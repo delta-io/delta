@@ -16,7 +16,7 @@
 
 package io.delta.storage.commit.uccommitcoordinator
 
-import java.net.{InetSocketAddress, URI}
+import java.net.{InetSocketAddress, URI, URLDecoder}
 import java.nio.charset.StandardCharsets
 import java.util.{Collections, Optional}
 
@@ -48,6 +48,7 @@ class UCTokenBasedRestClientSuite
   private var commitsHandler: HttpExchange => Unit = _
   private var deltaConfigHandler: HttpExchange => Unit = _
   private var deltaTablesHandler: HttpExchange => Unit = _
+  private var deltaPathCredentialsHandler: HttpExchange => Unit = _
   private var legacyTablesHandler: HttpExchange => Unit = _
   private val objectMapper = new ObjectMapper()
 
@@ -77,6 +78,11 @@ class UCTokenBasedRestClientSuite
       else sendJson(exchange, HttpStatus.SC_NOT_FOUND, "{}")
       exchange.close()
     })
+    server.createContext("/api/2.1/unity-catalog/delta/v1/temporary-path-credentials", exchange => {
+      if (deltaPathCredentialsHandler != null) deltaPathCredentialsHandler(exchange)
+      else sendJson(exchange, HttpStatus.SC_NOT_FOUND, "{}")
+      exchange.close()
+    })
     server.createContext("/api/2.1/unity-catalog/tables", exchange => {
       if (legacyTablesHandler != null) legacyTablesHandler(exchange)
       else sendJson(exchange, HttpStatus.SC_NOT_FOUND, "{}")
@@ -93,6 +99,7 @@ class UCTokenBasedRestClientSuite
     commitsHandler = null
     deltaConfigHandler = null
     deltaTablesHandler = null
+    deltaPathCredentialsHandler = null
     legacyTablesHandler = null
   }
 
@@ -107,6 +114,22 @@ class UCTokenBasedRestClientSuite
     exchange.sendResponseHeaders(status, bytes.length)
     exchange.getResponseBody.write(bytes)
     exchange.getResponseBody.close()
+  }
+
+  private def queryParams(exchange: HttpExchange): Map[String, String] = {
+    Option(exchange.getRequestURI.getRawQuery).toSeq
+      .flatMap(_.split("&"))
+      .filter(_.nonEmpty)
+      .map { kv =>
+        val pair = kv.split("=", 2)
+        val key = URLDecoder.decode(pair(0), StandardCharsets.UTF_8)
+        val value = if (pair.length == 2) {
+          URLDecoder.decode(pair(1), StandardCharsets.UTF_8)
+        } else {
+          ""
+        }
+        key -> value
+      }.toMap
   }
 
   private def createTokenProvider(): TokenProvider = new TokenProvider {
@@ -263,6 +286,80 @@ class UCTokenBasedRestClientSuite
       assert(client.supportsUCDeltaRestCatalogApi())
       assert(client.loadTable("main", "default", "tbl").getMetadata.getLocation ===
         "file:/tmp/uc/table")
+    } finally {
+      client.close()
+    }
+  }
+
+  test("catalog-aware constructor gets temporary path credentials through UC Delta Rest Catalog API") {
+    deltaConfigHandler = exchange => sendJson(exchange, HttpStatus.SC_OK,
+      """{
+        |  "endpoints": [
+        |    "GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}",
+        |    "GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}/credentials",
+        |    "GET /v1/temporary-path-credentials"
+        |  ],
+        |  "protocol-version": "1.0"
+        |}""".stripMargin)
+    deltaPathCredentialsHandler = exchange => {
+      assert(exchange.getRequestMethod === "GET")
+      assert(queryParams(exchange) === Map(
+        "location" -> "s3://bucket/path/to/table",
+        "operation" -> "READ"))
+      sendJson(exchange, HttpStatus.SC_OK,
+        """{
+          |  "storage-credentials": [
+          |    {
+          |      "prefix": "s3://bucket/path/to/table",
+          |      "operation": "READ",
+          |      "config": {
+          |        "s3.access-key-id": "ak",
+          |        "s3.secret-access-key": "sk",
+          |        "s3.session-token": "st"
+          |      },
+          |      "expiration-time-ms": 123
+          |    }
+          |  ]
+          |}""".stripMargin)
+    }
+
+    val client =
+      new UCTokenBasedRestClient(serverUri, createTokenProvider(), Collections.emptyMap(), "main")
+    try {
+      val response = client.getTemporaryPathCredentials(
+        "s3://bucket/path/to/table",
+        CredentialOperation.READ)
+      assert(response.getStorageCredentials.size() === 1)
+      assert(response.getStorageCredentials.get(0).getPrefix === "s3://bucket/path/to/table")
+      assert(response.getStorageCredentials.get(0).getOperation === CredentialOperation.READ)
+    } finally {
+      client.close()
+    }
+  }
+
+  test("catalog-aware constructor fails temporary path credentials when endpoint is unavailable") {
+    deltaConfigHandler = exchange => sendJson(exchange, HttpStatus.SC_OK,
+      """{
+        |  "endpoints": [
+        |    "GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}",
+        |    "GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}/credentials"
+        |  ],
+        |  "protocol-version": "1.0"
+        |}""".stripMargin)
+    deltaPathCredentialsHandler = exchange =>
+      fail(s"Unexpected temporary path credentials request: ${exchange.getRequestURI}")
+
+    val client =
+      new UCTokenBasedRestClient(serverUri, createTokenProvider(), Collections.emptyMap(), "main")
+    try {
+      val e = intercept[UnsupportedOperationException] {
+        client.getTemporaryPathCredentials(
+          "s3://bucket/path/to/table",
+          CredentialOperation.READ)
+      }
+      assert(e.getMessage ===
+        "getTemporaryPathCredentials requires UC Delta Rest Catalog API temporary path credentials " +
+          "support.")
     } finally {
       client.close()
     }

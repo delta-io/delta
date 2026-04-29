@@ -213,6 +213,19 @@ public interface UCClient extends AutoCloseable {
   }
 
   /**
+   * Gets temporary storage credentials for a cloud path through the UC Delta Rest Catalog API.
+   *
+   * <p>Unlike table credentials, path credentials are not scoped by catalog/schema/table because
+   * raw path access such as {@code delta.`s3://bucket/table`} bypasses catalog resolution.
+   */
+  default CredentialsResponse getTemporaryPathCredentials(
+      String location,
+      CredentialOperation operation) throws IOException {
+    throw new UnsupportedOperationException(
+        "getTemporaryPathCredentials requires UC Delta temporary path credentials support.");
+  }
+
+  /**
    * Closes any resources used by this client.
    * This method should be called to properly release resources such as network
    * connections (e.g., HTTPClient) when the client is no longer needed.

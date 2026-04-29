@@ -56,7 +56,8 @@ class UCDeltaRestCatalogApiSchemaConverterSuite extends AnyFunSuite {
       "timestamp" -> TimestampType,
       "timestamp_ntz" -> TimestampNTZType,
       "void" -> NullType).foreach { case (deltaType, sparkType) =>
-        val schema = UCDeltaRestCatalogApiSchemaConverter.toSparkType(deltaSchema(deltaField(deltaType)))
+        val schema = UCDeltaRestCatalogApiSchemaConverter.toSparkType(
+          deltaSchema(deltaField(deltaType)))
         assert(schema(deltaType).dataType === sparkType)
     }
   }

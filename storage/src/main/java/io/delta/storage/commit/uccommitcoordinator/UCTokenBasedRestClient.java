@@ -71,7 +71,7 @@ import java.util.*;
  *   <li>Committing changes to Delta tables</li>
  *   <li>Fetching unbackfilled commit histories</li>
  *   <li>Loading table metadata through the UC Delta Rest Catalog API</li>
- *   <li>Getting table credentials through the UC Delta Rest Catalog API</li>
+ *   <li>Getting table and path credentials through the UC Delta Rest Catalog API</li>
  * </ul>
  *
  * <p>All requests are authenticated using a TokenProvider that generates Bearer tokens dynamically.
@@ -97,6 +97,7 @@ public class UCTokenBasedRestClient implements UCClient {
   private static final Logger LOG = LoggerFactory.getLogger(UCTokenBasedRestClient.class);
 
   private final boolean supportsUCDeltaRestCatalogApi;
+  private final boolean supportsUCDeltaRestCatalogTemporaryPathCredentials;
   private DeltaCommitsApi deltaCommitsApi;
   private MetastoresApi metastoresApi;
   private TablesApi tablesApi;
@@ -115,6 +116,8 @@ public class UCTokenBasedRestClient implements UCClient {
       Arrays.asList(
           "GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}",
           "GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}/credentials");
+  private static final String UC_DELTA_TEMPORARY_PATH_CREDENTIALS_ENDPOINT_ID =
+      "GET /v1/temporary-path-credentials";
 
   /**
    * Constructs a new UCTokenBasedRestClient with the specified base URI, TokenProvider,
@@ -130,7 +133,8 @@ public class UCTokenBasedRestClient implements UCClient {
       String baseUri,
       TokenProvider tokenProvider,
       Map<String, String> appVersions) {
-    this(buildApiClient(baseUri, tokenProvider, appVersions), true);
+    this(buildApiClient(baseUri, tokenProvider, appVersions),
+        new UCDeltaRestCatalogApiSupport(true, true));
   }
 
   /**
@@ -152,7 +156,7 @@ public class UCTokenBasedRestClient implements UCClient {
   }
 
   private UCTokenBasedRestClient(ApiClient apiClient, String catalog) {
-    this(apiClient, supportsUCDeltaRestCatalogApi(apiClient, catalog));
+    this(apiClient, getUCDeltaRestCatalogApiSupport(apiClient, catalog));
   }
 
   private static ApiClient buildApiClient(
@@ -176,15 +180,18 @@ public class UCTokenBasedRestClient implements UCClient {
     return builder.build();
   }
 
-  private static boolean supportsUCDeltaRestCatalogApi(ApiClient apiClient, String catalog) {
+  private static UCDeltaRestCatalogApiSupport getUCDeltaRestCatalogApiSupport(
+      ApiClient apiClient,
+      String catalog) {
     Objects.requireNonNull(apiClient, "apiClient must not be null");
     Objects.requireNonNull(catalog, "catalog must not be null");
     try {
       CatalogConfig config =
           new ConfigurationApi(apiClient).getConfig(catalog, UC_DELTA_API_PROTOCOL_VERSION);
-      return config != null &&
-          config.getEndpoints() != null &&
-          config.getEndpoints().containsAll(REQUIRED_UC_DELTA_API_ENDPOINT_IDS);
+      List<String> endpoints = config == null ? null : config.getEndpoints();
+      return new UCDeltaRestCatalogApiSupport(
+          endpoints != null && endpoints.containsAll(REQUIRED_UC_DELTA_API_ENDPOINT_IDS),
+          endpoints != null && endpoints.contains(UC_DELTA_TEMPORARY_PATH_CREDENTIALS_ENDPOINT_ID));
     } catch (ApiException e) {
       if (e.getCode() == HTTP_NOT_FOUND) {
         LOG.warn(
@@ -192,7 +199,7 @@ public class UCTokenBasedRestClient implements UCClient {
                 + "UC Delta Rest Catalog API will be disabled.",
             catalog,
             e);
-        return false;
+        return new UCDeltaRestCatalogApiSupport(false, false);
       }
       throw new IllegalArgumentException(
           String.format(
@@ -212,9 +219,13 @@ public class UCTokenBasedRestClient implements UCClient {
    */
   private UCTokenBasedRestClient(
       ApiClient apiClient,
-      boolean supportsUCDeltaRestCatalogApi) {
+      UCDeltaRestCatalogApiSupport ucDeltaRestCatalogApiSupport) {
     Objects.requireNonNull(apiClient, "apiClient must not be null");
-    this.supportsUCDeltaRestCatalogApi = supportsUCDeltaRestCatalogApi;
+    Objects.requireNonNull(
+        ucDeltaRestCatalogApiSupport, "ucDeltaRestCatalogApiSupport must not be null");
+    this.supportsUCDeltaRestCatalogApi = ucDeltaRestCatalogApiSupport.supportsTableApis;
+    this.supportsUCDeltaRestCatalogTemporaryPathCredentials =
+        ucDeltaRestCatalogApiSupport.supportsTemporaryPathCredentials;
     this.deltaCommitsApi = new DeltaCommitsApi(apiClient);
     this.metastoresApi = new MetastoresApi(apiClient);
     this.tablesApi = new TablesApi(apiClient);
@@ -224,6 +235,18 @@ public class UCTokenBasedRestClient implements UCClient {
     this.deltaTemporaryCredentialsApi = supportsUCDeltaRestCatalogApi
         ? new TemporaryCredentialsApi(apiClient)
         : null;
+  }
+
+  private static class UCDeltaRestCatalogApiSupport {
+    private final boolean supportsTableApis;
+    private final boolean supportsTemporaryPathCredentials;
+
+    UCDeltaRestCatalogApiSupport(
+        boolean supportsTableApis,
+        boolean supportsTemporaryPathCredentials) {
+      this.supportsTableApis = supportsTableApis;
+      this.supportsTemporaryPathCredentials = supportsTemporaryPathCredentials;
+    }
   }
 
   @Override
@@ -245,6 +268,14 @@ public class UCTokenBasedRestClient implements UCClient {
     if (!supportsUCDeltaRestCatalogApi) {
       throw new UnsupportedOperationException(
           operation + " requires UC Delta Rest Catalog API support.");
+    }
+  }
+
+  private void ensureUCDeltaRestCatalogTemporaryPathCredentialsSupported(String operation) {
+    ensureOpen();
+    if (!supportsUCDeltaRestCatalogTemporaryPathCredentials) {
+      throw new UnsupportedOperationException(
+          operation + " requires UC Delta Rest Catalog API temporary path credentials support.");
     }
   }
 
@@ -396,6 +427,33 @@ public class UCTokenBasedRestClient implements UCClient {
               catalog,
               schema,
               table,
+              e.getCode(),
+              e.getResponseBody()),
+          e);
+    }
+  }
+
+  /**
+   * Gets temporary credentials for one path through the UC Delta credential APIs.
+   *
+   * <p>This method is only supported when the UC Delta Rest Catalog API config advertises temporary path
+   * credentials. It is used for raw path-based Delta access, not named table access.
+   */
+  @Override
+  public CredentialsResponse getTemporaryPathCredentials(
+      String location,
+      CredentialOperation operation) throws IOException {
+    ensureUCDeltaRestCatalogTemporaryPathCredentialsSupported("getTemporaryPathCredentials");
+    Objects.requireNonNull(location, "location must not be null.");
+    Objects.requireNonNull(operation, "operation must not be null.");
+
+    try {
+      return deltaTemporaryCredentialsApi.getTemporaryPathCredentials(location, operation);
+    } catch (ApiException e) {
+      throw new IOException(
+          String.format(
+              "Failed to get path credentials for %s (HTTP %s): %s",
+              location,
               e.getCode(),
               e.getResponseBody()),
           e);

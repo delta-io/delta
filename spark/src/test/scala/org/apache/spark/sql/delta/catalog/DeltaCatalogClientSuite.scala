@@ -17,13 +17,14 @@
 package org.apache.spark.sql.delta.catalog
 
 import java.io.IOException
-import java.net.InetSocketAddress
+import java.net.{InetSocketAddress, URLDecoder}
 import java.nio.charset.StandardCharsets
 
 import scala.collection.JavaConverters._
 
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY
+import org.apache.hadoop.fs.Path
 
 import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach}
 
@@ -51,6 +52,7 @@ class DeltaCatalogClientSuite
   private var serverUri: String = _
   private var configHandler: HttpExchange => Unit = _
   private var handler: HttpExchange => Unit = _
+  private var pathCredentialsHandler: HttpExchange => Unit = _
   private var credentialRequestCount: Int = _
 
   override def beforeAll(): Unit = {
@@ -81,6 +83,17 @@ class DeltaCatalogClientSuite
         exchange.close()
       }
     })
+    server.createContext("/api/2.1/unity-catalog/delta/v1/temporary-path-credentials", exchange => {
+      try {
+        if (pathCredentialsHandler != null) {
+          pathCredentialsHandler(exchange)
+        } else {
+          sendJson(exchange, 404, "{}")
+        }
+      } finally {
+        exchange.close()
+      }
+    })
     server.start()
     serverUri = s"http://localhost:${server.getAddress.getPort}"
   }
@@ -94,6 +107,7 @@ class DeltaCatalogClientSuite
     super.beforeEach()
     configHandler = null
     handler = null
+    pathCredentialsHandler = null
     credentialRequestCount = 0
   }
 
@@ -161,9 +175,11 @@ class DeltaCatalogClientSuite
     assert(storageProperties(UCDeltaRestCatalogApiCredentialConf.S3A_CREDENTIALS_PROVIDER) ===
       classOf[AwsVendedTokenProvider].getName)
     assert(storageProperties(UCDeltaRestCatalogApiCredentialConf.S3A_INIT_ACCESS_KEY) === "ak")
-    assert(tableProperties(s"option.${UCDeltaRestCatalogApiCredentialConf.S3A_CREDENTIALS_PROVIDER}") ===
-      classOf[AwsVendedTokenProvider].getName)
-    assert(tableProperties(s"option.${UCDeltaRestCatalogApiCredentialConf.S3A_INIT_ACCESS_KEY}") === "ak")
+    assert(tableProperties(
+      s"option.${UCDeltaRestCatalogApiCredentialConf.S3A_CREDENTIALS_PROVIDER}") ===
+        classOf[AwsVendedTokenProvider].getName)
+    assert(tableProperties(
+      s"option.${UCDeltaRestCatalogApiCredentialConf.S3A_INIT_ACCESS_KEY}") === "ak")
     assert(storageProperties("delta.feature.catalogManaged") === "supported")
     assert(!tableProperties.contains("delta.feature.catalogManaged"))
     assert(!tableProperties.contains(
@@ -192,8 +208,8 @@ class DeltaCatalogClientSuite
     val table = loadWithUCDeltaRestCatalogApi()
 
     assert(credentialQueries === Seq("operation=READ_WRITE", "operation=READ"))
-    assert(table.catalogTable.storage.properties(UCDeltaRestCatalogApiCredentialConf.UC_TABLE_OPERATION_KEY) ===
-      "READ")
+    assert(table.catalogTable.storage.properties(
+      UCDeltaRestCatalogApiCredentialConf.UC_TABLE_OPERATION_KEY) === "READ")
   }
 
   test("loadTable uses static credential properties when renewal is disabled") {
@@ -276,7 +292,8 @@ class DeltaCatalogClientSuite
     }
 
     assert(error.getMessage.contains("UC Delta Rest Catalog API is enabled for catalog uc"))
-    assert(error.getMessage.contains("does not support the required UC Delta Rest Catalog API endpoints"))
+    assert(error.getMessage.contains(
+      "does not support the required UC Delta Rest Catalog API endpoints"))
   }
 
   test("loadTable does not probe UC Delta Rest Catalog API when disabled") {
@@ -302,6 +319,80 @@ class DeltaCatalogClientSuite
         DeltaCatalogClient(new TestDelegateCatalog, spark)
       }
       assert(error.getMessage.contains("configuration is missing or incomplete"))
+    }
+  }
+
+  test("loadTable skips UC Delta Rest Catalog API for delta path identifiers") {
+    handler = exchange =>
+      fail(s"Unexpected UC Delta Rest Catalog API table request: ${exchange.getRequestURI}")
+
+    withUCDeltaRestCatalogApi { catalog =>
+      assert(catalog.loadTable(
+        Identifier.of(Array("delta"), "s3://bucket/path/to/table")).isEmpty)
+    }
+  }
+
+  test(
+      "pathCredentialOptions returns UC Delta Rest Catalog API path credential properties " +
+        "for cloud paths") {
+    configHandler = exchange => {
+      assert(queryParams(exchange)("catalog") === "uc")
+      sendJson(exchange, 200,
+        """{
+          |  "endpoints": [
+          |    "GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}",
+          |    "GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}/credentials",
+          |    "GET /v1/temporary-path-credentials"
+          |  ],
+          |  "protocol-version": "1.0"
+          |}""".stripMargin)
+    }
+    pathCredentialsHandler = exchange => {
+      assert(exchange.getRequestMethod === "GET")
+      assert(queryParams(exchange) === Map(
+        "location" -> "s3://bucket/path/to/table",
+        "operation" -> "READ"))
+      sendJson(exchange, 200, s3CredentialsResponseJson("s3://bucket/path/to/table", "READ"))
+    }
+
+    withSQLConf(
+      "spark.sql.catalog.uc" -> "io.unitycatalog.spark.UCSingleCatalog",
+      "spark.sql.catalog.uc.uri" -> serverUri,
+      "spark.sql.catalog.uc.token" -> "mock-token",
+      "spark.sql.defaultCatalog" -> "uc",
+      DeltaCatalogClient.deltaRestApiEnabledConf("uc") -> "true") {
+      val props = DeltaCatalogClient.pathCredentialOptions(
+        spark,
+        new Path("s3://bucket/path/to/table"))
+
+      assert(props(UCDeltaRestCatalogApiCredentialConf.S3A_CREDENTIALS_PROVIDER) ===
+        classOf[AwsVendedTokenProvider].getName)
+      assert(props(UCDeltaRestCatalogApiCredentialConf.S3A_INIT_ACCESS_KEY) === "ak")
+      assert(props(UCDeltaRestCatalogApiCredentialConf.UC_CREDENTIALS_TYPE_KEY) ===
+        UCDeltaRestCatalogApiCredentialConf.UC_CREDENTIALS_TYPE_PATH_VALUE)
+      assert(props(UCDeltaRestCatalogApiCredentialConf.UC_PATH_KEY) ===
+        "s3://bucket/path/to/table")
+      assert(props(UCDeltaRestCatalogApiCredentialConf.UC_PATH_OPERATION_KEY) === "PATH_READ")
+    }
+  }
+
+  test(
+      "pathCredentialOptions returns empty when no UC Delta Rest Catalog API catalog is " +
+        "configured") {
+    configHandler = exchange =>
+      fail(s"Unexpected UC Delta Rest Catalog API config request: ${exchange.getRequestURI}")
+    pathCredentialsHandler = exchange =>
+      fail(s"Unexpected temporary path credentials request: ${exchange.getRequestURI}")
+
+    withSQLConf(
+      "spark.sql.catalog.uc" -> "io.unitycatalog.spark.UCSingleCatalog",
+      "spark.sql.catalog.uc.uri" -> serverUri,
+      "spark.sql.catalog.uc.token" -> "mock-token") {
+      val props = DeltaCatalogClient.pathCredentialOptions(
+        spark,
+        new Path("s3://bucket/path/to/table"))
+
+      assert(props.isEmpty)
     }
   }
 
@@ -386,6 +477,22 @@ class DeltaCatalogClientSuite
        |    }
        |  ]
        |}""".stripMargin
+
+  private def queryParams(exchange: HttpExchange): Map[String, String] = {
+    Option(exchange.getRequestURI.getRawQuery).toSeq
+      .flatMap(_.split("&"))
+      .filter(_.nonEmpty)
+      .map { kv =>
+        val pair = kv.split("=", 2)
+        val key = URLDecoder.decode(pair(0), StandardCharsets.UTF_8)
+        val value = if (pair.length == 2) {
+          URLDecoder.decode(pair(1), StandardCharsets.UTF_8)
+        } else {
+          ""
+        }
+        key -> value
+      }.toMap
+  }
 
   private def sendJson(exchange: HttpExchange, status: Int, body: String): Unit = {
     val bytes = body.getBytes(StandardCharsets.UTF_8)

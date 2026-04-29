@@ -17,9 +17,11 @@
 package org.apache.spark.sql.delta.serverSidePlanning
 
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
+import org.apache.spark.sql.connector.catalog.{Identifier, Table, TableCapability}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.sources.{And, EqualTo, Filter, GreaterThan, LessThan}
+import org.apache.spark.sql.types.StructType
 
 /**
  * Tests for server-side planning with a mock client.
@@ -140,6 +142,33 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
         Array("test_db"), "shared_test"))
     assert(!loadedTable.isInstanceOf[ServerSidePlannedTable],
       s"Expected normal table but got ServerSidePlannedTable when config is disabled")
+  }
+
+  test("disabled server-side planning does not inspect table credentials") {
+    val throwingTable = new Table {
+      override def name(): String = "throwing_table"
+      override def schema(): StructType = new StructType()
+      override def properties(): java.util.Map[String, String] =
+        throw new IllegalStateException("properties should not be called")
+      override def capabilities(): java.util.Set[TableCapability] =
+        java.util.Collections.emptySet()
+    }
+
+    val originalConfig = spark.conf.getOption(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key)
+    spark.conf.set(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key, "false")
+    try {
+      val plannedTable = ServerSidePlannedTable.tryCreate(
+        spark,
+        Identifier.of(Array("db"), "throwing_table"),
+        throwingTable,
+        isUnityCatalog = true)
+      assert(plannedTable.isEmpty)
+    } finally {
+      originalConfig match {
+        case Some(value) => spark.conf.set(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key, value)
+        case None => spark.conf.unset(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key)
+      }
+    }
   }
 
   test("shouldUseServerSidePlanning() decision logic") {

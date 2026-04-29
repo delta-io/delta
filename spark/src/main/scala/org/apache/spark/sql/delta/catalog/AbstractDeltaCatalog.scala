@@ -292,7 +292,14 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       "DeltaCatalog", "loadTable") {
     setVariantBlockingConfigIfUC()
     try {
-      val table = deltaCatalogClient.loadTable(ident).getOrElse(super.loadTable(ident))
+      val table =
+        if (isPathIdentifier(ident)) {
+          loadPathTable(ident)
+        } else if (isIcebergPathIdentifier(ident)) {
+          newIcebergPathTable(ident)
+        } else {
+          deltaCatalogClient.loadTable(ident).getOrElse(super.loadTable(ident))
+        }
 
       ServerSidePlannedTable.tryCreate(spark, ident, table, isUnityCatalog).foreach { sspt =>
         return sspt

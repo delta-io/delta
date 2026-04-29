@@ -84,8 +84,16 @@ class DeltaTableV2 private(
       PathInfo(new Path(catalogTable.get.location), Seq.empty, None)
     } else {
       val (rootPath, filters, timeTravel) =
-        DeltaDataSource.parsePathIdentifier(spark, path.toString, options)
+        DeltaDataSource.parsePathIdentifier(spark, path.toString, pathBasedOptions)
       PathInfo(rootPath, filters, timeTravel)
+    }
+  }
+
+  private lazy val pathBasedOptions: Map[String, String] = {
+    if (catalogTable.isDefined) {
+      options
+    } else {
+      DeltaCatalogClient.pathCredentialOptions(spark, path) ++ options
     }
   }
 
@@ -120,7 +128,7 @@ class DeltaTableV2 private(
         }
         fileSystemOptions ++ options
       } else {
-        options
+        pathBasedOptions
       }
       DeltaLog.forTable(
         spark,
