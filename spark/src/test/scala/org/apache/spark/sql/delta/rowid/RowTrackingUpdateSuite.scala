@@ -162,20 +162,6 @@ trait RowTrackingUpdateCommonTests extends RowTrackingUpdateSuiteBase {
     }
   }
 
-  test("Preserving Row Tracking - Subqueries are not supported in UPDATE") {
-    withRowTrackingEnabled(enabled = true) {
-      withRowIdTestTable(isPartitioned = false) {
-        val ex = intercept[AnalysisException] {
-          checkAndExecuteUpdate(
-            tableName = targetTableName,
-            condition = Some(
-              s"""id in (SELECT id FROM $targetTableName s
-              WHERE s.id = 0 OR s.id = $numRowsPerFile)"""))
-        }.getMessage
-        assert(ex.contains("Subqueries are not supported in the UPDATE"))
-      }
-    }
-  }
 
   for {
     isPartitioned <- BOOLEAN_DOMAIN

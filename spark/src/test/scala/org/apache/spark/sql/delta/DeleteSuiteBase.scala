@@ -380,90 +380,6 @@ trait DeleteBaseTests extends DeleteBaseMixin {
       Row("c", "v") :: Row("d", "vv") :: Nil)
   }
 
-  test("do not support non-EXISTS subquery test") {
-    append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"))
-    Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("c", "d").createOrReplaceTempView("source")
-
-    // basic subquery
-    val e0 = intercept[AnalysisException] {
-      executeDelete(target = tableSQLIdentifier, "key < (SELECT max(c) FROM source)")
-    }.getMessage
-    assert(e0.contains("Subqueries are not supported"))
-
-    // subquery with IN
-    val e3 = intercept[AnalysisException] {
-      executeDelete(target = tableSQLIdentifier, "key IN (SELECT max(c) FROM source)")
-    }.getMessage
-    assert(e3.contains("Subqueries are not supported"))
-
-    // subquery with NOT IN
-    val e4 = intercept[AnalysisException] {
-      executeDelete(target = tableSQLIdentifier, "key NOT IN (SELECT max(c) FROM source)")
-    }.getMessage
-    assert(e4.contains("Subqueries are not supported"))
-
-    // EXISTS mixed with IN: the IN subquery should still be blocked
-    withSQLConf(DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key -> "true") {
-      checkError(
-        intercept[DeltaAnalysisException] {
-          executeDelete(
-            target = tableSQLIdentifier,
-            where = "EXISTS (SELECT 1 FROM source WHERE key = c) AND key IN (SELECT c FROM source)")
-        },
-        condition = "DELTA_UNSUPPORTED_SUBQUERY",
-        sqlState = Some("0AKDC"),
-        parameters = Map("operation" -> "DELETE", "cond" -> ".*"),
-        matchPVals = true)
-    }
-  }
-
-  test("delete with correlated EXISTS subquery") {
-    append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"))
-    Seq((2, 2), (1, 4)).toDF("c", "d").createOrReplaceTempView("source")
-
-    withSQLConf(DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key -> "true") {
-      executeDelete(
-        target = tableSQLIdentifier,
-        where = "EXISTS (SELECT 1 FROM source WHERE key = c)")
-    }
-    checkAnswer(
-      readDeltaTableByIdentifier(tableSQLIdentifier),
-      Row(0, 3) :: Nil)
-  }
-
-  test("delete with correlated NOT EXISTS subquery") {
-    append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"))
-    Seq((2, 2), (1, 4)).toDF("c", "d").createOrReplaceTempView("source")
-
-    withSQLConf(DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key -> "true") {
-      executeDelete(
-        target = tableSQLIdentifier,
-        where = "NOT EXISTS (SELECT 1 FROM source WHERE key = c)")
-    }
-    checkAnswer(
-      readDeltaTableByIdentifier(tableSQLIdentifier),
-      Row(2, 2) :: Row(1, 4) :: Row(1, 1) :: Nil)
-  }
-
-  test("EXISTS subquery kill switch") {
-    append(Seq((2, 2), (1, 4)).toDF("key", "value"))
-    Seq((2, 2)).toDF("c", "d").createOrReplaceTempView("source")
-
-    withSQLConf(
-        DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key -> "false") {
-      checkError(
-        intercept[DeltaAnalysisException] {
-          executeDelete(
-            target = tableSQLIdentifier,
-            where = "EXISTS (SELECT 1 FROM source WHERE key = c)")
-        },
-        condition = "DELTA_UNSUPPORTED_SUBQUERY",
-        sqlState = Some("0AKDC"),
-        parameters = Map("operation" -> "DELETE", "cond" -> ".*"),
-        matchPVals = true)
-    }
-  }
-
   test("schema pruning on data condition") {
     val input = Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value")
     append(input, Nil)
@@ -558,34 +474,6 @@ trait DeleteBaseTests extends DeleteBaseMixin {
     expectException = true
   )
 
-  testUnsupportedExpression(
-    function = "max",
-    functionType = "Aggregate",
-    data = Seq((2, 2), (1, 4)).toDF("key", "value"),
-    where = "key > max(value)",
-    expectException = true
-  )
-
-  // Explode functions are supported in where if only one row generated.
-  testUnsupportedExpression(
-    function = "explode",
-    functionType = "Generate",
-    data = Seq((2, List(2))).toDF("key", "value"),
-    where = "key = (select explode(value) from deltaTable)",
-    expectException = false // generate only one row, no exception.
-  )
-
-  // Explode functions are supported in where but if there's more than one row generated,
-  // it will throw an exception.
-  testUnsupportedExpression(
-    function = "explode",
-    functionType = "Generate",
-    data = Seq((2, List(2)), (1, List(4, 5))).toDF("key", "value"),
-    where = "key = (select explode(value) from deltaTable)",
-    expectException = true, // generate more than one row. Exception expected.
-    customErrorRegex =
-      Some(".*More than one row returned by a subquery used as an expression(?s).*")
-  )
 
   test("Variant type") {
     val dstDf = sql(

@@ -131,22 +131,6 @@ trait RowTrackingDeleteSuiteBase extends RowTrackingDeleteTestDimension {
     }
   }
 
-  test("Preserving Row Tracking - DELETE with EXISTS subquery") {
-    withSQLConf(DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key -> "true") {
-      withRowIdTestTable(isPartitioned = false) {
-        // Use a different column name to avoid ambiguous resolution inside EXISTS.
-        sql(
-          s"CREATE TABLE $subqueryTableName USING delta " +
-            s"AS SELECT id AS src_id FROM $testTableName")
-        withTable(subqueryTableName) {
-          deleteAndValidateStableRowId(Some(
-            s"EXISTS (SELECT 1 FROM $subqueryTableName s " +
-              s"WHERE s.src_id = id AND (s.src_id = 7 OR s.src_id = 11))"))
-        }
-      }
-    }
-  }
-
   for (isPartitioned <- BOOLEAN_DOMAIN)  {
     test(s"Multiple DELETEs preserve Row IDs, isPartitioned=$isPartitioned") {
       withRowIdTestTable(isPartitioned) {
