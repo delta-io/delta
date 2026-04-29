@@ -196,54 +196,55 @@ public class Checkpointer {
     while (currentVersion >= 0) {
       try {
         long searchLowerBound = Math.max(0, currentVersion - 1000);
-        CloseableIterator<FileStatus> deltaLogFileIter =
+        try (CloseableIterator<FileStatus> deltaLogFileIter =
             wrapEngineExceptionThrowsIO(
                 () ->
                     engine
                         .getFileSystemClient()
                         .listFrom(FileNames.listingPrefix(tableLogPath, searchLowerBound)),
                 "Listing from %s",
-                FileNames.listingPrefix(tableLogPath, searchLowerBound));
+                FileNames.listingPrefix(tableLogPath, searchLowerBound))) {
 
-        List<CheckpointInstance> checkpoints = new ArrayList<>();
-        while (deltaLogFileIter.hasNext()) {
-          FileStatus fileStatus = deltaLogFileIter.next();
-          String fileName = new Path(fileStatus.getPath()).getName();
+          List<CheckpointInstance> checkpoints = new ArrayList<>();
+          while (deltaLogFileIter.hasNext()) {
+            FileStatus fileStatus = deltaLogFileIter.next();
+            String fileName = new Path(fileStatus.getPath()).getName();
 
-          long currentFileVersion;
-          if (FileNames.isCommitFile(fileName)) {
-            currentFileVersion = FileNames.deltaVersion(fileName);
-          } else if (FileNames.isCheckpointFile(fileName)) {
-            currentFileVersion = FileNames.checkpointVersion(fileName);
-          } else {
-            // allow all other types of files.
-            currentFileVersion = currentVersion;
+            long currentFileVersion;
+            if (FileNames.isCommitFile(fileName)) {
+              currentFileVersion = FileNames.deltaVersion(fileName);
+            } else if (FileNames.isCheckpointFile(fileName)) {
+              currentFileVersion = FileNames.checkpointVersion(fileName);
+            } else {
+              // allow all other types of files.
+              currentFileVersion = currentVersion;
+            }
+
+            boolean shouldContinue =
+                // only consider files with version in the range and
+                // before the target version
+                (currentVersion == 0 || currentFileVersion <= currentVersion)
+                    && currentFileVersion < version;
+
+            if (!shouldContinue) {
+              break;
+            }
+            if (validCheckpointFile(fileStatus)) {
+              checkpoints.add(new CheckpointInstance(fileStatus.getPath()));
+            }
+            numberOfFilesSearched++;
           }
 
-          boolean shouldContinue =
-              // only consider files with version in the range and
-              // before the target version
-              (currentVersion == 0 || currentFileVersion <= currentVersion)
-                  && currentFileVersion < version;
+          Optional<CheckpointInstance> latestCheckpoint =
+              getLatestCompleteCheckpointFromList(checkpoints, upperBoundCheckpoint);
 
-          if (!shouldContinue) {
-            break;
+          if (latestCheckpoint.isPresent()) {
+            logger.info(
+                "Found the last complete checkpoint before version {} at {}",
+                version,
+                latestCheckpoint.get());
+            return new Tuple2<>(latestCheckpoint, numberOfFilesSearched);
           }
-          if (validCheckpointFile(fileStatus)) {
-            checkpoints.add(new CheckpointInstance(fileStatus.getPath()));
-          }
-          numberOfFilesSearched++;
-        }
-
-        Optional<CheckpointInstance> latestCheckpoint =
-            getLatestCompleteCheckpointFromList(checkpoints, upperBoundCheckpoint);
-
-        if (latestCheckpoint.isPresent()) {
-          logger.info(
-              "Found the last complete checkpoint before version {} at {}",
-              version,
-              latestCheckpoint.get());
-          return new Tuple2<>(latestCheckpoint, numberOfFilesSearched);
         }
         currentVersion -= 1000; // search for checkpoint in previous 1000 entries
       } catch (IOException e) {
