@@ -47,6 +47,7 @@ import io.delta.spark.internal.v2.utils.ScalaUtils;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import io.delta.spark.internal.v2.utils.StreamingHelper;
 import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.io.UncheckedIOException;
 import java.nio.channels.ClosedByInterruptException;
 import java.sql.Timestamp;
@@ -364,13 +365,11 @@ public class SparkMicroBatchStream
       isFirstBatch = false;
       return endOffset;
     } catch (Exception e) {
-      // Kernel's DefaultJsonHandler wraps ClosedByInterruptException (thrown by NIO
-      // channels on thread interrupt) inside KernelEngineException (a RuntimeException).
-      // Spark's StreamExecution.isInterruptionException recognizes
-      // ClosedByInterruptException and UncheckedIOException but not
-      // KernelEngineException. Re-wrap so Spark's isInterruptedByStop — which also
-      // verifies state == TERMINATED — handles it as a clean stream shutdown.
-      Optional<ClosedByInterruptException> interruptCause = findClosedByInterruptCause(e);
+      // Kernel wraps thread-interrupt signals into its own exception types before they escape
+      // the read path. Re-throw the JDK-standard interrupt type inside UncheckedIOException so
+      // Spark's isInterruptedByStop — which also verifies state == TERMINATED — handles it as a
+      // clean stream shutdown. See findInterruptIOException for the shapes handled.
+      Optional<IOException> interruptCause = findInterruptIOException(e);
       if (interruptCause.isPresent()) {
         throw new UncheckedIOException(interruptCause.get());
       }
@@ -497,10 +496,10 @@ public class SparkMicroBatchStream
               tablePath, fromVersion, fromIndex, endOffset),
           e);
     } catch (RuntimeException e) {
-      // Same interrupt handling as latestOffset(): Kernel wraps ClosedByInterruptException
-      // in KernelEngineException (a RuntimeException). Re-wrap as UncheckedIOException so
-      // Spark's isInterruptedByStop recognizes it as a clean shutdown.
-      Optional<ClosedByInterruptException> interruptCause = findClosedByInterruptCause(e);
+      // Same interrupt handling as latestOffset() — see findInterruptIOException for the
+      // shapes Kernel produces. Re-wrap as UncheckedIOException so Spark's isInterruptedByStop
+      // recognizes it as a clean shutdown.
+      Optional<IOException> interruptCause = findInterruptIOException(e);
       if (interruptCause.isPresent()) {
         throw new UncheckedIOException(interruptCause.get());
       }
@@ -545,15 +544,39 @@ public class SparkMicroBatchStream
   }
 
   /**
-   * If the given exception wraps a {@link ClosedByInterruptException} as its direct cause, returns
-   * it. This occurs when Spark interrupts the micro-batch thread during stream shutdown and the
-   * thread is blocked inside Kernel's {@code DefaultJsonHandler} reading delta log files via NIO
-   * channels.
+   * Detects a "clean stop" interrupt in the given exception chain and returns the JDK-standard
+   * interrupt I/O exception that should be re-thrown wrapped in {@link UncheckedIOException}, so
+   * Spark's {@code StreamExecution.isInterruptionException} (which already unwraps {@code
+   * UncheckedIOException}) recognizes it and {@code isInterruptedByStop} — which also gates on
+   * {@code state == TERMINATED} — handles it as a clean shutdown.
+   *
+   * <p>Two known shapes produced by Kernel in the streaming read path:
+   *
+   * <ol>
+   *   <li>{@link KernelEngineException} wrapping {@link ClosedByInterruptException} — produced by
+   *       {@code DefaultJsonHandler.hasNext()} when the thread is interrupted while blocked inside
+   *       an NIO channel read.
+   *   <li>{@link UncheckedIOException} wrapping {@link InterruptedIOException} — produced by {@code
+   *       ActionsIterator.next()} (#6606) when the interrupt flag is observed before the read
+   *       begins.
+   * </ol>
+   *
+   * <p>Intentionally narrow: only looks at the direct cause of {@code t} and, in shape 2, one more
+   * level inside the {@code UncheckedIOException}. If Kernel grows a new wrapping shape this
+   * returns empty and the raw exception propagates so we learn of the new shape via a test failure
+   * rather than masking it.
    */
-  static Optional<ClosedByInterruptException> findClosedByInterruptCause(Throwable t) {
+  static Optional<IOException> findInterruptIOException(Throwable t) {
+    if (t == null) {
+      return Optional.empty();
+    }
     Throwable cause = t.getCause();
     if (cause instanceof ClosedByInterruptException) {
       return Optional.of((ClosedByInterruptException) cause);
+    }
+    if (cause instanceof UncheckedIOException
+        && cause.getCause() instanceof InterruptedIOException) {
+      return Optional.of((InterruptedIOException) cause.getCause());
     }
     return Optional.empty();
   }

@@ -3951,31 +3951,52 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
   }
 
   /**
-   * Simulates the Kernel integration path where {@code DefaultJsonHandler.hasNext()} wraps a {@link
-   * ClosedByInterruptException} inside a {@link io.delta.kernel.exceptions.KernelEngineException}.
-   * Verifies that {@code findClosedByInterruptCause} extracts the interrupt cause so {@code
-   * latestOffset()} can re-throw it as {@link java.io.UncheckedIOException} for Spark's {@code
-   * isInterruptedByStop}.
+   * Simulates the two Kernel integration paths that produce a clean-stop interrupt signal. Verifies
+   * that {@code findInterruptIOException} extracts the JDK-standard interrupt I/O exception so
+   * {@code latestOffset()} / {@code planInputPartitions()} can re-throw it as {@link
+   * java.io.UncheckedIOException} for Spark's {@code isInterruptedByStop}.
    */
   @Test
-  public void testFindClosedByInterruptCause() {
-    // KernelEngineException wrapping ClosedByInterruptException -> present
+  public void testFindInterruptIOException() {
+    // Shape 1: KernelEngineException wrapping ClosedByInterruptException — produced by
+    // DefaultJsonHandler.hasNext() when interrupted inside an NIO channel read.
     ClosedByInterruptException cbie = new ClosedByInterruptException();
     assertThat(
-            SparkMicroBatchStream.findClosedByInterruptCause(
+            SparkMicroBatchStream.findInterruptIOException(
                 new io.delta.kernel.exceptions.KernelEngineException("readJsonFile", cbie)))
         .isPresent()
         .contains(cbie);
 
+    // Shape 2: RuntimeException wrapping UncheckedIOException(InterruptedIOException) — produced
+    // by ActionsIterator.next() (Kernel PR #6606) when the interrupt flag is observed before
+    // the read begins.
+    java.io.InterruptedIOException iioe =
+        new java.io.InterruptedIOException("Thread was interrupted");
+    assertThat(
+            SparkMicroBatchStream.findInterruptIOException(
+                new RuntimeException(
+                    "Failed to process commits", new java.io.UncheckedIOException(iioe))))
+        .isPresent()
+        .contains(iioe);
+
     // Plain RuntimeException -> empty
-    assertThat(SparkMicroBatchStream.findClosedByInterruptCause(new RuntimeException("unrelated")))
+    assertThat(SparkMicroBatchStream.findInterruptIOException(new RuntimeException("unrelated")))
         .isEmpty();
 
-    // KernelEngineException wrapping a different IOException -> empty
+    // KernelEngineException wrapping a non-interrupt IOException -> empty
     assertThat(
-            SparkMicroBatchStream.findClosedByInterruptCause(
+            SparkMicroBatchStream.findInterruptIOException(
                 new io.delta.kernel.exceptions.KernelEngineException(
                     "readJsonFile", new java.io.FileNotFoundException("missing"))))
+        .isEmpty();
+
+    // UncheckedIOException wrapping a non-interrupt IOException -> empty
+    assertThat(
+            SparkMicroBatchStream.findInterruptIOException(
+                new RuntimeException(
+                    "unrelated",
+                    new java.io.UncheckedIOException(
+                        new java.io.FileNotFoundException("missing")))))
         .isEmpty();
   }
 
