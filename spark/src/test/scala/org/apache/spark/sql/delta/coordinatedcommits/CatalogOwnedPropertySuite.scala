@@ -499,17 +499,23 @@ class CatalogOwnedPropertySuite extends QueryTest
       // Source catalog-owned table
       createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = true)
 
-      val error1 = intercept[DeltaUnsupportedOperationException] {
+      val error1 = intercept[UnsupportedOperationException] {
         sql(s"CREATE TABLE t2 LIKE t1 TBLPROPERTIES " +
           s"('${UCCommitCoordinatorClient.UC_TABLE_ID_KEY}' = '${UUID.randomUUID().toString}')")
       }
-      val error2 = intercept[DeltaUnsupportedOperationException] {
+      val error2 = intercept[UnsupportedOperationException] {
         sql(s"CREATE TABLE t3 LIKE t1 TBLPROPERTIES " +
           s"('${UCCommitCoordinatorClient.UC_TABLE_ID_KEY}' = '${UUID.randomUUID().toString}')")
       }
       Seq(error1, error2).foreach { error =>
-        checkError(error, "DELTA_CANNOT_MODIFY_TABLE_PROPERTY", "42939",
-          Map("prop" -> "io.unitycatalog.tableId"))
+        error match {
+          case deltaError: DeltaUnsupportedOperationException =>
+            checkError(deltaError, "DELTA_CANNOT_MODIFY_TABLE_PROPERTY", "42939",
+              Map("prop" -> "io.unitycatalog.tableId"))
+          case sparkError =>
+            assert(
+              sparkError.getMessage.contains("spark_catalog does not support CREATE TABLE LIKE"))
+        }
       }
     }
   }

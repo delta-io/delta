@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta.commands.{
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.scalatest.exceptions.TestFailedException
 
+import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -199,7 +200,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
     val targetTbl = "targetTbl"
     withTable(srcTbl, targetTbl) {
       createTable(srcTbl)
-      spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl")
+      spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl USING DELTA")
       checkTableCopyDelta(srcTbl, targetTbl)
     }
   }
@@ -209,7 +210,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
     val targetTbl = "targetTbl"
     withTable(srcTbl, targetTbl) {
       createTable(srcTbl, addComment = false)
-      spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl")
+      spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl USING DELTA")
       checkTableCopyDelta(srcTbl, targetTbl)
     }
   }
@@ -219,7 +220,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
     val targetTbl = "targetTbl"
     withTable(srcTbl, targetTbl) {
       createTable(srcTbl, addTblProperties = false)
-      spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl")
+      spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl USING DELTA")
       checkTableCopyDelta(srcTbl, targetTbl)
     }
   }
@@ -229,7 +230,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
     val targetTbl = "targetTbl"
     withTable(srcTbl, targetTbl) {
       spark.sql(s"CREATE TABLE $srcTbl USING DELTA")
-      spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl")
+      spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl USING DELTA")
       checkTableCopyDelta(srcTbl, targetTbl)
     }
   }
@@ -240,7 +241,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
     withTable(srcTbl, targetTbl) {
       createTable(srcTbl
       )
-      spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl")
+      spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl USING DELTA")
       checkTableCopyDelta(srcTbl, targetTbl)
     }
   }
@@ -281,10 +282,10 @@ class DeltaCreateTableLikeSuite extends QueryTest
         .format("delta")
         .saveAsTable(targetTbl)
 
-      val msg = intercept[DeltaAnalysisException] {
-        spark.sql(s"CREATE TABLE $targetTbl LIKE  $srcTbl")
+      val msg = intercept[AnalysisException] {
+        spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl USING DELTA")
       }.getMessage
-      msg.contains("Table `default`.`targetTbl` already exists.")
+      assert(msg.contains("already exists"))
     }
   }
 
@@ -460,7 +461,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
         spark.sql(s"ALTER TABLE $srcTbl" +
           s" SET TBLPROPERTIES(this.is.my.key = 14, 'this.is.my.key2' = false)")
         spark.sql(s"COMMENT ON TABLE $srcTbl IS 'srcTbl'")
-        spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl")
+        spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl USING DELTA")
 
         checkTableCopyDelta(srcTbl, targetTbl)
       }
@@ -473,7 +474,8 @@ class DeltaCreateTableLikeSuite extends QueryTest
     withTempDir(prefix = "sparkdirprefix") { dir =>
       withTable(srcTbl) {
         createTable(srcTbl)
-        spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl LOCATION '${dir.toURI.toString}'")
+        spark.sql(
+          s"CREATE TABLE $targetTbl LIKE $srcTbl USING DELTA LOCATION '${dir.toURI.toString}'")
         checkTableCopyDelta(srcTbl, targetTbl, checkLocation = Some(dir.toURI.toString))
       }
     }
@@ -484,7 +486,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
     withTempDir { dir =>
       withTable(srcTbl) {
         createTable(srcTbl)
-        spark.sql(s"CREATE TABLE delta.`${dir.toURI.toString}` LIKE $srcTbl")
+        spark.sql(s"CREATE TABLE delta.`${dir.toURI.toString}` LIKE $srcTbl USING DELTA")
         checkTableCopyDelta(srcTbl, dir.toURI.toString, checkTargetTableByPath = true
         )
       }
@@ -554,8 +556,9 @@ class DeltaCreateTableLikeSuite extends QueryTest
       spark.sql(s"ALTER TABLE $expectedTbl" +
         " SET TBLPROPERTIES(this.is.my.key = 14, 'this.is.my.key2' = false, " +
         "'this.is.my.key3' = true, 'delta.appendOnly' = 'true')")
-      spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl TBLPROPERTIES('this.is.my.key3' = true, " +
-        s"'delta.appendOnly' = 'true')")
+      spark.sql(
+        s"CREATE TABLE $targetTbl LIKE $srcTbl USING DELTA " +
+          s"TBLPROPERTIES('this.is.my.key3' = true, 'delta.appendOnly' = 'true')")
       checkTableCopyDelta(expectedTbl, targetTbl)
     }
   }

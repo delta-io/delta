@@ -38,6 +38,7 @@ import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
 import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DynamicContainer;
 import org.junit.jupiter.api.DynamicTest;
@@ -56,6 +57,23 @@ import org.opentest4j.TestAbortedException;
 public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSupport {
   public static final List<TableType> ALL_TABLE_TYPES =
       List.of(TableType.EXTERNAL, TableType.MANAGED);
+
+  protected static String sparkVersion() {
+    return org.apache.spark.package$.MODULE$.SPARK_VERSION();
+  }
+
+  protected static boolean isSparkMasterSnapshot() {
+    return sparkVersion().contains("SNAPSHOT");
+  }
+
+  protected static void assumeUcSparkMasterCompatible(String suiteName) {
+    Assumptions.assumeFalse(
+        isSparkMasterSnapshot(),
+        suiteName
+            + " are temporarily skipped on Spark master because the current Unity Catalog "
+            + "Spark connector does not yet support the current Spark master "
+            + "CatalogStorageFormat ABI.");
+  }
 
   /**
    * Tests with this annotation will test against ALL_TABLE_TYPES. Example:
@@ -111,6 +129,8 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
   /** Create the SparkSession before all tests. */
   @BeforeAll
   public void setUpSpark() {
+    assumeUcSparkMasterCompatible("Unity Catalog integration tests");
+
     // UC server is started by UnityCatalogSupport.setupServer()
     // And the BeforeAll of parent class UnityCatalogSupport will be called before this method.
 
