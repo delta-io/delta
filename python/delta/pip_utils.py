@@ -20,7 +20,8 @@ from pyspark.sql import SparkSession
 
 def configure_spark_with_delta_pip(
     spark_session_builder: SparkSession.Builder,
-    extra_packages: Optional[List[str]] = None
+    extra_packages: Optional[List[str]] = None,
+    extra_excludes: Optional[List[str]] = None
 ) -> SparkSession.Builder:
     """
     Utility function to configure a SparkSession builder such that the generated SparkSession
@@ -46,9 +47,30 @@ def configure_spark_with_delta_pip(
         my_packages = ["org.apache.spark:spark-sql-kafka-0-10_2.12:x.y.z"]
         spark = configure_spark_with_delta_pip(builder, extra_packages=my_packages).getOrCreate()
 
+    4. If you would like to exclude certain transitive dependencies from the resolved packages,
+       use the `extra_excludes` parameter. This sets ``spark.jars.excludes`` and is useful for
+       resolving classpath conflicts. For example, when using ``enableHiveSupport()`` together
+       with JDBC connectors (e.g. writing to PostgreSQL), Spark distributions that ship a
+       partial Apache Derby installation (engine JARs present but not ``derbyclient``) may raise
+       ``java.lang.NoClassDefFoundError: org/apache/derby/client/ClientAutoloadedDriver`` because
+       Derby's service-loader entry references a class from the missing ``derbyclient`` JAR.
+       Excluding the Derby artifacts resolves this conflict:
+
+        builder = SparkSession.builder \
+            .master("local[*]") \
+            .appName("test") \
+            .enableHiveSupport()
+        excludes = ["org.apache.derby:derby", "org.apache.derby:derbyclient",
+                    "org.apache.derby:derbytools"]
+        spark = configure_spark_with_delta_pip(
+            builder, extra_excludes=excludes).getOrCreate()
+
     :param spark_session_builder: SparkSession.Builder object being used to configure and
                                   create a SparkSession.
     :param extra_packages: Set other packages to add to Spark session besides Delta Lake.
+    :param extra_excludes: Transitive dependencies to exclude from all resolved packages.
+                           Each entry must be a ``groupId:artifactId`` string.
+                           Sets ``spark.jars.excludes`` on the builder.
     :return: Updated SparkSession.Builder object
 
     .. versionadded:: 1.0
@@ -96,4 +118,11 @@ See the online documentation for the correct usage of this function.
     all_artifacts = [maven_artifact] + extra_packages
     packages_str = ",".join(all_artifacts)
 
-    return spark_session_builder.config("spark.jars.packages", packages_str)
+    spark_session_builder = spark_session_builder.config("spark.jars.packages", packages_str)
+
+    if extra_excludes:
+        excludes_str = ",".join(extra_excludes)
+        spark_session_builder = spark_session_builder.config(
+            "spark.jars.excludes", excludes_str)
+
+    return spark_session_builder
