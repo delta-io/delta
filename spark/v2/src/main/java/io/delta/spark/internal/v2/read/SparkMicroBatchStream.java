@@ -467,25 +467,46 @@ public class SparkMicroBatchStream
 
     List<PartitionedFile> partitionedFiles = new ArrayList<>();
     long totalBytesToRead = 0;
+    boolean isCDC = options.readChangeFeed();
+    ZoneId zoneId = ZoneId.of(sqlConf.sessionLocalTimeZone());
+
     try (CloseableIterator<IndexedFile> fileChanges =
-        getFileChanges(fromVersion, fromIndex, isInitialSnapshot, Optional.of(endOffset))) {
+        isCDC
+            ? getFileChangesWithRateLimitForCDC(
+                fromVersion,
+                fromIndex,
+                isInitialSnapshot,
+                /* limits= */ Optional.empty(),
+                Optional.of(endOffset))
+            : getFileChanges(fromVersion, fromIndex, isInitialSnapshot, Optional.of(endOffset))) {
       while (fileChanges.hasNext()) {
         IndexedFile indexedFile = fileChanges.next();
-        if (indexedFile.getAddFile() == null) {
+        if (indexedFile.getAddFile() == null && indexedFile.getCDCDataFile() == null) {
           continue;
         }
-        AddFile addFile = indexedFile.getAddFile();
-        // TODO(#5319): Apply excludeRegex to RemoveFile/AddCDCFile when CDC is supported
-        if (excludeRegex.isPresent()
-            && excludeRegex.get().findFirstIn(addFile.getPath()).isDefined()) {
-          continue;
-        }
-        PartitionedFile partitionedFile =
-            PartitionUtils.buildPartitionedFile(
-                addFile, partitionSchema, tablePath, ZoneId.of(sqlConf.sessionLocalTimeZone()));
 
-        totalBytesToRead += addFile.getSize();
-        partitionedFiles.add(partitionedFile);
+        if (isCDC && indexedFile.getCDCDataFile() != null) {
+          CDCDataFile cdcFile = indexedFile.getCDCDataFile();
+          if (excludeRegex.isPresent()
+              && excludeRegex.get().findFirstIn(cdcFile.getPath()).isDefined()) {
+            continue;
+          }
+          PartitionedFile partitionedFile =
+              PartitionUtils.buildCDCPartitionedFile(
+                  cdcFile, indexedFile.getVersion(), partitionSchema, tablePath, zoneId);
+          totalBytesToRead += cdcFile.getFileSize();
+          partitionedFiles.add(partitionedFile);
+        } else if (indexedFile.getAddFile() != null) {
+          AddFile addFile = indexedFile.getAddFile();
+          if (excludeRegex.isPresent()
+              && excludeRegex.get().findFirstIn(addFile.getPath()).isDefined()) {
+            continue;
+          }
+          PartitionedFile partitionedFile =
+              PartitionUtils.buildPartitionedFile(addFile, partitionSchema, tablePath, zoneId);
+          totalBytesToRead += addFile.getSize();
+          partitionedFiles.add(partitionedFile);
+        }
       }
     } catch (IOException e) {
       throw new RuntimeException(
@@ -518,7 +539,8 @@ public class SparkMicroBatchStream
         dataFilters,
         scalaOptions,
         hadoopConf,
-        sqlConf);
+        sqlConf,
+        /* isCDCRead */ options.readChangeFeed());
   }
 
   ///////////////
@@ -568,8 +590,8 @@ public class SparkMicroBatchStream
     // Note: returning a version beyond latest snapshot version won't be a problem as callers
     // of this function won't use the version to retrieve snapshot(refer to
     // [[getStartingOffset]]).
-    // TODO(#5319): fetch spark config if CDF is supported.
-    boolean allowOutOfRange = false;
+    boolean allowOutOfRange =
+        (Boolean) sqlConf.getConf(DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP());
 
     if (options.startingVersion().isDefined()) {
       DeltaStartingVersion startingVersion = options.startingVersion().get();
@@ -587,7 +609,7 @@ public class SparkMicroBatchStream
           // check is skipped, so this is technically not safe, but we keep it this way for
           // historical reasons.
           snapshotManager.checkVersionExists(
-              version, /* mustBeRecreatable= */ false, /* allowOutOfRange= */ false);
+              version, /* mustBeRecreatable= */ false, allowOutOfRange);
         }
         cachedStartingVersion = Optional.of(version);
         return cachedStartingVersion;
