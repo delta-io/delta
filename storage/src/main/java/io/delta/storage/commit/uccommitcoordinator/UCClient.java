@@ -22,6 +22,11 @@ import io.delta.storage.commit.GetCommitsResponse;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
 import io.delta.storage.commit.uniform.UniformMetadata;
+import io.unitycatalog.client.delta.model.CreateTableRequest;
+import io.unitycatalog.client.delta.model.CredentialOperation;
+import io.unitycatalog.client.delta.model.CredentialsResponse;
+import io.unitycatalog.client.delta.model.LoadTableResponse;
+import io.unitycatalog.client.delta.model.StagingTableResponse;
 
 import java.io.IOException;
 import java.net.URI;
@@ -41,6 +46,13 @@ import java.util.Optional;
  * request handling.
  */
 public interface UCClient extends AutoCloseable {
+
+  /**
+   * Returns whether this client can use UC Delta Rest Catalog API.
+   */
+  default boolean supportsUCDeltaRestCatalogApi() {
+    return false;
+  }
 
   /**
    * Retrieves the metastore ID associated with this Unity Catalog instance.
@@ -170,6 +182,71 @@ public interface UCClient extends AutoCloseable {
       String storageLocation,
       List<ColumnDef> columns,
       Map<String, String> properties) throws CommitFailedException;
+
+  /**
+   * Loads a Delta table from Unity Catalog through the UC Delta Rest Catalog API.
+   *
+   * <p>Implementations that do not support UC Delta Rest Catalog API should use the default
+   * implementation, which fails loudly so callers do not accidentally route UC Delta Rest Catalog
+   * API operations through a legacy-only client.
+   */
+  default LoadTableResponse loadTable(
+      String catalog,
+      String schema,
+      String table) throws IOException {
+    throw new UnsupportedOperationException(
+        "loadTable requires UC Delta Rest Catalog API support.");
+  }
+
+  /**
+   * Gets temporary storage credentials for a table through the UC Delta Rest Catalog API.
+   *
+   * <p>Implementations that do not support UC Delta Rest Catalog API should use the default
+   * implementation, which fails loudly so callers do not accidentally treat legacy UC clients as
+   * credential-aware Delta clients.
+   */
+  default CredentialsResponse getTableCredentials(
+      CredentialOperation operation,
+      String catalog,
+      String schema,
+      String table) throws IOException {
+    throw new UnsupportedOperationException(
+        "getTableCredentials requires UC Delta Rest Catalog API support.");
+  }
+
+  /**
+   * Gets temporary storage credentials for a cloud path through the UC Delta Rest Catalog API.
+   *
+   * <p>Unlike table credentials, path credentials are not scoped by catalog/schema/table because
+   * raw path access such as {@code delta.`s3://bucket/table`} bypasses catalog resolution.
+   */
+  default CredentialsResponse getTemporaryPathCredentials(
+      String location,
+      CredentialOperation operation) throws IOException {
+    throw new UnsupportedOperationException(
+        "getTemporaryPathCredentials requires UC Delta temporary path credentials support.");
+  }
+
+  /**
+   * Creates a Delta staging table in Unity Catalog through the UC Delta Rest Catalog API.
+   */
+  default StagingTableResponse createStagingTable(
+      String catalog,
+      String schema,
+      String table) throws IOException {
+    throw new UnsupportedOperationException(
+        "createStagingTable requires UC Delta Rest Catalog API support.");
+  }
+
+  /**
+   * Finalizes a staged Delta table in Unity Catalog through the UC Delta Rest Catalog API.
+   */
+  default LoadTableResponse createTable(
+      String catalog,
+      String schema,
+      CreateTableRequest request) throws IOException {
+    throw new UnsupportedOperationException("createTable requires UC Delta Rest Catalog API support.");
+  }
 
   /**
    * Closes any resources used by this client.
