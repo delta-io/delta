@@ -337,6 +337,13 @@ lazy val sparkV1 = (project in file("spark"))
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
       // For DynamoDBCommitStore
       "com.amazonaws" % "aws-java-sdk" % "1.12.262" % "provided",
+      "io.unitycatalog" % "unitycatalog-hadoop" % unityCatalogVersion excludeAll(
+        ExclusionRule(organization = "org.openapitools"),
+        ExclusionRule(organization = "com.fasterxml.jackson.core"),
+        ExclusionRule(organization = "com.fasterxml.jackson.module"),
+        ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
+        ExclusionRule(organization = "com.fasterxml.jackson.dataformat")
+      ),
 
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
@@ -627,6 +634,13 @@ lazy val spark = (project in file("spark-unified"))
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
       "com.amazonaws" % "aws-java-sdk" % "1.12.262" % "provided",
+      "io.unitycatalog" % "unitycatalog-hadoop" % unityCatalogVersion excludeAll(
+        ExclusionRule(organization = "org.openapitools"),
+        ExclusionRule(organization = "com.fasterxml.jackson.core"),
+        ExclusionRule(organization = "com.fasterxml.jackson.module"),
+        ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
+        ExclusionRule(organization = "com.fasterxml.jackson.dataformat")
+      ),
 
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "org.scalatestplus" %% "scalacheck-1-15" % "3.2.9.0" % "test",
@@ -809,13 +823,19 @@ Global / ensurePinnedUnityCatalog := {
     val home = file(sys.props("user.home"))
     // Check both layouts: a restored sbt cache can pre-populate ivy alone, leaving m2 empty -
     // checking only ivy would silently skip the slow publish and break mvn-based consumers.
-    val ivy2Canary = home / ".ivy2" / "local" / "io.unitycatalog" /
+    val ivy2ClientCanary = home / ".ivy2" / "local" / "io.unitycatalog" /
       "unitycatalog-client" / unityCatalogVersion / "ivys" / "ivy.xml"
-    val m2Canary = home / ".m2" / "repository" / "io" / "unitycatalog" /
+    val m2ClientCanary = home / ".m2" / "repository" / "io" / "unitycatalog" /
       "unitycatalog-client" / unityCatalogVersion /
       s"unitycatalog-client-$unityCatalogVersion.pom"
-    if (!ivy2Canary.exists || !m2Canary.exists) {
-      publishPinnedUnityCatalog(log, ivy2Canary)
+    val ivy2HadoopCanary = home / ".ivy2" / "local" / "io.unitycatalog" /
+      "unitycatalog-hadoop" / unityCatalogVersion / "ivys" / "ivy.xml"
+    val m2HadoopCanary = home / ".m2" / "repository" / "io" / "unitycatalog" /
+      "unitycatalog-hadoop" / unityCatalogVersion /
+      s"unitycatalog-hadoop-$unityCatalogVersion.pom"
+    if (!Seq(ivy2ClientCanary, m2ClientCanary, ivy2HadoopCanary, m2HadoopCanary)
+        .forall(_.exists)) {
+      publishPinnedUnityCatalog(log, ivy2ClientCanary)
     }
   }
 }
@@ -1171,6 +1191,8 @@ lazy val storage = (project in file("storage"))
       // Note that the org.apache.hadoop.fs.s3a.Listing::createFileStatusListingIterator 3.3.1 API
       // is not compatible with 3.3.2.
       "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "provided",
+      "org.apache.hadoop" % "hadoop-azure" % hadoopVersion % "provided",
+      "com.google.cloud.bigdataoss" % "util-hadoop" % "3.0.2" % "provided",
       "io.unitycatalog" % "unitycatalog-client" % unityCatalogVersion excludeAll(
         ExclusionRule(organization = "org.openapitools"),
         ExclusionRule(organization = "com.fasterxml.jackson.core"),

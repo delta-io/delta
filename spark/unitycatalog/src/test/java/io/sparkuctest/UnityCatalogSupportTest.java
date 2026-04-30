@@ -18,6 +18,7 @@ package io.sparkuctest;
 
 import static io.sparkuctest.UnityCatalogSupport.UC_BASE_TABLE_LOCATION;
 import static io.sparkuctest.UnityCatalogSupport.UC_CATALOG_NAME;
+import static io.sparkuctest.UnityCatalogSupport.UC_DELTA_REST_CATALOG_API_ENABLED;
 import static io.sparkuctest.UnityCatalogSupport.UC_REMOTE;
 import static io.sparkuctest.UnityCatalogSupport.UC_SCHEMA_NAME;
 import static io.sparkuctest.UnityCatalogSupport.UC_TOKEN;
@@ -37,7 +38,13 @@ public class UnityCatalogSupportTest {
 
   private static final List<String> ALL_ENVS =
       ImmutableList.of(
-          UC_REMOTE, UC_URI, UC_TOKEN, UC_CATALOG_NAME, UC_SCHEMA_NAME, UC_BASE_TABLE_LOCATION);
+          UC_REMOTE,
+          UC_URI,
+          UC_TOKEN,
+          UC_CATALOG_NAME,
+          UC_SCHEMA_NAME,
+          UC_BASE_TABLE_LOCATION,
+          UC_DELTA_REST_CATALOG_API_ENABLED);
 
   @Test
   public void testUnityCatalogInfo() throws Exception {
@@ -176,6 +183,23 @@ public class UnityCatalogSupportTest {
         });
   }
 
+  @Test
+  public void testUCDeltaRestCatalogApiEnabledFromEnv() throws Exception {
+    withEnvTesting(
+        ImmutableMap.of(),
+        () -> {
+          TestingUCSupport uc = new TestingUCSupport();
+          assertThat(uc.isUCDeltaRestCatalogApiEnabledForTest()).isTrue();
+        });
+
+    withEnvTesting(
+        ImmutableMap.of(UC_DELTA_REST_CATALOG_API_ENABLED, "false"),
+        () -> {
+          TestingUCSupport uc = new TestingUCSupport();
+          assertThat(uc.isUCDeltaRestCatalogApiEnabledForTest()).isFalse();
+        });
+  }
+
   public interface TestCall {
 
     void call() throws Exception;
@@ -224,6 +248,10 @@ public class UnityCatalogSupportTest {
     public UnityCatalogInfo accessUnityCatalogInfo() throws Exception {
       setupServer();
       return unityCatalogInfo();
+    }
+
+    public boolean isUCDeltaRestCatalogApiEnabledForTest() {
+      return isUCDeltaRestCatalogApiEnabled();
     }
   }
 }
