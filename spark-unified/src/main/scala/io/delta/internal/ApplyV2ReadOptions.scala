@@ -16,9 +16,8 @@
 
 package io.delta.internal
 
-import scala.jdk.OptionConverters._
-
 import io.delta.spark.internal.v2.catalog.SparkTable
+import io.delta.spark.internal.v2.read.MetadataEvolutionHandler
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 
@@ -26,30 +25,32 @@ import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
-import org.apache.spark.sql.connector.catalog.Identifier
 
 /**
+ * TODO(#5319): remove this class after Spark supports directly create table reflect cdc/trackingLog
  * Plumbs read options into a V2 [[StreamingRelationV2]]'s [[SparkTable]] when those options
  * change a property the table derives from them.
  */
 class ApplyV2ReadOptions extends Rule[LogicalPlan] {
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {
-    case r @ StreamingRelationV2(_, _, sparkTable: SparkTable, extraOptions, _, _, Some(ident), _)
-        if CDCReader.isCDCRead(extraOptions)
-          && !r.output.exists(a => CDCSchemaContext.isCDCColumn(a.name)) =>
-      val newTable = sparkTable.getCatalogTable.toScala match {
-        case Some(catalogTable) => new SparkTable(ident, catalogTable, extraOptions)
-        case None => new SparkTable(ident, sparkTable.getTablePath.toString, extraOptions)
+    case s @ StreamingRelationV2(_, _, table: SparkTable, extraOptions, _, _, _, _)
+        if (CDCReader.isCDCRead(extraOptions) &&
+              !s.output.exists(a => CDCSchemaContext.isCDCColumn(a.name))) ||
+           MetadataEvolutionHandler.shouldPropagateSchemaTrackingToTable(
+             extraOptions, table.getOptions) =>
+      val merged = new java.util.HashMap[String, String]()
+      merged.putAll(table.getOptions)
+      merged.putAll(extraOptions.asCaseSensitiveMap())
+      val rebuilt = if (table.getCatalogTable.isPresent) {
+        new SparkTable(table.getIdentifier, table.getCatalogTable.get, merged)
+      } else {
+        new SparkTable(table.getIdentifier, table.getTablePath.toString, merged)
       }
-      StreamingRelationV2(
+      s.copy(
         source = None,
-        sourceName = r.sourceName,
-        table = newTable,
-        extraOptions = extraOptions,
-        output = toAttributes(newTable.schema()),
-        catalog = r.catalog,
-        identifier = Some(ident),
+        table = rebuilt,
+        output = toAttributes(rebuilt.schema),
         v1Relation = None)
   }
 }
