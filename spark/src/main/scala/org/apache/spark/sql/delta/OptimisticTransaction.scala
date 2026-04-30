@@ -2106,6 +2106,42 @@ trait OptimisticTransactionImpl extends TransactionHelper
       allActions = RowId.assignFreshRowIds(spark, protocol, snapshot, allActions, op)
       allActions = DefaultRowCommitVersion.assignIfMissing(
         spark, protocol, snapshot, allActions, getFirstAttemptVersion)
+      // If the table has UniForm Iceberg enabled, generate Iceberg metadata atomically
+      // before Delta commits.
+      // Unfortunately this requires materializing the streaming action iterator
+      // as Iceberg keeps track of actions to append inside memory.
+      // Thus, a validation on number of actions to convert exists for reminding users.
+      val (allActions3, catalogTrackedInfo) = catalogTable match {
+        case Some(table) if UniversalFormat.icebergEnabled(metadata) =>
+          val maxActions = spark.conf.get(
+            DeltaSQLConf.DELTA_UNIFORM_ICEBERG_MAX_ACTIONS_TO_CONVERT_FOR_COMMIT_LARGE
+          )
+          val bufferedActions = allActions.zipWithIndex.map { case (action, idx) =>
+            if (idx >= maxActions) {
+              throw new IllegalStateException(
+                s"There are more than $maxActions actions in this commitLarge. " +
+                "Please use a writer with large memory and increase threshold" +
+                "in DeltaSQLConf.DELTA_UNIFORM_ICEBERG_MAX_ACTIONS_TO_CONVERT_FOR_COMMIT_LARGE" +
+                "to retry.")
+            }
+            action
+          }.toSeq
+          val txnInfo = CurrentTransactionInfo.forIcebergConversion(
+            metadata = metadata,
+            protocol = protocol,
+            readSnapshot = snapshot,
+            actions = bufferedActions,
+            commitInfo = Some(commitInfo)
+          )
+          val (updatedTxnInfo, _) = generateIcebergAndUpdateCurrentTransactionInfo(
+            spark, this, attemptVersion, txnInfo, table
+          )
+          (bufferedActions.iterator: Iterator[Action],
+            new CatalogTrackedInfo(updatedTxnInfo.convertedIcebergMetadata.toJava))
+        case _ =>
+          (allActions, CatalogTrackedInfo.EMPTY)
+      }
+      allActions = allActions3
 
       val commitStatsComputer = new CommitStatsComputer()
       allActions = commitStatsComputer.addToCommitStats(allActions)
@@ -2134,7 +2170,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
           jsonActions,
           updatedActions,
           catalogTable.map(_.identifier),
-          CatalogTrackedInfo.EMPTY
+          catalogTrackedInfo
         )
       }
       // TODO(coordinated-commits): Use the right timestamp method on top of CommitInfo once ICT is
