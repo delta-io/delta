@@ -18,9 +18,14 @@ package org.apache.spark.sql.delta.uniform
 
 import scala.collection.mutable
 
+import com.databricks.spark.util.Log4jUsageLogger
+
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.DeltaTestUtils.filterUsageRecords
+import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.sql.Row
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.types._
 
 /**
@@ -33,6 +38,18 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
   val testTableName = "delta_table"
 
   var compatVersions: Seq[Int] = Seq(1, 2)
+
+  protected def verifyIncrementalConversion(tableName: String)(thunk: => Unit): Unit = {
+    val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+    val fromVersion = deltaLog.update().version + 1
+    val events = Log4jUsageLogger.track(thunk)
+    val toVersion = deltaLog.update().version
+    val rangeEvents = filterUsageRecords(events, "delta.iceberg.conversion.deltaCommitRange")
+    assert(rangeEvents.nonEmpty, "Expected deltaCommitRange event proving incremental conversion")
+    val eventData = JsonUtils.fromJson[Map[String, Any]](rangeEvents.head.blob)
+    assert(eventData("fromVersion") === fromVersion, s"Expected fromVersion=$fromVersion")
+    assert(eventData("toVersion") === toVersion, s"Expected toVersion=$toVersion")
+  }
 
   def extraTableProperties(compatVersion: Int): String = {
     val extraProps = mutable.HashMap[String, String]()
@@ -58,6 +75,10 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
              |)""".stripMargin)
         write(s"INSERT INTO $testTableName VALUES (123)")
         readAndVerify(testTableName, "col1", "col1", Seq(Row(123)))
+        verifyIncrementalConversion(testTableName) {
+          write(s"INSERT INTO $testTableName VALUES (123)")
+          readAndVerify(testTableName, "col1", "col1", Seq(Row(123), Row(123)))
+        }
       }
     }
   }
