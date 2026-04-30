@@ -697,38 +697,6 @@ class DeltaLog private(
       }
     }
   }
-
-  /**
-   * Returns a proper path canonicalization function for the current Delta log.
-   *
-   * If `runsOnExecutors` is true, the returned method will use a broadcast Hadoop Configuration
-   * so that the method is suitable for execution on executors. Otherwise, the returned method
-   * will use a local Hadoop Configuration and the method can only be executed on the driver.
-   */
-  private[delta] def getCanonicalPathFunction(runsOnExecutors: Boolean): String => String = {
-    val hadoopConf = newDeltaHadoopConf()
-    // Wrap `hadoopConf` with a method to delay the evaluation to run on executors.
-    val getHadoopConf = if (runsOnExecutors) {
-      val broadcastHadoopConf =
-        spark.sparkContext.broadcast(new SerializableConfiguration(hadoopConf))
-      () => broadcastHadoopConf.value.value
-    } else {
-      () => hadoopConf
-    }
-
-    new DeltaLog.CanonicalPathFunction(getHadoopConf)
-  }
-
-  /**
-   * Returns a proper path canonicalization UDF for the current Delta log.
-   *
-   * If `runsOnExecutors` is true, the returned UDF will use a broadcast Hadoop Configuration.
-   * Otherwise, the returned UDF will use a local Hadoop Configuration and the UDF can
-   * only be executed on the driver.
-   */
-  private[delta] def getCanonicalPathUdf(runsOnExecutors: Boolean = true): UserDefinedFunction = {
-    DeltaUDF.stringFromString(getCanonicalPathFunction(runsOnExecutors))
-  }
 }
 
 object DeltaLog extends DeltaLogging {
@@ -1241,29 +1209,5 @@ object DeltaLog extends DeltaLogging {
   /** How long to keep around logically deleted files before physically deleting them. */
   def tombstoneRetentionMillis(metadata: Metadata): Long = {
     DeltaConfigs.getMilliSeconds(DeltaConfigs.TOMBSTONE_RETENTION.fromMetaData(metadata))
-  }
-
-  /** Get a function that canonicalizes a given `path`. */
-  private[delta] class CanonicalPathFunction(getHadoopConf: () => Configuration)
-      extends Function[String, String] with Serializable {
-    // Mark it `@transient lazy val` so that de-serialization happens only once on every executor.
-    @transient
-    private lazy val fs = {
-      // scalastyle:off FileSystemGet
-      FileSystem.get(getHadoopConf())
-      // scalastyle:on FileSystemGet
-    }
-
-    override def apply(path: String): String = {
-      // scalastyle:off pathfromuri
-      val hadoopPath = new Path(new URI(path))
-      // scalastyle:on pathfromuri
-      if (hadoopPath.isAbsoluteAndSchemeAuthorityNull) {
-        fs.makeQualified(hadoopPath).toUri.toString
-      } else {
-        // return untouched if it is a relative path or is already fully qualified
-        hadoopPath.toUri.toString
-      }
-    }
   }
 }
