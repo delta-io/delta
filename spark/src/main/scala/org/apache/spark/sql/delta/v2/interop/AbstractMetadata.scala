@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.v2.interop
 
+import org.apache.spark.sql.delta.DeltaColumnMappingMode
 import org.apache.spark.sql.types.StructType
 
 /**
@@ -42,5 +43,12 @@ trait AbstractMetadata {
 
   /** The table properties/configuration defined on the table. */
   def configuration: Map[String, String]
+
+  /** Column mapping mode for this table. */
+  def columnMappingMode: DeltaColumnMappingMode
+
+  /** Returns the partitionSchema as a [[StructType]] */
+  def partitionSchema: StructType =
+    new StructType(partitionColumns.map(c => schema(c)).toArray)
 }
 
