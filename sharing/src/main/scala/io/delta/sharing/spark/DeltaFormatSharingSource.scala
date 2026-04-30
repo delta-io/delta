@@ -432,15 +432,15 @@ case class DeltaFormatSharingSource(
   }
 
   /** Returns the file ID hash option based on auto-resolve config and whether MD5 is needed. */
-  private def resolveFileIdHash(useMd5: Boolean): Option[String] = {
+  private def resolveFileIdHash(useParquetHash: Boolean): Option[String] = {
     val autoResolve = sqlConf.getConf(
       DeltaSQLConf.DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT)
     if (!autoResolve) {
       None
-    } else if (useMd5) {
-      Some(DeltaSharingRestClient.FILEIDHASH_MD5)
+    } else if (useParquetHash) {
+      Some(DeltaSharingRestClient.FILEIDHASH_PARQUET)
     } else {
-      Some(DeltaSharingRestClient.FILEIDHASH_SHA256)
+      Some(DeltaSharingRestClient.FILEIDHASH_DELTA)
     }
   }
 
@@ -682,7 +682,7 @@ case class DeltaFormatSharingSource(
       endOffset: DeltaSourceOffset,
       endConvertedFromLegacy: Boolean,
       latestTableVersion: Long): (Long, Option[String]) = {
-    val (endingVersionForQuery, useMd5) = if (endConvertedFromLegacy) {
+    val (endingVersionForQuery, useParquetHash) = if (endConvertedFromLegacy) {
       // getBatch priming during legacy to new format transition:
       // 1. Both start and end offsets are from legacy checkpoints.
       // 2. Start offset is None and end offset is from a legacy checkpoint.
@@ -708,7 +708,7 @@ case class DeltaFormatSharingSource(
       (getEndingVersionForRpc(startingOffset, latestTableVersion), false)
     }
 
-    val fileIdHash = resolveFileIdHash(useMd5)
+    val fileIdHash = resolveFileIdHash(useParquetHash)
 
     (endingVersionForQuery, fileIdHash)
   }
@@ -730,7 +730,7 @@ case class DeltaFormatSharingSource(
       startingOffset: DeltaSourceOffset,
       startConvertedFromLegacy: Boolean,
       latestTableVersion: Long): (Long, Option[String]) = {
-    val (endingVersionForQuery, useMd5) =
+    val (endingVersionForQuery, useParquetHash) =
       if (startConvertedFromLegacy &&
           startingOffset.index != DeltaSourceOffset.BASE_INDEX) {
         // Transitioning from parquet streaming source to delta streaming source.
@@ -743,7 +743,7 @@ case class DeltaFormatSharingSource(
         (getEndingVersionForRpc(startingOffset, latestTableVersion), false)
       }
 
-    val fileIdHash = resolveFileIdHash(useMd5)
+    val fileIdHash = resolveFileIdHash(useParquetHash)
 
     (endingVersionForQuery, fileIdHash)
   }
