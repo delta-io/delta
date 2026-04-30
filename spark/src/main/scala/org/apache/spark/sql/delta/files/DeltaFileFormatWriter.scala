@@ -429,20 +429,20 @@ object DeltaFileFormatWriter extends Logging {
     val dataWriter =
       if (sparkPartitionId != 0 && !iterator.hasNext) {
         // In case of empty job, leave first partition to save meta for file format like parquet.
-        new EmptyDirectoryDataWriter(description, taskAttemptContext, committer)
+        new DeltaEmptyDirectoryDataWriter(description, taskAttemptContext, committer)
       } else if (description.partitionColumns.isEmpty && description.bucketSpec.isEmpty) {
-        new SingleDirectoryDataWriter(description, taskAttemptContext, committer)
+        new DeltaSingleDirectoryDataWriter(description, taskAttemptContext, committer)
       } else {
         concurrentOutputWriterSpec match {
           case Some(spec) =>
-            new DynamicPartitionDataConcurrentWriter(
+            new DeltaDynamicPartitionDataConcurrentWriter(
               description,
               taskAttemptContext,
               committer,
               spec
             )
           case _ =>
-            new DynamicPartitionDataSingleWriter(description, taskAttemptContext, committer)
+            new DeltaDynamicPartitionDataSingleWriter(description, taskAttemptContext, committer)
         }
       }
 

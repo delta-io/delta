@@ -24,6 +24,7 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.encoders.encoderFor
 import org.apache.spark.sql.expressions.{SparkUserDefinedFunction, UserDefinedFunction}
 import org.apache.spark.sql.functions.udf
+import org.apache.spark.unsafe.types.VariantVal
 
 /**
  * Define a few templates for udfs used by Delta. Use these templates to create
@@ -75,6 +76,9 @@ object DeltaUDF {
   def booleanFromByte(x: Byte => Boolean): UserDefinedFunction =
     createUdfFromTemplateUnsafe(booleanFromByteTemplate, x, udf(x))
 
+  def variantFromVariant(f: VariantVal => VariantVal): UserDefinedFunction =
+    createUdfFromTemplateUnsafe(variantFromVariantTemplate, f, udf(f))
+
   private lazy val stringFromStringTemplate =
     udf[String, String](identity).asInstanceOf[SparkUserDefinedFunction]
 
@@ -113,6 +117,10 @@ object DeltaUDF {
 
   private lazy val booleanFromByteTemplate =
     udf((_: Byte) => true).asInstanceOf[SparkUserDefinedFunction]
+
+  private lazy val variantFromVariantTemplate =
+    udf((_: VariantVal) => new VariantVal(Array.empty, Array.empty))
+      .asInstanceOf[SparkUserDefinedFunction]
 
   /**
    * Return a `UserDefinedFunction` for the given `f` from `template` if
