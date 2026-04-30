@@ -18,7 +18,6 @@ package shadedForDelta.org.apache.iceberg.transforms
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.DeltaColumnMapping
 import org.apache.spark.sql.delta.commands.convert.TypeToSparkTypeWithCustomCast
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.util.{DateFormatter, TimestampFormatter}
@@ -134,10 +133,6 @@ object IcebergPartitionUtil {
           // binary partition values are problematic in Delta, so we block converting if the iceberg
           // table has a binary type partition column
           case _: Identity[_] if sourceType.typeId() != TypeID.BINARY =>
-            // copy id only for identity transform because source id will be the converted column id
-            // ids for other columns will be assigned later automatically during schema evolution
-            metadataBuilder
-              .putLong(DeltaColumnMapping.COLUMN_MAPPING_METADATA_ID_KEY, sourceField.fieldId())
             ("", TypeUtil.visit(sourceType, new TypeToSparkTypeWithCustomCast(castTimeType)))
 
           case Timestamps.MICROS_TO_YEAR | Dates.YEAR =>
