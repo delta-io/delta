@@ -97,13 +97,14 @@ public class SparkMicroBatchStream
 
   private static final Logger logger = LoggerFactory.getLogger(SparkMicroBatchStream.class);
 
-  private static final Set<DeltaAction> ACTION_SET =
+  public static final Set<DeltaAction> ACTION_SET =
       Collections.unmodifiableSet(
           new HashSet<>(
               Arrays.asList(
                   DeltaAction.ADD,
                   DeltaAction.REMOVE,
                   DeltaAction.METADATA,
+                  DeltaAction.PROTOCOL,
                   DeltaAction.COMMITINFO)));
 
   /** Action set for CDC reads. */

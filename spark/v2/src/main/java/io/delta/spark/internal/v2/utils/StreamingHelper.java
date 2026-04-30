@@ -28,6 +28,7 @@ import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.commitrange.CommitRangeImpl;
 import io.delta.kernel.internal.data.StructRow;
@@ -149,6 +150,15 @@ public class StreamingHelper {
     return Optional.ofNullable(metadata);
   }
 
+  /** Get Protocol action from a batch at the specified row, if present. */
+  public static Optional<Protocol> getProtocol(ColumnarBatch batch, int rowId) {
+    int protocolIdx = getFieldIndex(batch, DeltaLogActionUtils.DeltaAction.PROTOCOL.colName);
+    ColumnVector protocolVector = batch.getColumnVector(protocolIdx);
+    Protocol protocol = Protocol.fromColumnVector(protocolVector, rowId);
+
+    return Optional.ofNullable(protocol);
+  }
+
   /** Get CommitInfo action from a batch at the specified row, if present. */
   public static Optional<CommitInfo> getCommitInfo(ColumnarBatch columnarBatch, int rowId) {
     int commitInfoIdx =
@@ -195,7 +205,7 @@ public class StreamingHelper {
    * metadata action. Throws an exception if multiple metadata actions are found in the same commit.
    *
    * @param startVersion the starting version (inclusive) of the commit range
-   * @param endVersionOpt optional ending version (exclusive) of the commit range
+   * @param endVersionOpt optional ending version (inclusive) of the commit range
    * @param snapshotManager the Delta snapshot manager
    * @param engine the Delta engine
    * @param tablePath the path to the Delta table
@@ -246,6 +256,66 @@ public class StreamingHelper {
     }
 
     return versionToMetadata;
+  }
+
+  /**
+   * Collects protocol actions from a commit range, mapping each version to its protocol.
+   *
+   * <p>This method mirrors {@link #collectMetadataActionsFromRangeUnsafe} but for protocol actions.
+   *
+   * <p>Returns a map preserving version order (via LinkedHashMap) where each version maps to its
+   * protocol action. Throws an exception if multiple protocol actions are found in the same commit.
+   *
+   * @param startVersion the starting version (inclusive) of the commit range
+   * @param endVersionOpt optional ending version (inclusive) of the commit range
+   * @param snapshotManager the Delta snapshot manager
+   * @param engine the Delta engine
+   * @param tablePath the path to the Delta table
+   * @return a map from version number to protocol action, in version order
+   */
+  public static Map<Long, Protocol> collectProtocolActionsFromRangeUnsafe(
+      long startVersion,
+      Optional<Long> endVersionOpt,
+      DeltaSnapshotManager snapshotManager,
+      Engine engine,
+      String tablePath) {
+    CommitRangeImpl commitRange =
+        (CommitRangeImpl) snapshotManager.getTableChanges(engine, startVersion, endVersionOpt);
+    Map<Long, Protocol> versionToProtocol = new LinkedHashMap<>();
+
+    try (CloseableIterator<CommitActions> commitsIter =
+        getCommitActionsFromRangeUnsafe(
+            engine, commitRange, tablePath, Set.of(DeltaLogActionUtils.DeltaAction.PROTOCOL))) {
+      while (commitsIter.hasNext()) {
+        try (CommitActions commit = commitsIter.next()) {
+          long version = commit.getVersion();
+          try (CloseableIterator<ColumnarBatch> actionsIter = commit.getActions()) {
+            while (actionsIter.hasNext()) {
+              ColumnarBatch batch = actionsIter.next();
+              int numRows = batch.getSize();
+              for (int rowId = 0; rowId < numRows; rowId++) {
+                Optional<Protocol> protocolOpt = StreamingHelper.getProtocol(batch, rowId);
+                if (protocolOpt.isPresent()) {
+                  Protocol existing = versionToProtocol.putIfAbsent(version, protocolOpt.get());
+                  Preconditions.checkArgument(
+                      existing == null,
+                      "Should not encounter two protocol actions in the same commit of version %d",
+                      version);
+                }
+              }
+            }
+          } catch (IOException e) {
+            throw new RuntimeException("Failed to process commit at version " + version, e);
+          }
+        }
+      }
+    } catch (RuntimeException e) {
+      throw e;
+    } catch (Exception e) {
+      throw new RuntimeException("Failed to process commits", e);
+    }
+
+    return versionToProtocol;
   }
 
   /** Get explicit CDC file (AddCDCFile) from a batch at the specified row, if present. */

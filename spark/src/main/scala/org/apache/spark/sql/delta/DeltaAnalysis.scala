@@ -56,7 +56,7 @@ import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.plans.logical.CloneTableStatement
 import org.apache.spark.sql.catalyst.plans.logical.RestoreTableStatement
 import org.apache.spark.sql.catalyst.rules.Rule
-import org.apache.spark.sql.catalyst.streaming.WriteToStream
+import org.apache.spark.sql.catalyst.streaming.{StreamingRelationV2, WriteToStream}
 import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttribute
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
@@ -1530,9 +1530,9 @@ class DeltaAnalysis(session: SparkSession)
   private def verifyDeltaSourceSchemaLocation(
       inputQuery: LogicalPlan,
       checkpointLocation: String): Unit = {
-    // Maps StreamingRelation to schema location, similar to how MicroBatchExecution converts
-    // StreamingRelation to StreamingExecutionRelation.
-    val schemaLocationMap = mutable.Map[StreamingRelation, String]()
+    // Maps each Delta streaming source (V1 or V2) to its schema tracking location, similar to how
+    // MicroBatchExecution converts StreamingRelation to StreamingExecutionRelation.
+    val schemaLocationMap = mutable.Map[LogicalPlan, String]()
     val allowSchemaLocationOutsideOfCheckpoint = session.sessionState.conf.getConf(
       DeltaSQLConf.DELTA_STREAMING_ALLOW_SCHEMA_LOCATION_OUTSIDE_CHECKPOINT_LOCATION)
     inputQuery.foreach {
@@ -1558,6 +1558,27 @@ class DeltaAnalysis(session: SparkSession)
             // Save schema location for this streaming relation
             schemaLocationMap.put(streamingRelation, schemaTrackingLocation.stripSuffix("/"))
           }
+      case streamingRelationV2 @ StreamingRelationV2(_, _, table, extraOptions, _, _, _, _) =>
+        val opts = extraOptions.asCaseSensitiveMap.asScala.toMap
+        DeltaDataSource.extractSchemaTrackingLocationConfig(session, opts)
+          .foreach { rootSchemaTrackingLocation =>
+            // The analysis-time tableId only needs to be unique per source; it is decoupled from
+            // the runtime tableId (V1 uses the Delta UUID, V2 uses Kernel's snapshot id).
+            // `table.name` is path-aware ("delta.`/path`" for path-based, qualified name for
+            // catalog-based) and is sufficient to differentiate sources for the conflict check.
+            val tableId = table.name.replace(":", "").replace("/", "_")
+            val sourceIdOpt = opts.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID)
+            val schemaTrackingLocation =
+              DeltaSourceMetadataTrackingLog.fullMetadataTrackingLocation(
+                rootSchemaTrackingLocation, tableId, sourceIdOpt)
+            if (!allowSchemaLocationOutsideOfCheckpoint) {
+              assertSchemaTrackingLocationUnderCheckpoint(
+                checkpointLocation,
+                schemaTrackingLocation
+              )
+            }
+            schemaLocationMap.put(streamingRelationV2, schemaTrackingLocation.stripSuffix("/"))
+          }
       case _ =>
     }
 
@@ -1567,14 +1588,21 @@ class DeltaAnalysis(session: SparkSession)
       .groupBy { rel => schemaLocationMap(rel) }
       .find(_._2.size > 1)
     conflictSchemaOpt.foreach { case (schemaLocation, relations) =>
-      val ds = relations.head.dataSource
       // Pick one source that has conflict to make it more actionable for the user
-      val oneTableWithConflict = ds.catalogTable
-        .map(_.identifier.toString)
-        .getOrElse {
-          // `path` must exist
-          CaseInsensitiveMap(ds.options).get("path").get
-        }
+      val oneTableWithConflict = relations.head match {
+        case streamingRelation: StreamingRelation =>
+          val ds = streamingRelation.dataSource
+          ds.catalogTable
+            .map(_.identifier.toString)
+            .getOrElse {
+              // `path` must exist
+              CaseInsensitiveMap(ds.options).get("path").get
+            }
+        case streamingRelationV2: StreamingRelationV2 =>
+          streamingRelationV2.identifier
+            .map(_.toString)
+            .getOrElse(streamingRelationV2.table.name)
+      }
       throw DeltaErrors.sourcesWithConflictingSchemaTrackingLocation(
         schemaLocation, oneTableWithConflict)
     }

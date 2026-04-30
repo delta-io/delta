@@ -21,7 +21,7 @@ import scala.jdk.OptionConverters._
 
 import io.delta.spark.internal.v2.catalog.SparkTable
 import io.delta.spark.internal.v2.utils.ScalaUtils
-import org.apache.spark.sql.delta.DeltaV2Mode
+import org.apache.spark.sql.delta.{DeltaOptions, DeltaV2Mode}
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 
 import org.apache.spark.sql.SparkSession
@@ -71,6 +71,16 @@ class ApplyV2Streaming(
     deltaV2Mode.isStreamingReadsEnabled(s.dataSource.catalogTable.toJava)
   }
 
+  /** True when schema-tracking is set on extraOptions but not yet on the SparkTable. */
+  private def needsSchemaTrackingRebuild(
+      table: SparkTable, extraOptions: CaseInsensitiveStringMap): Boolean = {
+    val tableOptions = new CaseInsensitiveStringMap(table.getOptions)
+    (extraOptions.containsKey(DeltaOptions.SCHEMA_TRACKING_LOCATION) ||
+        extraOptions.containsKey(DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS)) &&
+      !tableOptions.containsKey(DeltaOptions.SCHEMA_TRACKING_LOCATION) &&
+      !tableOptions.containsKey(DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS)
+  }
+
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {
     case s: StreamingRelation if shouldApplyV2Streaming(s) =>
       // catalogTable is guaranteed to be defined because shouldApplyV2Streaming checks it
@@ -102,5 +112,21 @@ class ApplyV2Streaming(
         identifier = Some(ident),
         // Keep this None to force the V2 path; we don't want to fall back to V1 here.
         v1Relation = None)
+
+    // For catalog-loaded relations (readStream.table("foo")), TableCatalog.loadTable has no
+    // read-options channel, so schemaTrackingLocation arrives only on extraOptions and
+    // SparkTable.schema() can't see it. Rebuild with the merged options so the schema-log
+    // lookup fires, then re-derive output. Idempotent via needsSchemaTrackingRebuild.
+    case s @ StreamingRelationV2(_, _, table: SparkTable, extraOptions, _, _, _, _)
+        if needsSchemaTrackingRebuild(table, extraOptions) =>
+      val merged = new java.util.HashMap[String, String]()
+      merged.putAll(table.getOptions)
+      merged.putAll(extraOptions.asCaseSensitiveMap())
+      val rebuilt = if (table.getCatalogTable.isPresent) {
+        new SparkTable(table.getIdentifier, table.getCatalogTable.get, merged)
+      } else {
+        new SparkTable(table.getIdentifier, table.getTablePath.toString, merged)
+      }
+      s.copy(table = rebuilt, output = toAttributes(rebuilt.schema))
   }
 }
