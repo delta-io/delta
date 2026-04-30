@@ -102,7 +102,8 @@ class MaterializePartitionColumnsFeatureSuite
            |PARTITIONED BY (partCol)
            |""".stripMargin)
       sql(s"ALTER TABLE $tbl SET TBLPROPERTIES ('${DeltaConfigs
-        .ENABLE_MATERIALIZE_PARTITION_COLUMNS_FEATURE.key}' = 'true')")
+        .ENABLE_MATERIALIZE_PARTITION_COLUMNS_FEATURE.key}' = 'true'," +
+        s"${DeltaConfigs.WRITE_PARTITION_COLUMNS_TO_PARQUET.key}' = 'false')")
 
       val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tbl))
 
