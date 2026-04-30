@@ -79,7 +79,11 @@ public class CommitInfo {
           .add("txnId", StringType.STRING)
           .add(
               "operationMetrics",
-              new MapType(StringType.STRING, StringType.STRING, true /* nullable */));
+              new MapType(StringType.STRING, StringType.STRING, true /* nullable */))
+          .add(
+              "tags",
+              new MapType(StringType.STRING, StringType.STRING, true /* nullable */),
+              true /* nullable */);
 
   private static final StructType READ_SCHEMA =
       new StructType().add("commitInfo", CommitInfo.FULL_SCHEMA);
@@ -96,7 +100,7 @@ public class CommitInfo {
       return null;
     }
 
-    ColumnVector[] children = new ColumnVector[8];
+    ColumnVector[] children = new ColumnVector[9];
     for (int i = 0; i < children.length; i++) {
       children[i] = vector.getChild(i);
     }
@@ -115,7 +119,10 @@ public class CommitInfo {
         Optional.ofNullable(children[6].isNullAt(rowId) ? null : children[6].getString(rowId)),
         children[7].isNullAt(rowId)
             ? Collections.emptyMap()
-            : VectorUtils.toJavaMap(children[7].getMap(rowId)));
+            : VectorUtils.toJavaMap(children[7].getMap(rowId)),
+        children[8].isNullAt(rowId)
+            ? Collections.emptyMap()
+            : VectorUtils.toJavaMap(children[8].getMap(rowId)));
   }
 
   /**
@@ -222,6 +229,7 @@ public class CommitInfo {
   private final Optional<String> txnId;
   private Optional<Long> inCommitTimestamp;
   private final Map<String, String> operationMetrics;
+  private final Map<String, String> tags;
 
   public CommitInfo(
       Optional<Long> inCommitTimestamp,
@@ -232,6 +240,28 @@ public class CommitInfo {
       Optional<Boolean> isBlindAppend,
       Optional<String> txnId,
       Map<String, String> operationMetrics) {
+    this(
+        inCommitTimestamp,
+        timestamp,
+        engineInfo,
+        operation,
+        operationParameters,
+        isBlindAppend,
+        txnId,
+        operationMetrics,
+        Collections.emptyMap() /* tags */);
+  }
+
+  public CommitInfo(
+      Optional<Long> inCommitTimestamp,
+      long timestamp,
+      Optional<String> engineInfo,
+      Optional<String> operation,
+      Map<String, String> operationParameters,
+      Optional<Boolean> isBlindAppend,
+      Optional<String> txnId,
+      Map<String, String> operationMetrics,
+      Map<String, String> tags) {
     this.inCommitTimestamp = requireNonNull(inCommitTimestamp);
     this.timestamp = timestamp;
     this.engineInfo = requireNonNull(engineInfo);
@@ -240,6 +270,7 @@ public class CommitInfo {
     this.isBlindAppend = requireNonNull(isBlindAppend);
     this.txnId = requireNonNull(txnId);
     this.operationMetrics = Collections.unmodifiableMap(requireNonNull(operationMetrics));
+    this.tags = Collections.unmodifiableMap(requireNonNull(tags));
   }
 
   public long getTimestamp() {
@@ -274,6 +305,10 @@ public class CommitInfo {
     return operationMetrics;
   }
 
+  public Map<String, String> getTags() {
+    return tags;
+  }
+
   public void setInCommitTimestamp(Optional<Long> inCommitTimestamp) {
     this.inCommitTimestamp = inCommitTimestamp;
   }
@@ -295,6 +330,8 @@ public class CommitInfo {
     commitInfo.put(COL_NAME_TO_ORDINAL.get("txnId"), txnId.orElse(null));
     commitInfo.put(
         COL_NAME_TO_ORDINAL.get("operationMetrics"), stringStringMapValue(operationMetrics));
+    commitInfo.put(
+        COL_NAME_TO_ORDINAL.get("tags"), tags.isEmpty() ? null : stringStringMapValue(tags));
 
     return new GenericRow(CommitInfo.FULL_SCHEMA, commitInfo);
   }
