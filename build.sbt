@@ -337,6 +337,9 @@ lazy val sparkV1 = (project in file("spark"))
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
       // For DynamoDBCommitStore
       "com.amazonaws" % "aws-java-sdk" % "1.12.262" % "provided",
+      "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "provided",
+      "org.apache.hadoop" % "hadoop-azure" % hadoopVersion % "provided",
+      "com.google.cloud.bigdataoss" % "util-hadoop" % "3.0.2" % "provided",
 
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
@@ -627,6 +630,9 @@ lazy val spark = (project in file("spark-unified"))
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
       "com.amazonaws" % "aws-java-sdk" % "1.12.262" % "provided",
+      "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "provided",
+      "org.apache.hadoop" % "hadoop-azure" % hadoopVersion % "provided",
+      "com.google.cloud.bigdataoss" % "util-hadoop" % "3.0.2" % "provided",
 
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "org.scalatestplus" %% "scalacheck-1-15" % "3.2.9.0" % "test",
@@ -727,8 +733,8 @@ lazy val contribs = (project in file("contribs"))
 //
 //  1. `-DuseDefaultUnityCatalogReleaseVersion=true`: use `defaultUnityCatalogReleaseVersion`
 //     below -- the last released UC version on Maven Central. For workflows that don't actually
-//     need DRC APIs (e.g. unidoc, lint) and want to skip the pinned UC build. Shared across
-//     workflows by reading this single constant, so bumping is a one-line change here.
+//     need UC Delta Rest Catalog API and want to skip the pinned UC build. Shared across workflows
+//     by reading this single constant, so bumping is a one-line change here.
 //
 //  2. Release mode: set `unityCatalogReleaseVersion = Some("0.5.0")` (or whatever released
 //     version the release branch ships against). sbt resolves the coordinate from Maven Central

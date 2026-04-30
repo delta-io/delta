@@ -24,6 +24,7 @@ import com.google.common.collect.ImmutableMap;
 import io.unitycatalog.client.ApiException;
 import io.unitycatalog.client.api.TablesApi;
 import io.unitycatalog.client.model.ColumnInfo;
+import io.unitycatalog.client.model.ColumnTypeName;
 import io.unitycatalog.client.model.DataSourceFormat;
 import io.unitycatalog.client.model.TableInfo;
 import java.util.ArrayList;
@@ -556,6 +557,9 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
               Map.of(),
               null,
               null);
+          if (tableType == TableType.MANAGED) {
+            assertComplexColumnMetadata(tableName);
+          }
 
           // Verify data can be queried
           check(
@@ -625,8 +629,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     String schemaName = uc.schemaName();
 
     // Verify that properties are set on server. This can not be done by DESC EXTENDED.
-    TablesApi tablesApi = new TablesApi(uc.createApiClient());
-    TableInfo tableInfo = tablesApi.getTable(fullTableName, false, false);
+    TableInfo tableInfo = loadUCTableInfo(fullTableName);
     assertThat(tableInfo.getCatalogName()).isEqualTo(catalogName);
     assertThat(tableInfo.getName()).isEqualTo(parseTableName(fullTableName));
     assertThat(tableInfo.getSchemaName()).isEqualTo(schemaName);
@@ -747,6 +750,42 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       // Check for catalogManaged feature
       assertThat(tableProperties).doesNotContain(DELTA_CATALOG_MANAGED_KEY);
     }
+  }
+
+  private void assertComplexColumnMetadata(String fullTableName) throws ApiException {
+    Map<String, ColumnInfo> columnsByName =
+        loadUCTableInfo(fullTableName).getColumns().stream()
+            .collect(Collectors.toMap(ColumnInfo::getName, Function.identity()));
+
+    ColumnInfo arr = columnsByName.get("arr");
+    assertColumnInfo(arr, ColumnTypeName.ARRAY, "array<int>");
+    assertThat(arr.getTypeJson())
+        .contains("\"elementType\":\"integer\"", "\"containsNull\":true")
+        .doesNotContain("\"element-type\"", "\"contains-null\"");
+
+    ColumnInfo map = columnsByName.get("map_col");
+    assertColumnInfo(map, ColumnTypeName.MAP, "map<string,int>");
+    assertThat(map.getTypeJson())
+        .contains(
+            "\"keyType\":\"string\"", "\"valueType\":\"integer\"", "\"valueContainsNull\":true")
+        .doesNotContain("\"key-type\"", "\"value-type\"", "\"value-contains-null\"");
+
+    ColumnInfo struct = columnsByName.get("struct_col");
+    assertColumnInfo(struct, ColumnTypeName.STRUCT, "struct<a:int,b:string>");
+    assertThat(struct.getTypeJson())
+        .contains(
+            "\"name\":\"a\"", "\"type\":\"integer\"", "\"name\":\"b\"", "\"type\":\"string\"");
+  }
+
+  private void assertColumnInfo(ColumnInfo column, ColumnTypeName typeName, String typeText) {
+    assertThat(column).isNotNull();
+    assertThat(column.getTypeName()).isEqualTo(typeName);
+    assertThat(column.getTypeText()).isEqualTo(typeText);
+  }
+
+  private TableInfo loadUCTableInfo(String fullTableName) throws ApiException {
+    return new TablesApi(unityCatalogInfo().createApiClient())
+        .getTable(fullTableName, false, false);
   }
 
   private static String parseTableName(String fullTableName) {
