@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Helper to clone Unity Catalog at the pinned SHA (or `main` for the floating canary) and
-# publish its client/server/spark jars to ~/.ivy2/local (and ~/.m2) so sbt can resolve UC
+# publish its client/server/hadoop/spark jars to ~/.ivy2/local (and ~/.m2) so sbt can resolve UC
 # dependencies locally. Used by the pinned arrangement below and by the floating-main canary
 # in disabled_spark_test_uc_master.yaml. UC_REF is restricted to `main` or the pinned SHA;
 # no other values are accepted.
@@ -15,7 +15,7 @@
 # Rip those out, keep the generic clone/publish flow.
 #
 # What this does:
-#   Publishes UC (client/server/spark jars) into ~/.ivy2/local at coordinate
+#   Publishes UC (client/server/hadoop/spark jars) into ~/.ivy2/local at coordinate
 #   <UC_BASE_VERSION>-<7-char sha>, e.g. 0.5.0-SNAPSHOT-3b45d34. Idempotent: when the canonical
 #   Ivy artifact already exists for the target coordinate, the slow sbt publish is skipped.
 #
@@ -89,19 +89,21 @@ if [[ "${1:-}" == "--print-version" ]]; then
   exit 0
 fi
 
-# Canonical Ivy + Maven artifact paths. Delta depends on all three UC modules; sbt resolves from
+# Canonical Ivy + Maven artifact paths. Delta depends on these UC modules; sbt resolves from
 # ~/.ivy2/local, mvn (kernel-examples integration tests) resolves from ~/.m2/repository. If any
 # is missing in either layout we must re-publish.
 IVY_LOCAL="$HOME/.ivy2/local/io.unitycatalog"
 IVY_CANARY_CLIENT="$IVY_LOCAL/unitycatalog-client/$UC_VERSION/ivys/ivy.xml"
 IVY_CANARY_SERVER="$IVY_LOCAL/unitycatalog-server/$UC_VERSION/ivys/ivy.xml"
+IVY_CANARY_HADOOP="$IVY_LOCAL/unitycatalog-hadoop/$UC_VERSION/ivys/ivy.xml"
 IVY_CANARY_SPARK="$IVY_LOCAL/unitycatalog-spark_2.13/$UC_VERSION/ivys/ivy.xml"
 M2_LOCAL="$HOME/.m2/repository/io/unitycatalog"
 M2_CANARY_CLIENT="$M2_LOCAL/unitycatalog-client/$UC_VERSION/unitycatalog-client-$UC_VERSION.pom"
 M2_CANARY_SERVER="$M2_LOCAL/unitycatalog-server/$UC_VERSION/unitycatalog-server-$UC_VERSION.pom"
+M2_CANARY_HADOOP="$M2_LOCAL/unitycatalog-hadoop/$UC_VERSION/unitycatalog-hadoop-$UC_VERSION.pom"
 M2_CANARY_SPARK="$M2_LOCAL/unitycatalog-spark_2.13/$UC_VERSION/unitycatalog-spark_2.13-$UC_VERSION.pom"
-ALL_CANARIES=("$IVY_CANARY_CLIENT" "$IVY_CANARY_SERVER" "$IVY_CANARY_SPARK"
-              "$M2_CANARY_CLIENT" "$M2_CANARY_SERVER" "$M2_CANARY_SPARK")
+ALL_CANARIES=("$IVY_CANARY_CLIENT" "$IVY_CANARY_SERVER" "$IVY_CANARY_HADOOP" "$IVY_CANARY_SPARK"
+              "$M2_CANARY_CLIENT" "$M2_CANARY_SERVER" "$M2_CANARY_HADOOP" "$M2_CANARY_SPARK")
 
 all_canaries_present() {
   for c in "${ALL_CANARIES[@]}"; do
@@ -159,7 +161,7 @@ fi
 # coordinate. Applied as a persistent setting so it sticks across the two sbt invocations below.
 SET_VERSION_CMD="set ThisBuild / version := \"$UC_VERSION\""
 
-echo ">>> Building and publishing UC client + server to local Maven repo"
+echo ">>> Building and publishing UC client + hadoop + server to local Maven repo"
 ./build/sbt \
   "$SET_VERSION_CMD" \
   "set client / Compile / packageDoc / publishArtifact := false" \
@@ -167,6 +169,8 @@ echo ">>> Building and publishing UC client + server to local Maven repo"
   client/generate \
   client/publishLocal \
   client/publishM2 \
+  hadoop/publishLocal \
+  hadoop/publishM2 \
   server/publishLocal \
   server/publishM2
 
