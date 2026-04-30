@@ -70,13 +70,15 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
               DeltaOptions.IGNORE_DELETES_OPTION(),
               DeltaOptions.SKIP_CHANGE_COMMITS_OPTION(),
               DeltaOptions.EXCLUDE_REGEX_OPTION(),
-              DeltaOptions.FAIL_ON_DATA_LOSS_OPTION()));
+              DeltaOptions.FAIL_ON_DATA_LOSS_OPTION(),
+              DeltaOptions.SCHEMA_TRACKING_LOCATION(),
+              DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS(),
+              DeltaOptions.STREAMING_SOURCE_TRACKING_ID()));
 
   /**
-   * Block list of DeltaOptions that are not supported for streaming in V2 connector. Only
-   * startingVersion, startingTimestamp, maxFilesPerTrigger, maxBytesPerTrigger, ignoreFileDeletion,
-   * ignoreChanges, ignoreDeletes, skipChangeCommits, excludeRegex, and failOnDataLoss are
-   * supported. User-defined custom options (not in DeltaOptions) are allowed to pass through.
+   * Block list of DeltaOptions that are not supported for streaming in V2 connector. The supported
+   * options are enumerated in {@link #SUPPORTED_STREAMING_OPTIONS}; user-defined custom options
+   * (not in DeltaOptions) are allowed to pass through.
    */
   private static final Set<String> UNSUPPORTED_STREAMING_OPTIONS =
       Collections.unmodifiableSet(
@@ -86,9 +88,6 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
                   DeltaOptions.CDC_READ_OPTION_LEGACY().toLowerCase(),
                   DeltaOptions.CDC_END_VERSION().toLowerCase(),
                   DeltaOptions.CDC_END_TIMESTAMP().toLowerCase(),
-                  DeltaOptions.SCHEMA_TRACKING_LOCATION().toLowerCase(),
-                  DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS().toLowerCase(),
-                  DeltaOptions.STREAMING_SOURCE_TRACKING_ID().toLowerCase(),
                   DeltaOptions.ALLOW_SOURCE_COLUMN_DROP().toLowerCase(),
                   DeltaOptions.ALLOW_SOURCE_COLUMN_RENAME().toLowerCase(),
                   DeltaOptions.ALLOW_SOURCE_COLUMN_TYPE_CHANGE().toLowerCase())));

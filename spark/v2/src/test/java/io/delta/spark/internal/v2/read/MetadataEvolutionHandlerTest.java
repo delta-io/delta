@@ -44,6 +44,7 @@ import java.io.File;
 import java.util.*;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.delta.DeltaRuntimeException;
+import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.DeltaStreamUtils;
@@ -827,5 +828,88 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
     // Entry should be written at version 1 (the evolved version)
     assertTrue(hwl.trackingLog.getCurrentTrackedMetadata().isDefined());
     assertEquals(1L, hwl.trackingLog.getCurrentTrackedMetadata().get().deltaCommitVersion());
+  }
+
+  // ---------------------------------------------------------------------------
+  // getMetadataTrackingLogForMicroBatchStream
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Sets up a fresh empty Delta table at {@code tempDir/table} and invokes {@link
+   * MetadataEvolutionHandler#getMetadataTrackingLogForMicroBatchStream} with the given options. The
+   * other 5 arguments to the function are constants for these tests.
+   */
+  private Option<DeltaSourceMetadataTrackingLog> invokeGetTrackingLog(
+      File tempDir, Map<String, String> options) {
+    String tablePath = new File(tempDir, "table").getAbsolutePath();
+    String tableName = "t_" + UUID.randomUUID().toString().replace('-', '_');
+    createEmptyTestTable(tablePath, tableName);
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(tablePath, spark.sessionState().newHadoopConf());
+    SnapshotImpl snapshot = (SnapshotImpl) snapshotManager.loadLatestSnapshot();
+    return MetadataEvolutionHandler.getMetadataTrackingLogForMicroBatchStream(
+        spark,
+        snapshot,
+        options,
+        snapshotManager,
+        defaultEngine,
+        SparkMicroBatchStream.ACTION_SET,
+        Option.empty(),
+        /* mergeConsecutiveSchemaChanges= */ false);
+  }
+
+  /** No schema-tracking option → Option.empty. */
+  @Test
+  public void testGetTrackingLog_returnsEmptyWhenNoSchemaTrackingOption(@TempDir File tempDir) {
+    Option<DeltaSourceMetadataTrackingLog> result =
+        invokeGetTrackingLog(tempDir, Collections.emptyMap());
+    assertTrue(result.isEmpty());
+  }
+
+  /** Throws with the documented message when the feature flag is off. */
+  @Test
+  public void testGetTrackingLog_throwsWhenFeatureFlagDisabled(@TempDir File tempDir)
+      throws Exception {
+    String schemaLogPath = new File(tempDir, "schema_log").getAbsolutePath();
+    Map<String, String> options = new HashMap<>();
+    options.put(DeltaOptions.SCHEMA_TRACKING_LOCATION(), schemaLogPath);
+
+    withSQLConf(
+        DeltaSQLConf.DELTA_STREAMING_ENABLE_SCHEMA_TRACKING().key(),
+        "false",
+        () -> {
+          UnsupportedOperationException ex =
+              assertThrows(
+                  UnsupportedOperationException.class,
+                  () -> invokeGetTrackingLog(tempDir, options));
+          assertEquals(
+              "Schema tracking location is not supported for Delta streaming source",
+              ex.getMessage());
+        });
+  }
+
+  /** SCHEMA_TRACKING_LOCATION set → returns a usable tracking log. */
+  @Test
+  public void testGetTrackingLog_returnsLogWhenSchemaTrackingLocationSet(@TempDir File tempDir) {
+    String schemaLogPath = new File(tempDir, "schema_log").getAbsolutePath();
+    Map<String, String> options = new HashMap<>();
+    options.put(DeltaOptions.SCHEMA_TRACKING_LOCATION(), schemaLogPath);
+
+    Option<DeltaSourceMetadataTrackingLog> result = invokeGetTrackingLog(tempDir, options);
+    assertTrue(result.isDefined());
+    assertTrue(result.get().getCurrentTrackedMetadata().isEmpty());
+  }
+
+  /** Alias key ("schemaLocation") is also recognized. */
+  @Test
+  public void testGetTrackingLog_returnsLogWhenSchemaTrackingLocationAliasSet(
+      @TempDir File tempDir) {
+    String schemaLogPath = new File(tempDir, "schema_log").getAbsolutePath();
+    Map<String, String> options = new HashMap<>();
+    options.put(DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS(), schemaLogPath);
+
+    Option<DeltaSourceMetadataTrackingLog> result = invokeGetTrackingLog(tempDir, options);
+    assertTrue(result.isDefined());
+    assertTrue(result.get().getCurrentTrackedMetadata().isEmpty());
   }
 }

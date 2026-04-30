@@ -25,6 +25,8 @@ import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.rowtracking.RowTracking;
+import io.delta.spark.internal.v2.read.MetadataEvolutionHandler;
+import io.delta.spark.internal.v2.read.SparkMicroBatchStream;
 import io.delta.spark.internal.v2.read.SparkScanBuilder;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
@@ -46,6 +48,9 @@ import org.apache.spark.sql.connector.write.WriteBuilder;
 import org.apache.spark.sql.delta.DeltaTableUtils;
 import org.apache.spark.sql.delta.RowCommitVersion$;
 import org.apache.spark.sql.delta.RowId$;
+import org.apache.spark.sql.delta.sources.DeltaSQLConf;
+import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
+import org.apache.spark.sql.delta.sources.PersistedMetadata;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.DataTypes;
@@ -165,8 +170,47 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsM
     // Load the initial snapshot through the manager
     this.initialSnapshot = snapshotManager.loadLatestSnapshot();
 
-    // Schema-related metadata is lazily computed on first access within SchemaProvider
-    this.schemaProvider = new SchemaProvider(SparkSession.active(), initialSnapshot);
+    // Open the schema-tracking log once if configured. The persisted metadata is the source of
+    // truth for the analyzed schema. With mergeConsecutiveSchemaChanges=true, the merger folds
+    // consecutive metadata-only commits and writes the merged entry back to the durable schema
+    // log; the execution-time SparkMicroBatchStream then re-reads the same merged entry from the
+    // log via DeltaSourceMetadataTrackingLog.getCurrentTrackedMetadata.
+    SparkSession spark = SparkSession.active();
+    boolean mergeConsecutiveSchemaChanges =
+        (boolean)
+            spark
+                .sessionState()
+                .conf()
+                .getConf(
+                    DeltaSQLConf
+                        .DELTA_STREAMING_ENABLE_SCHEMA_TRACKING_MERGE_CONSECUTIVE_CHANGES());
+    scala.Option<DeltaSourceMetadataTrackingLog> trackingLog =
+        MetadataEvolutionHandler.getMetadataTrackingLogForMicroBatchStream(
+            spark,
+            (SnapshotImpl) initialSnapshot,
+            options,
+            snapshotManager,
+            kernelEngine,
+            SparkMicroBatchStream.ACTION_SET,
+            /* sourceMetadataPathOpt= */ scala.Option.empty(),
+            mergeConsecutiveSchemaChanges);
+    Optional<PersistedMetadata> persistedMetadata =
+        trackingLog.isDefined()
+            ? toJavaOptional(trackingLog.get().getCurrentTrackedMetadata())
+            : Optional.empty();
+
+    StructType rawSchema;
+    List<String> partitionColumnNames;
+    if (persistedMetadata.isPresent()) {
+      PersistedMetadata persisted = persistedMetadata.get();
+      rawSchema = persisted.dataSchema();
+      partitionColumnNames = Arrays.asList(persisted.partitionSchema().fieldNames());
+    } else {
+      rawSchema = SchemaUtils.convertKernelSchemaToSparkSchema(initialSnapshot.getSchema());
+      partitionColumnNames = new ArrayList<>(initialSnapshot.getPartitionColumnNames());
+    }
+    this.schemaProvider =
+        new SchemaProvider(SparkSession.active(), rawSchema, partitionColumnNames);
   }
 
   /**
@@ -203,6 +247,24 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsM
    */
   public Path getTablePath() {
     return new Path(tablePath);
+  }
+
+  /**
+   * Returns the V2 identifier this table was constructed with.
+   *
+   * @return Identifier provided at construction
+   */
+  public Identifier getIdentifier() {
+    return identifier;
+  }
+
+  /**
+   * Returns the merged options (catalog storage + user options) this table was constructed with.
+   *
+   * @return Map of merged catalog storage and user options
+   */
+  public Map<String, String> getOptions() {
+    return options;
   }
 
   /**
@@ -369,21 +431,21 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsM
    */
   private static class SchemaProvider {
     private final SparkSession sparkSession;
-    private final Snapshot snapshot;
+    private final StructType rawSchema;
+    private final List<String> partColNames;
 
     // Lazily computed fields
     private boolean initialized = false;
-    private StructType rawSchema;
     private StructType publicSchema;
-    private List<String> partColNames;
     private StructType dataSchema;
     private StructType partitionSchema;
     private Column[] columns;
     private Transform[] partitionTransforms;
 
-    SchemaProvider(SparkSession sparkSession, Snapshot snapshot) {
+    SchemaProvider(SparkSession sparkSession, StructType rawSchema, List<String> partColNames) {
       this.sparkSession = sparkSession;
-      this.snapshot = snapshot;
+      this.rawSchema = rawSchema;
+      this.partColNames = Collections.unmodifiableList(new ArrayList<>(partColNames));
     }
 
     private synchronized void ensureInitialized() {
@@ -391,16 +453,10 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsM
         return;
       }
 
-      // Convert Kernel schema to Spark schema - keep all metadata for internal use
-      this.rawSchema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
-
       // Create public schema by removing internal metadata (for schema() method)
       this.publicSchema =
           DeltaTableUtils.removeInternalDeltaMetadata(
               sparkSession, DeltaTableUtils.removeInternalWriterMetadata(sparkSession, rawSchema));
-
-      this.partColNames =
-          Collections.unmodifiableList(new ArrayList<>(snapshot.getPartitionColumnNames()));
 
       final List<StructField> dataFields = new ArrayList<>();
       final List<StructField> partitionFields = new ArrayList<>();

@@ -16,6 +16,7 @@
 package io.delta.spark.internal.v2.read;
 
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
@@ -32,12 +33,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.delta.DeltaColumnMapping$;
 import org.apache.spark.sql.delta.DeltaErrors;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.delta.TypeWideningMode;
 import org.apache.spark.sql.delta.schema.SchemaUtils$;
+import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataEvolutionSupport$;
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
@@ -466,5 +469,50 @@ public class MetadataEvolutionHandler {
       this.metadata = metadata;
       this.protocol = protocol;
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Consecutive metadata-change merging (analysis-phase helper)
+  // ---------------------------------------------------------------------------
+
+  /** V2 port of V1's {@code DeltaDataSource.getMetadataTrackingLogForDeltaSource}. */
+  public static Option<DeltaSourceMetadataTrackingLog> getMetadataTrackingLogForMicroBatchStream(
+      SparkSession spark,
+      SnapshotImpl snapshot,
+      Map<String, String> options,
+      DeltaSnapshotManager snapshotManager,
+      Engine engine,
+      Set<DeltaLogActionUtils.DeltaAction> mergeActionSet,
+      Option<String> sourceMetadataPathOpt,
+      boolean mergeConsecutiveSchemaChanges) {
+    String location =
+        options.getOrDefault(
+            DeltaOptions.SCHEMA_TRACKING_LOCATION(),
+            options.get(DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS()));
+    if (location == null) {
+      return Option.empty();
+    }
+    if (!(boolean)
+        spark
+            .sessionState()
+            .conf()
+            .getConf(DeltaSQLConf.DELTA_STREAMING_ENABLE_SCHEMA_TRACKING())) {
+      throw new UnsupportedOperationException(
+          "Schema tracking location is not supported for Delta streaming source");
+    }
+
+    String tablePath = snapshot.getPath();
+    return Option.apply(
+        DeltaSourceMetadataTrackingLog.create(
+            spark,
+            location,
+            snapshot.getMetadata().getId(),
+            tablePath,
+            ScalaUtils.toScalaMap(options),
+            sourceMetadataPathOpt,
+            // TODO(#5319): Implement v2 consecutiveSchema schema changes merger
+            /* mergeConsecutiveSchemaChanges= */ false,
+            /* consecutiveSchemaChangesMerger= */ null,
+            /* initMetadataLogEagerly= */ true));
   }
 }

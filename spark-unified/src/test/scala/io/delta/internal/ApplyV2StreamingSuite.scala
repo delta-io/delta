@@ -21,20 +21,25 @@ import java.util.{HashMap => JHashMap}
 
 import scala.jdk.CollectionConverters._
 
+import io.delta.kernel.internal.SnapshotImpl
 import io.delta.spark.internal.v2.catalog.SparkTable
+import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
+import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTableType}
 import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
+import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
+import org.apache.spark.sql.delta.DeltaOptions
 import org.apache.spark.sql.delta.Relocated.StreamingRelation
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.sources.{DeltaSourceMetadataTrackingLog, DeltaSQLConf, PersistedMetadata}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.execution.datasources.DataSource
 import org.apache.spark.sql.connector.catalog.Identifier
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{StringType, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 class ApplyV2StreamingSuite extends DeltaSQLCommandTest {
@@ -137,6 +142,187 @@ class ApplyV2StreamingSuite extends DeltaSQLCommandTest {
             }
           }
         }
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Rebuild StreamingRelationV2 if provided schema tracking log provided
+  // ---------------------------------------------------------------------------
+
+  /** The data-schema seeded into the tracking log by [[seedSchemaLogWithExtraColumn]]. */
+  private val seededFieldNames: Seq[String] = Seq("id", "extra")
+
+  private def buildStreamingRelationV2(
+      table: SparkTable, extraOptions: Map[String, String]): StreamingRelationV2 = {
+    StreamingRelationV2(
+      source = None,
+      sourceName = "delta",
+      table = table,
+      extraOptions = new CaseInsensitiveStringMap(extraOptions.asJava),
+      output = toAttributes(table.schema),
+      catalog = None,
+      identifier = Some(table.getIdentifier),
+      v1Relation = None)
+  }
+
+  /**
+   * Pre-seed the schema-tracking log at `schemaLogPath` with a 2-column schema
+   * (`id LONG, extra STRING`) that differs from the underlying snapshot's 1-column schema
+   */
+  private def seedSchemaLogWithExtraColumn(tablePath: String, schemaLogPath: String): Unit = {
+    val deltaLog = DeltaLog.forTable(spark, tablePath)
+    val snapshotManager =
+      new PathBasedSnapshotManager(tablePath, deltaLog.newDeltaHadoopConf())
+    val tableId =
+      snapshotManager.loadLatestSnapshot.asInstanceOf[SnapshotImpl].getMetadata.getId
+    val trackingLog = DeltaSourceMetadataTrackingLog.create(
+      spark, schemaLogPath, tableId, tablePath, parameters = Map.empty[String, String])
+    val customSchemaJson =
+      """{"type":"struct","fields":[
+        |{"name":"id","type":"long","nullable":true,"metadata":{}},
+        |{"name":"extra","type":"string","nullable":true,"metadata":{}}]}""".stripMargin
+    val emptyPartitionJson = """{"type":"struct","fields":[]}"""
+    val seededEntry = PersistedMetadata(
+      tableId,
+      deltaCommitVersion = 0L,
+      dataSchemaJson = customSchemaJson,
+      partitionSchemaJson = emptyPartitionJson,
+      sourceMetadataPath = tablePath + "/_delta_log/_streaming_metadata")
+    trackingLog.writeNewMetadata(seededEntry, replaceCurrent = false)
+  }
+
+  /** Asserts the table's schema matches the entry written by [[seedSchemaLogWithExtraColumn]]. */
+  private def assertSchemaMatchesSeededLogEntry(table: SparkTable): Unit = {
+    assert(table.schema.fieldNames.toSeq == seededFieldNames)
+    assert(table.schema.fields(1).dataType == StringType)
+  }
+
+  /**
+   * Build a catalog-backed SparkTable rooted at `tableLocationUri`. Mirrors the common production
+   * path through DeltaCatalog and is the default for tests that do not specifically distinguish
+   * between path-based and catalog-based construction.
+   */
+  private def buildCatalogBasedSparkTable(
+      tableLocationUri: URI, options: JHashMap[String, String]): SparkTable = {
+    val catalogTable = createCatalogTable(tableLocationUri, ucManaged = false)
+    val identifier = Identifier.of(
+      catalogTable.identifier.database.toArray, catalogTable.identifier.table)
+    new SparkTable(identifier, catalogTable, options)
+  }
+
+  test("schema-tracking rebuild: path-based SparkTable picks up the persisted schema") {
+    withTempDir { tableDir =>
+      withTempDir { schemaLogDir =>
+        val tablePath = tableDir.getCanonicalPath
+        createDeltaTable(tablePath) // snapshot schema: id BIGINT
+        val schemaLogPath = schemaLogDir.getCanonicalPath
+        seedSchemaLogWithExtraColumn(tablePath, schemaLogPath)
+
+        val identifier = Identifier.of(Array("default"), "tbl")
+        val table = new SparkTable(identifier, tablePath)
+        assert(!table.getOptions.containsKey(DeltaOptions.SCHEMA_TRACKING_LOCATION))
+
+        val plan = buildStreamingRelationV2(
+          table, Map(DeltaOptions.SCHEMA_TRACKING_LOCATION -> schemaLogPath))
+        val result = applyRule(plan).asInstanceOf[StreamingRelationV2]
+        val rebuiltTable = result.table.asInstanceOf[SparkTable]
+
+        assert(rebuiltTable ne table, "rebuild should produce a new SparkTable")
+        assert(rebuiltTable.getOptions.containsKey(DeltaOptions.SCHEMA_TRACKING_LOCATION))
+        assert(rebuiltTable.getOptions.get(DeltaOptions.SCHEMA_TRACKING_LOCATION) ==
+          schemaLogPath)
+        assert(!rebuiltTable.getCatalogTable.isPresent,
+          "path branch should not have catalogTable")
+        // Rebuilt schema is driven by the persisted entry, not the snapshot.
+        assertSchemaMatchesSeededLogEntry(rebuiltTable)
+        // And the rule's output is re-derived from that rebuilt schema.
+        assert(result.output.map(_.name) == seededFieldNames)
+
+        // Idempotent: re-applying the rule does not rebuild a second time.
+        val reappliedResult = applyRule(result).asInstanceOf[StreamingRelationV2]
+        assert(reappliedResult.table eq rebuiltTable, "re-applying rule should not rebuild")
+      }
+    }
+  }
+
+  test("schema-tracking rebuild: catalog-based SparkTable picks up the persisted schema and " +
+      "keeps its CatalogTable") {
+    withTempDir { tableDir =>
+      withTempDir { schemaLogDir =>
+        val tablePath = tableDir.getCanonicalPath
+        createDeltaTable(tablePath)
+        val schemaLogPath = schemaLogDir.getCanonicalPath
+        seedSchemaLogWithExtraColumn(tablePath, schemaLogPath)
+
+        val table = buildCatalogBasedSparkTable(tableDir.toURI, new JHashMap[String, String]())
+        assert(!table.getOptions.containsKey(DeltaOptions.SCHEMA_TRACKING_LOCATION))
+        assert(table.getCatalogTable.isPresent)
+
+        val plan = buildStreamingRelationV2(
+          table, Map(DeltaOptions.SCHEMA_TRACKING_LOCATION -> schemaLogPath))
+        val result = applyRule(plan).asInstanceOf[StreamingRelationV2]
+        val rebuiltTable = result.table.asInstanceOf[SparkTable]
+
+        assert(rebuiltTable.getOptions.containsKey(DeltaOptions.SCHEMA_TRACKING_LOCATION))
+        assert(rebuiltTable.getCatalogTable.isPresent,
+          "catalog branch should keep CatalogTable")
+        assertSchemaMatchesSeededLogEntry(rebuiltTable)
+      }
+    }
+  }
+
+  test("schema-tracking rebuild: triggered by SCHEMA_TRACKING_LOCATION_ALIAS option key") {
+    withTempDir { tableDir =>
+      withTempDir { schemaLogDir =>
+        val tablePath = tableDir.getCanonicalPath
+        createDeltaTable(tablePath)
+        val schemaLogPath = schemaLogDir.getCanonicalPath
+        seedSchemaLogWithExtraColumn(tablePath, schemaLogPath)
+
+        val table = buildCatalogBasedSparkTable(tableDir.toURI, new JHashMap[String, String]())
+
+        val plan = buildStreamingRelationV2(
+          table, Map(DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS -> schemaLogPath))
+        val result = applyRule(plan).asInstanceOf[StreamingRelationV2]
+        val rebuiltTable = result.table.asInstanceOf[SparkTable]
+
+        assert(rebuiltTable.getOptions.containsKey(DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS))
+        assert(rebuiltTable.getOptions.get(DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS) ==
+          schemaLogPath)
+        assertSchemaMatchesSeededLogEntry(rebuiltTable)
+      }
+    }
+  }
+
+  test("schema-tracking rebuild: skipped when extraOptions has no schema-tracking option") {
+    withTempDir { tableDir =>
+      val tablePath = tableDir.getCanonicalPath
+      createDeltaTable(tablePath)
+      val table = buildCatalogBasedSparkTable(tableDir.toURI, new JHashMap[String, String]())
+
+      val plan = buildStreamingRelationV2(table, Map.empty)
+      val result = applyRule(plan)
+      assert(result eq plan, "no rebuild expected when schema-tracking option not present")
+    }
+  }
+
+  test("schema-tracking rebuild: skipped when SparkTable already carries the " +
+      "schema-tracking option") {
+    withTempDir { tableDir =>
+      withTempDir { schemaLogDir =>
+        val tablePath = tableDir.getCanonicalPath
+        createDeltaTable(tablePath)
+        val schemaLogPath = schemaLogDir.getCanonicalPath
+        val tableOptions = new JHashMap[String, String]()
+        tableOptions.put(DeltaOptions.SCHEMA_TRACKING_LOCATION, schemaLogPath)
+        val table = buildCatalogBasedSparkTable(tableDir.toURI, tableOptions)
+        assert(table.getOptions.containsKey(DeltaOptions.SCHEMA_TRACKING_LOCATION))
+
+        val plan = buildStreamingRelationV2(
+          table, Map(DeltaOptions.SCHEMA_TRACKING_LOCATION -> schemaLogPath))
+        val result = applyRule(plan)
+        assert(result eq plan, "no rebuild expected when table already carries the option")
       }
     }
   }

@@ -600,7 +600,8 @@ public class SparkScanTest extends DeltaV2TestBase {
         "The following streaming options are not supported: [readchangefeed]. "
             + "Supported options are: [startingVersion, startingTimestamp, maxFilesPerTrigger, "
             + "maxBytesPerTrigger, ignoreFileDeletion, ignoreChanges, ignoreDeletes, skipChangeCommits, "
-            + "excludeRegex, failOnDataLoss].",
+            + "excludeRegex, failOnDataLoss, schemaTrackingLocation, schemaLocation, "
+            + "streamingSourceTrackingId].",
         exception.getMessage());
   }
 
