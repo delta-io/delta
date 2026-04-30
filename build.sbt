@@ -1171,6 +1171,8 @@ lazy val storage = (project in file("storage"))
       // Note that the org.apache.hadoop.fs.s3a.Listing::createFileStatusListingIterator 3.3.1 API
       // is not compatible with 3.3.2.
       "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "provided",
+      "org.apache.hadoop" % "hadoop-azure" % hadoopVersion % "provided",
+      "com.google.cloud.bigdataoss" % "util-hadoop" % "3.0.2" % "provided",
       "io.unitycatalog" % "unitycatalog-client" % unityCatalogVersion excludeAll(
         ExclusionRule(organization = "org.openapitools"),
         ExclusionRule(organization = "com.fasterxml.jackson.core"),
