@@ -16,16 +16,17 @@
 
 package io.delta.storage.commit.uccommitcoordinator
 
-import java.net.{InetSocketAddress, URI}
+import java.net.{InetSocketAddress, URI, URLDecoder}
 import java.nio.charset.StandardCharsets
 import java.util.{Collections, Optional}
 
 import com.fasterxml.jackson.databind.{JsonNode, ObjectMapper}
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
-import io.delta.storage.commit.{Commit, CommitFailedException}
-import io.delta.storage.commit.actions.AbstractMetadata
+import io.delta.storage.commit.{Commit, CommitFailedException, GetCommitsResponse}
+import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 import io.unitycatalog.client.auth.TokenProvider
+import io.unitycatalog.client.delta.model.{CreateTableRequest, CredentialOperation}
 
 import org.apache.hadoop.fs.{FileStatus, Path}
 import org.apache.http.HttpStatus
@@ -45,6 +46,10 @@ class UCTokenBasedRestClientSuite
   private var serverUri: String = _
   private var metastoreHandler: HttpExchange => Unit = _
   private var commitsHandler: HttpExchange => Unit = _
+  private var deltaConfigHandler: HttpExchange => Unit = _
+  private var deltaTablesHandler: HttpExchange => Unit = _
+  private var deltaPathCredentialsHandler: HttpExchange => Unit = _
+  private var legacyTablesHandler: HttpExchange => Unit = _
   private val objectMapper = new ObjectMapper()
 
   override def beforeAll(): Unit = {
@@ -63,6 +68,26 @@ class UCTokenBasedRestClientSuite
       }
       exchange.close()
     })
+    server.createContext("/api/2.1/unity-catalog/delta/v1/config", exchange => {
+      if (deltaConfigHandler != null) deltaConfigHandler(exchange)
+      else sendJson(exchange, HttpStatus.SC_NOT_FOUND, "{}")
+      exchange.close()
+    })
+    server.createContext("/api/2.1/unity-catalog/delta/v1/catalogs", exchange => {
+      if (deltaTablesHandler != null) deltaTablesHandler(exchange)
+      else sendJson(exchange, HttpStatus.SC_NOT_FOUND, "{}")
+      exchange.close()
+    })
+    server.createContext("/api/2.1/unity-catalog/delta/v1/temporary-path-credentials", exchange => {
+      if (deltaPathCredentialsHandler != null) deltaPathCredentialsHandler(exchange)
+      else sendJson(exchange, HttpStatus.SC_NOT_FOUND, "{}")
+      exchange.close()
+    })
+    server.createContext("/api/2.1/unity-catalog/tables", exchange => {
+      if (legacyTablesHandler != null) legacyTablesHandler(exchange)
+      else sendJson(exchange, HttpStatus.SC_NOT_FOUND, "{}")
+      exchange.close()
+    })
     server.start()
     serverUri = s"http://localhost:${server.getAddress.getPort}"
   }
@@ -72,6 +97,10 @@ class UCTokenBasedRestClientSuite
   override def beforeEach(): Unit = {
     metastoreHandler = null
     commitsHandler = null
+    deltaConfigHandler = null
+    deltaTablesHandler = null
+    deltaPathCredentialsHandler = null
+    legacyTablesHandler = null
   }
 
   private def readRequestBody(exchange: HttpExchange): String = {
@@ -85,6 +114,22 @@ class UCTokenBasedRestClientSuite
     exchange.sendResponseHeaders(status, bytes.length)
     exchange.getResponseBody.write(bytes)
     exchange.getResponseBody.close()
+  }
+
+  private def queryParams(exchange: HttpExchange): Map[String, String] = {
+    Option(exchange.getRequestURI.getRawQuery).toSeq
+      .flatMap(_.split("&"))
+      .filter(_.nonEmpty)
+      .map { kv =>
+        val pair = kv.split("=", 2)
+        val key = URLDecoder.decode(pair(0), StandardCharsets.UTF_8)
+        val value = if (pair.length == 2) {
+          URLDecoder.decode(pair(1), StandardCharsets.UTF_8)
+        } else {
+          ""
+        }
+        key -> value
+      }.toMap
   }
 
   private def createTokenProvider(): TokenProvider = new TokenProvider {
@@ -123,6 +168,71 @@ class UCTokenBasedRestClientSuite
     new UniformMetadata(
       new IcebergMetadata("s3://bucket/metadata/v1.json", 42L, "2025-01-04T03:13:11.423Z"))
 
+  private def loadTableResponseJson: String =
+    """{
+      |  "metadata": {
+      |    "name": "tbl",
+      |    "catalog-name": "main",
+      |    "schema-name": "default",
+      |    "table-type": "MANAGED",
+      |    "data-source-format": "DELTA",
+      |    "table-uuid": "11111111-1111-1111-1111-111111111111",
+      |    "location": "file:/tmp/uc/table",
+      |    "created-at": 10,
+      |    "updated-at": 11,
+      |    "columns": {
+      |      "type": "struct",
+      |      "fields": [
+      |        {
+      |          "name": "id",
+      |          "type": "long",
+      |          "nullable": false,
+      |          "metadata": {}
+      |        }
+      |      ]
+      |    },
+      |    "partition-columns": [],
+      |    "properties": {}
+      |  },
+      |  "commits": []
+      |}""".stripMargin
+
+  test("UCClient defaults fail loudly for UC Delta Rest Catalog API") {
+    val client = new UCClient {
+      override def getMetastoreId(): String = testMetastoreId
+      override def commit(
+          tableId: String,
+          tableUri: URI,
+          commit: Optional[Commit],
+          lastKnownBackfilledVersion: Optional[java.lang.Long],
+          disown: Boolean,
+          newMetadata: Optional[AbstractMetadata],
+          newProtocol: Optional[AbstractProtocol],
+          uniform: Optional[UniformMetadata]): Unit = {}
+      override def getCommits(
+          tableId: String,
+          tableUri: URI,
+          startVersion: Optional[java.lang.Long],
+          endVersion: Optional[java.lang.Long]): GetCommitsResponse = null
+      override def finalizeCreate(
+          tableName: String,
+          catalogName: String,
+          schemaName: String,
+          storageLocation: String,
+          columns: java.util.List[UCClient.ColumnDef],
+          properties: java.util.Map[String, String]): Unit = {}
+      override def close(): Unit = {}
+    }
+
+    assert(!client.supportsUCDeltaRestCatalogApi())
+    assert(intercept[UnsupportedOperationException] {
+      client.loadTable("main", "default", "tbl")
+    }.getMessage === "loadTable requires UC Delta Rest Catalog API support.")
+    assert(intercept[UnsupportedOperationException] {
+      client.getTableCredentials(CredentialOperation.READ, "main", "default", "tbl")
+    }.getMessage === "getTableCredentials requires UC Delta Rest Catalog API support.")
+  }
+
   // Constructor tests
   test("constructor validates required parameters") {
     intercept[NullPointerException] {
@@ -147,6 +257,286 @@ class UCTokenBasedRestClientSuite
     metastoreHandler = exchange => sendJson(exchange, HttpStatus.SC_INTERNAL_SERVER_ERROR, "{}")
     withClient { client =>
       intercept[java.io.IOException] { client.getMetastoreId() }
+    }
+  }
+
+  test("catalog-aware constructor uses UC Delta Rest Catalog API when config lists required endpoints") {
+    deltaConfigHandler = exchange => {
+      assert(exchange.getRequestURI.getQuery.contains("catalog=main"))
+      assert(exchange.getRequestURI.getQuery.contains("protocol-versions=1.0"))
+      sendJson(exchange, HttpStatus.SC_OK,
+        """{
+          |  "endpoints": [
+          |    "GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}",
+          |    "GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}/credentials"
+          |  ],
+          |  "protocol-version": "1.0"
+          |}""".stripMargin)
+    }
+    deltaTablesHandler = exchange => {
+      assert(exchange.getRequestURI.getPath ===
+        "/api/2.1/unity-catalog/delta/v1/catalogs/main/schemas/default/tables/tbl")
+      sendJson(exchange, HttpStatus.SC_OK, loadTableResponseJson)
+    }
+    legacyTablesHandler = exchange => fail(s"Unexpected legacy request: ${exchange.getRequestURI}")
+
+    val client =
+      new UCTokenBasedRestClient(serverUri, createTokenProvider(), Collections.emptyMap(), "main")
+    try {
+      assert(client.supportsUCDeltaRestCatalogApi())
+      assert(client.loadTable("main", "default", "tbl").getMetadata.getLocation ===
+        "file:/tmp/uc/table")
+    } finally {
+      client.close()
+    }
+  }
+
+  test("catalog-aware constructor gets temporary path credentials through UC Delta Rest Catalog API") {
+    deltaConfigHandler = exchange => sendJson(exchange, HttpStatus.SC_OK,
+      """{
+        |  "endpoints": [
+        |    "GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}",
+        |    "GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}/credentials",
+        |    "GET /v1/temporary-path-credentials"
+        |  ],
+        |  "protocol-version": "1.0"
+        |}""".stripMargin)
+    deltaPathCredentialsHandler = exchange => {
+      assert(exchange.getRequestMethod === "GET")
+      assert(queryParams(exchange) === Map(
+        "location" -> "s3://bucket/path/to/table",
+        "operation" -> "READ"))
+      sendJson(exchange, HttpStatus.SC_OK,
+        """{
+          |  "storage-credentials": [
+          |    {
+          |      "prefix": "s3://bucket/path/to/table",
+          |      "operation": "READ",
+          |      "config": {
+          |        "s3.access-key-id": "ak",
+          |        "s3.secret-access-key": "sk",
+          |        "s3.session-token": "st"
+          |      },
+          |      "expiration-time-ms": 123
+          |    }
+          |  ]
+          |}""".stripMargin)
+    }
+
+    val client =
+      new UCTokenBasedRestClient(serverUri, createTokenProvider(), Collections.emptyMap(), "main")
+    try {
+      val response = client.getTemporaryPathCredentials(
+        "s3://bucket/path/to/table",
+        CredentialOperation.READ)
+      assert(response.getStorageCredentials.size() === 1)
+      assert(response.getStorageCredentials.get(0).getPrefix === "s3://bucket/path/to/table")
+      assert(response.getStorageCredentials.get(0).getOperation === CredentialOperation.READ)
+    } finally {
+      client.close()
+    }
+  }
+
+  test("catalog-aware constructor fails temporary path credentials when endpoint is unavailable") {
+    deltaConfigHandler = exchange => sendJson(exchange, HttpStatus.SC_OK,
+      """{
+        |  "endpoints": [
+        |    "GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}",
+        |    "GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}/credentials"
+        |  ],
+        |  "protocol-version": "1.0"
+        |}""".stripMargin)
+    deltaPathCredentialsHandler = exchange =>
+      fail(s"Unexpected temporary path credentials request: ${exchange.getRequestURI}")
+
+    val client =
+      new UCTokenBasedRestClient(serverUri, createTokenProvider(), Collections.emptyMap(), "main")
+    try {
+      val e = intercept[UnsupportedOperationException] {
+        client.getTemporaryPathCredentials(
+          "s3://bucket/path/to/table",
+          CredentialOperation.READ)
+      }
+      assert(e.getMessage ===
+        "getTemporaryPathCredentials requires UC Delta Rest Catalog API temporary path credentials " +
+          "support.")
+    } finally {
+      client.close()
+    }
+  }
+
+  test("catalog-aware constructor fails UC Delta Rest Catalog API loadTable when config is unavailable") {
+    deltaConfigHandler = exchange => sendJson(exchange, HttpStatus.SC_NOT_FOUND, "{}")
+    deltaTablesHandler = exchange =>
+      fail(s"Unexpected UC Delta Rest Catalog API request: ${exchange.getRequestURI}")
+    legacyTablesHandler = exchange =>
+      fail(s"Unexpected legacy request: ${exchange.getRequestURI}")
+
+    val client =
+      new UCTokenBasedRestClient(serverUri, createTokenProvider(), Collections.emptyMap(), "main")
+    try {
+      assert(!client.supportsUCDeltaRestCatalogApi())
+      val e = intercept[UnsupportedOperationException] {
+        client.loadTable("main", "default", "tbl")
+      }
+      assert(e.getMessage === "loadTable requires UC Delta Rest Catalog API support.")
+      val credentialsError = intercept[UnsupportedOperationException] {
+        client.getTableCredentials(CredentialOperation.READ, "main", "default", "tbl")
+      }
+      assert(credentialsError.getMessage ===
+        "getTableCredentials requires UC Delta Rest Catalog API support.")
+      val stagingError = intercept[UnsupportedOperationException] {
+        client.createStagingTable("main", "default", "tbl")
+      }
+      assert(stagingError.getMessage ===
+        "createStagingTable requires UC Delta Rest Catalog API support.")
+      val createError = intercept[UnsupportedOperationException] {
+        client.createTable("main", "default", new CreateTableRequest().name("tbl"))
+      }
+      assert(createError.getMessage === "createTable requires UC Delta Rest Catalog API support.")
+    } finally {
+      client.close()
+    }
+  }
+
+  test("catalog-aware constructor disables UC Delta Rest Catalog API when config does not list loadTable") {
+    deltaConfigHandler = exchange => sendJson(exchange, HttpStatus.SC_OK,
+      """{
+        |  "endpoints": [
+        |    "GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}/credentials"
+        |  ],
+        |  "protocol-version": "1.0"
+        |}""".stripMargin)
+
+    val client =
+      new UCTokenBasedRestClient(serverUri, createTokenProvider(), Collections.emptyMap(), "main")
+    try {
+      assert(!client.supportsUCDeltaRestCatalogApi())
+    } finally {
+      client.close()
+    }
+  }
+
+  test("catalog-aware constructor disables UC Delta Rest Catalog API when config does not list credentials") {
+    deltaConfigHandler = exchange => sendJson(exchange, HttpStatus.SC_OK,
+      """{
+        |  "endpoints": [
+        |    "GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}"
+        |  ],
+        |  "protocol-version": "1.0"
+        |}""".stripMargin)
+
+    val client =
+      new UCTokenBasedRestClient(serverUri, createTokenProvider(), Collections.emptyMap(), "main")
+    try {
+      assert(!client.supportsUCDeltaRestCatalogApi())
+    } finally {
+      client.close()
+    }
+  }
+
+  test("catalog-aware constructor fails when config probe fails") {
+    deltaConfigHandler = exchange =>
+      sendJson(exchange, HttpStatus.SC_INTERNAL_SERVER_ERROR, """{"error":"boom"}""")
+
+    val e = intercept[IllegalArgumentException] {
+      new UCTokenBasedRestClient(serverUri, createTokenProvider(), Collections.emptyMap(), "main")
+    }
+    assert(e.getMessage.contains("Failed to determine UC Delta Rest Catalog API support"))
+    assert(e.getMessage.contains("HTTP 500"))
+  }
+
+  test("createStagingTable and createTable call UC Delta Rest Catalog API endpoints") {
+    var sawStagingCreate = false
+    var sawTableCreate = false
+    deltaTablesHandler = exchange => {
+      assert(exchange.getRequestMethod === "POST")
+      exchange.getRequestURI.getPath match {
+        case "/api/2.1/unity-catalog/delta/v1/catalogs/main/schemas/default/staging-tables" =>
+          sawStagingCreate = true
+          val body = objectMapper.readTree(readRequestBody(exchange))
+          assert(body.get("name").asText === "tbl")
+          sendJson(exchange, HttpStatus.SC_OK,
+            """{
+              |  "table-id": "22222222-2222-2222-2222-222222222222",
+              |  "table-type": "MANAGED",
+              |  "location": "s3://bucket/path/to/table",
+              |  "storage-credentials": [],
+              |  "required-protocol": {
+              |    "min-reader-version": 1,
+              |    "min-writer-version": 2
+              |  },
+              |  "required-properties": {
+              |    "delta.feature.catalogManaged": "supported"
+              |  }
+              |}""".stripMargin)
+        case "/api/2.1/unity-catalog/delta/v1/catalogs/main/schemas/default/tables" =>
+          sawTableCreate = true
+          val body = objectMapper.readTree(readRequestBody(exchange))
+          assert(body.get("name").asText === "tbl")
+          sendJson(exchange, HttpStatus.SC_OK, loadTableResponseJson)
+        case path =>
+          fail(s"Unexpected UC Delta Rest Catalog API request path: $path")
+      }
+    }
+
+    withClient { client =>
+      val staging = client.createStagingTable("main", "default", "tbl")
+      assert(staging.getTableId.toString === "22222222-2222-2222-2222-222222222222")
+      assert(staging.getLocation === "s3://bucket/path/to/table")
+
+      val created = client.createTable("main", "default", new CreateTableRequest().name("tbl"))
+      assert(created.getMetadata.getLocation === "file:/tmp/uc/table")
+    }
+    assert(sawStagingCreate)
+    assert(sawTableCreate)
+  }
+
+  test("createStagingTable and createTable wrap HTTP errors") {
+    deltaTablesHandler = exchange =>
+      sendJson(exchange, HttpStatus.SC_INTERNAL_SERVER_ERROR, """{"error":"boom"}""")
+
+    withClient { client =>
+      val stagingError = intercept[java.io.IOException] {
+        client.createStagingTable("main", "default", "tbl")
+      }
+      assert(stagingError.getMessage.contains(
+        "Failed to create staging table main.default.tbl via UC Delta Rest Catalog API (HTTP 500)"))
+
+      val createError = intercept[java.io.IOException] {
+        client.createTable("main", "default", new CreateTableRequest().name("tbl"))
+      }
+      assert(createError.getMessage.contains(
+        "Failed to create table main.default.tbl via UC Delta Rest Catalog API (HTTP 500)"))
+
+      val unnamedCreateError = intercept[java.io.IOException] {
+        client.createTable("main", "default", new CreateTableRequest())
+      }
+      assert(unnamedCreateError.getMessage.contains(
+        "Failed to create table main.default.<unknown> via UC Delta Rest Catalog API (HTTP 500)"))
+    }
+  }
+
+  test("createStagingTable and createTable validate required parameters") {
+    withClient { client =>
+      intercept[NullPointerException] {
+        client.createStagingTable(null, "default", "tbl")
+      }
+      intercept[NullPointerException] {
+        client.createStagingTable("main", null, "tbl")
+      }
+      intercept[NullPointerException] {
+        client.createStagingTable("main", "default", null)
+      }
+      intercept[NullPointerException] {
+        client.createTable(null, "default", new CreateTableRequest().name("tbl"))
+      }
+      intercept[NullPointerException] {
+        client.createTable("main", null, new CreateTableRequest().name("tbl"))
+      }
+      intercept[NullPointerException] {
+        client.createTable("main", "default", null)
+      }
     }
   }
 

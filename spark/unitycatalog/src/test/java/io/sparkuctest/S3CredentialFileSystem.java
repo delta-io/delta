@@ -149,14 +149,28 @@ public class S3CredentialFileSystem extends RawLocalFileSystem {
 
   private synchronized AwsCredentialsProvider resolveProvider(Configuration conf) {
     if (provider != null) return provider;
-    String clazz = conf.get(S3A_CREDENTIALS_PROVIDER);
-    if (clazz == null) return null;
-    try {
-      provider =
-          (AwsCredentialsProvider)
-              Class.forName(clazz).getConstructor(Configuration.class).newInstance(conf);
-    } catch (Exception e) {
-      throw new RuntimeException("Failed to instantiate credential provider: " + clazz, e);
+    String classes = conf.get(S3A_CREDENTIALS_PROVIDER);
+    if (classes == null) return null;
+
+    // S3A accepts a comma-separated provider chain. This fake filesystem only understands
+    // AWS SDK v2 providers; if none are present, assert static UC-vended Hadoop keys instead.
+    for (String clazz : classes.split(",")) {
+      String trimmed = clazz.trim();
+      if (trimmed.isEmpty()) continue;
+      try {
+        Class<?> candidate = Class.forName(trimmed);
+        if (!AwsCredentialsProvider.class.isAssignableFrom(candidate)) continue;
+        provider =
+            (AwsCredentialsProvider)
+                candidate.getConstructor(Configuration.class).newInstance(conf);
+        return provider;
+      } catch (ClassNotFoundException e) {
+        // Ignore providers that are valid for real S3A but absent from this test classpath.
+      } catch (NoSuchMethodException e) {
+        // Ignore AWS providers that real S3A can construct without a Hadoop Configuration.
+      } catch (ReflectiveOperationException e) {
+        throw new RuntimeException("Failed to instantiate credential provider: " + trimmed, e);
+      }
     }
     return provider;
   }
