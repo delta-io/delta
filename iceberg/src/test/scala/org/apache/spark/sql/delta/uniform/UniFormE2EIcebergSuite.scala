@@ -29,12 +29,15 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.{SparkConf, SparkSessionSwitch}
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.connector.catalog.{Identifier, Table}
 import org.apache.spark.sql.delta.DeltaConfigs.{
   COORDINATED_COMMITS_COORDINATOR_CONF,
   COORDINATED_COMMITS_COORDINATOR_NAME
 }
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.NonSparkReadIceberg
+import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.coordinatedcommits.{
   CatalogOwnedCommitCoordinatorBuilder,
   CommitCoordinatorProvider,
@@ -42,10 +45,45 @@ import org.apache.spark.sql.delta.coordinatedcommits.{
   InMemoryUCCommitCoordinator,
   UCCommitCoordinatorBuilder
 }
+import org.apache.spark.sql.delta.icebergShaded.IcebergConverter
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.uniform.hms.HMSTest
 import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.spark.sql.internal.SQLConf
+
+/**
+ * A [[DeltaCatalog]] subclass that enriches [[CatalogTable]] with the last converted Iceberg
+ * metadata from [[InMemoryUCCommitCoordinator]] before loading the table. This simulates what
+ * the real UC catalog does: returning [[IcebergConverter.CATALOG_TABLE_ICEBERG_METADATA_LOCATION]]
+ * and [[IcebergConverter.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION]] as catalog table
+ * properties so that [[IcebergConverter]] can perform incremental conversion.
+ */
+class UCBackedDeltaCatalog extends DeltaCatalog {
+  override def loadCatalogTable(ident: Identifier, catalogTable: CatalogTable): Table = {
+    val enriched = UCBackedDeltaCatalog.currentCoordinator.flatMap { coordinator =>
+      val deltaLog = DeltaLog.forTable(spark, new Path(catalogTable.location))
+      val tableConf = deltaLog.update().metadata.coordinatedCommitsTableConf
+      tableConf.get(UCCommitCoordinatorClient.UC_TABLE_ID_KEY).flatMap { tableId =>
+        coordinator.getUniformMetadata(tableId)
+          .filter(_.getIcebergMetadata.isPresent)
+          .map { meta =>
+            val icebergMeta = meta.getIcebergMetadata.get
+            catalogTable.copy(properties = catalogTable.properties +
+              (IcebergConverter.CATALOG_TABLE_ICEBERG_METADATA_LOCATION ->
+                icebergMeta.getMetadataLocation) +
+              (IcebergConverter.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION ->
+                icebergMeta.getConvertedDeltaVersion.toString))
+          }
+      }
+    }.getOrElse(catalogTable)
+    super.loadCatalogTable(ident, enriched)
+  }
+}
+
+object UCBackedDeltaCatalog {
+  @volatile var currentCoordinator: Option[InMemoryUCCommitCoordinator] = None
+}
 
 /**
  * This trait allows the tests to write with Delta
@@ -104,6 +142,11 @@ trait WriteDeltaUCCCReadIceberg extends UniFormE2ETest
   with DeltaSQLCommandTest
   with NonSparkReadIceberg {
 
+  override protected def sparkConf: SparkConf =
+    super.sparkConf.set(
+      SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key,
+      classOf[UCBackedDeltaCatalog].getName)
+
   /**
    * A [[UCCommitCoordinatorClient]] subclass that overrides [[registerTable]] to auto-assign
    * a UC table ID, simulating what the UC catalog does during CREATE TABLE.
@@ -141,6 +184,7 @@ trait WriteDeltaUCCCReadIceberg extends UniFormE2ETest
     DeltaLog.clearCache()
     CommitCoordinatorProvider.clearAllBuilders()
     ucCommitCoordinator = new InMemoryUCCommitCoordinator()
+    UCBackedDeltaCatalog.currentCoordinator = Some(ucCommitCoordinator)
     val ucClient = new InMemoryUCClient("test-metastore", ucCommitCoordinator)
     testCoordinator = new TestUCBackedCommitCoordinator(ucClient)
     CommitCoordinatorProvider.registerBuilder(new CatalogOwnedCommitCoordinatorBuilder {
@@ -155,6 +199,7 @@ trait WriteDeltaUCCCReadIceberg extends UniFormE2ETest
   }
 
   abstract override def afterEach(): Unit = {
+    UCBackedDeltaCatalog.currentCoordinator = None
     CommitCoordinatorProvider.clearAllBuilders()
     DeltaLog.clearCache()
     super.afterEach()

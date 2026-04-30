@@ -66,6 +66,12 @@ object IcebergConverter {
    */
   val BASE_DELTA_VERSION_PROPERTY = "base-delta-version"
 
+  /** CatalogTable property key for the last converted Iceberg metadata location. */
+  val CATALOG_TABLE_ICEBERG_METADATA_LOCATION = "deltaUniformIceberg.metadataLocation"
+
+  /** CatalogTable property key for the last converted Delta version. */
+  val CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION = "deltaUniformIceberg.convertedDeltaVersion"
+
   def getLastConvertedDeltaVersion(table: Option[IcebergTable]): Option[Long] =
     table.flatMap(_.properties().asScala.get(DELTA_VERSION_PROPERTY)).map(_.toLong)
 
@@ -145,6 +151,31 @@ class IcebergConverter
   )
 
   /**
+   * Reads the last converted Iceberg state from the catalogTable properties.
+   * The catalogTable does not have a deltaUniformIceberg field; instead the metadata location
+   * and last converted delta version are stored as plain table properties.
+   */
+  protected def fetchLastConvertedIcebergInfo(
+      catalogTable: CatalogTable, deltaLog: DeltaLog): LastConvertedIcebergInfo = {
+    val baseMetadataLocation =
+      catalogTable.properties.get(IcebergConverter.CATALOG_TABLE_ICEBERG_METADATA_LOCATION)
+    val lastDeltaVersionConverted =
+      catalogTable.properties.get(
+        IcebergConverter.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION).map(_.toLong)
+    val lastConvertedIcebergTable =
+      baseMetadataLocation.map(new HadoopTables(deltaLog.newDeltaHadoopConf()).load(_))
+    val lastConvertedIcebergSnapshotId =
+      lastConvertedIcebergTable.flatMap(it => Option(it.currentSnapshot())).map(_.snapshotId())
+
+    LastConvertedIcebergInfo(
+      icebergTable = lastConvertedIcebergTable,
+      icebergSnapshotId = lastConvertedIcebergSnapshotId,
+      deltaVersionConverted = lastDeltaVersionConverted,
+      baseMetadataLocationOpt = baseMetadataLocation
+    )
+  }
+
+  /**
    * Used for tracking Iceberg Conversion Context by Conversion Mode
    * UNIFORM_POST_COMMIT_MODE => no context required
    * @param conversionMode
@@ -197,12 +228,11 @@ class IcebergConverter
         deltaLog, txnInfo, deltaAttemptVersion, catalogTable
       )
 
+      val lastConvertedInfo = fetchLastConvertedIcebergInfo(refreshedTable, deltaLog)
       val icebergTxn = convertSnapshotInternal(
         snapshotToConvert,
         readSnapshotOpt = Some(txnInfo.readSnapshot),
-        lastConvertedInfo = LastConvertedIcebergInfo(
-          None, None, None, None
-        ),
+        lastConvertedInfo = lastConvertedInfo,
         conversionContext = new ConversionContext(
           conversionMode = UNIFORM_CC_MODE,
           additionalDeltaActionsToCommit = Some(txnInfo.finalActionsToCommit),
@@ -212,7 +242,7 @@ class IcebergConverter
       )
 
       val (newMetadataPath, _) = icebergTxn.getConvertedIcebergMetadata
-      (newMetadataPath, None)
+      (newMetadataPath, lastConvertedInfo.deltaVersionConverted)
     }
 
   private def refreshCatalogTableIfNeeded(
@@ -272,7 +302,7 @@ class IcebergConverter
 
       val icebergTxn = new IcebergConversionTransaction(
         spark, catalogTable, log.newDeltaHadoopConf(), snapshotToConvert, tableOp,
-        lastConvertedIcebergSnapshotId, lastDeltaVersionConverted
+        lastConvertedIcebergSnapshotId, lastDeltaVersionConverted, baseMetadataLocation
       )
 
       val convertedCommits: Seq[Option[CommitInfo]] = prevConvertedSnapshotOpt match {
@@ -280,6 +310,8 @@ class IcebergConverter
           // Read the actions directly from the delta json files.
           // TODO: Run this as a spark job on executors
           val endVersion = conversionMode match {
+            case UNIFORM_CC_MODE =>
+              snapshotToConvert.version - 1
             case _ => snapshotToConvert.version
           }
           val deltaFiles = DeltaFileProviderUtils.getDeltaFilesInVersionRange(
