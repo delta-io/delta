@@ -22,6 +22,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.read.Batch;
@@ -39,6 +40,10 @@ public class SparkBatch implements Batch {
   private final StructType partitionSchema;
   private final Predicate[] pushedToKernelFilters;
   private final Filter[] dataFilters;
+  // Derived Sets used only for equals/hashCode: filters are AND-ed at eval time,
+  // so list order has no semantic meaning.
+  private final Set<Predicate> pushedToKernelFiltersSet;
+  private final Set<Filter> dataFiltersSet;
   private final Configuration hadoopConf;
   private final SQLConf sqlConf;
   private final long totalBytes;
@@ -65,11 +70,10 @@ public class SparkBatch implements Batch {
         java.util.Collections.unmodifiableList(
             new ArrayList<>(Objects.requireNonNull(partitionedFiles, "partitionedFiles is null")));
     this.pushedToKernelFilters =
-        pushedToKernelFilters != null
-            ? Arrays.copyOf(pushedToKernelFilters, pushedToKernelFilters.length)
-            : new Predicate[0];
-    this.dataFilters =
-        dataFilters != null ? Arrays.copyOf(dataFilters, dataFilters.length) : new Filter[0];
+        pushedToKernelFilters == null ? new Predicate[0] : pushedToKernelFilters.clone();
+    this.dataFilters = dataFilters == null ? new Filter[0] : dataFilters.clone();
+    this.pushedToKernelFiltersSet = Set.copyOf(Arrays.asList(this.pushedToKernelFilters));
+    this.dataFiltersSet = Set.copyOf(Arrays.asList(this.dataFilters));
     this.totalBytes = totalBytes;
     this.scalaOptions = Objects.requireNonNull(scalaOptions, "scalaOptions is null");
     this.hadoopConf = Objects.requireNonNull(hadoopConf, "hadoopConf is null");
@@ -105,20 +109,20 @@ public class SparkBatch implements Batch {
         && Objects.equals(this.readDataSchema, that.readDataSchema)
         && Objects.equals(this.dataSchema, that.dataSchema)
         && Objects.equals(this.partitionSchema, that.partitionSchema)
-        && Arrays.equals(this.pushedToKernelFilters, that.pushedToKernelFilters)
-        && Arrays.equals(this.dataFilters, that.dataFilters)
+        && Objects.equals(this.pushedToKernelFiltersSet, that.pushedToKernelFiltersSet)
+        && Objects.equals(this.dataFiltersSet, that.dataFiltersSet)
         && partitionedFiles.size() == that.partitionedFiles.size();
   }
 
   @Override
   public int hashCode() {
-    int result = snapshot.hashCode();
-    result = 31 * result + readDataSchema.hashCode();
-    result = 31 * result + dataSchema.hashCode();
-    result = 31 * result + partitionSchema.hashCode();
-    result = 31 * result + Arrays.hashCode(pushedToKernelFilters);
-    result = 31 * result + Arrays.hashCode(dataFilters);
-    result = 31 * result + Integer.hashCode(partitionedFiles.size());
-    return result;
+    return Objects.hash(
+        snapshot,
+        readDataSchema,
+        dataSchema,
+        partitionSchema,
+        pushedToKernelFiltersSet,
+        dataFiltersSet,
+        partitionedFiles.size());
   }
 }

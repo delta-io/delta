@@ -101,6 +101,11 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   private final StructType partitionSchema;
   private final Predicate[] pushedToKernelFilters;
   private final Filter[] dataFilters;
+  // Derived Sets used only for equals/hashCode: filters are AND-ed at evaluation time,
+  // so list order has no semantic meaning and two scans with the same filter set in
+  // different orders should compare equal.
+  private final Set<Predicate> pushedToKernelFiltersSet;
+  private final Set<Filter> dataFiltersSet;
   private final io.delta.kernel.Scan kernelScan;
   private final Optional<Statistics> catalogStats;
   private final Configuration hadoopConf;
@@ -145,6 +150,8 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     this.pushedToKernelFilters =
         pushedToKernelFilters == null ? new Predicate[0] : pushedToKernelFilters.clone();
     this.dataFilters = dataFilters == null ? new Filter[0] : dataFilters.clone();
+    this.pushedToKernelFiltersSet = Set.copyOf(Arrays.asList(this.pushedToKernelFilters));
+    this.dataFiltersSet = Set.copyOf(Arrays.asList(this.dataFilters));
     this.kernelScan = Objects.requireNonNull(kernelScan, "kernelScan is null");
     this.catalogStats = Objects.requireNonNull(catalogStats, "catalogStats is null");
     this.options = Objects.requireNonNull(options, "options is null");
@@ -662,8 +669,8 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         && Objects.equals(dataSchema, that.dataSchema)
         && Objects.equals(partitionSchema, that.partitionSchema)
         && Objects.equals(readDataSchema, that.readDataSchema)
-        && Arrays.equals(pushedToKernelFilters, that.pushedToKernelFilters)
-        && Arrays.equals(dataFilters, that.dataFilters)
+        && Objects.equals(pushedToKernelFiltersSet, that.pushedToKernelFiltersSet)
+        && Objects.equals(dataFiltersSet, that.dataFiltersSet)
         // ignoring kernelScan because it is derived from Snapshot which is created from tablePath,
         // with pushed down filters that are also recorded in `pushedToKernelFilters`
         && Objects.equals(options, that.options)
@@ -673,19 +680,17 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
   @Override
   public int hashCode() {
-    int result =
-        Objects.hash(
-            catalogStats,
-            initialSnapshot.getPath(),
-            initialSnapshot.getVersion(),
-            dataSchema,
-            partitionSchema,
-            readDataSchema,
-            options,
-            appliedRuntimePredicates);
-    result = 31 * result + Arrays.hashCode(pushedToKernelFilters);
-    result = 31 * result + Arrays.hashCode(dataFilters);
-    return result;
+    return Objects.hash(
+        catalogStats,
+        initialSnapshot.getPath(),
+        initialSnapshot.getVersion(),
+        dataSchema,
+        partitionSchema,
+        readDataSchema,
+        options,
+        appliedRuntimePredicates,
+        pushedToKernelFiltersSet,
+        dataFiltersSet);
   }
 
   /**
