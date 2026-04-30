@@ -37,7 +37,9 @@ import org.apache.spark.sql.catalyst.planning.PhysicalOperation
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.trees.TreePattern.PROJECT
+import org.apache.spark.sql.connector.catalog.V2TableWithV1Fallback
 import org.apache.spark.sql.execution.datasources.{FileIndex, LogicalRelation}
+import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.types.StructType
 
 /**
@@ -196,8 +198,15 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
       val isSubquery = isSubqueryRoot(plan)
       // Should not be applied to DataSourceV2 write plans, because they'll be planned later
       // through a V1 fallback and only that later planning takes place within the transaction.
-      val isDataSourceV2 = plan.isInstanceOf[V2WriteCommand]
-      if (isSubquery || isDataSourceV2) {
+      val targetHasV1Fallback = plan match {
+        case v2: V2WriteCommand => v2.table match {
+          case r: DataSourceV2Relation => r.table.isInstanceOf[V2TableWithV1Fallback]
+          case _ => false
+        }
+        case _ => false
+      }
+
+      if (isSubquery || targetHasV1Fallback) {
         return plan
       }
 
