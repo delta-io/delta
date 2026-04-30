@@ -95,6 +95,10 @@ object ServerSidePlannedTable extends DeltaLogging {
     // Check if we should enable server-side planning (for testing)
     val enableServerSidePlanning =
       spark.conf.get(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key, "false").toBoolean
+    if (!enableServerSidePlanning) {
+      return None
+    }
+
     val hasTableCredentials = hasCredentials(table)
 
     // Check if we should use server-side planning

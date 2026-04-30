@@ -24,7 +24,7 @@ import scala.util.{Failure, Success, Try}
 import com.databricks.spark.util.DatabricksLogging
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.catalog.{DeltaCatalogClient, DeltaTableV2}
 import org.apache.spark.sql.delta.commands.{
   DeltaInsertReplaceOnOrUsingCommand,
   InsertReplaceOnOrUsingAPIOrigin,
@@ -95,7 +95,12 @@ class DeltaDataSource
     catalogTableOpt
       .map(catalogTable => DeltaLog.forTableWithSnapshot(
         sparkSession, catalogTable, options))
-      .getOrElse(DeltaLog.forTableWithSnapshot(sparkSession, path, options))._2
+      .getOrElse {
+        DeltaLog.forTableWithSnapshot(
+          sparkSession,
+          path,
+          DeltaCatalogClient.pathCredentialOptions(sparkSession, path) ++ options)
+      }._2
   }
 
   def inferSchema: StructType = new StructType() // empty
