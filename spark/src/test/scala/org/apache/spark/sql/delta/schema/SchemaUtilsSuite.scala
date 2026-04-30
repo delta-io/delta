@@ -2873,6 +2873,45 @@ class SchemaUtilsSuite extends QueryTest
       )
     }
   }
+  test(s"typeWideningMode - widen integral type to common wider decimal (reverse direction)") {
+    // Test the reverse case: DecimalType on left, IntegralType on right
+    // This ensures the fix in PR #6491 works correctly in both directions
+    val left = new StructType()
+      .add("a", DecimalType(2, 1))
+      .add("b", DecimalType(2, 1))
+      .add("c", DecimalType(2, 1))
+      .add("d", DecimalType(2, 1))
+    val right = new StructType()
+      .add("a", ByteType)
+      .add("b", ShortType)
+      .add("c", IntegerType)
+      .add("d", LongType)
+    val wider = new StructType()
+      .add("a", DecimalType(11, 1))
+      .add("b", DecimalType(11, 1))
+      .add("c", DecimalType(11, 1))
+      .add("d", DecimalType(21, 1))
+
+    assert(mergeSchemas(left, right, typeWideningMode = AllTypeWideningWithDecimalCoercion)
+      == wider)
+    assert(mergeSchemas(left, right, typeWideningMode = AllTypeWideningToCommonWiderType)
+      == wider)
+
+    // check that flipping conf to false prevents integral type decimal coercion
+    // for `AllTypeWideningToCommonWiderType`
+    withSQLConf(DeltaSQLConf.DELTA_TYPE_WIDENING_ALLOW_INTEGRAL_DECIMAL_COERCION.key ->
+      "false") {
+      val exception = intercept[DeltaAnalysisException] {
+        mergeSchemas(left, right, typeWideningMode = AllTypeWideningToCommonWiderType)
+      }
+      checkError(
+        exception,
+        "DELTA_FAILED_TO_MERGE_FIELDS",
+        sqlState = "22005",
+        parameters = Map("currentField" -> "a", "updateField" -> "a")
+      )
+    }
+  }
 
   test("schema merging override field metadata") {
     val base1 = new StructType()
