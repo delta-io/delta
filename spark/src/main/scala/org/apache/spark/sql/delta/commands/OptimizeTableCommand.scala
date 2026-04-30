@@ -154,6 +154,10 @@ case class OptimizeTableCommand(
       throw DeltaErrors.notADeltaTableException(table.deltaLog.dataPath.toString)
     }
 
+    if (snapshot.isCatalogOwned) {
+      throw DeltaErrors.operationBlockedOnCatalogManagedTable("OPTIMIZE")
+    }
+
     val isClusteredTable = ClusteredTableUtils.isSupported(snapshot.protocol)
     if (isClusteredTable) {
       if (userPartitionPredicates.nonEmpty) {
@@ -308,7 +312,14 @@ class OptimizeExecutor(
         case None =>
           filterCandidateFileList(minFileSize, maxDeletedRowsRatio, candidateFiles)
       }
-      val partitionsToCompact = filesToProcess.groupBy(_.partitionValues).toSeq
+      // Group files by their normalized (typed) partition values so that logically equivalent
+      // but differently formatted values (e.g. timestamp variants) end up in the same group.
+      val partitionsToCompact = filesToProcess
+        .groupBy(_.normalizedPartitionValues(
+          sparkSession,
+          snapshot.metadata.physicalPartitionSchema))
+        .map { case (_, files) => (files.head.partitionValues, files) }
+        .toSeq
 
       val jobs = groupFilesIntoBins(partitionsToCompact)
 

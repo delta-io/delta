@@ -61,7 +61,7 @@ import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttribute
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
-import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, TableCatalog}
+import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, TableCatalog, TableWritePrivilege}
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform, Transform}
 import org.apache.spark.sql.errors.QueryCompilationErrors
@@ -101,7 +101,13 @@ class DeltaAnalysis(session: SparkSession)
     // since we only want to up-cast for SQL insert into by name
     case a @ AppendDelta(r, d) if a.isByName && a.origin.sqlText.nonEmpty &&
         needsSchemaAdjustmentByName(a.query, r.output, d, a.writeOptions) =>
-      val projection = resolveQueryColumnsByName(a.query, r.output, d, a.writeOptions)
+      val projection = resolveQueryColumnsByName(
+        query = a.query,
+        targetAttrs = r.output,
+        deltaTable = d,
+        writeOptions = a.writeOptions,
+        allowSchemaEvolution = true,
+        isDfByNameInsert = false)
       if (projection != a.query) {
         a.copy(query = projection)
       } else {
@@ -246,7 +252,10 @@ class DeltaAnalysis(session: SparkSession)
           protocol
       }
       val newDeltaCatalog = new DeltaCatalogV1()
-      val existingTableOpt = newDeltaCatalog.getExistingTableIfExists(catalogTableTarget.identifier)
+      val existingTableOpt = newDeltaCatalog.getExistingTableIfExists(
+        catalogTableTarget.identifier,
+        identOpt = None,
+        operation = TableCreationModes.Create)
       val newTable = newDeltaCatalog
         .verifyTableAndSolidify(
           catalogTableTarget,
@@ -261,8 +270,59 @@ class DeltaAnalysis(session: SparkSession)
         protocol = protocolAfterFilteringCatalogOwnedFromSource,
         tableByPath = isTableByPath)
 
+    // Handling df.insertInto() with `replaceOn`/`replaceUsing`.
+    //
+    // Here, we match with OverwriteDelta because insertInto() with mode("overwrite")
+    // creates [[OverwriteByExpression]] in DataFrameWriter.
+    case o @ OverwriteDelta(r, d) if !o.isByName && o.origin.sqlText.isEmpty &&
+        hasReplaceOnOrUsingOption(o.writeOptions) =>
+      val writeOpts = new DeltaOptions(o.writeOptions, session.sessionState.conf)
+      if (writeOpts.replaceOn.isDefined && !session.sessionState.conf.getConf(
+          DeltaSQLConf.REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED)) {
+        throw DeltaErrors.operationNotSupportedException("replaceOn")
+      } else if (writeOpts.replaceUsing.isDefined && !session.sessionState.conf.getConf(
+          DeltaSQLConf.REPLACE_USING_OPTION_IN_DATAFRAME_WRITER_ENABLED)) {
+        throw DeltaErrors.operationNotSupportedException("replaceUsing")
+      }
+      val tableRelation = r
+      val deltaTableV2 = d
+      val needsAdjustment = needsSchemaAdjustmentByOrdinal(
+        deltaTable = deltaTableV2,
+        query = o.query,
+        schema = tableRelation.schema,
+        writeOptions = o.writeOptions)
+      val projectedQuery = if (needsAdjustment) {
+        resolveQueryColumnsByOrdinal(
+          query = o.query,
+          targetAttrs = tableRelation.output,
+          deltaTable = deltaTableV2,
+          writeOptions = o.writeOptions)
+      } else {
+        DeltaInsertReplaceOnOrUsingCommand.addOrdinalAliasProjection(
+          queryToAlias = o.query, aliasAttrs = tableRelation.output)
+      }
+      val deltaOptions = new DeltaOptions(
+        CaseInsensitiveMap(deltaTableV2.options ++ o.writeOptions),
+        session.sessionState.conf)
+      val writeCmd = WriteIntoDelta(
+        deltaLog = deltaTableV2.deltaLog,
+        mode = SaveMode.Overwrite,
+        options = deltaOptions,
+        partitionColumns = Nil,
+        configuration = Map.empty,
+        data = DataFrameUtils.ofRows(session, projectedQuery),
+        catalogTableOpt = deltaTableV2.catalogTable)
+      DeltaInsertReplaceOnOrUsingCommand(
+        deltaTable = deltaTableV2,
+        query = projectedQuery,
+        writeCmd = writeCmd,
+        insertReplaceCriteriaOpt = None,
+        byName = false,
+        apiOrigin = InsertReplaceOnOrUsingAPIOrigin.DFv1InsertInto)
+
     // INSERT OVERWRITE by ordinal and df.insertInto()
     case o @ OverwriteDelta(r, d) if !o.isByName &&
+        !hasReplaceOnOrUsingOption(o.writeOptions) &&
         needsSchemaAdjustmentByOrdinal(d, o.query, r.schema, o.writeOptions) =>
       val projection = resolveQueryColumnsByOrdinal(o.query, r.output, d, o.writeOptions)
       if (projection != o.query) {
@@ -282,7 +342,13 @@ class DeltaAnalysis(session: SparkSession)
     // since we only want to up-cast for SQL insert into by name
     case o @ OverwriteDelta(r, d) if o.isByName && o.origin.sqlText.nonEmpty &&
         needsSchemaAdjustmentByName(o.query, r.output, d, o.writeOptions) =>
-      val projection = resolveQueryColumnsByName(o.query, r.output, d, o.writeOptions)
+      val projection = resolveQueryColumnsByName(
+        query = o.query,
+        targetAttrs = r.output,
+        deltaTable = d,
+        writeOptions = o.writeOptions,
+        allowSchemaEvolution = true,
+        isDfByNameInsert = false)
       if (projection != o.query) {
         val aliases = AttributeMap(o.query.output.zip(projection.output).collect {
           case (l: AttributeReference, r: AttributeReference) if !l.sameRef(r) => (l, r)
@@ -308,7 +374,13 @@ class DeltaAnalysis(session: SparkSession)
         // INSERT OVERWRITE by name
         // OverwriteDelta.byName is also used for DataFrame append so we check for the SQL origin
         // text since we only want to up-cast for SQL insert into by name
-        resolveQueryColumnsByName(o.query, r.output, d, o.writeOptions)
+        resolveQueryColumnsByName(
+          query = o.query,
+          targetAttrs = r.output,
+          deltaTable = d,
+          writeOptions = o.writeOptions,
+          allowSchemaEvolution = true,
+          isDfByNameInsert = false)
       } else {
         o.query
       }
@@ -908,6 +980,34 @@ class DeltaAnalysis(session: SparkSession)
   }
 
   /**
+   * Conditionally wraps a struct expression with an IF expression to preserve NULL source values
+   * when `DELTA_INSERT_PRESERVE_NULL_SOURCE_STRUCTS` is enabled:
+   *   IF(sourceExpr IS NULL, NULL, createStructExpr)
+   *
+   * This prevents null expansion where a null struct would be incorrectly expanded to a struct
+   * with all fields set to NULL during INSERT operations.
+   *
+   * @param sourceExpr The source struct expression
+   * @param createStructExpr The generated CreateStruct expression
+   * @return The potentially wrapped expression with null preservation logic
+   */
+  private def maybeWrapWithNullPreservationForInsert(
+      sourceExpr: Expression,
+      createStructExpr: Expression): Expression = {
+    if (conf.getConf(DeltaSQLConf.DELTA_INSERT_PRESERVE_NULL_SOURCE_STRUCTS)) {
+      val sourceNullCondition = IsNull(sourceExpr)
+      val targetType = createStructExpr.dataType
+      If(
+        sourceNullCondition,
+        Literal.create(null, targetType),
+        createStructExpr
+      )
+    } else {
+      createStructExpr
+    }
+  }
+
+  /**
    * Performs the schema adjustment by adding UpCasts (which are safe) and Aliases so that we
    * can check if the by-ordinal schema of the insert query matches our Delta table.
    * The schema adjustment also include string length check if it's written into a char/varchar
@@ -941,16 +1041,30 @@ class DeltaAnalysis(session: SparkSession)
    * generated columns. If values of any columns are not in the query output, they must be generated
    * columns.
    */
-  private def resolveQueryColumnsByName(
+  protected def resolveQueryColumnsByName(
       query: LogicalPlan,
       targetAttrs: Seq[Attribute],
       deltaTable: DeltaTableV2,
-      writeOptions: Map[String, String]): LogicalPlan = {
-    insertIntoByNameMissingColumn(query, targetAttrs, deltaTable)
+      writeOptions: Map[String, String],
+      allowSchemaEvolution: Boolean = false,
+      isDfByNameInsert: Boolean): LogicalPlan = {
+    // Schema evolution is only effective when mergeSchema is enabled in write options AND
+    // the feature is enabled via SQL conf. For dataframe by-name queries, the schema evolution
+    // check is always deferred until after DeltaAnalysis, so avoid throwing here.
+    val effectiveSchemaEvolution = allowSchemaEvolution && (isDfByNameInsert ||
+      new DeltaOptions(deltaTable.options ++ writeOptions, conf).canMergeSchema &&
+      session.conf.get(DeltaSQLConf.DELTA_INSERT_BY_NAME_SCHEMA_EVOLUTION_ENABLED))
+
+    // DataFrame by-name inserts always allow missing columns; SQL BY NAME inserts only allow
+    // them when USE_NULLS_FOR_DEFAULT_COLUMN_VALUES is set or the column has a default/generated
+    // expression. isDfByNameInsert=false signals the SQL path, which needs the stricter check.
+    if (!isDfByNameInsert) {
+      insertIntoByNameMissingColumn(query, targetAttrs, deltaTable, effectiveSchemaEvolution)
+    }
 
     // This is called before resolveOutputColumns in postHocResolutionRules, so we need to duplicate
     // the schema validation here.
-    if (query.output.length > targetAttrs.length) {
+    if (!effectiveSchemaEvolution && query.output.length > targetAttrs.length) {
       throw QueryCompilationErrors.cannotWriteTooManyColumnsToTableError(
         tableName = deltaTable.name(),
         expected = targetAttrs.map(_.name),
@@ -960,10 +1074,16 @@ class DeltaAnalysis(session: SparkSession)
     val project = query.output.map { attr =>
       val targetAttr = targetAttrs.find(t => session.sessionState.conf.resolver(t.name, attr.name))
         .getOrElse {
-          throw DeltaErrors.missingColumn(attr, targetAttrs)
+          if (effectiveSchemaEvolution) {
+            attr
+          } else {
+            // Extra columns in the source are not allowed when schema evolution is disabled.
+            throw DeltaErrors.missingColumn(attr, targetAttrs)
+          }
         }
       addCastToColumn(attr, targetAttr, deltaTable.name(),
-        typeWideningMode = getTypeWideningMode(deltaTable, writeOptions)
+        typeWideningMode = getTypeWideningMode(deltaTable, writeOptions),
+        byName = isDfByNameInsert
       )
     }
     Project(project, query)
@@ -973,29 +1093,47 @@ class DeltaAnalysis(session: SparkSession)
       attr: NamedExpression,
       targetAttr: NamedExpression,
       tblName: String,
-      typeWideningMode: TypeWideningMode): NamedExpression = {
+      typeWideningMode: TypeWideningMode,
+      byName: Boolean = false): NamedExpression = {
     val expr = (attr.dataType, targetAttr.dataType) match {
       case (s, t) if s == t =>
         attr
       case (s: StructType, t: StructType) if s != t =>
-        addCastsToStructs(tblName, attr, s, t, typeWideningMode)
+        if (byName) {
+          addCastsToStructsByName(tblName, attr, s, t, typeWideningMode)
+        } else {
+          addCastsToStructsByPosition(tblName, attr, s, t, typeWideningMode)
+        }
       case (ArrayType(s: StructType, sNull: Boolean), ArrayType(t: StructType, tNull: Boolean))
         if s != t && sNull == tNull =>
-        addCastsToArrayStructs(tblName, attr, s, t, sNull, typeWideningMode)
+        addCastsToArrayStructs(tblName, attr, s, t, sNull, typeWideningMode, byName)
+      case (ArrayType(s, sNull: Boolean), ArrayType(t, tNull: Boolean)) if byName && s != t =>
+        // General array element casting for non-struct elements currently only for by-name inserts.
+        // Recursively applies addCastToColumn to each element via ArrayTransform.
+        val elementVar = NamedLambdaVariable("element", s, sNull)
+        val targetElementAttr = AttributeReference("element", t, tNull)()
+        val castedElement = addCastToColumn(
+          elementVar, targetElementAttr, tblName, typeWideningMode, byName)
+        ArrayTransform(attr, LambdaFunction(castedElement, Seq(elementVar)))
+      case (_, _: NullType) if byName =>
+        attr
       case (s: AtomicType, t: AtomicType)
         if typeWideningMode.shouldWidenTo(fromType = t, toType = s) =>
         // Keep the type from the query, the target schema will be updated to widen the existing
         // type to match it.
         attr
       case (s: MapType, t: MapType)
-        if !DataType.equalsStructurally(s, t, ignoreNullability = true) =>
+        if !DataType.equalsStructurally(s, t, ignoreNullability = true) || (byName && s != t) =>
         // only trigger addCastsToMaps if exists differences like extra fields, renaming or type
-        // differences.
-        addCastsToMaps(tblName, attr, s, t, typeWideningMode)
+        // differences. When by-name, always trigger as equalsStructurally is a positional check.
+        addCastsToMaps(tblName, attr, s, t, typeWideningMode, byName)
       case _ =>
         getCastFunction(attr, targetAttr.dataType, targetAttr.name)
     }
-    Alias(expr, targetAttr.name)(explicitMetadata = Option(targetAttr.metadata))
+    // Preserve source name when byName=true to let downstream handle normalization.
+    val fieldName = if (byName) attr.name else targetAttr.name
+    val metadata = if (byName) attr.metadata else targetAttr.metadata
+    Alias(expr, fieldName)(explicitMetadata = Option(metadata))
   }
 
   /**
@@ -1044,6 +1182,12 @@ class DeltaAnalysis(session: SparkSession)
         typeWideningMode = getTypeWideningMode(deltaTable, writeOptions))
   }
 
+  private def hasReplaceOnOrUsingOption(writeOptions: Map[String, String]): Boolean = {
+    val caseInsensitiveWriteOptions = CaseInsensitiveMap(writeOptions)
+    caseInsensitiveWriteOptions.contains(DeltaOptions.REPLACE_ON_OPTION) ||
+      caseInsensitiveWriteOptions.contains(DeltaOptions.REPLACE_USING_OPTION)
+  }
+
   /**
    * Checks for missing columns in a insert by name query and throws an exception if found.
    * Delta does not require users to provide values for generated columns, so any columns missing
@@ -1053,10 +1197,20 @@ class DeltaAnalysis(session: SparkSession)
   private def insertIntoByNameMissingColumn(
       query: LogicalPlan,
       targetAttrs: Seq[Attribute],
-      deltaTable: DeltaTableV2): Unit = {
-    if (query.output.length < targetAttrs.length) {
-      // Some columns are not specified. We don't allow schema evolution in INSERT INTO BY NAME, so
-      // we need to ensure the missing columns must be generated columns.
+      deltaTable: DeltaTableV2,
+      allowSchemaEvolution: Boolean = false): Unit = {
+    // When allowing the source schema to contain extra columns, it can still
+    // be missing required columns from the target schema.
+    //
+    // The total column count alone is not sufficient for validation.
+    // A source may have more columns overall but still omit specific columns
+    // that are required by the target schema.
+    //
+    // Example:
+    //   Target: [a, b]
+    //   Source: [a, x, y]
+    // Since the source has 3 columns vs target's 2, but is missing column b, this should be caught.
+    if (allowSchemaEvolution || query.output.length < targetAttrs.length) {
       val userSpecifiedNames = if (session.sessionState.conf.caseSensitiveAnalysis) {
         query.output.map(a => (a.name, a)).toMap
       } else {
@@ -1084,14 +1238,23 @@ class DeltaAnalysis(session: SparkSession)
    * of INSERT INTO. Here we check if we need to perform any schema adjustment for INSERT INTO by
    * name queries. We also check that any columns not in the list of user-specified columns must
    * have a default expression.
+   *
+   * @param isDfByNameInsert True for DataFrame by-name inserts, false for SQL by name inserts. On
+   *                         the first analyzer pass, controls two behaviors: (1) whether missing
+   *                         non-generated columns are an error, and (2) whether struct field
+   *                         comparison respects session case-sensitivity. Subsequent passes always
+   *                         see true, but it should be safe as we will have already thrown errors
+   *                         for missing columns and renamed columns for SQL inserts.
    */
-  private def needsSchemaAdjustmentByName(
+  protected def needsSchemaAdjustmentByName(
       query: LogicalPlan,
       targetAttrs: Seq[Attribute],
       deltaTable: DeltaTableV2,
-      writeOptions: Map[String, String]): Boolean = {
-    insertIntoByNameMissingColumn(query, targetAttrs, deltaTable)
-    val userSpecifiedNames = if (session.sessionState.conf.caseSensitiveAnalysis) {
+      writeOptions: Map[String, String],
+      isDfByNameInsert: Boolean = false): Boolean = {
+    if (!isDfByNameInsert) insertIntoByNameMissingColumn(query, targetAttrs, deltaTable)
+    val caseSensitive = session.sessionState.conf.caseSensitiveAnalysis
+    val userSpecifiedNames = if (caseSensitive) {
       query.output.map(a => (a.name, a)).toMap
     } else {
       CaseInsensitiveMap(query.output.map(a => (a.name, a)).toMap)
@@ -1100,7 +1263,13 @@ class DeltaAnalysis(session: SparkSession)
     !SchemaUtils.isReadCompatible(
       specifiedTargetAttrs.toStructType.asNullable,
       query.output.toStructType,
-      typeWideningMode = getTypeWideningMode(deltaTable, writeOptions)
+      typeWideningMode = getTypeWideningMode(deltaTable, writeOptions),
+      // DataFrame by-name inserts allow missing nested columns; SQL inserts do not.
+      allowMissingColumns = isDfByNameInsert,
+      // DF by-name casting preserves source field names, so (correctly) respect case to avoid
+      // infinite loops.
+      caseSensitive = caseSensitive || !isDfByNameInsert,
+      allowVoidTypeChange = isDfByNameInsert
     )
   }
 
@@ -1124,9 +1293,9 @@ class DeltaAnalysis(session: SparkSession)
   }
 
   /**
-   * Recursively casts struct data types in case the source/target type differs.
+   * Recursively casts struct data types positionally in case the source/target type differs.
    */
-  private def addCastsToStructs(
+  private def addCastsToStructsByPosition(
       tableName: String,
       parent: NamedExpression,
       source: StructType,
@@ -1147,7 +1316,7 @@ class DeltaAnalysis(session: SparkSession)
           case t: StructType =>
             val subField = Alias(GetStructField(parent, i, Option(name)), targetField.name)(
               explicitMetadata = Option(metadata))
-            addCastsToStructs(tableName, subField, nested, t, typeWideningMode)
+            addCastsToStructsByPosition(tableName, subField, nested, t, typeWideningMode)
           case o =>
             val field = parent.qualifiedName + "." + name
             val targetName = parent.qualifiedName + "." + targetField.name
@@ -1173,7 +1342,89 @@ class DeltaAnalysis(session: SparkSession)
           GetStructField(parent, i, Option(sourceField.name)),
           sourceField.name)(explicitMetadata = Option(sourceField.metadata))
     }
-    Alias(CreateStruct(fields), parent.name)(
+
+    // Fix for null expansion caused by struct type cast by preserving NULL source structs.
+    //
+    // Problem: When inserting a struct column, if the source struct is NULL, the casting logic
+    // will expand the NULL into a non-null struct with all fields set to NULL:
+    //   NULL -> struct(field1: null, field2: null, ..., newField: null)
+    //
+    // Expected: The target struct should remain NULL when the source struct is NULL:
+    //   NULL -> NULL
+    //
+    // Solution: Wrap the CreateStruct expression in an IF expression that preserves NULL:
+    //   IF(source_struct IS NULL, NULL, CreateStruct(...))
+    //
+    // This is controlled by the DELTA_INSERT_PRESERVE_NULL_SOURCE_STRUCTS config.
+    val createStructExpr = CreateStruct(fields)
+    val wrappedWithNullPreservation =
+      maybeWrapWithNullPreservationForInsert(
+        sourceExpr = parent,
+        createStructExpr = createStructExpr)
+    Alias(wrappedWithNullPreservation, parent.name)(
+      parent.exprId, parent.qualifier, Option(parent.metadata))
+  }
+
+  /**
+   * Recursively casts struct data types by matching fields by name.
+   * Unlike addCastsToStructsByPosition, this preserves source field names (i.e. capitalization)
+   * and lets downstream handle normalization.
+   */
+  private def addCastsToStructsByName(
+      tableName: String,
+      parent: NamedExpression,
+      source: StructType,
+      target: StructType,
+      typeWideningMode: TypeWideningMode): NamedExpression = {
+    val resolver = session.sessionState.conf.resolver
+    val fields = source.map { sourceField =>
+      val sourceIndex = source.fieldIndex(sourceField.name)
+      val targetFieldOpt = target.find(t => resolver(t.name, sourceField.name))
+      targetFieldOpt match {
+        case Some(targetField) =>
+          val expr = (sourceField.dataType, targetField.dataType) match {
+            // Delegate nested complex types to addCastToColumn which dispatches
+            // to the appropriate by-name handler (structs, arrays, maps).
+            case (_: StructType, _: StructType)
+                | (_: ArrayType, _: ArrayType) | (_: MapType, _: MapType)
+                if sourceField.dataType != targetField.dataType =>
+              val subField = Alias(
+                GetStructField(parent, sourceIndex, Option(sourceField.name)),
+                sourceField.name
+              )()
+              val targetAttr = AttributeReference(
+                targetField.name, targetField.dataType, targetField.nullable)()
+              addCastToColumn(subField, targetAttr, tableName, typeWideningMode, byName = true)
+
+            case (_, _: NullType) =>
+              GetStructField(parent, sourceIndex, Option(sourceField.name))
+            case (sourceType: AtomicType, targetType: AtomicType)
+              if typeWideningMode.shouldWidenTo(fromType = targetType, toType = sourceType) =>
+              GetStructField(parent, sourceIndex, Option(sourceField.name))
+
+            case _ =>
+              getCastFunction(
+                GetStructField(parent, sourceIndex, Option(sourceField.name)),
+                targetField.dataType,
+                targetField.name
+              )
+          }
+          Alias(expr, sourceField.name)(explicitMetadata = Option(sourceField.metadata))
+
+        case None =>
+          // Source field doesn't exist in target - pass through as-is.
+          Alias(
+            GetStructField(parent, sourceIndex, Option(sourceField.name)),
+            sourceField.name
+          )(explicitMetadata = Option(sourceField.metadata))
+      }
+    }
+
+    // Wrap the struct in an if statement to make sure that when a null is passed in, the struct
+    // field is null instead of a non-null struct with a null for each nested field.
+    val resultStruct = CreateStruct(fields)
+    val createStructExpr = If(IsNull(parent), Literal(null, resultStruct.dataType), resultStruct)
+    Alias(createStructExpr, parent.name)(
       parent.exprId, parent.qualifier, Option(parent.metadata))
   }
 
@@ -1183,10 +1434,17 @@ class DeltaAnalysis(session: SparkSession)
       source: StructType,
       target: StructType,
       sourceNullable: Boolean,
-      typeWideningMode: TypeWideningMode): Expression = {
-    val structConverter: (Expression, Expression) => Expression = (_, i) =>
-      addCastsToStructs(
-        tableName, Alias(GetArrayItem(parent, i), i.toString)(), source, target, typeWideningMode)
+      typeWideningMode: TypeWideningMode,
+      byName: Boolean = false): Expression = {
+    val structConverter: (Expression, Expression) => Expression = (_, i) => {
+      if (byName) {
+        addCastsToStructsByName(tableName, Alias(GetArrayItem(parent, i), i.toString)(),
+          source, target, typeWideningMode)
+      } else {
+        addCastsToStructsByPosition(tableName, Alias(GetArrayItem(parent, i), i.toString)(),
+          source, target, typeWideningMode)
+      }
+    }
     val transformLambdaFunc = {
       val elementVar = NamedLambdaVariable("elementVar", source, sourceNullable)
       val indexVar = NamedLambdaVariable("indexVar", IntegerType, false)
@@ -1211,7 +1469,8 @@ class DeltaAnalysis(session: SparkSession)
       parent: NamedExpression,
       sourceMapType: MapType,
       targetMapType: MapType,
-      typeWideningMode: TypeWideningMode): Expression = {
+      typeWideningMode: TypeWideningMode,
+      byName: Boolean = false): Expression = {
     val transformedKeys =
       if (sourceMapType.keyType != targetMapType.keyType) {
         // Create a transformation for the keys
@@ -1227,7 +1486,8 @@ class DeltaAnalysis(session: SparkSession)
               key,
               keyAttr,
               tableName,
-              typeWideningMode
+              typeWideningMode,
+              byName
             )
           LambdaFunction(castedKey, Seq(key))
         })
@@ -1250,7 +1510,8 @@ class DeltaAnalysis(session: SparkSession)
               value,
               valueAttr,
               tableName,
-              typeWideningMode
+              typeWideningMode,
+              byName
             )
           LambdaFunction(castedValue, Seq(value))
         })
@@ -1462,6 +1723,12 @@ case class DeltaDynamicPartitionOverwriteCommand(
     isByName: Boolean,
     analyzedQuery: Option[LogicalPlan] = None) extends RunnableCommand with V2WriteCommand {
 
+  val withSchemaEvolution: Boolean =
+    new DeltaOptions(deltaTable.options ++ writeOptions, conf).canMergeSchema
+
+  val writePrivileges: Set[TableWritePrivilege] =
+    Set(TableWritePrivilege.INSERT, TableWritePrivilege.DELETE)
+
   override def child: LogicalPlan = query
 
   override def withNewQuery(newQuery: LogicalPlan): DeltaDynamicPartitionOverwriteCommand = {
@@ -1488,6 +1755,18 @@ case class DeltaDynamicPartitionOverwriteCommand(
 
     // TODO: The configuration can be fetched directly from WriteIntoDelta's txn. Don't pass
     //  in the default snapshot's metadata config here.
+    if (deltaOptions.isReplaceOnOrUsingDefined) {
+      if (deltaOptions.replaceOn.isDefined && !sparkSession.sessionState.conf.getConf(
+          DeltaSQLConf.REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED)) {
+        throw DeltaErrors.operationNotSupportedException("replaceOn")
+      } else if (deltaOptions.replaceUsing.isDefined &&
+          !sparkSession.sessionState.conf.getConf(
+          DeltaSQLConf.REPLACE_USING_OPTION_IN_DATAFRAME_WRITER_ENABLED)) {
+        throw DeltaErrors.operationNotSupportedException("replaceUsing")
+      }
+      // replaceOn/replaceUsing is incompatible with dynamic partition overwrite.
+      throw DeltaErrors.dynamicPartitionOverwriteIncompatibleReplaceOnOrUsingError()
+    }
     WriteIntoDelta(
       deltaTable.deltaLog,
       SaveMode.Overwrite,
@@ -1499,4 +1778,3 @@ case class DeltaDynamicPartitionOverwriteCommand(
     ).run(sparkSession)
   }
 }
-

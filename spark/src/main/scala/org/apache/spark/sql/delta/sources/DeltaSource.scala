@@ -30,7 +30,6 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files.DeltaSourceSnapshot
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.storage.{ClosableIterator, SupportsRewinding}
 import org.apache.spark.sql.delta.storage.ClosableIterator._
 import org.apache.spark.sql.delta.util.{DateTimeUtils, TimestampFormatter}
@@ -116,62 +115,21 @@ trait DeltaSourceBase extends Source
     with DeltaLogging { self: DeltaSource =>
 
   /**
-   * Flag that allows user to force enable unsafe streaming read on Delta table with
-   * column mapping enabled AND drop/rename actions.
+   * Configuration options for handling schema changes behavior. Controls unsafe operations like
+   * column mapping changes, partition column changes, nullability changes, and type widening.
    */
-  protected lazy val allowUnsafeStreamingReadOnColumnMappingSchemaChanges: Boolean = {
-    val unsafeFlagEnabled = spark.sessionState.conf.getConf(
-      DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES)
-    if (unsafeFlagEnabled) {
-      recordDeltaEvent(
-        deltaLog,
-        "delta.unsafe.streaming.readOnColumnMappingSchemaChanges"
-      )
-    }
-    unsafeFlagEnabled
-  }
-
-  protected lazy val allowUnsafeStreamingReadOnPartitionColumnChanges: Boolean =
-    spark.sessionState.conf.getConf(
-      DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_PARTITION_COLUMN_CHANGE
+  protected lazy val schemaReadOptions: DeltaStreamUtils.SchemaReadOptions = {
+    val schemaReadOptions = DeltaStreamUtils.SchemaReadOptions.fromSparkSession(
+      spark = spark,
+      isStreamingFromColumnMappingTable =
+        snapshotAtSourceInit.metadata.columnMappingMode != NoMapping,
+      isTypeWideningSupportedInProtocol = TypeWidening.isSupported(snapshotAtSourceInit.protocol))
+    if (schemaReadOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges) recordDeltaEvent(
+      deltaLog,
+      "delta.unsafe.streaming.readOnColumnMappingSchemaChanges"
     )
-
-  /**
-   * Flag that allows user to disable the read-compatibility check during stream start which
-   * protects against an corner case in which verifyStreamHygiene could not detect.
-   * This is a bug fix but yet a potential behavior change, so we add a flag to fallback.
-   */
-  protected lazy val forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart =
-    spark.sessionState.conf.getConf(
-      DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES_DURING_STREAM_START)
-
-  /**
-   * Flag that allow user to fallback to the legacy behavior in which user can allow nullable=false
-   * schema to read nullable=true data, which is incorrect but a behavior change regardless.
-   */
-  protected lazy val forceEnableUnsafeReadOnNullabilityChange =
-    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STREAM_UNSAFE_READ_ON_NULLABILITY_CHANGE)
-
-  /**
-   * Whether we are streaming from a table with column mapping enabled
-   */
-  protected val isStreamingFromColumnMappingTable: Boolean =
-    snapshotAtSourceInit.metadata.columnMappingMode != NoMapping
-
-  /**
-   * Whether we are streaming from a table that has the type widening table feature enabled.
-   */
-  protected lazy val typeWideningEnabled: Boolean =
-    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_ALLOW_TYPE_WIDENING_STREAMING_SOURCE) &&
-      TypeWidening.isSupported(snapshotAtSourceInit.protocol)
-
-  /**
-   * Whether we should track widening type changes to allow users to accept them and resume
-   * stream processing.
-   */
-  protected lazy val enableSchemaTrackingForTypeWidening: Boolean =
-    spark.sessionState.conf
-      .getConf(DeltaSQLConf.DELTA_TYPE_WIDENING_ENABLE_STREAMING_SCHEMA_TRACKING)
+    schemaReadOptions
+  }
 
   /**
    * The persisted schema from the schema log that must be used to read data files in this Delta
@@ -545,14 +503,16 @@ trait DeltaSourceBase extends Source
       }
 
     // Cannot perfectly verify column mapping schema changes if we cannot compute a start snapshot.
-    if (!allowUnsafeStreamingReadOnColumnMappingSchemaChanges &&
-        isStreamingFromColumnMappingTable && errOpt.isDefined) {
+    if (!schemaReadOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges &&
+        schemaReadOptions.isStreamingFromColumnMappingTable && errOpt.isDefined) {
       throw DeltaErrors.failedToGetSnapshotDuringColumnMappingStreamingReadCheck(errOpt.get)
     }
 
     // Perform schema check if we need to, considering all escape flags.
-    if (!allowUnsafeStreamingReadOnColumnMappingSchemaChanges || typeWideningEnabled ||
-        !forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart) {
+    if (!schemaReadOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges ||
+        schemaReadOptions.typeWideningEnabled ||
+        !schemaReadOptions.
+            forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart) {
       startVersionSnapshotOpt.foreach { snapshot =>
         checkReadIncompatibleSchemaChanges(
           snapshot.metadata,
@@ -617,33 +577,12 @@ trait DeltaSourceBase extends Source
         newTableId = newMetadata.id, oldTableId = oldMetadata.id)
     }
 
-    def shouldTrackSchema: Boolean =
-      if (typeWideningEnabled && enableSchemaTrackingForTypeWidening &&
-        TypeWidening.containsWideningTypeChanges(oldMetadata.schema, newMetadata.schema)) {
-        // If schema tracking is enabled for type widening, we will detect widening type changes and
-        // block the stream until the user sets `allowSourceColumnTypeChange` - similar to handling
-        // DROP/RENAME for column mapping.
-        true
-      } else if (allowUnsafeStreamingReadOnColumnMappingSchemaChanges) {
-        false
-      } else {
-        // Column mapping schema changes
-        assert(!trackingMetadataChange, "should not check schema change while tracking it")
-        !DeltaColumnMapping.hasNoColumnMappingSchemaChanges(newMetadata, oldMetadata,
-          allowUnsafeStreamingReadOnPartitionColumnChanges)
-      }
-
-    if (shouldTrackSchema) {
-      throw DeltaErrors.blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges(
-        spark,
-        oldMetadata.schema,
-        newMetadata.schema,
-        detectedDuringStreaming = !validatedDuringStreamStart)
-    }
+    checkNonAdditiveSchemaChanges(oldMetadata, newMetadata, validatedDuringStreamStart)
 
     // Other standard read compatibility changes
     if (!validatedDuringStreamStart ||
-        !forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart) {
+        !schemaReadOptions.
+            forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart) {
 
       val schemaChange = if (options.readChangeFeed) {
         CDCReader.cdcReadSchema(metadata.schema)
@@ -655,75 +594,35 @@ trait DeltaSourceBase extends Source
       // check whether we can use `schema` (the fixed source schema we use in the same run of the
       // query) to read these new files safely.
       val backfilling = version < snapshotAtSourceInit.version
-      // We forbid the case when the the schemaChange is nullable while the read schema is NOT
-      // nullable, or in other words, `schema` should not tighten nullability from `schemaChange`,
-      // because we don't ever want to read back any nulls when the read schema is non-nullable.
-      val shouldForbidTightenNullability = !forceEnableUnsafeReadOnNullabilityChange
-      // If schema tracking is disabled for type widening, we allow widening type changes to go
-      // through without requiring the user to set `allowSourceColumnTypeChange`. The schema change
-      // will cause the stream to fail with a retryable exception, and the stream will restart using
-      // the new schema.
-      val allowWideningTypeChanges = typeWideningEnabled && !enableSchemaTrackingForTypeWidening
+      // Partition column change will be ignored if user enable the unsafe flag
+      val newPartitionColumns =
+        if (schemaReadOptions.allowUnsafeStreamingReadOnPartitionColumnChanges) Seq.empty
+        else newMetadata.partitionColumns
+      val oldPartitionColumns =
+        if (schemaReadOptions.allowUnsafeStreamingReadOnPartitionColumnChanges) Seq.empty
+        else oldMetadata.partitionColumns
 
-      if (!SchemaUtils.isReadCompatible(
-          existingSchema = schemaChange,
-          readSchema = schema,
-          forbidTightenNullability = shouldForbidTightenNullability,
-          // If a user is streaming from a column mapping table and enable the unsafe flag to ignore
-          // column mapping schema changes, we can allow the standard check to allow missing columns
-          // from the read schema in the schema change, because the only case that happens is when
-          // user rename/drops column but they don't care so they enabled the flag to unblock.
-          // This is only allowed when we are "backfilling", i.e. the stream progress is older than
-          // the analyzed table version. Any schema change past the analysis should still throw
-          // exception, because additive schema changes MUST be taken into account.
-          allowMissingColumns =
-            isStreamingFromColumnMappingTable &&
-              allowUnsafeStreamingReadOnColumnMappingSchemaChanges &&
-              backfilling,
-          // When backfilling after a type change, allow processing the data using the new, wider
-          // type.
-          typeWideningMode = if (allowWideningTypeChanges && backfilling) {
-              TypeWideningMode.AllTypeWidening
-            } else {
-              TypeWideningMode.NoTypeWidening
-            },
-          // Partition column change will be ignored if user enable the unsafe flag
-          newPartitionColumns = if (allowUnsafeStreamingReadOnPartitionColumnChanges) Seq.empty
-            else newMetadata.partitionColumns,
-          oldPartitionColumns = if (allowUnsafeStreamingReadOnPartitionColumnChanges) Seq.empty
-            else oldMetadata.partitionColumns
-        )) {
-        // Only schema change later than the current read snapshot/schema can be retried, in other
-        // words, backfills could never be retryable, because we have no way to refresh
-        // the latest schema to "catch up" when the schema change happens before than current read
-        // schema version.
-        // If not backfilling, we do another check to determine retryability, in which we assume
-        // we will be reading using this later `schemaChange` back on the current outdated `schema`,
-        // and if it works (including that `schemaChange` should not tighten the nullability
-        // constraint from `schema`), it is a retryable exception.
-        val retryable = !backfilling && SchemaUtils.isReadCompatible(
-          existingSchema = schema,
-          readSchema = schemaChange,
-          forbidTightenNullability = shouldForbidTightenNullability,
-          // Check for widening type changes that would succeed on retry when we backfill batches.
-          typeWideningMode = if (allowWideningTypeChanges) {
-              TypeWideningMode.AllTypeWidening
-            } else {
-              TypeWideningMode.NoTypeWidening
-            }
-        )
+      val checkResult = DeltaStreamUtils.checkSchemaChangesWhenNoSchemaTracking(
+        schemaChange, schema,
+        newPartitionColumns, oldPartitionColumns,
+        backfilling,
+        schemaReadOptions)
 
+      if (!DeltaStreamUtils.SchemaCompatibilityResult.isCompatible(checkResult)) {
+        val isRetryable =
+          DeltaStreamUtils.SchemaCompatibilityResult.isRetryableIncompatible(checkResult)
         recordDeltaEvent(
           deltaLog,
           "delta.streaming.source.schemaChanged",
           data = Map(
             "currentVersion" -> snapshotAtSourceInit.version,
             "newVersion" -> version,
-            "retryable" -> retryable,
+            "retryable" -> isRetryable,
             "backfilling" -> backfilling,
             "readChangeDataFeed" -> options.readChangeFeed,
-            "typeWideningEnabled" -> typeWideningEnabled,
-            "enableSchemaTrackingForTypeWidening" -> enableSchemaTrackingForTypeWidening,
+            "typeWideningEnabled" -> schemaReadOptions.typeWideningEnabled,
+            "enableSchemaTrackingForTypeWidening" ->
+                schemaReadOptions.enableSchemaTrackingForTypeWidening,
             "containsWideningTypeChanges" ->
               TypeWidening.containsWideningTypeChanges(schema, schemaChange)
           )
@@ -732,10 +631,59 @@ trait DeltaSourceBase extends Source
         throw DeltaErrors.schemaChangedException(
           schema,
           schemaChange,
-          retryable = retryable,
+          retryable = isRetryable,
           Some(version),
           includeStartingVersionOrTimestampMessage = options.containsStartingVersionOrTimestamp)
       }
+    }
+  }
+
+  /**
+   * Checks for non-additive schema changes (column renames, drops, type widening) and blocks
+   * the stream by throwing an exception if detected.
+   *
+   * Blocks when type widening tracking is enabled and widening changes exist, or when column
+   * mapping changes (rename/drop) are detected, unless `allowUnsafeStreamingReadOnColumnMapping
+   * SchemaChanges` is enabled. Upon blocking, the error requests the user to provide a schema
+   * tracking location to enable schema tracking. On restart, users must acknowledge changes via
+   * reader options or SQL confs.
+   * See [[DeltaSourceMetadataEvolutionSupport.validateIfSchemaChangeCanBeUnblocked]].
+   *
+   * Note: Should not be called when schema tracking is active (trackingMetadataChange = true).
+   *
+   * @param oldMetadata Previous metadata (typically from stream initialization)
+   * @param newMetadata New metadata with potential schema changes
+   * @param validatedDuringStreamStart Whether validating during stream start vs. execution,
+   *                                   which affects the error message.
+   * @throws DeltaAnalysisException if non-additive schema changes require blocking
+   */
+  private def checkNonAdditiveSchemaChanges(
+      oldMetadata: Metadata,
+      newMetadata: Metadata,
+      validatedDuringStreamStart: Boolean): Unit = {
+    val shouldTrackSchema: Boolean =
+      if (schemaReadOptions.typeWideningEnabled &&
+          schemaReadOptions.enableSchemaTrackingForTypeWidening &&
+        TypeWidening.containsWideningTypeChanges(oldMetadata.schema, newMetadata.schema)) {
+        // If schema tracking is enabled for type widening, we will detect widening type changes and
+        // block the stream until the user sets `allowSourceColumnTypeChange` - similar to handling
+        // DROP/RENAME for column mapping.
+        true
+      } else if (schemaReadOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges) {
+        false
+      } else {
+        // Column mapping schema changes
+        assert(!trackingMetadataChange, "should not check schema change while tracking it")
+        !DeltaColumnMapping.hasNoColumnMappingSchemaChanges(newMetadata, oldMetadata,
+          schemaReadOptions.allowUnsafeStreamingReadOnPartitionColumnChanges)
+      }
+
+    if (shouldTrackSchema) {
+      throw DeltaErrors.blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges(
+        spark,
+        oldMetadata.schema,
+        newMetadata.schema,
+        detectedDuringStreaming = !validatedDuringStreamStart)
     }
   }
 }
@@ -1480,14 +1428,12 @@ object DeltaSource extends DeltaLogging {
   }
 
   /**
-   * - If a commit version exactly matches the provided timestamp, we return it.
-   * - Otherwise, we return the earliest commit version
-   *   with a timestamp greater than the provided one.
-   * - If the provided timestamp is larger than the timestamp
-   *   of any committed version, and canExceedLatest is disabled we throw an error.
-   * - If the provided timestamp is larger than the timestamp
-   *   of any committed version, and canExceedLatest is enabled we return a version that is greater
-   *   than deltaLog.snapshot.version by one
+   * Returns the earliest commit version whose timestamp is >= the provided timestamp.
+   *
+   * This method fetches the commit at the given timestamp via
+   * [[DeltaLog.history.getActiveCommitAtTime]], computes the starting version using
+   * [[DeltaStreamUtils.getStartingVersionFromCommitAtTimestamp]], and validates the protocol
+   * at the returned version.
    *
    * @param spark - current spark session
    * @param deltaLog - Delta log of the table for which we find the version.
@@ -1495,6 +1441,8 @@ object DeltaSource extends DeltaLogging {
    * @param timestamp - user specified timestamp
    * @param canExceedLatest - if true, version can be greater than the latest snapshot commit
    * @return - corresponding version number for timestamp
+   * @see [[DeltaStreamUtils.getStartingVersionFromCommitAtTimestamp]] for the core version
+   *      computation logic
    */
   def getStartingVersionFromTimestamp(
       spark: SparkSession,
@@ -1509,31 +1457,20 @@ object DeltaSource extends DeltaLogging {
       canReturnLastCommit = true,
       mustBeRecreatable = false,
       canReturnEarliestCommit = true)
-    if (commit.timestamp >= timestamp.getTime) {
-      validateProtocolAt(spark, deltaLog, catalogTableOpt, commit.version)
-      // Find the commit at the `timestamp` or the earliest commit
-      commit.version
-    } else {
-      // commit.timestamp is not the same, so this commit is a commit before the timestamp and
-      // the next version if exists should be the earliest commit after the timestamp.
-      // Note: `getActiveCommitAtTime` has called `update`, so we don't need to call it again.
-      //
-      // Note2: In the use case of [[CDCReader]] timestamp passed in can exceed the latest commit
-      // timestamp, caller doesn't expect exception, and can handle the non-existent version.
-      val latestNotExceeded = commit.version + 1 <= deltaLog.unsafeVolatileSnapshot.version
-      if (latestNotExceeded || canExceedLatest) {
-        if (latestNotExceeded) {
-          validateProtocolAt(spark, deltaLog, catalogTableOpt, commit.version + 1)
-        }
-        commit.version + 1
-      } else {
-        val commitTs = new Timestamp(commit.timestamp)
-        val timestampFormatter = TimestampFormatter(DateTimeUtils.getTimeZone(tz))
-        val tsString = DateTimeUtils.timestampToString(
-          timestampFormatter, DateTimeUtils.fromJavaTimestamp(commitTs))
-        throw DeltaErrors.timestampGreaterThanLatestCommit(timestamp, commitTs, tsString)
-      }
+    // Note: `getActiveCommitAtTime` has called `update`, so we don't need to call it again.
+    val latestVersion = deltaLog.unsafeVolatileSnapshot.version
+    val startingVersion = DeltaStreamUtils.getStartingVersionFromCommitAtTimestamp(
+      timeZone = tz,
+      commitTimestamp = commit.timestamp,
+      commitVersion = commit.version,
+      latestVersion = latestVersion,
+      timestamp = timestamp,
+      canExceedLatest = canExceedLatest
+    )
+    if (startingVersion <= latestVersion) {
+      validateProtocolAt(spark, deltaLog, catalogTableOpt, startingVersion)
     }
+    startingVersion
   }
 
   /**

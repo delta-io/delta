@@ -359,6 +359,13 @@
     ],
     "sqlState" : "22003"
   },
+  "DELTA_CDC_NON_CONSTANT_ARGUMENT" : {
+    "message" : [
+      "The <argumentName> argument (position <pos>) of the <functionName> function requires a constant value, but got a non-constant expression: <sqlExpr>.",
+      ""
+    ],
+    "sqlState" : "42K0H"
+  },
   "DELTA_CDC_NOT_ALLOWED_IN_THIS_VERSION" : {
     "message" : [
       "Configuration delta.enableChangeDataFeed cannot be set. Change data feed from Delta is not yet available."
@@ -370,6 +377,12 @@
       "CDC read start/end parameters cannot be null. Please provide a valid version or timestamp."
     ],
     "sqlState" : "22004"
+  },
+  "DELTA_CDC_START_VERSION_AFTER_LATEST" : {
+    "message" : [
+      "Start version <start> for change data feed exceeds the latest table version <latest>."
+    ],
+    "sqlState" : "22003"
   },
   "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA" : {
     "message" : [
@@ -583,20 +596,56 @@
   },
   "DELTA_CONCURRENT_APPEND" : {
     "message" : [
-      "ConcurrentAppendException: Files were added to <partition> by a concurrent update. <retryMsg><conflictingCommit>\nRefer to <docLink> for more details."
+      "Transaction conflict detected. a concurrent <operation> added data to table <tableName> committed at version <version>."
     ],
+    "subClass" : {
+      "WITHOUT_HINT" : {
+        "message" : [
+          "The concurrent operation modified data that should have been read by this operation. Please retry the operation. Refer to <docLink> for more information."
+        ]
+      },
+      "WITH_PARTITION_HINT" : {
+        "message" : [
+          "The concurrent operation modified data in the partition <partitionValues> that should have been read by this operation. Please retry the operation. Refer to <docLink> for more information."
+        ]
+      }
+    },
     "sqlState" : "2D521"
   },
   "DELTA_CONCURRENT_DELETE_DELETE" : {
     "message" : [
-      "ConcurrentDeleteDeleteException: This transaction attempted to delete one or more files that were deleted (for example <file>) by a concurrent update. Please try the operation again.<conflictingCommit>\nRefer to <docLink> for more details."
+      "Transaction conflict detected, a concurrent <operation> deleted data from table <tableName> (committed at version <version>) that this transaction attempted to delete."
     ],
+    "subClass" : {
+      "WITHOUT_HINT" : {
+        "message" : [
+          "The concurrent operation deleted data that was read by this operation. Please retry the operation. Refer to <docLink> for more information."
+        ]
+      },
+      "WITH_PARTITION_HINT" : {
+        "message" : [
+          "The concurrent operation deleted data in the partition <partitionValues> that was read by this operation. Please retry the operation. Refer to <docLink> for more information."
+        ]
+      }
+    },
     "sqlState" : "2D521"
   },
   "DELTA_CONCURRENT_DELETE_READ" : {
     "message" : [
-      "ConcurrentDeleteReadException: This transaction attempted to read one or more files that were deleted (for example <file>) by a concurrent update. Please try the operation again.<conflictingCommit>\nRefer to <docLink> for more details."
+      "Transaction conflict detected, a concurrent <operation> deleted data from table <tableName> (committed at version <version>) that this transaction read."
     ],
+    "subClass" : {
+      "WITHOUT_HINT" : {
+        "message" : [
+          "The concurrent operation deleted data that was read by this operation. Please retry the operation. Refer to <docLink> for more information."
+        ]
+      },
+      "WITH_PARTITION_HINT" : {
+        "message" : [
+          "The concurrent operation deleted data in the partition <partitionValues> that was read by this operation. Please retry the operation. Refer to <docLink> for more information."
+        ]
+      }
+    },
     "sqlState" : "2D521"
   },
   "DELTA_CONCURRENT_TRANSACTION" : {
@@ -843,6 +892,12 @@
     ],
     "sqlState" : "XXKDS"
   },
+  "DELTA_DFV2_CREATE_REPLACE_INCOMPATIBLE_REPLACE_ON_OR_USING" : {
+    "message" : [
+      "DataFrame Writer V2 create()/replace()/createOrReplace() cannot be used with the `replaceOn` or `replaceUsing` option for Delta tables."
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_DOMAIN_METADATA_NOT_SUPPORTED" : {
     "message" : [
       "Detected DomainMetadata action(s) for domains <domainNames>, but DomainMetadataTableFeature is not enabled."
@@ -864,8 +919,70 @@
   },
   "DELTA_DUPLICATE_COLUMNS_FOUND" : {
     "message" : [
-      "Found duplicate column(s) <coltype>: <duplicateCols>"
+      "Found duplicate column(s): <duplicateCols>."
     ],
+    "subClass" : {
+      "ADDING_COLUMNS" : {
+        "message" : [
+          "The duplicate was found while adding columns."
+        ]
+      },
+      "CLUSTER_BY" : {
+        "message" : [
+          "The duplicate was found in CLUSTER BY."
+        ]
+      },
+      "CONVERT_TO_DELTA" : {
+        "message" : [
+          "The duplicate was found during conversion to Delta."
+        ]
+      },
+      "DATA" : {
+        "message" : [
+          "The duplicate was found in the data being saved."
+        ]
+      },
+      "EXISTING_SCHEMA" : {
+        "message" : [
+          "The duplicate was found in the existing table schema."
+        ]
+      },
+      "METADATA_UPDATE" : {
+        "message" : [
+          "The duplicate was found in the metadata update."
+        ]
+      },
+      "PARTITION_COLUMNS" : {
+        "message" : [
+          "The duplicate was found in the partition columns."
+        ]
+      },
+      "PARTITION_SCHEMA" : {
+        "message" : [
+          "The duplicate was found in the partition schema."
+        ]
+      },
+      "READ_SCHEMA" : {
+        "message" : [
+          "The duplicate was found in the schema of the data being read."
+        ]
+      },
+      "REPLACING_COLUMNS" : {
+        "message" : [
+          "The duplicate was found while replacing columns."
+        ]
+      },
+      "SPECIFIED_COLUMNS" : {
+        "message" : [
+          "The duplicate was found in the specified columns."
+        ]
+      },
+      "TABLE_SCHEMA" : {
+        "message" : [
+          "The duplicate was found in the table schema."
+        ]
+      }
+    },
     "sqlState" : "42711"
   },
   "DELTA_DUPLICATE_COLUMNS_ON_INSERT" : {
@@ -904,6 +1021,12 @@
       "Dynamic partition overwrite mode is specified by session config or write options, but it is disabled by `delta.dynamicPartitionOverwrite.enabled=false`."
     ],
     "sqlState" : "0A000"
+  },
+  "DELTA_DYNAMIC_PARTITION_OVERWRITE_INCOMPATIBLE_REPLACE_ON_OR_USING" : {
+    "message" : [
+      "Dynamic partition overwrite is incompatible with the `replaceOn`/`replaceUsing` option."
+    ],
+    "sqlState" : "42613"
   },
   "DELTA_EMPTY_DATA" : {
     "message" : [
@@ -1385,6 +1508,12 @@
     ],
     "sqlState" : "42601"
   },
+  "DELTA_INCOMPATIBLE_DATAFRAME_OPTIONS" : {
+    "message" : [
+      "The `<firstDeltaOption>` option cannot be used with the `<secondDeltaOption>` option for Delta tables."
+    ],
+    "sqlState" : "42613"
+  },
   "DELTA_INCONSISTENT_LOGSTORE_CONFS" : {
     "message" : [
       "(<setKeys>) cannot be set to different values. Please only set one of them, or set them to the same value."
@@ -1441,6 +1570,18 @@
       "Column <columnName> is not specified in INSERT"
     ],
     "sqlState" : "42802"
+  },
+  "DELTA_INSERT_REPLACE_ON_AMBIGUOUS_COLUMNS_IN_CONDITION" : {
+    "message" : [
+      "Column(s) <columnNames> are ambiguous in the condition of INSERT REPLACE ON. Consider specifying an alias for these columns."
+    ],
+    "sqlState" : "42702"
+  },
+  "DELTA_INSERT_REPLACE_ON_UNRESOLVED_COLUMNS_IN_CONDITION" : {
+    "message" : [
+      "Column(s) <columnNames> cannot be resolved in the condition of INSERT REPLACE ON."
+    ],
+    "sqlState" : "42703"
   },
   "DELTA_INVALID_AUTO_COMPACT_TYPE" : {
     "message" : [
@@ -1499,7 +1640,7 @@
   },
   "DELTA_INVALID_COMMITTED_VERSION" : {
     "message" : [
-      "The committed version is <committedVersion> but the current version is <currentVersion>."
+      "The commit succeeded at version <committedVersion>, but post-commit validation detected version <currentVersion>."
     ],
     "sqlState" : "XXKDS"
   },
@@ -1698,6 +1839,12 @@
     ],
     "sqlState" : "42806"
   },
+  "DELTA_MERGE_INTO_EMPTY_SCHEMA_TARGET" : {
+    "message" : [
+      "Cannot MERGE INTO a table with no columns. The target table must have columns, or schema evolution must be enabled."
+    ],
+    "sqlState" : "428GU"
+  },
   "DELTA_MERGE_MATERIALIZE_SOURCE_FAILED_REPEATEDLY" : {
     "message" : [
       "Keeping the source of the MERGE statement materialized has failed repeatedly."
@@ -1745,13 +1892,49 @@
       "The table <tableName> already exists in the catalog but no metadata could be found for the table at the path <tablePath>.",
       "Did you manually delete files from the _delta_log directory? If so, then you should be able to recreate it as follows. First, drop the table by running `DROP TABLE <tableNameForDropCmd>`. Then, recreate it by running the current command again."
     ],
-    "sqlState" : "XXKDS"
+    "sqlState" : "42K03"
   },
   "DELTA_METADATA_CHANGED" : {
     "message" : [
       "MetadataChangedException: The metadata of the Delta table has been changed by a concurrent update. Please try the operation again.<conflictingCommit>\nRefer to <docLink> for more details."
     ],
     "sqlState" : "2D521"
+  },
+  "DELTA_METADATA_MISMATCH" : {
+    "message" : [
+      "A metadata mismatch was detected when writing to the Delta table."
+    ],
+    "subClass" : {
+      "OVERWRITE_REQUIRED" : {
+        "message" : [
+          "To overwrite your schema or change partitioning, please set: '.option(\"overwriteSchema\", \"true\")'.",
+          "Note that the schema can't be overwritten when using 'replaceWhere'."
+        ]
+      },
+      "PARTITIONING_MISMATCH" : {
+        "message" : [
+          "Partition columns do not match the partition columns of the table.",
+          "Given: <provided>",
+          "Table: <original>",
+          ""
+        ]
+      },
+      "SCHEMA_MISMATCH" : {
+        "message" : [
+          "A schema mismatch detected when writing to the Delta table (Table ID: <id>).",
+          "To enable schema migration using DataFrameWriter or DataStreamWriter, please set: '.option(\"mergeSchema\", \"true\")'.",
+          "For other operations, set the session configuration spark.databricks.delta.schema.autoMerge.enabled to \"true\". See the documentation specific to the operation for details.",
+          "",
+          "Table schema:",
+          "<tableSchema>",
+          "",
+          "Data schema:",
+          "<dataSchema>",
+          ""
+        ]
+      }
+    },
+    "sqlState" : "42KDG"
   },
   "DELTA_MISSING_CHANGE_DATA" : {
     "message" : [
@@ -2103,6 +2286,12 @@
     ],
     "sqlState" : "42601"
   },
+  "DELTA_OVERWRITE_BY_FILTER_INCOMPATIBLE_REPLACE_ON_OR_USING" : {
+    "message" : [
+      "Overwrite by filter is incompatible with the `replaceOn`/`replaceUsing` option."
+    ],
+    "sqlState" : "42613"
+  },
   "DELTA_OVERWRITE_SCHEMA_WITH_DYNAMIC_PARTITION_OVERWRITE" : {
     "message" : [
       "'overwriteSchema' cannot be used in dynamic partition overwrite mode."
@@ -2237,6 +2426,13 @@
       "<file>"
     ],
     "sqlState" : "XXKDS"
+  },
+  "DELTA_REPLACE_ON_OR_USING_TABLE_CONSTRAINT_VIOLATION" : {
+    "message" : [
+      "Written data violates a table constraint during REPLACE ON/USING '<replaceExpression>'.",
+      "<invariantViolationMessage>"
+    ],
+    "sqlState" : "44000"
   },
   "DELTA_REPLACE_WHERE_IN_OVERWRITE" : {
     "message" : [
@@ -2395,7 +2591,7 @@
   },
   "DELTA_SOURCE_TABLE_IGNORE_CHANGES" : {
     "message" : [
-      "Detected a data update (for example <file>) in the source table at version <version>. This is currently not supported. If this is going to happen regularly and you are okay to skip changes, set the option 'skipChangeCommits' to 'true'. If you would like the data update to be reflected, please restart this query with a fresh checkpoint directory. The source table can be found at path <dataPath>."
+      "Detected a data update (for example <changeInfo>) in the source table at version <version>. This is currently not supported. If this is going to happen regularly and you are okay to skip changes, set the option 'skipChangeCommits' to 'true'. If you would like the data update to be reflected, please restart this query with a fresh checkpoint directory. The source table can be found at path <dataPath>."
     ],
     "sqlState" : "0A000"
   },
@@ -2478,6 +2674,22 @@
     ],
     "sqlState" : "42KD4"
   },
+  "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE_V2" : {
+    "message" : [
+      "Streaming read is not supported on tables with read-incompatible schema changes (e.g. rename or drop or datatype changes).",
+      "Non-additive schema change handling is not supported in Delta source v2 yet.",
+      "For further information and possible next steps to resolve this issue, please review the documentation at <docLink>",
+      "Read schema: <readSchema>. Incompatible data schema: <incompatibleSchema>."
+    ],
+    "sqlState" : "42KD4"
+  },
+  "DELTA_STREAMING_INITIAL_SNAPSHOT_TOO_LARGE" : {
+    "message" : [
+      "Initial snapshot for Delta streaming at table '<tablePath>' (version <snapshotVersion>) contains <numFiles> files, which exceeds the maximum allowed <maxFiles> files.",
+      "<suggestions>"
+    ],
+    "sqlState" : "54000"
+  },
   "DELTA_STREAMING_METADATA_EVOLUTION" : {
     "message" : [
       "The schema, table configuration or protocol of your Delta table has changed during streaming.",
@@ -2539,6 +2751,18 @@
       "The schema log may have been corrupted. Please pick a new schema location."
     ],
     "sqlState" : "22000"
+  },
+  "DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART" : {
+    "message" : [
+      "The streaming query's schema does not match the current table schema.",
+      "Query schema (from analysis): <querySchema>",
+      "",
+      "Current table schema: <tableSchema>",
+      "",
+      "The table schema has changed since this streaming query was created.",
+      "Please create a new streaming DataFrame to pick up the current schema."
+    ],
+    "sqlState" : "KD007"
   },
   "DELTA_TABLE_ALREADY_CONTAINS_CDC_COLUMNS" : {
     "message" : [
@@ -2830,6 +3054,12 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION" : {
+    "message" : [
+      "<operation> is blocked by the catalog for Catalog-Managed tables."
+    ],
+    "sqlState" : "0AKDC"
+  },
   "DELTA_UNSUPPORTED_CLONE_REPLACE_SAME_TABLE" : {
     "message" : [
       "",
@@ -3031,6 +3261,12 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_UNSUPPORTED_PARTITION_COLUMN_CHANGE" : {
+    "message" : [
+      "Cannot change partition columns during <operation> operation (old: <oldPartitionColumns>, new: <newPartitionColumns>)."
+    ],
+    "sqlState" : "42P10"
+  },
   "DELTA_UNSUPPORTED_PARTITION_COLUMN_IN_BLOOM_FILTER" : {
     "message" : [
       "Creating a bloom filter index on a partitioning column is unsupported: <columnName>"
@@ -3111,12 +3347,6 @@
     ],
     "sqlState" : "0AKDC"
   },
-  "DELTA_UNSUPPORTED_VACUUM_ON_MANAGED_TABLE" : {
-    "message" : [
-      "Running vacuum on catalog-managed tables is currently not supported."
-    ],
-    "sqlState" : "0AKDC"
-  },
   "DELTA_UNSUPPORTED_VACUUM_SPECIFIC_PARTITION" : {
     "message" : [
       "Please provide the base path (<baseDeltaPath>) when Vacuuming Delta tables. Vacuuming specific partitions is currently not supported."
@@ -3140,6 +3370,29 @@
       "Cannot cast <fromCatalog> to <toCatalog>. All nested columns must match."
     ],
     "sqlState" : "42846"
+  },
+  "DELTA_USER_DEFINED_TYPE_COLUMN_CONTAINS_NULL_TYPE" : {
+    "message" : [
+      "Found NullType in column <columnName> which is of <userClass> user-defined type. Delta doesn't support writing NullType in user-defined types."
+    ],
+    "sqlState" : "22005"
+  },
+  "DELTA_VACUUM_RETENTION_PERIOD_NEGATIVE" : {
+    "message" : [
+      "Retention period for Vacuum can't be less than 0 hours."
+    ],
+    "sqlState" : "22003"
+  },
+  "DELTA_VACUUM_RETENTION_PERIOD_TOO_SHORT" : {
+    "message" : [
+      "The specified VACUUM retention period is too low and may corrupt this Delta table if any writes are in progress.",
+      "",
+      "If no operations (insert, upsert, delete, optimize) are running, you can disable this safety check by setting:",
+      "delta.retentionDurationCheck.enabled = false",
+      "",
+      "Otherwise, use a retention period of at least <configuredRetentionHours> hours."
+    ],
+    "sqlState" : "22003"
   },
   "DELTA_VERSIONS_NOT_CONTIGUOUS" : {
     "message" : [
@@ -3226,6 +3479,12 @@
     ],
     "sqlState" : "42605"
   },
+  "INSERT_REPLACE_USING_DISALLOW_MISALIGNED_COLUMNS" : {
+    "message" : [
+      "INSERT REPLACE USING has misaligned columns: <misalignedReplaceUsingCols>. The replaceUsing columns must be at the same ordinal position in both the table and the source query."
+    ],
+    "sqlState" : "42802"
+  },
   "RESERVED_CDC_COLUMNS_ON_WRITE" : {
     "message" : [
       "",
@@ -3235,6 +3494,12 @@
       "<config> to false."
     ],
     "sqlState" : "42939"
+  },
+  "UNRESOLVED_INSERT_REPLACE_USING_COLUMN" : {
+    "message" : [
+      "Column <colName> cannot be resolved in <relationType>. Did you mean one of the following? [<suggestion>]."
+    ],
+    "sqlState" : "42703"
   },
   "WRONG_COLUMN_DEFAULTS_FOR_DELTA_ALTER_TABLE_ADD_COLUMN_NOT_SUPPORTED" : {
     "message" : [
@@ -3277,11 +3542,6 @@
   "_LEGACY_ERROR_TEMP_DELTA_0006" : {
     "message" : [
       "Inconsistent IDENTITY metadata for column <colName> detected: <hasStart>, <hasStep>, <hasInsert>"
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_DELTA_0007" : {
-    "message" : [
-      "<message>"
     ]
   },
   "_LEGACY_ERROR_TEMP_DELTA_0008" : {

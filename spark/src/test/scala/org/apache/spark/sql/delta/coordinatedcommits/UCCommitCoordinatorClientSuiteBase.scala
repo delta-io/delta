@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.coordinatedcommits
 
 import java.io.File
 import java.net.URI
-import java.util.{Optional, UUID}
+import java.util.{Collections, Optional, UUID}
 
 import scala.collection.JavaConverters._
 
@@ -35,7 +35,7 @@ import io.delta.storage.commit.{
 }
 import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCommitCoordinatorClient}
 import org.apache.hadoop.fs.Path
-import org.mockito.ArgumentMatchers.anyString
+import org.mockito.ArgumentMatchers.{any, anyString}
 import org.mockito.Mock
 import org.mockito.Mockito
 import org.mockito.Mockito.{mock, when}
@@ -85,7 +85,7 @@ trait UCCommitCoordinatorClientSuiteBase extends CommitCoordinatorClientImplSuit
     CommitCoordinatorProvider.registerBuilder(UCCommitCoordinatorBuilder)
     ucCommitCoordinator = new InMemoryUCCommitCoordinator()
     ucClient = new InMemoryUCClient(metastoreId.toString, ucCommitCoordinator)
-    when(mockFactory.createUCClient(anyString(), anyString())).thenReturn(ucClient)
+    when(mockFactory.createUCClient(anyString(), any[Map[String, String]]())).thenReturn(ucClient)
   }
   override protected def createTableCommitCoordinatorClient(
       deltaLog: DeltaLog): TableCommitCoordinatorClient = {
@@ -124,7 +124,8 @@ trait UCCommitCoordinatorClientSuiteBase extends CommitCoordinatorClientImplSuit
       Optional.of(version),
       false,
       Optional.empty(),
-      Optional.empty())
+      Optional.empty(),
+      Optional.empty() /* icebergMetadata */)
   }
 
   override protected def validateBackfillStrategy(

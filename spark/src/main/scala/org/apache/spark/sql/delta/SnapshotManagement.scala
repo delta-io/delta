@@ -269,10 +269,10 @@ trait SnapshotManagement { self: DeltaLog =>
       // the additional listing.
       val eventData = Map(
         "initialCommitVersionsFromFsListingOpt" ->
-          initialLogTuplesFromFsListingOpt.map(_.map(_._3)),
+          initialLogTuplesFromFsListingOpt.map(_.map(_._3).toSeq),
         "initialMaxDeltaVersionSeen" -> initialMaxDeltaVersionSeen,
         "additionalCommitVersionsFromFsListingOpt" ->
-          additionalLogTuplesFromFsListingOpt.map(_.map(_._3)),
+          additionalLogTuplesFromFsListingOpt.map(_.map(_._3).toSeq),
         "maxDeltaVersionSeen" -> maxDeltaVersionSeen,
         "unbackfilledCommitVersions" ->
           unbackfilledCommitsResponse.getCommits.asScala.map(commit => commit.getVersion),
@@ -744,8 +744,8 @@ trait SnapshotManagement { self: DeltaLog =>
       log" starting from checkpoint version " +
       log"${MDC(DeltaLogKeys.START_VERSION, initSegment.checkpointProvider.version)}."
     } else log"."
-    logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] Loading version " +
-      log"${MDC(DeltaLogKeys.VERSION, initSegment.version)}" + startingFrom)
+    logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedUnsafeVolatileTableId)}] " +
+      log"Loading version ${MDC(DeltaLogKeys.VERSION, initSegment.version)}" + startingFrom)
     createSnapshotFromGivenOrEquivalentLogSegment(
         initSegment, tableCommitCoordinatorClientOpt, catalogTableOpt) { segment =>
       new Snapshot(
@@ -1089,13 +1089,15 @@ trait SnapshotManagement { self: DeltaLog =>
     val doAsync = stalenessAcceptable && !isCurrentlyStale(capturedSnapshot.updateTimestamp)
     if (!doAsync) {
       recordFrameProfile("Delta", "SnapshotManagement.update") {
-        withSnapshotLockInterruptibly {
+        val snapshot = withSnapshotLockInterruptibly {
           val newSnapshot = updateInternal(
             isAsync = false,
             catalogTableOpt)
           sendEvent(newSnapshot = newSnapshot)
           newSnapshot
         }
+        logCurrentSnapshot()
+        snapshot
       }
     } else {
       // Kick off an async update, if one is not already obviously running. Intentionally racy.
@@ -1118,6 +1120,7 @@ trait SnapshotManagement { self: DeltaLog =>
             recordDeltaEvent(this, "delta.snapshot.asyncUpdateFailed", data = Map("exception" -> e))
         }
       }
+      logCurrentSnapshot()
       currentSnapshot.snapshot
     }
   }
@@ -1279,7 +1282,6 @@ trait SnapshotManagement { self: DeltaLog =>
           catalogTableOpt = catalogTableOpt,
           checksumOpt = None)
         previousSnapshotOpt.foreach(logMetadataTableIdChange(_, newSnapshot))
-        logInfo(log"Updated snapshot to ${MDC(DeltaLogKeys.SNAPSHOT, newSnapshot)}")
         newSnapshot
       }
     }.getOrElse {
@@ -1327,6 +1329,28 @@ trait SnapshotManagement { self: DeltaLog =>
         "nextSnapshotVersion" -> newSnapshot.version,
         "nextSnapshotMetadata" -> newSnapshot.metadata))
     }
+  }
+
+  private def logCurrentSnapshot(): Unit = {
+    val CapturedSnapshot(snapshot, updatedTimestamp) = currentSnapshot
+    var logLine = log"Updated snapshot to ${MDC(DeltaLogKeys.SNAPSHOT, snapshot)}. "
+    logLine += log"Updated at: ${MDC(DeltaLogKeys.TIMESTAMP, updatedTimestamp)}. "
+    // Only check table size when checksum is available to avoid triggering state reconstruction.
+    snapshot.checksumOpt.foreach { checksum =>
+      logLine += log"Number of files: ${MDC(DeltaLogKeys.NUM_FILES, checksum.numFiles)} files. "
+      logLine += log"Table size: ${MDC(DeltaLogKeys.NUM_BYTES, checksum.tableSizeBytes)} bytes. "
+      val threshold = spark.conf.get(DeltaSQLConf.DELTA_SNAPSHOT_LOGGING_MAX_FILES_THRESHOLD)
+      if (threshold > 0 && checksum.numFiles > threshold) {
+        logWarning(
+          log"Snapshot at ${MDC(DeltaLogKeys.PATH, logPath)}, " +
+          log"version ${MDC(DeltaLogKeys.VERSION, snapshot.version)} has too many files " +
+          log"(files: ${MDC(DeltaLogKeys.NUM_FILES, checksum.numFiles)}, " +
+          log"threshold: ${MDC(DeltaLogKeys.NUM_FILES, threshold)}). This generally happens " +
+          log"when the table is over-partitioned or have lots of small files. Consider fixing " +
+          log"the partitioning scheme or running OPTIMIZE on the table.")
+      }
+    }
+    logInfo(logLine)
   }
 
   /**
@@ -1383,13 +1407,19 @@ trait SnapshotManagement { self: DeltaLog =>
         // NOTE: Validation is a no-op with incremental commit disabled.
         newSnapshot.validateChecksum(Map("context" -> checksumContext))
       } catch {
-        case _: IllegalStateException if !DeltaUtils.isTesting => false
+        case e: IllegalStateException if !DeltaUtils.isTesting =>
+          logWarning(log"Incremental checksum validation failed: " +
+            log"${MDC(DeltaLogKeys.ERROR, e.getMessage)}")
+          false
       }
 
       if (!crcIsValid) {
         // Create snapshot without incremental checksum. This will fallback to creating
         // a checksum based on state reconstruction. Disable incremental commit to avoid
         // further error triggers in this session.
+        logWarning(log"Disabling incremental commit for this session due to checksum " +
+          log"validation failure at version " +
+          log"${MDC(DeltaLogKeys.VERSION, newSnapshot.version)}")
         spark.sessionState.conf.setConf(DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED, false)
         spark.sessionState.conf.setConf(DeltaSQLConf.DELTA_WRITE_SET_TRANSACTIONS_IN_CRC, false)
         return createSnapshotWithCrc(checksumOpt = None)
@@ -1452,7 +1482,7 @@ trait SnapshotManagement { self: DeltaLog =>
         installSnapshot(newSnapshot, updateTimestamp)
       }
       logMetadataTableIdChange(previousSnapshot, updatedSnapshot)
-      logInfo(log"Updated snapshot to ${MDC(DeltaLogKeys.SNAPSHOT, updatedSnapshot)}")
+      logCurrentSnapshot()
       updatedSnapshot
     }
   }
@@ -1541,6 +1571,17 @@ trait SnapshotManagement { self: DeltaLog =>
     targetSnapshot: Snapshot, latestSnapshot: Snapshot): Unit = {
     if (!SparkSession.active.sessionState.conf.getConf(
       DeltaSQLConf.ENFORCE_TIME_TRAVEL_WITHIN_DELETED_FILE_RETENTION_DURATION)) {
+      return
+    }
+
+    // Skip enforcement for delta-sharing tables since they create a faked delta-log
+    // where the version timestamp may be set to 0.
+    val deltasharingLogFileSystemSchema =
+      // Cannot import io.delta.sharing.spark.DeltaSharingLogFileSystemConstants.SCHEME
+      // in the current (spark) module since sharing depends on spark; falling back to
+      // string comparison.
+      "delta-sharing-log"
+    if (logPath.toUri.getScheme == deltasharingLogFileSystemSchema) {
       return
     }
 

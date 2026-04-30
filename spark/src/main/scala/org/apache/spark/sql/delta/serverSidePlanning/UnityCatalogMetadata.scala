@@ -16,120 +16,29 @@
 
 package org.apache.spark.sql.delta.serverSidePlanning
 
-import org.apache.http.client.methods.HttpGet
-import org.apache.http.impl.client.HttpClientBuilder
-import org.apache.http.util.EntityUtils
-import org.apache.http.{HttpHeaders, HttpStatus}
+import scala.jdk.CollectionConverters._
+
+import io.unitycatalog.client.auth.TokenProvider
+
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.connector.catalog.{Identifier, Table}
-import org.apache.spark.sql.delta.util.JsonUtils
-
-/**
- * Case class for parsing Iceberg REST catalog /v1/config response.
- * Per the Iceberg REST spec, the config endpoint returns defaults and overrides.
- * The optional "prefix" in overrides is used for multi-tenant catalog paths.
- */
-private case class CatalogConfigResponse(
-    defaults: Map[String, String],
-    overrides: Map[String, String])
 
 /**
  * Metadata for Unity Catalog tables.
- * Constructs IRC REST endpoint from UC base URI.
+ * Provides base Iceberg REST endpoint and authentication for server-side planning.
  */
 case class UnityCatalogMetadata(
     catalogName: String,
     ucUri: String,
-    ucToken: String,
+    override val tokenSupplier: Option[() => String],
     tableProps: Map[String, String]) extends ServerSidePlanningMetadata {
 
   override def planningEndpointUri: String = {
-    // Construct IRC REST endpoint from UC URI
-    constructPlanEndpoint(ucUri)
+    val base = if (ucUri.endsWith("/")) ucUri.dropRight(1) else ucUri
+    s"$base/api/2.1/unity-catalog/iceberg-rest/v1"
   }
-
-  override def authToken: Option[String] = Some(ucToken)
 
   override def tableProperties: Map[String, String] = tableProps
-
-  /**
-   * Base URI with trailing slash removed for consistent URL construction.
-   */
-  private def baseUri: String = if (ucUri.endsWith("/")) ucUri.dropRight(1) else ucUri
-
-  /**
-   * Lazily fetched catalog configuration from /v1/config endpoint.
-   * Cached to avoid repeated HTTP calls for the same metadata instance.
-   */
-  private lazy val catalogConfig: Option[CatalogConfigResponse] = fetchCatalogConfig()
-
-  /**
-   * Fetch catalog configuration from Iceberg REST /v1/config endpoint.
-   * Returns None on any error (network, parsing, HTTP error), which triggers
-   * fallback to simple endpoint construction without prefix.
-   */
-  private def fetchCatalogConfig(): Option[CatalogConfigResponse] = {
-    try {
-      val icebergRestBase = s"$baseUri/api/2.1/unity-catalog/iceberg-rest"
-      val configUri = s"$icebergRestBase/v1/config"
-      val httpClient = HttpClientBuilder.create().build()
-      try {
-        val httpGet = new HttpGet(configUri)
-        // Add auth header if token present
-        if (ucToken.nonEmpty) {
-          httpGet.setHeader(HttpHeaders.AUTHORIZATION, s"Bearer $ucToken")
-        }
-        val response = httpClient.execute(httpGet)
-        try {
-          if (response.getStatusLine.getStatusCode == HttpStatus.SC_OK) {
-            val body = EntityUtils.toString(response.getEntity)
-            Some(JsonUtils.fromJson[CatalogConfigResponse](body))
-          } else {
-            None // Fallback to simple path
-          }
-        } finally {
-          response.close()
-        }
-      } finally {
-        httpClient.close()
-      }
-    } catch {
-      case _: Exception => None // Fallback to simple path on any error
-    }
-  }
-
-  /**
-   * Construct Iceberg REST catalog endpoint for server-side planning.
-   *
-   * This implementation follows the Iceberg REST catalog spec:
-   * 1. Calls GET {icebergRestBase}/v1/config to retrieve catalog configuration
-   * 2. Extracts optional "prefix" from config.overrides (e.g., "catalogs/my-catalog")
-   * 3. If prefix exists, includes it in the endpoint: {icebergRestBase}/v1/{prefix}
-   * 4. If prefix is missing or config call fails, uses simple path: {icebergRestBase}
-   *
-   * Examples:
-   * - Without prefix:
-   *   https://unity-catalog-server.example.com/api/2.1/unity-catalog/iceberg-rest
-   * - With prefix:
-   *   https://unity-catalog-server.example.com/api/2.1/unity-catalog/iceberg-rest/
-   *   v1/catalogs/my-catalog
-   *
-   * See: https://iceberg.apache.org/rest-catalog-spec/
-   *
-   * Note: Multi-tenant hierarchies (AWS Glue, S3 Tables) are not yet handled.
-   */
-  private def constructPlanEndpoint(ucUri: String): String = {
-    val base = baseUri
-    val icebergRestBase = s"$base/api/2.1/unity-catalog/iceberg-rest"
-
-    // Try to get prefix from config
-    val prefix = catalogConfig.flatMap(_.overrides.get("prefix"))
-
-    prefix match {
-      case Some(p) => s"$icebergRestBase/v1/$p"
-      case None => icebergRestBase
-    }
-  }
 }
 
 object UnityCatalogMetadata {
@@ -141,16 +50,62 @@ object UnityCatalogMetadata {
     val catalogName = if (ident.namespace().length > 1) {
       ident.namespace().head
     } else {
-      "spark_catalog"
+      // Use current catalog from session
+      // This allows queries with 2-part names (schema.table) to work with Unity Catalog
+      spark.sessionState.catalogManager.currentCatalog.name()
     }
 
     // Read UC configuration from Spark conf
     val ucUri = spark.conf.get(s"spark.sql.catalog.$catalogName.uri", "")
-    val ucToken = spark.conf.get(s"spark.sql.catalog.$catalogName.token", "")
+    val authConfig = extractAuthConfig(spark, catalogName)
 
-    // Table properties currently unused, may be needed in future
+    val supplier: Option[() => String] = if (authConfig.nonEmpty) {
+      val tp = TokenProvider.create(authConfig.asJava)
+      Some(() => tp.accessToken())
+    } else {
+      None
+    }
+
     val tableProps = Map.empty[String, String]
+    UnityCatalogMetadata(catalogName, ucUri, supplier, tableProps)
+  }
 
-    UnityCatalogMetadata(catalogName, ucUri, ucToken, tableProps)
+  /**
+   * Extract authentication config for the planning endpoint.
+   *
+   * Follows the same pattern as UC's AuthConfigUtils:
+   * 1. Scan spark.sql.catalog.<name>.auth.* keys, strip prefix
+   * 2. If legacy .token exists:
+   *    - Error if auth.token also set (configured twice)
+   *    - Otherwise convert to Map("type" -> "static", ...)
+   * 3. Result passed to TokenProvider.create()
+   */
+  private[serverSidePlanning] def extractAuthConfig(
+      spark: SparkSession,
+      catalogName: String): Map[String, String] = {
+    val catalogPrefix = s"spark.sql.catalog.$catalogName."
+    val authPrefix = s"${catalogPrefix}auth."
+
+    // Extract all auth.* configs, stripping the prefix
+    val newFormatConfig = spark.conf.getAll
+      .filterKeys(_.startsWith(authPrefix))
+      .map { case (fullKey, value) => (fullKey.stripPrefix(authPrefix), value) }
+      .toMap
+
+    // Check legacy token
+    val legacyToken = spark.conf.get(s"${catalogPrefix}token", "")
+
+    if (legacyToken.nonEmpty) {
+      // Conflict: both legacy .token and auth.token set
+      require(!newFormatConfig.contains("token"),
+        s"Static token configured twice. Use either " +
+        s"'spark.sql.catalog.$catalogName.token' (legacy) or " +
+        s"'spark.sql.catalog.$catalogName.auth.token' (new), not both.")
+
+      // Legacy token: convert to static format. Matches UC AuthConfigUtils behavior.
+      Map("type" -> "static", "token" -> legacyToken)
+    } else {
+      newFormatConfig
+    }
   }
 }

@@ -24,6 +24,7 @@ import java.util.concurrent.{ConcurrentHashMap, TimeUnit}
 import scala.collection.JavaConverters._
 import scala.collection.concurrent
 import scala.reflect.ClassTag
+import scala.reflect.runtime.universe._
 import scala.util.matching.Regex
 
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
@@ -416,6 +417,36 @@ object DeltaTestUtils extends DeltaTestUtilsBase {
     AddFile(encodedPath, partitionValues, size, modificationTime, dataChange, stats)
   }
 
+
+  /**
+   * Discovers all DeltaOperations.Operation subclasses using reflection.
+   * Returns a Set of operation class names.
+   *
+   * This is useful for tests that need to ensure exhaustive coverage of all operations.
+   */
+  def getAllDeltaOperations: Set[String] = {
+    val mirror = runtimeMirror(getClass.getClassLoader)
+    val moduleSymbol =
+      mirror.staticModule("org.apache.spark.sql.delta.DeltaOperations")
+    val moduleMirror = mirror.reflectModule(moduleSymbol)
+    val instance = moduleMirror.instance
+
+    val instanceMirror = mirror.reflect(instance)
+    val symbol = instanceMirror.symbol
+    val traitOperation =
+      typeOf[org.apache.spark.sql.delta.DeltaOperations.Operation].typeSymbol
+
+    symbol.typeSignature.members.flatMap {
+      case cls: ClassSymbol
+        if cls.isCaseClass && cls.isPublic && cls.toType.baseClasses.contains(traitOperation) =>
+        Some(cls.name.toString)
+      case obj: ModuleSymbol
+        if obj.isPublic && obj.moduleClass.asType.toType.baseClasses.contains(traitOperation) =>
+        Some(obj.name.toString)
+      case _ => None
+    }.toSet
+  }
+
   /**
    * Extracts the table name and alias (if any) from the given string. Correctly handles whitespaces
    * in table name but doesn't support whitespaces in alias.
@@ -577,6 +608,75 @@ trait DeltaTestUtilsForTempViews
   }
 }
 
+trait DeltaSQLInMemoryTestUtils
+    extends DeltaSQLTestUtils
+    with InMemoryTestTableMixin {
+
+  import org.apache.spark.sql.delta.catalog.InMemoryDeltaCatalog
+
+  /**
+   * Override for [[withTable]] that asserts no leftover physical parquet as a sanity-check
+   * for V2 paths.
+   */
+  override protected def withTable(tableNames: String*)(f: => Unit): Unit = {
+    try {
+      super.withTable(tableNames: _*) {
+        f
+        tableNames.foreach(assertNoParquetFiles)
+      }
+    } finally {
+      for (tableName <- tableNames) {
+        assert(!InMemoryDeltaCatalog.contains(tableName))
+      }
+    }
+  }
+
+  /**
+   * Overrides for [[afterEach]], cleans the [[InMemoryDeltaCatalog]] after each test.
+   */
+  override protected def afterEach(): Unit = {
+    try {
+      InMemoryDeltaCatalog.reset()
+    } finally {
+      super.afterEach()
+    }
+  }
+
+  /**
+   * Assert no parquet files are contain within the data directory for [[tableName]].
+   * Used to sanity-check our V2-only write paths.
+   */
+  protected def assertNoParquetFiles(tableName: String): Unit = {
+    import java.nio.file.{Files, Path}
+
+    val ident = TableIdentifier(tableName)
+
+    // Temp views don't create anything on the disk, but still use `withTable`.
+    // Either way, something that doesn't have a catalog entry, but is used in `withTable` should
+    // not be checked on disk.
+    if (!spark.sessionState.catalog.tableExists(ident)) {
+      return
+    }
+
+    val catalogTable = spark.sessionState.catalog.getTableMetadata(ident)
+    val dataPath = new File(new java.net.URI(catalogTable.location.toString))
+    if (dataPath.exists()) {
+      val stream = Files.walk(dataPath.toPath)
+      try {
+        val parquetFiles = stream
+          .filter(Files.isRegularFile(_))
+          .filter(_.toString.endsWith(".parquet"))
+          .toArray.map(_.asInstanceOf[Path].toString).toSeq
+        assert(parquetFiles.isEmpty,
+          s"Physical parquet files found while V2 in-memory mode is enabled. " +
+          s"DML may have fallen back to V1. Files: $parquetFiles")
+      } finally {
+        stream.close()
+      }
+    }
+  }
+}
+
 /**
  * Trait collecting helper methods for DML tests e.p. creating a test table for each test and
  * cleaning it up after each test.
@@ -724,6 +824,31 @@ trait DeltaDMLTestUtils
     )
       .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
       .drop(CDCReader.CDC_COMMIT_VERSION)
+  }
+}
+
+/**
+ * Overrides [[DeltaDMLTestUtils]] methods to route writes through the V2 in-memory path.
+ */
+trait DeltaDMLInMemoryTestUtils
+    extends DeltaDMLTestUtils
+    with DeltaSQLInMemoryTestUtils {
+
+  /**
+   * Appends [[df]] into the test table.
+   */
+  override protected def append(df: DataFrame, partitionBy: Seq[String] = Nil): Unit = {
+    if (!spark.sessionState.catalog.tableExists(tableIdentifier)) {
+      val partitioning = if (partitionBy.nonEmpty) {
+        s"PARTITIONED BY (${partitionBy.mkString(", ")})"
+      } else {
+        ""
+      }
+      spark.sql(
+        s"CREATE TABLE $tableSQLIdentifier (${df.schema.toDDL}) USING delta $partitioning")
+    }
+    df.writeTo(tableSQLIdentifier).append()
+    assertNoParquetFiles(tableSQLIdentifier)
   }
 }
 

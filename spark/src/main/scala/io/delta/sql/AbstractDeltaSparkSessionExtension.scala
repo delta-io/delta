@@ -55,6 +55,11 @@ class AbstractDeltaSparkSessionExtension extends (SparkSessionExtensions => Unit
     extensions.injectResolutionRule { session =>
       PreprocessTimeTravel(session)
     }
+    // DeltaImplicitCast handles implicit casting for dataframe by-name V2WriteCommands.
+    extensions.injectResolutionRule { session =>
+      DeltaImplicitCast(session)
+    }
+    extensions.injectResolutionRule { _ => PropagateSchemaEvolutionWriteOptionShims }
     extensions.injectResolutionRule { session =>
       // To ensure the parquet field id reader is turned on, these fields are required to support
       // id column mapping mode for Delta.

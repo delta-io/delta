@@ -20,9 +20,14 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
+import shadedForDelta.org.apache.iceberg.BaseFileScanTask;
+import shadedForDelta.org.apache.iceberg.DeleteFile;
 import shadedForDelta.org.apache.iceberg.FileScanTask;
+import shadedForDelta.org.apache.iceberg.PartitionSpecParser;
+import shadedForDelta.org.apache.iceberg.SchemaParser;
 import shadedForDelta.org.apache.iceberg.Table;
 import shadedForDelta.org.apache.iceberg.TableScan;
 import shadedForDelta.org.apache.iceberg.catalog.Catalog;
@@ -35,6 +40,10 @@ import shadedForDelta.org.apache.iceberg.rest.requests.PlanTableScanRequestParse
 import shadedForDelta.org.apache.iceberg.rest.responses.ErrorResponse;
 import shadedForDelta.org.apache.iceberg.rest.PlanStatus;
 import shadedForDelta.org.apache.iceberg.rest.responses.PlanTableScanResponse;
+import shadedForDelta.org.apache.iceberg.expressions.Expression;
+import shadedForDelta.org.apache.iceberg.expressions.ResidualEvaluator;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -52,6 +61,34 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
   // Example: prefix="iceberg" transforms /v1/namespaces/db/tables/t1/plan
   //          to /v1/iceberg/namespaces/db/tables/t1/plan
   private String catalogPrefix = null;  // null = no prefix (fallback case)
+
+  // Static fields for test verification - captures filter and projection from requests
+  // Volatile is used to guarantee correct cross-thread access (test thread and Jetty server thread).
+  private static volatile Expression capturedFilter = null;
+  private static volatile List<String> capturedProjection = null;
+  private static volatile Long capturedMinRowsRequested = null;
+  private static volatile Boolean capturedCaseSensitive = null;
+
+  // Static field for test credential injection - credentials to inject into /plan responses
+  // Volatile is used to guarantee correct cross-thread access (test thread and Jetty server thread).
+  private static volatile Map<String, String> testCredentials = null;
+
+  // Static field for test residual injection - residual expression to override in /plan responses.
+  // When set, all FileScanTasks in the response will have this residual instead of the default.
+  // Volatile is used to guarantee correct cross-thread access (test thread and Jetty server thread).
+  private static volatile Expression testResidual = null;
+  
+  // Static field to capture the request path of /plan requests for test verification
+  // Volatile is used to guarantee correct cross-thread access (test thread and Jetty server thread).
+  private static volatile String capturedPlanRequestPath = null;
+
+  // Failure injection fields for testing HTTP retry logic.
+  // planRequestFailCount: number of remaining /plan requests to fail before allowing success.
+  // planRequestFailStatusCode: HTTP status code to return for injected failures.
+  // planRequestCount: total number of /plan requests received (for verifying retry behavior).
+  private static final AtomicInteger planRequestFailCount = new AtomicInteger(0);
+  private static volatile int planRequestFailStatusCode = 503;
+  private static final AtomicInteger planRequestCount = new AtomicInteger(0);
 
   IcebergRESTCatalogAdapterWithPlanSupport(Catalog catalog) {
     super(catalog);
@@ -79,6 +116,138 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
     return this.catalogPrefix;
   }
 
+  /**
+   * Get the filter captured from the most recent /plan request.
+   * Package-private for test access.
+   */
+  static Expression getCapturedFilter() {
+    return capturedFilter;
+  }
+
+  /**
+   * Get the projection (list of column names) captured from the most recent /plan request.
+   * Package-private for test access.
+   */
+  static List<String> getCapturedProjection() {
+    return capturedProjection;
+  }
+
+  /**
+   * Get the min-rows-requested captured from the most recent /plan request.
+   * Package-private for test access.
+   */
+  static Long getCapturedMinRowsRequested() {
+    return capturedMinRowsRequested;
+  }
+
+  /**
+   * Get the caseSensitive flag captured from the most recent /plan request.
+   * Package-private for test access.
+   */
+  static Boolean getCapturedCaseSensitive() {
+    return capturedCaseSensitive;
+  }
+
+  /**
+   * Get the request path captured from the most recent /plan request.
+   * Package-private for test access.
+   */
+  static String getCapturedPlanRequestPath() {
+    return capturedPlanRequestPath;
+  }
+
+  /**
+   * Set test credentials to inject into /plan responses.
+   * Package-private for test access.
+   *
+   * @param credentials Map of credential config (e.g., "s3.access-key-id" -> "...")
+   */
+  static void setTestCredentials(Map<String, String> credentials) {
+    testCredentials = credentials;
+  }
+
+  /**
+   * Get the test credentials configured for injection into /plan responses.
+   * Package-private for servlet access.
+   */
+  static Map<String, String> getTestCredentials() {
+    return testCredentials;
+  }
+
+  /**
+   * Set test residual expression to inject into /plan responses.
+   * When set, all FileScanTasks in the response will have this residual expression
+   * instead of the default (alwaysTrue). Used for testing client-side residual validation.
+   * Package-private for test access via IcebergRESTServer.
+   *
+   * @param residual The residual expression to inject, or null to use the default
+   */
+  static void setTestResidual(Expression residual) {
+    testResidual = residual;
+  }
+
+  /**
+   * Clear captured filter, projection, and limit. Call between tests to avoid pollution.
+   * Package-private for test access.
+   */
+  static void clearCaptured() {
+    capturedFilter = null;
+    capturedProjection = null;
+    capturedMinRowsRequested = null;
+    capturedCaseSensitive = null;
+    testCredentials = null;
+    testResidual = null;
+    capturedPlanRequestPath = null;
+    planRequestFailCount.set(0);
+    planRequestCount.set(0);
+  }
+
+  /**
+   * Configure the server to fail the next N /plan requests with the specified HTTP status code.
+   * After N failures, subsequent requests proceed normally.
+   * Used for testing HTTP retry logic in the client.
+   *
+   * @param count Number of /plan requests to fail
+   * @param statusCode HTTP status code to return for injected failures (e.g., 503, 404)
+   */
+  static void setFailNextPlanRequests(int count, int statusCode) {
+    planRequestFailCount.set(count);
+    planRequestFailStatusCode = statusCode;
+  }
+
+  /**
+   * Atomically get and decrement the remaining failure count.
+   * Returns the value before decrement. If > 0, the request should be failed.
+   * Package-private for servlet access.
+   */
+  static int getAndDecrementFailCount() {
+    return planRequestFailCount.getAndDecrement();
+  }
+
+  /**
+   * Get the HTTP status code to use for injected failures.
+   * Package-private for servlet access.
+   */
+  static int getPlanRequestFailStatusCode() {
+    return planRequestFailStatusCode;
+  }
+
+  /**
+   * Increment and return the total /plan request count.
+   * Package-private for servlet access.
+   */
+  static void incrementPlanRequestCount() {
+    planRequestCount.incrementAndGet();
+  }
+
+  /**
+   * Get the total number of /plan requests received.
+   * Package-private for test access.
+   */
+  static int getPlanRequestCount() {
+    return planRequestCount.get();
+  }
+
   @Override
   protected <T extends RESTResponse> T execute(
           HTTPRequest request,
@@ -90,6 +259,7 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
 
     // Intercept /plan requests before they reach the base adapter
     if (isPlanTableScanRequest(request)) {
+      capturedPlanRequestPath = request.path();  // Capture the path for test verification
       try {
         PlanTableScanResponse response = handlePlanTableScan(request, parserContext);
         return (T) response;
@@ -137,6 +307,25 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
     return TableIdentifier.of(namespace, tableName);
   }
 
+  /**
+   * Extract min-rows-requested from JSON string using Jackson.
+   * Iceberg 1.11 added this field, but we're on 1.10.0, so we parse it from JSON.
+   */
+  private Long extractMinRowsRequested(String jsonBody) {
+    if (jsonBody == null || jsonBody.trim().isEmpty()) {
+      return null;
+    }
+    try {
+      ObjectMapper mapper = new ObjectMapper();
+      JsonNode root = mapper.readTree(jsonBody);
+      JsonNode minRowsNode = root.get("min-rows-requested");
+      return minRowsNode != null ? minRowsNode.asLong() : null;
+    } catch (Exception e) {
+      LOG.warn("Failed to extract min-rows-requested from JSON: {}", e.getMessage());
+      return null;
+    }
+  }
+
   private PlanTableScanRequest parsePlanRequest(HTTPRequest request) {
     // The request body should be a JSON string
     Object body = request.body();
@@ -153,22 +342,33 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
 
     LOG.debug("Handling plan table scan request");
 
-    // 1. Extract table identifier
+    // Extract table identifier
     TableIdentifier tableIdent = extractTableIdentifier(request.path());
     LOG.debug("Table identifier: {}", tableIdent);
 
-    // 2. Parse request
-    PlanTableScanRequest planRequest = parsePlanRequest(request);
+    // Extract JSON body for parsing both the request and min-rows-requested
+    Object body = request.body();
+    if (body == null) {
+      throw new IllegalArgumentException("Request body is null");
+    }
+    String jsonBody = body.toString();
+
+    // Extract min-rows-requested (not supported in Iceberg 1.10, so parse from JSON)
+    Long minRowsRequested = extractMinRowsRequested(jsonBody);
+    LOG.debug("Extracted min-rows-requested: {}", minRowsRequested);
+
+    // Parse request
+    PlanTableScanRequest planRequest = PlanTableScanRequestParser.fromJson(jsonBody);
     LOG.debug("Plan request parsed: snapshotId={}", planRequest.snapshotId());
 
-    // 3. Load table from catalog
+    // Load table from catalog
     Table table = catalog.loadTable(tableIdent);
     LOG.debug("Table loaded: {}", table);
 
-    // 4. Create table scan
+    // Create table scan
     TableScan tableScan = table.newScan();
 
-    // 5. Apply snapshot if specified and valid
+    // Apply snapshot if specified and valid
     if (planRequest.snapshotId() != null && planRequest.snapshotId() != 0) {
       tableScan = tableScan.useSnapshot(planRequest.snapshotId());
       LOG.debug("Using snapshot: {}", planRequest.snapshotId());
@@ -176,15 +376,22 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
       LOG.debug("Using current snapshot (snapshotId was null or 0)");
     }
 
-    // 6. Validate that unsupported features are not requested
-    if (planRequest.filter() != null) {
-      throw new UnsupportedOperationException(
-          "Filter pushdown is not supported in this test implementation");
+    // Capture filter, projection, and limit for test verification
+    capturedFilter = planRequest.filter();
+    capturedProjection = planRequest.select();
+    capturedMinRowsRequested = minRowsRequested;
+    capturedCaseSensitive = planRequest.caseSensitive();
+    LOG.debug("Captured filter: {}", capturedFilter);
+    LOG.debug("Captured projection: {}", capturedProjection);
+    LOG.debug("Captured min-rows-requested: {}", capturedMinRowsRequested);
+    LOG.debug("Captured caseSensitive: {}", capturedCaseSensitive);
+
+    // Validate caseSensitive=false requirement
+    if (planRequest.caseSensitive()) {
+      throw new IllegalArgumentException("caseSensitive=true is not supported");
     }
-    if (planRequest.select() != null && !planRequest.select().isEmpty()) {
-      throw new UnsupportedOperationException(
-          "Column selection/projection is not supported in this test implementation");
-    }
+
+    // Validate that unsupported features are not requested
     if (planRequest.startSnapshotId() != null) {
       throw new UnsupportedOperationException(
           "Incremental scans are not supported in this test implementation");
@@ -198,21 +405,39 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
           "Column stats are not supported in this test implementation");
     }
 
-    // 7. Execute scan planning
+    // Execute scan planning
     List<FileScanTask> fileScanTasks = new ArrayList<>();
     try (CloseableIterable<FileScanTask> tasks = tableScan.planFiles()) {
       tasks.forEach(task -> fileScanTasks.add(task));
     }
     LOG.debug("Planned {} file scan tasks", fileScanTasks.size());
 
-    // 8. Get partition specs for serialization
+    // If a test residual is configured, rebuild tasks with the injected residual
+    Expression residualOverride = testResidual;
+    List<FileScanTask> tasksToReturn;
+    if (residualOverride != null) {
+      tasksToReturn = new ArrayList<>();
+      for (FileScanTask task : fileScanTasks) {
+        tasksToReturn.add(new BaseFileScanTask(
+            task.file(),
+            task.deletes().toArray(new DeleteFile[0]),
+            SchemaParser.toJson(task.spec().schema()),
+            PartitionSpecParser.toJson(task.spec()),
+            ResidualEvaluator.of(task.spec(), residualOverride, capturedCaseSensitive)));
+      }
+      LOG.debug("Injected test residual into {} file scan tasks", tasksToReturn.size());
+    } else {
+      tasksToReturn = fileScanTasks;
+    }
+
+    // Get partition specs for serialization
     Map<Integer, shadedForDelta.org.apache.iceberg.PartitionSpec> specsById = table.specs();
     LOG.debug("Table has {} partition specs", specsById.size());
 
-    // 9. Build response (Pattern 1: COMPLETED with direct tasks)
+    // Build response (Pattern 1: COMPLETED with direct tasks)
     return PlanTableScanResponse.builder()
         .withPlanStatus(PlanStatus.COMPLETED)
-        .withFileScanTasks(fileScanTasks)
+        .withFileScanTasks(tasksToReturn)
         .withSpecsById(specsById)
         .build();
   }

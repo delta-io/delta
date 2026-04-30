@@ -21,7 +21,6 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.functions.input_file_name
 import org.apache.spark.sql.sources.Filter
-import org.apache.spark.sql.types.StructType
 
 /**
  * Implementation of ServerSidePlanningClient that uses Spark SQL with input_file_name()
@@ -35,12 +34,13 @@ class TestServerSidePlanningClient(spark: SparkSession) extends ServerSidePlanni
   override def planScan(
       databaseName: String,
       table: String,
-      filter: Option[Filter] = None,
-      projection: Option[StructType] = None): ScanPlan = {
-    // Capture filter and projection for test verification
-    TestServerSidePlanningClient.capturedFilter = filter
-    TestServerSidePlanningClient.capturedProjection = projection
-
+      filterOption: Option[Filter] = None,
+      projectionOption: Option[Seq[String]] = None,
+      limitOption: Option[Int] = None): ScanPlan = {
+    // Capture filter, projection, and limit for test verification
+    TestServerSidePlanningClient.capturedFilter = filterOption
+    TestServerSidePlanningClient.capturedProjection = projectionOption
+    TestServerSidePlanningClient.capturedLimit = limitOption
     val fullTableName = s"$databaseName.$table"
 
     // Temporarily disable server-side planning to avoid infinite recursion
@@ -88,22 +88,49 @@ class TestServerSidePlanningClient(spark: SparkSession) extends ServerSidePlanni
     }
   }
 
+  override def canConvertFilters(filters: Array[Filter]): Boolean = {
+    // For testing: check if filters should be treated as convertible
+    // Tests can configure this via TestServerSidePlanningClient.setFiltersConvertible()
+    TestServerSidePlanningClient.filtersConvertible
+  }
+
+  override def close(): Unit = {
+    TestServerSidePlanningClient.clientClosed = true
+  }
+
   private def getFileFormat(path: Path): String = "parquet"
 }
 
 /**
  * Companion object for TestServerSidePlanningClient.
- * Stores captured pushdown parameters (filter, projection) for test verification.
+ * Stores captured pushdown parameters (filter, projection, limit) for test verification.
  */
 object TestServerSidePlanningClient {
   private var capturedFilter: Option[Filter] = None
-  private var capturedProjection: Option[StructType] = None
+  private var capturedProjection: Option[Seq[String]] = None
+  private var capturedLimit: Option[Int] = None
+  private var filtersConvertible: Boolean = true  // Default: all filters convertible
+  private[serverSidePlanning] var clientClosed: Boolean = false
 
   def getCapturedFilter: Option[Filter] = capturedFilter
-  def getCapturedProjection: Option[StructType] = capturedProjection
+  def getCapturedProjection: Option[Seq[String]] = capturedProjection
+  def getCapturedLimit: Option[Int] = capturedLimit
+  def isClientClosed: Boolean = clientClosed
+
+  /**
+   * Configure whether filters should be treated as convertible.
+   * Used for testing filter conversion failure scenarios.
+   */
+  def setFiltersConvertible(convertible: Boolean): Unit = {
+    filtersConvertible = convertible
+  }
+
   def clearCaptured(): Unit = {
     capturedFilter = None
     capturedProjection = None
+    capturedLimit = None
+    filtersConvertible = true  // Reset to default
+    clientClosed = false
   }
 }
 

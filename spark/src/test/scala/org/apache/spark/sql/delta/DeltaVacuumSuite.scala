@@ -23,15 +23,13 @@ import java.util.concurrent.TimeUnit
 import scala.collection.mutable.ArrayBuffer
 import scala.language.implicitConversions
 
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, DeltaUnsupportedOperationException}
 import org.apache.spark.sql.delta.DeltaOperations.{Delete, Write}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
+import org.apache.spark.sql.delta.DeltaUnsupportedOperationException
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, Metadata, RemoveFile}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.VacuumCommand
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedCommitCoordinatorProvider
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
-import org.apache.spark.sql.delta.coordinatedcommits.TrackingInMemoryCommitCoordinatorBuilder
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
@@ -947,7 +945,7 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
           CheckFiles(Seq("file1.txt")),
           ExpectFailure(
             GC(false, Seq(tempDir), Some(-2)),
-            classOf[IllegalArgumentException],
+            classOf[DeltaIllegalArgumentException],
             Seq("Retention", "less than", "0"))
         )
         val deltaTable = io.delta.tables.DeltaTable.forPath(spark, tempDir.getAbsolutePath)
@@ -956,7 +954,7 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
           CheckFiles(Seq("file2.txt")),
           ExpectFailure(
             ExecuteVacuumInScala(deltaTable, Seq(), Some(-2)),
-            classOf[IllegalArgumentException],
+            classOf[DeltaIllegalArgumentException],
             Seq("Retention", "less than", "0"))
         )
       }
@@ -1008,8 +1006,8 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
           CheckFiles(Seq("file1.txt")),
           ExpectFailure(
             GC(false, Nil, Some(0)),
-            classOf[IllegalArgumentException],
-            Seq("spark.databricks.delta.retentionDurationCheck.enabled = false", "168 hours"))
+            classOf[DeltaIllegalArgumentException],
+            Seq("delta.retentionDurationCheck.enabled = false", "168 hours"))
         )
       }
 
@@ -1047,11 +1045,11 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
       withTempDeltaTable(targetDF, enableDVs = true) { (targetTable, targetLog) =>
         // Add some DVs.
         targetTable().delete("id < 10")
-        val e = intercept[IllegalArgumentException] {
+        val e = intercept[DeltaIllegalArgumentException] {
           spark.sql(s"VACUUM delta.`${targetLog.dataPath}` RETAIN 0 HOURS")
         }
         assert(e.getMessage.contains(
-          "Are you sure you would like to vacuum files with such a low retention period?"))
+          "The specified VACUUM retention period is too low"))
       }
   }
 
@@ -1540,27 +1538,23 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
     }
   }
 
-  test("running vacuum on a catalog owned managed table should fail") {
-    CatalogOwnedCommitCoordinatorProvider.clearBuilders()
-    CatalogOwnedCommitCoordinatorProvider.registerBuilder(
-      "spark_catalog", TrackingInMemoryCommitCoordinatorBuilder(batchSize = 3))
-    withTable("t1") {
-      spark.sql(s"CREATE TABLE t1 (id INT) USING delta TBLPROPERTIES " +
-        s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
+  test("running vacuum on a catalog managed table should fail") {
+    withCatalogManagedTable() { tableName =>
       checkError(
         intercept[DeltaUnsupportedOperationException] {
-          spark.sql(s"VACUUM t1")
+          spark.sql(s"VACUUM $tableName")
         },
-        "DELTA_UNSUPPORTED_VACUUM_ON_MANAGED_TABLE"
+        "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION",
+        parameters = Map("operation" -> "VACUUM")
       )
       checkError(
         intercept[DeltaUnsupportedOperationException] {
-          spark.sql(s"VACUUM t1 DRY RUN")
+          spark.sql(s"VACUUM $tableName DRY RUN")
         },
-        "DELTA_UNSUPPORTED_VACUUM_ON_MANAGED_TABLE"
+        "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION",
+        parameters = Map("operation" -> "VACUUM")
       )
     }
-    CatalogOwnedCommitCoordinatorProvider.clearBuilders()
   }
 }
 

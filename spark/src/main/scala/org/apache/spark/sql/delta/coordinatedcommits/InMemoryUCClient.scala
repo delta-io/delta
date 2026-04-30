@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import io.delta.storage.commit.{Commit => JCommit, GetCommitsResponse => JGetCommitsResponse}
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.UCClient
+import io.delta.storage.commit.uniform.UniformMetadata
 
 /**
  * An in-memory implementation of [[UCClient]] for testing purposes.
@@ -63,7 +64,8 @@ class InMemoryUCClient(
       lastKnownBackfilledVersion: Optional[JLong],
       disown: Boolean,
       newMetadata: Optional[AbstractMetadata],
-      newProtocol: Optional[AbstractProtocol]): Unit = {
+      newProtocol: Optional[AbstractProtocol],
+      uniform: Optional[UniformMetadata] = Optional.empty()): Unit = {
     ucCommitCoordinator.commitToCoordinator(
       tableId,
       tableUri,
@@ -75,7 +77,9 @@ class InMemoryUCClient(
       Option(lastKnownBackfilledVersion.orElse(null)).map(_.toLong),
       disown,
       Option(newProtocol.orElse(null)).map(_.asInstanceOf[Protocol]),
-      Option(newMetadata.orElse(null)).map(_.asInstanceOf[Metadata]))
+      Option(newMetadata.orElse(null)).map(_.asInstanceOf[Metadata]),
+      Option(uniform.orElse(null))
+    )
   }
 
   override def getCommits(
@@ -89,6 +93,14 @@ class InMemoryUCClient(
       Option(startVersion.orElse(null)).map(_.toLong),
       Option(endVersion.orElse(null)).map(_.toLong))
   }
+
+  override def finalizeCreate(
+      tableName: String,
+      catalogName: String,
+      schemaName: String,
+      storageLocation: String,
+      columns: java.util.List[UCClient.ColumnDef],
+      properties: java.util.Map[String, String]): Unit = {}
 
   override def close(): Unit = {}
 }

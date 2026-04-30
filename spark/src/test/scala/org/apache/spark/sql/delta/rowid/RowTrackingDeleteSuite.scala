@@ -131,15 +131,18 @@ trait RowTrackingDeleteSuiteBase extends RowTrackingDeleteTestDimension {
     }
   }
 
-  test("Preserving Row Tracking - Subqueries are not supported in DELETE") {
-    withRowIdTestTable(isPartitioned = false) {
-      withTable(subqueryTableName) {
-        createTestTable(subqueryTableName, isPartitioned = false, multipleFilesPerPartition = false)
-        val ex = intercept[AnalysisException] {
+  test("Preserving Row Tracking - DELETE with EXISTS subquery") {
+    withSQLConf(DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key -> "true") {
+      withRowIdTestTable(isPartitioned = false) {
+        // Use a different column name to avoid ambiguous resolution inside EXISTS.
+        sql(
+          s"CREATE TABLE $subqueryTableName USING delta " +
+            s"AS SELECT id AS src_id FROM $testTableName")
+        withTable(subqueryTableName) {
           deleteAndValidateStableRowId(Some(
-            s"id in (SELECT id FROM $subqueryTableName WHERE id = 7 OR id = 11)"))
-        }.getMessage
-        assert(ex.contains("Subqueries are not supported in the DELETE"))
+            s"EXISTS (SELECT 1 FROM $subqueryTableName s " +
+              s"WHERE s.src_id = id AND (s.src_id = 7 OR s.src_id = 11))"))
+        }
       }
     }
   }

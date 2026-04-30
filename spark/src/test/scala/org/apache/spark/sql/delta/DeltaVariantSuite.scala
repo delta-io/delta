@@ -31,8 +31,10 @@ import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.delta.DeltaAnalysisException
 import org.apache.spark.sql.delta.schema.DeltaInvariantViolationException
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
+import org.scalatest.Ignore
 
 class DeltaVariantSuite
   extends QueryTest
@@ -531,21 +533,30 @@ class DeltaVariantSuite
   }
 
   Seq("name", "id").foreach { mode =>
-    test(s"column mapping works - $mode") {
-      withTable("tbl") {
-        sql(s"""CREATE TABLE tbl USING DELTA
-            TBLPROPERTIES ('delta.columnMapping.mode' = '$mode')
+    Seq(false, true).foreach { pushVariantIntoScan =>
+      withSQLConf(
+        SQLConf.PUSH_VARIANT_INTO_SCAN.key -> pushVariantIntoScan.toString
+      ) {
+        test(s"column mapping works - $mode - $pushVariantIntoScan") {
+          withTable("tbl") {
+            sql(s"""CREATE TABLE tbl USING DELTA
+            TBLPROPERTIES (
+              'delta.columnMapping.mode' = '$mode',
+              'delta.enableVariantShredding' = 'true'
+            )
             AS SELECT parse_json(cast(id as string)) v, parse_json(cast(id as string)) v_two
             FROM range(5)""")
-        val expectedAnswer = spark.sql("select v from tbl").collect()
+            val expectedAnswer = spark.sql("select v from tbl").collect()
 
-        sql("ALTER TABLE tbl RENAME COLUMN v TO new_v")
-        checkAnswer(spark.sql("select new_v from tbl"), expectedAnswer)
+            sql("ALTER TABLE tbl RENAME COLUMN v TO new_v")
+            checkAnswer(spark.sql("select new_v from tbl"), expectedAnswer)
 
-        sql("ALTER TABLE tbl DROP COLUMN new_v")
-        // 'SELECT *' from the test table should return the same as `expectedAnswer` because `v` and
-        // `v_two` are initially identical and `v` is dropped, resulting in a single column.
-        checkAnswer(spark.sql("select * from tbl"), expectedAnswer)
+            sql("ALTER TABLE tbl DROP COLUMN new_v")
+            // 'SELECT *' from the test table should return the same as `expectedAnswer` because `v`
+            // and `v_two` are initially identical and `v` is dropped, resulting in a single column.
+            checkAnswer(spark.sql("select * from tbl"), expectedAnswer)
+          }
+        }
       }
     }
   }
@@ -681,6 +692,142 @@ class DeltaVariantSuite
       sql("ALTER TABLE tbl ADD CONSTRAINT variantGTEZero CHECK (variant_get(v, '$', 'INT') >= 0)")
       val newLessThanZeroCount = spark.sql("select * from tbl where v::int < 0").count()
       assert(newLessThanZeroCount == 0)
+    }
+  }
+
+  test("column mapping with pushVariantIntoScan") {
+    withSQLConf(SQLConf.PUSH_VARIANT_INTO_SCAN.key -> "true") {
+      withTable("t1") {
+        sql(
+          """create table t1 (v variant) using delta
+            |tblproperties (
+            |  'delta.columnMapping.mode' = 'name',
+            |  'delta.enableVariantShredding' = 'true'
+            |)""".stripMargin)
+        sql("""insert into t1 (v) select parse_json('{"a": 1}')""")
+
+        checkAnswer(sql("select to_json(v) from t1"), Seq(Row("""{"a":1}""")))
+        checkAnswer(sql("select variant_get(v,'$.a','int') from t1"), Seq(Row(1)))
+      }
+
+      // Ensure it also works when the variant is nested in a struct.
+      withTable("t2") {
+        sql(
+          """create table t2 (s struct<v variant>) using delta
+            |tblproperties (
+            |  'delta.columnMapping.mode' = 'name',
+            |  'delta.enableVariantShredding' = 'true'
+            |)""".stripMargin)
+        sql("""insert into t2 (s) select named_struct('v', parse_json('{"a": 2}'))""")
+
+        checkAnswer(sql("select to_json(s) from t2"), Seq(Row("""{"v":{"a":2}}""")))
+        checkAnswer(sql("select to_json(s.v) from t2"), Seq(Row("""{"a":2}""")))
+        checkAnswer(sql("select variant_get(s.v, '$.a', 'int') from t2"), Seq(Row(2)))
+      }
+    }
+  }
+
+  test("DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40 - config disabled does not block") {
+    withSQLConf(
+      DeltaSQLConf.DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40.key -> "false"
+    ) {
+      withTable("tbl") {
+        sql("CREATE TABLE tbl(v VARIANT) USING DELTA")
+        sql("INSERT INTO tbl (SELECT parse_json(cast(id + 99 as string)) FROM range(1))")
+        assert(spark.table("tbl").selectExpr("v::int").head == Row(99))
+      }
+    }
+  }
+
+  test("DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40 - blocks reads on Spark 4.0") {
+    if (!org.apache.spark.SPARK_VERSION.startsWith("4.0")) {
+      cancel("This test only applies to Spark 4.0")
+    }
+    // Create a table with variant while the config is off.
+    withTable("tbl") {
+      sql("CREATE TABLE tbl(v VARIANT) USING DELTA")
+      sql("INSERT INTO tbl (SELECT parse_json(cast(id + 99 as string)) FROM range(1))")
+      // Clear the DeltaLog cache so the protocol check runs again with the new config.
+      DeltaLog.clearCache()
+      // Now enable the config and verify reads are blocked.
+      withSQLConf(
+        DeltaSQLConf.DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40.key -> "true"
+      ) {
+        val e = intercept[DeltaUnsupportedTableFeatureException] {
+          spark.table("tbl").collect()
+        }
+        assert(e.getMessage.contains("variantType"))
+      }
+    }
+  }
+
+  test("DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40 - blocks writes on Spark 4.0") {
+    if (!org.apache.spark.SPARK_VERSION.startsWith("4.0")) {
+      cancel("This test only applies to Spark 4.0")
+    }
+    withTable("tbl") {
+      // Create with config off.
+      sql("CREATE TABLE tbl(v VARIANT) USING DELTA")
+      // Enable config and verify writes are blocked.
+      withSQLConf(
+        DeltaSQLConf.DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40.key -> "true"
+      ) {
+        val e = intercept[DeltaUnsupportedTableFeatureException] {
+          sql("INSERT INTO tbl (SELECT parse_json(cast(id + 99 as string)) FROM range(1))")
+        }
+        assert(e.getMessage.contains("variantType"))
+      }
+    }
+  }
+
+  test("DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40 - blocks with preview feature on Spark 4.0") {
+    if (!org.apache.spark.SPARK_VERSION.startsWith("4.0")) {
+      cancel("This test only applies to Spark 4.0")
+    }
+    withTable("tbl") {
+      sql(
+        """CREATE TABLE tbl(v VARIANT) USING DELTA
+          |TBLPROPERTIES('delta.feature.variantType-preview' = 'supported')""".stripMargin)
+      DeltaLog.clearCache()
+      withSQLConf(
+        DeltaSQLConf.DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40.key -> "true"
+      ) {
+        val e = intercept[DeltaUnsupportedTableFeatureException] {
+          spark.table("tbl").collect()
+        }
+        assert(e.getMessage.contains("variantType"))
+      }
+    }
+  }
+
+  test("DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40 - does not block non-variant tables") {
+    if (!org.apache.spark.SPARK_VERSION.startsWith("4.0")) {
+      cancel("This test only applies to Spark 4.0")
+    }
+    withSQLConf(
+      DeltaSQLConf.DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40.key -> "true"
+    ) {
+      withTable("tbl") {
+        sql("CREATE TABLE tbl(s STRING, i INT) USING DELTA")
+        sql("INSERT INTO tbl VALUES ('foo', 1)")
+        checkAnswer(spark.table("tbl"), Seq(Row("foo", 1)))
+      }
+    }
+  }
+
+  test("DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40 - no-op on Spark 4.1+") {
+    if (org.apache.spark.SPARK_VERSION.startsWith("4.0")) {
+      cancel("This test only applies to Spark 4.1+")
+    }
+    // On Spark 4.1+, the config should have no effect since the version check skips it.
+    withSQLConf(
+      DeltaSQLConf.DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40.key -> "true"
+    ) {
+      withTable("tbl") {
+        sql("CREATE TABLE tbl(v VARIANT) USING DELTA")
+        sql("INSERT INTO tbl (SELECT parse_json(cast(id + 99 as string)) FROM range(1))")
+        assert(spark.table("tbl").selectExpr("v::int").head == Row(99))
+      }
     }
   }
 }

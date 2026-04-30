@@ -18,7 +18,8 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
-import org.apache.spark.sql.SaveMode
+import org.apache.spark.sql.{Row, SaveMode}
+import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
@@ -34,7 +35,6 @@ import org.apache.spark.sql.types._
 trait DeltaInsertIntoImplicitCastBase extends DeltaInsertIntoTest {
   override def beforeAll(): Unit = {
     super.beforeAll()
-    spark.conf.set(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key, "true")
     // Enable the null expansion fix by preserving NULL source structs in INSERT operations.
     // Without this fix, NULL source structs are incorrectly expanded to structs with NULL fields.
     spark.conf.set(DeltaSQLConf.DELTA_MERGE_PRESERVE_NULL_SOURCE_STRUCTS.key, "true")
@@ -60,10 +60,7 @@ trait DeltaInsertIntoImplicitCastTests extends DeltaInsertIntoImplicitCastBase {
         expected = new StructType()
           .add("a", LongType)
           .add("b", IntegerType)),
-      // The following insert operations don't implicitly cast the data but fail instead - see
-      // following test covering failure for these cases. We should change this to offer consistent
-      // behavior across all inserts.
-      excludeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert,
+      excludeInserts = insertsWithoutImplicitCastSupport,
       confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
     )
 
@@ -76,13 +73,13 @@ trait DeltaInsertIntoImplicitCastTests extends DeltaInsertIntoImplicitCastBase {
       expectedResult = ExpectedResult.Failure { ex =>
         checkError(
           ex,
-           "DELTA_FAILED_TO_MERGE_FIELDS",
+          "DELTA_FAILED_TO_MERGE_FIELDS",
           parameters = Map(
             "currentField" -> "a",
             "updateField" -> "a"
         ))
       },
-      includeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert,
+      includeInserts = insertsWithoutImplicitCastSupport,
       confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
     )
 
@@ -103,7 +100,7 @@ trait DeltaInsertIntoImplicitCastTests extends DeltaInsertIntoImplicitCastBase {
       // The following insert operations don't implicitly cast the data but fail instead - see
       // following test covering failure for these cases. We should change this to offer consistent
       // behavior across all inserts.
-      excludeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert,
+      excludeInserts = insertsWithoutImplicitCastSupport,
       confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
     )
 
@@ -118,13 +115,13 @@ trait DeltaInsertIntoImplicitCastTests extends DeltaInsertIntoImplicitCastBase {
       expectedResult = ExpectedResult.Failure { ex =>
         checkError(
           ex,
-           "DELTA_FAILED_TO_MERGE_FIELDS",
+          "DELTA_FAILED_TO_MERGE_FIELDS",
           parameters = Map(
             "currentField" -> "a",
             "updateField" -> "a"
         ))
       },
-      includeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert,
+      includeInserts = insertsWithoutImplicitCastSupport,
       confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
     )
 
@@ -145,7 +142,7 @@ trait DeltaInsertIntoImplicitCastTests extends DeltaInsertIntoImplicitCastBase {
       // The following insert operations don't implicitly cast the data but fail instead - see
       // following test covering failure for these cases. We should change this to offer consistent
       // behavior across all inserts.
-      excludeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert,
+      excludeInserts = insertsWithoutImplicitCastSupport,
       confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
     )
 
@@ -160,52 +157,179 @@ trait DeltaInsertIntoImplicitCastTests extends DeltaInsertIntoImplicitCastBase {
       expectedResult = ExpectedResult.Failure { ex =>
         checkError(
           ex,
-           "DELTA_FAILED_TO_MERGE_FIELDS",
+          "DELTA_FAILED_TO_MERGE_FIELDS",
           parameters = Map(
             "currentField" -> "m",
             "updateField" -> "m"
         ))
       },
-      includeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert,
+      includeInserts = insertsWithoutImplicitCastSupport,
       confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
     )
+  }
+
+  // Verify that dataframe by-name struct field resolution inside arrays works correctly when the
+  // array element nullability differs between source and target. Uses createDataFrame with explicit
+  // schemas to guarantee containsNull is exactly as specified (JSON reader may normalize it).
+  for {
+    (sourceContainsNull, targetContainsNull) <- Seq((false, true), (true, false))
+  } {
+    test("implicit cast with array element nullability mismatch " +
+        s"(source=$sourceContainsNull, target=$targetContainsNull)") {
+      val tableSchema = new StructType()
+        .add("key", IntegerType)
+        .add("a", ArrayType(new StructType()
+          .add("x", IntegerType)
+          .add("y", IntegerType), containsNull = targetContainsNull))
+      // Source has fields reordered (y before x) and y is long (needs cast to int).
+      val insertSchema = new StructType()
+        .add("key", IntegerType)
+        .add("a", ArrayType(new StructType()
+          .add("y", LongType)
+          .add("x", IntegerType), containsNull = sourceContainsNull))
+
+      withTable("target") {
+        spark.createDataFrame(
+          spark.sparkContext.emptyRDD[Row], tableSchema)
+          .write.format("delta").saveAsTable("target")
+
+        val sourceData = spark.createDataFrame(
+          java.util.Arrays.asList(Row(1, Seq(Row(5L, 4)))), insertSchema)
+        assert(sourceData.schema("a").dataType.asInstanceOf[ArrayType].containsNull
+          == sourceContainsNull, "source containsNull not preserved")
+
+        sourceData.writeTo("target").append()
+        // Expects by-name resolution (x=4, y=5). Without the fix,
+        // positional casting swaps the values (x=5, y=4).
+        checkAnswer(
+          spark.read.table("target"),
+          spark.createDataFrame(
+            java.util.Arrays.asList(Row(1, Seq(Row(4, 5)))), tableSchema))
+      }
+    }
+  }
+
+  // Tests that DELTA_DF_WRITE_ALLOW_IMPLICIT_CASTS controls implicit casting for df-by-name
+  // writes: when false, the write fails on type mismatch; when true, casting proceeds normally.
+  // Non-df-by-name writes (SQL inserts and df-by-position) always succeed regardless of the flag.
+  // save() and saveAsTable() overwrite are excluded since they don't support implicit casting.
+  for (allowImplicitCasts <- BOOLEAN_DOMAIN) {
+    testInserts("insert with implicit up and down cast on top-level fields, " +
+        s"DELTA_DF_WRITE_ALLOW_IMPLICIT_CASTS=$allowImplicitCasts")(
+      initialData = TestData("a long, b int", Seq("""{ "a": 1, "b": 2 }""")),
+      partitionBy = Seq("a"),
+      overwriteWhere = "a" -> 1,
+      insertData = TestData("a int, b long", Seq("""{ "a": 1, "b": 4 }""")),
+      expectedResult = if (allowImplicitCasts) {
+        ExpectedResult.Success(
+          expected = new StructType()
+            .add("a", LongType)
+            .add("b", IntegerType))
+      } else {
+        ExpectedResult.Failure()
+      },
+      includeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert --
+        insertsWithoutImplicitCastSupport,
+      confs = Seq(
+        DeltaSQLConf.DELTA_DF_WRITE_ALLOW_IMPLICIT_CASTS.key -> allowImplicitCasts.toString)
+    )
+
+    testInserts("insert with implicit up and down cast on top-level fields, " +
+        s"DELTA_DF_WRITE_ALLOW_IMPLICIT_CASTS=$allowImplicitCasts")(
+      initialData = TestData("a long, b int", Seq("""{ "a": 1, "b": 2 }""")),
+      partitionBy = Seq("a"),
+      overwriteWhere = "a" -> 1,
+      insertData = TestData("a int, b long", Seq("""{ "a": 1, "b": 4 }""")),
+      expectedResult = ExpectedResult.Success(
+        expected = new StructType()
+          .add("a", LongType)
+          .add("b", IntegerType)),
+      excludeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert,
+      confs = Seq(
+        DeltaSQLConf.DELTA_DF_WRITE_ALLOW_IMPLICIT_CASTS.key -> allowImplicitCasts.toString)
+    )
+
+    // save() and saveAsTable() overwrite always fail regardless of the flag since they don't
+    // go through DeltaImplicitCast.
+    testInserts("insert with implicit up and down cast on top-level fields, " +
+        s"DELTA_DF_WRITE_ALLOW_IMPLICIT_CASTS=$allowImplicitCasts")(
+      initialData = TestData("a long, b int", Seq("""{ "a": 1, "b": 2 }""")),
+      partitionBy = Seq("a"),
+      overwriteWhere = "a" -> 1,
+      insertData = TestData("a int, b long", Seq("""{ "a": 1, "b": 4 }""")),
+      expectedResult = ExpectedResult.Failure(),
+      includeInserts = insertsWithoutImplicitCastSupport,
+      confs = Seq(
+        DeltaSQLConf.DELTA_DF_WRITE_ALLOW_IMPLICIT_CASTS.key -> allowImplicitCasts.toString)
+    )
+  }
+
+  // Make sure that unresolved expressions (i.e. UpCast) in the query are NOT resolved during
+  // Delta's analysis steps.
+  test("df by-name overwrite with safe upcast under strict store assignment policy") {
+    withTable("target") {
+      TestData("a int, b double", Seq("""{ "a": 1, "b": 2.0 }""")).toDF
+        .write.format("delta").saveAsTable("target")
+      withSQLConf(SQLConf.STORE_ASSIGNMENT_POLICY.key -> "strict") {
+        TestData("a int, b int", Seq("""{ "a": 1, "b": 3 }""")).toDF
+          .writeTo("target").overwrite(lit(true))
+        checkAnswer(spark.table("target"),
+          TestData("a int, b double", Seq("""{ "a": 1, "b": 3.0 }""")).toDF)
+      }
+    }
   }
 }
 
 trait DeltaInsertIntoImplicitCastStreamingWriteTests extends DeltaInsertIntoImplicitCastBase {
   override protected val ignoredTestCases: Map[String, Set[Insert]] = Map(
-    "null struct with different field order"
+    "null struct with different field order, preserveNullSourceStructs=true"
+      -> (insertsDataframe.intersect(insertsByName) - StreamingInsert),
+    "null struct with different field order, preserveNullSourceStructs=false"
       -> (insertsDataframe.intersect(insertsByName) - StreamingInsert),
     "cast with dot in column name"
       -> (insertsDataframe.intersect(insertsByName) - StreamingInsert)
   )
 
-  for { (inserts: Set[Insert], expectedAnswer) <- Seq(
-    // Only few INSERT types correctly handle null structs and keep the whole struct null
-    // instead of expanding it to a struct of null fields.
-    Set(SQLInsertColList(SaveMode.Append), StreamingInsert) ->
-      TestData("a long, s struct <x int, y: int>",
-        Seq("""{ "a": 1, "s": { "x": 2, "y": 3 } }""", """{ "a": 1, "s": null }""")),
-    Set(SQLInsertColList(SaveMode.Overwrite),
-        SQLInsertOverwritePartitionByPosition,
-        SQLInsertOverwritePartitionColList) ->
-      TestData("a long, s struct <x int, y: int>", Seq("""{ "a": 1, "s": null }""")),
+  for {
+    preserveNullSourceStructs <- BOOLEAN_DOMAIN
+    (inserts: Set[Insert], expectedAnswer) <- Seq(
+      Set(SQLInsertColList(SaveMode.Append), StreamingInsert) ->
+        TestData("a long, s struct <x int, y: int>",
+          Seq("""{ "a": 1, "s": { "x": 2, "y": 3 } }""", """{ "a": 1, "s": null }""")),
+      Set(SQLInsertColList(SaveMode.Overwrite),
+          SQLInsertOverwritePartitionByPosition,
+          SQLInsertOverwritePartitionColList) ->
+        TestData("a long, s struct <x int, y: int>", Seq("""{ "a": 1, "s": null }""")),
 
-    // For all other INSERT types, the null struct gets incorrectly expanded to
-    // `struct<null, null>
-    insertsAppend - SQLInsertColList(SaveMode.Append) - StreamingInsert ->
-      TestData("a long, s struct <x int, y: int>",
-        Seq("""{ "a": 1, "s": { "x": 2, "y": 3 } }""",
-        """{ "a": 1, "s": { "x": null, "y": null } }""")),
-    insertsOverwrite
-      - SQLInsertColList(SaveMode.Overwrite)
-      - SQLInsertOverwritePartitionByPosition
-      - SQLInsertOverwritePartitionColList ->
-      TestData("a long, s struct <x int, y: int>",
-        Seq("""{ "a": 1, "s": { "x": null, "y": null } }"""))
+      // For all other INSERT types, the null struct gets incorrectly expanded to
+      // `struct<null, null> unless preserveNullSourceStructs is true.
+      insertsAppend - SQLInsertColList(SaveMode.Append) - StreamingInsert ->
+        TestData("a long, s struct <x int, y: int>",
+          Seq("""{ "a": 1, "s": { "x": 2, "y": 3 } }""",
+            if (preserveNullSourceStructs) {
+              """{ "a": 1, "s": null }"""
+            } else {
+              """{ "a": 1, "s": { "x": null, "y": null } }"""
+            }
+          )
+        ),
+      insertsOverwrite
+        - SQLInsertColList(SaveMode.Overwrite)
+        - SQLInsertOverwritePartitionByPosition
+        - SQLInsertOverwritePartitionColList ->
+        TestData("a long, s struct <x int, y: int>",
+          Seq(
+            if (preserveNullSourceStructs) {
+              """{ "a": 1, "s": null }"""
+            } else {
+              """{ "a": 1, "s": { "x": null, "y": null } }"""
+            }
+          )
+        )
     )
   } {
-   testInserts(s"null struct with different field order")(
+   testInserts("null struct with different field order, " +
+       s"preserveNullSourceStructs=$preserveNullSourceStructs")(
      initialData = TestData(
        "a long, s struct <x: int, y int>",
        Seq("""{ "a": 1, "s": { "x": 2, "y": 3 } }""")),
@@ -216,7 +340,9 @@ trait DeltaInsertIntoImplicitCastStreamingWriteTests extends DeltaInsertIntoImpl
      includeInserts = inserts,
      // Dataframe INSERTs by name don't support implicit casting except for streaming
      // writes, no point in testing them.
-     excludeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert
+     excludeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert,
+     confs = Seq(DeltaSQLConf.DELTA_INSERT_PRESERVE_NULL_SOURCE_STRUCTS.key
+       -> preserveNullSourceStructs.toString)
    )
  }
 

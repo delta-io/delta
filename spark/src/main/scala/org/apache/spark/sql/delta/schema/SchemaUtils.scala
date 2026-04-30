@@ -109,6 +109,24 @@ object SchemaUtils extends DeltaLogging {
       Some(other).filter(f)
   }
 
+  /**
+   * Checks if a given data type contains a NullType, including inside UDTs.
+   * `typeExistsRecursively` does not recurse into UDT sqlTypes, so this method
+   * explicitly handles that case.
+   */
+  def nullTypeExistsRecursively(
+      t: DataType
+  ): Boolean = {
+    typeExistsRecursively(t) {
+      case _: NullType =>
+        true
+      case udt: UserDefinedType[_] =>
+        nullTypeExistsRecursively(udt.sqlType)
+      case _ =>
+        false
+    }
+  }
+
   /** Turns the data types to nullable in a recursive manner for nested columns. */
   def typeAsNullable(dt: DataType): DataType = dt match {
     case s: StructType => s.asNullable
@@ -130,7 +148,8 @@ object SchemaUtils extends DeltaLogging {
    */
   def dropNullTypeColumns(df: DataFrame): DataFrame = {
     val schema = df.schema
-    if (!typeExistsRecursively(schema)(_.isInstanceOf[NullType])) return df
+    if (!nullTypeExistsRecursively(schema)) return df
+
     def generateSelectExpr(sf: StructField, nameStack: Seq[String]): Column = sf.dataType match {
       case st: StructType =>
         val nested = st.fields.flatMap { f =>
@@ -144,16 +163,21 @@ object SchemaUtils extends DeltaLogging {
         when(col(colName).isNull, null)
           .otherwise(struct(nested: _*))
           .alias(sf.name)
-      case a: ArrayType if typeExistsRecursively(a)(_.isInstanceOf[NullType]) =>
+      case a: ArrayType if nullTypeExistsRecursively(a) =>
         val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).sql
         throw new DeltaAnalysisException(
           errorClass = "DELTA_COMPLEX_TYPE_COLUMN_CONTAINS_NULL_TYPE",
           messageParameters = Array(colName, "ArrayType"))
-      case m: MapType if typeExistsRecursively(m)(_.isInstanceOf[NullType]) =>
+      case m: MapType if nullTypeExistsRecursively(m) =>
         val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).sql
         throw new DeltaAnalysisException(
           errorClass = "DELTA_COMPLEX_TYPE_COLUMN_CONTAINS_NULL_TYPE",
-          messageParameters = Array(colName, "NullType"))
+          messageParameters = Array(colName, "MapType"))
+        case udt: UserDefinedType[_] if nullTypeExistsRecursively(udt.sqlType) =>
+          val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).sql
+        throw new DeltaAnalysisException(
+          errorClass = "DELTA_USER_DEFINED_TYPE_COLUMN_CONTAINS_NULL_TYPE",
+          messageParameters = Array(colName, udt.userClass.getName))
       case _ =>
         val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).sql
         col(colName).alias(sf.name)
@@ -263,7 +287,7 @@ object SchemaUtils extends DeltaLogging {
       return nullFields.headOption
     }
 
-    if (typeExistsRecursively(schema)(_.isInstanceOf[NullType])) {
+    if (nullTypeExistsRecursively(schema)) {
       findNullTypeColumnRec(schema, Seq.empty)
     } else {
       None
@@ -464,7 +488,9 @@ def normalizeColumnNamesInDataType(
       allowMissingColumns: Boolean = false,
       typeWideningMode: TypeWideningMode = TypeWideningMode.NoTypeWidening,
       newPartitionColumns: Seq[String] = Seq.empty,
-      oldPartitionColumns: Seq[String] = Seq.empty): Boolean = {
+      oldPartitionColumns: Seq[String] = Seq.empty,
+      caseSensitive: Boolean = true,
+      allowVoidTypeChange: Boolean = false): Boolean = {
 
     def isNullabilityCompatible(existingNullable: Boolean, readNullable: Boolean): Boolean = {
       if (forbidTightenNullability) {
@@ -480,7 +506,9 @@ def normalizeColumnNamesInDataType(
           isReadCompatible(e, n,
             forbidTightenNullability,
             typeWideningMode = typeWideningMode,
-            allowMissingColumns = allowMissingColumns
+            allowMissingColumns = allowMissingColumns,
+            caseSensitive = caseSensitive,
+            allowVoidTypeChange = allowVoidTypeChange
           )
         case (e: ArrayType, n: ArrayType) =>
           // if existing elements are non-nullable, so should be the new element
@@ -491,6 +519,9 @@ def normalizeColumnNamesInDataType(
           isNullabilityCompatible(e.valueContainsNull, n.valueContainsNull) &&
             isDatatypeReadCompatible(e.keyType, n.keyType) &&
             isDatatypeReadCompatible(e.valueType, n.valueType)
+        // This should only be true for dataframe by-name inserts.
+        case (_: NullType, _) if allowVoidTypeChange =>
+          true
         case (e: AtomicType, n: AtomicType)
           if typeWideningMode.shouldWidenTo(fromType = e, toType = n) => true
         case (a, b) => a == b
@@ -498,14 +529,24 @@ def normalizeColumnNamesInDataType(
     }
 
     def isStructReadCompatible(existing: StructType, newtype: StructType): Boolean = {
-      val existingFields = toFieldMap(existing)
       // scalastyle:off caselocale
+      def checkNoDuplicateColumns(schema: StructType, errorSubClass: String): Unit = {
+        val fieldNames = schema.fieldNames
+        val lowercaseNames = fieldNames.map(_.toLowerCase).toSet
+        if (lowercaseNames.size != fieldNames.length) {
+          val duplicates = fieldNames.groupBy(_.toLowerCase).collect {
+            case (_, names) if names.length > 1 => names.mkString(", ")
+          }
+          throw DeltaErrors.foundDuplicateColumnsException(errorSubClass,
+            duplicates.mkString(", "))
+        }
+      }
+
+      val existingFields = toFieldMap(existing)
+      checkNoDuplicateColumns(existing, "EXISTING_SCHEMA")
       val existingFieldNames = existing.fieldNames.map(_.toLowerCase).toSet
-      assert(existingFieldNames.size == existing.length,
-        "Delta tables don't allow field names that only differ by case")
+      checkNoDuplicateColumns(newtype, "READ_SCHEMA")
       val newFields = newtype.fieldNames.map(_.toLowerCase).toSet
-      assert(newFields.size == newtype.length,
-        "Delta tables don't allow field names that only differ by case")
       // scalastyle:on caselocale
 
       if (!allowMissingColumns &&
@@ -517,8 +558,8 @@ def normalizeColumnNamesInDataType(
       newtype.forall { newField =>
         // new fields are fine, they just won't be returned
         existingFields.get(newField.name).forall { existingField =>
-          // we know the name matches modulo case - now verify exact match
-          (existingField.name == newField.name
+          // when case-sensitive, verify exact name match (modulo case already matched)
+          ((!caseSensitive || existingField.name == newField.name)
             // if existing value is non-nullable, so should be the new value
             && isNullabilityCompatible(existingField.nullable, newField.nullable)
             // and the type of the field must be compatible, too

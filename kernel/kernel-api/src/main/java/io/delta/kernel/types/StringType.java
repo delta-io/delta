@@ -52,6 +52,38 @@ public class StringType extends BasePrimitiveType {
     return collationIdentifier;
   }
 
+  /**
+   * Are the data types same? The metadata, collations or column names could be different.
+   *
+   * @param dataType
+   * @return
+   */
+  public boolean equivalent(DataType dataType) {
+    return dataType instanceof StringType;
+  }
+
+  /**
+   * Checks whether the given {@code dataType} is compatible with this type when writing data.
+   * Collation differences are ignored.
+   *
+   * <p>This method is intended to be used during the write path to validate that an input type
+   * matches the expected schema before data is written.
+   *
+   * <p>It should not be used in other cases, such as the read path.
+   *
+   * @param dataType the input data type being written
+   * @return {@code true} if the input type is compatible with this type.
+   */
+  @Override
+  public boolean isWriteCompatible(DataType dataType) {
+    return dataType instanceof StringType;
+  }
+
+  /** @return true if this StringType uses the default Spark UTF8_BINARY collation. */
+  public boolean isUTF8BinaryCollated() {
+    return collationIdentifier.isSparkUTF8BinaryCollation();
+  }
+
   @Override
   public boolean equals(Object o) {
     if (!(o instanceof StringType)) {
@@ -60,5 +92,20 @@ public class StringType extends BasePrimitiveType {
 
     StringType that = (StringType) o;
     return collationIdentifier.equals(that.collationIdentifier);
+  }
+
+  /**
+   * Override is needed because {@code toString()} may be used for schema serialization and similar
+   * contexts, so collation information must be included.
+   *
+   * @return string representation of the StringType.
+   */
+  @Override
+  public String toString() {
+    if (isUTF8BinaryCollated()) {
+      return super.toString();
+    } else {
+      return String.format("string collate %s", collationIdentifier.getName());
+    }
   }
 }

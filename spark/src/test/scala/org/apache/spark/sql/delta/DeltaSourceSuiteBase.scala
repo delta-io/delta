@@ -19,17 +19,40 @@ package org.apache.spark.sql.delta
 import java.io.File
 
 import org.apache.spark.sql.delta.actions.Format
-import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 
 import org.apache.spark.sql.{Column, DataFrame}
 import org.apache.spark.sql.streaming.StreamTest
 import org.apache.spark.sql.types.StructType
+import org.scalactic.source.Position
+import org.scalatest.Tag
+
+/**
+ * Trait that provides abstraction for testing both DSv1 and DSv2 connectors.
+ */
+trait DeltaSourceConnectorTrait {
+  self: DeltaSQLTestUtils =>
+
+  protected def useDsv2: Boolean = false
+
+  protected def loadStreamWithOptions(path: String, options: Map[String, String]): DataFrame = {
+    val reader = spark.readStream
+    options.foreach { case (k, v) => reader.option(k, v) }
+    if (useDsv2) {
+      // This will route through DeltaCatalog which checks V2_ENABLE_MODE
+      reader.table(s"delta.`$path`")
+    } else {
+      reader.format("delta").load(path)
+    }
+  }
+}
 
 trait DeltaSourceSuiteBase extends StreamTest
   with DeltaSQLTestUtils
-  with CoordinatedCommitsBaseSuite {
+  with CatalogOwnedTestBaseSuite
+  with DeltaSourceConnectorTrait {
 
   /**
    * Creates 3 temporary directories for use within a function.
@@ -96,10 +119,17 @@ trait DeltaSourceSuiteBase extends StreamTest
     val updatedSchema = copyOverMetadata(
       schema, baseMetadata.schema,
       baseMetadata.columnMappingMode)
-    // Configure coordinated commits
-    val updatedConfiguration = if (coordinatedCommitsEnabledInTests) {
+    // Configure CatalogManaged (CCv2) table settings.
+    val updatedConfiguration = if (catalogOwnedDefaultCreationEnabledInTests) {
+      // This withMetadata helper calls txn.commit(Metadata, ManualUpdate) directly, bypassing
+      // the normal CREATE TABLE path (CreateDeltaTableCommand, DeltaTestImplicits.commitActions)
+      // that populates newProtocol with CatalogOwnedTableFeature and auto-enables ICT. Without
+      // ICT, the CatalogManaged commit coordinator rejects the commit because it requires
+      // commitTimestamp on every version. This is a test-only issue: txn.commit is not a
+      // user-facing table creation API, and production tables always go through the full DDL
+      // path. We enable ICT manually here as the simplest fix.
       baseMetadata.configuration +
-        (DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key -> defaultCommitsCoordinatorName)
+        (DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true")
     } else {
       baseMetadata.configuration
     }

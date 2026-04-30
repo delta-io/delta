@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta.commands.DeleteCommand.{rewritingFilesMsg, FIN
 import org.apache.spark.sql.delta.commands.MergeIntoCommandBase.totalBytesAndDistinctPartitionValues
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.StatsCollectionUtils
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 
 import org.apache.spark.SparkContext
@@ -39,6 +40,7 @@ import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.{DeltaDelete, LogicalPlan}
 import org.apache.spark.sql.delta.DeltaOperations.Operation
+import org.apache.spark.sql.catalyst.plans.logical.SupportsSubquery
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.{createMetric, createTimingMetric}
@@ -112,7 +114,10 @@ case class DeleteCommand(
     catalogTable: Option[CatalogTable],
     target: LogicalPlan,
     condition: Option[Expression])
-  extends LeafRunnableCommand with DeltaCommand with DeleteCommandMetrics {
+  extends LeafRunnableCommand
+  with DeltaCommand
+  with DeleteCommandMetrics
+  with SupportsSubquery {
 
   override def innerChildren: Seq[QueryPlan[_]] = Seq(target)
 
@@ -289,10 +294,13 @@ case class DeleteCommand(
               opName = "DELETE")
 
             if (touchedFiles.nonEmpty) {
+              val stringTruncateLength = StatsCollectionUtils.getDataSkippingStringPrefixLength(
+                sparkSession, txn.metadata)
               val (actions, metricMap) = DMLWithDeletionVectorsHelper.processUnmodifiedData(
                 sparkSession,
                 touchedFiles,
-                txn.snapshot)
+                txn.snapshot,
+                stringTruncateLength)
               metrics("numDeletedRows").set(metricMap("numModifiedRows"))
               numDeletionVectorsAdded = metricMap("numDeletionVectorsAdded")
               numDeletionVectorsRemoved = metricMap("numDeletionVectorsRemoved")

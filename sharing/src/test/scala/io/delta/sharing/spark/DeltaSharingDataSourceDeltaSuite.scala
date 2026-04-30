@@ -21,11 +21,12 @@ package io.delta.sharing.spark
 
 import scala.concurrent.duration._
 
-import org.apache.spark.sql.delta.{DeltaConfigs, VariantShreddingPreviewTableFeature, VariantTypePreviewTableFeature, VariantTypeTableFeature}
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, VariantShreddingPreviewTableFeature, VariantShreddingTableFeature, VariantTypePreviewTableFeature, VariantTypeTableFeature}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.sql.{DataFrame, QueryTest, Row}
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.delta.sharing.DeltaSharingTestSparkUtils
 import org.apache.spark.sql.functions.col
@@ -119,11 +120,6 @@ trait DeltaSharingDataSourceDeltaSuiteBase
   def assertLimit(tableName: String, expectedLimit: Seq[Long]): Unit = {
     assert(expectedLimit ==
       TestClientForDeltaFormatSharing.limits.filter(_._1.contains(tableName)).map(_._2))
-  }
-
-  def assertRequestedFormat(tableName: String, expectedFormat: Seq[String]): Unit = {
-    assert(expectedFormat ==
-      TestClientForDeltaFormatSharing.requestedFormat.filter(_._1.contains(tableName)).map(_._2))
   }
 
   def assertJsonPredicateHints(tableName: String, expectedHints: Seq[String]): Unit = {
@@ -866,15 +862,10 @@ trait DeltaSharingDataSourceDeltaSuiteBase
   test("DeltaSharingDataSource able to read data for simple cdf query") {
     withTempDir { tempDir =>
       val deltaTableName = "delta_table_cdf"
-      // Set the deletedFileRetentionDuration and logRetentionDuration to a large value so that
-      // older versions can be accessed
-      val largeRetentionHours = 2 * System.currentTimeMillis().millis.toHours
       withTable(deltaTableName) {
         sql(s"""
                |CREATE TABLE $deltaTableName (c1 INT, c2 STRING) USING DELTA PARTITIONED BY (c2)
-               |TBLPROPERTIES (delta.enableChangeDataFeed = true,
-               |'delta.deletedFileRetentionDuration' = '$largeRetentionHours hours',
-               |'delta.logRetentionDuration' = '$largeRetentionHours hours')
+               |TBLPROPERTIES (delta.enableChangeDataFeed = true)
                |""".stripMargin)
         // 2 inserts in version 1, 1 with c1=2
         sql(s"""INSERT INTO $deltaTableName VALUES (1, "one"), (2, "two")""")
@@ -1151,17 +1142,12 @@ trait DeltaSharingDataSourceDeltaSuiteBase
   test("DeltaSharingDataSource able to read cdf with special chars") {
     withTempDir { tempDir =>
       val deltaTableName = "delta_table_cdf_special"
-      // Set the deletedFileRetentionDuration and logRetentionDuration to a large value so that
-      // older versions can be accessed
-      val largeRetentionHours = 2 * System.currentTimeMillis().millis.toHours
       withTable(deltaTableName) {
         // scalastyle:off nonascii
         sql(s"""CREATE TABLE $deltaTableName (`第一列` INT, c2 STRING)
                |USING DELTA PARTITIONED BY (c2)
                |TBLPROPERTIES(
-               |delta.enableChangeDataFeed = true,
-               |'delta.deletedFileRetentionDuration' = '$largeRetentionHours hours',
-               |'delta.logRetentionDuration' = '$largeRetentionHours hours'
+               |delta.enableChangeDataFeed = true
                |)""".stripMargin)
         // The table operations take about 20~30 seconds.
         for (i <- 0 to 9) {
@@ -1516,22 +1502,27 @@ trait DeltaSharingDataSourceDeltaSuiteBase
   Seq(
     VariantTypePreviewTableFeature,
     VariantTypeTableFeature,
-    VariantShreddingPreviewTableFeature
+    VariantShreddingPreviewTableFeature,
+    VariantShreddingTableFeature
   ).foreach { feature =>
     test(s"basic variant test - table feature: $feature") {
       withTempDir { tempDir =>
+        val shreddingConfs = Map(
+          "spark.sql.variant.writeShredding.enabled" -> "true",
+          "spark.sql.variant.allowReadingShredded" -> "true",
+          "spark.sql.variant.forceShreddingSchemaForTest" -> "a long"
+        )
         val extraConfs = feature match {
-          case VariantShreddingPreviewTableFeature => Map(
-            "spark.sql.variant.writeShredding.enabled" -> "true",
-            "spark.sql.variant.allowReadingShredded" -> "true",
-            "spark.sql.variant.forceShreddingSchemaForTest" -> "a long"
-          )
-          case _ => Map.empty
+          case VariantShreddingPreviewTableFeature => shreddingConfs
+          case VariantShreddingTableFeature => shreddingConfs +
+            (DeltaSQLConf.FORCE_USE_PREVIEW_SHREDDING_FEATURE.key -> "false")
+          case _ => Map.empty[String, String]
         }
         withSQLConf(extraConfs.toSeq: _*) {
           val deltaTableName = s"variant_table_${feature.name.replaceAll("-", "_")}"
           withTable(deltaTableName) {
-            if (feature == VariantShreddingPreviewTableFeature) {
+            if (feature == VariantShreddingPreviewTableFeature ||
+                feature == VariantShreddingTableFeature) {
               spark.sql(s"CREATE TABLE $deltaTableName(v variant) USING DELTA " +
                 s"TBLPROPERTIES('${DeltaConfigs.ENABLE_VARIANT_SHREDDING.key}' = 'true')")
             } else {
@@ -1545,6 +1536,12 @@ trait DeltaSharingDataSourceDeltaSuiteBase
               .format("delta")
               .mode("append")
               .insertInto(deltaTableName)
+
+            val (_, snapshot) =
+              DeltaLog.forTableWithSnapshot(spark, TableIdentifier(deltaTableName))
+            assert(snapshot.protocol.readerAndWriterFeatures.contains(feature),
+              s"Expected table feature ${feature.name} not found in " +
+                s"protocol: ${snapshot.protocol}")
 
             val sharedTableName = s"shared_table_variant_${feature.name.replaceAll("-", "_")}"
             prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
@@ -1604,6 +1601,156 @@ trait DeltaSharingDataSourceDeltaSuiteBase
           assert(expectedSchema == df.schema)
           val expected = spark.read.format("delta").table(deltaTableName)
           checkAnswer(df, expected)
+        }
+      }
+    }
+  }
+
+  test("deleted file retention duration check is not applied for time-travel on delta-sharing tables") {
+    withTempDir { tempDir =>
+      val deltaTableName = "delta_table_time_travel_retention"
+      withTable(deltaTableName) {
+        // file and log retention is set to 0 but still able to time-travel because of skipping enforcement.
+        sql(s"""
+               |CREATE TABLE $deltaTableName (c1 INT, c2 STRING) USING DELTA PARTITIONED BY (c2)
+               |TBLPROPERTIES ('delta.deletedFileRetentionDuration' = '0 hours',
+               |'delta.logRetentionDuration' = '0 hours')
+               |""".stripMargin)
+
+        // Insert multiple versions
+        sql(s"""INSERT INTO $deltaTableName VALUES (1, "one")""")
+        sql(s"""INSERT INTO $deltaTableName VALUES (2, "two")""")
+        sql(s"""INSERT INTO $deltaTableName VALUES (3, "three")""")
+
+        val sharedTableName = "shared_table_time_travel_retention"
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+        prepareMockedClientAndFileSystemResult(
+          deltaTable = deltaTableName,
+          sharedTable = sharedTableName,
+          versionAsOf = Some(1L)
+        )
+
+        // Enable enforcement config - delta-sharing tables should still skip enforcement
+        withSQLConf(
+          DeltaSQLConf.ENFORCE_TIME_TRAVEL_WITHIN_DELETED_FILE_RETENTION_DURATION.key -> "true"
+        ) {
+          withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+            val profileFile = prepareProfileFile(tempDir)
+            val tablePath = s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName"
+
+            // This should succeed even with enforcement enabled because delta-sharing
+            // tables use "delta-sharing-log" filesystem scheme and skip enforcement
+            val df = spark.read
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .option("versionAsOf", 1)
+              .load(tablePath)
+
+            val expected = Seq(Row(1, "one"))
+              checkAnswer(df, expected)
+          }
+        }
+      }
+    }
+  }
+
+  test("deleted file retention duration check is not applied for cdf on delta-sharing tables") {
+    withTempDir { tempDir =>
+      val deltaTableName = "delta_table_cdc_retention"
+      withTable(deltaTableName) {
+        // file and log retention is set to 0 but still able to time-travel because of skipping enforcement.
+        sql(s"""
+               |CREATE TABLE $deltaTableName (c1 INT, c2 STRING) USING DELTA PARTITIONED BY (c2)
+               |TBLPROPERTIES (delta.enableChangeDataFeed = true,
+               |'delta.deletedFileRetentionDuration' = '0 hours',
+               |'delta.logRetentionDuration' = '0 hours')
+               |""".stripMargin)
+
+        // Insert multiple versions
+        sql(s"""INSERT INTO $deltaTableName VALUES (1, "one")""")
+        sql(s"""INSERT INTO $deltaTableName VALUES (2, "two")""")
+        sql(s"""INSERT INTO $deltaTableName VALUES (3, "three")""")
+
+        val sharedTableName = "shared_table_cdc_retention"
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+        prepareMockedClientAndFileSystemResultForCdf(
+          deltaTable = deltaTableName,
+          sharedTable = sharedTableName,
+          startingVersion = 0L
+        )
+
+        // Enable enforcement config - delta-sharing tables should still skip enforcement
+        withSQLConf(
+          DeltaSQLConf.ENFORCE_TIME_TRAVEL_WITHIN_DELETED_FILE_RETENTION_DURATION.key -> "true"
+        ) {
+          withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+            val profileFile = prepareProfileFile(tempDir)
+            val tablePath = s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName"
+
+            val df = spark.read
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", 0)
+              .load(tablePath)
+              .select("c1", "c2", "_change_type", "_commit_version")
+
+            // CDF should return inserts for all 3 versions (1, 2, 3)
+            // Version 0 is table creation, inserts start from version 1
+            val expected = Seq(
+              Row(1, "one", "insert", 1L),
+              Row(2, "two", "insert", 2L),
+              Row(3, "three", "insert", 3L)
+            )
+            checkAnswer(df, expected)
+          }
+        }
+      }
+    }
+  }
+  test("callerOrg option is passed to DeltaSharingRestClient") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      val deltaTableName = "delta_table_caller_org"
+      withTable(deltaTableName) {
+        createSimpleTable(deltaTableName, enableCdf = false)
+        sql(s"""INSERT INTO $deltaTableName VALUES (1, "one")""")
+
+        val sharedTableName = "shared_table_caller_org"
+        prepareMockedClientAndFileSystemResult(
+          deltaTableName, sharedTableName)
+        DeltaSharingUtils.overrideSingleBlock[Long](
+          blockId = TestClientForDeltaFormatSharing.getBlockId(
+            sharedTableName, "getTableVersion"),
+          value = 1
+        )
+
+        withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+          val profileFile = prepareProfileFile(inputDir)
+          val tablePath =
+            s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName"
+
+          TestClientForDeltaFormatSharing.lastCallerOrg = ""
+          spark.read
+            .format("deltaSharing")
+            .option("responseFormat", "delta")
+            .option(DeltaSharingOptions.CALLER_ORG_OPTION, "test-org")
+            .load(tablePath)
+            .collect()
+          assert(
+            TestClientForDeltaFormatSharing.lastCallerOrg == "test-org",
+            "callerOrg should be passed through to the client"
+          )
+
+          TestClientForDeltaFormatSharing.lastCallerOrg = ""
+          spark.read
+            .format("deltaSharing")
+            .option("responseFormat", "delta")
+            .load(tablePath)
+            .collect()
+          assert(
+            TestClientForDeltaFormatSharing.lastCallerOrg == "",
+            "callerOrg should be empty when not set"
+          )
         }
       }
     }

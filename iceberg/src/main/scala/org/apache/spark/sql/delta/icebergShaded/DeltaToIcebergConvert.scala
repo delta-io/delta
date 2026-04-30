@@ -16,20 +16,22 @@
 
 package org.apache.spark.sql.delta.icebergShaded
 
+import java.nio.ByteBuffer
 import java.sql.Timestamp
-import java.time.{LocalDateTime, OffsetDateTime}
+import java.time.{LocalDateTime, OffsetDateTime, ZoneOffset}
 import java.time.format._
+import java.util.{Base64, List => JList}
 
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{DeltaConfig, DeltaConfigs, IcebergCompat, NoMapping, Snapshot, SnapshotDescriptor}
 import org.apache.spark.sql.delta.DeltaConfigs.{LOG_RETENTION, TOMBSTONE_RETENTION}
-import org.apache.spark.sql.delta.icebergShaded.IcebergTransactionUtils
+import org.apache.spark.sql.delta.actions.{AddFile, FileAction}
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import shadedForDelta.org.apache.iceberg.{PartitionSpec, Schema => IcebergSchema, StructLike, TableProperties => IcebergTableProperties}
+import org.apache.spark.sql.delta.util.JsonUtils
+import shadedForDelta.org.apache.iceberg.{FileMetadata, PartitionData, PartitionSpec, Schema => IcebergSchema, StructLike, TableProperties => IcebergTableProperties}
 import shadedForDelta.org.apache.iceberg.expressions.Literal
-import shadedForDelta.org.apache.iceberg.types.{Type => IcebergType, Types => IcebergTypes}
-import shadedForDelta.org.apache.iceberg.util.DateTimeUtil
+import shadedForDelta.org.apache.iceberg.types.{Conversions, Type => IcebergType, Types => IcebergTypes}
 
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.util.ResolveDefaultColumns.CURRENT_DEFAULT_COLUMN_METADATA_KEY
@@ -66,6 +68,25 @@ class DeltaToIcebergConverter(val snapshot: SnapshotDescriptor, val catalogTable
 object DeltaToIcebergConvert
   extends DeltaLogging
   {
+  object Action
+    extends DeltaLogging
+    {
+      def buildPartitionValues(
+          builder: FileMetadata.Builder,
+          fileAction: FileAction,
+          partitionSpec: PartitionSpec,
+          snapshot: Snapshot,
+          logicalToPhysicalPartitionNames: Map[String, String]): Unit = {
+        if (partitionSpec.isPartitioned) {
+            builder.withPartition(
+              DeltaToIcebergConvert.Partition.convertPartitionValues(
+                snapshot,
+                partitionSpec,
+                fileAction.partitionValues,
+                logicalToPhysicalPartitionNames))
+        }
+      }
+    }
   /**
    * Utils used when converting Delta schema to Iceberg
    */
@@ -92,6 +113,64 @@ object DeltaToIcebergConvert
         Right(None)
       }
     }
+
+    /**
+     * Follow Spark's string escape rule to unescape a default value string
+     * @param input string to be unescaped
+     * @return unescaped string
+     */
+    def unescapeString(input: String): String = {
+      val table = Map[Char, String](
+        'b' -> "\u0008", 't' -> "\t", 'n' -> "\n", 'r' -> "\r",
+        'Z' -> "\u001A", '\\' -> "\\", '%' -> "\\%", '_' -> "\\_", '\'' -> "'"
+      )
+
+      def isHex(c: Char): Boolean = Character.digit(c, 16) >= 0
+      def isOct(c: Char): Boolean = c >= '0' && c <= '7'
+
+      def hexAt(pos: Int, n: Int): String = {
+        if (pos + n <= input.length && (0 until n).forall(k => isHex(input.charAt(pos + k)))) {
+          val cp = Integer.parseInt(input.substring(pos, pos + n), 16)
+          new String(Character.toChars(cp))
+        } else null
+      }
+
+      def octAt(pos: Int): String = {
+        if (pos + 3 <= input.length && (0 until 3).forall(k => isOct(input.charAt(pos + k)))) {
+          val cp = Integer.parseInt(input.substring(pos, pos + 3), 8)
+          if (cp <= 255) new String(Character.toChars(cp)) else null
+        } else null
+      }
+
+      val out = new StringBuilder
+      var i = 0
+      while (i < input.length) {
+        val c = input.charAt(i)
+        if (c != '\\') { out.append(c); i += 1 }
+        else {
+          if (i + 1 >= input.length) throw new IllegalStateException("dangling escape")
+          val d = input.charAt(i + 1)
+
+          if (d >= '0' && d <= '7') {
+            val oct = octAt(i + 1)
+            if (oct != null) { out.append(oct); i += 4 }
+            else if (d == '0') { out.append("\u0000"); i += 2 }
+            else { out.append(d); i += 2 }
+          } else if (d == 'u' || d == 'U') {
+            val h8 = hexAt(i + 2, 8)
+            val h4 = if (h8 == null) hexAt(i + 2, 4) else null
+            val h = if (h8 != null) h8 else h4
+            if (h != null) { out.append(h); i += (if (h8 != null) 10 else 6) }
+            else { out.append(d); i += 2 } // \x => x rule
+          } else {
+            out.append(table.getOrElse(d, d.toString))
+            i += 2
+          }
+        }
+      }
+      out.toString
+    }
+
     /**
      * Convert Delta default value string to an Iceberg Literal based on data type.
      * @param str default value in Delta column metadata
@@ -102,7 +181,7 @@ object DeltaToIcebergConvert
       def parseString(input: String) = {
         if (input.length > 1 && ((input.head == '\'' && input.last == '\'')
           || (input.head == '"' && input.last == '"'))) {
-          Literal.of(input.substring(1, input.length - 1))
+          Literal.of(unescapeString(input.substring(1, input.length - 1)))
         } else {
           throw new UnsupportedOperationException(s"String missing quotation marks: $input")
         }
@@ -111,8 +190,11 @@ object DeltaToIcebergConvert
       def parseBinary(input: String) = {
         if (input.startsWith("x") || input.startsWith("X")) {
           // Hex encoded literal
-          Literal.of(BigInt(parseString(input.substring(1))
-              .value().toString, 16).toByteArray.dropWhile(_ == 0))
+          var hexString = parseString(input.substring(1)).value().toString
+          if (hexString.length % 2 == 1) {
+            hexString = hexString.substring(1) + "00"
+          }
+          Literal.of(hexString.sliding(2, 2).map(Integer.parseInt(_, 16).toByte).toArray)
         } else {
           Literal.of(parseString(input).value().toString
             .getBytes(java.nio.charset.StandardCharsets.UTF_8))
@@ -125,7 +207,13 @@ object DeltaToIcebergConvert
         val stripped = parseString(input).value()
         val parsed = formats.flatMap { format =>
           try {
-            Some(Literal.of(Timestamp.valueOf(LocalDateTime.parse(stripped, format)).getTime))
+            val ldt = LocalDateTime.parse(stripped, format)
+            Some(
+              Literal.of(
+                ldt.toInstant(ZoneOffset.UTC).getEpochSecond * 1000000
+                  + ldt.getNano / 1000
+              )
+            )
           } catch {
             case NonFatal(_) => None
           }
@@ -140,8 +228,8 @@ object DeltaToIcebergConvert
       def parseTimestamp(input: String) = {
         val stripped = parseString(input).value()
         try {
-          Literal.of(OffsetDateTime.parse(stripped, DateTimeFormatter.ISO_DATE_TIME)
-            .toInstant.toEpochMilli)
+          val instant = OffsetDateTime.parse(stripped, DateTimeFormatter.ISO_DATE_TIME).toInstant
+          Literal.of(instant.getEpochSecond * 1000000 + instant.getNano / 1000)
         } catch {
           case NonFatal(_) => parseLocalTimestamp(input)
         }

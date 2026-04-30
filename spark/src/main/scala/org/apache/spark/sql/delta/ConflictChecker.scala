@@ -32,6 +32,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils.CheckDeterministicOptions
 import org.apache.spark.sql.delta.util.FileNames
 import io.delta.storage.commit.UpdatedActions
+import io.delta.storage.commit.uniform.UniformMetadata
 import org.apache.hadoop.fs.FileStatus
 
 import org.apache.spark.internal.{MDC, MessageWithContext}
@@ -66,7 +67,9 @@ private[delta] case class CurrentTransactionInfo(
     val readRowIdHighWatermark: Long,
     val catalogTable: Option[CatalogTable],
     val domainMetadata: Seq[DomainMetadata],
-    val op: DeltaOperations.Operation) {
+    val op: DeltaOperations.Operation
+    , val convertedIcebergMetadata: Option[UniformMetadata] = None
+ ) {
 
   /**
    * Final actions to commit - including the [[CommitInfo]] which should always come first so we can
@@ -269,6 +272,23 @@ private[delta] class ConflictChecker(
         oldProtocol = readProtocol)
       if (isWinnerDroppingFeatures) {
         throw DeltaErrors.protocolChangedException(winningCommitSummary.commitInfo)
+      }
+
+      if (spark.conf.get(
+          DeltaSQLConf.DELTA_CONFLICT_CHECKER_ENFORCE_FEATURE_ENABLEMENT_VALIDATION)) {
+        // Check if the winning protocol adds features that should fail concurrent transactions at
+        // upgrade. These features are identified by the `failConcurrentTransactionsAtUpgrade`
+        // method returning true. These features impose write-time requirements that need to be
+        // respected by all writers beyond the protocol upgrade, and there's no custom feature
+        // specific conflict resolution logic below to be able to have the current transaction meet
+        // these requirements on-the-fly.
+        val winningTxnAddedFeatures = TableFeature.getAddedFeatures(winningProtocol, readProtocol)
+
+        val winningTxnUnsafeAddedFeatures = winningTxnAddedFeatures
+          .filter(_.failConcurrentTransactionsAtUpgrade)
+        if (winningTxnUnsafeAddedFeatures.nonEmpty) {
+          throw DeltaErrors.protocolChangedException(winningCommitSummary.commitInfo)
+        }
       }
     }
     // When the winning transaction does not change the protocol but the losing txn is
@@ -1029,21 +1049,11 @@ private[delta] class ConflictChecker(
         getFirstFileMatchingPartitionPredicates(addedFilesToCheckForConflicts)
 
       if (fileMatchingPartitionReadPredicates.nonEmpty) {
-        val isWriteSerializable = isolationLevel == WriteSerializable
-
-        val retryMsg = if (isWriteSerializable && winningCommitSummary.onlyAddFiles &&
-          winningCommitSummary.isBlindAppendOption.isEmpty) {
-          // The transaction was made by an older version which did not set `isBlindAppend` flag
-          // So even if it looks like an append, we don't know for sure if it was a blind append
-          // or not. So we suggest them to upgrade all there workloads to latest version.
-          Some(
-            "Upgrading all your concurrent writers to use the latest Delta Lake may " +
-              "avoid this error. Please upgrade and then retry this operation again.")
-        } else None
         throw DeltaErrors.concurrentAppendException(
           winningCommitSummary.commitInfo,
-          getPrettyPartitionMessage(fileMatchingPartitionReadPredicates.get.partitionValues),
-          retryMsg)
+          getTableNameOrPath,
+          winningCommitVersion,
+          getPrettyPartitionMessage(fileMatchingPartitionReadPredicates.get.partitionValues))
       }
     }
   }
@@ -1060,15 +1070,19 @@ private[delta] class ConflictChecker(
       val deleteReadOverlap = winningCommitSummary.removedFiles
         .find(r => readFilePaths.contains(r.path))
       if (deleteReadOverlap.nonEmpty) {
-        val filePath = deleteReadOverlap.get.path
-        val partition = getPrettyPartitionMessage(readFilePaths(filePath))
+        val partitionOpt = getPrettyPartitionMessage(readFilePaths(deleteReadOverlap.get.path))
         throw DeltaErrors.concurrentDeleteReadException(
-          winningCommitSummary.commitInfo, s"$filePath in $partition")
+          winningCommitSummary.commitInfo,
+          getTableNameOrPath,
+          winningCommitVersion,
+          partitionOpt)
       }
       if (winningCommitSummary.removedFiles.nonEmpty && currentTransactionInfo.readWholeTable) {
-        val filePath = winningCommitSummary.removedFiles.head.path
         throw DeltaErrors.concurrentDeleteReadException(
-          winningCommitSummary.commitInfo, s"$filePath")
+          winningCommitSummary.commitInfo,
+          getTableNameOrPath,
+          winningCommitVersion,
+          partitionOpt = None)
       }
     }
   }
@@ -1080,13 +1094,18 @@ private[delta] class ConflictChecker(
   protected def checkForDeletedFilesAgainstCurrentTxnDeletedFiles(): Unit = {
     recordTime("checked-2x-deletes") {
       // Fail if a file is deleted twice.
-      val txnDeletes = currentTransactionInfo.actions
-        .collect { case r: RemoveFile => r }
-        .map(_.path).toSet
-      val deleteOverlap = winningCommitSummary.removedFiles.map(_.path).toSet intersect txnDeletes
+      val deletedFilePaths = currentTransactionInfo.actions
+        .collect { case r: RemoveFile => r.path -> r.partitionValues }
+        .toMap
+      val deleteOverlap = winningCommitSummary.removedFiles
+        .find(r => deletedFilePaths.contains(r.path))
       if (deleteOverlap.nonEmpty) {
+        val partitionOpt = getPrettyPartitionMessage(deletedFilePaths(deleteOverlap.get.path))
         throw DeltaErrors.concurrentDeleteDeleteException(
-          winningCommitSummary.commitInfo, deleteOverlap.head)
+          winningCommitSummary.commitInfo,
+          getTableNameOrPath,
+          winningCommitVersion,
+          partitionOpt)
       }
     }
   }
@@ -1315,15 +1334,31 @@ private[delta] class ConflictChecker(
   }
 
   /** A helper function for pretty printing a specific partition directory. */
-  protected def getPrettyPartitionMessage(partitionValues: Map[String, String]): String = {
+  protected def getPrettyPartitionMessage(partitionValues: Map[String, String]): Option[String] = {
     val partitionColumns = currentTransactionInfo.partitionSchemaAtReadTime
-    if (partitionColumns.isEmpty) {
-      "the root of the table"
+    // Guard against null (e.g. RemoveFile written without extended metadata) and empty map
+    // (e.g. RemoveFile for a non-partitioned file or written by a client that omits partition
+    // values). Using getOrElse defensively also handles partially populated maps.
+    if (partitionColumns.isEmpty || partitionValues == null || partitionValues.isEmpty) {
+      None
     } else {
-      val partition = partitionColumns.map { field =>
-        s"${field.name}=${partitionValues(DeltaColumnMapping.getPhysicalName(field))}"
-      }.mkString("[", ", ", "]")
-      s"partition ${partition}"
+      Some(
+        partitionColumns.map { field =>
+          val value =
+            partitionValues.getOrElse(DeltaColumnMapping.getPhysicalName(field), "null")
+          s"${field.name}=$value"
+        }.mkString("[", ", ", "]")
+      )
+    }
+  }
+
+  protected def getTableNameOrPath: String = {
+    val tableName = currentTransactionInfo.catalogTable.map(_.qualifiedName)
+      .getOrElse(currentTransactionInfo.metadata.name)
+    if (tableName != null) {
+      tableName
+    } else {
+      s"delta.`${currentTransactionInfo.readSnapshot.deltaLog.dataPath}`"
     }
   }
 

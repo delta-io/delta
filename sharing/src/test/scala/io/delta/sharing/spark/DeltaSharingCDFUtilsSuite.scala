@@ -24,7 +24,7 @@ import io.delta.sharing.client.{
   DeltaSharingProfileProvider,
   DeltaSharingRestClient
 }
-import io.delta.sharing.client.model.{DeltaTableFiles, DeltaTableMetadata, Table}
+import io.delta.sharing.client.model.{DeltaTableFiles, DeltaTableMetadata, Table, TemporaryCredentials}
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
 
@@ -88,7 +88,9 @@ class TestDeltaSharingClientForCDFUtils(
     asyncQueryMaxDuration: Long = 600000L,
     tokenExchangeMaxRetries: Int = 5,
     tokenExchangeMaxRetryDurationInSeconds: Int = 60,
-    tokenRenewalThresholdInSeconds: Int = 600)
+    tokenRenewalThresholdInSeconds: Int = 600,
+    callerOrg: String = "",
+    skipFileIdHashVerification: Boolean = false)
     extends DeltaSharingClient {
 
   import CDFTesTUtils._
@@ -121,7 +123,8 @@ class TestDeltaSharingClientForCDFUtils(
       versionAsOf: Option[Long],
       timestampAsOf: Option[String],
       jsonPredicateHints: Option[String],
-      refreshToken: Option[String]
+      refreshToken: Option[String],
+      fileIdHash: Option[String]
   ): DeltaTableFiles = {
     throw new UnsupportedOperationException("getFiles is not supported now.")
   }
@@ -129,7 +132,8 @@ class TestDeltaSharingClientForCDFUtils(
   override def getFiles(
       table: Table,
       startingVersion: Long,
-      endingVersion: Option[Long]
+      endingVersion: Option[Long],
+      fileIdHash: Option[String]
   ): DeltaTableFiles = {
     throw new UnsupportedOperationException(s"getFiles with startingVersion($startingVersion)")
   }
@@ -137,7 +141,8 @@ class TestDeltaSharingClientForCDFUtils(
   override def getCDFFiles(
       table: Table,
       cdfOptions: Map[String, String],
-      includeHistoricalMetadata: Boolean
+      includeHistoricalMetadata: Boolean,
+      fileIdHash: Option[String]
   ): DeltaTableFiles = {
     numGetFileCalls += 1
     DeltaTableFiles(
@@ -150,6 +155,12 @@ class TestDeltaSharingClientForCDFUtils(
       ),
       respondedFormat = DeltaSharingRestClient.RESPONSE_FORMAT_DELTA
     )
+  }
+
+  override def generateTemporaryTableCredential(
+      table: Table,
+      location: Option[String]): TemporaryCredentials = {
+    throw new UnsupportedOperationException("generateTemporaryTableCredential is not implemented")
   }
 
   override def getForStreaming(): Boolean = forStreaming

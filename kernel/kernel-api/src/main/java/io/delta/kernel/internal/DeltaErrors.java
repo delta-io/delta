@@ -108,19 +108,10 @@ public final class DeltaErrors {
     return new CommitRangeNotFoundException(tablePath, startVersion, endVersionOpt);
   }
 
-  public static KernelException startVersionNotFound(
+  public static StartVersionNotFoundException startVersionNotFound(
       String tablePath, long startVersionRequested, Optional<Long> earliestAvailableVersion) {
-    String message =
-        String.format(
-            "%s: Requested table changes beginning with startVersion=%s but no log file found for "
-                + "version %s.",
-            tablePath, startVersionRequested, startVersionRequested);
-    if (earliestAvailableVersion.isPresent()) {
-      message =
-          message
-              + String.format(" Earliest available version is %s", earliestAvailableVersion.get());
-    }
-    return new KernelException(message);
+    return new StartVersionNotFoundException(
+        tablePath, startVersionRequested, earliestAvailableVersion);
   }
 
   public static KernelException endVersionNotFound(
@@ -139,6 +130,26 @@ public final class DeltaErrors {
             "Invalid version range: requested table changes for version range [%s, %s]. "
                 + "Requires startVersion >= 0 and endVersion >= startVersion.",
             startVersion, endVersion);
+    return new KernelException(message);
+  }
+
+  public static KernelException invalidResolvedVersionRange(
+      String tablePath, long startVersion, long endVersion) {
+    String message =
+        String.format(
+            "%s: Invalid resolved version range: after timestamp resolution, "
+                + "startVersion=%d > endVersion=%d. "
+                + "Please adjust the provided timestamp boundaries.",
+            tablePath, startVersion, endVersion);
+    return new KernelException(message);
+  }
+
+  public static KernelException resolvedEndVersionAfterMaxCatalogVersion(
+      String tablePath, long resolvedEndVersion, long maxCatalogVersion) {
+    String message =
+        String.format(
+            "%s: Resolved end version to %s which is after max catalog version %s",
+            tablePath, resolvedEndVersion, maxCatalogVersion);
     return new KernelException(message);
   }
 
@@ -192,6 +203,17 @@ public final class DeltaErrors {
     String message =
         "This version of Delta Kernel does not support writing to tables with "
             + "column invariants present.";
+    return new KernelException(message);
+  }
+
+  public static KernelException checkpointOnUnpublishedCommits(
+      String tablePath, long version, long maxPublishedVersion) {
+    String message =
+        String.format(
+            "Unable to create checkpoint: Snapshot at at path"
+                + " `%s` with version %d has unpublished commits. "
+                + "Max known published version is %d",
+            tablePath, version, maxPublishedVersion);
     return new KernelException(message);
   }
 
@@ -503,6 +525,17 @@ public final class DeltaErrors {
         String.format(
             "Cannot modify append-only table. Table `%s` has configuration %s=true.",
             tablePath, TableConfig.APPEND_ONLY_ENABLED.getKey()));
+  }
+
+  public static KernelException cdfMixedAddRemoveNotSupported(String tablePath) {
+    return new KernelException(
+        String.format(
+            "Cannot add and remove data in the same transaction when Change Data Feed is enabled "
+                + "on table %s. This would require writing CDC files for DML operations, which is "
+                + "not yet supported by Delta Kernel. You can perform add-only operations (like "
+                + "INSERT or CREATE TABLE), remove-only operations (like DELETE), or mixed "
+                + "operations with dataChange=false (like OPTIMIZE).",
+            tablePath));
   }
 
   public static KernelException rowTrackingMetadataMissingInFile(String entry, String filePath) {

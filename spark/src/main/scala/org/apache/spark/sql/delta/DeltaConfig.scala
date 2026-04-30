@@ -670,6 +670,18 @@ trait DeltaConfigsBase extends DeltaLogging {
       |collected.
       |""".stripMargin)
 
+  /**
+   * For string columns, how long prefix to store in the data skipping index.
+   * Note that the behavior from table property overrides the config:
+   * [[DeltaSQLConf.DATA_SKIPPING_STRING_PREFIX_LENGTH]]
+   */
+  val DATA_SKIPPING_STRING_PREFIX_LENGTH = buildConfig[Option[Int]](
+    "dataSkippingStringPrefixLength",
+    null,
+    v => Option(v).map(_.toInt),
+    v => v.forall(_ >= 0),
+    "needs to be greater or equal to zero.")
+
   val SYMLINK_FORMAT_MANIFEST_ENABLED = buildConfig[Boolean](
     s"${hooks.GenerateSymlinkManifest.CONFIG_NAME_ROOT}.enabled",
     "false",
@@ -837,6 +849,18 @@ trait DeltaConfigsBase extends DeltaLogging {
     fromString = v => Option(v).map(_.toBoolean),
     validationFunction = _ => true,
     helpMessage = "needs to be a boolean."
+  )
+  /**
+   * Guard property automatically set when a new IcebergCompat table is created
+   * Atomic UniForm Iceberg conversion requires this property to be present
+   */
+  val ICEBERG_ATOMIC_CONVERSION_SUPPORTED = buildConfig[Boolean](
+    "universalFormat.iceberg.atomicConversion.supported",
+    "false",
+    _.toBoolean,
+    _ => true,
+    "needs to be a boolean.",
+    userConfigurable = true
   )
 
   val CAST_ICEBERG_TIME_TYPE = buildConfig[Boolean](

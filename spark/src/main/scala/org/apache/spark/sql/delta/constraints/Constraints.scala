@@ -18,21 +18,25 @@ package org.apache.spark.sql.delta.constraints
 
 import java.util.Locale
 
+import scala.concurrent.duration
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{AllowedUserProvidedExpressions, DeltaErrors, DeltaLog}
 import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.ValidateCheckConstraintsMode
 
 import org.apache.spark.SparkThrowable
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Alias, Expression, GetArrayItem, GetMapValue, GetStructField, IsNotNull, UserDefinedExpression}
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, Project}
 import org.apache.spark.sql.catalyst.types.DataTypeUtils
+import org.apache.spark.sql.catalyst.util.CharVarcharUtils
 import org.apache.spark.sql.types.{BooleanType, StructType}
 
 /**
@@ -137,9 +141,18 @@ object Constraints extends DeltaLogging {
       schema: StructType): Unit = {
     val validateCheckConstraints = ValidateCheckConstraintsMode.fromConf(spark.sessionState.conf)
     if (validateCheckConstraints == ValidateCheckConstraintsMode.OFF) return
+    if (constraints.isEmpty) return
 
     try {
+      val startTime = System.nanoTime()
       validateCheckConstraintsInternal(spark, constraints, schema)
+      val durationMs = duration.NANOSECONDS.toMillis(System.nanoTime() - startTime)
+      logInfo(
+        log"Validated CHECK constraints on table " +
+        log"${MDC(DeltaLogKeys.TABLE_ID, deltaLog.unsafeVolatileTableId)} " +
+        log"in ${MDC(DeltaLogKeys.TIME_MS, durationMs)} ms and processed " +
+        log"${MDC(DeltaLogKeys.NUM_PREDICATES, constraints.size)} constraints"
+      )
     } catch {
       case NonFatal(e) =>
         val errorClassName = e match {
@@ -183,7 +196,9 @@ object Constraints extends DeltaLogging {
     // Use LocalRelation with the table schema to ensure column references can be validated
     val analyzed = try {
       val analyzer = spark.sessionState.analyzer
-      val relation = LocalRelation(DataTypeUtils.toAttributes(schema))
+      val relation = LocalRelation(
+        DataTypeUtils.toAttributes(CharVarcharUtils.replaceCharVarcharWithStringInSchema(schema))
+      )
       val plan = analyzer.execute(Project(selectExprs, relation))
       analyzer.checkAnalysis(plan)
       plan

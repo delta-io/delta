@@ -657,17 +657,19 @@ trait DeltaColumnMappingBase extends DeltaLogging {
    * We detect DROP COLUMNS by checking if any physical name in `currentSchema` is missing in
    * `newSchema`.
    */
-  def isDropColumnOperation(newMetadata: Metadata, currentMetadata: Metadata): Boolean = {
+  def isDropColumnOperation(
+      newSchema: StructType,
+      currentSchema: StructType,
+      isBothColumnMappingEnabled: Boolean): Boolean = {
 
     // We will need to compare the new schema's physical columns to the current schema's physical
     // columns. So, they both must have column mapping enabled.
-    if (newMetadata.columnMappingMode == NoMapping ||
-      currentMetadata.columnMappingMode == NoMapping) {
+    if (!isBothColumnMappingEnabled) {
       return false
     }
 
-    val newPhysicalToLogicalMap = getPhysicalNameFieldMap(newMetadata.schema)
-    val currentPhysicalToLogicalMap = getPhysicalNameFieldMap(currentMetadata.schema)
+    val newPhysicalToLogicalMap = getPhysicalNameFieldMap(newSchema)
+    val currentPhysicalToLogicalMap = getPhysicalNameFieldMap(currentSchema)
 
     // are any of the current physical names missing in the new schema?
     currentPhysicalToLogicalMap
@@ -704,23 +706,40 @@ trait DeltaColumnMappingBase extends DeltaLogging {
    * We detect RENAME COLUMNS by checking if any two columns with the same physical name have
    * different logical names
    */
-  def isRenameColumnOperation(newMetadata: Metadata, currentMetadata: Metadata): Boolean = {
+  def isRenameColumnOperation(
+      newSchema: StructType,
+      currentSchema: StructType,
+      isBothColumnMappingEnabled: Boolean): Boolean = {
 
     // We will need to compare the new schema's physical columns to the current schema's physical
     // columns. So, they both must have column mapping enabled.
-    if (newMetadata.columnMappingMode == NoMapping ||
-      currentMetadata.columnMappingMode == NoMapping) {
+    if (!isBothColumnMappingEnabled) {
       return false
     }
 
-    val newPhysicalToLogicalMap = getPhysicalNameFieldMap(newMetadata.schema)
-    val currentPhysicalToLogicalMap = getPhysicalNameFieldMap(currentMetadata.schema)
+    val newPhysicalToLogicalMap = getPhysicalNameFieldMap(newSchema)
+    val currentPhysicalToLogicalMap = getPhysicalNameFieldMap(currentSchema)
 
     // do any two columns with the same physical name have different logical names?
     currentPhysicalToLogicalMap
       .exists { case (physicalPath, field) =>
         newPhysicalToLogicalMap.get(physicalPath).exists(_.name != field.name)
       }
+  }
+
+  /**
+   * Returns true if there is a column mapping schema change (drop/rename) or an incompatible
+   * partition column change between the new and current schemas.
+   */
+  def hasColMappingOrPartitionSchemaChange(
+      newSchema: StructType,
+      currentSchema: StructType,
+      newPartitionColumns: Seq[String],
+      oldPartitionColumns: Seq[String],
+      isBothColumnMappingEnabled: Boolean): Boolean = {
+    isDropColumnOperation(newSchema, currentSchema, isBothColumnMappingEnabled) ||
+      isRenameColumnOperation(newSchema, currentSchema, isBothColumnMappingEnabled) ||
+      !SchemaUtils.isPartitionCompatible(newPartitionColumns, oldPartitionColumns)
   }
 
   /**
@@ -758,22 +777,24 @@ trait DeltaColumnMappingBase extends DeltaLogging {
    */
   def hasNoColumnMappingSchemaChanges(newMetadata: Metadata, oldMetadata: Metadata,
       allowUnsafeReadOnPartitionChanges: Boolean = false): Boolean = {
-    // Helper function to check no column mapping schema change and no repartition
-    def hasNoColMappingAndRepartitionSchemaChange(
-       newMetadata: Metadata, oldMetadata: Metadata): Boolean = {
-      isRenameColumnOperation(newMetadata, oldMetadata) ||
-        isDropColumnOperation(newMetadata, oldMetadata) ||
-        !SchemaUtils.isPartitionCompatible(
-          // if allow unsafe row read for partition change, ignore the check
-          if (allowUnsafeReadOnPartitionChanges) Seq.empty else newMetadata.partitionColumns,
-          if (allowUnsafeReadOnPartitionChanges) Seq.empty else oldMetadata.partitionColumns)
+    def hasColMappingOrPartitionSchemaChangeByMetadata(newMetadata: Metadata,
+        oldMetadata: Metadata): Boolean = {
+      val isBothColumnMappingEnabled =
+        newMetadata.columnMappingMode != NoMapping && oldMetadata.columnMappingMode != NoMapping
+      hasColMappingOrPartitionSchemaChange(
+        newMetadata.schema,
+        oldMetadata.schema,
+        // if allow unsafe row read for partition change, ignore the check
+        if (allowUnsafeReadOnPartitionChanges) Seq.empty else newMetadata.partitionColumns,
+        if (allowUnsafeReadOnPartitionChanges) Seq.empty else oldMetadata.partitionColumns,
+        isBothColumnMappingEnabled)
     }
 
     val (oldMode, newMode) = (oldMetadata.columnMappingMode, newMetadata.columnMappingMode)
     if (oldMode != NoMapping && newMode != NoMapping) {
       require(oldMode == newMode, "changing mode is not supported")
       // Both changes are post column mapping enabled
-      !hasNoColMappingAndRepartitionSchemaChange(newMetadata, oldMetadata)
+      !hasColMappingOrPartitionSchemaChangeByMetadata(newMetadata, oldMetadata)
     } else if (oldMode == NoMapping && newMode != NoMapping) {
       // The old metadata does not have column mapping while the new metadata does, in this case
       // we assume an upgrade has happened in between.
@@ -790,7 +811,7 @@ trait DeltaColumnMappingBase extends DeltaLogging {
           Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> newMetadata.columnMappingMode.name)
       )
       // use the same check
-      !hasNoColMappingAndRepartitionSchemaChange(newMetadata, upgradedMetadata)
+      !hasColMappingOrPartitionSchemaChangeByMetadata(newMetadata, upgradedMetadata)
     } else {
       // Prohibit reading across a downgrade.
       val isDowngrade = oldMode != NoMapping && newMode == NoMapping
