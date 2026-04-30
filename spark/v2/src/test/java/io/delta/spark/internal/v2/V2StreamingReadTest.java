@@ -471,4 +471,131 @@ public class V2StreamingReadTest extends V2TestBase {
         ex.getMessage().contains("DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART"),
         "Expected DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART but got: " + ex.getMessage());
   }
+
+  /**
+   * V2 streaming read works when the partition column is declared in the MIDDLE of the schema.
+   *
+   * <p>Previously hit a {@code NullPointerException} in {@code OnHeapColumnVector.getLong} because
+   * {@code SparkScan.readSchema()} returns {@code dataSchema ++ partitionSchema} (partitions at
+   * end) while {@code StreamingRelationV2.output} was bound from {@code SparkTable.schema()} (DDL
+   * order), so ordinal-based column vector access in the streaming codegen path landed on a
+   * type-mismatched vector. {@code V2StreamingSchemaReorder} now rebinds the V2 streaming
+   * relation's output in reader order and wraps it in a Project that re-emits attributes in DDL
+   * order, mirroring V1.
+   */
+  @Test
+  public void testStreamingReadPartitionColumnInMiddle(@TempDir File deltaTablePath)
+      throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+    spark.sql(
+        str(
+            "CREATE TABLE delta.`%s` (id LONG, part LONG, col3 INT) "
+                + "USING delta PARTITIONED BY (part)",
+            tablePath));
+    spark.sql(
+        str("INSERT INTO delta.`%s` VALUES (1, 10, 100), (2, 20, 200), (3, 30, 300)", tablePath));
+
+    Dataset<Row> streamingDF = spark.readStream().table(str("dsv2.delta.`%s`", tablePath));
+    // User-facing schema must stay in DDL order so V2 matches V1 streaming behavior.
+    assertArrayEquals(new String[] {"id", "part", "col3"}, streamingDF.schema().fieldNames());
+
+    // Verify V2StreamingSchemaReorder fired. Without the rule, the analyzed plan is a bare
+    // StreamingRelationV2 with DDL-ordered output [id, part, col3]. With the rule, the
+    // relation's output is rebound to reader order [id, col3, part] and wrapped in a Project
+    // that re-emits DDL order. A regression that silently disables the rule (e.g., a SparkTable
+    // rename) would not be caught by row-equality alone for some DDLs, so we assert the plan
+    // shape directly.
+    String analyzedTree = streamingDF.queryExecution().analyzed().treeString();
+    int relIdx = analyzedTree.indexOf("StreamingRelationV2");
+    assertTrue(relIdx >= 0, "Expected StreamingRelationV2 in analyzed plan; got:\n" + analyzedTree);
+    assertTrue(
+        analyzedTree.contains("Project"),
+        "Expected V2StreamingSchemaReorder to wrap StreamingRelationV2 in a Project; got:\n"
+            + analyzedTree);
+    int col3InRel = analyzedTree.indexOf("col3", relIdx);
+    int partInRel = analyzedTree.indexOf("part", relIdx);
+    assertTrue(
+        col3InRel >= 0 && partInRel >= 0 && col3InRel < partInRel,
+        "Expected StreamingRelationV2.output in reader order (col3 before part); got:\n"
+            + analyzedTree);
+
+    List<Row> actualRows = processStreamingQuery(streamingDF, "test_partition_middle_ok");
+    List<Row> expectedRows =
+        Arrays.asList(
+            RowFactory.create(1L, 10L, 100),
+            RowFactory.create(2L, 20L, 200),
+            RowFactory.create(3L, 30L, 300));
+    assertDataEquals(actualRows, expectedRows);
+  }
+
+  /**
+   * Control test: V2 streaming read works when the partition column is declared at the END of the
+   * schema. In this case {@code SparkScan.readSchema()} (dataSchema ++ partitionSchema) already
+   * matches {@code SparkTable.schema()} (DDL order), and the reorder rule no-ops.
+   */
+  @Test
+  public void testStreamingReadPartitionColumnAtEnd(@TempDir File deltaTablePath) throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+    spark.sql(
+        str(
+            "CREATE TABLE delta.`%s` (id LONG, col3 INT, part LONG) "
+                + "USING delta PARTITIONED BY (part)",
+            tablePath));
+    spark.sql(
+        str("INSERT INTO delta.`%s` VALUES (1, 100, 10), (2, 200, 20), (3, 300, 30)", tablePath));
+
+    Dataset<Row> streamingDF = spark.readStream().table(str("dsv2.delta.`%s`", tablePath));
+    List<Row> actualRows = processStreamingQuery(streamingDF, "test_partition_end_ok");
+    List<Row> expectedRows =
+        Arrays.asList(
+            RowFactory.create(1L, 100, 10L),
+            RowFactory.create(2L, 200, 20L),
+            RowFactory.create(3L, 300, 30L));
+    assertDataEquals(actualRows, expectedRows);
+  }
+
+  /**
+   * Multiple partition columns interleaved with data columns, declared in reverse order in {@code
+   * PARTITIONED BY}. Exercises the reorder rule's partition-declaration-order handling when DDL
+   * order differs from partition-list order.
+   */
+  @Test
+  public void testStreamingReadMultiplePartitionColumns(@TempDir File deltaTablePath)
+      throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+    // DDL order: a, p1, b, p2, c. Partition cols at positions 1 and 3; declared in reverse order.
+    spark.sql(
+        str(
+            "CREATE TABLE delta.`%s` (a LONG, p1 STRING, b INT, p2 STRING, c DOUBLE) "
+                + "USING delta PARTITIONED BY (p2, p1)",
+            tablePath));
+    // Use DataFrame writer so partition columns are routed correctly through the V1 write path.
+    spark
+        .createDataFrame(
+            Arrays.asList(
+                RowFactory.create(1L, "x", 10, "y", 1.5),
+                RowFactory.create(2L, "x", 20, "z", 2.5),
+                RowFactory.create(3L, "w", 30, "y", 3.5)),
+            new org.apache.spark.sql.types.StructType()
+                .add("a", org.apache.spark.sql.types.DataTypes.LongType)
+                .add("p1", org.apache.spark.sql.types.DataTypes.StringType)
+                .add("b", org.apache.spark.sql.types.DataTypes.IntegerType)
+                .add("p2", org.apache.spark.sql.types.DataTypes.StringType)
+                .add("c", org.apache.spark.sql.types.DataTypes.DoubleType))
+        .write()
+        .format("delta")
+        .mode("append")
+        .partitionBy("p2", "p1")
+        .save(tablePath);
+
+    Dataset<Row> streamingDF = spark.readStream().table(str("dsv2.delta.`%s`", tablePath));
+    assertArrayEquals(new String[] {"a", "p1", "b", "p2", "c"}, streamingDF.schema().fieldNames());
+    List<Row> actualRows = processStreamingQuery(streamingDF, "test_partition_multi_ok");
+    List<Row> expectedRows =
+        Arrays.asList(
+            RowFactory.create(1L, "x", 10, "y", 1.5),
+            RowFactory.create(2L, "x", 20, "z", 2.5),
+            RowFactory.create(3L, "w", 30, "y", 3.5));
+    assertDataEquals(actualRows, expectedRows);
+  }
 }

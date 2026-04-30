@@ -23,6 +23,7 @@ import org.apache.spark.sql.delta.optimizer.RangePartitionIdRewrite
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.PrepareDeltaScan
+import org.apache.spark.sql.delta.streaming.V2StreamingSchemaReorder
 import io.delta.sql.parser.DeltaSqlParser
 
 import org.apache.spark.sql.SparkSessionExtensions
@@ -99,6 +100,13 @@ class AbstractDeltaSparkSessionExtension extends (SparkSessionExtensions => Unit
     extensions.injectPostHocResolutionRule { session =>
       PostHocResolveUpCast(session)
     }
+
+    // Fix the schema-ordering mismatch between Spark's V2 streaming analysis and the Delta V2
+    // scan reader (see [[V2StreamingSchemaReorder]] for details). Must run after any rule that
+    // could produce or rebind `StreamingRelationV2.output`; post-hoc resolution guarantees it
+    // sees the fully resolved node from both the V2 catalog (`RelationResolution`) and V1
+    // fallback (`ApplyV2Streaming`) paths.
+    extensions.injectPostHocResolutionRule { _ => V2StreamingSchemaReorder() }
 
     extensions.injectPlanNormalizationRule { _ => GenerateRowIDs }
 

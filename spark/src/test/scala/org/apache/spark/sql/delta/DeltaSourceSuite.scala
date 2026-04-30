@@ -3215,9 +3215,8 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   test("reading from partitioned table succeeds during restart") {
     // Regression test: partition columns declared in the middle of the schema (e.g.,
     // (id, part, col3) with `part` as the partition column) must not trip the V2 restart
-    // schema check. DDL-only (no data): the restart validation runs without needing any
-    // files to be read. Data writes would trip a separate V2 partition-column read NPE
-    // (OnHeapColumnVector.getLong), tracked out-of-band.
+    // schema check. DDL-only (no data) — the restart validation runs without needing any
+    // files to be read.
     withTempDirs { (inputDir, _, checkpointDir) =>
       val tablePath = inputDir.getCanonicalPath
       sql(s"CREATE TABLE delta.`$tablePath` (id LONG, part LONG, col3 INT) " +
@@ -3234,6 +3233,46 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
       val q2 = startStream()
       try { q2.processAllAvailable() } finally { q2.stop() }
+    }
+  }
+
+  test("streaming read returns correct data from table with partition column in middle") {
+    // End-to-end regression test for the V2 partition-column NPE: when the partition column is
+    // declared in the MIDDLE of the DDL (ordinal 1), `SparkTable.schema()` (DDL order) and
+    // `SparkScan.readSchema()` (data ++ partitions) disagree. Without `V2StreamingSchemaReorder`,
+    // V2 streaming codegen binds ordinals against DDL order but the reader produces batches in
+    // data++partitions order, landing on the wrong `ColumnVector` and NPE-ing in
+    // `OnHeapColumnVector.getLong`.
+    withTempDirs { (inputDir, _, checkpointDir) =>
+      val tablePath = inputDir.getCanonicalPath
+      sql(s"CREATE TABLE delta.`$tablePath` (id LONG, part LONG, col3 INT) " +
+        "USING delta PARTITIONED BY (part)")
+
+      Seq((1L, 10L, 100), (2L, 20L, 200), (3L, 30L, 300))
+        .toDF("id", "part", "col3")
+        .write
+        .format("delta")
+        .mode("append")
+        .save(tablePath)
+
+      val streamingDF = loadStreamWithOptions(tablePath, Map.empty)
+      // User-facing schema must remain in DDL order (matches V1 streaming behavior).
+      assert(streamingDF.schema.fieldNames.toSeq === Seq("id", "part", "col3"))
+
+      val q = streamingDF
+        .writeStream
+        .format("memory")
+        .queryName("midPartitionStreamTest")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .start()
+      try {
+        q.processAllAvailable()
+        checkAnswer(
+          sql("SELECT * FROM midPartitionStreamTest ORDER BY id"),
+          Row(1L, 10L, 100) :: Row(2L, 20L, 200) :: Row(3L, 30L, 300) :: Nil)
+      } finally {
+        q.stop()
+      }
     }
   }
 }
