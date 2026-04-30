@@ -25,6 +25,7 @@ import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.{DataType, IntegerType, MetadataBuilder, StringType, StructField, StructType}
 import org.apache.spark.util.Utils
 
 /**
@@ -192,6 +193,83 @@ trait DeltaTableRefreshAndPinningSuiteBase
     }
   }
 
+  /**
+   * Writes an external commit containing only a Metadata action (no data file).
+   * Used to simulate external schema changes (DROP COLUMN, DROP/ADD column)
+   * that bypass DeltaLog.commit().
+   */
+  protected def writeExternalMetadataOnlyCommit(
+      tableName: String,
+      newMetadata: DeltaMetadata): Unit = {
+    val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+    val currentVersion = deltaLog.snapshot.version
+    deltaLog.store.write(
+      FileNames.unsafeDeltaFile(deltaLog.logPath, currentVersion + 1),
+      Iterator(JsonUtils.toJson(newMetadata.wrap)),
+      overwrite = false,
+      deltaLog.newDeltaHadoopConf())
+  }
+
+  /**
+   * Writes an external commit that removes all existing data files and writes
+   * new Metadata with a fresh UUID, simulating an external DROP and recreate.
+   * When columnMapping is true, all columns get new column mapping IDs and
+   * physical names so that the schema change detection triggers
+   * DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS.
+   */
+  protected def writeExternalDropAndRecreateCommit(
+      tableName: String,
+      columnMapping: Boolean): Unit = {
+    val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+    val currentVersion = deltaLog.snapshot.version
+    val currentMetadata = deltaLog.snapshot.metadata
+
+    val removeActions = deltaLog.snapshot.allFiles.collect().map(_.remove)
+
+    val newMetadata = if (columnMapping) {
+      val newFields = currentMetadata.schema.fields.zipWithIndex.map { case (field, idx) =>
+        val newMeta = new MetadataBuilder()
+          .withMetadata(field.metadata)
+          .putLong(DeltaColumnMapping.COLUMN_MAPPING_METADATA_ID_KEY, 100L + idx)
+          .putString(DeltaColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+            s"col-recreated-${java.util.UUID.randomUUID().toString.take(8)}")
+          .build()
+        field.copy(metadata = newMeta)
+      }
+      currentMetadata.copy(
+        id = java.util.UUID.randomUUID().toString,
+        schemaString = StructType(newFields).json,
+        configuration = currentMetadata.configuration +
+          (DeltaConfigs.COLUMN_MAPPING_MAX_ID.key ->
+            (100L + currentMetadata.schema.fields.length).toString))
+    } else {
+      currentMetadata.copy(id = java.util.UUID.randomUUID().toString)
+    }
+
+    val actions = removeActions.map(r => JsonUtils.toJson(r.wrap)).iterator ++
+      Iterator(JsonUtils.toJson(newMetadata.wrap))
+
+    deltaLog.store.write(
+      FileNames.unsafeDeltaFile(deltaLog.logPath, currentVersion + 1),
+      actions,
+      overwrite = false,
+      deltaLog.newDeltaHadoopConf())
+  }
+
+  /** Constructs a StructField with column mapping annotations (ID and physical name). */
+  private def buildColumnMappingField(
+      name: String,
+      dataType: DataType,
+      nullable: Boolean,
+      columnId: Long): StructField = {
+    val meta = new MetadataBuilder()
+      .putLong(DeltaColumnMapping.COLUMN_MAPPING_METADATA_ID_KEY, columnId)
+      .putString(DeltaColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+        s"col-ext-${java.util.UUID.randomUUID().toString.take(8)}")
+      .build()
+    StructField(name, dataType, nullable, meta)
+  }
+
   // ---------------------------------------------------------------------------
   // Section [1]: Temp views with stored plans
   // ---------------------------------------------------------------------------
@@ -343,6 +421,251 @@ trait DeltaTableRefreshAndPinningSuiteBase
   }
 
   // ---------------------------------------------------------------------------
+  // Section [1] external: Temp views with external modifications
+  // These test the "Connector w/ cache" behavior from the design doc.
+  // With high stalenessLimit, external changes are invisible because
+  // deltaLog.update(stalenessAcceptable=true) returns the cached snapshot
+  // without doing a filesystem listing.
+  // ---------------------------------------------------------------------------
+
+  test("[1] scenario 1 external: temp view with external data write") {
+    withTable("t") {
+      createSimpleTable("t")
+      insertInitialData("t")
+
+      spark.table("t").filter("salary < 999").createOrReplaceTempView("v")
+      checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
+
+      writeExternalCommit("t", Seq((2, 200)).toDF("id", "salary"))
+
+      if (stalenessLimitMs == 0L) {
+        checkAnswer(
+          sql("SELECT * FROM v ORDER BY id"),
+          Seq(Row(1, 100), Row(2, 200)))
+      } else {
+        checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
+      }
+    }
+  }
+
+  test("[1] scenario 2 external: temp view with external ADD COLUMN") {
+    withTable("t") {
+      createSimpleTable("t")
+      insertInitialData("t")
+
+      spark.table("t").filter("salary < 999").createOrReplaceTempView("v")
+      checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
+
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("t"))
+      val currentMetadata = deltaLog.snapshot.metadata
+      val newSchema = currentMetadata.schema
+        .add("new_column", IntegerType, nullable = true)
+      val newMetadata = currentMetadata.copy(schemaString = newSchema.json)
+
+      writeExternalCommit(
+        "t",
+        Seq((2, 200, -1)).toDF("id", "salary", "new_column"),
+        newMetadata = Some(newMetadata))
+
+      if (stalenessLimitMs == 0L) {
+        // View preserves original schema (id, salary) but picks up new data
+        checkAnswer(
+          sql("SELECT * FROM v ORDER BY id"),
+          Seq(Row(1, 100), Row(2, 200)))
+      } else {
+        checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
+      }
+    }
+  }
+
+  test("[1] scenario 3 external: temp view with external DROP COLUMN (column mapping)") {
+    withTable("t") {
+      createColumnMappingTable("t")
+      insertInitialData("t")
+
+      spark.table("t").filter("salary < 999").createOrReplaceTempView("v")
+      checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
+
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("t"))
+      val currentMetadata = deltaLog.snapshot.metadata
+      val newSchema = StructType(
+        currentMetadata.schema.fields.filterNot(_.name == "salary"))
+      val newMetadata = currentMetadata.copy(schemaString = newSchema.json)
+
+      writeExternalMetadataOnlyCommit("t", newMetadata)
+
+      if (stalenessLimitMs == 0L) {
+        checkError(
+          exception = intercept[DeltaAnalysisException] {
+            sql("SELECT * FROM v").collect()
+          },
+          condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
+          parameters = Map("schemaDiff" -> "(?s).*", "legacyFlagMessage" -> ""),
+          matchPVals = true)
+      } else {
+        // With high staleness, the async background update in deltaLog.update() may
+        // or may not discover the external commit before the foreground thread reads
+        // currentSnapshot. Both outcomes are valid.
+        try {
+          checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
+        } catch {
+          case e: DeltaAnalysisException
+            if e.getErrorClass == "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS" =>
+            // Also acceptable: async update won the race and detected schema change.
+        }
+      }
+    }
+  }
+
+  test("[1] scenario 4 external: temp view after external DROP and recreate " +
+      "(column mapping)") {
+    withTable("t") {
+      createColumnMappingTable("t")
+      insertInitialData("t")
+
+      spark.table("t").filter("salary < 999").createOrReplaceTempView("v")
+      checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
+
+      writeExternalDropAndRecreateCommit("t", columnMapping = true)
+
+      if (stalenessLimitMs == 0L) {
+        checkError(
+          exception = intercept[DeltaAnalysisException] {
+            sql("SELECT * FROM v").collect()
+          },
+          condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
+          parameters = Map("schemaDiff" -> "(?s).*", "legacyFlagMessage" -> ""),
+          matchPVals = true)
+      } else {
+        // With high staleness, the async background update in deltaLog.update() may
+        // or may not discover the external commit before the foreground thread reads
+        // currentSnapshot. Both outcomes are valid.
+        try {
+          checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
+        } catch {
+          case e: DeltaAnalysisException
+            if e.getErrorClass == "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS" =>
+            // Also acceptable: async update won the race and detected schema change.
+        }
+      }
+    }
+  }
+
+  test("[1] scenario 4 external: temp view after external DROP and recreate " +
+      "(no column mapping)") {
+    withTable("t") {
+      createSimpleTable("t")
+      insertInitialData("t")
+
+      spark.table("t").filter("salary < 999").createOrReplaceTempView("v")
+      checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
+
+      writeExternalDropAndRecreateCommit("t", columnMapping = false)
+
+      if (stalenessLimitMs == 0L) {
+        // Without column mapping, no column ID check. Existing data is removed.
+        checkAnswer(sql("SELECT * FROM v"), Seq.empty)
+      } else {
+        checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
+      }
+    }
+  }
+
+  test("[1] scenario 5 external: temp view after external DROP/ADD column " +
+      "same name same type (column mapping)") {
+    withTable("t") {
+      createColumnMappingTable("t")
+      insertInitialData("t")
+
+      spark.table("t").filter("salary < 999").createOrReplaceTempView("v")
+      checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
+
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("t"))
+      val currentMetadata = deltaLog.snapshot.metadata
+      val oldMaxId = currentMetadata.columnMappingMaxId
+      val newSalaryId = oldMaxId + 1
+      val idField = currentMetadata.schema("id")
+      val newSalaryField = buildColumnMappingField(
+        name = "salary", dataType = IntegerType, nullable = true, columnId = newSalaryId)
+      val newSchema = StructType(Seq(idField, newSalaryField))
+      val newMetadata = currentMetadata.copy(
+        schemaString = newSchema.json,
+        configuration = currentMetadata.configuration +
+          (DeltaConfigs.COLUMN_MAPPING_MAX_ID.key -> newSalaryId.toString))
+
+      writeExternalMetadataOnlyCommit("t", newMetadata)
+
+      if (stalenessLimitMs == 0L) {
+        checkError(
+          exception = intercept[DeltaAnalysisException] {
+            sql("SELECT * FROM v").collect()
+          },
+          condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
+          parameters = Map("schemaDiff" -> "(?s).*", "legacyFlagMessage" -> ""),
+          matchPVals = true)
+      } else {
+        // With high staleness, the async background update in deltaLog.update() may
+        // or may not discover the external commit before the foreground thread reads
+        // currentSnapshot. Both outcomes are valid.
+        try {
+          checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
+        } catch {
+          case e: DeltaAnalysisException
+            if e.getErrorClass == "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS" =>
+            // Also acceptable: async update won the race and detected schema change.
+        }
+      }
+    }
+  }
+
+  test("[1] scenario 6 external: temp view after external DROP/ADD column " +
+      "same name different type (column mapping)") {
+    withTable("t") {
+      createColumnMappingTable("t")
+      insertInitialData("t")
+
+      spark.table("t").filter("salary < 999").createOrReplaceTempView("v")
+      checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
+
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("t"))
+      val currentMetadata = deltaLog.snapshot.metadata
+      val oldMaxId = currentMetadata.columnMappingMaxId
+      val newSalaryId = oldMaxId + 1
+      val idField = currentMetadata.schema("id")
+      val newSalaryField = buildColumnMappingField(
+        name = "salary", dataType = StringType, nullable = true, columnId = newSalaryId)
+      val newSchema = StructType(Seq(idField, newSalaryField))
+      val newMetadata = currentMetadata.copy(
+        schemaString = newSchema.json,
+        configuration = currentMetadata.configuration +
+          (DeltaConfigs.COLUMN_MAPPING_MAX_ID.key -> newSalaryId.toString))
+
+      writeExternalMetadataOnlyCommit("t", newMetadata)
+
+      if (stalenessLimitMs == 0L) {
+        checkError(
+          exception = intercept[DeltaAnalysisException] {
+            sql("SELECT * FROM v").collect()
+          },
+          condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
+          parameters = Map("schemaDiff" -> "(?s).*", "legacyFlagMessage" -> ""),
+          matchPVals = true)
+      } else {
+        // With high staleness, the async background update in deltaLog.update() may
+        // or may not discover the external commit before the foreground thread reads
+        // currentSnapshot. Both outcomes are valid.
+        try {
+          checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
+        } catch {
+          case e: DeltaAnalysisException
+            if e.getErrorClass == "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS" =>
+            // Also acceptable: async update won the race and detected schema change.
+        }
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Section [2]: Repeated table access with external changes
   // ---------------------------------------------------------------------------
 
@@ -388,6 +711,77 @@ trait DeltaTableRefreshAndPinningSuiteBase
       writerSql("CREATE TABLE t (id INT, salary INT) USING delta")
 
       checkAnswer(sql("SELECT * FROM t"), Seq.empty)
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Section [2] external: Repeated table access with external modifications
+  // These test the "Connector w/ cache" behavior from the design doc.
+  // With high stalenessLimit, external changes are invisible because
+  // deltaLog.update(stalenessAcceptable=true) returns the cached snapshot.
+  // ---------------------------------------------------------------------------
+
+  test("[2] scenario 1 external: repeated access picks up external data") {
+    withTable("t") {
+      createSimpleTable("t")
+      insertInitialData("t")
+
+      checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
+
+      writeExternalCommit("t", Seq((2, 200)).toDF("id", "salary"))
+
+      if (stalenessLimitMs == 0L) {
+        checkAnswer(
+          sql("SELECT * FROM t ORDER BY id"),
+          Seq(Row(1, 100), Row(2, 200)))
+      } else {
+        checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
+      }
+    }
+  }
+
+  test("[2] scenario 2 external: repeated access reflects external schema change") {
+    withTable("t") {
+      createSimpleTable("t")
+      insertInitialData("t")
+
+      checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
+
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("t"))
+      val currentMetadata = deltaLog.snapshot.metadata
+      val newSchema = currentMetadata.schema
+        .add("new_column", IntegerType, nullable = true)
+      val newMetadata = currentMetadata.copy(schemaString = newSchema.json)
+
+      writeExternalCommit(
+        "t",
+        Seq((2, 200, -1)).toDF("id", "salary", "new_column"),
+        newMetadata = Some(newMetadata))
+
+      if (stalenessLimitMs == 0L) {
+        checkAnswer(
+          sql("SELECT * FROM t ORDER BY id"),
+          Seq(Row(1, 100, null), Row(2, 200, -1)))
+      } else {
+        checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
+      }
+    }
+  }
+
+  test("[2] scenario 3 external: repeated access after external DROP and recreate") {
+    withTable("t") {
+      createSimpleTable("t")
+      insertInitialData("t")
+
+      checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
+
+      writeExternalDropAndRecreateCommit("t", columnMapping = false)
+
+      if (stalenessLimitMs == 0L) {
+        checkAnswer(sql("SELECT * FROM t"), Seq.empty)
+      } else {
+        checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
+      }
     }
   }
 
