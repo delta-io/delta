@@ -47,6 +47,16 @@ trait DeltaSourceConnectorTrait {
       reader.format("delta").load(path)
     }
   }
+
+  /**
+   * Load a CDC streaming DataFrame from the given path with the CDC read option enabled.
+   * Subclasses can override this to route through V2 connector.
+   */
+  protected def loadCDCStream(path: String): DataFrame = {
+    loadStreamWithOptions(
+      path,
+      Map(org.apache.spark.sql.delta.DeltaOptions.CDC_READ_OPTION -> "true"))
+  }
 }
 
 trait DeltaSourceSuiteBase extends StreamTest

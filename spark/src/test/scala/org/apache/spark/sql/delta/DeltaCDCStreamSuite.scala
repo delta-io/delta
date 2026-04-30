@@ -52,6 +52,11 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
   override protected def sparkConf: SparkConf = super.sparkConf
     .set(cdcConfig.defaultTablePropertyKey, "true")
 
+  protected def enableCDF(path: String): Unit = {
+    sql(s"ALTER TABLE delta.`$path` SET TBLPROPERTIES " +
+      s"(${cdcConfig.key}=true)")
+  }
+
   /**
    * Create two tests for maxFilesPerTrigger and maxBytesPerTrigger
    */
@@ -83,8 +88,7 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
           .save(inputDir.getAbsolutePath)
       }
       // enable cdc - version 3
-      sql(s"ALTER TABLE delta.`${inputDir.getAbsolutePath}` SET TBLPROPERTIES " +
-        s"(${cdcConfig.key}=true)")
+      enableCDF(inputDir.getAbsolutePath)
 
       val df = spark.readStream
         .option(DeltaOptions.CDC_READ_OPTION, "true")
@@ -815,6 +819,56 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
     }
   }
 
+  test("maxFilesPerTrigger - batch reject stops iteration to prevent data loss") {
+    withTempDir { inputDir =>
+      // v0: 2 AddFiles (one per partition)
+      spark.range(2)
+        .withColumn("part", 'id % 2)
+        .withColumn("col3", lit(0))
+        .repartition(1)
+        .write
+        .format("delta")
+        .partitionBy("part")
+        .save(inputDir.getAbsolutePath)
+
+      val deltaTable = io.delta.tables.DeltaTable.forPath(inputDir.getAbsolutePath)
+      // v1: UPDATE -> 2 AddCDCFiles (explicit CDC, batch-admitted)
+      deltaTable.update(expr("col3 < 2"), Map("col3" -> lit("1")))
+
+      // v2: INSERT -> 1 AddFile
+      spark.range(10, 11)
+        .withColumn("part", lit(0L))
+        .withColumn("col3", lit(2))
+        .write.format("delta").mode("append")
+        .save(inputDir.getAbsolutePath)
+
+      // maxFilesPerTrigger=3, startingVersion=0:
+      // Trigger 1: v0 initial snapshot (2 files, budget=1 left).
+      //            v1 explicit CDC batch (2 files, 2 > 1 -> rejected, budget goes negative).
+      //            v2 must NOT be admitted -- rejected batch stops iteration.
+      // Trigger 2: v1 batch admitted (fresh budget, deadlock protection). v2 (1 file) admitted.
+      val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map(
+        DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "3",
+        DeltaOptions.CDC_READ_OPTION -> "true",
+        "startingVersion" -> "0"
+      )).drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+
+      testStream(df)(
+        ProcessAllAvailable(),
+        CheckProgress(Seq(2, 5)),
+        CheckAnswer(
+          (0, 0, 0, "insert", 0),
+          (1, 1, 0, "insert", 0),
+          (0, 0, 0, "update_preimage", 1),
+          (0, 0, 1, "update_postimage", 1),
+          (1, 1, 0, "update_preimage", 1),
+          (1, 1, 1, "update_postimage", 1),
+          (10, 0, 2, "insert", 2)
+        )
+      )
+    }
+  }
+
   test("maxFilesPerTrigger with Trigger.AvailableNow respects read limits") {
     withTempDir { inputDir =>
       // version 0 - 2 AddFiles
@@ -1057,6 +1111,65 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
           (4L, "delete", 2L),
           (7L, "delete", 2L)
         )
+      )
+    }
+  }
+
+  test("CDC stream supports column pruning of data columns") {
+    withTempDir { inputDir =>
+      val path = inputDir.getCanonicalPath
+      // version 0: three data columns. CDF is on by default via cdcConfig.defaultTablePropertyKey.
+      Seq((1, "a", 100), (2, "b", 200)).toDF("id", "name", "value")
+        .write.format("delta").save(path)
+      // version 1: append more data so we get multiple commits worth of CDF events.
+      Seq((3, "c", 300)).toDF("id", "name", "value")
+        .write.format("delta").mode("append").save(path)
+
+      // Project only id + _change_type, dropping the other two data columns. The Option B
+      // refactor of CDCSchemaContext is what makes the pruned readDataSchema flow cleanly to
+      // the reader; before it, this would have thrown IllegalStateException.
+      val df = loadStreamWithOptions(path, Map(
+        DeltaOptions.CDC_READ_OPTION -> "true",
+        DeltaOptions.STARTING_VERSION_OPTION -> "0"
+      )).select("id", "_change_type")
+
+      testStream(df)(
+        ProcessAllAvailable(),
+        CheckAnswer((1, "insert"), (2, "insert"), (3, "insert"))
+      )
+    }
+  }
+
+  test("CDC stream rejects reading row tracking metadata fields") {
+    // Per Delta protocol ("Reader Requirements for Row Tracking"), readers cannot expose row
+    // IDs or row commit versions while reading change data files from `cdc` actions. v1
+    // enforces this by stripping row tracking fields from `_metadata.metadataSchemaFields`
+    // when isCDCRead=true, so the analyzer can't resolve `_metadata.row_id`.
+    withTempDir { inputDir =>
+      val path = inputDir.getCanonicalPath
+      // Enable both CDF and Row Tracking via writer options (works under STRICT V2 mode where
+      // ALTER TABLE may be unavailable).
+      Seq((1L, "Alice"), (2L, "Bob")).toDF("id", "name")
+        .write.format("delta")
+        .option("delta.enableChangeDataFeed", "true")
+        .option("delta.enableRowTracking", "true")
+        .save(path)
+      Seq((3L, "Charlie")).toDF("id", "name")
+        .write.format("delta").mode("append").save(path)
+
+      // v1 rejects at analysis time (selectExpr); v2 may surface the error later (during stream
+      // execution). Wrap both in the intercept so we catch wherever it fires.
+      val ex = intercept[Exception] {
+        val df = loadStreamWithOptions(path, Map(
+          DeltaOptions.CDC_READ_OPTION -> "true",
+          DeltaOptions.STARTING_VERSION_OPTION -> "0"
+        )).selectExpr("id", "_metadata.row_id", "_change_type")
+        testStream(df)(ProcessAllAvailable())
+      }
+      assert(
+        ex.getMessage.toLowerCase.contains("row_id") ||
+          ex.getMessage.toLowerCase.contains("cannot be resolved"),
+        s"Expected error mentioning row_id under CDC, got: ${ex.getMessage}"
       )
     }
   }

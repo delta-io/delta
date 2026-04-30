@@ -467,25 +467,46 @@ public class SparkMicroBatchStream
 
     List<PartitionedFile> partitionedFiles = new ArrayList<>();
     long totalBytesToRead = 0;
+    boolean isCDC = options.readChangeFeed();
+    ZoneId zoneId = ZoneId.of(sqlConf.sessionLocalTimeZone());
+
     try (CloseableIterator<IndexedFile> fileChanges =
-        getFileChanges(fromVersion, fromIndex, isInitialSnapshot, Optional.of(endOffset))) {
+        isCDC
+            ? getFileChangesWithRateLimitForCDC(
+                fromVersion,
+                fromIndex,
+                isInitialSnapshot,
+                /* limits= */ Optional.empty(),
+                Optional.of(endOffset))
+            : getFileChanges(fromVersion, fromIndex, isInitialSnapshot, Optional.of(endOffset))) {
       while (fileChanges.hasNext()) {
         IndexedFile indexedFile = fileChanges.next();
-        if (indexedFile.getAddFile() == null) {
+        if (indexedFile.getAddFile() == null && indexedFile.getCDCDataFile() == null) {
           continue;
         }
-        AddFile addFile = indexedFile.getAddFile();
-        // TODO(#5319): Apply excludeRegex to RemoveFile/AddCDCFile when CDC is supported
-        if (excludeRegex.isPresent()
-            && excludeRegex.get().findFirstIn(addFile.getPath()).isDefined()) {
-          continue;
-        }
-        PartitionedFile partitionedFile =
-            PartitionUtils.buildPartitionedFile(
-                addFile, partitionSchema, tablePath, ZoneId.of(sqlConf.sessionLocalTimeZone()));
 
-        totalBytesToRead += addFile.getSize();
-        partitionedFiles.add(partitionedFile);
+        if (isCDC && indexedFile.getCDCDataFile() != null) {
+          CDCDataFile cdcFile = indexedFile.getCDCDataFile();
+          if (excludeRegex.isPresent()
+              && excludeRegex.get().findFirstIn(cdcFile.getPath()).isDefined()) {
+            continue;
+          }
+          PartitionedFile partitionedFile =
+              PartitionUtils.buildCDCPartitionedFile(
+                  cdcFile, indexedFile.getVersion(), partitionSchema, tablePath, zoneId);
+          totalBytesToRead += cdcFile.getFileSize();
+          partitionedFiles.add(partitionedFile);
+        } else if (indexedFile.getAddFile() != null) {
+          AddFile addFile = indexedFile.getAddFile();
+          if (excludeRegex.isPresent()
+              && excludeRegex.get().findFirstIn(addFile.getPath()).isDefined()) {
+            continue;
+          }
+          PartitionedFile partitionedFile =
+              PartitionUtils.buildPartitionedFile(addFile, partitionSchema, tablePath, zoneId);
+          totalBytesToRead += addFile.getSize();
+          partitionedFiles.add(partitionedFile);
+        }
       }
     } catch (IOException e) {
       throw new RuntimeException(
@@ -518,7 +539,8 @@ public class SparkMicroBatchStream
         dataFilters,
         scalaOptions,
         hadoopConf,
-        sqlConf);
+        sqlConf,
+        /* isCDCRead */ options.readChangeFeed());
   }
 
   ///////////////
@@ -568,8 +590,8 @@ public class SparkMicroBatchStream
     // Note: returning a version beyond latest snapshot version won't be a problem as callers
     // of this function won't use the version to retrieve snapshot(refer to
     // [[getStartingOffset]]).
-    // TODO(#5319): fetch spark config if CDF is supported.
-    boolean allowOutOfRange = false;
+    boolean allowOutOfRange =
+        (Boolean) sqlConf.getConf(DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP());
 
     if (options.startingVersion().isDefined()) {
       DeltaStartingVersion startingVersion = options.startingVersion().get();
@@ -587,7 +609,7 @@ public class SparkMicroBatchStream
           // check is skipped, so this is technically not safe, but we keep it this way for
           // historical reasons.
           snapshotManager.checkVersionExists(
-              version, /* mustBeRecreatable= */ false, /* allowOutOfRange= */ false);
+              version, /* mustBeRecreatable= */ false, allowOutOfRange);
         }
         cachedStartingVersion = Optional.of(version);
         return cachedStartingVersion;
@@ -801,6 +823,8 @@ public class SparkMicroBatchStream
       if (limits.isPresent()) {
         snapshotFiles = snapshotFiles.takeWhile(limits.get()::admit);
       }
+      // The same AdmissionLimits instance is shared: combine() is sequential concatenation,
+      // so snapshot files consume capacity before delta logs are processed.
       CloseableIterator<IndexedFile> deltaChanges =
           filterDeltaLogsWithRateLimitForCDC(
               fromVersion + 1, fromVersion, fromIndex, limits, endOffset);
@@ -896,7 +920,7 @@ public class SparkMicroBatchStream
     CloseableIterator<CommitActions> commits =
         getCommitsFromRange(startVersion, endOffset, CDC_ACTION_SET);
 
-    // Early exit: skip opening further commits once the budget is spent.
+    // Version-level rate limiting: stop processing commits once capacity is exhausted.
     if (limits.isPresent()) {
       commits = commits.takeWhile(commit -> limits.get().hasCapacity());
     }
@@ -1747,11 +1771,72 @@ public class SparkMicroBatchStream
         result.add(IndexedFile.cdc(version, fileIndex++, cdcFile));
       }
     } else {
-      for (CDCDataFile cdcFile : inferredCdcFiles) {
-        result.add(IndexedFile.cdc(version, fileIndex++, cdcFile));
+      // Bucket AddFile and RemoveFile by path to detect same-path DV pairs.
+      // Same-path pairs occur when a DV-based delete produces {RemoveFile(old), AddFile(same
+      // path + new DV)}. These need DV-diff processing rather than simple insert/delete.
+      Map<String, AddFile> addByPath = new HashMap<>();
+      Map<String, RemoveFile> removeByPath = new HashMap<>();
+      for (CDCDataFile cdc : inferredCdcFiles) {
+        if (cdc.getAddFile() != null) {
+          addByPath.put(cdc.getAddFile().getPath(), cdc.getAddFile());
+        } else if (cdc.getRemoveFile() != null) {
+          removeByPath.put(cdc.getRemoveFile().getPath(), cdc.getRemoveFile());
+        }
+      }
+
+      Set<String> samePathKeys = new HashSet<>(addByPath.keySet());
+      samePathKeys.retainAll(removeByPath.keySet());
+
+      // Non-same-path actions: pure inserts/deletes, preserving delta-log order
+      for (CDCDataFile cdc : inferredCdcFiles) {
+        String path = cdc.getPath();
+        if (path == null || !samePathKeys.contains(path)) {
+          result.add(IndexedFile.cdc(version, fileIndex++, cdc));
+        }
+      }
+
+      // Same-path pairs: DV diff processing
+      for (String path : samePathKeys) {
+        AddFile add = addByPath.get(path);
+        RemoveFile remove = removeByPath.get(path);
+        List<CDCDataFile> dvDiffFiles = generateDVDiffCDCFiles(add, remove, timestamp);
+        for (CDCDataFile f : dvDiffFiles) {
+          result.add(IndexedFile.cdc(version, fileIndex++, f));
+        }
       }
     }
 
+    return result;
+  }
+
+  /**
+   * Generates CDCDataFiles for a same-path Add+Remove pair by computing the DV bitmap diff.
+   * Delegates to {@link org.apache.spark.sql.delta.v2.CDCDeletionVectorHelper} which has access to
+   * private[delta] DV APIs (DeletionVectorStore, DeletionVectorUtils).
+   */
+  private List<CDCDataFile> generateDVDiffCDCFiles(AddFile add, RemoveFile remove, long timestamp) {
+    String addDvBase64 =
+        add.getDeletionVector().isPresent()
+            ? add.getDeletionVector().get().serializeToBase64()
+            : null;
+    String removeDvBase64 =
+        remove.getDeletionVector().isPresent()
+            ? remove.getDeletionVector().get().serializeToBase64()
+            : null;
+
+    // Use non-URI-encoded data path for DV file resolution (tablePath is URI-encoded
+    // from toUri().toString() which causes issues with %-prefixed DV file names).
+    String dataPath = ((SnapshotImpl) snapshotAtSourceInit).getDataPath().toString();
+    scala.Tuple2<String, String>[] diffs =
+        org.apache.spark.sql.delta.v2.CDCDeletionVectorHelper.computeDVDiff(
+            addDvBase64, removeDvBase64, hadoopConf, dataPath);
+
+    List<CDCDataFile> result = new ArrayList<>();
+    for (scala.Tuple2<String, String> diff : diffs) {
+      String changeType = diff._1();
+      String dvBase64 = diff._2();
+      result.add(CDCDataFile.fromDVDiff(add, changeType, timestamp, dvBase64));
+    }
     return result;
   }
 
