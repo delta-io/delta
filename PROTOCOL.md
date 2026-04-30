@@ -187,7 +187,7 @@ This example represents a table after [metadata cleanup](#metadata-cleanup) has 
 Data files can be stored in the root directory of the table or in any non-hidden subdirectory (i.e., one whose name does not start with an `_`).
 By default, the reference implementation stores data files in directories that are named based on the partition values for data in that file (i.e. `part1=value1/part2=value2/...`).
 This directory format is only used to follow existing conventions and is not required by the protocol.
-Actual partition values for a file must be read from the transaction log.
+Actual partition values for a file must be read from the transaction log, even if they are present in the data file itself.
 
 ### Deletion Vector Files
 Deletion Vector (DV) files are stored in the root directory of the table alongside the data files. A DV file contains one or more serialised DV, each describing the set of *invalidated* (or "soft deleted") rows for a particular data file it is associated with.
@@ -2443,6 +2443,7 @@ Property | Description | Details
 -|-|-
 `delta.parquet.compression.codec` | Compression codec writers SHOULD use for new Parquet data and checkpoint files. Changing this property does not affect existing files; a table may contain files written with different codecs, which is a normal and expected state. | Widely supported values (matched case-insensitively): `uncompressed`/`none` (no compression), `snappy`, `gzip`, `lz4` (deprecated, Hadoop framing), `lz4_raw` ([LZ4 block format](https://parquet.apache.org/docs/file-format/data-pages/compression/#lz4_raw)), `zstd`.<br><br>When absent, writers SHOULD default to `zstd`. If a writer does not support or recognize the specified codec, it SHOULD abort with an appropriate error or fall back to a default codec.<br><br>Readers SHOULD support all codecs listed above regardless of the current property value. Parquet files written with other [parquet-supported codecs](https://parquet.apache.org/docs/file-format/data-pages/compression/) may also exist; readers MAY support reading these files.
 `delta.parquet.format.version` | Parquet data page format writers SHOULD use for new data files. This property is a directive to writers only; readers do not need to consult it, as Parquet pages are self-describing via the `PageType` field in each page header. Changing this property does not affect existing files; a table MAY contain files written with different data page versions, which is a normal and expected state. | Valid values: `1.0.0` (DataPageV1) and `2.x.x` (DataPageV2, where `x.x` is any minor.patch version). Recommended values are `1.0.0` and `2.12.0`.<br><br>When absent, writers SHOULD default to `1.0.0`. Writers SHOULD validate this property and abort if the value does not match `1.0.0` or `2.MINOR.PATCH`.<br><br>Readers SHOULD support both DataPageV1 and DataPageV2 pages regardless of this property's value. Tables intended for access by engines beyond the Delta Lake connectors SHOULD use `1.0.0`, as DataPageV2 support varies across the broader Parquet ecosystem.
+`delta.writePartitionColumnsToParquet` | Controls whether writers SHOULD write partition columns in newly written data parquet files, in the absence of any writer features that necessitate writing of partition columns (eg. `IcebergCompatV1`). In other words, if no writer feature is enabled that requires materialization of partition columns, writers should read this property to decide whether to materialize partition columns in data parquet files or not. Writer features requirements take precedence over this property's value. Readers should continue to read partition values off of AddFile actions, regardless of the presence of partition values in data files. File-level statistics should not be present for partition columns in partitioned tables in any case. This setting does not apply to writers of files of any other file format. | Boolean field, with valid values `false` and `true`.
 
 # Appendix
 
@@ -2573,7 +2574,7 @@ maxValues | A value that is equal to the largest valid value[^1] present in the 
 
 ## Partition Value Serialization
 
-Partition values are stored as strings, using the following formats. An empty string for any type translates to a `null` partition value.
+Partition values are stored as strings in actions, using the following formats. An empty string for any type translates to a `null` partition value.
 
 Type | Serialization Format
 -|-
@@ -2590,6 +2591,8 @@ Note: A timestamp value in a partition value may be stored in one of the followi
 2. Adjusted to UTC and stored in ISO8601 format.
 
 It is highly recommended that modern writers adjust the timestamp to UTC and store the timestamp in ISO8601 format as outlined in 2.
+
+In addition to being stored in actions, partition values could also be present in data files. Some writer features (eg. [Iceberg Compatibility V1](#iceberg-compatibility-v1)) require the presence of partition values in data files.
 
 ## Schema Serialization Format
 
