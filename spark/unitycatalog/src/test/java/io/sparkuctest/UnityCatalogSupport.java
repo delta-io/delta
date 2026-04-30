@@ -45,7 +45,9 @@ import org.junit.jupiter.api.TestInstance;
  *
  * <p>Automatically starts a local Unity Catalog server before tests and stops it after. To use a
  * remote server instead, set {@code UC_REMOTE=true} and configure {@code UC_URI}, {@code UC_TOKEN},
- * {@code UC_CATALOG_NAME}, {@code UC_SCHEMA_NAME}, and {@code UC_BASE_TABLE_LOCATION}.
+ * {@code UC_CATALOG_NAME}, {@code UC_SCHEMA_NAME}, and {@code UC_BASE_TABLE_LOCATION}. Set {@code
+ * UC_DELTA_REST_CATALOG_API_ENABLED=false} to run the same tests through legacy UC Spark catalog
+ * behavior.
  *
  * <p>{@code unityCatalogInfo()} is the only API for subclasses, All other methods are internal
  * implementation details.
@@ -129,10 +131,17 @@ public abstract class UnityCatalogSupport {
   public static final String UC_CATALOG_NAME = "UC_CATALOG_NAME";
   public static final String UC_SCHEMA_NAME = "UC_SCHEMA_NAME";
   public static final String UC_BASE_TABLE_LOCATION = "UC_BASE_TABLE_LOCATION";
+  public static final String UC_DELTA_REST_CATALOG_API_ENABLED =
+      "UC_DELTA_REST_CATALOG_API_ENABLED";
 
   protected static boolean isUCRemoteConfigured() {
     String ucRemote = System.getenv(UC_REMOTE);
     return ucRemote != null && ucRemote.equalsIgnoreCase("true");
+  }
+
+  protected static boolean isUCDeltaRestCatalogApiEnabled() {
+    String deltaRestApiEnabled = System.getenv(UC_DELTA_REST_CATALOG_API_ENABLED);
+    return deltaRestApiEnabled == null || !deltaRestApiEnabled.equalsIgnoreCase("false");
   }
 
   /** The Unity Catalog info instance for subclasses access */
