@@ -154,6 +154,15 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     // Kernel cannot reconstruct snapshot without checkpoint file (_last_checkpoint still
     // points to deleted checkpoint). V1 falls back to delta files; Kernel does not.
     "initial snapshot: checkpoint missing but all commit files intact, succeeds",
+    // These tests directly use DeltaSource, not applicable to the v2 path.
+    "fail on missing trailing commit - trailing commit disappears between latestOffset and" +
+      " getBatch readChangeFeed=true midVersionEndOffset=true",
+    "fail on missing trailing commit - trailing commit disappears between latestOffset and" +
+      " getBatch readChangeFeed=true midVersionEndOffset=false",
+    "fail on missing trailing commit - trailing commit disappears between latestOffset and" +
+      " getBatch readChangeFeed=false midVersionEndOffset=true",
+    "fail on missing trailing commit - trailing commit disappears between latestOffset and" +
+      " getBatch readChangeFeed=false midVersionEndOffset=false",
 
     // === Misc ===
     // TODO(#5900): fix exception mismatch

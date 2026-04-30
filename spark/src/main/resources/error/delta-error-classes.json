@@ -2764,6 +2764,14 @@
     ],
     "sqlState" : "KD007"
   },
+  "DELTA_STREAMING_TRAILING_COMMIT_MISSING" : {
+    "message" : [
+      "The connector discovered commits up to version <expectedVersion>, but when reading the",
+      "data, commits after version <seenVersion> are missing. The trailing commit files may",
+      "have been deleted or be transiently invisible in the _delta_log directory."
+    ],
+    "sqlState" : "XXKDS"
+  },
   "DELTA_TABLE_ALREADY_CONTAINS_CDC_COLUMNS" : {
     "message" : [
       "Unable to enable Change Data Capture on the table. The table already contains",
