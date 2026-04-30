@@ -292,8 +292,7 @@ class UCTokenBasedRestClientSuite
           assert(iceberg.get("base_converted_delta_version").asLong() === base, desc)
         case None =>
           assert(
-            !iceberg.has("base_converted_delta_version") ||
-              iceberg.get("base_converted_delta_version").isNull,
+            !iceberg.has("base_converted_delta_version"),
             s"$desc: base_converted_delta_version must be absent")
       }
     }
