@@ -28,7 +28,9 @@ import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTableType}
 import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
+import org.apache.spark.sql.delta.DeltaOptions
 import org.apache.spark.sql.delta.Relocated.StreamingRelation
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
@@ -140,4 +142,60 @@ class ApplyV2StreamingSuite extends DeltaSQLCommandTest {
       }
     }
   }
+
+  // ==========================================================================
+  // CDC schema augmentation tests
+  // ==========================================================================
+
+  private val cdcColumnNames = Set(
+    CDCReader.CDC_TYPE_COLUMN_NAME,
+    CDCReader.CDC_COMMIT_VERSION,
+    CDCReader.CDC_COMMIT_TIMESTAMP)
+
+  test("Case 1: StreamingRelation with readChangeFeed=true includes CDC columns") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      createDeltaTable(path)
+      val catalogTable = createCatalogTable(dir.toURI, ucManaged = false)
+      val dataSource = DataSource(
+        sparkSession = spark,
+        userSpecifiedSchema = None,
+        className = "delta",
+        options = Map("path" -> path, DeltaOptions.CDC_READ_OPTION -> "true"),
+        catalogTable = Some(catalogTable))
+      val plan = StreamingRelation(dataSource)
+
+      withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "STRICT") {
+        val result = applyRule(plan)
+        assertV2(result)
+        val outputNames = result.output.map(_.name).toSet
+        assert(cdcColumnNames.subsetOf(outputNames),
+          s"Output should contain CDC columns. Got: ${outputNames}")
+      }
+    }
+  }
+
+  test("Case 1: StreamingRelation without readChangeFeed excludes CDC columns") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      createDeltaTable(path)
+      val catalogTable = createCatalogTable(dir.toURI, ucManaged = false)
+      val dataSource = DataSource(
+        sparkSession = spark,
+        userSpecifiedSchema = None,
+        className = "delta",
+        options = Map("path" -> path),
+        catalogTable = Some(catalogTable))
+      val plan = StreamingRelation(dataSource)
+
+      withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "STRICT") {
+        val result = applyRule(plan)
+        assertV2(result)
+        val outputNames = result.output.map(_.name).toSet
+        assert(cdcColumnNames.intersect(outputNames).isEmpty,
+          s"Output should not contain CDC columns. Got: ${outputNames}")
+      }
+    }
+  }
+
 }
