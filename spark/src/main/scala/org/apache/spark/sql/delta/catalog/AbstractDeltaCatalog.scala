@@ -83,6 +83,8 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
 
   val spark = SparkSession.active
 
+  private lazy val deltaCatalogClient: DeltaCatalogClient = DeltaCatalogClient(delegate, spark)
+
   private lazy val isUnityCatalog: Boolean = {
     val delegateField = classOf[DelegatingCatalogExtension].getDeclaredField("delegate")
     delegateField.setAccessible(true)
@@ -290,7 +292,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       "DeltaCatalog", "loadTable") {
     setVariantBlockingConfigIfUC()
     try {
-      val table = super.loadTable(ident)
+      val table = deltaCatalogClient.loadTable(ident).getOrElse(super.loadTable(ident))
 
       ServerSidePlannedTable.tryCreate(spark, ident, table, isUnityCatalog).foreach { sspt =>
         return sspt
