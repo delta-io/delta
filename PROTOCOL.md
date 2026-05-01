@@ -1495,7 +1495,7 @@ This table feature is enabled when the table property `delta.enableIcebergCompat
 
 When this feature is supported and enabled, writers must:
 - Require that Column Mapping be enabled and set to either `name` or `id` mode
-- Require that the nested `element` field of ArrayTypes and the nested `key` and `value` fields of MapTypes be assigned 32 bit integer identifiers. These identifiers must be unique and different from those used in [Column Mapping](#column-mapping), and must be stored in the metadata of their nearest ancestor [StructField](#struct-field) of the Delta table schema. Identifiers belonging to the same `StructField` must be organized as a `Map[String, Long]` and stored in metadata with key `parquet.field.nested.ids`. The keys of the map are "element", "key", or "value", prefixed by the name of the nearest ancestor StructField, separated by dots. The values are the identifiers. The keys for fields in nested arrays or nested maps are prefixed by their parents' key, separated by dots. An [example](#example-of-storing-identifiers-for-nested-fields-in-arraytype-and-maptype) is provided below to demonstrate how the identifiers are stored. These identifiers must be also written to the `field_id` field of the `SchemaElement` struct in the [Parquet Thrift specification](https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift) when writing parquet files.
+- Require that the nested `element` field of ArrayTypes and the nested `key` and `value` fields of MapTypes be assigned 32 bit integer identifiers. These identifiers must be unique and different from those used in [Column Mapping](#column-mapping), and must be stored in the metadata of their nearest ancestor [StructField](#struct-field) of the Delta table schema. Identifiers belonging to the same `StructField` must be organized as a `Map[String, Long]` and stored in metadata with key `delta.columnMapping.nested.ids`. The keys of the map are "element", "key", or "value", prefixed by the physical name of the nearest ancestor StructField, separated by dots. The values are the identifiers. The keys for fields in nested arrays or nested maps are prefixed by their parents' key, separated by dots. An [example](#example-of-storing-identifiers-for-nested-fields-in-arraytype-and-maptype) is provided below to demonstrate how the identifiers are stored. These identifiers must be also written to the `field_id` field of the `SchemaElement` struct in the [Parquet Thrift specification](https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift) when writing parquet files.
 - Require that IcebergCompatV1 is not active, which means either the `icebergCompatV1` table feature is not present in the table protocol or the table property `delta.enableIcebergCompatV1` is not set to `true`
 - Require that Deletion Vectors are not active, which means either the `deletionVectors` table feature is not present in the table protocol or the table property `delta.enableDeletionVectors` is not set to `true`
 - Require that partition column values be materialized when writing Parquet data files
@@ -1528,9 +1528,11 @@ The identifiers for the nested fields are stored in the metadata as follows:
       }
     },
     "metadata": {
-      "parquet.field.nested.ids": {
-        "col1.element": 100,
-        "col1.element.element": 101
+      "delta.columnMapping.id": 1,
+      "delta.columnMapping.physicalName": "col-aaa",
+      "delta.columnMapping.nested.ids": {
+        "col-aaa.element": 100,
+        "col-aaa.element.element": 101
       }
     }
   },
@@ -1545,10 +1547,12 @@ The identifiers for the nested fields are stored in the metadata as follows:
       }
     },
     "metadata": {
-      "parquet.field.nested.ids": {
-        "col2.key": 102,
-        "col2.value": 103,
-        "col2.value.element": 104
+      "delta.columnMapping.id": 2,
+      "delta.columnMapping.physicalName": "col-bbb",
+      "delta.columnMapping.nested.ids": {
+        "col-bbb.key": 102,
+        "col-bbb.value": 103,
+        "col-bbb.value.element": 104
       }
     }
   },
@@ -1567,8 +1571,10 @@ The identifiers for the nested fields are stored in the metadata as follows:
               "elementType": "int"
             },
             "metadata": {
-              "parquet.field.nested.ids": {
-                "subcol1.element": 107
+              "delta.columnMapping.id": 4,
+              "delta.columnMapping.physicalName": "col-ddd",
+              "delta.columnMapping.nested.ids": {
+                "col-ddd.element": 107
               }
             }
           }
@@ -1576,9 +1582,11 @@ The identifiers for the nested fields are stored in the metadata as follows:
       }
     },
     "metadata": {
-      "parquet.field.nested.ids": {
-        "col3.key": 105,
-        "col3.value": 106
+      "delta.columnMapping.id": 3,
+      "delta.columnMapping.physicalName": "col-ccc",
+      "delta.columnMapping.nested.ids": {
+        "col-ccc.key": 105,
+        "col-ccc.value": 106
       }
     }
   }
