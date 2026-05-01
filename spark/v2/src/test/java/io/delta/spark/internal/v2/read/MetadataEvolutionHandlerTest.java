@@ -1153,7 +1153,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
 
   /** Schema-tracking set and the log has a seeded entry → returns that entry. */
   @Test
-  public void testGetPersistedMetadata_returnsSeededEntry(@TempDir File tempDir) {
+  public void testGetPersistedMetadata_returnsSeededEntry(@TempDir File tempDir) throws Exception {
     String tablePath = new File(tempDir, "table").getAbsolutePath();
     String tableName = "t_" + UUID.randomUUID().toString().replace('-', '_');
     createEmptyTestTable(tablePath, tableName);
@@ -1165,34 +1165,42 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
     Map<String, String> options = new HashMap<>();
     options.put(DeltaOptions.SCHEMA_TRACKING_LOCATION(), schemaLogPath);
 
-    // Open the log through the same code path the util uses, then seed an entry.
-    DeltaSourceMetadataTrackingLog trackingLog =
-        MetadataEvolutionHandler.getMetadataTrackingLogForMicroBatchStream(
-                spark,
-                snapshot,
-                options,
-                snapshotManager,
-                defaultEngine,
-                SparkMicroBatchStream.ACTION_SET,
-                Option.empty(),
-                /* mergeConsecutiveSchemaChanges= */ false)
-            .get();
-    // Use a non-zero version so it's distinct from a default-init entry.
-    long seededVersion = 42L;
-    PersistedMetadata seeded =
-        PersistedMetadata.apply(
-            snapshot.getMetadata().getId(),
-            seededVersion,
-            new KernelMetadataAdapter(snapshot.getMetadata()),
-            new KernelProtocolAdapter(snapshot.getProtocol()),
-            tablePath + "/_delta_log/_streaming_metadata");
-    trackingLog.writeNewMetadata(seeded, false);
+    // Disable consecutive-schema-change merging: this test only verifies that a seeded entry is
+    // returned. With merging enabled, the merger looks ahead from the seeded version, and the
+    // artificial seededVersion (below) doesn't exist as a real commit on the table.
+    withSQLConf(
+        DeltaSQLConf.DELTA_STREAMING_ENABLE_SCHEMA_TRACKING_MERGE_CONSECUTIVE_CHANGES().key(),
+        "false",
+        () -> {
+          // Open the log through the same code path the util uses, then seed an entry.
+          DeltaSourceMetadataTrackingLog trackingLog =
+              MetadataEvolutionHandler.getMetadataTrackingLogForMicroBatchStream(
+                      spark,
+                      snapshot,
+                      options,
+                      snapshotManager,
+                      defaultEngine,
+                      SparkMicroBatchStream.ACTION_SET,
+                      Option.empty(),
+                      /* mergeConsecutiveSchemaChanges= */ false)
+                  .get();
+          // Use a non-zero version so it's distinct from a default-init entry.
+          long seededVersion = 42L;
+          PersistedMetadata seeded =
+              PersistedMetadata.apply(
+                  snapshot.getMetadata().getId(),
+                  seededVersion,
+                  new KernelMetadataAdapter(snapshot.getMetadata()),
+                  new KernelProtocolAdapter(snapshot.getProtocol()),
+                  tablePath + "/_delta_log/_streaming_metadata");
+          trackingLog.writeNewMetadata(seeded, false);
 
-    Optional<PersistedMetadata> result =
-        MetadataEvolutionHandler.getPersistedMetadataForMicroBatchStream(
-            spark, snapshot, options, snapshotManager, defaultEngine);
-    assertTrue(result.isPresent());
-    assertEquals(seededVersion, result.get().deltaCommitVersion());
+          Optional<PersistedMetadata> result =
+              MetadataEvolutionHandler.getPersistedMetadataForMicroBatchStream(
+                  spark, snapshot, options, snapshotManager, defaultEngine);
+          assertTrue(result.isPresent());
+          assertEquals(seededVersion, result.get().deltaCommitVersion());
+        });
   }
 
   // ---------------------------------------------------------------------------
@@ -1328,5 +1336,123 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
     assertTrue(
         segEx.getMessage().contains("log segment is not available"),
         "Unexpected message: " + segEx.getMessage());
+  }
+
+  // ---------------------------------------------------------------------------
+  // getMergedConsecutiveMetadataChanges
+  //
+  // Walks forward from currentMetadata.deltaCommitVersion looking for consecutive
+  // commits that contain only metadata/protocol changes (no file actions). Returns
+  // a merged PersistedMetadata at the last such version, or Option.empty if no
+  // forward progress beyond the current version was possible.
+  // ---------------------------------------------------------------------------
+
+  /** Builds a {@link PersistedMetadata} snapshot of the table state at v0. */
+  private PersistedMetadata buildCurrentMetadataAtV0(
+      String tablePath, PathBasedSnapshotManager snapshotManager) {
+    SnapshotImpl v0 = (SnapshotImpl) snapshotManager.loadSnapshotAt(0L);
+    return PersistedMetadata.apply(
+        "test-table-id",
+        0L,
+        new KernelMetadataAdapter(v0.getMetadata()),
+        new KernelProtocolAdapter(v0.getProtocol()),
+        tablePath + "/_delta_log/_streaming_metadata");
+  }
+
+  /**
+   * -1 sentinel means {@code Option.empty} (no merge). Other values are expected merged version.
+   */
+  private static final long EXPECTED_NO_MERGE = -1L;
+
+  /**
+   * Creates a v0 table partitioned by {@code id} with column mapping (name) enabled. Partitioning
+   * exercises {@code partitionSchemaJson} verification; column mapping makes RENAME / DROP COLUMN
+   * (including renaming the partition column) valid.
+   */
+  private void createPartitionedColumnMappingTable(String tablePath, String tableName) {
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, name STRING) USING delta "
+                + "PARTITIONED BY (id) LOCATION '%s' "
+                + "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')",
+            tableName, tablePath));
+  }
+
+  private static Stream<Arguments> mergerTestCases() {
+    String alterAddC3 = "ALTER TABLE %s ADD COLUMNS (c3 INT)";
+    String alterRenamePartitionId = "ALTER TABLE %s RENAME COLUMN id TO id_renamed";
+    String alterDropNonPartitionName = "ALTER TABLE %s DROP COLUMN name";
+    String alterBumpProtocol =
+        "ALTER TABLE %s SET TBLPROPERTIES "
+            + "('delta.minReaderVersion' = '3', 'delta.minWriterVersion' = '7')";
+    String insert2col = "INSERT INTO %s VALUES (1, 'Alice')";
+    String insert3col = "INSERT INTO %s VALUES (1, 'Alice', 10)";
+    return Stream.of(
+        // scenario, postV0Commits, expectedMergedVersion
+        Arguments.of("noLaterCommits", List.of(), EXPECTED_NO_MERGE),
+        Arguments.of("nextCommitHasFileAction", List.of(insert2col), EXPECTED_NO_MERGE),
+        // Renaming the PARTITION column changes both dataSchemaJson and partitionSchemaJson.
+        Arguments.of("renamePartitionColumn", List.of(alterRenamePartitionId), 1L),
+        // Dropping a NON-partition column changes dataSchemaJson but not partitionSchemaJson.
+        Arguments.of("dropNonPartitionColumn", List.of(alterDropNonPartitionName), 1L),
+        // Schema change (v1) followed by protocol change (v2) — both must merge.
+        Arguments.of("schemaChangeThenProtocolUpgrade", List.of(alterAddC3, alterBumpProtocol), 2L),
+        // All three change kinds in one consecutive run: data schema (ADD c3),
+        // partition schema (RENAME id), and protocol (TBLPROPERTIES bump).
+        Arguments.of(
+            "mergesDataSchemaPartitionAndProtocol",
+            List.of(alterAddC3, alterRenamePartitionId, alterBumpProtocol),
+            3L),
+        // v1=ADD c3, v2=INSERT, v3=DROP name → must stop at v1 (NOT skip to v3)
+        Arguments.of(
+            "stopsAtFileActionDoesNotSkipAhead",
+            List.of(alterAddC3, insert3col, alterDropNonPartitionName),
+            1L));
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("mergerTestCases")
+  public void testGetMergedConsecutive(
+      String scenario,
+      List<String> postV0Commits,
+      long expectedMergedVersion,
+      @TempDir File tempDir) {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "t_" + UUID.randomUUID().toString().replace('-', '_');
+    createPartitionedColumnMappingTable(tablePath, tableName); // v0
+    for (String sqlTemplate : postV0Commits) {
+      spark.sql(String.format(sqlTemplate, tableName));
+    }
+
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(tablePath, spark.sessionState().newHadoopConf());
+    PersistedMetadata current = buildCurrentMetadataAtV0(tablePath, snapshotManager);
+
+    Option<PersistedMetadata> result =
+        MetadataEvolutionHandler.getMergedConsecutiveMetadataChanges(
+            current, snapshotManager, defaultEngine, tablePath, SparkMicroBatchStream.ACTION_SET);
+
+    if (expectedMergedVersion == EXPECTED_NO_MERGE) {
+      assertTrue(result.isEmpty());
+      return;
+    }
+
+    // Verify the merger's result against the table's actual schema and protocol at the merged
+    // version. We build the "expected" PersistedMetadata directly from the snapshot at that
+    // version — if the merger captured the right metadata/protocol actions, the JSONs will match.
+    assertTrue(result.isDefined());
+    SnapshotImpl mergedSnapshot =
+        (SnapshotImpl) snapshotManager.loadSnapshotAt(expectedMergedVersion);
+    PersistedMetadata expected =
+        PersistedMetadata.apply(
+            "test-table-id",
+            expectedMergedVersion,
+            new KernelMetadataAdapter(mergedSnapshot.getMetadata()),
+            new KernelProtocolAdapter(mergedSnapshot.getProtocol()),
+            tablePath + "/_delta_log/_streaming_metadata");
+
+    assertEquals(expected.dataSchemaJson(), result.get().dataSchemaJson());
+    assertEquals(expected.partitionSchemaJson(), result.get().partitionSchemaJson());
+    assertEquals(expected.protocolJson(), result.get().protocolJson());
   }
 }

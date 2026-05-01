@@ -107,7 +107,8 @@ object PersistedMetadata {
   def fromJson(json: String): PersistedMetadata = JsonUtils.fromJson[PersistedMetadata](json)
 
   /**
-   * Builds a [[PersistedMetadata]] from V2 interop abstractions.
+   * Serializes an [[AbstractProtocol]] to the Spark [[Protocol]] JSON format used in
+   * [[PersistedMetadata.protocolJson]].
    *
    * Contract on [[AbstractProtocol]]: `readerFeatures` / `writerFeatures` must be consistent
    * with the min protocol versions: `readerFeatures` may only be defined when
@@ -116,26 +117,32 @@ object PersistedMetadata {
    * relies on this invariant; [[Protocol]] will throw a `require` failure if an implementation
    * gets it wrong.
    */
+  def toProtocolJson(abstractProtocol: AbstractProtocol): String = {
+    Protocol(
+      abstractProtocol.minReaderVersion,
+      abstractProtocol.minWriterVersion
+    ).copy(
+      readerFeatures = abstractProtocol.readerFeatures,
+      writerFeatures = abstractProtocol.writerFeatures
+    ).json
+  }
+
+  /**
+   * Builds a [[PersistedMetadata]] from V2 interop abstractions.
+   */
   def apply(
       tableId: String,
       deltaCommitVersion: Long,
       abstractMetadata: AbstractMetadata,
       abstractProtocol: AbstractProtocol,
       sourceMetadataPath: String): PersistedMetadata = {
-    val protocol = Protocol(
-      abstractProtocol.minReaderVersion,
-      abstractProtocol.minWriterVersion
-    ).copy(
-      readerFeatures = abstractProtocol.readerFeatures,
-      writerFeatures = abstractProtocol.writerFeatures
-    )
     PersistedMetadata(tableId, deltaCommitVersion,
       abstractMetadata.schema.json, abstractMetadata.partitionSchema.json,
       // The schema is bound to the specific source
       sourceMetadataPath,
       // Table configurations come from the Metadata action
       Some(abstractMetadata.configuration),
-      Some(protocol.json)
+      Some(toProtocolJson(abstractProtocol))
     )
   }
 }

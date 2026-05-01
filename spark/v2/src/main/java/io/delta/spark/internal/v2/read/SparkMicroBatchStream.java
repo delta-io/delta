@@ -264,7 +264,7 @@ public class SparkMicroBatchStream
     // tracking has a persisted entry, layer it onto the freshly loaded snapshotAtSourceInit so
     // the read schema/protocol/config reflect the evolved state. The merged entry has already
     // been written to the durable schema log during analysis (by SparkTable's call to
-    // getMetadataTrackingLogForMicroBatchStream with mergeConsecutiveSchemaChanges=true), so
+    // getPersistedMetadataForMicroBatchStream with mergeConsecutiveSchemaChanges=true), so
     // reading it back from the log here yields the same value V1 obtains.
     Option<PersistedMetadata> persistedMetadataAtSourceInit =
         metadataTrackingLog.isDefined()
@@ -1340,6 +1340,10 @@ public class SparkMicroBatchStream
           // Track Protocol for schema evolution barrier detection.
           Optional<Protocol> protocolOpt = StreamingHelper.getProtocol(batch, rowId);
           if (protocolOpt.isPresent()) {
+            Preconditions.checkArgument(
+                protocolAction == null,
+                "Should not encounter two protocol actions in the same commit of version %d",
+                version);
             protocolAction = protocolOpt.get();
           }
 

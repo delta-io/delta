@@ -113,20 +113,16 @@ trait DeltaV2SourceSchemaEvolutionSuiteBase extends V2ForceTest {
 
     // ========== Schema evolution scenarios ==========
     "consecutive schema evolutions without schema merging",
+    "consecutive schema evolutions",
     "upgrade and downgrade",
     "multiple sources with schema evolution",
     "schema evolution with Delta sink",
     "latestOffset should not progress before schema evolved",
-    "schema tracking interacting with unsafe escape flag",
-    "partition evolution"
-  )
-
-  // TODO(#5319): Move to PASS after consecutive schema merger is supported
-  override protected def shouldFailTests: Set[String] = Set(
-    // ========== Schema log core ==========
-    "consecutive schema evolutions",
     "unblock with sql conf",
-    "streaming with a column mapping upgrade"
+    "unblock with sql conf - nested struct",
+    "schema tracking interacting with unsafe escape flag",
+    "streaming with a column mapping upgrade",
+    "partition evolution"
   )
 }
 

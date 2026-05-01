@@ -86,11 +86,5 @@ class TypeWideningStreamingV2SourceSchemaTrackingSuite
       "unblocking stream with reader option after type change - unblock version",
       "overwrite schema with type change and dropped column",
       "disable schema tracking log using internal conf"
-    ) -- shouldFailTests
-
-  // TODO(#5319): Move to PASS after consecutive schema merger is supported
-  override  protected def shouldFailTests: Set[String] =
-    super.shouldFailTests ++ Set(
-      "type change in delta source writing to a delta sink"
     )
 }
