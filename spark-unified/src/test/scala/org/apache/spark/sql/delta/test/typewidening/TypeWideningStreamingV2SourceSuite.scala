@@ -25,7 +25,10 @@ import org.apache.spark.sql.delta.typewidening.{
 
 /**
  * Base trait for V2 type widening streaming source tests.
- * Provides common shouldFail logic shared by both suites.
+ *
+ * The base lists every test from `TypeWideningStreamingSourceTests` as passing: V2 supports
+ * type-widening streaming reads. Subclasses move specific tests back to `shouldFailTests` when
+ * there is a concrete V2 limitation (e.g., partition-column schema bug, missing event logging).
  */
 trait TypeWideningStreamingV2SourceSuiteBase extends V2ForceTest {
   self: TypeWideningStreamingSourceTestMixin =>
@@ -34,12 +37,7 @@ trait TypeWideningStreamingV2SourceSuiteBase extends V2ForceTest {
 
   override protected def executeDml(sqlText: String): Unit = executeInV1Mode(sqlText)
 
-  // TODO(#5319): Move tests to shouldPassTests as V2 schema tracking log support is implemented.
-  override protected def shouldPassTests: Set[String] = Set.empty[String]
-
-  // Tests from TypeWideningStreamingSourceTests, shared by both suites.
-  // Override in subclasses to add suite-specific tests.
-  override protected def shouldFailTests: Set[String] = Set(
+  override protected def shouldPassTests: Set[String] = Set(
     "type change - filter",
     "type change - projection",
     "type change - projection partition column",
@@ -59,45 +57,40 @@ trait TypeWideningStreamingV2SourceSuiteBase extends V2ForceTest {
     "arbitrary type changes are not supported",
     "type change in delta source writing to a delta sink"
   )
+
+  // Failures that affect both the schema-tracking and non-schema-tracking suites.
+  override protected def shouldFailTests: Set[String] = Set(
+    // Delta log event is not supported in V2, so event-logging tests are not meaningful.
+    "schema changed event is logged for type widening",
+    "schema changed event is not logged when there are no schema changes"
+  )
 }
 
 class TypeWideningStreamingV2SourceSuite
   extends TypeWideningStreamingSourceSuite
-    with TypeWideningStreamingV2SourceSuiteBase {
-
-  // All tests pass without schema tracking enabled, except where noted in shouldFailTests.
-  override protected def shouldPassTests: Set[String] =
-    super.shouldFailTests -- shouldFailTests
-
-  override protected def shouldFailTests: Set[String] = Set(
-    // Delta log event is not supported in V2, so event-logging tests are not meaningful.
-    "schema changed event is logged for type widening",
-    "schema changed event is not logged when there are no schema changes",
-    // TODO(#5319): Partition column schema has a bug in V2 causing these to fail.
-    "type change - projection partition column",
-    "type change - widen aggregation expression partition column",
-    // TODO(#5319): V2 lacks the implementation of
-    //  validateAndInitMetadataLogForPlannedBatchesDuringStreamStart, so the
-    //  2nd testStream restart does not throw on the incompatible type change.
-    "widening type change then restore back",
-    "narrowing type changes are not supported",
-    "arbitrary type changes are not supported"
-  )
-}
+    with TypeWideningStreamingV2SourceSuiteBase
 
 class TypeWideningStreamingV2SourceSchemaTrackingSuite
   extends TypeWideningStreamingSourceSchemaTrackingSuite
     with TypeWideningStreamingV2SourceSuiteBase {
 
-  override protected def shouldFailTests: Set[String] = super.shouldFailTests ++ Set(
-    // Additional tests from TypeWideningStreamingSourceSchemaTrackingTests
-    "type change first without schemaTrackingLocation and unblock using schemaTrackingLocation",
-    "unblocking stream with sql conf after type change - unblock all",
-    "unblocking stream with sql conf after type change - unblock stream",
-    "unblocking stream with sql conf after type change - unblock version",
-    "unblocking stream with reader option after type change - unblock stream",
-    "unblocking stream with reader option after type change - unblock version",
-    "overwrite schema with type change and dropped column",
-    "disable schema tracking log using internal conf"
-  )
+  // Schema-tracking-specific tests from TypeWideningStreamingSourceSchemaTrackingTests, on top of
+  // the base type-widening tests inherited from the trait, minus tests with known V2 issues.
+  override protected def shouldPassTests: Set[String] =
+    super.shouldPassTests ++ Set(
+      "type change first without schemaTrackingLocation and unblock using schemaTrackingLocation",
+      "unblocking stream with sql conf after type change - unblock all",
+      "unblocking stream with sql conf after type change - unblock stream",
+      "unblocking stream with sql conf after type change - unblock version",
+      "unblocking stream with reader option after type change - unblock stream",
+      "unblocking stream with reader option after type change - unblock version",
+      "overwrite schema with type change and dropped column",
+      "disable schema tracking log using internal conf"
+    ) -- shouldFailTests
+
+  // TODO(#5319): Move to PASS after consecutive schema merger is supported
+  override  protected def shouldFailTests: Set[String] =
+    super.shouldFailTests ++ Set(
+      "type change in delta source writing to a delta sink"
+    )
 }

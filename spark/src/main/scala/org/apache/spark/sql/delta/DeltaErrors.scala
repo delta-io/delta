@@ -3248,8 +3248,7 @@ trait DeltaErrorsBase
       spark: SparkSession,
       readSchema: StructType,
       incompatibleSchema: StructType,
-      detectedDuringStreaming: Boolean,
-      isV2DataSource: Boolean = false): Throwable = {
+      detectedDuringStreaming: Boolean): Throwable = {
     val docLink = "/versioning.html#column-mapping"
     val enableNonAdditiveSchemaEvolution = spark.sessionState.conf.getConf(
       DeltaSQLConf.DELTA_STREAMING_ENABLE_SCHEMA_TRACKING)
@@ -3259,8 +3258,7 @@ trait DeltaErrorsBase
       generateDocsLinkOption(spark, docLink).getOrElse("-"),
       enableNonAdditiveSchemaEvolution,
       additionalProperties = Map(
-        "detectedDuringStreaming" -> detectedDuringStreaming.toString,
-        "isV2DataSource" -> isV2DataSource.toString
+        "detectedDuringStreaming" -> detectedDuringStreaming.toString
       ))
   }
 
@@ -4443,9 +4441,7 @@ class DeltaStreamingNonAdditiveSchemaIncompatibleException(
     val enableNonAdditiveSchemaEvolution: Boolean = false,
     val additionalProperties: Map[String, String] = Map.empty)
   extends DeltaUnsupportedOperationException(
-    errorClass = if (additionalProperties.getOrElse("isV2DataSource", "false") == "true") {
-      "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE_V2"
-    } else if (enableNonAdditiveSchemaEvolution) {
+    errorClass = if (enableNonAdditiveSchemaEvolution) {
       "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE_USE_SCHEMA_LOG"
     } else {
       "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE"

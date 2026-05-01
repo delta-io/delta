@@ -751,7 +751,8 @@ public class SparkScanTest extends DeltaV2TestBase {
             + "Supported options are: [startingVersion, startingTimestamp, maxFilesPerTrigger, "
             + "maxBytesPerTrigger, ignoreFileDeletion, ignoreChanges, ignoreDeletes, "
             + "skipChangeCommits, excludeRegex, failOnDataLoss, readChangeFeed, readChangeData, "
-            + "schemaTrackingLocation, schemaLocation, streamingSourceTrackingId].",
+            + "schemaTrackingLocation, schemaLocation, streamingSourceTrackingId, "
+            + "allowSourceColumnDrop, allowSourceColumnRename, allowSourceColumnTypeChange].",
         exception.getMessage());
   }
 

@@ -70,7 +70,6 @@ trait DeltaV2SourceSchemaEvolutionSuiteBase extends V2ForceTest {
     }
   }
 
-  // TODO(#5319): Move tests to shouldPassTests as V2 schema tracking log support is implemented.
   override protected def shouldPassTests: Set[String] = Set(
     // ========== Schema log unit test ==========
     "schema location not under checkpoint",
@@ -93,11 +92,7 @@ trait DeltaV2SourceSchemaEvolutionSuiteBase extends V2ForceTest {
     "forward-compat: older version can read back newer JSON",
 
     // ========== Schema log core ==========
-    "multiple delta source sharing same schema log is blocked"
-  )
-
-  override protected def shouldFailTests: Set[String] = Set(
-    // ========== Schema log core ==========
+    "multiple delta source sharing same schema log is blocked",
     "schema log is applied",
     "schema log initialization with additive schema changes",
     "detect incompatible schema change while streaming",
@@ -118,15 +113,20 @@ trait DeltaV2SourceSchemaEvolutionSuiteBase extends V2ForceTest {
 
     // ========== Schema evolution scenarios ==========
     "consecutive schema evolutions without schema merging",
-    "consecutive schema evolutions",
     "upgrade and downgrade",
     "multiple sources with schema evolution",
     "schema evolution with Delta sink",
     "latestOffset should not progress before schema evolved",
-    "unblock with sql conf",
     "schema tracking interacting with unsafe escape flag",
-    "streaming with a column mapping upgrade",
     "partition evolution"
+  )
+
+  // TODO(#5319): Move to PASS after consecutive schema merger is supported
+  override protected def shouldFailTests: Set[String] = Set(
+    // ========== Schema log core ==========
+    "consecutive schema evolutions",
+    "unblock with sql conf",
+    "streaming with a column mapping upgrade"
   )
 }
 

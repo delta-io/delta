@@ -1194,4 +1194,139 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
     assertTrue(result.isPresent());
     assertEquals(seededVersion, result.get().deltaCommitVersion());
   }
+
+  // ---------------------------------------------------------------------------
+  // buildReadSnapshotFromPersistedMetadata
+  // ---------------------------------------------------------------------------
+
+  /** Loads the latest snapshot from a fresh empty Delta table created at {@code tempDir/table}. */
+  private SnapshotImpl loadSourceSnapshot(File tempDir) {
+    String tablePath = new File(tempDir, "table").getAbsolutePath();
+    String tableName = "t_" + UUID.randomUUID().toString().replace('-', '_');
+    createEmptyTestTable(tablePath, tableName);
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(tablePath, spark.sessionState().newHadoopConf());
+    return (SnapshotImpl) snapshotManager.loadLatestSnapshot();
+  }
+
+  /** Persisted metadata with schema, protocol, and configuration distinct from the source. */
+  private static PersistedMetadata persistedMetadataWithMarker(long version) {
+    Metadata customKernelMetadata =
+        new Metadata(
+            "persisted-id",
+            Optional.empty(),
+            Optional.empty(),
+            new Format("parquet", Collections.emptyMap()),
+            DEFAULT_SCHEMA_JSON,
+            DEFAULT_KERNEL_SCHEMA,
+            emptyArrayValue(),
+            Optional.empty(),
+            VectorUtils.stringStringMapValue(Collections.singletonMap("persisted.marker", "yes")));
+    // Use feature-less reader/writer versions (2/5) — different from a fresh table's defaults.
+    Protocol customKernelProtocol = new Protocol(2, 5);
+    return PersistedMetadata.apply(
+        "persisted-id",
+        version,
+        new KernelMetadataAdapter(customKernelMetadata),
+        new KernelProtocolAdapter(customKernelProtocol),
+        "/fake/metadata/path");
+  }
+
+  /** Happy path: persisted metadata overlays version, schema, protocol, and configuration. */
+  @Test
+  public void testBuildReadSnapshot_overlaysCustomMetadataAndProtocol(@TempDir File tempDir) {
+    SnapshotImpl source = loadSourceSnapshot(tempDir);
+    long persistedVersion = source.getVersion() + 100; // distinct from source version
+    PersistedMetadata persisted = persistedMetadataWithMarker(persistedVersion);
+
+    SnapshotImpl read =
+        MetadataEvolutionHandler.buildReadSnapshotFromPersistedMetadata(
+            source, defaultEngine, persisted);
+
+    assertEquals(persistedVersion, read.getVersion());
+    assertEquals(2, read.getProtocol().getMinReaderVersion());
+    assertEquals(5, read.getProtocol().getMinWriterVersion());
+    assertEquals("yes", read.getMetadata().getConfiguration().get("persisted.marker"));
+    assertEquals(DEFAULT_KERNEL_SCHEMA, read.getSchema());
+  }
+
+  /** When {@code protocolJson} is absent on the persisted entry, fall back to the source's. */
+  @Test
+  public void testBuildReadSnapshot_fallsBackToSnapshotProtocolWhenAbsent(@TempDir File tempDir) {
+    SnapshotImpl source = loadSourceSnapshot(tempDir);
+    PersistedMetadata withBoth = persistedMetadataWithMarker(42L);
+    PersistedMetadata withoutProtocol =
+        new PersistedMetadata(
+            withBoth.tableId(),
+            withBoth.deltaCommitVersion(),
+            withBoth.dataSchemaJson(),
+            withBoth.partitionSchemaJson(),
+            withBoth.sourceMetadataPath(),
+            withBoth.tableConfigurations(),
+            Option.empty(),
+            withBoth.previousMetadataSeqNum());
+
+    SnapshotImpl read =
+        MetadataEvolutionHandler.buildReadSnapshotFromPersistedMetadata(
+            source, defaultEngine, withoutProtocol);
+
+    assertEquals(
+        source.getProtocol().getMinReaderVersion(), read.getProtocol().getMinReaderVersion());
+    assertEquals(
+        source.getProtocol().getMinWriterVersion(), read.getProtocol().getMinWriterVersion());
+  }
+
+  /**
+   * When {@code tableConfigurations} is absent on the persisted entry, fall back to the source's.
+   */
+  @Test
+  public void testBuildReadSnapshot_fallsBackToSnapshotConfigurationWhenAbsent(
+      @TempDir File tempDir) {
+    SnapshotImpl source = loadSourceSnapshot(tempDir);
+    PersistedMetadata withBoth = persistedMetadataWithMarker(42L);
+    PersistedMetadata withoutConfig =
+        new PersistedMetadata(
+            withBoth.tableId(),
+            withBoth.deltaCommitVersion(),
+            withBoth.dataSchemaJson(),
+            withBoth.partitionSchemaJson(),
+            withBoth.sourceMetadataPath(),
+            Option.empty(),
+            withBoth.protocolJson(),
+            withBoth.previousMetadataSeqNum());
+
+    SnapshotImpl read =
+        MetadataEvolutionHandler.buildReadSnapshotFromPersistedMetadata(
+            source, defaultEngine, withoutConfig);
+
+    assertEquals(source.getMetadata().getConfiguration(), read.getMetadata().getConfiguration());
+    // The persisted marker must not have leaked through when we fell back to the source.
+    assertFalse(read.getMetadata().getConfiguration().containsKey("persisted.marker"));
+  }
+
+  /**
+   * The synthetic snapshot's {@code lazyLogSegment} / {@code lazyCrcInfo} are traps: anything that
+   * resolves them must fail loudly instead of silently reading against the wrong version.
+   */
+  @Test
+  public void testBuildReadSnapshot_trapsLogReplayAccess(@TempDir File tempDir) {
+    SnapshotImpl source = loadSourceSnapshot(tempDir);
+    PersistedMetadata persisted = persistedMetadataWithMarker(42L);
+
+    SnapshotImpl read =
+        MetadataEvolutionHandler.buildReadSnapshotFromPersistedMetadata(
+            source, defaultEngine, persisted);
+
+    IllegalStateException crcEx =
+        assertThrows(IllegalStateException.class, read::getCurrentCrcInfo);
+    assertTrue(
+        crcEx.getMessage().contains("CRC info is not available"),
+        "Unexpected message: " + crcEx.getMessage());
+
+    IllegalStateException segEx =
+        assertThrows(IllegalStateException.class, () -> read.getLazyLogSegment().get());
+    assertTrue(
+        segEx.getMessage().contains("log segment is not available"),
+        "Unexpected message: " + segEx.getMessage());
+  }
 }
