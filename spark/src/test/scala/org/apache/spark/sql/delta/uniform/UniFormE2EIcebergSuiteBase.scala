@@ -29,6 +29,8 @@ import org.apache.spark.sql.types._
  * perform verification.
  */
 abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
+  def isAtomicConversionEnabled: Boolean =
+    true
 
   val testTableName = "delta_table"
 
@@ -56,8 +58,18 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
              |  'delta.universalFormat.enabledFormats' = 'iceberg'
              |  ${extraTableProperties(compatVersion)}
              |)""".stripMargin)
-        write(s"INSERT INTO $testTableName VALUES (123)")
+        writeAndVerify(
+          s"INSERT INTO $testTableName VALUES (123)", isAtomicMode = isAtomicConversionEnabled
+        )
         readAndVerify(testTableName, "col1", "col1", Seq(Row(123)))
+        writeAndVerify(
+          s"INSERT INTO $testTableName VALUES (456)",
+          isAtomicMode = isAtomicConversionEnabled,
+          verifyFullOrIncrementalOpt = Some(
+            VerifyFullOrIncremental(testTableName, isIncremental = true)
+          )
+        )
+        readAndVerify(testTableName, "col1", "col1", Seq(Row(123), Row(456)))
       }
     }
   }
