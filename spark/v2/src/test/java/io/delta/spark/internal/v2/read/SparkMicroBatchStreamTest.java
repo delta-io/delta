@@ -4917,7 +4917,7 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
   }
 
   @Test
-  public void testDataFrameBasedInitialSnapshot_handlesLargeSnapshot(@TempDir File tempDir)
+  public void testDistributedInitialSnapshot_handlesLargeSnapshot(@TempDir File tempDir)
       throws Exception {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_df_snapshot_" + System.nanoTime();
@@ -4930,7 +4930,7 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
         /* includeEmptyVersion= */ false);
 
     String maxFilesKey = DeltaSQLConf.DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES().key();
-    String dfFlagKey = DeltaSQLConf.DELTA_STREAMING_USE_DATAFRAME_INITIAL_SNAPSHOT().key();
+    String dfFlagKey = DeltaSQLConf.DELTA_STREAMING_USE_DISTRIBUTED_INITIAL_SNAPSHOT().key();
     spark.conf().set(maxFilesKey, "5");
     spark.conf().set(dfFlagKey, "true");
 
@@ -4972,6 +4972,150 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
               "Files should be sorted by (modificationTime, path)");
         }
       }
+    } finally {
+      spark.conf().unset(maxFilesKey);
+      spark.conf().unset(dfFlagKey);
+    }
+  }
+
+  /**
+   * Regression test for the monotonically_increasing_id() bug: verifies that file indices
+   * produced by the DataFrame path are contiguous 0-based integers (0, 1, 2, ...), matching
+   * the driver path's sequential indexing and DSv1's zipWithIndex().
+   *
+   * <p>Non-contiguous indices (e.g., partition-relative IDs from monotonically_increasing_id())
+   * would break checkpoint compatibility when switching between the DataFrame and driver paths.
+   */
+  @Test
+  public void testDistributedInitialSnapshot_hasContiguousIndices(@TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_df_contiguous_idx_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+
+    // Use multiple versions so Spark is likely to use multiple partitions,
+    // which would produce non-contiguous IDs with monotonically_increasing_id().
+    insertVersions(
+        testTableName,
+        /* numVersions= */ 10,
+        /* rowsPerVersion= */ 5,
+        /* includeEmptyVersion= */ false);
+
+    String maxFilesKey = DeltaSQLConf.DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES().key();
+    String dfFlagKey = DeltaSQLConf.DELTA_STREAMING_USE_DISTRIBUTED_INITIAL_SNAPSHOT().key();
+    spark.conf().set(maxFilesKey, "10000");
+    spark.conf().set(dfFlagKey, "true");
+
+    try {
+      Configuration hadoopConf = spark.sessionState().newHadoopConf();
+      PathBasedSnapshotManager snapshotManager =
+          new PathBasedSnapshotManager(testTablePath, hadoopConf);
+      SparkMicroBatchStream stream =
+          createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+
+      long version = snapshotManager.loadLatestSnapshot().getVersion();
+      long fromIndex = DeltaSourceOffset.BASE_INDEX();
+      boolean isInitialSnapshot = true;
+
+      List<IndexedFile> files = new ArrayList<>();
+      try (CloseableIterator<IndexedFile> iter =
+          stream.getFileChanges(version, fromIndex, isInitialSnapshot, Optional.empty())) {
+        while (iter.hasNext()) {
+          files.add(iter.next());
+        }
+      }
+
+      // Sanity: must have BEGIN sentinel + at least one data file + END sentinel
+      assertThat(files).hasSizeGreaterThanOrEqualTo(3);
+      assertThat(files.get(0).getIndex()).isEqualTo(DeltaSourceOffset.BASE_INDEX());
+      assertThat(files.get(files.size() - 1).getIndex())
+          .isEqualTo(DeltaSourceOffset.END_INDEX());
+
+      // Extract data-file indices (everything except BEGIN and END sentinels)
+      List<Long> dataFileIndices =
+          files.stream()
+              .filter(f -> f.getAddFile() != null)
+              .map(IndexedFile::getIndex)
+              .collect(Collectors.toList());
+
+      assertThat(dataFileIndices).isNotEmpty();
+
+      // Verify contiguous 0-based: 0, 1, 2, ..., N-1
+      for (int i = 0; i < dataFileIndices.size(); i++) {
+        assertThat(dataFileIndices.get(i))
+            .as("Index at position %d should be %d (contiguous 0-based)", i, i)
+            .isEqualTo((long) i);
+      }
+    } finally {
+      spark.conf().unset(maxFilesKey);
+      spark.conf().unset(dfFlagKey);
+    }
+  }
+
+  /** Verifies that DataFrameSnapshotCache.close() nulls the DataFrame and is idempotent. */
+  @Test
+  public void testDataFrameSnapshotCache_closeAndIdempotent() {
+    Dataset<Row> df =
+        spark.range(10).toDF("value").persist(org.apache.spark.storage.StorageLevel.MEMORY_ONLY());
+    df.count();
+
+    DataFrameSnapshotCache cache = new DataFrameSnapshotCache(42L, df);
+    assertThat(cache.getVersion()).isEqualTo(42L);
+    assertThat(cache.getSortedAddFiles()).isNotNull();
+
+    // First close: should unpersist and null out the DataFrame reference
+    cache.close();
+    assertThat(cache.getSortedAddFiles()).isNull();
+
+    // Second close: idempotent — no exception thrown
+    assertDoesNotThrow(cache::close);
+  }
+
+  /**
+   * Verifies that the DataFrame path handles an empty table (no data files, only metadata) by
+   * returning only BEGIN and END sentinels.
+   */
+  @Test
+  public void testDistributedInitialSnapshot_emptyTable(@TempDir File tempDir) throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_df_empty_table_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+
+    // No insertVersions — table has CREATE TABLE metadata but zero data files
+
+    String maxFilesKey = DeltaSQLConf.DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES().key();
+    String dfFlagKey = DeltaSQLConf.DELTA_STREAMING_USE_DISTRIBUTED_INITIAL_SNAPSHOT().key();
+    spark.conf().set(maxFilesKey, "10000");
+    spark.conf().set(dfFlagKey, "true");
+
+    try {
+      Configuration hadoopConf = spark.sessionState().newHadoopConf();
+      PathBasedSnapshotManager snapshotManager =
+          new PathBasedSnapshotManager(testTablePath, hadoopConf);
+      SparkMicroBatchStream stream =
+          createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+
+      long version = snapshotManager.loadLatestSnapshot().getVersion();
+      long fromIndex = DeltaSourceOffset.BASE_INDEX();
+      boolean isInitialSnapshot = true;
+
+      List<IndexedFile> files = new ArrayList<>();
+      try (CloseableIterator<IndexedFile> iter =
+          stream.getFileChanges(version, fromIndex, isInitialSnapshot, Optional.empty())) {
+        while (iter.hasNext()) {
+          files.add(iter.next());
+        }
+      }
+
+      // Should have exactly BEGIN + END sentinels, no data files
+      assertThat(files).hasSize(2);
+      assertThat(files.get(0).getIndex()).isEqualTo(DeltaSourceOffset.BASE_INDEX());
+      assertThat(files.get(0).getAddFile()).isNull();
+      assertThat(files.get(1).getIndex()).isEqualTo(DeltaSourceOffset.END_INDEX());
+      assertThat(files.get(1).getAddFile()).isNull();
+
+      // Double-check: no file in the result has an AddFile
+      assertThat(files.stream().noneMatch(IndexedFile::hasFileAction)).isTrue();
     } finally {
       spark.conf().unset(maxFilesKey);
       spark.conf().unset(dfFlagKey);

@@ -60,8 +60,10 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
+import org.apache.spark.sql.RowFactory;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.expressions.Literal$;
 import org.apache.spark.sql.connector.read.InputPartition;
@@ -88,6 +90,7 @@ import org.apache.spark.sql.functions;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.DataType;
+import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.storage.StorageLevel;
@@ -96,6 +99,8 @@ import org.slf4j.LoggerFactory;
 import scala.Function2;
 import scala.Option;
 import scala.Some;
+import scala.Tuple2;
+import scala.collection.JavaConverters;
 import scala.collection.immutable.Seq;
 import scala.collection.immutable.Seq$;
 import scala.jdk.javaapi.CollectionConverters;
@@ -226,7 +231,7 @@ public class SparkMicroBatchStream
       new AtomicReference<>(null);
 
   private final int maxInitialSnapshotFiles;
-  private final boolean useDataFrameBasedInitialSnapshot;
+  private final boolean useDistributedInitialSnapshot;
 
   public SparkMicroBatchStream(
       DeltaSnapshotManager snapshotManager,
@@ -306,12 +311,12 @@ public class SparkMicroBatchStream
                 .sessionState()
                 .conf()
                 .getConf(DeltaSQLConf.DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES());
-    this.useDataFrameBasedInitialSnapshot =
+    this.useDistributedInitialSnapshot =
         (Boolean)
             spark
                 .sessionState()
                 .conf()
-                .getConf(DeltaSQLConf.DELTA_STREAMING_USE_DATAFRAME_INITIAL_SNAPSHOT());
+                .getConf(DeltaSQLConf.DELTA_STREAMING_USE_DISTRIBUTED_INITIAL_SNAPSHOT());
 
     boolean isStreamingFromColumnMappingTable =
         ColumnMapping.getColumnMappingMode(
@@ -370,7 +375,7 @@ public class SparkMicroBatchStream
   }
 
   private void initLastOffsetForTriggerAvailableNow(DeltaSourceOffset startOffsetOpt) {
-    if (useDataFrameBasedInitialSnapshot && startOffsetOpt.isInitialSnapshot()) {
+    if (useDistributedInitialSnapshot && startOffsetOpt.isInitialSnapshot()) {
       lastOffsetForTriggerAvailableNow = getLastOffsetForAvailableNowViaDataFrame(startOffsetOpt);
     } else {
       lastOffsetForTriggerAvailableNow =
@@ -958,7 +963,7 @@ public class SparkMicroBatchStream
       // Lazily combine snapshot files with delta logs starting from fromVersion + 1.
       // filterDeltaLogs handles the case when no commits exist after fromVersion.
       CloseableIterator<IndexedFile> snapshotFiles;
-      if (useDataFrameBasedInitialSnapshot) {
+      if (useDistributedInitialSnapshot) {
         snapshotFiles = getSnapshotFilesViaDataFrame(fromVersion, fromIndex);
       } else {
         InitialSnapshotCache snapshot = getSnapshotFiles(fromVersion);
@@ -1811,10 +1816,22 @@ public class SparkMicroBatchStream
 
   private CloseableIterator<IndexedFile> getSnapshotFilesViaDataFrame(
       long version, long fromIndex) {
+    // Thread-safety note: This check-then-act on cachedDataFrameSnapshot is safe without
+    // additional synchronization because Spark's MicroBatchExecution drives the
+    // latestOffset() -> planInputPartitions() -> commit() lifecycle sequentially from a
+    // single thread. The only concurrent access is from stop(), which uses
+    // AtomicReference.getAndSet(null) for safe teardown (see invalidateDataFrameCache()).
+    // The DataFrameSnapshotCache Javadoc documents "Callers synchronize externally" —
+    // the single-threaded MicroBatchExecution loop is that external synchronization.
     DataFrameSnapshotCache dfCache = cachedDataFrameSnapshot.get();
     if (dfCache == null || dfCache.getVersion() != version) {
       invalidateDataFrameCache();
 
+      // The DataFrame path can only serve the version matching snapshotAtSourceInit because
+      // that snapshot's LogSegment was serialized into SerializableReadOnlySnapshot. A different
+      // version would require re-serializing a different LogSegment. This is intentionally more
+      // restrictive than the driver path (which can load any version via
+      // snapshotManager.loadSnapshotAt(version)).
       Preconditions.checkArgument(
           snapshotAtSourceInit.getVersion() == version,
           "Expected snapshot version %d but snapshotAtSourceInit is at version %d",
@@ -1824,12 +1841,36 @@ public class SparkMicroBatchStream
           SerializableReadOnlySnapshot.fromSnapshot(snapshotAtSourceInit, hadoopConf);
 
       ScanFileRDD rdd = new ScanFileRDD(spark.sparkContext(), serSnapshot);
-      Dataset<Row> df =
+      Dataset<Row> sorted =
           spark
               .createDataFrame(rdd, ScanFileRDD.SPARK_SCHEMA)
-              .orderBy("modificationTime", "path")
-              .withColumn(FILE_IDX_COL, functions.monotonically_increasing_id())
-              .persist(StorageLevel.DISK_ONLY());
+              .orderBy("modificationTime", "path");
+
+      // Use zipWithIndex for contiguous 0-based indices, matching DSv1's
+      // DeltaSourceSnapshot and the driver path's sequential indexing.
+      // monotonically_increasing_id() produces non-contiguous partition-relative IDs
+      // that would break checkpoint compatibility.
+      int numFields = ScanFileRDD.SPARK_SCHEMA.size();
+      StructType schemaWithIdx =
+          ScanFileRDD.SPARK_SCHEMA.add(FILE_IDX_COL, DataTypes.LongType, false);
+      JavaRDD<Row> indexedRDD =
+          sorted
+              .javaRDD()
+              .zipWithIndex()
+              .map(
+                  (Tuple2<Row, Long> tuple) -> {
+                    Row row = tuple._1();
+                    long idx = tuple._2();
+                    Object[] fields = new Object[numFields + 1];
+                    for (int i = 0; i < numFields; i++) {
+                      fields[i] = row.get(i);
+                    }
+                    fields[numFields] = idx;
+                    return RowFactory.create(fields);
+                  });
+
+      Dataset<Row> df =
+          spark.createDataFrame(indexedRDD, schemaWithIdx).persist(StorageLevel.DISK_ONLY());
 
       dfCache = new DataFrameSnapshotCache(version, df);
       cachedDataFrameSnapshot.set(dfCache);
