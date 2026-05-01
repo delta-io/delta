@@ -323,6 +323,119 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
     Files.write(commitFile.toPath, newMetadataLine.getBytes(StandardCharsets.UTF_8))
   }
 
+  /**
+   * Simulates an external DROP and recreate of a column mapping table by writing
+   * RemoveFile actions for all data + new Metadata with fresh column mapping IDs,
+   * bypassing the server's DeltaLog entirely.
+   */
+  protected def writeExternalDropAndRecreateColumnMappingViaFilesystem(
+      tablePath: String): Unit = {
+    val deltaLogDir = new File(tablePath, "_delta_log")
+    val commitFiles = deltaLogDir.listFiles().filter(_.getName.endsWith(".json"))
+    val currentVersion = commitFiles.map(f =>
+      f.getName.stripSuffix(".json").toLong).max
+
+    // Collect active AddFile paths
+    val addPathRegex = """"add":\{[^}]*"path"\s*:\s*"([^"]+)"""".r
+    val removePathRegex = """"remove":\{[^}]*"path"\s*:\s*"([^"]+)"""".r
+    val addedPaths = scala.collection.mutable.Set[String]()
+    val removedPaths = scala.collection.mutable.Set[String]()
+    commitFiles.sortBy(_.getName).foreach { f =>
+      val content = new String(Files.readAllBytes(f.toPath), StandardCharsets.UTF_8)
+      addPathRegex.findAllMatchIn(content).foreach(m => addedPaths += m.group(1))
+      removePathRegex.findAllMatchIn(content).foreach(m => removedPaths += m.group(1))
+    }
+    val activeFiles = addedPaths -- removedPaths
+
+    // Read existing metadata
+    val metadataLine = commitFiles.sortBy(_.getName).flatMap { f =>
+      new String(Files.readAllBytes(f.toPath), StandardCharsets.UTF_8)
+        .split("\n").filter(_.contains("\"metaData\""))
+    }.lastOption.getOrElse(
+      throw new RuntimeException("No metaData action found in commit files"))
+
+    // Replace table id and all column mapping IDs with new values
+    val newId = java.util.UUID.randomUUID().toString
+    var newMetadataLine = metadataLine.replaceFirst(
+      """"id"\s*:\s*"[^"]+"""", s""""id":"$newId"""")
+    // Replace all delta.columnMapping.id values with new IDs (100+)
+    val colIdRegex = """delta\.columnMapping\.id\\?"?\s*:\s*(\d+)""".r
+    var nextId = 100
+    newMetadataLine = colIdRegex.replaceAllIn(newMetadataLine, _ => {
+      val result = s"delta.columnMapping.id\\\\\":${nextId}"
+      nextId += 1
+      result
+    })
+    // Replace all delta.columnMapping.physicalName values
+    val colNameRegex = """delta\.columnMapping\.physicalName\\?"?\s*:\s*\\?"?([^"\\,}]+)""".r
+    newMetadataLine = colNameRegex.replaceAllIn(newMetadataLine, _ => {
+      val uuid = java.util.UUID.randomUUID().toString.take(8)
+      s"""delta.columnMapping.physicalName\\\\\":\\\\\"col-recreated-$uuid"""
+    })
+
+    val removeActions = activeFiles.map { path =>
+      s"""{"remove":{"path":"$path","deletionTimestamp":${System.currentTimeMillis()},"dataChange":true}}"""
+    }
+    val commitContent = (removeActions.toSeq :+ newMetadataLine).mkString("\n")
+
+    val commitFile = new File(deltaLogDir, f"${currentVersion + 1}%020d.json")
+    Files.write(commitFile.toPath, commitContent.getBytes(StandardCharsets.UTF_8))
+  }
+
+  /**
+   * Simulates an external DROP/ADD of a column by writing a metadata-only commit
+   * that replaces the column's column mapping ID and physical name (and optionally
+   * its type), bypassing the server's DeltaLog entirely. This triggers
+   * DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS because the column mapping ID changed.
+   */
+  protected def writeExternalReplaceColumnViaFilesystem(
+      tablePath: String,
+      columnName: String,
+      newType: Option[String] = None): Unit = {
+    val deltaLogDir = new File(tablePath, "_delta_log")
+    val commitFiles = deltaLogDir.listFiles().filter(_.getName.endsWith(".json"))
+    val currentVersion = commitFiles.map(f =>
+      f.getName.stripSuffix(".json").toLong).max
+
+    val metadataLine = commitFiles.sortBy(_.getName).flatMap { f =>
+      new String(Files.readAllBytes(f.toPath), StandardCharsets.UTF_8)
+        .split("\n").filter(_.contains("\"metaData\""))
+    }.lastOption.getOrElse(
+      throw new RuntimeException("No metaData action found in commit files"))
+
+    val schemaStringRegex = """"schemaString"\s*:\s*"((?:[^"\\]|\\.)*)"""".r
+    val escapedSchema = schemaStringRegex.findFirstMatchIn(metadataLine).map(_.group(1)).getOrElse(
+      throw new RuntimeException("Could not extract schemaString from metadata"))
+    val schemaJson = escapedSchema.replace("\\\"", "\"")
+
+    // Find the target field and replace its column mapping ID and physical name
+    val uuid = java.util.UUID.randomUUID().toString.take(8)
+    val fieldRegex = ("""\{"name":"""" + columnName + """"[^}]*\}""").r
+    val newSchemaJson = fieldRegex.replaceFirstIn(schemaJson, { m =>
+      val fieldJson = m.group(0)
+      val typeStr = newType.getOrElse("integer")
+      // Replace the column mapping id with 999, physical name with new value
+      val withNewId = fieldJson
+        .replaceFirst(""""delta\.columnMapping\.id"\s*:\s*\d+""",
+          """"delta.columnMapping.id":999""")
+        .replaceFirst(""""delta\.columnMapping\.physicalName"\s*:\s*"[^"]+"""",
+          s""""delta.columnMapping.physicalName":"col-replaced-$uuid"""")
+      // Optionally change the type
+      if (newType.isDefined) {
+        withNewId.replaceFirst(""""type"\s*:\s*"[^"]+"""", s""""type":"$typeStr"""")
+      } else {
+        withNewId
+      }
+    })
+
+    val newEscapedSchema = newSchemaJson.replace("\"", "\\\"")
+    val newMetadataLine = schemaStringRegex.replaceFirstIn(
+      metadataLine, s""""schemaString":"$newEscapedSchema"""")
+
+    val commitFile = new File(deltaLogDir, f"${currentVersion + 1}%020d.json")
+    Files.write(commitFile.toPath, newMetadataLine.getBytes(StandardCharsets.UTF_8))
+  }
+
   // ---------------------------------------------------------------------------
   // Section [1]: Temp views with stored plans (Connect behavior)
   // Temp views created from Dataset capture the plan. In Connect, they behave
@@ -563,6 +676,104 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
           condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS")
       } else {
         checkAnswer(spark.sql("SELECT * FROM v_3ext"), Row(1, 100))
+      }
+    }
+  }
+
+  test("[1] connect scenario 4 external: temp view after external DROP and recreate " +
+      "(column mapping)") {
+    withTempPath { dir =>
+      val path = dir.getAbsolutePath
+      spark.sql(
+        s"""CREATE TABLE delta.`$path` (id INT, salary INT) USING delta
+           |TBLPROPERTIES ('delta.columnMapping.mode' = 'name')""".stripMargin)
+      spark.sql(s"INSERT INTO delta.`$path` VALUES (1, 100)")
+
+      spark.table(s"delta.`$path`").filter("id < 999").createOrReplaceTempView("v_4ext")
+      checkAnswer(spark.sql("SELECT * FROM v_4ext"), Row(1, 100))
+
+      writeExternalDropAndRecreateColumnMappingViaFilesystem(path)
+
+      if (stalenessLimitMs == 0L) {
+        checkError(
+          exception = intercept[SparkException] {
+            spark.sql("SELECT * FROM v_4ext").collect()
+          },
+          condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS")
+      } else {
+        checkAnswer(spark.sql("SELECT * FROM v_4ext"), Row(1, 100))
+      }
+    }
+  }
+
+  test("[1] connect scenario 4 external: temp view after external DROP and recreate " +
+      "(no column mapping)") {
+    withTempPath { dir =>
+      val path = dir.getAbsolutePath
+      spark.sql(s"CREATE TABLE delta.`$path` (id INT, salary INT) USING delta")
+      spark.sql(s"INSERT INTO delta.`$path` VALUES (1, 100)")
+
+      spark.table(s"delta.`$path`").filter("salary < 999").createOrReplaceTempView("v_4ext_nc")
+      checkAnswer(spark.sql("SELECT * FROM v_4ext_nc"), Row(1, 100))
+
+      writeExternalDropAndRecreateViaFilesystem(path)
+
+      if (stalenessLimitMs == 0L) {
+        checkAnswer(spark.sql("SELECT * FROM v_4ext_nc"), Seq.empty)
+      } else {
+        checkAnswer(spark.sql("SELECT * FROM v_4ext_nc"), Row(1, 100))
+      }
+    }
+  }
+
+  test("[1] connect scenario 5 external: temp view after external DROP/ADD column " +
+      "same name same type (column mapping)") {
+    withTempPath { dir =>
+      val path = dir.getAbsolutePath
+      spark.sql(
+        s"""CREATE TABLE delta.`$path` (id INT, salary INT) USING delta
+           |TBLPROPERTIES ('delta.columnMapping.mode' = 'name')""".stripMargin)
+      spark.sql(s"INSERT INTO delta.`$path` VALUES (1, 100)")
+
+      spark.table(s"delta.`$path`").filter("id < 999").createOrReplaceTempView("v_5ext")
+      checkAnswer(spark.sql("SELECT * FROM v_5ext"), Row(1, 100))
+
+      writeExternalReplaceColumnViaFilesystem(path, "salary")
+
+      if (stalenessLimitMs == 0L) {
+        checkError(
+          exception = intercept[SparkException] {
+            spark.sql("SELECT * FROM v_5ext").collect()
+          },
+          condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS")
+      } else {
+        checkAnswer(spark.sql("SELECT * FROM v_5ext"), Row(1, 100))
+      }
+    }
+  }
+
+  test("[1] connect scenario 6 external: temp view after external DROP/ADD column " +
+      "same name different type (column mapping)") {
+    withTempPath { dir =>
+      val path = dir.getAbsolutePath
+      spark.sql(
+        s"""CREATE TABLE delta.`$path` (id INT, salary INT) USING delta
+           |TBLPROPERTIES ('delta.columnMapping.mode' = 'name')""".stripMargin)
+      spark.sql(s"INSERT INTO delta.`$path` VALUES (1, 100)")
+
+      spark.table(s"delta.`$path`").filter("id < 999").createOrReplaceTempView("v_6ext")
+      checkAnswer(spark.sql("SELECT * FROM v_6ext"), Row(1, 100))
+
+      writeExternalReplaceColumnViaFilesystem(path, "salary", newType = Some("string"))
+
+      if (stalenessLimitMs == 0L) {
+        checkError(
+          exception = intercept[SparkException] {
+            spark.sql("SELECT * FROM v_6ext").collect()
+          },
+          condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS")
+      } else {
+        checkAnswer(spark.sql("SELECT * FROM v_6ext"), Row(1, 100))
       }
     }
   }
