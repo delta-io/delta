@@ -21,7 +21,9 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -35,6 +37,7 @@ import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.delta.stats.StatisticsCollection;
 import org.apache.spark.sql.streaming.StreamingQuery;
 import org.apache.spark.sql.streaming.StreamingQueryException;
+import org.apache.spark.sql.streaming.Trigger;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
 import scala.Option;
@@ -555,5 +558,243 @@ public class V2StreamingReadTest extends V2TestBase {
             RowFactory.create(2L, "x", 20, "z", 2.5),
             RowFactory.create(3L, "w", 30, "y", 3.5));
     assertDataEquals(actualRows, expectedRows);
+  }
+
+  // ---- Distributed Initial Snapshot Tests ----
+
+  /**
+   * Creates a Delta table with multiple versions, each containing {@code rowsPerVersion} rows.
+   * Rows use TEST_SCHEMA (id INT, name STRING, value DOUBLE) with deterministic values derived
+   * from the row's global position: id=pos, name="User{pos}", value=pos*10.0.
+   */
+  private void createMultiVersionTable(String tablePath, int numVersions, int rowsPerVersion) {
+    for (int v = 0; v < numVersions; v++) {
+      List<Row> rows = new ArrayList<>();
+      for (int r = 0; r < rowsPerVersion; r++) {
+        int id = v * rowsPerVersion + r + 1;
+        rows.add(RowFactory.create(id, "User" + id, (double) id * 10));
+      }
+      Dataset<Row> df = spark.createDataFrame(rows, TEST_SCHEMA);
+      if (v == 0) {
+        df.write().format("delta").save(tablePath);
+      } else {
+        df.write().format("delta").mode("append").save(tablePath);
+      }
+    }
+  }
+
+  private List<Row> expectedRows(int totalRows) {
+    List<Row> rows = new ArrayList<>();
+    for (int i = 1; i <= totalRows; i++) {
+      rows.add(RowFactory.create(i, "User" + i, (double) i * 10));
+    }
+    return rows;
+  }
+
+  /**
+   * End-to-end test: a full streaming query completes successfully with the distributed initial
+   * snapshot path enabled and produces all expected rows.
+   */
+  @Test
+  public void testStreamingReadWithDistributedInitialSnapshot(@TempDir File deltaTablePath)
+      throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+    String dfFlagKey = "spark.databricks.delta.streaming.distributedInitialSnapshot";
+    spark.conf().set(dfFlagKey, "true");
+
+    try {
+      createMultiVersionTable(tablePath, 5, 2);
+
+      String dsv2TableRef = str("dsv2.delta.`%s`", tablePath);
+      Dataset<Row> streamingDF = spark.readStream().table(dsv2TableRef);
+      assertTrue(streamingDF.isStreaming(), "Dataset should be streaming");
+
+      List<Row> actualRows =
+          processStreamingQuery(streamingDF, "test_distributed_e2e_" + System.nanoTime());
+      assertDataEquals(actualRows, expectedRows(10));
+    } finally {
+      spark.conf().unset(dfFlagKey);
+    }
+  }
+
+  /**
+   * Parity regression test: the distributed initial snapshot path must produce identical results
+   * to the driver path. This is the primary regression guard — if the distributed path ever
+   * diverges (wrong sort order, missed files, duplicate rows), this test catches it.
+   */
+  @Test
+  public void testDistributedInitialSnapshotParityWithDriverPath(@TempDir File deltaTablePath)
+      throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+    String dfFlagKey = "spark.databricks.delta.streaming.distributedInitialSnapshot";
+
+    createMultiVersionTable(tablePath, 5, 2);
+    String dsv2TableRef = str("dsv2.delta.`%s`", tablePath);
+
+    try {
+      // Driver path (distributedInitialSnapshot = false, the default)
+      spark.conf().unset(dfFlagKey);
+      Dataset<Row> driverStream = spark.readStream().table(dsv2TableRef);
+      List<Row> driverRows =
+          processStreamingQuery(driverStream, "parity_driver_" + System.nanoTime());
+
+      // Distributed path
+      spark.conf().set(dfFlagKey, "true");
+      Dataset<Row> distributedStream = spark.readStream().table(dsv2TableRef);
+      List<Row> distributedRows =
+          processStreamingQuery(distributedStream, "parity_distributed_" + System.nanoTime());
+
+      assertEquals(
+          driverRows.size(),
+          distributedRows.size(),
+          () ->
+              "Row count mismatch: driver="
+                  + driverRows.size()
+                  + " distributed="
+                  + distributedRows.size());
+
+      Set<Row> driverSet = new HashSet<>(driverRows);
+      Set<Row> distributedSet = new HashSet<>(distributedRows);
+      assertEquals(
+          driverSet,
+          distributedSet,
+          "Distributed path must produce identical results to driver path");
+    } finally {
+      spark.conf().unset(dfFlagKey);
+    }
+  }
+
+  /**
+   * Verifies that Trigger.AvailableNow completes and produces all rows when the distributed
+   * initial snapshot path is enabled. AvailableNow processes all available data in rate-limited
+   * batches and then terminates; this tests the optimized end-offset computation in
+   * {@code SparkMicroBatchStream.getLastOffsetForAvailableNowViaDataFrame}.
+   */
+  @Test
+  public void testTriggerAvailableNowWithDistributedInitialSnapshot(@TempDir File deltaTablePath)
+      throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+    String dfFlagKey = "spark.databricks.delta.streaming.distributedInitialSnapshot";
+    spark.conf().set(dfFlagKey, "true");
+
+    try {
+      createMultiVersionTable(tablePath, 5, 2);
+
+      String dsv2TableRef = str("dsv2.delta.`%s`", tablePath);
+      Dataset<Row> streamingDF = spark.readStream().table(dsv2TableRef);
+
+      String queryName = "test_available_now_distributed_" + System.nanoTime();
+      StreamingQuery query = null;
+      try {
+        query =
+            streamingDF
+                .writeStream()
+                .format("memory")
+                .queryName(queryName)
+                .outputMode("append")
+                .trigger(Trigger.AvailableNow())
+                .start();
+
+        assertTrue(
+            query.awaitTermination(60000),
+            "Trigger.AvailableNow query should terminate within 60 seconds");
+
+        List<Row> actualRows = spark.sql("SELECT * FROM " + queryName).collectAsList();
+        assertDataEquals(actualRows, expectedRows(10));
+      } finally {
+        if (query != null) {
+          query.stop();
+          DeltaLog.clearCache();
+        }
+      }
+    } finally {
+      spark.conf().unset(dfFlagKey);
+    }
+  }
+
+  /**
+   * Verifies checkpoint resume during an initial snapshot processed via the distributed path.
+   *
+   * <p>The test uses a delta file sink (not a memory sink) so that only committed batch data is
+   * visible, avoiding false duplicate detection from batches that executed but were not committed
+   * before query shutdown.
+   *
+   * <ol>
+   *   <li>Creates a 10-file table and starts a streaming query with {@code maxFilesPerTrigger=2}
+   *       (5 batches needed). Stops the query after at least one batch commits.
+   *   <li>Restarts from the same checkpoint and processes remaining data.
+   *   <li>Reads the delta sink and verifies all 10 rows are present with no duplicates.
+   * </ol>
+   */
+  @Test
+  public void testCheckpointResumeWithDistributedInitialSnapshot(@TempDir File tempDir)
+      throws Exception {
+    File sourceDir = new File(tempDir, "source");
+    File sinkDir = new File(tempDir, "sink");
+    File checkpointDir = new File(tempDir, "checkpoint");
+    String sourcePath = sourceDir.getAbsolutePath();
+    String sinkPath = sinkDir.getAbsolutePath();
+    String checkpointPath = checkpointDir.getAbsolutePath();
+
+    String dfFlagKey = "spark.databricks.delta.streaming.distributedInitialSnapshot";
+    spark.conf().set(dfFlagKey, "true");
+
+    try {
+      createMultiVersionTable(sourcePath, 10, 1);
+      String dsv2TableRef = str("dsv2.delta.`%s`", sourcePath);
+
+      // First run: start with rate limiting, stop after at least one batch commits.
+      StreamingQuery q1 =
+          spark
+              .readStream()
+              .option("maxFilesPerTrigger", "2")
+              .table(dsv2TableRef)
+              .writeStream()
+              .format("delta")
+              .option("checkpointLocation", checkpointPath)
+              .start(sinkPath);
+
+      try {
+        long deadline = System.currentTimeMillis() + 30_000;
+        while (q1.lastProgress() == null || q1.lastProgress().numInputRows() == 0) {
+          assertTrue(
+              System.currentTimeMillis() < deadline,
+              "At least one batch should commit within 30 seconds");
+          if (q1.exception().isDefined()) {
+            throw q1.exception().get();
+          }
+          Thread.sleep(100);
+        }
+      } finally {
+        q1.stop();
+      }
+
+      long firstRunCount = spark.read().format("delta").load(sinkPath).count();
+      assertTrue(firstRunCount > 0, "First run should commit at least one batch of data");
+
+      // Second run: restart from checkpoint, process remaining data.
+      StreamingQuery q2 =
+          spark
+              .readStream()
+              .option("maxFilesPerTrigger", "2")
+              .table(dsv2TableRef)
+              .writeStream()
+              .format("delta")
+              .option("checkpointLocation", checkpointPath)
+              .start(sinkPath);
+
+      try {
+        q2.processAllAvailable();
+      } finally {
+        q2.stop();
+      }
+
+      // The delta sink accumulates committed data from both runs.
+      List<Row> allRows = spark.read().format("delta").load(sinkPath).collectAsList();
+      assertDataEquals(allRows, expectedRows(10));
+    } finally {
+      spark.conf().unset(dfFlagKey);
+      DeltaLog.clearCache();
+    }
   }
 }
