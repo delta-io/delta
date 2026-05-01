@@ -310,14 +310,15 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       throw new RuntimeException("Could not extract schemaString from metadata"))
     val schemaJson = escapedSchema.replace("\\\"", "\"")
 
-    // Remove the field from the schema JSON by parsing the fields array
-    // Simple approach: use regex to find and remove the field object
-    val fieldPattern = ("""\{"name":"""" + columnToDrop + """"[^}]*\}""").r
+    // Remove the field from the schema JSON. Fields with column mapping have nested
+    // braces (metadata object inside the field object), so we match two levels of braces.
+    val fieldPattern = ("""\{"name":"""" + columnToDrop + """"[^}]*\{[^}]*\}\}""").r
     val newSchemaJson = fieldPattern.replaceFirstIn(schemaJson, "").replace(",,", ",")
       .replace("[,", "[").replace(",]", "]")
     val newEscapedSchema = newSchemaJson.replace("\"", "\\\"")
-    val newMetadataLine = schemaStringRegex.replaceFirstIn(
-      metadataLine, s""""schemaString":"$newEscapedSchema"""")
+    val replacement = java.util.regex.Matcher.quoteReplacement(
+      s""""schemaString":"$newEscapedSchema"""")
+    val newMetadataLine = schemaStringRegex.replaceFirstIn(metadataLine, replacement)
 
     val commitFile = new File(deltaLogDir, f"${currentVersion + 1}%020d.json")
     Files.write(commitFile.toPath, newMetadataLine.getBytes(StandardCharsets.UTF_8))
@@ -410,27 +411,27 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
 
     // Find the target field and replace its column mapping ID and physical name
     val uuid = java.util.UUID.randomUUID().toString.take(8)
-    val fieldRegex = ("""\{"name":"""" + columnName + """"[^}]*\}""").r
-    val newSchemaJson = fieldRegex.replaceFirstIn(schemaJson, { m =>
-      val fieldJson = m.group(0)
-      val typeStr = newType.getOrElse("integer")
-      // Replace the column mapping id with 999, physical name with new value
-      val withNewId = fieldJson
-        .replaceFirst(""""delta\.columnMapping\.id"\s*:\s*\d+""",
-          """"delta.columnMapping.id":999""")
-        .replaceFirst(""""delta\.columnMapping\.physicalName"\s*:\s*"[^"]+"""",
-          s""""delta.columnMapping.physicalName":"col-replaced-$uuid"""")
-      // Optionally change the type
-      if (newType.isDefined) {
-        withNewId.replaceFirst(""""type"\s*:\s*"[^"]+"""", s""""type":"$typeStr"""")
-      } else {
-        withNewId
-      }
-    })
+    // Fields with column mapping have nested braces (metadata object), match two levels.
+    val fieldRegex = ("""\{"name":"""" + columnName + """"[^}]*\{[^}]*\}\}""").r
+    val fieldMatch = fieldRegex.findFirstIn(schemaJson).getOrElse(
+      throw new RuntimeException(s"Could not find field '$columnName' in schema"))
+    val typeStr = newType.getOrElse("integer")
+    val modifiedField = fieldMatch
+      .replaceFirst(""""delta\.columnMapping\.id"\s*:\s*\d+""",
+        """"delta.columnMapping.id":999""")
+      .replaceFirst(""""delta\.columnMapping\.physicalName"\s*:\s*"[^"]+"""",
+        s""""delta.columnMapping.physicalName":"col-replaced-$uuid"""")
+    val modifiedFieldWithType = if (newType.isDefined) {
+      modifiedField.replaceFirst(""""type"\s*:\s*"[^"]+"""", s""""type":"$typeStr"""")
+    } else {
+      modifiedField
+    }
+    val newSchemaJson = schemaJson.replace(fieldMatch, modifiedFieldWithType)
 
     val newEscapedSchema = newSchemaJson.replace("\"", "\\\"")
-    val newMetadataLine = schemaStringRegex.replaceFirstIn(
-      metadataLine, s""""schemaString":"$newEscapedSchema"""")
+    val replacement = java.util.regex.Matcher.quoteReplacement(
+      s""""schemaString":"$newEscapedSchema"""")
+    val newMetadataLine = schemaStringRegex.replaceFirstIn(metadataLine, replacement)
 
     val commitFile = new File(deltaLogDir, f"${currentVersion + 1}%020d.json")
     Files.write(commitFile.toPath, newMetadataLine.getBytes(StandardCharsets.UTF_8))
