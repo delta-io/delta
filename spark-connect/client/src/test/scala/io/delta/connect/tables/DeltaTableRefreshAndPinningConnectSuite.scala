@@ -66,6 +66,32 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
 
   protected def useExternalSession: Boolean = false
 
+  /**
+   * Override in subclasses to set a non-zero staleness limit. The config is set on
+   * the server via spark.conf.set at runtime. See the classic suite's class-level
+   * scaladoc for why staleness has no observable effect for in-JVM writes.
+   */
+  protected def stalenessLimitMs: Long = 0L
+
+  private val stalenessConfigKey = "spark.databricks.delta.stalenessLimit"
+
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    if (stalenessLimitMs > 0L) {
+      spark.conf.set(stalenessConfigKey, s"${stalenessLimitMs}ms")
+    }
+  }
+
+  override def afterAll(): Unit = {
+    try {
+      if (stalenessLimitMs > 0L) {
+        spark.conf.set(stalenessConfigKey, "0ms")
+      }
+    } finally {
+      super.afterAll()
+    }
+  }
+
   /** Returns a session for performing writes. */
   protected def writerSession: org.apache.spark.sql.SparkSession = {
     if (useExternalSession) spark.newSession() else spark
@@ -381,6 +407,55 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
   }
 
   // ---------------------------------------------------------------------------
+  // Section [1] external: Temp views with external modifications (Connect)
+  // These test the "Connector w/ cache" behavior from the design doc.
+  // With high stalenessLimit, external changes are invisible.
+  // ---------------------------------------------------------------------------
+
+  test("[1] connect scenario 1 external: temp view with external data write") {
+    withTempPath { dir =>
+      val path = dir.getAbsolutePath
+      spark.sql(s"CREATE TABLE delta.`$path` (id INT, salary INT) USING delta")
+      spark.sql(s"INSERT INTO delta.`$path` VALUES (1, 100)")
+
+      spark.table(s"delta.`$path`").filter("salary < 999").createOrReplaceTempView("v_1ext")
+      checkAnswer(spark.sql("SELECT * FROM v_1ext"), Row(1, 100))
+
+      writeExternalCommitViaFilesystem(path, Seq((2, 200)))
+
+      if (stalenessLimitMs == 0L) {
+        checkAnswer(
+          spark.sql("SELECT * FROM v_1ext ORDER BY id"),
+          Seq(Row(1, 100), Row(2, 200)))
+      } else {
+        checkAnswer(spark.sql("SELECT * FROM v_1ext"), Row(1, 100))
+      }
+    }
+  }
+
+  test("[1] connect scenario 2 external: temp view with external ADD COLUMN") {
+    withTempPath { dir =>
+      val path = dir.getAbsolutePath
+      spark.sql(s"CREATE TABLE delta.`$path` (id INT, salary INT) USING delta")
+      spark.sql(s"INSERT INTO delta.`$path` VALUES (1, 100)")
+
+      spark.table(s"delta.`$path`").filter("salary < 999").createOrReplaceTempView("v_2ext")
+      checkAnswer(spark.sql("SELECT * FROM v_2ext"), Row(1, 100))
+
+      writeExternalSchemaChangeCommitViaFilesystem(path, Seq((2, 200, -1)))
+
+      if (stalenessLimitMs == 0L) {
+        // View preserves original schema (id, salary) but picks up new data
+        checkAnswer(
+          spark.sql("SELECT * FROM v_2ext ORDER BY id"),
+          Seq(Row(1, 100), Row(2, 200)))
+      } else {
+        checkAnswer(spark.sql("SELECT * FROM v_2ext"), Row(1, 100))
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Section [2]: Repeated table access with external changes (Connect)
   // ---------------------------------------------------------------------------
 
@@ -426,6 +501,50 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       writerSql("CREATE TABLE t (id INT, salary INT) USING delta")
 
       checkAnswer(spark.sql("SELECT * FROM t"), Seq.empty)
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Section [2] external: Repeated table access with external modifications
+  // ---------------------------------------------------------------------------
+
+  test("[2] connect scenario 1 external: repeated access picks up external data") {
+    withTempPath { dir =>
+      val path = dir.getAbsolutePath
+      spark.sql(s"CREATE TABLE delta.`$path` (id INT, salary INT) USING delta")
+      spark.sql(s"INSERT INTO delta.`$path` VALUES (1, 100)")
+
+      checkAnswer(spark.sql(s"SELECT * FROM delta.`$path`"), Row(1, 100))
+
+      writeExternalCommitViaFilesystem(path, Seq((2, 200)))
+
+      if (stalenessLimitMs == 0L) {
+        checkAnswer(
+          spark.sql(s"SELECT * FROM delta.`$path` ORDER BY id"),
+          Seq(Row(1, 100), Row(2, 200)))
+      } else {
+        checkAnswer(spark.sql(s"SELECT * FROM delta.`$path`"), Row(1, 100))
+      }
+    }
+  }
+
+  test("[2] connect scenario 2 external: repeated access reflects external schema change") {
+    withTempPath { dir =>
+      val path = dir.getAbsolutePath
+      spark.sql(s"CREATE TABLE delta.`$path` (id INT, salary INT) USING delta")
+      spark.sql(s"INSERT INTO delta.`$path` VALUES (1, 100)")
+
+      checkAnswer(spark.sql(s"SELECT * FROM delta.`$path`"), Row(1, 100))
+
+      writeExternalSchemaChangeCommitViaFilesystem(path, Seq((2, 200, -1)))
+
+      if (stalenessLimitMs == 0L) {
+        checkAnswer(
+          spark.sql(s"SELECT * FROM delta.`$path` ORDER BY id"),
+          Seq(Row(1, 100, null), Row(2, 200, -1)))
+      } else {
+        checkAnswer(spark.sql(s"SELECT * FROM delta.`$path`"), Row(1, 100))
+      }
     }
   }
 
@@ -1388,4 +1507,26 @@ class DeltaTableRefreshAndPinningConnectSuite
 class DeltaTableRefreshAndPinningConnectExternalSessionSuite
   extends DeltaTableRefreshAndPinningConnectSuiteBase {
   override protected def useExternalSession: Boolean = true
+}
+
+/**
+ * Sets stalenessLimit to 1 hour on the server. Verifies that behavior is identical
+ * to stalenessLimit=0 for in-JVM writes (since writes update DeltaLog.currentSnapshot
+ * immediately). External filesystem writes produce different results because the
+ * server's cached snapshot is returned without listing the filesystem.
+ */
+class DeltaTableRefreshAndPinningConnectStaleSuite
+  extends DeltaTableRefreshAndPinningConnectSuiteBase {
+  override protected def stalenessLimitMs: Long = 3600000L
+}
+
+/**
+ * Combines external session + high staleness limit. Both parameters have no
+ * observable effect for in-JVM writes, so this verifies the combination also
+ * produces identical results.
+ */
+class DeltaTableRefreshAndPinningConnectStaleExternalSessionSuite
+  extends DeltaTableRefreshAndPinningConnectSuiteBase {
+  override protected def useExternalSession: Boolean = true
+  override protected def stalenessLimitMs: Long = 3600000L
 }
