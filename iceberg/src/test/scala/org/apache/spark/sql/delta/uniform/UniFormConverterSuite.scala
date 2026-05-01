@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.uniform
 
+import com.databricks.spark.util.Log4jUsageLogger
+
 import shadedForDelta.org.apache.iceberg.hadoop.HadoopTables
 
 import org.apache.spark.sql.QueryTest
