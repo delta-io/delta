@@ -283,12 +283,6 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
         @Override
         public OptionalLong numRows() {
-          // Prefer catalog stats when available: ANALYZE TABLE counts are typically fresh
-          // enough for the optimizer, and using them lets us skip per-file stats JSON parsing
-          // during planning. Fall back to per-file row count only when the catalog lacks it.
-          if (stats.numRows().isPresent()) {
-            return stats.numRows();
-          }
           return rowCountKnownSnapshot ? OptionalLong.of(totalRowsSnapshot) : OptionalLong.empty();
         }
 
@@ -428,14 +422,11 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     // avoid coupling to the kernel-internal ScanImpl class. Until that API is available, this
     // instanceof check is the only way to request per-file statistics from the kernel.
     //
-    // Only parse stats JSON when all of:
+    // Parse stats JSON when both of:
     //  - the optimizer will use numRows (CBO or planStats enabled), matching V1's behavior
     //    (LogicalRelation.computeStats())
-    //  - the catalog does not already provide numRows (otherwise catalog value is preferred in
-    //    estimateStatistics(), so per-file parsing would be wasted work)
     //  - the kernel scan is ScanImpl (the only path that supports includeStats)
-    final boolean includeStats =
-        kernelScan instanceof ScanImpl && arePlanStatsEnabled() && !catalogHasNumRows();
+    final boolean includeStats = kernelScan instanceof ScanImpl && arePlanStatsEnabled();
     final Iterator<FilteredColumnarBatch> scanFileBatches;
     if (includeStats) {
       scanFileBatches = ((ScanImpl) kernelScan).getScanFiles(tableEngine, true /* includeStats */);
@@ -600,19 +591,13 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
    *   <li>whether {@code numRows()} is reported in {@link #estimateStatistics()}
    *   <li>whether the catalog-stats branch is entered (which also governs {@code columnStats}
    *       propagation from the catalog)
-   *   <li>whether per-file stats JSON is parsed in {@link #planScanFiles()} (gated together with
-   *       {@code !catalogHasNumRows()} to avoid wasted parsing when the catalog already has it)
+   *   <li>whether per-file stats JSON is parsed in {@link #planScanFiles()}
    * </ul>
    *
    * Future readers touching any of these paths should treat this helper as load-bearing.
    */
   private boolean arePlanStatsEnabled() {
     return sqlConf.cboEnabled() || sqlConf.planStatsEnabled();
-  }
-
-  /** Returns whether the catalog-provided statistics include a numRows value. */
-  private boolean catalogHasNumRows() {
-    return catalogStats.isPresent() && catalogStats.get().numRows().isPresent();
   }
 
   /**

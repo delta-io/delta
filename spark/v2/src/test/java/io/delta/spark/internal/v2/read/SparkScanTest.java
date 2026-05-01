@@ -1157,7 +1157,7 @@ public class SparkScanTest extends DeltaV2TestBase {
           SparkScan scan = (SparkScan) builder.build();
           Statistics stats = scan.estimateStatistics();
 
-          // numRows comes from catalog stats (per-file parsing is skipped when catalog has it)
+          // numRows comes from per-file (post-prune) stats
           assertTrue(stats.numRows().isPresent(), "numRows should be present with CBO enabled");
           assertEquals(2L, stats.numRows().getAsLong(), "numRows should be 2");
 
@@ -1183,13 +1183,12 @@ public class SparkScanTest extends DeltaV2TestBase {
   }
 
   @Test
-  public void testCatalogNumRowsPreferredOverPerFile(@TempDir File tempDir) throws Exception {
-    // Verifies that catalog numRows (from ANALYZE TABLE) is preferred over per-file numRows
-    // when both are available. This lets us skip per-file stats JSON parsing during planning,
-    // trading off freshness for planning cost. If the catalog value is stale, the user is
-    // expected to re-run ANALYZE TABLE.
+  public void testPerFileNumRowsPreferredOverCatalog(@TempDir File tempDir) throws Exception {
+    // Verifies that per-file (post-prune) numRows is used in preference to catalog numRows.
+    // numRows() reflects the row count for this scan after pruning, while catalog stats are
+    // table-level and unpruned.
     String path = tempDir.getAbsolutePath();
-    String tblName = "stats_catalog_wins";
+    String tblName = "stats_per_file_wins";
     spark.sql(
         String.format(
             "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'", tblName, path));
@@ -1215,12 +1214,12 @@ public class SparkScanTest extends DeltaV2TestBase {
           SparkScan scan = (SparkScan) builder.build();
           Statistics stats = scan.estimateStatistics();
 
-          // Catalog numRows wins; per-file parsing is skipped entirely.
+          // Per-file numRows wins over catalog stats.
           assertTrue(stats.numRows().isPresent(), "numRows should be present");
           assertEquals(
-              999L,
+              2L,
               stats.numRows().getAsLong(),
-              "numRows should come from catalog (999), not per-file (2)");
+              "numRows should come from per-file (2), not catalog (999)");
         });
   }
 
@@ -1302,7 +1301,7 @@ public class SparkScanTest extends DeltaV2TestBase {
                 SparkScan scan = (SparkScan) builder.build();
                 Statistics stats = scan.estimateStatistics();
 
-                // With planStatsEnabled, numRows should come from catalog stats
+                // With planStatsEnabled, numRows should be present (from per-file stats)
                 assertTrue(
                     stats.numRows().isPresent(), "numRows should be present with planStatsEnabled");
                 assertEquals(2L, stats.numRows().getAsLong(), "numRows should be 2");
