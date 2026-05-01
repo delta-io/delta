@@ -154,6 +154,10 @@ public class SerializableReadOnlySnapshot implements Serializable {
             Optional.ofNullable(maxPublishedDeltaVersion));
 
     Lazy<LogSegment> lazyLogSegment = new Lazy<>(() -> logSegment);
+    // CRC validation was already performed on the driver when snapshotAtSourceInit was
+    // constructed. CRC is an integrity check, not a correctness requirement for read-only
+    // log replay. Skipping it here avoids an unnecessary I/O round-trip to fetch the CRC
+    // file on each executor.
     Lazy<Optional<CRCInfo>> lazyCrcInfo = new Lazy<>(Optional::empty);
 
     LogReplay logReplay = new LogReplay(engine, kernelDataPath, lazyLogSegment, lazyCrcInfo);
