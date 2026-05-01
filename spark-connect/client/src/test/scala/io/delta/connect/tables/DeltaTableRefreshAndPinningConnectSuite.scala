@@ -1472,6 +1472,25 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
     }
   }
 
+  test("[4] connect scenario 1.2: df.collect on same DataFrame after write") {
+    withTable("t") {
+      createSimpleTable("t")
+      insertInitialData("t")
+
+      val df = spark.sql("SELECT * FROM t")
+      checkAnswer(df, Row(1, 100))
+
+      writerSql("INSERT INTO t VALUES (2, 200)")
+
+      // In Connect, collect() re-analyzes the plan on each execution
+      // (unlike classic where it reuses cached QueryExecution).
+      // Both show() and collect() see the new data.
+      checkAnswer(
+        df.orderBy("id"),
+        Seq(Row(1, 100), Row(2, 200)))
+    }
+  }
+
   test("[4] connect scenario 1b: count then collect consistency") {
     withTable("t") {
       createSimpleTable("t")
