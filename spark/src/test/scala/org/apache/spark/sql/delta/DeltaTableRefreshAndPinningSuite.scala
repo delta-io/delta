@@ -270,6 +270,28 @@ trait DeltaTableRefreshAndPinningSuiteBase
     StructField(name, dataType, nullable, meta)
   }
 
+  /**
+   * Blocks the async update in [[SnapshotManagement.update]] to make staleness
+   * behavior deterministic on local disk. In production, the foreground thread
+   * returns the stale snapshot before the background filesystem listing completes.
+   * On local disk the listing is near instant, so the async task can update
+   * currentSnapshot before the foreground reads it. Setting asyncUpdateTask to
+   * a non completed future prevents a new async task from being submitted
+   * (line 1104 guard), guaranteeing the stale snapshot is returned.
+   */
+  private def withBlockedAsyncUpdate(tableName: String)(body: => Unit): Unit = {
+    val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+    val savedTask = deltaLog.asyncUpdateTask
+    val blockingFuture = new java.util.concurrent.CompletableFuture[Unit]()
+    deltaLog.asyncUpdateTask = blockingFuture
+    try {
+      body
+    } finally {
+      blockingFuture.complete(())
+      deltaLog.asyncUpdateTask = savedTask
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Section [1]: Temp views with stored plans
   // ---------------------------------------------------------------------------
@@ -443,7 +465,13 @@ trait DeltaTableRefreshAndPinningSuiteBase
           sql("SELECT * FROM v ORDER BY id"),
           Seq(Row(1, 100), Row(2, 200)))
       } else {
-        checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
+        // In production (HDFS/S3), the background listing takes real time,
+        // so the foreground always returns the stale snapshot before the async
+        // task completes. On local disk the listing is near instant and the
+        // async task can win the race. Block it to simulate production timing.
+        withBlockedAsyncUpdate("t") {
+          checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
+        }
       }
     }
   }
@@ -473,7 +501,13 @@ trait DeltaTableRefreshAndPinningSuiteBase
           sql("SELECT * FROM v ORDER BY id"),
           Seq(Row(1, 100), Row(2, 200)))
       } else {
-        checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
+        // In production (HDFS/S3), the background listing takes real time,
+        // so the foreground always returns the stale snapshot before the async
+        // task completes. On local disk the listing is near instant and the
+        // async task can win the race. Block it to simulate production timing.
+        withBlockedAsyncUpdate("t") {
+          checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
+        }
       }
     }
   }
@@ -503,15 +537,12 @@ trait DeltaTableRefreshAndPinningSuiteBase
           parameters = Map("schemaDiff" -> "(?s).*", "legacyFlagMessage" -> ""),
           matchPVals = true)
       } else {
-        // With high staleness, the async background update in deltaLog.update() may
-        // or may not discover the external commit before the foreground thread reads
-        // currentSnapshot. Both outcomes are valid.
-        try {
+        // In production (HDFS/S3), the background listing takes real time,
+        // so the foreground always returns the stale snapshot before the async
+        // task completes. On local disk the listing is near instant and the
+        // async task can win the race. Block it to simulate production timing.
+        withBlockedAsyncUpdate("t") {
           checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
-        } catch {
-          case e: DeltaAnalysisException
-            if e.getErrorClass == "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS" =>
-            // Also acceptable: async update won the race and detected schema change.
         }
       }
     }
@@ -537,15 +568,12 @@ trait DeltaTableRefreshAndPinningSuiteBase
           parameters = Map("schemaDiff" -> "(?s).*", "legacyFlagMessage" -> ""),
           matchPVals = true)
       } else {
-        // With high staleness, the async background update in deltaLog.update() may
-        // or may not discover the external commit before the foreground thread reads
-        // currentSnapshot. Both outcomes are valid.
-        try {
+        // In production (HDFS/S3), the background listing takes real time,
+        // so the foreground always returns the stale snapshot before the async
+        // task completes. On local disk the listing is near instant and the
+        // async task can win the race. Block it to simulate production timing.
+        withBlockedAsyncUpdate("t") {
           checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
-        } catch {
-          case e: DeltaAnalysisException
-            if e.getErrorClass == "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS" =>
-            // Also acceptable: async update won the race and detected schema change.
         }
       }
     }
@@ -566,7 +594,13 @@ trait DeltaTableRefreshAndPinningSuiteBase
         // Without column mapping, no column ID check. Existing data is removed.
         checkAnswer(sql("SELECT * FROM v"), Seq.empty)
       } else {
-        checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
+        // In production (HDFS/S3), the background listing takes real time,
+        // so the foreground always returns the stale snapshot before the async
+        // task completes. On local disk the listing is near instant and the
+        // async task can win the race. Block it to simulate production timing.
+        withBlockedAsyncUpdate("t") {
+          checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
+        }
       }
     }
   }
@@ -604,15 +638,12 @@ trait DeltaTableRefreshAndPinningSuiteBase
           parameters = Map("schemaDiff" -> "(?s).*", "legacyFlagMessage" -> ""),
           matchPVals = true)
       } else {
-        // With high staleness, the async background update in deltaLog.update() may
-        // or may not discover the external commit before the foreground thread reads
-        // currentSnapshot. Both outcomes are valid.
-        try {
+        // In production (HDFS/S3), the background listing takes real time,
+        // so the foreground always returns the stale snapshot before the async
+        // task completes. On local disk the listing is near instant and the
+        // async task can win the race. Block it to simulate production timing.
+        withBlockedAsyncUpdate("t") {
           checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
-        } catch {
-          case e: DeltaAnalysisException
-            if e.getErrorClass == "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS" =>
-            // Also acceptable: async update won the race and detected schema change.
         }
       }
     }
@@ -651,15 +682,12 @@ trait DeltaTableRefreshAndPinningSuiteBase
           parameters = Map("schemaDiff" -> "(?s).*", "legacyFlagMessage" -> ""),
           matchPVals = true)
       } else {
-        // With high staleness, the async background update in deltaLog.update() may
-        // or may not discover the external commit before the foreground thread reads
-        // currentSnapshot. Both outcomes are valid.
-        try {
+        // In production (HDFS/S3), the background listing takes real time,
+        // so the foreground always returns the stale snapshot before the async
+        // task completes. On local disk the listing is near instant and the
+        // async task can win the race. Block it to simulate production timing.
+        withBlockedAsyncUpdate("t") {
           checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
-        } catch {
-          case e: DeltaAnalysisException
-            if e.getErrorClass == "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS" =>
-            // Also acceptable: async update won the race and detected schema change.
         }
       }
     }
