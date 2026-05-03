@@ -553,6 +553,13 @@ public class SparkScanTest extends DeltaV2TestBase {
     return (long) field.get(scan);
   }
 
+  private static org.apache.spark.sql.sources.Filter[] getDataFilters(SparkScan scan)
+      throws Exception {
+    Field field = SparkScan.class.getDeclaredField("dataFilters");
+    field.setAccessible(true);
+    return (org.apache.spark.sql.sources.Filter[]) field.get(scan);
+  }
+
   private static long getTotalRows(SparkScan scan) throws Exception {
     scan.estimateStatistics(); // ensurePlanned
     Field field = SparkScan.class.getDeclaredField("totalRows");
@@ -809,6 +816,53 @@ public class SparkScanTest extends DeltaV2TestBase {
     // Same options but different filters should not be equal and hashCodes should differ
     assertNotEquals(scan1, scan2);
     assertNotEquals(scan1.hashCode(), scan2.hashCode());
+  }
+
+  @Test
+  public void testEqualsWithPushedFiltersInDifferentOrder() {
+    org.apache.spark.sql.sources.Filter cityEq =
+        new org.apache.spark.sql.sources.EqualTo("city", "hz");
+    org.apache.spark.sql.sources.Filter dateEq =
+        new org.apache.spark.sql.sources.EqualTo("date", "20180520");
+
+    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
+    builder1.pushFilters(new org.apache.spark.sql.sources.Filter[] {cityEq, dateEq});
+    SparkScan scan1 = (SparkScan) builder1.build();
+
+    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    builder2.pushFilters(new org.apache.spark.sql.sources.Filter[] {dateEq, cityEq});
+    SparkScan scan2 = (SparkScan) builder2.build();
+
+    assertEquals(scan1, scan2);
+    assertEquals(scan1.hashCode(), scan2.hashCode());
+  }
+
+  @Test
+  public void testEqualsWithDataFiltersInDifferentOrder() throws Exception {
+    // city/date are partition columns, so the test above only exercises pushedToKernelFiltersSet.
+    // name and cnt are data columns (per the partitioned table schema), so per
+    // ExpressionUtils.classifyFilter these filters have isDataFilter=true and flow into
+    // SparkScan.dataFilters, exercising the dataFiltersSet branch of equals/hashCode.
+    org.apache.spark.sql.sources.Filter nameEq =
+        new org.apache.spark.sql.sources.EqualTo("name", "x");
+    org.apache.spark.sql.sources.Filter cntGt =
+        new org.apache.spark.sql.sources.GreaterThan("cnt", 10);
+
+    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
+    builder1.pushFilters(new org.apache.spark.sql.sources.Filter[] {nameEq, cntGt});
+    SparkScan scan1 = (SparkScan) builder1.build();
+
+    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    builder2.pushFilters(new org.apache.spark.sql.sources.Filter[] {cntGt, nameEq});
+    SparkScan scan2 = (SparkScan) builder2.build();
+
+    // Sanity check that dataFilters is actually populated, otherwise this test would trivially
+    // pass without exercising the dataFiltersSet path it's intended to cover.
+    assertEquals(2, getDataFilters(scan1).length);
+    assertEquals(2, getDataFilters(scan2).length);
+
+    assertEquals(scan1, scan2);
+    assertEquals(scan1.hashCode(), scan2.hashCode());
   }
 
   // ================================================================================================

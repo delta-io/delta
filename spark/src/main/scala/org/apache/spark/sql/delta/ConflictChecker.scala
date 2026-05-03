@@ -1336,12 +1336,17 @@ private[delta] class ConflictChecker(
   /** A helper function for pretty printing a specific partition directory. */
   protected def getPrettyPartitionMessage(partitionValues: Map[String, String]): Option[String] = {
     val partitionColumns = currentTransactionInfo.partitionSchemaAtReadTime
-    if (partitionColumns.isEmpty || partitionValues == null) {
+    // Guard against null (e.g. RemoveFile written without extended metadata) and empty map
+    // (e.g. RemoveFile for a non-partitioned file or written by a client that omits partition
+    // values). Using getOrElse defensively also handles partially populated maps.
+    if (partitionColumns.isEmpty || partitionValues == null || partitionValues.isEmpty) {
       None
     } else {
       Some(
         partitionColumns.map { field =>
-          s"${field.name}=${partitionValues(DeltaColumnMapping.getPhysicalName(field))}"
+          val value =
+            partitionValues.getOrElse(DeltaColumnMapping.getPhysicalName(field), "null")
+          s"${field.name}=$value"
         }.mkString("[", ", ", "]")
       )
     }
