@@ -21,7 +21,9 @@ import scala.collection.JavaConverters._
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaConfigs}
 import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.execution.datasources.PartitioningUtils
 import org.apache.spark.sql.types.{
+  StringType => SparkStringType,
   StructField => SparkStructField,
   StructType => SparkStructType
 }
@@ -156,8 +158,12 @@ class IcebergPartitionConverterSuite extends SparkFunSuite {
     assert(partitionFields.head.name == "org_id_identity")
     assert(!DeltaColumnMapping.hasColumnId(partitionFields.head))
 
-    val sourceFields = IcebergSchemaUtils.convertIcebergSchemaToSpark(icebergSchema).fields.toSeq
-    val metadata = assignColumnIdAndPhysicalName(sourceFields ++ partitionFields)
+    val sourceSchema = IcebergSchemaUtils.convertIcebergSchemaToSpark(icebergSchema)
+    val mergedSchema = PartitioningUtils.mergeDataAndPartitionSchema(
+      sourceSchema,
+      SparkStructType(partitionFields),
+      caseSensitive = true)._1
+    val metadata = assignColumnIdAndPhysicalName(mergedSchema.fields.toSeq)
     DeltaColumnMapping.checkColumnIdAndPhysicalNameAssignments(metadata)
 
     val fields = metadata.schema.fields
@@ -186,10 +192,15 @@ class IcebergPartitionConverterSuite extends SparkFunSuite {
       IcebergPartitionUtil.getPartitionFields(partSpec, icebergSchema, castTimeType = false)
     assert(partitionFields.length == 1)
     assert(partitionFields.head.name == "org_id")
-    assert(!DeltaColumnMapping.hasColumnId(partitionFields.head))
+    assert(DeltaColumnMapping.hasColumnId(partitionFields.head))
+    assert(DeltaColumnMapping.getColumnId(partitionFields.head) == 4)
 
-    val sourceFields = IcebergSchemaUtils.convertIcebergSchemaToSpark(icebergSchema).fields.toSeq
-    val metadata = assignColumnIdAndPhysicalName(sourceFields)
+    val sourceSchema = IcebergSchemaUtils.convertIcebergSchemaToSpark(icebergSchema)
+    val mergedSchema = PartitioningUtils.mergeDataAndPartitionSchema(
+      sourceSchema,
+      SparkStructType(partitionFields),
+      caseSensitive = true)._1
+    val metadata = assignColumnIdAndPhysicalName(mergedSchema.fields.toSeq)
     DeltaColumnMapping.checkColumnIdAndPhysicalNameAssignments(metadata)
 
     val fields = metadata.schema.fields
@@ -199,6 +210,51 @@ class IcebergPartitionConverterSuite extends SparkFunSuite {
     assert(fields(1).name == "org_id")
     assert(DeltaColumnMapping.getColumnId(fields(1)) == 4)
     assert(fields(2).name == "other_id")
+    assert(DeltaColumnMapping.getColumnId(fields(2)) == 5)
+  }
+
+  test("nested schema: identity on nested source omits partition column id") {
+    val addressStruct = StructType.of(
+      NestedField.required(3, "zip", StringType.get()),
+      NestedField.required(4, "city", StringType.get()))
+    val icebergSchema = new Schema(
+      1,
+      Seq(
+        NestedField.required(1, "id", LongType.get()),
+        NestedField.required(2, "address", addressStruct)
+      ).asJava)
+
+    val partSpec = PartitionSpec.builderFor(icebergSchema).identity("address.zip").build()
+    val icebergPartField = partSpec.fields().get(0)
+    assert(icebergPartField.sourceId() == 3)
+    assert(icebergSchema.findColumnName(3) == "address.zip")
+
+    val partitionFields =
+      IcebergPartitionUtil.getPartitionFields(partSpec, icebergSchema, castTimeType = false)
+    assert(partitionFields.length == 1)
+    assert(partitionFields.head.dataType == SparkStringType)
+    assert(partitionFields.head.name == icebergPartField.name())
+    // Nested dotted paths: partition column is extra after Spark merge vs data schema; do not
+    // reuse nested field id (see IcebergPartitionUtil identity branch).
+    assert(!DeltaColumnMapping.hasColumnId(partitionFields.head))
+
+    val sourceSchema = IcebergSchemaUtils.convertIcebergSchemaToSpark(icebergSchema)
+    val mergedSchema = PartitioningUtils.mergeDataAndPartitionSchema(
+      sourceSchema,
+      SparkStructType(partitionFields),
+      caseSensitive = true)._1
+    val metadata = assignColumnIdAndPhysicalName(mergedSchema.fields.toSeq)
+    DeltaColumnMapping.checkColumnIdAndPhysicalNameAssignments(metadata)
+
+    val fields = metadata.schema.fields
+    assert(fields.length == 3)
+    assert(fields(0).name == "id")
+    assert(DeltaColumnMapping.getColumnId(fields(0)) == 1)
+    assert(fields(1).name == "address")
+    assert(DeltaColumnMapping.getColumnId(fields(1)) == 2)
+    val zipInStruct = fields(1).dataType.asInstanceOf[SparkStructType]("zip")
+    assert(DeltaColumnMapping.getColumnId(zipInStruct) == 3)
+    assert(fields(2).name == icebergPartField.name())
     assert(DeltaColumnMapping.getColumnId(fields(2)) == 5)
   }
 
@@ -225,10 +281,15 @@ class IcebergPartitionConverterSuite extends SparkFunSuite {
       IcebergPartitionUtil.getPartitionFields(partSpec, icebergSchema, castTimeType = false)
     assert(!DeltaColumnMapping.hasColumnId(partitionFields.head))
 
-    val sourceFields = IcebergSchemaUtils.convertIcebergSchemaToSpark(icebergSchema).fields.toSeq
+    val sourceSchema = IcebergSchemaUtils.convertIcebergSchemaToSpark(icebergSchema)
+    val sourceFields = sourceSchema.fields.toSeq
     assert(DeltaColumnMapping.getColumnId(sourceFields.find(_.name == "org_id").get) == 1000)
 
-    val metadata = assignColumnIdAndPhysicalName(sourceFields ++ partitionFields)
+    val mergedSchema = PartitioningUtils.mergeDataAndPartitionSchema(
+      sourceSchema,
+      SparkStructType(partitionFields),
+      caseSensitive = true)._1
+    val metadata = assignColumnIdAndPhysicalName(mergedSchema.fields.toSeq)
     DeltaColumnMapping.checkColumnIdAndPhysicalNameAssignments(metadata)
 
     val fields = metadata.schema.fields
