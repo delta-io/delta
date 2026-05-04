@@ -2228,7 +2228,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       catalogTable: Option[CatalogTable],
       attemptVersion: Long,
       commitInfo: CommitInfo): (Iterator[Action], CatalogTrackedInfo) = {
-    val (allActionsAfter, catalogTrackedInfo) = catalogTable match {
+    val (allActionsCopy, catalogTrackedInfo) = catalogTable match {
       case Some(table) if UniversalFormat.icebergEnabled(metadata) =>
         val maxActions = spark.conf.get(
           DeltaSQLConf.DELTA_UNIFORM_ICEBERG_MAX_ACTIONS_TO_CONVERT_FOR_COMMIT_LARGE
@@ -2260,7 +2260,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       case _ =>
         (allActions, CatalogTrackedInfo.EMPTY)
     }
-    (allActionsAfter, catalogTrackedInfo)
+    (allActionsCopy, catalogTrackedInfo)
   }
 
   /**
