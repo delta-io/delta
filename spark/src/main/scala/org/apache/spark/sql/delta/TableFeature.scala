@@ -806,6 +806,8 @@ object VariantShreddingTableFeature
     // feature is enabled so old tables with only the preview table feature can be read.
     !protocol.isFeatureSupported(VariantShreddingPreviewTableFeature)
   }
+
+  override def requiredFeatures: Set[TableFeature] = Set(VariantTypeTableFeature)
 }
 
 object DeletionVectorsTableFeature
