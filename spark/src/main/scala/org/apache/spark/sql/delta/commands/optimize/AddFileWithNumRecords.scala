@@ -18,17 +18,22 @@ package org.apache.spark.sql.delta.commands.optimize
 
 import org.apache.spark.sql.delta.actions.AddFile
 
+import org.apache.spark.sql.catalyst.expressions.Literal
+
 /**
  * Wrapper over an [AddFile] and its stats:
  * @param numPhysicalRecords The number of records physically present in the file.
  *                           Equivalent to `addFile.numTotalRecords`.
  * @param numLogicalRecords The physical number of records minus the Deletion Vector cardinality.
  *                          Equivalent to `addFile.numRecords`.
+ * @param normalizedPartitionValues The partition values of the file, parsed to their actual types
+ *                                  so they can be compared safely.
  */
 case class AddFileWithNumRecords(
   addFile: AddFile,
   numPhysicalRecords: java.lang.Long,
-  numLogicalRecords: java.lang.Long) {
+  numLogicalRecords: java.lang.Long,
+  normalizedPartitionValues: Map[String, Literal]) {
 
   /** Returns the approx size of the remaining records after excluding the deleted ones. */
   def estLogicalFileSize: Long = {
@@ -51,9 +56,15 @@ case class AddFileWithNumRecords(
 }
 
 object AddFileWithNumRecords {
-  def createFromFile(file: AddFile): AddFileWithNumRecords = {
+  def createFromFile(
+      file: AddFile,
+      normalizedPartitionValues: Map[String, Literal]): AddFileWithNumRecords = {
     val numPhysicalRecords = file.numPhysicalRecords.getOrElse(0L)
     val numLogicalRecords = file.numLogicalRecords.getOrElse(0L)
-    AddFileWithNumRecords(file, numPhysicalRecords, numLogicalRecords)
+    AddFileWithNumRecords(
+      file,
+      numPhysicalRecords,
+      numLogicalRecords,
+      normalizedPartitionValues)
   }
 }

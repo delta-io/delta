@@ -14,9 +14,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.TableIdentifier;
 import org.apache.spark.sql.catalyst.catalog.CatalogColumnStat;
 import org.apache.spark.sql.catalyst.catalog.CatalogStatistics;
@@ -27,18 +25,11 @@ import org.apache.spark.sql.connector.expressions.FieldReference;
 import org.apache.spark.sql.connector.expressions.LiteralValue;
 import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.expressions.filter.Predicate;
-import org.apache.spark.sql.connector.read.Batch;
-import org.apache.spark.sql.connector.read.HasPartitionKey;
-import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.connector.read.Statistics;
 import org.apache.spark.sql.connector.read.colstats.ColumnStatistics;
-import org.apache.spark.sql.connector.read.partitioning.KeyGroupedPartitioning;
-import org.apache.spark.sql.connector.read.partitioning.Partitioning;
-import org.apache.spark.sql.connector.read.partitioning.UnknownPartitioning;
 import org.apache.spark.sql.delta.DeltaOptions;
-import org.apache.spark.sql.execution.datasources.FilePartition;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
@@ -562,6 +553,145 @@ public class SparkScanTest extends DeltaV2TestBase {
     return (long) field.get(scan);
   }
 
+  private static org.apache.spark.sql.sources.Filter[] getDataFilters(SparkScan scan)
+      throws Exception {
+    Field field = SparkScan.class.getDeclaredField("dataFilters");
+    field.setAccessible(true);
+    return (org.apache.spark.sql.sources.Filter[]) field.get(scan);
+  }
+
+  private static long getTotalRows(SparkScan scan) throws Exception {
+    scan.estimateStatistics(); // ensurePlanned
+    Field field = SparkScan.class.getDeclaredField("totalRows");
+    field.setAccessible(true);
+    return (long) field.get(scan);
+  }
+
+  private static boolean isRowCountKnown(SparkScan scan) throws Exception {
+    scan.estimateStatistics(); // ensurePlanned
+    Field field = SparkScan.class.getDeclaredField("rowCountKnown");
+    field.setAccessible(true);
+    return (boolean) field.get(scan);
+  }
+
+  // ================================================================================================
+  // Tests for numRows statistics
+  // ================================================================================================
+
+  @Test
+  public void testNumRowsEmptyWhenStatsDisabled() throws Exception {
+    // With CBO and planStats disabled (the default), numRows() should return empty even when all
+    // files have stats, matching V1 behavior (LogicalRelation.computeStats()).
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan = (SparkScan) builder.build();
+
+    assertFalse(
+        isRowCountKnown(scan), "rowCountKnown should be false when CBO and planStats are disabled");
+    assertFalse(
+        scan.estimateStatistics().numRows().isPresent(),
+        "numRows() should be empty when CBO and planStats are disabled");
+  }
+
+  @Test
+  public void testNumRowsInStatistics() throws Exception {
+    // Table has 5 rows inserted as 5 separate partitions (1 row each), all with stats.
+    withSQLConf(
+        "spark.sql.cbo.planStats.enabled",
+        "true",
+        () -> {
+          SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+          SparkScan scan = (SparkScan) builder.build();
+
+          assertTrue(isRowCountKnown(scan), "Row count should be known when all files have stats");
+          assertEquals(5L, getTotalRows(scan), "Total rows should match the 5 inserted rows");
+          assertTrue(scan.estimateStatistics().numRows().isPresent(), "numRows should be present");
+          assertEquals(5L, scan.estimateStatistics().numRows().getAsLong());
+        });
+  }
+
+  @Test
+  public void testNumRowsAfterRuntimeFiltering() throws Exception {
+    // Runtime partition filtering invalidates the cached totalRows: per-file row counts are
+    // not retained (to avoid O(n) memory on every scan), so numRows() returns empty after
+    // filtering rather than a recomputed value.
+    withSQLConf(
+        "spark.sql.cbo.planStats.enabled",
+        "true",
+        () -> {
+          SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+          SparkScan scan = (SparkScan) builder.build();
+
+          assertEquals(
+              5L, scan.estimateStatistics().numRows().getAsLong(), "5 rows before filtering");
+
+          scan.filter(new Predicate[] {cityPredicate}); // city=hz
+
+          assertFalse(
+              scan.estimateStatistics().numRows().isPresent(),
+              "numRows should be empty after runtime filtering invalidates row count");
+        });
+  }
+
+  @Test
+  public void testNumRowsEmptyAfterFilteringOutAllFiles() throws Exception {
+    // Same reasoning as testNumRowsAfterRuntimeFiltering: runtime filtering invalidates the
+    // cached totalRows regardless of how many files remain.
+    withSQLConf(
+        "spark.sql.cbo.planStats.enabled",
+        "true",
+        () -> {
+          SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+          SparkScan scan = (SparkScan) builder.build();
+
+          scan.filter(new Predicate[] {negativeCityPredicate}); // city=zz doesn't exist
+
+          assertFalse(
+              scan.estimateStatistics().numRows().isPresent(),
+              "numRows should be empty after runtime filtering (even when all files filtered)");
+        });
+  }
+
+  @Test
+  public void testNumRowsUnknownWhenSomeFilesLackStats(@TempDir File testDir) throws Exception {
+    // Older Delta tables or tables written with stats collection disabled will have AddFile entries
+    // without numRecords. When even one file lacks stats, rowCountKnown must be false so that
+    // numRows() returns OptionalLong.empty() rather than an incorrect partial count.
+    String tblName = "test_mixed_stats_numrows";
+    try {
+      String path = testDir.getAbsolutePath();
+      // First write: stats are collected by default (numRecords is present in AddFile stats JSON).
+      spark.sql(
+          "CREATE TABLE " + tblName + " (id INT, city STRING) USING delta LOCATION '" + path + "'");
+      spark.sql("INSERT INTO " + tblName + " VALUES (1, 'hz')");
+
+      // Disable stats collection via session config so the second AddFile has no numRecords.
+      spark.sql("SET spark.databricks.delta.stats.collect=false");
+      spark.sql("INSERT INTO " + tblName + " VALUES (2, 'sh')");
+
+      // Table now has two AddFile entries: one with stats (first insert), one without (second).
+      SparkTable mixedStatsTable =
+          new SparkTable(
+              Identifier.of(new String[] {"spark_catalog", "default"}, tblName), path, options);
+
+      withSQLConf(
+          "spark.sql.cbo.planStats.enabled",
+          "true",
+          () -> {
+            SparkScanBuilder builder = (SparkScanBuilder) mixedStatsTable.newScanBuilder(options);
+            SparkScan scan = (SparkScan) builder.build();
+
+            assertFalse(
+                isRowCountKnown(scan), "rowCountKnown should be false when some files lack stats");
+            assertFalse(
+                scan.estimateStatistics().numRows().isPresent(),
+                "numRows() should be OptionalLong.empty() when row count is unknown");
+          });
+    } finally {
+      spark.sql("RESET spark.databricks.delta.stats.collect");
+      spark.sql("DROP TABLE IF EXISTS " + tblName);
+    }
+  }
+
   // ================================================================================================
   // Tests for streaming options validation
   // ================================================================================================
@@ -608,7 +738,8 @@ public class SparkScanTest extends DeltaV2TestBase {
     assertEquals(
         "The following streaming options are not supported: [readchangefeed]. "
             + "Supported options are: [startingVersion, startingTimestamp, maxFilesPerTrigger, "
-            + "maxBytesPerTrigger, ignoreFileDeletion, ignoreChanges, ignoreDeletes, skipChangeCommits, excludeRegex].",
+            + "maxBytesPerTrigger, ignoreFileDeletion, ignoreChanges, ignoreDeletes, skipChangeCommits, "
+            + "excludeRegex, failOnDataLoss].",
         exception.getMessage());
   }
 
@@ -685,6 +816,53 @@ public class SparkScanTest extends DeltaV2TestBase {
     // Same options but different filters should not be equal and hashCodes should differ
     assertNotEquals(scan1, scan2);
     assertNotEquals(scan1.hashCode(), scan2.hashCode());
+  }
+
+  @Test
+  public void testEqualsWithPushedFiltersInDifferentOrder() {
+    org.apache.spark.sql.sources.Filter cityEq =
+        new org.apache.spark.sql.sources.EqualTo("city", "hz");
+    org.apache.spark.sql.sources.Filter dateEq =
+        new org.apache.spark.sql.sources.EqualTo("date", "20180520");
+
+    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
+    builder1.pushFilters(new org.apache.spark.sql.sources.Filter[] {cityEq, dateEq});
+    SparkScan scan1 = (SparkScan) builder1.build();
+
+    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    builder2.pushFilters(new org.apache.spark.sql.sources.Filter[] {dateEq, cityEq});
+    SparkScan scan2 = (SparkScan) builder2.build();
+
+    assertEquals(scan1, scan2);
+    assertEquals(scan1.hashCode(), scan2.hashCode());
+  }
+
+  @Test
+  public void testEqualsWithDataFiltersInDifferentOrder() throws Exception {
+    // city/date are partition columns, so the test above only exercises pushedToKernelFiltersSet.
+    // name and cnt are data columns (per the partitioned table schema), so per
+    // ExpressionUtils.classifyFilter these filters have isDataFilter=true and flow into
+    // SparkScan.dataFilters, exercising the dataFiltersSet branch of equals/hashCode.
+    org.apache.spark.sql.sources.Filter nameEq =
+        new org.apache.spark.sql.sources.EqualTo("name", "x");
+    org.apache.spark.sql.sources.Filter cntGt =
+        new org.apache.spark.sql.sources.GreaterThan("cnt", 10);
+
+    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
+    builder1.pushFilters(new org.apache.spark.sql.sources.Filter[] {nameEq, cntGt});
+    SparkScan scan1 = (SparkScan) builder1.build();
+
+    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    builder2.pushFilters(new org.apache.spark.sql.sources.Filter[] {cntGt, nameEq});
+    SparkScan scan2 = (SparkScan) builder2.build();
+
+    // Sanity check that dataFilters is actually populated, otherwise this test would trivially
+    // pass without exercising the dataFiltersSet path it's intended to cover.
+    assertEquals(2, getDataFilters(scan1).length);
+    assertEquals(2, getDataFilters(scan2).length);
+
+    assertEquals(scan1, scan2);
+    assertEquals(scan1.hashCode(), scan2.hashCode());
   }
 
   // ================================================================================================
@@ -975,243 +1153,6 @@ public class SparkScanTest extends DeltaV2TestBase {
   }
 
   // ================================================================================================
-  // Tests for output partitioning (SupportsReportPartitioning)
-  // ================================================================================================
-
-  @Test
-  public void testOutputPartitioningForPartitionedTable() {
-    // Partitioned table should return KeyGroupedPartitioning
-    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
-    SparkScan scan = (SparkScan) builder.build();
-
-    Partitioning partitioning = scan.outputPartitioning();
-
-    assertTrue(
-        partitioning instanceof KeyGroupedPartitioning,
-        "Partitioned table should return KeyGroupedPartitioning");
-
-    KeyGroupedPartitioning kgp = (KeyGroupedPartitioning) partitioning;
-
-    // The partitioned table has 3 partition columns: date, city, part
-    Expression[] keys = kgp.keys();
-    assertEquals(3, keys.length, "Should have 3 partition key expressions");
-
-    // Verify partition key names match partition schema
-    Set<String> keyNames = new HashSet<>();
-    for (Expression key : keys) {
-      assertTrue(key instanceof FieldReference, "Key should be a FieldReference");
-      keyNames.add(((FieldReference) key).fieldNames()[0]);
-    }
-    assertTrue(keyNames.containsAll(Arrays.asList("date", "city", "part")));
-
-    // numPartitions returns partitionedFiles.size() (file count, not unique partition count).
-    // In this test data, each partition has one file, so file count equals partition count.
-    assertEquals(5, kgp.numPartitions(), "Should have 5 files (one per partition)");
-  }
-
-  /** Creates a non-partitioned table with sample data and returns a SparkScan for it. */
-  private SparkScan createNonPartitionedScan(File tempDir, String tableName) {
-    spark.sql(
-        String.format(
-            "CREATE TABLE `%s` (id INT, name STRING) USING delta LOCATION '%s'",
-            tableName, tempDir.getAbsolutePath()));
-    spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice'), (2, 'Bob')", tableName));
-
-    SparkTable nonPartTable =
-        new SparkTable(
-            Identifier.of(new String[] {"spark_catalog", "default"}, tableName),
-            tempDir.getAbsolutePath(),
-            options);
-
-    SparkScanBuilder builder = (SparkScanBuilder) nonPartTable.newScanBuilder(options);
-    return (SparkScan) builder.build();
-  }
-
-  @Test
-  public void testOutputPartitioningForNonPartitionedTable(@TempDir File tempDir) {
-    // Non-partitioned table should return UnknownPartitioning
-    SparkScan scan = createNonPartitionedScan(tempDir, "deltatbl_nonpartitioned");
-
-    Partitioning partitioning = scan.outputPartitioning();
-
-    assertTrue(
-        partitioning instanceof UnknownPartitioning,
-        "Non-partitioned table should return UnknownPartitioning");
-  }
-
-  @Test
-  public void testOutputPartitioningAfterRuntimeFilter() {
-    // Output partitioning should reflect filtered partition count
-    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
-    SparkScan scan = (SparkScan) builder.build();
-
-    // Apply filter to only keep city=hz (2 rows: part=1/date=20180520 and part=1/date=20180718)
-    scan.filter(new Predicate[] {cityPredicate});
-
-    Partitioning partitioning = scan.outputPartitioning();
-    assertTrue(partitioning instanceof KeyGroupedPartitioning);
-
-    KeyGroupedPartitioning kgp = (KeyGroupedPartitioning) partitioning;
-    // numPartitions returns partitionedFiles.size() (file count); here each partition has one file.
-    assertEquals(
-        2,
-        kgp.numPartitions(),
-        "After filtering to city=hz, should have 2 files (one per partition)");
-  }
-
-  // ================================================================================================
-  // Tests for DeltaInputPartition in planInputPartitions
-  // ================================================================================================
-
-  @Test
-  public void testPlanInputPartitionsReturnsHasPartitionKeyForPartitionedTable() {
-    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
-    SparkScan scan = (SparkScan) builder.build();
-    Batch batch = scan.toBatch();
-
-    InputPartition[] partitions = batch.planInputPartitions();
-
-    assertTrue(partitions.length > 0, "Should have at least one partition");
-    for (InputPartition partition : partitions) {
-      assertTrue(
-          partition instanceof DeltaInputPartition,
-          "Partitioned table should return DeltaInputPartition instances");
-      assertTrue(
-          partition instanceof HasPartitionKey,
-          "DeltaInputPartition should implement HasPartitionKey");
-
-      DeltaInputPartition deltaPartition = (DeltaInputPartition) partition;
-      assertNotNull(deltaPartition.partitionKey(), "Partition key should not be null");
-      assertNotNull(deltaPartition.getFilePartition(), "FilePartition should not be null");
-    }
-  }
-
-  @Test
-  public void testPlanInputPartitionsGroupsFilesByPartition(@TempDir File tempDir)
-      throws Exception {
-    // Create a table with multiple files per partition to actually exercise the grouping logic
-    // in planPartitionedInputPartitions (the default test table has 1 file per partition,
-    // which would pass even without grouping).
-    String multiFileTableName = "deltatbl_multifile_partitioned";
-    spark.sql(
-        String.format(
-            "CREATE TABLE `%s` (id INT, data STRING, part INT) USING delta "
-                + "LOCATION '%s' PARTITIONED BY (part)",
-            multiFileTableName, tempDir.getAbsolutePath()));
-    // Insert in separate statements to create multiple files per partition
-    spark.sql(
-        String.format("INSERT INTO `%s` VALUES (1, 'a', 1), (2, 'b', 2)", multiFileTableName));
-    spark.sql(
-        String.format("INSERT INTO `%s` VALUES (3, 'c', 1), (4, 'd', 2)", multiFileTableName));
-    spark.sql(String.format("INSERT INTO `%s` VALUES (5, 'e', 1)", multiFileTableName));
-    // Now part=1 has 3 files, part=2 has 2 files
-
-    SparkTable multiFileTable =
-        new SparkTable(
-            Identifier.of(new String[] {"spark_catalog", "default"}, multiFileTableName),
-            tempDir.getAbsolutePath(),
-            options);
-
-    // Force maxPartitionBytes=1 so each file gets its own FilePartition, making the
-    // totalPartitions > 2 assertion deterministic regardless of default parallelism.
-    withSQLConf(
-        "spark.sql.files.maxPartitionBytes",
-        "1",
-        () -> {
-          SparkScanBuilder builder = (SparkScanBuilder) multiFileTable.newScanBuilder(options);
-          SparkScan scan = (SparkScan) builder.build();
-          Batch batch = scan.toBatch();
-
-          InputPartition[] partitions = batch.planInputPartitions();
-
-          // Verify all partitions are DeltaInputPartition with partition keys
-          Map<InternalRow, List<DeltaInputPartition>> partitionsByKey = new HashMap<>();
-          for (InputPartition p : partitions) {
-            assertTrue(p instanceof DeltaInputPartition);
-            DeltaInputPartition dp = (DeltaInputPartition) p;
-            partitionsByKey.computeIfAbsent(dp.partitionKey(), k -> new ArrayList<>()).add(dp);
-          }
-
-          // Should have exactly 2 unique partition keys (part=1 and part=2)
-          assertEquals(2, partitionsByKey.size(), "Should have 2 unique partition keys");
-
-          // Verify that the grouping actually produced multiple DeltaInputPartitions for a
-          // single partition key (since multiple files exist per partition and each gets its
-          // own FilePartition when maxPartitionBytes=1)
-          int totalPartitions = partitions.length;
-          assertTrue(
-              totalPartitions > 2,
-              "With 5 files across 2 partitions, should have more than 2 input partitions, "
-                  + "got "
-                  + totalPartitions);
-
-          // Verify all DeltaInputPartitions with the same key share the same partition key
-          for (Map.Entry<InternalRow, List<DeltaInputPartition>> entry :
-              partitionsByKey.entrySet()) {
-            List<DeltaInputPartition> group = entry.getValue();
-            InternalRow expectedKey = group.get(0).partitionKey();
-            for (DeltaInputPartition dp : group) {
-              assertEquals(
-                  expectedKey,
-                  dp.partitionKey(),
-                  "All partitions in the same group should have equal partition keys");
-            }
-          }
-        });
-  }
-
-  @Test
-  public void testPlanInputPartitionsReturnsFilePartitionForNonPartitionedTable(
-      @TempDir File tempDir) {
-    SparkScan scan = createNonPartitionedScan(tempDir, "deltatbl_nonpartitioned_batch");
-    Batch batch = scan.toBatch();
-
-    InputPartition[] partitions = batch.planInputPartitions();
-
-    assertTrue(partitions.length > 0, "Should have at least one partition");
-    for (InputPartition partition : partitions) {
-      assertTrue(
-          partition instanceof FilePartition,
-          "Non-partitioned table should return FilePartition instances, not DeltaInputPartition");
-      assertFalse(
-          partition instanceof DeltaInputPartition,
-          "Non-partitioned table should NOT return DeltaInputPartition");
-    }
-  }
-
-  @Test
-  public void testOutputPartitioningForEmptyPartitionedTable(@TempDir File tempDir) {
-    // Empty partitioned table should return KeyGroupedPartitioning with 0 partitions
-    String emptyTableName = "deltatbl_empty_partitioned";
-    spark.sql(
-        String.format(
-            "CREATE TABLE `%s` (id INT, name STRING, part INT) USING delta "
-                + "LOCATION '%s' PARTITIONED BY (part)",
-            emptyTableName, tempDir.getAbsolutePath()));
-
-    SparkTable emptyTable =
-        new SparkTable(
-            Identifier.of(new String[] {"spark_catalog", "default"}, emptyTableName),
-            tempDir.getAbsolutePath(),
-            options);
-
-    SparkScanBuilder builder = (SparkScanBuilder) emptyTable.newScanBuilder(options);
-    SparkScan scan = (SparkScan) builder.build();
-
-    Partitioning partitioning = scan.outputPartitioning();
-    assertTrue(
-        partitioning instanceof KeyGroupedPartitioning,
-        "Empty partitioned table should still return KeyGroupedPartitioning");
-
-    KeyGroupedPartitioning kgp = (KeyGroupedPartitioning) partitioning;
-    assertEquals(0, kgp.numPartitions(), "Empty table should have 0 partitions");
-
-    Batch batch = scan.toBatch();
-    InputPartition[] partitions = batch.planInputPartitions();
-    assertEquals(0, partitions.length, "Empty table should return 0 input partitions");
-  }
-
-  // ================================================================================================
   // Tests for catalog statistics propagation
   // ================================================================================================
 
@@ -1270,7 +1211,7 @@ public class SparkScanTest extends DeltaV2TestBase {
           SparkScan scan = (SparkScan) builder.build();
           Statistics stats = scan.estimateStatistics();
 
-          // Should have numRows from catalog stats
+          // numRows comes from catalog stats (per-file parsing is skipped when catalog has it)
           assertTrue(stats.numRows().isPresent(), "numRows should be present with CBO enabled");
           assertEquals(2L, stats.numRows().getAsLong(), "numRows should be 2");
 
@@ -1292,6 +1233,48 @@ public class SparkScanTest extends DeltaV2TestBase {
           assertTrue(idStats.max().isPresent(), "id max should be present");
           assertEquals(1, idStats.min().get(), "id min should be 1");
           assertEquals(2, idStats.max().get(), "id max should be 2");
+        });
+  }
+
+  @Test
+  public void testCatalogNumRowsPreferredOverPerFile(@TempDir File tempDir) throws Exception {
+    // Verifies that catalog numRows (from ANALYZE TABLE) is preferred over per-file numRows
+    // when both are available. This lets us skip per-file stats JSON parsing during planning,
+    // trading off freshness for planning cost. If the catalog value is stale, the user is
+    // expected to re-run ANALYZE TABLE.
+    String path = tempDir.getAbsolutePath();
+    String tblName = "stats_catalog_wins";
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'", tblName, path));
+    spark.sql(String.format("INSERT INTO %s VALUES (1, 'a'), (2, 'b')", tblName));
+
+    // Inject catalog stats claiming 999 rows (distinguishable from the actual per-file count of 2)
+    CatalogStatistics catalogStats =
+        new CatalogStatistics(
+            scala.math.BigInt.apply(1024L),
+            scala.Option.apply(scala.math.BigInt.apply(999L)),
+            buildColStatsMap(new String[] {}, new CatalogColumnStat[] {}));
+    CatalogTable catalogTable = injectCatalogStats(tblName, catalogStats);
+
+    withSQLConf(
+        "spark.sql.cbo.enabled",
+        "true",
+        () -> {
+          Identifier id = Identifier.of(new String[] {"default"}, tblName);
+          SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
+          SparkScanBuilder builder =
+              (SparkScanBuilder)
+                  sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
+          SparkScan scan = (SparkScan) builder.build();
+          Statistics stats = scan.estimateStatistics();
+
+          // Catalog numRows wins; per-file parsing is skipped entirely.
+          assertTrue(stats.numRows().isPresent(), "numRows should be present");
+          assertEquals(
+              999L,
+              stats.numRows().getAsLong(),
+              "numRows should come from catalog (999), not per-file (2)");
         });
   }
 
@@ -1399,7 +1382,7 @@ public class SparkScanTest extends DeltaV2TestBase {
         "spark.sql.cbo.enabled",
         "true",
         () -> {
-          // Path-based table — no catalog table, no stats
+          // Path-based table — no catalog table, no ANALYZE TABLE stats
           Identifier id = Identifier.of(new String[] {"default"}, tblName);
           SparkTable sparkTable = new SparkTable(id, path);
 
@@ -1409,8 +1392,11 @@ public class SparkScanTest extends DeltaV2TestBase {
           SparkScan scan = (SparkScan) builder.build();
           Statistics stats = scan.estimateStatistics();
 
-          // Without catalog stats, numRows should be empty
-          assertFalse(stats.numRows().isPresent(), "numRows should be empty for path-based table");
+          // Per-file Delta stats (numRecords in the transaction log) are available even without
+          // catalog stats from ANALYZE TABLE, so numRows should be present.
+          assertTrue(stats.numRows().isPresent(), "numRows should be present from per-file stats");
+          assertEquals(
+              1L, stats.numRows().getAsLong(), "numRows should match the inserted row count");
           assertTrue(stats.sizeInBytes().isPresent(), "sizeInBytes should be present");
           assertTrue(stats.sizeInBytes().getAsLong() > 0, "sizeInBytes should be positive");
         });
@@ -1600,8 +1586,11 @@ public class SparkScanTest extends DeltaV2TestBase {
           SparkScan scan = (SparkScan) builder.build();
           Statistics stats = scan.estimateStatistics();
 
-          // Without catalog stats, we fall back to file-only stats
-          assertFalse(stats.numRows().isPresent(), "numRows should be empty without catalog stats");
+          // Per-file Delta stats (numRecords in the transaction log) provide numRows even when
+          // ANALYZE TABLE has not been run and no catalog stats exist.
+          assertTrue(stats.numRows().isPresent(), "numRows should be present from per-file stats");
+          assertEquals(
+              1L, stats.numRows().getAsLong(), "numRows should match the inserted row count");
           assertTrue(stats.sizeInBytes().isPresent(), "sizeInBytes should be present");
           assertTrue(stats.sizeInBytes().getAsLong() > 0, "sizeInBytes should be positive");
         });
@@ -1610,9 +1599,9 @@ public class SparkScanTest extends DeltaV2TestBase {
   @Test
   public void testEstimateStatisticsWithCatalogStats_noNumRows(@TempDir File tempDir)
       throws Exception {
-    // Catalog stats with sizeInBytes but no numRows should be treated the same as no catalog
-    // stats: fall through to post-pruned/filtered file sizes instead of using the stale
-    // catalog sizeInBytes.
+    // Catalog stats with sizeInBytes but no numRows: when per-file stats are available,
+    // numRows should still be reported from per-file numRecords (not from catalog stats).
+    // sizeInBytes should come from planned files, not the stale catalog value.
     String path = tempDir.getAbsolutePath();
     String tblName = "stats_no_numrows";
     spark.sql(
@@ -1642,10 +1631,10 @@ public class SparkScanTest extends DeltaV2TestBase {
           SparkScan scan = (SparkScan) builder.build();
           Statistics stats = scan.estimateStatistics();
 
-          // Should behave like no catalog stats: numRows empty, sizeInBytes from planned files
-          assertFalse(
-              stats.numRows().isPresent(),
-              "numRows should be empty when catalog stats have no numRows");
+          // Per-file stats provide numRows even when catalog stats lack it
+          assertTrue(stats.numRows().isPresent(), "numRows should be present from per-file stats");
+          assertEquals(
+              2L, stats.numRows().getAsLong(), "numRows should reflect per-file row count");
           assertTrue(stats.sizeInBytes().isPresent(), "sizeInBytes should be present");
           assertTrue(stats.sizeInBytes().getAsLong() > 0, "sizeInBytes should be positive");
 
@@ -1655,10 +1644,10 @@ public class SparkScanTest extends DeltaV2TestBase {
               stats.sizeInBytes().getAsLong(),
               "sizeInBytes should come from planned files, not catalog stats");
 
-          // columnStats should be empty (not inheriting from catalog stats)
+          // columnStats should be empty (catalog stats had no column stats)
           assertTrue(
               stats.columnStats().isEmpty(),
-              "columnStats should be empty when catalog stats have no numRows");
+              "columnStats should be empty when catalog stats have no column stats");
         });
   }
 

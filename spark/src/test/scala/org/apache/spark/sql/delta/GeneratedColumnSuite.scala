@@ -847,7 +847,7 @@ trait GeneratedColumnSuiteBase
     testSchema(Seq(f6, f6x, f8), Set("c6", "c8"))
   }
 
-  test("disallow column type evolution") {
+  test("generated columns - implicit cast preserves column type") {
     withTableName("disallow_column_type_evolution") { table =>
     // "HASH(c1)" returns different results for INT and LONG. For example, "SELECT hash(32767)"
     // returns 1249274084, but "SELECT hash(32767L)" returns -860381306. Hence we should
@@ -856,26 +856,20 @@ trait GeneratedColumnSuiteBase
         Map("c2" -> "HASH(c1)"), Nil)
       val tableSchema = spark.table(table).schema
       Seq(32767).toDF("c1").write.format("delta").mode("append").saveAsTable(table)
-      assert(tableSchema == spark.table(table).schema)
-      // Insert a LONG to `c1` should fail rather than changing the `c1` type to LONG.
-      checkError(
-        intercept[AnalysisException] {
-          Seq(32767.toLong).toDF("c1").write.format("delta").mode("append")
-            .option("mergeSchema", "true")
-            .saveAsTable(table)
-        },
-        "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
-        parameters = Map(
-          "columnName" -> "c1",
-          "columnType" -> "INT",
-          "dataType" -> "BIGINT",
-          "generatedColumns" -> "c2 -> HASH(c1)"
-        ))
-      checkAnswer(spark.table(table), Row(32767, 1249274084) :: Nil)
+      assert(tableSchema === spark.table(table).schema)
+      // With implicit casting, inserting a LONG will cast to INT and succeed
+      Seq(32767.toLong).toDF("c1").write.format("delta").mode("append")
+        .option("mergeSchema", "true")
+        .saveAsTable(table)
+      // Schema should remain unchanged (still INT)
+      assert(tableSchema === spark.table(table).schema)
+      // Both rows should have the same hash since the LONG was cast to INT
+      checkAnswer(spark.table(table),
+        Row(32767, 1249274084) :: Row(32767, 1249274084) :: Nil)
     }
   }
 
-  test("disallow column type evolution - nesting") {
+  test("generated columns - implicit cast preserves column type with nesting") {
     withTableName("disallow_column_type_evolution") { table =>
       createTable(table, None, "a SMALLINT, c1 STRUCT<a: SMALLINT>, c2 INT",
         Map("c2" -> "HASH(a)"), Nil)
@@ -883,7 +877,7 @@ trait GeneratedColumnSuiteBase
       Seq(32767.toShort).toDF("a")
         .selectExpr("a", "named_struct('a', a) as c1")
         .write.format("delta").mode("append").saveAsTable(table)
-      assert(tableSchema == spark.table(table).schema)
+      assert(tableSchema === spark.table(table).schema)
 
       // INSERT an INT to `c1.a` should not fail
       Seq((32767.toShort, 32767)).toDF("a", "c1a")
@@ -892,23 +886,17 @@ trait GeneratedColumnSuiteBase
         .option("mergeSchema", "true")
         .saveAsTable(table)
 
-      // Insert an INT to `a` should fail rather than changing the `a` type to INT
-      checkError(
-        intercept[AnalysisException] {
-          Seq((32767, 32767)).toDF("a", "c1a")
-            .selectExpr("a", "named_struct('a', c1a) as c1")
-            .write.format("delta").mode("append")
-            .option("mergeSchema", "true")
-            .saveAsTable(table)
-        },
-        "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
-        parameters = Map(
-          "columnName" -> "a",
-          "columnType" -> "SMALLINT",
-          "dataType" -> "INT",
-          "generatedColumns" -> "c2 -> HASH(a)"
-        )
-      )
+      // Insert an INT to `a` should succeed - it will cast to SMALLINT
+      Seq((32767, 32767)).toDF("a", "c1a")
+        .selectExpr("a", "named_struct('a', c1a) as c1")
+        .write.format("delta").mode("append")
+        .option("mergeSchema", "true")
+        .saveAsTable(table)
+
+      // Schema should remain unchanged (still SMALLINT)
+      assert(tableSchema === spark.table(table).schema)
+      // Verify all rows were inserted with proper casting
+      assert(spark.table(table).count() === 3)
     }
   }
 

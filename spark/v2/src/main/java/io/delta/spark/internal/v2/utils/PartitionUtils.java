@@ -32,6 +32,7 @@ import io.delta.spark.internal.v2.read.rowtracking.RowTrackingSchemaContext;
 import java.time.ZoneId;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
@@ -39,6 +40,7 @@ import org.apache.hadoop.fs.Path;
 import org.apache.spark.paths.SparkPath;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.InternalRow;
+import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.delta.DefaultRowCommitVersion$;
 import org.apache.spark.sql.delta.DeltaColumnMapping;
@@ -46,6 +48,8 @@ import org.apache.spark.sql.delta.DeltaParquetFileFormat;
 import org.apache.spark.sql.delta.RowId$;
 import org.apache.spark.sql.delta.RowIndexFilterType;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
+import org.apache.spark.sql.execution.datasources.FilePartition;
+import org.apache.spark.sql.execution.datasources.FilePartition$;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.execution.datasources.PartitioningUtils;
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils;
@@ -57,6 +61,7 @@ import scala.Function1;
 import scala.Option;
 import scala.Tuple2;
 import scala.collection.Iterator;
+import scala.collection.JavaConverters;
 import scala.jdk.javaapi.CollectionConverters;
 
 /** Utility class for partition-related operations shared across Delta Kernel Spark components. */
@@ -104,18 +109,31 @@ public class PartitionUtils {
   }
 
   /**
+   * Plan input partitions by bin-packing a list of {@link PartitionedFile}s into {@link
+   * FilePartition}s.
+   */
+  public static InputPartition[] planInputPartitions(
+      SparkSession sparkSession,
+      List<PartitionedFile> partitionedFiles,
+      long totalBytes,
+      Configuration hadoopConf,
+      SQLConf sqlConf) {
+    long maxSplitBytes =
+        calculateMaxSplitBytes(sparkSession, totalBytes, partitionedFiles.size(), sqlConf);
+    scala.collection.Seq<FilePartition> filePartitions =
+        FilePartition$.MODULE$.getFilePartitions(
+            sparkSession, JavaConverters.asScalaBuffer(partitionedFiles).toSeq(), maxSplitBytes);
+
+    return JavaConverters.seqAsJavaList(filePartitions).toArray(new InputPartition[0]);
+  }
+
+  /**
    * Build the partition {@link InternalRow} from kernel partition values by casting them to the
    * desired Spark types using the session time zone for temporal types.
    *
    * <p>Note: Partition values in AddFile use physical column names as keys when column mapping is
    * enabled. This method uses DeltaColumnMapping.getPhysicalName to map from logical schema fields
    * to physical partition value keys.
-   *
-   * @implNote The returned {@link InternalRow} is a {@code GenericInternalRow} (via {@code
-   *     InternalRow.fromSeq}), which has value-based {@code equals()}/{@code hashCode()}. Callers
-   *     such as {@code SparkBatch.planPartitionedInputPartitions} rely on this for grouping files
-   *     by partition key. Changing the return type to a different InternalRow subtype (e.g. {@code
-   *     UnsafeRow}) may break that contract.
    */
   public static InternalRow getPartitionRow(
       MapValue partitionValues, StructType partitionSchema, ZoneId zoneId) {

@@ -737,10 +737,10 @@ sealed trait FileAction extends Action {
         partitionValues,
         partitionSchema,
         timeZone,
-        parseToTypedLiterals,
+        parseToTypedLiterals && partitionSchema.nonEmpty,
         failOnParsingError = true)
 
-      if (parseToTypedLiterals) {
+      if (parseToTypedLiterals && partitionSchema.nonEmpty) {
         val stringNormalizedPartitionValues = partitionValueLiterals.map {
           case (k, v) => (k, PartitionUtils.literalToNormalizedString(
             v,

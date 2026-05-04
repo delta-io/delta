@@ -16,9 +16,26 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.SparkConf
 import org.apache.spark.sql.delta.catalog.InMemoryDeltaCatalog
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.test.SharedSparkSession
+
+/**
+ * Tag for tests that access Delta internals (e.g., DeltaLog, physical scans, usage logs)
+ * and are therefore incompatible with the DSv2 InMemoryTable test path.
+ * Tests tagged with this are automatically skipped when [[InMemoryTestTableMixin]] is active.
+ */
+case class DSv2Incompatible(reason: String) extends org.scalatest.Tag("DSv2Incompatible")
+
+/**
+ * Tag for tests that exercise some features that are _currently_ not implemented for DSv2, but
+ * should be implemented sometime in the future.
+ * Not [[DSv2Incompatible]] -- that one is for tests that are completely unsupported and would
+ * never pass with DSv2.
+ * Tests tagged with this are automatically skipped when [[InMemoryTestTableMixin]] is active.
+ */
+case class DSv2TemporarilyIncompatible(reason: String)
+  extends org.scalatest.Tag("DSv2TemporariltyIncompatible")
 
 /**
  * Mixin trait that configures the session catalog to use [[InMemoryDeltaCatalog]],
@@ -27,4 +44,21 @@ import org.apache.spark.sql.test.SharedSparkSession
 trait InMemoryTestTableMixin extends SharedSparkSession {
   override protected def sparkConf: SparkConf = super.sparkConf
     .set("spark.sql.catalog.spark_catalog", classOf[InMemoryDeltaCatalog].getName)
+
+  override protected def test
+      (testName: String, testTags: org.scalatest.Tag*)
+      (testFun: => Any)
+      (implicit pos: org.scalactic.source.Position): Unit = {
+    for (tag <- testTags) {
+      tag match {
+        case t: DSv2Incompatible =>
+          ignore(testName + s" (DSv2Incompatible: $t.reason)", testTags: _*)(testFun)
+          return
+        case t: DSv2TemporarilyIncompatible =>
+          ignore(testName + s" (DSv2TemporarilyIncompatible: $t.reason)", testTags: _*)(testFun)
+          return
+      }
+    }
+    super.test(testName, testTags: _*)(testFun)
+  }
 }

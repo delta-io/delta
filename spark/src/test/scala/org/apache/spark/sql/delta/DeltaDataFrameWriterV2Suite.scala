@@ -672,32 +672,29 @@ class DeltaDataFrameWriterV2Suite
       a.partitionedBy($"id").tableProperty("delta.appendOnly", "true"))
   }
 
-  test("append or overwrite mode should not do implicit casting") {
+  test("saveAsTable overwrite mode should not do implicit casting") {
     val table = "not_implicit_casting"
     withTable(table) {
       spark.sql(s"CREATE TABLE $table(id bigint, p int) USING delta PARTITIONED BY (p)")
-      def verifyNotImplicitCasting(f: => Unit): Unit = {
-        val e = intercept[DeltaAnalysisException](f)
-        checkError(
-          e.getCause.asInstanceOf[DeltaAnalysisException],
-          "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
-          parameters = Map("currentDataType" -> "LongType", "updateDataType" -> "IntegerType"))
-      }
-      verifyNotImplicitCasting {
-        Seq(1 -> 1).toDF("id", "p").write.mode("append").format("delta").saveAsTable(table)
-      }
-      verifyNotImplicitCasting {
+      val e = intercept[DeltaAnalysisException] {
         Seq(1 -> 1).toDF("id", "p").write.mode("overwrite").format("delta").saveAsTable(table)
       }
-      verifyNotImplicitCasting {
-        Seq(1 -> 1).toDF("id", "p").writeTo(table).append()
-      }
-      verifyNotImplicitCasting {
-        Seq(1 -> 1).toDF("id", "p").writeTo(table).overwrite($"p" === 1)
-      }
-      verifyNotImplicitCasting {
-        Seq(1 -> 1).toDF("id", "p").writeTo(table).overwritePartitions()
-      }
+      checkError(
+        e.getCause.asInstanceOf[DeltaAnalysisException],
+        "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+        parameters = Map("currentDataType" -> "LongType", "updateDataType" -> "IntegerType"))
+    }
+  }
+
+  test("implicit casting supported for saveAsTable append and writeTo operations") {
+    val table = "implicit_casting"
+    withTable(table) {
+      spark.sql(s"CREATE TABLE $table(id bigint, p int) USING delta PARTITIONED BY (p)")
+      // All of these should succeed with implicit casting (int -> bigint)
+      Seq(1 -> 1).toDF("id", "p").write.mode("append").format("delta").saveAsTable(table)
+      Seq(1 -> 1).toDF("id", "p").writeTo(table).append()
+      Seq(1 -> 1).toDF("id", "p").writeTo(table).overwrite($"p" === 1)
+      Seq(1 -> 1).toDF("id", "p").writeTo(table).overwritePartitions()
     }
   }
 

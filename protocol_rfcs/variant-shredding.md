@@ -36,11 +36,12 @@ typed_value | * | (optional) This can be any Parquet type, representing the data
 ## Writer Requirements for Variant Shredding
 
 When Variant Shredding is supported (`writerFeatures` field of a table's `protocol` action contains `variantShredding`), writers:
-- must respect the `delta.enableVariantShredding` table property configuration. If `delta.enableVariantShredding=false`, a column of type `variant` must not be written as a shredded Variant, but as an unshredded Variant. If `delta.enableVariantShredding=true`, the writer can choose to shred a Variant column according to the [Parquet Variant Shredding specification](https://github.com/apache/parquet-format/blob/master/VariantShredding.md)
+- must respect the `delta.enableVariantShredding` table property configuration. If `delta.enableVariantShredding` is not present or if it is set to any value other than `true`, a column of type `variant` must not be written as a shredded Variant, but as an unshredded Variant. If `delta.enableVariantShredding=true`, the writer can choose to shred a Variant column according to the [Parquet Variant Shredding specification](https://github.com/apache/parquet-format/blob/master/VariantShredding.md).
+- must ensure the `variantShredding` table feature is present in the table protocol's `writerFeatures`  and `readerFeatures` when enabling the `delta.enableVariantShredding` table property, i.e. setting `delta.enableVariantShredding=true`.
 
 ## Reader Requirements for Variant Shredding
 
-When Variant type is supported (`readerFeatures` field of a table's `protocol` action contains `variantShredding`), readers:
+When Variant Shredding is supported (`readerFeatures` field of a table's `protocol` action contains `variantShredding`), readers:
 - must recognize and tolerate a `variant` data type in a Delta schema
 - must recognize and correctly process a parquet schema that is either unshredded (only `metadata` and `value` struct fields) or shredded (`metadata`, `value`, and `typed_value` struct fields) when reading a Variant data type from file.
 
@@ -58,7 +59,8 @@ When Variant type is supported (`readerFeatures` field of a table's `protocol` a
 - Each path in the Variant `minValues` (`maxValues`) value is the independently computed min (max) stat for the corresponding path in the file's Variant data, so e.g. `minValues.v:a` and `minValues.v:b` could come from different rows in the file.
 - Min/max stats may only be written for primitive (leaf) values, packed into a Variant representation.
 - Min/max stats may only be written for a path if that path has the same data type in every row of the data file.
-- The paths and types inside `minValues` and `maxValues` must be the same within any one file, but can vary from file to file.
+- If a path is present in both minValues and maxValues for a given file, the Variant type for that path must be the same in both.
+- A path may be present in minValues but not maxValues (or vice versa) for a given file. The paths and types can vary from file to file.
 - Subject to the above constraints, the writer of a given file determines which Variant leaf paths (if any) to emit statistics for.
 
 For a table with a single Variant column (`varCol: variant`) in its data schema, example statistics in JSON would look like:

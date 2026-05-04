@@ -17,23 +17,34 @@
 package io.delta.kernel.unitycatalog;
 
 import static io.delta.kernel.commit.CatalogCommitterUtils.*;
+import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
+import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.delta.kernel.commit.CommitMetadata;
+import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.DomainMetadata;
+import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.clustering.ClusteringMetadataDomain;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.*;
+import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.*;
+import java.util.function.BiFunction;
 import java.util.stream.Collectors;
 
 public class UnityCatalogUtils {
@@ -41,6 +52,99 @@ public class UnityCatalogUtils {
 
   private static final String UC_PROP_CLUSTERING_COLUMNS = "clusteringColumns";
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
+  /** Read schema for parsing delta files. */
+  private static final StructType DELTA_FILE_READ_SCHEMA =
+      new StructType()
+          .add("protocol", Protocol.FULL_SCHEMA)
+          .add("metaData", Metadata.FULL_SCHEMA)
+          .add("commitInfo", CommitInfo.FULL_SCHEMA)
+          .add("domainMetadata", DomainMetadata.FULL_SCHEMA);
+
+  /**
+   * Parse a single delta file and extract its actions.
+   *
+   * <p>Reads the delta file using the provided Engine's JsonHandler and extracts:
+   *
+   * <ul>
+   *   <li>Protocol action (if present)
+   *   <li>Metadata action (if present)
+   *   <li>CommitInfo action (if present)
+   *   <li>DomainMetadata actions (zero or more)
+   * </ul>
+   *
+   * @param engine the engine to use for reading the JSON delta file
+   * @param deltaFile the delta file to parse
+   * @return a {@link ParsedDeltaFileContents} containing the extracted actions
+   */
+  public static ParsedDeltaFileContents parseDeltaFileContents(
+      Engine engine, FileStatus deltaFile) {
+    Protocol protocol = null;
+    Metadata metadata = null;
+    CommitInfo commitInfo = null;
+    List<DomainMetadata> domainMetadatas = new ArrayList<>();
+
+    try (CloseableIterator<ColumnarBatch> batches =
+        wrapEngineExceptionThrowsIO(
+            () ->
+                engine
+                    .getJsonHandler()
+                    .readJsonFiles(
+                        singletonCloseableIterator(deltaFile),
+                        DELTA_FILE_READ_SCHEMA,
+                        Optional.empty()),
+            "Parsing delta file %s with readSchema=%s",
+            deltaFile.getPath(),
+            DELTA_FILE_READ_SCHEMA)) {
+
+      while (batches.hasNext()) {
+        final ColumnarBatch batch = batches.next();
+
+        if (protocol == null) {
+          protocol = findFirstAction(batch.getColumnVector(0), Protocol::fromColumnVector);
+        }
+
+        if (metadata == null) {
+          metadata = findFirstAction(batch.getColumnVector(1), Metadata::fromColumnVector);
+        }
+
+        if (commitInfo == null) {
+          commitInfo = findFirstAction(batch.getColumnVector(2), CommitInfo::fromColumnVector);
+        }
+
+        final ColumnVector domainMetadataVector = batch.getColumnVector(3);
+        for (int i = 0; i < domainMetadataVector.getSize(); i++) {
+          DomainMetadata dm = DomainMetadata.fromColumnVector(domainMetadataVector, i);
+          if (dm != null) {
+            domainMetadatas.add(dm);
+          }
+        }
+      }
+    } catch (IOException ex) {
+      throw new UncheckedIOException("Failed to parse delta file: " + deltaFile.getPath(), ex);
+    }
+
+    return new ParsedDeltaFileContents(
+        Optional.ofNullable(protocol),
+        Optional.ofNullable(metadata),
+        Optional.ofNullable(commitInfo),
+        domainMetadatas);
+  }
+
+  /**
+   * Scans a column vector in the batch and returns the first non-null action found, or null if none
+   * exists.
+   */
+  private static <T> T findFirstAction(
+      ColumnVector vector, BiFunction<ColumnVector, Integer, T> extractor) {
+    for (int i = 0; i < vector.getSize(); i++) {
+      T value = extractor.apply(vector, i);
+      if (value != null) {
+        return value;
+      }
+    }
+    return null;
+  }
 
   /**
    * Extract all properties that should be sent to Unity Catalog when creating a table (version 0).

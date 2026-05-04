@@ -3187,7 +3187,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
         new IcebergMetadata(
           metadataLocation,
           deltaAttemptVersion,
-          Instant.now.toString
+          Instant.now.toString,
+          baseConvertedDeltaVersion.map(Long.box).toJava
         )
       )
       (txnInfo.copy(convertedIcebergMetadata = Some(newDeltaUniFormIceberg)), true)

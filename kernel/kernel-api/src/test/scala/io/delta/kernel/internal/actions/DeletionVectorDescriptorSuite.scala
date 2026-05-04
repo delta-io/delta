@@ -74,6 +74,31 @@ class DeletionVectorDescriptorSuite extends AnyFunSuite {
     }
   }
 
+  // Regression test for https://github.com/delta-io/delta/issues/6261:
+  // getUniqueId() must unwrap Optional<Integer> offset instead of concatenating
+  // its toString() representation (e.g. "Optional[4]" instead of "4").
+  testCases.foreach { case (storageType, pathOrInlineDv, offset, sizeInBytes, cardinality) =>
+    test(s"getUniqueId - $storageType storage type") {
+      val dv = new DeletionVectorDescriptor(
+        storageType,
+        pathOrInlineDv,
+        offset.map(Integer.valueOf).map(Optional.of[Integer]).getOrElse(Optional.empty[Integer]()),
+        sizeInBytes,
+        cardinality)
+
+      val uniqueId = dv.getUniqueId
+      val expectedFileId = storageType + pathOrInlineDv
+      offset match {
+        case Some(o) =>
+          assert(uniqueId === s"$expectedFileId@$o")
+          // Verify the offset is the raw integer, not "Optional[...]"
+          assert(!uniqueId.contains("Optional"))
+        case None =>
+          assert(uniqueId === expectedFileId)
+      }
+    }
+  }
+
   test("serializeToBase64 throws for non-inline DV without offset") {
     val ex = intercept[IllegalArgumentException] {
       val dv = new DeletionVectorDescriptor(

@@ -488,7 +488,9 @@ def normalizeColumnNamesInDataType(
       allowMissingColumns: Boolean = false,
       typeWideningMode: TypeWideningMode = TypeWideningMode.NoTypeWidening,
       newPartitionColumns: Seq[String] = Seq.empty,
-      oldPartitionColumns: Seq[String] = Seq.empty): Boolean = {
+      oldPartitionColumns: Seq[String] = Seq.empty,
+      caseSensitive: Boolean = true,
+      allowVoidTypeChange: Boolean = false): Boolean = {
 
     def isNullabilityCompatible(existingNullable: Boolean, readNullable: Boolean): Boolean = {
       if (forbidTightenNullability) {
@@ -504,7 +506,9 @@ def normalizeColumnNamesInDataType(
           isReadCompatible(e, n,
             forbidTightenNullability,
             typeWideningMode = typeWideningMode,
-            allowMissingColumns = allowMissingColumns
+            allowMissingColumns = allowMissingColumns,
+            caseSensitive = caseSensitive,
+            allowVoidTypeChange = allowVoidTypeChange
           )
         case (e: ArrayType, n: ArrayType) =>
           // if existing elements are non-nullable, so should be the new element
@@ -515,6 +519,9 @@ def normalizeColumnNamesInDataType(
           isNullabilityCompatible(e.valueContainsNull, n.valueContainsNull) &&
             isDatatypeReadCompatible(e.keyType, n.keyType) &&
             isDatatypeReadCompatible(e.valueType, n.valueType)
+        // This should only be true for dataframe by-name inserts.
+        case (_: NullType, _) if allowVoidTypeChange =>
+          true
         case (e: AtomicType, n: AtomicType)
           if typeWideningMode.shouldWidenTo(fromType = e, toType = n) => true
         case (a, b) => a == b
@@ -551,8 +558,8 @@ def normalizeColumnNamesInDataType(
       newtype.forall { newField =>
         // new fields are fine, they just won't be returned
         existingFields.get(newField.name).forall { existingField =>
-          // we know the name matches modulo case - now verify exact match
-          (existingField.name == newField.name
+          // when case-sensitive, verify exact name match (modulo case already matched)
+          ((!caseSensitive || existingField.name == newField.name)
             // if existing value is non-nullable, so should be the new value
             && isNullabilityCompatible(existingField.nullable, newField.nullable)
             // and the type of the field must be compatible, too

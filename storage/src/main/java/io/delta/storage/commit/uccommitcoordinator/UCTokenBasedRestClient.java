@@ -268,13 +268,15 @@ public class UCTokenBasedRestClient implements UCClient {
    *   <li>metadataLocation -> metadata_location</li>
    *   <li>convertedDeltaVersion -> converted_delta_version</li>
    *   <li>convertedDeltaTimestamp -> converted_delta_timestamp</li>
+   *   <li>baseConvertedDeltaVersion -> base_converted_delta_version (optional)</li>
    * </ul>
    */
   private DeltaUniformIceberg toDeltaUniformIceberg(IcebergMetadata iceberg) {
     return new DeltaUniformIceberg()
         .metadataLocation(URI.create(iceberg.getMetadataLocation()))
         .convertedDeltaVersion(iceberg.getConvertedDeltaVersion())
-        .convertedDeltaTimestamp(iceberg.getConvertedDeltaTimestamp());
+        .convertedDeltaTimestamp(iceberg.getConvertedDeltaTimestamp())
+        .baseConvertedDeltaVersion(iceberg.getBaseConvertedDeltaVersion().orElse(null));
   }
 
   /**

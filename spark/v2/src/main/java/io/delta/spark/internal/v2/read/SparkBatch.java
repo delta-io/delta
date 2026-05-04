@@ -20,23 +20,18 @@ import io.delta.kernel.expressions.Predicate;
 import io.delta.spark.internal.v2.utils.PartitionUtils;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.SparkSession;
-import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.connector.read.Batch;
 import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
-import org.apache.spark.sql.execution.datasources.FilePartition;
-import org.apache.spark.sql.execution.datasources.FilePartition$;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.StructType;
-import scala.collection.JavaConverters;
 
 public class SparkBatch implements Batch {
   private final Snapshot snapshot;
@@ -45,6 +40,10 @@ public class SparkBatch implements Batch {
   private final StructType partitionSchema;
   private final Predicate[] pushedToKernelFilters;
   private final Filter[] dataFilters;
+  // Derived Sets used only for equals/hashCode: filters are AND-ed at eval time,
+  // so list order has no semantic meaning.
+  private final Set<Predicate> pushedToKernelFiltersSet;
+  private final Set<Filter> dataFiltersSet;
   private final Configuration hadoopConf;
   private final SQLConf sqlConf;
   private final long totalBytes;
@@ -71,11 +70,10 @@ public class SparkBatch implements Batch {
         java.util.Collections.unmodifiableList(
             new ArrayList<>(Objects.requireNonNull(partitionedFiles, "partitionedFiles is null")));
     this.pushedToKernelFilters =
-        pushedToKernelFilters != null
-            ? Arrays.copyOf(pushedToKernelFilters, pushedToKernelFilters.length)
-            : new Predicate[0];
-    this.dataFilters =
-        dataFilters != null ? Arrays.copyOf(dataFilters, dataFilters.length) : new Filter[0];
+        pushedToKernelFilters == null ? new Predicate[0] : pushedToKernelFilters.clone();
+    this.dataFilters = dataFilters == null ? new Filter[0] : dataFilters.clone();
+    this.pushedToKernelFiltersSet = Set.copyOf(Arrays.asList(this.pushedToKernelFilters));
+    this.dataFiltersSet = Set.copyOf(Arrays.asList(this.dataFilters));
     this.totalBytes = totalBytes;
     this.scalaOptions = Objects.requireNonNull(scalaOptions, "scalaOptions is null");
     this.hadoopConf = Objects.requireNonNull(hadoopConf, "hadoopConf is null");
@@ -84,62 +82,8 @@ public class SparkBatch implements Batch {
 
   @Override
   public InputPartition[] planInputPartitions() {
-    SparkSession sparkSession = SparkSession.active();
-    long maxSplitBytes =
-        PartitionUtils.calculateMaxSplitBytes(
-            sparkSession, totalBytes, partitionedFiles.size(), sqlConf);
-
-    // For non-partitioned tables, use simple file partitioning
-    if (partitionSchema.fields().length == 0) {
-      scala.collection.Seq<FilePartition> filePartitions =
-          FilePartition$.MODULE$.getFilePartitions(
-              sparkSession, JavaConverters.asScalaBuffer(partitionedFiles).toSeq(), maxSplitBytes);
-      return JavaConverters.seqAsJavaList(filePartitions).toArray(new InputPartition[0]);
-    }
-
-    // For partitioned tables, group files by partition values and wrap in DeltaInputPartition
-    // to support HasPartitionKey for KeyGroupedPartitioning optimizations
-    return planPartitionedInputPartitions(sparkSession, maxSplitBytes);
-  }
-
-  /**
-   * Plans input partitions for partitioned tables by grouping files by their partition values. Each
-   * resulting DeltaInputPartition implements HasPartitionKey, enabling Spark to leverage partition
-   * information for optimizations like shuffle elimination.
-   */
-  private InputPartition[] planPartitionedInputPartitions(
-      SparkSession sparkSession, long maxSplitBytes) {
-    // Note: Using InternalRow as map key relies on GenericInternalRow's value-based
-    // equals()/hashCode(), which is what PartitionUtils.getPartitionRow() returns.
-    Map<InternalRow, List<PartitionedFile>> filesByPartition = new LinkedHashMap<>();
-    for (PartitionedFile file : partitionedFiles) {
-      InternalRow partitionKey = file.partitionValues();
-      filesByPartition.computeIfAbsent(partitionKey, k -> new ArrayList<>()).add(file);
-    }
-
-    // Create DeltaInputPartitions for each partition group
-    List<InputPartition> result = new ArrayList<>();
-    int partitionIndex = 0;
-
-    for (Map.Entry<InternalRow, List<PartitionedFile>> entry : filesByPartition.entrySet()) {
-      InternalRow partitionKey = entry.getKey();
-      List<PartitionedFile> filesInPartition = entry.getValue();
-
-      // Split files within this partition based on maxSplitBytes
-      scala.collection.Seq<FilePartition> filePartitions =
-          FilePartition$.MODULE$.getFilePartitions(
-              sparkSession, JavaConverters.asScalaBuffer(filesInPartition).toSeq(), maxSplitBytes);
-
-      // Wrap each FilePartition in a DeltaInputPartition with the partition key.
-      // Re-index partitions with a global counter because getFilePartitions returns 0-based
-      // indices within each partition group, but we need unique indices across all groups.
-      for (FilePartition fp : JavaConverters.seqAsJavaList(filePartitions)) {
-        FilePartition reindexedPartition = new FilePartition(partitionIndex++, fp.files());
-        result.add(new DeltaInputPartition(reindexedPartition, partitionKey));
-      }
-    }
-
-    return result.toArray(new InputPartition[0]);
+    return PartitionUtils.planInputPartitions(
+        SparkSession.active(), partitionedFiles, totalBytes, hadoopConf, sqlConf);
   }
 
   @Override
@@ -165,20 +109,20 @@ public class SparkBatch implements Batch {
         && Objects.equals(this.readDataSchema, that.readDataSchema)
         && Objects.equals(this.dataSchema, that.dataSchema)
         && Objects.equals(this.partitionSchema, that.partitionSchema)
-        && Arrays.equals(this.pushedToKernelFilters, that.pushedToKernelFilters)
-        && Arrays.equals(this.dataFilters, that.dataFilters)
+        && Objects.equals(this.pushedToKernelFiltersSet, that.pushedToKernelFiltersSet)
+        && Objects.equals(this.dataFiltersSet, that.dataFiltersSet)
         && partitionedFiles.size() == that.partitionedFiles.size();
   }
 
   @Override
   public int hashCode() {
-    int result = snapshot.hashCode();
-    result = 31 * result + readDataSchema.hashCode();
-    result = 31 * result + dataSchema.hashCode();
-    result = 31 * result + partitionSchema.hashCode();
-    result = 31 * result + Arrays.hashCode(pushedToKernelFilters);
-    result = 31 * result + Arrays.hashCode(dataFilters);
-    result = 31 * result + Integer.hashCode(partitionedFiles.size());
-    return result;
+    return Objects.hash(
+        snapshot,
+        readDataSchema,
+        dataSchema,
+        partitionSchema,
+        pushedToKernelFiltersSet,
+        dataFiltersSet,
+        partitionedFiles.size());
   }
 }
