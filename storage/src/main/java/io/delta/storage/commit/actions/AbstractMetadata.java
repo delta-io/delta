@@ -16,8 +16,11 @@
 
 package io.delta.storage.commit.actions;
 
-import java.util.Map;
 import java.util.List;
+import java.util.Map;
+
+import io.delta.kernel.internal.types.DataTypeJsonSerDe;
+import io.delta.kernel.types.StructType;
 
 /**
  * Interface for metadata actions in Delta. The metadata defines the metadata
@@ -45,6 +48,17 @@ public interface AbstractMetadata {
 
   /** The format options */
   Map<String, String> getFormatOptions();
+
+  /**
+   * The table schema as a Delta Kernel type.
+   *
+   * <p>The default implementation parses {@link #getSchemaString()}; if {@code getSchemaString()}
+   * returns {@code null}, this method returns {@code null}.
+   */
+  default StructType getSchema() {
+    String schemaString = getSchemaString();
+    return schemaString == null ? null : DataTypeJsonSerDe.deserializeStructType(schemaString);
+  }
 
   /**
    * The table schema in string representation.

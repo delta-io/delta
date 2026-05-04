@@ -1163,6 +1163,37 @@ lazy val storage = (project in file("storage"))
     commonSettings,
     exportJars := true,
     javaOnlyReleaseSettings,
+
+    // Use the shaded kernel-api jar. A direct project dependency puts kernel-api's unshaded
+    // class directory on downstream classpaths, which conflicts with Kernel's shaded Jackson API.
+    Compile / unmanagedJars += (kernelApi / Compile / packageBin).value,
+    Test / unmanagedJars += (kernelApi / Compile / packageBin).value,
+    Compile / compile := (Compile / compile).dependsOn(kernelApi / Compile / packageBin).value,
+    Test / test := (Test / test).dependsOn(kernelApi / Compile / packageBin).value,
+
+    // delta-storage exposes Kernel types in its public API, so the published POM must still
+    // declare delta-kernel-api even though local compilation uses the shaded jar above.
+    pomPostProcess := { node =>
+      val ver = version.value
+      import scala.xml._
+      import scala.xml.transform._
+
+      val kernelApiDependency =
+        <dependency>
+          <groupId>io.delta</groupId>
+          <artifactId>delta-kernel-api</artifactId>
+          <version>{ver}</version>
+        </dependency>
+
+      new RuleTransformer(new RewriteRule {
+        override def transform(n: Node): Seq[Node] = n match {
+          case e: Elem if e.label == "dependencies" =>
+            Seq(e.copy(child = e.child ++ kernelApiDependency))
+          case _ => Seq(n)
+        }
+      }).transform(node).head
+    },
+
     libraryDependencies ++= Seq(
       // User can provide any 2.x or 3.x version. We don't use any new fancy APIs. Watch out for
       // versions with known vulnerabilities.

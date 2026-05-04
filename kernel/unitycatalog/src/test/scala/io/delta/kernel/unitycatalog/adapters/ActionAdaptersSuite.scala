@@ -74,6 +74,7 @@ class ActionAdaptersSuite extends AnyFunSuite {
     assert(adapter.getDescription === "description")
     assert(adapter.getProvider === "parquet")
     assert(adapter.getFormatOptions.asScala == Map("foo" -> "bar"))
+    assert(adapter.getSchema === kernelMetadata.getSchema)
     assert(adapter.getSchemaString === "schemaStringJson")
     assert(adapter.getPartitionColumns.asScala == Seq("part1"))
     assert(adapter.getConfiguration.asScala == Map("zip" -> "zap"))

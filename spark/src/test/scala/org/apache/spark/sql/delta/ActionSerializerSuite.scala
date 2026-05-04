@@ -134,6 +134,19 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       new StructType().json,
       Seq("a")))
 
+  test("Metadata getSchema parses schemaString as Kernel schema") {
+    val schemaString = new StructType()
+      .add("id", "long")
+      .add("nested", new StructType().add("name", "string"))
+      .json
+    val metadata = Metadata(schemaString = schemaString)
+    val expected =
+      io.delta.kernel.internal.types.DataTypeJsonSerDe.deserializeStructType(schemaString)
+
+    assert(metadata.getSchema === expected)
+    assert(Metadata().getSchema === null)
+  }
+
   test("extra fields") {
     // TODO reading from checkpoint
     Action.fromJson("""{"txn": {"test": 1}}""")

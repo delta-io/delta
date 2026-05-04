@@ -1251,6 +1251,12 @@ case class Metadata(
     .map(DataType.fromJson(_).asInstanceOf[StructType])
     .getOrElse(StructType.apply(Nil))
 
+  /** Returns the schema as a Kernel [[io.delta.kernel.types.StructType]] */
+  @JsonIgnore
+  private lazy val kernelSchema: io.delta.kernel.types.StructType = Option(schemaString)
+    .map(io.delta.kernel.internal.types.DataTypeJsonSerDe.deserializeStructType)
+    .orNull
+
   /** Returns the partitionSchema as a [[StructType]] */
   @JsonIgnore
   lazy val partitionSchema: StructType =
@@ -1311,6 +1317,9 @@ case class Metadata(
 
   @JsonIgnore
   override def getFormatOptions: java.util.Map[String, String] = format.options.asJava
+
+  @JsonIgnore
+  override def getSchema: io.delta.kernel.types.StructType = kernelSchema
 
   override def getSchemaString: String = schemaString
 

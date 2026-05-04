@@ -18,6 +18,7 @@ package io.delta.kernel.unitycatalog.adapters;
 
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.util.VectorUtils;
+import io.delta.kernel.types.StructType;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import java.util.*;
 
@@ -56,6 +57,11 @@ public class MetadataAdapter implements AbstractMetadata {
   @Override
   public Map<String, String> getFormatOptions() {
     return Collections.unmodifiableMap(kernelMetadata.getFormat().getOptions());
+  }
+
+  @Override
+  public StructType getSchema() {
+    return kernelMetadata.getSchema();
   }
 
   @Override
