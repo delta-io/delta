@@ -19,6 +19,11 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.File
 import java.nio.file.FileAlreadyExistsException
+import java.util.concurrent.{CountDownLatch, Executors, TimeUnit}
+
+import scala.collection.JavaConverters._
+import scala.concurrent.{Await, ExecutionContext, Future}
+import scala.concurrent.duration._
 
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Truncate}
@@ -1653,6 +1658,112 @@ class OptimisticTransactionSuite
       assertPartitionColumns(pathOrTable, expected)
     } else {
       assertPartitionColumns(new TableIdentifier(pathOrTable), expected)
+    }
+  }
+
+  test("filesForScan is thread-safe when invoked concurrently on a single transaction") {
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getCanonicalPath
+      val log = DeltaLog.forTable(spark, tablePath)
+
+      // Set up a partitioned table with one file per partition.
+      log.startTransaction().commit(Seq(
+        Metadata(
+          schemaString = new StructType()
+            .add("part", IntegerType)
+            .add("value", IntegerType).json,
+          partitionColumns = Seq("part"))
+      ), ManualUpdate)
+
+      val numPartitions = 16
+      val seedFiles = (0 until numPartitions).map { i =>
+        AddFile(s"f$i", Map("part" -> i.toString), 1, 1, dataChange = true)
+      }
+      log.startTransaction().commit(seedFiles, ManualUpdate)
+
+      val txn = log.startTransaction()
+
+      // Sanity check: filesForScan returns expected files when called concurrently. Each
+      // worker queries a single partition and must observe its own file independently of
+      // the other threads racing to update the transaction's state.
+      val numThreads = 8
+      val scanPool = Executors.newFixedThreadPool(numThreads)
+      locally {
+        implicit val ec: ExecutionContext = ExecutionContext.fromExecutorService(scanPool)
+        try {
+          val scanLatch = new CountDownLatch(1)
+          val scanFutures = (0 until numPartitions).map { i =>
+            Future {
+              scanLatch.await()
+              val filter = EqualTo('part, Literal(i))
+              val scan = txn.filesForScan(filter :: Nil)
+              assert(scan.files.map(_.path).toSet === Set(s"f$i"))
+            }
+          }
+          scanLatch.countDown()
+          Await.result(Future.sequence(scanFutures), 60.seconds)
+        } finally {
+          scanPool.shutdown()
+          scanPool.awaitTermination(60, TimeUnit.SECONDS)
+        }
+      }
+
+      // Stress the mutator path that filesForScan ultimately uses (trackFilesRead) with a
+      // large, evenly partitioned write load timed so all threads start simultaneously.
+      // With a non-thread-safe collection (e.g. mutable.HashSet) this deterministically
+      // loses entries or corrupts the table on the box this test ran on; with a
+      // ConcurrentHashMap-backed set every entry is observed.
+      val stressThreads = 32
+      val perThread = 1000
+      val totalExpected = stressThreads * perThread
+      val stressBatches = (0 until stressThreads).map { t =>
+        (0 until perThread).map { j =>
+          AddFile(s"stress-t${t}-j${j}", Map("part" -> "0"), 1, 1, dataChange = true)
+        }
+      }
+      val pool = Executors.newFixedThreadPool(stressThreads)
+      locally {
+        implicit val ec: ExecutionContext = ExecutionContext.fromExecutorService(pool)
+        try {
+          val startLatch = new CountDownLatch(1)
+          val readyLatch = new CountDownLatch(stressThreads)
+          val futures = stressBatches.map { batch =>
+            Future {
+              readyLatch.countDown()
+              startLatch.await()
+              txn.trackFilesRead(batch)
+            }
+          }
+          assert(readyLatch.await(60, TimeUnit.SECONDS),
+            "Timed out waiting for stress workers to reach the start barrier.")
+          startLatch.countDown()
+          Await.result(Future.sequence(futures), 120.seconds)
+        } finally {
+          pool.shutdown()
+          pool.awaitTermination(60, TimeUnit.SECONDS)
+        }
+      }
+
+      // Access the protected `readFiles` field reflectively so the test is decoupled
+      // from whether the underlying collection is a Scala or Java Set.
+      val readFilesField = txn.getClass.getDeclaredFields
+        .find(_.getName.endsWith("readFiles"))
+        .getOrElse(fail("Could not locate readFiles field on the transaction class"))
+      readFilesField.setAccessible(true)
+      val tracked: Set[AddFile] = readFilesField.get(txn) match {
+        case javaSet: java.util.Collection[_] =>
+          javaSet.asScala.toSet.asInstanceOf[Set[AddFile]]
+        case scalaSet: scala.collection.Iterable[_] =>
+          scalaSet.toSet.asInstanceOf[Set[AddFile]]
+        case other => fail(s"Unexpected readFiles container type: ${other.getClass}")
+      }
+      // Tracked files = the files initially scanned (one per partition) plus every
+      // synthetic file added by the stress phase.
+      val expectedSize = numPartitions + totalExpected
+      assert(tracked.size === expectedSize,
+        s"Expected $expectedSize tracked read files, got ${tracked.size}. " +
+          s"This indicates lost updates from concurrent updates to readFiles, meaning " +
+          s"the underlying collection is not thread-safe.")
     }
   }
 }
