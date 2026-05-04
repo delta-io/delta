@@ -2106,6 +2106,32 @@ trait OptimisticTransactionImpl extends TransactionHelper
       allActions = RowId.assignFreshRowIds(spark, protocol, snapshot, allActions, op)
       allActions = DefaultRowCommitVersion.assignIfMissing(
         spark, protocol, snapshot, allActions, getFirstAttemptVersion)
+      val (allActions3, catalogTrackedInfo) = generateIcebergMetadataForCommitLarge(
+        allActions, catalogTable, attemptVersion, commitInfo)
+      allActions = allActions3
+
+      val commitStatsComputer = new CommitStatsComputer()
+      allActions = commitStatsComputer.addToCommitStats(allActions)
+      executionObserver.beginDoCommit()
+      if (readVersion < 0) {
+        deltaLog.createLogDirectoriesIfNotExists()
+      }
+      val fsWriteStartNano = System.nanoTime()
+      val jsonActions = allActions.map(_.json)
+      var commitSizeBytes = 0L
+      jsonActions.map { action =>
+          commitSizeBytes += action.size
+      }
+      val effectiveTableCommitCoordinatorClient =
+        readSnapshotTableCommitCoordinatorClientOpt.getOrElse {
+          TableCommitCoordinatorClient(
+            commitCoordinatorClient = new FileSystemBasedCommitCoordinatorClient(deltaLog),
+            deltaLog = deltaLog,
+            coordinatedCommitsTableConf = snapshot.metadata.coordinatedCommitsTableConf)
+        }
+      val updatedActions = new UpdatedActions(
+        commitInfo, metadata, protocol, snapshot.metadata, snapshot.protocol)
+      val commitResponse = TransactionExecutionObserver.withObserver(executionObserver) {
         effectiveTableCommitCoordinatorClient.commit(
           attemptVersion,
           jsonActions,
