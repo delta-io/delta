@@ -419,7 +419,11 @@ class DeltaLog private(
     val unsupportedVariantFeatures =
       if (org.apache.spark.SPARK_VERSION.startsWith("4.0") &&
           spark.conf.get(DeltaSQLConf.DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40)) {
-        Seq(VariantTypeTableFeature, VariantTypePreviewTableFeature)
+        Seq(
+          VariantTypeTableFeature,
+          VariantTypePreviewTableFeature,
+          VariantShreddingTableFeature,
+          VariantShreddingPreviewTableFeature)
       } else {
         Seq.empty
       }
