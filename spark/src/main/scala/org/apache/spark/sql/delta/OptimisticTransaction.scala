@@ -2106,35 +2106,12 @@ trait OptimisticTransactionImpl extends TransactionHelper
       allActions = RowId.assignFreshRowIds(spark, protocol, snapshot, allActions, op)
       allActions = DefaultRowCommitVersion.assignIfMissing(
         spark, protocol, snapshot, allActions, getFirstAttemptVersion)
-
-      val commitStatsComputer = new CommitStatsComputer()
-      allActions = commitStatsComputer.addToCommitStats(allActions)
-      executionObserver.beginDoCommit()
-      if (readVersion < 0) {
-        deltaLog.createLogDirectoriesIfNotExists()
-      }
-      val fsWriteStartNano = System.nanoTime()
-      val jsonActions = allActions.map(_.json)
-      var commitSizeBytes = 0L
-      jsonActions.map { action =>
-          commitSizeBytes += action.size
-      }
-      val effectiveTableCommitCoordinatorClient =
-        readSnapshotTableCommitCoordinatorClientOpt.getOrElse {
-          TableCommitCoordinatorClient(
-            commitCoordinatorClient = new FileSystemBasedCommitCoordinatorClient(deltaLog),
-            deltaLog = deltaLog,
-            coordinatedCommitsTableConf = snapshot.metadata.coordinatedCommitsTableConf)
-        }
-      val updatedActions = new UpdatedActions(
-        commitInfo, metadata, protocol, snapshot.metadata, snapshot.protocol)
-      val commitResponse = TransactionExecutionObserver.withObserver(executionObserver) {
         effectiveTableCommitCoordinatorClient.commit(
           attemptVersion,
           jsonActions,
           updatedActions,
           catalogTable.map(_.identifier),
-          CatalogTrackedInfo.EMPTY
+          catalogTrackedInfo
         )
       }
       // TODO(coordinated-commits): Use the right timestamp method on top of CommitInfo once ICT is
@@ -2211,6 +2188,53 @@ trait OptimisticTransactionImpl extends TransactionHelper
             throw e
         }
     }
+  }
+
+  /**
+   * If the table has UniForm Iceberg enabled,
+   * generate Iceberg metadata atomically before Delta commits.
+   * Unfortunately this requires materializing the streaming action iterator
+   * as Iceberg keeps track of actions to append inside memory.
+   * Thus, a validation on number of actions to convert exists for reminding users.
+   */
+  def generateIcebergMetadataForCommitLarge(
+      allActions: Iterator[Action],
+      catalogTable: Option[CatalogTable],
+      attemptVersion: Long,
+      commitInfo: CommitInfo): (Iterator[Action], CatalogTrackedInfo) = {
+    val (allActionsAfter, catalogTrackedInfo) = catalogTable match {
+      case Some(table) if UniversalFormat.icebergEnabled(metadata) =>
+        val maxActions = spark.conf.get(
+          DeltaSQLConf.DELTA_UNIFORM_ICEBERG_MAX_ACTIONS_TO_CONVERT_FOR_COMMIT_LARGE
+        )
+        val bufferedActions = allActions.zipWithIndex.map { case (action, idx) =>
+          if (idx >= maxActions) {
+            throw new IllegalStateException(
+              s"There are more than $maxActions actions in this commitLarge. " +
+                "Please use a writer with large memory and increase threshold" +
+                "in DeltaSQLConf.DELTA_UNIFORM_ICEBERG_MAX_ACTIONS_TO_CONVERT_FOR_COMMIT_LARGE" +
+                "to retry.")
+          }
+          action
+        }.toSeq
+        val txnInfo = CurrentTransactionInfo.forIcebergConversion(
+          metadata = metadata,
+          protocol = protocol,
+          readSnapshot = snapshot,
+          actions = bufferedActions,
+          commitInfo = Some(commitInfo)
+        )
+        val (updatedTxnInfo, _) = generateIcebergAndUpdateCurrentTransactionInfo(
+          spark, this, attemptVersion, txnInfo
+          , table
+        )
+        (bufferedActions.iterator: Iterator[Action],
+          new CatalogTrackedInfo(updatedTxnInfo.convertedIcebergMetadata.toJava)
+        )
+      case _ =>
+        (allActions, CatalogTrackedInfo.EMPTY)
+    }
+    (allActionsAfter, catalogTrackedInfo)
   }
 
   /**
