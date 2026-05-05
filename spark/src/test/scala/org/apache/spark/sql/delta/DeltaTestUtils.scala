@@ -622,7 +622,7 @@ trait DeltaSQLInMemoryTestUtils
     try {
       super.withTable(tableNames: _*) {
         f
-        tableNames.foreach(assertNoParquetFiles)
+        tableNames.foreach(assertNoV1Writes)
       }
     } finally {
       for (tableName <- tableNames) {
@@ -642,13 +642,25 @@ trait DeltaSQLInMemoryTestUtils
     }
   }
 
+  override def withTempPath(f: File => Unit): Unit = {
+    super.withTempPath { dir =>
+      f(dir)
+      assertNoV1Writes(dir)
+    }
+  }
+
+  override protected def withTempDir(f: File => Unit): Unit = {
+    super.withTempPath { dir =>
+      f(dir)
+      assertNoV1Writes(dir)
+    }
+  }
+
   /**
-   * Assert no parquet files are contain within the data directory for [[tableName]].
+   * Asserts no hints of V1 writes (e.g. parquet files) are in the data directory for [[tableName]].
    * Used to sanity-check our V2-only write paths.
    */
-  protected def assertNoParquetFiles(tableName: String): Unit = {
-    import java.nio.file.{Files, Path}
-
+  protected def assertNoV1Writes(tableName: String): Unit = {
     val ident = TableIdentifier(tableName)
 
     // Temp views don't create anything on the disk, but still use `withTable`.
@@ -660,6 +672,17 @@ trait DeltaSQLInMemoryTestUtils
 
     val catalogTable = spark.sessionState.catalog.getTableMetadata(ident)
     val dataPath = new File(new java.net.URI(catalogTable.location.toString))
+    assertNoV1Writes(dataPath)
+  }
+
+  protected def assertNoV1Writes(dataPath: File): Unit = {
+    assertNoParquetFiles(dataPath)
+  }
+
+
+  private def assertNoParquetFiles(dataPath: File): Unit = {
+    import java.nio.file.{Files, Path}
+
     if (dataPath.exists()) {
       val stream = Files.walk(dataPath.toPath)
       try {
@@ -667,9 +690,11 @@ trait DeltaSQLInMemoryTestUtils
           .filter(Files.isRegularFile(_))
           .filter(_.toString.endsWith(".parquet"))
           .toArray.map(_.asInstanceOf[Path].toString).toSeq
-        assert(parquetFiles.isEmpty,
-          s"Physical parquet files found while V2 in-memory mode is enabled. " +
-          s"DML may have fallen back to V1. Files: $parquetFiles")
+        if (parquetFiles.nonEmpty) {
+          fail(s"Found ${parquetFiles.length} parquet files in $dataPath while" +
+              s"V2 in-memory mode is enabled.\n" +
+              s"DML may have fallen back to V1.")
+        }
       } finally {
         stream.close()
       }
@@ -848,7 +873,7 @@ trait DeltaDMLInMemoryTestUtils
         s"CREATE TABLE $tableSQLIdentifier (${df.schema.toDDL}) USING delta $partitioning")
     }
     df.writeTo(tableSQLIdentifier).append()
-    assertNoParquetFiles(tableSQLIdentifier)
+    assertNoV1Writes(tableSQLIdentifier)
   }
 }
 
