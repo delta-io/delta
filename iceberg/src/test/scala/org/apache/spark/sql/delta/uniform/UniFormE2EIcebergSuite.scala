@@ -100,7 +100,8 @@ trait WriteDeltaHMSReadIceberg extends UniFormE2ETest
 /**
  * A [[DeltaCatalog]] subclass that enriches [[CatalogTable]] with the last converted Iceberg
  * metadata from [[InMemoryUCCommitCoordinator]] before loading the table. This simulates what
- * the real UC catalog does: returning [[IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP]]
+ * the real UC catalog does:
+ * returning [[IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP]]
  * and [[IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP]] as catalog table
  * properties so that [[IcebergConverter]] can perform incremental conversion.
  */
@@ -237,9 +238,8 @@ trait WriteDeltaUCCCReadIceberg extends UniFormE2ETest
           .properties
           .getOrElse(
             IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP,
-            throw new AssertionError(
-              s"No Iceberg metadata found for '$table' i" +
-                s"n CC coordinator or catalog properties")
+            throw new IllegalStateException(
+              s"No Iceberg metadata found for '$table' in CC coordinator or catalog properties")
           )
       }
     verifyReadByPath(icebergMetadataPath, schema, fields, orderBy, expect)
