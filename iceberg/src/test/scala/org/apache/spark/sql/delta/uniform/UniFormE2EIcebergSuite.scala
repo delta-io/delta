@@ -35,7 +35,7 @@ import org.apache.spark.sql.delta.DeltaConfigs.{
   COORDINATED_COMMITS_COORDINATOR_CONF,
   COORDINATED_COMMITS_COORDINATOR_NAME
 }
-import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.{DeltaLog, IcebergConstants}
 import org.apache.spark.sql.delta.NonSparkReadIceberg
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.coordinatedcommits.{
@@ -97,8 +97,9 @@ trait WriteDeltaHMSReadIceberg extends UniFormE2ETest
 /**
  * A [[DeltaCatalog]] subclass that enriches [[CatalogTable]] with the last converted Iceberg
  * metadata from [[InMemoryUCCommitCoordinator]] before loading the table. This simulates what
- * the real UC catalog does: returning [[IcebergConverter.CATALOG_TABLE_ICEBERG_METADATA_LOCATION]]
- * and [[IcebergConverter.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION]] as catalog table
+ * the real UC catalog does: returning
+ * [[IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP]]
+ * and [[IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP]] as catalog table
  * properties so that [[IcebergConverter]] can perform incremental conversion.
  */
 class UCBackedDeltaCatalog extends DeltaCatalog {
@@ -112,9 +113,9 @@ class UCBackedDeltaCatalog extends DeltaCatalog {
           .map { meta =>
             val icebergMeta = meta.getIcebergMetadata.get
             catalogTable.copy(properties = catalogTable.properties +
-              (IcebergConverter.CATALOG_TABLE_ICEBERG_METADATA_LOCATION ->
+              (IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP->
                 icebergMeta.getMetadataLocation) +
-              (IcebergConverter.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION ->
+              (IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP ->
                 icebergMeta.getConvertedDeltaVersion.toString))
           }
       }
