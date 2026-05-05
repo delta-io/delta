@@ -352,6 +352,45 @@ public class UCDeltaTableDataFrameStreamingTest extends UCDeltaTableIntegrationB
         });
   }
 
+  @TestAllTableTypes
+  public void testStreamingReadChangeFeedFalseDoesNotError(TableType tableType) throws Exception {
+    if (tableType != TableType.MANAGED) return;
+    assertManagedStreamingOptionDoesNotError(
+        "streaming_read_cdf_false_test", "readChangeFeed", "false");
+  }
+
+  @TestAllTableTypes
+  public void testStreamingAllowSourceColumnDropFalseDoesNotError(TableType tableType)
+      throws Exception {
+    if (tableType != TableType.MANAGED) return;
+    assertManagedStreamingOptionDoesNotError(
+        "streaming_allow_drop_false_test", "allowSourceColumnDrop", "false");
+  }
+
+  private void assertManagedStreamingOptionDoesNotError(
+      String tableName, String optionName, String optionValue) throws Exception {
+    withNewTable(
+        tableName,
+        "id INT",
+        TableType.MANAGED,
+        fullTableName -> {
+          sql("INSERT INTO %s VALUES (1)", fullTableName);
+          List<Integer> result = new ArrayList<>();
+          spark()
+              .readStream()
+              .format("delta")
+              .option(optionName, optionValue)
+              .table(fullTableName)
+              .writeStream()
+              .trigger(Trigger.AvailableNow())
+              .option("checkpointLocation", checkpoint())
+              .foreachBatch((VoidFunction2<Dataset<Row>, Long>) (df, id) -> result.addAll(ids(df)))
+              .start()
+              .awaitTermination();
+          assertThat(result).containsExactly(1);
+        });
+  }
+
   /**
    * Starts a streaming read with options applied by {@code configure}, then asserts the stream
    * fails with a message containing all {@code fragments} (case-insensitive).

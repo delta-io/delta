@@ -642,6 +642,9 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
    * <p>Note: DeltaOptions internally uses CaseInsensitiveMap, which preserves the original key
    * casing but performs case-insensitive lookups.
    *
+   * <p>For boolean options that are unsupported only when enabled, only reject truthy values. For
+   * example, {@code readChangeFeed=false} explicitly opts out of CDF and should not be rejected.
+   *
    * @param deltaOptions the DeltaOptions to validate
    * @throws UnsupportedOperationException if unsupported options are found
    */
@@ -652,7 +655,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     while (keysIterator.hasNext()) {
       String key = keysIterator.next();
       // DeltaOptions uses CaseInsensitiveMap with keys already lowercased.
-      if (UNSUPPORTED_STREAMING_OPTIONS.contains(key)) {
+      if (isUnsupportedStreamingOptionEnabled(deltaOptions, key)) {
         unsupportedOptions.add(key);
       }
     }
@@ -665,6 +668,39 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
               String.join(", ", unsupportedOptions),
               String.join(", ", SUPPORTED_STREAMING_OPTIONS)));
     }
+  }
+
+  private static boolean isUnsupportedStreamingOptionEnabled(
+      DeltaOptions deltaOptions, String key) {
+    if (!UNSUPPORTED_STREAMING_OPTIONS.contains(key)) {
+      return false;
+    }
+
+    if (key.equals(DeltaOptions.CDC_READ_OPTION().toLowerCase())
+        || key.equals(DeltaOptions.CDC_READ_OPTION_LEGACY().toLowerCase())
+        || key.equals(DeltaOptions.ALLOW_SOURCE_COLUMN_DROP().toLowerCase())
+        || key.equals(DeltaOptions.ALLOW_SOURCE_COLUMN_RENAME().toLowerCase())
+        || key.equals(DeltaOptions.ALLOW_SOURCE_COLUMN_TYPE_CHANGE().toLowerCase())) {
+      return optionValueIsTrue(deltaOptions, key);
+    }
+
+    if (key.equals(DeltaOptions.SCHEMA_TRACKING_LOCATION().toLowerCase())
+        || key.equals(DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS().toLowerCase())
+        || key.equals(DeltaOptions.STREAMING_SOURCE_TRACKING_ID().toLowerCase())) {
+      return optionValueIsNonEmpty(deltaOptions, key);
+    }
+
+    return true;
+  }
+
+  private static boolean optionValueIsTrue(DeltaOptions deltaOptions, String key) {
+    scala.Option<String> raw = deltaOptions.options().get(key);
+    return raw.isDefined() && "true".equalsIgnoreCase(raw.get().trim());
+  }
+
+  private static boolean optionValueIsNonEmpty(DeltaOptions deltaOptions, String key) {
+    scala.Option<String> raw = deltaOptions.options().get(key);
+    return raw.isDefined() && !raw.get().trim().isEmpty();
   }
 
   @Override
