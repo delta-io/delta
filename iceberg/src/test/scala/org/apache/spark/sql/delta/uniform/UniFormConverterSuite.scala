@@ -24,7 +24,7 @@ import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeltaLog, DeltaOperations, DeltaTableReadPredicate, Snapshot}
+import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeltaLog, DeltaOperations, DeltaTableReadPredicate, IcebergConstants, Snapshot}
 import org.apache.spark.sql.delta.DeltaTestUtils.filterUsageRecords
 import org.apache.spark.sql.delta.NonSparkReadIceberg
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, DomainMetadata, Metadata}
@@ -100,8 +100,8 @@ class UniFormConverterSuite extends
       convertedDeltaVersion: Long): CatalogTable =
     catalogTable.copy(
       properties = catalogTable.properties +
-        (IcebergConverter.CATALOG_TABLE_ICEBERG_METADATA_LOCATION -> metadataPath) +
-        (IcebergConverter.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION ->
+        (IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP -> metadataPath) +
+        (IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP ->
           convertedDeltaVersion.toString)
     )
 

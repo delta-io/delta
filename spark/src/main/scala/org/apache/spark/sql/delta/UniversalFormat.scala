@@ -363,9 +363,14 @@ object IcebergConstants {
   val ICEBERG_NAME_MAPPING_PROPERTY = "schema.name-mapping.default"
 
   // CatalogTable property keys used to pass UniForm Iceberg metadata to the UC createTable API.
-  val UNIFORM_ICEBERG_METADATA_LOCATION_PROP = "delta.uniform.iceberg.metadataLocation"
-  val UNIFORM_ICEBERG_CONVERTED_VERSION_PROP = "delta.uniform.iceberg.convertedDeltaVersion"
-  val UNIFORM_ICEBERG_CONVERTED_TIMESTAMP_PROP = "delta.uniform.iceberg.convertedDeltaTimestamp"
+  /** CatalogTable property key for the last converted Iceberg metadata location. */
+  val CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP =
+    "deltaUniformIceberg.metadataLocation"
+  /** CatalogTable property key for the last converted Delta version. */
+  val CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP =
+    "deltaUniformIceberg.convertedDeltaVersion"
+  val CATALOG_TABLE_ICEBERG_CONVERTED_TIMESTAMP_PROP =
+    "delta.uniform.iceberg.convertedDeltaTimestamp"
 
   // Reserved field ID for the `_row_id` column
   // Iceberg spec: https://iceberg.apache.org/spec/?h=row#reserved-field-ids

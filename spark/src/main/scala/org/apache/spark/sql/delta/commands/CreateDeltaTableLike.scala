@@ -111,10 +111,10 @@ trait CreateDeltaTableLike extends SQLConfHelper {
   private def uniformMetadataToProperties(uniformMetadata: UniformMetadata): Map[String, String] = {
     val iceberg = uniformMetadata.getIcebergMetadata.get()
     Map(
-      IcebergConstants.UNIFORM_ICEBERG_METADATA_LOCATION_PROP  -> iceberg.getMetadataLocation,
-      IcebergConstants.UNIFORM_ICEBERG_CONVERTED_VERSION_PROP  ->
+      IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP  -> iceberg.getMetadataLocation,
+      IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP  ->
         iceberg.getConvertedDeltaVersion.toString,
-      IcebergConstants.UNIFORM_ICEBERG_CONVERTED_TIMESTAMP_PROP ->
+      IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_TIMESTAMP_PROP ->
         iceberg.getConvertedDeltaTimestamp
     )
   }
@@ -139,7 +139,7 @@ trait CreateDeltaTableLike extends SQLConfHelper {
           createTableFunc.get.apply(withUniformMetadata(snapshot, cleaned))
         } else {
           spark.sessionState.catalog.createTable(
-            cleaned,
+            withUniformMetadata(snapshot, cleaned),
             ignoreIfExists = existingTableOpt.isDefined || mode == SaveMode.Ignore,
             validateLocation = false)
         }

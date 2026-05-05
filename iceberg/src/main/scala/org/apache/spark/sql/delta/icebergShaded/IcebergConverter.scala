@@ -66,12 +66,6 @@ object IcebergConverter {
    */
   val BASE_DELTA_VERSION_PROPERTY = "base-delta-version"
 
-  /** CatalogTable property key for the last converted Iceberg metadata location. */
-  val CATALOG_TABLE_ICEBERG_METADATA_LOCATION = "deltaUniformIceberg.metadataLocation"
-
-  /** CatalogTable property key for the last converted Delta version. */
-  val CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION = "deltaUniformIceberg.convertedDeltaVersion"
-
   def getLastConvertedDeltaVersion(table: Option[IcebergTable]): Option[Long] =
     table.flatMap(_.properties().asScala.get(DELTA_VERSION_PROPERTY)).map(_.toLong)
 
@@ -241,10 +235,10 @@ class IcebergConverter
       deltaLog: DeltaLog,
       enablingUniForm: Boolean): LastConvertedIcebergInfo = {
     val baseMetadataLocation =
-      catalogTable.properties.get(IcebergConverter.CATALOG_TABLE_ICEBERG_METADATA_LOCATION)
+      catalogTable.properties.get(IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP)
     val lastDeltaVersionConverted =
       catalogTable.properties.get(
-        IcebergConverter.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION).map(_.toLong)
+        IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP).map(_.toLong)
     val lastConvertedIcebergTable =
       baseMetadataLocation.map(new HadoopTables(deltaLog.newDeltaHadoopConf()).load(_))
     val lastConvertedIcebergSnapshotId =

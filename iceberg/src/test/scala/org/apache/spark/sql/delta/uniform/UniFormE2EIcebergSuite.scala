@@ -24,18 +24,21 @@ import io.delta.storage.commit.{CommitCoordinatorClient => JCommitCoordinatorCli
 import io.delta.storage.commit.{TableIdentifier => UCTableIdentifier}
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
+import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.{SparkConf, SparkSessionSwitch}
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.connector.catalog.{Identifier, Table}
+import org.apache.spark.sql.connector.catalog.{
+  Identifier, Table
+}
 import org.apache.spark.sql.delta.DeltaConfigs.{
   COORDINATED_COMMITS_COORDINATOR_CONF,
   COORDINATED_COMMITS_COORDINATOR_NAME
 }
-import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.{DeltaLog, IcebergConstants}
 import org.apache.spark.sql.delta.NonSparkReadIceberg
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.coordinatedcommits.{
@@ -97,8 +100,8 @@ trait WriteDeltaHMSReadIceberg extends UniFormE2ETest
 /**
  * A [[DeltaCatalog]] subclass that enriches [[CatalogTable]] with the last converted Iceberg
  * metadata from [[InMemoryUCCommitCoordinator]] before loading the table. This simulates what
- * the real UC catalog does: returning [[IcebergConverter.CATALOG_TABLE_ICEBERG_METADATA_LOCATION]]
- * and [[IcebergConverter.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION]] as catalog table
+ * the real UC catalog does: returning [[IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP]]
+ * and [[IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP]] as catalog table
  * properties so that [[IcebergConverter]] can perform incremental conversion.
  */
 class UCBackedDeltaCatalog extends DeltaCatalog {
@@ -112,9 +115,9 @@ class UCBackedDeltaCatalog extends DeltaCatalog {
           .map { meta =>
             val icebergMeta = meta.getIcebergMetadata.get
             catalogTable.copy(properties = catalogTable.properties +
-              (IcebergConverter.CATALOG_TABLE_ICEBERG_METADATA_LOCATION ->
+              (IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP ->
                 icebergMeta.getMetadataLocation) +
-              (IcebergConverter.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION ->
+              (IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP ->
                 icebergMeta.getConvertedDeltaVersion.toString))
           }
       }
@@ -219,16 +222,26 @@ trait WriteDeltaUCCCReadIceberg extends UniFormE2ETest
 
   override protected def readAndVerify(
       table: String, fields: String, orderBy: String, expect: Seq[Row]): Unit = {
-    val tableId = testCoordinator.lastRegisteredTableId
-    assert(tableId != null,
-      s"No table UUID assigned for '$table' - table was not created with CC properties")
     val schema = DeltaLog.forTable(spark, TableIdentifier(table)).update().schema
-    val uniformMetadata = ucCommitCoordinator.getUniformMetadata(tableId)
-    assert(uniformMetadata.isDefined,
-      s"No UniForm metadata found for table '$table' (ID $tableId)")
-    assert(uniformMetadata.get.getIcebergMetadata.isPresent,
-      s"No Iceberg metadata found for table '$table' (ID $tableId)")
-    val icebergMetadataPath = uniformMetadata.get.getIcebergMetadata.get.getMetadataLocation
+    // Try the CC coordinator first (populated after the first CC commit, i.e., any INSERT).
+    // Fall back to catalog table properties, which are written by withUniformMetadata at
+    // CREATE TABLE / CTAS time before any CC commit has been made.
+    val icebergMetadataPath =
+      Option(testCoordinator.lastRegisteredTableId).flatMap { tableId =>
+        ucCommitCoordinator.getUniformMetadata(tableId)
+          .filter(_.getIcebergMetadata.isPresent)
+          .map(_.getIcebergMetadata.get.getMetadataLocation)
+      }.getOrElse {
+        spark.sessionState.catalog
+          .getTableMetadata(TableIdentifier(table))
+          .properties
+          .getOrElse(
+            IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP,
+            throw new AssertionError(
+              s"No Iceberg metadata found for '$table' i" +
+                s"n CC coordinator or catalog properties")
+          )
+      }
     verifyReadByPath(icebergMetadataPath, schema, fields, orderBy, expect)
   }
 }
@@ -239,7 +252,32 @@ trait WriteDeltaUCCCReadIceberg extends UniFormE2ETest
  */
 class UniFormE2EIcebergUCSuite extends UniFormE2EIcebergSuiteBase
     with WriteDeltaUCCCReadIceberg {
-  // No test should go here. Please add tests in [[UniFormE2EIcebergSuiteBase]]
+  // Generic tests belong in [[UniFormE2EIcebergSuiteBase]].
+  // Tests below are specific to the UC-coordinator CREATE TABLE flow.
   override def extraTableProperties(compatVersion: Int): String =
     super.extraTableProperties(compatVersion) + requiredTableProperties
+
+  test("CTAS stores Iceberg metadata for immediate read") {
+    withTable(testTableName) {
+      write(
+        s"""CREATE TABLE $testTableName
+           |USING DELTA
+           |TBLPROPERTIES (
+           |  'delta.columnMapping.mode' = 'name',
+           |  'delta.enableIcebergCompatV2' = 'true',
+           |  'delta.universalFormat.enabledFormats' = 'iceberg'
+           |  ${extraTableProperties(2)}
+           |)
+           |AS SELECT 1 AS col1""".stripMargin)
+      readAndVerify(testTableName, "col1", "col1", Seq(Row(1)))
+      writeAndVerify(
+        s"INSERT INTO $testTableName VALUES (2)",
+        isAtomicMode = isAtomicConversionEnabled,
+        verifyFullOrIncrementalOpt = Some(
+          VerifyFullOrIncremental(testTableName, isIncremental = true)
+        )
+      )
+      readAndVerify(testTableName, "col1", "col1", Seq(Row(1), Row(2)))
+    }
+  }
 }
