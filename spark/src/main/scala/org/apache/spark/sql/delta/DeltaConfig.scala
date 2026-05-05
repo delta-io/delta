@@ -850,6 +850,15 @@ trait DeltaConfigsBase extends DeltaLogging {
     validationFunction = _ => true,
     helpMessage = "needs to be a boolean."
   )
+
+  val ICEBERG_COMPAT_V3_ENABLED = buildConfig[Option[Boolean]](
+    key = "enableIcebergCompatV3",
+    defaultValue = null,
+    fromString = v => Option(v).map(_.toBoolean),
+    validationFunction = _ => true,
+    helpMessage = "needs to be a boolean."
+  )
+
   /**
    * Guard property automatically set when a new IcebergCompat table is created
    * Atomic UniForm Iceberg conversion requires this property to be present

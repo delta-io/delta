@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.DeltaConfigs._
 import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, Protocol}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -25,6 +26,7 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.internal.MDC
+import org.apache.spark.internal.config.ConfigEntry
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.types._
@@ -75,6 +77,91 @@ object IcebergCompatV2 extends IcebergCompatBase(
     CheckTypeWideningSupported
   )
 )
+object CheckTypeInV3AllowList extends CheckTypeInAllowList {
+  val v3OnlyTypes = Set[Class[_]](VariantType.getClass)
+  val v3GeoSpatialTypes = Set[Class[_]]()
+  override val allowTypes: Set[Class[_]] =
+    CheckTypeInV2AllowList.allowTypes ++ v3OnlyTypes ++ v3GeoSpatialTypes
+}
+
+object RequireRowTracking extends RequiredDeltaTableProperty(
+  deltaConfig = DeltaConfigs.ROW_TRACKING_ENABLED,
+  validator = (b: Boolean) => b,
+  autoSetValue = "true",
+  autoEnableOnExistingTable = true)
+
+object IcebergCompatV3 extends IcebergCompatBase(
+  version = 3,
+  icebergFormatVersion = 3,
+  config = DeltaConfigs.ICEBERG_COMPAT_V3_ENABLED,
+  tableFeature = IcebergCompatV3TableFeature,
+  relatedTableProperties = Seq(RequireColumnMapping, RequireRowTracking, OptionalAtomicEligible),
+  checks = Seq(
+    CheckOnlySingleVersionEnabled,
+    CheckAddFileHasStats,
+    CheckTypeInV3AllowList,
+    CheckPartitionDataTypeInV2AllowList,
+    CheckNoPartitionEvolution,
+    CheckTypeWideningSupported,
+    CheckCannotDisableCompat,
+    CheckColumnDefaultIsLiteral,
+    CheckNoRowTrackingBeforeUpgradeV3,
+    CheckAnySQLConf(Seq(
+      DeltaSQLConf.DELTA_UNIFORM_ICEBERG_TABLE_V3_ENABLED
+    ))
+  )
+) {
+  override def shouldAutoEnable(schema: StructType, properties: Map[String, String]): Boolean = {
+    val hasV3Properties = Set(ROW_TRACKING_ENABLED.key, ENABLE_DELETION_VECTORS_CREATION.key)
+      .exists(properties.get(_).exists(_ == "true"))
+    // Other iceberg v3 types (nano, etc) will be supported in future versions
+    val hasVariant = SchemaUtils.checkForVariantTypeColumnsRecursively(schema)
+    val hasSimpleV3Type = CheckTypeInV3AllowList.v3OnlyTypes
+      .filterNot(_ == VariantType.getClass)
+      .exists(targetClass => SchemaUtils.typeExistsRecursively(schema)(_.getClass == targetClass))
+    val hasDefaultValue = schema.fields
+      .exists(DeltaColumnDefaults.hasLiteralDefault)
+    val hasGeoSpatial = CheckTypeInV3AllowList.v3GeoSpatialTypes
+      .exists(targetClass =>
+        SchemaUtils.typeExistsRecursively(schema)(_.getClass == targetClass))
+
+    hasV3Properties || hasVariant || hasSimpleV3Type || hasDefaultValue || hasGeoSpatial
+  }
+
+  /**
+   * Automatically adjusts table properties to switch from v2 to v3 when certain
+   * v3-related features are enabled.
+   *
+   * If `ICEBERG_COMPAT_V3_ENABLED` is already true in `newEnabledConf`, no changes are made.
+   * Otherwise, if any v3-specific properties (e.g., row tracking or deletion vectors) are
+   * just enabled while the table is still on v2, update the settings to disable v2 and enable v3.
+   *
+   * @param newEnabledConf New configuration properties to be applied.
+   * @param table The Delta table being updated.
+   * @return Updated property map reflecting any necessary switch from v2 to v3.
+   */
+  def propertiesToEnable(
+      newEnabledConf: Map[String, String], table: DeltaTableV2): Map[String, String] = {
+    if (newEnabledConf.getOrElse(
+      DeltaConfigs.ICEBERG_COMPAT_V3_ENABLED.key, "false").toBoolean) {
+      return newEnabledConf
+    }
+
+    val hasV3PropertiesJustEnabled =
+      Set(ROW_TRACKING_ENABLED.key, ENABLE_DELETION_VECTORS_CREATION.key)
+      .exists(newEnabledConf.get(_).exists(_ == "true"))
+
+    if (hasV3PropertiesJustEnabled && table.properties().getOrDefault(
+        DeltaConfigs.ICEBERG_COMPAT_V2_ENABLED.key, "false").toBoolean) {
+      newEnabledConf ++ Map(
+        DeltaConfigs.ICEBERG_COMPAT_V2_ENABLED.key -> "false",
+        DeltaConfigs.ICEBERG_COMPAT_V3_ENABLED.key -> "true")
+    } else {
+      newEnabledConf
+    }
+  }
+}
+
 
 /**
  * All IcebergCompatVx should extend from this base class
@@ -140,6 +227,25 @@ case class IcebergCompatBase(
     val isCreatingOrReorgTable = UniversalFormat.isCreatingOrReorgTable(operation)
 
     (wasEnabled, isEnabled) match {
+      // disable compat, block if necessary
+      case (true, false) =>
+        checks.foreach {
+          case check @ CheckCannotDisableCompat =>
+            val context = IcebergCompatContext(
+              spark,
+              catalogTable,
+              prevSnapshot,
+              newestProtocol,
+              newestMetadata,
+              operation,
+              actions,
+              tableId,
+              version
+            )
+            check.apply(context)
+          case _ => // do nth
+        }
+        (None, None)
       case (_, false) => (None, None) // not enable or disabling, Ignore
       case (_, true) => // Enabling now or already-enabled
         val tblFeatureUpdates = scala.collection.mutable.Set.empty[TableFeature]
@@ -318,7 +424,7 @@ case class IcebergCompatVersionBase(knownVersions: Set[IcebergCompatBase]) {
 }
 
 object IcebergCompat extends IcebergCompatVersionBase(
-    Set(IcebergCompatV1, IcebergCompatV2)
+    Set(IcebergCompatV1, IcebergCompatV2, IcebergCompatV3)
   ) with DeltaLogging
 
 
@@ -390,6 +496,16 @@ object OptionalAtomicEligible extends OptionalDeltaTableProperty(
   shouldExistingValuesBeingPreserved = true
 )
 
+
+case class CheckAnySQLConf(confs: Seq[ConfigEntry[Boolean]]) extends IcebergCompatCheck {
+  override def apply(context: IcebergCompatContext): Unit = {
+    val spark = context.spark
+    if (!confs.exists(conf => spark.conf.get(conf))) {
+      val keys = confs.map(_.key).mkString(", ")
+      throw DeltaErrors.icebergCompatConfigNotEnabled(context.version, keys)
+    }
+  }
+}
 
 case class IcebergCompatContext(
     spark: SparkSession,
@@ -584,3 +700,50 @@ object CheckTypeWideningSupported extends IcebergCompatCheck {
     }
   }
 }
+
+object CheckCannotDisableCompat extends IcebergCompatCheck {
+  override def apply(context: IcebergCompatContext): Unit = {
+    // block if this is not create table and iceberg compat 3+ is disabled
+    if (context.prevSnapshot.version >= 0 &&
+      IcebergCompat.isGeqEnabled(context.prevMetadata, 3) &&
+      !IcebergCompat.isGeqEnabled(context.newestMetadata, 3)) {
+      throw new UnsupportedOperationException("IcebergCompat cannot be disabled")
+    }
+  }
+}
+
+object CheckColumnDefaultIsLiteral extends IcebergCompatCheck {
+  override def apply(context: IcebergCompatContext): Unit = {
+    val schema = context.newestMetadata.schema
+    schema.fields
+      .find(field =>
+        DeltaColumnDefaults.hasWriteDefault(field) &&
+          !DeltaColumnDefaults.hasLiteralDefault(field))
+      .foreach(field =>
+        throw DeltaErrors.icebergCompatUnsupportedFieldException(context.version, field, schema)
+      )
+    }
+}
+
+/**
+ * Check that RowTracking is disabled before enabling Iceberg Compat V3
+ * via an ALTER TABLE operation.
+ *
+ * This ensures that if the target table's current protocol and metadata
+ * indicate RowTracking is enabled, users cannot directly upgrade to
+ * Iceberg Compat V3 using ALTER TABLE without disabling RowTracking first.
+ */
+object CheckNoRowTrackingBeforeUpgradeV3 extends IcebergCompatCheck {
+  override def apply(context: IcebergCompatContext): Unit = {
+    context.operation match {
+      case Some(_ : DeltaOperations.SetTableProperties)
+        if !IcebergCompat.isGeqEnabled(context.prevMetadata, 3) &&
+          RowTracking.isEnabled(context.prevProtocol, context.prevMetadata) =>
+        throw new UnsupportedOperationException(
+          "Alter Table enable icebergCompatV3 with RowTracking enabled is not supported. " +
+            "Please disable RowTracking first.")
+      case _ => // pass
+    }
+  }
+}
+
