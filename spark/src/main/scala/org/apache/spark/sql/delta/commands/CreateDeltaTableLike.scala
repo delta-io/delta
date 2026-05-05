@@ -16,9 +16,12 @@
 
 package org.apache.spark.sql.delta.commands
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaOptions, Snapshot}
+import java.time.Instant
+
+import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeltaErrors, DeltaOptions, IcebergConstants, Snapshot, UniversalFormat}
 import org.apache.spark.sql.delta.hooks.{UpdateCatalog, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 
 import org.apache.spark.sql.{SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.SQLConfHelper
@@ -82,6 +85,41 @@ trait CreateDeltaTableLike extends SQLConfHelper {
   }
 
   /**
+   * Generates UniForm Iceberg metadata for a newly created table and injects it into the
+   * [[CatalogTable]] properties so the UC createTable API receives
+   * the Iceberg metadata location.
+   * Returns the table unchanged if Iceberg is not enabled.
+   */
+  protected def withUniformMetadata(
+      snapshot: Snapshot, catalogTable: CatalogTable): CatalogTable = {
+    if (!UniversalFormat.icebergEnabled(snapshot.metadata)) return catalogTable
+    val deltaLog = snapshot.deltaLog
+    val dummyTxnInfo = CurrentTransactionInfo.forIcebergConversion(
+      metadata = snapshot.metadata,
+      protocol = snapshot.protocol,
+      readSnapshot = snapshot,
+      actions = snapshot.allFiles.collect().toSeq
+    )
+    val (metadataPath, _) = deltaLog.icebergConverter.convertUncommitedTxn(
+      dummyTxnInfo, snapshot.version, deltaLog, catalogTable)
+    val uniformMetadata = new UniformMetadata(
+      new IcebergMetadata(metadataPath, snapshot.version, Instant.now().toString))
+    catalogTable.copy(
+      properties = catalogTable.properties ++ uniformMetadataToProperties(uniformMetadata))
+  }
+
+  private def uniformMetadataToProperties(uniformMetadata: UniformMetadata): Map[String, String] = {
+    val iceberg = uniformMetadata.getIcebergMetadata.get()
+    Map(
+      IcebergConstants.UNIFORM_ICEBERG_METADATA_LOCATION_PROP  -> iceberg.getMetadataLocation,
+      IcebergConstants.UNIFORM_ICEBERG_CONVERTED_VERSION_PROP  ->
+        iceberg.getConvertedDeltaVersion.toString,
+      IcebergConstants.UNIFORM_ICEBERG_CONVERTED_TIMESTAMP_PROP ->
+        iceberg.getConvertedDeltaTimestamp
+    )
+  }
+
+  /**
    * Here we disambiguate the catalog alterations we need to do based on the table operation, and
    * whether we have reached here through legacy code or DataSourceV2 code paths.
    */
@@ -98,7 +136,7 @@ trait CreateDeltaTableLike extends SQLConfHelper {
       case _ if tableByPath => // do nothing with the metastore if this is by path
       case TableCreationModes.Create =>
         if (createTableFunc.isDefined) {
-          createTableFunc.get.apply(cleaned)
+          createTableFunc.get.apply(withUniformMetadata(snapshot, cleaned))
         } else {
           spark.sessionState.catalog.createTable(
             cleaned,
@@ -120,7 +158,7 @@ trait CreateDeltaTableLike extends SQLConfHelper {
           case Some(createFunc) =>
             // This is the new missing-table path where creation is delegated through the V2
             // catalog plugin (for example Unity Catalog) instead of SessionCatalog.createTable().
-            createFunc(cleaned)
+            createFunc(withUniformMetadata(snapshot, cleaned))
           case None =>
             spark.sessionState.catalog.createTable(
               cleaned,
