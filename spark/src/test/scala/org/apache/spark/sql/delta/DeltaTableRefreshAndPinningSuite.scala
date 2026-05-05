@@ -25,7 +25,7 @@ import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.{DataType, IntegerType, MetadataBuilder, StringType, StructField, StructType}
+import org.apache.spark.sql.types.{DataType, IntegerType, LongType, MetadataBuilder, StringType, StructField, StructType}
 import org.apache.spark.util.Utils
 
 /**
@@ -43,7 +43,6 @@ import org.apache.spark.util.Utils
  * The base trait is parameterized by:
  *   - V2_ENABLE_MODE (NONE, AUTO) for connector mode coverage
  *   - useExternalSession: when true, writes go through spark.newSession()
- *   - stalenessLimitMs: configures the staleness time limit for async updates
  *
  * Important notes on parameterization:
  *
@@ -54,20 +53,6 @@ import org.apache.spark.util.Utils
  * to a true external writer (separate JVM/cluster). We parameterize with it anyway to verify
  * that the behavior is indeed identical, which documents that Delta's refresh mechanism is
  * driven by the shared DeltaLog, not by Spark's session-level catalog state.
- *
- * Staleness limit (stalenessLimitMs): The delta.stalenessLimit config controls whether
- * deltaLog.update() returns a cached snapshot without doing a filesystem listing. However,
- * since all writes in the same JVM go through the shared DeltaLog and update currentSnapshot
- * as a side effect of committing, the staleness limit has no observable effect in single-JVM
- * tests for normal writes. The snapshot is always already fresh by the time the reader queries
- * it. We parameterize with a high staleness limit to verify that most behaviors are identical,
- * documenting this JVM-level constraint.
- *
- * The exception is Section [5] scenario 6, which writes a commit directly to the filesystem
- * via [[org.apache.spark.sql.delta.storage.LogStore]], bypassing the DeltaLog API entirely.
- * This simulates an external process/cluster and is the only scenario where staleness limit
- * produces observably different results: with staleness = 0 the reader discovers the new
- * commit immediately, while with a high staleness limit the reader returns the cached snapshot.
  */
 trait DeltaTableRefreshAndPinningSuiteBase
   extends QueryTest
@@ -87,20 +72,10 @@ trait DeltaTableRefreshAndPinningSuiteBase
    */
   protected def useExternalSession: Boolean = false
 
-  /**
-   * Override in subclasses to set a non-zero staleness limit. Note that in a single JVM,
-   * writes update DeltaLog.currentSnapshot in place, so the staleness limit has no observable
-   * effect: the snapshot is already fresh before the reader queries it. To observe staleness,
-   * writes must come from a separate process. See class scaladoc for details.
-   */
-  protected def stalenessLimitMs: Long = 0L
-
   override protected def sparkConf: SparkConf = {
     super.sparkConf
       .set(DeltaSQLConf.DELTA_ALTER_TABLE_DROP_COLUMN_ENABLED.key, "true")
       .set(DeltaSQLConf.V2_ENABLE_MODE.key, v2EnableMode)
-      .set(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key,
-        s"${stalenessLimitMs}ms")
   }
 
   /**
@@ -147,7 +122,6 @@ trait DeltaTableRefreshAndPinningSuiteBase
    * updated. The DeltaLog.currentSnapshot is NOT updated (the commit
    * bypasses DeltaLog.commit()). This means:
    * - CacheManager plan matching still uses the old snapshot -> cache hit
-   * - deltaLog.update(stalenessAcceptable=true) respects stalenessLimit
    */
   protected def writeExternalCommit(
       tableName: String,
@@ -268,28 +242,6 @@ trait DeltaTableRefreshAndPinningSuiteBase
         s"col-ext-${java.util.UUID.randomUUID().toString.take(8)}")
       .build()
     StructField(name, dataType, nullable, meta)
-  }
-
-  /**
-   * Blocks the async update in [[SnapshotManagement.update]] to make staleness
-   * behavior deterministic on local disk. In production, the foreground thread
-   * returns the stale snapshot before the background filesystem listing completes.
-   * On local disk the listing is near instant, so the async task can update
-   * currentSnapshot before the foreground reads it. Setting asyncUpdateTask to
-   * a non completed future prevents a new async task from being submitted
-   * (line 1104 guard), guaranteeing the stale snapshot is returned.
-   */
-  private def withBlockedAsyncUpdate(tableName: String)(body: => Unit): Unit = {
-    val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
-    val savedTask = deltaLog.asyncUpdateTask
-    val blockingFuture = new java.util.concurrent.CompletableFuture[Unit]()
-    deltaLog.asyncUpdateTask = blockingFuture
-    try {
-      body
-    } finally {
-      blockingFuture.complete(())
-      deltaLog.asyncUpdateTask = savedTask
-    }
   }
 
   // ---------------------------------------------------------------------------
@@ -445,9 +397,6 @@ trait DeltaTableRefreshAndPinningSuiteBase
   // ---------------------------------------------------------------------------
   // Section [1] external: Temp views with external modifications
   // These test the "Connector w/ cache" behavior from the design doc.
-  // With high stalenessLimit, external changes are invisible because
-  // deltaLog.update(stalenessAcceptable=true) returns the cached snapshot
-  // without doing a filesystem listing.
   // ---------------------------------------------------------------------------
 
   test("[1] scenario 1 external: temp view with external data write") {
@@ -460,19 +409,9 @@ trait DeltaTableRefreshAndPinningSuiteBase
 
       writeExternalCommit("t", Seq((2, 200)).toDF("id", "salary"))
 
-      if (stalenessLimitMs == 0L) {
-        checkAnswer(
-          sql("SELECT * FROM v ORDER BY id"),
-          Seq(Row(1, 100), Row(2, 200)))
-      } else {
-        // In production (HDFS/S3), the background listing takes real time,
-        // so the foreground always returns the stale snapshot before the async
-        // task completes. On local disk the listing is near instant and the
-        // async task can win the race. Block it to simulate production timing.
-        withBlockedAsyncUpdate("t") {
-          checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
-        }
-      }
+      checkAnswer(
+        sql("SELECT * FROM v ORDER BY id"),
+        Seq(Row(1, 100), Row(2, 200)))
     }
   }
 
@@ -495,20 +434,10 @@ trait DeltaTableRefreshAndPinningSuiteBase
         Seq((2, 200, -1)).toDF("id", "salary", "new_column"),
         newMetadata = Some(newMetadata))
 
-      if (stalenessLimitMs == 0L) {
-        // View preserves original schema (id, salary) but picks up new data
-        checkAnswer(
-          sql("SELECT * FROM v ORDER BY id"),
-          Seq(Row(1, 100), Row(2, 200)))
-      } else {
-        // In production (HDFS/S3), the background listing takes real time,
-        // so the foreground always returns the stale snapshot before the async
-        // task completes. On local disk the listing is near instant and the
-        // async task can win the race. Block it to simulate production timing.
-        withBlockedAsyncUpdate("t") {
-          checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
-        }
-      }
+      // View preserves original schema (id, salary) but picks up new data
+      checkAnswer(
+        sql("SELECT * FROM v ORDER BY id"),
+        Seq(Row(1, 100), Row(2, 200)))
     }
   }
 
@@ -528,23 +457,13 @@ trait DeltaTableRefreshAndPinningSuiteBase
 
       writeExternalMetadataOnlyCommit("t", newMetadata)
 
-      if (stalenessLimitMs == 0L) {
-        checkError(
-          exception = intercept[DeltaAnalysisException] {
-            sql("SELECT * FROM v").collect()
-          },
-          condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
-          parameters = Map("schemaDiff" -> "(?s).*", "legacyFlagMessage" -> ""),
-          matchPVals = true)
-      } else {
-        // In production (HDFS/S3), the background listing takes real time,
-        // so the foreground always returns the stale snapshot before the async
-        // task completes. On local disk the listing is near instant and the
-        // async task can win the race. Block it to simulate production timing.
-        withBlockedAsyncUpdate("t") {
-          checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
-        }
-      }
+      checkError(
+        exception = intercept[DeltaAnalysisException] {
+          sql("SELECT * FROM v").collect()
+        },
+        condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
+        parameters = Map("schemaDiff" -> "(?s).*", "legacyFlagMessage" -> ""),
+        matchPVals = true)
     }
   }
 
@@ -559,23 +478,13 @@ trait DeltaTableRefreshAndPinningSuiteBase
 
       writeExternalDropAndRecreateCommit("t", columnMapping = true)
 
-      if (stalenessLimitMs == 0L) {
-        checkError(
-          exception = intercept[DeltaAnalysisException] {
-            sql("SELECT * FROM v").collect()
-          },
-          condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
-          parameters = Map("schemaDiff" -> "(?s).*", "legacyFlagMessage" -> ""),
-          matchPVals = true)
-      } else {
-        // In production (HDFS/S3), the background listing takes real time,
-        // so the foreground always returns the stale snapshot before the async
-        // task completes. On local disk the listing is near instant and the
-        // async task can win the race. Block it to simulate production timing.
-        withBlockedAsyncUpdate("t") {
-          checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
-        }
-      }
+      checkError(
+        exception = intercept[DeltaAnalysisException] {
+          sql("SELECT * FROM v").collect()
+        },
+        condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
+        parameters = Map("schemaDiff" -> "(?s).*", "legacyFlagMessage" -> ""),
+        matchPVals = true)
     }
   }
 
@@ -590,18 +499,8 @@ trait DeltaTableRefreshAndPinningSuiteBase
 
       writeExternalDropAndRecreateCommit("t", columnMapping = false)
 
-      if (stalenessLimitMs == 0L) {
-        // Without column mapping, no column ID check. Existing data is removed.
-        checkAnswer(sql("SELECT * FROM v"), Seq.empty)
-      } else {
-        // In production (HDFS/S3), the background listing takes real time,
-        // so the foreground always returns the stale snapshot before the async
-        // task completes. On local disk the listing is near instant and the
-        // async task can win the race. Block it to simulate production timing.
-        withBlockedAsyncUpdate("t") {
-          checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
-        }
-      }
+      // Without column mapping, no column ID check. Existing data is removed.
+      checkAnswer(sql("SELECT * FROM v"), Seq.empty)
     }
   }
 
@@ -629,23 +528,13 @@ trait DeltaTableRefreshAndPinningSuiteBase
 
       writeExternalMetadataOnlyCommit("t", newMetadata)
 
-      if (stalenessLimitMs == 0L) {
-        checkError(
-          exception = intercept[DeltaAnalysisException] {
-            sql("SELECT * FROM v").collect()
-          },
-          condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
-          parameters = Map("schemaDiff" -> "(?s).*", "legacyFlagMessage" -> ""),
-          matchPVals = true)
-      } else {
-        // In production (HDFS/S3), the background listing takes real time,
-        // so the foreground always returns the stale snapshot before the async
-        // task completes. On local disk the listing is near instant and the
-        // async task can win the race. Block it to simulate production timing.
-        withBlockedAsyncUpdate("t") {
-          checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
-        }
-      }
+      checkError(
+        exception = intercept[DeltaAnalysisException] {
+          sql("SELECT * FROM v").collect()
+        },
+        condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
+        parameters = Map("schemaDiff" -> "(?s).*", "legacyFlagMessage" -> ""),
+        matchPVals = true)
     }
   }
 
@@ -673,23 +562,47 @@ trait DeltaTableRefreshAndPinningSuiteBase
 
       writeExternalMetadataOnlyCommit("t", newMetadata)
 
-      if (stalenessLimitMs == 0L) {
-        checkError(
-          exception = intercept[DeltaAnalysisException] {
-            sql("SELECT * FROM v").collect()
-          },
-          condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
-          parameters = Map("schemaDiff" -> "(?s).*", "legacyFlagMessage" -> ""),
-          matchPVals = true)
-      } else {
-        // In production (HDFS/S3), the background listing takes real time,
-        // so the foreground always returns the stale snapshot before the async
-        // task completes. On local disk the listing is near instant and the
-        // async task can win the race. Block it to simulate production timing.
-        withBlockedAsyncUpdate("t") {
-          checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
-        }
-      }
+      checkError(
+        exception = intercept[DeltaAnalysisException] {
+          sql("SELECT * FROM v").collect()
+        },
+        condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
+        parameters = Map("schemaDiff" -> "(?s).*", "legacyFlagMessage" -> ""),
+        matchPVals = true)
+    }
+  }
+
+  test("[1] scenario 7 external: temp view after external type widening INT to BIGINT") {
+    withTable("t") {
+      sql(
+        """CREATE TABLE t (id INT, salary INT) USING delta
+          |TBLPROPERTIES (
+          |  'delta.columnMapping.mode' = 'name',
+          |  'delta.enableTypeWidening' = 'true'
+          |)""".stripMargin)
+      insertInitialData("t")
+
+      spark.table("t").filter("salary < 999").createOrReplaceTempView("v")
+      checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
+
+      // External type widening: change salary from INT to BIGINT
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("t"))
+      val currentMetadata = deltaLog.snapshot.metadata
+      val newSchema = StructType(
+        currentMetadata.schema.fields.map { field =>
+          if (field.name == "salary") field.copy(dataType = LongType) else field
+        })
+      val newMetadata = currentMetadata.copy(schemaString = newSchema.json)
+
+      writeExternalMetadataOnlyCommit("t", newMetadata)
+
+      checkError(
+        exception = intercept[DeltaAnalysisException] {
+          sql("SELECT * FROM v").collect()
+        },
+        condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
+        parameters = Map("schemaDiff" -> "(?s).*", "legacyFlagMessage" -> ""),
+        matchPVals = true)
     }
   }
 
@@ -745,8 +658,6 @@ trait DeltaTableRefreshAndPinningSuiteBase
   // ---------------------------------------------------------------------------
   // Section [2] external: Repeated table access with external modifications
   // These test the "Connector w/ cache" behavior from the design doc.
-  // With high stalenessLimit, external changes are invisible because
-  // deltaLog.update(stalenessAcceptable=true) returns the cached snapshot.
   // ---------------------------------------------------------------------------
 
   test("[2] scenario 1 external: repeated access picks up external data") {
@@ -758,13 +669,9 @@ trait DeltaTableRefreshAndPinningSuiteBase
 
       writeExternalCommit("t", Seq((2, 200)).toDF("id", "salary"))
 
-      if (stalenessLimitMs == 0L) {
-        checkAnswer(
-          sql("SELECT * FROM t ORDER BY id"),
-          Seq(Row(1, 100), Row(2, 200)))
-      } else {
-        checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
-      }
+      checkAnswer(
+        sql("SELECT * FROM t ORDER BY id"),
+        Seq(Row(1, 100), Row(2, 200)))
     }
   }
 
@@ -786,13 +693,9 @@ trait DeltaTableRefreshAndPinningSuiteBase
         Seq((2, 200, -1)).toDF("id", "salary", "new_column"),
         newMetadata = Some(newMetadata))
 
-      if (stalenessLimitMs == 0L) {
-        checkAnswer(
-          sql("SELECT * FROM t ORDER BY id"),
-          Seq(Row(1, 100, null), Row(2, 200, -1)))
-      } else {
-        checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
-      }
+      checkAnswer(
+        sql("SELECT * FROM t ORDER BY id"),
+        Seq(Row(1, 100, null), Row(2, 200, -1)))
     }
   }
 
@@ -805,11 +708,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
 
       writeExternalDropAndRecreateCommit("t", columnMapping = false)
 
-      if (stalenessLimitMs == 0L) {
-        checkAnswer(sql("SELECT * FROM t"), Seq.empty)
-      } else {
-        checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
-      }
+      checkAnswer(sql("SELECT * FROM t"), Seq.empty)
     }
   }
 
@@ -959,6 +858,32 @@ trait DeltaTableRefreshAndPinningSuiteBase
         df1.join(df2, df1("id") === df2("id")).collect()
       }
       assert(e.getErrorClass == "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS")
+    }
+  }
+
+  test("[3] scenario 7: join after ALTER COLUMN TYPE INT to BIGINT (type widening)") {
+    withTable("t") {
+      sql(
+        """CREATE TABLE t (id INT, salary INT) USING delta
+          |TBLPROPERTIES (
+          |  'delta.columnMapping.mode' = 'name',
+          |  'delta.enableTypeWidening' = 'true'
+          |)""".stripMargin)
+      insertInitialData("t")
+
+      val df1 = spark.table("t")
+
+      writerSql("ALTER TABLE t ALTER COLUMN salary TYPE BIGINT")
+
+      val df2 = spark.table("t")
+
+      checkError(
+        exception = intercept[DeltaAnalysisException] {
+          df1.join(df2, df1("id") === df2("id")).collect()
+        },
+        condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
+        parameters = Map("schemaDiff" -> "(?s).*", "legacyFlagMessage" -> ""),
+        matchPVals = true)
     }
   }
 
@@ -1137,6 +1062,30 @@ trait DeltaTableRefreshAndPinningSuiteBase
     }
   }
 
+  test("[4] scenario 7: df after ALTER COLUMN TYPE INT to BIGINT (type widening)") {
+    withTable("t") {
+      sql(
+        """CREATE TABLE t (id INT, salary INT) USING delta
+          |TBLPROPERTIES (
+          |  'delta.columnMapping.mode' = 'name',
+          |  'delta.enableTypeWidening' = 'true'
+          |)""".stripMargin)
+      insertInitialData("t")
+
+      val df = spark.sql("SELECT * FROM t")
+      checkAnswer(df, Row(1, 100))
+
+      writerSql("ALTER TABLE t ALTER COLUMN salary TYPE BIGINT")
+
+      // Fresh SQL re-analyzes with the new schema (salary is now BIGINT).
+      checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
+
+      // collect() on the same DataFrame reuses the cached QueryExecution.
+      // Type widening preserves the physical column, so old data is readable.
+      checkAnswer(df, Row(1, 100))
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Section [5]: CACHE TABLE impact on reads
   // ---------------------------------------------------------------------------
@@ -1154,9 +1103,9 @@ trait DeltaTableRefreshAndPinningSuiteBase
       Seq((2, 200)).toDF("id", "salary")
         .write.format("delta").mode("append").save(path)
 
-      // Delta refreshes table versions via PrepareDeltaScan regardless of
-      // stalenessLimit. The version change breaks the plan shape match in
-      // CacheManager, so the cache entry is not reused and fresh data is returned.
+      // Delta refreshes table versions via PrepareDeltaScan. The version change
+      // breaks the plan shape match in CacheManager, so the cache entry is not
+      // reused and fresh data is returned.
       // This means CACHE TABLE does not truly pin data in Delta.
       checkAnswer(
         sql("SELECT * FROM t ORDER BY id"),
@@ -1183,7 +1132,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
         .write.format("delta").mode("append").save(path)
 
       // After a session write invalidates the cache, Delta picks up all data
-      // from the log regardless of stalenessLimit.
+      // from the log.
       checkAnswer(
         sql("SELECT * FROM t ORDER BY id"),
         Seq(Row(1, 100), Row(2, 200), Row(3, 300)))
@@ -1207,7 +1156,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
         .write.format("delta").mode("append").save(path)
 
       // Schema change breaks the plan-shape match in CacheManager,
-      // so the cache is effectively invalidated regardless of stalenessLimit.
+      // so the cache is effectively invalidated.
       checkAnswer(
         sql("SELECT * FROM t ORDER BY id"),
         Seq(Row(1, 100, null), Row(2, 200, -1)))
@@ -1233,7 +1182,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
         .write.format("delta").mode("append").save(path)
 
       // Schema change from the session invalidates the cache.
-      // Delta picks up all data regardless of stalenessLimit.
+      // Delta picks up all data.
       checkAnswer(
         sql("SELECT * FROM t ORDER BY id"),
         Seq(Row(1, 100, null), Row(2, 200, -1)))
@@ -1279,16 +1228,10 @@ trait DeltaTableRefreshAndPinningSuiteBase
 
       sql("UNCACHE TABLE IF EXISTS t")
 
-      // After uncaching, fresh query calls deltaLog.update() which discovers
-      // the external commit when stalenessLimit=0 (forces filesystem listing).
-      // With high stalenessLimit, the stale snapshot is returned unchanged.
-      if (stalenessLimitMs == 0L) {
-        checkAnswer(
-          sql("SELECT * FROM t ORDER BY id"),
-          Seq(Row(1, 100), Row(2, 200)))
-      } else {
-        checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
-      }
+      // After uncaching, fresh query discovers the external commit.
+      checkAnswer(
+        sql("SELECT * FROM t ORDER BY id"),
+        Seq(Row(1, 100), Row(2, 200)))
     }
   }
 
@@ -1316,7 +1259,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
       // After uncaching, fresh query discovers all data including external write.
       // The session INSERT updated DeltaLog.currentSnapshot to version 2, and
       // UNCACHE TABLE's table resolution triggers a deltaLog.update() that
-      // discovers the external commit at version 3 regardless of stalenessLimit.
+      // discovers the external commit at version 3.
       checkAnswer(
         sql("SELECT * FROM t ORDER BY id"),
         Seq(Row(1, 100), Row(2, 200), Row(3, 300)))
@@ -1346,32 +1289,19 @@ trait DeltaTableRefreshAndPinningSuiteBase
         Seq((2, 200, -1)).toDF("id", "salary", "new_column"),
         newMetadata = Some(newMetadata))
 
-      // With stalenessLimit=0: deltaLog.update() lists filesystem, discovers
-      //   the schema change. New schema in analyzed plan doesn't match cached
-      //   plan -> cache miss -> fresh data visible.
-      //   Matches doc: schema changes break table state pinning.
-      //
-      // With stalenessLimit>0: stale snapshot returned, cache holds.
-      if (stalenessLimitMs == 0L) {
-        checkAnswer(
-          sql("SELECT * FROM t ORDER BY id"),
-          Seq(Row(1, 100, null), Row(2, 200, -1)))
-      } else {
-        checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
-      }
+      // deltaLog.update() lists filesystem, discovers the schema change.
+      // New schema in analyzed plan doesn't match cached plan -> cache miss
+      // -> fresh data visible. Matches doc: schema changes break table state pinning.
+      checkAnswer(
+        sql("SELECT * FROM t ORDER BY id"),
+        Seq(Row(1, 100, null), Row(2, 200, -1)))
 
       sql("UNCACHE TABLE IF EXISTS t")
 
-      // After uncaching, fresh query calls deltaLog.update() which discovers
-      // the external commit when stalenessLimit=0 (forces filesystem listing).
-      // With high stalenessLimit, the stale snapshot is returned unchanged.
-      if (stalenessLimitMs == 0L) {
-        checkAnswer(
-          sql("SELECT * FROM t ORDER BY id"),
-          Seq(Row(1, 100, null), Row(2, 200, -1)))
-      } else {
-        checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
-      }
+      // After uncaching, fresh query discovers the external commit.
+      checkAnswer(
+        sql("SELECT * FROM t ORDER BY id"),
+        Seq(Row(1, 100, null), Row(2, 200, -1)))
     }
   }
 
@@ -1391,26 +1321,17 @@ trait DeltaTableRefreshAndPinningSuiteBase
       writeExternalCommit("t", Seq((2, 200, -1)).toDF("id", "salary", "new_column"))
 
       // Session schema change breaks cache. Next query re-analyzes.
-      // With stalenessLimit=0: listing discovers external write too.
-      //   Matches doc: (1,100,null),(2,200,-1)
-      // With stalenessLimit>0: external write not discovered.
-      //   Session change visible: (1,100,null) only.
-      if (stalenessLimitMs == 0L) {
-        checkAnswer(
-          sql("SELECT * FROM t ORDER BY id"),
-          Seq(Row(1, 100, null), Row(2, 200, -1)))
-      } else {
-        checkAnswer(
-          sql("SELECT * FROM t ORDER BY id"),
-          Seq(Row(1, 100, null)))
-      }
+      // Listing discovers external write too. Matches doc: (1,100,null),(2,200,-1)
+      checkAnswer(
+        sql("SELECT * FROM t ORDER BY id"),
+        Seq(Row(1, 100, null), Row(2, 200, -1)))
 
       sql("UNCACHE TABLE IF EXISTS t")
 
       // After uncaching, fresh query discovers all data including external write.
       // The session ALTER TABLE updated DeltaLog.currentSnapshot, and
       // UNCACHE TABLE's table resolution triggers a deltaLog.update() that
-      // discovers the external commit regardless of stalenessLimit.
+      // discovers the external commit.
       checkAnswer(
         sql("SELECT * FROM t ORDER BY id"),
         Seq(Row(1, 100, null), Row(2, 200, -1)))
@@ -1419,24 +1340,16 @@ trait DeltaTableRefreshAndPinningSuiteBase
 }
 
 // ---------------------------------------------------------------------------
-// Concrete test suites parameterized by V2 mode, session type, staleness
+// Concrete test suites parameterized by V2 mode and session type
 // ---------------------------------------------------------------------------
 
-// REMOVED: scenarios 7 and staleLog 1-5 tested DeltaLog.update() API staleness
-// directly, which is NOT what the design doc's CACHE TABLE section describes.
-// The doc's CACHE TABLE scenarios are properly tested by scenarios 6b-6e above,
-// which use writeExternalCommit on named tables with CACHE TABLE SQL.
-
-// Concrete test suites parameterized by V2 mode, session type, staleness
-// ---------------------------------------------------------------------------
-
-/** V2_ENABLE_MODE = NONE, same-session writes, stalenessLimit = 0. */
+/** V2_ENABLE_MODE = NONE, same-session writes. */
 class DeltaTableRefreshAndPinningSuite
   extends DeltaTableRefreshAndPinningSuiteBase {
   override protected def v2EnableMode: String = "NONE"
 }
 
-/** V2_ENABLE_MODE = AUTO (default), same-session writes, stalenessLimit = 0. */
+/** V2_ENABLE_MODE = AUTO (default), same-session writes. */
 class DeltaTableRefreshAndPinningAutoModeSuite
   extends DeltaTableRefreshAndPinningSuiteBase {
   override protected def v2EnableMode: String = "AUTO"
@@ -1463,27 +1376,3 @@ class DeltaTableRefreshAndPinningAutoModeExternalSessionSuite
   override protected def useExternalSession: Boolean = true
 }
 
-/**
- * Sets stalenessLimit to 1 hour. Verifies that behavior is identical to stalenessLimit=0
- * because in a single JVM, writes update DeltaLog.currentSnapshot as a side effect of
- * committing. By the time the reader calls deltaLog.update(stalenessAcceptable = true),
- * the snapshot is already at the latest version, so the staleness check
- * (isCurrentlyStale returns false, doAsync = true, returns cached snapshot) returns
- * a snapshot that already includes the write. To observe different behavior, the write
- * must come from a separate JVM that commits directly to storage.
- */
-class DeltaTableRefreshAndPinningStaleSuite
-  extends DeltaTableRefreshAndPinningSuiteBase {
-  override protected def stalenessLimitMs: Long = 3600000L
-}
-
-/**
- * Combines external session + high staleness limit. Both parameters have no observable
- * effect in a single JVM (see class-level scaladoc), so this suite verifies that the
- * combination also produces identical results.
- */
-class DeltaTableRefreshAndPinningStaleExternalSessionSuite
-  extends DeltaTableRefreshAndPinningSuiteBase {
-  override protected def useExternalSession: Boolean = true
-  override protected def stalenessLimitMs: Long = 3600000L
-}

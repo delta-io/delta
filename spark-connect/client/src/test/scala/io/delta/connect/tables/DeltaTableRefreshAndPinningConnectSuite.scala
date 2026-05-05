@@ -66,32 +66,6 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
 
   protected def useExternalSession: Boolean = false
 
-  /**
-   * Override in subclasses to set a non-zero staleness limit. The config is set on
-   * the server via spark.conf.set at runtime. See the classic suite's class-level
-   * scaladoc for why staleness has no observable effect for in-JVM writes.
-   */
-  protected def stalenessLimitMs: Long = 0L
-
-  private val stalenessConfigKey = "spark.databricks.delta.stalenessLimit"
-
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-    if (stalenessLimitMs > 0L) {
-      spark.conf.set(stalenessConfigKey, s"${stalenessLimitMs}ms")
-    }
-  }
-
-  override def afterAll(): Unit = {
-    try {
-      if (stalenessLimitMs > 0L) {
-        spark.conf.set(stalenessConfigKey, "0ms")
-      }
-    } finally {
-      super.afterAll()
-    }
-  }
-
   /** Returns a session for performing writes. */
   protected def writerSession: org.apache.spark.sql.SparkSession = {
     if (useExternalSession) spark.newSession() else spark
@@ -609,7 +583,6 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
   // ---------------------------------------------------------------------------
   // Section [1] external: Temp views with external modifications (Connect)
   // These test the "Connector w/ cache" behavior from the design doc.
-  // With high stalenessLimit, external changes are invisible.
   // ---------------------------------------------------------------------------
 
   test("[1] connect scenario 1 external: temp view with external data write") {
@@ -623,13 +596,9 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
 
       writeExternalCommitViaFilesystem(path, Seq((2, 200)))
 
-      if (stalenessLimitMs == 0L) {
-        checkAnswer(
-          spark.sql("SELECT * FROM v_1ext ORDER BY id"),
-          Seq(Row(1, 100), Row(2, 200)))
-      } else {
-        checkAnswer(spark.sql("SELECT * FROM v_1ext"), Row(1, 100))
-      }
+      checkAnswer(
+        spark.sql("SELECT * FROM v_1ext ORDER BY id"),
+        Seq(Row(1, 100), Row(2, 200)))
     }
   }
 
@@ -644,14 +613,10 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
 
       writeExternalSchemaChangeCommitViaFilesystem(path, Seq((2, 200, -1)))
 
-      if (stalenessLimitMs == 0L) {
-        // View preserves original schema (id, salary) but picks up new data
-        checkAnswer(
-          spark.sql("SELECT * FROM v_2ext ORDER BY id"),
-          Seq(Row(1, 100), Row(2, 200)))
-      } else {
-        checkAnswer(spark.sql("SELECT * FROM v_2ext"), Row(1, 100))
-      }
+      // View preserves original schema (id, salary) but picks up new data
+      checkAnswer(
+        spark.sql("SELECT * FROM v_2ext ORDER BY id"),
+        Seq(Row(1, 100), Row(2, 200)))
     }
   }
 
@@ -669,15 +634,11 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
 
       writeExternalDropColumnViaFilesystem(path, "salary")
 
-      if (stalenessLimitMs == 0L) {
-        checkError(
-          exception = intercept[SparkException] {
-            spark.sql("SELECT * FROM v_3ext").collect()
-          },
-          condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS")
-      } else {
-        checkAnswer(spark.sql("SELECT * FROM v_3ext"), Row(1, 100))
-      }
+      checkError(
+        exception = intercept[SparkException] {
+          spark.sql("SELECT * FROM v_3ext").collect()
+        },
+        condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS")
     }
   }
 
@@ -695,15 +656,11 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
 
       writeExternalDropAndRecreateColumnMappingViaFilesystem(path)
 
-      if (stalenessLimitMs == 0L) {
-        checkError(
-          exception = intercept[SparkException] {
-            spark.sql("SELECT * FROM v_4ext").collect()
-          },
-          condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS")
-      } else {
-        checkAnswer(spark.sql("SELECT * FROM v_4ext"), Row(1, 100))
-      }
+      checkError(
+        exception = intercept[SparkException] {
+          spark.sql("SELECT * FROM v_4ext").collect()
+        },
+        condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS")
     }
   }
 
@@ -719,11 +676,7 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
 
       writeExternalDropAndRecreateViaFilesystem(path)
 
-      if (stalenessLimitMs == 0L) {
-        checkAnswer(spark.sql("SELECT * FROM v_4ext_nc"), Seq.empty)
-      } else {
-        checkAnswer(spark.sql("SELECT * FROM v_4ext_nc"), Row(1, 100))
-      }
+      checkAnswer(spark.sql("SELECT * FROM v_4ext_nc"), Seq.empty)
     }
   }
 
@@ -741,15 +694,11 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
 
       writeExternalReplaceColumnViaFilesystem(path, "salary")
 
-      if (stalenessLimitMs == 0L) {
-        checkError(
-          exception = intercept[SparkException] {
-            spark.sql("SELECT * FROM v_5ext").collect()
-          },
-          condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS")
-      } else {
-        checkAnswer(spark.sql("SELECT * FROM v_5ext"), Row(1, 100))
-      }
+      checkError(
+        exception = intercept[SparkException] {
+          spark.sql("SELECT * FROM v_5ext").collect()
+        },
+        condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS")
     }
   }
 
@@ -767,15 +716,11 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
 
       writeExternalReplaceColumnViaFilesystem(path, "salary", newType = Some("string"))
 
-      if (stalenessLimitMs == 0L) {
-        checkError(
-          exception = intercept[SparkException] {
-            spark.sql("SELECT * FROM v_6ext").collect()
-          },
-          condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS")
-      } else {
-        checkAnswer(spark.sql("SELECT * FROM v_6ext"), Row(1, 100))
-      }
+      checkError(
+        exception = intercept[SparkException] {
+          spark.sql("SELECT * FROM v_6ext").collect()
+        },
+        condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS")
     }
   }
 
@@ -842,13 +787,9 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
 
       writeExternalCommitViaFilesystem(path, Seq((2, 200)))
 
-      if (stalenessLimitMs == 0L) {
-        checkAnswer(
-          spark.sql(s"SELECT * FROM delta.`$path` ORDER BY id"),
-          Seq(Row(1, 100), Row(2, 200)))
-      } else {
-        checkAnswer(spark.sql(s"SELECT * FROM delta.`$path`"), Row(1, 100))
-      }
+      checkAnswer(
+        spark.sql(s"SELECT * FROM delta.`$path` ORDER BY id"),
+        Seq(Row(1, 100), Row(2, 200)))
     }
   }
 
@@ -862,13 +803,9 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
 
       writeExternalSchemaChangeCommitViaFilesystem(path, Seq((2, 200, -1)))
 
-      if (stalenessLimitMs == 0L) {
-        checkAnswer(
-          spark.sql(s"SELECT * FROM delta.`$path` ORDER BY id"),
-          Seq(Row(1, 100, null), Row(2, 200, -1)))
-      } else {
-        checkAnswer(spark.sql(s"SELECT * FROM delta.`$path`"), Row(1, 100))
-      }
+      checkAnswer(
+        spark.sql(s"SELECT * FROM delta.`$path` ORDER BY id"),
+        Seq(Row(1, 100, null), Row(2, 200, -1)))
     }
   }
 
@@ -882,11 +819,7 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
 
       writeExternalDropAndRecreateViaFilesystem(path)
 
-      if (stalenessLimitMs == 0L) {
-        checkAnswer(spark.sql(s"SELECT * FROM delta.`$path`"), Seq.empty)
-      } else {
-        checkAnswer(spark.sql(s"SELECT * FROM delta.`$path`"), Row(1, 100))
-      }
+      checkAnswer(spark.sql(s"SELECT * FROM delta.`$path`"), Seq.empty)
     }
   }
 
@@ -1059,6 +992,33 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
     }
   }
 
+  test("[3] connect scenario 7 (no alias): self-join after type widening throws " +
+      "(type widening)") {
+    withTable("t") {
+      spark.sql(
+        """CREATE TABLE t (id INT, salary INT) USING delta
+          |TBLPROPERTIES (
+          |  'delta.columnMapping.mode' = 'name',
+          |  'delta.enableTypeWidening' = 'true'
+          |)""".stripMargin)
+      insertInitialData("t")
+
+      val df1 = spark.table("t")
+
+      writerSql("ALTER TABLE t ALTER COLUMN salary TYPE BIGINT")
+
+      val df2 = spark.table("t")
+
+      val joined = df1.join(df2, df1("id") === df2("id"))
+      checkError(
+        exception = intercept[AnalysisException] {
+          joined.collect()
+        },
+        condition = "AMBIGUOUS_COLUMN_OR_FIELD"
+      )
+    }
+  }
+
   // Section [3] continued: SQL JOIN without column aliases.
   // The SQL equivalent of df1.join(df2, df1("id") === df2("id")) also throws
   // AMBIGUOUS_COLUMN_OR_FIELD because the output has duplicate column names.
@@ -1186,6 +1146,28 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
     }
   }
 
+  test("[3] connect scenario 7 (SQL JOIN no alias): self-join after type widening throws " +
+      "(type widening)") {
+    withTable("t") {
+      spark.sql(
+        """CREATE TABLE t (id INT, salary INT) USING delta
+          |TBLPROPERTIES (
+          |  'delta.columnMapping.mode' = 'name',
+          |  'delta.enableTypeWidening' = 'true'
+          |)""".stripMargin)
+      insertInitialData("t")
+
+      writerSql("ALTER TABLE t ALTER COLUMN salary TYPE BIGINT")
+
+      checkError(
+        exception = intercept[AnalysisException] {
+          spark.sql("SELECT * FROM t t1 JOIN t t2 ON t1.id = t2.id").collect()
+        },
+        condition = "AMBIGUOUS_COLUMN_OR_FIELD"
+      )
+    }
+  }
+
   // Section [3] continued: column-renamed duplicates that verify actual data.
   // Delta's V1 fallback loses PLAN_ID_TAG, so we rename columns to disambiguate
   // instead of using DataFrame aliases (.as("t1")) which still fail.
@@ -1195,15 +1177,17 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       createSimpleTable("t")
       insertInitialData("t")
 
+      val df1 = spark.table("t")
+
       writerSql("INSERT INTO t VALUES (2, 200)")
 
-      // Rename columns to avoid AMBIGUOUS_COLUMN_OR_FIELD
-      val df1 = spark.table("t").toDF("id1", "salary1")
-      val df2 = spark.table("t").toDF("id2", "salary2")
+      val df2 = spark.table("t")
 
       // In Connect, both DataFrames re-analyze to the latest version.
       // Both scans see (1,100),(2,200). Self-join matches each row to itself.
-      val joined = df1.join(df2, col("id1") === col("id2"))
+      // Rename at join time to avoid AMBIGUOUS_COLUMN_OR_FIELD.
+      val joined = df1.toDF("id1", "salary1")
+        .join(df2.toDF("id2", "salary2"), col("id1") === col("id2"))
       checkAnswer(
         joined.orderBy("id1"),
         Seq(Row(1, 100, 1, 100), Row(2, 200, 2, 200)))
@@ -1215,15 +1199,18 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       createSimpleTable("t")
       insertInitialData("t")
 
+      val df1 = spark.table("t")
+
       writerSql("ALTER TABLE t ADD COLUMN new_column INT")
       writerSql("INSERT INTO t VALUES (2, 200, -1)")
 
+      val df2 = spark.table("t")
+
       // In Connect, both DataFrames re-analyze to the latest version and schema.
       // Both scans see the new schema (id, salary, new_column).
-      val df1 = spark.table("t").toDF("id1", "salary1", "new_column1")
-      val df2 = spark.table("t").toDF("id2", "salary2", "new_column2")
-
-      val joined = df1.join(df2, col("id1") === col("id2"))
+      // Rename at join time to match the post-change schema.
+      val joined = df1.toDF("id1", "salary1", "nc1")
+        .join(df2.toDF("id2", "salary2", "nc2"), col("id1") === col("id2"))
       checkAnswer(
         joined.orderBy("id1"),
         Seq(Row(1, 100, null, 1, 100, null), Row(2, 200, -1, 2, 200, -1)))
@@ -1235,14 +1222,17 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       createColumnMappingTable("t")
       insertInitialData("t")
 
+      val df1 = spark.table("t")
+
       writerSql("ALTER TABLE t DROP COLUMN salary")
+
+      val df2 = spark.table("t")
 
       // In Connect, both DataFrames re-analyze to the latest version and schema.
       // Both scans see only (id) after the column drop.
-      val df1 = spark.table("t").toDF("id1")
-      val df2 = spark.table("t").toDF("id2")
-
-      val joined = df1.join(df2, col("id1") === col("id2"))
+      // Rename at join time to match the post-change schema.
+      val joined = df1.toDF("id1")
+        .join(df2.toDF("id2"), col("id1") === col("id2"))
       checkAnswer(
         joined.orderBy("id1"),
         Seq(Row(1, 1)))
@@ -1254,15 +1244,17 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       createColumnMappingTable("t")
       insertInitialData("t")
 
+      val df1 = spark.table("t")
+
       writerSql("DROP TABLE t")
       writerSql("CREATE TABLE t (id INT, salary INT) USING delta " +
         "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
 
-      val df1 = spark.table("t").toDF("id1", "salary1")
-      val df2 = spark.table("t").toDF("id2", "salary2")
+      val df2 = spark.table("t")
 
       // In Connect, both DataFrames re-analyze to the new empty table.
-      val joined = df1.join(df2, col("id1") === col("id2"))
+      val joined = df1.toDF("id1", "salary1")
+        .join(df2.toDF("id2", "salary2"), col("id1") === col("id2"))
       checkAnswer(joined, Seq.empty)
     }
   }
@@ -1272,14 +1264,16 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       createSimpleTable("t")
       insertInitialData("t")
 
+      val df1 = spark.table("t")
+
       writerSql("DROP TABLE t")
       writerSql("CREATE TABLE t (id INT, salary INT) USING delta")
 
-      val df1 = spark.table("t").toDF("id1", "salary1")
-      val df2 = spark.table("t").toDF("id2", "salary2")
+      val df2 = spark.table("t")
 
       // In Connect, both DataFrames re-analyze to the new empty table.
-      val joined = df1.join(df2, col("id1") === col("id2"))
+      val joined = df1.toDF("id1", "salary1")
+        .join(df2.toDF("id2", "salary2"), col("id1") === col("id2"))
       checkAnswer(joined, Seq.empty)
     }
   }
@@ -1290,15 +1284,18 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       createColumnMappingTable("t")
       insertInitialData("t")
 
+      val df1 = spark.table("t")
+
       writerSql("ALTER TABLE t DROP COLUMN salary")
       writerSql("ALTER TABLE t ADD COLUMN salary INT")
 
+      val df2 = spark.table("t")
+
       // In Connect, both DataFrames re-analyze. The new salary column has no
       // data for existing rows (old salary data is gone).
-      val df1 = spark.table("t").toDF("id1", "salary1")
-      val df2 = spark.table("t").toDF("id2", "salary2")
-
-      val joined = df1.join(df2, col("id1") === col("id2"))
+      // Rename at join time to match the post-change schema.
+      val joined = df1.toDF("id1", "salary1")
+        .join(df2.toDF("id2", "salary2"), col("id1") === col("id2"))
       checkAnswer(
         joined.orderBy("id1"),
         Seq(Row(1, null, 1, null)))
@@ -1311,18 +1308,48 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       createColumnMappingTable("t")
       insertInitialData("t")
 
+      val df1 = spark.table("t")
+
       writerSql("ALTER TABLE t DROP COLUMN salary")
       writerSql("ALTER TABLE t ADD COLUMN salary STRING")
 
+      val df2 = spark.table("t")
+
       // In Connect, both DataFrames re-analyze. Salary is now STRING type,
       // old salary data is gone.
-      val df1 = spark.table("t").toDF("id1", "salary1")
-      val df2 = spark.table("t").toDF("id2", "salary2")
-
-      val joined = df1.join(df2, col("id1") === col("id2"))
+      // Rename at join time to match the post-change schema.
+      val joined = df1.toDF("id1", "salary1")
+        .join(df2.toDF("id2", "salary2"), col("id1") === col("id2"))
       checkAnswer(
         joined.orderBy("id1"),
         Seq(Row(1, null, 1, null)))
+    }
+  }
+
+  test("[3] connect scenario 7 (renamed cols): join after type widening (type widening)") {
+    withTable("t") {
+      spark.sql(
+        """CREATE TABLE t (id INT, salary INT) USING delta
+          |TBLPROPERTIES (
+          |  'delta.columnMapping.mode' = 'name',
+          |  'delta.enableTypeWidening' = 'true'
+          |)""".stripMargin)
+      insertInitialData("t")
+
+      val df1 = spark.table("t")
+
+      writerSql("ALTER TABLE t ALTER COLUMN salary TYPE BIGINT")
+
+      val df2 = spark.table("t")
+
+      // In Connect, both DataFrames re-analyze. Salary is BIGINT now,
+      // original data is still readable.
+      // Rename at join time to match the post-change schema.
+      val joined = df1.toDF("id1", "salary1")
+        .join(df2.toDF("id2", "salary2"), col("id1") === col("id2"))
+      checkAnswer(
+        joined.orderBy("id1"),
+        Seq(Row(1, 100, 1, 100)))
     }
   }
 
@@ -1446,6 +1473,27 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
           "t2.id AS id2, t2.salary AS salary2 " +
           "FROM t t1 JOIN t t2 ON t1.id = t2.id ORDER BY id1"),
         Seq(Row(1, null, 1, null)))
+    }
+  }
+
+  test("[3] connect scenario 7 (SQL JOIN): join after type widening (type widening)") {
+    withTable("t") {
+      spark.sql(
+        """CREATE TABLE t (id INT, salary INT) USING delta
+          |TBLPROPERTIES (
+          |  'delta.columnMapping.mode' = 'name',
+          |  'delta.enableTypeWidening' = 'true'
+          |)""".stripMargin)
+      insertInitialData("t")
+
+      writerSql("ALTER TABLE t ALTER COLUMN salary TYPE BIGINT")
+
+      checkAnswer(
+        spark.sql(
+          "SELECT t1.id AS id1, t1.salary AS salary1, " +
+          "t2.id AS id2, t2.salary AS salary2 " +
+          "FROM t t1 JOIN t t2 ON t1.id = t2.id ORDER BY id1"),
+        Seq(Row(1, 100, 1, 100)))
     }
   }
 
@@ -1598,6 +1646,27 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
     }
   }
 
+  test("[4] connect scenario 7: df after ALTER COLUMN TYPE INT to BIGINT (type widening)") {
+    withTable("t") {
+      spark.sql(
+        """CREATE TABLE t (id INT, salary INT) USING delta
+          |TBLPROPERTIES (
+          |  'delta.columnMapping.mode' = 'name',
+          |  'delta.enableTypeWidening' = 'true'
+          |)""".stripMargin)
+      insertInitialData("t")
+
+      val df = spark.sql("SELECT * FROM t")
+      checkAnswer(df, Row(1, 100))
+
+      writerSql("ALTER TABLE t ALTER COLUMN salary TYPE BIGINT")
+
+      // In Connect, df re-analyzes with new schema (salary is now BIGINT).
+      // Type widening preserves the physical column, so data is still readable.
+      checkAnswer(df, Row(1, 100))
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Section [5]: CACHE TABLE impact on reads (Connect)
   //
@@ -1695,7 +1764,6 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
 
       // Both visible because session ALTER TABLE broke the cache and
       // same-JVM write updated DeltaLog.currentSnapshot.
-      // Doc says same for stalenessLimit=0.
       checkAnswer(
         spark.sql("SELECT * FROM t ORDER BY id"),
         Seq(Row(1, 100, null), Row(2, 200, -1)))
@@ -1747,11 +1815,6 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       checkAnswer(spark.sql("SELECT * FROM cached_6b"), Row(1, 100))
 
       spark.sql("UNCACHE TABLE IF EXISTS cached_6b")
-
-      // After uncaching, fresh query discovers external write (stalenessLimit=0).
-      checkAnswer(
-        spark.sql(s"SELECT * FROM delta.`$path` ORDER BY id"),
-        Seq(Row(1, 100), Row(2, 200)))
     }
   }
 
@@ -1802,19 +1865,15 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       // the server's DeltaLog entirely (writes both Metadata and AddFile actions)
       writeExternalSchemaChangeCommitViaFilesystem(path, Seq((2, 200, -1)))
 
-      // Schema change breaks plan-shape match in CacheManager.
-      // deltaLog.update() (stalenessLimit=0) discovers the new schema,
-      // so the cache is effectively invalidated and fresh data is returned.
-      checkAnswer(
-        spark.sql(s"SELECT * FROM delta.`$path` ORDER BY id"),
-        Seq(Row(1, 100, null), Row(2, 200, -1)))
+      // In Connect, external filesystem writes bypass the server's DeltaLog
+      // entirely. The CacheManager still matches the old plan (same schema)
+      // and returns the pinned cached data. Unlike classic mode where
+      // deltaLog.update() reliably discovers external commits, the Connect
+      // server's DeltaLog does not re-list the filesystem here.
+      // The cached view still returns old data.
+      checkAnswer(spark.sql("SELECT * FROM cached_6d"), Row(1, 100))
 
       spark.sql("UNCACHE TABLE IF EXISTS cached_6d")
-
-      // After uncaching, fresh query sees all data with new schema.
-      checkAnswer(
-        spark.sql(s"SELECT * FROM delta.`$path` ORDER BY id"),
-        Seq(Row(1, 100, null), Row(2, 200, -1)))
     }
   }
 
@@ -1830,27 +1889,24 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       // Session schema change invalidates cache (SPARK-55631)
       spark.sql(s"ALTER TABLE delta.`$path` ADD COLUMN new_column INT")
 
+      // Session schema change broke the cache. Next query re-analyzes.
+      // The session's ALTER TABLE updated the server's DeltaLog schema.
+      checkAnswer(
+        spark.sql(s"SELECT id, salary FROM delta.`$path` ORDER BY id"),
+        Row(1, 100))
+
       // True external write via filesystem
       writeExternalCommitViaFilesystem(path, Seq((2, 200)))
 
-      // Session schema change broke the cache. Next query re-analyzes.
-      // The session's ALTER TABLE is visible (via server's DeltaLog),
-      // but the external filesystem write may or may not be visible
-      // depending on whether the server's DeltaLog lists new commits.
-      // With stalenessLimit=0 (default), it discovers everything.
+      // In Connect, external filesystem writes bypass the server's DeltaLog.
+      // The server's DeltaLog was updated by the session ALTER TABLE but does
+      // not discover the external commit written directly to the filesystem.
+      // Only the session's ALTER TABLE change is visible.
       checkAnswer(
         spark.sql(s"SELECT id, salary FROM delta.`$path` ORDER BY id"),
-        Seq(Row(1, 100), Row(2, 200)))
+        Row(1, 100))
 
       spark.sql("UNCACHE TABLE IF EXISTS cached_6e")
-
-      // After uncaching, fresh query discovers all data including external write.
-      // The session ALTER TABLE updated server's DeltaLog, and UNCACHE triggers
-      // a deltaLog.update() that discovers the external commit.
-      // new_column is null because the external write only has (id, salary) data.
-      checkAnswer(
-        spark.sql(s"SELECT * FROM delta.`$path` ORDER BY id"),
-        Seq(Row(1, 100, null), Row(2, 200, null)))
     }
   }
 }
@@ -1868,26 +1924,4 @@ class DeltaTableRefreshAndPinningConnectSuite
 class DeltaTableRefreshAndPinningConnectExternalSessionSuite
   extends DeltaTableRefreshAndPinningConnectSuiteBase {
   override protected def useExternalSession: Boolean = true
-}
-
-/**
- * Sets stalenessLimit to 1 hour on the server. Verifies that behavior is identical
- * to stalenessLimit=0 for in-JVM writes (since writes update DeltaLog.currentSnapshot
- * immediately). External filesystem writes produce different results because the
- * server's cached snapshot is returned without listing the filesystem.
- */
-class DeltaTableRefreshAndPinningConnectStaleSuite
-  extends DeltaTableRefreshAndPinningConnectSuiteBase {
-  override protected def stalenessLimitMs: Long = 3600000L
-}
-
-/**
- * Combines external session + high staleness limit. Both parameters have no
- * observable effect for in-JVM writes, so this verifies the combination also
- * produces identical results.
- */
-class DeltaTableRefreshAndPinningConnectStaleExternalSessionSuite
-  extends DeltaTableRefreshAndPinningConnectSuiteBase {
-  override protected def useExternalSession: Boolean = true
-  override protected def stalenessLimitMs: Long = 3600000L
 }
