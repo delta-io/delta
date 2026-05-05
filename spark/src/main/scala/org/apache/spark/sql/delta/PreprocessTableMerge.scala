@@ -154,10 +154,9 @@ case class PreprocessTableMerge(override val conf: SQLConf)
         conf.getConf(DeltaSQLConf.DELTA_MERGE_INSERT_FIX_CASE_SENSITIVE_DUPLICATE_COLUMNS) &&
           hasGeneratedOrIdentityColumns &&
           !conf.caseSensitiveAnalysis
-      // scalastyle:off caselocale
       val normalizedColNames =
-        if (shouldNormalizeColumnCase) targetColNames.map(_.toLowerCase) else targetColNames
-      // scalastyle:on caselocale
+        if (shouldNormalizeColumnCase) targetColNames.map(_.toLowerCase(Locale.ROOT))
+        else targetColNames
       if (normalizedColNames.distinct.size < targetColNames.size) {
         throw DeltaErrors.duplicateColumnOnInsert()
       }
