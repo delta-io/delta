@@ -31,11 +31,11 @@ import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.connector.catalog.{Identifier, Table}
+import org.apache.spark.sql.delta.{DeltaLog, IcebergConstants}
 import org.apache.spark.sql.delta.DeltaConfigs.{
   COORDINATED_COMMITS_COORDINATOR_CONF,
   COORDINATED_COMMITS_COORDINATOR_NAME
 }
-import org.apache.spark.sql.delta.{DeltaLog, IcebergConstants}
 import org.apache.spark.sql.delta.NonSparkReadIceberg
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.coordinatedcommits.{
