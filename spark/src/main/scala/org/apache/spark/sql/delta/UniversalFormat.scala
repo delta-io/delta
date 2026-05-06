@@ -372,7 +372,7 @@ object IcebergConstants {
     "deltaUniformIceberg.convertedDeltaVersion"
   /** CatalogTable property key for the last converted Delta timestamp. */
   val CATALOG_TABLE_ICEBERG_CONVERTED_TIMESTAMP_PROP =
-    "delta.uniform.iceberg.convertedDeltaTimestamp"
+    "deltaUniformIceberg.convertedDeltaTimestamp"
 
   // Reserved field ID for the `_row_id` column
   // Iceberg spec: https://iceberg.apache.org/spec/?h=row#reserved-field-ids
