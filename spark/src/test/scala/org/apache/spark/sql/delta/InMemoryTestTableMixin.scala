@@ -38,10 +38,18 @@ case class DSv2TemporarilyIncompatible(reason: String)
   extends org.scalatest.Tag("DSv2TemporariltyIncompatible")
 
 /**
+ * Tag for tests that exercise DSv2 DML schema evolution. Schema evolution in DSv2 DML commands
+ * is only available starting with Spark 4.2, so tests tagged with this are automatically skipped
+ * when running against Spark 4.0/4.1.
+ */
+case object DSv2DMLSchemaEvolution extends org.scalatest.Tag("DSv2DMLSchemaEvolution")
+
+/**
  * Mixin trait that configures the session catalog to use [[InMemoryDeltaCatalog]],
  * routing DML operations through Spark's V2 execution path via [[InMemorySparkTable]].
  */
-trait InMemoryTestTableMixin extends SharedSparkSession {
+trait InMemoryTestTableMixin extends SharedSparkSession with InMemoryTestTableMixinShims  {
+
   override protected def sparkConf: SparkConf = super.sparkConf
     .set("spark.sql.catalog.spark_catalog", classOf[InMemoryDeltaCatalog].getName)
 
@@ -56,6 +64,10 @@ trait InMemoryTestTableMixin extends SharedSparkSession {
           return
         case t: DSv2TemporarilyIncompatible =>
           ignore(testName + s" (DSv2TemporarilyIncompatible: $t.reason)", testTags: _*)(testFun)
+          return
+        case DSv2DMLSchemaEvolution if !v2DmlSchemaEvolutionSupported =>
+          ignore(testName + s" (DSv2DMLSchemaEvolution: DSv2 DML schema evolution not supported " +
+            "on this Spark version", testTags: _*)(testFun)
           return
       }
     }

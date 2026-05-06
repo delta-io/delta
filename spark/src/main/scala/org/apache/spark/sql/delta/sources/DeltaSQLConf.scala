@@ -729,6 +729,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_MERGE_INSERT_FIX_CASE_SENSITIVE_DUPLICATE_COLUMNS =
+    buildConf("merge.insert.fixCaseSensitiveDuplicateColumns")
+      .internal()
+      .doc("Internal flag controlling a fix for case-variant duplicate columns in MERGE INSERT " +
+        "clauses (e.g., `colUtc` and `colUTC`). On tables with generated or identity columns, " +
+        "such duplicates would otherwise trigger an internal AssertionError in " +
+        "`resolveImplicitColumns` instead of a user-facing error. Disabling this fix restores " +
+        "the prior behavior.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_MERGE_SCHEMA_EVOLUTION_FIX_NESTED_STRUCT_ALIGNMENT =
     buildConf("schemaEvolution.merge.fixNestedStructAlignment")
       .internal()

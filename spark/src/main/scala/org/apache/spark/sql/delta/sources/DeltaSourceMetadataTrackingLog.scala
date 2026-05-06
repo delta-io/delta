@@ -23,17 +23,15 @@ import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.streaming.{JsonSchemaSerializer, PartitionAndDataSchema, SchemaTrackingLog}
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions, SnapshotDescriptor}
-import org.apache.spark.sql.delta.actions.{Action, FileAction, Metadata, Protocol}
-import org.apache.spark.sql.delta.storage.ClosableIterator._
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaOptions}
+import org.apache.spark.sql.delta.actions.{Action, Protocol}
 import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.spark.sql.delta.v2.interop.{AbstractMetadata, AbstractProtocol}
 import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.internal.Logging
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.types.{DataType, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 // scalastyle:on import.ordering.noEmptyLine
@@ -94,13 +92,12 @@ case class PersistedMetadata(
   lazy val protocol: Option[Protocol] =
     protocolJson.map(Action.fromJson).map(_.asInstanceOf[Protocol])
 
-  def validateAgainstSnapshot(snapshot: SnapshotDescriptor): Unit = {
-    if (snapshot.deltaLog.unsafeVolatileTableId != tableId) {
+  def validateAgainstSourceTableId(sourceTableId: String): Unit = {
+    if (sourceTableId != tableId) {
       throw DeltaErrors.incompatibleSchemaLogDeltaTable(
-        tableId, snapshot.deltaLog.unsafeVolatileTableId)
+        tableId, sourceTableId)
     }
   }
-
 }
 
 object PersistedMetadata {
@@ -109,18 +106,35 @@ object PersistedMetadata {
 
   def fromJson(json: String): PersistedMetadata = JsonUtils.fromJson[PersistedMetadata](json)
 
+  /**
+   * Builds a [[PersistedMetadata]] from V2 interop abstractions.
+   *
+   * Contract on [[AbstractProtocol]]: `readerFeatures` / `writerFeatures` must be consistent
+   * with the min protocol versions: `readerFeatures` may only be defined when
+   * `minReaderVersion >= TABLE_FEATURES_MIN_READER_VERSION`, and `writerFeatures` may only be
+   * defined when `minWriterVersion >= TABLE_FEATURES_MIN_WRITER_VERSION`. The conversion below
+   * relies on this invariant; [[Protocol]] will throw a `require` failure if an implementation
+   * gets it wrong.
+   */
   def apply(
       tableId: String,
       deltaCommitVersion: Long,
-      metadata: Metadata,
-      protocol: Protocol,
+      abstractMetadata: AbstractMetadata,
+      abstractProtocol: AbstractProtocol,
       sourceMetadataPath: String): PersistedMetadata = {
+    val protocol = Protocol(
+      abstractProtocol.minReaderVersion,
+      abstractProtocol.minWriterVersion
+    ).copy(
+      readerFeatures = abstractProtocol.readerFeatures,
+      writerFeatures = abstractProtocol.writerFeatures
+    )
     PersistedMetadata(tableId, deltaCommitVersion,
-      metadata.schema.json, metadata.partitionSchema.json,
+      abstractMetadata.schema.json, abstractMetadata.partitionSchema.json,
       // The schema is bound to the specific source
       sourceMetadataPath,
       // Table configurations come from the Metadata action
-      Some(metadata.configuration),
+      Some(abstractMetadata.configuration),
       Some(protocol.json)
     )
   }
@@ -132,7 +146,8 @@ object PersistedMetadata {
  * This schema log is NOT meant to be shared across different Delta streaming source instances.
  *
  * @param rootMetadataLocation Metadata log location
- * @param sourceSnapshot Delta source snapshot for the Delta streaming source
+ * @param sourceTableId Delta source table ID for the Delta streaming source
+ * @param sourceDataPath Delta source table data path for the Delta streaming source
  * @param sourceMetadataPathOpt The source metadata path that is used during streaming execution.
  * @param initMetadataLogEagerly If true, initialize metadata log as early as possible, otherwise,
  *                             initialize only when detecting non-additive schema change.
@@ -140,7 +155,8 @@ object PersistedMetadata {
 class DeltaSourceMetadataTrackingLog private(
     sparkSession: SparkSession,
     rootMetadataLocation: String,
-    sourceSnapshot: SnapshotDescriptor,
+    sourceTableId: String,
+    sourceDataPath: String,
     sourceMetadataPathOpt: Option[String] = None,
     val initMetadataLogEagerly: Boolean = true) {
 
@@ -160,7 +176,7 @@ class DeltaSourceMetadataTrackingLog private(
       sparkSession, rootMetadataLocation, schemaSerializer)
 
   // Validate schema at log init
-  trackingLog.getCurrentTrackedSchema.foreach(_.validateAgainstSnapshot(sourceSnapshot))
+  trackingLog.getCurrentTrackedSchema.foreach(_.validateAgainstSourceTableId(sourceTableId))
 
   /**
    * Get the global latest metadata for this metadata location.
@@ -222,12 +238,12 @@ class DeltaSourceMetadataTrackingLog private(
     } catch {
       case FailedToEvolveSchema =>
         throw DeltaErrors.sourcesWithConflictingSchemaTrackingLocation(
-          rootMetadataLocation, sourceSnapshot.deltaLog.dataPath.toString)
+          rootMetadataLocation, sourceDataPath)
     }
   }
 }
 
-object DeltaSourceMetadataTrackingLog extends Logging {
+object DeltaSourceMetadataTrackingLog {
 
   def fullMetadataTrackingLocation(
       rootSchemaTrackingLocation: String,
@@ -243,34 +259,45 @@ object DeltaSourceMetadataTrackingLog extends Logging {
    * a suffix of `_$sourceTrackingId` is appended if provided to further differentiate the sources.
    *
    * @param mergeConsecutiveSchemaChanges Defined during analysis phase.
+   * @param consecutiveSchemaChangesMerger A connector-specific function that, given the current
+   *                                       tracked metadata, looks ahead through consecutive
+   *                                       metadata-only commits and returns a merged
+   *                                       [[PersistedMetadata]] if possible. V1 uses DeltaLog to
+   *                                       iterate commits; V2 would use Delta Kernel.
    * @param sourceMetadataPathOpt Defined during execution phase.
    */
   def create(
       sparkSession: SparkSession,
       rootMetadataLocation: String,
-      sourceSnapshot: SnapshotDescriptor,
-      catalogTableOpt: Option[CatalogTable],
+      sourceTableId: String,
+      sourceDataPath: String,
       parameters: Map[String, String],
       sourceMetadataPathOpt: Option[String] = None,
       mergeConsecutiveSchemaChanges: Boolean = false,
+      consecutiveSchemaChangesMerger: Option[PersistedMetadata => Option[PersistedMetadata]] =
+        None,
       initMetadataLogEagerly: Boolean = true): DeltaSourceMetadataTrackingLog = {
+    require(
+      !mergeConsecutiveSchemaChanges || consecutiveSchemaChangesMerger.isDefined,
+      "consecutiveSchemaChangesMerger must be provided when mergeConsecutiveSchemaChanges is true")
     val options = new CaseInsensitiveStringMap(parameters.asJava)
     val sourceTrackingId = Option(options.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID))
     val metadataTrackingLocation = fullMetadataTrackingLocation(
-      rootMetadataLocation, sourceSnapshot.deltaLog.unsafeVolatileTableId, sourceTrackingId)
+      rootMetadataLocation, sourceTableId, sourceTrackingId)
     val log = new DeltaSourceMetadataTrackingLog(
       sparkSession,
       metadataTrackingLocation,
-      sourceSnapshot,
+      sourceTableId,
+      sourceDataPath,
       sourceMetadataPathOpt,
       initMetadataLogEagerly
     )
 
     // During initialize schema log, validate against:
-    // 1. table snapshot to check for partition and tahoe id mismatch
+    // 1. table id mismatch
     // 2. source metadata path to ensure we are not using the wrong schema log for the source
     log.getCurrentTrackedMetadata.foreach { schema =>
-      schema.validateAgainstSnapshot(sourceSnapshot)
+      schema.validateAgainstSourceTableId(sourceTableId)
       if (sparkSession.sessionState.conf.getConf(
           DeltaSQLConf.DELTA_STREAMING_SCHEMA_TRACKING_METADATA_PATH_CHECK_ENABLED)) {
         sourceMetadataPathOpt.foreach { metadataPath =>
@@ -293,14 +320,11 @@ object DeltaSourceMetadataTrackingLog extends Logging {
       // We add the prev pointer to the merged schema so that SQL conf validation logic later can
       // reliably fetch the previous read schema and the latest schema and then be able to determine
       // if it's OK for the stream to proceed.
-      getMergedConsecutiveMetadataChanges(
-        sparkSession,
-        sourceSnapshot.deltaLog,
-        catalogTableOpt,
-        log.getCurrentTrackedMetadata.get
-      ).foreach { mergedSchema =>
-        log.writeNewMetadata(mergedSchema, replaceCurrent = true)
-      }
+      consecutiveSchemaChangesMerger.get
+        .apply(log.getCurrentTrackedMetadata.get)
+        .foreach { mergedSchema =>
+          log.writeNewMetadata(mergedSchema, replaceCurrent = true)
+        }
     }
 
     // The validation is ran in *execution* phase where the metadata path becomes available.
@@ -315,61 +339,5 @@ object DeltaSourceMetadataTrackingLog extends Logging {
     }
 
     log
-  }
-
-  /**
-   * Speculate ahead and find the next merged consecutive metadata change if possible.
-   * A metadata change is either:
-   * 1. A [[Metadata]] action change. OR
-   * 2. A [[Protocol]] change.
-   */
-  private def getMergedConsecutiveMetadataChanges(
-      spark: SparkSession,
-      deltaLog: DeltaLog,
-      catalogTableOpt: Option[CatalogTable],
-      currentMetadata: PersistedMetadata): Option[PersistedMetadata] = {
-    val currentMetadataVersion = currentMetadata.deltaCommitVersion
-    // We start from the currentSchemaVersion so that we can stop early in case the current
-    // version still has file actions that potentially needs to be processed.
-    val untilMetadataChange =
-      deltaLog.getChangeLogFiles(
-          currentMetadataVersion, catalogTableOpt).map { case (version, fileStatus) =>
-        var metadataAction: Option[Metadata] = None
-        var protocolAction: Option[Protocol] = None
-        var hasFileAction = false
-        DeltaSource.createRewindableActionIterator(spark, deltaLog, fileStatus)
-          .processAndClose { actionsIter =>
-            actionsIter.foreach {
-              case m: Metadata => metadataAction = Some(m)
-              case p: Protocol => protocolAction = Some(p)
-              case _: FileAction => hasFileAction = true
-              case _ =>
-            }
-          }
-        (!hasFileAction && (metadataAction.isDefined || protocolAction.isDefined),
-          version, metadataAction, protocolAction)
-      }.takeWhile(_._1)
-    DeltaSource.iteratorLast(untilMetadataChange.toClosable)
-      .flatMap { case (_, version, metadataOpt, protocolOpt) =>
-      if (version == currentMetadataVersion) {
-        None
-      } else {
-        log.info(s"Looked ahead from version $currentMetadataVersion and " +
-          s"will use metadata at version $version to read Delta stream.")
-        Some(
-          currentMetadata.copy(
-            deltaCommitVersion = version,
-            dataSchemaJson =
-              metadataOpt.map(_.schema.json).getOrElse(currentMetadata.dataSchemaJson),
-            partitionSchemaJson =
-              metadataOpt.map(_.partitionSchema.json)
-                .getOrElse(currentMetadata.partitionSchemaJson),
-            tableConfigurations = metadataOpt.map(_.configuration)
-              .orElse(currentMetadata.tableConfigurations),
-            protocolJson = protocolOpt.map(_.json).orElse(currentMetadata.protocolJson)
-          )
-        )
-      }
-    }
   }
 }

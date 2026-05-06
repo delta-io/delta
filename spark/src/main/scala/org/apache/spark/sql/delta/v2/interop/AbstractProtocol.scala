@@ -40,5 +40,16 @@ trait AbstractProtocol {
    * Returns None if table features are not enabled for writers.
    */
   def writerFeatures: Option[Set[String]]
+
+  /**
+   * Field-wise equality across the abstract surface of [[AbstractProtocol]]. Use this instead of
+   * comparing fields ad-hoc at call sites so that adding a new field to this trait forces an
+   * update here rather than silently leaving stale comparisons elsewhere.
+   */
+  def equalsByFields(other: AbstractProtocol): Boolean =
+    minReaderVersion == other.minReaderVersion &&
+      minWriterVersion == other.minWriterVersion &&
+      readerFeatures == other.readerFeatures &&
+      writerFeatures == other.writerFeatures
 }
 
