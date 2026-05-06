@@ -24,7 +24,7 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.connector.catalog.{Identifier, Table}
+import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, Table, TableChange}
 import org.apache.spark.sql.connector.expressions.Transform
 
 /**
@@ -40,6 +40,17 @@ class InMemoryDeltaCatalog extends DeltaCatalog {
 
   override def loadCatalogTable(ident: Identifier, catalogTable: CatalogTable): Table =
     InMemoryDeltaCatalog.getOrCreateTable(ident, catalogTable, spark)
+
+  override def alterTable(ident: Identifier, changes: TableChange*): Table = {
+    loadTable(ident) match {
+      case table: InMemorySparkTable =>
+        InMemoryDeltaCatalog.applySchemaChanges(table, ident, changes.toSeq)
+        // Also propagate the change to the underlying catalog so the Delta table on disk stays in
+        // sync with the in-memory test stand-in.
+        super.alterTable(ident, changes: _*)
+      case _ => super.alterTable(ident, changes: _*)
+    }
+  }
 }
 
 object InMemoryDeltaCatalog {
@@ -71,6 +82,28 @@ object InMemoryDeltaCatalog {
         Array.empty[Transform],
         props)
     })
+  }
+
+  def isTestTable(table: Table): Boolean = table.isInstanceOf[InMemorySparkTable]
+
+  /** Applies schema changes to a test table and returns the updated table. */
+  def applySchemaChanges(table: Table, ident: Identifier, changes: Seq[TableChange]): Table = {
+    val newSchema = CatalogV2Util.applySchemaChanges(
+      table.schema(), changes, tableProvider = None, statementType = "ALTER TABLE")
+
+    val javaProps = new java.util.HashMap[String, String](table.properties)
+    // Create the new table with the evolved schema and migrate existing data.
+    val newTable = table match {
+      case t: InMemorySparkTable =>
+        val newTable = new InMemorySparkTable(
+          ident.name(), newSchema, t.partitioning, javaProps)
+        InMemorySparkTableShims.migrateData(newTable, t.data, newSchema)
+        newTable
+      case _ => throw new IllegalArgumentException(
+        s"Expected InMemorySparkTable but got ${table.getClass.getName}")
+    }
+    tables.put(ident.name(), newTable)
+    newTable
   }
 
   /**

@@ -59,10 +59,18 @@ case class ChecksDeltaMetrics(reason: String = "checks Delta metrics")
   extends org.scalatest.Tag("ChecksDeltaMetrics")
 
 /**
+ * Tag for tests that exercise DSv2 DML schema evolution. Schema evolution in DSv2 DML commands
+ * is only available starting with Spark 4.2, so tests tagged with this are automatically skipped
+ * when running against Spark 4.0/4.1.
+ */
+case object DSv2DMLSchemaEvolution extends org.scalatest.Tag("DSv2DMLSchemaEvolution")
+
+/**
  * Mixin trait that configures the session catalog to use [[InMemoryDeltaCatalog]],
  * routing DML operations through Spark's V2 execution path via [[InMemorySparkTable]].
  */
-trait InMemoryTestTableMixin extends SharedSparkSession {
+trait InMemoryTestTableMixin extends SharedSparkSession with InMemoryTestTableMixinShims  {
+
   override protected def sparkConf: SparkConf = super.sparkConf
     .set("spark.sql.catalog.spark_catalog", classOf[InMemoryDeltaCatalog].getName)
 
@@ -79,6 +87,8 @@ trait InMemoryTestTableMixin extends SharedSparkSession {
         "ChecksPhysicalDeltaPlan" -> t.reason
       case t: ChecksDeltaInternals =>
         "ChecksDeltaInternals" -> t.reason
+      case DSv2DMLSchemaEvolution if !v2DmlSchemaEvolutionSupported =>
+        "DSV2DMLSchemaEvolution" -> "DSv2 DML schema evolution not supported on this spark version"
     } match {
       case Some((tagName, reason)) =>
         ignore(testName + s" ($tagName: $reason)", testTags: _*)(testFun)
