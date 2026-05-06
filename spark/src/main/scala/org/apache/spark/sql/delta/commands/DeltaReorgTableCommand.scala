@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.commands
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, Snapshot}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, SnapshotDescriptor}
 import org.apache.spark.sql.delta.actions.AddFile
 
 import org.apache.spark.sql.{Row, SparkSession}
@@ -100,7 +100,10 @@ sealed trait DeltaReorgOperation {
    * Collects files that need to be processed by the reorg operation from the list of candidate
    * files.
    */
-  def filterFilesToReorg(spark: SparkSession, snapshot: Snapshot, files: Seq[AddFile]): Seq[AddFile]
+  def filterFilesToReorg(
+      spark: SparkSession,
+      snapshot: SnapshotDescriptor,
+      files: Seq[AddFile]): Seq[AddFile]
 }
 
 /**
@@ -109,8 +112,10 @@ sealed trait DeltaReorgOperation {
  * if ever exists such column that does not present in the current table schema.
  */
 class DeltaPurgeOperation extends DeltaReorgOperation with ReorgTableHelper {
-  override def filterFilesToReorg(spark: SparkSession, snapshot: Snapshot, files: Seq[AddFile])
-    : Seq[AddFile] = {
+  override def filterFilesToReorg(
+      spark: SparkSession,
+      snapshot: SnapshotDescriptor,
+      files: Seq[AddFile]): Seq[AddFile] = {
     val physicalSchema = DeltaColumnMapping.renameColumns(snapshot.schema)
     val protocol = snapshot.protocol
     val metadata = snapshot.metadata
@@ -130,8 +135,10 @@ class DeltaPurgeOperation extends DeltaReorgOperation with ReorgTableHelper {
  * Reorg operation to upgrade the iceberg compatibility version of a table.
  */
 class DeltaUpgradeUniformOperation(icebergCompatVersion: Int) extends DeltaReorgOperation {
-  override def filterFilesToReorg(spark: SparkSession, snapshot: Snapshot, files: Seq[AddFile])
-    : Seq[AddFile] = {
+  override def filterFilesToReorg(
+      spark: SparkSession,
+      snapshot: SnapshotDescriptor,
+      files: Seq[AddFile]): Seq[AddFile] = {
     def shouldRewriteToBeIcebergCompatible(file: AddFile): Boolean = {
       if (file.tags == null) return true
       val fileIcebergCompatVersion =
@@ -147,8 +154,10 @@ class DeltaUpgradeUniformOperation(icebergCompatVersion: Int) extends DeltaReorg
  * the type widening table feature.
  */
 class DeltaRewriteTypeWideningOperation extends DeltaReorgOperation with ReorgTableHelper {
-  override def filterFilesToReorg(spark: SparkSession, snapshot: Snapshot, files: Seq[AddFile])
-    : Seq[AddFile] = {
+  override def filterFilesToReorg(
+      spark: SparkSession,
+      snapshot: SnapshotDescriptor,
+      files: Seq[AddFile]): Seq[AddFile] = {
     val physicalSchema = DeltaColumnMapping.renameColumns(snapshot.schema)
     filterParquetFilesOnExecutors(spark, files, snapshot, ignoreCorruptFiles = false) {
       schema => fileHasDifferentTypes(schema, physicalSchema)

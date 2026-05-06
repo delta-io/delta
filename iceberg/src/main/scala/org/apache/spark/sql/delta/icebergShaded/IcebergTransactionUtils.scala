@@ -24,7 +24,7 @@ import scala.collection.JavaConverters._
 import scala.reflect.runtime.universe
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, Snapshot}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, Snapshot, SnapshotDescriptor}
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction, RemoveFile}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.PartitionUtils.{timestampPartitionPattern, utcFormatter}
@@ -130,7 +130,7 @@ object IcebergTransactionUtils
       tablePath: Path,
       partitionSpec: PartitionSpec,
       logicalToPhysicalPartitionNames: Map[String, String],
-      snapshot: Snapshot): DataFile = {
+      snapshot: SnapshotDescriptor): DataFile = {
     convertFileAction(
       remove, tablePath, partitionSpec, logicalToPhysicalPartitionNames, snapshot)
       .withRecordCount(remove.numLogicalRecords.getOrElse(0L))
@@ -142,7 +142,7 @@ object IcebergTransactionUtils
       tablePath: Path,
       partitionSpec: PartitionSpec,
       logicalToPhysicalPartitionNames: Map[String, String],
-      snapshot: Snapshot): DataFiles.Builder = {
+      snapshot: SnapshotDescriptor): DataFiles.Builder = {
     val absPath = canonicalizeFilePath(f, tablePath)
     var builder = DataFiles
       .builder(partitionSpec)
