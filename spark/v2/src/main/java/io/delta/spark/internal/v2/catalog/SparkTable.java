@@ -25,6 +25,7 @@ import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.rowtracking.RowTracking;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.spark.internal.v2.read.SparkScanBuilder;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
@@ -54,6 +55,7 @@ import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
+import scala.collection.JavaConverters;
 
 /** DataSource V2 Table implementation for Delta Lake using the Delta Kernel API. */
 public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsMetadataColumns {
@@ -253,21 +255,22 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsM
   }
 
   /**
-   * Exposes row-tracking metadata via a single DSv2 metadata struct column.
+   * Exposes metadata via a single DSv2 metadata struct column.
    *
    * <p>This always returns one metadata column named {@code _metadata}. When row tracking is
-   * enabled, the struct contains fields {@code row_id} and {@code row_commit_version}. When row
-   * tracking is disabled, those fields are omitted from the struct.
+   * enabled, the struct contains fields {@code row_id} and {@code row_commit_version}. For
+   * catalog-managed tables, it also contains Spark's standard file metadata fields.
    */
   @Override
   public MetadataColumn[] metadataColumns() {
     SnapshotImpl snapshotImpl = (SnapshotImpl) initialSnapshot;
     boolean rowTrackingEnabled =
         RowTracking.isEnabled(snapshotImpl.getProtocol(), snapshotImpl.getMetadata());
+    boolean catalogManaged = TableFeatures.isCatalogManagedSupported(snapshotImpl.getProtocol());
 
     final StructType metadataType =
         rowTrackingEnabled
-            ? new StructType()
+            ? baseMetadataSchema(catalogManaged)
                 .add(ROW_ID_METADATA_FIELD_NAME, DataTypes.LongType, false)
                 .add(ROW_COMMIT_VERSION_METADATA_FIELD_NAME, DataTypes.LongType, false)
             : new StructType();
@@ -292,6 +295,15 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsM
         };
 
     return columns;
+  }
+
+  private static StructType baseMetadataSchema(boolean includeFileMetadata) {
+    if (!includeFileMetadata) {
+      return new StructType();
+    }
+    return new StructType(
+        JavaConverters.seqAsJavaList(FileFormat$.MODULE$.BASE_METADATA_FIELDS())
+            .toArray(new StructField[0]));
   }
 
   @Override

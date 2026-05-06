@@ -367,6 +367,38 @@ public class UCDeltaTableDataFrameStreamingTest extends UCDeltaTableIntegrationB
         "streaming_allow_drop_false_test", "allowSourceColumnDrop", "false");
   }
 
+  @TestAllTableTypes
+  public void testStreamingMetadataColumns(TableType tableType) throws Exception {
+    if (tableType != TableType.MANAGED) return;
+    withNewTable(
+        "streaming_metadata_columns_test",
+        "id INT",
+        null,
+        tableType,
+        "'delta.enableRowTracking'='true'",
+        tableName -> {
+          sql("INSERT INTO %s VALUES (1)", tableName);
+          List<Row> result = new ArrayList<>();
+          spark()
+              .readStream()
+              .format("delta")
+              .table(tableName)
+              .selectExpr("id", "_metadata.file_path AS file_path", "_metadata.row_id AS row_id")
+              .writeStream()
+              .trigger(Trigger.AvailableNow())
+              .option("checkpointLocation", checkpoint())
+              .foreachBatch(
+                  (VoidFunction2<Dataset<Row>, Long>) (df, id) -> result.addAll(df.collectAsList()))
+              .start()
+              .awaitTermination();
+
+          assertThat(result).hasSize(1);
+          assertThat(result.get(0).getInt(0)).isEqualTo(1);
+          assertThat(result.get(0).getString(1)).endsWith(".parquet");
+          assertThat(result.get(0).isNullAt(2)).isFalse();
+        });
+  }
+
   private void assertManagedStreamingOptionDoesNotError(
       String tableName, String optionName, String optionValue) throws Exception {
     withNewTable(

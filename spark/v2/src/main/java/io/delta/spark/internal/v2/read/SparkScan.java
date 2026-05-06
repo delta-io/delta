@@ -24,8 +24,11 @@ import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.ScanImpl;
+import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.data.ScanStateRow;
+import io.delta.kernel.internal.rowtracking.RowTracking;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorSchemaContext;
@@ -47,14 +50,18 @@ import org.apache.spark.sql.connector.read.*;
 import org.apache.spark.sql.connector.read.colstats.ColumnStatistics;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
 import org.apache.spark.sql.delta.DeltaOptions;
+import org.apache.spark.sql.delta.RowCommitVersion$;
+import org.apache.spark.sql.delta.RowId$;
 import org.apache.spark.sql.execution.datasources.*;
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
+import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StringType;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
+import scala.collection.JavaConverters;
 
 /** Spark DSV2 Scan implementation backed by Delta Kernel. */
 public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Filtering {
@@ -128,6 +135,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   // estimation
   private long estimatedSizeInBytes = 0L;
   private volatile boolean planned = false;
+  private boolean streamingScanNeedsMetadataColumn = false;
 
   // Runtime predicates applied after planning (using Set for order-independent comparison)
   private final Set<org.apache.spark.sql.connector.expressions.filter.Predicate>
@@ -201,7 +209,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     boolean metadataColumnRequested =
         Arrays.stream(readDataSchema.fields())
             .anyMatch(field -> FileFormat$.MODULE$.METADATA_NAME().equals(field.name()));
-    if (metadataColumnRequested) {
+    if (metadataColumnRequested || streamingScanNeedsMetadataColumn) {
       return Scan.ColumnarSupportMode.UNSUPPORTED;
     }
 
@@ -247,6 +255,13 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   @Override
   public MicroBatchStream toMicroBatchStream(String checkpointLocation) {
     validateStreamingOptions(deltaOptions);
+    StructType streamingReadDataSchema = readDataSchema;
+    if (shouldAddMetadataColumnForStreaming()) {
+      streamingScanNeedsMetadataColumn = true;
+      streamingReadDataSchema =
+          readDataSchema.add(
+              FileFormat$.MODULE$.METADATA_NAME(), catalogManagedMetadataSchema(), false);
+    }
     return new SparkMicroBatchStream(
         snapshotManager,
         // Loads a fresh snapshot as the baseline for schema change detection and table identity
@@ -260,9 +275,27 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         getTablePath(),
         dataSchema,
         partitionSchema,
-        readDataSchema,
+        streamingReadDataSchema,
         dataFilters != null ? dataFilters : new Filter[0],
         scalaOptions != null ? scalaOptions : scala.collection.immutable.Map$.MODULE$.empty());
+  }
+
+  private boolean shouldAddMetadataColumnForStreaming() {
+    SnapshotImpl snapshotImpl = (SnapshotImpl) initialSnapshot;
+    return !Arrays.stream(readDataSchema.fields())
+            .anyMatch(field -> FileFormat$.MODULE$.METADATA_NAME().equals(field.name()))
+        && TableFeatures.isCatalogManagedSupported(snapshotImpl.getProtocol())
+        && RowTracking.isEnabled(snapshotImpl.getProtocol(), snapshotImpl.getMetadata());
+  }
+
+  private static StructType catalogManagedMetadataSchema() {
+    StructType metadataSchema =
+        new StructType(
+            JavaConverters.seqAsJavaList(FileFormat$.MODULE$.BASE_METADATA_FIELDS())
+                .toArray(new StructField[0]));
+    return metadataSchema
+        .add(RowId$.MODULE$.ROW_ID(), DataTypes.LongType, false)
+        .add(RowCommitVersion$.MODULE$.METADATA_STRUCT_FIELD_NAME(), DataTypes.LongType, false);
   }
 
   @Override
