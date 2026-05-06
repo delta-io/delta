@@ -32,6 +32,7 @@ import java.io.File;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.nio.file.Files;
+import java.util.Arrays;
 import java.util.Properties;
 import org.apache.commons.io.FileUtils;
 import org.apache.log4j.Logger;
@@ -347,5 +348,10 @@ public abstract class UnityCatalogSupport {
     int minor = Integer.parseInt(parts[1]);
     int patch = Integer.parseInt(parts[2]);
     return new int[] {major, minor, patch};
+  }
+
+  /** Returns whether the Unity Catalog Spark version is at least {@code major.minor.patch}. */
+  protected static boolean isUnityCatalogSparkAtLeast(int major, int minor, int patch) {
+    return Arrays.compare(getUnityCatalogSparkVersion(), new int[] {major, minor, patch}) >= 0;
   }
 }

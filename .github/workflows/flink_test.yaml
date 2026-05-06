@@ -1,6 +1,20 @@
 name: "Delta Flink"
 
-on: [push, pull_request]
+on:
+  push:
+    branches: [master, branch-*]
+    paths:
+      - 'flink/**'
+      - 'kernel/**'
+      - '!**/*.md'
+      - '!**/*.txt'
+  pull_request:
+    branches: [master, branch-*]
+    paths:
+      - 'flink/**'
+      - 'kernel/**'
+      - '!**/*.md'
+      - '!**/*.txt'
 
 # Cancel previous runs when new commits are pushed
 concurrency:
@@ -8,7 +22,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Point SBT to our cache directories for consistency
+  # Point SBT to our cache directories for consistency.
   SBT_OPTS: "-Dsbt.coursier.home-dir=/home/runner/.cache/coursier -Dsbt.ivy.home=/home/runner/.ivy2"
 
 jobs:
@@ -34,14 +48,13 @@ jobs:
         with:
           distribution: "zulu"
           java-version: "17"
-      - name: Cache SBT and dependencies
+      - name: Restore SBT cache
         id: cache-sbt
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.sbt
-            ~/.ivy2/cache
-            ~/.coursier/cache
+            ~/.ivy2
             ~/.cache/coursier
           key: sbt-flink
       - name: Check cache status
@@ -51,6 +64,19 @@ jobs:
           else
             echo "❌ Cache MISS - will download dependencies"
           fi
+      # flink has unitycatalog-client as a compile-scope dep and flink tests exercise UC.
+      # Publish the pinned UC build locally before sbt runs.
+      - name: Set up pinned Unity Catalog
+        uses: ./.github/actions/setup-unitycatalog
       - name: Run unit tests
         run: |
           build/sbt flinkGroup/test
+      - name: Save SBT cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2
+            ~/.cache/coursier
+          key: sbt-flink

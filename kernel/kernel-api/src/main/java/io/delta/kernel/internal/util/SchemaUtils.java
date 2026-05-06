@@ -853,7 +853,9 @@ public class SchemaUtils {
         || dataType instanceof DateType
         || dataType instanceof TimestampType
         || dataType instanceof TimestampNTZType
-        || dataType instanceof VariantType) {
+        || dataType instanceof VariantType
+        || dataType instanceof GeometryType
+        || dataType instanceof GeographyType) {
       // supported types
       return;
     } else if (dataType instanceof StructType) {

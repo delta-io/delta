@@ -1,10 +1,12 @@
 name: "Delta Build"
 on:
   push:
+    branches: [master, branch-*]
     paths-ignore:
       - '**.md'
       - '**.txt'
   pull_request:
+    branches: [master, branch-*]
     paths-ignore:
       - '**.md'
       - '**.txt'
@@ -26,8 +28,8 @@ jobs:
         with:
           python-version: '3.9'
 
-      - name: Cache Scala, SBT
-        uses: actions/cache@6f8efc29b200d32929f49075959781ed54ec270c # v3.5.0
+      - name: Restore SBT cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.sbt
@@ -35,5 +37,21 @@ jobs:
             ~/.cache/coursier
           key: delta-sbt-cache-cross-spark
 
+      # publishM2 compiles every aggregated project, including storage, which has
+      # unitycatalog-client as a compile-scope dependency. Publish the pinned UC build locally
+      # first so Delta compiles against the UC APIs it actually targets.
+      - name: Set up pinned Unity Catalog
+        uses: ./.github/actions/setup-unitycatalog
+
       - name: Run cross-Spark build test
         run: python project/tests/test_cross_spark_publish.py
+
+      - name: Save SBT cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2
+            ~/.cache/coursier
+          key: delta-sbt-cache-cross-spark

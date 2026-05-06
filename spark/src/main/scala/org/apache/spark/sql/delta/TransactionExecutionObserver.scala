@@ -24,6 +24,9 @@ trait ChainableExecutionObserver[O] {
    */
   @volatile protected var nextObserver: Option[O] = None
 
+  /** Returns the next observer. */
+  def getNextObserver: Option[O] = nextObserver
+
   /** Set the next observer for this thread. */
   def setNextObserver(nextTxnObserver: O): Unit = {
     nextObserver = Some(nextTxnObserver)
@@ -124,4 +127,14 @@ object NoOpTransactionExecutionObserver extends TransactionExecutionObserver {
     // This mimics the original behaviour of this code.
     TransactionExecutionObserver.getObserver
   }
+}
+
+/**
+ * Only the read part of a [[ChainableExecutionObserver]].
+ *
+ * The covariance allows specialising `getNextObserver` for subtypes.
+ */
+trait GetChainableExecutionObserver[+O] {
+
+  def getNextObserver: Option[O]
 }

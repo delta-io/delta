@@ -608,6 +608,100 @@ trait DeltaTestUtilsForTempViews
   }
 }
 
+trait DeltaSQLInMemoryTestUtils
+    extends DeltaSQLTestUtils
+    with InMemoryTestTableMixin {
+
+  import org.apache.spark.sql.delta.catalog.InMemoryDeltaCatalog
+
+  /**
+   * Override for [[withTable]] that asserts no leftover physical parquet as a sanity-check
+   * for V2 paths.
+   */
+  override protected def withTable(tableNames: String*)(f: => Unit): Unit = {
+    try {
+      super.withTable(tableNames: _*) {
+        f
+        tableNames.foreach(assertNoV1Writes)
+      }
+    } finally {
+      for (tableName <- tableNames) {
+        assert(!InMemoryDeltaCatalog.contains(tableName))
+      }
+    }
+  }
+
+  /**
+   * Overrides for [[afterEach]], cleans the [[InMemoryDeltaCatalog]] after each test.
+   */
+  override protected def afterEach(): Unit = {
+    try {
+      InMemoryDeltaCatalog.reset()
+    } finally {
+      super.afterEach()
+    }
+  }
+
+  override def withTempPath(f: File => Unit): Unit = {
+    super.withTempPath { dir =>
+      f(dir)
+      assertNoV1Writes(dir)
+    }
+  }
+
+  override protected def withTempDir(f: File => Unit): Unit = {
+    super.withTempPath { dir =>
+      f(dir)
+      assertNoV1Writes(dir)
+    }
+  }
+
+  /**
+   * Asserts no hints of V1 writes (e.g. parquet files) are in the data directory for [[tableName]].
+   * Used to sanity-check our V2-only write paths.
+   */
+  protected def assertNoV1Writes(tableName: String): Unit = {
+    val ident = TableIdentifier(tableName)
+
+    // Temp views don't create anything on the disk, but still use `withTable`.
+    // Either way, something that doesn't have a catalog entry, but is used in `withTable` should
+    // not be checked on disk.
+    if (!spark.sessionState.catalog.tableExists(ident)) {
+      return
+    }
+
+    val catalogTable = spark.sessionState.catalog.getTableMetadata(ident)
+    val dataPath = new File(new java.net.URI(catalogTable.location.toString))
+    assertNoV1Writes(dataPath)
+  }
+
+  protected def assertNoV1Writes(dataPath: File): Unit = {
+    assertNoParquetFiles(dataPath)
+  }
+
+
+  private def assertNoParquetFiles(dataPath: File): Unit = {
+    import java.nio.file.{Files, Path}
+
+    if (dataPath.exists()) {
+      val stream = Files.walk(dataPath.toPath)
+      try {
+        val parquetFiles = stream
+          .filter(Files.isRegularFile(_))
+          .filter(_.toString.endsWith(".parquet"))
+          .toArray.map(_.asInstanceOf[Path].toString).toSeq
+        if (parquetFiles.nonEmpty) {
+          fail(s"Found ${parquetFiles.length} parquet files in $dataPath while" +
+              s"V2 in-memory mode is enabled.\n" +
+              s"DML may have fallen back to V1.")
+        }
+      } finally {
+        stream.close()
+      }
+    }
+  }
+}
+
 /**
  * Trait collecting helper methods for DML tests e.p. creating a test table for each test and
  * cleaning it up after each test.
@@ -755,6 +849,46 @@ trait DeltaDMLTestUtils
     )
       .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
       .drop(CDCReader.CDC_COMMIT_VERSION)
+  }
+}
+
+/**
+ * Overrides [[DeltaDMLTestUtils]] methods to route writes through the V2 in-memory path.
+ */
+trait DeltaDMLInMemoryTestUtils
+    extends DeltaDMLTestUtils
+    with DeltaSQLInMemoryTestUtils {
+
+  /**
+   * Appends [[df]] into the test table.
+   */
+  override protected def append(df: DataFrame, partitionBy: Seq[String] = Nil): Unit = {
+    if (!spark.sessionState.catalog.tableExists(tableIdentifier)) {
+      val partitioning = if (partitionBy.nonEmpty) {
+        s"PARTITIONED BY (${partitionBy.mkString(", ")})"
+      } else {
+        ""
+      }
+      spark.sql(
+        s"CREATE TABLE $tableSQLIdentifier (${df.schema.toDDL}) USING delta $partitioning")
+    }
+    df.writeTo(tableSQLIdentifier).append()
+    assertNoV1Writes(tableSQLIdentifier)
+  }
+
+  /**
+   * Override errorContains to handle known error message differences between Delta V1 and DSv2.
+   * Eventually we'd want to migrate all usage of errorContains (deprecated) to checkError.
+   */
+  override protected def errorContains(errMsg: String, str: String): Unit = {
+    val mapped = str.toLowerCase(java.util.Locale.ROOT) match {
+      // Delta says "cannot resolve X in UPDATE/INSERT clause", Spark says "cannot be resolved"
+      case s if s.startsWith("cannot resolve") => "cannot be resolved"
+      // Delta says "No such struct field X in Y", Spark says "cannot be resolved"
+      case s if s.startsWith("no such struct field") => "cannot be resolved"
+      case _ => str
+    }
+    super.errorContains(errMsg, mapped)
   }
 }
 

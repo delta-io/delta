@@ -232,15 +232,11 @@ trait TypeWideningUniformTests extends QueryTest
             .format("delta")
             .saveAsTable("source")
           enableIcebergUniform("target", IcebergCompatV2)
-          withSQLConf(
-            DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key -> "true"
-          ) {
-            insert.runInsert(
-              columns = Seq("value"),
-              whereCol = "value",
-              whereValue = 1,
-              withSchemaEvolution = true)
-          }
+          insert.runInsert(
+            columns = Seq("value"),
+            whereCol = "value",
+            whereValue = 1,
+            withSchemaEvolution = true)
           val result = sql(s"SELECT * FROM target")
           val expected = testCase.initialValuesDF.union(testCase.initialValuesDF)
           assert(result.schema("value").dataType === testCase.fromType)

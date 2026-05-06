@@ -28,9 +28,11 @@ class IcebergRESTCatalogPlanningClientFactory extends ServerSidePlanningClientFa
       metadata: ServerSidePlanningMetadata): ServerSidePlanningClient = {
 
     val baseUri = metadata.planningEndpointUri
-    val token = metadata.authToken.getOrElse("")
     val catalogName = metadata.catalogName
+    val supplier: () => String =
+      metadata.tokenSupplier.getOrElse(() => "")
 
-    new IcebergRESTCatalogPlanningClient(baseUri, catalogName, token)
+    new IcebergRESTCatalogPlanningClient(
+      baseUri, catalogName, supplier)
   }
 }

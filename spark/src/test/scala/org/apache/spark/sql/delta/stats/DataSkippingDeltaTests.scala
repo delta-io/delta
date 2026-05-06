@@ -881,7 +881,7 @@ trait DataSkippingDeltaTestsBase extends QueryTest
     Seq(1, 2, 3).toDF().write.format("delta").save(tempDir.toString)
     val log = DeltaLog.forTable(spark, new Path(tempDir.toString))
     val txn = log.startTransaction()
-    val noStats = txn.filterFiles(Nil).map(_.copy(stats = null))
+    val noStats = txn.filterFiles().map(_.copy(stats = null))
     txn.commit(noStats, DeltaOperations.ComputeStats(Nil))
 
     val df = spark.read.format("delta").load(tempDir.toString)

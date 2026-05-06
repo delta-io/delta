@@ -217,13 +217,22 @@ case class DeletionVectorDescriptor(
 
       val storageTypeBytes = storageType.getBytes()
       assert(storageTypeBytes.length == 1, s"Storage type must be 1byte value: $storageType")
-      ds.writeByte(storageTypeBytes.head)
+      assert(storageTypeBytes.head.toChar.isLower,
+        s"Storage type must be lowercase: $storageType")
 
       if (storageType != INLINE_DV_MARKER) {
-        assert(offset.isDefined)
-        ds.writeInt(offset.get)
+        offset match {
+          case Some(o) =>
+            // Lowercase marker indicates offset follows.
+            ds.writeByte(storageTypeBytes.head)
+            ds.writeInt(o)
+          case None =>
+            // Uppercase marker indicates no offset bytes follow.
+            ds.writeByte(storageTypeBytes.head.toChar.toUpper.toByte)
+        }
       } else {
         assert(offset.isEmpty)
+        ds.writeByte(storageTypeBytes.head)
       }
 
       ds.writeUTF(pathOrInlineDv)
@@ -402,8 +411,17 @@ object DeletionVectorDescriptor {
     try {
       val cardinality = ds.readLong()
       val sizeInBytes = ds.readInt()
-      val storageType = ds.readByte().toChar.toString
-      val offset = if (storageType != INLINE_DV_MARKER) Some(ds.readInt()) else None
+      val serializedStorageType = ds.readByte().toChar
+      // Lowercase on-disk markers (u, p) are followed by an offset int.
+      // Uppercase on-disk markers (U, P) indicate no offset is present.
+      // Inline marker (i) never has an offset.
+      val (storageType, offset) = serializedStorageType match {
+        case c if c == INLINE_DV_MARKER.head => (INLINE_DV_MARKER, None)
+        case c if c.isUpper =>
+          (c.toLower.toString, None)
+        case c =>
+          (c.toString, Some(ds.readInt()))
+      }
       val pathOrInlineDv = ds.readUTF()
       DeletionVectorDescriptor(storageType, pathOrInlineDv, offset, sizeInBytes, cardinality)
     } finally {

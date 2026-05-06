@@ -16,7 +16,6 @@
 
 package org.apache.spark.sql.delta.stats
 
-import org.apache.spark.sql.delta.DeltaLog
 
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.expressions._
@@ -27,9 +26,10 @@ import org.apache.spark.sql.types.StringType
 class DataSkippingDeltaConstructDataFiltersSuite
     extends QueryTest with SharedSparkSession with DeltaSQLCommandTest {
   test("Verify constructDataFilters doesn't hang for expressions with Literal operands.") {
-    val snapshot = DeltaLog.forTable(spark, "dummy_path").update()
-    val dataFilterBuilder = new snapshot.DataFiltersBuilder(
-      spark, DeltaDataSkippingType.dataSkippingOnlyV1)
+    val dataFilterBuilder = new DataFiltersBuilder(
+      spark,
+      DeltaDataSkippingType.dataSkippingOnlyV1,
+      getStatsColumnOpt = _ => None)
 
     val literal = Literal.create("foo", StringType)
     Seq(
@@ -73,9 +73,10 @@ class DataSkippingDeltaConstructDataFiltersSuite
   }
 
   test("Verify areAllLeavesLiteral can't be recursively called b/c it can cause stack overflow") {
-    val snapshot = DeltaLog.forTable(spark, "dummy_path").update()
-    val dataFilterBuilder = new snapshot.DataFiltersBuilder(
-      spark, DeltaDataSkippingType.dataSkippingOnlyV1)
+    val dataFilterBuilder = new DataFiltersBuilder(
+      spark,
+      DeltaDataSkippingType.dataSkippingOnlyV1,
+      getStatsColumnOpt = _ => None)
 
     // Create a deeply nested Alias expression: Alias(Alias(Alias(...), "name3"), "name2"), "name1")
     val depth = 100000 // Deep enough to cause stack overflow with default JVM stack size

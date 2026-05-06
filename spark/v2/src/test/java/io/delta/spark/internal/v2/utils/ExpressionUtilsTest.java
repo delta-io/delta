@@ -272,6 +272,28 @@ public class ExpressionUtilsTest {
   }
 
   @Test
+  public void testAlwaysTrueFilter() {
+    Filter filter = new org.apache.spark.sql.sources.AlwaysTrue();
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+
+    assertTrue(result.isPresent(), "AlwaysTrue should be converted");
+    assertFalse(result.isPartial());
+    assertEquals("ALWAYS_TRUE", result.get().getName());
+  }
+
+  @Test
+  public void testAlwaysFalseFilter() {
+    Filter filter = new org.apache.spark.sql.sources.AlwaysFalse();
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+
+    assertTrue(result.isPresent(), "AlwaysFalse should be converted");
+    assertFalse(result.isPartial());
+    assertEquals("ALWAYS_FALSE", result.get().getName());
+  }
+
+  @Test
   public void testUnsupportedFilter() {
     // Create an unsupported filter (StringContains is not implemented in our conversion method)
     Filter unsupportedFilter = new StringContains("col1", "test");

@@ -265,7 +265,7 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
     // Verify the metadata has expected defaults
     assert(metadata.catalogName == "my_catalog")
     assert(metadata.planningEndpointUri == "")
-    assert(metadata.authToken.isEmpty)
+    assert(metadata.tokenSupplier.isEmpty)
     assert(metadata.tableProperties.isEmpty)
   }
 
@@ -274,7 +274,7 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
     val metadata = UnityCatalogMetadata(
       catalogName = "test_catalog",
       ucUri = ucUri,
-      ucToken = "test-token",
+      tokenSupplier = Some(() => "test-token"),
       tableProps = Map.empty
     )
 
@@ -285,6 +285,76 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
       "https://unity-catalog-server.example.com/api/2.1/unity-catalog/" +
       "iceberg-rest/v1"
     assert(metadata.planningEndpointUri == expectedEndpoint)
+  }
+
+  test("extractAuthConfig: OAuth config") {
+    val cat = "oauthCat"
+    withSQLConf(
+      s"spark.sql.catalog.$cat.auth.type" -> "oauth",
+      s"spark.sql.catalog.$cat.auth.oauth.uri" ->
+        "https://oauth.example.com/token",
+      s"spark.sql.catalog.$cat.auth.oauth.clientId" ->
+        "client123",
+      s"spark.sql.catalog.$cat.auth.oauth.clientSecret" ->
+        "secret456"
+    ) {
+      val config = UnityCatalogMetadata
+        .extractAuthConfig(spark, cat)
+      assert(config("type") == "oauth")
+      assert(config("oauth.uri") ==
+        "https://oauth.example.com/token")
+      assert(config("oauth.clientId") == "client123")
+      assert(config.size == 4)
+    }
+  }
+
+  test("extractAuthConfig: legacy token as static") {
+    val cat = "legacyCat"
+    withSQLConf(
+      s"spark.sql.catalog.$cat.token" -> "dapi-token"
+    ) {
+      val config = UnityCatalogMetadata
+        .extractAuthConfig(spark, cat)
+      assert(config("type") == "static")
+      assert(config("token") == "dapi-token")
+      assert(config.size == 2)
+    }
+  }
+
+  test("extractAuthConfig: error if both token formats") {
+    val cat = "conflictCat"
+    withSQLConf(
+      s"spark.sql.catalog.$cat.auth.token" -> "new",
+      s"spark.sql.catalog.$cat.token" -> "old"
+    ) {
+      val e = intercept[IllegalArgumentException] {
+        UnityCatalogMetadata.extractAuthConfig(spark, cat)
+      }
+      assert(e.getMessage.contains("configured twice"))
+    }
+  }
+
+  test("extractAuthConfig: legacy token wins over auth.*") {
+    val cat = "legacyWinsCat"
+    withSQLConf(
+      s"spark.sql.catalog.$cat.auth.type" -> "oauth",
+      s"spark.sql.catalog.$cat.auth.oauth.uri" ->
+        "https://oauth.example.com",
+      s"spark.sql.catalog.$cat.token" -> "dapi-legacy"
+    ) {
+      val config = UnityCatalogMetadata
+        .extractAuthConfig(spark, cat)
+      // Legacy .token always wins (converted to static)
+      assert(config("type") == "static")
+      assert(config("token") == "dapi-legacy")
+      assert(config.size == 2)
+    }
+  }
+
+  test("extractAuthConfig: empty when no auth") {
+    val config = UnityCatalogMetadata
+      .extractAuthConfig(spark, "nonExistentCat")
+    assert(config.isEmpty)
   }
 
   test("simple EqualTo filter pushed to planning client") {

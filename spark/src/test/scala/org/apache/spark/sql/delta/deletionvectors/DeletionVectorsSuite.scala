@@ -465,6 +465,25 @@ class DeletionVectorsSuite extends QueryTest
     }
   }
 
+  test("DELETE with DVs - table with a user column named 'path' does not conflict") {
+    withDeletionVectorsEnabled() {
+      withTempDir { dir =>
+        val tablePath = dir.getAbsolutePath
+        import testImplicits._
+        val data = (0 until 10).map(i => (i, s"/path/to/value/$i"))
+        data.toDF("value", "path").write.format("delta").save(tablePath)
+
+        val deltaTable = io.delta.tables.DeltaTable.forPath(tablePath)
+        deltaTable.delete("value < 3")
+
+        checkAnswer(
+          spark.read.format("delta").load(tablePath).orderBy("value"),
+          (3 until 10).map(i => Row(i, s"/path/to/value/$i"))
+        )
+      }
+    }
+  }
+
   test("JOIN with DVs - self-join a table with DVs") {
     val tableDf = spark.read.format("delta").load(table2Path)
     val leftDf = tableDf.withColumn("key", col("value") % 2)

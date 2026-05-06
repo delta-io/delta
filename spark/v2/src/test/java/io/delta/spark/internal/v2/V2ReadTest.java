@@ -16,7 +16,6 @@
 
 package io.delta.spark.internal.v2;
 
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
@@ -102,52 +101,5 @@ public class V2ReadTest extends V2TestBase {
     long count = spark.sql(str("SELECT * FROM dsv2.delta.`%s`", tablePath)).count();
     // 500 odd numbers from 0-999: 1, 3, 5, ..., 999
     assertTrue(count == 500, "Expected 500 rows after DV filtering, got " + count);
-  }
-
-  @Test
-  public void testPartitionedJoinEliminatesShuffle(@TempDir File tempDir) {
-    String tablePath = tempDir.getAbsolutePath();
-
-    // Create a partitioned Delta table via V1
-    spark.sql(
-        str(
-            "CREATE TABLE delta.`%s` (id INT, data STRING, part INT) "
-                + "USING delta PARTITIONED BY (part)",
-            tablePath));
-    spark.sql(
-        str(
-            "INSERT INTO delta.`%s` VALUES (1, 'a', 1), (2, 'b', 1), (3, 'c', 2), (4, 'd', 3)",
-            tablePath));
-
-    // Disable broadcast join so Spark must use shuffle or partition-aware join.
-    // Enable V2 bucketing so Spark recognizes KeyGroupedPartitioning from
-    // SupportsReportPartitioning (default is false in Spark 4.0, true in 4.1).
-    withSQLConf(
-        "spark.sql.autoBroadcastJoinThreshold",
-        "-1",
-        () ->
-            withSQLConf(
-                "spark.sql.sources.v2.bucketing.enabled",
-                "true",
-                () -> {
-                  // Self-join on partition column via DSv2 catalog
-                  String joinQuery =
-                      str(
-                          "SELECT a.id, b.data FROM dsv2.delta.`%s` a "
-                              + "JOIN dsv2.delta.`%s` b ON a.part = b.part",
-                          tablePath, tablePath);
-
-                  String explainOutput =
-                      spark.sql(joinQuery).queryExecution().executedPlan().toString();
-
-                  // With SupportsReportPartitioning + HasPartitionKey, Spark should recognize
-                  // both sides are KeyGroupedPartitioned on 'part' and skip the shuffle
-                  // (no Exchange node)
-                  assertFalse(
-                      explainOutput.contains("Exchange"),
-                      "Expected no Exchange (shuffle) in plan for partition-aligned join, "
-                          + "but found one.\nPlan:\n"
-                          + explainOutput);
-                }));
   }
 }

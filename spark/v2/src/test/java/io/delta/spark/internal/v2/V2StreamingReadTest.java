@@ -268,7 +268,7 @@ public class V2StreamingReadTest extends V2TestBase {
     try {
       writer.submit(
           () -> {
-            for (int i = 0; i < 100; i++) {
+            for (int i = 0; i < 100 && query.isActive(); i++) {
               try {
                 spark
                     .createDataFrame(
@@ -289,8 +289,10 @@ public class V2StreamingReadTest extends V2TestBase {
       Thread.sleep(300);
       query.stop();
     } finally {
-      writer.shutdownNow();
-      writer.awaitTermination(5, TimeUnit.SECONDS);
+      // Don't interrupt — let the in-flight save() finish so Spark isn't still creating files
+      // in @TempDir after we return. The writer exits on its own once query.isActive() is false.
+      writer.shutdown();
+      writer.awaitTermination(30, TimeUnit.SECONDS);
     }
 
     // Release cached DeltaLog references so @TempDir cleanup can delete the directory.

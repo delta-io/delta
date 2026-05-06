@@ -19,6 +19,7 @@ import static org.apache.spark.sql.connector.catalog.CatalogV2Implicits.parseCol
 
 import com.google.common.annotations.VisibleForTesting;
 import io.delta.kernel.expressions.AlwaysFalse;
+import io.delta.kernel.expressions.AlwaysTrue;
 import io.delta.kernel.expressions.And;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.In;
@@ -248,6 +249,13 @@ public final class ExpressionUtils {
           convertSparkFilterToKernelPredicate(f.child(), false /*canPartialPushDown*/, tableSchema);
       return new ConvertedPredicate(
           child.getConvertedPredicate().map(c -> new Predicate("NOT", c)), child.isPartial());
+    }
+
+    if (filter instanceof org.apache.spark.sql.sources.AlwaysTrue) {
+      return new ConvertedPredicate(Optional.of(AlwaysTrue.ALWAYS_TRUE));
+    }
+    if (filter instanceof org.apache.spark.sql.sources.AlwaysFalse) {
+      return new ConvertedPredicate(Optional.of(AlwaysFalse.ALWAYS_FALSE));
     }
 
     return new ConvertedPredicate(Optional.empty());

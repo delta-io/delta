@@ -18,10 +18,12 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 import java.lang.{Integer => JInt}
+import java.net.URI
 
 import scala.language.implicitConversions
 
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
+import org.apache.spark.sql.delta.catalog.InMemoryDeltaCatalog
 import org.apache.spark.sql.delta.commands.MergeIntoCommand
 import org.apache.spark.sql.delta.commands.merge.MergeStats
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -32,7 +34,7 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.QueryContext
 import org.apache.spark.sql.{functions, AnalysisException, DataFrame, QueryTest, Row}
-import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.{InternalRow, TableIdentifier}
 import org.apache.spark.sql.catalyst.expressions.{GenericInternalRow, UnsafeArrayData}
 import org.apache.spark.sql.catalyst.plans.logical.{SubqueryAlias, View}
 import org.apache.spark.sql.execution.adaptive.DisableAdaptiveExecution
@@ -3463,6 +3465,51 @@ trait MergeIntoSuiteBaseMiscTests extends MergeIntoSuiteBaseMixin {
           Row(-1, part3) :: Row(-1, part3) :: Row(-1, part3) ::
           Row(0, part4) ::
           Nil)
+    }
+  }
+}
+
+/**
+ * Merge-specific V2-DML mixin.
+ * Remaps known error conditions between V1 and V2.
+ */
+trait MergeIntoSuiteInMemoryTestTableMixin
+    extends DeltaDMLInMemoryTestUtils {
+
+  /**
+   * Override that checks for known-different [[condition]]s between V1 and V2.
+   * When a matching [[condition]] is found, the [[exception]] is only asserted to match the mapped
+   * condition.
+   */
+  override def checkError(
+      exception: org.apache.spark.SparkThrowable,
+      condition: String,
+      sqlState: Option[String] = None,
+      parameters: Map[String, String] = Map.empty,
+      matchPVals: Boolean = false,
+      queryContext: Array[ExpectedContext] = Array.empty): Unit = {
+    def assertV2(v2Condition: String): Unit = {
+      assert(exception.getCondition == v2Condition,
+        s"Expected V2 condition '$v2Condition' (mapped from '$condition'), " +
+        s"got '${exception.getCondition}'")
+    }
+    condition match {
+      case "DELTA_AGGREGATION_NOT_SUPPORTED" =>
+        assertV2("UNSUPPORTED_MERGE_CONDITION.AGGREGATE")
+      case "DELTA_NON_DETERMINISTIC_FUNCTION_NOT_SUPPORTED" =>
+        assertV2("UNSUPPORTED_MERGE_CONDITION.NON_DETERMINISTIC")
+      case "DELTA_MERGE_UNRESOLVED_EXPRESSION" =>
+        assertV2("UNRESOLVED_COLUMN.WITH_SUGGESTION")
+      case "DELTA_SUBQUERY_NOT_SUPPORTED" =>
+        assertV2("UNSUPPORTED_MERGE_CONDITION.SUBQUERY")
+      case _ =>
+        super.checkError(
+          exception = exception,
+          condition = condition,
+          sqlState = sqlState,
+          parameters = parameters,
+          matchPVals = matchPVals,
+          queryContext = queryContext)
     }
   }
 }

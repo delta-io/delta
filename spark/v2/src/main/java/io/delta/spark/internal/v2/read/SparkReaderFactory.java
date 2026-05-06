@@ -37,7 +37,7 @@ public class SparkReaderFactory implements PartitionReaderFactory {
 
   @Override
   public PartitionReader<ColumnarBatch> createColumnarReader(InputPartition partition) {
-    return new SparkPartitionReader<ColumnarBatch>(readFunc, extractFilePartition(partition));
+    return new SparkPartitionReader<ColumnarBatch>(readFunc, (FilePartition) partition);
   }
 
   @Override
@@ -47,23 +47,6 @@ public class SparkReaderFactory implements PartitionReaderFactory {
 
   @Override
   public PartitionReader<InternalRow> createReader(InputPartition partition) {
-    return new SparkPartitionReader<InternalRow>(readFunc, extractFilePartition(partition));
-  }
-
-  /**
-   * Extracts the FilePartition from the given InputPartition. Handles both DeltaInputPartition (for
-   * partitioned tables) and FilePartition (for non-partitioned tables).
-   */
-  private FilePartition extractFilePartition(InputPartition partition) {
-    if (partition instanceof DeltaInputPartition) {
-      return ((DeltaInputPartition) partition).getFilePartition();
-    } else if (partition instanceof FilePartition) {
-      return (FilePartition) partition;
-    } else {
-      throw new IllegalArgumentException(
-          "Unexpected partition type: "
-              + partition.getClass().getName()
-              + ". Expected DeltaInputPartition or FilePartition.");
-    }
+    return new SparkPartitionReader<InternalRow>(readFunc, (FilePartition) partition);
   }
 }

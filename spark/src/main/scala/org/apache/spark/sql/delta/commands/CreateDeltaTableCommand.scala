@@ -208,6 +208,13 @@ case class CreateDeltaTableCommand(
           // to once again go through analysis
           val data = DataFrameUtils.ofRows(sparkSession, query)
           val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
+          if (options.isReplaceOnOrUsingDefined) {
+            if (options.replaceOn.isDefined) {
+              throw DeltaErrors.operationNotSupportedException("replaceOn")
+            } else {
+              throw DeltaErrors.operationNotSupportedException("replaceUsing")
+            }
+          }
           val deltaWriter = WriteIntoDelta(
             deltaLog = deltaLog,
             mode = mode,
@@ -349,7 +356,9 @@ case class CreateDeltaTableCommand(
     // We are either appending/overwriting with saveAsTable or creating a new table with CTAS
     if (!hasBeenExecuted(txn, sparkSession, Some(options))) {
       val (taggedCommitData, op) = doDeltaWrite(updatedWriter, updatedWriter.data.schema.asNullable)
-      txn.commit(taggedCommitData.actions, op, tags = taggedCommitData.stringTags)
+      InsertAtomicReplaceExecutionObserver.getObserver.commit {
+        txn.commit(taggedCommitData.actions, op, tags = taggedCommitData.stringTags)
+      }
     }
     txnToReturn
   }
@@ -724,7 +733,7 @@ case class CreateDeltaTableCommand(
       )
 
     // Legacy saveAsTable with Overwrite mode
-    case TableCreationModes.CreateOrReplace if options.exists(_.replaceWhere.isDefined) =>
+    case TableCreationModes.CreateOrReplace if options.exists(_.isInsertAtomicReplaceOp) =>
       DeltaOperations.Write(
         mode = mode,
         partitionBy = Option(table.partitionColumnNames),
@@ -733,7 +742,9 @@ case class CreateDeltaTableCommand(
         isDynamicPartitionOverwrite = options.flatMap(
           o => if (Try(o.isDynamicPartitionOverwriteMode).getOrElse(false)) Some(true) else None),
         canOverwriteSchema = options.flatMap(o => if (o.canOverwriteSchema) Some(true) else None),
-        canMergeSchema = options.flatMap(o => if (o.canMergeSchema) Some(true) else None)
+        canMergeSchema = options.flatMap(o => if (o.canMergeSchema) Some(true) else None),
+        replaceOnCond = options.flatMap(_.replaceOn),
+        replaceUsingCols = options.flatMap(_.replaceUsing)
       )
 
     // New DataSourceV2 saveAsTable with overwrite mode behavior
@@ -775,6 +786,12 @@ case class CreateDeltaTableCommand(
       !options.canOverwriteSchema
     if (isReplace && dontOverwriteSchema) {
       throw DeltaErrors.illegalUsageException(DeltaOptions.OVERWRITE_SCHEMA_OPTION, "replacing")
+    }
+    // `replaceUsing`/`replaceOn` can only replace parts of the table, so combining them with
+    // commands that can overwrite schema could corrupt the table: the non-replaced rows would
+    // still have the old schema while newly written rows would have the new schema.
+    if (options.isReplaceOnOrUsingDefined) {
+      throw DeltaErrors.dfv2CreateReplaceIncompatibleReplaceOnOrUsingError()
     }
     if (txn.readVersion > -1L && isReplace && !dontOverwriteSchema) {
       // When a table already exists, and we're using the DataFrameWriterV2 API to replace

@@ -23,10 +23,14 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.spark.internal.v2.read.SparkScanBuilder;
+import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
+import io.delta.spark.internal.v2.write.DeltaV2WriteBuilder;
 import java.util.*;
 import java.util.function.Supplier;
 import org.apache.hadoop.conf.Configuration;
@@ -41,19 +45,39 @@ import org.apache.spark.sql.connector.read.Statistics;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.WriteBuilder;
 import org.apache.spark.sql.delta.DeltaTableUtils;
+import org.apache.spark.sql.delta.RowCommitVersion$;
+import org.apache.spark.sql.delta.RowId$;
+import org.apache.spark.sql.delta.SparkTableShims$;
+import org.apache.spark.sql.delta.commands.cdc.CDCReader;
+import org.apache.spark.sql.execution.datasources.FileFormat$;
+import org.apache.spark.sql.types.DataType;
+import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
 /** DataSource V2 Table implementation for Delta Lake using the Delta Kernel API. */
-public class SparkTable implements Table, SupportsRead, SupportsWrite {
+public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsMetadataColumns {
+  private static final String METADATA_COLUMN_NAME = FileFormat$.MODULE$.METADATA_NAME();
+  private static final String ROW_ID_METADATA_FIELD_NAME = RowId$.MODULE$.ROW_ID();
+  private static final String ROW_COMMIT_VERSION_METADATA_FIELD_NAME =
+      RowCommitVersion$.MODULE$.METADATA_STRUCT_FIELD_NAME();
 
-  private static final Set<TableCapability> CAPABILITIES =
-      Collections.unmodifiableSet(
-          EnumSet.of(
-              TableCapability.BATCH_READ,
-              TableCapability.MICRO_BATCH_READ,
-              TableCapability.BATCH_WRITE));
+  private static final Set<TableCapability> CAPABILITIES = buildCapabilities();
+
+  private static Set<TableCapability> buildCapabilities() {
+    EnumSet<TableCapability> caps =
+        EnumSet.of(
+            TableCapability.BATCH_READ,
+            TableCapability.MICRO_BATCH_READ,
+            TableCapability.BATCH_WRITE);
+    scala.Option<TableCapability> schemaEvolution =
+        SparkTableShims$.MODULE$.schemaEvolutionCapability();
+    if (schemaEvolution.isDefined()) {
+      caps.add(schemaEvolution.get());
+    }
+    return Collections.unmodifiableSet(caps);
+  }
 
   private final Identifier identifier;
   private final String tablePath;
@@ -63,9 +87,11 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
   private final Snapshot initialSnapshot;
 
   private final Configuration hadoopConf;
+  private final Engine kernelEngine;
 
   private final SchemaProvider schemaProvider;
   private final Optional<CatalogTable> catalogTable;
+  private final boolean isCDCRead;
 
   /**
    * Creates a SparkTable from a filesystem path without a catalog table.
@@ -147,13 +173,14 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
 
     this.hadoopConf =
         SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(options));
-    Engine kernelEngine = DefaultEngine.create(this.hadoopConf);
+    this.kernelEngine = DefaultEngine.create(this.hadoopConf);
     this.snapshotManager = SnapshotManagerFactory.create(tablePath, kernelEngine, catalogTable);
     // Load the initial snapshot through the manager
     this.initialSnapshot = snapshotManager.loadLatestSnapshot();
 
     // Schema-related metadata is lazily computed on first access within SchemaProvider
     this.schemaProvider = new SchemaProvider(SparkSession.active(), initialSnapshot);
+    this.isCDCRead = CDCReader.isCDCRead(new CaseInsensitiveStringMap(this.options));
   }
 
   /**
@@ -210,12 +237,13 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
 
   @Override
   public StructType schema() {
-    return schemaProvider.getPublicSchema();
+    StructType base = schemaProvider.getPublicSchema();
+    return isCDCRead ? CDCSchemaContext.appendCDCColumns(base) : base;
   }
 
   @Override
   public Column[] columns() {
-    return schemaProvider.getColumns();
+    return CatalogV2Util.structTypeToV2Columns(schema());
   }
 
   @Override
@@ -232,6 +260,48 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
   @Override
   public Set<TableCapability> capabilities() {
     return CAPABILITIES;
+  }
+
+  /**
+   * Exposes row-tracking metadata via a single DSv2 metadata struct column.
+   *
+   * <p>This always returns one metadata column named {@code _metadata}. When row tracking is
+   * enabled, the struct contains fields {@code row_id} and {@code row_commit_version}. When row
+   * tracking is disabled, those fields are omitted from the struct.
+   */
+  @Override
+  public MetadataColumn[] metadataColumns() {
+    SnapshotImpl snapshotImpl = (SnapshotImpl) initialSnapshot;
+    boolean rowTrackingEnabled =
+        RowTracking.isEnabled(snapshotImpl.getProtocol(), snapshotImpl.getMetadata());
+
+    final StructType metadataType =
+        rowTrackingEnabled
+            ? new StructType()
+                .add(ROW_ID_METADATA_FIELD_NAME, DataTypes.LongType, false)
+                .add(ROW_COMMIT_VERSION_METADATA_FIELD_NAME, DataTypes.LongType, false)
+            : new StructType();
+
+    MetadataColumn[] columns = new MetadataColumn[1];
+    columns[0] =
+        new MetadataColumn() {
+          @Override
+          public String name() {
+            return METADATA_COLUMN_NAME;
+          }
+
+          @Override
+          public DataType dataType() {
+            return metadataType;
+          }
+
+          @Override
+          public boolean isNullable() {
+            return false;
+          }
+        };
+
+    return columns;
   }
 
   @Override
@@ -259,17 +329,10 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
         merged);
   }
 
-  /**
-   * Batch write for Delta tables via the DSv2 connector is not yet supported.
-   *
-   * <p>The write entrypoint is intentionally present to advertise DSv2 write capability while
-   * follow-up changes land the full write implementation.
-   */
   @Override
   public WriteBuilder newWriteBuilder(LogicalWriteInfo info) {
     requireNonNull(info, "write info is null");
-    throw new UnsupportedOperationException(
-        "Batch write for Delta tables via the DSv2 connector is not yet supported.");
+    return new DeltaV2WriteBuilder(kernelEngine, tablePath, hadoopConf, initialSnapshot, info);
   }
 
   @Override
@@ -330,7 +393,6 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
     private List<String> partColNames;
     private StructType dataSchema;
     private StructType partitionSchema;
-    private Column[] columns;
     private Transform[] partitionTransforms;
 
     SchemaProvider(SparkSession sparkSession, Snapshot snapshot) {
@@ -385,8 +447,6 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
       this.dataSchema = new StructType(dataFields.toArray(new StructField[0]));
       this.partitionSchema = new StructType(partitionFields.toArray(new StructField[0]));
 
-      // Use publicSchema (cleaned) for external API
-      this.columns = CatalogV2Util.structTypeToV2Columns(publicSchema);
       this.partitionTransforms =
           partColNames.stream().map(Expressions::identity).toArray(Transform[]::new);
 
@@ -412,10 +472,6 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
 
     StructType getRawSchema() {
       return withInit(() -> rawSchema);
-    }
-
-    Column[] getColumns() {
-      return withInit(() -> columns);
     }
 
     Transform[] getPartitionTransforms() {

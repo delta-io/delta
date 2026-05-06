@@ -109,7 +109,7 @@ case class TestConfig(
  * @param testConfigs a list of [[TestConfig]]s that should be generated in this file.
  */
 case class TestGroup(
-    name: String,
+    packageName: String,
     imports: List[Importer],
     testConfigs: List[TestConfig]
 )
@@ -148,6 +148,8 @@ object SuiteGeneratorConfig {
     val DELETE_SCALA = DimensionMixin("DeleteScala", alias = Some("Scala"))
     val DELETE_SQL = DimensionMixin("DeleteSQL", alias = Some("SQL"))
     val DELETE_WITH_DVS = DimensionMixin("DeleteSQLWithDeletionVectors", alias = Some("DV"))
+    val V2_IN_MEMORY_TABLE_MERGE =
+      DimensionMixin("MergeIntoSuiteInMemoryTestTable", alias = Some("InMemoryTable"))
   }
 
   private object Tests {
@@ -213,7 +215,7 @@ object SuiteGeneratorConfig {
   lazy val TEST_GROUPS: List[TestGroup] = List(
     // scalastyle:off line.size.limit
     TestGroup(
-      name = "MergeSuites",
+      packageName = "merge",
       imports = List(
         importer"org.apache.spark.sql.delta._",
         importer"org.apache.spark.sql.delta.cdc._",
@@ -225,6 +227,16 @@ object SuiteGeneratorConfig {
           List(
             List(Dims.MERGE_SCALA)
           )
+        ),
+        TestConfig(
+          List(
+            "MergeIntoBasicTests",
+            "MergeIntoAnalysisExceptionTests",
+            "MergeIntoNotMatchedBySourceSuite",
+            "MergeIntoUnlimitedMergeClausesTests",
+            "MergeIntoSchemaEvolutionCoreTests",
+            "MergeIntoSchemaEvolutionNotMatchedBySourceTests"),
+          List(List(Dims.MERGE_SQL, Dims.V2_IN_MEMORY_TABLE_MERGE, Dims.NAME_BASED))
         ),
         TestConfig(
           "MergeCDCTests" :: "MergeIntoDVsTests" :: Tests.MERGE_SQL ::: Tests.MERGE_BASE,
@@ -270,7 +282,7 @@ object SuiteGeneratorConfig {
       )
     ),
     TestGroup(
-      name = "UpdateSuites",
+      packageName = "update",
       imports = List(
         importer"org.apache.spark.sql.delta._",
         importer"org.apache.spark.sql.delta.cdc._",
@@ -313,7 +325,7 @@ object SuiteGeneratorConfig {
       )
     ),
     TestGroup(
-      name = "DeleteSuites",
+      packageName = "delete",
       imports = List(
         importer"org.apache.spark.sql.delta._",
         importer"org.apache.spark.sql.delta.cdc._",
@@ -321,13 +333,13 @@ object SuiteGeneratorConfig {
       ),
       testConfigs = List(
         TestConfig(
-          "DeleteScalaTests" :: Tests.DELETE_BASE,
+          "DeleteScalaTests" :: "DeleteSubqueryExistsTests" :: Tests.DELETE_BASE,
           List(
             List(Dims.DELETE_SCALA)
           )
         ),
         TestConfig(
-          "DeleteCDCTests" :: "DeleteSQLTests" :: Tests.DELETE_BASE,
+          "DeleteCDCTests" :: "DeleteCDCTableWithDVsTests" :: "DeleteSQLTests" :: "DeleteSubqueryExistsTests" :: Tests.DELETE_BASE,
           List(
             List(Dims.DELETE_SQL, Dims.NAME_BASED),
             List(Dims.DELETE_SQL, Dims.PATH_BASED, Dims.COLUMN_MAPPING.asOptional),
@@ -346,7 +358,7 @@ object SuiteGeneratorConfig {
       )
     ),
     TestGroup(
-      name = "InsertSuites",
+      packageName = "insert",
       imports = List(
         importer"org.apache.spark.sql.delta._"
       ),

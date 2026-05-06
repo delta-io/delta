@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProto
 import org.apache.spark.sql.delta.commands.CloneTableCommand
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.spark.sql.delta.util.FileNames.{BackfilledDeltaFile, CompactedDeltaFile, DeltaFile, UnbackfilledDeltaFile}
 import io.delta.storage.LogStore
@@ -565,14 +566,48 @@ object CoordinatedCommitsUtils extends DeltaLogging {
         case UnbackfilledDeltaFile(fileStatus, version, _) if version > maxVersionSeen =>
           (fileStatus, version)
       }
-      // Check for a gap between listing and commit files in the logsegment
-      val gapListing = unbackfilledDeltas.headOption match {
-        case Some((_, version)) if maxVersionSeen + 1 < version =>
-          listDeltas(maxVersionSeen + 1, Some(version))
-        // no gap before
-        case _ => Iterator.empty
+      val backfillGapFixEnabled = SparkSession.active.sessionState.conf.getConf(
+        DeltaSQLConf.COMMIT_FILES_ITERATOR_BACKFILL_GAP_FIX_ENABLED)
+      if (backfillGapFixEnabled) {
+        // This fixes two bugs in the gap listing between Phase 1 (filesystem) and
+        // Phase 2 (coordinator/snapshot):
+        //
+        // Bug 1 - data loss: between Phase 1 and Phase 2,
+        // a concurrent writer backfills ALL remaining commits. unbackfilledDeltas is empty,
+        // headOption returns None, and the old code falls through to Iterator.empty,
+        // silently dropping versions [maxVersionSeen+1, endSnapshot.version].
+        // Fix: fall back to filesystem listing up to endSnapshot.version.
+        //
+        // Bug 2 - duplicate entries (Some case): listDeltas uses an inclusive upper bound
+        // (takeWhile { version <= endVersion }). If the first unbackfilled version is also
+        // backfilled on filesystem (either it happened after we contacted UC, or UC did not
+        // know), the gap listing includes it, producing a duplicate with unbackfilledDeltas.
+        // Example: prev snapshot v100, latest v110. update() returns v105-v110 as
+        // unbackfilled, but v105 is backfilled on filesystem. Old code calls
+        // listDeltas(101, Some(105)), which includes 105.json. gapListing=[v101..v105],
+        // unbackfilledDeltas=[v105..v110]. v105 appears twice.
+        // Fix: use version - 1 as exclusive upper bound. listDeltas(101, Some(104)) stops
+        // before v105, eliminating the overlap.
+        val highestGapVersion = unbackfilledDeltas.headOption match {
+          case Some((_, version)) => version - 1
+          case None => endSnapshot.version
+        }
+        val gapListing = if (maxVersionSeen < highestGapVersion) {
+          listDeltas(maxVersionSeen + 1, Some(highestGapVersion))
+        } else {
+          Iterator.empty
+        }
+        gapListing ++ unbackfilledDeltas
+      } else {
+        // Check for a gap between listing and commit files in the logsegment
+        val gapListing = unbackfilledDeltas.headOption match {
+          case Some((_, version)) if maxVersionSeen + 1 < version =>
+            listDeltas(maxVersionSeen + 1, Some(version))
+          // no gap before
+          case _ => Iterator.empty
+        }
+        gapListing ++ unbackfilledDeltas
       }
-      gapListing ++ unbackfilledDeltas
     }
 
     // We want to avoid invoking `tailFromSnapshot()` as it internally calls deltaLog.update()

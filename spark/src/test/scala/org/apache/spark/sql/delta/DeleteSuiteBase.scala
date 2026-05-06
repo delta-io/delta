@@ -380,7 +380,7 @@ trait DeleteBaseTests extends DeleteBaseMixin {
       Row("c", "v") :: Row("d", "vv") :: Nil)
   }
 
-  test("do not support subquery test") {
+  test("do not support non-EXISTS subquery test") {
     append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"))
     Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("c", "d").createOrReplaceTempView("source")
 
@@ -389,18 +389,6 @@ trait DeleteBaseTests extends DeleteBaseMixin {
       executeDelete(target = tableSQLIdentifier, "key < (SELECT max(c) FROM source)")
     }.getMessage
     assert(e0.contains("Subqueries are not supported"))
-
-    // subquery with EXISTS
-    val e1 = intercept[AnalysisException] {
-      executeDelete(target = tableSQLIdentifier, "EXISTS (SELECT max(c) FROM source)")
-    }.getMessage
-    assert(e1.contains("Subqueries are not supported"))
-
-    // subquery with NOT EXISTS
-    val e2 = intercept[AnalysisException] {
-      executeDelete(target = tableSQLIdentifier, "NOT EXISTS (SELECT max(c) FROM source)")
-    }.getMessage
-    assert(e2.contains("Subqueries are not supported"))
 
     // subquery with IN
     val e3 = intercept[AnalysisException] {
@@ -413,6 +401,67 @@ trait DeleteBaseTests extends DeleteBaseMixin {
       executeDelete(target = tableSQLIdentifier, "key NOT IN (SELECT max(c) FROM source)")
     }.getMessage
     assert(e4.contains("Subqueries are not supported"))
+
+    // EXISTS mixed with IN: the IN subquery should still be blocked
+    withSQLConf(DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key -> "true") {
+      checkError(
+        intercept[DeltaAnalysisException] {
+          executeDelete(
+            target = tableSQLIdentifier,
+            where = "EXISTS (SELECT 1 FROM source WHERE key = c) AND key IN (SELECT c FROM source)")
+        },
+        condition = "DELTA_UNSUPPORTED_SUBQUERY",
+        sqlState = Some("0AKDC"),
+        parameters = Map("operation" -> "DELETE", "cond" -> ".*"),
+        matchPVals = true)
+    }
+  }
+
+  test("delete with correlated EXISTS subquery") {
+    append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"))
+    Seq((2, 2), (1, 4)).toDF("c", "d").createOrReplaceTempView("source")
+
+    withSQLConf(DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key -> "true") {
+      executeDelete(
+        target = tableSQLIdentifier,
+        where = "EXISTS (SELECT 1 FROM source WHERE key = c)")
+    }
+    checkAnswer(
+      readDeltaTableByIdentifier(tableSQLIdentifier),
+      Row(0, 3) :: Nil)
+  }
+
+  test("delete with correlated NOT EXISTS subquery") {
+    append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"))
+    Seq((2, 2), (1, 4)).toDF("c", "d").createOrReplaceTempView("source")
+
+    withSQLConf(DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key -> "true") {
+      executeDelete(
+        target = tableSQLIdentifier,
+        where = "NOT EXISTS (SELECT 1 FROM source WHERE key = c)")
+    }
+    checkAnswer(
+      readDeltaTableByIdentifier(tableSQLIdentifier),
+      Row(2, 2) :: Row(1, 4) :: Row(1, 1) :: Nil)
+  }
+
+  test("EXISTS subquery kill switch") {
+    append(Seq((2, 2), (1, 4)).toDF("key", "value"))
+    Seq((2, 2)).toDF("c", "d").createOrReplaceTempView("source")
+
+    withSQLConf(
+        DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key -> "false") {
+      checkError(
+        intercept[DeltaAnalysisException] {
+          executeDelete(
+            target = tableSQLIdentifier,
+            where = "EXISTS (SELECT 1 FROM source WHERE key = c)")
+        },
+        condition = "DELTA_UNSUPPORTED_SUBQUERY",
+        sqlState = Some("0AKDC"),
+        parameters = Map("operation" -> "DELETE", "cond" -> ".*"),
+        matchPVals = true)
+    }
   }
 
   test("schema pruning on data condition") {
@@ -564,5 +613,236 @@ trait DeleteBaseTests extends DeleteBaseMixin {
     checkDelete(
       condition = Some(s"value = '$partValue'"),
       expectedResults = Nil)
+  }
+}
+
+/**
+ * Base mixin for subquery DELETE tests. Provides helpers shared by all subquery test traits.
+ */
+trait DeleteSubqueryBaseMixin extends DeleteBaseMixin {
+  import testImplicits._
+
+  protected def checkDeleteResult(
+      target: Seq[(Any, String)],
+      source: Seq[(Any, String)] = Nil,
+      source2: Seq[(Any, String)] = Nil,
+      deleteWhere: String,
+      expected: Seq[(Any, String)]): Unit = {
+    assert(spark.catalog.tableExists("target"),
+      "Table target must exist. Use testWithPartitioning().")
+    withTempView("source", "source2") {
+      target
+        .map { case (c, t1) => (c.asInstanceOf[Integer], t1) }
+        .toDF("c", "t1")
+        .coalesce(1)
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .saveAsTable("target")
+      if (source.nonEmpty) {
+        source
+          .map { case (c, s1) => (c.asInstanceOf[Integer], s1) }
+          .toDF("c", "s1")
+          .createOrReplaceTempView("source")
+      }
+      if (source2.nonEmpty) {
+        source2
+          .map { case (c, s2) => (c.asInstanceOf[Integer], s2) }
+          .toDF("c", "s2")
+          .createOrReplaceTempView("source2")
+      }
+      withSQLConf(
+        DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key -> "true"
+      ) {
+      executeDelete(target = "target t", where = deleteWhere)
+      }
+      checkAnswer(sqlContext.table("target"), expected.map(t => Row.fromTuple(t)))
+    }
+  }
+
+  protected def testWithPartitioning(name: String)(body: => Unit): Unit = {
+    Seq(true, false).foreach { isPartitioned =>
+      val partSpec = if (isPartitioned) "partitioned by (c)" else ""
+      test(name + s" isPartitioned=$isPartitioned") {
+        withTable("target") {
+          sql(s"CREATE TABLE target(c int, t1 string) USING delta $partSpec")
+          body
+        }
+      }
+    }
+  }
+}
+
+/**
+ * EXISTS/NOT EXISTS subquery tests.
+ */
+trait DeleteSubqueryExistsTests extends DeleteSubqueryBaseMixin {
+  import testImplicits._
+
+  testWithPartitioning("exists/notexists subquery") {
+    checkDeleteResult(
+      target = (3, "a") :: (1, "b") :: Nil,
+      source = (2, "a") :: (1, "b") :: Nil,
+      deleteWhere = "EXISTS (SELECT 1 FROM source WHERE t.c = source.c)",
+      expected = (3, "a") :: Nil)
+
+    checkDeleteResult(
+      target = (3, "a") :: (1, "b") :: Nil,
+      source = (2, "a") :: (1, "b") :: Nil,
+      deleteWhere = "NOT EXISTS (SELECT 1 FROM source WHERE t.c = source.c)",
+      expected = (1, "b") :: Nil)
+
+    checkDeleteResult(
+      target = (3, "a") :: (1, "b") :: (null, "a") :: Nil,
+      source = (null, "a") :: (1, "b") :: Nil,
+      deleteWhere = "EXISTS (SELECT * FROM source WHERE t.c = c)",
+      expected = (3, "a") :: (null, "a") :: Nil)
+
+    checkDeleteResult(
+      target = (3, "a") :: (1, "b") :: (null, "a") :: Nil,
+      source = (null, "a") :: (1, "b") :: Nil,
+      deleteWhere = "NOT EXISTS (SELECT c FROM source WHERE t.c = source.c)",
+      expected = (1, "b") :: Nil)
+
+    // <=>
+    checkDeleteResult(
+      target = (3, "a") :: (1, "b") :: (null, "a") :: Nil,
+      source = (null, "a") :: (1, "b") :: Nil,
+      deleteWhere = "EXISTS (SELECT c FROM source WHERE t.c <=> source.c)",
+      expected = (3, "a") :: Nil)
+
+    checkDeleteResult(
+      target = (3, "a") :: (1, "b") :: (null, "a") :: Nil,
+      source = (null, "a") :: (1, "b") :: Nil,
+      deleteWhere = "NOT EXISTS (SELECT c FROM source WHERE t.c <=> source.c)",
+      expected = (1, "b") :: (null, "a") :: Nil)
+  }
+
+  testWithPartitioning("exists with no matching source rows") {
+    checkDeleteResult(
+      target = (1, "a") :: (2, "b") :: Nil,
+      source = (100, "x") :: Nil,
+      deleteWhere = "EXISTS (SELECT 1 FROM source WHERE t.c = source.c)",
+      expected = (1, "a") :: (2, "b") :: Nil)
+
+    // NOT EXISTS with no matching source rows deletes all rows
+    checkDeleteResult(
+      target = (1, "a") :: (2, "b") :: Nil,
+      source = (100, "x") :: Nil,
+      deleteWhere = "NOT EXISTS (SELECT 1 FROM source WHERE t.c = source.c)",
+      expected = Nil)
+  }
+
+  testWithPartitioning("exists deletes all matching rows") {
+    checkDeleteResult(
+      target = (1, "a") :: (2, "b") :: (3, "c") :: Nil,
+      source = (1, "x") :: (2, "y") :: (3, "z") :: Nil,
+      deleteWhere = "EXISTS (SELECT 1 FROM source WHERE t.c = source.c)",
+      expected = Nil)
+  }
+
+  testWithPartitioning("exists with compound condition") {
+    checkDeleteResult(
+      target = (1, "a") :: (2, "b") :: (3, "c") :: (4, "d") :: Nil,
+      source = (1, "a") :: (2, "x") :: (3, "c") :: Nil,
+      deleteWhere =
+        "EXISTS (SELECT 1 FROM source WHERE t.c = source.c AND t.t1 = source.s1)",
+      expected = (2, "b") :: (4, "d") :: Nil)
+  }
+
+  testWithPartitioning("exists combined with non-subquery predicate") {
+    checkDeleteResult(
+      target = (1, "a") :: (2, "b") :: (3, "a") :: (4, "b") :: Nil,
+      source = (1, "x") :: (3, "y") :: Nil,
+      deleteWhere =
+        "EXISTS (SELECT 1 FROM source WHERE t.c = source.c) AND t1 = 'a'",
+      expected = (2, "b") :: (4, "b") :: Nil)
+  }
+
+  testWithPartitioning("multiple EXISTS subqueries in one condition") {
+    checkDeleteResult(
+      target = (1, "a") :: (2, "b") :: (3, "c") :: (4, "d") :: Nil,
+      source = (1, "x") :: (2, "y") :: Nil,
+      source2 = (2, "y") :: (3, "z") :: Nil,
+      deleteWhere =
+        "EXISTS (SELECT 1 FROM source WHERE t.c = source.c) AND " +
+          "EXISTS (SELECT 1 FROM source2 WHERE t.c = source2.c)",
+      expected = (1, "a") :: (3, "c") :: (4, "d") :: Nil)
+  }
+
+  testWithPartitioning("uncorrelated EXISTS subquery") {
+    checkDeleteResult(
+      target = (1, "a") :: (2, "b") :: (3, "c") :: Nil,
+      source = (99, "x") :: Nil,
+      deleteWhere = "EXISTS (SELECT 1 FROM source)",
+      expected = Nil)
+
+    // Uncorrelated NOT EXISTS with non-empty source deletes nothing
+    checkDeleteResult(
+      target = (1, "a") :: (2, "b") :: (3, "c") :: Nil,
+      source = (99, "x") :: Nil,
+      deleteWhere = "NOT EXISTS (SELECT 1 FROM source)",
+      expected = (1, "a") :: (2, "b") :: (3, "c") :: Nil)
+  }
+
+  testWithPartitioning("NOT EXISTS with empty source deletes all rows") {
+    import testImplicits._
+    Seq((1, "a"), (2, "b"), (3, "c"))
+      .toDF("c", "t1")
+      .coalesce(1)
+      .write
+      .format("delta")
+      .mode("overwrite")
+      .saveAsTable("target")
+    // Create an empty source view with the correct schema
+    Seq.empty[(Int, String)]
+      .toDF("c", "s1")
+      .createOrReplaceTempView("source")
+
+    withSQLConf(
+      DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key -> "true"
+    ) {
+    executeDelete(target = "target t",
+      where = "NOT EXISTS (SELECT 1 FROM source WHERE t.c = source.c)")
+    }
+    checkAnswer(sqlContext.table("target"), Nil)
+  }
+
+  testWithPartitioning("exists with multi-file target") {
+    // Write multiple files to exercise getFileMetadataColumn + distinct()
+    // in the first pass across multiple data files.
+    import testImplicits._
+    (1 to 20)
+      .map(i => (i, s"v$i"))
+      .toDF("c", "t1")
+      .repartition(4)
+      .write
+      .format("delta")
+      .mode("overwrite")
+      .saveAsTable("target")
+    Seq((3, "x"), (7, "y"), (15, "z"))
+      .toDF("c", "s1")
+      .createOrReplaceTempView("source")
+
+    withSQLConf(
+      DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key -> "true"
+    ) {
+    executeDelete(target = "target t",
+      where = "EXISTS (SELECT 1 FROM source WHERE t.c = source.c)")
+    }
+    checkAnswer(
+      sqlContext.table("target").select("c"),
+      (1 to 20).filter(i => i != 3 && i != 7 && i != 15).map(Row(_)))
+  }
+
+  testWithPartitioning("nested EXISTS subquery") {
+    checkDeleteResult(
+      target = (1, "a") :: (2, "b") :: (3, "c") :: Nil,
+      source = (1, "a") :: (2, "b") :: Nil,
+      source2 = (1, "b") :: Nil,
+      deleteWhere =
+        "EXISTS (SELECT 1 FROM source WHERE t.c = source.c AND " +
+          "EXISTS (SELECT 1 FROM source2 WHERE source.c = source2.c))",
+      expected = (2, "b") :: (3, "c") :: Nil)
   }
 }

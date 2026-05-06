@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 import java.util.Locale
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.DeltaOptions.{OVERWRITE_SCHEMA_OPTION, PARTITION_OVERWRITE_MODE_OPTION}
+import org.apache.spark.sql.delta.DeltaOptions.{OVERWRITE_SCHEMA_OPTION, PARTITION_OVERWRITE_MODE_OPTION, USE_NULL_INTOLERANT_EQUALITY_WITH_DPO}
 import org.apache.spark.sql.delta.actions.{Action, FileAction}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -309,6 +309,30 @@ class DeltaOptionSuite extends QueryTest
         }
       }
       assert(e.getErrorClass == "DELTA_OVERWRITE_SCHEMA_WITH_DYNAMIC_PARTITION_OVERWRITE")
+    }
+  }
+
+  test("useNullIntolerantEqualityWithDPO should never be specified when " +
+      "Dynamic Partition Overwrite is not enabled") {
+    withTable("temp") {
+      checkError(
+        exception = intercept[DeltaIllegalArgumentException] {
+          Seq(1, 2, 3).toDF
+            .withColumn("part", $"value" % 2)
+            .write
+            .mode("overwrite")
+            .format("delta")
+            .partitionBy("part")
+            .option(USE_NULL_INTOLERANT_EQUALITY_WITH_DPO, "true")
+            .saveAsTable("temp")
+        },
+        condition = "DELTA_ILLEGAL_OPTION",
+        sqlState = Some("42616"),
+        parameters = Map(
+          "name" -> USE_NULL_INTOLERANT_EQUALITY_WITH_DPO,
+          "input" -> "true",
+          "explain" -> "This option should be specified only in Dynamic Partition Overwrite mode.")
+      )
     }
   }
 

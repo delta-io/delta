@@ -20,6 +20,7 @@ import io.delta.flink.table.AbstractKernelTable;
 import io.delta.flink.table.ExceptionUtils;
 import io.delta.flink.table.TableEventListener;
 import io.delta.kernel.Snapshot;
+import io.delta.kernel.metrics.TransactionReport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -29,7 +30,8 @@ public class ChecksumListener implements TableEventListener {
   public static final Logger LOG = LoggerFactory.getLogger(ChecksumListener.class);
 
   @Override
-  public void onPostCommit(AbstractKernelTable source, Snapshot snapshot) {
+  public void onPostCommit(
+      AbstractKernelTable source, Snapshot snapshot, TransactionReport report) {
     if (source.getConf().isChecksumEnabled()) {
       // Write checksum asynchronously
       source.executeWithTiming(

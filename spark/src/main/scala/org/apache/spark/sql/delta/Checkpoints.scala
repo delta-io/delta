@@ -670,7 +670,8 @@ object Checkpoints
       spark: SparkSession,
       deltaLog: DeltaLog,
       snapshot: Snapshot,
-      catalogTableOpt: Option[CatalogTable]): LastCheckpointInfo = recordFrameProfile(
+      catalogTableOpt: Option[CatalogTable]): LastCheckpointInfo =
+    recordFrameProfile(
       "Delta", "Checkpoints.writeCheckpoint") {
     if (spark.conf.get(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED)) {
       snapshot.validateChecksum(Map("context" -> "writeCheckpoint"))

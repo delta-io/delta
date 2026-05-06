@@ -40,6 +40,7 @@ import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.{DeltaDelete, LogicalPlan}
 import org.apache.spark.sql.delta.DeltaOperations.Operation
+import org.apache.spark.sql.catalyst.plans.logical.SupportsSubquery
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.{createMetric, createTimingMetric}
@@ -113,7 +114,10 @@ case class DeleteCommand(
     catalogTable: Option[CatalogTable],
     target: LogicalPlan,
     condition: Option[Expression])
-  extends LeafRunnableCommand with DeltaCommand with DeleteCommandMetrics {
+  extends LeafRunnableCommand
+  with DeltaCommand
+  with DeleteCommandMetrics
+  with SupportsSubquery {
 
   override def innerChildren: Seq[QueryPlan[_]] = Seq(target)
 
@@ -402,6 +406,15 @@ case class DeleteCommand(
     txn.registerSQLMetrics(sparkSession, metrics)
     sendDriverMetrics(sparkSession, metrics)
 
+    val alwaysReportSomeZero =
+      conf.getConf(DeltaSQLConf.METRICS_ALWAYS_REPORT_SOME_ZERO_METRICS)
+    def reportSomeZero(rowCount: Option[Long]): Option[Long] =
+      if (alwaysReportSomeZero) {
+        Some(rowCount.getOrElse(0L))
+      } else {
+        rowCount
+      }
+
     val numRecordsStats = NumRecordsStats.fromActions(deleteActions)
     val deleteMetric = DeleteMetric(
         condition = condition.map(_.sql).getOrElse("true"),
@@ -418,8 +431,8 @@ case class DeleteCommand(
         numPartitionsAfterSkipping,
         numPartitionsAddedTo,
         numPartitionsRemovedFrom,
-        numCopiedRows,
-        numDeletedRows,
+        reportSomeZero(numCopiedRows),
+        reportSomeZero(numDeletedRows),
         numAddedBytes,
         numRemovedBytes,
         changeFileBytes = changeFileBytes,

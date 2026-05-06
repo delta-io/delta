@@ -43,7 +43,6 @@ abstract class DeltaSinkImplicitCastSuiteBase extends DeltaSinkTest {
 
   override def beforeAll(): Unit = {
     super.beforeAll()
-    spark.conf.set(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key, "true")
     spark.conf.set(SQLConf.ANSI_ENABLED.key, "true")
   }
 
@@ -478,32 +477,8 @@ class DeltaSinkImplicitCastSuite extends DeltaSinkImplicitCastSuiteBase
     }
   }
 
-  test("disallow implicit cast with spark.databricks.delta.streaming.sink.allowImplicitCasts") {
-    withSQLConf(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key -> "false") {
-      withDeltaStream[Long] { stream =>
-        stream.write(17)("CAST(value AS INT)")
-        assert(stream.currentSchema("value").dataType === IntegerType)
-        checkAnswer(stream.read(), Row(17))
-
-        val ex = intercept[StreamingQueryException] {
-          stream.write(23)("CAST(value AS LONG)")
-        }
-        checkError(
-          ex.getCause.asInstanceOf[SparkThrowable],
-          "DELTA_FAILED_TO_MERGE_FIELDS",
-          parameters = Map(
-          "currentField" -> "value",
-          "updateField" -> "value")
-        )
-      }
-    }
-  }
-
-  for (allowImplicitCasts <- Seq(true, false))
-  test(s"schema evolution with case sensitivity and without type mismatch, " +
-    s"allowImplicitCasts=$allowImplicitCasts") {
+  test("schema evolution with case sensitivity and without type mismatch") {
     withSQLConf(
-      DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key -> allowImplicitCasts.toString,
       SQLConf.CASE_SENSITIVE.key -> "true",
       DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true"
     ) {

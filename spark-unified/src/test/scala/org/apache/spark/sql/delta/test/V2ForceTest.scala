@@ -1,5 +1,5 @@
 /*
- * Copyright (2021) The Delta Lake Project Authors.
+ * Copyright (2025) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,9 +33,8 @@ import scala.collection.mutable
  * Usage:
  * {{{
  * class MyKernelTest extends MyOriginalSuite with V2ForceTest {
- *   override protected def shouldSkipTest(testName: String): Boolean = {
- *     testName.contains("unsupported feature")
- *   }
+ *   override protected def shouldPassTests: Set[String] = Set("supported test")
+ *   override protected def shouldFailTests: Set[String] = Set("unsupported test")
  * }
  * }}}
  */
@@ -62,15 +61,27 @@ trait V2ForceTest extends DeltaSQLCommandTest {
     }
   }
 
+  /** Tests expected to pass under the V2 connector. Subclasses populate this set. */
+  protected def shouldPassTests: Set[String] = Set.empty
+
+  /** Tests expected to fail under the V2 connector. Subclasses populate this set. */
+  protected def shouldFailTests: Set[String] = Set.empty
+
   /**
-   * Determine if a test is expected to fail based on the test name.
-   * Subclasses should override this method to define which tests are expected to fail.
-   * By default, no tests are expected to fail.
-   *
-   * @param testName The name of the test
-   * @return true if the test is expected to fail, false otherwise
+   * Determine if a test is expected to fail. Every test must appear in exactly one of
+   * [[shouldPassTests]] or [[shouldFailTests]] so the V2 contract is explicit.
    */
-  protected def shouldFail(testName: String): Boolean = false
+  protected def shouldFail(testName: String): Boolean = {
+    val inPassList = shouldPassTests.contains(testName)
+    val inFailList = shouldFailTests.contains(testName)
+
+    assert(inPassList || inFailList,
+      s"Test '$testName' not in shouldPassTests or shouldFailTests")
+    assert(!(inPassList && inFailList),
+      s"Test '$testName' in both shouldPassTests and shouldFailTests")
+
+    inFailList
+  }
 
   /**
    * Override `sparkConf` to set V2_ENABLE_MODE to "STRICT".
@@ -79,6 +90,16 @@ trait V2ForceTest extends DeltaSQLCommandTest {
   abstract override protected def sparkConf: SparkConf = {
     super.sparkConf
       .set(DeltaSQLConf.V2_ENABLE_MODE.key, "STRICT")
+  }
+
+  /**
+   * Run a SQL statement through the V1 connector by temporarily setting
+   * V2_ENABLE_MODE to NONE. Useful for DDL/DML that SparkTable (V2) doesn't support.
+   */
+  protected def executeInV1Mode(sqlText: String): Unit = {
+    withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "NONE") {
+      sql(sqlText)
+    }
   }
 
   override def afterAll(): Unit = {

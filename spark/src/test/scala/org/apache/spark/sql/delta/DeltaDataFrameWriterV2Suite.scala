@@ -21,6 +21,7 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.actions.{Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.{DeltaCatalog, DeltaTableV2}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.scalatest.BeforeAndAfter
 
@@ -671,32 +672,29 @@ class DeltaDataFrameWriterV2Suite
       a.partitionedBy($"id").tableProperty("delta.appendOnly", "true"))
   }
 
-  test("append or overwrite mode should not do implicit casting") {
+  test("saveAsTable overwrite mode should not do implicit casting") {
     val table = "not_implicit_casting"
     withTable(table) {
       spark.sql(s"CREATE TABLE $table(id bigint, p int) USING delta PARTITIONED BY (p)")
-      def verifyNotImplicitCasting(f: => Unit): Unit = {
-        val e = intercept[DeltaAnalysisException](f)
-        checkError(
-          e.getCause.asInstanceOf[DeltaAnalysisException],
-          "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
-          parameters = Map("currentDataType" -> "LongType", "updateDataType" -> "IntegerType"))
-      }
-      verifyNotImplicitCasting {
-        Seq(1 -> 1).toDF("id", "p").write.mode("append").format("delta").saveAsTable(table)
-      }
-      verifyNotImplicitCasting {
+      val e = intercept[DeltaAnalysisException] {
         Seq(1 -> 1).toDF("id", "p").write.mode("overwrite").format("delta").saveAsTable(table)
       }
-      verifyNotImplicitCasting {
-        Seq(1 -> 1).toDF("id", "p").writeTo(table).append()
-      }
-      verifyNotImplicitCasting {
-        Seq(1 -> 1).toDF("id", "p").writeTo(table).overwrite($"p" === 1)
-      }
-      verifyNotImplicitCasting {
-        Seq(1 -> 1).toDF("id", "p").writeTo(table).overwritePartitions()
-      }
+      checkError(
+        e.getCause.asInstanceOf[DeltaAnalysisException],
+        "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+        parameters = Map("currentDataType" -> "LongType", "updateDataType" -> "IntegerType"))
+    }
+  }
+
+  test("implicit casting supported for saveAsTable append and writeTo operations") {
+    val table = "implicit_casting"
+    withTable(table) {
+      spark.sql(s"CREATE TABLE $table(id bigint, p int) USING delta PARTITIONED BY (p)")
+      // All of these should succeed with implicit casting (int -> bigint)
+      Seq(1 -> 1).toDF("id", "p").write.mode("append").format("delta").saveAsTable(table)
+      Seq(1 -> 1).toDF("id", "p").writeTo(table).append()
+      Seq(1 -> 1).toDF("id", "p").writeTo(table).overwrite($"p" === 1)
+      Seq(1 -> 1).toDF("id", "p").writeTo(table).overwritePartitions()
     }
   }
 
@@ -728,6 +726,61 @@ class DeltaDataFrameWriterV2Suite
       )
     }
 
+  }
+
+  test("Append: writeTo with replaceUsing option just appends") {
+    withSQLConf(
+        DeltaSQLConf.REPLACE_USING_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "true") {
+      spark.sql("CREATE TABLE table_name (id bigint, data string) USING delta")
+
+      spark.table("source").writeTo("table_name").append()
+
+      checkAnswer(
+        spark.table("table_name"),
+        Seq(Row(1L, "a"), Row(2L, "b"), Row(3L, "c")))
+
+      Seq((2L, "updated"), (4L, "new")).toDF("id", "data")
+        .writeTo("table_name")
+        .option("replaceUsing", "id")
+        .append()
+
+      checkAnswer(
+        spark.table("table_name").orderBy("id", "data"),
+        Seq(
+          Row(1L, "a"),
+          Row(2L, "b"),
+          Row(2L, "updated"),
+          Row(3L, "c"),
+          Row(4L, "new")))
+    }
+  }
+
+  test("Append: writeTo with replaceOn and targetAlias option just appends") {
+    withSQLConf(
+        DeltaSQLConf.REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "true") {
+      spark.sql("CREATE TABLE table_name (id bigint, data string) USING delta")
+
+      spark.table("source").writeTo("table_name").append()
+
+      checkAnswer(
+        spark.table("table_name"),
+        Seq(Row(1L, "a"), Row(2L, "b"), Row(3L, "c")))
+
+      Seq((2L, "updated"), (4L, "new")).toDF("id", "data")
+        .writeTo("table_name")
+        .option("replaceOn", "t.id = s.id")
+        .option("targetAlias", "t")
+        .append()
+
+      checkAnswer(
+        spark.table("table_name").orderBy("id", "data"),
+        Seq(
+          Row(1L, "a"),
+          Row(2L, "b"),
+          Row(2L, "updated"),
+          Row(3L, "c"),
+          Row(4L, "new")))
+    }
   }
 }
 

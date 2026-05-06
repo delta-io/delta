@@ -273,7 +273,9 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
               StructType.class));
 
   private static final Set<Class<? extends DataType>> V3_SUPPORTED_TYPES =
-      Stream.concat(V2_SUPPORTED_TYPES.stream(), Stream.of(VariantType.class))
+      Stream.concat(
+              V2_SUPPORTED_TYPES.stream(),
+              Stream.of(VariantType.class, GeometryType.class, GeographyType.class))
           .collect(Collectors.toSet());
 
   protected static final IcebergCompatCheck V2_CHECK_HAS_SUPPORTED_TYPES =

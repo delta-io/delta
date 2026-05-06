@@ -24,6 +24,7 @@ import dev.failsafe.function.CheckedSupplier;
 import io.delta.flink.Conf;
 import io.delta.flink.table.postcommit.ChecksumListener;
 import io.delta.flink.table.postcommit.MaintenanceListener;
+import io.delta.flink.table.postcommit.ReportCommitMetricsListener;
 import io.delta.kernel.*;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
@@ -35,6 +36,7 @@ import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.data.TransactionStateRow;
+import io.delta.kernel.metrics.TransactionReport;
 import io.delta.kernel.transaction.CreateTableTransactionBuilder;
 import io.delta.kernel.transaction.DataLayoutSpec;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
@@ -181,6 +183,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
 
     addEventListener(new MaintenanceListener());
     addEventListener(new ChecksumListener());
+    addEventListener(new ReportCommitMetricsListener());
   }
 
   public AbstractKernelTable(DeltaCatalog catalog, String tableId, Map<String, String> conf) {
@@ -275,12 +278,13 @@ public abstract class AbstractKernelTable implements DeltaTable {
 
                   TransactionCommitResult result =
                       withTiming("commit.txn", () -> txn.commit(localEngine, actions));
+                  TransactionReport report = result.getTransactionReport();
                   return result
                       .getPostCommitSnapshot()
                       .map(
                           pcSnapshot -> {
                             this.refresh(pcSnapshot);
-                            onPostCommit(pcSnapshot);
+                            onPostCommit(pcSnapshot, report);
                             return pcSnapshot;
                           });
                 }));
@@ -413,7 +417,8 @@ public abstract class AbstractKernelTable implements DeltaTable {
     try {
       TransactionCommitResult result =
           txnBuilder.build(engine).commit(engine, CloseableIterable.emptyIterable());
-      result.getPostCommitSnapshot().ifPresent(this::onPostCommit);
+      TransactionReport report = result.getTransactionReport();
+      result.getPostCommitSnapshot().ifPresent(snapshot -> this.onPostCommit(snapshot, report));
     } catch (TableAlreadyExistsException ignore) {
       // Concurrent open may cause this. Ignore it safely.
     }
@@ -498,7 +503,9 @@ public abstract class AbstractKernelTable implements DeltaTable {
     conf.set("fs.AbstractFileSystem.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS");
 
     this.conf.engineConf().forEach(conf::set);
-    this.credentialManager.getCredentials().forEach(conf::set);
+    Map<String, String> creds = this.credentialManager.getCredentials();
+    creds.forEach(conf::set);
+    applyAzureSasTokenIfPresent(conf, creds);
 
     // Explicitly load external conf files
     // TODO this is because Flink does not auto load this file in Docker
@@ -538,6 +545,23 @@ public abstract class AbstractKernelTable implements DeltaTable {
 
   protected Map<String, String> extraConf() {
     return Map.of();
+  }
+
+  /**
+   * Remaps the generic Azure SAS token key to an account-scoped key derived from the table path.
+   * Azure ABFS requires the SAS token to be configured per storage account, e.g., {@code
+   * fs.azure.sas.fixed.token.<account>.dfs.core.windows.net}.
+   */
+  private void applyAzureSasTokenIfPresent(Configuration conf, Map<String, String> creds) {
+    String sasToken = creds.get(UnityCatalog.AZURE_SAS_TOKEN_KEY);
+    if (sasToken == null || tablePath == null) {
+      return;
+    }
+    String host = tablePath.getHost();
+    if (host != null && host.endsWith(".dfs.core.windows.net")) {
+      conf.set("fs.azure.account.auth.type." + host, "SAS");
+      conf.set("fs.azure.sas.fixed.token." + host, sasToken);
+    }
   }
 
   private CredentialManager createCredentialManager() {
@@ -634,11 +658,11 @@ public abstract class AbstractKernelTable implements DeltaTable {
     this.eventListeners.remove(listener);
   }
 
-  public void onPostCommit(Snapshot snapshot) {
+  public void onPostCommit(Snapshot snapshot, TransactionReport report) {
     eventListeners.forEach(
         listener -> {
           try {
-            listener.onPostCommit(this, snapshot);
+            listener.onPostCommit(this, snapshot, report);
           } catch (Exception e) {
             LOG.error("Suppressed exception from listener", e);
           }

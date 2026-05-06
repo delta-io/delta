@@ -108,19 +108,10 @@ public final class DeltaErrors {
     return new CommitRangeNotFoundException(tablePath, startVersion, endVersionOpt);
   }
 
-  public static KernelException startVersionNotFound(
+  public static StartVersionNotFoundException startVersionNotFound(
       String tablePath, long startVersionRequested, Optional<Long> earliestAvailableVersion) {
-    String message =
-        String.format(
-            "%s: Requested table changes beginning with startVersion=%s but no log file found for "
-                + "version %s.",
-            tablePath, startVersionRequested, startVersionRequested);
-    if (earliestAvailableVersion.isPresent()) {
-      message =
-          message
-              + String.format(" Earliest available version is %s", earliestAvailableVersion.get());
-    }
-    return new KernelException(message);
+    return new StartVersionNotFoundException(
+        tablePath, startVersionRequested, earliestAvailableVersion);
   }
 
   public static KernelException endVersionNotFound(
