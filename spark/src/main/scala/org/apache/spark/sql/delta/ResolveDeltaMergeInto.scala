@@ -402,6 +402,14 @@ object ResolveDeltaMergeInto {
     val canEvolveSchema =
       withSchemaEvolution || conf.getConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE)
 
+    // A target with no columns cannot be merged into without schema evolution.
+    // When schema evolution is on, the source schema is adopted instead, so the merge
+    // succeeds and widens the target.
+    if (conf.getConf(DeltaSQLConf.DELTA_MERGE_INTO_EMPTY_SCHEMA_TARGET_CHECK_ENABLED) &&
+        !canEvolveSchema && target.resolved && target.output.isEmpty) {
+      throw DeltaErrors.mergeIntoEmptySchemaTarget()
+    }
+
     val mergeActionResolver =
       if (conf.getConf(DeltaSQLConf.DELTA_MERGE_ANALYSIS_BATCH_RESOLUTION)) {
         new BatchedDeltaMergeActionResolver(target, source, conf, resolveExprsFn)

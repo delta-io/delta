@@ -89,13 +89,19 @@ if [[ "${1:-}" == "--print-version" ]]; then
   exit 0
 fi
 
-# Canonical Ivy artifact paths. Delta depends on all three UC modules; if any is missing
-# we must re-publish. If all exist, sbt can resolve every coordinate - no fetch, no publish.
+# Canonical Ivy + Maven artifact paths. Delta depends on all three UC modules; sbt resolves from
+# ~/.ivy2/local, mvn (kernel-examples integration tests) resolves from ~/.m2/repository. If any
+# is missing in either layout we must re-publish.
 IVY_LOCAL="$HOME/.ivy2/local/io.unitycatalog"
 IVY_CANARY_CLIENT="$IVY_LOCAL/unitycatalog-client/$UC_VERSION/ivys/ivy.xml"
 IVY_CANARY_SERVER="$IVY_LOCAL/unitycatalog-server/$UC_VERSION/ivys/ivy.xml"
 IVY_CANARY_SPARK="$IVY_LOCAL/unitycatalog-spark_2.13/$UC_VERSION/ivys/ivy.xml"
-ALL_CANARIES=("$IVY_CANARY_CLIENT" "$IVY_CANARY_SERVER" "$IVY_CANARY_SPARK")
+M2_LOCAL="$HOME/.m2/repository/io/unitycatalog"
+M2_CANARY_CLIENT="$M2_LOCAL/unitycatalog-client/$UC_VERSION/unitycatalog-client-$UC_VERSION.pom"
+M2_CANARY_SERVER="$M2_LOCAL/unitycatalog-server/$UC_VERSION/unitycatalog-server-$UC_VERSION.pom"
+M2_CANARY_SPARK="$M2_LOCAL/unitycatalog-spark_2.13/$UC_VERSION/unitycatalog-spark_2.13-$UC_VERSION.pom"
+ALL_CANARIES=("$IVY_CANARY_CLIENT" "$IVY_CANARY_SERVER" "$IVY_CANARY_SPARK"
+              "$M2_CANARY_CLIENT" "$M2_CANARY_SERVER" "$M2_CANARY_SPARK")
 
 all_canaries_present() {
   for c in "${ALL_CANARIES[@]}"; do

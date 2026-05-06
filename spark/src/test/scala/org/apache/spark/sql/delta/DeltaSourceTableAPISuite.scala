@@ -20,7 +20,7 @@ import java.io.File
 
 import scala.language.implicitConversions
 
-import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.shims.StreamingTestShims.MemoryStream
 
@@ -33,7 +33,7 @@ import org.apache.spark.util.Utils
 
 class DeltaSourceTableAPISuite extends StreamTest
   with DeltaSQLCommandTest
-  with CoordinatedCommitsBaseSuite {
+  with CatalogOwnedTestBaseSuite {
 
   override def beforeAll(): Unit = {
     super.beforeAll()
@@ -254,10 +254,10 @@ class DeltaSourceTableAPISuite extends StreamTest
   }
 }
 
-class DeltaSourceTableAPIWithCoordinatedCommitsBatch1Suite extends DeltaSourceTableAPISuite {
-  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
+class DeltaSourceTableAPIWithCatalogManagedBatch1Suite extends DeltaSourceTableAPISuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class DeltaSourceTableAPIWithCoordinatedCommitsBatch100Suite extends DeltaSourceTableAPISuite {
-  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
+class DeltaSourceTableAPIWithCatalogManagedBatch100Suite extends DeltaSourceTableAPISuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }

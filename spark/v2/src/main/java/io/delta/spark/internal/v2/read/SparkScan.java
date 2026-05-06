@@ -23,9 +23,11 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
+import io.delta.kernel.internal.ScanImpl;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorSchemaContext;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.utils.PartitionUtils;
@@ -100,17 +102,28 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   private final StructType partitionSchema;
   private final Predicate[] pushedToKernelFilters;
   private final Filter[] dataFilters;
+  // Derived Sets used only for equals/hashCode: filters are AND-ed at evaluation time,
+  // so list order has no semantic meaning and two scans with the same filter set in
+  // different orders should compare equal.
+  private final Set<Predicate> pushedToKernelFiltersSet;
+  private final Set<Filter> dataFiltersSet;
   private final io.delta.kernel.Scan kernelScan;
   private final Optional<Statistics> catalogStats;
   private final Configuration hadoopConf;
+  private final boolean isCDCRead;
   private final CaseInsensitiveStringMap options;
   private final scala.collection.immutable.Map<String, String> scalaOptions;
   private final SQLConf sqlConf;
+  private final DeltaOptions deltaOptions;
   private final ZoneId zoneId;
 
   // Planned input files and stats
   private List<PartitionedFile> partitionedFiles = new ArrayList<>();
   private long totalBytes = 0L;
+  private long totalRows = 0L;
+  // true iff every AddFile in the scan had numRecords in its stats JSON AND no runtime
+  // partition filter has been applied (runtime filtering invalidates the cached totalRows).
+  private boolean rowCountKnown = false;
   // Estimated size in bytes accounting for column projection, used for query optimizer cost
   // estimation
   private long estimatedSizeInBytes = 0L;
@@ -140,18 +153,22 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     this.pushedToKernelFilters =
         pushedToKernelFilters == null ? new Predicate[0] : pushedToKernelFilters.clone();
     this.dataFilters = dataFilters == null ? new Filter[0] : dataFilters.clone();
+    this.pushedToKernelFiltersSet = Set.copyOf(Arrays.asList(this.pushedToKernelFilters));
+    this.dataFiltersSet = Set.copyOf(Arrays.asList(this.dataFilters));
     this.kernelScan = Objects.requireNonNull(kernelScan, "kernelScan is null");
     this.catalogStats = Objects.requireNonNull(catalogStats, "catalogStats is null");
     this.options = Objects.requireNonNull(options, "options is null");
     this.scalaOptions = ScalaUtils.toScalaMap(options);
     this.hadoopConf = SparkSession.active().sessionState().newHadoopConfWithOptions(scalaOptions);
     this.sqlConf = SQLConf.get();
+    this.deltaOptions = new DeltaOptions(scalaOptions, sqlConf);
+    this.isCDCRead = deltaOptions.readChangeFeed();
     this.zoneId = ZoneId.of(sqlConf.sessionLocalTimeZone());
   }
 
   /**
-   * Read schema for the scan, which is the projection of data columns followed by partition
-   * columns.
+   * Read schema for the scan: data columns followed by partition columns, with CDC columns appended
+   * for CDC reads.
    */
   @Override
   public StructType readSchema() {
@@ -159,7 +176,8 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         new ArrayList<>(readDataSchema.fields().length + partitionSchema.fields().length);
     Collections.addAll(fields, readDataSchema.fields());
     Collections.addAll(fields, partitionSchema.fields());
-    return new StructType(fields.toArray(new StructField[0]));
+    StructType schema = new StructType(fields.toArray(new StructField[0]));
+    return isCDCRead ? CDCSchemaContext.appendCDCColumns(schema) : schema;
   }
 
   /**
@@ -187,15 +205,18 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
       return Scan.ColumnarSupportMode.UNSUPPORTED;
     }
 
-    // When the table supports deletion vectors, the reader factory augments the read schema
-    // with internal columns via DeletionVectorSchemaContext. Reuse the same class here so the
-    // batch-read check stays consistent — if DeletionVectorSchemaContext adds new fields in
-    // the future, this code path picks them up automatically.
-    StructType schemaForBatchCheck =
-        PartitionUtils.tableSupportsDeletionVectors(initialSnapshot)
-            ? new DeletionVectorSchemaContext(readDataSchema, partitionSchema)
-                .getSchemaWithDvColumn()
-            : readDataSchema;
+    // Mirror the schema augmentation chain in PartitionUtils.createDeltaParquetReaderFactory
+    // (CDC then DV, in that order) so the batch-read check sees the same final schema the
+    // parquet reader will. If you reorder or add augmentations there, update this in lockstep.
+    StructType schemaForBatchCheck = readDataSchema;
+    if (isCDCRead) {
+      schemaForBatchCheck = CDCSchemaContext.appendCDCColumns(schemaForBatchCheck);
+    }
+    if (PartitionUtils.tableSupportsDeletionVectors(initialSnapshot)) {
+      schemaForBatchCheck =
+          new DeletionVectorSchemaContext(schemaForBatchCheck, partitionSchema)
+              .getSchemaWithDvColumn();
+    }
 
     return ParquetUtils.isBatchReadSupportedForSchema(sqlConf, schemaForBatchCheck)
         ? Scan.ColumnarSupportMode.SUPPORTED
@@ -204,6 +225,11 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
   @Override
   public Batch toBatch() {
+    if (isCDCRead) {
+      throw new UnsupportedOperationException(
+          "Batch reads with CDC (readChangeFeed / readChangeData) are not supported in the V2 "
+              + "connector. Either remove the CDC read option or use a streaming read.");
+    }
     ensurePlanned();
     return new SparkBatch(
         initialSnapshot,
@@ -220,8 +246,6 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
   @Override
   public MicroBatchStream toMicroBatchStream(String checkpointLocation) {
-    DeltaOptions deltaOptions = new DeltaOptions(scalaOptions, sqlConf);
-    // Validate streaming options immediately after constructing DeltaOptions
     validateStreamingOptions(deltaOptions);
     return new SparkMicroBatchStream(
         snapshotManager,
@@ -255,17 +279,19 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   @Override
   public Statistics estimateStatistics() {
     ensurePlanned();
+    // Capture mutable scan state as final locals so the returned Statistics object reflects a
+    // consistent snapshot. A subsequent filter() call mutates rowCountKnown and totalRows
+    // (see ensurePlanned(runtimePredicates)), and we don't want those mutations to leak into a
+    // Statistics instance the caller is still holding.
     final long plannedBytes = estimatedSizeInBytes;
+    final boolean rowCountKnownSnapshot = rowCountKnown;
+    final long totalRowsSnapshot = totalRows;
 
-    // When catalog stats with numRows are available and CBO is enabled, combine table-level
-    // stats (for numRows/columnStats) with planned file stats (for sizeInBytes).
+    // When catalog stats are available and CBO is enabled, combine table-level stats
+    // (for columnStats) with planned file stats (for sizeInBytes and numRows).
     // This mirrors V1's LogicalRelation.computeStats() which gates column stats on
     // conf.cboEnabled || conf.planStatsEnabled.
-    // Catalog stats are typically all-or-nothing; having sizeInBytes without numRows is rare
-    // and not well-exercised in practice. For that case we fall through to the file-only path
-    // (planned file sizes), which aligns with V1's better-tested no-catalog-stats code path.
-    boolean useCatalogStats = sqlConf.cboEnabled() || sqlConf.planStatsEnabled();
-    if (useCatalogStats && catalogStats.isPresent() && catalogStats.get().numRows().isPresent()) {
+    if (arePlanStatsEnabled() && catalogStats.isPresent()) {
       final Statistics stats = catalogStats.get();
       return new Statistics() {
         @Override
@@ -276,10 +302,13 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
         @Override
         public OptionalLong numRows() {
-          // TODO: Use accurate row count from planned files (sum of AddFile.numRecords)
-          //  instead of catalog stats, which are stale (point-in-time from ANALYZE) and
-          //  not adjusted for partition pruning.
-          return stats.numRows();
+          // Prefer catalog stats when available: ANALYZE TABLE counts are typically fresh
+          // enough for the optimizer, and using them lets us skip per-file stats JSON parsing
+          // during planning. Fall back to per-file row count only when the catalog lacks it.
+          if (stats.numRows().isPresent()) {
+            return stats.numRows();
+          }
+          return rowCountKnownSnapshot ? OptionalLong.of(totalRowsSnapshot) : OptionalLong.empty();
         }
 
         @Override
@@ -300,8 +329,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
       @Override
       public OptionalLong numRows() {
-        // Row count is unknown without catalog stats
-        return OptionalLong.empty();
+        return rowCountKnownSnapshot ? OptionalLong.of(totalRowsSnapshot) : OptionalLong.empty();
       }
     };
   }
@@ -415,7 +443,26 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   private void planScanFiles() {
     final Engine tableEngine = DefaultEngine.create(hadoopConf);
     final String tablePath = getTablePath();
-    final Iterator<FilteredColumnarBatch> scanFileBatches = kernelScan.getScanFiles(tableEngine);
+    // TODO: Promote getScanFiles(Engine, boolean includeStats) to the public Scan interface to
+    // avoid coupling to the kernel-internal ScanImpl class. Until that API is available, this
+    // instanceof check is the only way to request per-file statistics from the kernel.
+    //
+    // Only parse stats JSON when all of:
+    //  - the optimizer will use numRows (CBO or planStats enabled), matching V1's behavior
+    //    (LogicalRelation.computeStats())
+    //  - the catalog does not already provide numRows (otherwise catalog value is preferred in
+    //    estimateStatistics(), so per-file parsing would be wasted work)
+    //  - the kernel scan is ScanImpl (the only path that supports includeStats)
+    final boolean includeStats =
+        kernelScan instanceof ScanImpl && arePlanStatsEnabled() && !catalogHasNumRows();
+    final Iterator<FilteredColumnarBatch> scanFileBatches;
+    if (includeStats) {
+      scanFileBatches = ((ScanImpl) kernelScan).getScanFiles(tableEngine, true /* includeStats */);
+      rowCountKnown = true; // assume all files have stats; set to false on first miss
+    } else {
+      rowCountKnown = false;
+      scanFileBatches = kernelScan.getScanFiles(tableEngine);
+    }
 
     final String[] locations = new String[0];
     final scala.collection.immutable.Map<String, Object> otherConstantMetadataColumnValues =
@@ -434,6 +481,18 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
           totalBytes += addFile.getSize();
           partitionedFiles.add(partitionedFile);
+
+          if (rowCountKnown) {
+            Optional<Long> numRecords = addFile.getNumRecords();
+            if (numRecords.isPresent()) {
+              totalRows += numRecords.get();
+            } else {
+              // This file has no numRecords — row count is unknowable for the whole scan.
+              // Clear partial state and stop accumulating for all subsequent files.
+              rowCountKnown = false;
+              totalRows = 0;
+            }
+          }
         }
       } catch (IOException e) {
         throw new RuntimeException(e);
@@ -473,13 +532,20 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         }
       }
 
-      // Update partitionedFiles, totalBytes, and estimatedSizeInBytes if any partition is
-      // filtered out
+      // Update partitionedFiles, totalBytes, totalRows, and estimatedSizeInBytes if any partition
+      // is filtered out
       if (runtimeFilteredPartitionedFiles.size() < this.partitionedFiles.size()) {
         this.partitionedFiles = runtimeFilteredPartitionedFiles;
         this.totalBytes =
             runtimeFilteredPartitionedFiles.stream().mapToLong(PartitionedFile::fileSize).sum();
         this.estimatedSizeInBytes = computeEstimatedSizeWithColumnProjection(this.totalBytes);
+        // Per-file row counts are not retained, so we cannot recompute totalRows over the
+        // filtered subset. Invalidate rowCountKnown so numRows() returns OptionalLong.empty()
+        // rather than a stale pre-filter count. Retaining per-file counts just for this case
+        // would cost O(n) memory on every scan; the trade-off is losing numRows after runtime
+        // partition filtering fires.
+        rowCountKnown = false;
+        totalRows = 0L;
       }
     }
   }
@@ -542,6 +608,33 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   }
 
   /**
+   * Returns whether plan-time statistics should be collected and reported. Matches V1 behavior:
+   * {@code LogicalRelation.computeStats()} only surfaces stats when {@code spark.sql.cbo.enabled}
+   * or {@code spark.sql.cbo.planStats.enabled} is true.
+   *
+   * <p>Despite the row-count-flavored framing in V1, this gate controls multiple things in the V2
+   * scan path:
+   *
+   * <ul>
+   *   <li>whether {@code numRows()} is reported in {@link #estimateStatistics()}
+   *   <li>whether the catalog-stats branch is entered (which also governs {@code columnStats}
+   *       propagation from the catalog)
+   *   <li>whether per-file stats JSON is parsed in {@link #planScanFiles()} (gated together with
+   *       {@code !catalogHasNumRows()} to avoid wasted parsing when the catalog already has it)
+   * </ul>
+   *
+   * Future readers touching any of these paths should treat this helper as load-bearing.
+   */
+  private boolean arePlanStatsEnabled() {
+    return sqlConf.cboEnabled() || sqlConf.planStatsEnabled();
+  }
+
+  /** Returns whether the catalog-provided statistics include a numRows value. */
+  private boolean catalogHasNumRows() {
+    return catalogStats.isPresent() && catalogStats.get().numRows().isPresent();
+  }
+
+  /**
    * Validates that unsupported streaming options are not used. Uses a block list approach - only
    * blocks known DeltaOptions that are unsupported, allowing user-defined custom options to pass
    * through.
@@ -588,8 +681,8 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         && Objects.equals(dataSchema, that.dataSchema)
         && Objects.equals(partitionSchema, that.partitionSchema)
         && Objects.equals(readDataSchema, that.readDataSchema)
-        && Arrays.equals(pushedToKernelFilters, that.pushedToKernelFilters)
-        && Arrays.equals(dataFilters, that.dataFilters)
+        && Objects.equals(pushedToKernelFiltersSet, that.pushedToKernelFiltersSet)
+        && Objects.equals(dataFiltersSet, that.dataFiltersSet)
         // ignoring kernelScan because it is derived from Snapshot which is created from tablePath,
         // with pushed down filters that are also recorded in `pushedToKernelFilters`
         && Objects.equals(options, that.options)
@@ -599,19 +692,17 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
   @Override
   public int hashCode() {
-    int result =
-        Objects.hash(
-            catalogStats,
-            initialSnapshot.getPath(),
-            initialSnapshot.getVersion(),
-            dataSchema,
-            partitionSchema,
-            readDataSchema,
-            options,
-            appliedRuntimePredicates);
-    result = 31 * result + Arrays.hashCode(pushedToKernelFilters);
-    result = 31 * result + Arrays.hashCode(dataFilters);
-    return result;
+    return Objects.hash(
+        catalogStats,
+        initialSnapshot.getPath(),
+        initialSnapshot.getVersion(),
+        dataSchema,
+        partitionSchema,
+        readDataSchema,
+        options,
+        appliedRuntimePredicates,
+        pushedToKernelFiltersSet,
+        dataFiltersSet);
   }
 
   /**

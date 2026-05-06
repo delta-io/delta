@@ -223,6 +223,11 @@ private[spark] class TestClientForDeltaFormatSharing(
       endingVersion.isDefined,
       "endingVersion is not defined. This shouldn't happen in unit test."
     )
+    assert(
+      startingVersion <= endingVersion.get,
+      s"startingVersion($startingVersion) is greater than " +
+        s"endingVersion(${endingVersion.get}). This shouldn't happen in unit test."
+    )
     val tableFullName = s"${table.share}.${table.schema}.${table.name}"
     TestClientForDeltaFormatSharing.requestedFormat.put(tableFullName, responseFormat)
     TestClientForDeltaFormatSharing.fileIdHashHistory.synchronized {

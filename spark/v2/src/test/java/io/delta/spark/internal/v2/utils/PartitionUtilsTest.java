@@ -145,9 +145,46 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
             filters,
             options,
             hadoopConf,
-            sqlConf);
+            sqlConf,
+            /* isCDCRead= */ false);
 
     assertNotNull(factory, "PartitionReaderFactory should not be null");
+  }
+
+  @Test
+  public void testCreateDeltaParquetReaderFactory_isCDCRead() {
+    String tablePath = createTestTable("test_delta_reader_factory_cdc_" + System.nanoTime(), true);
+
+    Table table = Table.forPath(defaultEngine, tablePath);
+    Snapshot snapshot = table.getLatestSnapshot(defaultEngine);
+
+    StructType dataSchema =
+        new StructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.LongType, true),
+            });
+    StructType partitionSchema =
+        new StructType(
+            new StructField[] {DataTypes.createStructField("part", DataTypes.StringType, true)});
+    StructType readDataSchema = dataSchema;
+    Filter[] filters = new Filter[0];
+    scala.collection.immutable.Map<String, String> options = Map$.MODULE$.empty();
+    Configuration hadoopConf = new Configuration();
+    SQLConf sqlConf = SQLConf.get();
+
+    PartitionReaderFactory factory =
+        PartitionUtils.createDeltaParquetReaderFactory(
+            snapshot,
+            dataSchema,
+            partitionSchema,
+            readDataSchema,
+            filters,
+            options,
+            hadoopConf,
+            sqlConf,
+            /* isCDCRead= */ true);
+
+    assertNotNull(factory, "CDC PartitionReaderFactory should not be null");
   }
 
   @Test

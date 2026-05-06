@@ -1013,6 +1013,18 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_MERGE_INTO_EMPTY_SCHEMA_TARGET_CHECK_ENABLED =
+    buildConf("merge.emptySchemaTargetCheck.enabled")
+      .internal()
+      .doc(
+        """
+          |When enabled, MERGE INTO a Delta table with an empty schema fails with a user-facing
+          |DELTA_MERGE_INTO_EMPTY_SCHEMA_TARGET error unless schema evolution is enabled. When
+          |disabled, the legacy behavior is preserved (Assertion is thrown during resolution).
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val MERGE_INSERT_ONLY_ENABLED =
     buildConf("merge.optimizeInsertOnlyMerge.enabled")
       .internal()
@@ -3136,12 +3148,29 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
     .internal()
     .doc(
       """
-        | If enabled, Spark writes to Delta could collect data skipping stats for Variant
-        | columns. Currently, this config is used to ensure that new checkpoints preserve previous
-        | Variant stats."""
+        | If enabled, Variant columns are allowed to be in the stats schema. This means that
+        | variant stats collection would be allowed and variant stats would be preserved during
+        | checkpointing and state reconstruction."""
         .stripMargin)
     .booleanConf
     .createWithDefault(true)
+
+  val PARSE_FOOTER_FOR_VARIANT_DATA_SKIPPING_STATS =
+    buildConf("variantShredding.parseFooterForStats")
+    .internal()
+    .doc(
+      """
+        | If enabled, re-read written parquet file to compute variant stats from the footer."""
+        .stripMargin)
+    .booleanConf
+    .createWithDefault(false)
+
+  val DELTA_STATS_LIMIT_PER_VARIANT =
+    buildConf("stats.limitPerVariant")
+    .internal()
+    .doc("The maximum number of data skipping stats to collect from each Variant column.")
+    .intConf
+    .createWithDefault(0)
 
   ///////////
   // TESTING

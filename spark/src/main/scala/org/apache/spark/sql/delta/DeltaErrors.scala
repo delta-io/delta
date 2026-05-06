@@ -3882,6 +3882,12 @@ trait DeltaErrorsBase
     )
   }
 
+  def mergeIntoEmptySchemaTarget(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_MERGE_INTO_EMPTY_SCHEMA_TARGET",
+      messageParameters = Array.empty)
+  }
+
   def columnBuilderMissingDataType(colName: String): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_COLUMN_MISSING_DATA_TYPE",
