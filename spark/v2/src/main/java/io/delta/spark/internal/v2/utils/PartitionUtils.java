@@ -23,6 +23,7 @@ import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
+import io.delta.spark.internal.v2.read.ColumnReorderReadFunction;
 import io.delta.spark.internal.v2.read.DeltaParquetFileFormatV2;
 import io.delta.spark.internal.v2.read.SparkReaderFactory;
 import io.delta.spark.internal.v2.read.cdc.CDCReadFunction;
@@ -240,6 +241,7 @@ public class PartitionUtils {
       StructType dataSchema,
       StructType partitionSchema,
       StructType readDataSchema,
+      StructType ddlOrderedReadOutputSchema,
       Filter[] dataFilters,
       scala.collection.immutable.Map<String, String> scalaOptions,
       Configuration hadoopConf,
@@ -250,6 +252,10 @@ public class PartitionUtils {
     // toUri().toString() encodes special characters (e.g., space -> %20), which causes
     // DV file path resolution failures.
     String tablePath = snapshotImpl.getDataPath().toString();
+
+    // Preserve the caller-provided readDataSchema (pre-DV/RT/CDC augmentation) for the final
+    // column-reorder wrapper below.
+    final StructType originalReadDataSchema = readDataSchema;
 
     // For CDC reads, build the schema context and augment readDataSchema with CDC columns
     // before DV wrapping so that DV column indices account for them.
@@ -336,6 +342,17 @@ public class PartitionUtils {
       }
       readFunc = CDCReadFunction.wrap(readFunc, cdcSchemaContext.get(), enableVectorizedReader);
     }
+
+    // DV and RT strip their internal helpers before yielding; CDC appends its fields at the tail.
+    // The wrapper infers the source layout from (data, partition, target) - CDC tail fields end up
+    // identity-mapped while data/partition columns are permuted into DDL order.
+    readFunc =
+        ColumnReorderReadFunction.wrap(
+            readFunc,
+            enableVectorizedReader,
+            originalReadDataSchema,
+            partitionSchema,
+            ddlOrderedReadOutputSchema);
 
     return new SparkReaderFactory(readFunc, enableVectorizedReader);
   }
