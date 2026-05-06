@@ -138,4 +138,12 @@ class V2DmlInMemoryTableSuite
       DSv2TemporarilyIncompatible("explicit skip")) {
     assert(false, "this test should have been skipped")
   }
+
+  test("should just throw, but checks physical Delta plan", ChecksPhysicalDeltaPlan()) {
+    assert(false, "this test should have been skipped")
+  }
+
+  test("should just throw, but checks Delta internals", ChecksDeltaInternals()) {
+    assert(false, "this test should have been skipped")
+  }
 }
