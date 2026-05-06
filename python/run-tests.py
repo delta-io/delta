@@ -21,9 +21,10 @@ import subprocess
 import shutil
 from os import path
 import json
+import argparse
 
 
-def test(root_dir, code_dir, packages):
+def test(root_dir, code_dir, packages, extra_maven_repo=None):
     # Test the codes in the code_dir directory using its "tests" subdirectory,
     # each of them has main entry point to execute, which is python's unittest testing
     # framework.
@@ -39,13 +40,15 @@ def test(root_dir, code_dir, packages):
 
     for test_file in test_files:
         try:
+            repositories = (f"{maven_local_repo},"
+                            "https://maven-central.storage-download.googleapis.com/maven2/,"
+                            "https://repo1.maven.org/maven2/,"
+                            "https://repository.apache.org/content/repositories/orgapachespark-1484")
+            if extra_maven_repo:
+                repositories = f"{maven_local_repo},{extra_maven_repo}"
             cmd = ["spark-submit",
                    "--driver-class-path=%s" % extra_class_path,
-                   "--repositories",
-                   (f"{maven_local_repo},"
-                    "https://maven-central.storage-download.googleapis.com/maven2/,"
-                       "https://repo1.maven.org/maven2/,"
-                       "https://repository.apache.org/content/repositories/orgapachespark-1484"),
+                   "--repositories", repositories,
                    "--packages", ",".join(packages), test_file]
             print("Running tests in %s\n=============" % test_file)
             print("Command: %s" % str(cmd))
@@ -221,6 +224,14 @@ def run_delta_connect_codegen_python(root_dir):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--maven-repo",
+        required=False,
+        default=None,
+        help="Additional Maven repo to resolve staged new release artifacts")
+    args = parser.parse_args()
+
     print("##### Running python tests #####")
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     spark_version = os.getenv("SPARK_VERSION") or "default"
@@ -230,7 +241,7 @@ if __name__ == "__main__":
     run_python_style_checks(root_dir)
     run_mypy_tests(root_dir)
     run_pypi_packaging_tests(root_dir)
-    test(root_dir, "delta", [delta_spark_package])
+    test(root_dir, "delta", [delta_spark_package], args.maven_repo)
 
     # Run Delta Connect tests as well
     run_delta_connect_codegen_python(root_dir)
@@ -251,4 +262,4 @@ if __name__ == "__main__":
                               f"org.apache.spark:spark-connect_2.13:{spark_full_version}",
                               get_local_package("delta-connect-server", spark_version, root_dir)]
 
-    test(root_dir, path.join("delta", "connect"), delta_connect_packages)
+    test(root_dir, path.join("delta", "connect"), delta_connect_packages, args.maven_repo)
