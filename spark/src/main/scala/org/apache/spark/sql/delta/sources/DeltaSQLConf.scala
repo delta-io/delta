@@ -656,6 +656,18 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val METRICS_ALWAYS_REPORT_SOME_ZERO_METRICS =
+    buildConf("metrics.alwaysReportSomeZeroMetrics")
+      .internal()
+      .doc(
+        """When enabled, DELETE operation metrics (numCopiedRows, numDeletedRows) always report
+          |Some(0) instead of None, even in cases where 0 rows are guaranteed to be copied or
+          |deleted. This aligns DELETE with UPDATE which already always reports Some(0). When
+          |disabled, reverts to the legacy behavior where DELETE returns None for these cases.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_VACUUM_RETENTION_WINDOW_IGNORE_ENABLED =
     buildConf("vacuum.retentionWindowIgnore.enabled")
       .internal()
