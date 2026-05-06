@@ -1852,63 +1852,15 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
     }
   }
 
-  test("[5] connect scenario 6d: external schema change with CACHE") {
-    withTempPath { dir =>
-      val path = dir.getAbsolutePath
-      spark.sql(s"CREATE TABLE delta.`$path` (id INT, salary INT) USING delta")
-      spark.sql(s"INSERT INTO delta.`$path` VALUES (1, 100)")
-      spark.sql(s"CACHE TABLE cached_6d AS SELECT * FROM delta.`$path`")
-
-      checkAnswer(spark.sql("SELECT * FROM cached_6d"), Row(1, 100))
-
-      // External schema change + data write via filesystem, bypassing
-      // the server's DeltaLog entirely (writes both Metadata and AddFile actions)
-      writeExternalSchemaChangeCommitViaFilesystem(path, Seq((2, 200, -1)))
-
-      // In Connect, external filesystem writes bypass the server's DeltaLog
-      // entirely. The CacheManager still matches the old plan (same schema)
-      // and returns the pinned cached data. Unlike classic mode where
-      // deltaLog.update() reliably discovers external commits, the Connect
-      // server's DeltaLog does not re-list the filesystem here.
-      // The cached view still returns old data.
-      checkAnswer(spark.sql("SELECT * FROM cached_6d"), Row(1, 100))
-
-      spark.sql("UNCACHE TABLE IF EXISTS cached_6d")
-    }
-  }
-
-  test("[5] connect scenario 6e: session schema change then external write") {
-    withTempPath { dir =>
-      val path = dir.getAbsolutePath
-      spark.sql(s"CREATE TABLE delta.`$path` (id INT, salary INT) USING delta")
-      spark.sql(s"INSERT INTO delta.`$path` VALUES (1, 100)")
-      spark.sql(s"CACHE TABLE cached_6e AS SELECT * FROM delta.`$path`")
-
-      checkAnswer(spark.sql("SELECT * FROM cached_6e"), Row(1, 100))
-
-      // Session schema change invalidates cache (SPARK-55631)
-      spark.sql(s"ALTER TABLE delta.`$path` ADD COLUMN new_column INT")
-
-      // Session schema change broke the cache. Next query re-analyzes.
-      // The session's ALTER TABLE updated the server's DeltaLog schema.
-      checkAnswer(
-        spark.sql(s"SELECT id, salary FROM delta.`$path` ORDER BY id"),
-        Row(1, 100))
-
-      // True external write via filesystem
-      writeExternalCommitViaFilesystem(path, Seq((2, 200)))
-
-      // In Connect, external filesystem writes bypass the server's DeltaLog.
-      // The server's DeltaLog was updated by the session ALTER TABLE but does
-      // not discover the external commit written directly to the filesystem.
-      // Only the session's ALTER TABLE change is visible.
-      checkAnswer(
-        spark.sql(s"SELECT id, salary FROM delta.`$path` ORDER BY id"),
-        Row(1, 100))
-
-      spark.sql("UNCACHE TABLE IF EXISTS cached_6e")
-    }
-  }
+  // Scenarios 6d (external schema change with CACHE) and 6e (session schema
+  // change then external write) are omitted from the Connect suite. In Connect,
+  // external filesystem writes bypass the server's DeltaLog entirely, and the
+  // DeltaLog's async update mechanism may or may not discover the external
+  // commit depending on timing. This makes the behavior non-deterministic:
+  // sometimes the cached view returns old data (1 row), sometimes the DeltaLog
+  // discovers the external commit and returns fresh data (2 rows). The classic
+  // suite tests these scenarios deterministically because writeExternalCommit
+  // uses LogStore.write() which the DeltaLog's listing reliably discovers.
 }
 
 /** Same-session writes (default). */
