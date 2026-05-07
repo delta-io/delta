@@ -11,8 +11,8 @@
  */
 object KernelVersion {
   /** SBT system property used to pin the kernel Maven version. */
-  val SystemProperty: String = "kernelVersion"
+  val systemProperty: String = "kernelVersion"
 
   /** The resolved kernel version override, or None to use in-tree kernel sources. */
-  val kernelVersionOpt: Option[String] = sys.props.get(SystemProperty)
+  val kernelVersionOpt: Option[String] = sys.props.get(systemProperty)
 }
