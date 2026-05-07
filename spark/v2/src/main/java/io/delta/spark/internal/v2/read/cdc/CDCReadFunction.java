@@ -18,30 +18,29 @@ package io.delta.spark.internal.v2.read.cdc;
 import io.delta.spark.internal.v2.utils.CloseableIterator;
 import io.delta.spark.internal.v2.utils.ConstantColumnVectors;
 import java.io.Serializable;
+import java.util.OptionalInt;
 import javax.annotation.Nullable;
 import org.apache.spark.sql.catalyst.InternalRow;
-import org.apache.spark.sql.catalyst.ProjectingInternalRow;
 import org.apache.spark.sql.catalyst.expressions.GenericInternalRow;
-import org.apache.spark.sql.catalyst.expressions.JoinedRow;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
+import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.vectorized.ColumnVector;
 import org.apache.spark.sql.vectorized.ColumnarBatch;
 import org.apache.spark.unsafe.types.UTF8String;
 import scala.Function1;
 import scala.collection.Iterator;
 import scala.collection.immutable.Map;
-import scala.collection.immutable.Seq;
 import scala.runtime.AbstractFunction1;
 
 /**
- * Decorates a Parquet reader to inject CDC metadata columns ({@code _change_type}, {@code
- * _commit_version}, {@code _commit_timestamp}) for write-time CDF reads.
+ * Decorates a Parquet reader to fill in CDC metadata columns ({@code _change_type}, {@code
+ * _commit_version}, {@code _commit_timestamp}) at their positions in {@code readDataSchema} using
+ * per-file constants from {@link PartitionedFile#otherConstantMetadataColumnValues()}.
  */
 public class CDCReadFunction extends AbstractFunction1<PartitionedFile, Iterator<InternalRow>>
     implements Serializable {
 
   private static final long serialVersionUID = 1L;
-  private static final int CDC_COL_COUNT = 3;
 
   private final Function1<PartitionedFile, Iterator<InternalRow>> baseReadFunc;
   private final CDCSchemaContext cdcSchemaContext;
@@ -58,9 +57,8 @@ public class CDCReadFunction extends AbstractFunction1<PartitionedFile, Iterator
 
   @Override
   public Iterator<InternalRow> apply(PartitionedFile file) {
-    // Extract CDC constants from PartitionedFile metadata
     Map<String, Object> constants = file.otherConstantMetadataColumnValues();
-    // Null for AddCDCFile: _change_type comes from the Parquet data per-row.
+    // Null for AddCDCFile: _change_type comes from the parquet data per-row.
     @Nullable
     String changeType =
         constants.contains(CDCSchemaContext.CDC_TYPE_COLUMN)
@@ -77,50 +75,60 @@ public class CDCReadFunction extends AbstractFunction1<PartitionedFile, Iterator
   }
 
   /**
-   * Row-based: project table columns, inject CDC constants, join into output order.
-   *
-   * <p>Output row order: {@code [readDataSchema, partition, _change_type, _commit_version,
-   * _commit_timestamp]}.
+   * Row path: build a new {@link GenericInternalRow} per input row, copying non-CDC values from the
+   * input and substituting per-file constants at CDC positions.
    */
   private Iterator<InternalRow> applyRow(
       PartitionedFile file,
       @Nullable String changeType,
       long commitVersion,
       long commitTimestampMicros) {
-    int changeTypeInternalIdx = cdcSchemaContext.getChangeTypeInternalIndex();
-    @Nullable UTF8String changeTypeUtf8 = UTF8String.fromString(changeType);
-
-    ProjectingInternalRow dataProjection =
-        ProjectingInternalRow.apply(
-            /* schema= */ cdcSchemaContext.getDataAndPartitionSchema(),
-            /* ordinals= */ cdcSchemaContext.getDataAndPartitionOrdinals());
-    GenericInternalRow cdcRow = new GenericInternalRow(3);
-    cdcRow.setLong(CDCSchemaContext.COMMIT_VERSION_IDX, commitVersion);
-    cdcRow.setLong(CDCSchemaContext.COMMIT_TIMESTAMP_IDX, commitTimestampMicros);
-    JoinedRow joined = new JoinedRow();
+    final OptionalInt changeTypeIdxOpt = cdcSchemaContext.changeTypeIndex();
+    final OptionalInt commitVersionIdxOpt = cdcSchemaContext.commitVersionIndex();
+    final OptionalInt commitTimestampIdxOpt = cdcSchemaContext.commitTimestampIndex();
+    @Nullable final UTF8String changeTypeUtf8 = UTF8String.fromString(changeType);
+    final StructField[] fields = cdcSchemaContext.getFullRowSchema().fields();
 
     return CloseableIterator.wrap(baseReadFunc.apply(file))
         .mapCloseable(
             row -> {
-              dataProjection.project(row);
-              cdcRow.update(
-                  CDCSchemaContext.CHANGE_TYPE_IDX,
-                  changeTypeUtf8 != null
-                      ? changeTypeUtf8
-                      : row.getUTF8String(changeTypeInternalIdx));
-              return (InternalRow) joined.apply(dataProjection, cdcRow);
+              int n = row.numFields();
+              Object[] values = new Object[n];
+              for (int i = 0; i < n; i++) {
+                values[i] = row.isNullAt(i) ? null : row.get(i, fields[i].dataType());
+              }
+              if (changeTypeIdxOpt.isPresent()) {
+                int idx = changeTypeIdxOpt.getAsInt();
+                // _change_type: null in row only for AddFile/RemoveFile (use constant). For
+                // AddCDCFile, the parquet file has the value; preserve what's there.
+                if (changeTypeUtf8 != null && row.isNullAt(idx)) {
+                  values[idx] = changeTypeUtf8;
+                }
+              }
+              if (commitVersionIdxOpt.isPresent()) {
+                values[commitVersionIdxOpt.getAsInt()] = commitVersion;
+              }
+              if (commitTimestampIdxOpt.isPresent()) {
+                values[commitTimestampIdxOpt.getAsInt()] = commitTimestampMicros;
+              }
+              return new GenericInternalRow(values);
             });
   }
 
-  /** Vectorized: reorder and replace CDC ColumnVectors in each batch. */
+  /**
+   * Vectorized path: replace CDC ColumnVectors at their positions in the batch. {@code
+   * _change_type} keeps the original parquet column when it has values (AddCDCFile); other CDC
+   * columns become {@link ConstantColumnVectors}.
+   */
   @SuppressWarnings("unchecked")
   private Iterator<InternalRow> applyBatch(
       PartitionedFile file,
       @Nullable String changeType,
       long commitVersion,
       long commitTimestampMicros) {
-    Seq<Object> dataAndPartitionOrdinals = cdcSchemaContext.getDataAndPartitionOrdinals();
-    int changeTypeInternalIdx = cdcSchemaContext.getChangeTypeInternalIndex();
+    final OptionalInt changeTypeIdxOpt = cdcSchemaContext.changeTypeIndex();
+    final OptionalInt commitVersionIdxOpt = cdcSchemaContext.commitVersionIndex();
+    final OptionalInt commitTimestampIdxOpt = cdcSchemaContext.commitTimestampIndex();
 
     Iterator<Object> baseIterator = (Iterator<Object>) (Iterator<?>) baseReadFunc.apply(file);
     return (Iterator<InternalRow>)
@@ -129,10 +137,11 @@ public class CDCReadFunction extends AbstractFunction1<PartitionedFile, Iterator
                 .mapCloseable(
                     item -> {
                       if (item instanceof ColumnarBatch) {
-                        return reorderColumnarBatch(
+                        return substituteCDCColumns(
                             (ColumnarBatch) item,
-                            dataAndPartitionOrdinals,
-                            changeTypeInternalIdx,
+                            changeTypeIdxOpt,
+                            commitVersionIdxOpt,
+                            commitTimestampIdxOpt,
                             changeType,
                             commitVersion,
                             commitTimestampMicros);
@@ -143,41 +152,34 @@ public class CDCReadFunction extends AbstractFunction1<PartitionedFile, Iterator
                     });
   }
 
-  /**
-   * Reorder a ColumnarBatch from internal layout [readDataSchema, CDC, partition] to output layout
-   * [readDataSchema, partition, CDC] and replace CDC columns with constants.
-   */
-  private static ColumnarBatch reorderColumnarBatch(
+  private static ColumnarBatch substituteCDCColumns(
       ColumnarBatch batch,
-      Seq<Object> dataAndPartitionOrdinals,
-      int changeTypeInternalIdx,
+      OptionalInt changeTypeIdxOpt,
+      OptionalInt commitVersionIdxOpt,
+      OptionalInt commitTimestampIdxOpt,
       @Nullable String changeType,
       long commitVersion,
       long commitTimestampMicros) {
     int numRows = batch.numRows();
-    int nonCdcColCount = dataAndPartitionOrdinals.size();
-    ColumnVector[] columns = new ColumnVector[nonCdcColCount + CDC_COL_COUNT];
-
-    // Data + partition columns: remap from internal batch positions.
-    for (int outIdx = 0; outIdx < nonCdcColCount; outIdx++) {
-      columns[outIdx] = batch.column((Integer) dataAndPartitionOrdinals.apply(outIdx));
+    int numCols = batch.numCols();
+    ColumnVector[] columns = new ColumnVector[numCols];
+    for (int i = 0; i < numCols; i++) {
+      columns[i] = batch.column(i);
     }
-    // CDC columns: constants (or original _change_type for explicit CDC).
-    // The replaced CDC ColumnVectors from the original batch (null-filled by schema evolution)
-    // are not explicitly closed here - their lifecycle is managed by the base Spark vectorized
-    // reader that owns the original batch.
-    int cdcStart = nonCdcColCount;
-    if (changeType != null) {
-      columns[cdcStart + CDCSchemaContext.CHANGE_TYPE_IDX] =
+    if (changeTypeIdxOpt.isPresent() && changeType != null) {
+      // AddFile/RemoveFile: replace the null-filled column with a constant. AddCDCFile
+      // (changeType == null) keeps the original parquet column.
+      columns[changeTypeIdxOpt.getAsInt()] =
           ConstantColumnVectors.ofUtf8String(changeType, numRows);
-    } else {
-      columns[cdcStart + CDCSchemaContext.CHANGE_TYPE_IDX] = batch.column(changeTypeInternalIdx);
     }
-    columns[cdcStart + CDCSchemaContext.COMMIT_VERSION_IDX] =
-        ConstantColumnVectors.ofLong(commitVersion, numRows);
-    columns[cdcStart + CDCSchemaContext.COMMIT_TIMESTAMP_IDX] =
-        ConstantColumnVectors.ofTimestampMicros(commitTimestampMicros, numRows);
-
+    if (commitVersionIdxOpt.isPresent()) {
+      columns[commitVersionIdxOpt.getAsInt()] =
+          ConstantColumnVectors.ofLong(commitVersion, numRows);
+    }
+    if (commitTimestampIdxOpt.isPresent()) {
+      columns[commitTimestampIdxOpt.getAsInt()] =
+          ConstantColumnVectors.ofTimestampMicros(commitTimestampMicros, numRows);
+    }
     return new ColumnarBatch(columns, numRows);
   }
 

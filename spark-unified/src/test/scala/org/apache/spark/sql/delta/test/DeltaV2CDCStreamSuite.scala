@@ -68,22 +68,25 @@ class DeltaV2CDCStreamSuite extends DeltaCDCStreamSuite with V2ForceTest {
 
     // ========== Option B refactor + RT-rejection coverage ==========
     "CDC stream supports column pruning of data columns",
-    "CDC stream rejects reading row tracking metadata fields"
-  )
+    "CDC stream rejects reading row tracking metadata fields",
 
-  override protected lazy val shouldFailTests = Set(
-    // === Error message format differs in V2 (missing [DELTA_VERSION_NOT_FOUND] prefix) ===
-    "starting[Version/Timestamp] > latest version",
-    // === sql("DELETE FROM delta.`...`") not supported under STRICT V2 mode ===
-    "double delete-only on the same file",
-    // === TODO(#6591): Pre-existing vectorized partitioned-CDC bug (PlainIntegerDictionary / NPE).
+    // ========== CDC column ordering ==========
+    "CDC stream: CDC column in the middle of data columns",
+    "CDC stream: CDC column at the head",
+    "CDC stream: select only an always-constant CDC column",
+    "CDC stream: two CDC columns interleaved with data columns",
+
     "rateLimit - maxFilesPerTrigger - should not deadlock",
     "rateLimit - maxBytesPerTrigger - should not deadlock",
     "maxFilesPerTrigger - 2 successive AddCDCFile commits",
     "maxFilesPerTrigger - batch reject stops iteration to prevent data loss",
-    "maxFilesPerTrigger with Trigger.AvailableNow respects read limits",
-    // === V2 wraps DeltaAnalysisException in RuntimeException, so the test's
-    // === ExpectFailure[DeltaAnalysisException] cause-class check fails.
+    "maxFilesPerTrigger with Trigger.AvailableNow respects read limits"
+  )
+
+  override protected lazy val shouldFailTests = Set(
+    "starting[Version/Timestamp] > latest version", // V2 drops [DELTA_VERSION_NOT_FOUND] prefix
+    "double delete-only on the same file", // DELETE unsupported under STRICT V2 mode
+    // V2 wraps DeltaAnalysisException in RuntimeException; cause-class check fails
     "startingVersion before CDF was enabled rejects with change-data-not-recorded"
   )
 }

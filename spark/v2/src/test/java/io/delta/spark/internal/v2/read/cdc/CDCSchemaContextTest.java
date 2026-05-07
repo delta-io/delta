@@ -17,12 +17,10 @@ package io.delta.spark.internal.v2.read.cdc;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.OptionalInt;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.Test;
-import scala.collection.immutable.Seq;
 
 public class CDCSchemaContextTest {
 
@@ -32,125 +30,73 @@ public class CDCSchemaContextTest {
       new StructType().add("date", DataTypes.StringType);
 
   @Test
-  void testDataOnlySchema() {
+  void testNoCDCColumnsRequested() {
     CDCSchemaContext ctx = new CDCSchemaContext(DATA_SCHEMA, new StructType());
+    assertEquals(OptionalInt.empty(), ctx.changeTypeIndex());
+    assertEquals(OptionalInt.empty(), ctx.commitVersionIndex());
+    assertEquals(OptionalInt.empty(), ctx.commitTimestampIndex());
 
-    // Augmented schema (Parquet input): [id, name, _change_type, _commit_version,
-    // _commit_timestamp]
-    StructType augmented = ctx.getReadDataSchemaWithCDC();
-    assertEquals(5, augmented.fields().length);
-    assertEquals("id", augmented.fields()[0].name());
-    assertEquals("name", augmented.fields()[1].name());
-    assertEquals(CDCSchemaContext.CDC_TYPE_COLUMN, augmented.fields()[2].name());
-    assertEquals(CDCSchemaContext.CDC_COMMIT_VERSION, augmented.fields()[3].name());
-    assertEquals(CDCSchemaContext.CDC_COMMIT_TIMESTAMP, augmented.fields()[4].name());
-
-    assertEquals(2, ctx.getChangeTypeInternalIndex());
-
-    // Ordinals: [id->0, name->1] (no partition, no CDC sentinels).
-    assertEquals(List.of(0, 1), toJavaList(ctx.getDataAndPartitionOrdinals()));
+    StructType full = ctx.getFullRowSchema();
+    assertEquals(2, full.fields().length);
+    assertEquals("id", full.fields()[0].name());
+    assertEquals("name", full.fields()[1].name());
   }
 
   @Test
-  void testWithPartitionColumns() {
-    CDCSchemaContext ctx = new CDCSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA);
+  void testAllCDCColumnsAtTail() {
+    StructType readDataSchema = CDCSchemaContext.appendCDCColumns(DATA_SCHEMA);
+    CDCSchemaContext ctx = new CDCSchemaContext(readDataSchema, PARTITION_SCHEMA);
 
-    // Internal layout: [id(0), name(1), CDC(2,3,4), date(5)]
-    // Output (non-CDC): [id, name, date]; date maps to internal 5 (after data + CDC), not 2.
-    assertEquals(2, ctx.getChangeTypeInternalIndex());
-    assertEquals(List.of(0, 1, 5), toJavaList(ctx.getDataAndPartitionOrdinals()));
+    // [id(0), name(1), _change_type(2), _commit_version(3), _commit_timestamp(4)] then date(5)
+    assertEquals(OptionalInt.of(2), ctx.changeTypeIndex());
+    assertEquals(OptionalInt.of(3), ctx.commitVersionIndex());
+    assertEquals(OptionalInt.of(4), ctx.commitTimestampIndex());
 
-    // dataAndPartitionSchema is [id, name, date].
-    StructType dap = ctx.getDataAndPartitionSchema();
-    assertEquals(3, dap.fields().length);
-    assertEquals("id", dap.fields()[0].name());
-    assertEquals("name", dap.fields()[1].name());
-    assertEquals("date", dap.fields()[2].name());
+    StructType full = ctx.getFullRowSchema();
+    assertEquals(6, full.fields().length);
+    assertEquals("id", full.fields()[0].name());
+    assertEquals("name", full.fields()[1].name());
+    assertEquals(CDCSchemaContext.CDC_TYPE_COLUMN, full.fields()[2].name());
+    assertEquals(CDCSchemaContext.CDC_COMMIT_VERSION, full.fields()[3].name());
+    assertEquals(CDCSchemaContext.CDC_COMMIT_TIMESTAMP, full.fields()[4].name());
+    assertEquals("date", full.fields()[5].name());
   }
 
   @Test
-  void testDataColumnPruning() {
-    // readDataSchema is a strict subset of dataSchema (only "id" selected; "name" pruned).
-    StructType prunedData = new StructType().add("id", DataTypes.IntegerType);
-
-    CDCSchemaContext ctx = new CDCSchemaContext(prunedData, PARTITION_SCHEMA);
-
-    // Internal layout: [id(0), CDC(1,2,3), date(4)]
-    // Output (non-CDC): [id, date]
-    assertEquals(1, ctx.getChangeTypeInternalIndex()); // dataColCount = 1
-    assertEquals(List.of(0, 4), toJavaList(ctx.getDataAndPartitionOrdinals()));
-
-    // Output schema honors pruning: pruned data column ("name") is NOT in the output.
-    StructType dap = ctx.getDataAndPartitionSchema();
-    assertEquals(2, dap.fields().length);
-    assertEquals("id", dap.fields()[0].name());
-    assertEquals("date", dap.fields()[1].name());
-  }
-
-  @Test
-  void testIsCDCColumn() {
-    assertTrue(CDCSchemaContext.isCDCColumn(CDCSchemaContext.CDC_TYPE_COLUMN));
-    assertTrue(CDCSchemaContext.isCDCColumn(CDCSchemaContext.CDC_COMMIT_VERSION));
-    assertTrue(CDCSchemaContext.isCDCColumn(CDCSchemaContext.CDC_COMMIT_TIMESTAMP));
-    assertTrue(CDCSchemaContext.isCDCColumn("_Change_Type"));
-    assertTrue(CDCSchemaContext.isCDCColumn("_COMMIT_VERSION"));
-    assertFalse(CDCSchemaContext.isCDCColumn("id"));
-    assertFalse(CDCSchemaContext.isCDCColumn("_change_type_extra"));
-  }
-
-  @Test
-  void testCdcFieldsDefensiveCopy() {
-    var fields1 = CDCSchemaContext.cdcFields();
-    var fields2 = CDCSchemaContext.cdcFields();
-
-    assertEquals(3, fields1.length);
-    assertEquals(CDCSchemaContext.CDC_TYPE_COLUMN, fields1[0].name());
-    assertEquals(DataTypes.StringType, fields1[0].dataType());
-    assertEquals(CDCSchemaContext.CDC_COMMIT_VERSION, fields1[1].name());
-    assertEquals(DataTypes.LongType, fields1[1].dataType());
-    assertEquals(CDCSchemaContext.CDC_COMMIT_TIMESTAMP, fields1[2].name());
-    assertEquals(DataTypes.TimestampType, fields1[2].dataType());
-
-    assertNotSame(fields1, fields2);
-  }
-
-  @Test
-  void testIndexConstantsMatchCDCFieldsOrder() {
-    var fields = CDCSchemaContext.cdcFields();
-    assertEquals(CDCSchemaContext.CDC_TYPE_COLUMN, fields[CDCSchemaContext.CHANGE_TYPE_IDX].name());
-    assertEquals(
-        CDCSchemaContext.CDC_COMMIT_VERSION, fields[CDCSchemaContext.COMMIT_VERSION_IDX].name());
-    assertEquals(
-        CDCSchemaContext.CDC_COMMIT_TIMESTAMP,
-        fields[CDCSchemaContext.COMMIT_TIMESTAMP_IDX].name());
-  }
-
-  @Test
-  void testConstructorRejectsCDCColumnsInReadDataSchema() {
-    StructType withChangeType =
+  void testCDCColumnsInterleaved() {
+    StructType readDataSchema =
         new StructType()
             .add("id", DataTypes.IntegerType)
-            .add(CDCSchemaContext.CDC_TYPE_COLUMN, DataTypes.StringType);
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> new CDCSchemaContext(withChangeType, new StructType()));
+            .add(CDCSchemaContext.CDC_TYPE_COLUMN, DataTypes.StringType)
+            .add("name", DataTypes.StringType)
+            .add(CDCSchemaContext.CDC_COMMIT_VERSION, DataTypes.LongType);
+    CDCSchemaContext ctx = new CDCSchemaContext(readDataSchema, new StructType());
 
-    StructType withCommitVersion =
-        new StructType().add(CDCSchemaContext.CDC_COMMIT_VERSION, DataTypes.LongType);
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> new CDCSchemaContext(withCommitVersion, new StructType()));
+    assertEquals(OptionalInt.of(1), ctx.changeTypeIndex());
+    assertEquals(OptionalInt.of(3), ctx.commitVersionIndex());
+    assertEquals(OptionalInt.empty(), ctx.commitTimestampIndex());
+  }
 
-    StructType withCommitTimestamp =
-        new StructType().add(CDCSchemaContext.CDC_COMMIT_TIMESTAMP, DataTypes.TimestampType);
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> new CDCSchemaContext(withCommitTimestamp, new StructType()));
+  @Test
+  void testCDCColumnAtHead() {
+    StructType readDataSchema =
+        new StructType()
+            .add(CDCSchemaContext.CDC_COMMIT_VERSION, DataTypes.LongType)
+            .add("id", DataTypes.IntegerType)
+            .add("name", DataTypes.StringType);
+    CDCSchemaContext ctx = new CDCSchemaContext(readDataSchema, new StructType());
 
-    // Case-insensitive: matches isCDCColumn semantics.
-    StructType mixedCase = new StructType().add("_Change_Type", DataTypes.StringType);
-    assertThrows(
-        IllegalArgumentException.class, () -> new CDCSchemaContext(mixedCase, new StructType()));
+    assertEquals(OptionalInt.empty(), ctx.changeTypeIndex());
+    assertEquals(OptionalInt.of(0), ctx.commitVersionIndex());
+    assertEquals(OptionalInt.empty(), ctx.commitTimestampIndex());
+  }
+
+  @Test
+  void testCaseInsensitiveLookup() {
+    StructType readDataSchema =
+        new StructType().add("id", DataTypes.IntegerType).add("_Change_Type", DataTypes.StringType);
+    CDCSchemaContext ctx = new CDCSchemaContext(readDataSchema, new StructType());
+    assertEquals(OptionalInt.of(1), ctx.changeTypeIndex());
   }
 
   @Test
@@ -162,13 +108,5 @@ public class CDCSchemaContextTest {
     assertEquals(CDCSchemaContext.CDC_TYPE_COLUMN, augmented.fields()[2].name());
     assertEquals(CDCSchemaContext.CDC_COMMIT_VERSION, augmented.fields()[3].name());
     assertEquals(CDCSchemaContext.CDC_COMMIT_TIMESTAMP, augmented.fields()[4].name());
-  }
-
-  private static List<Integer> toJavaList(Seq<Object> seq) {
-    List<Integer> result = new ArrayList<>(seq.size());
-    for (int i = 0; i < seq.size(); i++) {
-      result.add((Integer) seq.apply(i));
-    }
-    return result;
   }
 }

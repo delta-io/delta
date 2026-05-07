@@ -236,6 +236,7 @@ public class SparkMicroBatchStream
   public SparkMicroBatchStream(
       DeltaSnapshotManager snapshotManager,
       Snapshot snapshotAtSourceInit,
+      Snapshot analysisTimeSnapshot,
       Configuration hadoopConf,
       SparkSession spark,
       DeltaOptions options,
@@ -356,11 +357,12 @@ public class SparkMicroBatchStream
                 .sessionState()
                 .conf()
                 .getConf(DeltaSQLConf.STREAMING_SCHEMA_VALIDATION_ON_RESTART());
-    // When schema tracking is enabled, the MetadataEvolutionHandler manages schema changes via
-    // the schema log; the analysis-vs-snapshot mismatch this check guards against is expected on
-    // restart and is surfaced via the schema-log evolution exception instead.
-    if (shouldValidateSchemaOnRestart && !metadataEvolutionHandler.shouldTrackMetadataChange()) {
-      validateSchemaCompatibilityOnStartup(dataSchema, partitionSchema, readSchemaAtSourceInit);
+    if (shouldValidateSchemaOnRestart) {
+      StructType analysisTimeSchema =
+          SchemaUtils.convertKernelSchemaToSparkSchema(
+              Objects.requireNonNull(analysisTimeSnapshot, "analysisTimeSnapshot is null")
+                  .getSchema());
+      validateSchemaCompatibilityOnStartup(analysisTimeSchema, readSchemaAtSourceInit);
     }
   }
 
@@ -1734,25 +1736,21 @@ public class SparkMicroBatchStream
    */
   @VisibleForTesting
   static void validateSchemaCompatibilityOnStartup(
-      StructType dataSchema, StructType partitionSchema, StructType snapshotSchema) {
-    // Reconstruct the full analysis-time table schema from dataSchema + partitionSchema.
-    // StructType is immutable — add() returns a new instance without modifying the original.
-    StructType querySchema = dataSchema;
-    for (StructField field : partitionSchema.fields()) {
-      querySchema = querySchema.add(field);
-    }
+      StructType analysisTimeSchema, StructType streamStartSchema) {
     // Sort both sides so a partition column declared in the middle of the table doesn't
     // trip the check.
-    StructType sortedQuery = sortFieldsByName(querySchema);
-    StructType sortedSnapshot = sortFieldsByName(snapshotSchema);
+    StructType sortedAnalysis = sortFieldsByName(analysisTimeSchema);
+    StructType sortedStreamStart = sortFieldsByName(streamStartSchema);
     // equalsStructurally checks types + nullability but ignores field names;
     // equalsStructurallyByName checks names but ignores types/nullability.
     boolean typesAndNullabilityMatch =
-        DataType.equalsStructurally(sortedQuery, sortedSnapshot, /* ignoreNullability= */ false);
+        DataType.equalsStructurally(
+            sortedAnalysis, sortedStreamStart, /* ignoreNullability= */ false);
     boolean namesMatch =
-        DataType.equalsStructurallyByName(sortedQuery, sortedSnapshot, CASE_INSENSITIVE_RESOLVER);
+        DataType.equalsStructurallyByName(
+            sortedAnalysis, sortedStreamStart, CASE_INSENSITIVE_RESOLVER);
     if (!typesAndNullabilityMatch || !namesMatch) {
-      throw DeltaErrors.streamingSchemaMismatchOnRestart(querySchema, snapshotSchema);
+      throw DeltaErrors.streamingSchemaMismatchOnRestart(analysisTimeSchema, streamStartSchema);
     }
   }
 

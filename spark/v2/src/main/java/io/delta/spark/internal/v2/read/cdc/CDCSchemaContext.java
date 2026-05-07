@@ -16,32 +16,23 @@
 package io.delta.spark.internal.v2.read.cdc;
 
 import java.io.Serializable;
+import java.util.OptionalInt;
 import org.apache.spark.sql.delta.commands.cdc.CDCReader;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
-import scala.collection.immutable.Seq;
 
 /**
- * Holds the augmented read schema and column indices for the three CDC columns ({@code
- * _change_type}, {@code _commit_version}, {@code _commit_timestamp}).
- *
- * <p>The augmented schema is passed to the Parquet reader so that missing CDC columns are filled
- * with null via schema evolution. {@link CDCReadFunction} then replaces those nulls with per-file
- * constants using the pre-computed indices.
+ * Records which CDC columns ({@code _change_type}, {@code _commit_version}, {@code
+ * _commit_timestamp}) sit in {@code readDataSchema} and at what positions.
  */
 public class CDCSchemaContext implements Serializable {
 
-  // Fixed ID to ensure serialization compatibility across compiled versions of this class.
   private static final long serialVersionUID = 1L;
 
   public static final String CDC_TYPE_COLUMN = CDCReader.CDC_TYPE_COLUMN_NAME();
   public static final String CDC_COMMIT_VERSION = CDCReader.CDC_COMMIT_VERSION();
   public static final String CDC_COMMIT_TIMESTAMP = CDCReader.CDC_COMMIT_TIMESTAMP();
-
-  public static final int CHANGE_TYPE_IDX = 0;
-  public static final int COMMIT_VERSION_IDX = 1;
-  public static final int COMMIT_TIMESTAMP_IDX = 2;
 
   private static final StructField[] CDC_FIELDS =
       new StructField[] {
@@ -51,65 +42,53 @@ public class CDCSchemaContext implements Serializable {
             CDC_COMMIT_TIMESTAMP, DataTypes.TimestampType, /* nullable= */ true)
       };
 
-  /** Read data schema augmented with CDC columns (for Parquet reader). */
-  private final StructType readDataSchemaWithCDC;
+  /** Full schema of rows produced by the parquet reader: {@code readDataSchema ++ partition}. */
+  private final StructType fullRowSchema;
 
-  /** Output schema for non-CDC columns: {@code readDataSchema + partition}. */
-  private final StructType dataAndPartitionSchema;
+  // -1 when the column is not in readDataSchema.
+  private final int changeTypeIndex;
+  private final int commitVersionIndex;
+  private final int commitTimestampIndex;
 
-  /** Index of _change_type in the internal row [readDataSchema, CDC, partition]. */
-  private final int changeTypeInternalIndex;
-
-  /**
-   * Maps each (data + partition) output position to its internal batch position. Output order is
-   * {@code [readDataSchema, partition]} (CDC columns are appended separately). Internal batch order
-   * is {@code [readDataSchema, CDC, partition]}, so partition entries skip the CDC slots.
-   */
-  private final Seq<Object> dataAndPartitionOrdinals;
-
-  /**
-   * @param readDataSchema the (possibly pruned) data schema requested by Spark, without CDC or
-   *     partition columns
-   * @param partitionSchema the partition schema
-   */
   public CDCSchemaContext(StructType readDataSchema, StructType partitionSchema) {
-    // check that pruneColumns has pruned any existing CDC columns
-    for (StructField field : readDataSchema.fields()) {
-      if (isCDCColumn(field.name())) {
-        throw new IllegalArgumentException(
-            "readDataSchema already contains the CDC column: " + field.name());
+    StructType merged = readDataSchema;
+    for (StructField f : partitionSchema.fields()) {
+      merged = merged.add(f);
+    }
+    this.fullRowSchema = merged;
+    this.changeTypeIndex = findFieldIndex(readDataSchema, CDC_TYPE_COLUMN);
+    this.commitVersionIndex = findFieldIndex(readDataSchema, CDC_COMMIT_VERSION);
+    this.commitTimestampIndex = findFieldIndex(readDataSchema, CDC_COMMIT_TIMESTAMP);
+  }
+
+  /** Schema of rows the reader produces: {@code readDataSchema} followed by partition columns. */
+  public StructType getFullRowSchema() {
+    return fullRowSchema;
+  }
+
+  /** Index of {@code _change_type} in {@code readDataSchema}, or empty if not requested. */
+  public OptionalInt changeTypeIndex() {
+    return changeTypeIndex < 0 ? OptionalInt.empty() : OptionalInt.of(changeTypeIndex);
+  }
+
+  /** Index of {@code _commit_version} in {@code readDataSchema}, or empty if not requested. */
+  public OptionalInt commitVersionIndex() {
+    return commitVersionIndex < 0 ? OptionalInt.empty() : OptionalInt.of(commitVersionIndex);
+  }
+
+  /** Index of {@code _commit_timestamp} in {@code readDataSchema}, or empty if not requested. */
+  public OptionalInt commitTimestampIndex() {
+    return commitTimestampIndex < 0 ? OptionalInt.empty() : OptionalInt.of(commitTimestampIndex);
+  }
+
+  private static int findFieldIndex(StructType schema, String name) {
+    StructField[] fields = schema.fields();
+    for (int i = 0; i < fields.length; i++) {
+      if (fields[i].name().equalsIgnoreCase(name)) {
+        return i;
       }
     }
-    this.readDataSchemaWithCDC = appendCDCColumns(readDataSchema);
-    int dataColCount = readDataSchema.fields().length;
-    int partColCount = partitionSchema.fields().length;
-    int cdcColCount = CDC_FIELDS.length;
-    this.changeTypeInternalIndex = dataColCount;
-    this.dataAndPartitionSchema =
-        readDataSchema.merge(partitionSchema, /* handleDuplicateColumns= */ false);
-
-    // Output: [readDataSchema, partition, CDC]
-    // Internal (from Parquet): [readDataSchema, CDC, partition]
-    int[] ordinals = new int[dataColCount + partColCount];
-    for (int i = 0; i < dataColCount; i++) {
-      ordinals[i] = i;
-    }
-    for (int i = 0; i < partColCount; i++) {
-      ordinals[dataColCount + i] = dataColCount + cdcColCount + i;
-    }
-    this.dataAndPartitionOrdinals = scala.Predef.wrapIntArray(ordinals).toList();
-  }
-
-  /** Returns the 3 CDC StructFields. */
-  public static StructField[] cdcFields() {
-    return CDC_FIELDS.clone();
-  }
-
-  /** Returns true if the given field name is a CDC column. */
-  public static boolean isCDCColumn(String name) {
-    return CDC_TYPE_COLUMN.equalsIgnoreCase(name)
-        || CDC_COMMIT_VERSION.equalsIgnoreCase(name)
-        || CDC_COMMIT_TIMESTAMP.equalsIgnoreCase(name);
+    return -1;
   }
 
   /** Appends the three CDC columns to the given schema. */
@@ -119,25 +98,5 @@ public class CDCSchemaContext implements Serializable {
       result = result.add(field);
     }
     return result;
-  }
-
-  public StructType getReadDataSchemaWithCDC() {
-    return readDataSchemaWithCDC;
-  }
-
-  public int getChangeTypeInternalIndex() {
-    return changeTypeInternalIndex;
-  }
-
-  /** Returns the data + partition output schema. */
-  public StructType getDataAndPartitionSchema() {
-    return dataAndPartitionSchema;
-  }
-
-  /**
-   * Returns ordinals mapping each data + partition output position to its internal batch position.
-   */
-  public Seq<Object> getDataAndPartitionOrdinals() {
-    return dataAndPartitionOrdinals;
   }
 }

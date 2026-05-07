@@ -97,7 +97,8 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
   }
 
   @Test
-  public void testPruneColumns_filtersMixedCaseCDCColumn(@TempDir File tempDir) throws Exception {
+  public void testPruneColumns_keepsCDCColumnsInRequiredDataSchema(@TempDir File tempDir)
+      throws Exception {
     String path = tempDir.getAbsolutePath();
     String tableName = "scan_builder_mixed_case_cdc_test";
     spark.sql(
@@ -138,16 +139,16 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
         DataTypes.createStructType(
             new StructField[] {
               DataTypes.createStructField("id", DataTypes.IntegerType, true),
+              DataTypes.createStructField("dep_id", DataTypes.IntegerType, true),
               DataTypes.createStructField("_Change_Type", DataTypes.StringType, true)
             });
     builder.pruneColumns(requiredSchema);
 
     StructType requiredDataSchema = getRequiredDataSchema(builder);
-    for (StructField f : requiredDataSchema.fields()) {
-      assertTrue(
-          !f.name().equalsIgnoreCase("_change_type"),
-          "Mixed-case CDC column survived pruneColumns: " + f.name());
-    }
+    // Partition column "dep_id" stripped; CDC column kept (case preserved from input).
+    assertEquals(2, requiredDataSchema.fields().length);
+    assertEquals("id", requiredDataSchema.fields()[0].name());
+    assertEquals("_Change_Type", requiredDataSchema.fields()[1].name());
   }
 
   private StructType getRequiredDataSchema(SparkScanBuilder builder) throws Exception {
@@ -821,7 +822,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
   }
 
   /**
-   * Integration test: decimal widening end-to-end through pushFilters() → classifyFilter() →
+   * Integration test: decimal widening end-to-end through pushFilters() -> classifyFilter() ->
    * convertComparisonLiteral(). Verifies that a decimal literal Decimal(5,2) is widened to match
    * column type Decimal(7,2) when pushed through the full filter pushdown path.
    */

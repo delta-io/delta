@@ -917,6 +917,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
     return new SparkMicroBatchStream(
         snapshotManager,
         snapshot,
+        snapshot,
         hadoopConf,
         spark,
         options,

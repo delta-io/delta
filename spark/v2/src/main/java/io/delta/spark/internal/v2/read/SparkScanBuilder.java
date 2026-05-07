@@ -29,6 +29,7 @@ import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.connector.read.Statistics;
 import org.apache.spark.sql.connector.read.SupportsPushDownFilters;
 import org.apache.spark.sql.connector.read.SupportsPushDownRequiredColumns;
+import org.apache.spark.sql.delta.commands.cdc.CDCReader;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
@@ -88,7 +89,14 @@ public class SparkScanBuilder
     this.tableSchema = requireNonNull(tableSchema, "tableSchema is null");
     this.catalogStats = requireNonNull(catalogStats, "catalogStats is null");
     this.options = requireNonNull(options, "options is null");
-    this.requiredDataSchema = this.dataSchema;
+    // For CDC reads, the user-facing table schema (SparkTable.schema()) appends CDC columns to
+    // dataSchema. Initialize requiredDataSchema accordingly so the parquet reader is asked for
+    // CDC columns even when pruneColumns is not called by the planner (V2 streaming does not
+    // push column pruning down). dataSchema itself stays clean - it represents the table's
+    // actual data columns and is relied on for streaming schema-compatibility validation.
+    boolean isCDCRead = CDCReader.isCDCRead(options);
+    this.requiredDataSchema =
+        isCDCRead ? CDCSchemaContext.appendCDCColumns(this.dataSchema) : this.dataSchema;
     this.partitionColumnSet =
         Arrays.stream(this.partitionSchema.fields())
             .map(f -> f.name().toLowerCase(Locale.ROOT))
@@ -100,16 +108,10 @@ public class SparkScanBuilder
   @Override
   public void pruneColumns(StructType requiredSchema) {
     requireNonNull(requiredSchema, "requiredSchema is null");
-    // CDC columns are injected later by CDCReadFunction, so strip them here.
     this.requiredDataSchema =
         new StructType(
             Arrays.stream(requiredSchema.fields())
-                .filter(
-                    f -> {
-                      String name = f.name().toLowerCase(Locale.ROOT);
-                      return !partitionColumnSet.contains(name)
-                          && !CDCSchemaContext.isCDCColumn(name);
-                    })
+                .filter(f -> !partitionColumnSet.contains(f.name().toLowerCase(Locale.ROOT)))
                 .toArray(StructField[]::new));
   }
 

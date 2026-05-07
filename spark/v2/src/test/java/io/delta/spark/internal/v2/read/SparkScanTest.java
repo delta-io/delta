@@ -811,11 +811,7 @@ public class SparkScanTest extends DeltaV2TestBase {
   }
 
   @Test
-  public void testPruneColumns_cdcRead_filtersCDCColumns() {
-    // pruneColumns should filter out partition and CDC columns from the data schema, since
-    // partition columns are read separately and CDC columns are injected by CDCReadFunction.
-    // The remaining data columns are honored — pruning a data column ("cnt") shrinks the
-    // underlying parquet read.
+  public void testPruneColumns_cdcRead_keepsCDCColumns() {
     Map<String, String> cdcOptions = new HashMap<>();
     cdcOptions.put("readChangeFeed", "true");
     CaseInsensitiveStringMap cdcOptionsMap = new CaseInsensitiveStringMap(cdcOptions);
@@ -832,12 +828,15 @@ public class SparkScanTest extends DeltaV2TestBase {
 
     SparkScan scan = (SparkScan) builder.build();
 
-    // readDataSchema reflects pruning: only "name" remains (cnt dropped, partition + CDC filtered)
+    // readDataSchema = requiredSchema with partition columns ("date") stripped; CDC columns kept.
     StructType readDataSchema = scan.getReadDataSchema();
-    assertEquals(1, readDataSchema.fields().length);
+    assertEquals(4, readDataSchema.fields().length);
     assertEquals("name", readDataSchema.fields()[0].name());
+    assertEquals("_change_type", readDataSchema.fields()[1].name());
+    assertEquals("_commit_version", readDataSchema.fields()[2].name());
+    assertEquals("_commit_timestamp", readDataSchema.fields()[3].name());
 
-    // readSchema = readDataSchema + partition + CDC
+    // readSchema is the DDL-ordered output schema: data, partition, CDC.
     StructType readSchema = scan.readSchema();
     assertTrue(readSchema.fieldIndex("name") >= 0);
     assertTrue(readSchema.fieldIndex("date") >= 0);
