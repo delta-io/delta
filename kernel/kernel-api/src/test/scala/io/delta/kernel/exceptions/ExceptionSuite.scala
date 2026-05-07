@@ -100,9 +100,8 @@ class ExceptionSuite extends AnyFunSuite {
   // parent/child. Without an explicit catch clause, wrapEngineException's `catch (KernelException)`
   // fast-path doesn't match a KernelEngineException, so the outer call re-wraps an already-wrapped
   // engine exception into another KernelEngineException - hiding the original cause one extra
-  // level deep and breaking direct-cause checks at consumers (e.g.
-  // SparkMicroBatchStream.findInterruptIOException). These tests pin the "don't double-wrap"
-  // behavior.
+  // level deep and breaking consumers that intentionally inspect only the direct cause, such as
+  // Spark streaming interrupt handling. These tests pin the "don't double-wrap" behavior.
   test("wrapEngineException does not double-wrap an already-wrapped KernelEngineException") {
     val root = new ClassCastException("root cause")
     val inner = new KernelEngineException("inner op", root)
