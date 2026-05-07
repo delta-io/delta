@@ -30,6 +30,11 @@ import java.util.Set;
 /**
  * Adapts a Spark Row to the Kernel Row interface. Designed and tested for AddFile schema; other
  * schemas may work but are not validated.
+ *
+ * <p>Null contract: primitive getters ({@code getBoolean}, {@code getInt}, etc.) throw
+ * {@link IllegalStateException} if the field is null (callers must check {@code isNullAt} first).
+ * Reference-type getters ({@code getString}, {@code getStruct}, {@code getMap}, {@code getArray})
+ * return {@code null} for null fields.
  */
 public class SparkRowToKernelRow implements Row {
 
@@ -156,6 +161,9 @@ public class SparkRowToKernelRow implements Row {
 
   @Override
   public Row getStruct(int ordinal) {
+    if (sparkRow.isNullAt(ordinal)) {
+      return null;
+    }
     org.apache.spark.sql.Row nested = sparkRow.getStruct(ordinal);
     StructType nestedSchema = (StructType) kernelSchema.at(ordinal).getDataType();
     return new SparkRowToKernelRow(nested, nestedSchema);
@@ -179,6 +187,9 @@ public class SparkRowToKernelRow implements Row {
 
   @Override
   public ArrayValue getArray(int ordinal) {
+    if (sparkRow.isNullAt(ordinal)) {
+      return null;
+    }
     List<?> javaList = sparkRow.getList(ordinal);
     ArrayType at = (ArrayType) kernelSchema.at(ordinal).getDataType();
     return javaListToKernelArrayValue(javaList, at);

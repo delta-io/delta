@@ -76,6 +76,9 @@ public class KernelRowToSparkRow implements Row {
     Object[] values = new Object[length()];
     for (int i = 0; i < values.length; i++) {
       Object v = get(i);
+      // Recursively copy nested struct wrappers that still reference the live kernel row.
+      // Note: structs nested inside maps/arrays are already materialized by toSparkValue()
+      // as Scala collections of plain objects, so they don't hold kernel row references.
       if (v instanceof KernelRowToSparkRow) {
         v = ((KernelRowToSparkRow) v).copy();
       }
@@ -278,8 +281,10 @@ public class KernelRowToSparkRow implements Row {
       return DateTimeUtils.toJavaDate(accessor.getInt(ordinal));
     } else if (dt instanceof LongType) {
       return accessor.getLong(ordinal);
-    } else if (dt instanceof TimestampType || dt instanceof TimestampNTZType) {
+    } else if (dt instanceof TimestampType) {
       return DateTimeUtils.toJavaTimestamp(accessor.getLong(ordinal));
+    } else if (dt instanceof TimestampNTZType) {
+      return DateTimeUtils.microsToLocalDateTime(accessor.getLong(ordinal));
     } else if (dt instanceof FloatType) {
       return accessor.getFloat(ordinal);
     } else if (dt instanceof DoubleType) {
