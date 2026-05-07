@@ -101,8 +101,7 @@ public class ScanFileRDD extends RDD<Row> {
             try {
               batchIter.close();
             } catch (IOException e) {
-              LOG.warn(
-                  "Failed to close scan file iterator for distributed initial snapshot", e);
+              LOG.warn("Failed to close scan file iterator for distributed initial snapshot", e);
             }
           });
     }
