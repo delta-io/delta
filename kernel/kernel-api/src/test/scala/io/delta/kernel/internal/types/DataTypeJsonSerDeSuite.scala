@@ -197,7 +197,7 @@ class DataTypeJsonSerDeSuite extends AnyFunSuite {
   }
 
   test("parseDataType: geography accepts case-insensitive algorithm") {
-    // Uppercase algorithm input is accepted.
+    // Uppercase algorithm input is accepted .
     assert(parse("\"geography(OGC:CRS84, SPHERICAL)\"")
       === new GeographyType("OGC:CRS84", "SPHERICAL"))
     assert(parse("\"geography(ViNcEnTy)\"")
