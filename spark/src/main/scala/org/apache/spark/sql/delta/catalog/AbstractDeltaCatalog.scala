@@ -20,6 +20,7 @@ package org.apache.spark.sql.delta.catalog
 import java.sql.Timestamp
 import java.util
 import java.util.Locale
+import java.util.Optional
 
 import scala.collection.JavaConverters._
 import scala.collection.immutable.ListMap
@@ -30,7 +31,7 @@ import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterBy, ClusterBySpec}
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterByTransform => TempClusterByTransform}
-import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaConfigs, DeltaErrors, DeltaTableUtils}
+import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaConfigs, DeltaErrors, DeltaLog, DeltaTableUtils}
 import org.apache.spark.sql.delta.{DeltaOptions, IdentityColumn}
 import org.apache.spark.sql.delta.DeltaTableIdentifier.gluePermissionError
 import org.apache.spark.sql.delta.commands._
@@ -46,6 +47,14 @@ import org.apache.spark.sql.delta.tablefeatures.DropFeature
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.PartitionUtils
 import org.apache.hadoop.fs.Path
+import io.delta.kernel.defaults.engine.DefaultEngine
+import io.delta.kernel.internal.DeltaHistoryManager
+import io.delta.kernel.internal.SnapshotImpl
+import io.delta.kernel.internal.rowtracking.RowTracking
+import io.delta.spark.internal.v2.catalog.SparkTable
+import io.delta.spark.internal.v2.read.changelog.DeltaChangelog
+import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory
+import io.delta.spark.internal.v2.utils.{SchemaUtils => V2SchemaUtils}
 
 import org.apache.spark.SparkException
 import org.apache.spark.internal.MDC
@@ -54,7 +63,8 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchNamespaceException, NoSuchTableException, UnresolvedAttribute, UnresolvedFieldName, UnresolvedFieldPosition}
 import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable, CatalogTableType, CatalogUtils, SessionCatalog}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, QualifiedColType, QualifiedColTypeShims, SyncIdentity}
-import org.apache.spark.sql.connector.catalog.{DelegatingCatalogExtension, Identifier, StagedTable, StagingTableCatalog, SupportsWrite, Table, TableCapability, TableCatalog, TableChange, V1Table}
+import org.apache.spark.sql.connector.catalog.{Changelog, ChangelogInfo, DelegatingCatalogExtension, Identifier, StagedTable, StagingTableCatalog, SupportsWrite, Table, TableCapability, TableCatalog, TableChange, V1Table}
+import org.apache.spark.sql.connector.catalog.ChangelogRange.{TimestampRange, UnboundedRange, VersionRange}
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.catalog.TableChange._
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform, Literal, NamedReference, Transform}
@@ -63,6 +73,7 @@ import org.apache.spark.sql.execution.datasources.{DataSource, PartitioningUtils
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.InsertableRelation
 import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
+import org.apache.spark.util.{ThreadUtils, Utils}
 
 
 /**
@@ -324,6 +335,118 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
 
   override def loadTable(ident: Identifier, version: String): Table = {
     loadTableWithTimeTravel(ident, Some(version), timestamp = None)
+  }
+
+  override def loadChangelog(ident: Identifier, changelogInfo: ChangelogInfo): Changelog = {
+    changelogInfo.range() match {
+      case vr: VersionRange =>
+        val catalogTable = resolveDeltaCatalogTable(ident)
+        val resolvedEndingVersion: Option[Long] =
+          if (vr.endingVersion().isPresent()) Some(vr.endingVersion().get.toLong) else None
+
+        buildChangelog(
+          ident,
+          catalogTable,
+          vr.startingVersion().toLong,
+          resolvedEndingVersion,
+          vr.startingBoundInclusive(),
+          vr.endingBoundInclusive())
+      case tr: TimestampRange =>
+        val catalogTable = resolveDeltaCatalogTable(ident)
+        val deltaLog = DeltaLog.forTable(spark, catalogTable)
+        // TimestampRange carries Catalyst micros; java.sql.Timestamp expects millis.
+        val startTs = new Timestamp(tr.startingTimestamp / 1000)
+        val startVersion = deltaLog.history
+          .getActiveCommitAtTime(startTs, Some(catalogTable), false, true)
+          .version
+        val endVersion: Option[Long] = if (tr.endingTimestamp.isPresent()) {
+          val endTs = new Timestamp(tr.endingTimestamp.get / 1000)
+          Some(deltaLog.history
+            .getActiveCommitAtTime(endTs, Some(catalogTable), true, true)
+            .version)
+        } else {
+          None
+        }
+
+        buildChangelog(
+          ident,
+          catalogTable,
+          startVersion,
+          endVersion,
+          tr.startingBoundInclusive(),
+          tr.endingBoundInclusive())
+      case _: UnboundedRange =>
+        throw new AnalysisException("Delta CDC does not support this range.")
+    }
+  }
+
+  private def buildChangelog(ident: Identifier,
+      catalogTable: CatalogTable,
+      startVersion: Long,
+      endingVersion: Option[Long],
+      startingBoundInclusive: Boolean,
+      endingBoundInclusive: Boolean) : DeltaChangelog = {
+    val tablePath = new Path(catalogTable.location).toString()
+    val deltaLog = DeltaLog.forTable(spark, catalogTable)
+    val engine = DefaultEngine.create(deltaLog.newDeltaHadoopConf())
+    val snapshotManager =
+      SnapshotManagerFactory.create(tablePath, engine, Optional.of(catalogTable))
+    val snapshot = snapshotManager.loadLatestSnapshot()
+    val snapshotImpl = snapshot.asInstanceOf[SnapshotImpl]
+
+    if (!RowTracking.isEnabled(snapshotImpl.getProtocol, snapshotImpl.getMetadata)) {
+      throw new AnalysisException(
+        s"Change data capture via CHANGES on `${ident.name()}` requires row tracking. " +
+        s"Enable it with TBLPROPERTIES ('delta.enableRowTracking' = 'true')."
+      )
+    }
+
+    val latestVersion = snapshotImpl.getVersion()
+    val nonOptEndingVersion = endingVersion.getOrElse(latestVersion)
+    val (start, end) = validateAndAdjustVersionRange(
+      startVersion,
+      nonOptEndingVersion,
+      latestVersion,
+      startingBoundInclusive,
+      endingBoundInclusive)
+    val schema = V2SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema())
+
+    new DeltaChangelog(ident.name(), schema, snapshotManager, start, end)
+  }
+
+  /** Resolve a Delta-backed CatalogTable for the given identifier, or fail with a clear error. */
+  private def resolveDeltaCatalogTable(ident: Identifier): CatalogTable = {
+    loadTable(ident) match {
+      case st: SparkTable => st.getCatalogTable().orElseThrow()
+      case dt: DeltaTableV2 =>
+        dt.catalogTable.getOrElse(throw new AnalysisException("Table is not available"))
+      case other =>
+        throw new AnalysisException(
+          s"loadChangelog only supports SparkTable and DeltaTableV2; got " +
+            other.getClass.getName)
+    }
+  }
+
+  /**
+   * Apply the bounds-inclusivity adjustments and range validations for a VersionRange.
+   * Returns the (start, end) commit versions to read.
+   */
+  private def validateAndAdjustVersionRange(
+      start: Long,
+      end: Long,
+      latest: Long,
+      startingBoundInclusive: Boolean,
+      endingBoundInclusive: Boolean): (Long, Long) = {
+    val adjustedStart = if (!startingBoundInclusive) start + 1 else start
+    val adjustedEnd = if (!endingBoundInclusive) end - 1 else end
+
+    if (adjustedStart > adjustedEnd) {
+      throw DeltaErrors.endBeforeStartVersionInCDC(adjustedStart, adjustedEnd)
+    }
+    if (adjustedStart > latest) {
+      throw DeltaErrors.startVersionAfterLatestVersion(adjustedStart, latest)
+    }
+    (adjustedStart, adjustedEnd)
   }
 
   /**

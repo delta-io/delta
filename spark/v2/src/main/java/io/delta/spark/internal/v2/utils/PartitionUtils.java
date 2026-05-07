@@ -320,6 +320,21 @@ public class PartitionUtils {
       Filter[] dataFilters,
       scala.collection.immutable.Map<String, String> scalaOptions,
       Configuration hadoopConf,
+      SQLConf sqlConf) {
+    return createDeltaParquetReaderFactory(
+        snapshot, dataSchema, partitionSchema, readDataSchema, ddlOrderedReadOutputSchema,
+        dataFilters, scalaOptions, hadoopConf, sqlConf, /* isCDCRead */ false);
+  }
+
+  public static PartitionReaderFactory createDeltaParquetReaderFactory(
+      Snapshot snapshot,
+      StructType dataSchema,
+      StructType partitionSchema,
+      StructType readDataSchema,
+      StructType ddlOrderedReadOutputSchema,
+      Filter[] dataFilters,
+      scala.collection.immutable.Map<String, String> scalaOptions,
+      Configuration hadoopConf,
       SQLConf sqlConf,
       boolean isCDCRead) {
     SnapshotImpl snapshotImpl = (SnapshotImpl) snapshot;
@@ -441,6 +456,15 @@ public class PartitionUtils {
    * @param optimizationsEnabled whether to enable file splitting and predicate pushdown
    * @param useMetadataRowIndex explicit control over _metadata.row_index for DV filtering
    */
+  public static DeltaParquetFileFormatV2 createDeltaParquetFileFormat(
+      Snapshot snapshot,
+      String tablePath,
+      boolean optimizationsEnabled,
+      Option<Boolean> useMetadataRowIndex) {
+    return createDeltaParquetFileFormat(
+        snapshot, tablePath, optimizationsEnabled, useMetadataRowIndex, /* isCDCRead */ false);
+  }
+
   public static DeltaParquetFileFormatV2 createDeltaParquetFileFormat(
       Snapshot snapshot,
       String tablePath,
