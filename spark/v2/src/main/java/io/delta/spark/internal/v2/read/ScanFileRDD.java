@@ -87,6 +87,8 @@ public class ScanFileRDD extends RDD<Row> {
     CloseableIterator<FilteredColumnarBatch> batchIter;
     try {
       batchIter = scan.getScanFiles(engine);
+    } catch (KernelEngineException e) {
+      throw e;
     } catch (Exception e) {
       throw new KernelEngineException("open scan files on executor", e);
     }
