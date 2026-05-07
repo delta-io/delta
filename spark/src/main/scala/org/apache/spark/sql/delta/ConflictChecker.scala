@@ -333,7 +333,7 @@ private[delta] class ConflictChecker(
           // Sanity check.
           case m: Metadata if m != currentTransactionInfo.metadata =>
             recordDeltaEvent(
-              deltaLog = currentTransactionInfo.readSnapshot.deltaLog,
+              currentTransactionInfo.readSnapshot,
               opType = "dropFeature.conflictCheck.metadataMismatch",
               data = Map(
                 "transactionInfoMetadata" -> currentTransactionInfo.metadata,

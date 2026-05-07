@@ -162,7 +162,7 @@ private[delta] object TypeWideningMetadata extends DeltaLogging {
 
     if (changesToRecord.nonEmpty) {
       recordDeltaEvent(
-        deltaLog = txn.snapshot.deltaLog,
+        txn,
         opType = "delta.typeWidening.typeChanges",
         data = Map(
           "changes" -> changesToRecord.map { change =>

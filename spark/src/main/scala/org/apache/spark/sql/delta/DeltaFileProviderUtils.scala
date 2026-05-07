@@ -74,7 +74,7 @@ object DeltaFileProviderUtils extends DeltaLogging {
       // [[unsafeVolatileSnapshot]] maybe null, which needs to be explicitly filtered out.
       val snapshot = Some(deltaLog.unsafeVolatileSnapshot).filter(_ != null)
       recordDeltaEvent(
-        deltaLog = deltaLog,
+        provider = deltaLog,
         opType = "delta.exceptions.deltaVersionsNotContiguous",
         data = Map(
           // Remove the first element of the stack trace since this represents

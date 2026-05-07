@@ -26,8 +26,10 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable
 import scala.collection.mutable.{ArrayBuffer, HashSet}
 import scala.jdk.OptionConverters._
+import scala.util.Try
 import scala.util.control.NonFatal
 
+import com.databricks.spark.util.TagDefinition
 import com.databricks.spark.util.TagDefinitions.TAG_LOG_STORE_CLASS
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.DeltaOperations.{ChangeColumn, ChangeColumns, CreateTable, Operation, ReplaceColumns, ReplaceTable, UpdateSchema}
@@ -45,7 +47,7 @@ import org.apache.spark.sql.delta.hooks.metrics.UpdateMetricsHook
 import org.apache.spark.sql.delta.util.CatalogTableUtils
 import org.apache.spark.sql.delta.implicits.addFileEncoder
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
-import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider}
 import org.apache.spark.sql.delta.redirect.{RedirectFeature, TableRedirectConfiguration}
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
@@ -268,7 +270,16 @@ trait OptimisticTransactionImpl extends TransactionHelper
   with SQLMetricsReporting
   with DeltaScanGenerator
   with RecordChecksum
-  with DeltaLogging {
+  with DeltaLogging
+  with DeltaLoggingProvider {
+
+  /**
+   * Recording tags for this transaction, anchored to the read snapshot's `metadata.id`. Lets
+   * `recordDeltaEvent(txn, ...)` attribute events to the table being mutated without reaching
+   * through `txn.deltaLog`.
+   */
+  override def getCommonTags: Map[TagDefinition, String] =
+    deltaLog.getCommonTags(Try(snapshot.metadata.id).getOrElse(null))
 
   import org.apache.spark.sql.delta.util.FileNames._
 
@@ -1623,7 +1634,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
         if (illegalColChange) {
           recordDeltaEvent(
-            deltaLog = deltaLog,
+            provider = deltaLog,
             opType = "delta.metadataCheck.illegalPartitionColumnChange",
             data = Map(
               "operation" -> op.name,
