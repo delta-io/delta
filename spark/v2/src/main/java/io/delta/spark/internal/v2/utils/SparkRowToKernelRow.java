@@ -26,6 +26,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.apache.spark.sql.catalyst.util.DateTimeUtils;
 
 /**
  * Adapts a Spark Row to the Kernel Row interface. Designed and tested for AddFile schema; other
@@ -44,10 +45,7 @@ public class SparkRowToKernelRow implements Row {
           ByteType.class,
           ShortType.class,
           IntegerType.class,
-          DateType.class,
           LongType.class,
-          TimestampType.class,
-          TimestampNTZType.class,
           FloatType.class,
           DoubleType.class,
           StringType.class,
@@ -238,6 +236,37 @@ public class SparkRowToKernelRow implements Row {
     }
     if (PASSTHROUGH_TYPES.contains(dt.getClass())) {
       return sparkValue;
+    }
+    if (dt instanceof DateType) {
+      if (sparkValue instanceof Integer) {
+        return sparkValue;
+      } else if (sparkValue instanceof java.sql.Date) {
+        return DateTimeUtils.fromJavaDate((java.sql.Date) sparkValue);
+      } else if (sparkValue instanceof java.time.LocalDate) {
+        return DateTimeUtils.localDateToDays((java.time.LocalDate) sparkValue);
+      }
+      throw new UnsupportedOperationException(
+          "Cannot convert " + sparkValue.getClass() + " to DateType");
+    }
+    if (dt instanceof TimestampType) {
+      if (sparkValue instanceof Long) {
+        return sparkValue;
+      } else if (sparkValue instanceof java.sql.Timestamp) {
+        return DateTimeUtils.fromJavaTimestamp((java.sql.Timestamp) sparkValue);
+      } else if (sparkValue instanceof java.time.Instant) {
+        return DateTimeUtils.instantToMicros((java.time.Instant) sparkValue);
+      }
+      throw new UnsupportedOperationException(
+          "Cannot convert " + sparkValue.getClass() + " to TimestampType");
+    }
+    if (dt instanceof TimestampNTZType) {
+      if (sparkValue instanceof Long) {
+        return sparkValue;
+      } else if (sparkValue instanceof java.time.LocalDateTime) {
+        return DateTimeUtils.localDateTimeToMicros((java.time.LocalDateTime) sparkValue);
+      }
+      throw new UnsupportedOperationException(
+          "Cannot convert " + sparkValue.getClass() + " to TimestampNTZType");
     }
     if (dt instanceof StructType) {
       return new SparkRowToKernelRow((org.apache.spark.sql.Row) sparkValue, (StructType) dt);
