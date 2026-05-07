@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.RowFactory;
+import org.apache.spark.sql.catalyst.util.DateTimeUtils;
 
 /**
  * Adapts a Kernel Row to the Spark Row interface. Designed and tested for AddFile schema; other
@@ -74,7 +75,11 @@ public class KernelRowToSparkRow implements Row {
   public Row copy() {
     Object[] values = new Object[length()];
     for (int i = 0; i < values.length; i++) {
-      values[i] = get(i);
+      Object v = get(i);
+      if (v instanceof KernelRowToSparkRow) {
+        v = ((KernelRowToSparkRow) v).copy();
+      }
+      values[i] = v;
     }
     return RowFactory.create(values);
   }
@@ -267,12 +272,14 @@ public class KernelRowToSparkRow implements Row {
       return accessor.getByte(ordinal);
     } else if (dt instanceof ShortType) {
       return accessor.getShort(ordinal);
-    } else if (dt instanceof IntegerType || dt instanceof DateType) {
+    } else if (dt instanceof IntegerType) {
       return accessor.getInt(ordinal);
-    } else if (dt instanceof LongType
-        || dt instanceof TimestampType
-        || dt instanceof TimestampNTZType) {
+    } else if (dt instanceof DateType) {
+      return DateTimeUtils.toJavaDate(accessor.getInt(ordinal));
+    } else if (dt instanceof LongType) {
       return accessor.getLong(ordinal);
+    } else if (dt instanceof TimestampType || dt instanceof TimestampNTZType) {
+      return DateTimeUtils.toJavaTimestamp(accessor.getLong(ordinal));
     } else if (dt instanceof FloatType) {
       return accessor.getFloat(ordinal);
     } else if (dt instanceof DoubleType) {

@@ -69,51 +69,88 @@ public class SparkRowToKernelRow implements Row {
 
   @Override
   public boolean getBoolean(int ordinal) {
+    if (sparkRow.isNullAt(ordinal)) {
+      throw new IllegalStateException(
+          "Cannot read a null value as BOOLEAN at ordinal " + ordinal);
+    }
     return sparkRow.getBoolean(ordinal);
   }
 
   @Override
   public byte getByte(int ordinal) {
+    if (sparkRow.isNullAt(ordinal)) {
+      throw new IllegalStateException(
+          "Cannot read a null value as BYTE at ordinal " + ordinal);
+    }
     return sparkRow.getByte(ordinal);
   }
 
   @Override
   public short getShort(int ordinal) {
+    if (sparkRow.isNullAt(ordinal)) {
+      throw new IllegalStateException(
+          "Cannot read a null value as SHORT at ordinal " + ordinal);
+    }
     return sparkRow.getShort(ordinal);
   }
 
   @Override
   public int getInt(int ordinal) {
+    if (sparkRow.isNullAt(ordinal)) {
+      throw new IllegalStateException(
+          "Cannot read a null value as INT at ordinal " + ordinal);
+    }
     return sparkRow.getInt(ordinal);
   }
 
   @Override
   public long getLong(int ordinal) {
+    if (sparkRow.isNullAt(ordinal)) {
+      throw new IllegalStateException(
+          "Cannot read a null value as LONG at ordinal " + ordinal);
+    }
     return sparkRow.getLong(ordinal);
   }
 
   @Override
   public float getFloat(int ordinal) {
+    if (sparkRow.isNullAt(ordinal)) {
+      throw new IllegalStateException(
+          "Cannot read a null value as FLOAT at ordinal " + ordinal);
+    }
     return sparkRow.getFloat(ordinal);
   }
 
   @Override
   public double getDouble(int ordinal) {
+    if (sparkRow.isNullAt(ordinal)) {
+      throw new IllegalStateException(
+          "Cannot read a null value as DOUBLE at ordinal " + ordinal);
+    }
     return sparkRow.getDouble(ordinal);
   }
 
   @Override
   public String getString(int ordinal) {
+    if (sparkRow.isNullAt(ordinal)) {
+      return null;
+    }
     return sparkRow.getString(ordinal);
   }
 
   @Override
   public BigDecimal getDecimal(int ordinal) {
+    if (sparkRow.isNullAt(ordinal)) {
+      return null;
+    }
     return sparkRow.getDecimal(ordinal);
   }
 
   @Override
   public byte[] getBinary(int ordinal) {
+    if (sparkRow.isNullAt(ordinal)) {
+      return null;
+    }
     return (byte[]) sparkRow.get(ordinal);
   }
 
@@ -126,7 +163,16 @@ public class SparkRowToKernelRow implements Row {
 
   @Override
   public MapValue getMap(int ordinal) {
-    Map<?, ?> javaMap = sparkRow.getJavaMap(ordinal);
+    if (sparkRow.isNullAt(ordinal)) {
+      return null;
+    }
+    Object raw = sparkRow.get(ordinal);
+    Map<?, ?> javaMap;
+    if (raw instanceof scala.collection.Map) {
+      javaMap = scala.jdk.javaapi.CollectionConverters.asJava((scala.collection.Map<?, ?>) raw);
+    } else {
+      javaMap = (Map<?, ?>) raw;
+    }
     MapType mt = (MapType) kernelSchema.at(ordinal).getDataType();
     return javaMapToKernelMapValue(javaMap, mt);
   }
