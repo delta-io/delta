@@ -1842,9 +1842,7 @@ public class SparkMicroBatchStream
 
       ScanFileRDD rdd = new ScanFileRDD(spark.sparkContext(), serSnapshot);
       Dataset<Row> sorted =
-          spark
-              .createDataFrame(rdd, ScanFileRDD.SPARK_SCHEMA)
-              .orderBy("modificationTime", "path");
+          spark.createDataFrame(rdd, ScanFileRDD.SPARK_SCHEMA).orderBy("modificationTime", "path");
 
       // Use zipWithIndex for contiguous 0-based indices, matching DSv1's
       // DeltaSourceSnapshot and the driver path's sequential indexing.
