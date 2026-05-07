@@ -28,7 +28,7 @@ import io.delta.storage.commit.uccommitcoordinator.UCDeltaClient
 import io.unitycatalog.client.ApiException
 import io.unitycatalog.client.auth.TokenProvider
 import io.unitycatalog.hadoop.UCCredentialHadoopConfs
-import io.unitycatalog.hadoop.UCCredentialHadoopConfs.TableOperation
+import io.unitycatalog.hadoop.UCCredentialHadoopConfs.{PathOperation, TableOperation}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
@@ -230,13 +230,14 @@ private case class UCDeltaRestCatalogApiCredentialContext(
     hadoopConf: Configuration,
     appVersions: JMap[String, String])
 
-private object UCDeltaCatalogClient {
+private[catalog] object UCDeltaCatalogClient {
   private[catalog] val UCDeltaRestCatalogApiEnabledKey = "deltaRestApi.enabled"
   private[catalog] val RenewCredentialEnabledKey = "renewCredential.enabled"
   private[catalog] val CredScopedFsEnabledKey = "credScopedFs.enabled"
   private val ManagedTableType = "MANAGED"
   private val ExternalTableType = "EXTERNAL"
   private val UnsupportedTableFormatExceptionType = "UnsupportedTableFormatException"
+  private val DefaultCatalogConf = "spark.sql.defaultCatalog"
   private val DefaultRenewCredentialEnabled = true
   private val DefaultCredScopedFsEnabled = false
   private val CloudSchemes = Set("s3", "s3a", "gs", "abfs", "abfss")
@@ -257,6 +258,43 @@ private object UCDeltaCatalogClient {
     Option(scheme).exists(s => CloudSchemes.contains(s.toLowerCase(Locale.ROOT)))
   }
 
+  /**
+   * Returns UC Delta Rest Catalog API path credential options for raw path-based Delta access.
+   *
+   * Path-based access has no catalog identifier, so this uses the UC Delta Rest Catalog API-enabled
+   * default catalog as the credential authority. If the session has no such default catalog, path
+   * reads keep their original options.
+   */
+  private[delta] def pathCredentialOptions(
+      spark: SparkSession,
+      path: Path): Map[String, String] = {
+    val location = path.toString
+    val locationScheme = path.toUri.getScheme
+    if (!isCloudScheme(locationScheme)) {
+      return Map.empty[String, String]
+    }
+
+    selectedUCDeltaRestCatalogApiConfigForPathCredentials(spark)
+      .map { context =>
+        try {
+          buildHadoopCredentialPropertiesForPath(location, locationScheme, context)
+        } catch {
+          case e: ApiException if e.getCode == 404 =>
+            Map.empty[String, String]
+        }
+      }
+      .getOrElse(Map.empty[String, String])
+  }
+
+  private def selectedUCDeltaRestCatalogApiConfigForPathCredentials(
+      spark: SparkSession): Option[UCDeltaRestCatalogApiCredentialContext] = {
+    spark.conf.getOption(DefaultCatalogConf)
+      .filter(_.nonEmpty)
+      .filter(catalogName =>
+        spark.conf.get(deltaRestApiEnabledConf(catalogName), "false").toBoolean)
+      .flatMap(catalogName => ucDeltaRestCatalogApiCredentialContext(spark, catalogName))
+  }
+
   private def reflectedString(metadata: AbstractMetadata, methodName: String): String = {
     try {
       metadata.getClass.getMethod(methodName).invoke(metadata).asInstanceOf[String]
@@ -274,44 +312,67 @@ private object UCDeltaCatalogClient {
     }
   }
 
+  private def ucDeltaRestCatalogApiCredentialContext(
+      spark: SparkSession,
+      catalogName: String): Option[UCDeltaRestCatalogApiCredentialContext] = {
+    if (!spark.conf.get(deltaRestApiEnabledConf(catalogName), "false").toBoolean) {
+      return None
+    }
+
+    val (_, uri, authConfig) = UCCommitCoordinatorBuilder.getCatalogConfigs(spark)
+      .collectFirst { case (`catalogName`, configuredUri, configuredAuthConfig) =>
+        (catalogName, configuredUri, configuredAuthConfig)
+      }
+      .getOrElse {
+        throw new IllegalArgumentException(
+          "UC Delta Rest Catalog API is enabled for catalog " +
+            s"$catalogName, but its Unity Catalog " +
+            "configuration is missing or incomplete.")
+      }
+    val tokenProvider = TokenProvider.create(authConfig.asJava)
+    // Catalog load has no DeltaLog yet, so pass the Spark session Hadoop conf to the UC
+    // credential builder.
+    // scalastyle:off deltahadoopconfiguration
+    val hadoopConf = spark.sessionState.newHadoopConf()
+    // scalastyle:on deltahadoopconfiguration
+    Some(UCDeltaRestCatalogApiCredentialContext(
+      uri.toString,
+      tokenProvider,
+      spark.conf.get(
+        renewCredentialEnabledConf(catalogName),
+        DefaultRenewCredentialEnabled.toString).toBoolean,
+      spark.conf.get(
+        credScopedFsEnabledConf(catalogName),
+        DefaultCredScopedFsEnabled.toString).toBoolean,
+      hadoopConf,
+      UCTokenBasedRestClientFactory.defaultAppVersionsAsJava))
+  }
+
+  private def buildHadoopCredentialPropertiesForPath(
+      location: String,
+      locationScheme: String,
+      credentialContext: UCDeltaRestCatalogApiCredentialContext): Map[String, String] = {
+    UCCredentialHadoopConfs.builder(
+        credentialContext.uri,
+        locationScheme.toLowerCase(Locale.ROOT))
+      .tokenProvider(credentialContext.tokenProvider)
+      .addAppVersions(credentialContext.appVersions)
+      .enableCredentialRenewal(credentialContext.renewCredentialEnabled)
+      .enableCredentialScopedFs(credentialContext.credScopedFsEnabled)
+      .hadoopConf(credentialContext.hadoopConf)
+      .buildForPath(location, PathOperation.PATH_READ)
+      .asScala
+      .toMap
+  }
+
   def apply(delegatePlugin: CatalogPlugin, spark: SparkSession): UCDeltaCatalogClient = {
     val catalogName = delegatePlugin.name()
-    var credentialContext = Option.empty[UCDeltaRestCatalogApiCredentialContext]
-    val ucDeltaClient = if (spark.conf
-        .get(deltaRestApiEnabledConf(catalogName), "false")
-        .toBoolean) {
-      val (_, uri, authConfig) = UCCommitCoordinatorBuilder.getCatalogConfigs(spark)
-        .collectFirst { case (`catalogName`, configuredUri, configuredAuthConfig) =>
-          (catalogName, configuredUri, configuredAuthConfig)
-        }
-        .getOrElse {
-          throw new IllegalArgumentException(
-            "UC Delta Rest Catalog API is enabled for catalog " +
-              s"$catalogName, but its Unity Catalog " +
-              "configuration is missing or incomplete.")
-        }
-      val tokenProvider = TokenProvider.create(authConfig.asJava)
-      // Catalog load has no DeltaLog yet, so pass the Spark session Hadoop conf to the UC
-      // credential builder.
-      // scalastyle:off deltahadoopconfiguration
-      val hadoopConf = spark.sessionState.newHadoopConf()
-      // scalastyle:on deltahadoopconfiguration
-      val appVersions = UCTokenBasedRestClientFactory.defaultAppVersionsAsJava
-      credentialContext = Some(UCDeltaRestCatalogApiCredentialContext(
-        uri.toString,
-        tokenProvider,
-        spark.conf.get(
-          renewCredentialEnabledConf(catalogName),
-          DefaultRenewCredentialEnabled.toString).toBoolean,
-        spark.conf.get(
-          credScopedFsEnabledConf(catalogName),
-          DefaultCredScopedFsEnabled.toString).toBoolean,
-        hadoopConf,
-        appVersions))
+    val credentialContext = ucDeltaRestCatalogApiCredentialContext(spark, catalogName)
+    val ucDeltaClient = credentialContext.flatMap { context =>
       UCTokenBasedRestClientFactory.createUCDeltaClient(
-        uri,
-        tokenProvider,
-        appVersions,
+        context.uri,
+        context.tokenProvider,
+        context.appVersions,
         catalogName) match {
         case Some(client) if client.supportsUCDeltaRestCatalogApi() =>
           Some(client)
@@ -322,9 +383,7 @@ private object UCDeltaCatalogClient {
               "Catalog server does not support the required UC Delta Rest Catalog API endpoints.")
         case None =>
           None
-        }
-    } else {
-      None
+      }
     }
     new UCDeltaCatalogClient(ucDeltaClient, catalogName, credentialContext)
   }

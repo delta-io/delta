@@ -16,6 +16,9 @@
 
 package org.apache.spark.sql.delta.catalog
 
+import org.apache.hadoop.fs.Path
+
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.connector.catalog.{Identifier, Table}
 
 /**
@@ -26,4 +29,31 @@ import org.apache.spark.sql.connector.catalog.{Identifier, Table}
  */
 private[catalog] trait DeltaCatalogClient {
   def loadTable(ident: Identifier): Option[Table]
+}
+
+private[delta] object DeltaCatalogClient {
+  private[catalog] val UCDeltaRestCatalogApiEnabledKey =
+    UCDeltaCatalogClient.UCDeltaRestCatalogApiEnabledKey
+  private[catalog] val RenewCredentialEnabledKey =
+    UCDeltaCatalogClient.RenewCredentialEnabledKey
+  private[catalog] val CredScopedFsEnabledKey =
+    UCDeltaCatalogClient.CredScopedFsEnabledKey
+
+  private[catalog] def deltaRestApiEnabledConf(catalogName: String): String = {
+    UCDeltaCatalogClient.deltaRestApiEnabledConf(catalogName)
+  }
+
+  private[catalog] def renewCredentialEnabledConf(catalogName: String): String = {
+    UCDeltaCatalogClient.renewCredentialEnabledConf(catalogName)
+  }
+
+  private[catalog] def credScopedFsEnabledConf(catalogName: String): String = {
+    UCDeltaCatalogClient.credScopedFsEnabledConf(catalogName)
+  }
+
+  private[delta] def pathCredentialOptions(
+      spark: SparkSession,
+      path: Path): Map[String, String] = {
+    UCDeltaCatalogClient.pathCredentialOptions(spark, path)
+  }
 }

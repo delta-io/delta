@@ -17,13 +17,14 @@
 package org.apache.spark.sql.delta.catalog
 
 import java.io.IOException
-import java.net.InetSocketAddress
+import java.net.{InetSocketAddress, URLDecoder}
 import java.nio.charset.StandardCharsets
 
 import scala.collection.JavaConverters._
 
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY
+import org.apache.hadoop.fs.Path
 
 import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach}
 
@@ -49,6 +50,7 @@ class DeltaCatalogClientSuite
   private var serverUri: String = _
   private var configHandler: HttpExchange => Unit = _
   private var handler: HttpExchange => Unit = _
+  private var pathCredentialsHandler: HttpExchange => Unit = _
   private var credentialRequestCount: Int = _
 
   private val AwsVendedTokenProviderClass =
@@ -56,6 +58,10 @@ class DeltaCatalogClientSuite
   private val S3ACredentialsProviderKey = "fs.s3a.aws.credentials.provider"
   private val S3AInitAccessKey = "fs.s3a.init.access.key"
   private val UCTableOperationKey = "fs.unitycatalog.table.operation"
+  private val UCCredentialsTypeKey = "fs.unitycatalog.credentials.type"
+  private val UCCredentialsTypePathValue = "path"
+  private val UCPathKey = "fs.unitycatalog.path"
+  private val UCPathOperationKey = "fs.unitycatalog.path.operation"
 
   override def beforeAll(): Unit = {
     super.beforeAll()
@@ -68,8 +74,7 @@ class DeltaCatalogClientSuite
           sendJson(exchange, 200,
             """{
               |  "endpoints": [
-              |    "GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}",
-              |    "GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}/credentials"
+              |    "GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}"
               |  ],
               |  "protocol-version": "1.0"
               |}""".stripMargin)
@@ -81,6 +86,17 @@ class DeltaCatalogClientSuite
     server.createContext("/api/2.1/unity-catalog/delta/v1/catalogs", exchange => {
       try {
         if (handler != null) handler(exchange) else sendJson(exchange, 404, "{}")
+      } finally {
+        exchange.close()
+      }
+    })
+    server.createContext("/api/2.1/unity-catalog/temporary-path-credentials", exchange => {
+      try {
+        if (pathCredentialsHandler != null) {
+          pathCredentialsHandler(exchange)
+        } else {
+          sendJson(exchange, 404, "{}")
+        }
       } finally {
         exchange.close()
       }
@@ -98,6 +114,7 @@ class DeltaCatalogClientSuite
     super.beforeEach()
     configHandler = null
     handler = null
+    pathCredentialsHandler = null
     credentialRequestCount = 0
   }
 
@@ -359,6 +376,135 @@ class DeltaCatalogClientSuite
     }
   }
 
+  test("loadTable skips UC Delta Rest Catalog API for delta path identifiers") {
+    handler = exchange =>
+      fail(s"Unexpected UC Delta Rest Catalog API table request: ${exchange.getRequestURI}")
+
+    withUCDeltaRestCatalogApi { catalog =>
+      assert(catalog.loadTable(
+        Identifier.of(Array("delta"), "s3://bucket/path/to/table")).isEmpty)
+    }
+  }
+
+  test(
+      "pathCredentialOptions returns UC Delta Rest Catalog API path credential properties " +
+        "for cloud paths") {
+    configHandler = exchange => {
+      assert(queryParams(exchange)("catalog") === "uc")
+      sendJson(exchange, 200,
+        """{
+          |  "endpoints": [
+          |    "GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}"
+          |  ],
+          |  "protocol-version": "1.0"
+          |}""".stripMargin)
+    }
+    pathCredentialsHandler = exchange => {
+      assert(exchange.getRequestMethod === "POST")
+      assertJsonContains(exchange, Seq(
+        "\"url\":\"s3://bucket/path/to/table\"",
+        "\"operation\":\"PATH_READ\""))
+      sendJson(exchange, 200, s3TemporaryCredentialsResponseJson())
+    }
+
+    withSQLConf(
+      "spark.sql.catalog.uc" -> "io.unitycatalog.spark.UCSingleCatalog",
+      "spark.sql.catalog.uc.uri" -> serverUri,
+      "spark.sql.catalog.uc.token" -> "mock-token",
+      "spark.sql.defaultCatalog" -> "uc",
+      DeltaCatalogClient.deltaRestApiEnabledConf("uc") -> "true") {
+      val props = DeltaCatalogClient.pathCredentialOptions(
+        spark,
+        new Path("s3://bucket/path/to/table"))
+
+      assert(props(S3ACredentialsProviderKey) ===
+        AwsVendedTokenProviderClass)
+      assert(props(S3AInitAccessKey) === "ak")
+      assert(props(UCCredentialsTypeKey) === UCCredentialsTypePathValue)
+      assert(props(UCPathKey) ===
+        "s3://bucket/path/to/table")
+      assert(props(UCPathOperationKey) === "PATH_READ")
+    }
+  }
+
+  test("pathCredentialOptions returns empty when path credentials are unavailable") {
+    configHandler = exchange => {
+      assert(queryParams(exchange)("catalog") === "uc")
+      sendJson(exchange, 200,
+        """{
+          |  "endpoints": [
+          |    "GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}"
+          |  ],
+          |  "protocol-version": "1.0"
+          |}""".stripMargin)
+    }
+    pathCredentialsHandler = exchange => sendJson(exchange, 404, "{}")
+
+    withSQLConf(
+      "spark.sql.catalog.uc" -> "io.unitycatalog.spark.UCSingleCatalog",
+      "spark.sql.catalog.uc.uri" -> serverUri,
+      "spark.sql.catalog.uc.token" -> "mock-token",
+      "spark.sql.defaultCatalog" -> "uc",
+      DeltaCatalogClient.deltaRestApiEnabledConf("uc") -> "true") {
+      val props = DeltaCatalogClient.pathCredentialOptions(
+        spark,
+        new Path("s3://bucket/path/to/table"))
+
+      assert(props.isEmpty)
+    }
+  }
+
+  test("pathCredentialOptions returns empty when path is not governed by UC") {
+    configHandler = exchange => {
+      assert(queryParams(exchange)("catalog") === "uc")
+      sendJson(exchange, 200,
+        """{
+          |  "endpoints": [
+          |    "GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}"
+          |  ],
+          |  "protocol-version": "1.0"
+          |}""".stripMargin)
+    }
+    pathCredentialsHandler = exchange => {
+      assert(exchange.getRequestMethod === "POST")
+      assertJsonContains(exchange, Seq("\"url\":\"s3://other-bucket/path/to/table\""))
+      sendJson(exchange, 404, """{"error_code":"NOT_FOUND"}""")
+    }
+
+    withSQLConf(
+      "spark.sql.catalog.uc" -> "io.unitycatalog.spark.UCSingleCatalog",
+      "spark.sql.catalog.uc.uri" -> serverUri,
+      "spark.sql.catalog.uc.token" -> "mock-token",
+      "spark.sql.defaultCatalog" -> "uc",
+      DeltaCatalogClient.deltaRestApiEnabledConf("uc") -> "true") {
+      val props = DeltaCatalogClient.pathCredentialOptions(
+        spark,
+        new Path("s3://other-bucket/path/to/table"))
+
+      assert(props.isEmpty)
+    }
+  }
+
+  test(
+      "pathCredentialOptions returns empty when no UC Delta Rest Catalog API catalog is " +
+        "configured") {
+    configHandler = exchange =>
+      fail(s"Unexpected UC Delta Rest Catalog API config request: ${exchange.getRequestURI}")
+    pathCredentialsHandler = exchange =>
+      fail(s"Unexpected temporary path credentials request: ${exchange.getRequestURI}")
+
+    withSQLConf(
+      "spark.sql.catalog.uc" -> "io.unitycatalog.spark.UCSingleCatalog",
+      "spark.sql.catalog.uc.uri" -> serverUri,
+      "spark.sql.catalog.uc.token" -> "mock-token") {
+      val props = DeltaCatalogClient.pathCredentialOptions(
+        spark,
+        new Path("s3://bucket/path/to/table"))
+
+      assert(props.isEmpty)
+    }
+  }
+
   private def loadWithUCDeltaRestCatalogApi(): V1Table = {
     withUCDeltaRestCatalogApi { catalog =>
       catalog.loadTable(Identifier.of(Array("default"), "tbl")).get.asInstanceOf[V1Table]
@@ -440,6 +586,40 @@ class DeltaCatalogClientSuite
        |    }
        |  ]
        |}""".stripMargin
+
+  private def s3TemporaryCredentialsResponseJson(): String =
+    """{
+      |  "aws_temp_credentials": {
+      |    "access_key_id": "ak",
+      |    "secret_access_key": "sk",
+      |    "session_token": "st"
+      |  },
+      |  "expiration_time": 1710000000000
+      |}""".stripMargin
+
+  private def assertJsonContains(exchange: HttpExchange, expectedSnippets: Seq[String]): Unit = {
+    val body = new String(exchange.getRequestBody.readAllBytes(), StandardCharsets.UTF_8)
+      .replaceAll("\\s+", "")
+    expectedSnippets.foreach { snippet =>
+      assert(body.contains(snippet), s"Expected request body $body to contain $snippet")
+    }
+  }
+
+  private def queryParams(exchange: HttpExchange): Map[String, String] = {
+    Option(exchange.getRequestURI.getRawQuery).toSeq
+      .flatMap(_.split("&"))
+      .filter(_.nonEmpty)
+      .map { kv =>
+        val pair = kv.split("=", 2)
+        val key = URLDecoder.decode(pair(0), StandardCharsets.UTF_8)
+        val value = if (pair.length == 2) {
+          URLDecoder.decode(pair(1), StandardCharsets.UTF_8)
+        } else {
+          ""
+        }
+        key -> value
+      }.toMap
+  }
 
   private def sendJson(exchange: HttpExchange, status: Int, body: String): Unit = {
     val bytes = body.getBytes(StandardCharsets.UTF_8)
