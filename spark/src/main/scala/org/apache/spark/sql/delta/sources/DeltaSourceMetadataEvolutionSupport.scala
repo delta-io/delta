@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.actions.{Action, FileAction, Metadata, Protoco
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.storage.ClosableIterator
 import org.apache.spark.sql.delta.storage.ClosableIterator._
+import org.apache.spark.sql.delta.v2.interop.{AbstractMetadata, AbstractProtocol}
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.SparkSession
@@ -89,26 +90,13 @@ import org.apache.spark.sql.types.StructType
  */
 trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaSource =>
 
-  /**
-   * Whether this DeltaSource is utilizing a schema log entry as its read schema.
-   *
-   * If user explicitly turn on the flag to fall back to using latest schema to read (i.e. the
-   * legacy mode), we will ignore the schema log.
-   */
   protected def trackingMetadataChange: Boolean =
-    !schemaReadOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges &&
-      metadataTrackingLog.flatMap(_.getCurrentTrackedMetadata).nonEmpty
+    DeltaSourceMetadataEvolutionSupport.shouldTrackMetadataChange(
+      schemaReadOptions, metadataTrackingLog)
 
-  /**
-   * Whether a schema tracking log is provided (and is empty), so we could initialize eagerly.
-   * This should only be used for the first write to the schema log, after then, schema tracking
-   * should not rely on this state any more.
-   */
   protected def readyToInitializeMetadataTrackingEagerly: Boolean =
-    !schemaReadOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges &&
-      metadataTrackingLog.exists { log =>
-        log.getCurrentTrackedMetadata.isEmpty && log.initMetadataLogEagerly
-      }
+    DeltaSourceMetadataEvolutionSupport.shouldInitializeMetadataTrackingEagerly(
+      schemaReadOptions, metadataTrackingLog)
 
 
   /**
@@ -126,43 +114,19 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
     }
   }
 
-  /**
-   * Check the table metadata or protocol changed since the initial read snapshot. We make sure:
-   * 1. The schema is the same, except for internal metadata, AND
-   * 2. The delta related table configurations are strictly equal, AND
-   * 3. The incoming metadata change should not be considered a failure-causing change if we have
-   *    marked the persisted schema and the stream progress is behind that schema version.
-   *    This could happen when we've already merged consecutive schema changes during the analysis
-   *    phase and we are using the merged schema as the read schema. All the schema changes in
-   *    between can be safely ignored because they won't contribute any data.
-   */
   private def hasMetadataOrProtocolChangeComparedToStreamMetadata(
       metadataChangeOpt: Option[Metadata],
       protocolChangeOpt: Option[Protocol],
       newSchemaVersion: Long): Boolean = {
-    if (persistedMetadataAtSourceInit.exists(_.deltaCommitVersion >= newSchemaVersion)) {
-      false
-    } else {
-      protocolChangeOpt.exists(_ != readProtocolAtSourceInit) ||
-      metadataChangeOpt.exists { newMetadata =>
-         hasSchemaChangeComparedToStreamMetadata(newMetadata.schema) ||
-           newMetadata.partitionSchema != readPartitionSchemaAtSourceInit ||
-           newMetadata.configuration.filterKeys(_.startsWith("delta.")).toMap !=
-             readConfigurationsAtSourceInit.filterKeys(_.startsWith("delta.")).toMap
-      }
-    }
+    DeltaSourceMetadataEvolutionSupport.hasMetadataOrProtocolChangeComparedToStreamMetadata(
+      metadataChangeOpt,
+      protocolChangeOpt,
+      newSchemaVersion,
+      persistedMetadataAtSourceInit,
+      readProtocolAtSourceInit,
+      readSnapshotDescriptor.metadata,
+      spark)
   }
-
-  /**
-   * Check that the give schema is the same as the schema from the initial read snapshot.
-   */
-  private def hasSchemaChangeComparedToStreamMetadata(newSchema: StructType): Boolean =
-    if (spark.conf.get(DeltaSQLConf.DELTA_STREAMING_IGNORE_INTERNAL_METADATA_FOR_SCHEMA_CHANGE)) {
-      DeltaTableUtils.removeInternalWriterMetadata(spark, newSchema) !=
-        DeltaTableUtils.removeInternalWriterMetadata(spark, readSchemaAtSourceInit)
-    } else {
-      newSchema != readSchemaAtSourceInit
-    }
 
   /**
    * If the current stream metadata is not equal to the metadata change in [[metadataChangeOpt]],
@@ -684,6 +648,90 @@ object DeltaSourceMetadataEvolutionSupport extends Logging {
   def bypassTypeChangeCheck(spark: SparkSession): Boolean =
     spark.sessionState.conf.getConf(
       DeltaSQLConf.DELTA_TYPE_WIDENING_BYPASS_STREAMING_TYPE_CHANGE_CHECK)
+
+  /**
+   * Whether this DeltaSource is utilizing a schema log entry as its read schema.
+   *
+   * If user explicitly turn on the flag to fall back to using latest schema to read (i.e. the
+   * legacy mode), we will ignore the schema log.
+   */
+  def shouldTrackMetadataChange(
+      schemaReadOptions: DeltaStreamUtils.SchemaReadOptions,
+      metadataTrackingLog: Option[DeltaSourceMetadataTrackingLog]): Boolean = {
+    !schemaReadOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges &&
+      metadataTrackingLog.flatMap(_.getCurrentTrackedMetadata).nonEmpty
+  }
+
+  /**
+   * Whether a schema tracking log is provided (and is empty), so we could initialize eagerly.
+   * This should only be used for the first write to the schema log, after then, schema tracking
+   * should not rely on this state any more.
+   */
+  def shouldInitializeMetadataTrackingEagerly(
+      schemaReadOptions: DeltaStreamUtils.SchemaReadOptions,
+      metadataTrackingLog: Option[DeltaSourceMetadataTrackingLog]): Boolean = {
+    !schemaReadOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges &&
+      metadataTrackingLog.exists { log =>
+        log.getCurrentTrackedMetadata.isEmpty && log.initMetadataLogEagerly
+      }
+  }
+
+  /**
+   * Check the table metadata or protocol changed since the initial read snapshot. We make sure:
+   * 1. The schema is the same, except for internal metadata, AND
+   * 2. The delta related table configurations are strictly equal, AND
+   * 3. The incoming metadata change should not be considered a failure-causing change if we have
+   *    marked the persisted schema and the stream progress is behind that schema version.
+   *    This could happen when we've already merged consecutive schema changes during the analysis
+   *    phase and we are using the merged schema as the read schema. All the schema changes in
+   *    between can be safely ignored because they won't contribute any data.
+   *
+   * @param metadataChangeOpt New metadata action, if any.
+   * @param protocolChangeOpt New protocol action, if any.
+   * @param newSchemaVersion The version of the incoming change.
+   * @param persistedMetadataAtSourceInit The persisted metadata at source init, if any.
+   * @param readProtocolAtSourceInit The protocol at source init.
+   * @param readMetadataAtSourceInit The metadata at source init (schema, partition schema, and
+   *                                 configuration). Bundled to avoid the swap footgun of three
+   *                                 adjacent params.
+   * @param spark The SparkSession (used for SQL conf checks).
+   */
+  def hasMetadataOrProtocolChangeComparedToStreamMetadata(
+      metadataChangeOpt: Option[AbstractMetadata],
+      protocolChangeOpt: Option[AbstractProtocol],
+      newSchemaVersion: Long,
+      persistedMetadataAtSourceInit: Option[PersistedMetadata],
+      readProtocolAtSourceInit: AbstractProtocol,
+      readMetadataAtSourceInit: AbstractMetadata,
+      spark: SparkSession): Boolean = {
+    if (persistedMetadataAtSourceInit.exists(_.deltaCommitVersion >= newSchemaVersion)) {
+      false
+    } else {
+      protocolChangeOpt.exists(p => !p.equalsByFields(readProtocolAtSourceInit)) ||
+      metadataChangeOpt.exists { newMetadata =>
+        hasSchemaChangeComparedToStreamMetadata(
+          newMetadata.schema, readMetadataAtSourceInit.schema, spark) ||
+          newMetadata.partitionSchema != readMetadataAtSourceInit.partitionSchema ||
+          newMetadata.configuration.filterKeys(_.startsWith("delta.")).toMap !=
+            readMetadataAtSourceInit.configuration.filterKeys(_.startsWith("delta.")).toMap
+      }
+    }
+  }
+
+  /**
+   * Check that the given schema is the same as the schema from the initial read snapshot.
+   */
+  private def hasSchemaChangeComparedToStreamMetadata(
+      newSchema: StructType,
+      readSchemaAtSourceInit: StructType,
+      spark: SparkSession): Boolean = {
+    if (spark.conf.get(DeltaSQLConf.DELTA_STREAMING_IGNORE_INTERNAL_METADATA_FOR_SCHEMA_CHANGE)) {
+      DeltaTableUtils.removeInternalWriterMetadata(spark, newSchema) !=
+        DeltaTableUtils.removeInternalWriterMetadata(spark, readSchemaAtSourceInit)
+    } else {
+      newSchema != readSchemaAtSourceInit
+    }
+  }
 
   /**
    * Speculate ahead and find the next merged consecutive metadata change if possible.

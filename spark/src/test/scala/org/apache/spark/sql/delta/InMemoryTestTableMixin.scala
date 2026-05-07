@@ -35,7 +35,28 @@ case class DSv2Incompatible(reason: String) extends org.scalatest.Tag("DSv2Incom
  * Tests tagged with this are automatically skipped when [[InMemoryTestTableMixin]] is active.
  */
 case class DSv2TemporarilyIncompatible(reason: String)
-  extends org.scalatest.Tag("DSv2TemporariltyIncompatible")
+  extends org.scalatest.Tag("DSv2TemporarilyIncompatible")
+
+/**
+ * Tag for tests that assert the physical Delta execution plan shape.
+ * Tests tagged with this are automatically skipped when [[InMemoryTestTableMixin]] is active.
+ */
+case class ChecksPhysicalDeltaPlan(reason: String = "checks physical Delta plan")
+  extends org.scalatest.Tag("ChecksPhysicalDeltaPlan")
+
+/**
+ * Tag for tests that inspect or mutate Delta internals such as DeltaLog or file stats.
+ * Tests tagged with this are automatically skipped when [[InMemoryTestTableMixin]] is active.
+ */
+case class ChecksDeltaInternals(reason: String = "checks Delta internals")
+  extends org.scalatest.Tag("ChecksDeltaInternals")
+
+/**
+ * Tag for tests that inspect Delta metrics.
+ * Test tagged with this are automatically skipped when [[InMemoryTestTableMixin]] is active.
+ */
+case class ChecksDeltaMetrics(reason: String = "checks Delta metrics")
+  extends org.scalatest.Tag("ChecksDeltaMetrics")
 
 /**
  * Tag for tests that exercise DSv2 DML schema evolution. Schema evolution in DSv2 DML commands
@@ -57,20 +78,22 @@ trait InMemoryTestTableMixin extends SharedSparkSession with InMemoryTestTableMi
       (testName: String, testTags: org.scalatest.Tag*)
       (testFun: => Any)
       (implicit pos: org.scalactic.source.Position): Unit = {
-    for (tag <- testTags) {
-      tag match {
-        case t: DSv2Incompatible =>
-          ignore(testName + s" (DSv2Incompatible: $t.reason)", testTags: _*)(testFun)
-          return
-        case t: DSv2TemporarilyIncompatible =>
-          ignore(testName + s" (DSv2TemporarilyIncompatible: $t.reason)", testTags: _*)(testFun)
-          return
-        case DSv2DMLSchemaEvolution if !v2DmlSchemaEvolutionSupported =>
-          ignore(testName + s" (DSv2DMLSchemaEvolution: DSv2 DML schema evolution not supported " +
-            "on this Spark version", testTags: _*)(testFun)
-          return
-      }
+    testTags.collectFirst {
+      case t: DSv2Incompatible =>
+        "DSv2Incompatible" -> t.reason
+      case t: DSv2TemporarilyIncompatible =>
+        "DSv2TemporarilyIncompatible" -> t.reason
+      case t: ChecksPhysicalDeltaPlan =>
+        "ChecksPhysicalDeltaPlan" -> t.reason
+      case t: ChecksDeltaInternals =>
+        "ChecksDeltaInternals" -> t.reason
+      case DSv2DMLSchemaEvolution if !v2DmlSchemaEvolutionSupported =>
+        "DSV2DMLSchemaEvolution" -> "DSv2 DML schema evolution not supported on this spark version"
+    } match {
+      case Some((tagName, reason)) =>
+        ignore(testName + s" ($tagName: $reason)", testTags: _*)(testFun)
+      case None =>
+        super.test(testName, testTags: _*)(testFun)
     }
-    super.test(testName, testTags: _*)(testFun)
   }
 }
