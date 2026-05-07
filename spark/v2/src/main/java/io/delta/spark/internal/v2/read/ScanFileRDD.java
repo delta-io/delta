@@ -19,6 +19,7 @@ import io.delta.kernel.Scan;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.KernelEngineException;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.utils.KernelRowToSparkRow;
@@ -35,6 +36,8 @@ import org.apache.spark.TaskContext;
 import org.apache.spark.rdd.RDD;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.types.StructType;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import scala.reflect.ClassTag$;
 
 /**
@@ -46,6 +49,8 @@ import scala.reflect.ClassTag$;
  * multi-partition replay. The downstream sort is still distributed.
  */
 public class ScanFileRDD extends RDD<Row> {
+
+  private static final Logger LOG = LoggerFactory.getLogger(ScanFileRDD.class);
 
   public static final StructType SPARK_SCHEMA =
       SchemaUtils.convertKernelSchemaToSparkSchema(AddFile.SCHEMA_WITHOUT_STATS);
@@ -83,7 +88,7 @@ public class ScanFileRDD extends RDD<Row> {
     try {
       batchIter = scan.getScanFiles(engine);
     } catch (Exception e) {
-      throw new RuntimeException("Failed to open scan files on executor", e);
+      throw new KernelEngineException("open scan files on executor", e);
     }
 
     AddFileLazyIterator lazyIter = new AddFileLazyIterator(batchIter);
@@ -94,7 +99,8 @@ public class ScanFileRDD extends RDD<Row> {
             try {
               batchIter.close();
             } catch (IOException e) {
-              // best effort cleanup
+              LOG.warn(
+                  "Failed to close scan file iterator for distributed initial snapshot", e);
             }
           });
     }

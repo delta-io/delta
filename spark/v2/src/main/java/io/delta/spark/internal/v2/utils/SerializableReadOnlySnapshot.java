@@ -49,11 +49,11 @@ public class SerializableReadOnlySnapshot implements Serializable {
   private final String logPath;
   private final long version;
 
-  private final ArrayList<SerializableFileStatus> deltas;
-  private final ArrayList<SerializableFileStatus> compactions;
-  private final ArrayList<SerializableFileStatus> checkpoints;
-  private final SerializableFileStatus deltaAtEndVersion;
-  private final SerializableFileStatus lastSeenChecksum; // nullable
+  private final ArrayList<SerializableKernelFileStatus> deltas;
+  private final ArrayList<SerializableKernelFileStatus> compactions;
+  private final ArrayList<SerializableKernelFileStatus> checkpoints;
+  private final SerializableKernelFileStatus deltaAtEndVersion;
+  private final SerializableKernelFileStatus lastSeenChecksum; // nullable
   private final Long maxPublishedDeltaVersion; // nullable
 
   private final Protocol protocol;
@@ -64,11 +64,11 @@ public class SerializableReadOnlySnapshot implements Serializable {
       String dataPath,
       String logPath,
       long version,
-      ArrayList<SerializableFileStatus> deltas,
-      ArrayList<SerializableFileStatus> compactions,
-      ArrayList<SerializableFileStatus> checkpoints,
-      SerializableFileStatus deltaAtEndVersion,
-      SerializableFileStatus lastSeenChecksum,
+      ArrayList<SerializableKernelFileStatus> deltas,
+      ArrayList<SerializableKernelFileStatus> compactions,
+      ArrayList<SerializableKernelFileStatus> checkpoints,
+      SerializableKernelFileStatus deltaAtEndVersion,
+      SerializableKernelFileStatus lastSeenChecksum,
       Long maxPublishedDeltaVersion,
       Protocol protocol,
       Metadata metadata,
@@ -98,11 +98,11 @@ public class SerializableReadOnlySnapshot implements Serializable {
         snapshot.getDataPath().toString(),
         logSegment.getLogPath().toString(),
         snapshot.getVersion(),
-        new ArrayList<>(SerializableFileStatus.fromList(logSegment.getDeltas())),
-        new ArrayList<>(SerializableFileStatus.fromList(logSegment.getCompactions())),
-        new ArrayList<>(SerializableFileStatus.fromList(logSegment.getCheckpoints())),
-        SerializableFileStatus.from(logSegment.getDeltaFileAtEndVersion()),
-        logSegment.getLastSeenChecksum().map(SerializableFileStatus::from).orElse(null),
+        new ArrayList<>(SerializableKernelFileStatus.fromList(logSegment.getDeltas())),
+        new ArrayList<>(SerializableKernelFileStatus.fromList(logSegment.getCompactions())),
+        new ArrayList<>(SerializableKernelFileStatus.fromList(logSegment.getCheckpoints())),
+        SerializableKernelFileStatus.from(logSegment.getDeltaFileAtEndVersion()),
+        logSegment.getLastSeenChecksum().map(SerializableKernelFileStatus::from).orElse(null),
         logSegment.getMaxPublishedDeltaVersion().orElse(null),
         snapshot.getProtocol(),
         snapshot.getMetadata(),
@@ -146,11 +146,11 @@ public class SerializableReadOnlySnapshot implements Serializable {
         new LogSegment(
             kernelLogPath,
             version,
-            SerializableFileStatus.toFileStatusList(deltas),
-            SerializableFileStatus.toFileStatusList(compactions),
-            SerializableFileStatus.toFileStatusList(checkpoints),
+            SerializableKernelFileStatus.toFileStatusList(deltas),
+            SerializableKernelFileStatus.toFileStatusList(compactions),
+            SerializableKernelFileStatus.toFileStatusList(checkpoints),
             deltaAtEndVersion.toFileStatus(),
-            Optional.ofNullable(lastSeenChecksum).map(SerializableFileStatus::toFileStatus),
+            Optional.ofNullable(lastSeenChecksum).map(SerializableKernelFileStatus::toFileStatus),
             Optional.ofNullable(maxPublishedDeltaVersion));
 
     Lazy<LogSegment> lazyLogSegment = new Lazy<>(() -> logSegment);
