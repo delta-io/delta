@@ -3954,11 +3954,10 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
    * Simulates the two Kernel integration paths that produce a clean-stop interrupt signal:
    *
    * <ol>
-   *   <li>{@code KernelEngineException(ClosedByInterruptException)} from
-   *       {@code DefaultJsonHandler.hasNext()} when interrupted inside an NIO channel read.
-   *   <li>{@code RuntimeException(UncheckedIOException(InterruptedIOException))} from
-   *       {@code ActionsIterator.next()} when the interrupt flag is observed before the read
-   *       begins.
+   *   <li>{@code KernelEngineException(ClosedByInterruptException)} from {@code
+   *       DefaultJsonHandler.hasNext()} when interrupted inside an NIO channel read.
+   *   <li>{@code RuntimeException(UncheckedIOException(InterruptedIOException))} from {@code
+   *       ActionsIterator.next()} when the interrupt flag is observed before the read begins.
    * </ol>
    *
    * <p>Verifies that {@code findInterruptIOException} extracts only those known JDK-standard
