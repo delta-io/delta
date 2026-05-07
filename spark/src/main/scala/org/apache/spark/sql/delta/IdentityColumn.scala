@@ -374,7 +374,7 @@ object IdentityColumn extends DeltaLogging {
   }
 
   def logTableWrite(
-      snapshot: Snapshot,
+      snapshot: SnapshotDescriptor,
       generatedIdentityColumns: Set[String],
       numInsertedRowsOpt: Option[Long]): Unit = {
     val identityColumns = getIdentityColumns(snapshot.schema)

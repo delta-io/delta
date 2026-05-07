@@ -1229,7 +1229,7 @@ object DeltaLog extends DeltaLogging {
    * Checks whether this table only accepts appends. If so it will throw an error in operations that
    * can remove data such as DELETE/UPDATE/MERGE.
    */
-  def assertRemovable(snapshot: Snapshot): Unit = {
+  def assertRemovable(snapshot: SnapshotDescriptor): Unit = {
     val metadata = snapshot.metadata
     if (DeltaConfigs.IS_APPEND_ONLY.fromMetaData(metadata)) {
       throw DeltaErrors.modifyAppendOnlyTableException(metadata.name)

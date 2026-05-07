@@ -1359,7 +1359,7 @@ object CheckpointProtectionTableFeature
    * Gets the version requiring checkpoint protection from `snapshot`. If the table property is
    * not set, return the default value 0.
    */
-  def getCheckpointProtectionVersion(snapshot: Snapshot): Long = {
+  def getCheckpointProtectionVersion(snapshot: SnapshotDescriptor): Long = {
     getCheckpointProtectionVersionOption(snapshot.protocol, snapshot.metadata).getOrElse(0)
   }
 
@@ -1386,7 +1386,7 @@ object CheckpointProtectionTableFeature
   }
 
   def historyPriorToCheckpointProtectionVersionIsTruncated(
-      snapshot: Snapshot,
+      snapshot: SnapshotDescriptor,
       catalogTableOpt: Option[CatalogTable]): Boolean = {
     val checkpointProtectionVersion = getCheckpointProtectionVersion(snapshot)
     if (checkpointProtectionVersion <= 0) return true
