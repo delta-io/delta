@@ -143,13 +143,7 @@ trait DeltaSourceBase extends Source
    */
   protected val readSchemaAtSourceInit: StructType = readSnapshotDescriptor.metadata.schema
 
-  protected val readPartitionSchemaAtSourceInit: StructType =
-    readSnapshotDescriptor.metadata.partitionSchema
-
   protected val readProtocolAtSourceInit: Protocol = readSnapshotDescriptor.protocol
-
-  protected val readConfigurationsAtSourceInit: Map[String, String] =
-    readSnapshotDescriptor.metadata.configuration
 
   /**
    * Create a snapshot descriptor, customizing its metadata using metadata tracking if necessary

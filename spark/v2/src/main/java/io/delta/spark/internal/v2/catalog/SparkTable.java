@@ -47,6 +47,7 @@ import org.apache.spark.sql.connector.write.WriteBuilder;
 import org.apache.spark.sql.delta.DeltaTableUtils;
 import org.apache.spark.sql.delta.RowCommitVersion$;
 import org.apache.spark.sql.delta.RowId$;
+import org.apache.spark.sql.delta.SparkTableShims$;
 import org.apache.spark.sql.delta.commands.cdc.CDCReader;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.types.DataType;
@@ -62,12 +63,21 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsM
   private static final String ROW_COMMIT_VERSION_METADATA_FIELD_NAME =
       RowCommitVersion$.MODULE$.METADATA_STRUCT_FIELD_NAME();
 
-  private static final Set<TableCapability> CAPABILITIES =
-      Collections.unmodifiableSet(
-          EnumSet.of(
-              TableCapability.BATCH_READ,
-              TableCapability.MICRO_BATCH_READ,
-              TableCapability.BATCH_WRITE));
+  private static final Set<TableCapability> CAPABILITIES = buildCapabilities();
+
+  private static Set<TableCapability> buildCapabilities() {
+    EnumSet<TableCapability> caps =
+        EnumSet.of(
+            TableCapability.BATCH_READ,
+            TableCapability.MICRO_BATCH_READ,
+            TableCapability.BATCH_WRITE);
+    scala.Option<TableCapability> schemaEvolution =
+        SparkTableShims$.MODULE$.schemaEvolutionCapability();
+    if (schemaEvolution.isDefined()) {
+      caps.add(schemaEvolution.get());
+    }
+    return Collections.unmodifiableSet(caps);
+  }
 
   private final Identifier identifier;
   private final String tablePath;

@@ -656,6 +656,18 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val METRICS_ALWAYS_REPORT_SOME_ZERO_METRICS =
+    buildConf("metrics.alwaysReportSomeZeroMetrics")
+      .internal()
+      .doc(
+        """When enabled, DELETE operation metrics (numCopiedRows, numDeletedRows) always report
+          |Some(0) instead of None, even in cases where 0 rows are guaranteed to be copied or
+          |deleted. This aligns DELETE with UPDATE which already always reports Some(0). When
+          |disabled, reverts to the legacy behavior where DELETE returns None for these cases.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_VACUUM_RETENTION_WINDOW_IGNORE_ENABLED =
     buildConf("vacuum.retentionWindowIgnore.enabled")
       .internal()
@@ -728,6 +740,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .doc("If true, enables schema merging on appends and on overwrites.")
       .booleanConf
       .createWithDefault(false)
+
+  val DELTA_MERGE_INSERT_FIX_CASE_SENSITIVE_DUPLICATE_COLUMNS =
+    buildConf("merge.insert.fixCaseSensitiveDuplicateColumns")
+      .internal()
+      .doc("Internal flag controlling a fix for case-variant duplicate columns in MERGE INSERT " +
+        "clauses (e.g., `colUtc` and `colUTC`). On tables with generated or identity columns, " +
+        "such duplicates would otherwise trigger an internal AssertionError in " +
+        "`resolveImplicitColumns` instead of a user-facing error. Disabling this fix restores " +
+        "the prior behavior.")
+      .booleanConf
+      .createWithDefault(true)
 
   val DELTA_MERGE_SCHEMA_EVOLUTION_FIX_NESTED_STRUCT_ALIGNMENT =
     buildConf("schemaEvolution.merge.fixNestedStructAlignment")
