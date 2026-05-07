@@ -23,6 +23,11 @@ import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
+import org.apache.spark.sql.delta.RowIndexFilterType;
+import org.apache.spark.sql.delta.DefaultRowCommitVersion$;
+import org.apache.spark.sql.delta.DeltaColumnMapping;
+import org.apache.spark.sql.delta.DeltaParquetFileFormat;
+import org.apache.spark.sql.delta.RowId$;
 import io.delta.spark.internal.v2.read.DeltaParquetFileFormatV2;
 import io.delta.spark.internal.v2.read.SparkReaderFactory;
 import io.delta.spark.internal.v2.read.cdc.CDCReadFunction;
@@ -44,11 +49,6 @@ import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
-import org.apache.spark.sql.delta.DefaultRowCommitVersion$;
-import org.apache.spark.sql.delta.DeltaColumnMapping;
-import org.apache.spark.sql.delta.DeltaParquetFileFormat;
-import org.apache.spark.sql.delta.RowId$;
-import org.apache.spark.sql.delta.RowIndexFilterType;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.execution.datasources.FilePartition;
 import org.apache.spark.sql.execution.datasources.FilePartition$;
@@ -243,6 +243,20 @@ public class PartitionUtils {
       Filter[] dataFilters,
       scala.collection.immutable.Map<String, String> scalaOptions,
       Configuration hadoopConf,
+      SQLConf sqlConf) {
+    return createDeltaParquetReaderFactory(
+        snapshot, dataSchema, partitionSchema, readDataSchema,
+        dataFilters, scalaOptions, hadoopConf, sqlConf, /* isCDCRead */ false);
+  }
+
+  public static PartitionReaderFactory createDeltaParquetReaderFactory(
+      Snapshot snapshot,
+      StructType dataSchema,
+      StructType partitionSchema,
+      StructType readDataSchema,
+      Filter[] dataFilters,
+      scala.collection.immutable.Map<String, String> scalaOptions,
+      Configuration hadoopConf,
       SQLConf sqlConf,
       boolean isCDCRead) {
     SnapshotImpl snapshotImpl = (SnapshotImpl) snapshot;
@@ -349,6 +363,15 @@ public class PartitionUtils {
    * @param optimizationsEnabled whether to enable file splitting and predicate pushdown
    * @param useMetadataRowIndex explicit control over _metadata.row_index for DV filtering
    */
+  public static DeltaParquetFileFormatV2 createDeltaParquetFileFormat(
+      Snapshot snapshot,
+      String tablePath,
+      boolean optimizationsEnabled,
+      Option<Boolean> useMetadataRowIndex) {
+    return createDeltaParquetFileFormat(
+        snapshot, tablePath, optimizationsEnabled, useMetadataRowIndex, /* isCDCRead */ false);
+  }
+
   public static DeltaParquetFileFormatV2 createDeltaParquetFileFormat(
       Snapshot snapshot,
       String tablePath,
