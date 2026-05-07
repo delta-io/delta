@@ -18,6 +18,7 @@ package io.delta.spark.internal.v2.utils;
 import io.delta.kernel.utils.FileStatus;
 import java.io.Serializable;
 import java.util.List;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 /**
@@ -25,7 +26,7 @@ import java.util.stream.Collectors;
  * modifying. This wrapper is used to serialize snapshot state (LogSegment contents) from the driver
  * to executors.
  */
-public final class SerializableFileStatus implements Serializable {
+public final class SerializableKernelFileStatus implements Serializable {
 
   private static final long serialVersionUID = 1L;
 
@@ -33,25 +34,27 @@ public final class SerializableFileStatus implements Serializable {
   private final long size;
   private final long modificationTime;
 
-  public SerializableFileStatus(String path, long size, long modificationTime) {
-    this.path = path;
+  public SerializableKernelFileStatus(String path, long size, long modificationTime) {
+    this.path = Objects.requireNonNull(path, "path is null");
     this.size = size;
     this.modificationTime = modificationTime;
   }
 
-  public static SerializableFileStatus from(FileStatus fs) {
-    return new SerializableFileStatus(fs.getPath(), fs.getSize(), fs.getModificationTime());
+  public static SerializableKernelFileStatus from(FileStatus fs) {
+    return new SerializableKernelFileStatus(fs.getPath(), fs.getSize(), fs.getModificationTime());
   }
 
   public FileStatus toFileStatus() {
     return FileStatus.of(path, size, modificationTime);
   }
 
-  public static List<SerializableFileStatus> fromList(List<FileStatus> list) {
-    return list.stream().map(SerializableFileStatus::from).collect(Collectors.toList());
+  public static List<SerializableKernelFileStatus> fromList(List<FileStatus> list) {
+    return list.stream().map(SerializableKernelFileStatus::from).collect(Collectors.toList());
   }
 
-  public static List<FileStatus> toFileStatusList(List<SerializableFileStatus> list) {
-    return list.stream().map(SerializableFileStatus::toFileStatus).collect(Collectors.toList());
+  public static List<FileStatus> toFileStatusList(List<SerializableKernelFileStatus> list) {
+    return list.stream()
+        .map(SerializableKernelFileStatus::toFileStatus)
+        .collect(Collectors.toList());
   }
 }
