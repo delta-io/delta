@@ -32,8 +32,8 @@ import org.apache.spark.sql.catalyst.util.DateTimeUtils;
  * Adapts a Spark Row to the Kernel Row interface. Designed and tested for AddFile schema; other
  * schemas may work but are not validated.
  *
- * <p>Null contract: primitive getters ({@code getBoolean}, {@code getInt}, etc.) throw
- * {@link IllegalStateException} if the field is null (callers must check {@code isNullAt} first).
+ * <p>Null contract: primitive getters ({@code getBoolean}, {@code getInt}, etc.) throw {@link
+ * IllegalStateException} if the field is null (callers must check {@code isNullAt} first).
  * Reference-type getters ({@code getString}, {@code getStruct}, {@code getMap}, {@code getArray})
  * return {@code null} for null fields.
  */
@@ -73,8 +73,7 @@ public class SparkRowToKernelRow implements Row {
   @Override
   public boolean getBoolean(int ordinal) {
     if (sparkRow.isNullAt(ordinal)) {
-      throw new IllegalStateException(
-          "Cannot read a null value as BOOLEAN at ordinal " + ordinal);
+      throw new IllegalStateException("Cannot read a null value as BOOLEAN at ordinal " + ordinal);
     }
     return sparkRow.getBoolean(ordinal);
   }
@@ -82,8 +81,7 @@ public class SparkRowToKernelRow implements Row {
   @Override
   public byte getByte(int ordinal) {
     if (sparkRow.isNullAt(ordinal)) {
-      throw new IllegalStateException(
-          "Cannot read a null value as BYTE at ordinal " + ordinal);
+      throw new IllegalStateException("Cannot read a null value as BYTE at ordinal " + ordinal);
     }
     return sparkRow.getByte(ordinal);
   }
@@ -91,8 +89,7 @@ public class SparkRowToKernelRow implements Row {
   @Override
   public short getShort(int ordinal) {
     if (sparkRow.isNullAt(ordinal)) {
-      throw new IllegalStateException(
-          "Cannot read a null value as SHORT at ordinal " + ordinal);
+      throw new IllegalStateException("Cannot read a null value as SHORT at ordinal " + ordinal);
     }
     return sparkRow.getShort(ordinal);
   }
@@ -100,8 +97,7 @@ public class SparkRowToKernelRow implements Row {
   @Override
   public int getInt(int ordinal) {
     if (sparkRow.isNullAt(ordinal)) {
-      throw new IllegalStateException(
-          "Cannot read a null value as INT at ordinal " + ordinal);
+      throw new IllegalStateException("Cannot read a null value as INT at ordinal " + ordinal);
     }
     return sparkRow.getInt(ordinal);
   }
@@ -109,8 +105,7 @@ public class SparkRowToKernelRow implements Row {
   @Override
   public long getLong(int ordinal) {
     if (sparkRow.isNullAt(ordinal)) {
-      throw new IllegalStateException(
-          "Cannot read a null value as LONG at ordinal " + ordinal);
+      throw new IllegalStateException("Cannot read a null value as LONG at ordinal " + ordinal);
     }
     return sparkRow.getLong(ordinal);
   }
@@ -118,8 +113,7 @@ public class SparkRowToKernelRow implements Row {
   @Override
   public float getFloat(int ordinal) {
     if (sparkRow.isNullAt(ordinal)) {
-      throw new IllegalStateException(
-          "Cannot read a null value as FLOAT at ordinal " + ordinal);
+      throw new IllegalStateException("Cannot read a null value as FLOAT at ordinal " + ordinal);
     }
     return sparkRow.getFloat(ordinal);
   }
@@ -127,8 +121,7 @@ public class SparkRowToKernelRow implements Row {
   @Override
   public double getDouble(int ordinal) {
     if (sparkRow.isNullAt(ordinal)) {
-      throw new IllegalStateException(
-          "Cannot read a null value as DOUBLE at ordinal " + ordinal);
+      throw new IllegalStateException("Cannot read a null value as DOUBLE at ordinal " + ordinal);
     }
     return sparkRow.getDouble(ordinal);
   }
