@@ -3951,10 +3951,21 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
   }
 
   /**
-   * Simulates the two Kernel integration paths that produce a clean-stop interrupt signal. Verifies
-   * that {@code findInterruptIOException} extracts the JDK-standard interrupt I/O exception so
-   * {@code latestOffset()} / {@code planInputPartitions()} can re-throw it as {@link
-   * java.io.UncheckedIOException} for Spark's {@code isInterruptedByStop}.
+   * Simulates the two Kernel integration paths that produce a clean-stop interrupt signal:
+   *
+   * <ol>
+   *   <li>{@code KernelEngineException(ClosedByInterruptException)} from
+   *       {@code DefaultJsonHandler.hasNext()} when interrupted inside an NIO channel read.
+   *   <li>{@code RuntimeException(UncheckedIOException(InterruptedIOException))} from
+   *       {@code ActionsIterator.next()} when the interrupt flag is observed before the read
+   *       begins.
+   * </ol>
+   *
+   * <p>Verifies that {@code findInterruptIOException} extracts only those known JDK-standard
+   * interrupt I/O exceptions so {@code latestOffset()} / {@code planInputPartitions()} can re-throw
+   * them as {@link java.io.UncheckedIOException} for Spark's {@code isInterruptedByStop}. Unknown
+   * wrapping shapes intentionally return empty so the raw exception propagates and exposes the new
+   * shape in tests.
    */
   @Test
   public void testFindInterruptIOException() {
@@ -3997,6 +4008,16 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
                     "unrelated",
                     new java.io.UncheckedIOException(
                         new java.io.FileNotFoundException("missing")))))
+        .isEmpty();
+
+    // Deeper nesting is intentionally not accepted: Kernel should not double-wrap
+    // KernelEngineException, and a new nested shape should fail loudly instead of being masked.
+    ClosedByInterruptException nestedCbie = new ClosedByInterruptException();
+    assertThat(
+            SparkMicroBatchStream.findInterruptIOException(
+                new io.delta.kernel.exceptions.KernelEngineException(
+                    "outer",
+                    new io.delta.kernel.exceptions.KernelEngineException("inner", nestedCbie))))
         .isEmpty();
   }
 
