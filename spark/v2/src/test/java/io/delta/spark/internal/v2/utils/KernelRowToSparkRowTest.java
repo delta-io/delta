@@ -162,6 +162,73 @@ public class KernelRowToSparkRowTest {
     assertEquals("c", seq.apply(2));
   }
 
+  @Test
+  public void testEqualsAndHashCode() {
+    StructType schema =
+        new StructType()
+            .add("name", StringType.STRING)
+            .add("value", IntegerType.INTEGER)
+            .add("flag", BooleanType.BOOLEAN);
+
+    Map<Integer, Object> fieldMap1 = new HashMap<>();
+    fieldMap1.put(0, "alpha");
+    fieldMap1.put(1, 42);
+    fieldMap1.put(2, true);
+
+    Map<Integer, Object> fieldMap2 = new HashMap<>();
+    fieldMap2.put(0, "alpha");
+    fieldMap2.put(1, 42);
+    fieldMap2.put(2, true);
+
+    Map<Integer, Object> fieldMap3 = new HashMap<>();
+    fieldMap3.put(0, "beta");
+    fieldMap3.put(1, 42);
+    fieldMap3.put(2, true);
+
+    Row row1 = new KernelRowToSparkRow(new GenericRow(schema, fieldMap1));
+    Row row2 = new KernelRowToSparkRow(new GenericRow(schema, fieldMap2));
+    Row row3 = new KernelRowToSparkRow(new GenericRow(schema, fieldMap3));
+
+    assertEquals(row1, row2);
+    assertEquals(row1.hashCode(), row2.hashCode());
+    assertNotEquals(row1, row3);
+  }
+
+  @Test
+  public void testDateAndTimestampConversion() {
+    StructType schema =
+        new StructType()
+            .add("dateField", DateType.DATE)
+            .add("tsField", TimestampType.TIMESTAMP)
+            .add("tsNtzField", TimestampNTZType.TIMESTAMP_NTZ);
+
+    int epochDays = 20254; // ~2025-06-15
+    long tsMicros = 1750000000000000L;
+    long ntzMicros = 1750000000000000L;
+
+    Map<Integer, Object> fieldMap = new HashMap<>();
+    fieldMap.put(0, epochDays);
+    fieldMap.put(1, tsMicros);
+    fieldMap.put(2, ntzMicros);
+
+    io.delta.kernel.data.Row kernelRow = new GenericRow(schema, fieldMap);
+    Row sparkRow = new KernelRowToSparkRow(kernelRow);
+
+    Object dateVal = sparkRow.get(0);
+    assertTrue(
+        dateVal instanceof java.sql.Date, "Expected java.sql.Date, got " + dateVal.getClass());
+
+    Object tsVal = sparkRow.get(1);
+    assertTrue(
+        tsVal instanceof java.sql.Timestamp,
+        "Expected java.sql.Timestamp, got " + tsVal.getClass());
+
+    Object ntzVal = sparkRow.get(2);
+    assertTrue(
+        ntzVal instanceof java.time.LocalDateTime,
+        "Expected java.time.LocalDateTime, got " + ntzVal.getClass());
+  }
+
   /** Integration test: verifies AddFile survives Kernel Row -> Spark Row -> Kernel Row. */
   @Tag("integration")
   @Test

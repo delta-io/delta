@@ -68,7 +68,8 @@ public class KernelRowToSparkRow implements Row {
 
   @Override
   public Object get(int i) {
-    return toSparkValue(rowFieldAccessor, i, kernelSchema.at(i).getDataType());
+    return toSparkValue(
+        rowFieldAccessor, i, kernelSchema.at(i).getDataType(), sparkSchema.fields()[i].dataType());
   }
 
   @Override
@@ -265,7 +266,15 @@ public class KernelRowToSparkRow implements Row {
     };
   }
 
-  static Object toSparkValue(FieldAccessor accessor, int ordinal, DataType dt) {
+  /**
+   * Converts a Kernel field value to its Spark equivalent. Accepts a pre-computed Spark DataType to
+   * avoid redundant schema conversion on every row for nested types (structs, maps, arrays).
+   */
+  static Object toSparkValue(
+      FieldAccessor accessor,
+      int ordinal,
+      DataType dt,
+      org.apache.spark.sql.types.DataType sparkDt) {
     if (accessor.isNullAt(ordinal)) {
       return null;
     }
@@ -297,36 +306,41 @@ public class KernelRowToSparkRow implements Row {
       return accessor.getBinary(ordinal);
     } else if (dt instanceof StructType) {
       return new KernelRowToSparkRow(
-          accessor.getStruct(ordinal),
-          SchemaUtils.convertKernelSchemaToSparkSchema((StructType) dt));
+          accessor.getStruct(ordinal), (org.apache.spark.sql.types.StructType) sparkDt);
     } else if (dt instanceof MapType) {
-      return mapValueToScalaMap(accessor.getMap(ordinal), (MapType) dt);
+      org.apache.spark.sql.types.MapType sparkMapType =
+          (org.apache.spark.sql.types.MapType) sparkDt;
+      return mapValueToScalaMap(accessor.getMap(ordinal), (MapType) dt, sparkMapType);
     } else if (dt instanceof ArrayType) {
-      return arrayValueToScalaSeq(accessor.getArray(ordinal), (ArrayType) dt);
+      org.apache.spark.sql.types.ArrayType sparkArrayType =
+          (org.apache.spark.sql.types.ArrayType) sparkDt;
+      return arrayValueToScalaSeq(accessor.getArray(ordinal), (ArrayType) dt, sparkArrayType);
     }
     throw new UnsupportedOperationException("Unsupported Kernel DataType: " + dt);
   }
 
-  static scala.collection.Map<Object, Object> mapValueToScalaMap(MapValue mv, MapType mt) {
+  static scala.collection.Map<Object, Object> mapValueToScalaMap(
+      MapValue mv, MapType mt, org.apache.spark.sql.types.MapType sparkMt) {
     ColumnVector keys = mv.getKeys();
     ColumnVector values = mv.getValues();
     FieldAccessor keyAccessor = vectorAccessor(keys);
     FieldAccessor valueAccessor = vectorAccessor(values);
     Map<Object, Object> javaMap = new HashMap<>();
     for (int i = 0; i < mv.getSize(); i++) {
-      Object key = toSparkValue(keyAccessor, i, mt.getKeyType());
-      Object value = toSparkValue(valueAccessor, i, mt.getValueType());
+      Object key = toSparkValue(keyAccessor, i, mt.getKeyType(), sparkMt.keyType());
+      Object value = toSparkValue(valueAccessor, i, mt.getValueType(), sparkMt.valueType());
       javaMap.put(key, value);
     }
     return scala.jdk.javaapi.CollectionConverters.asScala(javaMap);
   }
 
-  static scala.collection.Seq<Object> arrayValueToScalaSeq(ArrayValue av, ArrayType at) {
+  static scala.collection.Seq<Object> arrayValueToScalaSeq(
+      ArrayValue av, ArrayType at, org.apache.spark.sql.types.ArrayType sparkAt) {
     ColumnVector elements = av.getElements();
     FieldAccessor elemAccessor = vectorAccessor(elements);
     List<Object> javaList = new ArrayList<>();
     for (int i = 0; i < av.getSize(); i++) {
-      javaList.add(toSparkValue(elemAccessor, i, at.getElementType()));
+      javaList.add(toSparkValue(elemAccessor, i, at.getElementType(), sparkAt.elementType()));
     }
     return scala.jdk.javaapi.CollectionConverters.asScala(javaList).toList();
   }

@@ -21,9 +21,14 @@ import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.*;
+import java.sql.Date;
+import java.sql.Timestamp;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 import org.apache.spark.sql.RowFactory;
+import org.apache.spark.sql.catalyst.util.DateTimeUtils;
 import org.junit.jupiter.api.Test;
 
 public class SparkRowToKernelRowTest {
@@ -102,5 +107,82 @@ public class SparkRowToKernelRowTest {
     assertNotNull(nested);
     assertEquals(99, nested.getInt(0));
     assertEquals("inner", nested.getString(1));
+  }
+
+  @Test
+  public void testDateField() {
+    StructType schema = new StructType().add("dateField", DateType.DATE);
+
+    Date sqlDate = Date.valueOf(LocalDate.of(2025, 6, 15));
+    org.apache.spark.sql.Row sparkRow = RowFactory.create(sqlDate);
+    Row kernelRow = new SparkRowToKernelRow(sparkRow, schema);
+
+    int epochDays = kernelRow.getInt(0);
+    assertEquals(DateTimeUtils.fromJavaDate(sqlDate), epochDays);
+  }
+
+  @Test
+  public void testTimestampField() {
+    StructType schema = new StructType().add("tsField", TimestampType.TIMESTAMP);
+
+    Timestamp sqlTs = Timestamp.valueOf("2025-06-15 10:30:00");
+    org.apache.spark.sql.Row sparkRow = RowFactory.create(sqlTs);
+    Row kernelRow = new SparkRowToKernelRow(sparkRow, schema);
+
+    long micros = kernelRow.getLong(0);
+    assertEquals(DateTimeUtils.fromJavaTimestamp(sqlTs), micros);
+  }
+
+  @Test
+  public void testTimestampNTZField() {
+    StructType schema = new StructType().add("tsNtzField", TimestampNTZType.TIMESTAMP_NTZ);
+
+    LocalDateTime ldt = LocalDateTime.of(2025, 6, 15, 10, 30, 0);
+    org.apache.spark.sql.Row sparkRow = RowFactory.create(ldt);
+    Row kernelRow = new SparkRowToKernelRow(sparkRow, schema);
+
+    long micros = kernelRow.getLong(0);
+    assertEquals(DateTimeUtils.localDateTimeToMicros(ldt), micros);
+  }
+
+  @Test
+  public void testNullGuardsOnPrimitiveGetters() {
+    StructType schema =
+        new StructType()
+            .add("boolField", BooleanType.BOOLEAN, true)
+            .add("intField", IntegerType.INTEGER, true)
+            .add("longField", LongType.LONG, true)
+            .add("floatField", FloatType.FLOAT, true)
+            .add("doubleField", DoubleType.DOUBLE, true);
+
+    org.apache.spark.sql.Row sparkRow = RowFactory.create(null, null, null, null, null);
+    Row kernelRow = new SparkRowToKernelRow(sparkRow, schema);
+
+    assertTrue(kernelRow.isNullAt(0));
+    assertThrows(IllegalStateException.class, () -> kernelRow.getBoolean(0));
+    assertThrows(IllegalStateException.class, () -> kernelRow.getInt(1));
+    assertThrows(IllegalStateException.class, () -> kernelRow.getLong(2));
+    assertThrows(IllegalStateException.class, () -> kernelRow.getFloat(3));
+    assertThrows(IllegalStateException.class, () -> kernelRow.getDouble(4));
+  }
+
+  @Test
+  public void testJavaUtilMapInput() {
+    StructType schema =
+        new StructType().add("tags", new MapType(StringType.STRING, StringType.STRING, true));
+
+    Map<String, String> javaMap = new HashMap<>();
+    javaMap.put("engine", "spark");
+    javaMap.put("version", "4.0");
+
+    org.apache.spark.sql.Row sparkRow = RowFactory.create(javaMap);
+    Row kernelRow = new SparkRowToKernelRow(sparkRow, schema);
+
+    MapValue mv = kernelRow.getMap(0);
+    assertNotNull(mv);
+    assertEquals(2, mv.getSize());
+    Map<?, ?> roundTripped = VectorUtils.toJavaMap(mv);
+    assertEquals("spark", roundTripped.get("engine"));
+    assertEquals("4.0", roundTripped.get("version"));
   }
 }
