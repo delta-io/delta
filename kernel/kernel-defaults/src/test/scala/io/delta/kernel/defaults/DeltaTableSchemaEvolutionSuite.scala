@@ -1963,7 +1963,7 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
       .fromMetadata(getMetadata(engine, tablePath))
   }
 
-  // Adding a geometry/geography column auto-enables GEOSPATIAL_RW_FEATURE and bumps protocol to (3, 7).
+  // Adding a geo column auto-enables GEOSPATIAL_RW_FEATURE and bumps protocol to (3, 7).
   Seq(
     ("geometry", GeometryType.ofDefault()),
     ("geometry custom SRID", GeometryType.ofSRID("EPSG:4326")),
