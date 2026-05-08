@@ -132,11 +132,49 @@ class ExceptionSuite extends AnyFunSuite {
     assert(outer.getCause eq root)
   }
 
+  test("wrapEngineException rethrows KernelException as the same instance") {
+    val inner = new KernelException("kernel error")
+
+    val outer = intercept[KernelException] {
+      DeltaErrors.wrapEngineException[Unit](
+        () => throw inner,
+        "outer op")
+    }
+
+    assert(outer eq inner)
+  }
+
+  test("wrapEngineExceptionThrowsIO rethrows KernelException as the same instance") {
+    val inner = new KernelException("kernel error")
+
+    val outer = intercept[KernelException] {
+      DeltaErrors.wrapEngineExceptionThrowsIO[Unit](
+        () => throw inner,
+        "outer op")
+    }
+
+    assert(outer eq inner)
+  }
+
   test("wrapEngineException still wraps plain RuntimeException") {
     val root = new IllegalStateException("some engine bug")
 
     val wrapped = intercept[KernelEngineException] {
       DeltaErrors.wrapEngineException[Unit](
+        () => throw root,
+        "outer op %s",
+        "arg")
+    }
+
+    assert(wrapped.getCause eq root)
+    assert(wrapped.getMessage.contains("outer op arg"))
+  }
+
+  test("wrapEngineExceptionThrowsIO still wraps plain RuntimeException") {
+    val root = new IllegalStateException("some engine bug")
+
+    val wrapped = intercept[KernelEngineException] {
+      DeltaErrors.wrapEngineExceptionThrowsIO[Unit](
         () => throw root,
         "outer op %s",
         "arg")
