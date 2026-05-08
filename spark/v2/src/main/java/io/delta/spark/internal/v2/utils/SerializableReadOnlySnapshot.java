@@ -40,6 +40,12 @@ import org.apache.spark.util.SerializableConfiguration;
  * SnapshotImpl} (zero I/O), and reconstructed on the executor as a read-only {@link Scan} via
  * {@link #toScan(Configuration)}. The returned {@code Scan} interface exposes only read operations,
  * preventing accidental misuse of write-path APIs (e.g. {@code Committer}).
+ *
+ * <p>TODO: This class relies on 10 {@code io.delta.kernel.internal.*} packages which have no
+ * stability guarantees. Any Kernel refactor (constructor signature changes, package moves, class
+ * renames) will break this code without warning. This is temporary until Kernel exposes a public
+ * serialization API (e.g. {@code Snapshot.toSerializableReadOnlyState()}). Track:
+ * https://github.com/delta-io/delta/issues/XXXXX
  */
 public class SerializableReadOnlySnapshot implements Serializable {
 
@@ -154,10 +160,11 @@ public class SerializableReadOnlySnapshot implements Serializable {
             Optional.ofNullable(maxPublishedDeltaVersion));
 
     Lazy<LogSegment> lazyLogSegment = new Lazy<>(() -> logSegment);
-    // CRC validation was already performed on the driver when snapshotAtSourceInit was
-    // constructed. CRC is an integrity check, not a correctness requirement for read-only
-    // log replay. Skipping it here avoids an unnecessary I/O round-trip to fetch the CRC
-    // file on each executor.
+    // CRC is passed as empty because this Scan is only used for getScanFiles() which does not
+    // consult CRC. CRC validation was already performed on the driver when snapshotAtSourceInit
+    // was constructed. NOTE: if LogReplay.getActiveDomainMetadataMap() were ever called on this
+    // reconstructed snapshot, it would fall back to a full log scan (Case 1 in
+    // loadDomainMetadataMap) instead of the O(1) CRC shortcut — correct but expensive.
     Lazy<Optional<CRCInfo>> lazyCrcInfo = new Lazy<>(Optional::empty);
 
     LogReplay logReplay = new LogReplay(engine, kernelDataPath, lazyLogSegment, lazyCrcInfo);
