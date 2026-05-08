@@ -100,7 +100,6 @@ import scala.Function2;
 import scala.Option;
 import scala.Some;
 import scala.Tuple2;
-import scala.collection.JavaConverters;
 import scala.collection.immutable.Seq;
 import scala.collection.immutable.Seq$;
 import scala.jdk.javaapi.CollectionConverters;
