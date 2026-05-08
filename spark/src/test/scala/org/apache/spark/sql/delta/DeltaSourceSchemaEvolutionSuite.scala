@@ -1525,25 +1525,22 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
 
   testSchemaEvolution("consecutive schema evolutions with protocol-only tail") {
     implicit log =>
-    // The merger chain here ends with a Protocol-only commit (no Metadata action). The schema
-    // changes are chosen so that the start schema, the post-first-change schema (currentMetadata
-    // when the merger runs), and the final snapshot schema are all distinct -- otherwise a faulty
-    // merger could land on a coincidentally-equal schema and still appear to pass.
-    val v5 = log.update().version // file action; starting schema <a, b>
-    renameColumn("b", "c") // v6 -> <a, c>  (this becomes currentMetadata at merger time)
-    addColumn("d") // v7 -> <a, c, d>
-    dropColumn("c") // v8/v9 -> <a, d>      (this is the final snapshot schema)
+    // Chain ends with a Protocol-only commit; start, currentMetadata, and final schemas
+    // are chosen pairwise distinct so a coincidence can't mask a faulty merger.
+    val v5 = log.update().version // <a, b>
+    renameColumn("b", "c") // <a, c> -- becomes currentMetadata at merger time
+    addColumn("d") // <a, c, d>
+    dropColumn("c") // <a, d> -- the final snapshot schema
     val newProtocol = log.update().protocol.merge(
       Action.supportedProtocolVersion(featuresToExclude = Seq(CatalogOwnedTableFeature)))
     log.upgradeProtocol(newProtocol) // protocol-only tail commit
     val vTail = log.update().version
-    // File action bounds the merger chain.
-    addData(5 until 6)
+    addData(5 until 6) // file action bounds the merger chain
 
     def df: DataFrame = readStream(
       schemaLocation = Some(getDefaultSchemaLocation.toString), startingVersion = Some(v5))
 
-    // Initialize the schema log @ v5 with <a, b>.
+    // Init schema log @ v5 with <a, b>.
     testStream(df)(
       StartStream(checkpointLocation = getDefaultCheckpoint.toString),
       ProcessAllAvailableIgnoreError,
@@ -1553,7 +1550,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     assert(getDefaultSchemaLog().getLatestMetadata.get.dataSchema.fieldNames
       .sameElements(Array("a", "b")))
 
-    // Encounter the first schema change at v6, persists (v6, <a, c>), fails the stream.
+    // First schema change at v6 -> persists (v6, <a, c>), fails the stream.
     testStream(df)(
       StartStream(checkpointLocation = getDefaultCheckpoint.toString),
       ProcessAllAvailableIgnoreError,
@@ -1564,17 +1561,11 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     assert(getDefaultSchemaLog().getLatestMetadata.get.dataSchema.fieldNames
       .sameElements(Array("a", "c")))
 
-    // Next restart runs the consecutive-merger, scanning v6..vTail and stopping at the file
-    // action. The merged entry must reflect the post-dropColumn schema <a, d> and the upgraded
-    // protocol, with deltaCommitVersion == vTail. With the protocol-only-tail bug, the merger
-    // would instead leave dataSchema = <a, c> (the pre-chain currentMetadata) -- which is
-    // distinguishable from both the start schema <a, b> and the correct schema <a, d>.
+    // Next restart runs the merger; entry should advance to vTail with schema <a, d>.
     val latestDf = df
-    assert(getDefaultSchemaLog().getLatestMetadata.get.deltaCommitVersion == vTail,
-      s"merger should advance deltaCommitVersion to the protocol-only tail at $vTail")
+    assert(getDefaultSchemaLog().getLatestMetadata.get.deltaCommitVersion == vTail)
     assert(latestDf.schema.fieldNames.sameElements(Array("a", "d")),
-      "merger should fold the metadata changes through dropColumn; got " +
-        latestDf.schema.fieldNames.toSeq)
+      s"got ${latestDf.schema.fieldNames.toSeq}")
   }
 
   testSchemaEvolution("upgrade and downgrade") { implicit log =>

@@ -116,6 +116,7 @@ trait DeltaV2SourceSchemaEvolutionSuiteBase extends V2ForceTest {
     // ========== Schema evolution scenarios ==========
     "consecutive schema evolutions without schema merging",
     "consecutive schema evolutions",
+    "consecutive schema evolutions with protocol-only tail",
     "upgrade and downgrade",
     "multiple sources with schema evolution",
     "schema evolution with Delta sink",
