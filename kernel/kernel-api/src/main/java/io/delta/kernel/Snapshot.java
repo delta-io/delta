@@ -17,9 +17,11 @@
 package io.delta.kernel;
 
 import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.clustering.ClusteringColumnInfo;
 import io.delta.kernel.commit.PublishFailedException;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
+import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.statistics.SnapshotStatistics;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
@@ -117,6 +119,35 @@ public interface Snapshot {
 
   /** @return statistics about this snapshot */
   SnapshotStatistics getStatistics();
+
+  /**
+   * Get per-clustering-column descriptors with the physical column reference (as stored in the
+   * {@code delta.clustering} domain), the logical column reference (resolved against {@link
+   * #getSchema()}), and the column's data type. Returned in the order the columns appear in the
+   * domain.
+   *
+   * <ul>
+   *   <li>{@code Optional.empty()} -- snapshot has no {@code delta.clustering} domain
+   *   <li>{@code Optional.of(List.of())} -- clustered with no columns
+   *   <li>{@code Optional.of([info1, info2])} -- clustered with the listed columns
+   * </ul>
+   *
+   * <p>The default body builds the list eagerly on every call by reading the {@code
+   * delta.clustering} domain via {@link #getDomainMetadata(String)} and delegating the parse +
+   * resolve to {@link ClusteringColumnInfo#resolveAllFromDomainJson(StructType, String)}.
+   * Implementations should override this method to cache the resolved list so repeated callers
+   * (e.g. plan rules invoking it per file group) don't re-deserialize the JSON and re-walk the
+   * schema.
+   *
+   * @throws KernelException if the {@code delta.clustering} domain JSON is not a valid clustering
+   *     domain configuration, or if a physical clustering column cannot be resolved against the
+   *     snapshot's schema.
+   * @since 4.3.0
+   */
+  default Optional<List<ClusteringColumnInfo>> getClusteringColumnInfos() {
+    return getDomainMetadata(ClusteringColumnInfo.CLUSTERING_DOMAIN_NAME)
+        .map(json -> ClusteringColumnInfo.resolveAllFromDomainJson(getSchema(), json));
+  }
 
   /** @return a scan builder to construct a {@link Scan} to read data from this snapshot */
   ScanBuilder getScanBuilder();

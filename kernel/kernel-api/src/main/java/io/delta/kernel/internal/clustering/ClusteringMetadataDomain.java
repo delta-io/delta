@@ -73,7 +73,11 @@ public final class ClusteringMetadataDomain extends JsonMetadataDomain {
   @JsonCreator
   private ClusteringMetadataDomain(
       @JsonProperty("clusteringColumns") List<List<String>> physicalClusteringColumns) {
-    this.clusteringColumns = physicalClusteringColumns;
+    // Treat a missing or explicit-null `clusteringColumns` field as a clustered table with no
+    // clustering columns -- semantically equivalent to `[]`. Avoids an opaque NPE on read paths
+    // (e.g. Snapshot.getClusteringColumnInfos) when a writer emits incomplete domain JSON.
+    this.clusteringColumns =
+        physicalClusteringColumns == null ? Collections.emptyList() : physicalClusteringColumns;
   }
 
   @Override
