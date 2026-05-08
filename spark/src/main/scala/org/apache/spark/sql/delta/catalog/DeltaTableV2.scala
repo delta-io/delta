@@ -27,7 +27,7 @@ import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
 import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.commands.WriteIntoDelta
+import org.apache.spark.sql.delta.commands.{DeltaCommand, WriteIntoDelta}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider}
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils}
@@ -73,7 +73,8 @@ class DeltaTableV2 private(
   with TruncatableTable
   with V2TableWithV1Fallback
   with DeltaLogging
-  with DeltaLoggingProvider {
+  with DeltaLoggingProvider
+  with DeltaCommand {
 
   case class PathInfo(
       rootPath: Path,
@@ -275,12 +276,17 @@ class DeltaTableV2 private(
   override def truncateTable(): Boolean = recordDeltaOperation(deltaLog, "delta.truncateTable") {
     deltaLog.withNewTransaction(catalogTable) { txn =>
       DeltaLog.assertRemovable(txn.snapshot)
-      val removedFiles = txn.filterFiles().map(_.removeWithTimestamp(System.currentTimeMillis()))
-      txn.commitIfNeeded(
-        actions = removedFiles,
-        op = DeltaOperations.Truncate(),
-        tags = RowTracking.addPreservedRowTrackingTagIfNotSet(txn.snapshot))
-      removedFiles.nonEmpty
+      if (hasBeenExecuted(txn, spark)) {
+        false
+      } else {
+        val removedFiles = txn.filterFiles().map(_.removeWithTimestamp(System.currentTimeMillis()))
+        val actions = createSetTransaction(spark, deltaLog).toSeq ++ removedFiles
+        txn.commitIfNeeded(
+          actions = actions,
+          op = DeltaOperations.Truncate(),
+          tags = RowTracking.addPreservedRowTrackingTagIfNotSet(txn.snapshot))
+          .isDefined
+      }
     }
   }
 
