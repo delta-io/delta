@@ -532,22 +532,33 @@ public class SparkScanTest extends DeltaV2TestBase {
     assertEquals(afterDppTotalBytes, afterDppEstimatedSize);
   }
 
+  /**
+   * Triggers scan file planning via reflection. estimateStatistics() intentionally does NOT call
+   * ensurePlanned() to avoid OOM in streaming, so tests that inspect internal scan state must call
+   * ensurePlanned() directly.
+   */
+  private static void triggerPlanning(SparkScan scan) throws Exception {
+    java.lang.reflect.Method ensurePlanned = SparkScan.class.getDeclaredMethod("ensurePlanned");
+    ensurePlanned.setAccessible(true);
+    ensurePlanned.invoke(scan);
+  }
+
   private static List<PartitionedFile> getPartitionedFiles(SparkScan scan) throws Exception {
-    scan.estimateStatistics(); // ensurePlanned
+    triggerPlanning(scan);
     Field field = SparkScan.class.getDeclaredField("partitionedFiles");
     field.setAccessible(true);
     return (List<PartitionedFile>) field.get(scan);
   }
 
   private static long getTotalBytes(SparkScan scan) throws Exception {
-    scan.estimateStatistics(); // ensurePlanned
+    triggerPlanning(scan);
     Field field = SparkScan.class.getDeclaredField("totalBytes");
     field.setAccessible(true);
     return (long) field.get(scan);
   }
 
   private static long getEstimatedSizeInBytes(SparkScan scan) throws Exception {
-    scan.estimateStatistics(); // ensurePlanned
+    triggerPlanning(scan);
     Field field = SparkScan.class.getDeclaredField("estimatedSizeInBytes");
     field.setAccessible(true);
     return (long) field.get(scan);
@@ -561,14 +572,14 @@ public class SparkScanTest extends DeltaV2TestBase {
   }
 
   private static long getTotalRows(SparkScan scan) throws Exception {
-    scan.estimateStatistics(); // ensurePlanned
+    triggerPlanning(scan);
     Field field = SparkScan.class.getDeclaredField("totalRows");
     field.setAccessible(true);
     return (long) field.get(scan);
   }
 
   private static boolean isRowCountKnown(SparkScan scan) throws Exception {
-    scan.estimateStatistics(); // ensurePlanned
+    triggerPlanning(scan);
     Field field = SparkScan.class.getDeclaredField("rowCountKnown");
     field.setAccessible(true);
     return (boolean) field.get(scan);
@@ -621,6 +632,7 @@ public class SparkScanTest extends DeltaV2TestBase {
           SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
           SparkScan scan = (SparkScan) builder.build();
 
+          triggerPlanning(scan);
           assertEquals(
               5L, scan.estimateStatistics().numRows().getAsLong(), "5 rows before filtering");
 
@@ -1041,6 +1053,7 @@ public class SparkScanTest extends DeltaV2TestBase {
     SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
     SparkScan scan = (SparkScan) builder.build();
 
+    triggerPlanning(scan);
     long estimatedSizeFromStats = scan.estimateStatistics().sizeInBytes().getAsLong();
     long estimatedSizeFromField = getEstimatedSizeInBytes(scan);
 
@@ -1375,6 +1388,7 @@ public class SparkScanTest extends DeltaV2TestBase {
               (SparkScanBuilder)
                   sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
           SparkScan scan = (SparkScan) builder.build();
+          triggerPlanning(scan);
           Statistics stats = scan.estimateStatistics();
 
           // numRows comes from per-file (post-prune) stats
@@ -1432,6 +1446,7 @@ public class SparkScanTest extends DeltaV2TestBase {
               (SparkScanBuilder)
                   sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
           SparkScan scan = (SparkScan) builder.build();
+          triggerPlanning(scan);
           Statistics stats = scan.estimateStatistics();
 
           // Per-file numRows wins over catalog stats.
@@ -1528,6 +1543,7 @@ public class SparkScanTest extends DeltaV2TestBase {
               (SparkScanBuilder)
                   sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
           SparkScan scan = (SparkScan) builder.build();
+          triggerPlanning(scan);
           Statistics stats = scan.estimateStatistics();
 
           // With CBO disabled, numRows should be empty (matching V1 behavior)
@@ -1574,6 +1590,7 @@ public class SparkScanTest extends DeltaV2TestBase {
                     (SparkScanBuilder)
                         sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
                 SparkScan scan = (SparkScan) builder.build();
+                triggerPlanning(scan);
                 Statistics stats = scan.estimateStatistics();
 
                 // With planStatsEnabled, numRows should be present (from per-file stats)
@@ -1610,6 +1627,7 @@ public class SparkScanTest extends DeltaV2TestBase {
               (SparkScanBuilder)
                   sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
           SparkScan scan = (SparkScan) builder.build();
+          triggerPlanning(scan);
           Statistics stats = scan.estimateStatistics();
 
           // Per-file Delta stats (numRecords in the transaction log) are available even without
@@ -1678,6 +1696,7 @@ public class SparkScanTest extends DeltaV2TestBase {
               (SparkScanBuilder)
                   sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
           SparkScan scan = (SparkScan) builder.build();
+          triggerPlanning(scan);
           Statistics stats = scan.estimateStatistics();
 
           assertTrue(stats.numRows().isPresent(), "numRows should be present");
@@ -1804,6 +1823,7 @@ public class SparkScanTest extends DeltaV2TestBase {
               (SparkScanBuilder)
                   sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
           SparkScan scan = (SparkScan) builder.build();
+          triggerPlanning(scan);
           Statistics stats = scan.estimateStatistics();
 
           // Per-file Delta stats (numRecords in the transaction log) provide numRows even when
@@ -1849,6 +1869,7 @@ public class SparkScanTest extends DeltaV2TestBase {
               (SparkScanBuilder)
                   sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
           SparkScan scan = (SparkScan) builder.build();
+          triggerPlanning(scan);
           Statistics stats = scan.estimateStatistics();
 
           // Per-file stats provide numRows even when catalog stats lack it
