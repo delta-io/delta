@@ -15,6 +15,8 @@
  */
 package io.delta.spark.internal.v2.utils;
 
+import static io.delta.kernel.internal.util.Preconditions.checkState;
+
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
@@ -72,57 +74,57 @@ public class SparkRowToKernelRow implements Row {
 
   @Override
   public boolean getBoolean(int ordinal) {
-    if (sparkRow.isNullAt(ordinal)) {
-      throw new IllegalStateException("Cannot read a null value as BOOLEAN at ordinal " + ordinal);
-    }
+    checkState(
+        !sparkRow.isNullAt(ordinal),
+        String.format("Cannot read a null value as BOOLEAN at ordinal %d", ordinal));
     return sparkRow.getBoolean(ordinal);
   }
 
   @Override
   public byte getByte(int ordinal) {
-    if (sparkRow.isNullAt(ordinal)) {
-      throw new IllegalStateException("Cannot read a null value as BYTE at ordinal " + ordinal);
-    }
+    checkState(
+        !sparkRow.isNullAt(ordinal),
+        String.format("Cannot read a null value as BYTE at ordinal %d", ordinal));
     return sparkRow.getByte(ordinal);
   }
 
   @Override
   public short getShort(int ordinal) {
-    if (sparkRow.isNullAt(ordinal)) {
-      throw new IllegalStateException("Cannot read a null value as SHORT at ordinal " + ordinal);
-    }
+    checkState(
+        !sparkRow.isNullAt(ordinal),
+        String.format("Cannot read a null value as SHORT at ordinal %d", ordinal));
     return sparkRow.getShort(ordinal);
   }
 
   @Override
   public int getInt(int ordinal) {
-    if (sparkRow.isNullAt(ordinal)) {
-      throw new IllegalStateException("Cannot read a null value as INT at ordinal " + ordinal);
-    }
+    checkState(
+        !sparkRow.isNullAt(ordinal),
+        String.format("Cannot read a null value as INT at ordinal %d", ordinal));
     return sparkRow.getInt(ordinal);
   }
 
   @Override
   public long getLong(int ordinal) {
-    if (sparkRow.isNullAt(ordinal)) {
-      throw new IllegalStateException("Cannot read a null value as LONG at ordinal " + ordinal);
-    }
+    checkState(
+        !sparkRow.isNullAt(ordinal),
+        String.format("Cannot read a null value as LONG at ordinal %d", ordinal));
     return sparkRow.getLong(ordinal);
   }
 
   @Override
   public float getFloat(int ordinal) {
-    if (sparkRow.isNullAt(ordinal)) {
-      throw new IllegalStateException("Cannot read a null value as FLOAT at ordinal " + ordinal);
-    }
+    checkState(
+        !sparkRow.isNullAt(ordinal),
+        String.format("Cannot read a null value as FLOAT at ordinal %d", ordinal));
     return sparkRow.getFloat(ordinal);
   }
 
   @Override
   public double getDouble(int ordinal) {
-    if (sparkRow.isNullAt(ordinal)) {
-      throw new IllegalStateException("Cannot read a null value as DOUBLE at ordinal " + ordinal);
-    }
+    checkState(
+        !sparkRow.isNullAt(ordinal),
+        String.format("Cannot read a null value as DOUBLE at ordinal %d", ordinal));
     return sparkRow.getDouble(ordinal);
   }
 
