@@ -42,7 +42,7 @@ import org.apache.spark.sql.catalyst.analysis.{ResolvedTable, UnresolvedTable}
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogUtils}
 import org.apache.spark.sql.catalyst.plans.logical.{AnalysisHelper, LogicalPlan, SubqueryAlias}
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
-import org.apache.spark.sql.connector.catalog.{SupportsWrite, Table, TableCapability, TableCatalog, V2TableWithV1Fallback}
+import org.apache.spark.sql.connector.catalog.{SupportsWrite, Table, TableCapability, TableCatalog, TruncatableTable, V2TableWithV1Fallback}
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.catalog.V1Table
@@ -70,6 +70,7 @@ class DeltaTableV2 private(
     val options: Map[String, String])
   extends Table
   with SupportsWrite
+  with TruncatableTable
   with V2TableWithV1Fallback
   with DeltaLogging
   with DeltaLoggingProvider {
@@ -270,6 +271,18 @@ class DeltaTableV2 private(
     ACCEPT_ANY_SCHEMA, BATCH_READ,
     V1_BATCH_WRITE, OVERWRITE_BY_FILTER, TRUNCATE, OVERWRITE_DYNAMIC
   ).asJava
+
+  override def truncateTable(): Boolean = recordDeltaOperation(deltaLog, "delta.truncateTable") {
+    deltaLog.withNewTransaction(catalogTable) { txn =>
+      DeltaLog.assertRemovable(txn.snapshot)
+      val removedFiles = txn.filterFiles().map(_.removeWithTimestamp(System.currentTimeMillis()))
+      txn.commitIfNeeded(
+        actions = removedFiles,
+        op = DeltaOperations.Truncate(),
+        tags = RowTracking.addPreservedRowTrackingTagIfNotSet(txn.snapshot))
+      removedFiles.nonEmpty
+    }
+  }
 
   def tableExists: Boolean = deltaLog.tableExists
 
