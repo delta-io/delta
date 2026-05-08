@@ -563,9 +563,9 @@ public class V2StreamingReadTest extends V2TestBase {
   // ---- Distributed Initial Snapshot Tests ----
 
   /**
-   * Creates a Delta table with multiple versions, each containing {@code rowsPerVersion} rows.
-   * Rows use TEST_SCHEMA (id INT, name STRING, value DOUBLE) with deterministic values derived
-   * from the row's global position: id=pos, name="User{pos}", value=pos*10.0.
+   * Creates a Delta table with multiple versions, each containing {@code rowsPerVersion} rows. Rows
+   * use TEST_SCHEMA (id INT, name STRING, value DOUBLE) with deterministic values derived from the
+   * row's global position: id=pos, name="User{pos}", value=pos*10.0.
    */
   private void createMultiVersionTable(String tablePath, int numVersions, int rowsPerVersion) {
     for (int v = 0; v < numVersions; v++) {
@@ -618,9 +618,9 @@ public class V2StreamingReadTest extends V2TestBase {
   }
 
   /**
-   * Parity regression test: the distributed initial snapshot path must produce identical results
-   * to the driver path. This is the primary regression guard — if the distributed path ever
-   * diverges (wrong sort order, missed files, duplicate rows), this test catches it.
+   * Parity regression test: the distributed initial snapshot path must produce identical results to
+   * the driver path. This is the primary regression guard — if the distributed path ever diverges
+   * (wrong sort order, missed files, duplicate rows), this test catches it.
    */
   @Test
   public void testDistributedInitialSnapshotParityWithDriverPath(@TempDir File deltaTablePath)
@@ -665,10 +665,10 @@ public class V2StreamingReadTest extends V2TestBase {
   }
 
   /**
-   * Verifies that Trigger.AvailableNow completes and produces all rows when the distributed
-   * initial snapshot path is enabled. AvailableNow processes all available data in rate-limited
-   * batches and then terminates; this tests the optimized end-offset computation in
-   * {@code SparkMicroBatchStream.getLastOffsetForAvailableNowViaDataFrame}.
+   * Verifies that Trigger.AvailableNow completes and produces all rows when the distributed initial
+   * snapshot path is enabled. AvailableNow processes all available data in rate-limited batches and
+   * then terminates; this tests the optimized end-offset computation in {@code
+   * SparkMicroBatchStream.getLastOffsetForAvailableNowViaDataFrame}.
    */
   @Test
   public void testTriggerAvailableNowWithDistributedInitialSnapshot(@TempDir File deltaTablePath)
@@ -720,8 +720,8 @@ public class V2StreamingReadTest extends V2TestBase {
    * before query shutdown.
    *
    * <ol>
-   *   <li>Creates a 10-file table and starts a streaming query with {@code maxFilesPerTrigger=2}
-   *       (5 batches needed). Stops the query after at least one batch commits.
+   *   <li>Creates a 10-file table and starts a streaming query with {@code maxFilesPerTrigger=2} (5
+   *       batches needed). Stops the query after at least one batch commits.
    *   <li>Restarts from the same checkpoint and processes remaining data.
    *   <li>Reads the delta sink and verifies all 10 rows are present with no duplicates.
    * </ol>
