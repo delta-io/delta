@@ -193,6 +193,13 @@ class DeltaSourceMetadataTrackingLog private(
     trackingLog.getLatest().map(_._2)
 
   /**
+   * Get the tracked metadata entry at the given seq num, if present.
+   * Visible for testing.
+   */
+  private[delta] def getTrackedMetadataAtSeqNum(seqNum: Long): Option[PersistedMetadata] =
+    trackingLog.getTrackedSchemaAtSeqNum(seqNum)
+
+  /**
    * Get the current schema that is being tracked by this schema log. This is typically the latest
    * schema log entry to the best of this schema log's knowledge.
    */
