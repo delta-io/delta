@@ -31,29 +31,10 @@ import io.delta.kernel.types.{DataType, IntegerType, StructType}
 import io.delta.kernel.utils.{CloseableIterable, DataFileStatus}
 import io.delta.kernel.utils.CloseableIterable.inMemoryIterable
 
-/**
- * Shared helpers for geospatial tests. Mix into any AnyFunSuite that already mixes in
- * AbstractWriteUtils. Provides:
- *
- *   - WKB and WKT literal construction for synthetic geometry/geography points
- *   - Column vectors carrying WKB binary or scalar int data
- *   - DataFileStatistics with min/max bounding-box literals
- *   - The boilerplate to stage a synthetic add file (no real Parquet write) and to
- *     commit one such file per stats entry against a given table
- *   - A box-intersect file-pruning shorthand that returns the count of scan files a
- *     query bounding box leaves after data skipping
- *
- * Suites that exercise the data-skipping path inject stats directly via
- * appendActionsForGeoStatsFile rather than going through the Parquet writer; that
- * keeps the test fixtures deterministic and decouples the predicate behavior from
- * the write pipeline.
- */
+/** Mixin for geospatial test fixtures: WKB/WKT helpers, stats injection, box-prune queries. */
 trait GeoTestUtils extends AbstractWriteUtils {
 
-  /**
-   * Builds a 21-byte little-endian WKB encoding for POINT(x y):
-   * byteOrder(1) + type=1(4) + x(8) + y(8).
-   */
+  /** 21-byte little-endian WKB for POINT(x y). */
   def pointWkb(x: Double, y: Double): Array[Byte] = {
     val buf = ByteBuffer.allocate(21).order(ByteOrder.LITTLE_ENDIAN)
     buf.put(1.toByte)
@@ -63,14 +44,9 @@ trait GeoTestUtils extends AbstractWriteUtils {
     buf.array()
   }
 
-  /** WKT POINT literal of the given type, e.g. for stats min/max or query bounds. */
   def pointWktLiteral(x: Double, y: Double, geoType: DataType): Literal =
     Literal.ofGeospatialWKT(s"POINT ($x $y)", geoType)
 
-  /**
-   * ColumnVector backed by an in-memory Seq of WKB byte arrays. None entries become
-   * null rows; Some entries return their bytes via getBinary.
-   */
   def geoColumnVector(
       geoType: DataType,
       values: Seq[Option[Array[Byte]]]): ColumnVector = new ColumnVector {
@@ -81,7 +57,6 @@ trait GeoTestUtils extends AbstractWriteUtils {
     override def getBinary(rowId: Int): Array[Byte] = values(rowId).orNull
   }
 
-  /** Trivial non-null IntegerType vector. */
   def intColumnVector(values: Seq[Int]): ColumnVector = new ColumnVector {
     override def getDataType: DataType = IntegerType.INTEGER
     override def getSize: Int = values.length
@@ -90,10 +65,6 @@ trait GeoTestUtils extends AbstractWriteUtils {
     override def getInt(rowId: Int): Int = values(rowId)
   }
 
-  /**
-   * DataFileStatistics with a single geo column's min/max set to POINT WKT literals
-   * for the given bounding box, and null count = 0.
-   */
   def geoStats(
       geomCol: Column,
       minX: Double,
@@ -108,10 +79,7 @@ trait GeoTestUtils extends AbstractWriteUtils {
     Map(geomCol -> (0L: java.lang.Long)).asJava,
     Optional.empty())
 
-  /**
-   * DataFileStatistics with no min/max recorded - the data-skipping path treats
-   * this file as "always include" because the predicate cannot prove non-intersection.
-   */
+  /** Stats with no min/max recorded - data skipping must always retain such files. */
   def emptyStats(numRecords: Long = 10L): DataFileStatistics = new DataFileStatistics(
     numRecords,
     Collections.emptyMap(),
@@ -119,11 +87,6 @@ trait GeoTestUtils extends AbstractWriteUtils {
     Collections.emptyMap(),
     Optional.empty())
 
-  /**
-   * General-purpose DataFileStatistics builder for multi-column stats. Use when a
-   * single file needs min/max recorded for several columns (e.g. a geo column AND
-   * an int column to test combined predicates).
-   */
   def stats(
       minValues: Map[Column, Literal],
       maxValues: Map[Column, Literal],
@@ -135,12 +98,7 @@ trait GeoTestUtils extends AbstractWriteUtils {
     nullCounts.asJava,
     Optional.empty())
 
-  /**
-   * Stages a synthetic add file at <txn-target-dir>/part-{fileIdx}.parquet with the
-   * provided stats (no real Parquet bytes are written), returning the actions that
-   * the caller should hand to commitTransaction. fileSize is non-zero so the add
-   * action looks plausible to downstream consumers.
-   */
+  /** Stages a synthetic add file (no real Parquet bytes) at part-{fileIdx}.parquet. */
   def appendActionsForGeoStatsFile(
       engine: Engine,
       txn: Transaction,
@@ -160,11 +118,7 @@ trait GeoTestUtils extends AbstractWriteUtils {
     inMemoryIterable(actions)
   }
 
-  /**
-   * Commits one synthetic add file per stats entry, creating the table on the first
-   * commit and updating it on subsequent ones. Each entry becomes its own commit so
-   * tests can reason about per-file pruning post-checkpoint.
-   */
+  /** One commit per stats entry; first creates the table, rest update. */
   def commitGeoStatsFiles(
       tablePath: String,
       engine: Engine,
@@ -180,11 +134,7 @@ trait GeoTestUtils extends AbstractWriteUtils {
       commitTransaction(txn, engine, appendActionsForGeoStatsFile(engine, txn, idx, s))
   }
 
-  /**
-   * Returns the count of scan files a snapshot leaves after applying an
-   * StGeometryBoxesIntersect predicate against the given column with the given query
-   * bounding box. Files with missing geo stats fall through and count toward the result.
-   */
+  /** Count of scan files left after applying StGeometryBoxesIntersect on a query bbox. */
   def boxFilesHit(
       snapshot: Snapshot,
       geomCol: Column,

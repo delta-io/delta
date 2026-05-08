@@ -31,7 +31,7 @@ import io.delta.kernel.internal.actions.DomainMetadata
 import io.delta.kernel.internal.clustering.ClusteringMetadataDomain
 import io.delta.kernel.internal.util.ColumnMapping
 import io.delta.kernel.internal.util.ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY
-import io.delta.kernel.types.{MapType, StructType}
+import io.delta.kernel.types.{GeographyType, GeometryType, MapType, StructType}
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.utils.CloseableIterable
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
@@ -116,6 +116,69 @@ trait DeltaTableClusteringSuiteBase extends AnyFunSuite with AbstractWriteUtils 
           clusteringColsOpt = Some(List(new Column("mapType"))))
       }
       assert(ex.getMessage.contains("Clustering is not supported because the following column(s)"))
+    }
+  }
+
+  Seq(
+    ("geometry", GeometryType.ofDefault()),
+    ("geography", GeographyType.ofDefault())).foreach { case (label, geoType) =>
+    test(s"build table txn: clustering on a $label column should be rejected") {
+      withTempDirAndEngine { (tablePath, engine) =>
+        val schema = new StructType()
+          .add("id", INTEGER)
+          .add("geo", geoType)
+        val ex = intercept[KernelException] {
+          getCreateTxn(
+            engine,
+            tablePath,
+            schema,
+            clusteringColsOpt = Some(List(new Column("geo"))))
+        }
+        assert(
+          ex.getMessage.contains("Clustering is not supported on geometry/geography column(s)"),
+          s"unexpected error message: ${ex.getMessage}")
+        assert(ex.getMessage.contains("geo"))
+      }
+    }
+
+    test(s"build table txn: clustering with mixed non-geo + $label column rejects only the geo") {
+      withTempDirAndEngine { (tablePath, engine) =>
+        val schema = new StructType()
+          .add("id", INTEGER)
+          .add("geo", geoType)
+        val ex = intercept[KernelException] {
+          getCreateTxn(
+            engine,
+            tablePath,
+            schema,
+            clusteringColsOpt = Some(List(new Column("id"), new Column("geo"))))
+        }
+        assert(
+          ex.getMessage.contains("Clustering is not supported on geometry/geography column(s)"),
+          s"unexpected error message: ${ex.getMessage}")
+        assert(ex.getMessage.contains("geo"))
+        assert(
+          !ex.getMessage.contains(" id "),
+          s"non-geo column should not be in the rejection list: ${ex.getMessage}")
+      }
+    }
+
+    test(s"update a non-clustered table: cannot enable clustering on a $label column") {
+      withTempDirAndEngine { (tablePath, engine) =>
+        val schema = new StructType()
+          .add("id", INTEGER)
+          .add("geo", geoType)
+        createEmptyTable(engine, tablePath, schema)
+        val ex = intercept[KernelException] {
+          updateTableMetadata(
+            engine,
+            tablePath,
+            clusteringColsOpt = Some(List(new Column("geo"))))
+        }
+        assert(
+          ex.getMessage.contains("Clustering is not supported on geometry/geography column(s)"),
+          s"unexpected error message: ${ex.getMessage}")
+      }
     }
   }
 

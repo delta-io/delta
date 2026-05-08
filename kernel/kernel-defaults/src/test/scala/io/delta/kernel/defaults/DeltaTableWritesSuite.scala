@@ -30,7 +30,7 @@ import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector
 import io.delta.kernel.defaults.internal.data.vector.DefaultStructVector
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
-import io.delta.kernel.defaults.utils.{AbstractWriteUtils, TestRow, WriteUtils}
+import io.delta.kernel.defaults.utils.{AbstractWriteUtils, GeoTestUtils, TestRow, WriteUtils}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions._
 import io.delta.kernel.expressions.{Column, Literal}
@@ -67,7 +67,7 @@ class DeltaTableWritesSuite extends AbstractDeltaTableWritesSuite with WriteUtil
 
 /** Transaction commit in this suite IS REQUIRED TO use commitTransaction than .commit */
 abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWriteUtils
-    with ParquetSuiteBase {
+    with GeoTestUtils with ParquetSuiteBase {
 
   ///////////////////////////////////////////////////////////////////////////
   // Create table tests
@@ -373,6 +373,27 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         "Kernel doesn't support writing data with partition column (p1) of type: array[integer]"))
     }
   }
+
+  Seq(
+    ("geometry", GeometryType.ofDefault(), "Geometry(srid=OGC:CRS84)"),
+    ("geography", GeographyType.ofDefault(), "Geography(srid=OGC:CRS84, algorithm=spherical)"))
+    .foreach { case (label, geoType, typeStr) =>
+      test(s"create partitioned table - $label partition column is rejected") {
+        withTempDirAndEngine { (tablePath, engine) =>
+          val schema = new StructType()
+            .add("id", INTEGER)
+            .add("geo", geoType)
+
+          val ex = intercept[KernelException] {
+            getCreateTxn(engine, tablePath, schema = schema, partCols = Seq("geo"))
+          }
+          assert(
+            ex.getMessage.contains(
+              s"Kernel doesn't support writing data with partition column (geo) of type: $typeStr"),
+            s"unexpected error message: ${ex.getMessage}")
+        }
+      }
+    }
 
   test("create a partitioned table") {
     withTempDirAndEngine { (tablePath, engine) =>
@@ -2096,4 +2117,103 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
     }
     newStructType
   }
+
+  // Reads (id INT, geo <geoType>) rows; Seq[Byte] avoids Array reference-equality surprises.
+  private def readGeoTable(tablePath: String): Seq[(Int, Option[Seq[Byte]])] = {
+    val schema = latestSnapshot(tablePath).getSchema
+    val out = scala.collection.mutable.ArrayBuffer.empty[(Int, Option[Seq[Byte]])]
+    readTableUsingKernel(defaultEngine, tablePath, schema).foreach { filteredBatch =>
+      val batch = filteredBatch.getData
+      val idIdx = batch.getSchema.indexOf("id")
+      val geoIdx = batch.getSchema.indexOf("geo")
+      val idCol = batch.getColumnVector(idIdx)
+      val geoCol = batch.getColumnVector(geoIdx)
+      val sel = filteredBatch.getSelectionVector
+      (0 until batch.getSize).foreach { rowId =>
+        val included = !sel.isPresent ||
+          (!sel.get().isNullAt(rowId) && sel.get().getBoolean(rowId))
+        if (included) {
+          val id = idCol.getInt(rowId)
+          val geo =
+            if (geoCol.isNullAt(rowId)) None else Some(geoCol.getBinary(rowId).toSeq)
+          out.append((id, geo))
+        }
+      }
+    }
+    out.toSeq
+  }
+
+  private def insertGeoBatch(
+      tablePath: String,
+      schema: StructType,
+      rows: Seq[(Int, Option[Array[Byte]])],
+      isNewTable: Boolean): TransactionCommitResult = {
+    val ids = rows.map(_._1)
+    val geos = rows.map(_._2)
+    val geoFieldType = schema.get("geo").getDataType
+    val batch = new DefaultColumnarBatch(
+      ids.length,
+      schema,
+      Array(intColumnVector(ids), geoColumnVector(geoFieldType, geos)))
+    val data =
+      Seq(Map.empty[String, Literal] -> Seq(new FilteredColumnarBatch(batch, Optional.empty())))
+    appendData(
+      defaultEngine,
+      tablePath,
+      isNewTable = isNewTable,
+      schema = if (isNewTable) schema else null,
+      data = data)
+  }
+
+  Seq(
+    ("geometry default SRID", GeometryType.ofDefault()),
+    ("geometry custom SRID", GeometryType.ofSRID("EPSG:4326")),
+    ("geography default", GeographyType.ofDefault()),
+    ("geography custom algorithm", new GeographyType("OGC:CRS84", "vincenty")))
+    .foreach { case (label, geoType) =>
+      test(s"create + insert + read roundtrip - $label") {
+        withTempDirAndEngine { (tablePath, engine) =>
+          val schema = new StructType()
+            .add("id", INTEGER)
+            .add("geo", geoType)
+
+          val rowsBatch1 = Seq[(Int, Option[Array[Byte]])](
+            (1, Some(pointWkb(1.0, 2.0))),
+            (2, None),
+            (3, Some(pointWkb(-3.5, 4.25))))
+          val rowsBatch2 = Seq[(Int, Option[Array[Byte]])](
+            (4, Some(pointWkb(10.0, 20.0))),
+            (5, Some(pointWkb(0.0, 0.0))))
+
+          val res0 = insertGeoBatch(tablePath, schema, rowsBatch1, isNewTable = true)
+          assert(res0.getVersion === 0)
+          val res1 = insertGeoBatch(tablePath, schema, rowsBatch2, isNewTable = false)
+          assert(res1.getVersion === 1)
+
+          val snapshot = latestSnapshot(tablePath)
+          val loadedGeoType = snapshot.getSchema.get("geo").getDataType
+          assert(loadedGeoType == geoType, s"loaded $loadedGeoType, expected $geoType")
+
+          val protocol = snapshot.getProtocol
+          val supported = protocol.getImplicitlyAndExplicitlySupportedFeatures
+          assert(
+            supported.contains(io.delta.kernel.internal.tablefeatures.TableFeatures
+              .GEOSPATIAL_RW_FEATURE),
+            s"protocol features: $supported")
+          assert(protocol.getMinReaderVersion >= 3)
+          assert(protocol.getMinWriterVersion >= 7)
+
+          // id-keyed compare; cross-file/cross-partition row order is not guaranteed.
+          val expected = (rowsBatch1 ++ rowsBatch2).map { case (id, bytes) =>
+            (id, bytes.map(_.toSeq))
+          }.toMap
+          val actual = readGeoTable(tablePath).toMap
+          assert(actual.size === expected.size)
+          expected.foreach { case (id, expGeo) =>
+            assert(actual.contains(id), s"missing id=$id")
+            assert(actual(id) === expGeo, s"WKB mismatch at id=$id")
+          }
+        }
+      }
+    }
 }

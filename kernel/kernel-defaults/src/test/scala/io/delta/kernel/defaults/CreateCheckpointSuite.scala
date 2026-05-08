@@ -17,14 +17,18 @@ package io.delta.kernel.defaults
 
 import java.io.File
 
+import scala.collection.immutable.Seq
+
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.{Table, TableManager}
 import io.delta.kernel.defaults.engine.DefaultEngine
-import io.delta.kernel.defaults.utils.{TestRow, TestUtils, WriteUtils}
+import io.delta.kernel.defaults.utils.{GeoTestUtils, TestRow, TestUtils, WriteUtils}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.{CheckpointAlreadyExistsException, TableNotFoundException}
-import io.delta.kernel.expressions.Literal
+import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.internal.SnapshotImpl
+import io.delta.kernel.statistics.DataFileStatistics
+import io.delta.kernel.types.{GeometryType, StructType => KernelStructType}
 
 import org.apache.spark.sql.delta.{DeltaLog, VersionNotFoundException}
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
@@ -40,7 +44,7 @@ import org.scalatest.funsuite.AnyFunSuite
 /**
  * Test suite for `io.delta.kernel.Table.checkpoint(engine, version)`
  */
-class CreateCheckpointSuite extends CheckpointBase {
+class CreateCheckpointSuite extends CheckpointBase with GeoTestUtils {
 
   ///////////
   // Tests //
@@ -467,6 +471,94 @@ class CreateCheckpointSuite extends CheckpointBase {
         deltaLogDir.listFiles().count(_.getName.endsWith(".json")) < commits + 1,
         "Checkpoint on snapshot built without specific version should trigger log cleanup")
     }
+  }
+
+  // Same fixture as GeometryDataSkippingSuite (4 quadrants + null-stats f4).
+  private val geomCheckpointFileExtents: Seq[Option[(Double, Double, Double, Double)]] = Seq(
+    Some((0.0, 0.0, 3.0, 3.0)),
+    Some((7.0, 7.0, 10.0, 10.0)),
+    Some((0.0, 7.0, 3.0, 10.0)),
+    Some((7.0, 0.0, 10.0, 3.0)),
+    None)
+
+  private val geomColType = new GeometryType("OGC:CRS84")
+  private val geomCol = new Column("geom")
+
+  private def geoCheckpointStatsList: Seq[DataFileStatistics] =
+    geomCheckpointFileExtents.map {
+      case Some((minX, minY, maxX, maxY)) =>
+        geoStats(geomCol, minX, minY, maxX, maxY, geomColType)
+      case None => emptyStats()
+    }
+
+  // Counts the checkpoint manifest files at a version. Excludes sidecars
+  // (<version>.checkpoint.NNNN.NNNN.<UUID>.parquet) so both classic and V2 layouts return 1.
+  private def checkpointManifestCount(tablePath: String, checkpointVersion: Long): Int = {
+    val deltaLogDir = new java.io.File(tablePath, "_delta_log")
+    val versionPrefix = f"$checkpointVersion%020d.checkpoint"
+    deltaLogDir
+      .listFiles()
+      .count { f =>
+        val name = f.getName
+        name.startsWith(versionPrefix) &&
+        !name.matches(raw".*\.checkpoint\.\d+\.\d+\..*")
+      }
+  }
+
+  Seq(
+    ("classic", Map.empty[String, String]),
+    (
+      "v2-typed",
+      Map(
+        io.delta.kernel.internal.TableConfig.CHECKPOINT_POLICY.getKey -> "v2"))).foreach {
+    case (label, tableProps) =>
+      test(s"data skipping survives $label checkpoint - geometry column") {
+        withTempDirAndEngine { (tablePath, engine) =>
+          val schema = new KernelStructType().add("geom", geomColType)
+          commitGeoStatsFiles(
+            tablePath,
+            engine,
+            schema,
+            geoCheckpointStatsList,
+            tableProperties = tableProps)
+
+          val checkpointVersion = (geomCheckpointFileExtents.length - 1).toLong
+          kernelCheckpoint(engine, tablePath, checkpointVersion)
+
+          val manifestCount = checkpointManifestCount(tablePath, checkpointVersion)
+          assert(
+            manifestCount == 1,
+            s"expected exactly 1 checkpoint manifest at v=$checkpointVersion, got $manifestCount")
+
+          // Inline delete instead of deleteDeltaFilesBefore: that helper goes through Spark,
+          // which rejects tables with the geospatial feature it doesn't recognize.
+          Seq.range(0L, checkpointVersion).foreach { v =>
+            val p = new Path(f"$tablePath/_delta_log/$v%020d.json")
+            p.getFileSystem(new Configuration()).delete(p, false)
+          }
+
+          val snapshot = latestSnapshot(tablePath)
+
+          assert(snapshot.getSchema.get("geom").getDataType == geomColType)
+
+          val features = snapshot.getProtocol.getImplicitlyAndExplicitlySupportedFeatures
+          assert(
+            features.contains(io.delta.kernel.internal.tablefeatures.TableFeatures
+              .GEOSPATIAL_RW_FEATURE),
+            s"geospatial feature missing post-checkpoint: $features")
+
+          // null-stats f4 always falls through (+1 in every count).
+          assert(boxFilesHit(snapshot, geomCol, geomColType, 1.0, 1.0, 4.0, 4.0) == 2)
+          assert(boxFilesHit(snapshot, geomCol, geomColType, 8.0, 8.0, 11.0, 11.0) == 2)
+          assert(boxFilesHit(snapshot, geomCol, geomColType, 4.0, 4.0, 6.0, 6.0) == 1)
+          assert(boxFilesHit(snapshot, geomCol, geomColType, 0.0, 0.0, 11.0, 11.0) == 5)
+
+          assert(
+            collectScanFileRows(snapshot.getScanBuilder().build()).size ==
+              geomCheckpointFileExtents.length,
+            s"checkpoint dropped add actions: expected ${geomCheckpointFileExtents.length}")
+        }
+      }
   }
 
   test(
