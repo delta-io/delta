@@ -22,13 +22,15 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.{AttributeMap, AttributeReference}
 import org.apache.spark.sql.catalyst.plans.logical._
+import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 
 /**
  * An analyzer resolution rule that handles implicit casting for all V2WriteCommands targeting
  * Delta tables via DataFrame by-name writes. This rule runs BEFORE [[DeltaAnalysis]].
  */
-case class DeltaImplicitCast(session: SparkSession) extends DeltaAnalysis(session) {
+case class DeltaImplicitCast(session: SparkSession)
+    extends Rule[LogicalPlan] with DeltaInsertCastSupport {
 
   override def apply(plan: LogicalPlan): LogicalPlan = {
     if (!session.conf.get(DeltaSQLConf.DELTA_DF_WRITE_ALLOW_IMPLICIT_CASTS)) return plan
