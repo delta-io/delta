@@ -22,9 +22,10 @@ import java.nio.charset.Charset
 import scala.collection.JavaConverters._
 import scala.util.Try
 
-import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.sources._
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.commons.io.FileUtils
 import org.apache.commons.lang3.exception.ExceptionUtils
@@ -49,6 +50,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     "trigger.Once with deferred commit should work",
     "trigger.AvailableNow should work",
     "consecutive schema evolutions",
+    "consecutive schema evolutions with protocol-only tail",
     "latestOffset should not progress before schema evolved"
   )
 
@@ -1519,6 +1521,60 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       ProcessAllAvailable(),
       CheckAnswer((5 until 6).map(i => (i.toString, i.toString)): _*)
     )
+  }
+
+  testSchemaEvolution("consecutive schema evolutions with protocol-only tail") {
+    implicit log =>
+    // The merger chain here ends with a Protocol-only commit (no Metadata action). The schema
+    // changes are chosen so that the start schema, the post-first-change schema (currentMetadata
+    // when the merger runs), and the final snapshot schema are all distinct -- otherwise a faulty
+    // merger could land on a coincidentally-equal schema and still appear to pass.
+    val v5 = log.update().version // file action; starting schema <a, b>
+    renameColumn("b", "c") // v6 -> <a, c>  (this becomes currentMetadata at merger time)
+    addColumn("d") // v7 -> <a, c, d>
+    dropColumn("c") // v8/v9 -> <a, d>      (this is the final snapshot schema)
+    val newProtocol = log.update().protocol.merge(
+      Action.supportedProtocolVersion(featuresToExclude = Seq(CatalogOwnedTableFeature)))
+    log.upgradeProtocol(newProtocol) // protocol-only tail commit
+    val vTail = log.update().version
+    // File action bounds the merger chain.
+    addData(5 until 6)
+
+    def df: DataFrame = readStream(
+      schemaLocation = Some(getDefaultSchemaLocation.toString), startingVersion = Some(v5))
+
+    // Initialize the schema log @ v5 with <a, b>.
+    testStream(df)(
+      StartStream(checkpointLocation = getDefaultCheckpoint.toString),
+      ProcessAllAvailableIgnoreError,
+      ExpectMetadataEvolutionExceptionFromInitialization
+    )
+    assert(getDefaultSchemaLog().getLatestMetadata.get.deltaCommitVersion == v5)
+    assert(getDefaultSchemaLog().getLatestMetadata.get.dataSchema.fieldNames
+      .sameElements(Array("a", "b")))
+
+    // Encounter the first schema change at v6, persists (v6, <a, c>), fails the stream.
+    testStream(df)(
+      StartStream(checkpointLocation = getDefaultCheckpoint.toString),
+      ProcessAllAvailableIgnoreError,
+      CheckAnswer(Seq(4).map(_.toString).map(i => (i, i)): _*),
+      ExpectMetadataEvolutionException
+    )
+    assert(getDefaultSchemaLog().getLatestMetadata.get.deltaCommitVersion == v5 + 1)
+    assert(getDefaultSchemaLog().getLatestMetadata.get.dataSchema.fieldNames
+      .sameElements(Array("a", "c")))
+
+    // Next restart runs the consecutive-merger, scanning v6..vTail and stopping at the file
+    // action. The merged entry must reflect the post-dropColumn schema <a, d> and the upgraded
+    // protocol, with deltaCommitVersion == vTail. With the protocol-only-tail bug, the merger
+    // would instead leave dataSchema = <a, c> (the pre-chain currentMetadata) -- which is
+    // distinguishable from both the start schema <a, b> and the correct schema <a, d>.
+    val latestDf = df
+    assert(getDefaultSchemaLog().getLatestMetadata.get.deltaCommitVersion == vTail,
+      s"merger should advance deltaCommitVersion to the protocol-only tail at $vTail")
+    assert(latestDf.schema.fieldNames.sameElements(Array("a", "d")),
+      "merger should fold the metadata changes through dropColumn; got " +
+        latestDf.schema.fieldNames.toSeq)
   }
 
   testSchemaEvolution("upgrade and downgrade") { implicit log =>
