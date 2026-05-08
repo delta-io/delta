@@ -27,8 +27,14 @@ import org.scalatest.funsuite.AnyFunSuite
 class GeometryDataSkippingSuite extends AnyFunSuite with WriteUtils with GeoTestUtils {
 
   // 4-quadrant layout + 1 null-stats file (f4, never skipped):
-  //   f2 NW [0,7]-[3,10]    f1 NE [7,7]-[10,10]
-  //   f0 SW [0,0]-[3,3]     f3 SE [7,0]-[10,3]
+  //    y=10 +------+        +------+
+  //         |  f2  |        |  f1  |
+  //    y=7  +------+        +------+
+  //                (gap)
+  //    y=3  +------+        +------+
+  //         |  f0  |        |  f3  |
+  //    y=0  +------+        +------+
+  //         x=0    x=3      x=7    x=10
   private val fileExtents: Seq[Option[(Double, Double, Double, Double)]] = Seq(
     Some((0.0, 0.0, 3.0, 3.0)),
     Some((7.0, 7.0, 10.0, 10.0)),
