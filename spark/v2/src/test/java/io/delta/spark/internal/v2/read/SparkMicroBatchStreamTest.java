@@ -4979,9 +4979,9 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
   }
 
   /**
-   * Regression test for the monotonically_increasing_id() bug: verifies that file indices
-   * produced by the DataFrame path are contiguous 0-based integers (0, 1, 2, ...), matching
-   * the driver path's sequential indexing and DSv1's zipWithIndex().
+   * Regression test for the monotonically_increasing_id() bug: verifies that file indices produced
+   * by the DataFrame path are contiguous 0-based integers (0, 1, 2, ...), matching the driver
+   * path's sequential indexing and DSv1's zipWithIndex().
    *
    * <p>Non-contiguous indices (e.g., partition-relative IDs from monotonically_increasing_id())
    * would break checkpoint compatibility when switching between the DataFrame and driver paths.
@@ -5028,8 +5028,7 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
       // Sanity: must have BEGIN sentinel + at least one data file + END sentinel
       assertThat(files).hasSizeGreaterThanOrEqualTo(3);
       assertThat(files.get(0).getIndex()).isEqualTo(DeltaSourceOffset.BASE_INDEX());
-      assertThat(files.get(files.size() - 1).getIndex())
-          .isEqualTo(DeltaSourceOffset.END_INDEX());
+      assertThat(files.get(files.size() - 1).getIndex()).isEqualTo(DeltaSourceOffset.END_INDEX());
 
       // Extract data-file indices (everything except BEGIN and END sentinels)
       List<Long> dataFileIndices =

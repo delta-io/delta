@@ -1915,7 +1915,7 @@ public class SparkMicroBatchStream
       public IndexedFile next() {
         if (!sentBegin) {
           sentBegin = true;
-          return new IndexedFile(version, DeltaSourceOffset.BASE_INDEX(), null);
+          return IndexedFile.sentinel(version, DeltaSourceOffset.BASE_INDEX());
         }
 
         if (localIter.hasNext()) {
@@ -1925,11 +1925,11 @@ public class SparkMicroBatchStream
           // the extra _file_idx column at the end is safely ignored.
           io.delta.kernel.data.Row kernelRow =
               new SparkRowToKernelRow(sparkRow, AddFile.SCHEMA_WITHOUT_STATS);
-          return new IndexedFile(version, fileIdx, new AddFile(kernelRow));
+          return IndexedFile.addFile(version, fileIdx, new AddFile(kernelRow));
         }
 
         sentEnd = true;
-        return new IndexedFile(version, DeltaSourceOffset.END_INDEX(), null);
+        return IndexedFile.sentinel(version, DeltaSourceOffset.END_INDEX());
       }
 
       @Override
