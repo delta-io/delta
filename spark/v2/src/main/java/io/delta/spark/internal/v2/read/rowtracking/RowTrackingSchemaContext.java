@@ -53,6 +53,7 @@ public class RowTrackingSchemaContext implements Serializable {
   private int materializedRowIdIndex = -1;
   private int materializedRowCommitVersionIndex = -1;
   private int rowIndexColumnIndex = -1;
+  private StructType metadataSchema;
   private StructType dataSchema;
   private Seq<Object> dataColumnsOrdinals;
   private StructType partitionSchema;
@@ -69,6 +70,7 @@ public class RowTrackingSchemaContext implements Serializable {
       return;
     }
     StructType metadataType = (StructType) metadataColumn.dataType();
+    this.metadataSchema = metadataType;
 
     StructType baseSchemaWithoutMetadata =
         new StructType(
@@ -148,6 +150,10 @@ public class RowTrackingSchemaContext implements Serializable {
 
   public boolean areRowTrackingMetadataFieldsRequested() {
     return isRowIdRequested() || isRowCommitVersionRequested();
+  }
+
+  public StructType getMetadataSchema() {
+    return metadataSchema;
   }
 
   private static Seq<Object> buildRangeOrdinals(int startInclusive, int endExclusive) {

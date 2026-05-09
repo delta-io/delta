@@ -243,7 +243,8 @@ public class UCDeltaTableDataFrameStreamingTest extends UCDeltaTableIntegrationB
    * CDF streaming reads work for EXTERNAL tables but fail for MANAGED tables.
    *
    * <p>For EXTERNAL: verifies that inserts and a delete produce the expected typed change events.
-   * For MANAGED: verifies the stream fails with an error containing "not supported" and "CDC".
+   * For MANAGED: verifies the stream fails with an error that names the user-facing option and
+   * table type.
    */
   @TestAllTableTypes
   public void testStreamingCDFRead(TableType tableType) throws Exception {
@@ -286,7 +287,8 @@ public class UCDeltaTableDataFrameStreamingTest extends UCDeltaTableIntegrationB
                 tableName,
                 r -> r.option("readChangeFeed", "true").option("startingVersion", insertVersion),
                 "not supported",
-                "CDC");
+                "readChangeFeed",
+                "Unity Catalog managed");
           }
         });
   }
@@ -347,6 +349,77 @@ public class UCDeltaTableDataFrameStreamingTest extends UCDeltaTableIntegrationB
           assertInvalidStreamOption(
               tableName, r -> r.option("startingVersion", -1), "startingVersion");
           assertInvalidStreamOption(tableName, r -> r.option("startingVersion", 999999), "999999");
+        });
+  }
+
+  @TestAllTableTypes
+  public void testStreamingReadChangeFeedFalseDoesNotError(TableType tableType) throws Exception {
+    if (tableType != TableType.MANAGED) return;
+    assertManagedStreamingOptionDoesNotError(
+        "streaming_read_cdf_false_test", "readChangeFeed", "false");
+  }
+
+  @TestAllTableTypes
+  public void testStreamingAllowSourceColumnDropFalseDoesNotError(TableType tableType)
+      throws Exception {
+    if (tableType != TableType.MANAGED) return;
+    assertManagedStreamingOptionDoesNotError(
+        "streaming_allow_drop_false_test", "allowSourceColumnDrop", "false");
+  }
+
+  @TestAllTableTypes
+  public void testStreamingMetadataColumns(TableType tableType) throws Exception {
+    if (tableType != TableType.MANAGED) return;
+    withNewTable(
+        "streaming_metadata_columns_test",
+        "id INT",
+        null,
+        tableType,
+        "'delta.enableRowTracking'='true'",
+        tableName -> {
+          sql("INSERT INTO %s VALUES (1)", tableName);
+          List<Row> result = new ArrayList<>();
+          spark()
+              .readStream()
+              .format("delta")
+              .table(tableName)
+              .selectExpr("id", "_metadata.file_path AS file_path", "_metadata.row_id AS row_id")
+              .writeStream()
+              .trigger(Trigger.AvailableNow())
+              .option("checkpointLocation", checkpoint())
+              .foreachBatch(
+                  (VoidFunction2<Dataset<Row>, Long>) (df, id) -> result.addAll(df.collectAsList()))
+              .start()
+              .awaitTermination();
+
+          assertThat(result).hasSize(1);
+          assertThat(result.get(0).getInt(0)).isEqualTo(1);
+          assertThat(result.get(0).getString(1)).endsWith(".parquet");
+          assertThat(result.get(0).isNullAt(2)).isFalse();
+        });
+  }
+
+  private void assertManagedStreamingOptionDoesNotError(
+      String tableName, String optionName, String optionValue) throws Exception {
+    withNewTable(
+        tableName,
+        "id INT",
+        TableType.MANAGED,
+        fullTableName -> {
+          sql("INSERT INTO %s VALUES (1)", fullTableName);
+          List<Integer> result = new ArrayList<>();
+          spark()
+              .readStream()
+              .format("delta")
+              .option(optionName, optionValue)
+              .table(fullTableName)
+              .writeStream()
+              .trigger(Trigger.AvailableNow())
+              .option("checkpointLocation", checkpoint())
+              .foreachBatch((VoidFunction2<Dataset<Row>, Long>) (df, id) -> result.addAll(ids(df)))
+              .start()
+              .awaitTermination();
+          assertThat(result).containsExactly(1);
         });
   }
 

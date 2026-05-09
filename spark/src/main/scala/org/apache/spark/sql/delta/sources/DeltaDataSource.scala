@@ -124,7 +124,9 @@ class DeltaDataSource
     val deltaV2Mode = new DeltaV2Mode(sqlContext.sparkSession.sessionState.conf)
     if (schema.isDefined &&
         deltaV2Mode.shouldBypassSchemaValidationForStreaming(parameters.asJava)) {
-      require(!CDCReader.isCDCRead(options), "CDC read is not supported for schema bypass.")
+      require(!CDCReader.isCDCRead(options),
+        "The 'readChangeFeed' (Change Data Feed) streaming option is not supported for " +
+          "Unity Catalog managed Delta tables.")
       return (shortName(), schema.get)
     }
     val path = parameters.getOrElse("path", {

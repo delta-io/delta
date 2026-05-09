@@ -21,20 +21,23 @@ import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.ProjectingInternalRow;
 import org.apache.spark.sql.catalyst.expressions.GenericInternalRow;
 import org.apache.spark.sql.catalyst.expressions.JoinedRow;
+import org.apache.spark.sql.catalyst.expressions.Literal;
 import org.apache.spark.sql.delta.DefaultRowCommitVersion$;
+import org.apache.spark.sql.delta.RowCommitVersion$;
 import org.apache.spark.sql.delta.RowId$;
+import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
+import org.apache.spark.sql.types.StructField;
 import scala.Function1;
 import scala.collection.Iterator;
 import scala.runtime.AbstractFunction1;
 
 /**
- * Read-function decorator that appends row-tracking values under the DSv2 {@code _metadata} struct.
+ * Read-function decorator that appends metadata values under the DSv2 {@code _metadata} struct.
  *
  * <p>This wrapper consumes rows that include internal helper columns introduced by {@link
- * RowTrackingSchemaContext}, computes requested row-tracking metadata fields using Delta
- * null-coalesce semantics, and returns rows in logical output order: {@code data columns +
- * _metadata + partition columns}.
+ * RowTrackingSchemaContext}, computes requested metadata fields, and returns rows in logical output
+ * order: {@code data columns + _metadata + partition columns}.
  */
 public class RowTrackingReadFunction
     extends AbstractFunction1<PartitionedFile, Iterator<InternalRow>> implements Serializable {
@@ -49,7 +52,8 @@ public class RowTrackingReadFunction
   }
 
   /**
-   * Produces rows with a single {@code _metadata} struct column that contains row-tracking values.
+   * Produces rows with a single {@code _metadata} struct column that contains requested metadata
+   * values.
    *
    * <p>For each row, computes {@code row_id} as {@code COALESCE(materialized_row_id, base_row_id +
    * physical_row_index)} and computes {@code row_commit_version} as {@code
@@ -77,15 +81,12 @@ public class RowTrackingReadFunction
       commitVersionId = 0L;
     }
 
-    int rowTrackingFieldsCount =
-        (rowTrackingSchemaContext.isRowIdRequested() ? 1 : 0)
-            + (rowTrackingSchemaContext.isRowCommitVersionRequested() ? 1 : 0);
-
     Iterator<InternalRow> baseIterator = baseReadFunc.apply(file);
 
     GenericInternalRow metadataStruct = new GenericInternalRow(1);
-    // The fields inside the metadata structs are ordered: row_id first / row_commit_version second
-    GenericInternalRow rowTrackingFields = new GenericInternalRow(rowTrackingFieldsCount);
+    GenericInternalRow metadataFields =
+        new GenericInternalRow(rowTrackingSchemaContext.getMetadataSchema().fields().length);
+    populateFileMetadataFields(file, metadataFields);
 
     ProjectingInternalRow dataProjection =
         ProjectingInternalRow.apply(
@@ -101,34 +102,10 @@ public class RowTrackingReadFunction
     return CloseableIterator.wrap(baseIterator)
         .mapCloseable(
             row -> {
-              int index = 0;
-              if (rowTrackingSchemaContext.isRowIdRequested()) {
-                int materializedRowIdIndex = rowTrackingSchemaContext.getMaterializedRowIdIndex();
-                int rowIndexColumnIndex = rowTrackingSchemaContext.getRowIndexColumnIndex();
-                long physicalRowIndex = row.getLong(rowIndexColumnIndex);
-                // When reading tables with f.e. mixed file history, the materialized RowIds can be
-                // absent so materializedRowIdIndex can be beyond the row's width. Treat this case
-                // like null and fall back to baseRowId + physicalRowIndex.
-                long rowId =
-                    (row.numFields() <= materializedRowIdIndex
-                            || row.isNullAt(materializedRowIdIndex))
-                        ? baseRowId + physicalRowIndex
-                        : row.getLong(materializedRowIdIndex);
-                rowTrackingFields.setLong(index++, rowId);
-              }
-
-              if (rowTrackingSchemaContext.isRowCommitVersionRequested()) {
-                int materializedCommitVersionIndex =
-                    rowTrackingSchemaContext.getMaterializedRowCommitVersionIndex();
-                long rowCommitVersion =
-                    row.isNullAt(materializedCommitVersionIndex)
-                        ? commitVersionId
-                        : row.getLong(materializedCommitVersionIndex);
-                rowTrackingFields.setLong(index, rowCommitVersion);
-              }
+              populateRowTrackingMetadataFields(row, metadataFields, baseRowId, commitVersionId);
               dataProjection.project(row);
               partitionProjection.project(row);
-              metadataStruct.update(0, rowTrackingFields.copy());
+              metadataStruct.update(0, metadataFields.copy());
 
               // Partition columns are appended after data columns in readSchema, so insert
               // `_metadata` between projected data columns and partition columns to preserve
@@ -144,6 +121,52 @@ public class RowTrackingReadFunction
               }
               return dataWithMetadata;
             });
+  }
+
+  private void populateRowTrackingMetadataFields(
+      InternalRow row, GenericInternalRow metadataFields, long baseRowId, long commitVersionId) {
+    StructField[] fields = rowTrackingSchemaContext.getMetadataSchema().fields();
+    for (int i = 0; i < fields.length; i++) {
+      String name = fields[i].name();
+      if (RowId$.MODULE$.ROW_ID().equals(name)) {
+        int materializedRowIdIndex = rowTrackingSchemaContext.getMaterializedRowIdIndex();
+        int rowIndexColumnIndex = rowTrackingSchemaContext.getRowIndexColumnIndex();
+        long physicalRowIndex = row.getLong(rowIndexColumnIndex);
+        // When reading tables with f.e. mixed file history, the materialized RowIds can be absent
+        // so materializedRowIdIndex can be beyond the row's width. Treat this case like null and
+        // fall back to baseRowId + physicalRowIndex.
+        long rowId =
+            (row.numFields() <= materializedRowIdIndex || row.isNullAt(materializedRowIdIndex))
+                ? baseRowId + physicalRowIndex
+                : row.getLong(materializedRowIdIndex);
+        metadataFields.setLong(i, rowId);
+      } else if (RowCommitVersion$.MODULE$.METADATA_STRUCT_FIELD_NAME().equals(name)) {
+        int materializedCommitVersionIndex =
+            rowTrackingSchemaContext.getMaterializedRowCommitVersionIndex();
+        long rowCommitVersion =
+            row.isNullAt(materializedCommitVersionIndex)
+                ? commitVersionId
+                : row.getLong(materializedCommitVersionIndex);
+        metadataFields.setLong(i, rowCommitVersion);
+      }
+    }
+  }
+
+  private void populateFileMetadataFields(PartitionedFile file, GenericInternalRow metadataFields) {
+    StructField[] fields = rowTrackingSchemaContext.getMetadataSchema().fields();
+    for (int i = 0; i < fields.length; i++) {
+      String name = fields[i].name();
+      if (FileFormat$.MODULE$.BASE_METADATA_EXTRACTORS().contains(name)) {
+        Literal literal =
+            FileFormat$.MODULE$.getFileConstantMetadataColumnValue(
+                name, file, FileFormat$.MODULE$.BASE_METADATA_EXTRACTORS());
+        if (literal.value() == null) {
+          metadataFields.setNullAt(i);
+        } else {
+          metadataFields.update(i, literal.value());
+        }
+      }
+    }
   }
 
   /** Creates a row-tracking read-function wrapper around a base Parquet read function. */
