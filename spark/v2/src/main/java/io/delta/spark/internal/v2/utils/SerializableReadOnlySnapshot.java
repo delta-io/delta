@@ -44,8 +44,7 @@ import org.apache.spark.util.SerializableConfiguration;
  * <p>TODO: This class relies on 10 {@code io.delta.kernel.internal.*} packages which have no
  * stability guarantees. Any Kernel refactor (constructor signature changes, package moves, class
  * renames) will break this code without warning. This is temporary until Kernel exposes a public
- * serialization API (e.g. {@code Snapshot.toSerializableReadOnlyState()}). Track:
- * https://github.com/delta-io/delta/issues/XXXXX
+ * serialization API (e.g. {@code Snapshot.toSerializableReadOnlyState()}).
  */
 public class SerializableReadOnlySnapshot implements Serializable {
 
