@@ -17,6 +17,8 @@ package io.delta.spark.internal.v2.utils;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.data.GenericRow;
@@ -194,6 +196,17 @@ public class KernelRowToSparkRowTest {
     assertNotEquals(row1, row3);
   }
 
+  /**
+   * Uses vector-backed rows (via DefaultColumnarBatch) instead of GenericRow because GenericRow's
+   * throwIfUnsafeAccess rejects getInt() for DateType and getLong() for
+   * TimestampType/TimestampNTZType. In production, KernelRowToSparkRow wraps ColumnarBatchRow or
+   * StructRow (both extend ChildVectorBasedRow), where getInt()/getLong() delegate to
+   * ColumnVector.getInt()/getLong() which correctly handle date/timestamp types.
+   *
+   * <p>This test exercises the exact production code path: ColumnarBatchRow ->
+   * ChildVectorBasedRow.getInt()/getLong() -> GenericColumnVector.getInt()/getLong() ->
+   * KernelRowToSparkRow.toSparkValue() -> DateTimeUtils conversion
+   */
   @Test
   public void testDateAndTimestampConversion() {
     StructType schema =
@@ -206,12 +219,16 @@ public class KernelRowToSparkRowTest {
     long tsMicros = 1750000000000000L;
     long ntzMicros = 1750000000000000L;
 
-    Map<Integer, Object> fieldMap = new HashMap<>();
-    fieldMap.put(0, epochDays);
-    fieldMap.put(1, tsMicros);
-    fieldMap.put(2, ntzMicros);
+    ColumnVector dateVector = VectorUtils.buildColumnVector(List.of(epochDays), DateType.DATE);
+    ColumnVector tsVector =
+        VectorUtils.buildColumnVector(List.of(tsMicros), TimestampType.TIMESTAMP);
+    ColumnVector ntzVector =
+        VectorUtils.buildColumnVector(List.of(ntzMicros), TimestampNTZType.TIMESTAMP_NTZ);
 
-    io.delta.kernel.data.Row kernelRow = new GenericRow(schema, fieldMap);
+    DefaultColumnarBatch batch =
+        new DefaultColumnarBatch(1, schema, new ColumnVector[] {dateVector, tsVector, ntzVector});
+    io.delta.kernel.data.Row kernelRow = batch.getRows().next();
+
     Row sparkRow = new KernelRowToSparkRow(kernelRow);
 
     Object dateVal = sparkRow.get(0);

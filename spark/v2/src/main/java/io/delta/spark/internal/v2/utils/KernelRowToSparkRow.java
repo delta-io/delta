@@ -72,6 +72,48 @@ public class KernelRowToSparkRow implements Row {
         rowFieldAccessor, i, kernelSchema.at(i).getDataType(), sparkSchema.fields()[i].dataType());
   }
 
+  /**
+   * Field-by-field equality matching Spark's Row.equals semantics. Required because Java classes
+   * implementing Scala traits get Object.equals (reference equality) -- the JVM does not inherit
+   * default methods from interfaces for Object methods.
+   */
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) return true;
+    if (!(o instanceof Row)) return false;
+    Row other = (Row) o;
+    if (length() != other.length()) return false;
+    for (int i = 0; i < length(); i++) {
+      if (isNullAt(i) != other.isNullAt(i)) return false;
+      if (!isNullAt(i)) {
+        Object thisVal = get(i);
+        Object otherVal = other.get(i);
+        if (thisVal instanceof byte[] && otherVal instanceof byte[]) {
+          if (!java.util.Arrays.equals((byte[]) thisVal, (byte[]) otherVal)) return false;
+        } else if (!thisVal.equals(otherVal)) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  @Override
+  public int hashCode() {
+    int result = 37;
+    for (int i = 0; i < length(); i++) {
+      Object val = isNullAt(i) ? null : get(i);
+      if (val == null) {
+        result = 37 * result;
+      } else if (val instanceof byte[]) {
+        result = 37 * result + java.util.Arrays.hashCode((byte[]) val);
+      } else {
+        result = 37 * result + val.hashCode();
+      }
+    }
+    return result;
+  }
+
   @Override
   public Row copy() {
     Object[] values = new Object[length()];
@@ -287,12 +329,18 @@ public class KernelRowToSparkRow implements Row {
     } else if (dt instanceof IntegerType) {
       return accessor.getInt(ordinal);
     } else if (dt instanceof DateType) {
+      // Kernel stores DateType internally as int (epoch days since 1970-01-01).
+      // Spark's public Row.getDate() expects java.sql.Date objects.
       return DateTimeUtils.toJavaDate(accessor.getInt(ordinal));
     } else if (dt instanceof LongType) {
       return accessor.getLong(ordinal);
     } else if (dt instanceof TimestampType) {
+      // Kernel stores TimestampType as long (microseconds since epoch, UTC).
+      // Spark's public Row expects java.sql.Timestamp objects.
       return DateTimeUtils.toJavaTimestamp(accessor.getLong(ordinal));
     } else if (dt instanceof TimestampNTZType) {
+      // Kernel stores TimestampNTZType as long (microseconds, wall-clock / no timezone).
+      // Spark's public Row expects java.time.LocalDateTime objects.
       return DateTimeUtils.microsToLocalDateTime(accessor.getLong(ordinal));
     } else if (dt instanceof FloatType) {
       return accessor.getFloat(ordinal);

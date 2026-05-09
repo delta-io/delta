@@ -101,6 +101,24 @@ public class SparkRowToKernelRow implements Row {
     checkState(
         !sparkRow.isNullAt(ordinal),
         String.format("Cannot read a null value as INT at ordinal %d", ordinal));
+    if (kernelSchema.at(ordinal).getDataType() instanceof DateType) {
+      // Kernel's Row.getInt() contract for DateType: return epoch days since 1970-01-01.
+      // (Evidence: VectorUtils.java groups IntegerType||DateType -> getInt(),
+      // GenericColumnVector does the same, StructRow delegates to ColumnVector.getInt()
+      // which natively stores dates as epoch-day ints.)
+      //
+      // Spark's public Row stores DateType as java.sql.Date (or java.time.LocalDate
+      // depending on spark.sql.datetime.java8API.enabled), NOT as raw int.
+      // Row.getInt() on Spark's side is just a raw cast -- it would ClassCastException.
+      // We must convert the java.sql/java.time object to the int Kernel expects.
+      //
+      // We handle multiple input types because the wrapped Spark Row could be:
+      // - GenericRowWithSchema from RowFactory.create() -> stores java.sql.Date
+      // - InternalRow wrapper -> may already store as int (epoch days)
+      // - Any other Row implementation
+      Object raw = sparkRow.get(ordinal);
+      return (int) sparkValueToKernel(raw, DateType.DATE);
+    }
     return sparkRow.getInt(ordinal);
   }
 
@@ -109,6 +127,20 @@ public class SparkRowToKernelRow implements Row {
     checkState(
         !sparkRow.isNullAt(ordinal),
         String.format("Cannot read a null value as LONG at ordinal %d", ordinal));
+    DataType dt = kernelSchema.at(ordinal).getDataType();
+    if (dt instanceof TimestampType || dt instanceof TimestampNTZType) {
+      // Kernel's Row.getLong() contract for TimestampType: return microseconds since epoch (UTC).
+      // For TimestampNTZType: return microseconds (wall-clock, no timezone).
+      // Same evidence pattern as getInt()/DateType above -- production vector-backed rows store
+      // timestamps as raw longs, and Kernel consumers (ActionsIterator, LogReplay, etc.) call
+      // getLong() to read them.
+      //
+      // Spark's public Row stores TimestampType as java.sql.Timestamp (or java.time.Instant)
+      // and TimestampNTZType as java.time.LocalDateTime -- not raw long.
+      // We must convert to the microsecond representation Kernel expects.
+      Object raw = sparkRow.get(ordinal);
+      return (long) sparkValueToKernel(raw, dt);
+    }
     return sparkRow.getLong(ordinal);
   }
 
@@ -232,12 +264,33 @@ public class SparkRowToKernelRow implements Row {
     if (PASSTHROUGH_TYPES.contains(dt.getClass())) {
       return sparkValue;
     }
+    // --- Date/Timestamp conversion (Spark -> Kernel) ---
+    //
+    // Kernel expects dates and timestamps as raw primitives:
+    //   DateType        -> int  (epoch days since 1970-01-01)
+    //   TimestampType   -> long (microseconds since epoch, UTC)
+    //   TimestampNTZType -> long (microseconds since epoch, wall-clock / no timezone)
+    //
+    // However, the incoming sparkValue can arrive in MULTIPLE forms depending on the
+    // call site:
+    //   1. Already a raw int/long — happens when the value originated from Spark's
+    //      InternalRow (e.g., a GenericInternalRow or UnsafeRow), where dates/timestamps
+    //      are stored as primitives matching Kernel's representation.
+    //   2. A java.sql.Date / java.sql.Timestamp / java.time.* object — happens when the
+    //      value comes through Spark's public Row interface (Row.get(i)), which returns
+    //      the user-facing Java types.
+    //
+    // We handle both forms for each type so this converter works regardless of whether
+    // the caller supplies internal or external row values.
     if (dt instanceof DateType) {
       if (sparkValue instanceof Integer) {
+        // Already epoch-days (from InternalRow); matches Kernel's DateType representation.
         return sparkValue;
       } else if (sparkValue instanceof java.sql.Date) {
+        // Convert java.sql.Date -> epoch-days int.
         return DateTimeUtils.fromJavaDate((java.sql.Date) sparkValue);
       } else if (sparkValue instanceof java.time.LocalDate) {
+        // Convert java.time.LocalDate -> epoch-days int.
         return DateTimeUtils.localDateToDays((java.time.LocalDate) sparkValue);
       }
       throw new UnsupportedOperationException(
@@ -245,10 +298,13 @@ public class SparkRowToKernelRow implements Row {
     }
     if (dt instanceof TimestampType) {
       if (sparkValue instanceof Long) {
+        // Already epoch-microseconds (from InternalRow); matches Kernel's TimestampType.
         return sparkValue;
       } else if (sparkValue instanceof java.sql.Timestamp) {
+        // Convert java.sql.Timestamp -> epoch-microseconds long (UTC).
         return DateTimeUtils.fromJavaTimestamp((java.sql.Timestamp) sparkValue);
       } else if (sparkValue instanceof java.time.Instant) {
+        // Convert java.time.Instant -> epoch-microseconds long (UTC).
         return DateTimeUtils.instantToMicros((java.time.Instant) sparkValue);
       }
       throw new UnsupportedOperationException(
@@ -256,8 +312,10 @@ public class SparkRowToKernelRow implements Row {
     }
     if (dt instanceof TimestampNTZType) {
       if (sparkValue instanceof Long) {
+        // Already epoch-microseconds (from InternalRow); matches Kernel's TimestampNTZType.
         return sparkValue;
       } else if (sparkValue instanceof java.time.LocalDateTime) {
+        // Convert wall-clock LocalDateTime -> epoch-microseconds long (no timezone).
         return DateTimeUtils.localDateTimeToMicros((java.time.LocalDateTime) sparkValue);
       }
       throw new UnsupportedOperationException(
