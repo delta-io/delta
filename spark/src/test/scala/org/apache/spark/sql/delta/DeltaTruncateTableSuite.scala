@@ -181,14 +181,17 @@ final class DeltaTruncateTableSuite
     assert(actual.minWriterVersion === expected.minWriterVersion,
       s"minWriterVersion changed: ${expected.minWriterVersion} -> ${actual.minWriterVersion}")
     assert(actual.readerFeatures === expected.readerFeatures,
-      s"Reader features changed.\nBefore: ${expected.readerFeatures}\nAfter:  ${actual.readerFeatures}")
+      s"Reader features changed.\nBefore: ${expected.readerFeatures}\n" +
+        s"After:  ${actual.readerFeatures}")
     assert(actual.writerFeatures === expected.writerFeatures,
-      s"Writer features changed.\nBefore: ${expected.writerFeatures}\nAfter:  ${actual.writerFeatures}")
+      s"Writer features changed.\nBefore: ${expected.writerFeatures}\n" +
+        s"After:  ${actual.writerFeatures}")
     assert(actual.configuration === expected.configuration,
       s"Metadata configuration changed.\nBefore: ${expected.configuration}\n" +
         s"After:  ${actual.configuration}")
     assert(actual.schema === expected.schema,
-      s"Schema changed.\nBefore: ${expected.schema.treeString}\nAfter:  ${actual.schema.treeString}")
+      s"Schema changed.\nBefore: ${expected.schema.treeString}\n" +
+        s"After:  ${actual.schema.treeString}")
     assert(actual.partitionColumns === expected.partitionColumns,
       s"Partition columns changed: ${expected.partitionColumns} -> ${actual.partitionColumns}")
   }
@@ -476,7 +479,7 @@ object DeltaTruncateTableSuite {
    *   - `stableProperties` from SHOW TBLPROPERTIES (catalog-side view), with mutable keys
    *     filtered out (delta.lastCommitTimestamp, delta.lastUpdateVersion, transient_lastDdlTime)
    *
-   * `numFiles` / `sizeInBytes` from DESCRIBE DETAIL are intentionally excluded — those
+   * `numFiles` / `sizeInBytes` from DESCRIBE DETAIL are intentionally excluded - those
    * legitimately change across a non-empty truncate.
    */
   private final case class TableSnapshot(
