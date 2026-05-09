@@ -180,8 +180,11 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
 
   // Prepare the result(Protocol and Metadata) for client.GetMetadata for the sharedTable based on
   // the latest table info of the deltaTable, store them in BlockManager.
-  private[spark] def prepareMockedClientMetadata(deltaTable: String, sharedTable: String): Unit = {
-    val snapshotToUse = getSnapshotToUse(deltaTable, None)
+  private[spark] def prepareMockedClientMetadata(
+      deltaTable: String,
+      sharedTable: String,
+      versionAsOf: Option[Long] = None): Unit = {
+    val snapshotToUse = getSnapshotToUse(deltaTable, versionAsOf)
     val dsProtocol: DeltaSharingProtocol = DeltaSharingProtocol(snapshotToUse.protocol)
     val dsMetadata: DeltaSharingMetadata = DeltaSharingMetadata(
       deltaMetadata = snapshotToUse.metadata
@@ -189,7 +192,8 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
 
     // Put the metadata in blockManager for DeltaSharingClient to return for getMetadata.
     DeltaSharingUtils.overrideIteratorBlock[String](
-      blockId = TestClientForDeltaFormatSharing.getBlockId(sharedTable, "getMetadata"),
+      blockId = TestClientForDeltaFormatSharing.getBlockId(
+        sharedTable, "getMetadata", versionAsOf = versionAsOf),
       values = Seq(dsProtocol.json, dsMetadata.json).toIterator
     )
   }

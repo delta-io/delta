@@ -26,6 +26,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.spark.internal.v2.read.SparkScanBuilder;
+import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
@@ -46,6 +47,8 @@ import org.apache.spark.sql.connector.write.WriteBuilder;
 import org.apache.spark.sql.delta.DeltaTableUtils;
 import org.apache.spark.sql.delta.RowCommitVersion$;
 import org.apache.spark.sql.delta.RowId$;
+import org.apache.spark.sql.delta.SparkTableShims$;
+import org.apache.spark.sql.delta.commands.cdc.CDCReader;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.DataTypes;
@@ -60,12 +63,21 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsM
   private static final String ROW_COMMIT_VERSION_METADATA_FIELD_NAME =
       RowCommitVersion$.MODULE$.METADATA_STRUCT_FIELD_NAME();
 
-  private static final Set<TableCapability> CAPABILITIES =
-      Collections.unmodifiableSet(
-          EnumSet.of(
-              TableCapability.BATCH_READ,
-              TableCapability.MICRO_BATCH_READ,
-              TableCapability.BATCH_WRITE));
+  private static final Set<TableCapability> CAPABILITIES = buildCapabilities();
+
+  private static Set<TableCapability> buildCapabilities() {
+    EnumSet<TableCapability> caps =
+        EnumSet.of(
+            TableCapability.BATCH_READ,
+            TableCapability.MICRO_BATCH_READ,
+            TableCapability.BATCH_WRITE);
+    scala.Option<TableCapability> schemaEvolution =
+        SparkTableShims$.MODULE$.schemaEvolutionCapability();
+    if (schemaEvolution.isDefined()) {
+      caps.add(schemaEvolution.get());
+    }
+    return Collections.unmodifiableSet(caps);
+  }
 
   private final Identifier identifier;
   private final String tablePath;
@@ -79,6 +91,7 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsM
 
   private final SchemaProvider schemaProvider;
   private final Optional<CatalogTable> catalogTable;
+  private final boolean isCDCRead;
 
   /**
    * Creates a SparkTable from a filesystem path without a catalog table.
@@ -167,6 +180,7 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsM
 
     // Schema-related metadata is lazily computed on first access within SchemaProvider
     this.schemaProvider = new SchemaProvider(SparkSession.active(), initialSnapshot);
+    this.isCDCRead = CDCReader.isCDCRead(new CaseInsensitiveStringMap(this.options));
   }
 
   /**
@@ -223,12 +237,13 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsM
 
   @Override
   public StructType schema() {
-    return schemaProvider.getPublicSchema();
+    StructType base = schemaProvider.getPublicSchema();
+    return isCDCRead ? CDCSchemaContext.appendCDCColumns(base) : base;
   }
 
   @Override
   public Column[] columns() {
-    return schemaProvider.getColumns();
+    return CatalogV2Util.structTypeToV2Columns(schema());
   }
 
   @Override
@@ -378,7 +393,6 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsM
     private List<String> partColNames;
     private StructType dataSchema;
     private StructType partitionSchema;
-    private Column[] columns;
     private Transform[] partitionTransforms;
 
     SchemaProvider(SparkSession sparkSession, Snapshot snapshot) {
@@ -433,8 +447,6 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsM
       this.dataSchema = new StructType(dataFields.toArray(new StructField[0]));
       this.partitionSchema = new StructType(partitionFields.toArray(new StructField[0]));
 
-      // Use publicSchema (cleaned) for external API
-      this.columns = CatalogV2Util.structTypeToV2Columns(publicSchema);
       this.partitionTransforms =
           partColNames.stream().map(Expressions::identity).toArray(Transform[]::new);
 
@@ -460,10 +472,6 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsM
 
     StructType getRawSchema() {
       return withInit(() -> rawSchema);
-    }
-
-    Column[] getColumns() {
-      return withInit(() -> columns);
     }
 
     Transform[] getPartitionTransforms() {

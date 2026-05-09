@@ -362,6 +362,18 @@ object IcebergConstants {
   val ICEBERG_PROVIDER = "iceberg"
   val ICEBERG_NAME_MAPPING_PROPERTY = "schema.name-mapping.default"
 
+  // UniForm metadata would be stored inside catalogTable's properties upon loading
+  // Those are kept in-memory only and won't be sent to catalog
+  /** CatalogTable property key for the last converted Iceberg metadata location. */
+  val CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP =
+    "deltaUniformIceberg.metadataLocation"
+  /** CatalogTable property key for the last converted Delta version. */
+  val CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP =
+    "deltaUniformIceberg.convertedDeltaVersion"
+  /** CatalogTable property key for the last converted Delta timestamp. */
+  val CATALOG_TABLE_ICEBERG_CONVERTED_TIMESTAMP_PROP =
+    "deltaUniformIceberg.convertedDeltaTimestamp"
+
   // Reserved field ID for the `_row_id` column
   // Iceberg spec: https://iceberg.apache.org/spec/?h=row#reserved-field-ids
   val ICEBERG_ROW_TRACKING_ROW_ID_FIELD_ID = 2147483540L

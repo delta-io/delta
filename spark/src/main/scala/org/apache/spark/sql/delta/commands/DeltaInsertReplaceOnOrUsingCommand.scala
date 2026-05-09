@@ -243,7 +243,7 @@ case class DeltaInsertReplaceOnOrUsingCommand(
     } finally {
       commandStats.totalExecutionTimeMs = System.currentTimeMillis() - commandStartTimeMs
       recordDeltaEvent(
-        deltaLog = deltaTable.deltaLog,
+        provider = deltaTable,
         opType = "delta.insertReplaceOnOrUsing.stats",
         data = commandStats)
     }

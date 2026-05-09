@@ -38,7 +38,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import io.delta.sharing.client.{DeltaSharingClient, DeltaSharingRestClient}
 import io.delta.sharing.client.util.ConfUtils
-import io.delta.sharing.client.model.{Table => DeltaSharingTable}
+import io.delta.sharing.client.model.{DeltaTableFiles, DeltaTableMetadata, Table => DeltaSharingTable}
 
 import org.apache.spark.delta.sharing.CachedTableManager
 import org.apache.spark.sql.{DataFrame, SparkSession}
@@ -59,7 +59,7 @@ import org.apache.spark.sql.types.StructType
  * When a new stream is started, delta sharing starts by fetching delta log from the server side,
  * constructing a local delta log, and call delta source apis to compute offset or read data.
  *
- * TODO: Support CDC Streaming and SupportsConcurrentExecution.
+ * TODO: Support SupportsConcurrentExecution.
  */
 case class DeltaFormatSharingSource(
     spark: SparkSession,
@@ -149,6 +149,68 @@ case class DeltaFormatSharingSource(
       CDCReader.cdcReadSchema(schemaWithoutCDC)
     } else {
       schemaWithoutCDC
+    }
+  }
+
+  // When restarting from a legacy DeltaSharingSourceOffset checkpoint that is still in the
+  // initial snapshot (isStartingVersion=true), file index ordering differs between
+  // DeltaSharingSource (sort by file ID) and DeltaSource (sort by modificationTime and path).
+  // We delegate to a DeltaSharingSource instance during the snapshot phase, then switch
+  // back to normal DeltaFormatSharingSource logic once the snapshot completes.
+  //
+  // (snapshotVersion, DeltaSharingSource)
+  private var legacyDeltaSharingSourceOpt: Option[(Long, DeltaSharingSource)] = None
+
+  /**
+   * Create the legacy DeltaSharingSource for snapshot delegation.
+   *
+   * @param snapshotVersion the initial snapshot version from the legacy checkpoint offset,
+   *                        used to fetch metadata at that version so RemoteDeltaLog is
+   *                        initialized with the correct schema.
+   */
+  private def getOrCreateLegacySource(snapshotVersion: Long): DeltaSharingSource = {
+    // Safeguard: this error should never happen, as we only delegate to the legacy
+    // source for the initial snapshot.
+    legacyDeltaSharingSourceOpt.foreach { case (existingVersion, _) =>
+      if (existingVersion != snapshotVersion) {
+        throw new IllegalStateException(
+          s"Legacy DeltaSharingSource was created for snapshot version $existingVersion " +
+            s"but is now requested for version $snapshotVersion")
+      }
+    }
+    legacyDeltaSharingSourceOpt.map(_._2).getOrElse {
+      logInfo(s"Initializing legacy DeltaSharingSource for snapshot delegation at " +
+        s"version $snapshotVersion," + getTableInfoForLogging)
+      // Create a parquet-format client to fetch metadata, since RemoteDeltaLog
+      // expects parquet-format DeltaTableMetadata (with protocol/metadata fields
+      // set, not just lines).
+      val parsedPath = DeltaSharingRestClient.parsePath(
+        tablePath, options.shareCredentialsOptions)
+      val parquetClient = DeltaSharingRestClient(
+        profileFile = parsedPath.profileFile,
+        shareCredentialsOptions = options.shareCredentialsOptions,
+        forStreaming = true,
+        responseFormat = DeltaSharingOptions.RESPONSE_FORMAT_PARQUET
+      )
+      val deltaTableMetadata = try {
+        parquetClient.getMetadata(table, versionAsOf = Some(snapshotVersion))
+      } finally {
+        parquetClient match {
+          case restClient: DeltaSharingRestClient => restClient.close()
+          case _ =>
+        }
+      }
+      val deltaLog = RemoteDeltaLog(
+        path = tablePath,
+        shareCredentialsOptions = options.shareCredentialsOptions,
+        forStreaming = true,
+        responseFormat = DeltaSharingOptions.RESPONSE_FORMAT_PARQUET,
+        initDeltaTableMetadata = Some(deltaTableMetadata),
+        callerOrg = options.callerOrg
+      )
+      val source = DeltaSharingSource(spark, deltaLog, options)
+      legacyDeltaSharingSourceOpt = Some((snapshotVersion, source))
+      source
     }
   }
 
@@ -370,15 +432,15 @@ case class DeltaFormatSharingSource(
   }
 
   /** Returns the file ID hash option based on auto-resolve config and whether MD5 is needed. */
-  private def resolveFileIdHash(useMd5: Boolean): Option[String] = {
+  private def resolveFileIdHash(useParquetHash: Boolean): Option[String] = {
     val autoResolve = sqlConf.getConf(
       DeltaSQLConf.DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT)
     if (!autoResolve) {
       None
-    } else if (useMd5) {
-      Some(DeltaSharingRestClient.FILEIDHASH_MD5)
+    } else if (useParquetHash) {
+      Some(DeltaSharingRestClient.FILEIDHASH_PARQUET)
     } else {
-      Some(DeltaSharingRestClient.FILEIDHASH_SHA256)
+      Some(DeltaSharingRestClient.FILEIDHASH_DELTA)
     }
   }
 
@@ -469,6 +531,17 @@ case class DeltaFormatSharingSource(
         case Some((offset, fromLegacy)) => (Some(offset), fromLegacy)
         case None => (None, false)
       }
+
+    // Delegate to legacy source if start offset is from a legacy checkpoint and still in the
+    // initial snapshot. Index ordering differs: DeltaSharingSource sorts by fileId, while
+    // DeltaSource sorts by modificationTime and path. Format conversion starts after the
+    // initial snapshot completes.
+    if (wasConvertedFromLegacy && startDeltaSourceOffsetOpt.exists(_.isInitialSnapshot)) {
+      logInfo(s"Delegating latestOffset to legacy DeltaSharingSource," + getTableInfoForLogging)
+      return getOrCreateLegacySource(
+        startDeltaSourceOffsetOpt.get.reservoirVersion).latestOffset(startOffset, limit)
+    }
+
     // The engine always calls getBatch for priming on restart, so
     // latestProcessedEndOffsetOption is normally valid here and points to the last processed end
     // offset in legacy format.
@@ -488,6 +561,17 @@ case class DeltaFormatSharingSource(
     }
 
     val latestTableVersion = getOrUpdateLatestTableVersion
+    // Legacy conversion edge case when the table has no version beyond the initial snapshot:
+    // - Batch 0: v1, index=0, isStartingVersion=true (mid-snapshot at v1).
+    // - Batch 1: v2, index=-1, isStartingVersion=false (snapshot finished; end offset is
+    //   startVersion+1 at the version boundary).
+    // The table only has v1 (no newer versions). getBatch priming delegates to the legacy source
+    // because the batch 0 is still in the initial snapshot, latestProcessedEndOffsetOption
+    // is empty, and latestOffset here advances to v2 with index=-1. The server has no v2, so
+    // latestOffset must return null instead of fetching files for v2 from the server.
+    if (wasConvertedFromLegacy && deltaSourceOffset.reservoirVersion > latestTableVersion) {
+      return null
+    }
     val (endingVersion, fileIdHash) = determineVersionAndHashFromLatestOffset(
       deltaSourceOffset, wasConvertedFromLegacy, latestTableVersion)
     maybeGetLatestFileChangesFromServer(
@@ -598,7 +682,7 @@ case class DeltaFormatSharingSource(
       endOffset: DeltaSourceOffset,
       endConvertedFromLegacy: Boolean,
       latestTableVersion: Long): (Long, Option[String]) = {
-    val (endingVersionForQuery, useMd5) = if (endConvertedFromLegacy) {
+    val (endingVersionForQuery, useParquetHash) = if (endConvertedFromLegacy) {
       // getBatch priming during legacy to new format transition:
       // 1. Both start and end offsets are from legacy checkpoints.
       // 2. Start offset is None and end offset is from a legacy checkpoint.
@@ -624,7 +708,7 @@ case class DeltaFormatSharingSource(
       (getEndingVersionForRpc(startingOffset, latestTableVersion), false)
     }
 
-    val fileIdHash = resolveFileIdHash(useMd5)
+    val fileIdHash = resolveFileIdHash(useParquetHash)
 
     (endingVersionForQuery, fileIdHash)
   }
@@ -646,7 +730,7 @@ case class DeltaFormatSharingSource(
       startingOffset: DeltaSourceOffset,
       startConvertedFromLegacy: Boolean,
       latestTableVersion: Long): (Long, Option[String]) = {
-    val (endingVersionForQuery, useMd5) =
+    val (endingVersionForQuery, useParquetHash) =
       if (startConvertedFromLegacy &&
           startingOffset.index != DeltaSourceOffset.BASE_INDEX) {
         // Transitioning from parquet streaming source to delta streaming source.
@@ -659,7 +743,7 @@ case class DeltaFormatSharingSource(
         (getEndingVersionForRpc(startingOffset, latestTableVersion), false)
       }
 
-    val fileIdHash = resolveFileIdHash(useMd5)
+    val fileIdHash = resolveFileIdHash(useParquetHash)
 
     (endingVersionForQuery, fileIdHash)
   }
@@ -687,7 +771,9 @@ case class DeltaFormatSharingSource(
       if (startingOffset.isInitialSnapshot || !options.readChangeFeed) {
         getTableFileChanges(startingOffset, endingVersionForQuery, fileIdHash)
       } else {
-        throw new UnsupportedOperationException("CDF Streaming is not supported yet.")
+        // No flag check here: DELTA_SHARING_ENABLE_DELTA_FORMAT_CDF_STREAMING is already
+        // enforced in DeltaSharingDataSource.createSource before this source is instantiated.
+        getTableCDFFileChanges(startingOffset, endingVersionForQuery, fileIdHash)
       }
     }
   }
@@ -712,8 +798,8 @@ case class DeltaFormatSharingSource(
     logInfo(
       s"Fetching files with table version(${startingOffset.reservoirVersion}), " +
       s"index(${startingOffset.index}), isInitialSnapshot(${startingOffset.isInitialSnapshot})," +
-      s" endingVersionForQuery($endingVersionForQuery), server version" +
-      s"($latestTableVersionOnServer)," + getTableInfoForLogging
+      s" endingVersionForQuery($endingVersionForQuery), " +
+      s"server version($latestTableVersionOnServer)," + getTableInfoForLogging
     )
 
     val (tableFiles, refreshFunc) = if (startingOffset.isInitialSnapshot) {
@@ -769,6 +855,69 @@ case class DeltaFormatSharingSource(
       (tableFiles, refreshFunc)
     }
 
+    applyTableFileChanges(tableFiles, refreshFunc, startingOffset, endingVersionForQuery)
+  }
+
+  /**
+   * Fetch the CDF file changes from delta sharing server for the given version range,
+   * and store them in the locally constructed delta log.
+   *
+   * This is the CDF streaming counterpart to getTableFileChanges. It calls getCDFFiles
+   * instead of getFiles to retrieve AddCDCFile, AddFile, and RemoveFile actions that
+   * represent row-level changes. includeHistoricalMetadata=true ensures metadata actions
+   * are included so that mid-range schema changes break the stream correctly.
+   *
+   * @param startingOffset The starting offset with the reservoirVersion to fetch from.
+   * @param endingVersionForQuery The ending version (inclusive) for the query.
+   */
+  private def getTableCDFFileChanges(
+      startingOffset: DeltaSourceOffset,
+      endingVersionForQuery: Long,
+      fileIdHash: Option[String] = None): Unit = {
+    logInfo(
+      s"Fetching CDF files with table version(${startingOffset.reservoirVersion}), " +
+      s"index(${startingOffset.index}), " +
+      s"endingVersionForQuery($endingVersionForQuery), " +
+      s"server version($latestTableVersionOnServer)," + getTableInfoForLogging
+    )
+
+    val cdfOptions = Map(
+      DeltaSharingOptions.CDF_START_VERSION -> startingOffset.reservoirVersion.toString,
+      DeltaSharingOptions.CDF_END_VERSION -> endingVersionForQuery.toString
+    )
+    val tableFiles = client.getCDFFiles(
+      table = table,
+      cdfOptions = cdfOptions,
+      // Requests Metadata actions for schema-changing versions in the range so DeltaSource
+      // can detect both backward-compatible and non-backward-compatible schema changes.
+      includeHistoricalMetadata = true,
+      fileIdHash = fileIdHash
+    )
+    val refreshFunc = DeltaSharingUtils.getRefresherForGetCDFFiles(
+      client = client,
+      table = table,
+      cdfOptions = cdfOptions,
+      fileIdHash = fileIdHash
+    )
+    logInfo(
+      s"Fetched ${tableFiles.lines.size} CDF lines from startingVersion " +
+      s"${startingOffset.reservoirVersion} to endingVersion $endingVersionForQuery from " +
+      "delta sharing server," + getTableInfoForLogging + getQueryIdForLogging
+    )
+
+    applyTableFileChanges(tableFiles, refreshFunc, startingOffset, endingVersionForQuery)
+  }
+
+  /**
+   * Shared post-RPC logic for both getTableFileChanges and getTableCDFFileChanges.
+   * Constructs the local delta log from the server response, registers file URLs in
+   * CachedTableManager, and updates version tracking state.
+   */
+  private def applyTableFileChanges(
+      tableFiles: DeltaTableFiles,
+      refreshFunc: DeltaSharingUtils.RefresherFunction,
+      startingOffset: DeltaSourceOffset,
+      endingVersionForQuery: Long): Unit = {
     val deltaLogMetadata = DeltaSharingLogFileSystem.constructLocalDeltaLogAcrossVersions(
       lines = tableFiles.lines,
       customTablePath = customTablePathWithUUIDSuffix,
@@ -842,6 +991,28 @@ case class DeltaFormatSharingSource(
         case Some((offset, fromLegacy)) => (Some(offset), fromLegacy)
         case None => (None, false)
       }
+
+    // Delegate to legacy source if either offset is from a legacy checkpoint and either is
+    // still in the initial snapshot. Index ordering differs: DeltaSharingSource sorts by
+    // fileId, while DeltaSource sorts by modificationTime and path.
+    // Format conversion starts after the initial snapshot completes.
+    //
+    // Possible streaming restart priming cases for legacy conversion:
+    // 1. start=None, end=legacy(initial)
+    // 2. start=legacy(initial), end=legacy(initial)
+    // 3. start=legacy(initial), end=legacy(post-snapshot)
+    val needsDelegation =
+      (startConvertedFromLegacy && startDeltaOffsetOption.exists(_.isInitialSnapshot)) ||
+      (endConvertedFromLegacy && endOffset.isInitialSnapshot)
+    if (needsDelegation) {
+      val snapshotVersion = startDeltaOffsetOption.map(_.reservoirVersion)
+        .getOrElse(endOffset.reservoirVersion)
+      logInfo(s"Delegating getBatch to legacy DeltaSharingSource," + getTableInfoForLogging)
+      // Need to use table metadata at the snapshot version,
+      // and pass in legacy offset to prime the legacy source.
+      return getOrCreateLegacySource(snapshotVersion).getBatch(startOffsetOption, end)
+    }
+
     val startingOffset = getStartingOffset(startDeltaOffsetOption, Some(endOffset))
 
     val latestTableVersion = getOrUpdateLatestTableVersion
@@ -893,6 +1064,7 @@ case class DeltaFormatSharingSource(
   }
 
   override def stop(): Unit = {
+    legacyDeltaSharingSourceOpt.foreach(_._2.stop())
     deltaSource.stop()
 
     DeltaSharingLogFileSystem.tryToCleanUpDeltaLog(deltaLogPath)
@@ -901,7 +1073,16 @@ case class DeltaFormatSharingSource(
   // Calls deltaSource.commit for checks related to column mapping.
   override def commit(end: Offset): Unit = {
     logInfo(s"Commit end offset: $end," + getTableInfoForLogging)
-    val endOffset = forceToDeltaSourceOffset(end)._1
+    val (endOffset, endConvertedFromLegacy) = forceToDeltaSourceOffset(end)
+
+    if (endConvertedFromLegacy && endOffset.isInitialSnapshot) {
+      // During legacy snapshot delegation, the batch was produced by DeltaSharingSource,
+      // so delegate commit to the legacy source and return. DeltaSharingSource doesn't
+      // implement commit(), so this is a no-op for now.
+      legacyDeltaSharingSourceOpt.foreach(_._2.commit(end))
+      return
+    }
+
     // If DeltaSource detects a metadata change at endOffset
     // version, deltaSource.commit throws an exception so the
     // stream restarts from the checkpoint with the new schema.

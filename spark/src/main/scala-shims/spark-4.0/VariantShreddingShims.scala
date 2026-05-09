@@ -16,21 +16,24 @@
 
 package org.apache.spark.sql.delta.shims
 
+import org.apache.hadoop.conf.Configuration
+
+import org.apache.spark.sql.execution.datasources.{OutputWriter, WriteTaskStatsTracker}
+
 /**
  * Shim for variant shredding configs to handle API changes between Spark versions.
- * In Spark 4.0, VARIANT_INFER_SHREDDING_SCHEMA config does not exist.
- *
- * This shim provides a way to conditionally add the config to the options map
- * when writing files.
+ * Spark 4.0 does not have support for variant shredding/stats.
  */
 object VariantShreddingShims {
-  /**
-   * Returns a Map containing variant shredding related configs for file writing.
-   * In Spark 4.0, this returns an empty map since the config doesn't exist.
-   */
   def getVariantInferShreddingSchemaOptions(enableVariantShredding: Boolean)
     : Map[String, String] = {
     // In Spark 4.0, VARIANT_INFER_SHREDDING_SCHEMA does not exist, so return empty map
     Map.empty[String, String]
   }
+
+  def extractAndInjectVariantStats(
+      writer: OutputWriter,
+      trackers: Seq[WriteTaskStatsTracker],
+      parquetRebaseModeInRead: String,
+      hadoopConf: Configuration): Unit = {}
 }

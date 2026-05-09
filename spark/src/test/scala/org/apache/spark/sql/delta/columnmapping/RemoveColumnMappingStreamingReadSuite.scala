@@ -219,7 +219,7 @@ class RemoveColumnMappingStreamingReadSuite
   }
 
   private def createTable(columnMappingMode: String = "none"): Unit = {
-    sql(s"""CREATE TABLE $testTableName
+    executeDml(s"""CREATE TABLE $testTableName
            |USING delta
            |TBLPROPERTIES ('${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = '$columnMappingMode',
            |  '${DeltaConfigs.CHANGE_DATA_FEED.key}' = 'true'
@@ -231,7 +231,7 @@ class RemoveColumnMappingStreamingReadSuite
 
   private def insertMoreRows(v: Int = -1): Unit = {
     val values = List.fill(currentNumCols)(v.toString).mkString(", ")
-    sql(s"INSERT INTO $testTableName SELECT $values FROM $testTableName LIMIT $totalRows")
+    executeDml(s"INSERT INTO $testTableName SELECT $values FROM $testTableName LIMIT $totalRows")
   }
 
   private def currentNumCols = deltaLog.update().schema.length

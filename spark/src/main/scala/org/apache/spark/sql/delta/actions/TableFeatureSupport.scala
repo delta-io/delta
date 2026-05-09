@@ -559,7 +559,7 @@ object DropTableFeatureUtils extends DeltaLogging {
       } catch {
         case NonFatal(e) =>
           recordDeltaEvent(
-            deltaLog = log,
+            provider = log,
             opType = "dropFeature.checkpointAndVerify.error",
             data = Map(
               "message" -> e.getMessage,

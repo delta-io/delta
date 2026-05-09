@@ -932,6 +932,11 @@
           "The duplicate was found in CLUSTER BY."
         ]
       },
+      "CONVERT_TO_DELTA" : {
+        "message" : [
+          "The duplicate was found during conversion to Delta."
+        ]
+      },
       "DATA" : {
         "message" : [
           "The duplicate was found in the data being saved."
@@ -1833,6 +1838,12 @@
       "Failed to merge decimal types with incompatible <decimalRanges>"
     ],
     "sqlState" : "42806"
+  },
+  "DELTA_MERGE_INTO_EMPTY_SCHEMA_TARGET" : {
+    "message" : [
+      "Cannot MERGE INTO a table with no columns. The target table must have columns, or schema evolution must be enabled."
+    ],
+    "sqlState" : "428GU"
   },
   "DELTA_MERGE_MATERIALIZE_SOURCE_FAILED_REPEATEDLY" : {
     "message" : [

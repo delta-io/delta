@@ -428,6 +428,20 @@ trait DeltaInsertIntoTest
   protected lazy val (insertsAppend, insertsOverwrite): (Set[Insert], Set[Insert]) =
     allInsertTypes.partition(_.mode == SaveMode.Append)
 
+  /**
+   * Collects inserts that don't support implicit casting: save() (all modes) and saveAsTable()
+   * overwrite. These go through SaveIntoDataSourceCommand / ReplaceTableAsSelect which are not
+   * handled by [[DeltaImplicitCast]]. Note that saveAsTable(Append) is NOT in this set because
+   * it routes through AppendData (a V2WriteCommand) which IS handled by [[DeltaImplicitCast]].
+   */
+  protected lazy val insertsWithoutImplicitCastSupport: Set[Insert] = Set(
+    DFv1Save(SaveMode.Append),
+    DFv1Save(SaveMode.Overwrite),
+    DFv1SaveReplaceOn,
+    DFv1SaveAsTable(SaveMode.Overwrite)
+  )
+
+
   /** Collects all test cases defined, aggregated by test name. Used in
    * [[checkAllTestCasesImplemented]] below to ensure each test covers all existing insert types.
    */

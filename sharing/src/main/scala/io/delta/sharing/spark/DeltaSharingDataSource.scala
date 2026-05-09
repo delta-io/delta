@@ -94,9 +94,6 @@ private[sharing] class DeltaSharingDataSource
     } else if (responseFormat == DeltaSharingOptions.RESPONSE_FORMAT_DELTA) {
       logInfo(s"sourceSchema with delta format for table path:$path, parameters:$parameters")
       if (options.readChangeFeed) {
-        throw new UnsupportedOperationException(
-          s"Delta sharing cdc streaming is not supported when responseformat=delta."
-        )
       }
       //  1. create delta sharing client
       val client = DeltaSharingRestClient(
@@ -170,7 +167,11 @@ private[sharing] class DeltaSharingDataSource
       }
 
       DeltaSharingLogFileSystem.tryToCleanUpDeltaLog(deltaLogPath)
-      (shortName(), schemaToUse)
+      if (options.readChangeFeed) {
+        (shortName(), CDCReader.cdcReadSchema(schemaToUse))
+      } else {
+        (shortName(), schemaToUse)
+      }
     } else {
       throw new UnsupportedOperationException(
         s"responseformat(${responseFormat}) is not " +
@@ -208,9 +209,6 @@ private[sharing] class DeltaSharingDataSource
     } else if (responseFormat == DeltaSharingOptions.RESPONSE_FORMAT_DELTA) {
       logInfo(s"createSource with delta format for table path:$path, parameters:$parameters")
       if (options.readChangeFeed) {
-        throw new UnsupportedOperationException(
-          s"Delta sharing cdc streaming is not supported when responseformat=delta."
-        )
       }
       //  1. create delta sharing client
       val client = DeltaSharingRestClient(

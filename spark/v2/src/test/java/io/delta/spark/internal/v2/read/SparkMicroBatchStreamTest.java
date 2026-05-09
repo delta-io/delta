@@ -58,6 +58,7 @@ import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.ReadMaxBytes;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.apache.spark.sql.delta.util.JsonUtils;
+import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.Test;
@@ -2146,7 +2147,7 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
             Optional.of(10000L),
             "With both limits"),
 
-        // Edge cases
+        // start and end version equals
         Arguments.of(
             /* fromVersion= */ 3L,
             /* toVersion= */ 3L,
@@ -3179,7 +3180,7 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
    * Test that verifies DSv1 and DSv2 throw errors when the starting snapshot has an incompatible
    * schema change that gets reverted before the latest version.
    *
-   * <p>Edge case: checkReadIncompatibleSchemaChange only checks metadata actions, so it misses the
+   * <p>Scenario: checkReadIncompatibleSchemaChange only checks metadata actions, so it misses the
    * incompatible intermediate state (id → userId → id). The
    * checkReadIncompatibleSchemaChangeOnStreamStartOnce method catches this by validating each
    * snapshot in the range.
@@ -3408,6 +3409,198 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
             /* sparkConf */ Map.of(
                 DeltaSQLConf.DELTA_TYPE_WIDENING_ENABLE_STREAMING_SCHEMA_TRACKING().key(), "true"),
             "Widen INT column to BIGINT"));
+  }
+
+  // ================================================================================================
+  // Tests for failOnDataLoss option
+  // ================================================================================================
+
+  /**
+   * Helper to simulate log retention by creating a checkpoint and deleting delta log files up to
+   * the given version.
+   */
+  private void simulateLogRetention(String tablePath, long deleteUpToVersion) {
+    DeltaLog.forTable(spark, new Path(tablePath)).checkpoint();
+    Path logPath = new Path(tablePath, "_delta_log");
+    for (long v = 0; v <= deleteUpToVersion; v++) {
+      File logFile = new File(new Path(logPath, String.format("%020d.json", v)).toUri().getPath());
+      if (logFile.exists()) {
+        logFile.delete();
+      }
+    }
+  }
+
+  /** Parity test: failOnDataLoss=false with missing start version skips to earliest available. */
+  @Test
+  public void testFailOnDataLoss_false_getFileChangesParity(@TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_fdl_false_parity_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+    insertVersions(
+        testTableName,
+        /* numVersions= */ 5,
+        /* rowsPerVersion= */ 2,
+        /* includeEmptyVersion= */ false);
+
+    simulateLogRetention(testTablePath, /* deleteUpToVersion= */ 2);
+
+    long fromVersion = 0L;
+    long fromIndex = DeltaSourceOffset.BASE_INDEX();
+    DeltaOptions options = createDeltaOptions("failOnDataLoss", "false");
+
+    // DSv1
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath, options);
+    ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> dsv1Changes =
+        deltaSource.getFileChanges(
+            fromVersion,
+            fromIndex,
+            /* isInitialSnapshot= */ false,
+            Option.empty(),
+            /* verifyMetadataAction= */ true);
+    List<org.apache.spark.sql.delta.sources.IndexedFile> dsv1Files = new ArrayList<>();
+    while (dsv1Changes.hasNext()) {
+      dsv1Files.add(dsv1Changes.next());
+    }
+    dsv1Changes.close();
+
+    // DSv2
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+    SparkMicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, options);
+    try (CloseableIterator<IndexedFile> dsv2Changes =
+        stream.getFileChanges(
+            fromVersion, fromIndex, /* isInitialSnapshot= */ false, Optional.empty())) {
+      List<IndexedFile> dsv2Files = new ArrayList<>();
+      while (dsv2Changes.hasNext()) {
+        dsv2Files.add(dsv2Changes.next());
+      }
+      compareFileChanges(dsv1Files, dsv2Files);
+    }
+  }
+
+  /** Parity test: failOnDataLoss=true (default) with missing start version throws in both. */
+  @Test
+  public void testFailOnDataLoss_true_getFileChangesThrowsParity(@TempDir File tempDir) {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_fdl_true_parity_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+    insertVersions(
+        testTableName,
+        /* numVersions= */ 5,
+        /* rowsPerVersion= */ 2,
+        /* includeEmptyVersion= */ false);
+
+    simulateLogRetention(testTablePath, /* deleteUpToVersion= */ 2);
+
+    long fromVersion = 0L;
+    long fromIndex = DeltaSourceOffset.BASE_INDEX();
+
+    // DSv1: failOnDataLoss=true throws DeltaIllegalStateException with
+    // DELTA_MISSING_FILES_UNEXPECTED_VERSION error class.
+    // expectedVersion=0 (startVersion), seenVersion=3 (earliest available after deleting 0-2)
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    DeltaOptions defaultOptions = emptyDeltaOptions();
+    DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath, defaultOptions);
+    DeltaIllegalStateException dsv1Exception =
+        assertThrows(
+            DeltaIllegalStateException.class,
+            () -> {
+              ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> iter =
+                  deltaSource.getFileChanges(
+                      fromVersion,
+                      fromIndex,
+                      /* isInitialSnapshot= */ false,
+                      Option.empty(),
+                      /* verifyMetadataAction= */ true);
+              while (iter.hasNext()) {
+                iter.next();
+              }
+              iter.close();
+            });
+    assertEquals("DELTA_MISSING_FILES_UNEXPECTED_VERSION", dsv1Exception.getErrorClass());
+    // Parameters: startVersion=0, earliestVersion=3, option=failOnDataLoss
+    assertThat(dsv1Exception.getMessageParameters())
+        .containsEntry("startVersion", "0")
+        .containsEntry("earliestVersion", "3")
+        .containsEntry("option", DeltaOptions.FAIL_ON_DATA_LOSS_OPTION());
+
+    // DSv2: failOnDataLoss=true throws StartVersionNotFoundException with structured fields
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+    SparkMicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, defaultOptions);
+    io.delta.kernel.exceptions.StartVersionNotFoundException dsv2Exception =
+        assertThrows(
+            io.delta.kernel.exceptions.StartVersionNotFoundException.class,
+            () -> {
+              try (CloseableIterator<IndexedFile> iter =
+                  stream.getFileChanges(
+                      fromVersion, fromIndex, /* isInitialSnapshot= */ false, Optional.empty())) {
+                while (iter.hasNext()) {
+                  iter.next();
+                }
+              }
+            });
+    assertEquals(0, dsv2Exception.getStartVersionRequested());
+    assertTrue(dsv2Exception.getEarliestAvailableVersion().isPresent());
+    assertEquals(3L, dsv2Exception.getEarliestAvailableVersion().get().longValue());
+  }
+
+  /**
+   * failOnDataLoss=false in v2 only handles missing start commits. Mid-log gaps (e.g., a deleted
+   * file in the middle) still throw regardless of failOnDataLoss.
+   */
+  @Test
+  public void testFailOnDataLoss_false_midLogGapStillThrows(@TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_fdl_mid_gap_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+    insertVersions(
+        testTableName,
+        /* numVersions= */ 5,
+        /* rowsPerVersion= */ 2,
+        /* includeEmptyVersion= */ false);
+
+    // Create checkpoint, then delete only version 3 (mid-log gap, not start)
+    DeltaLog.forTable(spark, new Path(testTablePath)).checkpoint();
+    Path logPath = new Path(testTablePath, "_delta_log");
+    File midFile = new File(new Path(logPath, String.format("%020d.json", 3)).toUri().getPath());
+    if (midFile.exists()) {
+      midFile.delete();
+    }
+
+    Configuration hadoopConf = spark.sessionState().newHadoopConf();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+    DeltaOptions options = createDeltaOptions("failOnDataLoss", "false");
+    SparkMicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, options);
+
+    // Reading from version 1 (which exists) should throw InvalidTableException because
+    // version 3 is missing in the middle — non-contiguous versions are not a log-retention
+    // scenario and are never ignored.
+    io.delta.kernel.exceptions.InvalidTableException midGapException =
+        assertThrows(
+            io.delta.kernel.exceptions.InvalidTableException.class,
+            () -> {
+              try (CloseableIterator<IndexedFile> changes =
+                  stream.getFileChanges(
+                      /* fromVersion= */ 1L,
+                      /* fromIndex= */ DeltaSourceOffset.BASE_INDEX(),
+                      /* isInitialSnapshot= */ false,
+                      /* endOffset= */ Optional.empty())) {
+                while (changes.hasNext()) {
+                  changes.next();
+                }
+              }
+            });
+    assertThat(midGapException.getMessage()).contains("versions are not contiguous");
   }
 
   // ================================================================================================
@@ -3919,5 +4112,149 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
         closedFlag.set(true);
       }
     };
+  }
+
+  // ==========================================================================
+  // validateSchemaCompatibilityOnStartup
+  // ==========================================================================
+
+  @Test
+  public void testValidateSchema_partitionColumnInMiddle_succeeds() {
+    // Reproduces the bug fixed in PR #6583: partition column declared in the middle of the
+    // table schema must not trip the structural equality check on stream restart.
+    StructType dataSchema =
+        new StructType().add("id", DataTypes.LongType).add("col3", DataTypes.IntegerType);
+    StructType partitionSchema = new StructType().add("part", DataTypes.LongType);
+    StructType snapshotSchema =
+        new StructType()
+            .add("id", DataTypes.LongType)
+            .add("part", DataTypes.LongType)
+            .add("col3", DataTypes.IntegerType);
+
+    assertDoesNotThrow(
+        () ->
+            SparkMicroBatchStream.validateSchemaCompatibilityOnStartup(
+                dataSchema, partitionSchema, snapshotSchema));
+  }
+
+  @Test
+  public void testValidateSchema_partitionColumnAtEnd_succeeds() {
+    StructType dataSchema =
+        new StructType().add("id", DataTypes.LongType).add("col3", DataTypes.IntegerType);
+    StructType partitionSchema = new StructType().add("part", DataTypes.LongType);
+    StructType snapshotSchema =
+        new StructType()
+            .add("id", DataTypes.LongType)
+            .add("col3", DataTypes.IntegerType)
+            .add("part", DataTypes.LongType);
+
+    assertDoesNotThrow(
+        () ->
+            SparkMicroBatchStream.validateSchemaCompatibilityOnStartup(
+                dataSchema, partitionSchema, snapshotSchema));
+  }
+
+  @Test
+  public void testValidateSchema_analysisHasExtraColumn_throws() {
+    StructType dataSchema =
+        new StructType()
+            .add("id", DataTypes.LongType)
+            .add("col3", DataTypes.IntegerType)
+            .add("dropped", DataTypes.StringType);
+    StructType partitionSchema = new StructType().add("part", DataTypes.LongType);
+    StructType snapshotSchema =
+        new StructType()
+            .add("id", DataTypes.LongType)
+            .add("part", DataTypes.LongType)
+            .add("col3", DataTypes.IntegerType);
+
+    DeltaIllegalStateException ex =
+        assertThrows(
+            DeltaIllegalStateException.class,
+            () ->
+                SparkMicroBatchStream.validateSchemaCompatibilityOnStartup(
+                    dataSchema, partitionSchema, snapshotSchema));
+    assertTrue(ex.getMessage().contains("DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART"));
+  }
+
+  @Test
+  public void testValidateSchema_snapshotHasExtraColumn_throws() {
+    StructType dataSchema =
+        new StructType().add("id", DataTypes.LongType).add("col3", DataTypes.IntegerType);
+    StructType partitionSchema = new StructType().add("part", DataTypes.LongType);
+    StructType snapshotSchema =
+        new StructType()
+            .add("id", DataTypes.LongType)
+            .add("part", DataTypes.LongType)
+            .add("col3", DataTypes.IntegerType)
+            .add("added", DataTypes.StringType);
+
+    DeltaIllegalStateException ex =
+        assertThrows(
+            DeltaIllegalStateException.class,
+            () ->
+                SparkMicroBatchStream.validateSchemaCompatibilityOnStartup(
+                    dataSchema, partitionSchema, snapshotSchema));
+    assertTrue(ex.getMessage().contains("DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART"));
+  }
+
+  @Test
+  public void testValidateSchema_columnTypeChanged_throws() {
+    StructType dataSchema =
+        new StructType().add("id", DataTypes.IntegerType).add("col3", DataTypes.IntegerType);
+    StructType partitionSchema = new StructType().add("part", DataTypes.LongType);
+    StructType snapshotSchema =
+        new StructType()
+            .add("id", DataTypes.LongType)
+            .add("part", DataTypes.LongType)
+            .add("col3", DataTypes.IntegerType);
+
+    DeltaIllegalStateException ex =
+        assertThrows(
+            DeltaIllegalStateException.class,
+            () ->
+                SparkMicroBatchStream.validateSchemaCompatibilityOnStartup(
+                    dataSchema, partitionSchema, snapshotSchema));
+    assertTrue(ex.getMessage().contains("DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART"));
+  }
+
+  @Test
+  public void testValidateSchema_nestedStructMatches_succeeds() {
+    StructType inner = new StructType().add("x", DataTypes.IntegerType);
+    StructType dataSchema = new StructType().add("id", DataTypes.LongType).add("data", inner);
+    StructType partitionSchema = new StructType();
+    StructType snapshotSchema = new StructType().add("id", DataTypes.LongType).add("data", inner);
+
+    assertDoesNotThrow(
+        () ->
+            SparkMicroBatchStream.validateSchemaCompatibilityOnStartup(
+                dataSchema, partitionSchema, snapshotSchema));
+  }
+
+  @Test
+  public void testValidateSchema_columnRenamed_throws() {
+    StructType dataSchema = new StructType().add("a", DataTypes.IntegerType);
+    StructType partitionSchema = new StructType();
+    StructType snapshotSchema = new StructType().add("b", DataTypes.IntegerType);
+
+    DeltaIllegalStateException ex =
+        assertThrows(
+            DeltaIllegalStateException.class,
+            () ->
+                SparkMicroBatchStream.validateSchemaCompatibilityOnStartup(
+                    dataSchema, partitionSchema, snapshotSchema));
+    assertTrue(ex.getMessage().contains("DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART"));
+  }
+
+  @Test
+  public void testValidateSchema_columnNameCaseDiffers_succeeds() {
+    StructType dataSchema = new StructType().add("Id", DataTypes.IntegerType);
+    StructType partitionSchema = new StructType();
+    StructType snapshotSchema = new StructType().add("id", DataTypes.IntegerType);
+
+    assertDoesNotThrow(
+        () ->
+            SparkMicroBatchStream.validateSchemaCompatibilityOnStartup(
+                dataSchema, partitionSchema, snapshotSchema));
   }
 }

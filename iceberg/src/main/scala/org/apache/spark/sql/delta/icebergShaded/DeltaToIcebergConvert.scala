@@ -75,7 +75,7 @@ object DeltaToIcebergConvert
           builder: FileMetadata.Builder,
           fileAction: FileAction,
           partitionSpec: PartitionSpec,
-          snapshot: Snapshot,
+          snapshot: SnapshotDescriptor,
           logicalToPhysicalPartitionNames: Map[String, String]): Unit = {
         if (partitionSpec.isPartitioned) {
             builder.withPartition(
@@ -357,7 +357,7 @@ object DeltaToIcebergConvert
   object Partition {
 
     private[delta] def convertPartitionValues(
-        snapshot: Snapshot,
+        snapshot: SnapshotDescriptor,
         partitionSpec: PartitionSpec,
         partitionValues: Map[String, String],
         logicalToPhysicalPartitionNames: Map[String, String]): StructLike = {

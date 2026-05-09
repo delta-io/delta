@@ -628,7 +628,7 @@ object Checkpoints
    */
   def getV2CheckpointFormatOpt(
       spark: SparkSession,
-      snapshot: Snapshot): Option[V2Checkpoint.Format] = {
+      snapshot: SnapshotDescriptor): Option[V2Checkpoint.Format] = {
     val policy = DeltaConfigs.CHECKPOINT_POLICY.fromMetaData(snapshot.metadata)
     if (policy.needsV2CheckpointSupport) {
       assert(CheckpointProvider.isV2CheckpointEnabled(snapshot))
@@ -1222,12 +1222,12 @@ object Checkpoints
     )
   }
 
-  def shouldWriteStatsAsStruct(conf: SQLConf, snapshot: Snapshot): Boolean = {
+  def shouldWriteStatsAsStruct(conf: SQLConf, snapshot: SnapshotDescriptor): Boolean = {
     DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_STRUCT.fromMetaData(snapshot.metadata) &&
       !conf.getConf(DeltaSQLConf.STATS_AS_STRUCT_IN_CHECKPOINT_FORCE_DISABLED).getOrElse(false)
   }
 
-  def shouldWriteStatsAsJson(snapshot: Snapshot): Boolean = {
+  def shouldWriteStatsAsJson(snapshot: SnapshotDescriptor): Boolean = {
     DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_JSON.fromMetaData(snapshot.metadata)
   }
 
