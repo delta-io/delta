@@ -23,10 +23,11 @@ import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
 import io.delta.storage.commit.CommitCoordinatorClient
-import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCommitCoordinatorClient, UCTokenBasedRestClient}
+import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCommitCoordinatorClient, UCDeltaClient, UCTokenBasedRestClient}
 
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import io.unitycatalog.client.auth.TokenProvider
 import org.apache.spark.internal.MDC
@@ -90,7 +91,13 @@ object UCCommitCoordinatorBuilder
           s"Catalog $catalogName not found in the provided SparkSession configurations.")
     }
     val conf = Map.empty[String, String]
-    new UCCommitCoordinatorClient(conf.asJava, client)
+    if (spark.conf.get(DeltaSQLConf.DELTA_REST_CATALOG_ENABLED)) {
+      val catalogPlugin = spark.sessionState.catalogManager.catalog(catalogName)
+      val ucDeltaClient = UCDeltaClient.createFromCatalogDelegate(catalogPlugin, client)
+      new UCCommitCoordinatorClient(conf.asJava, client, ucDeltaClient)
+    } else {
+      new UCCommitCoordinatorClient(conf.asJava, client)
+    }
   }
 
   /**
