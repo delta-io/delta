@@ -25,8 +25,10 @@ import scala.collection.JavaConverters._
 import scala.collection.immutable.ListMap
 import scala.collection.mutable
 
+import io.delta.storage.commit.uccommitcoordinator.{ClientProvider, UCDeltaClient}
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY_OLD
+import org.apache.spark.sql.delta.coordinatedcommits.UCCommitCoordinatorBuilder
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterBy, ClusterBySpec}
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterByTransform => TempClusterByTransform}
@@ -78,7 +80,8 @@ class DeltaCatalogV1 extends AbstractDeltaCatalog
 class AbstractDeltaCatalog extends DelegatingCatalogExtension
   with StagingTableCatalog
   with SupportsPathIdentifier
-  with DeltaLogging {
+  with DeltaLogging
+  with ClientProvider {
 
 
   val spark = SparkSession.active
@@ -88,6 +91,31 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     delegateField.setAccessible(true)
     delegateField.get(this).getClass.getCanonicalName.startsWith("io.unitycatalog.")
   }
+
+  /** Shared UCDeltaClient instance, created once and shared via ClientProvider. */
+  private lazy val ucDeltaClient: UCDeltaClient = {
+    if (!isUnityCatalog) null
+    else {
+      val catalogConfigs = UCCommitCoordinatorBuilder.getCatalogConfigMap(spark)
+      val catalogName = name()
+      catalogConfigs.get(catalogName) match {
+        case Some(config) =>
+          import scala.collection.JavaConverters._
+          val tokenProvider = io.unitycatalog.client.auth.TokenProvider.create(
+            config.authConfig.asJava)
+          new UCDeltaClient(config.uri, tokenProvider, java.util.Collections.emptyMap())
+        case None => null
+      }
+    }
+  }
+
+  /** Spark-level shim for catalog operations. */
+  private lazy val ucDeltaCatalogClient: UCDeltaCatalogClient = {
+    val drcEnabled = spark.conf.get(DeltaSQLConf.DELTA_REST_CATALOG_ENABLED)
+    new UCDeltaCatalogClient(ucDeltaClient, drcEnabled)
+  }
+
+  override def getUCDeltaClient(): UCDeltaClient = ucDeltaClient
 
   /**
    * In Unity Catalog environments, disable variant table feature support for Spark 4.0 clients
@@ -277,9 +305,12 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       //       Before this bug is fixed, we should only call the catalog plugin API to create tables
       //       if UC is enabled to replace `V2SessionCatalog`.
       createTableFunc = Option.when(isUnityCatalog) {
-        v1Table => {
-          val t = V1Table(v1Table)
-          super.createTable(ident, t.columns(), t.partitioning, t.properties)
+        (v1Table, snapshot) => {
+          if (!ucDeltaCatalogClient.createTable(ident, v1Table, snapshot)) {
+            // DRC path not active — fall through to legacy UCProxy path
+            val t = V1Table(v1Table)
+            super.createTable(ident, t.columns(), t.partitioning, t.properties)
+          }
         }
       }).run(spark)
 
