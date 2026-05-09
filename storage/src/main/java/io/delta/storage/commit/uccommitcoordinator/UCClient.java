@@ -172,6 +172,42 @@ public interface UCClient extends AutoCloseable {
       Map<String, String> properties) throws CommitFailedException;
 
   /**
+   * Overloaded commit that accepts the full table configuration map, enabling
+   * implementations that address tables by name (e.g., Delta REST API) to extract
+   * the catalog/schema/table triple. The default implementation delegates to the
+   * ID-based {@link #commit(String, URI, Optional, Optional, boolean, Optional,
+   * Optional, Optional)} method.
+   */
+  default void commit(
+      Map<String, String> tableConf,
+      URI tableUri,
+      Optional<Commit> commit,
+      Optional<Long> lastKnownBackfilledVersion,
+      boolean disown,
+      Optional<AbstractMetadata> newMetadata,
+      Optional<AbstractProtocol> newProtocol,
+      Optional<UniformMetadata> uniform
+  ) throws IOException, CommitFailedException, UCCommitCoordinatorException {
+    commit(tableConf.get("io.unitycatalog.tableId"), tableUri, commit,
+        lastKnownBackfilledVersion, disown, newMetadata, newProtocol, uniform);
+  }
+
+  /**
+   * Overloaded getCommits that accepts the full table configuration map. The default
+   * implementation delegates to the ID-based {@link #getCommits(String, URI, Optional,
+   * Optional)} method.
+   */
+  default GetCommitsResponse getCommits(
+      Map<String, String> tableConf,
+      URI tableUri,
+      Optional<Long> startVersion,
+      Optional<Long> endVersion
+  ) throws IOException, UCCommitCoordinatorException {
+    return getCommits(tableConf.get("io.unitycatalog.tableId"), tableUri,
+        startVersion, endVersion);
+  }
+
+  /**
    * Closes any resources used by this client.
    * This method should be called to properly release resources such as network
    * connections (e.g., HTTPClient) when the client is no longer needed.

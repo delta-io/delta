@@ -23,7 +23,7 @@ import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
 import io.delta.storage.commit.CommitCoordinatorClient
-import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCommitCoordinatorClient, UCTokenBasedRestClient}
+import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCommitCoordinatorClient, UCDeltaRestClient, UCTokenBasedRestClient}
 
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -56,6 +56,9 @@ object UCCommitCoordinatorBuilder
   /** Suffix for the URI configuration of a catalog. */
   final private val URI_SUFFIX = "uri"
 
+  /** Suffix for the Delta REST API feature flag. */
+  final private val DELTA_REST_API_ENABLED_SUFFIX = "deltaRestApi.enabled"
+
   /** Cache for UCCommitCoordinatorClient instances. */
   private val commitCoordinatorClientCache =
     new ConcurrentHashMap[String, UCCommitCoordinatorClient]()
@@ -84,7 +87,9 @@ object UCCommitCoordinatorBuilder
       spark: SparkSession,
       catalogName: String): CommitCoordinatorClient = {
     val client = getCatalogConfigs(spark).find(_._1 == catalogName) match {
-      case Some((_, uri, authConfig)) => ucClientFactory.createUCClient(uri, authConfig)
+      case Some((_, uri, authConfig)) =>
+        val deltaRestEnabled = isDeltaRestApiEnabled(spark, catalogName)
+        createUCClientForConfig(uri, authConfig, deltaRestEnabled)
       case None =>
         throw new IllegalArgumentException(
           s"Catalog $catalogName not found in the provided SparkSession configurations.")
@@ -102,16 +107,39 @@ object UCCommitCoordinatorBuilder
    * appropriate exception.
    */
   private def getMatchingUCClient(spark: SparkSession, metastoreId: String): UCClient = {
-    val matchingClients: List[(String, Map[String, String])] = getCatalogConfigs(spark)
-      .map { case (name, uri, authConfig) => (uri, authConfig) }
+    val matchingClients: List[(String, Map[String, String], Boolean)] = getCatalogConfigs(spark)
+      .map { case (name, uri, authConfig) =>
+        val deltaRestEnabled = isDeltaRestApiEnabled(spark, name)
+        (uri, authConfig, deltaRestEnabled)
+      }
       .distinct // Remove duplicates since multiple catalogs can have the same uri and config
-      .filter { case (uri, authConfig) => getMetastoreId(uri, authConfig).contains(metastoreId) }
+      .filter { case (uri, authConfig, _) =>
+        getMetastoreId(uri, authConfig).contains(metastoreId) }
 
     matchingClients match {
       case Nil => throw noMatchingCatalogException(metastoreId)
-      case (uri, authConfig) :: Nil => ucClientFactory.createUCClient(uri, authConfig)
+      case (uri, authConfig, deltaRestEnabled) :: Nil =>
+        createUCClientForConfig(uri, authConfig, deltaRestEnabled)
       case multiple => throw multipleMatchingCatalogs(metastoreId, multiple.map(_._1))
     }
+  }
+
+  /** Creates a UCClient using either the legacy or Delta REST factory based on config. */
+  private def createUCClientForConfig(
+      uri: String,
+      authConfig: Map[String, String],
+      deltaRestApiEnabled: Boolean): UCClient = {
+    if (deltaRestApiEnabled) {
+      UCDeltaRestClientFactory.createUCClient(uri, authConfig)
+    } else {
+      ucClientFactory.createUCClient(uri, authConfig)
+    }
+  }
+
+  /** Checks if Delta REST API is enabled for a given catalog. */
+  private def isDeltaRestApiEnabled(spark: SparkSession, catalogName: String): Boolean = {
+    val key = s"$SPARK_SQL_CATALOG_PREFIX$catalogName.$DELTA_REST_API_ENABLED_SUFFIX"
+    spark.conf.getOption(key).exists(_.equalsIgnoreCase("true"))
   }
 
   /**
@@ -336,6 +364,17 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
       authConfig: java.util.Map[String, String],
       appVersions: java.util.Map[String, String]): UCClient = {
     createUCClientWithVersions(uri, authConfig.asScala.toMap, appVersions.asScala.toMap)
+  }
+}
+
+/**
+ * Factory that creates [[UCDeltaRestClient]] instances for the Delta REST Catalog API.
+ */
+object UCDeltaRestClientFactory extends UCClientFactory {
+  override def createUCClient(uri: String, authConfig: Map[String, String]): UCClient = {
+    val tokenProvider = TokenProvider.create(authConfig.asJava)
+    val appVersions = UCTokenBasedRestClientFactory.defaultAppVersionsAsJava
+    new UCDeltaRestClient(uri, tokenProvider, appVersions)
   }
 }
 

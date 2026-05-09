@@ -710,7 +710,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
         "Commit timestamp should be specified when commitFile is present"))
     ));
     ucClient.commit(
-      extractUCTableId(tableDesc),
+      tableDesc.getTableConf(),
       CoordinatedCommitsUtils.getTablePath(logPath).toUri(),
       commit,
       lastKnownBackfilledVersion,
@@ -831,7 +831,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       Optional<Long> endVersion) {
     try {
       return ucClient.getCommits(
-        extractUCTableId(tableDesc),
+        tableDesc.getTableConf(),
         CoordinatedCommitsUtils.getTablePath(tableDesc.getLogPath()).toUri(),
         startVersion,
         endVersion);
