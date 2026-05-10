@@ -1581,6 +1581,40 @@ case class CheckpointMetadata(
   extends CheckpointOnlyAction {
 
   override def wrap: SingleAction = SingleAction(checkpointMetadata = this)
+
+  @JsonIgnore
+  def sidecarFileSchema: Option[StructType] = {
+    Option(tags)
+      .flatMap(_.get(CheckpointMetadata.Tags.SIDECAR_FILE_SCHEMA))
+      .map(DataType.fromJson(_).asInstanceOf[StructType])
+  }
+}
+
+object CheckpointMetadata {
+  def apply(
+      version: Long,
+      sidecarNumActions: Long,
+      sidecarSizeInBytes: Long,
+      numOfAddFiles: Long,
+      sidecarFileSchemaOpt: Option[StructType]): CheckpointMetadata = {
+    val tagMapWithSchema =
+      sidecarFileSchemaOpt.map(Tags.SIDECAR_FILE_SCHEMA -> _.json)
+    CheckpointMetadata(
+      version = version,
+      tags = Map(
+        Tags.SIDECAR_NUM_ACTIONS -> sidecarNumActions.toString,
+        Tags.SIDECAR_SIZE_IN_BYTES -> sidecarSizeInBytes.toString,
+        Tags.NUM_OF_ADD_FILES -> numOfAddFiles.toString
+      ) ++ tagMapWithSchema
+    )
+  }
+
+  object Tags {
+    val SIDECAR_NUM_ACTIONS = "sidecarNumActions"
+    val SIDECAR_SIZE_IN_BYTES = "sidecarSizeInBytes"
+    val NUM_OF_ADD_FILES = "numOfAddFiles"
+    val SIDECAR_FILE_SCHEMA = "sidecarFileSchema"
+  }
 }
 
 

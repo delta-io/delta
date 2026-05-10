@@ -983,7 +983,13 @@ object Checkpoints
     // Filter out the sidecar schema if it is too large.
     val sidecarFileSchemaOpt =
       Checkpoints.checkpointSchemaToWriteInLastCheckpointFile(spark, sidecarSchema)
-    val checkpointMetadata = CheckpointMetadata(snapshot.version)
+    val checkpointMetadata = CheckpointMetadata(
+      version = snapshot.version,
+      sidecarNumActions = rowsWrittenInCheckpointJob,
+      sidecarSizeInBytes = parquetFilesSizeInBytes,
+      numOfAddFiles = snapshot.numOfFiles,
+      sidecarFileSchemaOpt = sidecarFileSchemaOpt
+    )
 
     val nonFileActionsToWrite =
       (checkpointMetadata +: sidecarFilesWritten) ++ snapshot.nonFileActions
