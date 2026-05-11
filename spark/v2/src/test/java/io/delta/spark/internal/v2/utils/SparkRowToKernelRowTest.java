@@ -337,7 +337,7 @@ public class SparkRowToKernelRowTest {
     ArrayValue av = kernelRow.getArray(0);
     assertNotNull(av);
     // Verify round-trip
-    List<?> roundTripped = VectorUtils.toJavaList(av, StringType.STRING);
+    List<?> roundTripped = VectorUtils.toJavaList(av);
     assertEquals(3, roundTripped.size());
     assertEquals("alpha", roundTripped.get(0));
     assertEquals("beta", roundTripped.get(1));
