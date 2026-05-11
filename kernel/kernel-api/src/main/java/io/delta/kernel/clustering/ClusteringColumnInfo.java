@@ -33,14 +33,14 @@ import java.util.stream.Collectors;
  * reference (as stored in the {@code delta.clustering} domain), the logical column reference (as it
  * appears in the snapshot's logical schema), and the column's data type.
  *
- * <p>Each column reference is multi-part to support nested-field clustering ({@link
- * Column#getNames()} returns the parts). The logical reference always carries the casing of the
- * snapshot's schema (the schema walk matches by case-insensitive name). With column mapping enabled
- * the physical reference holds the stable identifiers stored in the domain JSON and the two
- * references diverge; without column mapping, the references differ only when the domain JSON's
- * column-name casing differs from the schema's. Callers should not assume any particular format for
- * the physical identifiers (e.g. {@code col-<uuid>}); the format depends on the column-mapping mode
- * and whether the table was new at the time mapping was enabled.
+ * <p>The logical reference always carries the casing of the snapshot's schema (the schema walk
+ * matches by case-insensitive name). With column mapping enabled the physical reference holds the
+ * stable identifiers stored in the domain JSON and the two references diverge; without column
+ * mapping, the references differ only when the domain JSON's column-name casing differs from the
+ * schema's. Callers should not assume any particular format for the physical identifiers (e.g.
+ * {@code col-<uuid>}); the format depends on the column-mapping mode and whether the table was new
+ * at the time mapping was enabled. Nested-field clustering shows up as a {@link Column} with more
+ * than one name part.
  *
  * <p>Produced by {@link io.delta.kernel.Snapshot#getClusteringColumnInfos()} and the static {@link
  * #resolve(StructType, Column)} factory.

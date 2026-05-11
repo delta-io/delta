@@ -71,14 +71,17 @@ class SnapshotGetClusteringColumnInfosDefaultBodySuite extends AnyFunSuite {
     assert(result.get().isEmpty)
   }
 
-  test("default body treats missing clusteringColumns field as empty list") {
-    // A clustering domain whose JSON parses but lacks a `clusteringColumns` field must not NPE
-    // on read. ClusteringMetadataDomain coalesces null -> empty, so the result is an empty
-    // descriptor list (semantically equivalent to a clustered-with-no-columns table).
+  test("default body throws KernelException when clusteringColumns field is missing or null") {
+    // A clustering domain whose JSON parses but lacks a `clusteringColumns` field is incomplete
+    // and surfaced as a KernelException rather than silently coalesced to an empty list, so
+    // writer bugs are not masked. `[]` is the right way to spell a clustered-but-empty table.
     Seq("{}", """{"clusteringColumns":null}""").foreach { json =>
-      val result = stub(Some(json)).getClusteringColumnInfos
-      assert(result.isPresent, s"json=$json must yield Optional.of(emptyList), got Optional.empty")
-      assert(result.get().isEmpty, s"json=$json must yield empty list, got ${result.get()}")
+      val ex = intercept[KernelException] {
+        stub(Some(json)).getClusteringColumnInfos
+      }
+      assert(
+        ex.getMessage.toLowerCase(Locale.ROOT).contains("clustering"),
+        s"json=$json: unexpected exception message: ${ex.getMessage}")
     }
   }
 

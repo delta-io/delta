@@ -552,6 +552,44 @@ trait DeltaTableClusteringSuiteBase extends AnyFunSuite with AbstractWriteUtils 
     }
   }
 
+  test("getClusteringColumnInfos under `name` column mapping mode") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // ===== GIVEN =====
+      // Exercise getClusteringColumnInfos with `name` column mapping (distinct write path from
+      // the `id`-mode test above). Like `id` mode, Kernel's writer assigns generated physical
+      // identifiers (e.g. `col-<uuid>`) to new fields, so physical and logical references
+      // diverge at create time.
+      val tableProperties = Map(ColumnMapping.COLUMN_MAPPING_MODE_KEY -> "name")
+      val clusteringColumns = List(new Column("part1"), new Column("part2"))
+
+      createEmptyTable(
+        engine,
+        tablePath,
+        testPartitionSchema,
+        tableProperties = tableProperties,
+        clusteringColsOpt = Some(clusteringColumns))
+
+      // ===== WHEN =====
+      val snapshot = getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath)
+      val infos = snapshot.getClusteringColumnInfos.get().asScala
+
+      // ===== THEN =====
+      assert(infos.size == 2)
+      infos.zipWithIndex.foreach { case (info, idx) =>
+        val expectedLogicalName = if (idx == 0) "part1" else "part2"
+
+        assert(info.getPhysicalColumn.getNames.length == 1)
+        assert(info.getLogicalColumn.getNames.length == 1)
+        assert(info.getLogicalColumn.getNames()(0) == expectedLogicalName)
+        assert(
+          info.getPhysicalColumn != info.getLogicalColumn,
+          s"physical=${info.getPhysicalColumn}, logical=${info.getLogicalColumn} " +
+            "must diverge when column mapping is enabled")
+        assert(info.getDataType == INTEGER)
+      }
+    }
+  }
+
   test("getClusteringColumnInfos returns empty for unclustered table") {
     withTempDirAndEngine { (tablePath, engine) =>
       createEmptyTable(engine, tablePath, testPartitionSchema)
