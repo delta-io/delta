@@ -52,3 +52,5 @@ Note that this table feature, as well as [icebergCompatV1](https://github.com/de
 | No writer feature requiring partition column materialization is enabled | `false` | Partition columns *should not* be materialized in parquet data files |
 | No writer feature requiring partition column materialization is enabled | `true` | Partition columns *should* be materialized in parquet data files |
 | No writer feature requiring partition column materialization is enabled | unset | No requirement on partition column materialization |
+
+The value of having both the table feature `materializePartitionColumns` and the table property `delta.writePartitionColumnsToParquet` supported is that not every table is going to need the heightened requirement of only allowing writes from writers that understand `materializePartitionColumns`. In other words, `materializePartitionColumns` imposes a writer compatibility edge that `delta.writePartitionColumnsToParquet` does not.
