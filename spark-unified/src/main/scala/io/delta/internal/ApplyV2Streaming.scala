@@ -16,21 +16,28 @@
 
 package io.delta.internal
 
+import java.util.{HashMap => JHashMap}
+
 import scala.jdk.CollectionConverters._
 import scala.jdk.OptionConverters._
 
 import io.delta.spark.internal.v2.catalog.SparkTable
+import io.delta.spark.internal.v2.read.SparkScanBuilder
 import io.delta.spark.internal.v2.utils.ScalaUtils
 import org.apache.spark.sql.delta.DeltaV2Mode
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.expressions.AttributeReference
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
+import org.apache.spark.sql.catalyst.util._
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.delta.Relocated.StreamingRelation
+import org.apache.spark.sql.execution.datasources.FileFormat
+import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
@@ -71,6 +78,20 @@ class ApplyV2Streaming(
     deltaV2Mode.isStreamingReadsEnabled(s.dataSource.catalogTable.toJava)
   }
 
+  private def requestedMetadataSchemaJson(output: Seq[AttributeReference]): Option[String] = {
+    output.find(attr => attr.isMetadataCol && attr.name == FileFormat.METADATA_NAME).map { attr =>
+      StructType(Seq(StructField(attr.name, attr.dataType, attr.nullable, attr.metadata))).json
+    }
+  }
+
+  private def withStreamingMetadataSchemaOption(
+      options: CaseInsensitiveStringMap,
+      schemaJson: String): CaseInsensitiveStringMap = {
+    val updated = new JHashMap[String, String](options.asCaseSensitiveMap())
+    updated.put(SparkScanBuilder.STREAMING_METADATA_SCHEMA_OPTION, schemaJson)
+    new CaseInsensitiveStringMap(updated)
+  }
+
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {
     case s: StreamingRelation if shouldApplyV2Streaming(s) =>
       // catalogTable is guaranteed to be defined because shouldApplyV2Streaming checks it
@@ -102,5 +123,13 @@ class ApplyV2Streaming(
         identifier = Some(ident),
         // Keep this None to force the V2 path; we don't want to fall back to V1 here.
         v1Relation = None)
+
+    case s @ StreamingRelationV2(_, _, _: SparkTable, extraOptions, output, _, _, _) =>
+      requestedMetadataSchemaJson(output) match {
+        case Some(schemaJson)
+            if extraOptions.get(SparkScanBuilder.STREAMING_METADATA_SCHEMA_OPTION) != schemaJson =>
+          s.copy(extraOptions = withStreamingMetadataSchemaOption(extraOptions, schemaJson))
+        case _ => s
+      }
   }
 }

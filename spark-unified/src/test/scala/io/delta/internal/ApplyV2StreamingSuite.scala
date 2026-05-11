@@ -34,10 +34,12 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.execution.datasources.DataSource
 import org.apache.spark.sql.connector.catalog.Identifier
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 class ApplyV2StreamingSuite extends DeltaSQLCommandTest {
+
+  private val streamingMetadataSchemaOption = "__delta_internal_v2_streaming_metadata_schema"
 
   private def applyRule(plan: LogicalPlan): LogicalPlan = {
     new ApplyV2Streaming(spark).apply(plan)
@@ -137,6 +139,35 @@ class ApplyV2StreamingSuite extends DeltaSQLCommandTest {
             }
           }
         }
+      }
+    }
+  }
+
+  test("ApplyV2Streaming preserves requested metadata schema in scan options") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      createDeltaTable(path)
+      val catalogTable = createCatalogTable(dir.toURI, ucManaged = false)
+      val dataSource = DataSource(
+        sparkSession = spark,
+        userSpecifiedSchema = None,
+        className = "delta",
+        options = Map("path" -> path),
+        catalogTable = Some(catalogTable))
+
+      withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "STRICT") {
+        val v2Relation = applyRule(StreamingRelation(dataSource)).asInstanceOf[StreamingRelationV2]
+        val withMetadata = v2Relation.withMetadataColumns()
+        val metadataAttr = withMetadata.output.find(_.name == "_metadata").get
+        val expectedSchema = StructType(Seq(StructField(
+          metadataAttr.name,
+          metadataAttr.dataType,
+          metadataAttr.nullable,
+          metadataAttr.metadata))).json
+
+        val result = applyRule(withMetadata).asInstanceOf[StreamingRelationV2]
+
+        assert(result.extraOptions.get(streamingMetadataSchemaOption) == expectedSchema)
       }
     }
   }
