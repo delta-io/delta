@@ -180,6 +180,29 @@ trait DeltaTableClusteringSuiteBase extends AnyFunSuite with AbstractWriteUtils 
           s"unexpected error message: ${ex.getMessage}")
       }
     }
+
+    test(s"build table txn: clustering on a nested $label column should be rejected") {
+      withTempDirAndEngine { (tablePath, engine) =>
+        val schema = new StructType()
+          .add("id", INTEGER)
+          .add(
+            "parent",
+            new StructType().add("geo", geoType))
+        val ex = intercept[KernelException] {
+          getCreateTxn(
+            engine,
+            tablePath,
+            schema,
+            clusteringColsOpt = Some(List(new Column(Array("parent", "geo")))))
+        }
+        assert(
+          ex.getMessage.contains("Clustering is not supported on geometry/geography column(s)"),
+          s"unexpected error message: ${ex.getMessage}")
+        assert(
+          ex.getMessage.contains("parent") && ex.getMessage.contains("geo"),
+          s"error should name the nested column path: ${ex.getMessage}")
+      }
+    }
   }
 
   test("create a clustered table should succeed") {

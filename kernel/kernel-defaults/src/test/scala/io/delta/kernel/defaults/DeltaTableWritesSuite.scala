@@ -39,6 +39,7 @@ import io.delta.kernel.internal.{ScanImpl, SnapshotImpl, TableConfig}
 import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElement
 import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
+import io.delta.kernel.internal.tablefeatures.TableFeatures.GEOSPATIAL_RW_FEATURE
 import io.delta.kernel.internal.types.DataTypeJsonSerDe
 import io.delta.kernel.internal.util.{Clock, JsonUtils}
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
@@ -2196,10 +2197,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
 
           val protocol = snapshot.getProtocol
           val supported = protocol.getImplicitlyAndExplicitlySupportedFeatures
-          assert(
-            supported.contains(io.delta.kernel.internal.tablefeatures.TableFeatures
-              .GEOSPATIAL_RW_FEATURE),
-            s"protocol features: $supported")
+          assert(supported.contains(GEOSPATIAL_RW_FEATURE), s"protocol features: $supported")
           assert(protocol.getMinReaderVersion >= 3)
           assert(protocol.getMinWriterVersion >= 7)
 

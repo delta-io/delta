@@ -26,7 +26,8 @@ import io.delta.kernel.defaults.utils.{GeoTestUtils, TestRow, TestUtils, WriteUt
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.{CheckpointAlreadyExistsException, TableNotFoundException}
 import io.delta.kernel.expressions.{Column, Literal}
-import io.delta.kernel.internal.SnapshotImpl
+import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
+import io.delta.kernel.internal.tablefeatures.TableFeatures.GEOSPATIAL_RW_FEATURE
 import io.delta.kernel.statistics.DataFileStatistics
 import io.delta.kernel.types.{GeometryType, StructType => KernelStructType}
 
@@ -515,10 +516,7 @@ class CreateCheckpointSuite extends CheckpointBase with GeoTestUtils {
 
   Seq(
     ("classic", Map.empty[String, String]),
-    (
-      "v2-typed",
-      Map(
-        io.delta.kernel.internal.TableConfig.CHECKPOINT_POLICY.getKey -> "v2"))).foreach {
+    ("v2-typed", Map(TableConfig.CHECKPOINT_POLICY.getKey -> "v2"))).foreach {
     case (label, tableProps) =>
       test(s"data skipping survives $label checkpoint - geometry column") {
         withTempDirAndEngine { (tablePath, engine) =>
@@ -551,8 +549,7 @@ class CreateCheckpointSuite extends CheckpointBase with GeoTestUtils {
 
           val features = snapshot.getProtocol.getImplicitlyAndExplicitlySupportedFeatures
           assert(
-            features.contains(io.delta.kernel.internal.tablefeatures.TableFeatures
-              .GEOSPATIAL_RW_FEATURE),
+            features.contains(GEOSPATIAL_RW_FEATURE),
             s"geospatial feature missing post-checkpoint: $features")
 
           // null-stats f4 always falls through (+1 in every count).

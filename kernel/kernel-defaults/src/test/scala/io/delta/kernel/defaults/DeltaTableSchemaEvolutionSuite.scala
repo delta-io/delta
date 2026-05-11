@@ -29,8 +29,9 @@ import io.delta.kernel.expressions.Column
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
 import io.delta.kernel.internal.actions.DomainMetadata
 import io.delta.kernel.internal.clustering.ClusteringMetadataDomain
+import io.delta.kernel.internal.tablefeatures.TableFeatures.GEOSPATIAL_RW_FEATURE
 import io.delta.kernel.internal.util.{ColumnMapping, ColumnMappingSuiteBase}
-import io.delta.kernel.types.{ArrayType, CollationIdentifier, DecimalType, FieldMetadata, GeographyType, GeometryType, IntegerType, LongType, MapType, StringType, StructType, TypeChange}
+import io.delta.kernel.types.{ArrayType, CollationIdentifier, DataType, DecimalType, FieldMetadata, GeographyType, GeometryType, IntegerType, LongType, MapType, StringType, StructType, TypeChange}
 import io.delta.kernel.utils.CloseableIterable
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
 
@@ -1986,8 +1987,7 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
           val before = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
           val featuresBefore = before.getProtocol.getImplicitlyAndExplicitlySupportedFeatures
           assert(
-            !featuresBefore.contains(io.delta.kernel.internal.tablefeatures.TableFeatures
-              .GEOSPATIAL_RW_FEATURE),
+            !featuresBefore.contains(GEOSPATIAL_RW_FEATURE),
             s"geospatial should not be present before, got: $featuresBefore")
 
           val currentSchema = before.getSchema
@@ -2003,8 +2003,7 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
 
           val featuresAfter = after.getProtocol.getImplicitlyAndExplicitlySupportedFeatures
           assert(
-            featuresAfter.contains(io.delta.kernel.internal.tablefeatures.TableFeatures
-              .GEOSPATIAL_RW_FEATURE),
+            featuresAfter.contains(GEOSPATIAL_RW_FEATURE),
             s"geospatial should be present after, got: $featuresAfter")
           assert(after.getProtocol.getMinReaderVersion >= 3)
           assert(after.getProtocol.getMinWriterVersion >= 7)
@@ -2052,8 +2051,7 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
       val after = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       val features = after.getProtocol.getImplicitlyAndExplicitlySupportedFeatures
       assert(
-        features.contains(io.delta.kernel.internal.tablefeatures.TableFeatures
-          .GEOSPATIAL_RW_FEATURE),
+        features.contains(GEOSPATIAL_RW_FEATURE),
         s"geospatial should be present, got: $features")
       assert(after.getProtocol.getMinReaderVersion >= 3)
       assert(after.getProtocol.getMinWriterVersion >= 7)
@@ -2064,12 +2062,12 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
   Seq(
     (
       "change geometry SRID",
-      GeometryType.ofSRID("OGC:CRS84").asInstanceOf[io.delta.kernel.types.DataType],
-      GeometryType.ofSRID("EPSG:4326").asInstanceOf[io.delta.kernel.types.DataType]),
+      GeometryType.ofSRID("OGC:CRS84").asInstanceOf[DataType],
+      GeometryType.ofSRID("EPSG:4326").asInstanceOf[DataType]),
     (
       "change geography algorithm",
-      new GeographyType("OGC:CRS84", "spherical").asInstanceOf[io.delta.kernel.types.DataType],
-      new GeographyType("OGC:CRS84", "vincenty").asInstanceOf[io.delta.kernel.types.DataType]))
+      new GeographyType("OGC:CRS84", "spherical").asInstanceOf[DataType],
+      new GeographyType("OGC:CRS84", "vincenty").asInstanceOf[DataType]))
     .foreach { case (label, fromType, toType) =>
       test(s"$label is rejected by schema evolution") {
         withTempDirAndEngine { (tablePath, engine) =>
