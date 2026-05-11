@@ -215,7 +215,13 @@ public class SparkRowToKernelRow implements Row {
     if (sparkRow.isNullAt(ordinal)) {
       return null;
     }
-    List<?> javaList = sparkRow.getList(ordinal);
+    Object raw = sparkRow.get(ordinal);
+    List<?> javaList;
+    if (raw instanceof scala.collection.Seq) {
+      javaList = scala.jdk.javaapi.CollectionConverters.asJava((scala.collection.Seq<?>) raw);
+    } else {
+      javaList = (List<?>) raw;
+    }
     ArrayType at = (ArrayType) kernelSchema.at(ordinal).getDataType();
     return javaListToKernelArrayValue(javaList, at);
   }
@@ -298,7 +304,9 @@ public class SparkRowToKernelRow implements Row {
     }
     if (dt instanceof TimestampType) {
       if (sparkValue instanceof Long) {
-        // Already epoch-microseconds (from InternalRow); matches Kernel's TimestampType.
+        // Already UTC epoch-microseconds (from InternalRow or pre-converted value).
+        // Kernel stores TimestampType as long micros. Callers are responsible for
+        // ensuring the long value represents UTC microseconds.
         return sparkValue;
       } else if (sparkValue instanceof java.sql.Timestamp) {
         // Convert java.sql.Timestamp -> epoch-microseconds long (UTC).
@@ -312,7 +320,12 @@ public class SparkRowToKernelRow implements Row {
     }
     if (dt instanceof TimestampNTZType) {
       if (sparkValue instanceof Long) {
-        // Already epoch-microseconds (from InternalRow); matches Kernel's TimestampNTZType.
+        // Already wall-clock microseconds (from InternalRow or pre-converted value).
+        // Kernel stores both TimestampType and TimestampNTZType as long micros with no
+        // runtime distinction — the semantic difference (UTC vs wall-clock) is carried
+        // solely by the schema DataType, not the value representation. Callers are
+        // responsible for ensuring the long value has the correct semantics for the
+        // declared type.
         return sparkValue;
       } else if (sparkValue instanceof java.time.LocalDateTime) {
         // Convert wall-clock LocalDateTime -> epoch-microseconds long (no timezone).

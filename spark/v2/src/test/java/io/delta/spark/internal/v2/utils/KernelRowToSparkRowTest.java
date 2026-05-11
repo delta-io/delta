@@ -27,6 +27,7 @@ import io.delta.kernel.types.*;
 import java.math.BigDecimal;
 import java.util.*;
 import org.apache.spark.sql.Row;
+import org.apache.spark.sql.catalyst.util.DateTimeUtils;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
@@ -234,16 +235,19 @@ public class KernelRowToSparkRowTest {
     Object dateVal = sparkRow.get(0);
     assertTrue(
         dateVal instanceof java.sql.Date, "Expected java.sql.Date, got " + dateVal.getClass());
+    assertEquals(java.sql.Date.valueOf(java.time.LocalDate.ofEpochDay(epochDays)), dateVal);
 
     Object tsVal = sparkRow.get(1);
     assertTrue(
         tsVal instanceof java.sql.Timestamp,
         "Expected java.sql.Timestamp, got " + tsVal.getClass());
+    assertEquals(DateTimeUtils.toJavaTimestamp(tsMicros), tsVal);
 
     Object ntzVal = sparkRow.get(2);
     assertTrue(
         ntzVal instanceof java.time.LocalDateTime,
         "Expected java.time.LocalDateTime, got " + ntzVal.getClass());
+    assertEquals(DateTimeUtils.microsToLocalDateTime(ntzMicros), ntzVal);
   }
 
   /** Integration test: verifies AddFile survives Kernel Row -> Spark Row -> Kernel Row. */

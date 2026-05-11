@@ -17,6 +17,7 @@ package io.delta.spark.internal.v2.utils;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.util.VectorUtils;
@@ -26,6 +27,7 @@ import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import org.apache.spark.sql.RowFactory;
 import org.apache.spark.sql.catalyst.util.DateTimeUtils;
@@ -184,5 +186,24 @@ public class SparkRowToKernelRowTest {
     Map<?, ?> roundTripped = VectorUtils.toJavaMap(mv);
     assertEquals("spark", roundTripped.get("engine"));
     assertEquals("4.0", roundTripped.get("version"));
+  }
+
+  @Test
+  public void testJavaUtilListArrayInput() {
+    StructType schema = new StructType().add("items", new ArrayType(StringType.STRING, true));
+
+    List<String> javaList = List.of("alpha", "beta", "gamma");
+
+    org.apache.spark.sql.Row sparkRow = RowFactory.create(javaList);
+    Row kernelRow = new SparkRowToKernelRow(sparkRow, schema);
+
+    ArrayValue av = kernelRow.getArray(0);
+    assertNotNull(av);
+    // Verify round-trip
+    List<?> roundTripped = VectorUtils.toJavaList(av, StringType.STRING);
+    assertEquals(3, roundTripped.size());
+    assertEquals("alpha", roundTripped.get(0));
+    assertEquals("beta", roundTripped.get(1));
+    assertEquals("gamma", roundTripped.get(2));
   }
 }
