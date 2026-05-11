@@ -464,6 +464,25 @@ object TableFeatureProtocolUtils {
   def propertyKey(featureName: String): String =
     s"$FEATURE_PROP_PREFIX$featureName"
 
+  /**
+   * Checks whether `configs` marks `feature` as supported.
+   *
+   * This inspects only the requested feature key, so callers that receive protocol-derived
+   * catalog properties can avoid failing on unrelated feature names newer than this runtime.
+   */
+  def isFeatureSupportedInTableConfigs(
+      configs: Map[String, String],
+      feature: TableFeature): Boolean = {
+    val featureKey = propertyKey(feature).toLowerCase(Locale.ROOT)
+    configs.exists { case (key, status) =>
+      // Snapshot.getProperties generates protocol-derived catalog feature properties.
+      // Those properties always use `supported`.
+      // Do not accept the deprecated `enabled` table property status here.
+      key.toLowerCase(Locale.ROOT) == featureKey &&
+        status.toLowerCase(Locale.ROOT) == FEATURE_PROP_SUPPORTED
+    }
+  }
+
   /** Get the session default config key for the `feature`. */
   def defaultPropertyKey(feature: TableFeature): String = defaultPropertyKey(feature.name)
 
