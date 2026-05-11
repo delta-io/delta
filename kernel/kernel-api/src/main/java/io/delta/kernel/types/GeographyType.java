@@ -16,10 +16,10 @@
 package io.delta.kernel.types;
 
 import io.delta.kernel.annotation.Evolving;
-import java.util.Locale;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
 
