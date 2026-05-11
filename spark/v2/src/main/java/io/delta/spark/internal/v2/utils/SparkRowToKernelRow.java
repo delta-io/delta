@@ -129,16 +129,22 @@ public class SparkRowToKernelRow implements Row {
         String.format("Cannot read a null value as LONG at ordinal %d", ordinal));
     DataType dt = kernelSchema.at(ordinal).getDataType();
     if (dt instanceof TimestampType || dt instanceof TimestampNTZType) {
-      // Kernel's Row.getLong() contract for TimestampType: return microseconds since epoch (UTC).
-      // For TimestampNTZType: return microseconds (wall-clock, no timezone).
-      // Same evidence pattern as getInt()/DateType above -- production vector-backed rows store
-      // timestamps as raw longs, and Kernel consumers (ActionsIterator, LogReplay, etc.) call
-      // getLong() to read them.
+      // Kernel's Row.getLong() contract: return microseconds for timestamp types.
+      // TimestampType = UTC micros, TimestampNTZType = wall-clock micros.
+      // (Evidence: VectorUtils groups LongType||TimestampType -> getLong(),
+      // GenericColumnVector does the same, StructRow delegates to ColumnVector.getLong().)
       //
-      // Spark's public Row stores TimestampType as java.sql.Timestamp (or java.time.Instant)
-      // and TimestampNTZType as java.time.LocalDateTime -- not raw long.
-      // We must convert to the microsecond representation Kernel expects.
+      // Spark's public Row stores TimestampType as java.sql.Timestamp (or Instant) and
+      // TimestampNTZType as java.time.LocalDateTime — not raw long. We must convert.
+      //
+      // Note: unlike sparkValueToKernel() which rejects Long for TimestampNTZType (to
+      // prevent UTC/wall-clock ambiguity in recursive map/array values), getLong() accepts
+      // Long directly because it fulfills Kernel's Row.getLong() contract — the schema
+      // already establishes the timestamp semantics at this level.
       Object raw = sparkRow.get(ordinal);
+      if (raw instanceof Long) {
+        return (long) raw;
+      }
       return (long) sparkValueToKernel(raw, dt);
     }
     return sparkRow.getLong(ordinal);
@@ -319,20 +325,21 @@ public class SparkRowToKernelRow implements Row {
           "Cannot convert " + sparkValue.getClass() + " to TimestampType");
     }
     if (dt instanceof TimestampNTZType) {
-      if (sparkValue instanceof Long) {
-        // Already wall-clock microseconds (from InternalRow or pre-converted value).
-        // Kernel stores both TimestampType and TimestampNTZType as long micros with no
-        // runtime distinction — the semantic difference (UTC vs wall-clock) is carried
-        // solely by the schema DataType, not the value representation. Callers are
-        // responsible for ensuring the long value has the correct semantics for the
-        // declared type.
-        return sparkValue;
-      } else if (sparkValue instanceof java.time.LocalDateTime) {
-        // Convert wall-clock LocalDateTime -> epoch-microseconds long (no timezone).
+      // Unlike TimestampType, we do NOT accept raw Long here. A Long is ambiguous for
+      // TimestampNTZType: it could be UTC micros (from a TimestampType context) silently
+      // misinterpreted as wall-clock micros. KernelRowToSparkRow.toSparkValue() converts
+      // TimestampNTZType to LocalDateTime (via DateTimeUtils.microsToLocalDateTime), so
+      // the reverse path must require LocalDateTime to preserve the round-trip contract.
+      // Callers with a raw long must explicitly wrap it:
+      //   DateTimeUtils.microsToLocalDateTime(longVal)
+      if (sparkValue instanceof java.time.LocalDateTime) {
         return DateTimeUtils.localDateTimeToMicros((java.time.LocalDateTime) sparkValue);
       }
       throw new UnsupportedOperationException(
-          "Cannot convert " + sparkValue.getClass() + " to TimestampNTZType");
+          "Cannot convert "
+              + sparkValue.getClass()
+              + " to TimestampNTZType. Use java.time.LocalDateTime"
+              + " (raw Long is rejected to prevent UTC/wall-clock ambiguity).");
     }
     if (dt instanceof StructType) {
       return new SparkRowToKernelRow((org.apache.spark.sql.Row) sparkValue, (StructType) dt);

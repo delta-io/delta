@@ -189,6 +189,143 @@ public class SparkRowToKernelRowTest {
   }
 
   @Test
+  public void testDateFieldWithLocalDate() {
+    StructType schema = new StructType().add("dateField", DateType.DATE);
+
+    LocalDate ld = LocalDate.of(1970, 1, 1);
+    org.apache.spark.sql.Row sparkRow = RowFactory.create(Date.valueOf(ld));
+    Row kernelRow = new SparkRowToKernelRow(sparkRow, schema);
+
+    assertEquals(0, kernelRow.getInt(0));
+  }
+
+  @Test
+  public void testDateFieldEpochBoundary() {
+    StructType schema = new StructType().add("dateField", DateType.DATE);
+
+    Date preEpoch = Date.valueOf(LocalDate.of(1969, 12, 31));
+    org.apache.spark.sql.Row sparkRow = RowFactory.create(preEpoch);
+    Row kernelRow = new SparkRowToKernelRow(sparkRow, schema);
+
+    int epochDays = kernelRow.getInt(0);
+    assertEquals(-1, epochDays);
+  }
+
+  @Test
+  public void testTimestampFieldWithInstant() {
+    StructType schema = new StructType().add("tsField", TimestampType.TIMESTAMP);
+
+    java.time.Instant instant = java.time.Instant.parse("2025-06-15T10:30:00Z");
+    Timestamp sqlTs = Timestamp.from(instant);
+    org.apache.spark.sql.Row sparkRow = RowFactory.create(sqlTs);
+    Row kernelRow = new SparkRowToKernelRow(sparkRow, schema);
+
+    long micros = kernelRow.getLong(0);
+    assertEquals(DateTimeUtils.fromJavaTimestamp(sqlTs), micros);
+  }
+
+  @Test
+  public void testTimestampNTZFieldRoundTrip() {
+    StructType schema = new StructType().add("ntzField", TimestampNTZType.TIMESTAMP_NTZ);
+
+    LocalDateTime ldt = LocalDateTime.of(2025, 1, 1, 0, 0, 0);
+    org.apache.spark.sql.Row sparkRow = RowFactory.create(ldt);
+    Row kernelRow = new SparkRowToKernelRow(sparkRow, schema);
+
+    long micros = kernelRow.getLong(0);
+    assertEquals(ldt, DateTimeUtils.microsToLocalDateTime(micros));
+  }
+
+  @Test
+  public void testGetLongPassesThroughRawLongForTimestampNTZ() {
+    StructType ntzStruct = new StructType().add("ntz", TimestampNTZType.TIMESTAMP_NTZ);
+    StructType schema = new StructType().add("nested", ntzStruct);
+
+    // Inner Row holds a raw Long (simulates InternalRow-backed path).
+    // getLong() on the Kernel Row interface should still work — it fulfills the
+    // Row.getLong() contract directly without going through sparkValueToKernel().
+    org.apache.spark.sql.Row inner = RowFactory.create(1750000000000000L);
+    org.apache.spark.sql.Row sparkRow = RowFactory.create(inner);
+    Row kernelRow = new SparkRowToKernelRow(sparkRow, schema);
+
+    Row nested = kernelRow.getStruct(0);
+    assertEquals(1750000000000000L, nested.getLong(0));
+  }
+
+  @Test
+  public void testSparkValueToKernelRejectsRawLongForTimestampNTZ() {
+    // sparkValueToKernel (used in map/array/struct recursion) should reject Long for
+    // TimestampNTZType because a raw Long is ambiguous — it could be UTC micros from a
+    // TimestampType context silently misinterpreted as wall-clock micros.
+    assertThrows(
+        UnsupportedOperationException.class,
+        () ->
+            SparkRowToKernelRow.sparkValueToKernel(
+                1750000000000000L, TimestampNTZType.TIMESTAMP_NTZ));
+  }
+
+  @Test
+  public void testSparkValueToKernelAcceptsLocalDateTimeForTimestampNTZ() {
+    LocalDateTime ldt = LocalDateTime.of(2025, 6, 15, 10, 30, 0);
+    Object result = SparkRowToKernelRow.sparkValueToKernel(ldt, TimestampNTZType.TIMESTAMP_NTZ);
+    assertEquals(DateTimeUtils.localDateTimeToMicros(ldt), result);
+  }
+
+  @Test
+  public void testSparkValueToKernelAcceptsLongForTimestampType() {
+    // For TimestampType (UTC), raw Long IS accepted — UTC micros is unambiguous.
+    long utcMicros = 1750000000000000L;
+    Object result = SparkRowToKernelRow.sparkValueToKernel(utcMicros, TimestampType.TIMESTAMP);
+    assertEquals(utcMicros, result);
+  }
+
+  @Test
+  public void testSparkValueToKernelAcceptsTimestampForTimestampType() {
+    Timestamp ts = Timestamp.valueOf("2025-06-15 10:30:00");
+    Object result = SparkRowToKernelRow.sparkValueToKernel(ts, TimestampType.TIMESTAMP);
+    assertEquals(DateTimeUtils.fromJavaTimestamp(ts), result);
+  }
+
+  @Test
+  public void testSparkValueToKernelAcceptsInstantForTimestampType() {
+    java.time.Instant instant = java.time.Instant.parse("2025-06-15T10:30:00Z");
+    Object result = SparkRowToKernelRow.sparkValueToKernel(instant, TimestampType.TIMESTAMP);
+    assertEquals(DateTimeUtils.instantToMicros(instant), result);
+  }
+
+  @Test
+  public void testSparkValueToKernelDateConversions() {
+    LocalDate ld = LocalDate.of(2025, 6, 15);
+    Date sqlDate = Date.valueOf(ld);
+
+    Object fromSqlDate = SparkRowToKernelRow.sparkValueToKernel(sqlDate, DateType.DATE);
+    Object fromLocalDate = SparkRowToKernelRow.sparkValueToKernel(ld, DateType.DATE);
+    Object fromInt = SparkRowToKernelRow.sparkValueToKernel(20254, DateType.DATE);
+
+    assertEquals(fromSqlDate, fromLocalDate);
+    assertEquals(DateTimeUtils.fromJavaDate(sqlDate), fromInt);
+  }
+
+  @Test
+  public void testNullDateAndTimestampFields() {
+    StructType schema =
+        new StructType()
+            .add("dateField", DateType.DATE, true)
+            .add("tsField", TimestampType.TIMESTAMP, true)
+            .add("ntzField", TimestampNTZType.TIMESTAMP_NTZ, true);
+
+    org.apache.spark.sql.Row sparkRow = RowFactory.create(null, null, null);
+    Row kernelRow = new SparkRowToKernelRow(sparkRow, schema);
+
+    assertTrue(kernelRow.isNullAt(0));
+    assertTrue(kernelRow.isNullAt(1));
+    assertTrue(kernelRow.isNullAt(2));
+    assertThrows(IllegalStateException.class, () -> kernelRow.getInt(0));
+    assertThrows(IllegalStateException.class, () -> kernelRow.getLong(1));
+    assertThrows(IllegalStateException.class, () -> kernelRow.getLong(2));
+  }
+
+  @Test
   public void testJavaUtilListArrayInput() {
     StructType schema = new StructType().add("items", new ArrayType(StringType.STRING, true));
 

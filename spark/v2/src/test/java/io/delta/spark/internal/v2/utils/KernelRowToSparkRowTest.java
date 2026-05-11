@@ -250,6 +250,103 @@ public class KernelRowToSparkRowTest {
     assertEquals(DateTimeUtils.microsToLocalDateTime(ntzMicros), ntzVal);
   }
 
+  @Test
+  public void testDateEpochBoundary() {
+    StructType schema = new StructType().add("dateField", DateType.DATE);
+
+    ColumnVector dateVector = VectorUtils.buildColumnVector(List.of(0), DateType.DATE);
+    DefaultColumnarBatch batch =
+        new DefaultColumnarBatch(1, schema, new ColumnVector[] {dateVector});
+    io.delta.kernel.data.Row kernelRow = batch.getRows().next();
+
+    Row sparkRow = new KernelRowToSparkRow(kernelRow);
+    assertEquals(java.sql.Date.valueOf(java.time.LocalDate.ofEpochDay(0)), sparkRow.get(0));
+  }
+
+  @Test
+  public void testPreEpochDate() {
+    StructType schema = new StructType().add("dateField", DateType.DATE);
+
+    ColumnVector dateVector = VectorUtils.buildColumnVector(List.of(-1), DateType.DATE);
+    DefaultColumnarBatch batch =
+        new DefaultColumnarBatch(1, schema, new ColumnVector[] {dateVector});
+    io.delta.kernel.data.Row kernelRow = batch.getRows().next();
+
+    Row sparkRow = new KernelRowToSparkRow(kernelRow);
+    assertEquals(java.sql.Date.valueOf(java.time.LocalDate.ofEpochDay(-1)), sparkRow.get(0));
+  }
+
+  @Test
+  public void testTimestampZeroMicros() {
+    StructType schema = new StructType().add("tsField", TimestampType.TIMESTAMP);
+
+    ColumnVector tsVector = VectorUtils.buildColumnVector(List.of(0L), TimestampType.TIMESTAMP);
+    DefaultColumnarBatch batch = new DefaultColumnarBatch(1, schema, new ColumnVector[] {tsVector});
+    io.delta.kernel.data.Row kernelRow = batch.getRows().next();
+
+    Row sparkRow = new KernelRowToSparkRow(kernelRow);
+    assertEquals(DateTimeUtils.toJavaTimestamp(0L), sparkRow.get(0));
+  }
+
+  @Test
+  public void testNullDateTimestampFields() {
+    StructType schema =
+        new StructType()
+            .add("dateField", DateType.DATE, true)
+            .add("tsField", TimestampType.TIMESTAMP, true)
+            .add("ntzField", TimestampNTZType.TIMESTAMP_NTZ, true);
+
+    ColumnVector dateVector =
+        VectorUtils.buildColumnVector(Collections.singletonList(null), DateType.DATE);
+    ColumnVector tsVector =
+        VectorUtils.buildColumnVector(Collections.singletonList(null), TimestampType.TIMESTAMP);
+    ColumnVector ntzVector =
+        VectorUtils.buildColumnVector(
+            Collections.singletonList(null), TimestampNTZType.TIMESTAMP_NTZ);
+
+    DefaultColumnarBatch batch =
+        new DefaultColumnarBatch(1, schema, new ColumnVector[] {dateVector, tsVector, ntzVector});
+    io.delta.kernel.data.Row kernelRow = batch.getRows().next();
+
+    Row sparkRow = new KernelRowToSparkRow(kernelRow);
+    assertTrue(sparkRow.isNullAt(0));
+    assertTrue(sparkRow.isNullAt(1));
+    assertTrue(sparkRow.isNullAt(2));
+    assertNull(sparkRow.get(0));
+    assertNull(sparkRow.get(1));
+    assertNull(sparkRow.get(2));
+  }
+
+  @Test
+  public void testDateTimestampRoundTrip() {
+    StructType schema =
+        new StructType()
+            .add("dateField", DateType.DATE)
+            .add("tsField", TimestampType.TIMESTAMP)
+            .add("ntzField", TimestampNTZType.TIMESTAMP_NTZ);
+
+    int epochDays = 20254;
+    long tsMicros = 1750000000000000L;
+    long ntzMicros = 1750000000000000L;
+
+    ColumnVector dateVector = VectorUtils.buildColumnVector(List.of(epochDays), DateType.DATE);
+    ColumnVector tsVector =
+        VectorUtils.buildColumnVector(List.of(tsMicros), TimestampType.TIMESTAMP);
+    ColumnVector ntzVector =
+        VectorUtils.buildColumnVector(List.of(ntzMicros), TimestampNTZType.TIMESTAMP_NTZ);
+
+    DefaultColumnarBatch batch =
+        new DefaultColumnarBatch(1, schema, new ColumnVector[] {dateVector, tsVector, ntzVector});
+    io.delta.kernel.data.Row kernelRow = batch.getRows().next();
+
+    Row sparkRow = new KernelRowToSparkRow(kernelRow);
+    io.delta.kernel.data.Row backToKernel = new SparkRowToKernelRow(sparkRow, schema);
+
+    assertEquals(epochDays, backToKernel.getInt(0));
+    assertEquals(tsMicros, backToKernel.getLong(1));
+    assertEquals(ntzMicros, backToKernel.getLong(2));
+  }
+
   /** Integration test: verifies AddFile survives Kernel Row -> Spark Row -> Kernel Row. */
   @Tag("integration")
   @Test
