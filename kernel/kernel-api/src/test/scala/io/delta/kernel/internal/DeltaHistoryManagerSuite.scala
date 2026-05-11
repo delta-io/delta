@@ -37,7 +37,7 @@ import io.delta.kernel.internal.snapshot.LogSegment
 import io.delta.kernel.internal.util.{FileNames, VectorUtils}
 import io.delta.kernel.internal.util.InCommitTimestampUtils
 import io.delta.kernel.internal.util.VectorUtils.{buildArrayValue, stringStringMapValue}
-import io.delta.kernel.test.{MockFileSystemClientUtils, MockListFromFileSystemClient, MockReadICTFileJsonHandler}
+import io.delta.kernel.test.{CloseTrackingFileSystemClient, MockFileSystemClientUtils, MockListFromFileSystemClient, MockReadICTFileJsonHandler}
 import io.delta.kernel.test.MockSnapshotUtils.getMockSnapshot
 import io.delta.kernel.types.StringType
 import io.delta.kernel.types.StructType
@@ -1554,6 +1554,50 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       expectedVersion = 10,
       canReturnEarliestCommit = true,
       ictEnablementInfo = ictEnablementInfo)
+  }
+
+  //////////////////////////////////////////////////////////////////////////////////
+  // Iterator close/resource leak tests
+  //////////////////////////////////////////////////////////////////////////////////
+
+  test("listFrom closes iterator when directory listing is empty") {
+    // Before the fix, listFrom threw TableNotFoundException without closing the iterator
+    // when the listing was empty. Now files.close() is called before throwing.
+    val client = new CloseTrackingFileSystemClient(listFromProvider(Seq.empty))
+    val engine = mockEngine(fileSystemClient = client)
+
+    assertThrows[TableNotFoundException] {
+      DeltaHistoryManager.getEarliestDeltaFile(engine, logPath, Optional.empty())
+    }
+
+    assert(client.createdIterators.size == 1, "Expected exactly one iterator to be created")
+    assert(
+      client.createdIterators.head.closeCount > 0,
+      "Iterator should be closed when listing is empty")
+  }
+
+  test("getCommits closes iterator after successful use via try-with-resources") {
+    // Before the fix, getCommits never closed the iterator returned by listFrom.
+    // Now getCommits uses try-with-resources to ensure the iterator is closed.
+    val fileList = deltaFileStatuses(Seq.range(0, 5))
+    val client = new CloseTrackingFileSystemClient(listFromProvider(fileList))
+    val engine = mockEngine(fileSystemClient = client)
+
+    val activeCommit = getActiveCommitAtTimestamp(
+      engine,
+      getMockSnapshot(dataPath, latestVersion = 4),
+      logPath,
+      timestamp = 10,
+      canReturnLastCommit = true,
+      canReturnEarliestCommit = true)
+    assert(activeCommit.getVersion == 1)
+
+    assert(client.createdIterators.nonEmpty, "Expected at least one iterator to be created")
+    client.createdIterators.foreach { iter =>
+      assert(
+        iter.closeCount > 0,
+        "All created iterators should be closed after getCommits completes")
+    }
   }
 
   test("getActiveCommitAtTimestamp rejects non-ratified staged commits") {

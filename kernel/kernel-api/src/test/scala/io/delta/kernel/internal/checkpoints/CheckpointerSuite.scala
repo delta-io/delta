@@ -27,7 +27,7 @@ import io.delta.kernel.internal.checkpoints.Checkpointer.findLastCompleteCheckpo
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames.checkpointFileSingular
 import io.delta.kernel.internal.util.Utils
-import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils, VectorTestUtils}
+import io.delta.kernel.test.{BaseMockJsonHandler, CloseTrackingFileSystemClient, MockFileSystemClientUtils, VectorTestUtils}
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 
@@ -192,6 +192,43 @@ class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     Seq((14, 10, 15), (25, 10, 27), (27, 10, 27)).foreach {
       case (beforeVersion, expCheckpointVersion, expNumFilesListed) =>
         assertLastCheckpoint(files, beforeVersion, expCheckpointVersion, expNumFilesListed)
+    }
+  }
+
+  //////////////////////////////////////////////////////////////////////////////////
+  // Iterator close/resource leak tests
+  //////////////////////////////////////////////////////////////////////////////////
+
+  test("findLastCompleteCheckpointBeforeHelper closes iterator when checkpoint found") {
+    // Before the fix, the iterator from listFrom was never closed in this method.
+    // Now try-with-resources ensures it is closed after each iteration.
+    val files = deltaFileStatuses(Seq.range(0, 25)) ++ singularCheckpointFileStatuses(Seq(10))
+    val client = new CloseTrackingFileSystemClient(listFromProvider(files))
+    val engine = mockEngine(fileSystemClient = client)
+
+    val result = findLastCompleteCheckpointBeforeHelper(engine, logPath, 25)
+    assert(result._1.isPresent)
+    assert(result._1.get().version == 10)
+
+    assert(client.createdIterators.nonEmpty, "Expected at least one iterator to be created")
+    client.createdIterators.foreach { iter =>
+      assert(iter.closeCount > 0, "Iterator should be closed after finding checkpoint")
+    }
+  }
+
+  test("findLastCompleteCheckpointBeforeHelper closes iterator when no checkpoint found") {
+    // Before the fix, the iterator from listFrom was never closed in this method.
+    // Now try-with-resources ensures it is closed after each iteration.
+    val files = deltaFileStatuses(Seq.range(0, 25))
+    val client = new CloseTrackingFileSystemClient(listFromProvider(files))
+    val engine = mockEngine(fileSystemClient = client)
+
+    val result = findLastCompleteCheckpointBeforeHelper(engine, logPath, 25)
+    assert(!result._1.isPresent)
+
+    assert(client.createdIterators.nonEmpty, "Expected at least one iterator to be created")
+    client.createdIterators.foreach { iter =>
+      assert(iter.closeCount > 0, "Iterator should be closed even when no checkpoint found")
     }
   }
 
