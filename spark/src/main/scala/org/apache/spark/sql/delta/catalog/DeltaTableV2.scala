@@ -50,6 +50,8 @@ import org.apache.spark.sql.connector.expressions._
 import org.apache.spark.sql.connector.write.{LogicalWriteInfo, SupportsDynamicOverwrite, SupportsOverwrite, SupportsTruncate, V1Write, WriteBuilder}
 import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.execution.datasources.LogicalRelation
+import org.apache.spark.sql.execution.metric.SQLMetric
+import org.apache.spark.sql.execution.metric.SQLMetrics.{createMetric, createTimingMetric}
 import org.apache.spark.sql.sources.{BaseRelation, Filter, InsertableRelation}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
@@ -274,18 +276,39 @@ class DeltaTableV2 private(
   ).asJava
 
   override def truncateTable(): Boolean = recordDeltaOperation(deltaLog, "delta.truncateTable") {
+    val metrics = Map[String, SQLMetric](
+      "numRemovedFiles" -> createMetric(spark.sparkContext, "number of files removed."),
+      "executionTimeMs" ->
+        createTimingMetric(spark.sparkContext, "time taken to execute the entire operation")
+    )
+
     deltaLog.withNewTransaction(catalogTable) { txn =>
       DeltaLog.assertRemovable(txn.snapshot)
       if (hasBeenExecuted(txn, spark)) {
+        sendDriverMetrics(spark, metrics)
         false
       } else {
-        val removedFiles = txn.filterFiles().map(_.removeWithTimestamp(System.currentTimeMillis()))
+        val startTime = System.nanoTime()
+        val addFiles = txn.filterFiles()
+        val removedFiles = addFiles.map(_.removeWithTimestamp(System.currentTimeMillis()))
         val actions = createSetTransaction(spark, deltaLog).toSeq ++ removedFiles
-        txn.commitIfNeeded(
+
+        metrics("numRemovedFiles").set(addFiles.size)
+        metrics("executionTimeMs").set((System.nanoTime() - startTime) / 1000 / 1000)
+        txn.registerSQLMetrics(spark, metrics)
+        sendDriverMetrics(spark, metrics)
+
+        val commitVersion = txn.commitIfNeeded(
           actions = actions,
           op = DeltaOperations.Truncate(),
           tags = RowTracking.addPreservedRowTrackingTagIfNotSet(txn.snapshot))
-          .isDefined
+        recordDeltaEvent(
+          deltaLog,
+          "delta.dml.truncate.stats",
+          data = TruncateMetric(
+            numRemovedFiles = addFiles.size,
+            commitVersion = commitVersion))
+        commitVersion.isDefined
       }
     }
   }
@@ -706,3 +729,7 @@ private class WriteIntoDeltaBuilder(
     }
   }
 }
+
+case class TruncateMetric(
+    numRemovedFiles: Long,
+    commitVersion: Option[Long] = None)
