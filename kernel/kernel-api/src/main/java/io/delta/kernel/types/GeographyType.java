@@ -19,6 +19,7 @@ import io.delta.kernel.annotation.Evolving;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
 
@@ -82,7 +83,7 @@ public final class GeographyType extends DataType {
     if (algorithm == null || algorithm.isEmpty()) {
       throw new IllegalArgumentException("Algorithm cannot be null or empty");
     }
-    if (!VALID_ALGORITHMS.contains(algorithm)) {
+    if (!VALID_ALGORITHMS.contains(algorithm.toLowerCase(Locale.ROOT))) {
       throw new IllegalArgumentException(
           "Algorithm must be one of: spherical, vincenty, thomas, andoyer, karney, got: "
               + algorithm);
