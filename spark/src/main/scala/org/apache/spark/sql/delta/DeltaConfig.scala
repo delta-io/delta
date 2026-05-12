@@ -26,7 +26,6 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.{DataSkippingReaderConf, StatisticsCollection}
 import org.apache.spark.sql.delta.util.{DeltaSqlParserUtils, JsonUtils}
-import org.apache.spark.sql.delta.util.ParquetFormatVersion
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.util.{DateTimeConstants, IntervalUtils}
@@ -610,23 +609,6 @@ trait DeltaConfigsBase extends DeltaLogging {
     fromString = _.toBoolean,
     validationFunction = _ => true,
     helpMessage = "needs to be a boolean.")
-
-  /*
-   * This is the table property that determines which Parquet format version should be used when
-   * writing new Parquet files on the table.
-   */
-  val PARQUET_FORMAT_VERSION: DeltaConfig[Option[String]] =
-    buildConfig[Option[String]](
-      "parquet.format.version",
-      ParquetFormatVersion.V1_0_0.getVersion(),
-      fromString = v => Option(v),
-      validationFunction = v => {
-        v.foreach(s => ParquetFormatVersion.resolve(s))
-        true
-      },
-      s"needs to be a valid Parquet format version " +
-      s"(${ParquetFormatVersion.values().map(_.getVersion).mkString(", ")})"
-    )
 
   val ENABLE_VARIANT_SHREDDING = buildConfig[Boolean](
     key = "enableVariantShredding",
