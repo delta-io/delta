@@ -471,4 +471,66 @@ public class V2StreamingReadTest extends V2TestBase {
         ex.getMessage().contains("DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART"),
         "Expected DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART but got: " + ex.getMessage());
   }
+
+  /**
+   * Regression test for the V2 partition-column read NPE referenced in PR #6583's DSv1 test comment
+   * ("Data writes would trip a separate V2 partition-column read NPE (OnHeapColumnVector.getLong),
+   * tracked out-of-band").
+   *
+   * <p>The table schema declares the partition column in the MIDDLE of the column list: {@code (id
+   * LONG, part LONG, col3 INT) PARTITIONED BY (part)}. The V2 scan's {@link
+   * io.delta.spark.internal.v2.read.SparkScan#readSchema()} naively appends partition columns to
+   * the data columns, producing {@code (id, col3, part)} — the partition column lands in the wrong
+   * ordinal. When Spark's vectorized Parquet reader builds its {@code OnHeapColumnVector} batch
+   * using the table-schema ordinal for {@code part}, it dereferences a partition-value vector that
+   * the data-only Parquet file does not actually contain, hitting an NPE in {@code
+   * OnHeapColumnVector.getLong}.
+   */
+  @Test
+  public void testStreamingRead_partitionColumnInMiddle(@TempDir File deltaTablePath)
+      throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+    String dsv2TableRef = str("dsv2.delta.`%s`", tablePath);
+
+    // Create table with partition column declared IN THE MIDDLE: (id, part, col3)
+    spark.sql(
+        str(
+            "CREATE TABLE delta.`%s` (id LONG, part LONG, col3 INT) "
+                + "USING delta PARTITIONED BY (part)",
+            tablePath));
+
+    // Insert actual data across two partition values.
+    spark.sql(str("INSERT INTO delta.`%s` VALUES (1, 10, 100), (2, 10, 200)", tablePath));
+    spark.sql(str("INSERT INTO delta.`%s` VALUES (3, 20, 300), (4, 20, 400)", tablePath));
+
+    // Stream via V1 (oracle): readStream + format("delta").load(path).
+    Dataset<Row> v1StreamingDF = spark.readStream().format("delta").load(tablePath);
+    List<Row> v1Rows = processStreamingQuery(v1StreamingDF, "test_partition_col_middle_v1");
+
+    // V1 must succeed and return the expected rows.
+    List<Row> expectedRows =
+        Arrays.asList(
+            RowFactory.create(1L, 10L, 100),
+            RowFactory.create(2L, 10L, 200),
+            RowFactory.create(3L, 20L, 300),
+            RowFactory.create(4L, 20L, 400));
+    assertDataEquals(v1Rows, expectedRows);
+
+    // Stream via V2.
+    Dataset<Row> streamingDF = spark.readStream().table(dsv2TableRef);
+    assertTrue(streamingDF.isStreaming(), "Dataset should be streaming");
+
+    List<Row> v2Rows = processStreamingQuery(streamingDF, "test_partition_col_middle_v2");
+
+    // Sort both lists by id (column 0) and assert V1 == V2.
+    List<Row> v1Sorted =
+        v1Rows.stream()
+            .sorted((a, b) -> Long.compare(a.getLong(0), b.getLong(0)))
+            .collect(Collectors.toList());
+    List<Row> v2Sorted =
+        v2Rows.stream()
+            .sorted((a, b) -> Long.compare(a.getLong(0), b.getLong(0)))
+            .collect(Collectors.toList());
+    assertEquals(v1Sorted, v2Sorted);
+  }
 }
