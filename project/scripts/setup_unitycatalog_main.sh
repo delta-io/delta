@@ -57,7 +57,7 @@ set -euo pipefail
 # The pin. Bump both lines together if UC's version.sbt changed at the new SHA. build.sbt's
 # `unityCatalogVersion` is obtained by running this script with `--print-version`, so these two
 # values are the single source of truth.
-UC_PIN_SHA=e3ab24e815b16a7614ff32044cf51067ef7ad16b
+UC_PIN_SHA=e6cd5cd6acdefaa4f7d9bd3814075176aac43132
 UC_BASE_VERSION=0.5.0-SNAPSHOT
 # ---------------------------------------------------------------------------------------------
 
@@ -96,12 +96,14 @@ IVY_LOCAL="$HOME/.ivy2/local/io.unitycatalog"
 IVY_CANARY_CLIENT="$IVY_LOCAL/unitycatalog-client/$UC_VERSION/ivys/ivy.xml"
 IVY_CANARY_SERVER="$IVY_LOCAL/unitycatalog-server/$UC_VERSION/ivys/ivy.xml"
 IVY_CANARY_SPARK="$IVY_LOCAL/unitycatalog-spark_2.13/$UC_VERSION/ivys/ivy.xml"
+IVY_CANARY_HADOOP="$IVY_LOCAL/unitycatalog-hadoop/$UC_VERSION/ivys/ivy.xml"
 M2_LOCAL="$HOME/.m2/repository/io/unitycatalog"
 M2_CANARY_CLIENT="$M2_LOCAL/unitycatalog-client/$UC_VERSION/unitycatalog-client-$UC_VERSION.pom"
 M2_CANARY_SERVER="$M2_LOCAL/unitycatalog-server/$UC_VERSION/unitycatalog-server-$UC_VERSION.pom"
 M2_CANARY_SPARK="$M2_LOCAL/unitycatalog-spark_2.13/$UC_VERSION/unitycatalog-spark_2.13-$UC_VERSION.pom"
-ALL_CANARIES=("$IVY_CANARY_CLIENT" "$IVY_CANARY_SERVER" "$IVY_CANARY_SPARK"
-              "$M2_CANARY_CLIENT" "$M2_CANARY_SERVER" "$M2_CANARY_SPARK")
+M2_CANARY_HADOOP="$M2_LOCAL/unitycatalog-hadoop/$UC_VERSION/unitycatalog-hadoop-$UC_VERSION.pom"
+ALL_CANARIES=("$IVY_CANARY_CLIENT" "$IVY_CANARY_SERVER" "$IVY_CANARY_SPARK" "$IVY_CANARY_HADOOP"
+              "$M2_CANARY_CLIENT" "$M2_CANARY_SERVER" "$M2_CANARY_SPARK" "$M2_CANARY_HADOOP")
 
 all_canaries_present() {
   for c in "${ALL_CANARIES[@]}"; do
@@ -168,7 +170,9 @@ echo ">>> Building and publishing UC client + server to local Maven repo"
   client/publishLocal \
   client/publishM2 \
   server/publishLocal \
-  server/publishM2
+  server/publishM2 \
+  hadoop/publishLocal \
+  hadoop/publishM2
 
 # spark/publishM2 can hit a transient coursier lock race - retry up to 3 times.
 echo ">>> Building and publishing UC spark module to local Maven repo"
