@@ -535,10 +535,9 @@ public class SparkScanTest extends DeltaV2TestBase {
   }
 
   /**
-   * Triggers scan file planning via reflection. Several public methods already call
-   * ensurePlanned() (estimateStatistics() for batch queries, toBatch(), and filter()), but tests
-   * that inspect internal scan state before any of those code paths run need a way to force
-   * planning directly.
+   * Triggers scan file planning via reflection. Several public methods already call ensurePlanned()
+   * (estimateStatistics() for batch queries, toBatch(), and filter()), but tests that inspect
+   * internal scan state before any of those code paths run need a way to force planning directly.
    */
   private static void triggerPlanning(SparkScan scan) throws Exception {
     java.lang.reflect.Method ensurePlanned = SparkScan.class.getDeclaredMethod("ensurePlanned");
@@ -739,9 +738,7 @@ public class SparkScanTest extends DeltaV2TestBase {
         stats.sizeInBytes(),
         "Streaming sizeInBytes should be defaultSizeInBytes");
     assertEquals(
-        OptionalLong.empty(),
-        stats.numRows(),
-        "Streaming numRows should be empty (unknown)");
+        OptionalLong.empty(), stats.numRows(), "Streaming numRows should be empty (unknown)");
 
     // The key invariant: streaming stats must NOT trigger file enumeration.
     Field plannedField = SparkScan.class.getDeclaredField("planned");
