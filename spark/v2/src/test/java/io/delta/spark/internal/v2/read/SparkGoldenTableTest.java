@@ -23,12 +23,17 @@ import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.spark.internal.v2.catalog.SparkTable;
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileReader;
 import java.lang.reflect.Field;
 import java.math.BigDecimal;
+import java.nio.file.Files;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.SparkConf;
+import org.apache.spark.api.java.function.VoidFunction2;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.QueryTest$;
 import org.apache.spark.sql.Row;
@@ -38,7 +43,10 @@ import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.expressions.Expression;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.ScanBuilder;
+import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.sources.*;
+import org.apache.spark.sql.streaming.StreamingQuery;
+import org.apache.spark.sql.streaming.Trigger;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
@@ -730,6 +738,1136 @@ public class SparkGoldenTableTest {
     }
   }
 
+  /**
+   * Differential streaming corpus test (gap class #7).
+   *
+   * <p>Mirrors {@link #testAllGoldenTables()} for streaming: for each golden table, runs DSv1
+   * streaming and DSv2 streaming side by side with {@code Trigger.AvailableNow} and asserts both
+   * paths return the same schema and rows. Every divergence is a real differential bug.
+   *
+   * <p>Skip strategy: option (a) — inspect the delta log directly. A table is skipped if any commit
+   * JSON contains a {@code "remove"} action (delete/overwrite/restore/merge/update history). Such
+   * tables would require {@code ignoreDeletes}/{@code ignoreChanges} which changes the contract
+   * under test. We also skip the same {@code unsupportedTables} as the batch test, plus tables that
+   * have no top-level data files (only a corrupt/synthetic _delta_log).
+   */
+  @Test
+  public void testAllGoldenTablesStreaming() throws Exception {
+    List<String> tableNames = getAllGoldenTableNames();
+    // Same allowlist as testAllGoldenTables — corrupt-by-design or DSv2-batch-unsupported.
+    List<String> unsupportedTables =
+        Arrays.asList(
+            "canonicalized-paths-normal-a",
+            "canonicalized-paths-normal-b",
+            "canonicalized-paths-special-a",
+            "canonicalized-paths-special-b",
+            "checkpoint",
+            "corrupted-last-checkpoint",
+            "data-reader-absolute-paths-escaped-chars",
+            "data-reader-escaped-chars",
+            "delete-re-add-same-file-different-transactions",
+            "deltalog-commit-info",
+            "deltalog-invalid-protocol-version",
+            "deltalog-state-reconstruction-from-checkpoint-missing-metadata",
+            "deltalog-state-reconstruction-from-checkpoint-missing-protocol");
+
+    int tested = 0;
+    int skippedUnsupported = 0;
+    int skippedNoData = 0;
+    int skippedNonAppend = 0;
+    int skippedSetupFailure = 0;
+    List<String> divergences = new ArrayList<>();
+    List<String> testedTableNames = new ArrayList<>();
+
+    for (String tableName : tableNames) {
+      if (unsupportedTables.contains(tableName)) {
+        skippedUnsupported++;
+        continue;
+      }
+      String tablePath = goldenTablePath(tableName);
+      if (hasOnlyDeltaLogSubdir(tablePath)) {
+        skippedNoData++;
+        continue;
+      }
+      // Detect non-append history by scanning commit JSON for "remove" actions. Streaming sources
+      // require ignoreDeletes / ignoreChanges in that case; we skip to keep the basic contract
+      // under test.
+      try {
+        if (hasNonAppendHistory(tablePath)) {
+          skippedNonAppend++;
+          continue;
+        }
+      } catch (Throwable t) {
+        skippedSetupFailure++;
+        continue;
+      }
+
+      String safeName = tableName.replaceAll("[^a-zA-Z0-9]", "_");
+      String q1Name = "gt_v1_" + safeName + "_" + System.nanoTime();
+      String q2Name = "gt_v2_" + safeName + "_" + System.nanoTime();
+
+      List<Row> v1Rows;
+      StructType v1Schema;
+      try {
+        Dataset<Row> v1Stream = spark.readStream().format("delta").load(tablePath);
+        v1Schema = v1Stream.schema();
+        v1Rows = collectStream(v1Stream, q1Name);
+      } catch (Throwable t) {
+        // DSv1 itself failed — record as a divergence candidate only if DSv2 succeeds.
+        StringBuilder sb = new StringBuilder();
+        sb.append("[")
+            .append(tableName)
+            .append("] DSv1 streaming failed (DSv2 not yet attempted): ")
+            .append(rootMessage(t));
+        // Try DSv2 to see if it succeeds (= asymmetric failure, which is itself a divergence).
+        try {
+          Dataset<Row> v2Stream = spark.readStream().table("dsv2.delta.`" + tablePath + "`");
+          List<Row> v2Rows = collectStream(v2Stream, q2Name);
+          sb.append(" | DSv2 SUCCEEDED — DIVERGENCE: DSv2 returned ")
+              .append(v2Rows.size())
+              .append(" rows while DSv1 threw: ")
+              .append(t.getClass().getSimpleName());
+          divergences.add(sb.toString());
+        } catch (Throwable t2) {
+          // Both failed. Likely a setup/skip case; record as setup failure not divergence.
+          skippedSetupFailure++;
+        }
+        continue;
+      }
+
+      List<Row> v2Rows;
+      StructType v2Schema;
+      try {
+        Dataset<Row> v2Stream = spark.readStream().table("dsv2.delta.`" + tablePath + "`");
+        v2Schema = v2Stream.schema();
+        v2Rows = collectStream(v2Stream, q2Name);
+      } catch (Throwable t) {
+        divergences.add(
+            "["
+                + tableName
+                + "] DIVERGENCE: DSv1 returned "
+                + v1Rows.size()
+                + " rows; DSv2 threw "
+                + t.getClass().getName()
+                + ": "
+                + rootMessage(t));
+        continue;
+      }
+
+      tested++;
+      testedTableNames.add(tableName);
+
+      if (!v1Schema.equals(v2Schema)) {
+        divergences.add(
+            "["
+                + tableName
+                + "] SCHEMA DIVERGENCE\n  DSv1: "
+                + v1Schema.treeString()
+                + "\n  DSv2: "
+                + v2Schema.treeString());
+        continue;
+      }
+
+      try {
+        QueryTest$.MODULE$.checkAnswer(spark.createDataFrame(v2Rows, v2Schema), v1Rows);
+      } catch (Throwable t) {
+        divergences.add(
+            "["
+                + tableName
+                + "] ROW DIVERGENCE\n  DSv1 rows ("
+                + v1Rows.size()
+                + "): "
+                + truncate(v1Rows)
+                + "\n  DSv2 rows ("
+                + v2Rows.size()
+                + "): "
+                + truncate(v2Rows)
+                + "\n  diff: "
+                + rootMessage(t));
+      }
+    }
+
+    System.out.println("=== testAllGoldenTablesStreaming summary ===");
+    System.out.println("Total golden tables: " + tableNames.size());
+    System.out.println("Tested: " + tested);
+    System.out.println("Skipped (unsupportedTables allowlist): " + skippedUnsupported);
+    System.out.println("Skipped (no top-level data dir): " + skippedNoData);
+    System.out.println("Skipped (non-append history): " + skippedNonAppend);
+    System.out.println("Skipped (setup failure / both sides failed): " + skippedSetupFailure);
+    System.out.println("Tested tables: " + testedTableNames);
+    System.out.println("Divergences found: " + divergences.size());
+    for (String d : divergences) {
+      System.out.println("---");
+      System.out.println(d);
+    }
+
+    DeltaLog.clearCache();
+
+    if (!divergences.isEmpty()) {
+      StringBuilder sb = new StringBuilder();
+      sb.append(divergences.size())
+          .append(" DSv1 vs DSv2 streaming divergence(s) across ")
+          .append(tested)
+          .append(" tested golden tables:\n");
+      for (String d : divergences) {
+        sb.append("---\n").append(d).append("\n");
+      }
+      throw new AssertionError(sb.toString());
+    }
+  }
+
+  @Test
+  public void testAllGoldenTablesStreamingMidRestart() throws Exception {
+    // Curated subset hand-picked from Task G's TODO list. Each table targets a different bug shape:
+    //   data-reader-partition-values            — partitions + complex types (the #6583 target)
+    //   kernel-timestamp-PST                    — timestamp partition + non-canonical column order
+    //   kernel-timestamp-INT96                  — timestamp partition (INT96 read path)
+    //   dv-partitioned-with-checkpoint          — DV + partitioned + checkpoint (mid-stream)
+    //   dv-with-columnmapping                   — DV + column mapping (#6606-class lifecycle)
+    //   time-travel-partition-changes-a         — partition schema evolution
+    //   spark-variant-checkpoint                — variant + checkpoint lifecycle
+    //   data-reader-nested-struct (bonus)       — nested STRUCT lifecycle
+    //   hive/deltatbl-partition-prune (bonus)   — Hive-style partitioned table
+    List<String> subset =
+        Arrays.asList(
+            "data-reader-partition-values",
+            "kernel-timestamp-PST",
+            "kernel-timestamp-INT96",
+            "dv-partitioned-with-checkpoint",
+            "dv-with-columnmapping",
+            "time-travel-partition-changes-a",
+            "spark-variant-checkpoint",
+            "data-reader-nested-struct",
+            "hive/deltatbl-partition-prune");
+
+    List<String> divergences = new ArrayList<>();
+    List<String> passed = new ArrayList<>();
+    List<String> skipped = new ArrayList<>();
+
+    for (String tableName : subset) {
+      String tablePath = goldenTablePath(tableName);
+      File tableDir = new File(tablePath);
+      if (!tableDir.exists() || hasOnlyDeltaLogSubdir(tablePath)) {
+        skipped.add(tableName + " (no top-level data dir)");
+        continue;
+      }
+
+      String safeName = tableName.replaceAll("[^a-zA-Z0-9]", "_");
+      File checkpointDir = Files.createTempDirectory("midrestart_ckpt_" + safeName).toFile();
+
+      // 1. DSv1 oracle: one-shot AvailableNow on a separate (memory-sink) query.
+      String oracleName = "midrestart_oracle_" + safeName + "_" + System.nanoTime();
+      List<Row> oracleRows;
+      StructType oracleSchema;
+      try {
+        Dataset<Row> v1Stream = spark.readStream().format("delta").load(tablePath);
+        oracleSchema = v1Stream.schema();
+        oracleRows = collectStreamOnce(v1Stream, oracleName);
+      } catch (Throwable t) {
+        // If DSv1 itself can't read the table, we skip — there's no oracle.
+        skipped.add(tableName + " (DSv1 oracle failed: " + rootMessage(t) + ")");
+        continue;
+      }
+
+      // 2. DSv2 first half: stop after the first batch (maxFilesPerTrigger=1).
+      List<Row> firstHalf = new ArrayList<>();
+      AtomicInteger batchCounter = new AtomicInteger(0);
+      int[] firstHalfBatches = new int[] {0};
+      try {
+        Dataset<Row> v2Stream =
+            spark
+                .readStream()
+                .option("maxFilesPerTrigger", "1")
+                .table("dsv2.delta.`" + tablePath + "`");
+
+        // Holder for the query so the foreachBatch lambda can stop it after batch 0.
+        StreamingQuery[] queryHolder = new StreamingQuery[1];
+        VoidFunction2<Dataset<Row>, Long> writeFirstBatch =
+            (Dataset<Row> batch, Long batchId) -> {
+              if (batchCounter.get() == 0) {
+                // Persist this batch's rows so we can union with second-half later.
+                List<Row> rows = batch.collectAsList();
+                synchronized (firstHalf) {
+                  firstHalf.addAll(rows);
+                }
+              }
+              int n = batchCounter.incrementAndGet();
+              firstHalfBatches[0] = n;
+              if (n >= 1 && queryHolder[0] != null) {
+                // Stop after the first batch is committed. The next start() resumes from offset 1.
+                new Thread(
+                        () -> {
+                          try {
+                            queryHolder[0].stop();
+                          } catch (Throwable ignored) {
+                          }
+                        })
+                    .start();
+              }
+            };
+
+        StreamingQuery q =
+            v2Stream
+                .writeStream()
+                .foreachBatch(writeFirstBatch)
+                .option("checkpointLocation", checkpointDir.getAbsolutePath())
+                .trigger(Trigger.AvailableNow())
+                .start();
+        queryHolder[0] = q;
+        try {
+          q.awaitTermination(60_000);
+        } catch (Throwable ignored) {
+          // Timeout or stop()-induced exception — proceed to restart phase regardless.
+        }
+        try {
+          q.stop();
+        } catch (Throwable ignored) {
+        }
+      } catch (Throwable t) {
+        divergences.add("[" + tableName + "] DSv2 FIRST-HALF FAILED: " + rootMessage(t));
+        continue;
+      }
+
+      // 3. DSv2 second half: restart from the same checkpoint, no batch cap, run to completion.
+      List<Row> secondHalf = new ArrayList<>();
+      StructType secondHalfSchema = null;
+      try {
+        Dataset<Row> v2StreamRestart = spark.readStream().table("dsv2.delta.`" + tablePath + "`");
+        secondHalfSchema = v2StreamRestart.schema();
+        VoidFunction2<Dataset<Row>, Long> writeRest =
+            (Dataset<Row> batch, Long batchId) -> {
+              List<Row> rows = batch.collectAsList();
+              synchronized (secondHalf) {
+                secondHalf.addAll(rows);
+              }
+            };
+        StreamingQuery q =
+            v2StreamRestart
+                .writeStream()
+                .foreachBatch(writeRest)
+                .option("checkpointLocation", checkpointDir.getAbsolutePath())
+                .trigger(Trigger.AvailableNow())
+                .start();
+        try {
+          q.processAllAvailable();
+        } finally {
+          try {
+            q.stop();
+          } catch (Throwable ignored) {
+          }
+        }
+      } catch (Throwable t) {
+        divergences.add(
+            "["
+                + tableName
+                + "] DSv2 RESTART FAILED after first-half had "
+                + firstHalf.size()
+                + " row(s): "
+                + rootMessage(t));
+        continue;
+      }
+
+      // 4. Compare (firstHalf ∪ secondHalf) to oracle.
+      if (secondHalfSchema != null && !oracleSchema.equals(secondHalfSchema)) {
+        divergences.add(
+            "["
+                + tableName
+                + "] SCHEMA DIVERGENCE on restart\n  DSv1 oracle: "
+                + oracleSchema.treeString()
+                + "\n  DSv2 restart: "
+                + secondHalfSchema.treeString());
+        continue;
+      }
+
+      List<Row> combined = new ArrayList<>(firstHalf.size() + secondHalf.size());
+      combined.addAll(firstHalf);
+      combined.addAll(secondHalf);
+
+      try {
+        QueryTest$.MODULE$.checkAnswer(spark.createDataFrame(combined, oracleSchema), oracleRows);
+        passed.add(
+            tableName
+                + " (firstHalfBatches="
+                + firstHalfBatches[0]
+                + ", firstHalfRows="
+                + firstHalf.size()
+                + ", secondHalfRows="
+                + secondHalf.size()
+                + ", oracleRows="
+                + oracleRows.size()
+                + ")");
+      } catch (Throwable t) {
+        divergences.add(
+            "["
+                + tableName
+                + "] ROW DIVERGENCE on restart\n  oracle ("
+                + oracleRows.size()
+                + " rows): "
+                + truncate(oracleRows)
+                + "\n  combined ("
+                + combined.size()
+                + " rows; firstHalf="
+                + firstHalf.size()
+                + ", secondHalf="
+                + secondHalf.size()
+                + "): "
+                + truncate(combined)
+                + "\n  diff: "
+                + rootMessage(t));
+      }
+    }
+
+    System.out.println("=== testAllGoldenTablesStreamingMidRestart summary ===");
+    System.out.println("Subset size: " + subset.size());
+    System.out.println("Passed: " + passed.size());
+    for (String p : passed) System.out.println("  PASS  " + p);
+    System.out.println("Skipped: " + skipped.size());
+    for (String s : skipped) System.out.println("  SKIP  " + s);
+    System.out.println("Divergences: " + divergences.size());
+    for (String d : divergences) {
+      System.out.println("---");
+      System.out.println(d);
+    }
+
+    DeltaLog.clearCache();
+
+    if (!divergences.isEmpty()) {
+      StringBuilder sb = new StringBuilder();
+      sb.append(divergences.size())
+          .append(" mid-stream-restart divergence(s) across ")
+          .append(subset.size())
+          .append(" curated tables:\n");
+      for (String d : divergences) {
+        sb.append("---\n").append(d).append("\n");
+      }
+      throw new AssertionError(sb.toString());
+    }
+  }
+
+  /**
+   * Differential streaming with {@code startingVersion=1}.
+   *
+   * <p>Mirrors {@link #testAllGoldenTablesStreaming()} but skips the initial-snapshot path and
+   * exercises the incremental-only path. Tables with fewer than 2 commits are skipped.
+   */
+  @Test
+  public void testAllGoldenTablesStreamingFromVersion1() throws Exception {
+    List<String> tableNames = getAllGoldenTableNames();
+    List<String> unsupportedTables =
+        Arrays.asList(
+            "canonicalized-paths-normal-a",
+            "canonicalized-paths-normal-b",
+            "canonicalized-paths-special-a",
+            "canonicalized-paths-special-b",
+            "checkpoint",
+            "corrupted-last-checkpoint",
+            "data-reader-absolute-paths-escaped-chars",
+            "data-reader-escaped-chars",
+            "delete-re-add-same-file-different-transactions",
+            "deltalog-commit-info",
+            "deltalog-invalid-protocol-version",
+            "deltalog-state-reconstruction-from-checkpoint-missing-metadata",
+            "deltalog-state-reconstruction-from-checkpoint-missing-protocol");
+
+    int tested = 0;
+    int skippedUnsupported = 0;
+    int skippedNoData = 0;
+    int skippedNonAppend = 0;
+    int skippedSingleVersion = 0;
+    int skippedSetupFailure = 0;
+    List<String> divergences = new ArrayList<>();
+    List<String> testedTableNames = new ArrayList<>();
+
+    for (String tableName : tableNames) {
+      if (unsupportedTables.contains(tableName)) {
+        skippedUnsupported++;
+        continue;
+      }
+      String tablePath = goldenTablePath(tableName);
+      if (hasOnlyDeltaLogSubdir(tablePath)) {
+        skippedNoData++;
+        continue;
+      }
+      try {
+        if (hasNonAppendHistory(tablePath)) {
+          skippedNonAppend++;
+          continue;
+        }
+        if (countCommitJsonFiles(tablePath) < 2) {
+          skippedSingleVersion++;
+          continue;
+        }
+      } catch (Throwable t) {
+        skippedSetupFailure++;
+        continue;
+      }
+
+      String safeName = tableName.replaceAll("[^a-zA-Z0-9]", "_");
+      String q1Name = "gtv1_v1_" + safeName + "_" + System.nanoTime();
+      String q2Name = "gtv1_v2_" + safeName + "_" + System.nanoTime();
+
+      List<Row> v1Rows;
+      StructType v1Schema;
+      try {
+        Dataset<Row> v1Stream =
+            spark.readStream().format("delta").option("startingVersion", "1").load(tablePath);
+        v1Schema = v1Stream.schema();
+        v1Rows = collectStream(v1Stream, q1Name);
+      } catch (Throwable t) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("[")
+            .append(tableName)
+            .append("] DSv1 streaming(startingVersion=1) failed: ")
+            .append(rootMessage(t));
+        try {
+          Dataset<Row> v2Stream =
+              spark
+                  .readStream()
+                  .option("startingVersion", "1")
+                  .table("dsv2.delta.`" + tablePath + "`");
+          List<Row> v2Rows = collectStream(v2Stream, q2Name);
+          sb.append(" | DSv2 SUCCEEDED — DIVERGENCE: DSv2 returned ")
+              .append(v2Rows.size())
+              .append(" rows while DSv1 threw: ")
+              .append(t.getClass().getSimpleName());
+          divergences.add(sb.toString());
+        } catch (Throwable t2) {
+          skippedSetupFailure++;
+        }
+        continue;
+      }
+
+      List<Row> v2Rows;
+      StructType v2Schema;
+      try {
+        Dataset<Row> v2Stream =
+            spark
+                .readStream()
+                .option("startingVersion", "1")
+                .table("dsv2.delta.`" + tablePath + "`");
+        v2Schema = v2Stream.schema();
+        v2Rows = collectStream(v2Stream, q2Name);
+      } catch (Throwable t) {
+        divergences.add(
+            "["
+                + tableName
+                + "] DIVERGENCE(startingVersion=1): DSv1 returned "
+                + v1Rows.size()
+                + " rows; DSv2 threw "
+                + t.getClass().getName()
+                + ": "
+                + rootMessage(t));
+        continue;
+      }
+
+      tested++;
+      testedTableNames.add(tableName);
+
+      if (!v1Schema.equals(v2Schema)) {
+        divergences.add(
+            "["
+                + tableName
+                + "] SCHEMA DIVERGENCE(startingVersion=1)\n  DSv1: "
+                + v1Schema.treeString()
+                + "\n  DSv2: "
+                + v2Schema.treeString());
+        continue;
+      }
+
+      try {
+        QueryTest$.MODULE$.checkAnswer(spark.createDataFrame(v2Rows, v2Schema), v1Rows);
+      } catch (Throwable t) {
+        divergences.add(
+            "["
+                + tableName
+                + "] ROW DIVERGENCE(startingVersion=1)\n  DSv1 rows ("
+                + v1Rows.size()
+                + "): "
+                + truncate(v1Rows)
+                + "\n  DSv2 rows ("
+                + v2Rows.size()
+                + "): "
+                + truncate(v2Rows)
+                + "\n  diff: "
+                + rootMessage(t));
+      }
+    }
+
+    System.out.println("=== testAllGoldenTablesStreamingFromVersion1 summary ===");
+    System.out.println("Total golden tables: " + tableNames.size());
+    System.out.println("Tested: " + tested);
+    System.out.println("Skipped (unsupportedTables allowlist): " + skippedUnsupported);
+    System.out.println("Skipped (no top-level data dir): " + skippedNoData);
+    System.out.println("Skipped (non-append history): " + skippedNonAppend);
+    System.out.println("Skipped (single version): " + skippedSingleVersion);
+    System.out.println("Skipped (setup failure / both sides failed): " + skippedSetupFailure);
+    System.out.println("Tested tables: " + testedTableNames);
+    System.out.println("Divergences found: " + divergences.size());
+    for (String d : divergences) {
+      System.out.println("---");
+      System.out.println(d);
+    }
+
+    DeltaLog.clearCache();
+
+    if (!divergences.isEmpty()) {
+      StringBuilder sb = new StringBuilder();
+      sb.append(divergences.size())
+          .append(" DSv1 vs DSv2 streaming(startingVersion=1) divergence(s) across ")
+          .append(tested)
+          .append(" tested golden tables:\n");
+      for (String d : divergences) {
+        sb.append("---\n").append(d).append("\n");
+      }
+      throw new AssertionError(sb.toString());
+    }
+  }
+
+  /**
+   * Differential streaming with single-column projection.
+   *
+   * <p>Picks one non-partition leaf column per table and applies {@code .select(col)} to both DSv1
+   * and DSv2 streams. Diffs the returned rows AND schema. Targets {@code
+   * SupportsPushDownRequiredColumns} interaction with streaming (column pruning + partition column
+   * injection).
+   */
+  @Test
+  public void testAllGoldenTablesStreamingWithProjection() throws Exception {
+    List<String> tableNames = getAllGoldenTableNames();
+    List<String> unsupportedTables =
+        Arrays.asList(
+            "canonicalized-paths-normal-a",
+            "canonicalized-paths-normal-b",
+            "canonicalized-paths-special-a",
+            "canonicalized-paths-special-b",
+            "checkpoint",
+            "corrupted-last-checkpoint",
+            "data-reader-absolute-paths-escaped-chars",
+            "data-reader-escaped-chars",
+            "delete-re-add-same-file-different-transactions",
+            "deltalog-commit-info",
+            "deltalog-invalid-protocol-version",
+            "deltalog-state-reconstruction-from-checkpoint-missing-metadata",
+            "deltalog-state-reconstruction-from-checkpoint-missing-protocol");
+
+    int tested = 0;
+    int skippedUnsupported = 0;
+    int skippedNoData = 0;
+    int skippedNonAppend = 0;
+    int skippedNoColumn = 0;
+    int skippedSetupFailure = 0;
+    List<String> divergences = new ArrayList<>();
+    List<String> testedTableNames = new ArrayList<>();
+
+    for (String tableName : tableNames) {
+      if (unsupportedTables.contains(tableName)) {
+        skippedUnsupported++;
+        continue;
+      }
+      String tablePath = goldenTablePath(tableName);
+      if (hasOnlyDeltaLogSubdir(tablePath)) {
+        skippedNoData++;
+        continue;
+      }
+      try {
+        if (hasNonAppendHistory(tablePath)) {
+          skippedNonAppend++;
+          continue;
+        }
+      } catch (Throwable t) {
+        skippedSetupFailure++;
+        continue;
+      }
+
+      // Pick a non-partition leaf column. Fall back to first column if everything is partition.
+      String selectedCol;
+      Set<String> partitionCols;
+      try {
+        partitionCols = readPartitionColumns(tablePath);
+        StructType schema = spark.readStream().format("delta").load(tablePath).schema();
+        selectedCol = pickProjectionColumn(schema, partitionCols);
+      } catch (Throwable t) {
+        skippedSetupFailure++;
+        continue;
+      }
+      if (selectedCol == null) {
+        skippedNoColumn++;
+        continue;
+      }
+
+      String safeName = tableName.replaceAll("[^a-zA-Z0-9]", "_");
+      String q1Name = "gtproj_v1_" + safeName + "_" + System.nanoTime();
+      String q2Name = "gtproj_v2_" + safeName + "_" + System.nanoTime();
+
+      List<Row> v1Rows;
+      StructType v1Schema;
+      try {
+        Dataset<Row> v1Stream =
+            spark.readStream().format("delta").load(tablePath).select(selectedCol);
+        v1Schema = v1Stream.schema();
+        v1Rows = collectStream(v1Stream, q1Name);
+      } catch (Throwable t) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("[")
+            .append(tableName)
+            .append("] DSv1 streaming(.select(")
+            .append(selectedCol)
+            .append(")) failed: ")
+            .append(rootMessage(t));
+        try {
+          Dataset<Row> v2Stream =
+              spark.readStream().table("dsv2.delta.`" + tablePath + "`").select(selectedCol);
+          List<Row> v2Rows = collectStream(v2Stream, q2Name);
+          sb.append(" | DSv2 SUCCEEDED — DIVERGENCE: DSv2 returned ")
+              .append(v2Rows.size())
+              .append(" rows while DSv1 threw: ")
+              .append(t.getClass().getSimpleName());
+          divergences.add(sb.toString());
+        } catch (Throwable t2) {
+          skippedSetupFailure++;
+        }
+        continue;
+      }
+
+      List<Row> v2Rows;
+      StructType v2Schema;
+      try {
+        Dataset<Row> v2Stream =
+            spark.readStream().table("dsv2.delta.`" + tablePath + "`").select(selectedCol);
+        v2Schema = v2Stream.schema();
+        v2Rows = collectStream(v2Stream, q2Name);
+      } catch (Throwable t) {
+        divergences.add(
+            "["
+                + tableName
+                + "] DIVERGENCE(.select("
+                + selectedCol
+                + ")): DSv1 returned "
+                + v1Rows.size()
+                + " rows; DSv2 threw "
+                + t.getClass().getName()
+                + ": "
+                + rootMessage(t));
+        continue;
+      }
+
+      tested++;
+      testedTableNames.add(tableName + "[" + selectedCol + "]");
+
+      if (!v1Schema.equals(v2Schema)) {
+        divergences.add(
+            "["
+                + tableName
+                + "] SCHEMA DIVERGENCE(.select("
+                + selectedCol
+                + "))\n  DSv1: "
+                + v1Schema.treeString()
+                + "\n  DSv2: "
+                + v2Schema.treeString());
+        continue;
+      }
+
+      try {
+        QueryTest$.MODULE$.checkAnswer(spark.createDataFrame(v2Rows, v2Schema), v1Rows);
+      } catch (Throwable t) {
+        divergences.add(
+            "["
+                + tableName
+                + "] ROW DIVERGENCE(.select("
+                + selectedCol
+                + "))\n  DSv1 rows ("
+                + v1Rows.size()
+                + "): "
+                + truncate(v1Rows)
+                + "\n  DSv2 rows ("
+                + v2Rows.size()
+                + "): "
+                + truncate(v2Rows)
+                + "\n  diff: "
+                + rootMessage(t));
+      }
+    }
+
+    System.out.println("=== testAllGoldenTablesStreamingWithProjection summary ===");
+    System.out.println("Total golden tables: " + tableNames.size());
+    System.out.println("Tested: " + tested);
+    System.out.println("Skipped (unsupportedTables allowlist): " + skippedUnsupported);
+    System.out.println("Skipped (no top-level data dir): " + skippedNoData);
+    System.out.println("Skipped (non-append history): " + skippedNonAppend);
+    System.out.println("Skipped (no projectable column): " + skippedNoColumn);
+    System.out.println("Skipped (setup failure / both sides failed): " + skippedSetupFailure);
+    System.out.println("Tested tables: " + testedTableNames);
+    System.out.println("Divergences found: " + divergences.size());
+    for (String d : divergences) {
+      System.out.println("---");
+      System.out.println(d);
+    }
+
+    DeltaLog.clearCache();
+
+    if (!divergences.isEmpty()) {
+      StringBuilder sb = new StringBuilder();
+      sb.append(divergences.size())
+          .append(" DSv1 vs DSv2 streaming(.select(col)) divergence(s) across ")
+          .append(tested)
+          .append(" tested golden tables:\n");
+      for (String d : divergences) {
+        sb.append("---\n").append(d).append("\n");
+      }
+      throw new AssertionError(sb.toString());
+    }
+  }
+
+  /**
+   * Differential streaming with a trivially-true filter pushed down.
+   *
+   * <p>For each table, picks a leaf column and applies {@code col IS NOT NULL} as a streaming
+   * {@code .where(...)} on both DSv1 and DSv2. The trivially-permissive variant should still return
+   * all rows whose value is not null, so the row counts must match between the two readers
+   * (regardless of how many rows are non-null). Targets {@code SupportsPushDownFilters} interaction
+   * with streaming offset management.
+   */
+  @Test
+  public void testAllGoldenTablesStreamingWithFilter() throws Exception {
+    List<String> tableNames = getAllGoldenTableNames();
+    List<String> unsupportedTables =
+        Arrays.asList(
+            "canonicalized-paths-normal-a",
+            "canonicalized-paths-normal-b",
+            "canonicalized-paths-special-a",
+            "canonicalized-paths-special-b",
+            "checkpoint",
+            "corrupted-last-checkpoint",
+            "data-reader-absolute-paths-escaped-chars",
+            "data-reader-escaped-chars",
+            "delete-re-add-same-file-different-transactions",
+            "deltalog-commit-info",
+            "deltalog-invalid-protocol-version",
+            "deltalog-state-reconstruction-from-checkpoint-missing-metadata",
+            "deltalog-state-reconstruction-from-checkpoint-missing-protocol");
+
+    int tested = 0;
+    int skippedUnsupported = 0;
+    int skippedNoData = 0;
+    int skippedNonAppend = 0;
+    int skippedNoColumn = 0;
+    int skippedSetupFailure = 0;
+    List<String> divergences = new ArrayList<>();
+    List<String> testedTableNames = new ArrayList<>();
+
+    for (String tableName : tableNames) {
+      if (unsupportedTables.contains(tableName)) {
+        skippedUnsupported++;
+        continue;
+      }
+      String tablePath = goldenTablePath(tableName);
+      if (hasOnlyDeltaLogSubdir(tablePath)) {
+        skippedNoData++;
+        continue;
+      }
+      try {
+        if (hasNonAppendHistory(tablePath)) {
+          skippedNonAppend++;
+          continue;
+        }
+      } catch (Throwable t) {
+        skippedSetupFailure++;
+        continue;
+      }
+
+      String filterCol;
+      try {
+        StructType schema = spark.readStream().format("delta").load(tablePath).schema();
+        filterCol = pickFilterColumn(schema);
+      } catch (Throwable t) {
+        skippedSetupFailure++;
+        continue;
+      }
+      if (filterCol == null) {
+        skippedNoColumn++;
+        continue;
+      }
+      // Backtick-quote so columns with hyphens / spaces / dots still parse.
+      String predicate = "`" + filterCol.replace("`", "``") + "` IS NOT NULL";
+
+      String safeName = tableName.replaceAll("[^a-zA-Z0-9]", "_");
+      String q1Name = "gtfilt_v1_" + safeName + "_" + System.nanoTime();
+      String q2Name = "gtfilt_v2_" + safeName + "_" + System.nanoTime();
+
+      List<Row> v1Rows;
+      StructType v1Schema;
+      try {
+        Dataset<Row> v1Stream = spark.readStream().format("delta").load(tablePath).where(predicate);
+        v1Schema = v1Stream.schema();
+        v1Rows = collectStream(v1Stream, q1Name);
+      } catch (Throwable t) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("[")
+            .append(tableName)
+            .append("] DSv1 streaming(.where(")
+            .append(predicate)
+            .append(")) failed: ")
+            .append(rootMessage(t));
+        try {
+          Dataset<Row> v2Stream =
+              spark.readStream().table("dsv2.delta.`" + tablePath + "`").where(predicate);
+          List<Row> v2Rows = collectStream(v2Stream, q2Name);
+          sb.append(" | DSv2 SUCCEEDED — DIVERGENCE: DSv2 returned ")
+              .append(v2Rows.size())
+              .append(" rows while DSv1 threw: ")
+              .append(t.getClass().getSimpleName());
+          divergences.add(sb.toString());
+        } catch (Throwable t2) {
+          skippedSetupFailure++;
+        }
+        continue;
+      }
+
+      List<Row> v2Rows;
+      StructType v2Schema;
+      try {
+        Dataset<Row> v2Stream =
+            spark.readStream().table("dsv2.delta.`" + tablePath + "`").where(predicate);
+        v2Schema = v2Stream.schema();
+        v2Rows = collectStream(v2Stream, q2Name);
+      } catch (Throwable t) {
+        divergences.add(
+            "["
+                + tableName
+                + "] DIVERGENCE(.where("
+                + predicate
+                + ")): DSv1 returned "
+                + v1Rows.size()
+                + " rows; DSv2 threw "
+                + t.getClass().getName()
+                + ": "
+                + rootMessage(t));
+        continue;
+      }
+
+      tested++;
+      testedTableNames.add(tableName + "[" + filterCol + "]");
+
+      if (!v1Schema.equals(v2Schema)) {
+        divergences.add(
+            "["
+                + tableName
+                + "] SCHEMA DIVERGENCE(.where("
+                + predicate
+                + "))\n  DSv1: "
+                + v1Schema.treeString()
+                + "\n  DSv2: "
+                + v2Schema.treeString());
+        continue;
+      }
+
+      try {
+        QueryTest$.MODULE$.checkAnswer(spark.createDataFrame(v2Rows, v2Schema), v1Rows);
+      } catch (Throwable t) {
+        divergences.add(
+            "["
+                + tableName
+                + "] ROW DIVERGENCE(.where("
+                + predicate
+                + "))\n  DSv1 rows ("
+                + v1Rows.size()
+                + "): "
+                + truncate(v1Rows)
+                + "\n  DSv2 rows ("
+                + v2Rows.size()
+                + "): "
+                + truncate(v2Rows)
+                + "\n  diff: "
+                + rootMessage(t));
+      }
+    }
+
+    System.out.println("=== testAllGoldenTablesStreamingWithFilter summary ===");
+    System.out.println("Total golden tables: " + tableNames.size());
+    System.out.println("Tested: " + tested);
+    System.out.println("Skipped (unsupportedTables allowlist): " + skippedUnsupported);
+    System.out.println("Skipped (no top-level data dir): " + skippedNoData);
+    System.out.println("Skipped (non-append history): " + skippedNonAppend);
+    System.out.println("Skipped (no filterable column): " + skippedNoColumn);
+    System.out.println("Skipped (setup failure / both sides failed): " + skippedSetupFailure);
+    System.out.println("Tested tables: " + testedTableNames);
+    System.out.println("Divergences found: " + divergences.size());
+    for (String d : divergences) {
+      System.out.println("---");
+      System.out.println(d);
+    }
+
+    DeltaLog.clearCache();
+
+    if (!divergences.isEmpty()) {
+      StringBuilder sb = new StringBuilder();
+      sb.append(divergences.size())
+          .append(" DSv1 vs DSv2 streaming(.where(col IS NOT NULL)) divergence(s) across ")
+          .append(tested)
+          .append(" tested golden tables:\n");
+      for (String d : divergences) {
+        sb.append("---\n").append(d).append("\n");
+      }
+      throw new AssertionError(sb.toString());
+    }
+  }
+
+  /** Number of {@code N.json} commit files under the table's _delta_log. */
+  private int countCommitJsonFiles(String tablePath) {
+    File logDir = new File(tablePath, "_delta_log");
+    if (!logDir.isDirectory()) return 0;
+    File[] files = logDir.listFiles((d, n) -> n.endsWith(".json"));
+    return files == null ? 0 : files.length;
+  }
+
+  /**
+   * Read the partition columns from the table's most recent commit-time metadata. Returns the empty
+   * set on any error.
+   */
+  private Set<String> readPartitionColumns(String tablePath) {
+    Set<String> result = new LinkedHashSet<>();
+    try {
+      DeltaLog log = DeltaLog.forTable(spark, tablePath);
+      scala.collection.immutable.List<String> partCols =
+          log.unsafeVolatileSnapshot().metadata().partitionColumns().toList();
+      scala.collection.Iterator<String> it = partCols.iterator();
+      while (it.hasNext()) result.add(it.next());
+    } catch (Throwable ignored) {
+    }
+    return result;
+  }
+
+  /**
+   * Pick the first non-partition leaf column that's safe to project. Falls back to the first leaf
+   * column if everything is a partition column. Returns {@code null} if no leaf columns exist.
+   */
+  private String pickProjectionColumn(StructType schema, Set<String> partitionCols) {
+    StructField fallback = null;
+    for (StructField f : schema.fields()) {
+      if (fallback == null) fallback = f;
+      if (!partitionCols.contains(f.name())) {
+        return f.name();
+      }
+    }
+    return fallback == null ? null : fallback.name();
+  }
+
+  /**
+   * Pick a leaf column suitable for an {@code IS NOT NULL} streaming filter. We prefer top-level
+   * primitive columns to keep the filter pushdown unambiguous; any column type works for the
+   * trivial-true case but nested types tend to produce noisier diffs.
+   */
+  private String pickFilterColumn(StructType schema) {
+    for (StructField f : schema.fields()) {
+      if (f.dataType() instanceof org.apache.spark.sql.types.NumericType
+          || f.dataType() instanceof org.apache.spark.sql.types.StringType
+          || f.dataType() instanceof org.apache.spark.sql.types.BooleanType
+          || f.dataType() instanceof org.apache.spark.sql.types.DateType
+          || f.dataType() instanceof org.apache.spark.sql.types.TimestampType) {
+        return f.name();
+      }
+    }
+    // Fall back to first column (any type) so we still exercise filter pushdown.
+    return schema.fields().length > 0 ? schema.fields()[0].name() : null;
+  }
+
+  /** Collect a streaming DataFrame end-to-end with Trigger.AvailableNow into a list of rows. */
+  private List<Row> collectStreamOnce(Dataset<Row> streamingDF, String queryName) throws Exception {
+    StreamingQuery query = null;
+    try {
+      query =
+          streamingDF
+              .writeStream()
+              .format("memory")
+              .queryName(queryName)
+              .outputMode("append")
+              .trigger(Trigger.AvailableNow())
+              .start();
+      query.processAllAvailable();
+      return spark.sql("SELECT * FROM " + queryName).collectAsList();
+    } finally {
+      if (query != null) {
+        try {
+          query.stop();
+        } catch (Throwable ignored) {
+        }
+      }
+      try {
+        spark.sql("DROP VIEW IF EXISTS " + queryName);
+      } catch (Throwable ignored) {
+      }
+    }
+  }
+
+  /** Collect a streaming DataFrame end-to-end with Trigger.AvailableNow into a list of rows. */
+  private List<Row> collectStream(Dataset<Row> streamingDF, String queryName) throws Exception {
+    StreamingQuery query = null;
+    try {
+      query =
+          streamingDF
+              .writeStream()
+              .format("memory")
+              .queryName(queryName)
+              .outputMode("append")
+              .trigger(Trigger.AvailableNow())
+              .start();
+      // AvailableNow + processAllAvailable terminates after draining all currently-available data.
+      query.processAllAvailable();
+      return spark.sql("SELECT * FROM " + queryName).collectAsList();
+    } finally {
+      if (query != null) {
+        try {
+          query.stop();
+        } catch (Throwable ignored) {
+        }
+      }
+      try {
+        spark.sql("DROP VIEW IF EXISTS " + queryName);
+      } catch (Throwable ignored) {
+      }
+    }
+  }
+
+  /**
+   * Returns true if any commit JSON in the table's _delta_log contains a "remove" action,
+   * indicating delete/overwrite/restore/merge/update history. Such tables aren't usable as basic
+   * append-only streaming sources without ignoreDeletes/ignoreChanges.
+   */
+  private boolean hasNonAppendHistory(String tablePath) throws Exception {
+    File logDir = new File(tablePath, "_delta_log");
+    if (!logDir.isDirectory()) return false;
+    File[] files = logDir.listFiles((d, n) -> n.endsWith(".json"));
+    if (files == null) return false;
+    for (File f : files) {
+      try (BufferedReader r = new BufferedReader(new FileReader(f))) {
+        String line;
+        while ((line = r.readLine()) != null) {
+          // Lines are one-action-per-line JSON; "remove" appears as a top-level key only when the
+          // line encodes a RemoveFile action.
+          if (line.startsWith("{\"remove\"") || line.contains("\"remove\":{")) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  private String rootMessage(Throwable t) {
+    Throwable cur = t;
+    while (cur.getCause() != null && cur.getCause() != cur) {
+      cur = cur.getCause();
+    }
+    String msg = cur.getMessage();
+    return cur.getClass().getName() + ": " + (msg == null ? "(no message)" : msg);
+  }
+
+  private String truncate(List<Row> rows) {
+    int max = 10;
+    if (rows.size() <= max) return rows.toString();
+    return rows.subList(0, max).toString() + "... (+" + (rows.size() - max) + " more)";
+  }
+
   private void verifyHadoopConf(Configuration conf) {
     assertEquals("value1", conf.get("key1"));
     assertEquals("new_value2", conf.get("key2"));
@@ -763,5 +1901,210 @@ public class SparkGoldenTableTest {
 
   private List<String> getAllGoldenTableNames() {
     return scala.collection.JavaConverters.seqAsJavaList(GoldenTableUtils$.MODULE$.allTableNames());
+  }
+
+  @Test
+  public void testAllGoldenTablesStreamingWithMaxFilesPerTrigger() throws Exception {
+    runRateLimitedDifferential(
+        "maxFilesPerTrigger", "1", "testAllGoldenTablesStreamingWithMaxFilesPerTrigger");
+  }
+
+  /**
+   * Differential streaming corpus test with {@code maxBytesPerTrigger=1b} on the DSv2 side. Even
+   * tighter than {@code maxFilesPerTrigger=1} — Delta's rate limiter still includes at least one
+   * file per batch, but byte-budget bookkeeping runs per batch which is a separate code path.
+   */
+  @Test
+  public void testAllGoldenTablesStreamingWithMaxBytesPerTrigger() throws Exception {
+    runRateLimitedDifferential(
+        "maxBytesPerTrigger", "1b", "testAllGoldenTablesStreamingWithMaxBytesPerTrigger");
+  }
+
+  /**
+   * Shared body of the two rate-limited differential corpus tests. Iterates the same set of golden
+   * tables as {@link #testAllGoldenTablesStreaming}, applies the given DSv2 reader option, and
+   * compares the union of all DSv2 micro-batches against an unrestricted DSv1 one-shot oracle.
+   */
+  private void runRateLimitedDifferential(String optionName, String optionValue, String tagForLogs)
+      throws Exception {
+    List<String> tableNames = getAllGoldenTableNames();
+    // Same allowlist as testAllGoldenTablesStreaming.
+    List<String> unsupportedTables =
+        Arrays.asList(
+            "canonicalized-paths-normal-a",
+            "canonicalized-paths-normal-b",
+            "canonicalized-paths-special-a",
+            "canonicalized-paths-special-b",
+            "checkpoint",
+            "corrupted-last-checkpoint",
+            "data-reader-absolute-paths-escaped-chars",
+            "data-reader-escaped-chars",
+            "delete-re-add-same-file-different-transactions",
+            "deltalog-commit-info",
+            "deltalog-invalid-protocol-version",
+            "deltalog-state-reconstruction-from-checkpoint-missing-metadata",
+            "deltalog-state-reconstruction-from-checkpoint-missing-protocol");
+
+    int tested = 0;
+    int skippedUnsupported = 0;
+    int skippedNoData = 0;
+    int skippedNonAppend = 0;
+    int skippedSetupFailure = 0;
+    List<String> divergences = new ArrayList<>();
+    List<String> testedTableNames = new ArrayList<>();
+
+    for (String tableName : tableNames) {
+      if (unsupportedTables.contains(tableName)) {
+        skippedUnsupported++;
+        continue;
+      }
+      String tablePath = goldenTablePath(tableName);
+      if (hasOnlyDeltaLogSubdir(tablePath)) {
+        skippedNoData++;
+        continue;
+      }
+      try {
+        if (hasNonAppendHistory(tablePath)) {
+          skippedNonAppend++;
+          continue;
+        }
+      } catch (Throwable t) {
+        skippedSetupFailure++;
+        continue;
+      }
+
+      String safeName = tableName.replaceAll("[^a-zA-Z0-9]", "_");
+      String q1Name = "gt_v1_rl_" + safeName + "_" + System.nanoTime();
+      String q2Name = "gt_v2_rl_" + safeName + "_" + System.nanoTime();
+
+      // 1. DSv1 oracle — no rate limit, single AvailableNow batch.
+      List<Row> v1Rows;
+      StructType v1Schema;
+      try {
+        Dataset<Row> v1Stream = spark.readStream().format("delta").load(tablePath);
+        v1Schema = v1Stream.schema();
+        v1Rows = collectStream(v1Stream, q1Name);
+      } catch (Throwable t) {
+        // DSv1 can't read this table — try DSv2 with the rate limit anyway: asymmetric failure
+        // is itself a divergence.
+        StringBuilder sb = new StringBuilder();
+        sb.append("[")
+            .append(tableName)
+            .append("] DSv1 streaming failed (DSv2 not yet attempted): ")
+            .append(rootMessage(t));
+        try {
+          Dataset<Row> v2Stream =
+              spark
+                  .readStream()
+                  .option(optionName, optionValue)
+                  .table("dsv2.delta.`" + tablePath + "`");
+          List<Row> v2Rows = collectStream(v2Stream, q2Name);
+          sb.append(" | DSv2 (")
+              .append(optionName)
+              .append("=")
+              .append(optionValue)
+              .append(") SUCCEEDED — DIVERGENCE: DSv2 returned ")
+              .append(v2Rows.size())
+              .append(" rows while DSv1 threw: ")
+              .append(t.getClass().getSimpleName());
+          divergences.add(sb.toString());
+        } catch (Throwable t2) {
+          skippedSetupFailure++;
+        }
+        continue;
+      }
+
+      // 2. DSv2 with rate limit — multiple micro-batches expected.
+      List<Row> v2Rows;
+      StructType v2Schema;
+      try {
+        Dataset<Row> v2Stream =
+            spark
+                .readStream()
+                .option(optionName, optionValue)
+                .table("dsv2.delta.`" + tablePath + "`");
+        v2Schema = v2Stream.schema();
+        v2Rows = collectStream(v2Stream, q2Name);
+      } catch (Throwable t) {
+        divergences.add(
+            "["
+                + tableName
+                + "] DIVERGENCE: DSv1 returned "
+                + v1Rows.size()
+                + " rows; DSv2 ("
+                + optionName
+                + "="
+                + optionValue
+                + ") threw "
+                + t.getClass().getName()
+                + ": "
+                + rootMessage(t));
+        continue;
+      }
+
+      tested++;
+      testedTableNames.add(tableName);
+
+      if (!v1Schema.equals(v2Schema)) {
+        divergences.add(
+            "["
+                + tableName
+                + "] SCHEMA DIVERGENCE\n  DSv1: "
+                + v1Schema.treeString()
+                + "\n  DSv2: "
+                + v2Schema.treeString());
+        continue;
+      }
+
+      try {
+        QueryTest$.MODULE$.checkAnswer(spark.createDataFrame(v2Rows, v2Schema), v1Rows);
+      } catch (Throwable t) {
+        divergences.add(
+            "["
+                + tableName
+                + "] ROW DIVERGENCE\n  DSv1 rows ("
+                + v1Rows.size()
+                + "): "
+                + truncate(v1Rows)
+                + "\n  DSv2 rows ("
+                + v2Rows.size()
+                + "): "
+                + truncate(v2Rows)
+                + "\n  diff: "
+                + rootMessage(t));
+      }
+    }
+
+    System.out.println("=== " + tagForLogs + " summary ===");
+    System.out.println("Total golden tables: " + tableNames.size());
+    System.out.println("Tested: " + tested);
+    System.out.println("Skipped (unsupportedTables allowlist): " + skippedUnsupported);
+    System.out.println("Skipped (no top-level data dir): " + skippedNoData);
+    System.out.println("Skipped (non-append history): " + skippedNonAppend);
+    System.out.println("Skipped (setup failure / both sides failed): " + skippedSetupFailure);
+    System.out.println("Tested tables: " + testedTableNames);
+    System.out.println("Divergences found: " + divergences.size());
+    for (String d : divergences) {
+      System.out.println("---");
+      System.out.println(d);
+    }
+
+    DeltaLog.clearCache();
+
+    if (!divergences.isEmpty()) {
+      StringBuilder sb = new StringBuilder();
+      sb.append(divergences.size())
+          .append(" DSv1 vs DSv2 streaming divergence(s) (")
+          .append(optionName)
+          .append("=")
+          .append(optionValue)
+          .append(") across ")
+          .append(tested)
+          .append(" tested golden tables:\n");
+      for (String d : divergences) {
+        sb.append("---\n").append(d).append("\n");
+      }
+      throw new AssertionError(sb.toString());
+    }
   }
 }
