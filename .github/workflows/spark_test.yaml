@@ -37,9 +37,9 @@ jobs:
     name: "DS: Spark ${{ matrix.spark_version }}, Scala ${{ matrix.scala }}, Shard ${{ matrix.shard }}"
     runs-on: ubuntu-24.04
     needs: generate-matrix
-    # Spark master is a moving snapshot; do not block PRs on its failures.
-    # Remove this once master has been green for a sustained window.
-    continue-on-error: ${{ matrix.spark_version == 'master' }}
+    # Spark 4.2 is a branch snapshot until the Spark 4.2 release is published.
+    # Do not block PRs on its failures while the snapshot lane is stabilizing.
+    continue-on-error: ${{ matrix.spark_version == '4.2' }}
     strategy:
       fail-fast: false
       matrix:
