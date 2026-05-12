@@ -14,6 +14,8 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalLong;
+import java.util.Set;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.catalyst.TableIdentifier;
 import org.apache.spark.sql.catalyst.catalog.CatalogColumnStat;
@@ -533,9 +535,10 @@ public class SparkScanTest extends DeltaV2TestBase {
   }
 
   /**
-   * Triggers scan file planning via reflection. estimateStatistics() intentionally does NOT call
-   * ensurePlanned() to avoid OOM in streaming, so tests that inspect internal scan state must call
-   * ensurePlanned() directly.
+   * Triggers scan file planning via reflection. Several public methods already call
+   * ensurePlanned() (estimateStatistics() for batch queries, toBatch(), and filter()), but tests
+   * that inspect internal scan state before any of those code paths run need a way to force
+   * planning directly.
    */
   private static void triggerPlanning(SparkScan scan) throws Exception {
     java.lang.reflect.Method ensurePlanned = SparkScan.class.getDeclaredMethod("ensurePlanned");
@@ -711,6 +714,41 @@ public class SparkScanTest extends DeltaV2TestBase {
       spark.sql("RESET spark.databricks.delta.stats.collect");
       spark.sql("DROP TABLE IF EXISTS " + tblName);
     }
+  }
+
+  // ================================================================================================
+  // Tests for streaming estimateStatistics
+  // ================================================================================================
+
+  @Test
+  public void testStreamingEstimateStatisticsReturnsDefaultsWithoutPlanning() throws Exception {
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan = (SparkScan) builder.build();
+
+    // Simulate the streaming path: toMicroBatchStream() sets isStreaming = true, but requires
+    // full streaming infrastructure. Use reflection to flip the flag directly.
+    Field isStreamingField = SparkScan.class.getDeclaredField("isStreaming");
+    isStreamingField.setAccessible(true);
+    isStreamingField.set(scan, true);
+
+    Statistics stats = scan.estimateStatistics();
+
+    long expectedDefaultSize = spark.sessionState().conf().defaultSizeInBytes();
+    assertEquals(
+        OptionalLong.of(expectedDefaultSize),
+        stats.sizeInBytes(),
+        "Streaming sizeInBytes should be defaultSizeInBytes");
+    assertEquals(
+        OptionalLong.empty(),
+        stats.numRows(),
+        "Streaming numRows should be empty (unknown)");
+
+    // The key invariant: streaming stats must NOT trigger file enumeration.
+    Field plannedField = SparkScan.class.getDeclaredField("planned");
+    plannedField.setAccessible(true);
+    assertFalse(
+        (boolean) plannedField.get(scan),
+        "estimateStatistics() for streaming should not trigger planning");
   }
 
   // ================================================================================================
