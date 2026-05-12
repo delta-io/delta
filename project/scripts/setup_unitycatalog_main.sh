@@ -159,6 +159,25 @@ fi
 # coordinate. Applied as a persistent setting so it sticks across the two sbt invocations below.
 SET_VERSION_CMD="set ThisBuild / version := \"$UC_VERSION\""
 
+# Inject GCS Maven Central mirror to avoid HTTP 429 rate-limiting from repo1.maven.org.
+# UC's build/sbt respects SBT_OPTS when MAVEN_PROXY_URL and JENKINS_URL are both unset.
+# DEFAULT_ARTIFACT_REPOSITORY is used by sbt-launch-lib.bash for downloading sbt-launch.jar.
+UC_SBT_REPOS_CONFIG=$(mktemp)
+cat > "$UC_SBT_REPOS_CONFIG" <<'REPOS'
+[repositories]
+  local
+  local-preloaded-ivy: file:///${sbt.preloaded-${sbt.global.base-${user.home}/.sbt}/preloaded/}, [organization]/[module]/[revision]/[type]s/[artifact](-[classifier]).[ext]
+  local-preloaded: file:///${sbt.preloaded-${sbt.global.base-${user.home}/.sbt}/preloaded/}
+  gcs-maven-central-mirror: https://maven-central.storage-download.googleapis.com/maven2/
+  maven-central
+  typesafe-ivy-releases: https://repo.typesafe.com/typesafe/ivy-releases/, [organization]/[module]/[revision]/[type]s/[artifact](-[classifier]).[ext], bootOnly
+  sbt-ivy-snapshots: https://repo.scala-sbt.org/scalasbt/ivy-snapshots/, [organization]/[module]/[revision]/[type]s/[artifact](-[classifier]).[ext], bootOnly
+  sbt-plugin-releases: https://repo.scala-sbt.org/scalasbt/sbt-plugin-releases/, [organization]/[module]/(scala_[scalaVersion]/)(sbt_[sbtVersion]/)[revision]/[type]s/[artifact](-[classifier]).[ext]
+  typesafe-releases: https://repo.typesafe.com/typesafe/releases/
+REPOS
+export SBT_OPTS="${SBT_OPTS:-} -Dsbt.override.build.repos=true -Dsbt.repository.config=$UC_SBT_REPOS_CONFIG"
+export DEFAULT_ARTIFACT_REPOSITORY="https://maven-central.storage-download.googleapis.com/maven2"
+
 echo ">>> Building and publishing UC client + server to local Maven repo"
 ./build/sbt \
   "$SET_VERSION_CMD" \
