@@ -17,8 +17,11 @@ package io.delta.spark.internal.v2.utils;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.MapValue;
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch;
+import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.data.GenericRow;
@@ -400,5 +403,303 @@ public class KernelRowToSparkRowTest {
 
     Map<?, ?> roundTrippedPartVals = VectorUtils.toJavaMap(roundTripped.getPartitionValues());
     assertEquals("2025-01-01", roundTrippedPartVals.get("date"));
+  }
+
+  /**
+   * Verifies that struct values nested inside a map are materialized (deep-copied) when copy() is
+   * called on the outer KernelRowToSparkRow. Without the fix in mapValueToScalaMap(), these struct
+   * values would remain as live KernelRowToSparkRow wrappers holding references to the underlying
+   * kernel ColumnVector.
+   */
+  @Test
+  public void testCopyMaterializesStructsInsideMap() {
+    StructType innerSchema =
+        new StructType().add("innerInt", IntegerType.INTEGER).add("innerStr", StringType.STRING);
+    MapType mapType = new MapType(StringType.STRING, innerSchema, true);
+    StructType outerSchema = new StructType().add("mapField", mapType, false);
+
+    Map<Integer, Object> innerFieldMap1 = new HashMap<>();
+    innerFieldMap1.put(0, 10);
+    innerFieldMap1.put(1, "hello");
+    GenericRow innerRow1 = new GenericRow(innerSchema, innerFieldMap1);
+
+    Map<Integer, Object> innerFieldMap2 = new HashMap<>();
+    innerFieldMap2.put(0, 20);
+    innerFieldMap2.put(1, "world");
+    GenericRow innerRow2 = new GenericRow(innerSchema, innerFieldMap2);
+
+    MapValue mv =
+        new MapValue() {
+          @Override
+          public int getSize() {
+            return 2;
+          }
+
+          @Override
+          public ColumnVector getKeys() {
+            return VectorUtils.buildColumnVector(List.of("key1", "key2"), StringType.STRING);
+          }
+
+          @Override
+          public ColumnVector getValues() {
+            return VectorUtils.buildColumnVector(List.of(innerRow1, innerRow2), innerSchema);
+          }
+        };
+
+    ColumnVector mapVector = VectorUtils.buildColumnVector(List.of(mv), mapType);
+    DefaultColumnarBatch batch =
+        new DefaultColumnarBatch(1, outerSchema, new ColumnVector[] {mapVector});
+    io.delta.kernel.data.Row kernelRow = batch.getRows().next();
+
+    KernelRowToSparkRow sparkRow = new KernelRowToSparkRow(kernelRow);
+
+    // Struct values are materialized at collection-build time (in mapValueToScalaMap),
+    // so even before copy(), the map values are already GenericRow, not KernelRowToSparkRow.
+    @SuppressWarnings("unchecked")
+    scala.collection.Map<Object, Object> preCopyMap =
+        (scala.collection.Map<Object, Object>) sparkRow.get(0);
+    Row preCopyVal1 = (Row) preCopyMap.apply("key1");
+    assertFalse(
+        preCopyVal1 instanceof KernelRowToSparkRow,
+        "Struct inside map should be materialized at collection-build time");
+
+    Row copied = sparkRow.copy();
+
+    @SuppressWarnings("unchecked")
+    scala.collection.Map<Object, Object> scalaMap =
+        (scala.collection.Map<Object, Object>) copied.get(0);
+
+    Row val1 = (Row) scalaMap.apply("key1");
+    assertFalse(
+        val1 instanceof KernelRowToSparkRow,
+        "Struct inside map should be materialized, not a live KernelRowToSparkRow");
+    assertNotSame(preCopyVal1, val1, "Copied struct should be a different reference");
+    assertEquals(preCopyVal1, val1, "Copied struct should have the same content");
+    assertEquals(10, val1.get(0));
+    assertEquals("hello", val1.get(1));
+
+    Row val2 = (Row) scalaMap.apply("key2");
+    assertFalse(
+        val2 instanceof KernelRowToSparkRow,
+        "Struct inside map should be materialized, not a live KernelRowToSparkRow");
+    assertEquals(20, val2.get(0));
+    assertEquals("world", val2.get(1));
+  }
+
+  /**
+   * Verifies that struct elements nested inside an array are materialized (deep-copied) when copy()
+   * is called on the outer KernelRowToSparkRow. Without the fix in arrayValueToScalaSeq(), these
+   * struct elements would remain as live KernelRowToSparkRow wrappers.
+   */
+  @Test
+  public void testCopyMaterializesStructsInsideArray() {
+    StructType innerSchema =
+        new StructType().add("innerInt", IntegerType.INTEGER).add("innerStr", StringType.STRING);
+    ArrayType arrayType = new ArrayType(innerSchema, true);
+    StructType outerSchema = new StructType().add("arrayField", arrayType, false);
+
+    Map<Integer, Object> innerFieldMap1 = new HashMap<>();
+    innerFieldMap1.put(0, 100);
+    innerFieldMap1.put(1, "alpha");
+    GenericRow innerRow1 = new GenericRow(innerSchema, innerFieldMap1);
+
+    Map<Integer, Object> innerFieldMap2 = new HashMap<>();
+    innerFieldMap2.put(0, 200);
+    innerFieldMap2.put(1, "beta");
+    GenericRow innerRow2 = new GenericRow(innerSchema, innerFieldMap2);
+
+    ArrayValue av = VectorUtils.buildArrayValue(List.of(innerRow1, innerRow2), innerSchema);
+
+    ColumnVector arrayVector = VectorUtils.buildColumnVector(List.of(av), arrayType);
+    DefaultColumnarBatch batch =
+        new DefaultColumnarBatch(1, outerSchema, new ColumnVector[] {arrayVector});
+    io.delta.kernel.data.Row kernelRow = batch.getRows().next();
+
+    KernelRowToSparkRow sparkRow = new KernelRowToSparkRow(kernelRow);
+
+    // Struct elements are materialized at collection-build time (in arrayValueToScalaSeq),
+    // so even before copy(), the array elements are already GenericRow.
+    @SuppressWarnings("unchecked")
+    scala.collection.Seq<Object> preCopySeq = (scala.collection.Seq<Object>) sparkRow.get(0);
+    Row preCopyElem0 = (Row) preCopySeq.apply(0);
+    assertFalse(
+        preCopyElem0 instanceof KernelRowToSparkRow,
+        "Struct inside array should be materialized at collection-build time");
+
+    Row copied = sparkRow.copy();
+
+    @SuppressWarnings("unchecked")
+    scala.collection.Seq<Object> seq = (scala.collection.Seq<Object>) copied.get(0);
+    assertEquals(2, seq.length());
+
+    Row elem0 = (Row) seq.apply(0);
+    assertFalse(
+        elem0 instanceof KernelRowToSparkRow,
+        "Struct inside array should be materialized, not a live KernelRowToSparkRow");
+    assertNotSame(preCopyElem0, elem0, "Copied struct should be a different reference");
+    assertEquals(preCopyElem0, elem0, "Copied struct should have the same content");
+    assertEquals(100, elem0.get(0));
+    assertEquals("alpha", elem0.get(1));
+
+    Row elem1 = (Row) seq.apply(1);
+    assertFalse(
+        elem1 instanceof KernelRowToSparkRow,
+        "Struct inside array should be materialized, not a live KernelRowToSparkRow");
+    assertEquals(200, elem1.get(0));
+    assertEquals("beta", elem1.get(1));
+  }
+
+  /**
+   * Verifies that the basic read path (without copy()) returns correct values for struct fields
+   * nested inside both maps and arrays in a single row.
+   */
+  @Test
+  public void testMapAndArrayStructValuesAreCorrect() {
+    StructType innerSchema =
+        new StructType().add("id", IntegerType.INTEGER).add("name", StringType.STRING);
+    MapType mapType = new MapType(StringType.STRING, innerSchema, true);
+    ArrayType arrayType = new ArrayType(innerSchema, true);
+    StructType outerSchema =
+        new StructType().add("mapField", mapType, false).add("arrayField", arrayType, false);
+
+    Map<Integer, Object> mapStructFields = new HashMap<>();
+    mapStructFields.put(0, 1);
+    mapStructFields.put(1, "one");
+    GenericRow mapStructRow = new GenericRow(innerSchema, mapStructFields);
+
+    Map<Integer, Object> arrayStructFields = new HashMap<>();
+    arrayStructFields.put(0, 2);
+    arrayStructFields.put(1, "two");
+    GenericRow arrayStructRow = new GenericRow(innerSchema, arrayStructFields);
+
+    MapValue mv =
+        new MapValue() {
+          @Override
+          public int getSize() {
+            return 1;
+          }
+
+          @Override
+          public ColumnVector getKeys() {
+            return VectorUtils.buildColumnVector(List.of("entry"), StringType.STRING);
+          }
+
+          @Override
+          public ColumnVector getValues() {
+            return VectorUtils.buildColumnVector(List.of(mapStructRow), innerSchema);
+          }
+        };
+
+    ArrayValue av = VectorUtils.buildArrayValue(List.of(arrayStructRow), innerSchema);
+
+    ColumnVector mapVector = VectorUtils.buildColumnVector(List.of(mv), mapType);
+    ColumnVector arrayVector = VectorUtils.buildColumnVector(List.of(av), arrayType);
+    DefaultColumnarBatch batch =
+        new DefaultColumnarBatch(1, outerSchema, new ColumnVector[] {mapVector, arrayVector});
+    io.delta.kernel.data.Row kernelRow = batch.getRows().next();
+
+    Row sparkRow = new KernelRowToSparkRow(kernelRow);
+
+    @SuppressWarnings("unchecked")
+    scala.collection.Map<Object, Object> map =
+        (scala.collection.Map<Object, Object>) sparkRow.get(0);
+    Row mapStruct = (Row) map.apply("entry");
+    assertEquals(1, mapStruct.get(0));
+    assertEquals("one", mapStruct.get(1));
+
+    @SuppressWarnings("unchecked")
+    scala.collection.Seq<Object> seq = (scala.collection.Seq<Object>) sparkRow.get(1);
+    assertEquals(1, seq.length());
+    Row arrayStruct = (Row) seq.apply(0);
+    assertEquals(2, arrayStruct.get(0));
+    assertEquals("two", arrayStruct.get(1));
+  }
+
+  /**
+   * Verifies that null struct values inside maps and arrays are handled correctly -- they should
+   * come through as null rather than throwing.
+   *
+   * <p>Uses {@link DefaultGenericVector} instead of {@link VectorUtils#buildColumnVector} for
+   * struct-typed vectors because GenericColumnVector.getChild() eagerly iterates all entries via
+   * extractChildValues(), which crashes on null elements. DefaultGenericVector.getChild() creates a
+   * DefaultSubFieldVector that lazily accesses rows per-index and properly handles nulls.
+   */
+  @Test
+  public void testNullStructValuesInsideMapAndArray() {
+    StructType innerSchema =
+        new StructType().add("innerInt", IntegerType.INTEGER).add("innerStr", StringType.STRING);
+    MapType mapType = new MapType(StringType.STRING, innerSchema, true);
+    ArrayType arrayType = new ArrayType(innerSchema, true);
+    StructType outerSchema =
+        new StructType().add("mapField", mapType, false).add("arrayField", arrayType, false);
+
+    Map<Integer, Object> innerFieldMap = new HashMap<>();
+    innerFieldMap.put(0, 10);
+    innerFieldMap.put(1, "hello");
+    GenericRow innerRow1 = new GenericRow(innerSchema, innerFieldMap);
+
+    List<Object> mapStructValues = new ArrayList<>();
+    mapStructValues.add(innerRow1);
+    mapStructValues.add(null);
+
+    MapValue mv =
+        new MapValue() {
+          @Override
+          public int getSize() {
+            return 2;
+          }
+
+          @Override
+          public ColumnVector getKeys() {
+            return VectorUtils.buildColumnVector(List.of("key1", "key2"), StringType.STRING);
+          }
+
+          @Override
+          public ColumnVector getValues() {
+            return DefaultGenericVector.fromList(innerSchema, mapStructValues);
+          }
+        };
+
+    List<Object> arrayStructValues = new ArrayList<>();
+    arrayStructValues.add(innerRow1);
+    arrayStructValues.add(null);
+    ArrayValue av =
+        new ArrayValue() {
+          @Override
+          public int getSize() {
+            return 2;
+          }
+
+          @Override
+          public ColumnVector getElements() {
+            return DefaultGenericVector.fromList(innerSchema, arrayStructValues);
+          }
+        };
+
+    ColumnVector mapVector = VectorUtils.buildColumnVector(List.of(mv), mapType);
+    ColumnVector arrayVector = VectorUtils.buildColumnVector(List.of(av), arrayType);
+    DefaultColumnarBatch batch =
+        new DefaultColumnarBatch(1, outerSchema, new ColumnVector[] {mapVector, arrayVector});
+    io.delta.kernel.data.Row kernelRow = batch.getRows().next();
+
+    KernelRowToSparkRow sparkRow = new KernelRowToSparkRow(kernelRow);
+    Row copied = sparkRow.copy();
+
+    @SuppressWarnings("unchecked")
+    scala.collection.Map<Object, Object> map = (scala.collection.Map<Object, Object>) copied.get(0);
+    Row mapVal1 = (Row) map.apply("key1");
+    assertNotNull(mapVal1);
+    assertEquals(10, mapVal1.get(0));
+    assertEquals("hello", mapVal1.get(1));
+    assertNull(map.apply("key2"));
+
+    @SuppressWarnings("unchecked")
+    scala.collection.Seq<Object> seq = (scala.collection.Seq<Object>) copied.get(1);
+    assertEquals(2, seq.length());
+    Row arrayElem0 = (Row) seq.apply(0);
+    assertNotNull(arrayElem0);
+    assertEquals(10, arrayElem0.get(0));
+    assertEquals("hello", arrayElem0.get(1));
+    assertNull(seq.apply(1));
   }
 }

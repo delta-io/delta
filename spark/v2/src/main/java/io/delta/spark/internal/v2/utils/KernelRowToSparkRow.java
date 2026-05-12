@@ -120,8 +120,8 @@ public class KernelRowToSparkRow implements Row {
     for (int i = 0; i < values.length; i++) {
       Object v = get(i);
       // Recursively copy nested struct wrappers that still reference the live kernel row.
-      // Note: structs nested inside maps/arrays are already materialized by toSparkValue()
-      // as Scala collections of plain objects, so they don't hold kernel row references.
+      // Structs nested inside maps/arrays are materialized when those collections are built
+      // by mapValueToScalaMap() and arrayValueToScalaSeq(), so only top-level fields need this.
       if (v instanceof KernelRowToSparkRow) {
         v = ((KernelRowToSparkRow) v).copy();
       }
@@ -376,7 +376,13 @@ public class KernelRowToSparkRow implements Row {
     Map<Object, Object> javaMap = new HashMap<>();
     for (int i = 0; i < mv.getSize(); i++) {
       Object key = toSparkValue(keyAccessor, i, mt.getKeyType(), sparkMt.keyType());
+      if (key instanceof KernelRowToSparkRow) {
+        key = ((KernelRowToSparkRow) key).copy();
+      }
       Object value = toSparkValue(valueAccessor, i, mt.getValueType(), sparkMt.valueType());
+      if (value instanceof KernelRowToSparkRow) {
+        value = ((KernelRowToSparkRow) value).copy();
+      }
       javaMap.put(key, value);
     }
     return scala.jdk.javaapi.CollectionConverters.asScala(javaMap);
@@ -388,7 +394,11 @@ public class KernelRowToSparkRow implements Row {
     FieldAccessor elemAccessor = vectorAccessor(elements);
     List<Object> javaList = new ArrayList<>();
     for (int i = 0; i < av.getSize(); i++) {
-      javaList.add(toSparkValue(elemAccessor, i, at.getElementType(), sparkAt.elementType()));
+      Object elem = toSparkValue(elemAccessor, i, at.getElementType(), sparkAt.elementType());
+      if (elem instanceof KernelRowToSparkRow) {
+        elem = ((KernelRowToSparkRow) elem).copy();
+      }
+      javaList.add(elem);
     }
     return scala.jdk.javaapi.CollectionConverters.asScala(javaList).toList();
   }
