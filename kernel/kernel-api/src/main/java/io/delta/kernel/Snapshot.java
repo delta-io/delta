@@ -132,21 +132,23 @@ public interface Snapshot {
    *   <li>{@code Optional.of([info1, info2])} -- clustered with the listed columns
    * </ul>
    *
-   * <p>The default body builds the list eagerly on every call by reading the {@code
-   * delta.clustering} domain via {@link #getDomainMetadata(String)} and delegating the parse +
-   * resolve to {@link ClusteringColumnInfo#resolveAllFromDomainJson(StructType, String)}.
-   * Implementations should override this method to cache the resolved list so repeated callers
-   * (e.g. plan rules invoking it per file group) don't re-deserialize the JSON and re-walk the
-   * schema.
+   * <p>Implementations must override this method; the default body throws {@link
+   * UnsupportedOperationException}. A turnkey implementation can compose {@link
+   * #getDomainMetadata(String)} (with {@link ClusteringColumnInfo#CLUSTERING_DOMAIN_NAME}) and
+   * {@link ClusteringColumnInfo#resolveAllFromDomainJson(StructType, String)}; overrides are
+   * encouraged to cache the result so repeated callers (e.g. plan rules invoking it per file group)
+   * don't re-deserialize the JSON and re-walk the schema.
    *
+   * @throws UnsupportedOperationException if the {@link Snapshot} implementation does not override
+   *     this method.
    * @throws KernelException if the {@code delta.clustering} domain JSON is not a valid clustering
    *     domain configuration, or if a physical clustering column cannot be resolved against the
    *     snapshot's schema.
    * @since 4.3.0
    */
   default Optional<List<ClusteringColumnInfo>> getClusteringColumnInfos() {
-    return getDomainMetadata(ClusteringColumnInfo.CLUSTERING_DOMAIN_NAME)
-        .map(json -> ClusteringColumnInfo.resolveAllFromDomainJson(getSchema(), json));
+    throw new UnsupportedOperationException(
+        "getClusteringColumnInfos() is not implemented for this Snapshot");
   }
 
   /** @return a scan builder to construct a {@link Scan} to read data from this snapshot */
