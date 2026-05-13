@@ -388,7 +388,11 @@ trait DeltaInsertIntoTest
         .format("delta")
         .trigger(Trigger.AvailableNow())
         .toTable("target")
-      query.processAllAvailable()
+      try {
+        query.processAllAvailable()
+      } finally {
+        query.stop()
+      }
     }
   }
 
