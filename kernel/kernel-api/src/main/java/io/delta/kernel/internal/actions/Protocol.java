@@ -126,6 +126,17 @@ public class Protocol {
     } else {
       newReaderFeatures = null;
     }
+    // Reader-writer features must be listed in both readerFeatures and writerFeatures of the
+    // protocol per the Delta spec. Writer-only features (e.g. inCommitTimestamp) are not added
+    // to readerFeatures.
+    if (newReaderFeatures != null) {
+      for (String feature : writerFeatures) {
+        if (TableFeatures.READER_WRITER_FEATURES.contains(feature)
+            && !newReaderFeatures.contains(feature)) {
+          newReaderFeatures.add(feature);
+        }
+      }
+    }
     return new Protocol(
         newProtocolVersions._1, newProtocolVersions._2, newReaderFeatures, newWriterFeatures);
   }

@@ -21,6 +21,7 @@ import io.delta.kernel.internal.TableFeatures.{
   extractAutomaticallyEnabledWriterFeatures,
   hasGeospatial,
   minProtocolVersionFromAutomaticallyEnabledFeatures,
+  validateReadSupportedTable,
   validateWriteSupportedTable
 }
 import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
@@ -98,6 +99,27 @@ class TableFeaturesSuite extends AnyFunSuite {
     val t = minProtocolVersionFromAutomaticallyEnabledFeatures(
       Collections.singleton("geospatial"))
     assert(t._1 == 3 && t._2 == 7)
+  }
+
+  test("auto-enable geospatial yields Protocol(3, 7) with geospatial in both " +
+    "reader and writer features") {
+    val metadata = createTestMetadata(includeGeometryTypeCol = true)
+    val initialProtocol = new Protocol(1, 1, null, null)
+    val autoEnabled = extractAutomaticallyEnabledWriterFeatures(metadata, initialProtocol)
+    val newProtocol = initialProtocol.withNewWriterFeatures(autoEnabled)
+    assert(newProtocol.getMinReaderVersion == 3)
+    assert(newProtocol.getMinWriterVersion == 7)
+    assert(newProtocol.getReaderFeatures.asScala.toSet == Set("geospatial"))
+    assert(newProtocol.getWriterFeatures.asScala.toSet == Set("geospatial"))
+  }
+
+  test("validateReadSupportedTable accepts geospatial reader feature at protocol 3") {
+    val protocol = new Protocol(
+      3,
+      7,
+      Collections.singletonList("geospatial"),
+      Collections.singletonList("geospatial"))
+    validateReadSupportedTable(protocol, "/test/table", Optional.empty())
   }
 
   Seq("invariants", "checkConstraints", "generatedColumns", "allowColumnDefaults", "changeDataFeed",

@@ -66,6 +66,20 @@ public class TableFeatures {
             }
           });
 
+  /**
+   * Names of features that are reader-writer features per the Delta spec, i.e. features whose name
+   * must appear in both {@code readerFeatures} and {@code writerFeatures} of the protocol whenever
+   * the feature is enabled. Writer-only features (e.g. {@code inCommitTimestamp}) are intentionally
+   * excluded.
+   */
+  public static final Set<String> READER_WRITER_FEATURES =
+      Collections.unmodifiableSet(
+          new HashSet<String>() {
+            {
+              add("geospatial");
+            }
+          });
+
   /** The feature name for domain metadata. */
   public static final String DOMAIN_METADATA_FEATURE_NAME = "domainMetadata";
 
