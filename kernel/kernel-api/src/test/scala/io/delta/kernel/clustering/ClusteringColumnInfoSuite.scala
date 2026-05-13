@@ -21,7 +21,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.expressions.Column
-import io.delta.kernel.types.{IntegerType, StructType}
+import io.delta.kernel.types.{IntegerType, StringType, StructType}
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -47,6 +47,23 @@ class ClusteringColumnInfoSuite extends AnyFunSuite {
     assert(infos(1).getLogicalColumn == new Column("part2"))
     assert(infos(1).getPhysicalColumn == new Column("part2"))
     assert(infos(1).getDataType == IntegerType.INTEGER)
+  }
+
+  test("resolveAllFromDomainJson resolves nested-field (multi-part) clustering columns") {
+    val nestedSchema = new StructType()
+      .add(
+        "user",
+        new StructType()
+          .add(
+            "address",
+            new StructType()
+              .add("city", StringType.STRING)))
+    val json = """{"clusteringColumns":[["user","address","city"]]}"""
+    val infos = ClusteringColumnInfo.resolveAllFromDomainJson(nestedSchema, json).asScala
+    assert(infos.size == 1)
+    assert(infos.head.getLogicalColumn == new Column(Array("user", "address", "city")))
+    assert(infos.head.getPhysicalColumn == new Column(Array("user", "address", "city")))
+    assert(infos.head.getDataType == StringType.STRING)
   }
 
   test("resolveAllFromDomainJson returns an empty list when the domain has no columns") {
