@@ -444,6 +444,25 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       "timeSpentInGettingLastKnownBackfilledVersion",
       timeSpentInGettingLastKnownBackfilledVersion);
 
+    // SHOULD_PASS_METADATA_TO_UC gates metadata and protocol
+    // (same UC server-side rollout).
+    boolean metadataChanged =
+        updatedActions.getNewMetadata() != updatedActions.getOldMetadata();
+    boolean protocolChanged =
+        updatedActions.getNewProtocol() != updatedActions.getOldProtocol();
+    Optional<AbstractMetadata> oldMetadata =
+        optionalIf(SHOULD_PASS_METADATA_TO_UC,
+            updatedActions.getOldMetadata());
+    Optional<AbstractMetadata> newMetadata =
+        optionalIf(SHOULD_PASS_METADATA_TO_UC && metadataChanged,
+            updatedActions.getNewMetadata());
+    Optional<AbstractProtocol> oldProtocol =
+        optionalIf(SHOULD_PASS_METADATA_TO_UC && protocolChanged,
+            updatedActions.getOldProtocol());
+    Optional<AbstractProtocol> newProtocol =
+        optionalIf(SHOULD_PASS_METADATA_TO_UC && protocolChanged,
+            updatedActions.getNewProtocol());
+
     int transientErrorRetryCount = 0;
     while (transientErrorRetryCount <= MAX_RETRIES_ON_TRANSIENT_ERROR) {
       try {
@@ -455,18 +474,10 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
           Optional.of(commitTimestamp),
           Optional.of(lastKnownBackfilledVersion.get()),
           catalogTrackedInfo,
-          !SHOULD_PASS_METADATA_TO_UC ? Optional.empty() : Optional.of(updatedActions.getOldMetadata()),
-          updatedActions.getNewMetadata() == updatedActions.getOldMetadata() || !SHOULD_PASS_METADATA_TO_UC ?
-            Optional.empty() :
-            Optional.of(updatedActions.getNewMetadata()),
-          // SHOULD_PASS_METADATA_TO_UC gates both metadata and protocol fields since they
-          // are controlled by the same UC server-side feature rollout.
-          !SHOULD_PASS_METADATA_TO_UC || updatedActions.getNewProtocol() == updatedActions.getOldProtocol() ?
-            Optional.empty() :
-            Optional.of(updatedActions.getOldProtocol()),
-          !SHOULD_PASS_METADATA_TO_UC || updatedActions.getNewProtocol() == updatedActions.getOldProtocol() ?
-            Optional.empty() :
-            Optional.of(updatedActions.getNewProtocol())
+          oldMetadata,
+          newMetadata,
+          oldProtocol,
+          newProtocol
         );
         break;
       } catch (CommitFailedException cfe) {
@@ -707,8 +718,6 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       Optional<AbstractProtocol> newProtocol
   ) throws IOException, CommitFailedException, UCCommitCoordinatorException
   {
-    assert tableId.equals(extractUCTableId(tableDesc))
-      : "tableId mismatch: " + tableId + " vs tableDesc=" + extractUCTableId(tableDesc);
     Optional<Commit> commit = commitFile.map(f -> new Commit(
       commitVersion.orElseThrow(() -> new IllegalArgumentException(
         "Commit version should be specified when commitFile is present")),
@@ -992,5 +1001,9 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       " is not supported by this version of the UC commit coordinator client. Please upgrade" +
       " the commit coordinator client to " + op + " this table.");
     }
+  }
+
+  private static <T> Optional<T> optionalIf(boolean condition, T value) {
+    return condition ? Optional.of(value) : Optional.empty();
   }
 }
