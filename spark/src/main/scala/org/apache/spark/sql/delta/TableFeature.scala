@@ -386,7 +386,6 @@ object TableFeature {
       TypeWideningTableFeature,
       IcebergCompatV1TableFeature,
       IcebergCompatV2TableFeature,
-      IcebergCompatV3TableFeature,
       DeletionVectorsTableFeature,
       VacuumProtocolCheckTableFeature,
       V2CheckpointTableFeature,
@@ -1021,23 +1020,6 @@ object IcebergCompatV2TableFeature extends WriterFeature(name = "icebergCompatV2
 
   override def requiredFeatures: Set[TableFeature] = Set(ColumnMappingTableFeature)
 }
-
-object IcebergCompatV3TableFeature extends WriterFeature(name = "icebergCompatV3")
-  with FeatureAutomaticallyEnabledByMetadata {
-
-  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
-
-  override def failConcurrentTransactionsAtUpgrade: Boolean = false
-
-  override def metadataRequiresFeatureToBeEnabled(
-      protocol: Protocol,
-      metadata: Metadata,
-      spark: SparkSession): Boolean = IcebergCompatV3.isEnabled(metadata)
-
-  override def requiredFeatures: Set[TableFeature] =
-    Set(ColumnMappingTableFeature, RowTrackingFeature)
-}
-
 
 /**
  * Clustering table feature is enabled when a table is created with CLUSTER BY clause.
