@@ -8,7 +8,7 @@ Currently, Delta tables store partition column values primarily in the table met
 
 This RFC proposes a new writer-only table feature called `materializePartitionColumns`. When supported, this feature requires partition columns to be physically materialized in Parquet data files alongside the data columns.
 
-This RFC also proposes a new table property, `delta.writePartitionColumnsToParquet`. When set to true in table metadata, this property indicates that partition columns should be materialized in parquet data files regardless of whether the `materializePartitionColumns` feature is supported/enabled.
+This RFC also proposes a new table property, `delta.writePartitionColumnsToParquet`. If the above-mentioned `materializePartitionColumns` feature is not enabled, this property provides a best-effort knob to control materialization of partition columns. In other words, in the absence of the `materializePartitionColumns` feature, partition columns should be materialized if the `delta.writePartitionColumnsToParquet` property is set to true, although it is also correct for writers to ignore this property.
 
 ## Motivation
 
