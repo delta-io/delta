@@ -4001,6 +4001,12 @@ trait DeltaErrorsBase
     )
   }
 
+  def replaceTableWithCatalogManagedNotSupported(tableNameParts: Seq[String]): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_REPLACE_TABLE_WITH_CATALOG_MANAGED_NOT_SUPPORTED",
+      messageParameters = Array(toSQLId(tableNameParts)))
+  }
+
   def cannotResolveSourceColumnException(columnPath: Seq[String]): Throwable = {
     new DeltaIllegalArgumentException(
       errorClass = "DELTA_CANNOT_RESOLVE_SOURCE_COLUMN",

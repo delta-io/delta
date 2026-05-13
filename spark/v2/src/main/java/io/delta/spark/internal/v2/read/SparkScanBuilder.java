@@ -217,6 +217,7 @@ public class SparkScanBuilder
     return new SparkScan(
         snapshotManager,
         initialSnapshot,
+        tableSchema,
         dataSchema,
         partitionSchema,
         requiredDataSchema,

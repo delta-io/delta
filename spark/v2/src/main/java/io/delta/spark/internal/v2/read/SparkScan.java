@@ -32,6 +32,7 @@ import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorSchemaContex
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.utils.PartitionUtils;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
+import io.delta.spark.internal.v2.utils.SchemaUtils;
 import java.io.IOException;
 import java.time.ZoneId;
 import java.util.*;
@@ -100,6 +101,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   private final StructType readDataSchema;
   private final StructType dataSchema;
   private final StructType partitionSchema;
+  private final StructType ddlOrderedReadOutputSchema;
   private final Predicate[] pushedToKernelFilters;
   private final Filter[] dataFilters;
   // Derived Sets used only for equals/hashCode: filters are AND-ed at evaluation time,
@@ -136,9 +138,11 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   private final Set<org.apache.spark.sql.connector.expressions.filter.Predicate>
       appliedRuntimePredicates = new HashSet<>();
 
+  // TODO(#6743): bundle scan-level schemas into a single ScanSchemaContext.
   public SparkScan(
       DeltaSnapshotManager snapshotManager,
       Snapshot initialSnapshot,
+      StructType tableSchema,
       StructType dataSchema,
       StructType partitionSchema,
       StructType readDataSchema,
@@ -167,20 +171,16 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     this.deltaOptions = new DeltaOptions(scalaOptions, sqlConf);
     this.isCDCRead = deltaOptions.readChangeFeed();
     this.zoneId = ZoneId.of(sqlConf.sessionLocalTimeZone());
+    StructType ddlOrdered =
+        SchemaUtils.ddlOrderedOutputSchema(tableSchema, readDataSchema, partitionSchema);
+    this.ddlOrderedReadOutputSchema =
+        isCDCRead ? CDCSchemaContext.appendCDCColumns(ddlOrdered) : ddlOrdered;
   }
 
-  /**
-   * Read schema for the scan: data columns followed by partition columns, with CDC columns appended
-   * for CDC reads.
-   */
+  /** Read schema for the scan, in the table's DDL column order. */
   @Override
   public StructType readSchema() {
-    final List<StructField> fields =
-        new ArrayList<>(readDataSchema.fields().length + partitionSchema.fields().length);
-    Collections.addAll(fields, readDataSchema.fields());
-    Collections.addAll(fields, partitionSchema.fields());
-    StructType schema = new StructType(fields.toArray(new StructField[0]));
-    return isCDCRead ? CDCSchemaContext.appendCDCColumns(schema) : schema;
+    return ddlOrderedReadOutputSchema;
   }
 
   /**
@@ -239,6 +239,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         dataSchema,
         partitionSchema,
         readDataSchema,
+        ddlOrderedReadOutputSchema,
         partitionedFiles,
         pushedToKernelFilters,
         dataFilters,
@@ -264,6 +265,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         dataSchema,
         partitionSchema,
         readDataSchema,
+        ddlOrderedReadOutputSchema,
         dataFilters != null ? dataFilters : new Filter[0],
         scalaOptions != null ? scalaOptions : scala.collection.immutable.Map$.MODULE$.empty());
   }

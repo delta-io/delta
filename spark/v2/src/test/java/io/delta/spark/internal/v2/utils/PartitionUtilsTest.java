@@ -131,6 +131,11 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
         new StructType(
             new StructField[] {DataTypes.createStructField("part", DataTypes.StringType, true)});
     StructType readDataSchema = dataSchema;
+    StructType ddlOrderedReadOutputSchema =
+        SchemaUtils.ddlOrderedOutputSchema(
+            SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema()),
+            readDataSchema,
+            partitionSchema);
     Filter[] filters = new Filter[0];
     scala.collection.immutable.Map<String, String> options = Map$.MODULE$.empty();
     Configuration hadoopConf = new Configuration();
@@ -142,6 +147,7 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
             dataSchema,
             partitionSchema,
             readDataSchema,
+            ddlOrderedReadOutputSchema,
             filters,
             options,
             hadoopConf,
@@ -167,6 +173,11 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
         new StructType(
             new StructField[] {DataTypes.createStructField("part", DataTypes.StringType, true)});
     StructType readDataSchema = dataSchema;
+    StructType ddlOrderedReadOutputSchema =
+        SchemaUtils.ddlOrderedOutputSchema(
+            SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema()),
+            readDataSchema,
+            partitionSchema);
     Filter[] filters = new Filter[0];
     scala.collection.immutable.Map<String, String> options = Map$.MODULE$.empty();
     Configuration hadoopConf = new Configuration();
@@ -178,6 +189,7 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
             dataSchema,
             partitionSchema,
             readDataSchema,
+            ddlOrderedReadOutputSchema,
             filters,
             options,
             hadoopConf,
@@ -275,6 +287,157 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
     assertNotNull(partitionedFile);
     assertEquals(addFile.getSize(), partitionedFile.fileSize());
     assertEquals(1, partitionedFile.partitionValues().numFields());
+  }
+
+  @Test
+  public void testDdlOrderedOutputSchema_PartitionInMiddleInterleavedAtDdlPosition() {
+    String tablePath = getTempTablePath("ddl_order_middle_" + System.nanoTime());
+    spark.sql(
+        String.format(
+            "CREATE TABLE delta.`%s` (id LONG, part LONG, col3 INT) USING delta "
+                + "PARTITIONED BY (part)",
+            tablePath));
+    Snapshot snapshot = Table.forPath(defaultEngine, tablePath).getLatestSnapshot(defaultEngine);
+
+    StructType readDataSchema =
+        new StructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.LongType, true),
+              DataTypes.createStructField("col3", DataTypes.IntegerType, true)
+            });
+    StructType partitionSchema =
+        new StructType(
+            new StructField[] {DataTypes.createStructField("part", DataTypes.LongType, true)});
+
+    StructType result =
+        SchemaUtils.ddlOrderedOutputSchema(
+            SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema()),
+            readDataSchema,
+            partitionSchema);
+    assertArrayEquals(new String[] {"id", "part", "col3"}, result.fieldNames());
+  }
+
+  @Test
+  public void testDdlOrderedOutputSchema_PartitionAtEndIsIdentity() {
+    String tablePath = getTempTablePath("ddl_order_end_" + System.nanoTime());
+    spark.sql(
+        String.format(
+            "CREATE TABLE delta.`%s` (id LONG, col3 INT, part LONG) USING delta "
+                + "PARTITIONED BY (part)",
+            tablePath));
+    Snapshot snapshot = Table.forPath(defaultEngine, tablePath).getLatestSnapshot(defaultEngine);
+
+    StructType readDataSchema =
+        new StructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.LongType, true),
+              DataTypes.createStructField("col3", DataTypes.IntegerType, true)
+            });
+    StructType partitionSchema =
+        new StructType(
+            new StructField[] {DataTypes.createStructField("part", DataTypes.LongType, true)});
+
+    StructType result =
+        SchemaUtils.ddlOrderedOutputSchema(
+            SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema()),
+            readDataSchema,
+            partitionSchema);
+    assertArrayEquals(new String[] {"id", "col3", "part"}, result.fieldNames());
+  }
+
+  @Test
+  public void testDdlOrderedOutputSchema_NoPartitionsShortCircuits() {
+    String tablePath = getTempTablePath("ddl_order_no_part_" + System.nanoTime());
+    spark.sql(String.format("CREATE TABLE delta.`%s` (id LONG, col3 INT) USING delta", tablePath));
+    Snapshot snapshot = Table.forPath(defaultEngine, tablePath).getLatestSnapshot(defaultEngine);
+
+    StructType readDataSchema =
+        new StructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.LongType, true),
+              DataTypes.createStructField("col3", DataTypes.IntegerType, true)
+            });
+    StructType emptyPartitions = new StructType(new StructField[0]);
+
+    StructType result =
+        SchemaUtils.ddlOrderedOutputSchema(
+            SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema()),
+            readDataSchema,
+            emptyPartitions);
+    // Returns the readDataSchema instance unchanged (short-circuit).
+    assertSame(readDataSchema, result);
+  }
+
+  @Test
+  public void testDdlOrderedOutputSchema_MetadataLeftoverAppendedAtEnd() {
+    String tablePath = getTempTablePath("ddl_order_meta_" + System.nanoTime());
+    spark.sql(
+        String.format(
+            "CREATE TABLE delta.`%s` (id LONG, part LONG, col3 INT) USING delta "
+                + "PARTITIONED BY (part)",
+            tablePath));
+    Snapshot snapshot = Table.forPath(defaultEngine, tablePath).getLatestSnapshot(defaultEngine);
+
+    // _metadata is a synthetic Spark column not in the persisted schema; verify it lands at the
+    // tail in insertion order rather than being interleaved.
+    StructField metadataField =
+        DataTypes.createStructField(
+            "_metadata",
+            new StructType(
+                new StructField[] {
+                  DataTypes.createStructField("file_path", DataTypes.StringType, true)
+                }),
+            true);
+    StructType readDataSchema =
+        new StructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.LongType, true),
+              DataTypes.createStructField("col3", DataTypes.IntegerType, true),
+              metadataField
+            });
+    StructType partitionSchema =
+        new StructType(
+            new StructField[] {DataTypes.createStructField("part", DataTypes.LongType, true)});
+
+    StructType result =
+        SchemaUtils.ddlOrderedOutputSchema(
+            SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema()),
+            readDataSchema,
+            partitionSchema);
+    assertArrayEquals(new String[] {"id", "part", "col3", "_metadata"}, result.fieldNames());
+  }
+
+  @Test
+  public void testDdlOrderedOutputSchema_MultiplePartitionsInterleaved() {
+    String tablePath = getTempTablePath("ddl_order_multi_" + System.nanoTime());
+    // PARTITIONED BY order intentionally differs from DDL order to exercise both axes.
+    spark.sql(
+        String.format(
+            "CREATE TABLE delta.`%s` (a LONG, p1 STRING, b INT, p2 STRING, c DOUBLE) USING delta "
+                + "PARTITIONED BY (p2, p1)",
+            tablePath));
+    Snapshot snapshot = Table.forPath(defaultEngine, tablePath).getLatestSnapshot(defaultEngine);
+
+    StructType readDataSchema =
+        new StructType(
+            new StructField[] {
+              DataTypes.createStructField("a", DataTypes.LongType, true),
+              DataTypes.createStructField("b", DataTypes.IntegerType, true),
+              DataTypes.createStructField("c", DataTypes.DoubleType, true)
+            });
+    StructType partitionSchema =
+        new StructType(
+            new StructField[] {
+              DataTypes.createStructField("p2", DataTypes.StringType, true),
+              DataTypes.createStructField("p1", DataTypes.StringType, true)
+            });
+
+    StructType result =
+        SchemaUtils.ddlOrderedOutputSchema(
+            SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema()),
+            readDataSchema,
+            partitionSchema);
+    assertArrayEquals(new String[] {"a", "p1", "b", "p2", "c"}, result.fieldNames());
   }
 
   /** Helper to create a test Delta table. */

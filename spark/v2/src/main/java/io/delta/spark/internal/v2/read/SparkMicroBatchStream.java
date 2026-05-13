@@ -141,6 +141,7 @@ public class SparkMicroBatchStream
   private final StructType readDataSchema;
   private final StructType dataSchema;
   private final StructType partitionSchema;
+  private final StructType ddlOrderedReadOutputSchema;
   private final Filter[] dataFilters;
   private final Configuration hadoopConf;
   private final SQLConf sqlConf;
@@ -211,6 +212,7 @@ public class SparkMicroBatchStream
       StructType dataSchema,
       StructType partitionSchema,
       StructType readDataSchema,
+      StructType ddlOrderedReadOutputSchema,
       Filter[] dataFilters,
       scala.collection.immutable.Map<String, String> scalaOptions) {
     this.snapshotManager = Objects.requireNonNull(snapshotManager, "snapshotManager is null");
@@ -231,6 +233,8 @@ public class SparkMicroBatchStream
     this.dataSchema = Objects.requireNonNull(dataSchema, "dataSchema is null");
     this.partitionSchema = Objects.requireNonNull(partitionSchema, "partitionSchema is null");
     this.readDataSchema = Objects.requireNonNull(readDataSchema, "readDataSchema is null");
+    this.ddlOrderedReadOutputSchema =
+        Objects.requireNonNull(ddlOrderedReadOutputSchema, "ddlOrderedReadOutputSchema is null");
     this.dataFilters =
         Arrays.copyOf(
             Objects.requireNonNull(dataFilters, "dataFilters is null"), dataFilters.length);
@@ -515,6 +519,7 @@ public class SparkMicroBatchStream
         dataSchema,
         partitionSchema,
         readDataSchema,
+        ddlOrderedReadOutputSchema,
         dataFilters,
         scalaOptions,
         hadoopConf,
