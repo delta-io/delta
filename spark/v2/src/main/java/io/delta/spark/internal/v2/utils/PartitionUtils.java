@@ -322,8 +322,16 @@ public class PartitionUtils {
       Configuration hadoopConf,
       SQLConf sqlConf) {
     return createDeltaParquetReaderFactory(
-        snapshot, dataSchema, partitionSchema, readDataSchema, ddlOrderedReadOutputSchema,
-        dataFilters, scalaOptions, hadoopConf, sqlConf, /* isCDCRead */ false);
+        snapshot,
+        dataSchema,
+        partitionSchema,
+        readDataSchema,
+        ddlOrderedReadOutputSchema,
+        dataFilters,
+        scalaOptions,
+        hadoopConf,
+        sqlConf,
+        /* isCDCRead */ false);
   }
 
   public static PartitionReaderFactory createDeltaParquetReaderFactory(

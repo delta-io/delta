@@ -1,27 +1,5 @@
 package io.delta.spark.internal.v2.read.changelog;
 
-import org.apache.spark.sql.delta.DefaultRowCommitVersion$;
-import org.apache.spark.sql.delta.RowId$;
-import io.delta.spark.internal.v2.utils.PartitionUtils;
-import io.delta.spark.internal.v2.utils.StreamingHelper;
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.Path;
-import org.apache.spark.paths.SparkPath;
-import org.apache.spark.sql.catalyst.InternalRow;
-import org.apache.spark.sql.catalyst.expressions.GenericInternalRow;
-import org.apache.spark.sql.catalyst.expressions.UnsafeProjection;
-import org.apache.spark.sql.catalyst.expressions.JoinedRow;
-import org.apache.spark.sql.execution.datasources.FilePartition;
-import org.apache.spark.sql.execution.datasources.PartitionedFile;
-import org.apache.spark.sql.connector.read.Batch;
-import org.apache.spark.sql.connector.read.InputPartition;
-import org.apache.spark.sql.connector.read.PartitionReader;
-import org.apache.spark.sql.connector.read.PartitionReaderFactory;
-import org.apache.spark.sql.internal.SQLConf;
-import org.apache.spark.sql.sources.Filter;
-import org.apache.spark.sql.types.DataTypes;
-import org.apache.spark.sql.types.StructType;
-import org.apache.spark.unsafe.types.UTF8String;
 import io.delta.kernel.CommitActions;
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.Snapshot;
@@ -32,13 +10,34 @@ import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.commitrange.CommitRangeImpl;
 import io.delta.kernel.utils.CloseableIterator;
-
+import io.delta.spark.internal.v2.utils.PartitionUtils;
+import io.delta.spark.internal.v2.utils.StreamingHelper;
 import java.io.IOException;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
+import org.apache.spark.paths.SparkPath;
+import org.apache.spark.sql.catalyst.InternalRow;
+import org.apache.spark.sql.catalyst.expressions.GenericInternalRow;
+import org.apache.spark.sql.catalyst.expressions.JoinedRow;
+import org.apache.spark.sql.catalyst.expressions.UnsafeProjection;
+import org.apache.spark.sql.connector.read.Batch;
+import org.apache.spark.sql.connector.read.InputPartition;
+import org.apache.spark.sql.connector.read.PartitionReader;
+import org.apache.spark.sql.connector.read.PartitionReaderFactory;
+import org.apache.spark.sql.delta.DefaultRowCommitVersion$;
+import org.apache.spark.sql.delta.RowId$;
+import org.apache.spark.sql.execution.datasources.FilePartition;
+import org.apache.spark.sql.execution.datasources.PartitionedFile;
+import org.apache.spark.sql.internal.SQLConf;
+import org.apache.spark.sql.sources.Filter;
+import org.apache.spark.sql.types.DataTypes;
+import org.apache.spark.sql.types.StructType;
+import org.apache.spark.unsafe.types.UTF8String;
 import scala.Tuple2;
 
 public class DeltaChangelogBatch implements Batch {
@@ -180,8 +179,7 @@ public class DeltaChangelogBatch implements Batch {
     StructType readDataSchema = dataSchema;
     if (rowTrackingEnabled) {
       readDataSchema =
-          readDataSchema.add(
-              DeltaChangelog.METADATA_COLUMN, DeltaChangelog.METADATA_STRUCT, false);
+          readDataSchema.add(DeltaChangelog.METADATA_COLUMN, DeltaChangelog.METADATA_STRUCT, false);
     }
     Filter[] dataFilters = new Filter[0];
     scala.collection.immutable.Map<String, String> scalaOptions =
@@ -201,16 +199,15 @@ public class DeltaChangelogBatch implements Batch {
             sqlConf,
             /* isCDCRead */ true);
 
-    StructType outputSchema = readDataSchema
-      .add("_change_type", DataTypes.StringType, false)
-      .add("_commit_version", DataTypes.LongType, false)
-      .add("_commit_timestamp", DataTypes.TimestampType, false);
+    StructType outputSchema =
+        readDataSchema
+            .add("_change_type", DataTypes.StringType, false)
+            .add("_commit_version", DataTypes.LongType, false)
+            .add("_commit_timestamp", DataTypes.TimestampType, false);
     return new CDCPartitionReaderFactory(delegate, snapshot.getPath(), outputSchema);
   }
 
-  /**
-   * Serialized to executors; represents one CDC file change unit.
-   */
+  /** Serialized to executors; represents one CDC file change unit. */
   static class CDCInputPartition implements InputPartition, Serializable {
     private final String filePath;
     private final long fileSize;
@@ -266,15 +263,14 @@ public class DeltaChangelogBatch implements Batch {
     }
   }
 
-  /**
-   * Executor-side factory for CDC partition readers.
-   */
+  /** Executor-side factory for CDC partition readers. */
   static class CDCPartitionReaderFactory implements PartitionReaderFactory, Serializable {
     private final PartitionReaderFactory delegate;
     private final String tablePath;
     private final StructType outputSchema;
 
-    CDCPartitionReaderFactory(PartitionReaderFactory delegate, String tablePath, StructType outputSchema) {
+    CDCPartitionReaderFactory(
+        PartitionReaderFactory delegate, String tablePath, StructType outputSchema) {
       this.delegate = delegate;
       this.tablePath = tablePath;
       this.outputSchema = outputSchema;
@@ -288,7 +284,8 @@ public class DeltaChangelogBatch implements Batch {
           SparkPath.fromUrlString(new Path(tablePath, cdcPartition.getFilePath()).toString());
       scala.collection.immutable.Map<String, Object> constantMetadata =
           (scala.collection.immutable.Map<String, Object>)
-              (scala.collection.immutable.Map<?, ?>) scala.collection.immutable.Map$.MODULE$.empty();
+              (scala.collection.immutable.Map<?, ?>)
+                  scala.collection.immutable.Map$.MODULE$.empty();
       constantMetadata =
           constantMetadata.$plus(
               new Tuple2<>(RowId$.MODULE$.BASE_ROW_ID(), cdcPartition.getBaseRowId()));
@@ -314,9 +311,7 @@ public class DeltaChangelogBatch implements Batch {
     }
   }
 
-  /**
-   * Executor-side reader stub for per-file CDC row materialization.
-   */
+  /** Executor-side reader stub for per-file CDC row materialization. */
   static class CDCPartitionReader implements PartitionReader<InternalRow> {
     private final PartitionReader<InternalRow> baseReader;
     private final UnsafeProjection projection;

@@ -20,7 +20,6 @@ package org.apache.spark.sql.delta.catalog
 import java.sql.Timestamp
 import java.util
 import java.util.Locale
-import java.util.Optional
 
 import scala.collection.JavaConverters._
 import scala.collection.immutable.ListMap
@@ -31,7 +30,7 @@ import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterBy, ClusterBySpec}
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterByTransform => TempClusterByTransform}
-import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaConfigs, DeltaErrors, DeltaLog, DeltaTableUtils}
+import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaConfigs, DeltaErrors, DeltaTableUtils}
 import org.apache.spark.sql.delta.{DeltaOptions, IdentityColumn}
 import org.apache.spark.sql.delta.DeltaTableIdentifier.gluePermissionError
 import org.apache.spark.sql.delta.commands._
@@ -47,14 +46,6 @@ import org.apache.spark.sql.delta.tablefeatures.DropFeature
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.PartitionUtils
 import org.apache.hadoop.fs.Path
-import io.delta.kernel.defaults.engine.DefaultEngine
-import io.delta.kernel.internal.DeltaHistoryManager
-import io.delta.kernel.internal.SnapshotImpl
-import io.delta.kernel.internal.rowtracking.RowTracking
-import io.delta.spark.internal.v2.catalog.SparkTable
-import io.delta.spark.internal.v2.read.changelog.DeltaChangelog
-import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory
-import io.delta.spark.internal.v2.utils.{SchemaUtils => V2SchemaUtils}
 
 import org.apache.spark.SparkException
 import org.apache.spark.internal.MDC
@@ -63,8 +54,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchNamespaceException, NoSuchTableException, UnresolvedAttribute, UnresolvedFieldName, UnresolvedFieldPosition}
 import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable, CatalogTableType, CatalogUtils, SessionCatalog}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, QualifiedColType, QualifiedColTypeShims, SyncIdentity}
-import org.apache.spark.sql.connector.catalog.{Changelog, ChangelogInfo, DelegatingCatalogExtension, Identifier, StagedTable, StagingTableCatalog, SupportsWrite, Table, TableCapability, TableCatalog, TableChange, V1Table}
-import org.apache.spark.sql.connector.catalog.ChangelogRange.{TimestampRange, UnboundedRange, VersionRange}
+import org.apache.spark.sql.connector.catalog.{DelegatingCatalogExtension, Identifier, StagedTable, StagingTableCatalog, SupportsWrite, Table, TableCapability, TableCatalog, TableChange, V1Table}
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.catalog.TableChange._
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform, Literal, NamedReference, Transform}
@@ -73,7 +63,6 @@ import org.apache.spark.sql.execution.datasources.{DataSource, PartitioningUtils
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.InsertableRelation
 import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
-import org.apache.spark.util.{ThreadUtils, Utils}
 
 
 /**

@@ -1,18 +1,18 @@
 package io.delta.spark.internal.v2.read.changelog;
 
+import io.delta.kernel.Snapshot;
+import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import org.apache.spark.sql.connector.catalog.CatalogV2Util;
 import org.apache.spark.sql.connector.catalog.Changelog;
-import org.apache.spark.sql.types.DataTypes;
-import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.connector.catalog.Column;
 import org.apache.spark.sql.connector.expressions.FieldReference;
 import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.read.ScanBuilder;
+import org.apache.spark.sql.types.DataTypes;
+import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
-import io.delta.kernel.Snapshot;
-import io.delta.kernel.internal.SnapshotImpl;
-import io.delta.kernel.internal.rowtracking.RowTracking;
 
 public class DeltaChangelog implements Changelog {
 
@@ -33,7 +33,6 @@ public class DeltaChangelog implements Changelog {
       new StructType()
           .add(ROW_ID_FIELD, DataTypes.LongType, false)
           .add(ROW_COMMIT_VERSION_FIELD, DataTypes.LongType, false);
-
 
   public DeltaChangelog(
       String tableName,
@@ -66,10 +65,11 @@ public class DeltaChangelog implements Changelog {
     if (rowTrackingEnabled) {
       cdcSchema = cdcSchema.add(METADATA_COLUMN, METADATA_STRUCT, false);
     }
-    cdcSchema = cdcSchema
-      .add("_change_type", DataTypes.StringType, false)
-      .add("_commit_version", DataTypes.LongType, false)
-      .add("_commit_timestamp", DataTypes.TimestampType, false);
+    cdcSchema =
+        cdcSchema
+            .add("_change_type", DataTypes.StringType, false)
+            .add("_commit_version", DataTypes.LongType, false)
+            .add("_commit_timestamp", DataTypes.TimestampType, false);
 
     return CatalogV2Util.structTypeToV2Columns(cdcSchema);
   }
@@ -99,8 +99,13 @@ public class DeltaChangelog implements Changelog {
   @Override
   public ScanBuilder newScanBuilder(CaseInsensitiveStringMap options) {
     return new DeltaChangelogScanBuilder(
-        snapshotManager, dataSchema, startVersion, endVersion,
-        startSnapshot, rowTrackingEnabled, options);
+        snapshotManager,
+        dataSchema,
+        startVersion,
+        endVersion,
+        startSnapshot,
+        rowTrackingEnabled,
+        options);
   }
 
   @Override

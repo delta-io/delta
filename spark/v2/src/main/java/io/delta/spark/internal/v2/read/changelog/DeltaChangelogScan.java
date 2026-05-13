@@ -1,12 +1,12 @@
 package io.delta.spark.internal.v2.read.changelog;
 
+import io.delta.kernel.CommitRange;
+import io.delta.kernel.Snapshot;
+import io.delta.kernel.engine.Engine;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.connector.read.Batch;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.types.StructType;
-import io.delta.kernel.CommitRange;
-import io.delta.kernel.engine.Engine;
-import io.delta.kernel.Snapshot;
 
 public class DeltaChangelogScan implements Scan {
   private final Engine engine;

@@ -1,5 +1,9 @@
 package io.delta.spark.internal.v2.read.changelog;
 
+import io.delta.kernel.CommitRange;
+import io.delta.kernel.Snapshot;
+import io.delta.kernel.defaults.engine.DefaultEngine;
+import io.delta.kernel.engine.Engine;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import java.util.Objects;
 import java.util.Optional;
@@ -10,10 +14,6 @@ import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
-import io.delta.kernel.CommitRange;
-import io.delta.kernel.Snapshot;
-import io.delta.kernel.defaults.engine.DefaultEngine;
-import io.delta.kernel.engine.Engine;
 
 public class DeltaChangelogScanBuilder implements ScanBuilder {
 
@@ -44,28 +44,24 @@ public class DeltaChangelogScanBuilder implements ScanBuilder {
 
   @Override
   public Scan build() {
-    Configuration hadoopConf = Objects.requireNonNull(
-        SparkSession.active().sparkContext().hadoopConfiguration(), "hadoopConf is null");
+    Configuration hadoopConf =
+        Objects.requireNonNull(
+            SparkSession.active().sparkContext().hadoopConfiguration(), "hadoopConf is null");
     Engine engine = DefaultEngine.create(hadoopConf);
     CommitRange commitRange =
         snapshotManager.getTableChanges(engine, startVersion, Optional.of(endVersion));
 
     StructType cdcSchema = dataSchema;
     if (rowTrackingEnabled) {
-      cdcSchema = cdcSchema.add(
-          DeltaChangelog.METADATA_COLUMN, DeltaChangelog.METADATA_STRUCT, false);
+      cdcSchema =
+          cdcSchema.add(DeltaChangelog.METADATA_COLUMN, DeltaChangelog.METADATA_STRUCT, false);
     }
-    cdcSchema = cdcSchema
-      .add("_change_type", DataTypes.StringType, false)
-      .add("_commit_version", DataTypes.LongType, false)
-      .add("_commit_timestamp", DataTypes.TimestampType, false);
+    cdcSchema =
+        cdcSchema
+            .add("_change_type", DataTypes.StringType, false)
+            .add("_commit_version", DataTypes.LongType, false)
+            .add("_commit_timestamp", DataTypes.TimestampType, false);
     return new DeltaChangelogScan(
-      cdcSchema,
-      commitRange,
-      engine,
-      dataSchema,
-      startSnapshot,
-      rowTrackingEnabled,
-      hadoopConf);
+        cdcSchema, commitRange, engine, dataSchema, startSnapshot, rowTrackingEnabled, hadoopConf);
   }
 }
