@@ -435,25 +435,11 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val shouldUnsetCatalogOwnedConf =
       isActiveReplaceCommand && CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(spark)
     val conf = if (shouldUnsetCatalogOwnedConf) {
-      // Unset default CatalogOwned enablement iff:
-      // 0. `isCreatingNewTable` indicates that this either is a REPLACE or CREATE command.
-      // 1. `readVersion != 1` indicates the table already exists.
-      //    - 0) and 1) suggest that this is an active REPLACE command.
-      // 2. Default CC enablement is set in the spark conf.
-      // This prevents any unintended modifications to the `newProtocol`.
-      // E.g., [[CatalogOwnedTableFeature]] and its dependent features
-      //       [[InCommitTimestampTableFeature]] & [[VacuumProtocolCheckTableFeature]].
-      //
-      // Note that this does *not* affect global spark conf state as we are modifying
-      // the copy of `spark.sessionState.conf`. Thus, `defaultCatalogOwnedFeatureEnabledKey`
-      // will remain unchanged for any concurrent operations that use the same SparkSession.
+      // Isolate the spark conf used by [[DeltaConfigs.mergeGlobalConfigs]].
+      val clonedConf = spark.sessionState.conf.clone()
       val defaultCatalogOwnedFeatureEnabledKey =
         TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature)
-      // Isolate the spark conf to be used in the subsequent [[DeltaConfigs.mergeGlobalConfigs]]
-      // by cloning the existing configuration.
-      // Note: [[SQLConf.clone]] is already atomic so no extra synchronization is needed.
-      val clonedConf = spark.sessionState.conf.clone()
-      // Unset default CC conf on the cloned spark conf.
+      // Default CatalogOwned enablement is ignored during REPLACE.
       clonedConf.unsetConf(defaultCatalogOwnedFeatureEnabledKey)
       clonedConf
     } else {
@@ -955,8 +941,6 @@ trait OptimisticTransactionImpl extends TransactionHelper
    *   configurations is finalized.
    */
   def updateMetadataForNewTableInReplace(metadata: Metadata): Unit = {
-    assert(CoordinatedCommitsUtils.getExplicitCCConfigurations(metadata.configuration).isEmpty,
-      "Command-specified Coordinated Commits configurations should have been blocked earlier.")
     assert(!metadata.configuration.contains(UCCommitCoordinatorClient.UC_TABLE_ID_KEY),
       "Command-specified Catalog-Owned table UUID (ucTableId) should have been blocked earlier.")
     // Extract any existing ucTableId from the snapshot metadata.
@@ -982,9 +966,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     }
     // Update the metadata.
     updateMetadataForNewTable(metadata)
-    // Now the `txn.metadata` contains all the command-specified properties and all the default
-    // properties. The latter might still contain Coordinated Commits configurations, so we need
-    // to remove them and retain the Coordinated Commits configurations from the existing table.
+    // Rebuild the final configuration from the new metadata and retained target-owned metadata.
     val newConfsWithoutCC = newMetadata.get.configuration --
       CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS
     val existingQoLConfsToRetain = existingQoLConfs.filterNot { case (key, _) =>
