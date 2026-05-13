@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.connector.catalog.TableCapability
 
 /**
- * Shim to build [[SparkTable]] against different Spark versions.
+ * Shim to build [[DeltaV2Table]] against different Spark versions.
  * This is the shim for the latest version - Spark 4.2.
  */
 object SparkTableShims {

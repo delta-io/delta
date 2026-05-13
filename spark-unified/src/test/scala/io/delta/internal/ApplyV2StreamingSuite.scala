@@ -21,7 +21,7 @@ import java.util.{HashMap => JHashMap}
 
 import scala.jdk.CollectionConverters._
 
-import io.delta.spark.internal.v2.catalog.SparkTable
+import io.delta.spark.internal.v2.catalog.DeltaV2Table
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -45,7 +45,7 @@ class ApplyV2StreamingSuite extends DeltaSQLCommandTest {
 
   private def assertV2(result: LogicalPlan): Unit = {
     result match {
-      case StreamingRelationV2(_, _, _: SparkTable, _, _, _, _, v1Relation) =>
+      case StreamingRelationV2(_, _, _: DeltaV2Table, _, _, _, _, v1Relation) =>
         assert(v1Relation.isEmpty)
       case other =>
         fail(s"Expected StreamingRelationV2, got $other")
@@ -100,7 +100,7 @@ class ApplyV2StreamingSuite extends DeltaSQLCommandTest {
       val ident = Identifier.of(
         catalogTable.identifier.database.toArray,
         catalogTable.identifier.table)
-      val table = new SparkTable(ident, catalogTable, new JHashMap[String, String]())
+      val table = new DeltaV2Table(ident, catalogTable, new JHashMap[String, String]())
       DataSourceV2Relation.create(
         table,
         None,

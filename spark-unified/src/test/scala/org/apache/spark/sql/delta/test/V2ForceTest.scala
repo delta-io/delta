@@ -25,7 +25,7 @@ import scala.collection.mutable
 
 /**
  * Trait that forces Delta V2 connector mode to STRICT, ensuring all operations
- * use the Kernel-based SparkTable implementation (V2 connector) instead of
+ * use the Kernel-based DeltaV2Table implementation (V2 connector) instead of
  * DeltaTableV2 (V1 connector).
  *
  * See [[DeltaSQLConf.V2_ENABLE_MODE]] for V1 vs V2 connector definitions.
@@ -85,7 +85,7 @@ trait V2ForceTest extends DeltaSQLCommandTest {
 
   /**
    * Override `sparkConf` to set V2_ENABLE_MODE to "STRICT".
-   * This ensures all catalog operations use Kernel SparkTable (V2 connector).
+   * This ensures all catalog operations use Kernel DeltaV2Table (V2 connector).
    */
   abstract override protected def sparkConf: SparkConf = {
     super.sparkConf
@@ -94,7 +94,7 @@ trait V2ForceTest extends DeltaSQLCommandTest {
 
   /**
    * Run a SQL statement through the V1 connector by temporarily setting
-   * V2_ENABLE_MODE to NONE. Useful for DDL/DML that SparkTable (V2) doesn't support.
+   * V2_ENABLE_MODE to NONE. Useful for DDL/DML that DeltaV2Table (V2) doesn't support.
    */
   protected def executeInV1Mode(sqlText: String): Unit = {
     withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "NONE") {

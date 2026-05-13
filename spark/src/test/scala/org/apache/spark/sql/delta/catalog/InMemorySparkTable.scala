@@ -26,7 +26,7 @@ import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types.StructType
 
 /**
- * In-memory DSv2 table used as a test stand-in for SparkTable (the Kernel-based Delta V2
+ * In-memory DSv2 table used as a test stand-in for DeltaV2Table (the Kernel-based Delta V2
  * connector).
  *
  * Created by [[InMemoryDeltaCatalog]] when used as the session catalog in tests.

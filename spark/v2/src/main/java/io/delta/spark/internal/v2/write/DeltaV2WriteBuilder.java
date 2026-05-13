@@ -46,7 +46,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
   private final LogicalWriteInfo writeInfo;
 
   /**
-   * @param engine Kernel engine (persisted in SparkTable, shared across operations)
+   * @param engine Kernel engine (persisted in DeltaV2Table, shared across operations)
    * @param tablePath filesystem path to the Delta table root
    * @param hadoopConf Hadoop configuration (with merged table options)
    * @param initialSnapshot Kernel snapshot loaded at table construction time

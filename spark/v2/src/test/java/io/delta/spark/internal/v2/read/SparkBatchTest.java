@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 import io.delta.spark.internal.v2.DeltaV2TestBase;
-import io.delta.spark.internal.v2.catalog.SparkTable;
+import io.delta.spark.internal.v2.catalog.DeltaV2Table;
 import java.io.File;
 import java.util.stream.Stream;
 import org.apache.spark.sql.connector.catalog.Identifier;
@@ -49,8 +49,8 @@ public class SparkBatchTest extends DeltaV2TestBase {
   private final CaseInsensitiveStringMap options =
       new CaseInsensitiveStringMap(new java.util.HashMap<>());
 
-  private final SparkTable table =
-      new SparkTable(
+  private final DeltaV2Table table =
+      new DeltaV2Table(
           Identifier.of(new String[] {"spark_catalog", "default"}, tableName), tablePath, options);
 
   // Cases where two batches built from the same table must be equal. city/date are partition
