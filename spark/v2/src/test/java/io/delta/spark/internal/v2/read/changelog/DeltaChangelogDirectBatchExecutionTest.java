@@ -307,11 +307,15 @@ public class DeltaChangelogDirectBatchExecutionTest extends DeltaV2TestBase {
       long insertCommitTimestampMicros, long deleteCommitTimestampMicros) {
     List<ExpectedRow> rows = new ArrayList<>();
     // id, name, _change_type, _commit_version, _commit_timestamp
+    //
+    // Spark's INSERT VALUES splits the two rows into separate Delta data files (one row per
+    // file, due to default shuffle partitioning). DELETE WHERE id=1 then affects only Alice's
+    // file: it emits a RemoveFile for that file (preimage = Alice) and writes no AddFile
+    // because the surviving row count is 0. Bob's file is left untouched, so Bob does not
+    // appear in the v2 change set.
     rows.add(row(1L, "Alice", "insert", 1L, insertCommitTimestampMicros));
     rows.add(row(2L, "Bob", "insert", 1L, insertCommitTimestampMicros));
     rows.add(row(1L, "Alice", "delete", 2L, deleteCommitTimestampMicros));
-    rows.add(row(2L, "Bob", "delete", 2L, deleteCommitTimestampMicros));
-    rows.add(row(2L, "Bob", "insert", 2L, deleteCommitTimestampMicros));
     return rows;
   }
 

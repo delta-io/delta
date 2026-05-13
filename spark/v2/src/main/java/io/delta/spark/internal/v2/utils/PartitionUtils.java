@@ -347,19 +347,24 @@ public class PartitionUtils {
     // column-reorder wrapper below.
     final StructType originalReadDataSchema = readDataSchema;
 
+    boolean metadataColumnRequested =
+        Arrays.stream(readDataSchema.fields())
+            .anyMatch(field -> FileFormat$.MODULE$.METADATA_NAME().equals(field.name()));
+
     // For CDC reads, build the schema context and augment readDataSchema with CDC columns
     // before DV wrapping so that DV column indices account for them.
+    //
+    // Skip the schema augmentation when row tracking is also requested (Auto-CDF path): in
+    // that case the outer CDCPartitionReaderFactory in DeltaChangelogBatch injects the CDC
+    // tail columns as constants, so adding them here would cause a double-injection /
+    // schema-vs-reader misalignment.
     Optional<CDCSchemaContext> cdcSchemaContext =
-        isCDCRead
+        (isCDCRead && !metadataColumnRequested)
             ? Optional.of(new CDCSchemaContext(readDataSchema, partitionSchema))
             : Optional.empty();
     if (cdcSchemaContext.isPresent()) {
       readDataSchema = cdcSchemaContext.get().getReadDataSchemaWithCDC();
     }
-
-    boolean metadataColumnRequested =
-        Arrays.stream(readDataSchema.fields())
-            .anyMatch(field -> FileFormat$.MODULE$.METADATA_NAME().equals(field.name()));
     Optional<RowTrackingSchemaContext> rowTrackingSchemaContext = Optional.empty();
     if (metadataColumnRequested) {
       RowTrackingSchemaContext context =
@@ -425,11 +430,11 @@ public class PartitionUtils {
 
     // TODO(#5319): add e2e test for CDC reads (full schema + column pruning) when CDC reads
     // become user-reachable.
-    if (cdcSchemaContext.isPresent()) {
-      if (rowTrackingSchemaContext.isPresent()) {
-        throw new UnsupportedOperationException(
-            "CDC reads combined with row tracking are not supported");
-      }
+    //
+    // When row tracking is also enabled (Auto-CDF path), the outer CDCPartitionReaderFactory
+    // in DeltaChangelogBatch injects the CDC tail columns (_change_type, _commit_version,
+    // _commit_timestamp); skip the inner CDCReadFunction wrapper to avoid double injection.
+    if (cdcSchemaContext.isPresent() && !rowTrackingSchemaContext.isPresent()) {
       readFunc = CDCReadFunction.wrap(readFunc, cdcSchemaContext.get(), enableVectorizedReader);
     }
 

@@ -78,22 +78,25 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaV2TestBase {
   }
 
   /**
-   * Returns the commit timestamp of {@code version} as a {@link java.sql.Timestamp}. Uses
-   * {@code Row.getTimestamp(idx)} (typed accessor) rather than {@code getAs} to avoid the raw
+   * Returns the commit timestamp of {@code version} as a {@link java.sql.Timestamp}. Uses {@code
+   * Row.getTimestamp(idx)} (typed accessor) rather than {@code getAs} to avoid the raw
    * long-microsecond surfacing by the underlying internal row.
    */
   private java.sql.Timestamp commitTimestamp(String tableName, long version) {
-    Dataset<Row> row = spark.sql(
-        String.format(
-            "SELECT timestamp FROM (DESCRIBE HISTORY %s) WHERE version = %d",
-            tableName, version));
+    // DESCRIBE HISTORY cannot appear inside a subquery in Spark SQL; materialize it first,
+    // then filter via the DataFrame API.
+    Dataset<Row> row =
+        spark
+            .sql(String.format("DESCRIBE HISTORY %s", tableName))
+            .filter(String.format("version = %d", version))
+            .select("timestamp");
     return row.collectAsList().get(0).getTimestamp(0);
   }
 
   /**
-   * Returns a wall-clock string strictly between two commit timestamps. Used to exercise
-   * {@code getActiveCommitAtTime} with inputs that don't coincide with any commit's exact ts,
-   * so bounds inclusivity does not change the resolved version.
+   * Returns a wall-clock string strictly between two commit timestamps. Used to exercise {@code
+   * getActiveCommitAtTime} with inputs that don't coincide with any commit's exact ts, so bounds
+   * inclusivity does not change the resolved version.
    */
   private String betweenCommits(String tableName, long earlier, long later) {
     long earlierMs = commitTimestamp(tableName, earlier).getTime();

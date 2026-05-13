@@ -75,27 +75,44 @@ public class DeltaChangelogBatch implements Batch {
 
     // TODO Remove streaminghelper usage
     try (CloseableIterator<CommitActions> commitsIter =
-             StreamingHelper.getCommitActionsFromRangeUnsafe(
-                 engine, (CommitRangeImpl) commitRange, snapshot.getPath(), CHANGELOG_ACTION_SET)) {
+        StreamingHelper.getCommitActionsFromRangeUnsafe(
+            engine, (CommitRangeImpl) commitRange, snapshot.getPath(), CHANGELOG_ACTION_SET)) {
       while (commitsIter.hasNext()) {
+        // For a single commit, emit DELETE partitions (RemoveFiles) before INSERT partitions
+        // (AddFiles). The Delta commit-log action order is not contract for downstream readers
+        // (e.g. Spark's batch CDC post-processor) — it expects the preimage-then-postimage
+        // ordering when forming update pairs. Buffering per-commit lets us stabilize this
+        // regardless of how AddFile/RemoveFile are interleaved in the on-disk commit log.
+        List<InputPartition> commitRemoves = new ArrayList<>();
+        List<InputPartition> commitAdds = new ArrayList<>();
         try (CommitActions commit = commitsIter.next();
-             CloseableIterator<ColumnarBatch> actionsIter = commit.getActions()) {
+            CloseableIterator<ColumnarBatch> actionsIter = commit.getActions()) {
           while (actionsIter.hasNext()) {
             ColumnarBatch batch = actionsIter.next();
             for (int rowId = 0; rowId < batch.getSize(); rowId++) {
               Optional<AddFile> addOpt = StreamingHelper.getAddFileWithDataChange(batch, rowId);
               if (addOpt.isPresent()) {
                 AddFile add = addOpt.get();
-                long baseRowId = rowTrackingEnabled
-                    ? add.getBaseRowId().orElseThrow(() -> new IllegalStateException(
-                        "AddFile " + add.getPath()
-                            + " missing baseRowId on row-tracking-enabled table"))
-                    : 0L;
-                long defaultRcv = rowTrackingEnabled
-                    ? add.getDefaultRowCommitVersion().orElseThrow(() -> new IllegalStateException(
-                        "AddFile " + add.getPath()
-                            + " missing defaultRowCommitVersion on row-tracking-enabled table"))
-                    : 0L;
+                long baseRowId =
+                    rowTrackingEnabled
+                        ? add.getBaseRowId()
+                            .orElseThrow(
+                                () ->
+                                    new IllegalStateException(
+                                        "AddFile "
+                                            + add.getPath()
+                                            + " missing baseRowId on row-tracking-enabled table"))
+                        : 0L;
+                long defaultRcv =
+                    rowTrackingEnabled
+                        ? add.getDefaultRowCommitVersion()
+                            .orElseThrow(
+                                () ->
+                                    new IllegalStateException(
+                                        "AddFile "
+                                            + add.getPath()
+                                            + " missing defaultRowCommitVersion on row-tracking-enabled table"))
+                        : 0L;
                 CDCInputPartition cdcPartition =
                     new CDCInputPartition(
                         add.getPath(),
@@ -105,25 +122,33 @@ public class DeltaChangelogBatch implements Batch {
                         INSERT_CHANGE_TYPE,
                         baseRowId,
                         defaultRcv);
-                partitions.add(cdcPartition);
+                commitAdds.add(cdcPartition);
               }
               Optional<RemoveFile> removeOpt = StreamingHelper.getDataChangeRemove(batch, rowId);
               if (removeOpt.isPresent()) {
                 RemoveFile remove = removeOpt.get();
-                // The shaded RemoveFile drop-in does not yet expose baseRowId /
-                // defaultRowCommitVersion. Fall through to the underlying kerneljvm
-                // RemoveFile which has the getters.
-                long baseRowId = rowTrackingEnabled
-                    ? remove.unwrap().getBaseRowId().orElseThrow(() -> new IllegalStateException(
-                        "RemoveFile " + remove.getPath()
-                            + " missing baseRowId on row-tracking-enabled table"))
-                    : 0L;
-                long defaultRcv = rowTrackingEnabled
-                    ? remove.unwrap().getDefaultRowCommitVersion().orElseThrow(
-                        () -> new IllegalStateException(
-                            "RemoveFile " + remove.getPath()
-                                + " missing defaultRowCommitVersion on row-tracking-enabled table"))
-                    : 0L;
+                long baseRowId =
+                    rowTrackingEnabled
+                        ? remove
+                            .getBaseRowId()
+                            .orElseThrow(
+                                () ->
+                                    new IllegalStateException(
+                                        "RemoveFile "
+                                            + remove.getPath()
+                                            + " missing baseRowId on row-tracking-enabled table"))
+                        : 0L;
+                long defaultRcv =
+                    rowTrackingEnabled
+                        ? remove
+                            .getDefaultRowCommitVersion()
+                            .orElseThrow(
+                                () ->
+                                    new IllegalStateException(
+                                        "RemoveFile "
+                                            + remove.getPath()
+                                            + " missing defaultRowCommitVersion on row-tracking-enabled table"))
+                        : 0L;
                 CDCInputPartition cdcPartition =
                     new CDCInputPartition(
                         remove.getPath(),
@@ -133,13 +158,15 @@ public class DeltaChangelogBatch implements Batch {
                         DELETE_CHANGE_TYPE,
                         baseRowId,
                         defaultRcv);
-                partitions.add(cdcPartition);
+                commitRemoves.add(cdcPartition);
               }
             }
           }
         } catch (Exception e) {
           throw new RuntimeException("Failed to process CDC commit actions", e);
         }
+        partitions.addAll(commitRemoves);
+        partitions.addAll(commitAdds);
       }
     } catch (Exception e) {
       throw new RuntimeException("Failed to plan CDC input partitions", e);

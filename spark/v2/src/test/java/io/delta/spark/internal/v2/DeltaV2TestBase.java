@@ -35,7 +35,7 @@ public abstract class DeltaV2TestBase {
             .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtensionV1")
             .config(
                 "spark.sql.catalog.spark_catalog",
-                "org.apache.spark.sql.delta.catalog.DeltaCatalogV1")
+                "org.apache.spark.sql.delta.catalog.DeltaCatalog")
             .config("spark.sql.catalog.dsv2", "io.delta.spark.internal.v2.catalog.TestCatalog")
             .config("spark.sql.catalog.dsv2.base_path", System.getProperty("java.io.tmpdir"))
             .getOrCreate();
@@ -126,6 +126,19 @@ public abstract class DeltaV2TestBase {
     } finally {
       for (String tableName : tableNames) {
         spark.sql(String.format("DROP TABLE IF EXISTS %s", tableName));
+      }
+    }
+  }
+
+  /** Runs the given action and removes the table directory afterwards. */
+  protected void withTable(String tablePath, ThrowingRunnable action) throws Exception {
+    try {
+      action.run();
+    } finally {
+      try {
+        org.apache.commons.io.FileUtils.deleteDirectory(new java.io.File(tablePath));
+      } catch (java.io.IOException ignored) {
+        // Test cleanup best-effort.
       }
     }
   }
