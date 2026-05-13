@@ -62,8 +62,8 @@ public interface UCClient extends AutoCloseable {
    * @param tableId The Unity Catalog table ID (UUID) identifying the target table.
    * @param tableUri The URI of the storage location of the table (e.g.,
    *                 {@code s3://bucket/path/to/table}, not the {@code _delta_log} path).
-   * @param tableIdentifier An Optional containing the three-part table identifier
-   *                        (catalog, schema, table name) for the table in Unity Catalog.
+   * @param tableIdentifier The three-part table identifier (catalog, schema, table name)
+   *                        for the table in Unity Catalog, or null if unavailable.
    * @param commit An Optional containing the Commit object with the changes to be committed.
    *               If empty, it indicates that no new data is being added in this commit.
    * @param lastKnownBackfilledVersion An Optional containing the last known backfilled version
@@ -92,7 +92,7 @@ public interface UCClient extends AutoCloseable {
   void commit(
       String tableId,
       URI tableUri,
-      Optional<TableIdentifier> tableIdentifier,
+      TableIdentifier tableIdentifier,
       Optional<Commit> commit,
       Optional<Long> lastKnownBackfilledVersion,
       Optional<AbstractMetadata> oldMetadata,

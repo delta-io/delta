@@ -60,7 +60,7 @@ class InMemoryUCClient(
   override def commit(
       tableId: String,
       tableUri: URI,
-      tableIdentifier: Optional[TableIdentifier],
+      tableIdentifier: TableIdentifier,
       commit: Optional[JCommit],
       lastKnownBackfilledVersion: Optional[JLong],
       oldMetadata: Optional[AbstractMetadata],

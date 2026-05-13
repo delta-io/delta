@@ -154,7 +154,7 @@ public class UCTokenBasedRestClient implements UCClient {
   public void commit(
       String tableId,
       URI tableUri,
-      Optional<TableIdentifier> tableIdentifier,
+      TableIdentifier tableIdentifier,
       Optional<Commit> commit,
       Optional<Long> lastKnownBackfilledVersion,
       Optional<AbstractMetadata> oldMetadata,

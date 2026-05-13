@@ -159,7 +159,7 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
     this.commit(
       tableId,
       tableUri,
-      Optional.empty(), // tableIdentifier
+      null, // tableIdentifier
       commit,
       lastKnownBackfilledVersion,
       Optional.empty(), // oldMetadata
@@ -173,7 +173,7 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
   override def commit(
       tableId: String,
       tableUri: URI,
-      tableIdentifier: Optional[TableIdentifier],
+      tableIdentifier: TableIdentifier,
       commitOpt: Optional[Commit] = Optional.empty(),
       lastKnownBackfilledVersionOpt: Optional[JLong],
       oldMetadata: Optional[AbstractMetadata],

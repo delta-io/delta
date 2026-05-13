@@ -435,11 +435,13 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       throw new RuntimeException(e);
     }
     long commitTimestamp = updatedActions.getCommitInfo().getCommitTimestamp();
+    boolean disown = isDisownCommit(
+      updatedActions.getOldMetadata(),
+      updatedActions.getNewMetadata());
     eventData.put("tableId", tableId);
     eventData.put("lastKnownBackfilledVersion", lastKnownBackfilledVersion.get());
     eventData.put("commitTimestamp", commitTimestamp);
-    eventData.put("disown", isDisownCommit(
-      updatedActions.getOldMetadata(), updatedActions.getNewMetadata()));
+    eventData.put("disown", disown);
     eventData.put(
       "timeSpentInGettingLastKnownBackfilledVersion",
       timeSpentInGettingLastKnownBackfilledVersion);
@@ -451,7 +453,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
     boolean protocolChanged =
         updatedActions.getNewProtocol() != updatedActions.getOldProtocol();
     Optional<AbstractMetadata> oldMetadata =
-        optionalIf(SHOULD_PASS_METADATA_TO_UC,
+        optionalIf(SHOULD_PASS_METADATA_TO_UC && metadataChanged,
             updatedActions.getOldMetadata());
     Optional<AbstractMetadata> newMetadata =
         optionalIf(SHOULD_PASS_METADATA_TO_UC && metadataChanged,
@@ -728,7 +730,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
     ucClient.commit(
       tableId,
       CoordinatedCommitsUtils.getTablePath(tableDesc.getLogPath()).toUri(),
-      tableDesc.getTableIdentifier(),
+      tableDesc.getTableIdentifier().orElse(null),
       commit,
       lastKnownBackfilledVersion,
       oldMetadata,

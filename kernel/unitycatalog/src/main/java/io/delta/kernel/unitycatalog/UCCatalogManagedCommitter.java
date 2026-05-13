@@ -453,7 +453,9 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
             ucClient.commit(
                 ucTableId,
                 tablePath.toUri(),
-                ucTableIdentifier.map(UCCatalogManagedCommitter::toStorageTableIdentifier),
+                ucTableIdentifier
+                    .map(UCCatalogManagedCommitter::toStorageTableIdentifier)
+                    .orElse(null),
                 Optional.of(getUcCommitPayload(commitMetadata, kernelStagedCommitFileStatus)),
                 commitMetadata.getMaxKnownPublishedDeltaVersion(),
                 Optional.empty() /* oldMetadata */,

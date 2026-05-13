@@ -119,7 +119,7 @@ trait UCCommitCoordinatorClientSuiteBase extends CommitCoordinatorClientImplSuit
     ucClient.commit(
       tableUUID.toString,
       JCoordinatedCommitsUtils.getTablePath(deltaLog.logPath).toUri,
-      Optional.empty(), // tableIdentifier
+      null, // tableIdentifier
       Optional.empty(), // commit
       Optional.of(version),
       Optional.empty(), // oldMetadata
