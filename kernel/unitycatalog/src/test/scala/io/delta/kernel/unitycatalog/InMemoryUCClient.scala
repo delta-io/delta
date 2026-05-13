@@ -18,7 +18,7 @@ package io.delta.kernel.unitycatalog
 
 import java.lang.{Long => JLong}
 import java.net.URI
-import java.util.Optional
+import java.util.{Collections, Optional}
 import java.util.concurrent.ConcurrentHashMap
 
 import scala.collection.JavaConverters._
@@ -28,6 +28,8 @@ import io.delta.storage.commit.{Commit, CommitFailedException, GetCommitsRespons
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.{InvalidTargetTableException, UCClient, UCCommitCoordinatorClient}
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
+
+import org.apache.hadoop.fs.Path
 
 object InMemoryUCClient {
 
@@ -157,9 +159,9 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       newMetadata: Optional[AbstractMetadata] = Optional.empty(),
       newProtocol: Optional[AbstractProtocol] = Optional.empty()): Unit = {
     val tableDesc = new TableDescriptor(
-      new org.apache.hadoop.fs.Path(tableUri.toString, "_delta_log"),
-      java.util.Optional.empty(),
-      java.util.Collections.singletonMap(UCCommitCoordinatorClient.UC_TABLE_ID_KEY, tableId))
+      new Path(tableUri.toString, "_delta_log"),
+      Optional.empty(),
+      Collections.singletonMap(UCCommitCoordinatorClient.UC_TABLE_ID_KEY, tableId))
     this.commit(
       tableDesc,
       commit,

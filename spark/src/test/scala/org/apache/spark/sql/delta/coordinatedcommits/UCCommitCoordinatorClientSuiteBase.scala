@@ -121,8 +121,7 @@ trait UCCommitCoordinatorClientSuiteBase extends CommitCoordinatorClientImplSuit
     val tableDesc = new TableDescriptor(
       deltaLog.logPath,
       Optional.empty(),
-      java.util.Collections.singletonMap(
-        UCCommitCoordinatorClient.UC_TABLE_ID_KEY, tableUUID.toString))
+      Collections.singletonMap(UCCommitCoordinatorClient.UC_TABLE_ID_KEY, tableUUID.toString))
     ucClient.commit(
       tableDesc,
       Optional.empty(),

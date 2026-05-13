@@ -102,8 +102,8 @@ class UCTokenBasedRestClientSuite
       tableUri: URI = testTableUri): TableDescriptor =
     new TableDescriptor(
       new Path(tableUri.toString, "_delta_log"),
-      java.util.Optional.empty(),
-      java.util.Collections.singletonMap(UCCommitCoordinatorClient.UC_TABLE_ID_KEY, tableId))
+      Optional.empty(),
+      Collections.singletonMap(UCCommitCoordinatorClient.UC_TABLE_ID_KEY, tableId))
 
   private def withClient(fn: UCTokenBasedRestClient => Unit): Unit = {
     val client = createClient()
@@ -192,8 +192,8 @@ class UCTokenBasedRestClientSuite
       intercept[NullPointerException] {
         val descWithoutTableId = new TableDescriptor(
           new Path(testTableUri.toString, "_delta_log"),
-          java.util.Optional.empty(),
-          java.util.Collections.emptyMap())
+          Optional.empty(),
+          Collections.emptyMap())
         client.commit(descWithoutTableId, Optional.empty(), Optional.empty(),
           Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
           Optional.empty())
