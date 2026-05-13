@@ -370,7 +370,7 @@ def normalizeColumnNamesInDataType(
             s"Types without nesting should match but $sourceDataType != $tableDataType")
         } else if (sourceDataType != tableDataType) {
           recordDeltaEvent(
-            deltaLog = deltaLog,
+            provider = deltaLog,
             opType = "delta.assertions.schemaNormalization.nonNestedTypeMismatch",
             tags = Map.empty,
             data = Map(

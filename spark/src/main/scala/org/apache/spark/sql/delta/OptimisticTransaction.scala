@@ -26,8 +26,10 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable
 import scala.collection.mutable.{ArrayBuffer, HashSet}
 import scala.jdk.OptionConverters._
+import scala.util.Try
 import scala.util.control.NonFatal
 
+import com.databricks.spark.util.TagDefinition
 import com.databricks.spark.util.TagDefinitions.TAG_LOG_STORE_CLASS
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.DeltaOperations.{ChangeColumn, ChangeColumns, CreateTable, Operation, ReplaceColumns, ReplaceTable, UpdateSchema}
@@ -45,7 +47,7 @@ import org.apache.spark.sql.delta.hooks.metrics.UpdateMetricsHook
 import org.apache.spark.sql.delta.util.CatalogTableUtils
 import org.apache.spark.sql.delta.implicits.addFileEncoder
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
-import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider}
 import org.apache.spark.sql.delta.redirect.{RedirectFeature, TableRedirectConfiguration}
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
@@ -268,7 +270,16 @@ trait OptimisticTransactionImpl extends TransactionHelper
   with SQLMetricsReporting
   with DeltaScanGenerator
   with RecordChecksum
-  with DeltaLogging {
+  with DeltaLogging
+  with DeltaLoggingProvider {
+
+  /**
+   * Recording tags for this transaction, anchored to the read snapshot's `metadata.id`. Lets
+   * `recordDeltaEvent(txn, ...)` attribute events to the table being mutated without reaching
+   * through `txn.deltaLog`.
+   */
+  override def getCommonTags: Map[TagDefinition, String] =
+    deltaLog.getCommonTags(Try(snapshot.metadata.id).getOrElse(null))
 
   import org.apache.spark.sql.delta.util.FileNames._
 
@@ -1623,7 +1634,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
         if (illegalColChange) {
           recordDeltaEvent(
-            deltaLog = deltaLog,
+            provider = deltaLog,
             opType = "delta.metadataCheck.illegalPartitionColumnChange",
             data = Map(
               "operation" -> op.name,
@@ -2106,6 +2117,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
       allActions = RowId.assignFreshRowIds(spark, protocol, snapshot, allActions, op)
       allActions = DefaultRowCommitVersion.assignIfMissing(
         spark, protocol, snapshot, allActions, getFirstAttemptVersion)
+      val (allActions3, catalogTrackedInfo) = generateIcebergMetadataForCommitLarge(
+        allActions, catalogTable, attemptVersion, commitInfo)
+      allActions = allActions3
 
       val commitStatsComputer = new CommitStatsComputer()
       allActions = commitStatsComputer.addToCommitStats(allActions)
@@ -2134,7 +2148,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
           jsonActions,
           updatedActions,
           catalogTable.map(_.identifier),
-          CatalogTrackedInfo.EMPTY
+          catalogTrackedInfo
         )
       }
       // TODO(coordinated-commits): Use the right timestamp method on top of CommitInfo once ICT is
@@ -2211,6 +2225,53 @@ trait OptimisticTransactionImpl extends TransactionHelper
             throw e
         }
     }
+  }
+
+  /**
+   * If the table has UniForm Iceberg enabled,
+   * generate Iceberg metadata atomically before Delta commits.
+   * Unfortunately this requires materializing the streaming action iterator
+   * as Iceberg keeps track of actions to append inside memory.
+   * Thus, a validation on number of actions to convert exists for reminding users.
+   */
+  def generateIcebergMetadataForCommitLarge(
+      allActions: Iterator[Action],
+      catalogTable: Option[CatalogTable],
+      attemptVersion: Long,
+      commitInfo: CommitInfo): (Iterator[Action], CatalogTrackedInfo) = {
+    val (allActionsCopy, catalogTrackedInfo) = catalogTable match {
+      case Some(table) if UniversalFormat.icebergEnabled(metadata) =>
+        val maxActions = spark.conf.get(
+          DeltaSQLConf.DELTA_UNIFORM_ICEBERG_MAX_ACTIONS_TO_CONVERT_FOR_COMMIT_LARGE
+        )
+        val bufferedActions = allActions.zipWithIndex.map { case (action, idx) =>
+          if (idx >= maxActions) {
+            throw new IllegalStateException(
+              s"There are more than $maxActions actions in this commitLarge. " +
+                "Please use a writer with large memory and increase threshold" +
+                "in DeltaSQLConf.DELTA_UNIFORM_ICEBERG_MAX_ACTIONS_TO_CONVERT_FOR_COMMIT_LARGE" +
+                "to retry.")
+          }
+          action
+        }.toSeq
+        val txnInfo = CurrentTransactionInfo.forIcebergConversion(
+          metadata = metadata,
+          protocol = protocol,
+          readSnapshot = snapshot,
+          actions = bufferedActions,
+          commitInfo = Some(commitInfo)
+        )
+        val (updatedTxnInfo, _) = generateIcebergAndUpdateCurrentTransactionInfo(
+          spark, this, attemptVersion, txnInfo
+          , table
+        )
+        (bufferedActions.iterator: Iterator[Action],
+          new CatalogTrackedInfo(updatedTxnInfo.convertedIcebergMetadata.toJava)
+        )
+      case _ =>
+        (allActions, CatalogTrackedInfo.EMPTY)
+    }
+    (allActionsCopy, catalogTrackedInfo)
   }
 
   /**

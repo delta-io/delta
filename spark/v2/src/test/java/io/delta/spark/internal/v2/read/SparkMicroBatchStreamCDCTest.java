@@ -862,6 +862,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
         /* dataSchema= */ tableSchema,
         /* partitionSchema= */ new StructType(),
         /* readDataSchema= */ new StructType(),
+        /* ddlOrderedReadOutputSchema= */ new StructType(),
         /* dataFilters= */ new org.apache.spark.sql.sources.Filter[0],
         /* scalaOptions= */ scala.collection.immutable.Map$.MODULE$.empty());
   }

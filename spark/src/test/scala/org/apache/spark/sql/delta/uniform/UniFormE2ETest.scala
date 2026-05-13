@@ -16,7 +16,13 @@
 
 package org.apache.spark.sql.delta.uniform
 
+import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
+import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.DeltaTestUtils.filterUsageRecords
+import org.apache.spark.sql.delta.util.JsonUtils
+
 import org.apache.spark.sql.{DataFrame, QueryTest, Row}
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
 
 /**
@@ -30,6 +36,9 @@ import org.apache.spark.sql.test.SharedSparkSession
  * Implementing classes need to correctly set up the reader and writer environments.
  * See [[UniFormE2EIcebergSuiteBase]] for existing examples.
  */
+
+case class VerifyFullOrIncremental(tableName: String, isIncremental: Boolean)
+
 trait UniFormE2ETest
   extends QueryTest
   with SharedSparkSession {
@@ -40,6 +49,20 @@ trait UniFormE2ETest
    * @param sqlText write query to the UniForm table
    */
   protected def write(sqlText: String): DataFrame = sql(sqlText)
+
+  protected def writeAndVerify(
+      sqlText: String,
+      isAtomicMode: Boolean,
+      verifyFullOrIncrementalOpt: Option[VerifyFullOrIncremental] = None): Unit = {
+    val events = Log4jUsageLogger.track { sql(sqlText) }
+    verifyConversionMode(events, isAtomicMode)
+    verifyFullOrIncrementalOpt.foreach {
+      case VerifyFullOrIncremental(tbl, true) =>
+        verifyIncrementalConversion(tbl, events)
+      case VerifyFullOrIncremental(tbl, false) =>
+        verifyFullConversion(tbl, events)
+    }
+  }
 
   /**
    * Verify the result by reading from the reader session and compare the result to the expected.
@@ -64,4 +87,37 @@ trait UniFormE2ETest
    * @return table name for reading, default is no translation
    */
   protected def tableNameForRead(tableName: String): String = tableName
+
+  protected def verifyIncrementalConversion(
+      tableName: String,
+      events: Seq[UsageRecord]): Unit = {
+    val toVersion = DeltaLog.forTable(spark, TableIdentifier(tableName)).update().version
+    val fromVersion = toVersion
+    val rangeEvents = filterUsageRecords(events, "delta.iceberg.conversion.deltaCommitRange")
+    assert(rangeEvents.nonEmpty, "Expected deltaCommitRange event proving incremental conversion")
+    val eventData = JsonUtils.fromJson[Map[String, Any]](rangeEvents.head.blob)
+    assert(eventData("fromVersion") === fromVersion, s"Expected fromVersion=$fromVersion")
+    assert(eventData("toVersion") === toVersion, s"Expected toVersion=$toVersion")
+  }
+
+  protected def verifyFullConversion(tableName: String, events: Seq[UsageRecord]): Unit = {
+    val snapshot = DeltaLog.forTable(spark, TableIdentifier(tableName)).update()
+    val batchEvents = filterUsageRecords(events, "delta.iceberg.conversion.batch")
+    assert(batchEvents.nonEmpty, "Expected batch event proving full conversion")
+    val eventData = JsonUtils.fromJson[Map[String, Any]](batchEvents.head.blob)
+    assert(eventData("version") === snapshot.version, s"Expected version=${snapshot.version}")
+  }
+
+  // Verify if post-commit-conversion or atomic-UniForm conversion is triggered
+  private def verifyConversionMode(events: Seq[UsageRecord], isAtomicMode: Boolean): Unit = {
+    val postCommitConversionExists =
+      filterUsageRecords(events, "delta.iceberg.conversion.convertSnapshot").nonEmpty
+    val preCommitConversionExists =
+      filterUsageRecords(events, "delta.iceberg.conversion.convertUncommitedTxn").nonEmpty
+    if (isAtomicMode) {
+      assert(preCommitConversionExists && !postCommitConversionExists)
+    } else {
+      assert(!preCommitConversionExists && postCommitConversionExists)
+    }
+  }
 }

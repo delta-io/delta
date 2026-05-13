@@ -204,7 +204,7 @@ object CheckpointProvider extends DeltaLogging {
       logPath: Path,
       exception: Option[Throwable]): Unit = {
     recordDeltaEvent(
-      deltaLog = null,
+      provider = null,
       opType = "delta.checkpointV2.readV2ActionsFromCheckpoint",
       data = Map(
         "timeTakenMs" -> (System.currentTimeMillis() - startTimeMs),

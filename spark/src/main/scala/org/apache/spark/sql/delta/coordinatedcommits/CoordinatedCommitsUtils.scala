@@ -459,7 +459,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
     val allData = baseData ++ catalogData ++ coordinatorData ++ stackTraceData ++ diagnosticData
 
     recordDeltaEvent(
-      deltaLog = deltaLog,
+      provider = deltaLog,
       opType = opType,
       data = allData
     )

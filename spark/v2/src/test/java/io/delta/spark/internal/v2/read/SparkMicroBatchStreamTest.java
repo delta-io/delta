@@ -24,6 +24,7 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
+import io.delta.spark.internal.v2.utils.SchemaUtils;
 import java.io.File;
 import java.nio.channels.ClosedByInterruptException;
 import java.sql.Timestamp;
@@ -2055,6 +2056,11 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
             dataSchema,
             partitionSchema,
             dataSchema,
+            SchemaUtils.ddlOrderedOutputSchema(
+                io.delta.spark.internal.v2.utils.SchemaUtils.convertKernelSchemaToSparkSchema(
+                    snapshotManager.loadLatestSnapshot().getSchema()),
+                dataSchema,
+                partitionSchema),
             new org.apache.spark.sql.sources.Filter[0],
             Map$.MODULE$.empty());
 
@@ -2235,7 +2241,12 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
             testTablePath,
             dataSchema,
             partitionSchema,
-            fullSchema,
+            dataSchema,
+            SchemaUtils.ddlOrderedOutputSchema(
+                io.delta.spark.internal.v2.utils.SchemaUtils.convertKernelSchemaToSparkSchema(
+                    snapshotManager.loadLatestSnapshot().getSchema()),
+                dataSchema,
+                partitionSchema),
             new org.apache.spark.sql.sources.Filter[0],
             Map$.MODULE$.empty());
 
@@ -3832,6 +3843,7 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
         /* dataSchema= */ tableSchema,
         /* partitionSchema= */ new StructType(),
         /* readDataSchema= */ new StructType(),
+        /* ddlOrderedReadOutputSchema= */ new StructType(),
         /* dataFilters= */ new org.apache.spark.sql.sources.Filter[0],
         /* scalaOptions= */ scala.collection.immutable.Map$.MODULE$.empty());
   }
