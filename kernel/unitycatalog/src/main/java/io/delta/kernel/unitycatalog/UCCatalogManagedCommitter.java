@@ -459,6 +459,7 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
                 tableDesc,
                 Optional.of(getUcCommitPayload(commitMetadata, kernelStagedCommitFileStatus)),
                 commitMetadata.getMaxKnownPublishedDeltaVersion(),
+                false /* isDisown */,
                 Optional.empty() /* oldMetadata */,
                 generateMetadataPayloadOpt(commitMetadata).map(MetadataAdapter::new),
                 Optional.empty() /* oldProtocol */,

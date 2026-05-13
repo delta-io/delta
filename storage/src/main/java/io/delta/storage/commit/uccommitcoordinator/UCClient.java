@@ -80,6 +80,8 @@ public interface UCClient extends AutoCloseable {
    *                    If present, UC can validate the current protocol state.
    * @param newProtocol An Optional containing a new protocol version to be applied to the table.
    *                    If present, the table's protocol will be updated atomically with the commit.
+   * @param disown Whether this commit disowns the table from UC coordinated-commits (i.e., the
+   *               table is transitioning away from UC as the commit coordinator).
    * @param uniform An Optional containing UniForm metadata for Delta Universal Format support.
    *                If present, this metadata will be used by UC to manage format conversions
    *                (e.g., Iceberg, Hudi).
@@ -92,6 +94,7 @@ public interface UCClient extends AutoCloseable {
       TableDescriptor tableDesc,
       Optional<Commit> commit,
       Optional<Long> lastKnownBackfilledVersion,
+      boolean disown,
       Optional<AbstractMetadata> oldMetadata,
       Optional<AbstractMetadata> newMetadata,
       Optional<AbstractProtocol> oldProtocol,

@@ -166,18 +166,20 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       tableDesc,
       commit,
       lastKnownBackfilledVersion,
+      false, // disown
       Optional.empty(), // oldMetadata
       newMetadata,
       Optional.empty(), // oldProtocol
       newProtocol,
-      Optional.empty()
-    ) // uniform
+      Optional.empty() // uniform
+    )
   }
 
   override def commit(
       tableDesc: TableDescriptor,
       commitOpt: Optional[Commit] = Optional.empty(),
       lastKnownBackfilledVersionOpt: Optional[JLong],
+      disown: Boolean,
       oldMetadata: Optional[AbstractMetadata],
       newMetadata: Optional[AbstractMetadata],
       oldProtocol: Optional[AbstractProtocol],

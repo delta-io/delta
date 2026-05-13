@@ -126,6 +126,7 @@ trait UCCommitCoordinatorClientSuiteBase extends CommitCoordinatorClientImplSuit
       tableDesc,
       Optional.empty(),
       Optional.of(version),
+      false,
       Optional.empty(),
       Optional.empty(),
       Optional.empty(),

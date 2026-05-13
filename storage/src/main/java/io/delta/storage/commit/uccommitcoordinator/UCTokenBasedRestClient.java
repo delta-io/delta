@@ -155,6 +155,7 @@ public class UCTokenBasedRestClient implements UCClient {
       TableDescriptor tableDesc,
       Optional<Commit> commit,
       Optional<Long> lastKnownBackfilledVersion,
+      boolean disown,
       Optional<AbstractMetadata> oldMetadata,
       Optional<AbstractMetadata> newMetadata,
       Optional<AbstractProtocol> oldProtocol,

@@ -435,9 +435,13 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       throw new RuntimeException(e);
     }
     long commitTimestamp = updatedActions.getCommitInfo().getCommitTimestamp();
+    boolean disown = isDisownCommit(
+      updatedActions.getOldMetadata(),
+      updatedActions.getNewMetadata());
     eventData.put("tableId", tableId);
     eventData.put("lastKnownBackfilledVersion", lastKnownBackfilledVersion.get());
     eventData.put("commitTimestamp", commitTimestamp);
+    eventData.put("disown", disown);
     eventData.put(
       "timeSpentInGettingLastKnownBackfilledVersion",
       timeSpentInGettingLastKnownBackfilledVersion);
@@ -452,6 +456,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
           Optional.of(commitTimestamp),
           Optional.of(lastKnownBackfilledVersion.get()),
           catalogTrackedInfo,
+          disown,
           !SHOULD_PASS_METADATA_TO_UC ? Optional.empty() : Optional.of(updatedActions.getOldMetadata()),
           updatedActions.getNewMetadata() == updatedActions.getOldMetadata() || !SHOULD_PASS_METADATA_TO_UC ?
             Optional.empty() :
@@ -664,6 +669,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       Optional.empty() /* commitTimestamp */,
       Optional.of(updatedLastKnownBackfilledVersion),
       CatalogTrackedInfo.EMPTY,
+      false /* disown */,
       Optional.empty() /* oldMetadata */,
       Optional.empty() /* newMetadata */,
       Optional.empty() /* oldProtocol */,
@@ -694,6 +700,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       Optional<Long> commitTimestamp,
       Optional<Long> lastKnownBackfilledVersion,
       CatalogTrackedInfo catalogTrackedInfo,
+      boolean disown,
       Optional<AbstractMetadata> oldMetadata,
       Optional<AbstractMetadata> newMetadata,
       Optional<AbstractProtocol> oldProtocol,
@@ -711,12 +718,25 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       tableDesc,
       commit,
       lastKnownBackfilledVersion,
+      disown,
       oldMetadata,
       newMetadata,
       oldProtocol,
       newProtocol,
       catalogTrackedInfo.deltaUniformIceberg()
     );
+  }
+
+  /**
+   * Detects whether the current commit is a downgrade (disown) commit by checking
+   * that the UC commit coordinator name is present in the old metadata but removed from
+   * the new metadata.
+   */
+  protected boolean isDisownCommit(AbstractMetadata oldMetadata, AbstractMetadata newMetadata) {
+    return CoordinatedCommitsUtils
+      .getCoordinatorName(oldMetadata)
+      .filter("unity-catalog"::equals).isPresent() &&
+      !CoordinatedCommitsUtils.getCoordinatorName(newMetadata).isPresent();
   }
 
   /**
