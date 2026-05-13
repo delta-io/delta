@@ -22,8 +22,8 @@ import java.util.Objects;
  * The data type representing geometry values. A Geometry must have a fixed Spatial Reference System
  * Identifier (CRS) that defines the coordinate system.
  *
- * <p>The CRS is specified as a string The engine is responsible for validating and interpreting
- * the CRS value.
+ * <p>The CRS is specified as a string The engine is responsible for validating and interpreting the
+ * CRS value.
  *
  * @since 3.0.0
  */
