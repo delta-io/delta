@@ -206,12 +206,6 @@ public class TableFeatures {
   }
 
   /**
-   * Checks if the table protocol supports the "domainMetadata" writer feature.
-   *
-   * @param protocol the protocol to check
-   * @return true if the "domainMetadata" feature is supported, false otherwise
-   */
-  /**
    * Returns whether the table schema (including nested fields) includes a {@link GeometryType} or
    * {@link GeographyType} column.
    */
@@ -239,6 +233,12 @@ public class TableFeatures {
     return false;
   }
 
+  /**
+   * Checks if the table protocol supports the "domainMetadata" writer feature.
+   *
+   * @param protocol the protocol to check
+   * @return true if the "domainMetadata" feature is supported, false otherwise
+   */
   public static boolean isDomainMetadataSupported(Protocol protocol) {
     List<String> writerFeatures = protocol.getWriterFeatures();
     if (writerFeatures == null) {
