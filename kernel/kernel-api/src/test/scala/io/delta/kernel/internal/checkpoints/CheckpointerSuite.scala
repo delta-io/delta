@@ -195,6 +195,31 @@ class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     }
   }
 
+  test("findLastCompleteCheckpointBefore - checksum files don't break first search iteration") {
+    // Unrecognized files (e.g. .crc) used to break the first search window immediately,
+    // causing the search to miss nearby checkpoints and fall back to older ones.
+    val versions = Seq.range(0L, 2100L)
+    val files = deltaFileStatuses(versions) ++
+      versions.map(checksumFileStatus) ++
+      singularCheckpointFileStatuses(Seq(1000, 2000))
+
+    // First search window covers v1100-2099. Should find checkpoint 2000, not fall back to 1000.
+    assertLastCheckpoint(
+      files,
+      beforeVersion = 2100,
+      expCheckpointVersion = 2000,
+      expNumFilesListed = 1000 /* deltas */ + 1000 /* checksums */ + 1 /* checkpoint at 2000 */ )
+
+    // Checkpoint well within the first search window (v1050-2049) is also found.
+    // Files scanned: 1000 deltas + 1000 checksums (v1050-2049) + 1 checkpoint (v2000)
+    // + 1 crc at v2050 (skipped but counted, before break on v2050 delta)
+    assertLastCheckpoint(
+      files,
+      beforeVersion = 2050,
+      expCheckpointVersion = 2000,
+      expNumFilesListed = 2002)
+  }
+
   /** Assert that the checkpoint metadata is same as [[SAMPLE_LAST_CHECKPOINT_FILE_CONTENT]] */
   def assertValidCheckpointMetadata(actual: Optional[CheckpointMetaData]): Unit = {
     assert(actual.isPresent)
