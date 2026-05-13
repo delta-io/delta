@@ -17,8 +17,7 @@
 package org.apache.spark.sql.delta.coordinatedcommits
 
 import java.io.File
-import java.net.URI
-import java.util.{Collections, Optional, UUID}
+import java.util.{Optional, UUID}
 
 import scala.collection.JavaConverters._
 
@@ -31,8 +30,7 @@ import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import io.delta.storage.commit.{
   CoordinatedCommitsUtils => JCoordinatedCommitsUtils,
-  GetCommitsResponse => JGetCommitsResponse,
-  TableDescriptor
+  GetCommitsResponse => JGetCommitsResponse
 }
 import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCommitCoordinatorClient}
 import org.apache.hadoop.fs.Path
@@ -118,20 +116,17 @@ trait UCCommitCoordinatorClientSuiteBase extends CommitCoordinatorClientImplSuit
       tableCommitCoordinatorClient: TableCommitCoordinatorClient,
       deltaLog: DeltaLog,
       version: Long): Unit = {
-    val tableDesc = new TableDescriptor(
-      deltaLog.logPath,
-      Optional.empty(),
-      Collections.singletonMap(UCCommitCoordinatorClient.UC_TABLE_ID_KEY, tableUUID.toString))
     ucClient.commit(
-      tableDesc,
-      Optional.empty(),
+      tableUUID.toString,
+      JCoordinatedCommitsUtils.getTablePath(deltaLog.logPath).toUri,
+      Optional.empty(), // tableIdentifier
+      Optional.empty(), // commit
       Optional.of(version),
-      false,
-      Optional.empty(),
-      Optional.empty(),
-      Optional.empty(),
-      Optional.empty(),
-      Optional.empty() /* icebergMetadata */)
+      Optional.empty(), // oldMetadata
+      Optional.empty(), // newMetadata
+      Optional.empty(), // oldProtocol
+      Optional.empty(), // newProtocol
+      Optional.empty() /* uniform */)
   }
 
   override protected def validateBackfillStrategy(

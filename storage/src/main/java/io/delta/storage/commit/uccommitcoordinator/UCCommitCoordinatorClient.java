@@ -159,7 +159,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
     return asyncExecutor.submit(task);
   }
 
-  protected String extractUCTableId(TableDescriptor tableDesc) {
+  public static String extractUCTableId(TableDescriptor tableDesc) {
     Map<String, String> tableConf = tableDesc.getTableConf();
     if (!tableConf.containsKey(UC_TABLE_ID_KEY)) {
       throw new IllegalStateException("UC Table ID not found in " + tableConf);
@@ -435,13 +435,11 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       throw new RuntimeException(e);
     }
     long commitTimestamp = updatedActions.getCommitInfo().getCommitTimestamp();
-    boolean disown = isDisownCommit(
-      updatedActions.getOldMetadata(),
-      updatedActions.getNewMetadata());
     eventData.put("tableId", tableId);
     eventData.put("lastKnownBackfilledVersion", lastKnownBackfilledVersion.get());
     eventData.put("commitTimestamp", commitTimestamp);
-    eventData.put("disown", disown);
+    eventData.put("disown", isDisownCommit(
+      updatedActions.getOldMetadata(), updatedActions.getNewMetadata()));
     eventData.put(
       "timeSpentInGettingLastKnownBackfilledVersion",
       timeSpentInGettingLastKnownBackfilledVersion);
@@ -450,21 +448,23 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
     while (transientErrorRetryCount <= MAX_RETRIES_ON_TRANSIENT_ERROR) {
       try {
         commitToUC(
+          tableId,
           tableDesc,
           Optional.of(commitFile),
           Optional.of(commitVersion),
           Optional.of(commitTimestamp),
           Optional.of(lastKnownBackfilledVersion.get()),
           catalogTrackedInfo,
-          disown,
           !SHOULD_PASS_METADATA_TO_UC ? Optional.empty() : Optional.of(updatedActions.getOldMetadata()),
           updatedActions.getNewMetadata() == updatedActions.getOldMetadata() || !SHOULD_PASS_METADATA_TO_UC ?
             Optional.empty() :
             Optional.of(updatedActions.getNewMetadata()),
-          updatedActions.getNewProtocol() == updatedActions.getOldProtocol() ?
+          // SHOULD_PASS_METADATA_TO_UC gates both metadata and protocol fields since they
+          // are controlled by the same UC server-side feature rollout.
+          !SHOULD_PASS_METADATA_TO_UC || updatedActions.getNewProtocol() == updatedActions.getOldProtocol() ?
             Optional.empty() :
             Optional.of(updatedActions.getOldProtocol()),
-          updatedActions.getNewProtocol() == updatedActions.getOldProtocol() ?
+          !SHOULD_PASS_METADATA_TO_UC || updatedActions.getNewProtocol() == updatedActions.getOldProtocol() ?
             Optional.empty() :
             Optional.of(updatedActions.getNewProtocol())
         );
@@ -663,13 +663,13 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
 
     long commitStartTime = System.currentTimeMillis();
     commitToUC(
+      tableId,
       tableDesc,
       Optional.empty() /* commitFile */,
       Optional.empty() /* commitVersion */,
       Optional.empty() /* commitTimestamp */,
       Optional.of(updatedLastKnownBackfilledVersion),
       CatalogTrackedInfo.EMPTY,
-      false /* disown */,
       Optional.empty() /* oldMetadata */,
       Optional.empty() /* newMetadata */,
       Optional.empty() /* oldProtocol */,
@@ -694,19 +694,21 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
   }
 
   protected void commitToUC(
+      String tableId,
       TableDescriptor tableDesc,
       Optional<FileStatus> commitFile,
       Optional<Long> commitVersion,
       Optional<Long> commitTimestamp,
       Optional<Long> lastKnownBackfilledVersion,
       CatalogTrackedInfo catalogTrackedInfo,
-      boolean disown,
       Optional<AbstractMetadata> oldMetadata,
       Optional<AbstractMetadata> newMetadata,
       Optional<AbstractProtocol> oldProtocol,
       Optional<AbstractProtocol> newProtocol
   ) throws IOException, CommitFailedException, UCCommitCoordinatorException
   {
+    assert tableId.equals(extractUCTableId(tableDesc))
+      : "tableId mismatch: " + tableId + " vs tableDesc=" + extractUCTableId(tableDesc);
     Optional<Commit> commit = commitFile.map(f -> new Commit(
       commitVersion.orElseThrow(() -> new IllegalArgumentException(
         "Commit version should be specified when commitFile is present")),
@@ -715,10 +717,11 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
         "Commit timestamp should be specified when commitFile is present"))
     ));
     ucClient.commit(
-      tableDesc,
+      tableId,
+      CoordinatedCommitsUtils.getTablePath(tableDesc.getLogPath()).toUri(),
+      tableDesc.getTableIdentifier(),
       commit,
       lastKnownBackfilledVersion,
-      disown,
       oldMetadata,
       newMetadata,
       oldProtocol,

@@ -19,7 +19,7 @@ package io.delta.storage.commit.uccommitcoordinator;
 import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.CommitFailedException;
 import io.delta.storage.commit.GetCommitsResponse;
-import io.delta.storage.commit.TableDescriptor;
+import io.delta.storage.commit.TableIdentifier;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
 import io.delta.storage.commit.uniform.UniformMetadata;
@@ -59,10 +59,11 @@ public interface UCClient extends AutoCloseable {
    * proper coordination and consistency of the commit process.
    * Note: At least one of commit or lastKnownBackfilledVersion must be present.
    *
-   * @param tableDesc Descriptor containing the table's log path and configuration, including
-   *                  the Unity Catalog table ID (UUID) in the table conf under key
-   *                  {@code io.unitycatalog.tableId}. Also provides the storage URI via the
-   *                  log path's parent directory.
+   * @param tableId The Unity Catalog table ID (UUID) identifying the target table.
+   * @param tableUri The URI of the storage location of the table (e.g.,
+   *                 {@code s3://bucket/path/to/table}, not the {@code _delta_log} path).
+   * @param tableIdentifier An Optional containing the three-part table identifier
+   *                        (catalog, schema, table name) for the table in Unity Catalog.
    * @param commit An Optional containing the Commit object with the changes to be committed.
    *               If empty, it indicates that no new data is being added in this commit.
    * @param lastKnownBackfilledVersion An Optional containing the last known backfilled version
@@ -80,8 +81,6 @@ public interface UCClient extends AutoCloseable {
    *                    If present, UC can validate the current protocol state.
    * @param newProtocol An Optional containing a new protocol version to be applied to the table.
    *                    If present, the table's protocol will be updated atomically with the commit.
-   * @param disown Whether this commit disowns the table from UC coordinated-commits (i.e., the
-   *               table is transitioning away from UC as the commit coordinator).
    * @param uniform An Optional containing UniForm metadata for Delta Universal Format support.
    *                If present, this metadata will be used by UC to manage format conversions
    *                (e.g., Iceberg, Hudi).
@@ -91,10 +90,11 @@ public interface UCClient extends AutoCloseable {
    *         commit coordination process.
    */
   void commit(
-      TableDescriptor tableDesc,
+      String tableId,
+      URI tableUri,
+      Optional<TableIdentifier> tableIdentifier,
       Optional<Commit> commit,
       Optional<Long> lastKnownBackfilledVersion,
-      boolean disown,
       Optional<AbstractMetadata> oldMetadata,
       Optional<AbstractMetadata> newMetadata,
       Optional<AbstractProtocol> oldProtocol,

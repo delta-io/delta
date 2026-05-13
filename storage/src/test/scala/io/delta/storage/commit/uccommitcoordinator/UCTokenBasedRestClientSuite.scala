@@ -22,10 +22,9 @@ import java.util.{Collections, Optional}
 
 import com.fasterxml.jackson.databind.{JsonNode, ObjectMapper}
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
-import io.delta.storage.commit.{Commit, CommitFailedException, TableDescriptor}
+import io.delta.storage.commit.{Commit, CommitFailedException}
 import io.delta.storage.commit.actions.AbstractMetadata
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
-import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import io.unitycatalog.client.auth.TokenProvider
 
 import org.apache.hadoop.fs.{FileStatus, Path}
@@ -97,14 +96,6 @@ class UCTokenBasedRestClientSuite
   private def createClient(): UCTokenBasedRestClient =
     new UCTokenBasedRestClient(serverUri, createTokenProvider(), Collections.emptyMap())
 
-  private def createTableDesc(
-      tableId: String = testTableId,
-      tableUri: URI = testTableUri): TableDescriptor =
-    new TableDescriptor(
-      new Path(tableUri.toString, "_delta_log"),
-      Optional.empty(),
-      Collections.singletonMap(UCCommitCoordinatorClient.UC_TABLE_ID_KEY, tableId))
-
   private def withClient(fn: UCTokenBasedRestClient => Unit): Unit = {
     val client = createClient()
     try fn(client) finally client.close()
@@ -162,19 +153,20 @@ class UCTokenBasedRestClientSuite
   // commit tests
   test("commit succeeds with valid parameters") {
     withClient { client =>
-      client.commit(createTableDesc(), Optional.of(createCommit(1L)),
-        Optional.empty(), false, Optional.empty(), Optional.empty(), Optional.empty(),
-        Optional.empty(), Optional.empty())
+      client.commit(testTableId, testTableUri, Optional.empty(),
+        Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
+        Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty())
     }
   }
 
   test("commit succeeds with metadata") {
     withClient { client =>
       client.commit(
-        createTableDesc(),
+        testTableId,
+        testTableUri,
+        Optional.empty(),
         Optional.of(createCommit(1L)),
         Optional.of(java.lang.Long.valueOf(0L)),
-        true,
         Optional.empty(),
         Optional.of(createMetadata()),
         Optional.empty(),
@@ -186,18 +178,14 @@ class UCTokenBasedRestClientSuite
   test("commit validates required parameters") {
     withClient { client =>
       intercept[NullPointerException] {
-        client.commit(null, Optional.empty(), Optional.empty(),
-          false, Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
-          Optional.empty())
+        client.commit(null, testTableUri, Optional.empty(), Optional.empty(),
+          Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
+          Optional.empty(), Optional.empty())
       }
       intercept[NullPointerException] {
-        val descWithoutTableId = new TableDescriptor(
-          new Path(testTableUri.toString, "_delta_log"),
-          Optional.empty(),
-          Collections.emptyMap())
-        client.commit(descWithoutTableId, Optional.empty(), Optional.empty(),
-          false, Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
-          Optional.empty())
+        client.commit(testTableId, null, Optional.empty(), Optional.empty(),
+          Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
+          Optional.empty(), Optional.empty())
       }
     }
   }
@@ -206,9 +194,9 @@ class UCTokenBasedRestClientSuite
     def commitWith(status: Int): Unit = {
       commitsHandler = exchange => sendJson(exchange, status, s"""{"error":"$status"}""")
       withClient { client =>
-        client.commit(createTableDesc(), Optional.of(createCommit(1L)),
-          Optional.empty(), false, Optional.empty(), Optional.empty(), Optional.empty(),
-          Optional.empty(), Optional.empty())
+        client.commit(testTableId, testTableUri, Optional.empty(),
+          Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
+          Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty())
       }
     }
 
@@ -291,9 +279,10 @@ class UCTokenBasedRestClientSuite
       }
 
       withClient { client =>
-        client.commit(createTableDesc(), Optional.of(createCommit(1L)),
-          Optional.empty(), false, Optional.empty(), Optional.empty(), Optional.empty(),
-          Optional.empty(), Optional.of(new UniformMetadata(icebergMeta)))
+        client.commit(testTableId, testTableUri, Optional.empty(),
+          Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
+          Optional.empty(), Optional.empty(), Optional.empty(),
+          Optional.of(new UniformMetadata(icebergMeta)))
       }
 
       val json: JsonNode = objectMapper.readTree(capturedBody)
@@ -324,9 +313,9 @@ class UCTokenBasedRestClientSuite
     }
 
     withClient { client =>
-      client.commit(createTableDesc(), Optional.of(createCommit(1L)),
-        Optional.empty(), false, Optional.empty(), Optional.empty(), Optional.empty(),
-        Optional.empty(), Optional.empty())
+      client.commit(testTableId, testTableUri, Optional.empty(),
+        Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
+        Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty())
     }
 
     val json = objectMapper.readTree(capturedBody)
@@ -341,9 +330,10 @@ class UCTokenBasedRestClientSuite
     }
 
     withClient { client =>
-      client.commit(createTableDesc(), Optional.of(createCommit(1L)),
-        Optional.empty(), false, Optional.empty(), Optional.empty(), Optional.empty(),
-        Optional.empty(), Optional.of(new UniformMetadata(null)))
+      client.commit(testTableId, testTableUri, Optional.empty(),
+        Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
+        Optional.empty(), Optional.empty(), Optional.empty(),
+        Optional.of(new UniformMetadata(null)))
     }
 
     val json = objectMapper.readTree(capturedBody)
