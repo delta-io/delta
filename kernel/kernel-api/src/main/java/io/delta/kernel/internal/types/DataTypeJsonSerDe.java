@@ -467,31 +467,31 @@ public class DataTypeJsonSerDe {
         return new DecimalType(precision, scale);
       }
 
-      // geometry has a special pattern with an SRID
+      // geometry has a special pattern with an CRS
       Matcher geometryMatcher = GEOMETRY_PATTERN.matcher(name);
       if (geometryMatcher.matches()) {
-        String srid = geometryMatcher.group(1);
-        return GeometryType.ofSRID(srid);
+        String crs = geometryMatcher.group(1);
+        return GeometryType.ofCRS(crs);
       }
 
       // geography has different patterns:
-      // 1. geography(<srid>, <algorithm>) - both specified
-      // 2. geography(<srid>) - SRID specified (contains colon)
+      // 1. geography(<crs>, <algorithm>) - both specified
+      // 2. geography(<crs>) - CRS specified (contains colon)
       // 3. geography(<algorithm>) - algorithm specified (no colon)
 
       // First check for both CRS and algorithm (contains comma)
       Matcher geographyCrsAlgMatcher = GEOGRAPHY_CRS_ALG_PATTERN.matcher(name);
       if (geographyCrsAlgMatcher.matches()) {
-        String srid = geographyCrsAlgMatcher.group(1);
+        String crs = geographyCrsAlgMatcher.group(1);
         String algorithm = geographyCrsAlgMatcher.group(2);
-        return new GeographyType(srid, algorithm);
+        return new GeographyType(crs, algorithm);
       }
 
       // Check for CRS pattern (contains colon)
       Matcher geographyCrsMatcher = GEOGRAPHY_CRS_PATTERN.matcher(name);
       if (geographyCrsMatcher.matches()) {
-        String srid = geographyCrsMatcher.group(1);
-        return GeographyType.ofSRID(srid);
+        String crs = geographyCrsMatcher.group(1);
+        return GeographyType.ofCRS(crs);
       }
 
       // Check for algorithm pattern (no colon)

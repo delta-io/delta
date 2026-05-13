@@ -75,7 +75,7 @@ class DataTypeJsonSerDeSuite extends AnyFunSuite {
     ("\"decimal(10, 5)\"", new DecimalType(10, 5)),
     ("\"variant\"", VariantType.VARIANT),
     ("\"geometry\"", GeometryType.ofDefault()),
-    ("\"geometry(EPSG:0)\"", GeometryType.ofSRID("EPSG:0")),
+    ("\"geometry(EPSG:0)\"", GeometryType.ofCRS("EPSG:0")),
     ("\"geography\"", GeographyType.ofDefault()),
     ("\"geography(EPSG:4326)\"", new GeographyType("EPSG:4326", "spherical")),
     ("\"geography(vincenty)\"", new GeographyType("OGC:CRS84", "vincenty")),
@@ -96,39 +96,39 @@ class DataTypeJsonSerDeSuite extends AnyFunSuite {
       "decimal(1) is not a supported delta data type")
   }
 
-  test("deserialize: geometry with default SRID") {
-    // Parsing "geometry" should use default SRID (OGC:CRS84)
+  test("deserialize: geometry with default CRS") {
+    // Parsing "geometry" should use default CRS (OGC:CRS84)
     assert(parse("\"geometry\"") === GeometryType.ofDefault())
     // But serialization always writes full form
     assert(serialize(GeometryType.ofDefault()) === "\"geometry(OGC:CRS84)\"")
   }
 
-  test("serialize/deserialize: geometry with various SRID formats") {
-    // Kernel accepts any SRID format; engine validates compatibility
-    testRoundTrip("\"geometry(OGC:CRS84)\"", GeometryType.ofSRID("OGC:CRS84"))
-    testRoundTrip("\"geometry(EPSG:4326)\"", GeometryType.ofSRID("EPSG:4326"))
-    testRoundTrip("\"geometry(EPSG:0)\"", GeometryType.ofSRID("EPSG:0"))
-    testRoundTrip("\"geometry(epsg:4326)\"", GeometryType.ofSRID("epsg:4326"))
+  test("serialize/deserialize: geometry with various CRS formats") {
+    // Kernel accepts any CRS format; engine validates compatibility
+    testRoundTrip("\"geometry(OGC:CRS84)\"", GeometryType.ofCRS("OGC:CRS84"))
+    testRoundTrip("\"geometry(EPSG:4326)\"", GeometryType.ofCRS("EPSG:4326"))
+    testRoundTrip("\"geometry(EPSG:0)\"", GeometryType.ofCRS("EPSG:0"))
+    testRoundTrip("\"geometry(epsg:4326)\"", GeometryType.ofCRS("epsg:4326"))
   }
 
-  test("deserialize: geography with default SRID and algorithm") {
+  test("deserialize: geography with default CRS and algorithm") {
     // Parsing "geography" should use defaults (OGC:CRS84, spherical)
     assert(parse("\"geography\"") === GeographyType.ofDefault())
     // But serialization always writes full form
     assert(serialize(GeographyType.ofDefault()) === "\"geography(OGC:CRS84, spherical)\"")
   }
 
-  test("deserialize: geography with SRID and default algorithm") {
-    // Parsing "geography(<srid>)" should use default algorithm (spherical)
-    assert(parse("\"geography(EPSG:4326)\"") === GeographyType.ofSRID("EPSG:4326"))
-    assert(parse("\"geography(EPSG:3857)\"") === GeographyType.ofSRID("EPSG:3857"))
-    assert(parse("\"geography(OGC:CRS84)\"") === GeographyType.ofSRID("OGC:CRS84"))
+  test("deserialize: geography with CRS and default algorithm") {
+    // Parsing "geography(<crs>)" should use default algorithm (spherical)
+    assert(parse("\"geography(EPSG:4326)\"") === GeographyType.ofCRS("EPSG:4326"))
+    assert(parse("\"geography(EPSG:3857)\"") === GeographyType.ofCRS("EPSG:3857"))
+    assert(parse("\"geography(OGC:CRS84)\"") === GeographyType.ofCRS("OGC:CRS84"))
     // But serialization always writes full form
-    assert(serialize(GeographyType.ofSRID("EPSG:4326")) === "\"geography(EPSG:4326, spherical)\"")
+    assert(serialize(GeographyType.ofCRS("EPSG:4326")) === "\"geography(EPSG:4326, spherical)\"")
   }
 
-  test("deserialize: geography with default SRID and specified algorithm") {
-    // Parsing "geography(<algorithm>)" should use default SRID (OGC:CRS84)
+  test("deserialize: geography with default CRS and specified algorithm") {
+    // Parsing "geography(<algorithm>)" should use default CRS (OGC:CRS84)
     assert(parse("\"geography(spherical)\"") === GeographyType.ofAlgorithm("spherical"))
     assert(parse("\"geography(vincenty)\"") === GeographyType.ofAlgorithm("vincenty"))
     assert(parse("\"geography(andoyer)\"") === GeographyType.ofAlgorithm("andoyer"))
@@ -138,8 +138,8 @@ class DataTypeJsonSerDeSuite extends AnyFunSuite {
         "\"geography(OGC:CRS84, vincenty)\"")
   }
 
-  test("serialize/deserialize: geography with both SRID and algorithm") {
-    // Both SRID and algorithm specified - round trips correctly
+  test("serialize/deserialize: geography with both CRS and algorithm") {
+    // Both CRS and algorithm specified - round trips correctly
     testRoundTrip(
       "\"geography(EPSG:4326, spherical)\"",
       new GeographyType("EPSG:4326", "spherical"))
@@ -155,7 +155,7 @@ class DataTypeJsonSerDeSuite extends AnyFunSuite {
   }
 
   test("parseDataType: invalid geometry formats") {
-    // Missing SRID parameter
+    // Missing CRS parameter
     checkError[IllegalArgumentException](
       "\"geometry()\"",
       "geometry() is not a supported delta data type")
@@ -494,7 +494,7 @@ class DataTypeJsonSerDeSuite extends AnyFunSuite {
       arrayTypeJson("\"geometry(OGC:CRS84)\"", false),
       new ArrayType(GeometryType.ofDefault(), false))
 
-    // Array of geography with non-default SRID and algorithm
+    // Array of geography with non-default CRS and algorithm
     testRoundTrip(
       arrayTypeJson("\"geography(EPSG:4326, vincenty)\"", true),
       new ArrayType(new GeographyType("EPSG:4326", "vincenty"), true))
@@ -505,7 +505,7 @@ class DataTypeJsonSerDeSuite extends AnyFunSuite {
         structFieldJson("geom", "\"geometry(EPSG:4326)\"", false),
         structFieldJson("geog", "\"geography(EPSG:3857, spherical)\"", true))),
       new StructType()
-        .add("geom", GeometryType.ofSRID("EPSG:4326"), false)
+        .add("geom", GeometryType.ofCRS("EPSG:4326"), false)
         .add("geog", new GeographyType("EPSG:3857", "spherical"), true))
 
     // Struct containing arrays of geometry and geography

@@ -22,59 +22,59 @@ import java.util.Set;
 
 /**
  * The data type representing geography values. A Geography must have a fixed Spatial Reference
- * System Identifier (SRID) that defines the coordinate system and an algorithm that determines how
+ * System Identifier (CRS) that defines the coordinate system and an algorithm that determines how
  * geometric calculations are performed.
  *
- * <p>The SRID is specified as a string and the algorithm defines the calculation method. The engine
- * is responsible for validating and interpreting the SRID and algorithm values.
+ * <p>The CRS is specified as a string and the algorithm defines the calculation method. The engine
+ * is responsible for validating and interpreting the CRS and algorithm values.
  *
  * @since 3.0.0
  */
 @Evolving
 public final class GeographyType extends DataType {
-  public static final String DEFAULT_SRID = "OGC:CRS84";
+  public static final String DEFAULT_CRS = "OGC:CRS84";
   public static final String DEFAULT_ALGORITHM = "spherical";
 
   public static final Set<String> VALID_ALGORITHMS =
       Set.of("spherical", "vincenty", "thomas", "andoyer", "karney");
 
-  private final String srid;
+  private final String crs;
   private final String algorithm;
 
-  /** Returns a GeographyType with the default SRID and algorithm. */
+  /** Returns a GeographyType with the default CRS and algorithm. */
   public static GeographyType ofDefault() {
-    return new GeographyType(DEFAULT_SRID, DEFAULT_ALGORITHM);
+    return new GeographyType(DEFAULT_CRS, DEFAULT_ALGORITHM);
   }
 
   /**
-   * Returns a GeographyType with the specified SRID and default algorithm.
+   * Returns a GeographyType with the specified CRS and default algorithm.
    *
-   * @param srid the Spatial Reference System Identifier (any non-null, non-empty string)
+   * @param crs the Spatial Reference System Identifier (any non-null, non-empty string)
    */
-  public static GeographyType ofSRID(String srid) {
-    return new GeographyType(srid, DEFAULT_ALGORITHM);
+  public static GeographyType ofCRS(String crs) {
+    return new GeographyType(crs, DEFAULT_ALGORITHM);
   }
 
   /**
-   * Returns a GeographyType with the default SRID and the specified algorithm.
+   * Returns a GeographyType with the default CRS and the specified algorithm.
    *
    * @param algorithm one of: spherical, vincenty, thomas, andoyer, karney
    */
   public static GeographyType ofAlgorithm(String algorithm) {
-    return new GeographyType(DEFAULT_SRID, algorithm);
+    return new GeographyType(DEFAULT_CRS, algorithm);
   }
 
   /**
-   * Create a GeographyType with the specified SRID and algorithm.
+   * Create a GeographyType with the specified CRS and algorithm.
    *
-   * @param srid the Spatial Reference System Identifier (any non-null, non-empty string)
+   * @param crs the Spatial Reference System Identifier (any non-null, non-empty string)
    * @param algorithm the algorithm for geometric calculations (any non-null, non-empty string)
-   * @throws IllegalArgumentException if the SRID or algorithm is null or empty or algorithm is
+   * @throws IllegalArgumentException if the CRS or algorithm is null or empty or algorithm is
    *     invalid
    */
-  public GeographyType(String srid, String algorithm) {
-    if (srid == null || srid.isEmpty()) {
-      throw new IllegalArgumentException("SRID cannot be null or empty");
+  public GeographyType(String crs, String algorithm) {
+    if (crs == null || crs.isEmpty()) {
+      throw new IllegalArgumentException("CRS cannot be null or empty");
     }
     if (algorithm == null || algorithm.isEmpty()) {
       throw new IllegalArgumentException("Algorithm cannot be null or empty");
@@ -84,17 +84,17 @@ public final class GeographyType extends DataType {
           "Algorithm must be one of: spherical, vincenty, thomas, andoyer, karney, got: "
               + algorithm);
     }
-    this.srid = srid;
+    this.crs = crs;
     this.algorithm = algorithm;
   }
 
   /**
    * Get the Spatial Reference System Identifier.
    *
-   * @return the SRID string
+   * @return the CRS string
    */
-  public String getSRID() {
-    return srid;
+  public String getCRS() {
+    return crs;
   }
 
   /**
@@ -117,12 +117,12 @@ public final class GeographyType extends DataType {
    * @return the serialized string representation
    */
   public String simpleString() {
-    return String.format("geography(%s, %s)", srid, algorithm);
+    return String.format("geography(%s, %s)", crs, algorithm);
   }
 
   @Override
   public String toString() {
-    return String.format("Geography(srid=%s, algorithm=%s)", srid, algorithm);
+    return String.format("Geography(crs=%s, algorithm=%s)", crs, algorithm);
   }
 
   @Override
@@ -134,11 +134,11 @@ public final class GeographyType extends DataType {
       return false;
     }
     GeographyType that = (GeographyType) o;
-    return srid.equals(that.srid) && algorithm.equals(that.algorithm);
+    return crs.equals(that.crs) && algorithm.equals(that.algorithm);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(srid, algorithm);
+    return Objects.hash(crs, algorithm);
   }
 }
