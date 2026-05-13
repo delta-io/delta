@@ -203,6 +203,20 @@ public class TableFeatures {
     }
   }
 
+  static final TableFeature GEOSPATIAL_RW_FEATURE = new GeoSpatialTableFeature();
+
+  private static class GeoSpatialTableFeature extends TableFeature.ReaderWriterFeature
+      implements FeatureAutoEnabledByMetadata {
+    GeoSpatialTableFeature() {
+      super("geospatial", /* minReaderVersion = */ 3, /* minWriterVersion = */ 7);
+    }
+
+    @Override
+    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
+      return hasGeospatial(metadata);
+    }
+  }
+
   /* ---- Start: variantType ---- */
   // Base class for variantType and variantType-preview features. Both features are same in terms
   // of behavior and given the feature is graduated, we will enable the `variantType` by default
@@ -562,7 +576,8 @@ public class TableFeatures {
               VARIANT_SHREDDING_RW_FEATURE,
               VARIANT_SHREDDING_PREVIEW_RW_FEATURE,
               ICEBERG_WRITER_COMPAT_V1,
-              ICEBERG_WRITER_COMPAT_V3));
+              ICEBERG_WRITER_COMPAT_V3,
+              GEOSPATIAL_RW_FEATURE));
 
   public static final Map<String, TableFeature> TABLE_FEATURE_MAP =
       Collections.unmodifiableMap(
@@ -858,6 +873,15 @@ public class TableFeatures {
     } else {
       return getDependencyFeatures(requiredFeatures);
     }
+  }
+
+  public static boolean hasGeospatial(Metadata metadata) {
+    return new SchemaIterable(metadata.getSchema())
+        .stream()
+            .anyMatch(
+                element ->
+                    element.getField().getDataType() instanceof GeometryType
+                        || element.getField().getDataType() instanceof GeographyType);
   }
 
   /**
