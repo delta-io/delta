@@ -435,13 +435,9 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       throw new RuntimeException(e);
     }
     long commitTimestamp = updatedActions.getCommitInfo().getCommitTimestamp();
-    boolean disown = isDisownCommit(
-      updatedActions.getOldMetadata(),
-      updatedActions.getNewMetadata());
     eventData.put("tableId", tableId);
     eventData.put("lastKnownBackfilledVersion", lastKnownBackfilledVersion.get());
     eventData.put("commitTimestamp", commitTimestamp);
-    eventData.put("disown", disown);
     eventData.put(
       "timeSpentInGettingLastKnownBackfilledVersion",
       timeSpentInGettingLastKnownBackfilledVersion);
@@ -451,16 +447,18 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       try {
         commitToUC(
           tableDesc,
-          logPath,
           Optional.of(commitFile),
           Optional.of(commitVersion),
           Optional.of(commitTimestamp),
           Optional.of(lastKnownBackfilledVersion.get()),
           catalogTrackedInfo,
-          disown,
+          !SHOULD_PASS_METADATA_TO_UC ? Optional.empty() : Optional.of(updatedActions.getOldMetadata()),
           updatedActions.getNewMetadata() == updatedActions.getOldMetadata() || !SHOULD_PASS_METADATA_TO_UC ?
             Optional.empty() :
             Optional.of(updatedActions.getNewMetadata()),
+          updatedActions.getNewProtocol() == updatedActions.getOldProtocol() ?
+            Optional.empty() :
+            Optional.of(updatedActions.getOldProtocol()),
           updatedActions.getNewProtocol() == updatedActions.getOldProtocol() ?
             Optional.empty() :
             Optional.of(updatedActions.getNewProtocol())
@@ -661,14 +659,14 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
     long commitStartTime = System.currentTimeMillis();
     commitToUC(
       tableDesc,
-      logPath,
       Optional.empty() /* commitFile */,
       Optional.empty() /* commitVersion */,
       Optional.empty() /* commitTimestamp */,
       Optional.of(updatedLastKnownBackfilledVersion),
-      CatalogTrackedInfo.EMPTY
-      , true /* disown */,
+      CatalogTrackedInfo.EMPTY,
+      Optional.empty() /* oldMetadata */,
       Optional.empty() /* newMetadata */,
+      Optional.empty() /* oldProtocol */,
       Optional.empty() /* newProtocol */
     );
     long commitDuration = System.currentTimeMillis() - commitStartTime;
@@ -691,14 +689,14 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
 
   protected void commitToUC(
       TableDescriptor tableDesc,
-      Path logPath,
       Optional<FileStatus> commitFile,
       Optional<Long> commitVersion,
       Optional<Long> commitTimestamp,
       Optional<Long> lastKnownBackfilledVersion,
       CatalogTrackedInfo catalogTrackedInfo,
-      boolean disown,
+      Optional<AbstractMetadata> oldMetadata,
       Optional<AbstractMetadata> newMetadata,
+      Optional<AbstractProtocol> oldProtocol,
       Optional<AbstractProtocol> newProtocol
   ) throws IOException, CommitFailedException, UCCommitCoordinatorException
   {
@@ -710,27 +708,16 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
         "Commit timestamp should be specified when commitFile is present"))
     ));
     ucClient.commit(
-      extractUCTableId(tableDesc),
-      CoordinatedCommitsUtils.getTablePath(logPath).toUri(),
+      null /* identifier: not available in the Spark coordinated-commits path */,
+      tableDesc,
       commit,
       lastKnownBackfilledVersion,
-      disown,
+      oldMetadata,
       newMetadata,
+      oldProtocol,
       newProtocol,
-        catalogTrackedInfo.deltaUniformIceberg()
+      catalogTrackedInfo.deltaUniformIceberg()
     );
-  }
-
-  /**
-   * Detects whether the current commit is a downgrade (disown) commit by checking
-   * that the UC commit coordinator name is present in the old metadata but removed from
-   * the new metadata.
-   */
-  protected boolean isDisownCommit(AbstractMetadata oldMetadata, AbstractMetadata newMetadata) {
-    return CoordinatedCommitsUtils
-      .getCoordinatorName(oldMetadata)
-      .filter("unity-catalog"::equals).isPresent() &&
-      !CoordinatedCommitsUtils.getCoordinatorName(newMetadata).isPresent();
   }
 
   /**

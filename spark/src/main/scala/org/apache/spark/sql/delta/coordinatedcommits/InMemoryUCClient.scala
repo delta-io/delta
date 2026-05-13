@@ -21,9 +21,9 @@ import java.net.URI
 import java.util.Optional
 
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
-import io.delta.storage.commit.{Commit => JCommit, GetCommitsResponse => JGetCommitsResponse}
+import io.delta.storage.commit.{CoordinatedCommitsUtils, Commit => JCommit, GetCommitsResponse => JGetCommitsResponse, TableDescriptor}
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
-import io.delta.storage.commit.uccommitcoordinator.UCClient
+import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCommitCoordinatorClient, UCDeltaTableIdentifier}
 import io.delta.storage.commit.uniform.UniformMetadata
 
 /**
@@ -58,14 +58,18 @@ class InMemoryUCClient(
   override def getMetastoreId: String = metastoreId
 
   override def commit(
-      tableId: String,
-      tableUri: URI,
+      identifier: UCDeltaTableIdentifier,
+      tableDesc: TableDescriptor,
       commit: Optional[JCommit],
       lastKnownBackfilledVersion: Optional[JLong],
-      disown: Boolean,
+      oldMetadata: Optional[AbstractMetadata],
       newMetadata: Optional[AbstractMetadata],
+      oldProtocol: Optional[AbstractProtocol],
       newProtocol: Optional[AbstractProtocol],
       uniform: Optional[UniformMetadata] = Optional.empty()): Unit = {
+    val tableId = tableDesc.getTableConf.get(UCCommitCoordinatorClient.UC_TABLE_ID_KEY)
+    val tableUri = tableDesc.getLogPath.getParent.toUri
+    val isDisown = deriveIsDisownCommit(oldMetadata, newMetadata)
     ucCommitCoordinator.commitToCoordinator(
       tableId,
       tableUri,
@@ -75,11 +79,22 @@ class InMemoryUCClient(
       Option(commit.orElse(null)).map(_.getFileStatus.getModificationTime),
       Option(commit.orElse(null)).map(_.getCommitTimestamp),
       Option(lastKnownBackfilledVersion.orElse(null)).map(_.toLong),
-      disown,
+      isDisown,
       Option(newProtocol.orElse(null)).map(_.asInstanceOf[Protocol]),
       Option(newMetadata.orElse(null)).map(_.asInstanceOf[Metadata]),
       Option(uniform.orElse(null))
     )
+  }
+
+  private def deriveIsDisownCommit(
+      oldMeta: Optional[AbstractMetadata],
+      newMeta: Optional[AbstractMetadata]): Boolean = {
+    if (!oldMeta.isPresent) return false
+    val oldHasUC = CoordinatedCommitsUtils.getCoordinatorName(oldMeta.get())
+        .filter("unity-catalog".equals(_)).isPresent
+    val newHasCoord = newMeta.isPresent &&
+        CoordinatedCommitsUtils.getCoordinatorName(newMeta.get()).isPresent
+    oldHasUC && !newHasCoord
   }
 
   override def getCommits(

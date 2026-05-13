@@ -31,7 +31,8 @@ import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import io.delta.storage.commit.{
   CoordinatedCommitsUtils => JCoordinatedCommitsUtils,
-  GetCommitsResponse => JGetCommitsResponse
+  GetCommitsResponse => JGetCommitsResponse,
+  TableDescriptor
 }
 import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCommitCoordinatorClient}
 import org.apache.hadoop.fs.Path
@@ -117,12 +118,18 @@ trait UCCommitCoordinatorClientSuiteBase extends CommitCoordinatorClientImplSuit
       tableCommitCoordinatorClient: TableCommitCoordinatorClient,
       deltaLog: DeltaLog,
       version: Long): Unit = {
+    val tableDesc = new TableDescriptor(
+      deltaLog.logPath,
+      Optional.empty(),
+      java.util.Collections.singletonMap(
+        UCCommitCoordinatorClient.UC_TABLE_ID_KEY, tableUUID.toString))
     ucClient.commit(
-      tableUUID.toString,
-      JCoordinatedCommitsUtils.getTablePath(deltaLog.logPath).toUri,
+      null,
+      tableDesc,
       Optional.empty(),
       Optional.of(version),
-      false,
+      Optional.empty(),
+      Optional.empty(),
       Optional.empty(),
       Optional.empty(),
       Optional.empty() /* icebergMetadata */)

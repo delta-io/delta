@@ -24,9 +24,9 @@ import java.util.concurrent.ConcurrentHashMap
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
-import io.delta.storage.commit.{Commit, CommitFailedException, GetCommitsResponse}
+import io.delta.storage.commit.{Commit, CommitFailedException, GetCommitsResponse, TableDescriptor}
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
-import io.delta.storage.commit.uccommitcoordinator.{InvalidTargetTableException, UCClient}
+import io.delta.storage.commit.uccommitcoordinator.{InvalidTargetTableException, UCClient, UCCommitCoordinatorClient, UCDeltaTableIdentifier}
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 
 object InMemoryUCClient {
@@ -154,35 +154,37 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       tableUri: URI,
       commit: Optional[Commit],
       lastKnownBackfilledVersion: Optional[JLong] = Optional.empty(),
-      disown: Boolean = false,
       newMetadata: Optional[AbstractMetadata] = Optional.empty(),
       newProtocol: Optional[AbstractProtocol] = Optional.empty()): Unit = {
+    val tableDesc = new TableDescriptor(
+      new org.apache.hadoop.fs.Path(tableUri.toString, "_delta_log"),
+      java.util.Optional.empty(),
+      java.util.Collections.singletonMap(UCCommitCoordinatorClient.UC_TABLE_ID_KEY, tableId))
     this.commit(
-      tableId,
-      tableUri,
+      null /* identifier */,
+      tableDesc,
       commit,
       lastKnownBackfilledVersion,
-      disown,
+      Optional.empty() /* oldMetadata */,
       newMetadata,
+      Optional.empty() /* oldProtocol */,
       newProtocol,
       Optional.empty() /* uniform */ )
   }
 
   override def commit(
-      tableId: String,
-      tableUri: URI,
+      identifier: UCDeltaTableIdentifier,
+      tableDesc: TableDescriptor,
       commitOpt: Optional[Commit] = Optional.empty(),
       lastKnownBackfilledVersionOpt: Optional[JLong],
-      disown: Boolean,
+      oldMetadata: Optional[AbstractMetadata],
       newMetadata: Optional[AbstractMetadata],
+      oldProtocol: Optional[AbstractProtocol],
       newProtocol: Optional[AbstractProtocol],
       uniform: Optional[UniformMetadata]): Unit = {
     forceThrowInCommitMethod()
 
-    if (disown) {
-      throw new UnsupportedOperationException("disown not yet supported in InMemoryUCClient")
-    }
-
+    val tableId = tableDesc.getTableConf.get(UCCommitCoordinatorClient.UC_TABLE_ID_KEY)
     val tableData = getOrCreateTableIfNotExists(tableId)
 
     tableData.synchronized {

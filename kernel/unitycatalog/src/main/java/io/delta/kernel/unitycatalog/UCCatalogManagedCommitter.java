@@ -37,8 +37,10 @@ import io.delta.kernel.unitycatalog.metrics.UcPublishTelemetry;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.commit.Commit;
+import io.delta.storage.commit.TableDescriptor;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorException;
+import io.delta.storage.commit.uccommitcoordinator.UCDeltaTableIdentifier;
 import io.delta.storage.commit.uniform.UniformMetadata;
 import java.io.IOException;
 import java.util.Collections;
@@ -449,13 +451,26 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
               });
 
           try {
+            UCDeltaTableIdentifier deltaTableId =
+                ucTableIdentifier
+                    .map(
+                        u ->
+                            new UCDeltaTableIdentifier(
+                                u.getCatalogName(), u.getSchemaName(), u.getTableName()))
+                    .orElse(null);
+            TableDescriptor tableDesc =
+                new TableDescriptor(
+                    new Path(tablePath, "_delta_log"),
+                    Optional.empty(),
+                    Collections.singletonMap(UC_TABLE_ID_KEY, ucTableId));
             ucClient.commit(
-                ucTableId,
-                tablePath.toUri(),
+                deltaTableId,
+                tableDesc,
                 Optional.of(getUcCommitPayload(commitMetadata, kernelStagedCommitFileStatus)),
                 commitMetadata.getMaxKnownPublishedDeltaVersion(),
-                false /* isDisown */,
+                Optional.empty() /* oldMetadata */,
                 generateMetadataPayloadOpt(commitMetadata).map(MetadataAdapter::new),
+                Optional.empty() /* oldProtocol */,
                 commitMetadata.getNewProtocolOpt().map(ProtocolAdapter::new),
                 uniformMetadataOpt);
             return null;

@@ -19,6 +19,7 @@ package io.delta.storage.commit.uccommitcoordinator;
 import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.CommitFailedException;
 import io.delta.storage.commit.GetCommitsResponse;
+import io.delta.storage.commit.TableDescriptor;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
 import io.delta.storage.commit.uniform.UniformMetadata;
@@ -58,25 +59,27 @@ public interface UCClient extends AutoCloseable {
    * proper coordination and consistency of the commit process.
    * Note: At least one of commit or lastKnownBackfilledVersion must be present.
    *
-   * @param tableId The unique identifier of the Delta table.
-   * @param tableUri The URI of the storage location of the table. e.g. s3://bucket/path/to/table
-   *                 (and not s3://bucket/path/to/table/_delta_log).
-   *                 If the tableId exists but the tableUri is different from the one previously
-   *                 registered (e.g., if the table as moved), the request will fail.
+   * @param identifier The three-part Unity Catalog table identifier (catalog.schema.table).
+   *                   May be null when the catalog context is not available (e.g., Spark path).
+   * @param tableDesc Descriptor containing the table's log path and configuration, including
+   *                  the Unity Catalog table ID (UUID) in the table conf under key
+   *                  {@code io.unitycatalog.tableId}. Also provides the storage URI via the
+   *                  log path's parent directory.
    * @param commit An Optional containing the Commit object with the changes to be committed.
    *               If empty, it indicates that no new data is being added in this commit.
    * @param lastKnownBackfilledVersion An Optional containing the last known backfilled version
-   *                                   of the table. This value serves as a hint to the UC about the
+   *                                   of the table. This value serves as a hint to UC about the
    *                                   most recent version that has been successfully backfilled.
-   *                                   UC can use this information to optimize its internal state
-   *                                   management by cleaning up tracking information for backfilled
-   *                                   commits up to this version.
+   *                                   UC can use this information to clean up tracking information
+   *                                   for backfilled commits up to this version.
    *                                   If not provided (Optional.empty()), UC will rely on its
    *                                   current state without any additional cleanup hints.
-   * @param disown A boolean flag indicating whether to disown the table after commit.
-   *               If true, the coordinator will release ownership of the table after the commit.
+   * @param oldMetadata An Optional containing the existing metadata of the table before the commit.
+   *                    If present, UC can validate the current state of the table.
    * @param newMetadata An Optional containing new metadata to be applied to the table.
    *                    If present, the table's metadata will be updated atomically with the commit.
+   * @param oldProtocol An Optional containing the existing protocol of the table before the commit.
+   *                    If present, UC can validate the current protocol state.
    * @param newProtocol An Optional containing a new protocol version to be applied to the table.
    *                    If present, the table's protocol will be updated atomically with the commit.
    * @param uniform An Optional containing UniForm metadata for Delta Universal Format support.
@@ -88,12 +91,13 @@ public interface UCClient extends AutoCloseable {
    *         commit coordination process.
    */
   void commit(
-      String tableId,
-      URI tableUri,
+      UCDeltaTableIdentifier identifier,
+      TableDescriptor tableDesc,
       Optional<Commit> commit,
       Optional<Long> lastKnownBackfilledVersion,
-      boolean disown,
+      Optional<AbstractMetadata> oldMetadata,
       Optional<AbstractMetadata> newMetadata,
+      Optional<AbstractProtocol> oldProtocol,
       Optional<AbstractProtocol> newProtocol,
       Optional<UniformMetadata> uniform
   ) throws IOException, CommitFailedException, UCCommitCoordinatorException;

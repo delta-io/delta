@@ -20,6 +20,7 @@ import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.CommitFailedException;
 import io.delta.storage.commit.CoordinatedCommitsUtils;
 import io.delta.storage.commit.GetCommitsResponse;
+import io.delta.storage.commit.TableDescriptor;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
 import io.delta.storage.commit.uniform.IcebergMetadata;
@@ -151,16 +152,20 @@ public class UCTokenBasedRestClient implements UCClient {
 
   @Override
   public void commit(
-      String tableId,
-      URI tableUri,
+      UCDeltaTableIdentifier identifier,
+      TableDescriptor tableDesc,
       Optional<Commit> commit,
       Optional<Long> lastKnownBackfilledVersion,
-      boolean disown,
+      Optional<AbstractMetadata> oldMetadata,
       Optional<AbstractMetadata> newMetadata,
+      Optional<AbstractProtocol> oldProtocol,
       Optional<AbstractProtocol> newProtocol,
       Optional<UniformMetadata> uniform
   ) throws IOException, CommitFailedException, UCCommitCoordinatorException {
     ensureOpen();
+    Objects.requireNonNull(tableDesc, "tableDesc must not be null.");
+    String tableId = tableDesc.getTableConf().get(UCCommitCoordinatorClient.UC_TABLE_ID_KEY);
+    URI tableUri = tableDesc.getLogPath().getParent().toUri();
     Objects.requireNonNull(tableId, "tableId must not be null.");
     Objects.requireNonNull(tableUri, "tableUri must not be null.");
 
@@ -182,8 +187,8 @@ public class UCTokenBasedRestClient implements UCClient {
     uniform.flatMap(u -> u.getIcebergMetadata().map(this::toDeltaUniformIceberg))
         .ifPresent(iceberg -> deltaCommit.uniform(new DeltaUniform().iceberg(iceberg)));
 
-    // Note: protocol and disown are not part of the DeltaCommit schema in the Unity Catalog
-    // OpenAPI spec. They are intentionally not sent.
+    // Note: identifier, oldMetadata, oldProtocol, newProtocol are not part of the DeltaCommit
+    // schema in the Unity Catalog OpenAPI spec. They are intentionally not sent.
 
     try {
       deltaCommitsApi.commit(deltaCommit);
