@@ -152,7 +152,6 @@ public class UCTokenBasedRestClient implements UCClient {
 
   @Override
   public void commit(
-      UCDeltaTableIdentifier identifier,
       TableDescriptor tableDesc,
       Optional<Commit> commit,
       Optional<Long> lastKnownBackfilledVersion,
@@ -187,8 +186,8 @@ public class UCTokenBasedRestClient implements UCClient {
     uniform.flatMap(u -> u.getIcebergMetadata().map(this::toDeltaUniformIceberg))
         .ifPresent(iceberg -> deltaCommit.uniform(new DeltaUniform().iceberg(iceberg)));
 
-    // Note: identifier, oldMetadata, oldProtocol, newProtocol are not part of the DeltaCommit
-    // schema in the Unity Catalog OpenAPI spec. They are intentionally not sent.
+    // Note: oldMetadata, oldProtocol, newProtocol are not part of the DeltaCommit schema in the
+    // Unity Catalog OpenAPI spec. They are intentionally not sent.
 
     try {
       deltaCommitsApi.commit(deltaCommit);

@@ -26,7 +26,7 @@ import scala.collection.mutable.ArrayBuffer
 
 import io.delta.storage.commit.{Commit, CommitFailedException, GetCommitsResponse, TableDescriptor}
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
-import io.delta.storage.commit.uccommitcoordinator.{InvalidTargetTableException, UCClient, UCCommitCoordinatorClient, UCDeltaTableIdentifier}
+import io.delta.storage.commit.uccommitcoordinator.{InvalidTargetTableException, UCClient, UCCommitCoordinatorClient}
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 
 object InMemoryUCClient {
@@ -161,19 +161,18 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       java.util.Optional.empty(),
       java.util.Collections.singletonMap(UCCommitCoordinatorClient.UC_TABLE_ID_KEY, tableId))
     this.commit(
-      null /* identifier */,
       tableDesc,
       commit,
       lastKnownBackfilledVersion,
-      Optional.empty() /* oldMetadata */,
+      Optional.empty(), // oldMetadata
       newMetadata,
-      Optional.empty() /* oldProtocol */,
+      Optional.empty(), // oldProtocol
       newProtocol,
-      Optional.empty() /* uniform */ )
+      Optional.empty()
+    ) // uniform
   }
 
   override def commit(
-      identifier: UCDeltaTableIdentifier,
       tableDesc: TableDescriptor,
       commitOpt: Optional[Commit] = Optional.empty(),
       lastKnownBackfilledVersionOpt: Optional[JLong],

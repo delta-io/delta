@@ -708,7 +708,6 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
         "Commit timestamp should be specified when commitFile is present"))
     ));
     ucClient.commit(
-      null /* identifier: not available in the Spark coordinated-commits path */,
       tableDesc,
       commit,
       lastKnownBackfilledVersion,

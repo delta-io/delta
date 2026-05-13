@@ -59,8 +59,6 @@ public interface UCClient extends AutoCloseable {
    * proper coordination and consistency of the commit process.
    * Note: At least one of commit or lastKnownBackfilledVersion must be present.
    *
-   * @param identifier The three-part Unity Catalog table identifier (catalog.schema.table).
-   *                   May be null when the catalog context is not available (e.g., Spark path).
    * @param tableDesc Descriptor containing the table's log path and configuration, including
    *                  the Unity Catalog table ID (UUID) in the table conf under key
    *                  {@code io.unitycatalog.tableId}. Also provides the storage URI via the
@@ -91,7 +89,6 @@ public interface UCClient extends AutoCloseable {
    *         commit coordination process.
    */
   void commit(
-      UCDeltaTableIdentifier identifier,
       TableDescriptor tableDesc,
       Optional<Commit> commit,
       Optional<Long> lastKnownBackfilledVersion,

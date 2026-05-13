@@ -162,7 +162,7 @@ class UCTokenBasedRestClientSuite
   // commit tests
   test("commit succeeds with valid parameters") {
     withClient { client =>
-      client.commit(null, createTableDesc(), Optional.of(createCommit(1L)),
+      client.commit(createTableDesc(), Optional.of(createCommit(1L)),
         Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
         Optional.empty(), Optional.empty())
     }
@@ -171,7 +171,6 @@ class UCTokenBasedRestClientSuite
   test("commit succeeds with metadata") {
     withClient { client =>
       client.commit(
-        null,
         createTableDesc(),
         Optional.of(createCommit(1L)),
         Optional.of(java.lang.Long.valueOf(0L)),
@@ -186,7 +185,7 @@ class UCTokenBasedRestClientSuite
   test("commit validates required parameters") {
     withClient { client =>
       intercept[NullPointerException] {
-        client.commit(null, null, Optional.empty(), Optional.empty(),
+        client.commit(null, Optional.empty(), Optional.empty(),
           Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
           Optional.empty())
       }
@@ -195,7 +194,7 @@ class UCTokenBasedRestClientSuite
           new Path(testTableUri.toString, "_delta_log"),
           java.util.Optional.empty(),
           java.util.Collections.emptyMap())
-        client.commit(null, descWithoutTableId, Optional.empty(), Optional.empty(),
+        client.commit(descWithoutTableId, Optional.empty(), Optional.empty(),
           Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
           Optional.empty())
       }
@@ -206,7 +205,7 @@ class UCTokenBasedRestClientSuite
     def commitWith(status: Int): Unit = {
       commitsHandler = exchange => sendJson(exchange, status, s"""{"error":"$status"}""")
       withClient { client =>
-        client.commit(null, createTableDesc(), Optional.of(createCommit(1L)),
+        client.commit(createTableDesc(), Optional.of(createCommit(1L)),
           Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
           Optional.empty(), Optional.empty())
       }
@@ -291,7 +290,7 @@ class UCTokenBasedRestClientSuite
       }
 
       withClient { client =>
-        client.commit(null, createTableDesc(), Optional.of(createCommit(1L)),
+        client.commit(createTableDesc(), Optional.of(createCommit(1L)),
           Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
           Optional.empty(), Optional.of(new UniformMetadata(icebergMeta)))
       }
@@ -324,7 +323,7 @@ class UCTokenBasedRestClientSuite
     }
 
     withClient { client =>
-      client.commit(null, createTableDesc(), Optional.of(createCommit(1L)),
+      client.commit(createTableDesc(), Optional.of(createCommit(1L)),
         Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
         Optional.empty(), Optional.empty())
     }
@@ -341,7 +340,7 @@ class UCTokenBasedRestClientSuite
     }
 
     withClient { client =>
-      client.commit(null, createTableDesc(), Optional.of(createCommit(1L)),
+      client.commit(createTableDesc(), Optional.of(createCommit(1L)),
         Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
         Optional.empty(), Optional.of(new UniformMetadata(null)))
     }

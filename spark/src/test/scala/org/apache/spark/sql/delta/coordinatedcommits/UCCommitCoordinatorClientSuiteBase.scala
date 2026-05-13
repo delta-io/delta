@@ -124,7 +124,6 @@ trait UCCommitCoordinatorClientSuiteBase extends CommitCoordinatorClientImplSuit
       java.util.Collections.singletonMap(
         UCCommitCoordinatorClient.UC_TABLE_ID_KEY, tableUUID.toString))
     ucClient.commit(
-      null,
       tableDesc,
       Optional.empty(),
       Optional.of(version),
