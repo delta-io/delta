@@ -1055,9 +1055,9 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
       QueryTest.checkAnswer(
         descriptionDf.filter(
           "!(col_name in ('Catalog', 'Created Time', 'Created By', 'Database', " +
-            "'index', 'Is_managed_location', 'Location', 'Name', 'Owner', 'Partition Provider'," +
-            "'Provider', 'Table', 'Table Properties',  'Type', '_partition', 'Last Access', " +
-            "'Statistics', ''))"),
+            "'index', 'Is_managed_location', 'Location', 'Name', 'Namespace', 'Owner', " +
+            "'Partition Provider', 'Provider', 'Table', 'Table Properties', 'Type', " +
+            "'_partition', 'Last Access', 'Statistics', ''))"),
         Seq(
           Row("# Column Default Values", "", ""),
           Row("# Detailed Table Information", "", ""),
