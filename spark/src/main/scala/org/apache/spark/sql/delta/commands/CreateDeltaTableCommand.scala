@@ -147,6 +147,7 @@ case class CreateDeltaTableCommand(
       tableExists = deltaLog.tableExists,
       query = query,
       catalogTableProperties = tableWithLocation.properties,
+      catalogTable = tableWithLocation,
       existingTableSnapshotOpt =
         if (deltaLog.tableExists) Some(deltaLog.unsafeVolatileSnapshot) else None)
 

@@ -310,6 +310,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
    * @param tableExists Whether the table already exists.
    * @param query The query to be executed (e.g., CloneTableCommand).
    * @param catalogTableProperties The table properties from the catalog table.
+   * @param catalogTable The catalog table, used to derive the table name in error messages.
    * @param existingTableSnapshotOpt The snapshot of the existing table, if it exists.
    */
   def validatePropertiesForCreateDeltaTableCommand(
@@ -317,6 +318,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
       tableExists: Boolean,
       query: Option[LogicalPlan],
       catalogTableProperties: Map[String, String],
+      catalogTable: CatalogTable,
       existingTableSnapshotOpt: Option[Snapshot] = None): Unit = {
     val (command, propertyOverrides) = query match {
       // For CLONE, we cannot use the properties from the catalog table, because they are already
@@ -352,10 +354,8 @@ object CatalogOwnedTableUtils extends DeltaLogging {
       // the CatalogManaged status during REPLACE (the table type won't change), there's no need
       // to block that case.
       if (isSpecifyingCatalogManaged && !existingTableIsCatalogManaged) {
-        throw new IllegalStateException(
-          "Specifying CatalogManaged in REPLACE TABLE command is not supported " +
-          "for tables that are not already CatalogManaged. " +
-          "Please either upgrade the existing table or create a fresh CatalogManaged table.")
+        throw DeltaErrors.replaceTableWithCatalogManagedNotSupported(
+          catalogTable.identifier.nameParts)
       }
     }
   }
