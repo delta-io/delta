@@ -68,7 +68,7 @@ public class TableFeatures {
 
   private static class AppendOnlyFeature extends TableFeature.LegacyWriterFeature {
     AppendOnlyFeature() {
-      super(/* featureName = */ "appendOnly", /* minWriterVersion = */ 2);
+      super(/* featureName = */ "appendOnly", /* minWriterVersion  = */ 2);
     }
 
     @Override
