@@ -356,7 +356,6 @@ object DeltaOptions extends DeltaLogging {
   val TIMESTAMP_AS_OF = "timestampAsOf"
 
   val COMPRESSION = "compression"
-  val PARQUET_VERSION = "parquet.writer.version"
   val MAX_RECORDS_PER_FILE = "maxRecordsPerFile"
   val TXN_APP_ID = "txnAppId"
   val TXN_VERSION = "txnVersion"
@@ -385,7 +384,6 @@ object DeltaOptions extends DeltaLogging {
    * An option to control if delta will write partition columns to data files
    */
   val WRITE_PARTITION_COLUMNS = "writePartitionColumns"
-  val PARQUET_OUTPUT_TIMESTAMP_TYPE = SQLConf.PARQUET_OUTPUT_TIMESTAMP_TYPE.key
 
   val validOptionKeys : Set[String] = Set(
     IS_DATAFRAME_WRITER_V1_SAVE_AS_TABLE_OVERWRITE,
@@ -416,8 +414,6 @@ object DeltaOptions extends DeltaLogging {
     CDC_END_VERSION,
     COMPRESSION,
     MAX_RECORDS_PER_FILE,
-    PARQUET_VERSION,
-    PARQUET_OUTPUT_TIMESTAMP_TYPE,
     TXN_APP_ID,
     TXN_VERSION,
     SCHEMA_TRACKING_LOCATION,

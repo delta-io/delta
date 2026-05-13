@@ -2439,6 +2439,12 @@
     ],
     "sqlState" : "44000"
   },
+  "DELTA_REPLACE_TABLE_WITH_CATALOG_MANAGED_NOT_SUPPORTED" : {
+    "message" : [
+      "REPLACE TABLE cannot enable catalog-managed on the existing non-catalog-managed table <tableName>. Upgrade or recreate the table instead."
+    ],
+    "sqlState" : "0A000"
+  },
   "DELTA_REPLACE_WHERE_IN_OVERWRITE" : {
     "message" : [
       "You can't use replaceWhere in conjunction with an overwrite by filter"
