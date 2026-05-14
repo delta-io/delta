@@ -17,37 +17,65 @@
 package io.delta.storage.commit.uccommitcoordinator;
 
 import io.delta.storage.commit.actions.AbstractMetadata;
-
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.StagingTableResponse;
-import io.unitycatalog.client.delta.model.CreateTableRequest;
 import java.io.IOException;
+import java.util.List;
+import java.util.Map;
 
 /**
- * Extended interface for interacting with Unity Catalog for Delta-specific operations.
- * <p>
- * This interface extends {@link UCClient} to provide additional Delta-specific functionality beyond
- * the base commit coordination operations, including table lifecycle management through the UC
- * Delta Rest Catalog API.
- * <p>
- * Implementations should handle Delta-specific concerns while delegating core commit coordination
- * to the underlying {@link UCClient} contract.
+ * Extends {@link UCClient} with Delta table lifecycle operations backed by the UC Delta REST
+ * Catalog API (load, stage, and create tables).
  */
 public interface UCDeltaClient extends UCClient {
 
   /**
-   * Loads a Delta table from Unity Catalog through the UC Delta Rest Catalog API.
+   * Loads a table's metadata from Unity Catalog.
+   *
+   * @param catalog the catalog name
+   * @param schema  the schema name
+   * @param table   the table name
+   * @return the table's {@link AbstractMetadata}
+   * @throws IOException on network or API errors
    */
   AbstractMetadata loadTable(String catalog, String schema, String table) throws IOException;
 
   /**
-   * Creates a Delta staging table in Unity Catalog through the UC Delta Rest Catalog API.
+   * Reserves a staging slot for a new Delta table. The returned response contains the table ID,
+   * storage location, and protocol/property requirements that the caller must honor when
+   * finalizing the table with {@link #createTable}.
+   *
+   * @param catalog the catalog name
+   * @param schema  the schema name
+   * @param table   the table name
+   * @return a {@link StagingTableResponse} with the reserved table details
+   * @throws IOException on network or API errors
    */
   StagingTableResponse createStagingTable(String catalog, String schema, String table)
       throws IOException;
 
   /**
-   * Finalizes a staged Delta table in Unity Catalog through the UC Delta Rest Catalog API.
+   * Finalizes a previously staged Delta table, making it visible in the catalog.
+   *
+   * @param catalog          the catalog name
+   * @param schema           the schema name
+   * @param name             the table name
+   * @param location         the storage location
+   * @param tableType        the table type (MANAGED or EXTERNAL), or {@code null}
+   * @param comment          the table comment, or {@code null}
+   * @param partitionColumns the partition column names, or {@code null}
+   * @param protocol         the required Delta protocol, or {@code null}
+   * @param properties       the table properties, or {@code null}
+   * @return the newly created table's {@link AbstractMetadata}
+   * @throws IOException on network or API errors
    */
-  AbstractMetadata createTable(String catalog, String schema, CreateTableRequest request)
-      throws IOException;
+  AbstractMetadata createTable(
+      String catalog,
+      String schema,
+      String name,
+      String location,
+      UCDeltaModels.TableType tableType,
+      String comment,
+      List<String> partitionColumns,
+      UCDeltaModels.DeltaProtocol protocol,
+      Map<String, String> properties) throws IOException;
 }
