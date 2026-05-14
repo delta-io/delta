@@ -37,6 +37,11 @@ jobs:
             ~/.cache/coursier
           key: delta-sbt-cache-cross-spark
 
+      - name: Run DynamoDB commit coordinator listing regression tests
+        run: |
+          cd spark/src/main/java/io/delta/dynamodbcommitcoordinator/integration_tests
+          python _dynamodb_commitcoordinator_listing.py
+
       # publishM2 compiles every aggregated project, including storage, which has
       # unitycatalog-client as a compile-scope dependency. Publish the pinned UC build locally
       # first so Delta compiles against the UC APIs it actually targets.
