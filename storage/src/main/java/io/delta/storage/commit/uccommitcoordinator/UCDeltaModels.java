@@ -1,5 +1,5 @@
 /*
- * Copyright (2021) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@ package io.delta.storage.commit.uccommitcoordinator;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -34,26 +33,11 @@ public final class UCDeltaModels {
     EXTERNAL
   }
 
-  public enum DataSourceFormat {
-    DELTA("DELTA"),
-    ICEBERG("ICEBERG");
-
-    private final String value;
-
-    DataSourceFormat(String value) {
-      this.value = value;
-    }
-
-    public String getValue() {
-      return value;
-    }
-  }
-
   public static class DeltaProtocol {
     private int minReaderVersion;
     private int minWriterVersion;
-    private List<String> readerFeatures;
-    private List<String> writerFeatures;
+    private final List<String> readerFeatures = new ArrayList<>();
+    private final List<String> writerFeatures = new ArrayList<>();
 
     public DeltaProtocol minReaderVersion(int minReaderVersion) {
       this.minReaderVersion = minReaderVersion;
@@ -73,186 +57,55 @@ public final class UCDeltaModels {
       return minWriterVersion;
     }
 
-    public DeltaProtocol readerFeatures(List<String> readerFeatures) {
-      this.readerFeatures = readerFeatures;
-      return this;
-    }
-
-    public DeltaProtocol addReaderFeaturesItem(String readerFeaturesItem) {
-      if (readerFeatures == null) {
-        readerFeatures = new ArrayList<>();
-      }
-      readerFeatures.add(readerFeaturesItem);
+    public DeltaProtocol readerFeatures(List<String> newReaderFeatures) {
+      readerFeatures.addAll(newReaderFeatures);
       return this;
     }
 
     public List<String> getReaderFeatures() {
-      return readerFeatures == null ? Collections.emptyList() : readerFeatures;
+      return readerFeatures;
     }
 
-    public DeltaProtocol writerFeatures(List<String> writerFeatures) {
-      this.writerFeatures = writerFeatures;
-      return this;
-    }
-
-    public DeltaProtocol addWriterFeaturesItem(String writerFeaturesItem) {
-      if (writerFeatures == null) {
-        writerFeatures = new ArrayList<>();
-      }
-      writerFeatures.add(writerFeaturesItem);
+    public DeltaProtocol writerFeatures(List<String> newWriterFeatures) {
+      this.writerFeatures.addAll(newWriterFeatures);
       return this;
     }
 
     public List<String> getWriterFeatures() {
-      return writerFeatures == null ? Collections.emptyList() : writerFeatures;
-    }
-  }
-
-  public static final class CreateTableRequest {
-    private String name;
-    private String location;
-    private TableType tableType;
-    private DataSourceFormat dataSourceFormat;
-    private String comment;
-    private String schemaString;
-    private List<String> partitionColumns;
-    private DeltaProtocol protocol;
-    private Map<String, String> properties;
-
-    public CreateTableRequest name(String name) {
-      this.name = name;
-      return this;
-    }
-
-    public String getName() {
-      return name;
-    }
-
-    public CreateTableRequest location(String location) {
-      this.location = location;
-      return this;
-    }
-
-    public String getLocation() {
-      return location;
-    }
-
-    public CreateTableRequest tableType(TableType tableType) {
-      this.tableType = tableType;
-      return this;
-    }
-
-    public TableType getTableType() {
-      return tableType;
-    }
-
-    public CreateTableRequest dataSourceFormat(DataSourceFormat dataSourceFormat) {
-      this.dataSourceFormat = dataSourceFormat;
-      return this;
-    }
-
-    public DataSourceFormat getDataSourceFormat() {
-      return dataSourceFormat;
-    }
-
-    public CreateTableRequest comment(String comment) {
-      this.comment = comment;
-      return this;
-    }
-
-    public String getComment() {
-      return comment;
-    }
-
-    public CreateTableRequest schemaString(String schemaString) {
-      this.schemaString = schemaString;
-      return this;
-    }
-
-    public String getSchemaString() {
-      return schemaString;
-    }
-
-    public CreateTableRequest partitionColumns(List<String> partitionColumns) {
-      this.partitionColumns = partitionColumns;
-      return this;
-    }
-
-    public CreateTableRequest addPartitionColumnsItem(String partitionColumnsItem) {
-      if (partitionColumns == null) {
-        partitionColumns = new ArrayList<>();
-      }
-      partitionColumns.add(partitionColumnsItem);
-      return this;
-    }
-
-    public List<String> getPartitionColumns() {
-      return partitionColumns == null ? Collections.emptyList() : partitionColumns;
-    }
-
-    public CreateTableRequest protocol(DeltaProtocol protocol) {
-      this.protocol = protocol;
-      return this;
-    }
-
-    public DeltaProtocol getProtocol() {
-      return protocol;
-    }
-
-    public CreateTableRequest properties(Map<String, String> properties) {
-      this.properties = properties;
-      return this;
-    }
-
-    public CreateTableRequest putPropertiesItem(String key, String propertiesItem) {
-      if (properties == null) {
-        properties = new LinkedHashMap<>();
-      }
-      properties.put(key, propertiesItem);
-      return this;
-    }
-
-    public Map<String, String> getProperties() {
-      return properties == null ? Collections.emptyMap() : properties;
+      return writerFeatures;
     }
   }
 
   public static final class UpdateTableRequest {
-    private List<TableRequirement> requirements;
-    private List<TableUpdate> updates;
+    private final List<TableRequirement> requirements = new ArrayList<>();
+    private final List<TableUpdate> updates = new ArrayList<>();
 
     public UpdateTableRequest requirements(List<TableRequirement> requirements) {
-      this.requirements = requirements;
+      this.requirements.addAll(requirements);
       return this;
     }
 
-    public UpdateTableRequest addRequirementsItem(TableRequirement requirement) {
-      if (requirements == null) {
-        requirements = new ArrayList<>();
-      }
-      requirements.add(requirement);
+    public UpdateTableRequest addRequirementsItem(TableRequirement item) {
+      this.requirements.add(item);
       return this;
     }
 
     public List<TableRequirement> getRequirements() {
-      return requirements == null ? Collections.emptyList() : requirements;
+      return requirements;
     }
 
     public UpdateTableRequest updates(List<TableUpdate> updates) {
-      this.updates = updates;
+      this.updates.addAll(updates);
       return this;
     }
 
-    public UpdateTableRequest addUpdatesItem(TableUpdate update) {
-      if (updates == null) {
-        updates = new ArrayList<>();
-      }
-      updates.add(update);
+    public UpdateTableRequest addUpdatesItem(TableUpdate item) {
+      this.updates.add(item);
       return this;
     }
 
     public List<TableUpdate> getUpdates() {
-      return updates == null ? Collections.emptyList() : updates;
+      return updates;
     }
   }
 

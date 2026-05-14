@@ -1,5 +1,5 @@
 /*
- * Copyright (2021) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,66 +16,38 @@
 
 package io.delta.storage.commit.uccommitcoordinator;
 
-import io.delta.storage.commit.CommitFailedException;
 import io.delta.storage.commit.actions.AbstractMetadata;
 
+import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.StagingTableResponse;
+import io.unitycatalog.client.delta.model.CreateTableRequest;
 import java.io.IOException;
 
 /**
  * Extended interface for interacting with Unity Catalog for Delta-specific operations.
- *
- * This interface extends {@link UCClient} to provide additional Delta-specific
- * functionality beyond the base commit coordination operations, including
- * table lifecycle management through the UC Delta Rest Catalog API.
- *
- * Implementations should handle Delta-specific concerns while delegating core
- * commit coordination to the underlying {@link UCClient} contract.
+ * <p>
+ * This interface extends {@link UCClient} to provide additional Delta-specific functionality beyond
+ * the base commit coordination operations, including table lifecycle management through the UC
+ * Delta Rest Catalog API.
+ * <p>
+ * Implementations should handle Delta-specific concerns while delegating core commit coordination
+ * to the underlying {@link UCClient} contract.
  */
 public interface UCDeltaClient extends UCClient {
 
   /**
    * Loads a Delta table from Unity Catalog through the UC Delta Rest Catalog API.
    */
-  default AbstractMetadata loadTable(
-      String catalog,
-      String schema,
-      String table) throws IOException {
-    throw new UnsupportedOperationException(
-        "loadTable requires UC Delta Rest Catalog API support.");
-  }
+  AbstractMetadata loadTable(String catalog, String schema, String table) throws IOException;
 
   /**
    * Creates a Delta staging table in Unity Catalog through the UC Delta Rest Catalog API.
    */
-  default UCDeltaModels.StagingTableResponse createStagingTable(
-      String catalog,
-      String schema,
-      String table) throws IOException {
-    throw new UnsupportedOperationException(
-        "createStagingTable requires UC Delta Rest Catalog API support.");
-  }
+  StagingTableResponse createStagingTable(String catalog, String schema, String table)
+      throws IOException;
 
   /**
    * Finalizes a staged Delta table in Unity Catalog through the UC Delta Rest Catalog API.
    */
-  default AbstractMetadata createTable(
-      String catalog,
-      String schema,
-      UCDeltaModels.CreateTableRequest request) throws IOException {
-    throw new UnsupportedOperationException(
-        "createTable requires UC Delta Rest Catalog API support.");
-  }
-
-  /**
-   * Updates a Delta table in Unity Catalog through the UC Delta Rest Catalog API.
-   */
-  default AbstractMetadata updateTable(
-      String catalog,
-      String schema,
-      String table,
-      UCDeltaModels.UpdateTableRequest request)
-      throws IOException, CommitFailedException, UCCommitCoordinatorException {
-    throw new UnsupportedOperationException(
-        "updateTable requires UC Delta Rest Catalog API support.");
-  }
+  AbstractMetadata createTable(String catalog, String schema, CreateTableRequest request)
+      throws IOException;
 }
