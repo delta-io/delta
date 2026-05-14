@@ -20,7 +20,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
 /**
  * Delta-owned models for the UC Delta REST Catalog API. These decouple the
@@ -77,8 +76,8 @@ public final class UCDeltaModels {
     }
   }
 
-  public static final class StagingTableResponse {
-    private final UUID tableId;
+  public static final class StagingTableInfo {
+    private final String tableId;
     private final TableType tableType;
     private final String location;
     private final DeltaProtocol requiredProtocol;
@@ -86,8 +85,8 @@ public final class UCDeltaModels {
     private final Map<String, String> requiredProperties;
     private final Map<String, String> suggestedProperties;
 
-    public StagingTableResponse(
-        UUID tableId,
+    public StagingTableInfo(
+        String tableId,
         TableType tableType,
         String location,
         DeltaProtocol requiredProtocol,
@@ -103,7 +102,7 @@ public final class UCDeltaModels {
       this.suggestedProperties = suggestedProperties;
     }
 
-    public UUID getTableId() { return tableId; }
+    public String getTableId() { return tableId; }
 
     public TableType getTableType() { return tableType; }
 

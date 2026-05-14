@@ -17,7 +17,7 @@
 package io.delta.storage.commit.uccommitcoordinator;
 
 import io.delta.storage.commit.actions.AbstractMetadata;
-import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.StagingTableResponse;
+import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.StagingTableInfo;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
@@ -47,10 +47,10 @@ public interface UCDeltaClient extends UCClient {
    * @param catalog the catalog name
    * @param schema  the schema name
    * @param table   the table name
-   * @return a {@link StagingTableResponse} with the reserved table details
+   * @return a {@link StagingTableInfo} with the reserved table details
    * @throws IOException on network or API errors
    */
-  StagingTableResponse createStagingTable(String catalog, String schema, String table)
+  StagingTableInfo createStagingTable(String catalog, String schema, String table)
       throws IOException;
 
   /**

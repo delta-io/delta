@@ -162,9 +162,10 @@ class UCDeltaTokenBasedRestClientSuite
 
   // --------------- loadTable ---------------
 
-  test("loadTable returns correct AbstractMetadata") {
+  test("loadTable returns AbstractMetadata with correct fields") {
     withClient { c =>
       val m = c.loadTable(testCatalog, testSchema, testTable)
+      assert(m.getName === testTable)
       assert(m.getId === testTableId)
       assert(m.getProvider === "DELTA")
       assert(m.getConfiguration.get("key1") === "val1")
@@ -353,106 +354,68 @@ class UCDeltaTokenBasedRestClientSuite
     }
   }
 
-  // --------------- getCommits via loadTable ---------------
+  // --------------- getCommits ---------------
 
-  private val tableUri = new URI("s3://bucket/table")
-
-  private val commitsResponseJson =
-    """{"metadata":{"table-uuid":"550e8400-e29b-41d4-a716-446655440000",""" +
-    """"data-source-format":"DELTA","properties":{},"partition-columns":[],"created-time":1000},""" +
-    """"commits":[""" +
-    """{"version":3,"timestamp":3000,"file-name":"3.uuid-a.json","file-size":100,"file-modification-timestamp":3001},""" +
-    """{"version":5,"timestamp":5000,"file-name":"5.uuid-b.json","file-size":200,"file-modification-timestamp":5001},""" +
-    """{"version":7,"timestamp":7000,"file-name":"7.uuid-c.json","file-size":300,"file-modification-timestamp":7001}""" +
-    """],"latest-table-version":7}"""
-
-  private def seedIdentifierCache(client: UCDeltaTokenBasedRestClient): Unit = {
-    deltaHandler = (exchange, _) => sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
-    client.commit(testTableId, tableUri, testIdentifier,
-      Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
-      Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty())
-  }
-
-  test("getCommits returns all commits when no version range specified") {
-    withClient { c =>
-      seedIdentifierCache(c)
-      deltaHandler = (exchange, _) => sendJson(exchange, HttpStatus.SC_OK, commitsResponseJson)
-
-      val resp = c.getCommits(testTableId, tableUri, Optional.empty(), Optional.empty())
-      assert(resp.getCommits.size() === 3)
-      assert(resp.getLatestTableVersion === 7L)
-
-      val commit = resp.getCommits.get(0)
-      assert(commit.getVersion === 3L)
-      assert(commit.getCommitTimestamp === 3000L)
-      assert(commit.getFileStatus.getLen === 100L)
-      assert(commit.getFileStatus.getPath.getName === "3.uuid-a.json")
-    }
-  }
-
-  test("getCommits filters by startVersion and endVersion") {
-    withClient { c =>
-      seedIdentifierCache(c)
-      deltaHandler = (exchange, _) => sendJson(exchange, HttpStatus.SC_OK, commitsResponseJson)
-
-      val resp = c.getCommits(testTableId, tableUri,
-        Optional.of(java.lang.Long.valueOf(4L)), Optional.of(java.lang.Long.valueOf(6L)))
-      assert(resp.getCommits.size() === 1)
-      assert(resp.getCommits.get(0).getVersion === 5L)
-    }
-  }
-
-  test("getCommits filters by startVersion only") {
-    withClient { c =>
-      seedIdentifierCache(c)
-      deltaHandler = (exchange, _) => sendJson(exchange, HttpStatus.SC_OK, commitsResponseJson)
-
-      val resp = c.getCommits(testTableId, tableUri,
-        Optional.of(java.lang.Long.valueOf(5L)), Optional.empty())
-      assert(resp.getCommits.size() === 2)
-      assert(resp.getCommits.get(0).getVersion === 5L)
-      assert(resp.getCommits.get(1).getVersion === 7L)
-    }
-  }
-
-  test("getCommits returns empty list when no commits match range") {
-    withClient { c =>
-      seedIdentifierCache(c)
-      deltaHandler = (exchange, _) => sendJson(exchange, HttpStatus.SC_OK, commitsResponseJson)
-
-      val resp = c.getCommits(testTableId, tableUri,
-        Optional.of(java.lang.Long.valueOf(100L)), Optional.empty())
-      assert(resp.getCommits.isEmpty)
-      assert(resp.getLatestTableVersion === 7L)
-    }
-  }
-
-  test("getCommits throws InvalidTargetTableException on 404") {
-    withClient { c =>
-      seedIdentifierCache(c)
-      deltaHandler = (exchange, _) =>
-        sendJson(exchange, HttpStatus.SC_NOT_FOUND, """{"error":"nf"}""")
-
-      intercept[InvalidTargetTableException] {
-        c.getCommits(testTableId, tableUri, Optional.empty(), Optional.empty())
-      }
-    }
-  }
-
-  test("getCommits throws IllegalStateException when called without prior commit") {
-    withClient { c =>
-      intercept[IllegalStateException] {
-        c.getCommits(testTableId, tableUri, Optional.empty(), Optional.empty())
-      }
-    }
-  }
-
-  // --------------- unsupported operations ---------------
-
-  test("finalizeCreate throws UnsupportedOperationException") {
+  test("getCommits throws UnsupportedOperationException") {
     withClient { c =>
       intercept[UnsupportedOperationException] {
-        c.finalizeCreate("t", "c", "s", "loc", Collections.emptyList(), Collections.emptyMap())
+        c.getCommits(testTableId, new URI("s3://b/t"), Optional.empty(), Optional.empty())
+      }
+    }
+  }
+
+  // --------------- finalizeCreate ---------------
+
+  test("finalizeCreate sends createTable request with columns and properties") {
+    var captured: String = null
+    deltaHandler = (exchange, body) => {
+      captured = body
+      sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+    }
+
+    val columns = java.util.List.of(
+      new UCClient.ColumnDef("id", "LONG", "long", """{"type":"long"}""", false, 0),
+      new UCClient.ColumnDef("name", "STRING", "string", """{"type":"string"}""", true, 1))
+    val props = new java.util.HashMap[String, String]()
+    props.put("delta.minReaderVersion", "1")
+
+    withClient { c =>
+      c.finalizeCreate("my_table", testCatalog, testSchema, "s3://bucket/tbl", columns, props)
+    }
+
+    val json = objectMapper.readTree(captured)
+    assert(json.get("name").asText() === "my_table")
+    assert(json.get("location").asText() === "s3://bucket/tbl")
+    assert(json.get("properties").get("delta.minReaderVersion").asText() === "1")
+
+    val fields = json.get("columns").get("fields")
+    assert(fields.size() === 2)
+    assert(fields.get(0).get("name").asText() === "id")
+    assert(fields.get(0).get("nullable").asBoolean() === false)
+    assert(fields.get(1).get("name").asText() === "name")
+    assert(fields.get(1).get("nullable").asBoolean() === true)
+  }
+
+  test("finalizeCreate throws CommitFailedException on server error") {
+    deltaHandler = (exchange, _) =>
+      sendJson(exchange, HttpStatus.SC_INTERNAL_SERVER_ERROR, """{"error":"fail"}""")
+
+    withClient { c =>
+      val e = intercept[CommitFailedException] {
+        c.finalizeCreate("t", testCatalog, testSchema, "s3://b/t",
+          Collections.emptyList(), Collections.emptyMap())
+      }
+      assert(e.getRetryable)
+    }
+  }
+
+  test("finalizeCreate validates required parameters") {
+    withClient { c =>
+      intercept[NullPointerException] {
+        c.finalizeCreate(null, "c", "s", "loc", Collections.emptyList(), Collections.emptyMap())
+      }
+      intercept[NullPointerException] {
+        c.finalizeCreate("t", null, "s", "loc", Collections.emptyList(), Collections.emptyMap())
       }
     }
   }
