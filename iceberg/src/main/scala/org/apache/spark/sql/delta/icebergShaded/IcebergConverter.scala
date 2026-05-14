@@ -646,7 +646,7 @@ class IcebergConverter
             icebergTxn.getNullHelper
           case _ =>
             recordDeltaEvent(
-              targetSnapshot.deltaLog,
+              targetSnapshot,
               "delta.iceberg.conversion.unsupportedActions",
               data = Map(
                 "version" -> targetSnapshot.version,
@@ -670,7 +670,7 @@ class IcebergConverter
         }
     }
     recordDeltaEvent(
-      targetSnapshot.deltaLog,
+      targetSnapshot,
       "delta.iceberg.conversion.convertActions",
       data = Map(
         "version" -> targetSnapshot.version,

@@ -94,6 +94,68 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
         "Expected DELTA_MISSING_CHANGE_DATA error class");
   }
 
+  @Test
+  public void testValidateCDFEnabled_passesWhenEnabledAtStartVersionEqualToInit(
+      @TempDir File tempDir) {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "test_cdf_init_version_" + System.nanoTime();
+    createEmptyTestTable(tablePath, tableName);
+    sql("ALTER TABLE %s SET TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')", tableName);
+    sql("INSERT INTO %s VALUES (1, 'User1')", tableName);
+
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
+    SparkMicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+
+    long initVersion = snapshotManager.loadLatestSnapshot().getVersion();
+    assertDoesNotThrow(() -> stream.validateCDFEnabledOnTable(initVersion));
+  }
+
+  @Test
+  public void testValidateCDFEnabled_throwsWhenCDFOffAtStartVersionButOnAtInit(
+      @TempDir File tempDir) {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "test_cdf_off_at_start_" + System.nanoTime();
+    // v0: CREATE (CDF off). v1: INSERT (CDF still off). v2: ALTER enable CDF. v3: INSERT.
+    createEmptyTestTable(tablePath, tableName);
+    sql("INSERT INTO %s VALUES (1, 'User1')", tableName);
+    sql("ALTER TABLE %s SET TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')", tableName);
+    sql("INSERT INTO %s VALUES (2, 'User2')", tableName);
+
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
+    SparkMicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+
+    // Init snapshot has CDF=on (v3), but startVersion=0 had CDF=off. The check must use the
+    // metadata at startVersion, not at source-init time.
+    RuntimeException exception =
+        assertThrows(RuntimeException.class, () -> stream.validateCDFEnabledOnTable(0L));
+    Throwable cause = exception.getCause() != null ? exception.getCause() : exception;
+    assertInstanceOf(AnalysisException.class, cause);
+    assertEquals("DELTA_MISSING_CHANGE_DATA", ((AnalysisException) cause).getErrorClass());
+  }
+
+  @Test
+  public void testValidateCDFEnabled_swallowsForUnmaterializedStartVersion(@TempDir File tempDir) {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "test_cdf_future_version_" + System.nanoTime();
+    createEmptyTestTable(tablePath, tableName);
+    sql("ALTER TABLE %s SET TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')", tableName);
+    sql("INSERT INTO %s VALUES (1, 'User1')", tableName);
+
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
+    SparkMicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+    long latestVersion = snapshotManager.loadLatestSnapshot().getVersion();
+
+    // startingVersion=latest resolves to latest+1, which is not materialized. The KernelException
+    // is swallowed and the validator returns without throwing.
+    assertDoesNotThrow(() -> stream.validateCDFEnabledOnTable(latestVersion + 1));
+  }
+
   private static final SparkMicroBatchStreamTest.ScenarioSetup CDC_TWO_INSERT_SETUP =
       (tableName, tempDir) -> {
         sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2')", tableName);

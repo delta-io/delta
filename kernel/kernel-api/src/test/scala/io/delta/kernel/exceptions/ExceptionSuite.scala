@@ -95,4 +95,92 @@ class ExceptionSuite extends AnyFunSuite {
     assert(ex.getMessage.contains("Requested table changes between [5, Optional[10]]"))
     assert(ex.getMessage.contains("no log files found"))
   }
+
+  // KernelEngineException and KernelException are siblings (both extend RuntimeException), not
+  // parent/child. Without an explicit catch clause, wrapEngineException's `catch (KernelException)`
+  // fast-path doesn't match a KernelEngineException, so the outer call re-wraps an already-wrapped
+  // engine exception into another KernelEngineException - hiding the original cause one extra
+  // level deep and breaking consumers that intentionally inspect only the direct cause, such as
+  // Spark streaming interrupt handling. These tests pin the "don't double-wrap" behavior.
+  test("wrapEngineException does not double-wrap an already-wrapped KernelEngineException") {
+    val root = new ClassCastException("root cause")
+    val inner = new KernelEngineException("inner op", root)
+
+    val outer = intercept[KernelEngineException] {
+      DeltaErrors.wrapEngineException[Unit](
+        () => throw inner,
+        "outer op")
+    }
+
+    // Must be the same instance - not re-wrapped.
+    assert(outer eq inner)
+    assert(outer.getCause eq root)
+  }
+
+  test(
+    "wrapEngineExceptionThrowsIO does not double-wrap an already-wrapped KernelEngineException") {
+    val root = new java.nio.channels.ClosedByInterruptException()
+    val inner = new KernelEngineException("inner op", root)
+
+    val outer = intercept[KernelEngineException] {
+      DeltaErrors.wrapEngineExceptionThrowsIO[Unit](
+        () => throw inner,
+        "outer op")
+    }
+
+    assert(outer eq inner)
+    assert(outer.getCause eq root)
+  }
+
+  test("wrapEngineException rethrows KernelException as the same instance") {
+    val inner = new KernelException("kernel error")
+
+    val outer = intercept[KernelException] {
+      DeltaErrors.wrapEngineException[Unit](
+        () => throw inner,
+        "outer op")
+    }
+
+    assert(outer eq inner)
+  }
+
+  test("wrapEngineExceptionThrowsIO rethrows KernelException as the same instance") {
+    val inner = new KernelException("kernel error")
+
+    val outer = intercept[KernelException] {
+      DeltaErrors.wrapEngineExceptionThrowsIO[Unit](
+        () => throw inner,
+        "outer op")
+    }
+
+    assert(outer eq inner)
+  }
+
+  test("wrapEngineException still wraps plain RuntimeException") {
+    val root = new IllegalStateException("some engine bug")
+
+    val wrapped = intercept[KernelEngineException] {
+      DeltaErrors.wrapEngineException[Unit](
+        () => throw root,
+        "outer op %s",
+        "arg")
+    }
+
+    assert(wrapped.getCause eq root)
+    assert(wrapped.getMessage.contains("outer op arg"))
+  }
+
+  test("wrapEngineExceptionThrowsIO still wraps plain RuntimeException") {
+    val root = new IllegalStateException("some engine bug")
+
+    val wrapped = intercept[KernelEngineException] {
+      DeltaErrors.wrapEngineExceptionThrowsIO[Unit](
+        () => throw root,
+        "outer op %s",
+        "arg")
+    }
+
+    assert(wrapped.getCause eq root)
+    assert(wrapped.getMessage.contains("outer op arg"))
+  }
 }

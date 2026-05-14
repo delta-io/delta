@@ -1356,7 +1356,7 @@
       },
       "CONFIG_NOT_ENABLED" : {
         "message" : [
-          "IcebergCompatV<version> requires the config <config> to be enabled."
+          "IcebergCompatV<version> is not enabled in this environment."
         ]
       },
       "DELETION_VECTORS_NOT_PURGED" : {

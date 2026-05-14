@@ -3625,10 +3625,10 @@ trait DeltaErrorsBase
   }
 
   def icebergCompatConfigNotEnabled(
-      version: Int, conf: String): Throwable = {
+      version: Int): Throwable = {
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.CONFIG_NOT_ENABLED",
-      messageParameters = Array(version.toString, version.toString, conf)
+      messageParameters = Array(version.toString, version.toString)
     )
   }
 

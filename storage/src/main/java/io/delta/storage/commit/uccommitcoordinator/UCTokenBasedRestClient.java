@@ -20,6 +20,7 @@ import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.CommitFailedException;
 import io.delta.storage.commit.CoordinatedCommitsUtils;
 import io.delta.storage.commit.GetCommitsResponse;
+import io.delta.storage.commit.TableIdentifier;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
 import io.delta.storage.commit.uniform.IcebergMetadata;
@@ -153,10 +154,12 @@ public class UCTokenBasedRestClient implements UCClient {
   public void commit(
       String tableId,
       URI tableUri,
+      TableIdentifier tableIdentifier,
       Optional<Commit> commit,
       Optional<Long> lastKnownBackfilledVersion,
-      boolean disown,
+      Optional<AbstractMetadata> oldMetadata,
       Optional<AbstractMetadata> newMetadata,
+      Optional<AbstractProtocol> oldProtocol,
       Optional<AbstractProtocol> newProtocol,
       Optional<UniformMetadata> uniform
   ) throws IOException, CommitFailedException, UCCommitCoordinatorException {
@@ -182,8 +185,8 @@ public class UCTokenBasedRestClient implements UCClient {
     uniform.flatMap(u -> u.getIcebergMetadata().map(this::toDeltaUniformIceberg))
         .ifPresent(iceberg -> deltaCommit.uniform(new DeltaUniform().iceberg(iceberg)));
 
-    // Note: protocol and disown are not part of the DeltaCommit schema in the Unity Catalog
-    // OpenAPI spec. They are intentionally not sent.
+    // Note: tableIdentifier, oldMetadata, oldProtocol, and newProtocol are not part of the
+    // DeltaCommit schema in the Unity Catalog OpenAPI spec. They are intentionally not sent.
 
     try {
       deltaCommitsApi.commit(deltaCommit);

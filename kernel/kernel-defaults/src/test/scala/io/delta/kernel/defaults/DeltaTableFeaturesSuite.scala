@@ -420,6 +420,7 @@ trait DeltaTableFeaturesSuiteBase extends AnyFunSuite with AbstractWriteUtils {
       val protocolV0 = getProtocol(engine, tablePath)
       assert(!protocolV0.supportsFeature(TableFeatures.VARIANT_SHREDDING_PREVIEW_RW_FEATURE))
       assert(protocolV0.supportsFeature(TableFeatures.VARIANT_SHREDDING_RW_FEATURE))
+      assert(protocolV0.supportsFeature(TableFeatures.VARIANT_RW_FEATURE))
 
       updateTableMetadata(
         engine = engine,
@@ -436,6 +437,7 @@ trait DeltaTableFeaturesSuiteBase extends AnyFunSuite with AbstractWriteUtils {
       val protocolV0 = getProtocol(engine, tablePath)
       assert(!protocolV0.supportsFeature(TableFeatures.VARIANT_SHREDDING_PREVIEW_RW_FEATURE))
       assert(!protocolV0.supportsFeature(TableFeatures.VARIANT_SHREDDING_RW_FEATURE))
+      assert(!protocolV0.supportsFeature(TableFeatures.VARIANT_RW_FEATURE))
 
       updateTableMetadata(
         engine = engine,
@@ -444,6 +446,7 @@ trait DeltaTableFeaturesSuiteBase extends AnyFunSuite with AbstractWriteUtils {
       val protocolV1 = getProtocol(engine, tablePath)
       assert(!protocolV1.supportsFeature(TableFeatures.VARIANT_SHREDDING_PREVIEW_RW_FEATURE))
       assert(protocolV1.supportsFeature(TableFeatures.VARIANT_SHREDDING_RW_FEATURE))
+      assert(protocolV1.supportsFeature(TableFeatures.VARIANT_RW_FEATURE))
     }
   }
 
@@ -458,6 +461,7 @@ trait DeltaTableFeaturesSuiteBase extends AnyFunSuite with AbstractWriteUtils {
       val protocolV0 = getProtocol(engine, tablePath)
       require(protocolV0.supportsFeature(TableFeatures.VARIANT_SHREDDING_PREVIEW_RW_FEATURE))
       require(!protocolV0.supportsFeature(TableFeatures.VARIANT_SHREDDING_RW_FEATURE))
+      require(protocolV0.supportsFeature(TableFeatures.VARIANT_RW_FEATURE))
 
       updateTableMetadata(
         engine = engine,
@@ -466,6 +470,7 @@ trait DeltaTableFeaturesSuiteBase extends AnyFunSuite with AbstractWriteUtils {
       val protocolV1 = getProtocol(engine, tablePath)
       assert(protocolV1.supportsFeature(TableFeatures.VARIANT_SHREDDING_PREVIEW_RW_FEATURE))
       assert(!protocolV1.supportsFeature(TableFeatures.VARIANT_SHREDDING_RW_FEATURE))
+      assert(protocolV1.supportsFeature(TableFeatures.VARIANT_RW_FEATURE))
     }
   }
   test("both variantShredding and variantShredding-preview can coexist") {
@@ -481,6 +486,7 @@ trait DeltaTableFeaturesSuiteBase extends AnyFunSuite with AbstractWriteUtils {
       val protocol = getProtocol(engine, tablePath)
       assert(protocol.supportsFeature(TableFeatures.VARIANT_SHREDDING_RW_FEATURE))
       assert(protocol.supportsFeature(TableFeatures.VARIANT_SHREDDING_PREVIEW_RW_FEATURE))
+      assert(protocol.supportsFeature(TableFeatures.VARIANT_RW_FEATURE))
     }
   }
   /* ---- End: variant shredding tests ---- */

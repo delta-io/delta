@@ -15,6 +15,7 @@
  */
 package io.delta.spark.internal.v2.read;
 
+import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.actions.AddCDCFile;
 import io.delta.kernel.internal.actions.AddFile;
@@ -30,6 +31,8 @@ public class CDCDataFile {
   @Nullable private final AddFile addFile;
   @Nullable private final RemoveFile removeFile;
   private final boolean isAddCDCFile;
+  @Nullable private final String cdcPath;
+  @Nullable private final MapValue cdcPartitionValues;
   @Nullable private final String changeType;
   private final long commitTimestamp;
   private final long fileSize;
@@ -38,12 +41,16 @@ public class CDCDataFile {
       @Nullable AddFile addFile,
       @Nullable RemoveFile removeFile,
       boolean isAddCDCFile,
+      @Nullable String cdcPath,
+      @Nullable MapValue cdcPartitionValues,
       @Nullable String changeType,
       long commitTimestamp,
       long fileSize) {
     this.addFile = addFile;
     this.removeFile = removeFile;
     this.isAddCDCFile = isAddCDCFile;
+    this.cdcPath = cdcPath;
+    this.cdcPartitionValues = cdcPartitionValues;
     this.changeType = changeType;
     this.commitTimestamp = commitTimestamp;
     this.fileSize = fileSize;
@@ -55,6 +62,8 @@ public class CDCDataFile {
         addFile,
         /* removeFile= */ null,
         /* isAddCDCFile= */ false,
+        /* cdcPath= */ null,
+        /* cdcPartitionValues= */ null,
         CDCReader.CDC_TYPE_INSERT(),
         commitTimestamp,
         addFile.getSize());
@@ -66,6 +75,8 @@ public class CDCDataFile {
         /* addFile= */ null,
         removeFile,
         /* isAddCDCFile= */ false,
+        /* cdcPath= */ null,
+        /* cdcPartitionValues= */ null,
         CDCReader.CDC_TYPE_DELETE_STRING(),
         commitTimestamp,
         removeFile.getSize().orElse(0L));
@@ -73,11 +84,15 @@ public class CDCDataFile {
 
   /** Create a CDCDataFile for an explicit AddCDCFile action. */
   public static CDCDataFile fromAddCDCFile(Row cdcRow, long commitTimestamp) {
+    String path = cdcRow.getString(AddCDCFile.FULL_SCHEMA.indexOf("path"));
+    MapValue partitionValues = cdcRow.getMap(AddCDCFile.FULL_SCHEMA.indexOf("partitionValues"));
     long size = cdcRow.getLong(AddCDCFile.FULL_SCHEMA.indexOf("size"));
     return new CDCDataFile(
         /* addFile= */ null,
         /* removeFile= */ null,
         /* isAddCDCFile= */ true,
+        /* cdcPath= */ path,
+        /* cdcPartitionValues= */ partitionValues,
         /* changeType= */ null,
         commitTimestamp,
         size);
@@ -91,6 +106,28 @@ public class CDCDataFile {
   @Nullable
   public RemoveFile getRemoveFile() {
     return removeFile;
+  }
+
+  /** Returns the file path for any CDC file variant. */
+  public String getPath() {
+    if (addFile != null) {
+      return addFile.getPath();
+    } else if (removeFile != null) {
+      return removeFile.getPath();
+    } else {
+      return cdcPath;
+    }
+  }
+
+  /**
+   * Returns the partition values for any CDC file variant. May be null for RemoveFile when
+   * extendedFileMetadata is not present.
+   */
+  @Nullable
+  public MapValue getPartitionValues() {
+    if (addFile != null) return addFile.getPartitionValues();
+    if (removeFile != null) return removeFile.getPartitionValues().orElse(null);
+    return cdcPartitionValues;
   }
 
   @Nullable
