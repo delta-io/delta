@@ -380,20 +380,32 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   }
 
   private UCDeltaModels.DeltaProtocol toDeltaProtocol(StagingTableResponseRequiredProtocol p) {
-    if (p == null) return null;
+    if (p == null) {
+      return null;
+    }
     UCDeltaModels.DeltaProtocol protocol = new UCDeltaModels.DeltaProtocol()
         .minReaderVersion(p.getMinReaderVersion())
         .minWriterVersion(p.getMinWriterVersion());
-    if (p.getReaderFeatures() != null) protocol.readerFeatures(p.getReaderFeatures());
-    if (p.getWriterFeatures() != null) protocol.writerFeatures(p.getWriterFeatures());
+    if (p.getReaderFeatures() != null) {
+      protocol.readerFeatures(p.getReaderFeatures());
+    }
+    if (p.getWriterFeatures() != null) {
+      protocol.writerFeatures(p.getWriterFeatures());
+    }
     return protocol;
   }
 
   private UCDeltaModels.DeltaProtocol toDeltaProtocol(StagingTableResponseSuggestedProtocol p) {
-    if (p == null) return null;
+    if (p == null) {
+      return null;
+    }
     UCDeltaModels.DeltaProtocol protocol = new UCDeltaModels.DeltaProtocol();
-    if (p.getReaderFeatures() != null) protocol.readerFeatures(p.getReaderFeatures());
-    if (p.getWriterFeatures() != null) protocol.writerFeatures(p.getWriterFeatures());
+    if (p.getReaderFeatures() != null) {
+      protocol.readerFeatures(p.getReaderFeatures());
+    }
+    if (p.getWriterFeatures() != null) {
+      protocol.writerFeatures(p.getWriterFeatures());
+    }
     return protocol;
   }
 
@@ -425,19 +437,6 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     return protocol;
   }
 
-  private DeltaProtocol toSDKDeltaProtocol(UCDeltaModels.DeltaProtocol p) {
-    DeltaProtocol protocol = new DeltaProtocol()
-        .minReaderVersion(p.getMinReaderVersion())
-        .minWriterVersion(p.getMinWriterVersion());
-    if (!p.getReaderFeatures().isEmpty()) {
-      protocol.readerFeatures(p.getReaderFeatures());
-    }
-    if (!p.getWriterFeatures().isEmpty()) {
-      protocol.writerFeatures(p.getWriterFeatures());
-    }
-    return protocol;
-  }
-
   private UniformMetadata toSDKUniformMetadata(
       io.delta.storage.commit.uniform.UniformMetadata uniform) {
     UniformMetadata ucUniform = new UniformMetadata();
@@ -459,7 +458,9 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
    * millis) and ISO-8601 datetime strings (e.g. "2025-01-04T03:13:11.423Z").
    */
   private Long parseTimestampToEpochMs(String timestamp) {
-    if (timestamp == null) return null;
+    if (timestamp == null) {
+      return null;
+    }
     try {
       return Long.parseLong(timestamp);
     } catch (NumberFormatException e) {
@@ -582,8 +583,11 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   // Inner Classes
   // ===========================
 
-  /** Adapts a UC SDK {@link TableMetadata} to {@link AbstractMetadata}. */
+  /**
+   * Adapts a UC SDK {@link TableMetadata} to {@link AbstractMetadata}.
+   */
   private static final class DeltaTableMetadata implements AbstractMetadata {
+
     private final String name;
     private final TableMetadata m;
 
@@ -592,25 +596,50 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       this.m = m;
     }
 
-    @Override public String getId() {
+    @Override
+    public String getId() {
       return m.getTableUuid() != null ? m.getTableUuid().toString() : null;
     }
-    @Override public String getName() { return name; }
-    @Override public String getDescription() { return null; }
-    @Override public String getProvider() {
+
+    @Override
+    public String getName() {
+      return name;
+    }
+
+    @Override
+    public String getDescription() {
+      return null;
+    }
+
+    @Override
+    public String getProvider() {
       return m.getDataSourceFormat() != null ? m.getDataSourceFormat().getValue() : null;
     }
-    @Override public Map<String, String> getFormatOptions() { return Collections.emptyMap(); }
-    @Override public String getSchemaString() {
+
+    @Override
+    public Map<String, String> getFormatOptions() {
+      return Collections.emptyMap();
+    }
+
+    @Override
+    public String getSchemaString() {
       return m.getColumns() != null ? m.getColumns().toString() : null;
     }
-    @Override public List<String> getPartitionColumns() {
+
+    @Override
+    public List<String> getPartitionColumns() {
       return m.getPartitionColumns() != null
           ? m.getPartitionColumns() : Collections.emptyList();
     }
-    @Override public Map<String, String> getConfiguration() {
+
+    @Override
+    public Map<String, String> getConfiguration() {
       return m.getProperties() != null ? m.getProperties() : Collections.emptyMap();
     }
-    @Override public Long getCreatedTime() { return m.getCreatedTime(); }
+
+    @Override
+    public Long getCreatedTime() {
+      return m.getCreatedTime();
+    }
   }
 }

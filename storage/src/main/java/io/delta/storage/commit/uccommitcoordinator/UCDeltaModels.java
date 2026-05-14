@@ -16,10 +16,12 @@
 
 package io.delta.storage.commit.uccommitcoordinator;
 
-import java.util.ArrayList;
+import io.delta.storage.commit.actions.AbstractProtocol;
+import java.util.Collection;
 import java.util.Collections;
-import java.util.List;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Delta-owned models for the UC Delta REST Catalog API. These decouple the
@@ -33,19 +35,35 @@ public final class UCDeltaModels {
     EXTERNAL
   }
 
-  public static class DeltaProtocol {
+  public static class DeltaProtocol implements AbstractProtocol {
     private int minReaderVersion;
     private int minWriterVersion;
-    private final List<String> readerFeatures = new ArrayList<>();
-    private final List<String> writerFeatures = new ArrayList<>();
+    private final Set<String> readerFeatures = new HashSet<>();
+    private final Set<String> writerFeatures = new HashSet<>();
+
+    @Override
+    public int getMinReaderVersion() {
+      return minReaderVersion;
+    }
+
+    @Override
+    public int getMinWriterVersion() {
+      return minWriterVersion;
+    }
+
+    @Override
+    public Set<String> getReaderFeatures() {
+      return readerFeatures;
+    }
+
+    @Override
+    public Set<String> getWriterFeatures() {
+      return writerFeatures;
+    }
 
     public DeltaProtocol minReaderVersion(int minReaderVersion) {
       this.minReaderVersion = minReaderVersion;
       return this;
-    }
-
-    public int getMinReaderVersion() {
-      return minReaderVersion;
     }
 
     public DeltaProtocol minWriterVersion(int minWriterVersion) {
@@ -53,26 +71,14 @@ public final class UCDeltaModels {
       return this;
     }
 
-    public int getMinWriterVersion() {
-      return minWriterVersion;
-    }
-
-    public DeltaProtocol readerFeatures(List<String> newReaderFeatures) {
-      readerFeatures.addAll(newReaderFeatures);
+    public DeltaProtocol readerFeatures(Collection<String> readerFeatures) {
+      this.readerFeatures.addAll(readerFeatures);
       return this;
     }
 
-    public List<String> getReaderFeatures() {
-      return readerFeatures;
-    }
-
-    public DeltaProtocol writerFeatures(List<String> newWriterFeatures) {
-      this.writerFeatures.addAll(newWriterFeatures);
+    public DeltaProtocol writerFeatures(Collection<String> writerFeatures) {
+      this.writerFeatures.addAll(writerFeatures);
       return this;
-    }
-
-    public List<String> getWriterFeatures() {
-      return writerFeatures;
     }
   }
 
