@@ -354,6 +354,68 @@ class UCDeltaTokenBasedRestClientSuite
     }
   }
 
+  // --------------- createStagingTable ---------------
+
+  test("createStagingTable sends request and converts response fields") {
+    var captured: String = null
+    val stagingJson =
+      s"""{
+         |  "table-id":"$testTableId",
+         |  "table-type":"MANAGED",
+         |  "location":"s3://bucket/staging",
+         |  "required-protocol":{
+         |    "min-reader-version":3,"min-writer-version":7,
+         |    "reader-features":["columnMapping"],
+         |    "writer-features":["columnMapping","v2Checkpoint"]
+         |  },
+         |  "suggested-protocol":{"reader-features":["deletionVectors"]},
+         |  "required-properties":{"delta.enableChangeDataFeed":"true"},
+         |  "suggested-properties":{"delta.autoOptimize.optimizeWrite":"true"}
+         |}""".stripMargin
+
+    deltaHandler = (exchange, body) => {
+      captured = body
+      sendJson(exchange, HttpStatus.SC_OK, stagingJson)
+    }
+
+    withClient { c =>
+      val info = c.createStagingTable(testCatalog, testSchema, testTable)
+
+      // verify request body
+      val req = objectMapper.readTree(captured)
+      assert(req.get("name").asText() === testTable)
+
+      // verify all response fields converted
+      assert(info.getTableId === testTableId)
+      assert(info.getTableType === UCDeltaModels.TableType.MANAGED)
+      assert(info.getLocation === "s3://bucket/staging")
+
+      val rp = info.getRequiredProtocol
+      assert(rp.getMinReaderVersion === 3)
+      assert(rp.getMinWriterVersion === 7)
+      assert(rp.getReaderFeatures.contains("columnMapping"))
+      assert(rp.getWriterFeatures.size() === 2)
+
+      val sp = info.getSuggestedProtocol
+      assert(sp.getReaderFeatures.contains("deletionVectors"))
+      assert(sp.getWriterFeatures.isEmpty)
+
+      assert(info.getRequiredProperties.get("delta.enableChangeDataFeed") === "true")
+      assert(info.getSuggestedProperties.get("delta.autoOptimize.optimizeWrite") === "true")
+    }
+  }
+
+  test("createStagingTable throws IOException on server error") {
+    deltaHandler = (exchange, _) =>
+      sendJson(exchange, HttpStatus.SC_INTERNAL_SERVER_ERROR, """{"error":"fail"}""")
+    withClient { c =>
+      val e = intercept[java.io.IOException] {
+        c.createStagingTable(testCatalog, testSchema, testTable)
+      }
+      assert(e.getMessage.contains("HTTP 500"))
+    }
+  }
+
   // --------------- getCommits ---------------
 
   test("getCommits throws UnsupportedOperationException") {
