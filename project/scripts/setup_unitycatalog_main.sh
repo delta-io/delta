@@ -89,7 +89,7 @@ if [[ "${1:-}" == "--print-version" ]]; then
   exit 0
 fi
 
-# Canonical Ivy + Maven artifact paths. Delta depends on all three UC modules; sbt resolves from
+# Canonical Ivy + Maven artifact paths. Delta depends on these UC modules; sbt resolves from
 # ~/.ivy2/local, mvn (kernel-examples integration tests) resolves from ~/.m2/repository. If any
 # is missing in either layout we must re-publish.
 IVY_LOCAL="$HOME/.ivy2/local/io.unitycatalog"
@@ -118,24 +118,26 @@ if [[ "$UC_FORCE" != "1" ]] && all_canaries_present; then
   exit 0
 fi
 
-echo ">>> Fetching Unity Catalog main from $UC_REPO"
+echo ">>> Fetching Unity Catalog from $UC_REPO"
 rm -rf "$UC_DIR"
 mkdir -p "$UC_DIR"
-# Fetch main's full history so we can run `git merge-base --is-ancestor` below to verify the
-# pinned SHA is actually on main. UC's repo is small; full fetch of one branch is cheap.
+# Fetch the target branch so we can verify the pinned SHA is reachable.
 git -C "$UC_DIR" init --quiet
 git -C "$UC_DIR" remote add origin "$UC_REPO"
-git -C "$UC_DIR" fetch --quiet origin main
+if [[ "$UC_REF" == "main" ]]; then
+  git -C "$UC_DIR" fetch --quiet origin main
+else
+  git -C "$UC_DIR" fetch --quiet origin "$UC_PIN_SHA"
+fi
 
 cd "$UC_DIR"
 
-# Safety check: the pinned SHA must be reachable from UC main. Local `merge-base --is-ancestor`
+# Safety check: the pinned SHA must be reachable from the fetched branch. Local `merge-base --is-ancestor`
 # on the history we just fetched - no GitHub API, no token needed. Only applies when UC_REF is
 # the pinned SHA; UC_REF=main is trivially on main.
 if [[ "$UC_REF" == "$UC_PIN_SHA" ]]; then
-  if ! git merge-base --is-ancestor "$UC_PIN_SHA" origin/main 2>/dev/null; then
-    echo "ERROR: UC_PIN_SHA=$UC_PIN_SHA is not reachable from unitycatalog/unitycatalog main." >&2
-    echo "       Pin must reference a commit on https://github.com/unitycatalog/unitycatalog/commits/main" >&2
+  if ! git rev-parse --verify "$UC_PIN_SHA^{commit}" >/dev/null 2>&1; then
+    echo "ERROR: UC_PIN_SHA=$UC_PIN_SHA could not be fetched from $UC_REPO." >&2
     exit 1
   fi
 fi
@@ -161,7 +163,7 @@ fi
 # coordinate. Applied as a persistent setting so it sticks across the two sbt invocations below.
 SET_VERSION_CMD="set ThisBuild / version := \"$UC_VERSION\""
 
-echo ">>> Building and publishing UC client + server to local Maven repo"
+echo ">>> Building and publishing UC client + server + hadoop to local Maven repo"
 ./build/sbt \
   "$SET_VERSION_CMD" \
   "set client / Compile / packageDoc / publishArtifact := false" \

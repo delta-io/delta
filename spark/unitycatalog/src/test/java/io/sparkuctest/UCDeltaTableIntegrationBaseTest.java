@@ -144,7 +144,10 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     String catalogName = uc.catalogName();
     return conf.set("spark.sql.catalog." + catalogName, "io.unitycatalog.spark.UCSingleCatalog")
         .set("spark.sql.catalog." + catalogName + ".uri", uc.serverUri())
-        .set("spark.sql.catalog." + catalogName + ".token", uc.serverToken());
+        .set("spark.sql.catalog." + catalogName + ".token", uc.serverToken())
+        .set(
+            "spark.sql.catalog." + catalogName + ".deltaRestApi.enabled",
+            String.valueOf(isUCDeltaRestCatalogApiEnabled()));
   }
 
   /** Stop the SparkSession after all tests. */

@@ -340,8 +340,22 @@ lazy val sparkV1 = (project in file("spark"))
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
       // For DynamoDBCommitStore
-      "com.amazonaws" % "aws-java-sdk" % "1.12.262" % "provided",
-
+      "com.amazonaws" % "aws-java-sdk" % "1.12.262" % "provided"
+    ) ++ {
+      if (unityCatalogVersion >= "0.5.0") {
+        Seq(
+          "io.unitycatalog" % "unitycatalog-hadoop" % unityCatalogVersion excludeAll(
+            ExclusionRule(organization = "org.openapitools"),
+            ExclusionRule(organization = "com.fasterxml.jackson.core"),
+            ExclusionRule(organization = "com.fasterxml.jackson.module"),
+            ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
+            ExclusionRule(organization = "com.fasterxml.jackson.dataformat")
+          )
+        )
+      } else {
+        Seq.empty
+      }
+    } ++ Seq(
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "org.scalatestplus" %% "scalacheck-1-15" % "3.2.9.0" % "test",
@@ -660,8 +674,22 @@ lazy val spark = (project in file("spark-unified"))
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
-      "com.amazonaws" % "aws-java-sdk" % "1.12.262" % "provided",
-
+      "com.amazonaws" % "aws-java-sdk" % "1.12.262" % "provided"
+    ) ++ {
+      if (unityCatalogVersion >= "0.5.0") {
+        Seq(
+          "io.unitycatalog" % "unitycatalog-hadoop" % unityCatalogVersion excludeAll(
+            ExclusionRule(organization = "org.openapitools"),
+            ExclusionRule(organization = "com.fasterxml.jackson.core"),
+            ExclusionRule(organization = "com.fasterxml.jackson.module"),
+            ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
+            ExclusionRule(organization = "com.fasterxml.jackson.dataformat")
+          )
+        )
+      } else {
+        Seq.empty
+      }
+    } ++ Seq(
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "org.scalatestplus" %% "scalacheck-1-15" % "3.2.9.0" % "test",
       "junit" % "junit" % "4.13.2" % "test",
@@ -669,7 +697,17 @@ lazy val spark = (project in file("spark-unified"))
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
-      "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests"
+    ) ++ {
+      if (unityCatalogVersion >= "0.5.0") {
+        Seq(
+          // unitycatalog-hadoop references the ABFS token-provider interface during classloading.
+          "org.apache.hadoop" % "hadoop-azure" % hadoopVersion % "test"
+        )
+      } else {
+        Seq.empty
+      }
+    } ++ Seq(
       "org.mockito" % "mockito-inline" % "4.11.0" % "test",
     ),
 
@@ -843,13 +881,19 @@ Global / ensurePinnedUnityCatalog := {
     val home = file(sys.props("user.home"))
     // Check both layouts: a restored sbt cache can pre-populate ivy alone, leaving m2 empty -
     // checking only ivy would silently skip the slow publish and break mvn-based consumers.
-    val ivy2Canary = home / ".ivy2" / "local" / "io.unitycatalog" /
+    val ivy2ClientCanary = home / ".ivy2" / "local" / "io.unitycatalog" /
       "unitycatalog-client" / unityCatalogVersion / "ivys" / "ivy.xml"
-    val m2Canary = home / ".m2" / "repository" / "io" / "unitycatalog" /
+    val m2ClientCanary = home / ".m2" / "repository" / "io" / "unitycatalog" /
       "unitycatalog-client" / unityCatalogVersion /
       s"unitycatalog-client-$unityCatalogVersion.pom"
-    if (!ivy2Canary.exists || !m2Canary.exists) {
-      publishPinnedUnityCatalog(log, ivy2Canary)
+    val ivy2HadoopCanary = home / ".ivy2" / "local" / "io.unitycatalog" /
+      "unitycatalog-hadoop" / unityCatalogVersion / "ivys" / "ivy.xml"
+    val m2HadoopCanary = home / ".m2" / "repository" / "io" / "unitycatalog" /
+      "unitycatalog-hadoop" / unityCatalogVersion /
+      s"unitycatalog-hadoop-$unityCatalogVersion.pom"
+    if (!Seq(ivy2ClientCanary, m2ClientCanary, ivy2HadoopCanary, m2HadoopCanary)
+        .forall(_.exists)) {
+      publishPinnedUnityCatalog(log, ivy2ClientCanary)
     }
   }
 }
