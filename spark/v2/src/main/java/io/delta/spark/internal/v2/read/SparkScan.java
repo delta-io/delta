@@ -340,6 +340,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
       return new Statistics() {
         @Override
         public OptionalLong sizeInBytes() {
+          // Planned file size is authoritative (even if 0 for an empty table)
           return OptionalLong.of(plannedBytes);
         }
 
@@ -356,11 +357,14 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
         @Override
         public Map<NamedReference, ColumnStatistics> columnStats() {
+          // TODO: After partition pruning, column stats (e.g. min, max, nullCount,
+          //  distinctCount) could be tightened based on the pruned file-level stats.
           return stats.columnStats();
         }
       };
     }
 
+    // No catalog stats available or CBO disabled — return stats from planned files only
     return new Statistics() {
       @Override
       public OptionalLong sizeInBytes() {
