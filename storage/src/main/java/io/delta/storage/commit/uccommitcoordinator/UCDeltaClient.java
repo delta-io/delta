@@ -17,8 +17,10 @@
 package io.delta.storage.commit.uccommitcoordinator;
 
 import io.delta.storage.commit.actions.AbstractMetadata;
+import io.delta.storage.commit.CommitFailedException;
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.CreateTableRequest;
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.StagingTableResponse;
+import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.UpdateTableRequest;
 
 import java.io.IOException;
 
@@ -68,5 +70,18 @@ public interface UCDeltaClient extends UCClient {
       CreateTableRequest request) throws IOException {
     throw new UnsupportedOperationException(
         "createTable requires UC Delta Rest Catalog API support.");
+  }
+
+  /**
+   * Updates a Delta table in Unity Catalog through the UC Delta Rest Catalog API.
+   */
+  default AbstractMetadata updateTable(
+      String catalog,
+      String schema,
+      String table,
+      UpdateTableRequest request)
+      throws IOException, CommitFailedException, UCCommitCoordinatorException {
+    throw new UnsupportedOperationException(
+        "updateTable requires UC Delta Rest Catalog API support.");
   }
 }

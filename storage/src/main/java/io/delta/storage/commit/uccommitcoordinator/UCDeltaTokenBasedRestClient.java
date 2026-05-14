@@ -26,11 +26,17 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import io.delta.storage.commit.actions.AbstractMetadata;
+import io.delta.storage.commit.CommitFailedException;
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.CreateTableRequest;
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.DataSourceFormat;
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.DeltaProtocol;
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.StagingTableResponse;
+import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.TableRequirement;
+import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.TableUpdate;
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.TableType;
+import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.UpdateTableRequest;
+import io.delta.storage.commit.uniform.IcebergMetadata;
+import io.delta.storage.commit.uniform.UniformMetadata;
 import io.unitycatalog.client.ApiClient;
 import io.unitycatalog.client.ApiException;
 import io.unitycatalog.client.auth.TokenProvider;
@@ -116,6 +122,9 @@ public class UCDeltaTokenBasedRestClient
   private io.unitycatalog.client.delta.api.TablesApi deltaTablesApi;
 
   private static final int HTTP_NOT_FOUND = 404;
+  private static final int HTTP_BAD_REQUEST = 400;
+  private static final int HTTP_CONFLICT = 409;
+  private static final int HTTP_TOO_MANY_REQUESTS = 429;
   private static final String UC_DELTA_API_PROTOCOL_VERSION = "1.0";
   // Endpoint identifiers advertised by the UC Delta Rest Catalog API /config endpoint, not
   // concrete URLs.
@@ -327,6 +336,32 @@ public class UCDeltaTokenBasedRestClient
     }
   }
 
+  /**
+   * Updates a Delta table in Unity Catalog through the UC Delta Rest Catalog API.
+   */
+  @Override
+  public AbstractMetadata updateTable(
+      String catalog,
+      String schema,
+      String table,
+      UpdateTableRequest request)
+      throws IOException, CommitFailedException, UCCommitCoordinatorException {
+    ensureUCDeltaRestCatalogApiSupported("updateTable");
+    Objects.requireNonNull(catalog, "catalog must not be null.");
+    Objects.requireNonNull(schema, "schema must not be null.");
+    Objects.requireNonNull(table, "table must not be null.");
+    Objects.requireNonNull(request, "request must not be null.");
+
+    try {
+      io.unitycatalog.client.delta.model.LoadTableResponse response =
+          deltaTablesApi.updateTable(catalog, schema, table, toSdkUpdateTableRequest(request));
+      return response == null ? null : toTableMetadata(table, response.getMetadata());
+    } catch (ApiException e) {
+      handleUpdateTableException(catalog, schema, table, e);
+      throw new IllegalStateException("unreachable");
+    }
+  }
+
   private static TableMetadataAdapter toTableMetadata(String tableName, TableMetadata metadata) {
     if (metadata == null) {
       return null;
@@ -387,6 +422,76 @@ public class UCDeltaTokenBasedRestClient
         .properties(request.getProperties());
     sdkRequest.lastCommitTimestampMs(request.getLastCommitTimestampMs());
     return sdkRequest;
+  }
+
+  private static io.unitycatalog.client.delta.model.UpdateTableRequest toSdkUpdateTableRequest(
+      UpdateTableRequest request) {
+    List<io.unitycatalog.client.delta.model.TableRequirement> requirements = new ArrayList<>();
+    for (TableRequirement requirement : request.getRequirements()) {
+      requirements.add(toSdkTableRequirement(requirement));
+    }
+    List<io.unitycatalog.client.delta.model.TableUpdate> updates = new ArrayList<>();
+    for (TableUpdate update : request.getUpdates()) {
+      updates.add(toSdkTableUpdate(update));
+    }
+    return new io.unitycatalog.client.delta.model.UpdateTableRequest()
+        .requirements(requirements)
+        .updates(updates);
+  }
+
+  private static io.unitycatalog.client.delta.model.TableRequirement toSdkTableRequirement(
+      TableRequirement requirement) {
+    Objects.requireNonNull(requirement, "requirement must not be null.");
+    switch (requirement.getType()) {
+      case ASSERT_TABLE_UUID:
+        return new io.unitycatalog.client.delta.model.AssertTableUUID()
+            .uuid(requirement.getUuid());
+      case ASSERT_ETAG:
+        return new io.unitycatalog.client.delta.model.AssertEtag()
+            .etag(requirement.getEtag());
+      default:
+        throw new IllegalArgumentException("Unsupported UC Delta table requirement: "
+            + requirement.getType());
+    }
+  }
+
+  private static io.unitycatalog.client.delta.model.TableUpdate toSdkTableUpdate(
+      TableUpdate update) {
+    Objects.requireNonNull(update, "update must not be null.");
+    switch (update.getAction()) {
+      case SET_PROPERTIES:
+        return new io.unitycatalog.client.delta.model.SetPropertiesUpdate()
+            .updates(update.getPropertyUpdates());
+      case REMOVE_PROPERTIES:
+        return new io.unitycatalog.client.delta.model.RemovePropertiesUpdate()
+            .removals(update.getPropertyRemovals());
+      case SET_PROTOCOL:
+        return new io.unitycatalog.client.delta.model.SetProtocolUpdate()
+            .protocol(toSdkDeltaProtocol(update.getProtocol()));
+      case SET_COLUMNS:
+        return new io.unitycatalog.client.delta.model.SetSchemaUpdate()
+            .columns(toSdkStructType(update.getSchemaString()));
+      case SET_PARTITION_COLUMNS:
+        return new io.unitycatalog.client.delta.model.SetPartitionColumnsUpdate()
+            .partitionColumns(update.getPartitionColumns());
+      case SET_TABLE_COMMENT:
+        return new io.unitycatalog.client.delta.model.SetTableCommentUpdate()
+            .comment(update.getComment());
+      case ADD_COMMIT:
+        return new io.unitycatalog.client.delta.model.AddCommitUpdate()
+            .commit(toSdkDeltaCommit(update.getCommit()))
+            .uniform(toSdkUniformMetadata(update.getUniform()));
+      case SET_LATEST_BACKFILLED_VERSION:
+        return new io.unitycatalog.client.delta.model.SetLatestBackfilledVersionUpdate()
+            .latestPublishedVersion(update.getLatestPublishedVersion());
+      case UPDATE_METADATA_SNAPSHOT_VERSION:
+        return new io.unitycatalog.client.delta.model.UpdateSnapshotVersionUpdate()
+            .lastCommitVersion(update.getLastCommitVersion())
+            .lastCommitTimestampMs(update.getLastCommitTimestampMs());
+      default:
+        throw new IllegalArgumentException("Unsupported UC Delta table update: "
+            + update.getAction());
+    }
   }
 
   private static TableType toTableType(
@@ -491,6 +596,79 @@ public class UCDeltaTokenBasedRestClient
         .minWriterVersion(protocol.getMinWriterVersion())
         .readerFeatures(protocol.getReaderFeatures())
         .writerFeatures(protocol.getWriterFeatures());
+  }
+
+  private static io.unitycatalog.client.delta.model.DeltaCommit toSdkDeltaCommit(
+      UCDeltaModels.DeltaCommit commit) {
+    if (commit == null) {
+      return null;
+    }
+    return new io.unitycatalog.client.delta.model.DeltaCommit()
+        .version(commit.getVersion())
+        .timestamp(commit.getTimestamp())
+        .fileName(commit.getFileName())
+        .fileSize(commit.getFileSize())
+        .fileModificationTimestamp(commit.getFileModificationTimestamp());
+  }
+
+  private static io.unitycatalog.client.delta.model.UniformMetadata toSdkUniformMetadata(
+      UniformMetadata uniform) {
+    if (uniform == null || !uniform.getIcebergMetadata().isPresent()) {
+      return null;
+    }
+    IcebergMetadata iceberg = uniform.getIcebergMetadata().get();
+    io.unitycatalog.client.delta.model.UniformMetadataIceberg sdkIceberg =
+        new io.unitycatalog.client.delta.model.UniformMetadataIceberg()
+            .metadataLocation(iceberg.getMetadataLocation())
+            .convertedDeltaVersion(iceberg.getConvertedDeltaVersion())
+            .convertedDeltaTimestamp(Long.parseLong(iceberg.getConvertedDeltaTimestamp()))
+            .baseConvertedDeltaVersion(iceberg.getBaseConvertedDeltaVersion().orElse(null));
+    return new io.unitycatalog.client.delta.model.UniformMetadata().iceberg(sdkIceberg);
+  }
+
+  private static void handleUpdateTableException(
+      String catalog,
+      String schema,
+      String table,
+      ApiException e)
+      throws CommitFailedException, UCCommitCoordinatorException, IOException {
+    int statusCode = e.getCode();
+    String responseBody = e.getResponseBody();
+    switch (statusCode) {
+      case HTTP_BAD_REQUEST:
+        throw new CommitFailedException(
+            false /* retryable */,
+            false /* conflict */,
+            "Invalid UC Delta updateTable request: " + responseBody,
+            e);
+      case HTTP_NOT_FOUND:
+        throw new InvalidTargetTableException(
+            String.format(
+                "Invalid UC Delta target table %s.%s.%s: %s",
+                catalog,
+                schema,
+                table,
+                responseBody));
+      case HTTP_CONFLICT:
+        throw new CommitFailedException(
+            true /* retryable */,
+            true /* conflict */,
+            "UC Delta updateTable conflict: " + responseBody,
+            e);
+      case HTTP_TOO_MANY_REQUESTS:
+        throw new CommitLimitReachedException(
+            "UC Delta updateTable commit limit reached: " + responseBody);
+      default:
+        throw new IOException(
+            String.format(
+                "Failed to update table %s.%s.%s via UC Delta Rest Catalog API (HTTP %s): %s",
+                catalog,
+                schema,
+                table,
+                statusCode,
+                responseBody),
+            e);
+    }
   }
 
   /**

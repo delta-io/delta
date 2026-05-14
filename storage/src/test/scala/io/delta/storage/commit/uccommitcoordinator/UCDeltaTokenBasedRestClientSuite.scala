@@ -19,11 +19,18 @@ package io.delta.storage.commit.uccommitcoordinator
 import java.io.IOException
 import java.net.{InetSocketAddress, URI}
 import java.nio.charset.StandardCharsets
-import java.util.{Collections, Optional}
+import java.util.{Arrays => JArrays, Collections, Optional, UUID}
 
 import io.delta.storage.commit.{Commit, GetCommitsResponse, TableIdentifier}
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
-import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.CreateTableRequest
+import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.{
+  CreateTableRequest,
+  DeltaCommit,
+  DeltaProtocol,
+  TableRequirement,
+  TableUpdate,
+  UpdateTableRequest
+}
 import io.delta.storage.commit.uniform.UniformMetadata
 
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -327,6 +334,9 @@ class UCDeltaTokenBasedRestClientSuite
     assert(intercept[UnsupportedOperationException] {
       client.createTable("main", "default", new CreateTableRequest().name("tbl"))
     }.getMessage === "createTable requires UC Delta Rest Catalog API support.")
+    assert(intercept[UnsupportedOperationException] {
+      client.updateTable("main", "default", "tbl", new UpdateTableRequest())
+    }.getMessage === "updateTable requires UC Delta Rest Catalog API support.")
   }
 
   test("default constructor does not enable UC Delta Rest Catalog API") {
@@ -341,6 +351,9 @@ class UCDeltaTokenBasedRestClientSuite
       assert(intercept[UnsupportedOperationException] {
         client.createTable("main", "default", new CreateTableRequest().name("tbl"))
       }.getMessage === "createTable requires UC Delta Rest Catalog API support.")
+      assert(intercept[UnsupportedOperationException] {
+        client.updateTable("main", "default", "tbl", new UpdateTableRequest())
+      }.getMessage === "updateTable requires UC Delta Rest Catalog API support.")
     }
   }
 
@@ -435,6 +448,10 @@ class UCDeltaTokenBasedRestClientSuite
         client.createTable("main", "default", new CreateTableRequest().name("tbl"))
       }
       assert(createError.getMessage === "createTable requires UC Delta Rest Catalog API support.")
+      val updateError = intercept[UnsupportedOperationException] {
+        client.updateTable("main", "default", "tbl", new UpdateTableRequest())
+      }
+      assert(updateError.getMessage === "updateTable requires UC Delta Rest Catalog API support.")
     } finally {
       client.close()
     }
@@ -510,7 +527,100 @@ class UCDeltaTokenBasedRestClientSuite
     assert(sawTableCreate)
   }
 
-  test("createStagingTable and createTable wrap HTTP errors") {
+  test("updateTable calls UC Delta Rest Catalog API endpoint") {
+    enableDeltaApiConfig()
+    deltaTablesHandler = exchange => {
+      assert(exchange.getRequestMethod === "POST")
+      assert(exchange.getRequestURI.getPath ===
+        "/api/2.1/unity-catalog/delta/v1/catalogs/main/schemas/default/tables/tbl")
+      val body = objectMapper.readTree(readRequestBody(exchange))
+      val requirements = body.get("requirements")
+      assert(requirements.size() === 1)
+      assert(requirements.get(0).get("type").asText === "assert-table-uuid")
+      assert(requirements.get(0).get("uuid").asText ===
+        "11111111-1111-1111-1111-111111111111")
+
+      val updates = body.get("updates")
+      assert(updates.size() === 6)
+      val addCommit = updates.get(0)
+      assert(addCommit.get("action").asText === "add-commit")
+      assert(addCommit.get("commit").get("version").asLong === 7L)
+      assert(addCommit.get("commit").get("timestamp").asLong === 100L)
+      assert(addCommit.get("commit").get("file-name").asText === "0007.uuid.json")
+      assert(addCommit.get("commit").get("file-size").asLong === 32L)
+      assert(addCommit.get("commit").get("file-modification-timestamp").asLong === 200L)
+
+      val setColumns = updates.get(1)
+      assert(setColumns.get("action").asText === "set-columns")
+      val fields = setColumns.get("columns").get("fields")
+      val arrayType = fields.get(0).get("type")
+      assert(arrayType.has("element-type"))
+      assert(arrayType.has("contains-null"))
+      assert(!arrayType.has("elementType"))
+      assert(!arrayType.has("containsNull"))
+      val mapType = fields.get(1).get("type")
+      assert(mapType.has("key-type"))
+      assert(mapType.has("value-type"))
+      assert(mapType.has("value-contains-null"))
+      assert(!mapType.has("keyType"))
+      assert(!mapType.has("valueType"))
+      assert(!mapType.has("valueContainsNull"))
+
+      val setProtocol = updates.get(2)
+      assert(setProtocol.get("action").asText === "set-protocol")
+      assert(setProtocol.get("protocol").get("min-reader-version").asInt === 1)
+      assert(setProtocol.get("protocol").get("min-writer-version").asInt === 7)
+      assert(setProtocol.get("protocol").get("writer-features").get(0).asText === "domainMetadata")
+
+      val setProperties = updates.get(3)
+      assert(setProperties.get("action").asText === "set-properties")
+      assert(setProperties.get("updates").get("delta.appendOnly").asText === "true")
+      val removeProperties = updates.get(4)
+      assert(removeProperties.get("action").asText === "remove-properties")
+      assert(removeProperties.get("removals").get(0).asText === "old.prop")
+      val latestBackfilled = updates.get(5)
+      assert(latestBackfilled.get("action").asText === "set-latest-backfilled-version")
+      assert(latestBackfilled.get("latest-published-version").asLong === 6L)
+
+      sendJson(exchange, HttpStatus.SC_OK, loadTableResponseJson())
+    }
+
+    val client = createDeltaClient()
+    try {
+      val updated = client.updateTable(
+        "main",
+        "default",
+        "tbl",
+        new UpdateTableRequest()
+          .addRequirementsItem(TableRequirement.assertTableUuid(
+            UUID.fromString("11111111-1111-1111-1111-111111111111")))
+          .addUpdatesItem(TableUpdate.addCommit(
+            new DeltaCommit()
+              .version(7L)
+              .timestamp(100L)
+              .fileName("0007.uuid.json")
+              .fileSize(32L)
+              .fileModificationTimestamp(200L),
+            null))
+          .addUpdatesItem(TableUpdate.setColumns(sparkSchemaJson))
+          .addUpdatesItem(TableUpdate.setProtocolUpdate(
+            new DeltaProtocol()
+              .minReaderVersion(1)
+              .minWriterVersion(7)
+              .writerFeatures(JArrays.asList("domainMetadata"))))
+          .addUpdatesItem(TableUpdate.setProperties(
+            Collections.singletonMap("delta.appendOnly", "true")))
+          .addUpdatesItem(TableUpdate.removeProperties(JArrays.asList("old.prop")))
+          .addUpdatesItem(TableUpdate.setLatestBackfilledVersion(6L)))
+      assert(
+        updated.asInstanceOf[UCDeltaTokenBasedRestClient.TableMetadataAdapter].getLocation ===
+          "file:/tmp/uc/table")
+    } finally {
+      client.close()
+    }
+  }
+
+  test("createStagingTable, createTable, and updateTable wrap HTTP errors") {
     enableDeltaApiConfig()
     deltaTablesHandler = exchange =>
       sendJson(exchange, HttpStatus.SC_INTERNAL_SERVER_ERROR, """{"error":"boom"}""")
@@ -534,12 +644,18 @@ class UCDeltaTokenBasedRestClientSuite
       }
       assert(unnamedCreateError.getMessage.contains(
         "Failed to create table main.default.<unknown> via UC Delta Rest Catalog API (HTTP 500)"))
+
+      val updateError = intercept[java.io.IOException] {
+        client.updateTable("main", "default", "tbl", new UpdateTableRequest())
+      }
+      assert(updateError.getMessage.contains(
+        "Failed to update table main.default.tbl via UC Delta Rest Catalog API (HTTP 500)"))
     } finally {
       client.close()
     }
   }
 
-  test("createStagingTable and createTable validate required parameters") {
+  test("createStagingTable, createTable, and updateTable validate required parameters") {
     enableDeltaApiConfig()
 
     val client = createDeltaClient()
@@ -561,6 +677,18 @@ class UCDeltaTokenBasedRestClientSuite
       }
       intercept[NullPointerException] {
         client.createTable("main", "default", null)
+      }
+      intercept[NullPointerException] {
+        client.updateTable(null, "default", "tbl", new UpdateTableRequest())
+      }
+      intercept[NullPointerException] {
+        client.updateTable("main", null, "tbl", new UpdateTableRequest())
+      }
+      intercept[NullPointerException] {
+        client.updateTable("main", "default", null, new UpdateTableRequest())
+      }
+      intercept[NullPointerException] {
+        client.updateTable("main", "default", "tbl", null)
       }
     } finally {
       client.close()
