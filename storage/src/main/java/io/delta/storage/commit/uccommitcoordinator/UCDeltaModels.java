@@ -24,10 +24,11 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Delta-owned models for the UC Delta REST Catalog API. These decouple the
- * {@link UCDeltaClient} interface from any generated SDK types.
+ * Delta-owned models for the UC Delta REST Catalog API. These decouple the {@link UCDeltaClient}
+ * interface from any generated SDK types.
  */
 public final class UCDeltaModels {
+
   private UCDeltaModels() {}
 
   public enum TableType {
@@ -36,6 +37,7 @@ public final class UCDeltaModels {
   }
 
   public static class DeltaProtocol implements AbstractProtocol {
+
     private int minReaderVersion;
     private int minWriterVersion;
     private final Set<String> readerFeatures = new HashSet<>();
@@ -83,6 +85,7 @@ public final class UCDeltaModels {
   }
 
   public static final class StagingTableInfo {
+
     private final String tableId;
     private final TableType tableType;
     private final String location;
@@ -108,15 +111,25 @@ public final class UCDeltaModels {
       this.suggestedProperties = suggestedProperties;
     }
 
-    public String getTableId() { return tableId; }
+    public String getTableId() {
+      return tableId;
+    }
 
-    public TableType getTableType() { return tableType; }
+    public TableType getTableType() {
+      return tableType;
+    }
 
-    public String getLocation() { return location; }
+    public String getLocation() {
+      return location;
+    }
 
-    public DeltaProtocol getRequiredProtocol() { return requiredProtocol; }
+    public DeltaProtocol getRequiredProtocol() {
+      return requiredProtocol;
+    }
 
-    public DeltaProtocol getSuggestedProtocol() { return suggestedProtocol; }
+    public DeltaProtocol getSuggestedProtocol() {
+      return suggestedProtocol;
+    }
 
     public Map<String, String> getRequiredProperties() {
       return requiredProperties == null ? Collections.emptyMap() : requiredProperties;
