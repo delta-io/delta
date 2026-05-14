@@ -16,10 +16,28 @@
 
 package org.apache.spark.sql.delta.catalog
 
+import java.net.URI
+
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.connector.catalog.{Identifier, Table}
+import org.apache.spark.sql.delta.Snapshot
+
+/**
+ * Values returned by the UC Delta Rest Catalog API prepare-create step.
+ *
+ * @param location UC-chosen location where Delta should write the initial log.
+ * @param tableProperties properties added to the CatalogTable so the Delta commit uses the
+ *                        server-required protocol/features and UC table id.
+ * @param storageProperties Hadoop storage options, usually UC-vended credentials, added to the
+ *                          write options for the initial Delta commit.
+ */
+private[catalog] case class PreparedUCDeltaRestCatalogApiCreate(
+    location: URI,
+    tableProperties: Map[String, String],
+    storageProperties: Map[String, String])
 
 /**
  * Spark-facing Delta catalog API hook.
@@ -29,6 +47,16 @@ import org.apache.spark.sql.connector.catalog.{Identifier, Table}
  */
 private[catalog] trait DeltaCatalogClient {
   def loadTable(ident: Identifier): Option[Table]
+
+  def prepareCreateTable(
+      ident: Identifier,
+      tableType: CatalogTableType,
+      location: Option[URI]): Option[PreparedUCDeltaRestCatalogApiCreate]
+
+  def createTable(
+      ident: Identifier,
+      table: CatalogTable,
+      snapshot: Snapshot): Unit
 }
 
 private[delta] object DeltaCatalogClient {
