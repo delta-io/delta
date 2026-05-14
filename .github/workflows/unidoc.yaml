@@ -20,4 +20,4 @@
             java-version: "17"
         - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
         - name: generate unidoc
-          run: build/sbt -DuseDefaultUnityCatalogReleaseVersion=true "++ ${{ matrix.scala }}" unidoc
+          run: build/sbt "++ ${{ matrix.scala }}" unidoc
