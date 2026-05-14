@@ -129,7 +129,6 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   // estimation
   private long estimatedSizeInBytes = 0L;
   private volatile boolean planned = false;
-  private volatile boolean isStreaming = false;
 
   // Runtime predicates applied after planning (using Set for order-independent comparison)
   private final Set<org.apache.spark.sql.connector.expressions.filter.Predicate>
@@ -247,8 +246,6 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
   @Override
   public MicroBatchStream toMicroBatchStream(String checkpointLocation) {
-    isStreaming = true;
-    DeltaOptions deltaOptions = new DeltaOptions(scalaOptions, sqlConf);
     validateStreamingOptions(deltaOptions);
 
     // Loads a fresh snapshot as the baseline for schema change detection and table identity
@@ -302,27 +299,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
   @Override
   public Statistics estimateStatistics() {
-    if (isStreaming) {
-      // For streaming, do not trigger planScanFiles(). Streaming tables can have millions of
-      // files; loading them all into driver memory here would cause OOM. Streaming uses
-      // SparkMicroBatchStream.planInputPartitions() for per-batch file planning instead.
-      final long defaultSize = sqlConf.defaultSizeInBytes();
-      return new Statistics() {
-        @Override
-        public OptionalLong sizeInBytes() {
-          return OptionalLong.of(defaultSize);
-        }
-
-        @Override
-        public OptionalLong numRows() {
-          return OptionalLong.empty();
-        }
-      };
-    }
-
-    // For batch queries, materialize scan files now so the optimizer gets accurate stats.
     ensurePlanned();
-
     // Capture mutable scan state as final locals so the returned Statistics object reflects a
     // consistent snapshot. A subsequent filter() call mutates rowCountKnown and totalRows
     // (see ensurePlanned(runtimePredicates)), and we don't want those mutations to leak into a
