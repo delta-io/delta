@@ -29,11 +29,6 @@ import io.delta.storage.commit.uniform.UniformMetadata;
 public final class UCDeltaModels {
   private UCDeltaModels() {}
 
-  public enum CredentialOperation {
-    READ,
-    READ_WRITE
-  }
-
   public enum TableType {
     MANAGED,
     EXTERNAL
@@ -55,35 +50,27 @@ public final class UCDeltaModels {
   }
 
   public static class DeltaProtocol {
-    private Integer minReaderVersion;
-    private Integer minWriterVersion;
+    private int minReaderVersion;
+    private int minWriterVersion;
     private List<String> readerFeatures;
     private List<String> writerFeatures;
 
-    public DeltaProtocol minReaderVersion(Integer minReaderVersion) {
+    public DeltaProtocol minReaderVersion(int minReaderVersion) {
       this.minReaderVersion = minReaderVersion;
       return this;
     }
 
-    public Integer getMinReaderVersion() {
+    public int getMinReaderVersion() {
       return minReaderVersion;
     }
 
-    public void setMinReaderVersion(Integer minReaderVersion) {
-      this.minReaderVersion = minReaderVersion;
-    }
-
-    public DeltaProtocol minWriterVersion(Integer minWriterVersion) {
+    public DeltaProtocol minWriterVersion(int minWriterVersion) {
       this.minWriterVersion = minWriterVersion;
       return this;
     }
 
-    public Integer getMinWriterVersion() {
+    public int getMinWriterVersion() {
       return minWriterVersion;
-    }
-
-    public void setMinWriterVersion(Integer minWriterVersion) {
-      this.minWriterVersion = minWriterVersion;
     }
 
     public DeltaProtocol readerFeatures(List<String> readerFeatures) {
@@ -103,10 +90,6 @@ public final class UCDeltaModels {
       return readerFeatures == null ? Collections.emptyList() : readerFeatures;
     }
 
-    public void setReaderFeatures(List<String> readerFeatures) {
-      this.readerFeatures = readerFeatures;
-    }
-
     public DeltaProtocol writerFeatures(List<String> writerFeatures) {
       this.writerFeatures = writerFeatures;
       return this;
@@ -122,10 +105,6 @@ public final class UCDeltaModels {
 
     public List<String> getWriterFeatures() {
       return writerFeatures == null ? Collections.emptyList() : writerFeatures;
-    }
-
-    public void setWriterFeatures(List<String> writerFeatures) {
-      this.writerFeatures = writerFeatures;
     }
   }
 
@@ -149,10 +128,6 @@ public final class UCDeltaModels {
       return name;
     }
 
-    public void setName(String name) {
-      this.name = name;
-    }
-
     public CreateTableRequest location(String location) {
       this.location = location;
       return this;
@@ -160,10 +135,6 @@ public final class UCDeltaModels {
 
     public String getLocation() {
       return location;
-    }
-
-    public void setLocation(String location) {
-      this.location = location;
     }
 
     public CreateTableRequest tableType(TableType tableType) {
@@ -175,10 +146,6 @@ public final class UCDeltaModels {
       return tableType;
     }
 
-    public void setTableType(TableType tableType) {
-      this.tableType = tableType;
-    }
-
     public CreateTableRequest dataSourceFormat(DataSourceFormat dataSourceFormat) {
       this.dataSourceFormat = dataSourceFormat;
       return this;
@@ -186,10 +153,6 @@ public final class UCDeltaModels {
 
     public DataSourceFormat getDataSourceFormat() {
       return dataSourceFormat;
-    }
-
-    public void setDataSourceFormat(DataSourceFormat dataSourceFormat) {
-      this.dataSourceFormat = dataSourceFormat;
     }
 
     public CreateTableRequest comment(String comment) {
@@ -201,10 +164,6 @@ public final class UCDeltaModels {
       return comment;
     }
 
-    public void setComment(String comment) {
-      this.comment = comment;
-    }
-
     public CreateTableRequest schemaString(String schemaString) {
       this.schemaString = schemaString;
       return this;
@@ -212,10 +171,6 @@ public final class UCDeltaModels {
 
     public String getSchemaString() {
       return schemaString;
-    }
-
-    public void setSchemaString(String schemaString) {
-      this.schemaString = schemaString;
     }
 
     public CreateTableRequest partitionColumns(List<String> partitionColumns) {
@@ -235,10 +190,6 @@ public final class UCDeltaModels {
       return partitionColumns == null ? Collections.emptyList() : partitionColumns;
     }
 
-    public void setPartitionColumns(List<String> partitionColumns) {
-      this.partitionColumns = partitionColumns;
-    }
-
     public CreateTableRequest protocol(DeltaProtocol protocol) {
       this.protocol = protocol;
       return this;
@@ -246,10 +197,6 @@ public final class UCDeltaModels {
 
     public DeltaProtocol getProtocol() {
       return protocol;
-    }
-
-    public void setProtocol(DeltaProtocol protocol) {
-      this.protocol = protocol;
     }
 
     public CreateTableRequest properties(Map<String, String> properties) {
@@ -267,10 +214,6 @@ public final class UCDeltaModels {
 
     public Map<String, String> getProperties() {
       return properties == null ? Collections.emptyMap() : properties;
-    }
-
-    public void setProperties(Map<String, String> properties) {
-      this.properties = properties;
     }
   }
 
@@ -295,10 +238,6 @@ public final class UCDeltaModels {
       return requirements == null ? Collections.emptyList() : requirements;
     }
 
-    public void setRequirements(List<TableRequirement> requirements) {
-      this.requirements = requirements;
-    }
-
     public UpdateTableRequest updates(List<TableUpdate> updates) {
       this.updates = updates;
       return this;
@@ -314,10 +253,6 @@ public final class UCDeltaModels {
 
     public List<TableUpdate> getUpdates() {
       return updates == null ? Collections.emptyList() : updates;
-    }
-
-    public void setUpdates(List<TableUpdate> updates) {
-      this.updates = updates;
     }
   }
 
@@ -348,10 +283,6 @@ public final class UCDeltaModels {
       return type;
     }
 
-    public void setType(Type type) {
-      this.type = type;
-    }
-
     public TableRequirement uuid(UUID uuid) {
       this.uuid = uuid;
       return this;
@@ -361,10 +292,6 @@ public final class UCDeltaModels {
       return uuid;
     }
 
-    public void setUuid(UUID uuid) {
-      this.uuid = uuid;
-    }
-
     public TableRequirement etag(String etag) {
       this.etag = etag;
       return this;
@@ -372,10 +299,6 @@ public final class UCDeltaModels {
 
     public String getEtag() {
       return etag;
-    }
-
-    public void setEtag(String etag) {
-      this.etag = etag;
     }
   }
 
@@ -395,10 +318,6 @@ public final class UCDeltaModels {
       return version;
     }
 
-    public void setVersion(Long version) {
-      this.version = version;
-    }
-
     public DeltaCommit timestamp(Long timestamp) {
       this.timestamp = timestamp;
       return this;
@@ -406,10 +325,6 @@ public final class UCDeltaModels {
 
     public Long getTimestamp() {
       return timestamp;
-    }
-
-    public void setTimestamp(Long timestamp) {
-      this.timestamp = timestamp;
     }
 
     public DeltaCommit fileName(String fileName) {
@@ -421,10 +336,6 @@ public final class UCDeltaModels {
       return fileName;
     }
 
-    public void setFileName(String fileName) {
-      this.fileName = fileName;
-    }
-
     public DeltaCommit fileSize(Long fileSize) {
       this.fileSize = fileSize;
       return this;
@@ -434,10 +345,6 @@ public final class UCDeltaModels {
       return fileSize;
     }
 
-    public void setFileSize(Long fileSize) {
-      this.fileSize = fileSize;
-    }
-
     public DeltaCommit fileModificationTimestamp(Long fileModificationTimestamp) {
       this.fileModificationTimestamp = fileModificationTimestamp;
       return this;
@@ -445,10 +352,6 @@ public final class UCDeltaModels {
 
     public Long getFileModificationTimestamp() {
       return fileModificationTimestamp;
-    }
-
-    public void setFileModificationTimestamp(Long fileModificationTimestamp) {
-      this.fileModificationTimestamp = fileModificationTimestamp;
     }
   }
 
@@ -532,10 +435,6 @@ public final class UCDeltaModels {
       return action;
     }
 
-    public void setAction(Action action) {
-      this.action = action;
-    }
-
     public TableUpdate propertyUpdates(Map<String, String> propertyUpdates) {
       this.propertyUpdates = propertyUpdates;
       return this;
@@ -543,10 +442,6 @@ public final class UCDeltaModels {
 
     public Map<String, String> getPropertyUpdates() {
       return propertyUpdates == null ? Collections.emptyMap() : propertyUpdates;
-    }
-
-    public void setPropertyUpdates(Map<String, String> propertyUpdates) {
-      this.propertyUpdates = propertyUpdates;
     }
 
     public TableUpdate propertyRemovals(List<String> propertyRemovals) {
@@ -558,10 +453,6 @@ public final class UCDeltaModels {
       return propertyRemovals == null ? Collections.emptyList() : propertyRemovals;
     }
 
-    public void setPropertyRemovals(List<String> propertyRemovals) {
-      this.propertyRemovals = propertyRemovals;
-    }
-
     public TableUpdate protocol(DeltaProtocol protocol) {
       this.protocol = protocol;
       return this;
@@ -569,10 +460,6 @@ public final class UCDeltaModels {
 
     public DeltaProtocol getProtocol() {
       return protocol;
-    }
-
-    public void setProtocol(DeltaProtocol protocol) {
-      this.protocol = protocol;
     }
 
     public TableUpdate schemaString(String schemaString) {
@@ -584,10 +471,6 @@ public final class UCDeltaModels {
       return schemaString;
     }
 
-    public void setSchemaString(String schemaString) {
-      this.schemaString = schemaString;
-    }
-
     public TableUpdate partitionColumns(List<String> partitionColumns) {
       this.partitionColumns = partitionColumns;
       return this;
@@ -595,10 +478,6 @@ public final class UCDeltaModels {
 
     public List<String> getPartitionColumns() {
       return partitionColumns == null ? Collections.emptyList() : partitionColumns;
-    }
-
-    public void setPartitionColumns(List<String> partitionColumns) {
-      this.partitionColumns = partitionColumns;
     }
 
     public TableUpdate comment(String comment) {
@@ -610,10 +489,6 @@ public final class UCDeltaModels {
       return comment;
     }
 
-    public void setComment(String comment) {
-      this.comment = comment;
-    }
-
     public TableUpdate commit(DeltaCommit commit) {
       this.commit = commit;
       return this;
@@ -621,10 +496,6 @@ public final class UCDeltaModels {
 
     public DeltaCommit getCommit() {
       return commit;
-    }
-
-    public void setCommit(DeltaCommit commit) {
-      this.commit = commit;
     }
 
     public TableUpdate uniform(UniformMetadata uniform) {
@@ -636,10 +507,6 @@ public final class UCDeltaModels {
       return uniform;
     }
 
-    public void setUniform(UniformMetadata uniform) {
-      this.uniform = uniform;
-    }
-
     public TableUpdate latestPublishedVersion(Long latestPublishedVersion) {
       this.latestPublishedVersion = latestPublishedVersion;
       return this;
@@ -647,10 +514,6 @@ public final class UCDeltaModels {
 
     public Long getLatestPublishedVersion() {
       return latestPublishedVersion;
-    }
-
-    public void setLatestPublishedVersion(Long latestPublishedVersion) {
-      this.latestPublishedVersion = latestPublishedVersion;
     }
 
     public TableUpdate lastCommitVersion(Long lastCommitVersion) {
@@ -662,10 +525,6 @@ public final class UCDeltaModels {
       return lastCommitVersion;
     }
 
-    public void setLastCommitVersion(Long lastCommitVersion) {
-      this.lastCommitVersion = lastCommitVersion;
-    }
-
     public TableUpdate lastCommitTimestampMs(Long lastCommitTimestampMs) {
       this.lastCommitTimestampMs = lastCommitTimestampMs;
       return this;
@@ -674,17 +533,12 @@ public final class UCDeltaModels {
     public Long getLastCommitTimestampMs() {
       return lastCommitTimestampMs;
     }
-
-    public void setLastCommitTimestampMs(Long lastCommitTimestampMs) {
-      this.lastCommitTimestampMs = lastCommitTimestampMs;
-    }
   }
 
   public static final class StagingTableResponse {
     private final UUID tableId;
     private final TableType tableType;
     private final String location;
-    private final List<StorageCredential> storageCredentials;
     private final DeltaProtocol requiredProtocol;
     private final DeltaProtocol suggestedProtocol;
     private final Map<String, String> requiredProperties;
@@ -694,7 +548,6 @@ public final class UCDeltaModels {
         UUID tableId,
         TableType tableType,
         String location,
-        List<StorageCredential> storageCredentials,
         DeltaProtocol requiredProtocol,
         DeltaProtocol suggestedProtocol,
         Map<String, String> requiredProperties,
@@ -702,7 +555,6 @@ public final class UCDeltaModels {
       this.tableId = tableId;
       this.tableType = tableType;
       this.location = location;
-      this.storageCredentials = storageCredentials;
       this.requiredProtocol = requiredProtocol;
       this.suggestedProtocol = suggestedProtocol;
       this.requiredProperties = requiredProperties;
@@ -721,10 +573,6 @@ public final class UCDeltaModels {
       return location;
     }
 
-    public List<StorageCredential> getStorageCredentials() {
-      return storageCredentials == null ? Collections.emptyList() : storageCredentials;
-    }
-
     public DeltaProtocol getRequiredProtocol() {
       return requiredProtocol;
     }
@@ -739,81 +587,6 @@ public final class UCDeltaModels {
 
     public Map<String, String> getSuggestedProperties() {
       return suggestedProperties == null ? Collections.emptyMap() : suggestedProperties;
-    }
-  }
-
-  public static final class StorageCredential {
-    private final String prefix;
-    private final CredentialOperation operation;
-    private final StorageCredentialConfig config;
-    private final Long expirationTimeMs;
-
-    public StorageCredential(
-        String prefix,
-        CredentialOperation operation,
-        StorageCredentialConfig config,
-        Long expirationTimeMs) {
-      this.prefix = prefix;
-      this.operation = operation;
-      this.config = config;
-      this.expirationTimeMs = expirationTimeMs;
-    }
-
-    public String getPrefix() {
-      return prefix;
-    }
-
-    public CredentialOperation getOperation() {
-      return operation;
-    }
-
-    public StorageCredentialConfig getConfig() {
-      return config;
-    }
-
-    public Long getExpirationTimeMs() {
-      return expirationTimeMs;
-    }
-  }
-
-  public static final class StorageCredentialConfig {
-    private final String s3AccessKeyId;
-    private final String s3SecretAccessKey;
-    private final String s3SessionToken;
-    private final String azureSasToken;
-    private final String gcsOauthToken;
-
-    public StorageCredentialConfig(
-        String s3AccessKeyId,
-        String s3SecretAccessKey,
-        String s3SessionToken,
-        String azureSasToken,
-        String gcsOauthToken) {
-      this.s3AccessKeyId = s3AccessKeyId;
-      this.s3SecretAccessKey = s3SecretAccessKey;
-      this.s3SessionToken = s3SessionToken;
-      this.azureSasToken = azureSasToken;
-      this.gcsOauthToken = gcsOauthToken;
-    }
-
-    public String getS3AccessKeyId() {
-      return s3AccessKeyId;
-    }
-
-    public String getS3SecretAccessKey() {
-      return s3SecretAccessKey;
-    }
-
-    public String getS3SessionToken() {
-      return s3SessionToken;
-    }
-
-    public String getAzureSasToken() {
-      return azureSasToken;
-    }
-
-    public String getGcsOauthToken() {
-      return gcsOauthToken;
     }
   }
 }
