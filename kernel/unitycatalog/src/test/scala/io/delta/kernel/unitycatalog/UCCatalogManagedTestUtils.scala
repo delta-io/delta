@@ -38,7 +38,7 @@ import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.metrics.MetricsReport
 import io.delta.kernel.test.{ActionUtils, TestFixtures}
 import io.delta.kernel.utils.CloseableIterator
-import io.delta.storage.commit.{Commit, GetCommitsResponse}
+import io.delta.storage.commit.{Commit, GetCommitsResponse, TableIdentifier}
 
 import InMemoryUCClient.TableData
 import org.apache.hadoop.conf.Configuration
@@ -207,11 +207,12 @@ trait UCCatalogManagedTestUtils
 
     override def getCommits(
         tableId: String,
+        tableIdentifier: TableIdentifier,
         tableUri: URI,
         startVersion: Optional[JLong],
         endVersion: Optional[JLong]): GetCommitsResponse = {
       numGetCommitsCalls += 1
-      super.getCommits(tableId, tableUri, startVersion, endVersion)
+      super.getCommits(tableId, tableIdentifier, tableUri, startVersion, endVersion)
     }
 
     def getNumGetCommitCalls: Long = numGetCommitsCalls

@@ -29,7 +29,7 @@ import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.unitycatalog.UCCatalogManagedCommitter
 import io.delta.kernel.utils.CloseableIterable
-import io.delta.storage.commit.{Commit, GetCommitsResponse}
+import io.delta.storage.commit.{Commit, GetCommitsResponse, TableIdentifier}
 
 import InMemoryUCClient.TableData
 import org.scalatest.funsuite.AnyFunSuite
@@ -445,10 +445,11 @@ object UCE2ESuite {
 
     override def getCommits(
         tableId: String,
+        tableIdentifier: TableIdentifier,
         tableUri: java.net.URI,
         startVersion: Optional[java.lang.Long],
         endVersion: Optional[java.lang.Long]): GetCommitsResponse = {
-      val response = super.getCommits(tableId, tableUri, startVersion, endVersion)
+      val response = super.getCommits(tableId, tableIdentifier, tableUri, startVersion, endVersion)
       maxVersionLimit match {
         case Some(limit) =>
           // Filter commits and limit maxRatifiedVersion

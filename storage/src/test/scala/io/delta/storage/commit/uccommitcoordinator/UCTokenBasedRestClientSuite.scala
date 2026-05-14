@@ -22,7 +22,7 @@ import java.util.{Collections, Optional}
 
 import com.fasterxml.jackson.databind.{JsonNode, ObjectMapper}
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
-import io.delta.storage.commit.{Commit, CommitFailedException}
+import io.delta.storage.commit.{Commit, CommitFailedException, TableIdentifier}
 import io.delta.storage.commit.actions.AbstractMetadata
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 import io.unitycatalog.client.auth.TokenProvider
@@ -228,20 +228,39 @@ class UCTokenBasedRestClientSuite
     commitsHandler = exchange => sendJson(exchange, HttpStatus.SC_OK, responseJson)
     withClient { client =>
       val response = client.getCommits(
-        testTableId, testTableUri, Optional.empty(), Optional.empty())
+        testTableId, null, testTableUri, Optional.empty(), Optional.empty())
       assert(response.getCommits.size() === 1)
       assert(response.getCommits.get(0).getVersion === 1L)
       assert(response.getLatestTableVersion === 1L)
     }
   }
 
+  test("getCommits accepts table identifier without changing legacy request") {
+    var capturedBody: String = null
+    commitsHandler = exchange => {
+      capturedBody = readRequestBody(exchange)
+      sendJson(exchange, HttpStatus.SC_OK, """{"commits":[],"latest_table_version":1}""")
+    }
+    val tableIdentifier = new TableIdentifier(Array("main", "default"), "tbl")
+
+    withClient { client =>
+      client.getCommits(
+        testTableId, tableIdentifier, testTableUri, Optional.of(2L), Optional.empty())
+    }
+
+    val requestJson = objectMapper.readTree(capturedBody)
+    assert(requestJson.get("table_id").asText() === testTableId)
+    assert(requestJson.get("table_uri").asText() === testTableUri.toString)
+    assert(requestJson.get("start_version").asLong() === 2L)
+  }
+
   test("getCommits validates required parameters") {
     withClient { client =>
       intercept[NullPointerException] {
-        client.getCommits(null, testTableUri, Optional.empty(), Optional.empty())
+        client.getCommits(null, null, testTableUri, Optional.empty(), Optional.empty())
       }
       intercept[NullPointerException] {
-        client.getCommits(testTableId, null, Optional.empty(), Optional.empty())
+        client.getCommits(testTableId, null, null, Optional.empty(), Optional.empty())
       }
     }
   }
@@ -250,7 +269,7 @@ class UCTokenBasedRestClientSuite
     commitsHandler = exchange => sendJson(exchange, HttpStatus.SC_NOT_FOUND, "{}")
     withClient { client =>
       intercept[InvalidTargetTableException] {
-        client.getCommits(testTableId, testTableUri, Optional.empty(), Optional.empty())
+        client.getCommits(testTableId, null, testTableUri, Optional.empty(), Optional.empty())
       }
     }
   }

@@ -205,6 +205,7 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
 
   override def getCommits(
       tableId: String,
+      tableIdentifier: TableIdentifier,
       tableUri: URI,
       startVersion: Optional[JLong],
       endVersion: Optional[JLong]): GetCommitsResponse = {

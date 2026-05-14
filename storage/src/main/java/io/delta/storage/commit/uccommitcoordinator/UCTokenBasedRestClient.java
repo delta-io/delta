@@ -198,6 +198,7 @@ public class UCTokenBasedRestClient implements UCClient {
   @Override
   public GetCommitsResponse getCommits(
       String tableId,
+      TableIdentifier tableIdentifier,
       URI tableUri,
       Optional<Long> startVersion,
       Optional<Long> endVersion) throws IOException, UCCommitCoordinatorException {
@@ -205,7 +206,8 @@ public class UCTokenBasedRestClient implements UCClient {
     Objects.requireNonNull(tableId, "tableId must not be null.");
     Objects.requireNonNull(tableUri, "tableUri must not be null.");
 
-    // Build the DeltaGetCommits request using SDK models
+    // Build the DeltaGetCommits request using SDK models. The legacy API does not accept
+    // tableIdentifier, but UC Delta Rest Catalog clients need it in this shared interface.
     DeltaGetCommits request = new DeltaGetCommits()
         .tableId(tableId)
         .tableUri(tableUri.toString())

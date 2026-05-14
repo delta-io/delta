@@ -429,6 +429,7 @@ public class UCCatalogManagedClient {
               try {
                 return ucClient.getCommits(
                     ucTableId,
+                    null /* tableIdentifier */,
                     new Path(tablePath).toUri(),
                     Optional.empty() /* startVersion */,
                     versionOpt /* endVersion */);

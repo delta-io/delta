@@ -110,6 +110,8 @@ public interface UCClient extends AutoCloseable {
    *                 (and not s3://bucket/path/to/table/_delta_log).
    *                 If the tableId exists but the tableUri is different from the one previously
    *                 registered (e.g., if the table as moved), the request will fail.
+   * @param tableIdentifier The three-part table identifier (catalog, schema, table name)
+   *                        for the table in Unity Catalog, or null if unavailable.
    * @param startVersion An Optional containing the start version of the range of commits to
    *                     retrieve.
    * @param endVersion An Optional containing the end version of the range of commits to retrieve.
@@ -123,6 +125,7 @@ public interface UCClient extends AutoCloseable {
    */
   GetCommitsResponse getCommits(
       String tableId,
+      TableIdentifier tableIdentifier,
       URI tableUri,
       Optional<Long> startVersion,
       Optional<Long> endVersion) throws IOException, UCCommitCoordinatorException;

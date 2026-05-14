@@ -43,6 +43,7 @@ import io.delta.storage.commit.uniform.UniformMetadata
  * // Use the client for testing
  * val getCommitsResponse = client.getCommits(
  *     "tableId",
+ *     null,
  *     new URI("tableUri"),
  *     Optional.empty(),
  *     Optional.empty())
@@ -86,6 +87,7 @@ class InMemoryUCClient(
 
   override def getCommits(
       tableId: String,
+      tableIdentifier: TableIdentifier,
       tableUri: URI,
       startVersion: Optional[JLong],
       endVersion: Optional[JLong]): JGetCommitsResponse = {

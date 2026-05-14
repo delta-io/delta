@@ -37,7 +37,12 @@ class InMemoryUCClientSuite extends AnyFunSuite with UCCatalogManagedTestUtils {
       endVersionOpt: Optional[JLong],
       expectedVersions: Seq[Long]): Unit = {
     val client = getInMemoryUCClientWithCommitsForTableId("tableId", allVersions)
-    val response = client.getCommits("tableId", fakeURI, startVersionOpt, endVersionOpt)
+    val response = client.getCommits(
+      "tableId",
+      null,
+      fakeURI,
+      startVersionOpt,
+      endVersionOpt)
     val actualVersions = response.getCommits.asScala.map(_.getVersion)
 
     assert(actualVersions == expectedVersions)
@@ -82,7 +87,12 @@ class InMemoryUCClientSuite extends AnyFunSuite with UCCatalogManagedTestUtils {
   test("getCommits throws InvalidTargetTableException for non-existent table") {
     val client = new InMemoryUCClient("ucMetastoreId")
     val exception = intercept[InvalidTargetTableException] {
-      client.getCommits("abcd", new URI("s3://bucket/table"), Optional.empty(), Optional.empty())
+      client.getCommits(
+        "abcd",
+        null,
+        new URI("s3://bucket/table"),
+        Optional.empty(),
+        Optional.empty())
     }
     assert(exception.getMessage.contains(s"Table not found: abcd"))
   }
