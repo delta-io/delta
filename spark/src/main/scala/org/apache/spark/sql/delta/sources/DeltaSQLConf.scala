@@ -2176,6 +2176,22 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_UNIFORM_ICEBERG_TABLE_V3_ENABLED =
+    buildConf("uniform.iceberg.v3.enabled")
+      .internal()
+      .doc("If true, allow users to create/upgrade Uniform Iceberg v3 tables.")
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_UNIFORM_ICEBERG_GEOSPATIAL_ENABLED =
+    buildConf("uniform.iceberg.geospatial.enabled")
+      .internal()
+      .doc("If true, allow Delta tables with GeometryType/GeographyType columns to use " +
+        "IcebergCompatV3 (Uniform/DBI). Defaults to false until geospatial Uniform support " +
+        "is fully validated.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_UNIFORM_ICEBERG_SYNC_CONVERT_ENABLED =
     buildConf("uniform.iceberg.sync.convert.enabled")
       .doc("If enabled, iceberg conversion will be done synchronously. " +

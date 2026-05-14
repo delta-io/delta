@@ -3624,6 +3624,14 @@ trait DeltaErrorsBase
     )
   }
 
+  def icebergCompatConfigNotEnabled(
+      version: Int): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.CONFIG_NOT_ENABLED",
+      messageParameters = Array(version.toString, version.toString)
+    )
+  }
+
   def icebergCompatReorgAddFileTagsMissingException(
       tableVersion: Long,
       icebergCompatVersion: Int,

@@ -1354,6 +1354,11 @@
           "IcebergCompatVersion = <version> is not supported. Supported versions are between 1 and <maxVersion> "
         ]
       },
+      "CONFIG_NOT_ENABLED" : {
+        "message" : [
+          "IcebergCompatV<version> is not enabled in this environment."
+        ]
+      },
       "DELETION_VECTORS_NOT_PURGED" : {
         "message" : [
           "IcebergCompatV<version> requires Deletion Vectors to be completely purged from the table. Please run the REORG TABLE APPLY (PURGE) command."
