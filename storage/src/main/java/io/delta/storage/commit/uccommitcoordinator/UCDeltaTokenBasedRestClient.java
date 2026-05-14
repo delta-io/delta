@@ -177,12 +177,12 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
 
     if (oldMetadata.isPresent()
         && newMetadata.isPresent()
-        && oldMetadata.get() != newMetadata.get()) {
+        && !Objects.equals(oldMetadata.get(), newMetadata.get())) {
       addMetadataUpdates(request, oldMetadata.get(), newMetadata.get());
     }
     if (oldProtocol.isPresent()
         && newProtocol.isPresent()
-        && oldProtocol.get() != newProtocol.get()) {
+        && !Objects.equals(oldProtocol.get(), newProtocol.get())) {
       request.addUpdatesItem(new SetProtocolUpdate()
           .action("set-protocol")
           .protocol(toSDKDeltaProtocol(newProtocol.get())));
@@ -623,6 +623,26 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     @Override
     public Long getCreatedTime() {
       return m.getCreatedTime();
+    }
+
+    @Override
+    public boolean equals(Object o) {
+      if (this == o) return true;
+      if (!(o instanceof DeltaTableMetadata)) return false;
+      DeltaTableMetadata that = (DeltaTableMetadata) o;
+      return Objects.equals(getId(), that.getId())
+          && Objects.equals(getName(), that.getName())
+          && Objects.equals(getProvider(), that.getProvider())
+          && Objects.equals(getSchemaString(), that.getSchemaString())
+          && Objects.equals(getPartitionColumns(), that.getPartitionColumns())
+          && Objects.equals(getConfiguration(), that.getConfiguration())
+          && Objects.equals(getCreatedTime(), that.getCreatedTime());
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(getId(), getName(), getProvider(), getSchemaString(),
+          getPartitionColumns(), getConfiguration(), getCreatedTime());
     }
   }
 }

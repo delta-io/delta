@@ -21,6 +21,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -81,6 +82,22 @@ public final class UCDeltaModels {
     public DeltaProtocol writerFeatures(Collection<String> writerFeatures) {
       this.writerFeatures.addAll(writerFeatures);
       return this;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+      if (this == o) return true;
+      if (!(o instanceof DeltaProtocol)) return false;
+      DeltaProtocol that = (DeltaProtocol) o;
+      return minReaderVersion == that.minReaderVersion
+          && minWriterVersion == that.minWriterVersion
+          && Objects.equals(readerFeatures, that.readerFeatures)
+          && Objects.equals(writerFeatures, that.writerFeatures);
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(minReaderVersion, minWriterVersion, readerFeatures, writerFeatures);
     }
   }
 

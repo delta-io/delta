@@ -128,6 +128,17 @@ class UCDeltaTokenBasedRestClientSuite
       override def getPartitionColumns: java.util.List[String] = partitions
       override def getConfiguration: java.util.Map[String, String] = config
       override def getCreatedTime: java.lang.Long = 0L
+      override def equals(obj: Any): Boolean = obj match {
+        case o: AbstractMetadata =>
+          getId == o.getId && getName == o.getName && getDescription == o.getDescription &&
+            getProvider == o.getProvider && getSchemaString == o.getSchemaString &&
+            getPartitionColumns == o.getPartitionColumns && getConfiguration == o.getConfiguration
+        case _ => false
+      }
+      override def hashCode(): Int =
+        java.util.Objects.hash(getId, getName, getDescription,
+          getProvider, getSchemaString, getPartitionColumns,
+          getConfiguration)
     }
 
   private def protocol(minReader: Int, minWriter: Int,
@@ -138,6 +149,16 @@ class UCDeltaTokenBasedRestClientSuite
       override def getMinWriterVersion: Int = minWriter
       override def getReaderFeatures: JSet[String] = readerFeatures
       override def getWriterFeatures: JSet[String] = writerFeatures
+      override def equals(obj: Any): Boolean = obj match {
+        case o: AbstractProtocol =>
+          getMinReaderVersion == o.getMinReaderVersion &&
+            getMinWriterVersion == o.getMinWriterVersion &&
+            getReaderFeatures == o.getReaderFeatures && getWriterFeatures == o.getWriterFeatures
+        case _ => false
+      }
+      override def hashCode(): Int =
+        java.util.Objects.hash(getMinReaderVersion: Integer, getMinWriterVersion: Integer,
+          getReaderFeatures, getWriterFeatures)
     }
 
   // --------------- constructor tests ---------------
@@ -187,7 +208,9 @@ class UCDeltaTokenBasedRestClientSuite
   test("commit sends ASSERT_TABLE_UUID, ADD_COMMIT, and SET_LATEST_BACKFILLED_VERSION") {
     var captured: String = null
     deltaHandler = (exchange, body) => {
-      if (exchange.getRequestMethod == "POST") captured = body
+      if (exchange.getRequestMethod == "POST") {
+        captured = body
+      }
       sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
     }
 
@@ -217,14 +240,20 @@ class UCDeltaTokenBasedRestClientSuite
   test("commit sends metadata diff updates") {
     var captured: String = null
     deltaHandler = (exchange, body) => {
-      if (exchange.getRequestMethod == "POST") captured = body
+      if (exchange.getRequestMethod == "POST") {
+        captured = body
+      }
       sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
     }
 
-    val oldMeta = metadata(
-      desc = "old", config = new java.util.HashMap[String, String]() { put("a", "1"); put("b", "2") })
-    val newMeta = metadata(
-      desc = "new", config = new java.util.HashMap[String, String]() { put("a", "1"); put("c", "3") })
+    val oldMeta = metadata(desc = "old",
+      config = new java.util.HashMap[String, String]() {
+        put("a", "1"); put("b", "2")
+      })
+    val newMeta = metadata(desc = "new",
+      config = new java.util.HashMap[String, String]() {
+        put("a", "1"); put("c", "3")
+      })
 
     withClient { c =>
       c.commit(testTableId, new URI("s3://b/t"), testIdentifier,
@@ -245,7 +274,9 @@ class UCDeltaTokenBasedRestClientSuite
   test("commit sends SET_PROTOCOL when protocol changes") {
     var captured: String = null
     deltaHandler = (exchange, body) => {
-      if (exchange.getRequestMethod == "POST") captured = body
+      if (exchange.getRequestMethod == "POST") {
+        captured = body
+      }
       sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
     }
 
@@ -267,10 +298,63 @@ class UCDeltaTokenBasedRestClientSuite
     assert(proto.get("min-writer-version").asInt() === 7)
   }
 
+  test("commit skips metadata updates when old and new are equal") {
+    var captured: String = null
+    deltaHandler = (exchange, body) => {
+      if (exchange.getRequestMethod == "POST") {
+        captured = body
+      }
+      sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+    }
+
+    val m1 = metadata(desc = "same")
+    val m2 = metadata(desc = "same")
+    assert(m1 ne m2, "must be different objects")
+
+    withClient { c =>
+      c.commit(testTableId, new URI("s3://b/t"), testIdentifier,
+        Optional.of(createCommit(1L)), Optional.empty(),
+        Optional.of(m1), Optional.of(m2),
+        Optional.empty(), Optional.empty(), Optional.empty())
+    }
+
+    val updates = objectMapper.readTree(captured).get("updates")
+    val actions = (0 until updates.size()).map(i => updates.get(i).get("action").asText()).toSet
+    assert(!actions.contains("set-table-comment"),
+      "should skip metadata updates for equal metadata")
+  }
+
+  test("commit skips protocol update when old and new are equal") {
+    var captured: String = null
+    deltaHandler = (exchange, body) => {
+      if (exchange.getRequestMethod == "POST") {
+        captured = body
+      }
+      sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+    }
+
+    val p1 = protocol(3, 7, java.util.Set.of("f1"), java.util.Set.of("f2"))
+    val p2 = protocol(3, 7, java.util.Set.of("f1"), java.util.Set.of("f2"))
+    assert(p1 ne p2, "must be different objects")
+
+    withClient { c =>
+      c.commit(testTableId, new URI("s3://b/t"), testIdentifier,
+        Optional.of(createCommit(1L)), Optional.empty(),
+        Optional.empty(), Optional.empty(),
+        Optional.of(p1), Optional.of(p2), Optional.empty())
+    }
+
+    val updates = objectMapper.readTree(captured).get("updates")
+    val actions = (0 until updates.size()).map(i => updates.get(i).get("action").asText()).toSet
+    assert(!actions.contains("set-protocol"), "should skip protocol update for equal protocols")
+  }
+
   test("commit with uniform iceberg metadata (numeric timestamp)") {
     var captured: String = null
     deltaHandler = (exchange, body) => {
-      if (exchange.getRequestMethod == "POST") captured = body
+      if (exchange.getRequestMethod == "POST") {
+        captured = body
+      }
       sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
     }
 
@@ -298,7 +382,9 @@ class UCDeltaTokenBasedRestClientSuite
   test("commit with uniform iceberg metadata (ISO-8601 timestamp)") {
     var captured: String = null
     deltaHandler = (exchange, body) => {
-      if (exchange.getRequestMethod == "POST") captured = body
+      if (exchange.getRequestMethod == "POST") {
+        captured = body
+      }
       sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
     }
 
@@ -325,9 +411,12 @@ class UCDeltaTokenBasedRestClientSuite
 
   test("commit throws CommitFailedException on 409") {
     deltaHandler = (exchange, _) => {
-      if (exchange.getRequestMethod == "POST")
-        sendJson(exchange, HttpStatus.SC_CONFLICT, """{"error":"conflict"}""")
-      else sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+      if (exchange.getRequestMethod == "POST") {
+        sendJson(exchange, HttpStatus.SC_CONFLICT,
+          """{"error":"conflict"}""")
+      } else {
+        sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+      }
     }
     withClient { c =>
       val e = intercept[CommitFailedException] {
@@ -341,9 +430,12 @@ class UCDeltaTokenBasedRestClientSuite
 
   test("commit throws InvalidTargetTableException on 404") {
     deltaHandler = (exchange, _) => {
-      if (exchange.getRequestMethod == "POST")
-        sendJson(exchange, HttpStatus.SC_NOT_FOUND, """{"error":"not found"}""")
-      else sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+      if (exchange.getRequestMethod == "POST") {
+        sendJson(exchange, HttpStatus.SC_NOT_FOUND,
+          """{"error":"not found"}""")
+      } else {
+        sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+      }
     }
     withClient { c =>
       intercept[InvalidTargetTableException] {
