@@ -60,8 +60,9 @@ public class ScanFileRDD extends RDD<Row> {
   public ScanFileRDD(SparkContext sc, SerializableReadOnlySnapshot serializableSnapshot) {
     super(
         sc,
-        scala.collection.immutable.Seq$.MODULE$.<org.apache.spark.Dependency<?>>empty(),
-        ClassTag$.MODULE$.apply(Row.class));
+        /* deps = */ scala.collection.immutable.Seq$.MODULE$
+            .<org.apache.spark.Dependency<?>>empty(),
+        /* evidence = */ ClassTag$.MODULE$.apply(Row.class));
     this.serializableSnapshot = serializableSnapshot;
   }
 
