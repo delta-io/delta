@@ -23,6 +23,12 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.Tuple2;
+import io.delta.kernel.types.ArrayType;
+import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.GeographyType;
+import io.delta.kernel.types.GeometryType;
+import io.delta.kernel.types.MapType;
+import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -40,6 +46,7 @@ public class TableFeatures {
               add("typeWidening-preview");
               add("typeWidening");
               add(DOMAIN_METADATA_FEATURE_NAME);
+              add("geospatial");
             }
           });
 
@@ -55,6 +62,21 @@ public class TableFeatures {
               add("vacuumProtocolCheck");
               add("variantType-preview");
               add("v2Checkpoint");
+              add("geospatial");
+            }
+          });
+
+  /**
+   * Names of features that are reader-writer features per the Delta spec, i.e. features whose name
+   * must appear in both {@code readerFeatures} and {@code writerFeatures} of the protocol whenever
+   * the feature is enabled. Writer-only features (e.g. {@code inCommitTimestamp}) are intentionally
+   * excluded.
+   */
+  public static final Set<String> READER_WRITER_FEATURES =
+      Collections.unmodifiableSet(
+          new HashSet<String>() {
+            {
+              add("geospatial");
             }
           });
 
@@ -100,7 +122,8 @@ public class TableFeatures {
    *   <li>protocol writer version 1.
    *   <li>protocol writer version 2 only with appendOnly feature enabled.
    *   <li>protocol writer version 7 with {@code appendOnly}, {@code inCommitTimestamp}, {@code
-   *       columnMapping}, {@code typeWidening}, {@code domainMetadata} feature enabled.
+   *       columnMapping}, {@code typeWidening}, {@code domainMetadata}, {@code geospatial} feature
+   *       enabled.
    * </ul>
    *
    * @param protocol Table protocol
@@ -183,6 +206,34 @@ public class TableFeatures {
   }
 
   /**
+   * Returns whether the table schema (including nested fields) includes a {@link GeometryType} or
+   * {@link GeographyType} column.
+   */
+  public static boolean hasGeospatial(Metadata metadata) {
+    return dataTypeContainsGeospatial(metadata.getSchema());
+  }
+
+  private static boolean dataTypeContainsGeospatial(DataType dataType) {
+    if (dataType instanceof GeometryType || dataType instanceof GeographyType) {
+      return true;
+    }
+    if (dataType instanceof StructType) {
+      for (StructField field : ((StructType) dataType).fields()) {
+        if (dataTypeContainsGeospatial(field.getDataType())) {
+          return true;
+        }
+      }
+    } else if (dataType instanceof ArrayType) {
+      return dataTypeContainsGeospatial(((ArrayType) dataType).getElementField().getDataType());
+    } else if (dataType instanceof MapType) {
+      MapType mapType = (MapType) dataType;
+      return dataTypeContainsGeospatial(mapType.getKeyField().getDataType())
+          || dataTypeContainsGeospatial(mapType.getValueField().getDataType());
+    }
+    return false;
+  }
+
+  /**
    * Checks if the table protocol supports the "domainMetadata" writer feature.
    *
    * @param protocol the protocol to check
@@ -206,6 +257,7 @@ public class TableFeatures {
   private static int getMinReaderVersion(String feature) {
     switch (feature) {
       case "inCommitTimestamp":
+      case "geospatial":
         return 3;
       default:
         return 1;
@@ -221,6 +273,7 @@ public class TableFeatures {
   private static int getMinWriterVersion(String feature) {
     switch (feature) {
       case "inCommitTimestamp":
+      case "geospatial":
         return 7;
       default:
         return 2;
@@ -240,6 +293,8 @@ public class TableFeatures {
     switch (feature) {
       case "inCommitTimestamp":
         return IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata);
+      case "geospatial":
+        return hasGeospatial(metadata);
       default:
         return false;
     }

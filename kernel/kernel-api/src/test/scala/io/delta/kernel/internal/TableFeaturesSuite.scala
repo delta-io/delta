@@ -17,7 +17,13 @@ package io.delta.kernel.internal
 
 import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue}
 import io.delta.kernel.exceptions.KernelException
-import io.delta.kernel.internal.TableFeatures.validateWriteSupportedTable
+import io.delta.kernel.internal.TableFeatures.{
+  extractAutomaticallyEnabledWriterFeatures,
+  hasGeospatial,
+  minProtocolVersionFromAutomaticallyEnabledFeatures,
+  validateReadSupportedTable,
+  validateWriteSupportedTable
+}
 import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
 import io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector
 import io.delta.kernel.types._
@@ -69,11 +75,51 @@ class TableFeaturesSuite extends AnyFunSuite {
   }
 
   Seq("appendOnly", "inCommitTimestamp", "typeWidening-preview", "typeWidening",
-    "domainMetadata")
+    "domainMetadata", "geospatial")
     .foreach { supportedWriterFeature =>
     test(s"validateWriteSupported: protocol 7 with $supportedWriterFeature") {
       checkSupported(createTestProtocol(minWriterVersion = 7, supportedWriterFeature))
     }
+  }
+
+  test("hasGeospatial detects geometry and geography columns") {
+    assert(hasGeospatial(createTestMetadata(includeGeometryTypeCol = true)))
+    assert(hasGeospatial(createTestMetadata(includeGeographyTypeCol = true)))
+    assert(!hasGeospatial(createTestMetadata()))
+  }
+
+  test("extractAutomaticallyEnabledWriterFeatures enables geospatial from schema") {
+    val metadata = createTestMetadata(includeGeometryTypeCol = true)
+    val protocol = createTestProtocol(minWriterVersion = 7)
+    assert(extractAutomaticallyEnabledWriterFeatures(metadata, protocol).asScala.toSet == Set(
+      "geospatial"))
+  }
+
+  test("minProtocolVersionFromAutomaticallyEnabledFeatures for geospatial") {
+    val t = minProtocolVersionFromAutomaticallyEnabledFeatures(
+      Collections.singleton("geospatial"))
+    assert(t._1 == 3 && t._2 == 7)
+  }
+
+  test("auto-enable geospatial yields Protocol(3, 7) with geospatial in both " +
+    "reader and writer features") {
+    val metadata = createTestMetadata(includeGeometryTypeCol = true)
+    val initialProtocol = new Protocol(1, 1, null, null)
+    val autoEnabled = extractAutomaticallyEnabledWriterFeatures(metadata, initialProtocol)
+    val newProtocol = initialProtocol.withNewWriterFeatures(autoEnabled)
+    assert(newProtocol.getMinReaderVersion == 3)
+    assert(newProtocol.getMinWriterVersion == 7)
+    assert(newProtocol.getReaderFeatures.asScala.toSet == Set("geospatial"))
+    assert(newProtocol.getWriterFeatures.asScala.toSet == Set("geospatial"))
+  }
+
+  test("validateReadSupportedTable accepts geospatial reader feature at protocol 3") {
+    val protocol = new Protocol(
+      3,
+      7,
+      Collections.singletonList("geospatial"),
+      Collections.singletonList("geospatial"))
+    validateReadSupportedTable(protocol, "/test/table", Optional.empty())
   }
 
   Seq("invariants", "checkConstraints", "generatedColumns", "allowColumnDefaults", "changeDataFeed",
@@ -112,7 +158,10 @@ class TableFeaturesSuite extends AnyFunSuite {
     )
   }
 
-  def createTestMetadata(withAppendOnly: Boolean = false): Metadata = {
+  def createTestMetadata(
+      withAppendOnly: Boolean = false,
+      includeGeometryTypeCol: Boolean = false,
+      includeGeographyTypeCol: Boolean = false): Metadata = {
     var config: Map[String, String] = Map()
     if (withAppendOnly) {
       config = Map("delta.appendOnly" -> "true");
@@ -123,7 +172,9 @@ class TableFeaturesSuite extends AnyFunSuite {
       Optional.of("description"),
       new Format("parquet", Collections.emptyMap()),
       "sss",
-      new StructType(),
+      createTestSchema(
+        includeGeometryTypeCol = includeGeometryTypeCol,
+        includeGeographyTypeCol = includeGeographyTypeCol),
       new ArrayValue() { // partitionColumns
         override def getSize = 1
 
@@ -142,7 +193,9 @@ class TableFeaturesSuite extends AnyFunSuite {
   }
 
   def createTestSchema(
-    includeInvariant: Boolean = false): StructType = {
+      includeInvariant: Boolean = false,
+      includeGeometryTypeCol: Boolean = false,
+      includeGeographyTypeCol: Boolean = false): StructType = {
     var structType = new StructType()
       .add("c1", IntegerType.INTEGER)
       .add("c2", StringType.STRING)
@@ -153,6 +206,12 @@ class TableFeaturesSuite extends AnyFunSuite {
         FieldMetadata.builder()
           .putString("delta.invariants", "{\"expression\": { \"expression\": \"x > 3\"} }")
           .build())
+    }
+    if (includeGeometryTypeCol) {
+      structType = structType.add("c8", GeometryType.ofDefault())
+    }
+    if (includeGeographyTypeCol) {
+      structType = structType.add("c9", GeographyType.ofDefault())
     }
     structType
   }
