@@ -191,7 +191,12 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     String catalog = tableIdentifier.getNamespace()[0];
     String schema = tableIdentifier.getNamespace()[1];
     String table = tableIdentifier.getName();
-    updateTable(catalog, schema, table, request);
+
+    try {
+      deltaTablesApi.updateTable(catalog, schema, table, request);
+    } catch (ApiException e) {
+      handleUpdateTableException(e, catalog, schema, table);
+    }
   }
 
   @Override
@@ -334,28 +339,6 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       throw new IOException(
           String.format("Failed to create table %s.%s.%s (HTTP %s): %s",
               catalog, schema, name, e.getCode(), e.getResponseBody()), e);
-    }
-  }
-
-  private AbstractMetadata updateTable(
-      String catalog,
-      String schema,
-      String table,
-      UpdateTableRequest request)
-      throws IOException, CommitFailedException, UCCommitCoordinatorException {
-    ensureOpen();
-    Objects.requireNonNull(catalog, "catalog must not be null");
-    Objects.requireNonNull(schema, "schema must not be null");
-    Objects.requireNonNull(table, "table must not be null");
-    Objects.requireNonNull(request, "request must not be null");
-
-    try {
-      LoadTableResponse response =
-          deltaTablesApi.updateTable(catalog, schema, table, request);
-      return new DeltaTableMetadata(table, response.getMetadata());
-    } catch (ApiException e) {
-      handleUpdateTableException(e, catalog, schema, table);
-      throw new IllegalStateException("unreachable");
     }
   }
 
