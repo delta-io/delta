@@ -90,7 +90,8 @@ object UCCommitCoordinatorBuilder
       spark: SparkSession,
       catalogName: String): CommitCoordinatorClient = {
     val client = getCatalogConfigs(spark).find(_._1 == catalogName) match {
-      case Some((_, uri, authConfig)) => ucClientFactory.createUCClient(uri, authConfig)
+      case Some((_, uri, authConfig)) =>
+        ucClientFactory.createUCClient(uri, authConfig, catalogName)
       case None =>
         throw new IllegalArgumentException(
           s"Catalog $catalogName not found in the provided SparkSession configurations.")
@@ -294,6 +295,13 @@ object UCCommitCoordinatorBuilder
 
 trait UCClientFactory {
   def createUCClient(uri: String, authConfig: Map[String, String]): UCClient
+
+  def createUCClient(
+      uri: String,
+      authConfig: Map[String, String],
+      catalogName: String): UCClient = {
+    createUCClient(uri, authConfig)
+  }
 }
 
 object UCTokenBasedRestClientFactory extends UCClientFactory {
@@ -302,6 +310,16 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
 
   override def createUCClient(uri: String, authConfig: Map[String, String]): UCClient = {
     createUCClientWithVersions(uri, authConfig, defaultAppVersions)
+  }
+
+  override def createUCClient(
+      uri: String,
+      authConfig: Map[String, String],
+      catalogName: String): UCClient = {
+    val tokenProvider = TokenProvider.create(authConfig.asJava)
+    val appVersions = defaultAppVersionsAsJava
+    createUCDeltaClient(uri, tokenProvider, appVersions, catalogName)
+      .getOrElse(new UCTokenBasedRestClient(uri, tokenProvider, appVersions))
   }
 
   /**

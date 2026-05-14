@@ -121,15 +121,20 @@ private class UCDeltaCatalogClient private (
           case (CatalogTableType.EXTERNAL, Some(externalLocation))
               if isCloudScheme(externalLocation.getScheme) =>
             val locationText = externalLocation.toString
-            // External create must write the initial _delta_log, so READ fallback would be wrong.
-            Some(PreparedUCDeltaRestCatalogApiCreate(
-              location = externalLocation,
-              tableProperties = Map.empty,
-              storageProperties = buildHadoopCredentialPropertiesForPath(
-                locationText,
-                externalLocation.getScheme,
-                PathOperation.PATH_CREATE_TABLE,
-                credentialContext)))
+            try {
+              // External create must write the initial _delta_log, so READ fallback would be wrong.
+              Some(PreparedUCDeltaRestCatalogApiCreate(
+                location = externalLocation,
+                tableProperties = Map.empty,
+                storageProperties = buildHadoopCredentialPropertiesForPath(
+                  locationText,
+                  externalLocation.getScheme,
+                  PathOperation.PATH_CREATE_TABLE,
+                  credentialContext)))
+            } catch {
+              case e: ApiException if e.getCode == 404 =>
+                None
+            }
           case _ =>
             None
         }

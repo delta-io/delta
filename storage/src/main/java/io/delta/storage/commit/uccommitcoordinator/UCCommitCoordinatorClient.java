@@ -35,6 +35,10 @@ import io.delta.storage.LogStore;
 import io.delta.storage.commit.*;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
+import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.DeltaProtocol;
+import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.TableRequirement;
+import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.TableUpdate;
+import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.UpdateTableRequest;
 import io.delta.storage.commit.uniform.UniformMetadata;
 import io.delta.storage.internal.FileNameUtils;
 import io.delta.storage.internal.LogStoreErrors;
@@ -446,25 +450,6 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       "timeSpentInGettingLastKnownBackfilledVersion",
       timeSpentInGettingLastKnownBackfilledVersion);
 
-    // SHOULD_PASS_METADATA_TO_UC gates metadata and protocol
-    // (same UC server-side rollout).
-    boolean metadataChanged =
-        updatedActions.getNewMetadata() != updatedActions.getOldMetadata();
-    boolean protocolChanged =
-        updatedActions.getNewProtocol() != updatedActions.getOldProtocol();
-    Optional<AbstractMetadata> oldMetadata =
-        optionalIf(SHOULD_PASS_METADATA_TO_UC && metadataChanged,
-            updatedActions.getOldMetadata());
-    Optional<AbstractMetadata> newMetadata =
-        optionalIf(SHOULD_PASS_METADATA_TO_UC && metadataChanged,
-            updatedActions.getNewMetadata());
-    Optional<AbstractProtocol> oldProtocol =
-        optionalIf(SHOULD_PASS_METADATA_TO_UC && protocolChanged,
-            updatedActions.getOldProtocol());
-    Optional<AbstractProtocol> newProtocol =
-        optionalIf(SHOULD_PASS_METADATA_TO_UC && protocolChanged,
-            updatedActions.getNewProtocol());
-
     int transientErrorRetryCount = 0;
     while (transientErrorRetryCount <= MAX_RETRIES_ON_TRANSIENT_ERROR) {
       try {
@@ -476,10 +461,11 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
           Optional.of(commitTimestamp),
           Optional.of(lastKnownBackfilledVersion.get()),
           catalogTrackedInfo,
-          oldMetadata,
-          newMetadata,
-          oldProtocol,
-          newProtocol
+          disown,
+          Optional.ofNullable(updatedActions.getOldMetadata()),
+          Optional.ofNullable(updatedActions.getNewMetadata()),
+          Optional.ofNullable(updatedActions.getOldProtocol()),
+          Optional.ofNullable(updatedActions.getNewProtocol())
         );
         break;
       } catch (CommitFailedException cfe) {
@@ -683,6 +669,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       Optional.empty() /* commitTimestamp */,
       Optional.of(updatedLastKnownBackfilledVersion),
       CatalogTrackedInfo.EMPTY,
+      true /* disown */,
       Optional.empty() /* oldMetadata */,
       Optional.empty() /* newMetadata */,
       Optional.empty() /* oldProtocol */,
@@ -714,6 +701,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       Optional<Long> commitTimestamp,
       Optional<Long> lastKnownBackfilledVersion,
       CatalogTrackedInfo catalogTrackedInfo,
+      boolean disown,
       Optional<AbstractMetadata> oldMetadata,
       Optional<AbstractMetadata> newMetadata,
       Optional<AbstractProtocol> oldProtocol,
@@ -727,18 +715,200 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       commitTimestamp.orElseThrow(() -> new IllegalArgumentException(
         "Commit timestamp should be specified when commitFile is present"))
     ));
+    Optional<UCDeltaTableIdentifier> identifier = getUCDeltaTableIdentifier(tableDesc);
+    Optional<UCDeltaClient> ucDeltaClient = ucClient instanceof UCDeltaClient
+        ? Optional.of((UCDeltaClient) ucClient)
+        : Optional.empty();
+    if (ucDeltaClient.isPresent()
+        && ucDeltaClient.get().supportsUCDeltaRestCatalogApi()
+        && identifier.isPresent()
+        && !disown) {
+      commitToUCDeltaRestCatalogApi(
+        ucDeltaClient.get(),
+        identifier.get(),
+        tableDesc,
+        commit,
+        lastKnownBackfilledVersion,
+        oldMetadata,
+        newMetadata,
+        oldProtocol,
+        newProtocol,
+        catalogTrackedInfo.deltaUniformIceberg());
+      return;
+    }
+    Optional<AbstractMetadata> legacyNewMetadata =
+        getLegacyMetadataUpdate(oldMetadata, newMetadata);
+    Optional<AbstractMetadata> legacyOldMetadata =
+        legacyNewMetadata.isPresent() ? oldMetadata : Optional.empty();
+    Optional<AbstractProtocol> legacyNewProtocol =
+        getLegacyProtocolUpdate(oldProtocol, newProtocol);
+    Optional<AbstractProtocol> legacyOldProtocol =
+        legacyNewProtocol.isPresent() ? oldProtocol : Optional.empty();
     ucClient.commit(
       tableId,
       CoordinatedCommitsUtils.getTablePath(tableDesc.getLogPath()).toUri(),
       tableDesc.getTableIdentifier().orElse(null),
       commit,
       lastKnownBackfilledVersion,
-      oldMetadata,
-      newMetadata,
-      oldProtocol,
-      newProtocol,
+      legacyOldMetadata,
+      legacyNewMetadata,
+      legacyOldProtocol,
+      legacyNewProtocol,
       catalogTrackedInfo.deltaUniformIceberg()
     );
+  }
+
+  private Optional<AbstractMetadata> getLegacyMetadataUpdate(
+      Optional<AbstractMetadata> oldMetadata,
+      Optional<AbstractMetadata> newMetadata) {
+    if (!SHOULD_PASS_METADATA_TO_UC
+        || !oldMetadata.isPresent()
+        || !newMetadata.isPresent()
+        || oldMetadata.get() == newMetadata.get()) {
+      return Optional.empty();
+    }
+    return newMetadata;
+  }
+
+  private Optional<AbstractProtocol> getLegacyProtocolUpdate(
+      Optional<AbstractProtocol> oldProtocol,
+      Optional<AbstractProtocol> newProtocol) {
+    if (!oldProtocol.isPresent()
+        || !newProtocol.isPresent()
+        || oldProtocol.get() == newProtocol.get()) {
+      return Optional.empty();
+    }
+    return newProtocol;
+  }
+
+  private void commitToUCDeltaRestCatalogApi(
+      UCDeltaClient ucDeltaClient,
+      UCDeltaTableIdentifier identifier,
+      TableDescriptor tableDesc,
+      Optional<Commit> commit,
+      Optional<Long> lastKnownBackfilledVersion,
+      Optional<AbstractMetadata> oldMetadata,
+      Optional<AbstractMetadata> newMetadata,
+      Optional<AbstractProtocol> oldProtocol,
+      Optional<AbstractProtocol> newProtocol,
+      Optional<UniformMetadata> uniform)
+      throws IOException, CommitFailedException, UCCommitCoordinatorException {
+    UpdateTableRequest request = new UpdateTableRequest()
+        .addRequirementsItem(TableRequirement.assertTableUuid(
+            UUID.fromString(extractUCTableId(tableDesc))));
+    commit.ifPresent(c -> request.addUpdatesItem(
+        TableUpdate.addCommit(toUCDeltaCommit(c), uniform.orElse(null))));
+    lastKnownBackfilledVersion.ifPresent(v ->
+        request.addUpdatesItem(TableUpdate.setLatestBackfilledVersion(v)));
+
+    if (oldMetadata.isPresent()
+        && newMetadata.isPresent()
+        && oldMetadata.get() != newMetadata.get()) {
+      addMetadataUpdates(request, oldMetadata.get(), newMetadata.get());
+    }
+    if (oldProtocol.isPresent()
+        && newProtocol.isPresent()
+        && oldProtocol.get() != newProtocol.get()) {
+      request.addUpdatesItem(TableUpdate.setProtocolUpdate(toUCDeltaProtocol(newProtocol.get())));
+    }
+
+    ucDeltaClient.updateTable(identifier.catalog, identifier.schema, identifier.table, request);
+  }
+
+  private void addMetadataUpdates(
+      UpdateTableRequest request,
+      AbstractMetadata oldMetadata,
+      AbstractMetadata newMetadata) {
+    if (!Objects.equals(oldMetadata.getSchemaString(), newMetadata.getSchemaString())
+        && newMetadata.getSchemaString() != null) {
+      request.addUpdatesItem(TableUpdate.setColumns(newMetadata.getSchemaString()));
+    }
+    List<String> oldPartitionColumns = emptyListIfNull(oldMetadata.getPartitionColumns());
+    List<String> newPartitionColumns = emptyListIfNull(newMetadata.getPartitionColumns());
+    if (!Objects.equals(oldPartitionColumns, newPartitionColumns)) {
+      request.addUpdatesItem(TableUpdate.setPartitionColumnsUpdate(newPartitionColumns));
+    }
+
+    String oldDescription = oldMetadata.getDescription();
+    String newDescription = newMetadata.getDescription();
+    if (!Objects.equals(oldDescription, newDescription) && newDescription != null) {
+      request.addUpdatesItem(TableUpdate.setTableComment(newDescription));
+    }
+
+    Map<String, String> oldProperties = emptyIfNull(oldMetadata.getConfiguration());
+    Map<String, String> newProperties = emptyIfNull(newMetadata.getConfiguration());
+    Map<String, String> changedProperties = new LinkedHashMap<>();
+    newProperties.forEach((key, value) -> {
+      if (!Objects.equals(value, oldProperties.get(key))) {
+        changedProperties.put(key, value);
+      }
+    });
+    if (!changedProperties.isEmpty()) {
+      request.addUpdatesItem(TableUpdate.setProperties(changedProperties));
+    }
+    List<String> removedProperties = oldProperties.keySet().stream()
+        .filter(key -> !newProperties.containsKey(key))
+        .collect(Collectors.toList());
+    if (!removedProperties.isEmpty()) {
+      request.addUpdatesItem(TableUpdate.removeProperties(removedProperties));
+    }
+  }
+
+  private Map<String, String> emptyIfNull(Map<String, String> map) {
+    return map == null ? Collections.emptyMap() : map;
+  }
+
+  private List<String> emptyListIfNull(List<String> list) {
+    return list == null ? Collections.emptyList() : list;
+  }
+
+  private UCDeltaModels.DeltaCommit toUCDeltaCommit(Commit commit) {
+    FileStatus fileStatus = commit.getFileStatus();
+    return new UCDeltaModels.DeltaCommit()
+        .version(commit.getVersion())
+        .timestamp(commit.getCommitTimestamp())
+        .fileName(fileStatus.getPath().getName())
+        .fileSize(fileStatus.getLen())
+        .fileModificationTimestamp(fileStatus.getModificationTime());
+  }
+
+  private DeltaProtocol toUCDeltaProtocol(AbstractProtocol protocol) {
+    return new DeltaProtocol()
+        .minReaderVersion(protocol.getMinReaderVersion())
+        .minWriterVersion(protocol.getMinWriterVersion())
+        .readerFeatures(protocol.getReaderFeatures() == null
+            ? Collections.emptyList()
+            : new ArrayList<>(protocol.getReaderFeatures()))
+        .writerFeatures(protocol.getWriterFeatures() == null
+            ? Collections.emptyList()
+            : new ArrayList<>(protocol.getWriterFeatures()));
+  }
+
+  private Optional<UCDeltaTableIdentifier> getUCDeltaTableIdentifier(TableDescriptor tableDesc) {
+    if (!tableDesc.getTableIdentifier().isPresent()) {
+      return Optional.empty();
+    }
+    TableIdentifier tableIdentifier = tableDesc.getTableIdentifier().get();
+    String[] namespace = tableIdentifier.getNamespace();
+    if (namespace.length != 2) {
+      return Optional.empty();
+    }
+    return Optional.of(new UCDeltaTableIdentifier(
+        namespace[0],
+        namespace[1],
+        tableIdentifier.getName()));
+  }
+
+  private static final class UCDeltaTableIdentifier {
+    private final String catalog;
+    private final String schema;
+    private final String table;
+
+    private UCDeltaTableIdentifier(String catalog, String schema, String table) {
+      this.catalog = catalog;
+      this.schema = schema;
+      this.table = table;
+    }
   }
 
   /**
