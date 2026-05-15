@@ -22,8 +22,6 @@ import shutil
 from os import path
 import json
 
-RELEASED_UNITY_CATALOG_VERSION = "0.4.1"
-
 
 def test(root_dir, code_dir, packages):
     # Test the codes in the code_dir directory using its "tests" subdirectory,
@@ -86,11 +84,8 @@ def prepare(root_dir, spark_version, kernel_version=None):
             delete_if_exists(os.path.expanduser(f"~/{filepath}/cache/io.delta"))
         delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/"))
     sbt_command = [sbt_path]
-    # Keep local published artifacts on the released UC dependency; UC-main overrides are only for
-    # the dedicated UC compatibility workflow.
     sbt_command = sbt_command + [
         f"-DsparkVersion={spark_version}",
-        f"-DunityCatalogVersion={RELEASED_UNITY_CATALOG_VERSION}"
     ]
     if kernel_version:
         sbt_command = sbt_command + [f"-DkernelVersion={kernel_version}"]

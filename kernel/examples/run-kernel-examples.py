@@ -37,7 +37,6 @@ from os import path
 import shutil
 import argparse
 
-RELEASED_UNITY_CATALOG_VERSION = "0.4.1"
 
 def run_single_threaded_examples(version, maven_repo, examples_root_dir, golden_tables_dir):
     main_class = "io.delta.kernel.examples.SingleThreadedTableReader"
@@ -186,11 +185,8 @@ if __name__ == "__main__":
 
     if args.use_local:
         with WorkingDirectory(project_root_dir):
-            # Keep local published artifacts on the released UC dependency; UC-main overrides are
-            # only for the dedicated UC compatibility workflow.
             run_cmd([
                 "build/sbt",
-                f"-DunityCatalogVersion={RELEASED_UNITY_CATALOG_VERSION}",
                 "kernelGroup/publishM2",
                 "storage/publishM2"
             ], stream_output=True)
