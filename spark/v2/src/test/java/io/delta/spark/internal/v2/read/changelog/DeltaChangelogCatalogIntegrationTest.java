@@ -20,7 +20,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.delta.spark.internal.v2.DeltaV2TestBase;
 import java.util.Arrays;
 import java.util.List;
 import org.apache.spark.sql.AnalysisException;
@@ -34,7 +33,7 @@ import org.junit.jupiter.api.Test;
  * <p>These tests intentionally exercise SQL/DataFrame paths (not direct DeltaChangelog
  * construction) so they validate analyzer -> catalog -> changelog wiring.
  */
-public class DeltaChangelogCatalogIntegrationTest extends DeltaV2TestBase {
+public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase {
 
   // ===========================================================================================
   // Fixtures and helpers
@@ -490,7 +489,7 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaV2TestBase {
                           AnalysisException.class,
                           () -> spark.read().changes(tableName).collectAsList());
                   assertTrue(
-                      ex.getMessage().contains("Delta CDC does not support this range"),
+                      ex.getMessage().contains("DELTA_CHANGELOG_UNBOUNDED_RANGE"),
                       "Expected loadChangelog rejection for unbounded batch range, got: "
                           + ex.getMessage());
                 }));

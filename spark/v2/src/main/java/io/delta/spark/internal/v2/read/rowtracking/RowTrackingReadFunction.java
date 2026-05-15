@@ -152,9 +152,4 @@ public class RowTrackingReadFunction
       RowTrackingSchemaContext context) {
     return new RowTrackingReadFunction(baseReadFunc, context);
   }
-
-  /** Returns wrapped base read function for unwrapping in factories. */
-  public Function1<PartitionedFile, Iterator<InternalRow>> getBaseReadFunc() {
-    return baseReadFunc;
-  }
 }

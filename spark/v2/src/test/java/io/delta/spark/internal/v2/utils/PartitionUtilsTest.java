@@ -199,6 +199,52 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
     assertNotNull(factory, "CDC PartitionReaderFactory should not be null");
   }
 
+  /**
+   * In {@link io.delta.spark.internal.v2.read.cdc.CdcReadMode#BATCH_CHANGELOG} mode, PartitionUtils
+   * is contractually inert on the CDC side: it does not augment {@code readDataSchema} with CDC
+   * columns and does not wrap the reader with {@code CDCReadFunction}. The Auto-CDF entrypoint
+   * ({@code DeltaChangelogBatch.CDCPartitionReaderFactory}) injects the CDC tail columns as
+   * per-partition constants instead. This test locks down the contract that {@code
+   * DeltaChangelogBatch} relies on by exercising the factory build for BATCH_CHANGELOG and
+   * asserting it produces a usable, non-null reader factory.
+   */
+  @Test
+  public void testCreateDeltaParquetReaderFactory_BatchChangelog() {
+    String tablePath =
+        createTestTable("test_delta_reader_factory_batch_changelog_" + System.nanoTime(), true);
+
+    Table table = Table.forPath(defaultEngine, tablePath);
+    Snapshot snapshot = table.getLatestSnapshot(defaultEngine);
+
+    StructType dataSchema =
+        new StructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.LongType, true),
+            });
+    StructType partitionSchema =
+        new StructType(
+            new StructField[] {DataTypes.createStructField("part", DataTypes.StringType, true)});
+    StructType readDataSchema = dataSchema;
+    Filter[] filters = new Filter[0];
+    scala.collection.immutable.Map<String, String> options = Map$.MODULE$.empty();
+    Configuration hadoopConf = new Configuration();
+    SQLConf sqlConf = SQLConf.get();
+
+    PartitionReaderFactory factory =
+        PartitionUtils.createDeltaParquetReaderFactory(
+            snapshot,
+            dataSchema,
+            partitionSchema,
+            readDataSchema,
+            filters,
+            options,
+            hadoopConf,
+            sqlConf,
+            io.delta.spark.internal.v2.read.cdc.CdcReadMode.BATCH_CHANGELOG);
+
+    assertNotNull(factory, "BATCH_CHANGELOG PartitionReaderFactory should not be null");
+  }
+
   @Test
   public void testCalculateMaxSplitBytes_Basic() {
     SQLConf sqlConf = SQLConf.get();

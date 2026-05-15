@@ -586,6 +586,26 @@ trait DeltaErrorsBase
       messageParameters = Array(start.toString, latest.toString))
   }
 
+  /**
+   * Auto-CDF batch read rejected because the source table does not have row tracking enabled.
+   * Row tracking is required for the V2 changelog reader to identify rows across commits.
+   */
+  def changelogRequiresRowTracking(tableName: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CHANGELOG_REQUIRES_ROW_TRACKING",
+      messageParameters = Array(tableName))
+  }
+
+  /**
+   * Auto-CDF batch read rejected because the user requested an unbounded changelog range.
+   * Batch CHANGES queries require explicit start and end bounds.
+   */
+  def changelogUnboundedRange(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CHANGELOG_UNBOUNDED_RANGE",
+      messageParameters = Array.empty[String])
+  }
+
   def setTransactionVersionConflict(appId: String, version1: Long, version2: Long): Throwable = {
     new IllegalArgumentException(
       s"Two SetTransaction actions within the same transaction have the same appId ${appId} but " +

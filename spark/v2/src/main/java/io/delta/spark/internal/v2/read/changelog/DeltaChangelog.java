@@ -1,8 +1,6 @@
 package io.delta.spark.internal.v2.read.changelog;
 
 import io.delta.kernel.Snapshot;
-import io.delta.kernel.internal.SnapshotImpl;
-import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import org.apache.spark.sql.connector.catalog.CatalogV2Util;
 import org.apache.spark.sql.connector.catalog.Changelog;
@@ -14,6 +12,15 @@ import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
+/**
+ * V2 Changelog implementation for Delta tables.
+ *
+ * <p>Row tracking must be enabled on the source table at {@code startVersion}; the catalog
+ * (DeltaCatalogChangelogSupport) is responsible for validating this before constructing a
+ * DeltaChangelog. With that invariant, {@link #rowId()} and {@link #rowVersion()} can always point
+ * at the {@code _metadata.row_id} / {@code _metadata.row_commit_version} fields that the SPIP
+ * analyzer rule expects for update detection, carry-over removal, and net-change computation.
+ */
 public class DeltaChangelog implements Changelog {
 
   private final String tableName;
@@ -21,10 +28,8 @@ public class DeltaChangelog implements Changelog {
   private final DeltaSnapshotManager snapshotManager;
   private final long startVersion;
   private final long endVersion;
-  /** Cached snapshot at {@link #startVersion}, used by downstream Scan/Batch. */
+  /** Snapshot at {@link #startVersion}, supplied by the catalog after row-tracking validation. */
   private final Snapshot startSnapshot;
-  /** Whether row tracking was enabled in {@link #startSnapshot}. */
-  private final boolean rowTrackingEnabled;
 
   public static final String METADATA_COLUMN = "_metadata";
   public static final String ROW_ID_FIELD = "row_id";
@@ -38,20 +43,15 @@ public class DeltaChangelog implements Changelog {
       String tableName,
       StructType dataSchema,
       DeltaSnapshotManager snapshotManager,
+      Snapshot startSnapshot,
       long startVersion,
       long endVersion) {
     this.tableName = tableName;
     this.dataSchema = dataSchema;
     this.snapshotManager = snapshotManager;
+    this.startSnapshot = startSnapshot;
     this.startVersion = startVersion;
     this.endVersion = endVersion;
-    // Load the start-version snapshot once and cache the row-tracking flag. Downstream
-    // ScanBuilder / Scan / Batch take both as constructor args so the snapshot is loaded
-    // and the SnapshotImpl downcast happens exactly once.
-    this.startSnapshot = snapshotManager.loadSnapshotAt(startVersion);
-    SnapshotImpl snapshotImpl = (SnapshotImpl) startSnapshot;
-    this.rowTrackingEnabled =
-        RowTracking.isEnabled(snapshotImpl.getProtocol(), snapshotImpl.getMetadata());
   }
 
   @Override
@@ -61,12 +61,9 @@ public class DeltaChangelog implements Changelog {
 
   @Override
   public Column[] columns() {
-    StructType cdcSchema = dataSchema;
-    if (rowTrackingEnabled) {
-      cdcSchema = cdcSchema.add(METADATA_COLUMN, METADATA_STRUCT, false);
-    }
-    cdcSchema =
-        cdcSchema
+    StructType cdcSchema =
+        dataSchema
+            .add(METADATA_COLUMN, METADATA_STRUCT, false)
             .add("_change_type", DataTypes.StringType, false)
             .add("_commit_version", DataTypes.LongType, false)
             .add("_commit_timestamp", DataTypes.TimestampType, false);
@@ -75,14 +72,14 @@ public class DeltaChangelog implements Changelog {
   }
 
   // TODO: optimise to false when deletion vectors are guaranteed enabled across the entire
-  // [startVersion, endVersion] range — DVs enabled over range produces no carry-overs.
+  // [startVersion, endVersion] range. DVs enabled over range produces no carry-overs.
   @Override
   public boolean containsCarryoverRows() {
     return true;
   }
 
   // TODO: optimise to false when the range is a single commit with no UPDATE/MERGE
-  // operations. Requires inspecting the commit's operation type, questionable
+  // operations. Requires inspecting the commit's operation type, questionable.
   @Override
   public boolean containsIntermediateChanges() {
     return true;
@@ -99,20 +96,11 @@ public class DeltaChangelog implements Changelog {
   @Override
   public ScanBuilder newScanBuilder(CaseInsensitiveStringMap options) {
     return new DeltaChangelogScanBuilder(
-        snapshotManager,
-        dataSchema,
-        startVersion,
-        endVersion,
-        startSnapshot,
-        rowTrackingEnabled,
-        options);
+        snapshotManager, dataSchema, startVersion, endVersion, startSnapshot, options);
   }
 
   @Override
   public NamedReference[] rowId() {
-    if (!rowTrackingEnabled) {
-      return new NamedReference[0];
-    }
     return new NamedReference[] {FieldReference.apply("_metadata.row_id")};
   }
 

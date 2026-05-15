@@ -35,13 +35,9 @@ public abstract class DeltaV2TestBase {
             .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtensionV1")
             .config(
                 "spark.sql.catalog.spark_catalog",
-                "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+                "org.apache.spark.sql.delta.catalog.DeltaCatalogV1")
             .config("spark.sql.catalog.dsv2", "io.delta.spark.internal.v2.catalog.TestCatalog")
             .config("spark.sql.catalog.dsv2.base_path", System.getProperty("java.io.tmpdir"))
-            // Auto-CDF (loadChangelog) is gated behind a SQLConf flag in production; enable it
-            // for the entire V2 test base so CHANGES FROM ... queries can drive the kernel-based
-            // changelog reader stack.
-            .config("spark.databricks.delta.changelogV2.enabled", "true")
             .getOrCreate();
     defaultEngine = DefaultEngine.create(spark.sessionState().newHadoopConf());
   }

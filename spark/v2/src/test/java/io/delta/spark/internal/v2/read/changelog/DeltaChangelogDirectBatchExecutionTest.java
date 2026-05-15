@@ -19,7 +19,6 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
 import java.sql.Timestamp;
@@ -49,7 +48,7 @@ import org.junit.jupiter.api.Test;
  * <p>This is intentionally strict with explicit expected rows to validate end-to-end behavior
  * through ScanBuilder -> Scan -> Batch -> PartitionReader.
  */
-public class DeltaChangelogDirectBatchExecutionTest extends DeltaV2TestBase {
+public class DeltaChangelogDirectBatchExecutionTest extends DeltaChangelogTestBase {
 
   @Test
   public void testDirectBatchExecutionWithExplicitExpectedRows() throws Exception {
@@ -75,7 +74,13 @@ public class DeltaChangelogDirectBatchExecutionTest extends DeltaV2TestBase {
           Map<Long, Long> commitTimestampsMicros = loadCommitTimestampsMicros(tableName);
 
           DeltaChangelog changelog =
-              new DeltaChangelog(tableName, dataSchema, snapshotManager, 0L, latestVersion);
+              new DeltaChangelog(
+                  tableName,
+                  dataSchema,
+                  snapshotManager,
+                  snapshotManager.loadSnapshotAt(0L),
+                  0L,
+                  latestVersion);
           ScanBuilder scanBuilder =
               changelog.newScanBuilder(new CaseInsensitiveStringMap(Collections.emptyMap()));
           Scan scan = scanBuilder.build();
@@ -142,7 +147,13 @@ public class DeltaChangelogDirectBatchExecutionTest extends DeltaV2TestBase {
           long latestVersion = snapshotManager.loadLatestSnapshot().getVersion();
 
           DeltaChangelog changelog =
-              new DeltaChangelog(tableName, dataSchema, snapshotManager, 0L, latestVersion);
+              new DeltaChangelog(
+                  tableName,
+                  dataSchema,
+                  snapshotManager,
+                  snapshotManager.loadSnapshotAt(0L),
+                  0L,
+                  latestVersion);
 
           NamedReference[] rowIdRefs = changelog.rowId();
           assertEquals(1, rowIdRefs.length, "Expected a single rowId field reference");
@@ -188,7 +199,13 @@ public class DeltaChangelogDirectBatchExecutionTest extends DeltaV2TestBase {
           Map<Long, Long> commitTimestampsMicros = loadCommitTimestampsMicros(tableName);
 
           DeltaChangelog changelog =
-              new DeltaChangelog(tableName, dataSchema, snapshotManager, 0L, latestVersion);
+              new DeltaChangelog(
+                  tableName,
+                  dataSchema,
+                  snapshotManager,
+                  snapshotManager.loadSnapshotAt(0L),
+                  0L,
+                  latestVersion);
           Scan scan =
               changelog
                   .newScanBuilder(new CaseInsensitiveStringMap(Collections.emptyMap()))
@@ -257,7 +274,13 @@ public class DeltaChangelogDirectBatchExecutionTest extends DeltaV2TestBase {
 
           // Range = [v2, v3]. v0 (CREATE) and v1 (Alice) must be excluded from the output.
           DeltaChangelog changelog =
-              new DeltaChangelog(tableName, dataSchema, snapshotManager, 2L, 3L);
+              new DeltaChangelog(
+                  tableName,
+                  dataSchema,
+                  snapshotManager,
+                  snapshotManager.loadSnapshotAt(2L),
+                  2L,
+                  3L);
           Scan scan =
               changelog
                   .newScanBuilder(new CaseInsensitiveStringMap(Collections.emptyMap()))

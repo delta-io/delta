@@ -22,7 +22,6 @@ public class DeltaChangelogScanBuilder implements ScanBuilder {
   private final long startVersion;
   private final long endVersion;
   private final Snapshot startSnapshot;
-  private final boolean rowTrackingEnabled;
   private final CaseInsensitiveStringMap options;
 
   public DeltaChangelogScanBuilder(
@@ -31,14 +30,12 @@ public class DeltaChangelogScanBuilder implements ScanBuilder {
       long startVersion,
       long endVersion,
       Snapshot startSnapshot,
-      boolean rowTrackingEnabled,
       CaseInsensitiveStringMap options) {
     this.snapshotManager = snapshotManager;
     this.dataSchema = dataSchema;
     this.startVersion = startVersion;
     this.endVersion = endVersion;
     this.startSnapshot = startSnapshot;
-    this.rowTrackingEnabled = rowTrackingEnabled;
     this.options = options;
   }
 
@@ -51,17 +48,20 @@ public class DeltaChangelogScanBuilder implements ScanBuilder {
     CommitRange commitRange =
         snapshotManager.getTableChanges(engine, startVersion, Optional.of(endVersion));
 
-    StructType cdcSchema = dataSchema;
-    if (rowTrackingEnabled) {
-      cdcSchema =
-          cdcSchema.add(DeltaChangelog.METADATA_COLUMN, DeltaChangelog.METADATA_STRUCT, false);
-    }
-    cdcSchema =
-        cdcSchema
+    StructType cdcSchema =
+        dataSchema
+            .add(DeltaChangelog.METADATA_COLUMN, DeltaChangelog.METADATA_STRUCT, false)
             .add("_change_type", DataTypes.StringType, false)
             .add("_commit_version", DataTypes.LongType, false)
             .add("_commit_timestamp", DataTypes.TimestampType, false);
     return new DeltaChangelogScan(
-        cdcSchema, commitRange, engine, dataSchema, startSnapshot, rowTrackingEnabled, hadoopConf);
+        cdcSchema,
+        commitRange,
+        engine,
+        dataSchema,
+        startSnapshot,
+        startVersion,
+        endVersion,
+        hadoopConf);
   }
 }

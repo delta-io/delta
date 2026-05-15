@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Supplier;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.paths.SparkPath;
@@ -50,7 +51,6 @@ public class DeltaChangelogBatch implements Batch {
   private final Engine engine;
   private final StructType dataSchema;
   private final Snapshot snapshot;
-  private final boolean rowTrackingEnabled;
   private final Configuration hadoopConf;
 
   public DeltaChangelogBatch(
@@ -58,13 +58,11 @@ public class DeltaChangelogBatch implements Batch {
       Engine engine,
       StructType dataSchema,
       Snapshot snapshot,
-      boolean rowTrackingEnabled,
       Configuration hadoopConf) {
     this.commitRange = commitRange;
     this.engine = engine;
     this.dataSchema = dataSchema;
     this.snapshot = snapshot;
-    this.rowTrackingEnabled = rowTrackingEnabled;
     this.hadoopConf = hadoopConf;
   }
 
@@ -72,16 +70,17 @@ public class DeltaChangelogBatch implements Batch {
   public InputPartition[] planInputPartitions() {
     List<InputPartition> partitions = new ArrayList<>();
 
-    // TODO Remove streaminghelper usage
+    // TODO: Remove StreamingHelper usage; the helper is generic, only the class name is
+    // streaming-flavored.
     try (CloseableIterator<CommitActions> commitsIter =
         StreamingHelper.getCommitActionsFromRangeUnsafe(
             engine, (CommitRangeImpl) commitRange, snapshot.getPath(), CHANGELOG_ACTION_SET)) {
       while (commitsIter.hasNext()) {
-        // For a single commit, emit DELETE partitions (RemoveFiles) before INSERT partitions
-        // (AddFiles). The Delta commit-log action order is not contract for downstream readers
-        // (e.g. Spark's batch CDC post-processor) — it expects the preimage-then-postimage
-        // ordering when forming update pairs. Buffering per-commit lets us stabilize this
-        // regardless of how AddFile/RemoveFile are interleaved in the on-disk commit log.
+        // The SPIP analyzer re-partitions and re-sorts by (rowId, rowVersion) before the CDC
+        // post-processor inspects pairs, so it does not require any particular partition order
+        // from the connector. Direct-batch tests that bypass the analyzer do iterate partitions
+        // in emission order, though; emitting RemoveFiles before AddFiles per commit gives
+        // those tests a deterministic preimage-then-postimage shape.
         List<InputPartition> commitRemoves = new ArrayList<>();
         List<InputPartition> commitAdds = new ArrayList<>();
         try (CommitActions commit = commitsIter.next();
@@ -92,95 +91,90 @@ public class DeltaChangelogBatch implements Batch {
               Optional<AddFile> addOpt = StreamingHelper.getAddFileWithDataChange(batch, rowId);
               if (addOpt.isPresent()) {
                 AddFile add = addOpt.get();
-                long baseRowId =
-                    rowTrackingEnabled
-                        ? add.getBaseRowId()
-                            .orElseThrow(
-                                () ->
-                                    new IllegalStateException(
-                                        "AddFile "
-                                            + add.getPath()
-                                            + " missing baseRowId on row-tracking-enabled table"))
-                        : 0L;
-                long defaultRcv =
-                    rowTrackingEnabled
-                        ? add.getDefaultRowCommitVersion()
-                            .orElseThrow(
-                                () ->
-                                    new IllegalStateException(
-                                        "AddFile "
-                                            + add.getPath()
-                                            + " missing defaultRowCommitVersion on row-tracking-enabled table"))
-                        : 0L;
-                CDCInputPartition cdcPartition =
-                    new CDCInputPartition(
+                commitAdds.add(
+                    buildPartition(
                         add.getPath(),
                         add.getSize(),
+                        INSERT_CHANGE_TYPE,
                         commit.getVersion(),
                         commit.getTimestamp(),
-                        INSERT_CHANGE_TYPE,
-                        baseRowId,
-                        defaultRcv);
-                commitAdds.add(cdcPartition);
+                        add::getBaseRowId,
+                        add::getDefaultRowCommitVersion,
+                        "AddFile"));
               }
               Optional<RemoveFile> removeOpt = StreamingHelper.getDataChangeRemove(batch, rowId);
               if (removeOpt.isPresent()) {
                 RemoveFile remove = removeOpt.get();
-                long baseRowId =
-                    rowTrackingEnabled
-                        ? remove
-                            .getBaseRowId()
-                            .orElseThrow(
-                                () ->
-                                    new IllegalStateException(
-                                        "RemoveFile "
-                                            + remove.getPath()
-                                            + " missing baseRowId on row-tracking-enabled table"))
-                        : 0L;
-                long defaultRcv =
-                    rowTrackingEnabled
-                        ? remove
-                            .getDefaultRowCommitVersion()
-                            .orElseThrow(
-                                () ->
-                                    new IllegalStateException(
-                                        "RemoveFile "
-                                            + remove.getPath()
-                                            + " missing defaultRowCommitVersion on row-tracking-enabled table"))
-                        : 0L;
-                CDCInputPartition cdcPartition =
-                    new CDCInputPartition(
+                commitRemoves.add(
+                    buildPartition(
                         remove.getPath(),
                         remove.getSize().orElse(0L),
+                        DELETE_CHANGE_TYPE,
                         commit.getVersion(),
                         commit.getTimestamp(),
-                        DELETE_CHANGE_TYPE,
-                        baseRowId,
-                        defaultRcv);
-                commitRemoves.add(cdcPartition);
+                        remove::getBaseRowId,
+                        remove::getDefaultRowCommitVersion,
+                        "RemoveFile"));
               }
             }
           }
+        } catch (RuntimeException e) {
+          throw e;
         } catch (Exception e) {
+          // try-with-resources requires catching Exception because CommitActions.close()
+          // declares it. Unchecked exceptions (e.g. the IllegalStateExceptions thrown above
+          // by buildPartition's orElseThrow) are re-thrown unchanged.
           throw new RuntimeException("Failed to process CDC commit actions", e);
         }
         partitions.addAll(commitRemoves);
         partitions.addAll(commitAdds);
       }
+    } catch (RuntimeException e) {
+      throw e;
     } catch (Exception e) {
       throw new RuntimeException("Failed to plan CDC input partitions", e);
     }
     return partitions.toArray(new InputPartition[0]);
   }
 
+  /**
+   * Build a {@link CDCInputPartition} for a single AddFile or RemoveFile action. Both action types
+   * require non-empty {@code baseRowId} and {@code defaultRowCommitVersion}; the caller (catalog)
+   * has already validated that row tracking is enabled at the start version of the read, so any
+   * missing value here is an invariant violation rather than a user-facing error.
+   */
+  private static CDCInputPartition buildPartition(
+      String path,
+      long size,
+      String changeType,
+      long commitVersion,
+      long commitTimestampMillis,
+      Supplier<Optional<Long>> baseRowIdAccessor,
+      Supplier<Optional<Long>> defaultRowCommitVersionAccessor,
+      String actionDescription) {
+    long baseRowId =
+        baseRowIdAccessor
+            .get()
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        actionDescription + " " + path + " missing baseRowId"));
+    long defaultRcv =
+        defaultRowCommitVersionAccessor
+            .get()
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        actionDescription + " " + path + " missing defaultRowCommitVersion"));
+    return new CDCInputPartition(
+        path, size, commitVersion, commitTimestampMillis, changeType, baseRowId, defaultRcv);
+  }
+
   @Override
   public PartitionReaderFactory createReaderFactory() {
     StructType partitionSchema = new StructType();
-    StructType readDataSchema = dataSchema;
-    if (rowTrackingEnabled) {
-      readDataSchema =
-          readDataSchema.add(DeltaChangelog.METADATA_COLUMN, DeltaChangelog.METADATA_STRUCT, false);
-    }
+    StructType readDataSchema =
+        dataSchema.add(DeltaChangelog.METADATA_COLUMN, DeltaChangelog.METADATA_STRUCT, false);
     Filter[] dataFilters = new Filter[0];
     scala.collection.immutable.Map<String, String> scalaOptions =
         scala.collection.immutable.Map$.MODULE$.empty();
@@ -327,10 +321,11 @@ public class DeltaChangelogBatch implements Batch {
         StructType outputSchema) {
       this.baseReader = baseReader;
       this.projection = UnsafeProjection.create(outputSchema);
-      // Tail values are partition-constants — set them once at construction so
-      // get() doesn't redo the same writes on every row.
+      // Tail values are partition-constants. Set them once at construction so get() does not
+      // redo the same writes on every row.
       this.cdcTail.update(0, UTF8String.fromString(cdcPartition.getChangeType()));
       this.cdcTail.setLong(1, cdcPartition.getCommitVersion());
+      // millis to micros: Catalyst stores TimestampType as microseconds since epoch.
       this.cdcTail.setLong(2, cdcPartition.getCommitTimestampMillis() * 1000L);
     }
 

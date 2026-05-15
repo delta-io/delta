@@ -360,7 +360,7 @@ public class PartitionUtils {
 
     // For streaming CDC reads, build the schema context and augment readDataSchema with CDC
     // columns before DV wrapping so that DV column indices account for them. Auto-CDF batch
-    // reads (BATCH_CHANGELOG) skip this step — DeltaChangelogBatch's outer
+    // reads (BATCH_CHANGELOG) skip this step. DeltaChangelogBatch's outer
     // CDCPartitionReaderFactory injects the CDC tail columns as constants instead.
     Optional<CDCSchemaContext> cdcSchemaContext =
         cdcReadMode.injectsCdcAtReaderLevel()

@@ -14,7 +14,8 @@ public class DeltaChangelogScan implements Scan {
   private final CommitRange commitRange;
   private final StructType dataSchema;
   private final Snapshot snapshot;
-  private final boolean rowTrackingEnabled;
+  private final long startVersion;
+  private final long endVersion;
   private final Configuration hadoopConf;
 
   public DeltaChangelogScan(
@@ -23,14 +24,16 @@ public class DeltaChangelogScan implements Scan {
       Engine engine,
       StructType dataSchema,
       Snapshot snapshot,
-      boolean rowTrackingEnabled,
+      long startVersion,
+      long endVersion,
       Configuration hadoopConf) {
     this.readSchema = readSchema;
     this.commitRange = commitRange;
     this.engine = engine;
     this.dataSchema = dataSchema;
     this.snapshot = snapshot;
-    this.rowTrackingEnabled = rowTrackingEnabled;
+    this.startVersion = startVersion;
+    this.endVersion = endVersion;
     this.hadoopConf = hadoopConf;
   }
 
@@ -41,13 +44,13 @@ public class DeltaChangelogScan implements Scan {
 
   @Override
   public String description() {
-    return "DeltaChangelogScan";
+    return String.format(
+        "DeltaChangelogScan [startVersion=%d, endVersion=%d]", startVersion, endVersion);
   }
 
   @Override
   public Batch toBatch() {
-    return new DeltaChangelogBatch(
-        commitRange, engine, dataSchema, snapshot, rowTrackingEnabled, hadoopConf);
+    return new DeltaChangelogBatch(commitRange, engine, dataSchema, snapshot, hadoopConf);
   }
 
   // TODO: implement toMicroBatchStream() so spark.readStream...loadChangelog(...) can drive a

@@ -3578,5 +3578,18 @@
     "message" : [
       "Could not resolve expression: <expression>"
     ]
+  },
+  "DELTA_CHANGELOG_REQUIRES_ROW_TRACKING" : {
+    "message" : [
+      "Change data capture via CHANGES on `<tableName>` requires row tracking.",
+      "Enable it by setting TBLPROPERTIES ('delta.enableRowTracking' = 'true')."
+    ],
+    "sqlState" : "0AKDE"
+  },
+  "DELTA_CHANGELOG_UNBOUNDED_RANGE" : {
+    "message" : [
+      "Delta CDC does not support unbounded ranges in batch reads. Specify a starting and ending version or timestamp."
+    ],
+    "sqlState" : "0AKDE"
   }
 }

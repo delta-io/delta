@@ -29,7 +29,6 @@ import io.delta.spark.internal.v2.read.changelog.DeltaChangelog
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory
 import io.delta.spark.internal.v2.utils.{SchemaUtils => V2SchemaUtils}
 
-import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.connector.catalog.{Changelog, ChangelogInfo, Identifier}
 import org.apache.spark.sql.connector.catalog.ChangelogRange.{TimestampRange, UnboundedRange, VersionRange}
@@ -89,44 +88,27 @@ abstract class DeltaCatalogChangelogSupport extends AbstractDeltaCatalog {
           tr.startingBoundInclusive(),
           tr.endingBoundInclusive())
       case _: UnboundedRange =>
-        throw new AnalysisException(
-          message = "Delta CDC does not support this range.",
-          line = None,
-          startPosition = None,
-          cause = None,
-          errorClass = None,
-          messageParameters = Map.empty,
-          context = Array.empty)
+        throw DeltaErrors.changelogUnboundedRange()
     }
   }
 
-  private def buildChangelog(ident: Identifier,
+  private def buildChangelog(
+      ident: Identifier,
       catalogTable: CatalogTable,
       startVersion: Long,
       endingVersion: Option[Long],
       startingBoundInclusive: Boolean,
-      endingBoundInclusive: Boolean) : DeltaChangelog = {
+      endingBoundInclusive: Boolean): DeltaChangelog = {
     val tablePath = new Path(catalogTable.location).toString()
     val deltaLog = DeltaLog.forTable(spark, catalogTable)
     val engine = DefaultEngine.create(deltaLog.newDeltaHadoopConf())
     val snapshotManager =
       SnapshotManagerFactory.create(tablePath, engine, Optional.of(catalogTable))
-    val snapshot = snapshotManager.loadLatestSnapshot()
-    val snapshotImpl = snapshot.asInstanceOf[SnapshotImpl]
 
-    if (!RowTracking.isEnabled(snapshotImpl.getProtocol, snapshotImpl.getMetadata)) {
-      throw new AnalysisException(
-        message = s"Change data capture via CHANGES on `${ident.name()}` requires row tracking. " +
-          s"Enable it with TBLPROPERTIES ('delta.enableRowTracking' = 'true').",
-        line = None,
-        startPosition = None,
-        cause = None,
-        errorClass = None,
-        messageParameters = Map.empty,
-        context = Array.empty)
-    }
-
-    val latestVersion = snapshotImpl.getVersion()
+    // The latest snapshot is needed to default the ending version when the user did not
+    // specify one, and to surface a clear "start > latest" error before issuing a snapshot
+    // load that would otherwise fail with a low-level kernel error.
+    val latestVersion = snapshotManager.loadLatestSnapshot().getVersion()
     val nonOptEndingVersion = endingVersion.getOrElse(latestVersion)
     val (start, end) = validateAndAdjustVersionRange(
       startVersion,
@@ -134,9 +116,18 @@ abstract class DeltaCatalogChangelogSupport extends AbstractDeltaCatalog {
       latestVersion,
       startingBoundInclusive,
       endingBoundInclusive)
-    val schema = V2SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema())
 
-    new DeltaChangelog(ident.name(), schema, snapshotManager, start, end)
+    // Validate row tracking on the START snapshot (the leftmost commit the reader consumes).
+    // Validating on the latest snapshot would pass when row tracking was enabled mid-life and
+    // then misread a range whose start predates that change.
+    val startSnapshot = snapshotManager.loadSnapshotAt(start)
+    val startSnapshotImpl = startSnapshot.asInstanceOf[SnapshotImpl]
+    if (!RowTracking.isEnabled(startSnapshotImpl.getProtocol, startSnapshotImpl.getMetadata)) {
+      throw DeltaErrors.changelogRequiresRowTracking(ident.name())
+    }
+
+    val schema = V2SchemaUtils.convertKernelSchemaToSparkSchema(startSnapshot.getSchema())
+    new DeltaChangelog(ident.name(), schema, snapshotManager, startSnapshot, start, end)
   }
 
   /** Resolve a Delta-backed CatalogTable for the given identifier, or fail with a clear error. */
@@ -144,24 +135,12 @@ abstract class DeltaCatalogChangelogSupport extends AbstractDeltaCatalog {
     loadTable(ident) match {
       case st: SparkTable => st.getCatalogTable().orElseThrow()
       case dt: DeltaTableV2 =>
-        dt.catalogTable.getOrElse(throw new AnalysisException(
-          message = "Table is not available",
-          line = None,
-          startPosition = None,
-          cause = None,
-          errorClass = None,
-          messageParameters = Map.empty,
-          context = Array.empty))
+        dt.catalogTable.getOrElse(throw new IllegalStateException(
+          s"Delta table `${ident.name()}` has no catalogTable; loadChangelog cannot proceed."))
       case other =>
-        throw new AnalysisException(
-          message = s"loadChangelog only supports SparkTable and DeltaTableV2; got " +
-            other.getClass.getName,
-          line = None,
-          startPosition = None,
-          cause = None,
-          errorClass = None,
-          messageParameters = Map.empty,
-          context = Array.empty)
+        throw new IllegalStateException(
+          "loadChangelog only supports SparkTable and DeltaTableV2; got " +
+            other.getClass.getName)
     }
   }
 
