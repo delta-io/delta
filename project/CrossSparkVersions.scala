@@ -287,7 +287,7 @@ object SparkVersionSpec {
   )
 
   private val spark42Snapshot = SparkVersionSpec(
-    fullVersion = "4.2.0-SNAPSHOT",
+    fullVersion = "4.2.0-preview5",
     targetJvm = "17",
     additionalSourceDir = Some("scala-shims/spark-4.2"),
     supportIceberg = false,
