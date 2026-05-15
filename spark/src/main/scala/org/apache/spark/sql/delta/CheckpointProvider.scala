@@ -89,7 +89,11 @@ trait CheckpointProvider extends UninitializedCheckpointProvider {
    * checkpoint (i.e. V2 checkpoints) implement this; the default throws.
    */
   def createCompatibilityCheckpoint(
-      spark: SparkSession, deltaLog: DeltaLog, logPath: Path, hadoopConf: Configuration): Unit =
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      logPath: Path,
+      hadoopConf: Configuration,
+      tableProperties: Map[String, String]): Unit =
     throw new IllegalStateException(
       s"createCompatibilityCheckpoint is not supported for ${this.getClass.getName}.")
 
@@ -557,8 +561,13 @@ abstract class LazyCompleteCheckpointProvider(
     underlyingCheckpointProvider.checkpointPolicyForLogging
 
   override def createCompatibilityCheckpoint(
-      spark: SparkSession, deltaLog: DeltaLog, logPath: Path, hadoopConf: Configuration): Unit =
-    underlyingCheckpointProvider.createCompatibilityCheckpoint(spark, deltaLog, logPath, hadoopConf)
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      logPath: Path,
+      hadoopConf: Configuration,
+      tableProperties: Map[String, String]): Unit =
+    underlyingCheckpointProvider.createCompatibilityCheckpoint(
+      spark, deltaLog, logPath, hadoopConf, tableProperties)
 
   override def allActionsFileIndexesAndSchemas(
       spark: SparkSession, deltaLog: DeltaLog): Seq[(DeltaLogFileIndex, StructType)] = {
@@ -614,7 +623,11 @@ case class V2CheckpointProvider(
     Some(CheckpointPolicy.V2)
 
   override def createCompatibilityCheckpoint(
-      spark: SparkSession, deltaLog: DeltaLog, logPath: Path, hadoopConf: Configuration): Unit = {
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      logPath: Path,
+      hadoopConf: Configuration,
+      tableProperties: Map[String, String]): Unit = {
     // topLevelFileIndex is non-empty for V2CheckpointProvider and
     // represents the v2 manifest file
     val shallowCopyDf = deltaLog.loadIndex(topLevelFileIndex.get, Action.logSchema)
@@ -624,7 +637,8 @@ case class V2CheckpointProvider(
       shallowCopyDf,
       finalPath,
       hadoopConf,
-      useRename = false)
+      useRename = false,
+      tableProperties = tableProperties)
   }
 
   private val v2SchemaWithCaching = new LazyCheckpointSchemaGetter {
