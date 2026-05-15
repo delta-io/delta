@@ -223,6 +223,11 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
         new StructType(
             new StructField[] {DataTypes.createStructField("part", DataTypes.StringType, true)});
     StructType readDataSchema = dataSchema;
+    StructType ddlOrderedReadOutputSchema =
+        SchemaUtils.ddlOrderedOutputSchema(
+            SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema()),
+            readDataSchema,
+            partitionSchema);
     Filter[] filters = new Filter[0];
     scala.collection.immutable.Map<String, String> options = Map$.MODULE$.empty();
     Configuration hadoopConf = new Configuration();
@@ -234,6 +239,7 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
             dataSchema,
             partitionSchema,
             readDataSchema,
+            ddlOrderedReadOutputSchema,
             filters,
             options,
             hadoopConf,
