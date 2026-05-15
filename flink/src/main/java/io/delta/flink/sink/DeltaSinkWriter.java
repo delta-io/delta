@@ -18,6 +18,7 @@ package io.delta.flink.sink;
 
 import io.delta.flink.sink.mergestrategy.Upsert;
 import io.delta.flink.table.DeltaTable;
+import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.types.StructType;
 import java.io.IOException;
@@ -210,6 +211,22 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaWrite
       Collection<DeltaWriterResult> results = mergeStrategy.merge();
       metricGroup.counter("numFilesWritten").inc(results.size());
       return results;
+    } catch (IOException e) {
+      throw new RuntimeException("merge failed for checkpoint", e);
+    }
+  }
+
+  /**
+   * Invoke the configured {@link MergeStrategy} for the current checkpoint and append any returned
+   * actions to {@code completedWrites}. The strategy owns its own per-checkpoint state and is
+   * responsible for resetting it inside {@link MergeStrategy#merge}, so we don't need a guard here.
+   */
+  private void runMergeStrategy() {
+    try {
+      List<Row> extraActions = mergeStrategy.merge(deltaTable, conf);
+      if (!extraActions.isEmpty()) {
+        completedWrites.add(new DeltaWriterResult(extraActions, new WriterResultContext()));
+      }
     } catch (IOException e) {
       throw new RuntimeException("merge failed for checkpoint", e);
     }

@@ -148,12 +148,17 @@ public class DeltaSinkConf implements Serializable {
    *
    * <p>Format: comma-separated, decimal, non-negative integers. Example: {@code "0,3"} declares a
    * composite PK on field ordinals 0 and 3.
+   *
+   * <p>This option is intentionally <em>not</em> registered in {@code optionalOptions()} so that
+   * Flink SQL {@code WITH(...)} clauses cannot override the DDL primary key.
    */
   public static final ConfigOption<String> PRIMARY_KEY =
       ConfigOptions.key("primary_key")
           .stringType()
           .noDefaultValue()
-          .withDescription("Comma-separated primary key column ordinals.");
+          .withDescription(
+              "Comma-separated primary key column ordinals. Resolved by upper layers "
+                  + "from the table's PRIMARY KEY clause. Not a user-facing option.");
 
   // ----------------------------------------------------------------------
   // State
