@@ -58,11 +58,10 @@ trait ChangelogSupport extends TableCatalog {
       case other =>
         // Auto-CDF only supports the V2 connector. V1 Delta tables (DeltaTableV2 under the
         // hood) keep going through the legacy CDF path that DeltaCatalog already exposes.
-        throw new IllegalStateException(
-          "Auto-CDF requires a V2 Delta table; got " + other.getClass.getName)
+        DeltaErrors.throwChangelogRequiresV2Table(ident.toString, other.getClass.getName)
     }
     val (startVersion, endVersion) = resolveRange(sparkTable, changelogInfo.range())
-    new DeltaChangelog(ident.name(), sparkTable, changelogInfo, startVersion, endVersion)
+    new DeltaChangelog(ident.name(), sparkTable, startVersion, endVersion)
   }
 
   /**
@@ -84,7 +83,7 @@ trait ChangelogSupport extends TableCatalog {
         adjustBounds(
           rawStart, rawEnd, vr.startingBoundInclusive(), vr.endingBoundInclusive(), latestVersion)
       case tr: TimestampRange =>
-        // TimestampRange carries Catalyst micros; the kernel API takes millis.
+        // TimestampRange carries Catalyst micros. The kernel API takes millis.
         val rawStart = snapshotManager
           .getActiveCommitAtTime(
             tr.startingTimestamp / 1000,
@@ -106,7 +105,7 @@ trait ChangelogSupport extends TableCatalog {
         adjustBounds(
           rawStart, rawEnd, tr.startingBoundInclusive(), tr.endingBoundInclusive(), latestVersion)
       case _: UnboundedRange =>
-        throw DeltaErrors.changelogUnboundedRange()
+        DeltaErrors.throwChangelogUnboundedRange()
     }
   }
 

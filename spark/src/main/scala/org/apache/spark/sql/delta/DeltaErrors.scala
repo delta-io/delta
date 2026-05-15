@@ -590,9 +590,8 @@ trait DeltaErrorsBase
    * Auto-CDF batch read rejected because the source table does not have row tracking enabled.
    * Row tracking is required for the V2 changelog reader to identify rows across commits.
    *
-   * Throws unconditionally; the {@code Nothing} return lets Java callers use {@code throw} on
-   * the result without tripping Java's checked-exception rules ({@code AnalysisException}
-   * extends {@code Exception}, not {@code RuntimeException}).
+   * Returns `Nothing` so Scala callers can use this in expression position (e.g. as a `match`
+   * arm) without an explicit `throw`. Java callers invoke it as a statement.
    */
   def throwChangelogRequiresRowTracking(tableName: String): Nothing = {
     throw new DeltaAnalysisException(
@@ -600,20 +599,32 @@ trait DeltaErrorsBase
       messageParameters = Array(tableName))
   }
 
-  def changelogRequiresRowTracking(tableName: String): Throwable = {
-    new DeltaAnalysisException(
-      errorClass = "DELTA_CHANGELOG_REQUIRES_ROW_TRACKING",
-      messageParameters = Array(tableName))
-  }
-
   /**
    * Auto-CDF batch read rejected because the user requested an unbounded changelog range.
    * Batch CHANGES queries require explicit start and end bounds.
+   *
+   * Returns `Nothing` so Scala callers can use this in expression position (e.g. as a `match`
+   * arm) without an explicit `throw`. Java callers invoke it as a statement.
    */
-  def changelogUnboundedRange(): Throwable = {
-    new DeltaAnalysisException(
+  def throwChangelogUnboundedRange(): Nothing = {
+    throw new DeltaAnalysisException(
       errorClass = "DELTA_CHANGELOG_UNBOUNDED_RANGE",
       messageParameters = Array.empty[String])
+  }
+
+  /**
+   * Auto-CDF batch read rejected because the table resolved by the catalog is not a V2
+   * [[io.delta.spark.internal.v2.catalog.SparkTable]]. The V2 connector is the only path that
+   * implements the catalog-driven CHANGES surface. V1 Delta tables (`DeltaTableV2`) continue to
+   * use the legacy CDF path that does not go through `TableCatalog.loadChangelog`.
+   *
+   * Returns `Nothing` so Scala callers can use this in expression position (e.g. as a `match`
+   * arm) without an explicit `throw`. Java callers invoke it as a statement.
+   */
+  def throwChangelogRequiresV2Table(tableName: String, actualClassName: String): Nothing = {
+    throw new DeltaAnalysisException(
+      errorClass = "DELTA_CHANGELOG_REQUIRES_V2_TABLE",
+      messageParameters = Array(tableName, actualClassName))
   }
 
   /**

@@ -3595,14 +3595,21 @@
   "DELTA_CHANGELOG_SCHEMA_CHANGE_IN_RANGE" : {
     "message" : [
       "Delta CDC does not support reading a changelog range that includes a schema change.",
-      "Commit at version <version> changes the table schema; pick a starting/ending version that brackets a single schema."
+      "Commit at version <version> changes the table schema. Pick a starting/ending version that brackets a single schema."
     ],
     "sqlState" : "0AKDE"
   },
   "DELTA_CHANGELOG_ROW_TRACKING_DISABLED_IN_RANGE" : {
     "message" : [
       "Delta CDC requires row tracking to remain enabled across the requested range.",
-      "Commit at version <version> disabled row tracking; pick a starting/ending version that brackets a row-tracking-enabled state."
+      "Commit at version <version> disabled row tracking. Pick a starting/ending version that brackets a row-tracking-enabled state."
+    ],
+    "sqlState" : "0AKDE"
+  },
+  "DELTA_CHANGELOG_REQUIRES_V2_TABLE" : {
+    "message" : [
+      "Auto-CDF reads on `<tableName>` require the V2 Delta connector, but the catalog resolved the table to `<actualClassName>`.",
+      "Set the SQL conf `spark.databricks.delta.v2.enableMode` to `STRICT` (or `AUTO`, if AUTO routes CHANGES queries) to read this table through the V2 connector."
     ],
     "sqlState" : "0AKDE"
   }

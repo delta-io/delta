@@ -573,13 +573,13 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
   }
 
   /**
-   * A CHANGES read across a range where row tracking is toggled off mid-range (via a setting of
-   * {@code delta.enableRowTracking=false}) must be rejected with {@code
-   * DELTA_CHANGELOG_ROW_TRACKING_DISABLED_IN_RANGE}.
+   * Range ends in an RT-disabled state. The eager end-snapshot check in {@code
+   * DeltaChangelogScanBuilder.build} must reject with {@code DELTA_CHANGELOG_REQUIRES_ROW_TRACKING}
+   * before the per-commit loop runs.
    */
   @Test
-  public void testChangelogRejectsRowTrackingToggleMidRange() throws Exception {
-    String tableName = "dsv2_cdc_catalog_rt_toggle_" + System.nanoTime();
+  public void testChangelogRejectsRowTrackingDisabledAtEnd() throws Exception {
+    String tableName = "dsv2_cdc_catalog_rt_disabled_end_" + System.nanoTime();
     String tablePath = System.getProperty("java.io.tmpdir") + "/" + tableName;
 
     withTable(
@@ -619,14 +619,72 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
                                                     + "VERSION 2",
                                                 tableName))
                                         .collectAsList());
-                        // Either the eager end-snapshot check (RT off at end) or the per-commit
-                        // mid-range check fires; both errors are user-actionable.
+                        assertTrue(
+                            ex.getMessage().contains("DELTA_CHANGELOG_REQUIRES_ROW_TRACKING"),
+                            "Expected eager end-snapshot RT error, got: " + ex.getMessage());
+                      });
+                }));
+  }
+
+  /**
+   * Range starts and ends with row tracking enabled, but a mid-range commit carries a Metadata
+   * action that disables row tracking. The per-commit Metadata loop in {@code
+   * DeltaChangelogBatch.planInputPartitions} must reject with {@code
+   * DELTA_CHANGELOG_ROW_TRACKING_DISABLED_IN_RANGE}, because the eager boundary checks see only
+   * RT-enabled endpoints.
+   */
+  @Test
+  public void testChangelogRejectsRowTrackingDisabledMidRange() throws Exception {
+    String tableName = "dsv2_cdc_catalog_rt_disabled_mid_" + System.nanoTime();
+    String tablePath = System.getProperty("java.io.tmpdir") + "/" + tableName;
+
+    withTable(
+        tablePath,
+        () ->
+            withTable(
+                new String[] {tableName},
+                () -> {
+                  // v0: CREATE with row tracking enabled.
+                  spark.sql(
+                      String.format(
+                          "CREATE TABLE %s (id BIGINT, name STRING) USING delta LOCATION '%s' "
+                              + "TBLPROPERTIES "
+                              + "('delta.enableDeletionVectors'='false', "
+                              + "'delta.enableRowTracking'='true')",
+                          tableName, tablePath));
+                  // v1: INSERT (RT still on).
+                  spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice')", tableName));
+                  // v2: ALTER TBLPROPERTIES sets RT off (Metadata commit inside the range).
+                  spark.sql(
+                      String.format(
+                          "ALTER TABLE %s SET TBLPROPERTIES ('delta.enableRowTracking'='false')",
+                          tableName));
+                  // v3: ALTER TBLPROPERTIES turns RT back on, so the end-snapshot check passes
+                  // and the failure must come from the per-commit loop at v2.
+                  spark.sql(
+                      String.format(
+                          "ALTER TABLE %s SET TBLPROPERTIES ('delta.enableRowTracking'='true')",
+                          tableName));
+
+                  withSQLConf(
+                      "spark.databricks.delta.v2.enableMode",
+                      "STRICT",
+                      () -> {
+                        Exception ex =
+                            assertThrows(
+                                Exception.class,
+                                () ->
+                                    spark
+                                        .sql(
+                                            String.format(
+                                                "SELECT * FROM %s CHANGES FROM VERSION 0 TO "
+                                                    + "VERSION 3",
+                                                tableName))
+                                        .collectAsList());
                         assertTrue(
                             ex.getMessage()
-                                    .contains("DELTA_CHANGELOG_ROW_TRACKING_DISABLED_IN_RANGE")
-                                || ex.getMessage()
-                                    .contains("DELTA_CHANGELOG_REQUIRES_ROW_TRACKING"),
-                            "Expected row-tracking-toggle error, got: " + ex.getMessage());
+                                .contains("DELTA_CHANGELOG_ROW_TRACKING_DISABLED_IN_RANGE"),
+                            "Expected per-commit mid-range RT error, got: " + ex.getMessage());
                       });
                 }));
   }

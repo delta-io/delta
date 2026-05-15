@@ -79,7 +79,6 @@ public class DeltaChangelogDirectBatchExecutionTest extends DeltaChangelogTestBa
               new DeltaChangelog(
                   tableName,
                   new SparkTable(Identifier.of(new String[0], tableName), tablePath),
-                  /* changelogInfo */ null,
                   0L,
                   latestVersion);
           ScanBuilder scanBuilder =
@@ -151,7 +150,6 @@ public class DeltaChangelogDirectBatchExecutionTest extends DeltaChangelogTestBa
               new DeltaChangelog(
                   tableName,
                   new SparkTable(Identifier.of(new String[0], tableName), tablePath),
-                  /* changelogInfo */ null,
                   0L,
                   latestVersion);
 
@@ -202,7 +200,6 @@ public class DeltaChangelogDirectBatchExecutionTest extends DeltaChangelogTestBa
               new DeltaChangelog(
                   tableName,
                   new SparkTable(Identifier.of(new String[0], tableName), tablePath),
-                  /* changelogInfo */ null,
                   0L,
                   latestVersion);
           Scan scan =
@@ -276,7 +273,6 @@ public class DeltaChangelogDirectBatchExecutionTest extends DeltaChangelogTestBa
               new DeltaChangelog(
                   tableName,
                   new SparkTable(Identifier.of(new String[0], tableName), tablePath),
-                  /* changelogInfo */ null,
                   2L,
                   3L);
           Scan scan =

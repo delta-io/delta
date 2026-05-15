@@ -79,7 +79,7 @@ public class DeltaChangelogBatch implements Batch {
     // Eager schema-drift check: if the start-version snapshot's schema differs from the
     // end-version reference (passed in as `dataSchema`), a Metadata-changing commit lies in
     // the range. The per-commit Metadata loop below catches the case where Metadata also
-    // appears inside the range; this start-vs-end pre-check catches the case where the
+    // appears inside the range. This start-vs-end pre-check catches the case where the
     // schema before our first iterated commit is already out of sync.
     StructType startSchema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
     if (!startSchema.equals(dataSchema)) {
@@ -87,8 +87,13 @@ public class DeltaChangelogBatch implements Batch {
           ((CommitRangeImpl) commitRange).getStartVersion());
     }
 
-    // TODO: Remove StreamingHelper usage; the helper is generic, only the class name is
+    // TODO: Remove StreamingHelper usage. The helper is generic, only the class name is
     // streaming-flavored.
+    //
+    // The two `catch (RuntimeException e) { throw e; } catch (Exception e) { throw new
+    // RuntimeException(...) }` blocks below exist because try-with-resources requires catching
+    // Exception (CommitActions.close() declares it). Unchecked exceptions, including the
+    // IllegalStateExceptions thrown by buildPartition's orElseThrow, are re-thrown unchanged.
     try (CloseableIterator<CommitActions> commitsIter =
         StreamingHelper.getCommitActionsFromRangeUnsafe(
             engine, (CommitRangeImpl) commitRange, snapshot.getPath(), CHANGELOG_ACTION_SET)) {
@@ -96,7 +101,7 @@ public class DeltaChangelogBatch implements Batch {
         // The SPIP analyzer re-partitions and re-sorts by (rowId, rowVersion) before the CDC
         // post-processor inspects pairs, so it does not require any particular partition order
         // from the connector. Direct-batch tests that bypass the analyzer do iterate partitions
-        // in emission order, though; emitting RemoveFiles before AddFiles per commit gives
+        // in emission order, though. Emitting RemoveFiles before AddFiles per commit gives
         // those tests a deterministic preimage-then-postimage shape.
         List<InputPartition> commitRemoves = new ArrayList<>();
         List<InputPartition> commitAdds = new ArrayList<>();
@@ -157,9 +162,6 @@ public class DeltaChangelogBatch implements Batch {
         } catch (RuntimeException e) {
           throw e;
         } catch (Exception e) {
-          // try-with-resources requires catching Exception because CommitActions.close()
-          // declares it. Unchecked exceptions (e.g. the IllegalStateExceptions thrown above
-          // by buildPartition's orElseThrow) are re-thrown unchanged.
           throw new RuntimeException("Failed to process CDC commit actions", e);
         }
         partitions.addAll(commitRemoves);

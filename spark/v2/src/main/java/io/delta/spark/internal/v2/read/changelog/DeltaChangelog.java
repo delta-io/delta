@@ -1,9 +1,10 @@
 package io.delta.spark.internal.v2.read.changelog;
 
+import io.delta.kernel.Snapshot;
 import io.delta.spark.internal.v2.catalog.SparkTable;
+import io.delta.spark.internal.v2.utils.SchemaUtils;
 import org.apache.spark.sql.connector.catalog.CatalogV2Util;
 import org.apache.spark.sql.connector.catalog.Changelog;
-import org.apache.spark.sql.connector.catalog.ChangelogInfo;
 import org.apache.spark.sql.connector.catalog.Column;
 import org.apache.spark.sql.connector.expressions.FieldReference;
 import org.apache.spark.sql.connector.expressions.NamedReference;
@@ -15,21 +16,20 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 /**
  * V2 Changelog implementation for Delta tables.
  *
- * <p>Wraps the {@link SparkTable} resolved by {@code TableCatalog.loadTable(ident)} and the {@link
- * ChangelogInfo} that captures the user's CDC query options (deduplication mode, update detection,
- * the resolved version range). All connector-level work — snapshot loads, row tracking validation,
- * metadata-action inspection across the range — is deferred to the read path inside {@link
- * DeltaChangelogBatch}, so that constructing a DeltaChangelog from the catalog stays cheap and
- * side-effect free.
+ * <p>Wraps the {@link SparkTable} resolved by {@code TableCatalog.loadTable(ident)}. The
+ * connector-level work (snapshot loads, row tracking validation, metadata-action inspection
+ * across the range) is deferred to the read path inside {@link DeltaChangelogBatch}. The schema
+ * exposed by {@link #columns()} is the end-version schema. It matches the {@code dataSchema} the
+ * scan builds against, so analysis-time column resolution agrees with the per-commit Metadata
+ * validation performed at scan planning.
  *
- * <p>Row tracking is required at the table protocol; without it the SPIP analyzer rule cannot
+ * <p>Row tracking is required at the table protocol. Without it the SPIP analyzer rule cannot
  * partition by {@code rowId / rowVersion}. Validation is performed by the read path, not here.
  */
 public class DeltaChangelog implements Changelog {
 
   private final String tableName;
   private final SparkTable sparkTable;
-  private final ChangelogInfo changelogInfo;
   private final long startVersion;
   private final long endVersion;
 
@@ -42,14 +42,9 @@ public class DeltaChangelog implements Changelog {
           .add(ROW_COMMIT_VERSION_FIELD, DataTypes.LongType, false);
 
   public DeltaChangelog(
-      String tableName,
-      SparkTable sparkTable,
-      ChangelogInfo changelogInfo,
-      long startVersion,
-      long endVersion) {
+      String tableName, SparkTable sparkTable, long startVersion, long endVersion) {
     this.tableName = tableName;
     this.sparkTable = sparkTable;
-    this.changelogInfo = changelogInfo;
     this.startVersion = startVersion;
     this.endVersion = endVersion;
   }
@@ -61,9 +56,14 @@ public class DeltaChangelog implements Changelog {
 
   @Override
   public Column[] columns() {
+    // Resolve the end-version schema lazily so that constructing a DeltaChangelog from the
+    // catalog stays side-effect free. The analyzer calls columns() once per query during
+    // resolution, and the scan path later validates that every per-commit Metadata.getSchema()
+    // matches this same end-version schema.
+    Snapshot endSnapshot = sparkTable.getSnapshotManager().loadSnapshotAt(endVersion);
+    StructType endSchema = SchemaUtils.convertKernelSchemaToSparkSchema(endSnapshot.getSchema());
     StructType cdcSchema =
-        sparkTable
-            .schema()
+        endSchema
             .add(METADATA_COLUMN, METADATA_STRUCT, false)
             .add("_change_type", DataTypes.StringType, false)
             .add("_commit_version", DataTypes.LongType, false)
@@ -80,7 +80,7 @@ public class DeltaChangelog implements Changelog {
   }
 
   // TODO: optimise to false when the range is a single commit with no UPDATE/MERGE
-  // operations. Requires inspecting the commit's operation type, questionable.
+  // operations. Requires inspecting the commit's operation type.
   @Override
   public boolean containsIntermediateChanges() {
     return true;
@@ -107,10 +107,5 @@ public class DeltaChangelog implements Changelog {
   @Override
   public NamedReference rowVersion() {
     return FieldReference.apply("_metadata." + ROW_COMMIT_VERSION_FIELD);
-  }
-
-  /** Exposes the captured changelog options for downstream readers. */
-  public ChangelogInfo getChangelogInfo() {
-    return changelogInfo;
   }
 }
