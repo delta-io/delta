@@ -142,9 +142,7 @@ object UCCommitCoordinatorBuilder
     }
   }
 
-  // scalastyle:off line.size.limit
-  private def noMatchingCatalogException(
-      metastoreId: String) = {
+  private def noMatchingCatalogException(metastoreId: String) = {
     new IllegalStateException(
       s"No matching catalog found for UC metastore ID $metastoreId. " +
         "Please ensure the catalog is configured correctly by setting " +
@@ -154,9 +152,7 @@ object UCCommitCoordinatorBuilder
         "provided configuration in Spark Session configs.")
   }
 
-  private def multipleMatchingCatalogs(
-      metastoreId: String,
-      uris: List[String]) = {
+  private def multipleMatchingCatalogs(metastoreId: String, uris: List[String]) = {
     new IllegalStateException(
       s"Found multiple catalogs for UC metastore ID $metastoreId at $uris. " +
         "Please ensure the catalog is configured correctly by setting " +
