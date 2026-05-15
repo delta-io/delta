@@ -16,7 +16,6 @@
 
 package org.apache.spark.sql.delta
 
-import com.databricks.spark.util.{DatabricksLogging, Log4jUsageLogger, MetricDefinitions}
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.catalog.TruncateMetric
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -29,7 +28,6 @@ import org.apache.spark.sql.test.SharedSparkSession
 
 class TruncateTableMetricsSuite extends QueryTest
   with SharedSparkSession
-  with DatabricksLogging
   with DeltaSQLCommandTest {
 
   private final val numPartitionsToTest: Seq[Int] = Seq(1, 2, 4, 8, 16, 32, 64)
@@ -71,12 +69,8 @@ class TruncateTableMetricsSuite extends QueryTest
     test(s"truncate emits delta.dml.truncate.stats usage log event" +
       s" (numPartitions=$numPartitions)") {
       forEachTruncateTarget(numPartitions) { truncateTarget =>
-        val records = Log4jUsageLogger.track {
+        val events = DeltaTestUtils.collectUsageLogs("delta.dml.truncate.stats") {
           spark.sql(s"TRUNCATE TABLE $truncateTarget")
-        }
-        val events = records.filter { r =>
-          r.metric == MetricDefinitions.EVENT_TAHOE.name &&
-            r.tags.get("opType").contains("delta.dml.truncate.stats")
         }
         assert(events.size == 1)
         val truncateMetric = JsonUtils.fromJson[TruncateMetric](events.head.blob)
