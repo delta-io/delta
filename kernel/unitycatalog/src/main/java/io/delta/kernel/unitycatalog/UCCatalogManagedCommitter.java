@@ -37,6 +37,7 @@ import io.delta.kernel.unitycatalog.metrics.UcPublishTelemetry;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.commit.Commit;
+import io.delta.storage.commit.TableIdentifier;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorException;
 import io.delta.storage.commit.uniform.UniformMetadata;
@@ -452,10 +453,14 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
             ucClient.commit(
                 ucTableId,
                 tablePath.toUri(),
+                ucTableIdentifier
+                    .map(UCCatalogManagedCommitter::toStorageTableIdentifier)
+                    .orElse(null),
                 Optional.of(getUcCommitPayload(commitMetadata, kernelStagedCommitFileStatus)),
                 commitMetadata.getMaxKnownPublishedDeltaVersion(),
-                false /* isDisown */,
+                Optional.empty() /* oldMetadata */,
                 generateMetadataPayloadOpt(commitMetadata).map(MetadataAdapter::new),
+                Optional.empty() /* oldProtocol */,
                 commitMetadata.getNewProtocolOpt().map(ProtocolAdapter::new),
                 uniformMetadataOpt);
             return null;
@@ -499,6 +504,11 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
         "unknown" /* owner */,
         "unknown" /* group */,
         new org.apache.hadoop.fs.Path(kernelFileStatus.getPath()) /* path */);
+  }
+
+  static TableIdentifier toStorageTableIdentifier(UCTableIdentifier id) {
+    return new TableIdentifier(
+        new String[] {id.getCatalogName(), id.getSchemaName()}, id.getTableName());
   }
 
   private static CommitFailedException storageCFEtoKernelCFE(

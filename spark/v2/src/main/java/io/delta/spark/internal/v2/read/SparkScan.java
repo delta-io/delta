@@ -32,6 +32,7 @@ import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorSchemaContex
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.utils.PartitionUtils;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
+import io.delta.spark.internal.v2.utils.SchemaUtils;
 import java.io.IOException;
 import java.time.ZoneId;
 import java.util.*;
@@ -72,20 +73,14 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
               DeltaOptions.IGNORE_DELETES_OPTION(),
               DeltaOptions.SKIP_CHANGE_COMMITS_OPTION(),
               DeltaOptions.EXCLUDE_REGEX_OPTION(),
-              DeltaOptions.FAIL_ON_DATA_LOSS_OPTION()));
+              DeltaOptions.FAIL_ON_DATA_LOSS_OPTION(),
+              DeltaOptions.CDC_READ_OPTION(),
+              DeltaOptions.CDC_READ_OPTION_LEGACY()));
 
-  /**
-   * Block list of DeltaOptions that are not supported for streaming in V2 connector. Only
-   * startingVersion, startingTimestamp, maxFilesPerTrigger, maxBytesPerTrigger, ignoreFileDeletion,
-   * ignoreChanges, ignoreDeletes, skipChangeCommits, excludeRegex, and failOnDataLoss are
-   * supported. User-defined custom options (not in DeltaOptions) are allowed to pass through.
-   */
   private static final Set<String> UNSUPPORTED_STREAMING_OPTIONS =
       Collections.unmodifiableSet(
           new HashSet<>(
               Arrays.asList(
-                  DeltaOptions.CDC_READ_OPTION().toLowerCase(),
-                  DeltaOptions.CDC_READ_OPTION_LEGACY().toLowerCase(),
                   DeltaOptions.CDC_END_VERSION().toLowerCase(),
                   DeltaOptions.CDC_END_TIMESTAMP().toLowerCase(),
                   DeltaOptions.SCHEMA_TRACKING_LOCATION().toLowerCase(),
@@ -100,6 +95,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   private final StructType readDataSchema;
   private final StructType dataSchema;
   private final StructType partitionSchema;
+  private final StructType ddlOrderedReadOutputSchema;
   private final Predicate[] pushedToKernelFilters;
   private final Filter[] dataFilters;
   // Derived Sets used only for equals/hashCode: filters are AND-ed at evaluation time,
@@ -136,9 +132,11 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   private final Set<org.apache.spark.sql.connector.expressions.filter.Predicate>
       appliedRuntimePredicates = new HashSet<>();
 
+  // TODO(#6743): bundle scan-level schemas into a single ScanSchemaContext.
   public SparkScan(
       DeltaSnapshotManager snapshotManager,
       Snapshot initialSnapshot,
+      StructType tableSchema,
       StructType dataSchema,
       StructType partitionSchema,
       StructType readDataSchema,
@@ -167,20 +165,16 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     this.deltaOptions = new DeltaOptions(scalaOptions, sqlConf);
     this.isCDCRead = deltaOptions.readChangeFeed();
     this.zoneId = ZoneId.of(sqlConf.sessionLocalTimeZone());
+    StructType ddlOrdered =
+        SchemaUtils.ddlOrderedOutputSchema(tableSchema, readDataSchema, partitionSchema);
+    this.ddlOrderedReadOutputSchema =
+        isCDCRead ? CDCSchemaContext.appendCDCColumns(ddlOrdered) : ddlOrdered;
   }
 
-  /**
-   * Read schema for the scan: data columns followed by partition columns, with CDC columns appended
-   * for CDC reads.
-   */
+  /** Read schema for the scan, in the table's DDL column order. */
   @Override
   public StructType readSchema() {
-    final List<StructField> fields =
-        new ArrayList<>(readDataSchema.fields().length + partitionSchema.fields().length);
-    Collections.addAll(fields, readDataSchema.fields());
-    Collections.addAll(fields, partitionSchema.fields());
-    StructType schema = new StructType(fields.toArray(new StructField[0]));
-    return isCDCRead ? CDCSchemaContext.appendCDCColumns(schema) : schema;
+    return ddlOrderedReadOutputSchema;
   }
 
   /**
@@ -239,6 +233,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         dataSchema,
         partitionSchema,
         readDataSchema,
+        ddlOrderedReadOutputSchema,
         partitionedFiles,
         pushedToKernelFilters,
         dataFilters,
@@ -264,6 +259,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         dataSchema,
         partitionSchema,
         readDataSchema,
+        ddlOrderedReadOutputSchema,
         dataFilters != null ? dataFilters : new Filter[0],
         scalaOptions != null ? scalaOptions : scala.collection.immutable.Map$.MODULE$.empty());
   }

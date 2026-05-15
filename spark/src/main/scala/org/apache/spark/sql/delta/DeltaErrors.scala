@@ -3625,10 +3625,10 @@ trait DeltaErrorsBase
   }
 
   def icebergCompatConfigNotEnabled(
-      version: Int, conf: String): Throwable = {
+      version: Int): Throwable = {
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.CONFIG_NOT_ENABLED",
-      messageParameters = Array(version.toString, version.toString, conf)
+      messageParameters = Array(version.toString, version.toString)
     )
   }
 
@@ -3999,6 +3999,12 @@ trait DeltaErrorsBase
       errorClass = "DELTA_PATH_BASED_ACCESS_TO_CATALOG_MANAGED_TABLE_BLOCKED",
       messageParameters = Array(path.toString)
     )
+  }
+
+  def replaceTableWithCatalogManagedNotSupported(tableNameParts: Seq[String]): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_REPLACE_TABLE_WITH_CATALOG_MANAGED_NOT_SUPPORTED",
+      messageParameters = Array(toSQLId(tableNameParts)))
   }
 
   def cannotResolveSourceColumnException(columnPath: Seq[String]): Throwable = {

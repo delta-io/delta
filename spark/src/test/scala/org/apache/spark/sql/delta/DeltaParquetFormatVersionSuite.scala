@@ -117,7 +117,7 @@ class DeltaParquetFormatVersionSuite
 
   /**
    * Guard for tests that need SPARK-56414 (per-write options overriding session conf in Parquet
-   * writes). Databricks Spark always has the fix; OSS Spark needs >= 4.2.
+   * writes).
    */
   private def assumeSpark56414Available(): Unit = {
     assume(spark.version >= "4.2",

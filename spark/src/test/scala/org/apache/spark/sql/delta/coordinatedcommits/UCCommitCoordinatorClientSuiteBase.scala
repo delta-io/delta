@@ -17,8 +17,7 @@
 package org.apache.spark.sql.delta.coordinatedcommits
 
 import java.io.File
-import java.net.URI
-import java.util.{Collections, Optional, UUID}
+import java.util.{Optional, UUID}
 
 import scala.collection.JavaConverters._
 
@@ -120,12 +119,14 @@ trait UCCommitCoordinatorClientSuiteBase extends CommitCoordinatorClientImplSuit
     ucClient.commit(
       tableUUID.toString,
       JCoordinatedCommitsUtils.getTablePath(deltaLog.logPath).toUri,
-      Optional.empty(),
+      null, // tableIdentifier
+      Optional.empty(), // commit
       Optional.of(version),
-      false,
-      Optional.empty(),
-      Optional.empty(),
-      Optional.empty() /* icebergMetadata */)
+      Optional.empty(), // oldMetadata
+      Optional.empty(), // newMetadata
+      Optional.empty(), // oldProtocol
+      Optional.empty(), // newProtocol
+      Optional.empty() /* uniform */)
   }
 
   override protected def validateBackfillStrategy(

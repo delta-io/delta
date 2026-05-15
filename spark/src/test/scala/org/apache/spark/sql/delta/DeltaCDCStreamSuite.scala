@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.sql.Timestamp
 import java.text.SimpleDateFormat
-import java.util.Date
+import java.util.{Date, Locale}
 
 import scala.language.implicitConversions
 
@@ -33,6 +33,7 @@ import io.delta.tables._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
+import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.streaming.{StreamingQuery, StreamingQueryException, StreamTest, Trigger}
 import org.apache.spark.sql.types.StructType
@@ -51,6 +52,24 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
 
   override protected def sparkConf: SparkConf = super.sparkConf
     .set(cdcConfig.defaultTablePropertyKey, "true")
+
+  /**
+   * Enable CDF on a table at the given path. Override in V2 subclasses where
+   * `ALTER TABLE delta.\`...\`` doesn't work under STRICT V2 mode.
+   */
+  protected def enableCDF(path: String): Unit = {
+    sql(s"ALTER TABLE delta.`$path` SET TBLPROPERTIES " +
+      s"(${cdcConfig.key}=true)")
+  }
+
+  /** Load a CDC streaming DataFrame, with the CDC read option pre-set. */
+  protected def loadCDCStream(
+      path: String,
+      additionalOptions: Map[String, String] = Map.empty): DataFrame = {
+    loadStreamWithOptions(
+      path,
+      Map(DeltaOptions.CDC_READ_OPTION -> "true") ++ additionalOptions)
+  }
 
   /**
    * Create two tests for maxFilesPerTrigger and maxBytesPerTrigger
@@ -83,14 +102,11 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
           .save(inputDir.getAbsolutePath)
       }
       // enable cdc - version 3
-      sql(s"ALTER TABLE delta.`${inputDir.getAbsolutePath}` SET TBLPROPERTIES " +
-        s"(${cdcConfig.key}=true)")
+      enableCDF(inputDir.getAbsolutePath)
 
-      val df = spark.readStream
-        .option(DeltaOptions.CDC_READ_OPTION, "true")
-        .format("delta")
-        .load(inputDir.getCanonicalPath)
-        .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+      val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map(
+        DeltaOptions.CDC_READ_OPTION -> "true"
+      )).drop(CDCReader.CDC_COMMIT_TIMESTAMP)
 
       val version = 3
       val deltaTable = io.delta.tables.DeltaTable.forPath(inputDir.getAbsolutePath)
@@ -114,11 +130,9 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
 
         val deltaTable = io.delta.tables.DeltaTable.forPath(inputDir.getAbsolutePath)
 
-        val df = spark.readStream
-          .option(DeltaOptions.CDC_READ_OPTION, "true")
-          .format("delta")
-          .load(inputDir.getCanonicalPath)
-          .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+        val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map(
+          DeltaOptions.CDC_READ_OPTION -> "true"
+        )).drop(CDCReader.CDC_COMMIT_TIMESTAMP)
 
         testStream(df)(
           ProcessAllAvailable(),
@@ -141,12 +155,10 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
     withTempDir { inputDir =>
       Seq(1, 2).toDF("value").write.format("delta").save(inputDir.getAbsolutePath)
 
-      val df = spark.readStream
-        .option(DeltaOptions.CDC_READ_OPTION, "true")
-        .option("startingVersion", "latest")
-        .format("delta")
-        .load(inputDir.getCanonicalPath)
-        .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+      val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map(
+        DeltaOptions.CDC_READ_OPTION -> "true",
+        "startingVersion" -> "latest"
+      )).drop(CDCReader.CDC_COMMIT_TIMESTAMP)
 
       testStream(df) (
         ProcessAllAvailable(),
@@ -169,12 +181,10 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
       // version 2
       val deltaTable = io.delta.tables.DeltaTable.forPath(inputDir.getAbsolutePath)
 
-      val df = spark.readStream
-        .option(DeltaOptions.CDC_READ_OPTION, "true")
-        .option("startingVersion", "1")
-        .format("delta")
-        .load(inputDir.toString)
-        .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+      val df = loadStreamWithOptions(inputDir.toString, Map(
+        DeltaOptions.CDC_READ_OPTION -> "true",
+        "startingVersion" -> "1"
+      )).drop(CDCReader.CDC_COMMIT_TIMESTAMP)
 
       testStream(df) (
         ProcessAllAvailable(),
@@ -184,6 +194,31 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
         },
         ProcessAllAvailable(),
         CheckAnswer((4, "insert", 1), (5, "insert", 1), (3, "delete", 2))
+      )
+    }
+  }
+
+  // CDF check must use the metadata at the start version, not at source-init time.
+  testQuietly("startingVersion before CDF was enabled rejects with change-data-not-recorded") {
+    withTempDir { inputDir =>
+      withSQLConf(cdcConfig.defaultTablePropertyKey -> "false") {
+        // v0: CDF=false at create. v1: append (no metadata action, CDF still false).
+        Seq(1, 2).toDF("id").write.format("delta").save(inputDir.getAbsolutePath)
+        Seq(3, 4).toDF("id").write.format("delta").mode("append").save(inputDir.getAbsolutePath)
+      }
+      // v2: enable CDF. v3: append.
+      enableCDF(inputDir.getAbsolutePath)
+      Seq(5, 6).toDF("id").write.format("delta").mode("append").save(inputDir.getAbsolutePath)
+
+      val df = loadCDCStream(inputDir.toString, Map("startingVersion" -> "1"))
+        .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+
+      testStream(df)(
+        ExpectFailure[org.apache.spark.sql.delta.DeltaAnalysisException] { t =>
+          assert(t.getMessage.contains("DELTA_MISSING_CHANGE_DATA") ||
+            t.getMessage.toLowerCase(Locale.ROOT).contains("change data was not"),
+            s"Expected change-data-not-recorded error, got: ${t.getMessage}")
+        }
       )
     }
   }
@@ -202,12 +237,10 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
       val deltaTable = io.delta.tables.DeltaTable.forPath(inputDir.getAbsolutePath)
       val startTs = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
         .format(new Date(2000))
-      val df = spark.readStream
-        .option(DeltaOptions.CDC_READ_OPTION, "true")
-        .option("startingTimestamp", startTs)
-        .format("delta")
-        .load(inputDir.toString)
-        .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+      val df = loadStreamWithOptions(inputDir.toString, Map(
+        DeltaOptions.CDC_READ_OPTION -> "true",
+        "startingTimestamp" -> startTs
+      )).drop(CDCReader.CDC_COMMIT_TIMESTAMP)
 
       testStream(df) (
         ProcessAllAvailable(),
@@ -228,22 +261,19 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
       val deltaLog = DeltaLog.forTable(spark, inputDir.getAbsolutePath)
       modifyCommitTimestamp(deltaLog, 0, 1000)
 
-      val df1 = spark.readStream
-        .option(DeltaOptions.CDC_READ_OPTION, "true")
-        .option("startingVersion", 1)
-        .format("delta")
-        .load(inputDir.toString)
-        .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+      val df1 = loadStreamWithOptions(inputDir.toString, Map(
+        DeltaOptions.CDC_READ_OPTION -> "true",
+        "startingVersion" -> "1"
+      )).drop(CDCReader.CDC_COMMIT_TIMESTAMP)
 
       val startTs = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
         .format(new Date(3000))
       val commitTs = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
       .format(new Date(1000))
-      val df2 = spark.readStream
-        .option(DeltaOptions.CDC_READ_OPTION, "true")
-        .option("startingTimestamp", startTs)
-        .format("delta")
-        .load(inputDir.toString)
+      val df2 = loadStreamWithOptions(inputDir.toString, Map(
+        DeltaOptions.CDC_READ_OPTION -> "true",
+        "startingTimestamp" -> startTs
+      ))
 
       val e1 = VersionNotFoundException(1, 0, 0).getMessage
       val e2 = DeltaErrors.timestampGreaterThanLatestCommit(
@@ -282,21 +312,17 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
             // build dataframe with starting timestamp option.
             val startTs = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
               .format(new Date(2000))
-            spark.readStream
-              .option(DeltaOptions.CDC_READ_OPTION, "true")
-              .option("startingTimestamp", startTs)
-              .format("delta")
-              .load(inputDir.toString)
-              .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+            loadStreamWithOptions(inputDir.toString, Map(
+              DeltaOptions.CDC_READ_OPTION -> "true",
+              "startingTimestamp" -> startTs
+            )).drop(CDCReader.CDC_COMMIT_TIMESTAMP)
           } else {
             assert(target == "version")
             // build dataframe with starting version option.
-            spark.readStream
-              .option(DeltaOptions.CDC_READ_OPTION, "true")
-              .option("startingVersion", 1)
-              .format("delta")
-              .load(inputDir.toString)
-              .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+            loadStreamWithOptions(inputDir.toString, Map(
+              DeltaOptions.CDC_READ_OPTION -> "true",
+              "startingVersion" -> "1"
+            )).drop(CDCReader.CDC_COMMIT_TIMESTAMP)
           }
 
           testStream(df)(
@@ -319,13 +345,11 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
     withTempDir { tableDir =>
       val tablePath = tableDir.getCanonicalPath
       spark.range(10).write.format("delta").save(tableDir.getAbsolutePath)
-      val q = spark.readStream
-        .format("delta")
-        .option(DeltaOptions.CDC_READ_OPTION, "true")
-        .option("startingVersion", 0L)
-        .option("startingTimestamp", "2020-07-15")
-        .load(tablePath)
-        .writeStream
+      val q = loadStreamWithOptions(tablePath, Map(
+        DeltaOptions.CDC_READ_OPTION -> "true",
+        "startingVersion" -> "0",
+        "startingTimestamp" -> "2020-07-15"
+      )).writeStream
         .format("console")
         .start()
       assert(intercept[StreamingQueryException] {
@@ -352,12 +376,10 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
       def streamChanges(
           startingVersion: Long,
           checkpointLocation: String): Unit = {
-        val q = spark.readStream
-          .format("delta")
-          .option(DeltaOptions.CDC_READ_OPTION, "true")
-          .option("startingVersion", startingVersion)
-          .load(inputDir.getCanonicalPath)
-          .select("id")
+        val q = loadStreamWithOptions(inputDir.getCanonicalPath, Map(
+          DeltaOptions.CDC_READ_OPTION -> "true",
+          "startingVersion" -> startingVersion.toString
+        )).select("id")
           .writeStream
           .format("delta")
           .option("checkpointLocation", checkpointLocation)
@@ -431,12 +453,10 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
 
         // Read the target dir with cdc read option and ensure that
         // data frame is empty.
-        val q = spark.readStream
-          .format("delta")
-          .option(DeltaOptions.CDC_READ_OPTION, "true")
-          .option("startingVersion", "1")
-          .load(targetDir.getCanonicalPath)
-          .writeStream
+        val q = loadStreamWithOptions(targetDir.getCanonicalPath, Map(
+          DeltaOptions.CDC_READ_OPTION -> "true",
+          "startingVersion" -> "1"
+        )).writeStream
           .format("memory")
           .option("checkpointLocation", checkpointDir.getCanonicalPath)
           .queryName("testQuery")
@@ -465,10 +485,9 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
 
           def runStreamingQuery(): StreamingQuery = {
             // process the input table in a CDC manner
-            val df = spark.readStream
-              .option(DeltaOptions.CDC_READ_OPTION, readChangeFeed)
-              .format("delta")
-              .load(inputDir.getAbsolutePath)
+            val df = loadStreamWithOptions(inputDir.getAbsolutePath, Map(
+              DeltaOptions.CDC_READ_OPTION -> readChangeFeed.toString
+            ))
             val query = df
               .select("id")
               .writeStream
@@ -520,12 +539,10 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
 
       val deltaTable = io.delta.tables.DeltaTable.forPath(inputDir.getAbsolutePath)
 
-      val df = spark.readStream
-        .option(DeltaOptions.CDC_READ_OPTION, "true")
-        .option("startingVersion", 0)
-        .format("delta")
-        .load(inputDir.toString)
-        .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+      val df = loadStreamWithOptions(inputDir.toString, Map(
+        DeltaOptions.CDC_READ_OPTION -> "true",
+        "startingVersion" -> "0"
+      )).drop(CDCReader.CDC_COMMIT_TIMESTAMP)
 
       testStream(df) (
         ProcessAllAvailable(),
@@ -552,12 +569,10 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
 
       deltaTable.delete("part = 0")
 
-      val df = spark.readStream
-        .option(DeltaOptions.CDC_READ_OPTION, "true")
-        .option("startingVersion", 1)
-        .format("delta")
-        .load(inputDir.toString)
-        .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+      val df = loadStreamWithOptions(inputDir.toString, Map(
+        DeltaOptions.CDC_READ_OPTION -> "true",
+        "startingVersion" -> "1"
+      )).drop(CDCReader.CDC_COMMIT_TIMESTAMP)
 
       testStream(df) (
         ProcessAllAvailable(),
@@ -579,12 +594,10 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
 
       deltaTable.delete("col2 = 0")
 
-      val df = spark.readStream
-        .option(DeltaOptions.CDC_READ_OPTION, "true")
-        .option("startingVersion", 1)
-        .format("delta")
-        .load(inputDir.toString)
-        .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+      val df = loadStreamWithOptions(inputDir.toString, Map(
+        DeltaOptions.CDC_READ_OPTION -> "true",
+        "startingVersion" -> "1"
+      )).drop(CDCReader.CDC_COMMIT_TIMESTAMP)
 
       testStream(df) (
         ProcessAllAvailable(),
@@ -641,13 +654,11 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
         4, // 4 rows(pre_image and post_image) from the 2 AddCDCFile
         4 // 4 rows(pre_image and post_image) from the 2 AddCDCFile
       )
-      val q = spark.readStream
-        .format("delta")
-        .option(key, value)
-        .option(DeltaOptions.CDC_READ_OPTION, "true")
-        .option("startingVersion", "0")
-        .load(inputDir.getCanonicalPath)
-        .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+      val q = loadStreamWithOptions(inputDir.getCanonicalPath, Map(
+        key -> value,
+        DeltaOptions.CDC_READ_OPTION -> "true",
+        "startingVersion" -> "0"
+      )).drop(CDCReader.CDC_COMMIT_TIMESTAMP)
 
       testStream(q) (
         ProcessAllAvailable(),
@@ -694,12 +705,10 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
 
       assert(deltaLog.snapshot.numOfFiles === 5)
 
-      val q = spark.readStream
-        .format("delta")
-        .option(key, value)
-        .option(DeltaOptions.CDC_READ_OPTION, "true")
-        .load(inputDir.getCanonicalPath)
-        .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+      val q = loadStreamWithOptions(inputDir.getCanonicalPath, Map(
+        key -> value,
+        DeltaOptions.CDC_READ_OPTION -> "true"
+      )).drop(CDCReader.CDC_COMMIT_TIMESTAMP)
 
       // 5 batches for the 5 commits split across commits and index number.
       val rowsPerBatch = Seq(1, 1, 1, 1, 1)
@@ -737,13 +746,11 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
       // version 2 - 2 AddCDCFiles
       deltaTable.update(expr("col3 < 2"), Map("col3" -> lit("1")))
 
-      val df = spark.readStream
-        .format("delta")
-        .option(key, value)
-        .option(DeltaOptions.CDC_READ_OPTION, "true")
-        .option("startingVersion", "1")
-        .load(inputDir.getCanonicalPath)
-        .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+      val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map(
+        key -> value,
+        DeltaOptions.CDC_READ_OPTION -> "true",
+        "startingVersion" -> "1"
+      )).drop(CDCReader.CDC_COMMIT_TIMESTAMP)
 
       testStream(df)(
         ProcessAllAvailable(),
@@ -781,13 +788,11 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
       // version 2 - 2 AddCDCFiles
       deltaTable.update(expr("col3 < 2"), Map("col3" -> lit("1")))
 
-      val df = spark.readStream
-        .format("delta")
-        .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "3")
-        .option(DeltaOptions.CDC_READ_OPTION, "true")
-        .option("startingVersion", "0")
-        .load(inputDir.getCanonicalPath)
-        .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+      val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map(
+        DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "3",
+        DeltaOptions.CDC_READ_OPTION -> "true",
+        "startingVersion" -> "0"
+      )).drop(CDCReader.CDC_COMMIT_TIMESTAMP)
 
       // test whether the AddCDCFile commits do not get split up.
       val rowsPerBatch = Seq(
@@ -815,6 +820,56 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
     }
   }
 
+  test("maxFilesPerTrigger - batch reject stops iteration to prevent data loss") {
+    withTempDir { inputDir =>
+      // v0: 2 AddFiles (one per partition)
+      spark.range(2)
+        .withColumn("part", 'id % 2)
+        .withColumn("col3", lit(0))
+        .repartition(1)
+        .write
+        .format("delta")
+        .partitionBy("part")
+        .save(inputDir.getAbsolutePath)
+
+      val deltaTable = io.delta.tables.DeltaTable.forPath(inputDir.getAbsolutePath)
+      // v1: UPDATE -> 2 AddCDCFiles (explicit CDC, batch-admitted)
+      deltaTable.update(expr("col3 < 2"), Map("col3" -> lit("1")))
+
+      // v2: INSERT -> 1 AddFile
+      spark.range(10, 11)
+        .withColumn("part", lit(0L))
+        .withColumn("col3", lit(2))
+        .write.format("delta").mode("append")
+        .save(inputDir.getAbsolutePath)
+
+      // maxFilesPerTrigger=3, startingVersion=0:
+      // Trigger 1: v0 initial snapshot (2 files, budget=1 left).
+      //            v1 explicit CDC batch (2 files, 2 > 1 -> rejected, budget goes negative).
+      //            v2 must NOT be admitted -- rejected batch stops iteration.
+      // Trigger 2: v1 batch admitted (fresh budget, deadlock protection). v2 (1 file) admitted.
+      val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map(
+        DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "3",
+        DeltaOptions.CDC_READ_OPTION -> "true",
+        "startingVersion" -> "0"
+      )).drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+
+      testStream(df)(
+        ProcessAllAvailable(),
+        CheckProgress(Seq(2, 5)),
+        CheckAnswer(
+          (0, 0, 0, "insert", 0),
+          (1, 1, 0, "insert", 0),
+          (0, 0, 0, "update_preimage", 1),
+          (0, 0, 1, "update_postimage", 1),
+          (1, 1, 0, "update_preimage", 1),
+          (1, 1, 1, "update_postimage", 1),
+          (10, 0, 2, "insert", 2)
+        )
+      )
+    }
+  }
+
   test("maxFilesPerTrigger with Trigger.AvailableNow respects read limits") {
     withTempDir { inputDir =>
       // version 0 - 2 AddFiles
@@ -834,13 +889,11 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
       // version 2 - 2 AddCDCFiles
       deltaTable.update(expr("col3 < 2"), Map("col3" -> lit("1")))
 
-      val df = spark.readStream
-        .format("delta")
-        .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "3")
-        .option(DeltaOptions.CDC_READ_OPTION, "true")
-        .option("startingVersion", "0")
-        .load(inputDir.getCanonicalPath)
-        .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+      val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map(
+        DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "3",
+        DeltaOptions.CDC_READ_OPTION -> "true",
+        "startingVersion" -> "0"
+      )).drop(CDCReader.CDC_COMMIT_TIMESTAMP)
 
       // test whether the AddCDCFile commits do not get split up.
       val rowsPerBatch = Seq(
@@ -881,13 +934,11 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
         .partitionBy("part")
         .save(inputDir.getAbsolutePath)
 
-      val df = spark.readStream
-        .option(DeltaOptions.CDC_READ_OPTION, "true")
-        .option("startingVersion", "0")
-        .option(DeltaOptions.EXCLUDE_REGEX_OPTION, "part=0")
-        .format("delta")
-        .load(inputDir.getCanonicalPath)
-        .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+      val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map(
+        DeltaOptions.CDC_READ_OPTION -> "true",
+        "startingVersion" -> "0",
+        DeltaOptions.EXCLUDE_REGEX_OPTION -> "part=0"
+      )).drop(CDCReader.CDC_COMMIT_TIMESTAMP)
 
       testStream(df)(
         ProcessAllAvailable(),
@@ -917,13 +968,11 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
         .asInstanceOf[AddCDCFile]
         .path
 
-      val df = spark.readStream
-        .option(DeltaOptions.CDC_READ_OPTION, "true")
-        .option("startingVersion", "0")
-        .option(DeltaOptions.EXCLUDE_REGEX_OPTION, excludePath)
-        .format("delta")
-        .load(inputDir.getCanonicalPath)
-        .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+      val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map(
+        DeltaOptions.CDC_READ_OPTION -> "true",
+        "startingVersion" -> "0",
+        DeltaOptions.EXCLUDE_REGEX_OPTION -> excludePath
+      )).drop(CDCReader.CDC_COMMIT_TIMESTAMP)
 
       testStream(df)(
         ProcessAllAvailable(),
@@ -939,12 +988,10 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
         Seq(i).toDF.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
-      val df = spark.readStream
-        .format("delta")
-        .option(DeltaOptions.CDC_READ_OPTION, "true")
-        .option("startingVersion", 0)
-        .load(inputDir.getCanonicalPath)
-        .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+      val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map(
+        DeltaOptions.CDC_READ_OPTION -> "true",
+        "startingVersion" -> "0"
+      )).drop(CDCReader.CDC_COMMIT_TIMESTAMP)
 
       testStream(df)(
         AssertOnQuery { q => q.processAllAvailable(); true },
@@ -979,14 +1026,12 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
       spark.range(1, 2).write.format("delta").save(inputDir2.getCanonicalPath)
 
       def startQuery(): StreamingQuery = {
-        val df1 = spark.readStream
-          .format("delta")
-          .option("readChangeFeed", "true")
-          .load(inputDir1.getCanonicalPath)
-        val df2 = spark.readStream
-          .format("delta")
-          .option("readChangeFeed", "true")
-          .load(inputDir2.getCanonicalPath)
+        val df1 = loadStreamWithOptions(inputDir1.getCanonicalPath, Map(
+          "readChangeFeed" -> "true"
+        ))
+        val df2 = loadStreamWithOptions(inputDir2.getCanonicalPath, Map(
+          "readChangeFeed" -> "true"
+        ))
         df1.union(df2).writeStream
           .format("noop")
           .option("checkpointLocation", checkpointDir.getCanonicalPath)
@@ -1039,13 +1084,11 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
       spark.sql(s"DELETE FROM delta.`$tablePath` WHERE id IN (1, 3, 6)")
       spark.sql(s"DELETE FROM delta.`$tablePath` WHERE id IN (2, 4, 7)")
 
-      val stream = spark.readStream
-        .format("delta")
-        .option(DeltaOptions.CDC_READ_OPTION, true)
-        .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, 1)
-        .option(DeltaOptions.STARTING_VERSION_OPTION, 1)
-        .load(tablePath)
-        .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+      val stream = loadStreamWithOptions(tablePath, Map(
+        DeltaOptions.CDC_READ_OPTION -> "true",
+        DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "1",
+        DeltaOptions.STARTING_VERSION_OPTION -> "1"
+      )).drop(CDCReader.CDC_COMMIT_TIMESTAMP)
 
       testStream(stream)(
         ProcessAllAvailable(),
@@ -1057,6 +1100,61 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
           (4L, "delete", 2L),
           (7L, "delete", 2L)
         )
+      )
+    }
+  }
+
+  test("CDC stream supports column pruning of data columns") {
+    withTempDir { inputDir =>
+      val path = inputDir.getCanonicalPath
+      // version 0: three data columns. CDF is on by default via cdcConfig.defaultTablePropertyKey.
+      Seq((1, "a", 100), (2, "b", 200)).toDF("id", "name", "value")
+        .write.format("delta").save(path)
+      // version 1: append more data so we get multiple commits worth of CDF events.
+      Seq((3, "c", 300)).toDF("id", "name", "value")
+        .write.format("delta").mode("append").save(path)
+
+      // Project only id + _change_type, dropping the other two data columns. The Option B
+      // refactor of CDCSchemaContext is what makes the pruned readDataSchema flow cleanly to
+      // the reader; before it, this would have thrown IllegalStateException.
+      val df = loadCDCStream(path, Map(DeltaOptions.STARTING_VERSION_OPTION -> "0"))
+        .select("id", "_change_type")
+
+      testStream(df)(
+        ProcessAllAvailable(),
+        CheckAnswer((1, "insert"), (2, "insert"), (3, "insert"))
+      )
+    }
+  }
+
+  test("CDC stream rejects reading row tracking metadata fields") {
+    // Per Delta protocol ("Reader Requirements for Row Tracking"), readers cannot expose row
+    // IDs or row commit versions while reading change data files from `cdc` actions. v1
+    // enforces this by stripping row tracking fields from `_metadata.metadataSchemaFields`
+    // when isCDCRead=true, so the analyzer can't resolve `_metadata.row_id`.
+    withTempDir { inputDir =>
+      val path = inputDir.getCanonicalPath
+      // Enable both CDF and Row Tracking via writer options (works under STRICT V2 mode where
+      // ALTER TABLE may be unavailable).
+      Seq((1L, "Alice"), (2L, "Bob")).toDF("id", "name")
+        .write.format("delta")
+        .option("delta.enableChangeDataFeed", "true")
+        .option("delta.enableRowTracking", "true")
+        .save(path)
+      Seq((3L, "Charlie")).toDF("id", "name")
+        .write.format("delta").mode("append").save(path)
+
+      // v1 rejects at analysis time (selectExpr); v2 may surface the error later (during stream
+      // execution). Wrap both in the intercept so we catch wherever it fires.
+      val ex = intercept[Exception] {
+        val df = loadCDCStream(path, Map(DeltaOptions.STARTING_VERSION_OPTION -> "0"))
+          .selectExpr("id", "_metadata.row_id", "_change_type")
+        testStream(df)(ProcessAllAvailable())
+      }
+      assert(
+        ex.getMessage.toLowerCase(Locale.ROOT).contains("row_id") ||
+          ex.getMessage.toLowerCase(Locale.ROOT).contains("cannot be resolved"),
+        s"Expected error mentioning row_id under CDC, got: ${ex.getMessage}"
       )
     }
   }

@@ -18,6 +18,7 @@ package io.delta.kernel.internal.clustering;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.metadatadomain.JsonMetadataDomain;
@@ -73,6 +74,16 @@ public final class ClusteringMetadataDomain extends JsonMetadataDomain {
   @JsonCreator
   private ClusteringMetadataDomain(
       @JsonProperty("clusteringColumns") List<List<String>> physicalClusteringColumns) {
+    // A clustering domain must carry an explicit `clusteringColumns` field (use `[]` for a
+    // clustered-but-empty table). A missing or explicit-null field is incomplete domain JSON --
+    // surface it as a descriptive KernelException rather than NPE on read or silently masking a
+    // writer bug.
+    if (physicalClusteringColumns == null) {
+      throw new KernelException(
+          "Invalid `delta.clustering` domain configuration: missing or null "
+              + "`clusteringColumns` field. Use `[]` for a clustered table with no clustering "
+              + "columns.");
+    }
     this.clusteringColumns = physicalClusteringColumns;
   }
 

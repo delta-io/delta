@@ -126,6 +126,34 @@ public class CDCSchemaContextTest {
   }
 
   @Test
+  void testConstructorRejectsCDCColumnsInReadDataSchema() {
+    StructType withChangeType =
+        new StructType()
+            .add("id", DataTypes.IntegerType)
+            .add(CDCSchemaContext.CDC_TYPE_COLUMN, DataTypes.StringType);
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> new CDCSchemaContext(withChangeType, new StructType()));
+
+    StructType withCommitVersion =
+        new StructType().add(CDCSchemaContext.CDC_COMMIT_VERSION, DataTypes.LongType);
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> new CDCSchemaContext(withCommitVersion, new StructType()));
+
+    StructType withCommitTimestamp =
+        new StructType().add(CDCSchemaContext.CDC_COMMIT_TIMESTAMP, DataTypes.TimestampType);
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> new CDCSchemaContext(withCommitTimestamp, new StructType()));
+
+    // Case-insensitive: matches isCDCColumn semantics.
+    StructType mixedCase = new StructType().add("_Change_Type", DataTypes.StringType);
+    assertThrows(
+        IllegalArgumentException.class, () -> new CDCSchemaContext(mixedCase, new StructType()));
+  }
+
+  @Test
   void testAppendCDCColumns() {
     StructType augmented = CDCSchemaContext.appendCDCColumns(DATA_SCHEMA);
     assertEquals(5, augmented.fields().length);

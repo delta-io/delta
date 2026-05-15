@@ -1786,6 +1786,14 @@ trait DeltaErrorsSuiteBase
         Map("path" -> path.toString))
     }
     {
+      val tableName = TableIdentifier("mytable")
+      val e = intercept[DeltaUnsupportedOperationException] {
+        throw DeltaErrors.replaceTableWithCatalogManagedNotSupported(tableName.nameParts)
+      }
+      checkError(e, "DELTA_REPLACE_TABLE_WITH_CATALOG_MANAGED_NOT_SUPPORTED", "0A000",
+        Map("tableName" -> "`mytable`"))
+    }
+    {
       val e = intercept[DeltaUnsupportedOperationException] {
         throw DeltaErrors.operationBlockedOnCatalogManagedTable("OPTIMIZE")
       }
