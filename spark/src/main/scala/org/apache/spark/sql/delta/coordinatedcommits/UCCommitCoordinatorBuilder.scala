@@ -243,20 +243,36 @@ trait UCClientFactory {
  * implementation so this module has no compile-time dependency on specific implementations
  * (e.g. UCDeltaTokenBasedRestClient).
  *
+ * The `ucConfig` map is typically built from Spark catalog configuration. For example,
+ * given these Spark configs:
+ *
+ * {{{
+ *   spark.sql.catalog.my_catalog = io.unitycatalog.spark.UCSingleCatalog
+ *   spark.sql.catalog.my_catalog.uri = https://my-uc-server.com
+ *   spark.sql.catalog.my_catalog.auth.type = static
+ *   spark.sql.catalog.my_catalog.auth.token = dapi1234567890
+ * }}}
+ *
+ * The resulting `ucConfig` map (with the `spark.sql.catalog.my_catalog.` prefix stripped)
+ * would be: `Map("uri" -> "...", "auth.type" -> "static", "auth.token" -> "...")`.
+ *
+ * Legacy format (token without auth. prefix) is also supported for backward compatibility:
+ *
+ * {{{
+ *   spark.sql.catalog.my_catalog.uri = https://my-uc-server.com
+ *   spark.sql.catalog.my_catalog.token = dapi1234567890
+ * }}}
+ *
  * Recognised ucConfig keys:
  *  - `uri` (required) -- the UC server endpoint.
  *  - `auth.*` / `token` (legacy) -- authentication parameters for [[TokenProvider]].
  *  - `ucclient.impl` -- fully-qualified class name of the [[UCClient]] to instantiate.
  *  - `deltaRestApi.enabled` -- if `"true"` and no explicit impl, uses the Delta REST client.
- *  - `appVersions.*` -- extra version entries merged with the built-in defaults
- *    (Delta, Spark, Scala, Java). Used by callers such as the V2 connector to add
- *    Kernel version telemetry.
  */
 object UCTokenBasedRestClientFactory extends UCClientFactory {
 
   final val URI_KEY = "uri"
   final val AUTH_PREFIX = "auth."
-  final val APP_VERSIONS_PREFIX = "appVersions."
   final val DELTA_REST_API_ENABLED_KEY = "deltaRestApi.enabled"
   final val UC_CLIENT_IMPL_KEY = "ucclient.impl"
 
@@ -279,14 +295,12 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
         DEFAULT_UC_CLIENT_CLASS
       })
 
-    val appVersions = extractAppVersions(ucConfig)
-
     val cls = Utils.classForName(className)
     require(classOf[UCClient].isAssignableFrom(cls),
       s"$className does not implement ${classOf[UCClient].getName}")
     val ctor = cls.getConstructor(
       classOf[String], classOf[TokenProvider], classOf[java.util.Map[_, _]])
-    ctor.newInstance(uri, tokenProvider, appVersions.asJava).asInstanceOf[UCClient]
+    ctor.newInstance(uri, tokenProvider, defaultAppVersions.asJava).asInstanceOf[UCClient]
   }
 
   /** Java-friendly overload that accepts a java.util.Map. */
@@ -313,19 +327,6 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
         case None => Map.empty
       }
     }
-  }
-
-  /**
-   * Merges default app versions with any `appVersions.*` entries from ucConfig.
-   * Caller-supplied entries override defaults with the same key.
-   */
-  private[coordinatedcommits] def extractAppVersions(
-      ucConfig: Map[String, String]): Map[String, String] = {
-    val extra = ucConfig
-      .filterKeys(_.startsWith(APP_VERSIONS_PREFIX))
-      .map { case (k, v) => (k.stripPrefix(APP_VERSIONS_PREFIX), v) }
-      .toMap
-    defaultAppVersions ++ extra
   }
 
   private[coordinatedcommits] def defaultAppVersions: Map[String, String] = {
