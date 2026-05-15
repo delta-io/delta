@@ -502,6 +502,19 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
     }
   }
 
+  test("extractAppVersions merges defaults with ucConfig entries") {
+    val ucConfig = Map(
+      "uri" -> "https://test.com",
+      "appVersions.Kernel" -> "0.7.0",
+      "appVersions.Delta V2 connector" -> "true"
+    )
+    val versions = UCTokenBasedRestClientFactory.extractAppVersions(ucConfig)
+    assert(versions("Delta") === io.delta.VERSION)
+    assert(versions("Spark") === org.apache.spark.SPARK_VERSION)
+    assert(versions("Kernel") === "0.7.0")
+    assert(versions("Delta V2 connector") === "true")
+  }
+
   test("buildForCatalog with non-existent catalog") {
     val exception = intercept[IllegalArgumentException] {
       UCCommitCoordinatorBuilder.buildForCatalog(spark, "non_existent_catalog")
