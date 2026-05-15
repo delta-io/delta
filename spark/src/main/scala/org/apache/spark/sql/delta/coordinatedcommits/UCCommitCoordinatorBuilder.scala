@@ -16,7 +16,6 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
-import java.net.{URI, URISyntaxException}
 import java.util.concurrent.ConcurrentHashMap
 
 import scala.collection.JavaConverters._
@@ -54,95 +53,109 @@ object UCCommitCoordinatorBuilder
   final private[delta] val UNITY_CATALOG_CONNECTOR_CLASS: String =
     "io.unitycatalog.spark.UCSingleCatalog"
 
-  /** Suffix for the URI configuration of a catalog. */
-  final private val URI_SUFFIX = "uri"
-
   /** Cache for UCCommitCoordinatorClient instances. */
   private val commitCoordinatorClientCache =
     new ConcurrentHashMap[String, UCCommitCoordinatorClient]()
 
-  // Helper cache for (uri, authConfig) to metastoreId to avoid redundant calls to getMetastoreId
-  private val uriAuthConfigToMetastoreIdCache =
-    new ConcurrentHashMap[(String, Map[String, String]), String]()
+  private val ucConfigToMetastoreIdCache =
+    new ConcurrentHashMap[Map[String, String], String]()
 
   // Use a var instead of val for ease of testing by injecting different UCClientFactory.
-  private[delta] var ucClientFactory: UCClientFactory = UCTokenBasedRestClientFactory
+  private[delta] var ucClientFactory: UCClientFactory =
+    UCTokenBasedRestClientFactory
 
   override def getName: String = COORDINATOR_NAME
 
-  override def build(spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient = {
+  override def build(
+      spark: SparkSession,
+      conf: Map[String, String]
+  ): CommitCoordinatorClient = {
     val metastoreId = conf.getOrElse(
       UCCommitCoordinatorClient.UC_METASTORE_ID_KEY,
       throw new IllegalArgumentException(
-        s"UC metastore ID not found in the provided coordinator conf: $conf"))
+        "UC metastore ID not found in the provided " +
+          s"coordinator conf: $conf"))
 
     commitCoordinatorClientCache.computeIfAbsent(
       metastoreId,
-      _ => new UCCommitCoordinatorClient(conf.asJava, getMatchingUCClient(spark, metastoreId)))
+      _ => new UCCommitCoordinatorClient(
+        conf.asJava,
+        getMatchingUCClient(spark, metastoreId)))
   }
 
   override def buildForCatalog(
       spark: SparkSession,
       catalogName: String): CommitCoordinatorClient = {
-    val client = getCatalogConfigs(spark).find(_._1 == catalogName) match {
-      case Some((_, uri, authConfig)) => ucClientFactory.createUCClient(uri, authConfig)
+    val ucConfig = getCatalogConfigs(spark)
+      .find(_._1 == catalogName) match {
+      case Some((_, config)) =>
+        ucClientFactory.createUCClient(config)
       case None =>
         throw new IllegalArgumentException(
-          s"Catalog $catalogName not found in the provided SparkSession configurations.")
+          s"Catalog $catalogName not found in the " +
+            "provided SparkSession configurations.")
     }
     val conf = Map.empty[String, String]
-    new UCCommitCoordinatorClient(conf.asJava, client)
+    new UCCommitCoordinatorClient(conf.asJava, ucConfig)
   }
 
   /**
-   * Finds and returns a UCClient that matches the given metastore ID.
-   *
-   * This method iterates through all configured catalogs in SparkSession, creates UCClients for
-   * each, gets their metastore ID and returns the one that matches the provided metastore ID.
-   * If no matching catalog is found or if multiple matching catalogs are found, it throws an
-   * appropriate exception.
+   * Finds and returns a UCClient that matches the given
+   * metastore ID.
    */
-  private def getMatchingUCClient(spark: SparkSession, metastoreId: String): UCClient = {
-    val matchingClients: List[(String, Map[String, String])] = getCatalogConfigs(spark)
-      .map { case (name, uri, authConfig) => (uri, authConfig) }
-      .distinct // Remove duplicates since multiple catalogs can have the same uri and config
-      .filter { case (uri, authConfig) => getMetastoreId(uri, authConfig).contains(metastoreId) }
+  private def getMatchingUCClient(
+      spark: SparkSession,
+      metastoreId: String): UCClient = {
+    val matchingConfigs = getCatalogConfigs(spark)
+      .map(_._2)
+      .distinct
+      .filter { ucConfig =>
+        getMetastoreId(ucConfig).contains(metastoreId)
+      }
 
-    matchingClients match {
-      case Nil => throw noMatchingCatalogException(metastoreId)
-      case (uri, authConfig) :: Nil => ucClientFactory.createUCClient(uri, authConfig)
-      case multiple => throw multipleMatchingCatalogs(metastoreId, multiple.map(_._1))
+    matchingConfigs match {
+      case Nil =>
+        throw noMatchingCatalogException(metastoreId)
+      case ucConfig :: Nil =>
+        ucClientFactory.createUCClient(ucConfig)
+      case multiple =>
+        throw multipleMatchingCatalogs(
+          metastoreId, multiple.map(_("uri")))
     }
   }
 
   /**
-   * Retrieves the metastore ID for a given URI and auth configuration map.
-   *
-   * This method creates a UCClient using the provided URI and auth configuration map, then
-   * retrieves its metastore ID. The result is cached to avoid unnecessary getMetastoreId requests
-   * in future calls. If there's an error, it returns None and logs a warning.
+   * Retrieves the metastore ID for a given UC configuration.
    */
-  private def getMetastoreId(uri: String, authConfig: Map[String, String]): Option[String] = {
+  private def getMetastoreId(
+      ucConfig: Map[String, String]): Option[String] = {
     try {
-      val metastoreId = uriAuthConfigToMetastoreIdCache.computeIfAbsent(
-        (uri, authConfig),
-        _ => {
-          val ucClient = ucClientFactory.createUCClient(uri, authConfig)
-          try {
-            ucClient.getMetastoreId
-          } finally {
-            safeClose(ucClient, uri)
-          }
-        })
+      val metastoreId =
+        ucConfigToMetastoreIdCache.computeIfAbsent(
+          ucConfig,
+          _ => {
+            val ucClient =
+              ucClientFactory.createUCClient(ucConfig)
+            try {
+              ucClient.getMetastoreId
+            } finally {
+              safeClose(ucClient, ucConfig.getOrElse("uri", ""))
+            }
+          })
       Some(metastoreId)
     } catch {
       case NonFatal(e) =>
-        logWarning(log"Failed to getMetastoreSummary with ${MDC(DeltaLogKeys.URI, uri)}", e)
+        logWarning(
+          log"Failed to getMetastoreSummary with " +
+            log"${MDC(DeltaLogKeys.URI, ucConfig.getOrElse("uri", ""))}",
+          e)
         None
     }
   }
 
-  private def noMatchingCatalogException(metastoreId: String) = {
+  // scalastyle:off line.size.limit
+  private def noMatchingCatalogException(
+      metastoreId: String) = {
     new IllegalStateException(
       s"No matching catalog found for UC metastore ID $metastoreId. " +
         "Please ensure the catalog is configured correctly by setting " +
@@ -152,7 +165,9 @@ object UCCommitCoordinatorBuilder
         "provided configuration in Spark Session configs.")
   }
 
-  private def multipleMatchingCatalogs(metastoreId: String, uris: List[String]) = {
+  private def multipleMatchingCatalogs(
+      metastoreId: String,
+      uris: List[String]) = {
     new IllegalStateException(
       s"Found multiple catalogs for UC metastore ID $metastoreId at $uris. " +
         "Please ensure the catalog is configured correctly by setting " +
@@ -161,182 +176,152 @@ object UCCommitCoordinatorBuilder
         "Note that the matching process involves retrieving the metastoreId using the " +
         "provided configuration in Spark Session configs.")
   }
+  // scalastyle:on line.size.limit
 
   /**
-   * Retrieves the catalog configurations from the SparkSession.
+   * Retrieves the catalog configurations from the
+   * SparkSession.
    *
-   * This method supports both the new auth.* format and the legacy token format for backward
-   * compatibility:
+   * For each Unity Catalog catalog, collects all sub-keys
+   * under `spark.sql.catalog.<name>.*` (stripping the
+   * prefix) into a flat config map. This includes `uri`,
+   * `auth.*`, `token` (legacy), `deltaRestApi.enabled`,
+   * and any other catalog-specific settings.
    *
-   * New format:
-   *   spark.sql.catalog.catalog1.uri = "https://dbc-123abc.databricks.com"
-   *   spark.sql.catalog.catalog1.auth.type = "static"
-   *   spark.sql.catalog.catalog1.auth.token = "dapi1234567890"
-   *
-   * Legacy format (for backward compatibility):
-   *   spark.sql.catalog.catalog1.uri = "https://dbc-123abc.databricks.com"
-   *   spark.sql.catalog.catalog1.token = "dapi1234567890"
-   *
-   * When the legacy format is detected (token without auth. prefix), it is automatically
-   * converted to the new format (type=static, token=value) for TokenProvider.
-   *
-   * @return
-   *   A list of tuples containing (catalogName, uri, authConfigMap) for each properly configured
-   *   catalog. The authConfigMap contains authentication configurations ready to be passed to
-   *   TokenProvider.create().
+   * @return A list of (catalogName, ucConfig) for each
+   *         properly configured UC catalog.
    */
   private[delta] def getCatalogConfigs(
-      spark: SparkSession): List[(String, String, Map[String, String])] = {
-    val catalogConfigs = spark.conf.getAll.filterKeys(_.startsWith(SPARK_SQL_CATALOG_PREFIX))
+      spark: SparkSession
+  ): List[(String, Map[String, String])] = {
+    val allConfigs = spark.conf.getAll
+      .filterKeys(_.startsWith(SPARK_SQL_CATALOG_PREFIX))
 
-    // First, identify all Unity Catalog catalogs
-    val ucCatalogNames = catalogConfigs
+    val ucCatalogNames = allConfigs
       .keys
       .map(_.split("\\."))
       .filter(_.length == 4)
       .map(_(3))
       .filter { catalogName: String =>
-        val connector = catalogConfigs.get(s"$SPARK_SQL_CATALOG_PREFIX$catalogName")
-        connector.contains(UNITY_CATALOG_CONNECTOR_CLASS)
+        allConfigs
+          .get(s"$SPARK_SQL_CATALOG_PREFIX$catalogName")
+          .contains(UNITY_CATALOG_CONNECTOR_CLASS)
       }
 
-    // For each UC catalog, extract its URI and auth configurations
     ucCatalogNames
       .flatMap { catalogName: String =>
-        val catalogPrefix = s"$SPARK_SQL_CATALOG_PREFIX$catalogName."
-        val authPrefix = s"${catalogPrefix}auth."
-        val uriOpt = catalogConfigs.get(s"$catalogPrefix$URI_SUFFIX")
+        val prefix =
+          s"$SPARK_SQL_CATALOG_PREFIX$catalogName."
+        val ucConfig = allConfigs
+          .filterKeys(_.startsWith(prefix))
+          .map { case (k, v) =>
+            (k.stripPrefix(prefix), v)
+          }
+          .toMap
 
-        uriOpt match {
-          case Some(uri) =>
-            try {
-              new URI(uri) // Validate the URI
-
-              // Extract all auth.* configuration keys for this catalog
-              // and strip the "spark.sql.catalog.<catalog-name>.auth." prefix
-              var authConfigMap = catalogConfigs
-                .filterKeys(_.startsWith(authPrefix))
-                .map { case (fullKey, value) =>
-                  // Remove the auth prefix to get just the auth config key
-                  // e.g., "spark.sql.catalog.catalog1.auth.type" -> "type"
-                  // e.g., "spark.sql.catalog.catalog1.auth.oauth.uri" -> "oauth.uri"
-                  val authKey = fullKey.stripPrefix(authPrefix)
-                  (authKey, value)
-                }
-                .toMap
-
-              // Support legacy format: if no auth.* configs but token exists,
-              // convert to new format (type=static, token=value)
-              if (authConfigMap.isEmpty) {
-                val legacyTokenOpt = catalogConfigs.get(s"${catalogPrefix}token")
-                legacyTokenOpt match {
-                  case Some(token) =>
-                    authConfigMap = Map("type" -> "static", "token" -> token)
-                  case None =>
-                  // No auth configs found
-                }
-              }
-
-              if (authConfigMap.isEmpty) {
-                logWarning(
-                  log"Skipping catalog ${MDC(DeltaLogKeys.CATALOG, catalogName)} as it " +
-                    "does not have any authentication configurations in Spark Session.")
-                None
-              } else {
-                Some((catalogName, uri, authConfigMap))
-              }
-            } catch {
-              case _: URISyntaxException =>
-                logWarning(
-                  log"Skipping catalog ${MDC(DeltaLogKeys.CATALOG, catalogName)} as it " +
-                    log"does not have a valid URI ${MDC(DeltaLogKeys.URI, uri)}.")
-                None
-            }
-          case None =>
-            logWarning(
-              log"Skipping catalog ${MDC(DeltaLogKeys.CATALOG, catalogName)} as it does " +
-                "not have uri configured in Spark Session.")
-            None
+        if (!ucConfig.contains("uri")) {
+          logWarning(
+            log"Skipping catalog " +
+              log"${MDC(DeltaLogKeys.CATALOG, catalogName)}" +
+              " as it does not have uri configured " +
+              "in Spark Session.")
+          None
+        } else {
+          Some((catalogName, ucConfig))
         }
       }
       .toList
   }
 
   /**
-   * Returns catalog configurations as a Map for O(1) lookup by catalog name.
-   * Wraps [[getCatalogConfigs]] results in [[UCCatalogConfig]] for better readability.
+   * Returns catalog configurations as a Map for O(1) lookup
+   * by catalog name.
    */
-  private[delta] def getCatalogConfigMap(spark: SparkSession): Map[String, UCCatalogConfig] = {
+  private[delta] def getCatalogConfigMap(
+      spark: SparkSession
+  ): Map[String, UCCatalogConfig] = {
     getCatalogConfigs(spark).map {
-      case (name, uri, authConfig) => name -> UCCatalogConfig(name, uri, authConfig)
+      case (name, ucConfig) =>
+        name -> UCCatalogConfig(name, ucConfig)
     }.toMap
   }
 
-  private def safeClose(ucClient: UCClient, uri: String): Unit = {
+  private def safeClose(
+      ucClient: UCClient, uri: String): Unit = {
     try {
       ucClient.close()
     } catch {
       case NonFatal(e) =>
-        logWarning(log"Failed to close UCClient for uri ${MDC(DeltaLogKeys.URI, uri)}", e)
+        logWarning(
+          log"Failed to close UCClient for uri " +
+            log"${MDC(DeltaLogKeys.URI, uri)}",
+          e)
     }
   }
 
   def clearCache(): Unit = {
     commitCoordinatorClientCache.clear()
-    uriAuthConfigToMetastoreIdCache.clear()
+    ucConfigToMetastoreIdCache.clear()
   }
 }
 
+/**
+ * Factory trait for creating [[UCClient]] instances.
+ * Implementations parse `uri`, authentication, and
+ * implementation-selection keys from `ucConfig`.
+ */
 trait UCClientFactory {
-  def createUCClient(uri: String, authConfig: Map[String, String]): UCClient
+  def createUCClient(
+      ucConfig: Map[String, String]): UCClient
 }
 
-object UCTokenBasedRestClientFactory extends UCClientFactory {
+/**
+ * Default [[UCClientFactory]] that uses reflection to
+ * instantiate the [[UCClient]] implementation so this module
+ * has no compile-time dependency on specific implementations
+ * (e.g. UCDeltaTokenBasedRestClient).
+ *
+ * Implementation selection:
+ *  - If `ucclient.impl` is set, that class is loaded.
+ *  - Else if `deltaRestApi.enabled` is `"true"`, the Delta
+ *    REST catalog client is loaded.
+ *  - Otherwise [[UCTokenBasedRestClient]] is used.
+ */
+object UCTokenBasedRestClientFactory
+    extends UCClientFactory {
 
-  /**
-   * Config key for specifying a custom [[UCClient]] implementation class.
-   * The class must have a constructor accepting (String, TokenProvider, java.util.Map).
-   */
+  final val URI_KEY = "uri"
+  final val AUTH_PREFIX = "auth."
+  final val DELTA_REST_API_ENABLED_KEY =
+    "deltaRestApi.enabled"
   final val UC_CLIENT_IMPL_KEY = "ucclient.impl"
 
   private val DEFAULT_UC_CLIENT_CLASS: String =
     classOf[UCTokenBasedRestClient].getName
 
+  private val DELTA_UC_CLIENT_CLASS: String =
+    "io.delta.storage.commit.uccommitcoordinator" +
+      ".UCDeltaTokenBasedRestClient"
+
   override def createUCClient(
-      uri: String,
-      authConfig: Map[String, String]): UCClient = {
-    createUCClient(uri, authConfig, Map.empty[String, String])
-  }
+      ucConfig: Map[String, String]): UCClient = {
+    val uri = ucConfig.getOrElse(URI_KEY,
+      throw new IllegalArgumentException(
+        s"UC config must contain '$URI_KEY'"))
 
-  def createUCClient(
-      uri: String,
-      authConfig: Map[String, String],
-      clientConfig: Map[String, String]): UCClient = {
-    createUCClientWithVersions(
-      uri, authConfig, defaultAppVersions, clientConfig)
-  }
+    val authConfig = extractAuthConfig(ucConfig)
+    val tokenProvider =
+      TokenProvider.create(authConfig.asJava)
 
-  /**
-   * Creates a UC client with the given application versions for
-   * telemetry. The provided `appVersions` map is used as-is;
-   * callers are responsible for including all desired version
-   * entries.
-   *
-   * The implementation class is loaded via reflection so that
-   * this module has no compile-time dependency on specific
-   * [[UCClient]] implementations (e.g.
-   * UCDeltaTokenBasedRestClient). Override the implementation
-   * by setting [[UC_CLIENT_IMPL_KEY]] in `clientConfig`.
-   */
-  def createUCClientWithVersions(
-      uri: String,
-      authConfig: Map[String, String],
-      appVersions: Map[String, String],
-      clientConfig: Map[String, String] = Map.empty
-  ): UCClient = {
-    val tokenProvider = TokenProvider.create(authConfig.asJava)
-    val className = clientConfig.getOrElse(
-      UC_CLIENT_IMPL_KEY, DEFAULT_UC_CLIENT_CLASS)
+    val className = ucConfig.getOrElse(
+      UC_CLIENT_IMPL_KEY,
+      if (ucConfig.get(DELTA_REST_API_ENABLED_KEY)
+          .exists(_.equalsIgnoreCase("true"))) {
+        DELTA_UC_CLIENT_CLASS
+      } else {
+        DEFAULT_UC_CLIENT_CLASS
+      })
+
     val cls = Utils.classForName(className)
     require(
       classOf[UCClient].isAssignableFrom(cls),
@@ -347,8 +332,40 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
       classOf[TokenProvider],
       classOf[java.util.Map[_, _]])
     ctor.newInstance(
-      uri, tokenProvider, appVersions.asJava)
+      uri, tokenProvider, defaultAppVersions.asJava)
       .asInstanceOf[UCClient]
+  }
+
+  /** Java-friendly overload. */
+  def createUCClient(
+      ucConfig: java.util.Map[String, String]
+  ): UCClient = {
+    createUCClient(ucConfig.asScala.toMap)
+  }
+
+  /**
+   * Extracts authentication configuration from ucConfig.
+   * Prefers `auth.*` keys; falls back to legacy `token` key.
+   */
+  private[coordinatedcommits] def extractAuthConfig(
+      ucConfig: Map[String, String]
+  ): Map[String, String] = {
+    val authConfig = ucConfig
+      .filterKeys(_.startsWith(AUTH_PREFIX))
+      .map { case (k, v) =>
+        (k.stripPrefix(AUTH_PREFIX), v)
+      }
+      .toMap
+
+    if (authConfig.nonEmpty) {
+      authConfig
+    } else {
+      ucConfig.get("token") match {
+        case Some(token) =>
+          Map("type" -> "static", "token" -> token)
+        case None => Map.empty
+      }
+    }
   }
 
   private[coordinatedcommits] def defaultAppVersions:
@@ -365,54 +382,26 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
   def defaultAppVersionsAsJava: java.util.Map[String, String] = {
     new java.util.HashMap(defaultAppVersions.asJava)
   }
-
-  /** Java-friendly overload that accepts a java.util.Map. */
-  def createUCClient(
-      uri: String,
-      authConfig: java.util.Map[String, String]
-  ): UCClient = {
-    createUCClient(uri, authConfig.asScala.toMap)
-  }
-
-  /** Java-friendly overload with clientConfig. */
-  def createUCClient(
-      uri: String,
-      authConfig: java.util.Map[String, String],
-      clientConfig: java.util.Map[String, String]
-  ): UCClient = {
-    createUCClient(
-      uri,
-      authConfig.asScala.toMap,
-      clientConfig.asScala.toMap)
-  }
-
-  /** Java-friendly overload for telemetry versions. */
-  def createUCClientWithVersions(
-      uri: String,
-      authConfig: java.util.Map[String, String],
-      appVersions: java.util.Map[String, String]
-  ): UCClient = {
-    createUCClientWithVersions(
-      uri, authConfig.asScala.toMap, appVersions.asScala.toMap)
-  }
-
-  /** Java-friendly overload with versions and clientConfig. */
-  def createUCClientWithVersions(
-      uri: String,
-      authConfig: java.util.Map[String, String],
-      appVersions: java.util.Map[String, String],
-      clientConfig: java.util.Map[String, String]
-  ): UCClient = {
-    createUCClientWithVersions(
-      uri,
-      authConfig.asScala.toMap,
-      appVersions.asScala.toMap,
-      clientConfig.asScala.toMap)
-  }
 }
 
 /**
- * Holder for Unity Catalog configuration extracted from Spark configs.
- * Used by [[UCCommitCoordinatorBuilder.getCatalogConfigMap]].
+ * Holder for Unity Catalog configuration extracted from Spark
+ * configs. The `ucConfig` map contains all sub-keys under
+ * `spark.sql.catalog.<name>.*` with the prefix stripped.
  */
-case class UCCatalogConfig(catalogName: String, uri: String, authConfig: Map[String, String])
+case class UCCatalogConfig(
+    catalogName: String,
+    ucConfig: Map[String, String]) {
+
+  def uri: String = ucConfig.getOrElse("uri",
+    throw new NoSuchElementException(
+      s"No URI in config for catalog $catalogName"))
+
+  /**
+   * Returns the authentication config suitable for
+   * [[TokenProvider.create]]. Prefers `auth.*` keys;
+   * falls back to legacy `token` key.
+   */
+  def authConfig: Map[String, String] =
+    UCTokenBasedRestClientFactory.extractAuthConfig(ucConfig)
+}
