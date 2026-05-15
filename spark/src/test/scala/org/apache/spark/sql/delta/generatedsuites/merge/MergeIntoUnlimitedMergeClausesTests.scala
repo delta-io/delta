@@ -35,7 +35,7 @@ import org.apache.spark.sql.delta.rowid._
 class MergeIntoUnlimitedMergeClausesSQLInMemoryTableNameBasedSuite
   extends MergeIntoUnlimitedMergeClausesTests
   with MergeIntoSQLMixin
-  with MergeIntoSuiteInMemoryTestTableMixin
+  with DeltaDMLInMemoryTestUtils
   with DeltaDMLTestUtilsNameBased
 
 class MergeIntoUnlimitedMergeClausesSQLNameBasedSuite
