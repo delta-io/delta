@@ -7,10 +7,12 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.commitrange.CommitRangeImpl;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.utils.PartitionUtils;
+import io.delta.spark.internal.v2.utils.SchemaUtils;
 import io.delta.spark.internal.v2.utils.StreamingHelper;
 import java.io.IOException;
 import java.io.Serializable;
@@ -31,6 +33,7 @@ import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReader;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.delta.DefaultRowCommitVersion$;
+import org.apache.spark.sql.delta.DeltaErrors;
 import org.apache.spark.sql.delta.RowId$;
 import org.apache.spark.sql.execution.datasources.FilePartition;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
@@ -43,7 +46,10 @@ import scala.Tuple2;
 
 public class DeltaChangelogBatch implements Batch {
   private static final Set<DeltaLogActionUtils.DeltaAction> CHANGELOG_ACTION_SET =
-      Set.of(DeltaLogActionUtils.DeltaAction.ADD, DeltaLogActionUtils.DeltaAction.REMOVE);
+      Set.of(
+          DeltaLogActionUtils.DeltaAction.ADD,
+          DeltaLogActionUtils.DeltaAction.REMOVE,
+          DeltaLogActionUtils.DeltaAction.METADATA);
   private static final String INSERT_CHANGE_TYPE = "insert";
   private static final String DELETE_CHANGE_TYPE = "delete";
 
@@ -69,6 +75,17 @@ public class DeltaChangelogBatch implements Batch {
   @Override
   public InputPartition[] planInputPartitions() {
     List<InputPartition> partitions = new ArrayList<>();
+
+    // Eager schema-drift check: if the start-version snapshot's schema differs from the
+    // end-version reference (passed in as `dataSchema`), a Metadata-changing commit lies in
+    // the range. The per-commit Metadata loop below catches the case where Metadata also
+    // appears inside the range; this start-vs-end pre-check catches the case where the
+    // schema before our first iterated commit is already out of sync.
+    StructType startSchema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
+    if (!startSchema.equals(dataSchema)) {
+      DeltaErrors.throwChangelogSchemaChangeInRange(
+          ((CommitRangeImpl) commitRange).getStartVersion());
+    }
 
     // TODO: Remove StreamingHelper usage; the helper is generic, only the class name is
     // streaming-flavored.
@@ -115,6 +132,25 @@ public class DeltaChangelogBatch implements Batch {
                         remove::getBaseRowId,
                         remove::getDefaultRowCommitVersion,
                         "RemoveFile"));
+              }
+              // Validate Metadata actions: schema and row-tracking config must match the
+              // end-version baseline established by DeltaChangelogScanBuilder. Mid-range
+              // schema evolution or row-tracking-toggle would silently corrupt downstream
+              // CDC post-processing (row identity / column mapping drift).
+              Optional<Metadata> metadataOpt = StreamingHelper.getMetadata(batch, rowId);
+              if (metadataOpt.isPresent()) {
+                Metadata md = metadataOpt.get();
+                StructType commitSchema =
+                    SchemaUtils.convertKernelSchemaToSparkSchema(md.getSchema());
+                if (!commitSchema.equals(dataSchema)) {
+                  DeltaErrors.throwChangelogSchemaChangeInRange(commit.getVersion());
+                }
+                String rtValue = md.getConfiguration().get("delta.enableRowTracking");
+                // Absent key means the prior value persists (no change at this commit).
+                boolean rowTrackingEnabled = rtValue == null || "true".equalsIgnoreCase(rtValue);
+                if (!rowTrackingEnabled) {
+                  DeltaErrors.throwChangelogRowTrackingDisabledInRange(commit.getVersion());
+                }
               }
             }
           }
@@ -180,9 +216,11 @@ public class DeltaChangelogBatch implements Batch {
         scala.collection.immutable.Map$.MODULE$.empty();
     SQLConf sqlConf = SQLConf.get();
 
-    // BATCH_CHANGELOG: PartitionUtils does NOT inject CDC tail columns or wrap the reader with
-    // CDCReadFunction here. Auto-CDF's outer CDCPartitionReaderFactory below appends
-    // _change_type / _commit_version / _commit_timestamp as per-partition constants instead.
+    // Read-time Auto-CDF reads raw parquet here. The CDC tail columns (_change_type,
+    // _commit_version, _commit_timestamp) are added below by CDCPartitionReaderFactory as
+    // per-partition constants, not by PartitionUtils. This is unrelated to write-time CDF
+    // (streaming with readChangeFeed=true), which is the only consumer of the
+    // isWriteTimeCDCRead branch in PartitionUtils.
     PartitionReaderFactory delegate =
         PartitionUtils.createDeltaParquetReaderFactory(
             snapshot,
@@ -194,7 +232,7 @@ public class DeltaChangelogBatch implements Batch {
             scalaOptions,
             hadoopConf,
             sqlConf,
-            io.delta.spark.internal.v2.read.cdc.CdcReadMode.BATCH_CHANGELOG);
+            /* isWriteTimeCDCRead */ false);
 
     StructType outputSchema =
         readDataSchema

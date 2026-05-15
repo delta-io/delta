@@ -525,9 +525,7 @@ public class SparkMicroBatchStream
         scalaOptions,
         hadoopConf,
         sqlConf,
-        options.readChangeFeed()
-            ? io.delta.spark.internal.v2.read.cdc.CdcReadMode.STREAMING
-            : io.delta.spark.internal.v2.read.cdc.CdcReadMode.NONE);
+        /* isWriteTimeCDCRead */ options.readChangeFeed());
   }
 
   /**

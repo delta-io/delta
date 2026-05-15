@@ -589,7 +589,17 @@ trait DeltaErrorsBase
   /**
    * Auto-CDF batch read rejected because the source table does not have row tracking enabled.
    * Row tracking is required for the V2 changelog reader to identify rows across commits.
+   *
+   * Throws unconditionally; the {@code Nothing} return lets Java callers use {@code throw} on
+   * the result without tripping Java's checked-exception rules ({@code AnalysisException}
+   * extends {@code Exception}, not {@code RuntimeException}).
    */
+  def throwChangelogRequiresRowTracking(tableName: String): Nothing = {
+    throw new DeltaAnalysisException(
+      errorClass = "DELTA_CHANGELOG_REQUIRES_ROW_TRACKING",
+      messageParameters = Array(tableName))
+  }
+
   def changelogRequiresRowTracking(tableName: String): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_CHANGELOG_REQUIRES_ROW_TRACKING",
@@ -604,6 +614,27 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_CHANGELOG_UNBOUNDED_RANGE",
       messageParameters = Array.empty[String])
+  }
+
+  /**
+   * Auto-CDF batch read rejected because the table schema differs at some commit within the
+   * requested range. The connector requires the schema to be stable across the read range so
+   * that downstream batch CDC post-processing sees a single schema.
+   */
+  def throwChangelogSchemaChangeInRange(version: Long): Nothing = {
+    throw new DeltaAnalysisException(
+      errorClass = "DELTA_CHANGELOG_SCHEMA_CHANGE_IN_RANGE",
+      messageParameters = Array(version.toString))
+  }
+
+  /**
+   * Auto-CDF batch read rejected because row tracking was disabled at some commit within the
+   * requested range (the `delta.enableRowTracking` table property was set to `false`).
+   */
+  def throwChangelogRowTrackingDisabledInRange(version: Long): Nothing = {
+    throw new DeltaAnalysisException(
+      errorClass = "DELTA_CHANGELOG_ROW_TRACKING_DISABLED_IN_RANGE",
+      messageParameters = Array(version.toString))
   }
 
   def setTransactionVersionConflict(appId: String, version1: Long, version2: Long): Throwable = {

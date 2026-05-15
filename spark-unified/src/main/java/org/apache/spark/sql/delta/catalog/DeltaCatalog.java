@@ -62,7 +62,7 @@ import org.apache.spark.sql.connector.catalog.Table;
  *
  * <p>See {@link DeltaV2Mode} for V1 vs V2 connector definitions and enable mode configuration.</p>
  */
-public class DeltaCatalog extends DeltaCatalogChangelogSupport {
+public class DeltaCatalog extends AbstractDeltaCatalog implements ChangelogSupport {
 
   /**
    * Loads a Delta table that is registered in the catalog.

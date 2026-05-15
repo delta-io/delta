@@ -1,9 +1,9 @@
 package io.delta.spark.internal.v2.read.changelog;
 
-import io.delta.kernel.Snapshot;
-import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
+import io.delta.spark.internal.v2.catalog.SparkTable;
 import org.apache.spark.sql.connector.catalog.CatalogV2Util;
 import org.apache.spark.sql.connector.catalog.Changelog;
+import org.apache.spark.sql.connector.catalog.ChangelogInfo;
 import org.apache.spark.sql.connector.catalog.Column;
 import org.apache.spark.sql.connector.expressions.FieldReference;
 import org.apache.spark.sql.connector.expressions.NamedReference;
@@ -15,21 +15,23 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 /**
  * V2 Changelog implementation for Delta tables.
  *
- * <p>Row tracking must be enabled on the source table at {@code startVersion}; the catalog
- * (DeltaCatalogChangelogSupport) is responsible for validating this before constructing a
- * DeltaChangelog. With that invariant, {@link #rowId()} and {@link #rowVersion()} can always point
- * at the {@code _metadata.row_id} / {@code _metadata.row_commit_version} fields that the SPIP
- * analyzer rule expects for update detection, carry-over removal, and net-change computation.
+ * <p>Wraps the {@link SparkTable} resolved by {@code TableCatalog.loadTable(ident)} and the {@link
+ * ChangelogInfo} that captures the user's CDC query options (deduplication mode, update detection,
+ * the resolved version range). All connector-level work — snapshot loads, row tracking validation,
+ * metadata-action inspection across the range — is deferred to the read path inside {@link
+ * DeltaChangelogBatch}, so that constructing a DeltaChangelog from the catalog stays cheap and
+ * side-effect free.
+ *
+ * <p>Row tracking is required at the table protocol; without it the SPIP analyzer rule cannot
+ * partition by {@code rowId / rowVersion}. Validation is performed by the read path, not here.
  */
 public class DeltaChangelog implements Changelog {
 
   private final String tableName;
-  private final StructType dataSchema;
-  private final DeltaSnapshotManager snapshotManager;
+  private final SparkTable sparkTable;
+  private final ChangelogInfo changelogInfo;
   private final long startVersion;
   private final long endVersion;
-  /** Snapshot at {@link #startVersion}, supplied by the catalog after row-tracking validation. */
-  private final Snapshot startSnapshot;
 
   public static final String METADATA_COLUMN = "_metadata";
   public static final String ROW_ID_FIELD = "row_id";
@@ -41,15 +43,13 @@ public class DeltaChangelog implements Changelog {
 
   public DeltaChangelog(
       String tableName,
-      StructType dataSchema,
-      DeltaSnapshotManager snapshotManager,
-      Snapshot startSnapshot,
+      SparkTable sparkTable,
+      ChangelogInfo changelogInfo,
       long startVersion,
       long endVersion) {
     this.tableName = tableName;
-    this.dataSchema = dataSchema;
-    this.snapshotManager = snapshotManager;
-    this.startSnapshot = startSnapshot;
+    this.sparkTable = sparkTable;
+    this.changelogInfo = changelogInfo;
     this.startVersion = startVersion;
     this.endVersion = endVersion;
   }
@@ -62,7 +62,8 @@ public class DeltaChangelog implements Changelog {
   @Override
   public Column[] columns() {
     StructType cdcSchema =
-        dataSchema
+        sparkTable
+            .schema()
             .add(METADATA_COLUMN, METADATA_STRUCT, false)
             .add("_change_type", DataTypes.StringType, false)
             .add("_commit_version", DataTypes.LongType, false)
@@ -95,8 +96,7 @@ public class DeltaChangelog implements Changelog {
 
   @Override
   public ScanBuilder newScanBuilder(CaseInsensitiveStringMap options) {
-    return new DeltaChangelogScanBuilder(
-        snapshotManager, dataSchema, startVersion, endVersion, startSnapshot, options);
+    return new DeltaChangelogScanBuilder(sparkTable, startVersion, endVersion, options);
   }
 
   @Override
@@ -107,5 +107,10 @@ public class DeltaChangelog implements Changelog {
   @Override
   public NamedReference rowVersion() {
     return FieldReference.apply("_metadata." + ROW_COMMIT_VERSION_FIELD);
+  }
+
+  /** Exposes the captured changelog options for downstream readers. */
+  public ChangelogInfo getChangelogInfo() {
+    return changelogInfo;
   }
 }

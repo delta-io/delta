@@ -27,7 +27,7 @@ import org.junit.jupiter.api.BeforeAll;
  *
  * <ul>
  *   <li>The hybrid {@code DeltaCatalog} (spark-unified) as {@code spark_catalog}, so {@code
- *       TableCatalog.loadChangelog} routes into {@code DeltaCatalogChangelogSupport}.
+ *       TableCatalog.loadChangelog} routes into the {@code ChangelogSupport} trait.
  *   <li>{@code spark.databricks.delta.changelogV2.enabled = true}, the SQLConf gate behind which
  *       Auto-CDF is hidden in production.
  * </ul>

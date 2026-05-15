@@ -152,7 +152,7 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
             options,
             hadoopConf,
             sqlConf,
-            io.delta.spark.internal.v2.read.cdc.CdcReadMode.NONE);
+            /* isWriteTimeCDCRead */ false);
 
     assertNotNull(factory, "PartitionReaderFactory should not be null");
   }
@@ -194,22 +194,20 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
             options,
             hadoopConf,
             sqlConf,
-            io.delta.spark.internal.v2.read.cdc.CdcReadMode.STREAMING);
+            /* isWriteTimeCDCRead */ true);
 
     assertNotNull(factory, "CDC PartitionReaderFactory should not be null");
   }
 
   /**
-   * In {@link io.delta.spark.internal.v2.read.cdc.CdcReadMode#BATCH_CHANGELOG} mode, PartitionUtils
-   * is contractually inert on the CDC side: it does not augment {@code readDataSchema} with CDC
-   * columns and does not wrap the reader with {@code CDCReadFunction}. The Auto-CDF entrypoint
-   * ({@code DeltaChangelogBatch.CDCPartitionReaderFactory}) injects the CDC tail columns as
-   * per-partition constants instead. This test locks down the contract that {@code
-   * DeltaChangelogBatch} relies on by exercising the factory build for BATCH_CHANGELOG and
-   * asserting it produces a usable, non-null reader factory.
+   * Read-time Auto-CDF calls into PartitionUtils with {@code isWriteTimeCDCRead=false}. The factory
+   * is then a plain Parquet reader factory: PartitionUtils does not augment {@code readDataSchema}
+   * with CDC tail columns and does not wrap the reader with {@code CDCReadFunction}. The tail
+   * columns are added by {@code DeltaChangelogBatch.CDCPartitionReaderFactory} as per-partition
+   * constants instead.
    */
   @Test
-  public void testCreateDeltaParquetReaderFactory_BatchChangelog() {
+  public void testCreateDeltaParquetReaderFactory_NotWriteTimeCDCRead() {
     String tablePath =
         createTestTable("test_delta_reader_factory_batch_changelog_" + System.nanoTime(), true);
 
@@ -240,9 +238,9 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
             options,
             hadoopConf,
             sqlConf,
-            io.delta.spark.internal.v2.read.cdc.CdcReadMode.BATCH_CHANGELOG);
+            /* isWriteTimeCDCRead */ false);
 
-    assertNotNull(factory, "BATCH_CHANGELOG PartitionReaderFactory should not be null");
+    assertNotNull(factory, "isWriteTimeCDCRead=false PartitionReaderFactory should not be null");
   }
 
   @Test

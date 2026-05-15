@@ -28,7 +28,6 @@ import io.delta.spark.internal.v2.read.DeltaParquetFileFormatV2;
 import io.delta.spark.internal.v2.read.SparkReaderFactory;
 import io.delta.spark.internal.v2.read.cdc.CDCReadFunction;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
-import io.delta.spark.internal.v2.read.cdc.CdcReadMode;
 import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorReadFunction;
 import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorSchemaContext;
 import io.delta.spark.internal.v2.read.rowtracking.RowTrackingReadFunction;
@@ -309,10 +308,12 @@ public class PartitionUtils {
    * </ol>
    *
    * @param snapshot The Delta table snapshot containing protocol, metadata, and table path
-   * @param cdcReadMode Selects the CDC entrypoint. {@link CdcReadMode#STREAMING} augments the read
-   *     schema with CDC columns and wraps the reader with {@link CDCReadFunction}. {@link
-   *     CdcReadMode#BATCH_CHANGELOG} leaves both untouched (an outer wrapper owns CDC injection).
-   *     {@link CdcReadMode#NONE} disables CDC handling entirely.
+   * @param isWriteTimeCDCRead If {@code true}, this is a write-time CDF read (streaming reads of
+   *     the legacy {@code .option("readChangeFeed")} format): the read schema is augmented with CDC
+   *     tail columns and the reader is wrapped with {@link CDCReadFunction}. If {@code false}, this
+   *     is a plain table scan or a read-time Auto-CDF read; CDC handling is left to the caller in
+   *     that case (Auto-CDF's outer {@code CDCPartitionReaderFactory} injects the tail columns as
+   *     per-partition constants instead).
    */
   public static PartitionReaderFactory createDeltaParquetReaderFactory(
       Snapshot snapshot,
@@ -334,7 +335,7 @@ public class PartitionUtils {
         scalaOptions,
         hadoopConf,
         sqlConf,
-        CdcReadMode.NONE);
+        /* isWriteTimeCDCRead */ false);
   }
 
   public static PartitionReaderFactory createDeltaParquetReaderFactory(
@@ -347,7 +348,7 @@ public class PartitionUtils {
       scala.collection.immutable.Map<String, String> scalaOptions,
       Configuration hadoopConf,
       SQLConf sqlConf,
-      CdcReadMode cdcReadMode) {
+      boolean isWriteTimeCDCRead) {
     SnapshotImpl snapshotImpl = (SnapshotImpl) snapshot;
     // Use Path.toString() instead of toUri().toString() to avoid URL encoding issues.
     // toUri().toString() encodes special characters (e.g., space -> %20), which causes
@@ -358,12 +359,13 @@ public class PartitionUtils {
     // column-reorder wrapper below.
     final StructType originalReadDataSchema = readDataSchema;
 
-    // For streaming CDC reads, build the schema context and augment readDataSchema with CDC
-    // columns before DV wrapping so that DV column indices account for them. Auto-CDF batch
-    // reads (BATCH_CHANGELOG) skip this step. DeltaChangelogBatch's outer
-    // CDCPartitionReaderFactory injects the CDC tail columns as constants instead.
+    // For write-time CDF reads (streaming with readChangeFeed=true), build the schema context
+    // and augment readDataSchema with CDC tail columns before DV wrapping so that DV column
+    // indices account for them. Read-time CDF (Auto-CDF, via DeltaChangelogBatch) does not go
+    // through this path: DeltaChangelogBatch's outer CDCPartitionReaderFactory injects the
+    // tail columns as per-partition constants instead.
     Optional<CDCSchemaContext> cdcSchemaContext =
-        cdcReadMode.injectsCdcAtReaderLevel()
+        isWriteTimeCDCRead
             ? Optional.of(new CDCSchemaContext(readDataSchema, partitionSchema))
             : Optional.empty();
     if (cdcSchemaContext.isPresent()) {
@@ -409,7 +411,7 @@ public class PartitionUtils {
         dvSchemaContext.isPresent() ? Option.apply(Boolean.FALSE) : Option.empty();
     DeltaParquetFileFormatV2 deltaFormat =
         createDeltaParquetFileFormat(
-            snapshot, tablePath, optimizationsEnabled, useMetadataRowIndex, cdcReadMode.isCdc());
+            snapshot, tablePath, optimizationsEnabled, useMetadataRowIndex, isWriteTimeCDCRead);
 
     Function1<PartitionedFile, Iterator<InternalRow>> readFunc =
         deltaFormat.buildReaderWithPartitionValues(

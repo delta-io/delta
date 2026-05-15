@@ -92,9 +92,8 @@ public class SparkBatch implements Batch {
 
   @Override
   public PartitionReaderFactory createReaderFactory() {
-    // Non-CDC plain table scan. CDC reads enter through other paths: streaming via
-    // SparkMicroBatchStream, batch CHANGES FROM via DeltaChangelogBatch. Both pass their own
-    // CdcReadMode.
+    // Non-CDC plain table scan. Write-time CDF streaming reads route through
+    // SparkMicroBatchStream; read-time Auto-CDF batch reads route through DeltaChangelogBatch.
     return PartitionUtils.createDeltaParquetReaderFactory(
         snapshot,
         dataSchema,

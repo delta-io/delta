@@ -19,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.delta.spark.internal.v2.catalog.SparkTable;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
 import java.sql.Timestamp;
@@ -31,6 +32,7 @@ import java.util.Map;
 import java.util.Optional;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.catalyst.InternalRow;
+import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.read.Batch;
 import org.apache.spark.sql.connector.read.InputPartition;
@@ -76,9 +78,8 @@ public class DeltaChangelogDirectBatchExecutionTest extends DeltaChangelogTestBa
           DeltaChangelog changelog =
               new DeltaChangelog(
                   tableName,
-                  dataSchema,
-                  snapshotManager,
-                  snapshotManager.loadSnapshotAt(0L),
+                  new SparkTable(Identifier.of(new String[0], tableName), tablePath),
+                  /* changelogInfo */ null,
                   0L,
                   latestVersion);
           ScanBuilder scanBuilder =
@@ -149,9 +150,8 @@ public class DeltaChangelogDirectBatchExecutionTest extends DeltaChangelogTestBa
           DeltaChangelog changelog =
               new DeltaChangelog(
                   tableName,
-                  dataSchema,
-                  snapshotManager,
-                  snapshotManager.loadSnapshotAt(0L),
+                  new SparkTable(Identifier.of(new String[0], tableName), tablePath),
+                  /* changelogInfo */ null,
                   0L,
                   latestVersion);
 
@@ -201,9 +201,8 @@ public class DeltaChangelogDirectBatchExecutionTest extends DeltaChangelogTestBa
           DeltaChangelog changelog =
               new DeltaChangelog(
                   tableName,
-                  dataSchema,
-                  snapshotManager,
-                  snapshotManager.loadSnapshotAt(0L),
+                  new SparkTable(Identifier.of(new String[0], tableName), tablePath),
+                  /* changelogInfo */ null,
                   0L,
                   latestVersion);
           Scan scan =
@@ -276,9 +275,8 @@ public class DeltaChangelogDirectBatchExecutionTest extends DeltaChangelogTestBa
           DeltaChangelog changelog =
               new DeltaChangelog(
                   tableName,
-                  dataSchema,
-                  snapshotManager,
-                  snapshotManager.loadSnapshotAt(2L),
+                  new SparkTable(Identifier.of(new String[0], tableName), tablePath),
+                  /* changelogInfo */ null,
                   2L,
                   3L);
           Scan scan =
