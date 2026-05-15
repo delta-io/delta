@@ -31,6 +31,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import io.unitycatalog.client.auth.TokenProvider
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.util.Utils
 
 /**
  * Builder for Unity Catalog Commit Coordinator Clients.
@@ -291,27 +292,67 @@ trait UCClientFactory {
 }
 
 object UCTokenBasedRestClientFactory extends UCClientFactory {
-  override def createUCClient(uri: String, authConfig: Map[String, String]): UCClient = {
-    createUCClientWithVersions(uri, authConfig, defaultAppVersions)
+
+  /**
+   * Config key for specifying a custom [[UCClient]] implementation class.
+   * The class must have a constructor accepting (String, TokenProvider, java.util.Map).
+   */
+  final val UC_CLIENT_IMPL_KEY = "ucclient.impl"
+
+  private val DEFAULT_UC_CLIENT_CLASS: String =
+    classOf[UCTokenBasedRestClient].getName
+
+  override def createUCClient(
+      uri: String,
+      authConfig: Map[String, String]): UCClient = {
+    createUCClient(uri, authConfig, Map.empty[String, String])
+  }
+
+  def createUCClient(
+      uri: String,
+      authConfig: Map[String, String],
+      clientConfig: Map[String, String]): UCClient = {
+    createUCClientWithVersions(
+      uri, authConfig, defaultAppVersions, clientConfig)
   }
 
   /**
-   * Creates a UC client with the given application versions for telemetry.
-   * The provided `appVersions` map is used as-is; callers are responsible for
-   * including all desired version entries.
+   * Creates a UC client with the given application versions for
+   * telemetry. The provided `appVersions` map is used as-is;
+   * callers are responsible for including all desired version
+   * entries.
+   *
+   * The implementation class is loaded via reflection so that
+   * this module has no compile-time dependency on specific
+   * [[UCClient]] implementations (e.g.
+   * UCDeltaTokenBasedRestClient). Override the implementation
+   * by setting [[UC_CLIENT_IMPL_KEY]] in `clientConfig`.
    */
   def createUCClientWithVersions(
       uri: String,
       authConfig: Map[String, String],
-      appVersions: Map[String, String]): UCClient = {
-    // Create TokenProvider from the authentication configuration map
-    // We pass the configuration through without interpreting any specific keys,
-    // as those are managed by the Unity Catalog client library
+      appVersions: Map[String, String],
+      clientConfig: Map[String, String] = Map.empty
+  ): UCClient = {
     val tokenProvider = TokenProvider.create(authConfig.asJava)
-    new UCTokenBasedRestClient(uri, tokenProvider, appVersions.asJava)
+    val className = clientConfig.getOrElse(
+      UC_CLIENT_IMPL_KEY, DEFAULT_UC_CLIENT_CLASS)
+    val cls = Utils.classForName(className)
+    require(
+      classOf[UCClient].isAssignableFrom(cls),
+      s"$className does not implement " +
+        s"${classOf[UCClient].getName}")
+    val ctor = cls.getConstructor(
+      classOf[String],
+      classOf[TokenProvider],
+      classOf[java.util.Map[_, _]])
+    ctor.newInstance(
+      uri, tokenProvider, appVersions.asJava)
+      .asInstanceOf[UCClient]
   }
 
-  private[coordinatedcommits] def defaultAppVersions: Map[String, String] = {
+  private[coordinatedcommits] def defaultAppVersions:
+      Map[String, String] = {
     Map(
       "Delta" -> io.delta.VERSION,
       "Spark" -> org.apache.spark.SPARK_VERSION,
@@ -320,22 +361,53 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
     )
   }
 
-  /** Returns the default app versions as a mutable Java map for easy extension. */
+  /** Returns the default app versions as a mutable Java map. */
   def defaultAppVersionsAsJava: java.util.Map[String, String] = {
     new java.util.HashMap(defaultAppVersions.asJava)
   }
 
-  /** Java-friendly overload that accepts a java.util.Map */
-  def createUCClient(uri: String, authConfig: java.util.Map[String, String]): UCClient = {
+  /** Java-friendly overload that accepts a java.util.Map. */
+  def createUCClient(
+      uri: String,
+      authConfig: java.util.Map[String, String]
+  ): UCClient = {
     createUCClient(uri, authConfig.asScala.toMap)
   }
 
-  /** Java-friendly overload that accepts application versions for telemetry. */
+  /** Java-friendly overload with clientConfig. */
+  def createUCClient(
+      uri: String,
+      authConfig: java.util.Map[String, String],
+      clientConfig: java.util.Map[String, String]
+  ): UCClient = {
+    createUCClient(
+      uri,
+      authConfig.asScala.toMap,
+      clientConfig.asScala.toMap)
+  }
+
+  /** Java-friendly overload for telemetry versions. */
   def createUCClientWithVersions(
       uri: String,
       authConfig: java.util.Map[String, String],
-      appVersions: java.util.Map[String, String]): UCClient = {
-    createUCClientWithVersions(uri, authConfig.asScala.toMap, appVersions.asScala.toMap)
+      appVersions: java.util.Map[String, String]
+  ): UCClient = {
+    createUCClientWithVersions(
+      uri, authConfig.asScala.toMap, appVersions.asScala.toMap)
+  }
+
+  /** Java-friendly overload with versions and clientConfig. */
+  def createUCClientWithVersions(
+      uri: String,
+      authConfig: java.util.Map[String, String],
+      appVersions: java.util.Map[String, String],
+      clientConfig: java.util.Map[String, String]
+  ): UCClient = {
+    createUCClientWithVersions(
+      uri,
+      authConfig.asScala.toMap,
+      appVersions.asScala.toMap,
+      clientConfig.asScala.toMap)
   }
 }
 
