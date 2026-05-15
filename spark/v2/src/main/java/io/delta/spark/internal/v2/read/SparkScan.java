@@ -265,7 +265,6 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
             options,
             snapshotManager,
             DefaultEngine.create(hadoopConf),
-            SparkMicroBatchStream.ACTION_SET,
             Option.apply(checkpointLocation),
             /* mergeConsecutiveSchemaChanges= */ false);
 
