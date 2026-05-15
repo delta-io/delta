@@ -628,6 +628,38 @@ trait DeltaConfigsBase extends DeltaLogging {
       s"(${ParquetFormatVersion.values().map(_.getVersion).mkString(", ")})"
     )
 
+  /**
+   * The set of compression codecs recognized by `delta.parquet.compression.codec`.
+   *
+   * The set is intentionally limited to the values listed in the Delta protocol:
+   * https://github.com/delta-io/delta/blob/master/PROTOCOL.md#table-properties
+   *
+   * Other codecs that Parquet may technically support are not allowed here so that tables
+   * written via Delta remain portable across writers.
+   */
+  private[delta] val VALID_PARQUET_COMPRESSION_CODECS: Set[String] =
+    Set("uncompressed", "none", "snappy", "gzip", "lz4", "lz4_raw", "zstd")
+
+  /**
+   * Compression codec that writers should use for new Parquet data files and checkpoint files.
+   *
+   * Changing this property does not affect existing files; a table may contain files written with
+   * different codecs which is a normal and expected state.
+   *
+   * Values are matched case-insensitively. When unset, writers fall back to Spark's existing
+   * default behavior (configured via `spark.sql.parquet.compression.codec`).
+   */
+  val PARQUET_COMPRESSION_CODEC: DeltaConfig[Option[String]] =
+    buildConfig[Option[String]](
+      "parquet.compression.codec",
+      null,
+      fromString = v => Option(v).map(_.toLowerCase(Locale.ROOT)),
+      validationFunction = _.forall(VALID_PARQUET_COMPRESSION_CODECS.contains),
+      helpMessage = "needs to be one of: " +
+        VALID_PARQUET_COMPRESSION_CODECS.toSeq.sorted.map(s => s"'$s'").mkString(", ") +
+        " (case-insensitive)."
+    )
+
   val ENABLE_VARIANT_SHREDDING = buildConfig[Boolean](
     key = "enableVariantShredding",
     defaultValue = "false",

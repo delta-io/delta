@@ -31,7 +31,7 @@ import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStore
-import org.apache.spark.sql.delta.util.{DeltaFileOperations, DeltaLogGroupingIterator, FileNames}
+import org.apache.spark.sql.delta.util.{DeltaFileOperations, DeltaLogGroupingIterator, FileNames, TableParquetCompressionCodecOption}
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -765,7 +765,10 @@ object Checkpoints
       val format = new ParquetFileFormat()
       val job = Job.getInstance(hadoopConf)
       // Right now, we don't shred variant stats in checkpoints.
-      val writeOptions = VariantShreddingShims.getVariantInferShreddingSchemaOptions(false)
+      val writeOptions = VariantShreddingShims.getVariantInferShreddingSchemaOptions(false) ++
+        TableParquetCompressionCodecOption.getWriterOptions(
+          writerOptions = Map.empty,
+          tableProperties = snapshot.metadata.configuration)
       (format.prepareWrite(spark, job, Map.empty ++ writeOptions, schema),
         new SerializableConfiguration(job.getConfiguration))
     }
@@ -1009,7 +1012,8 @@ object Checkpoints
         val dfToWrite = nonFileActionsToWrite.map(_.wrap).toDF()
         val v2CheckpointPath = newV2CheckpointParquetFile(deltaLog.logPath, snapshot.version)
         val schemaOfDfWritten = createCheckpointV2ParquetFile(
-          spark, dfToWrite, v2CheckpointPath, hadoopConf, useRename)
+          spark, dfToWrite, v2CheckpointPath, hadoopConf, useRename,
+          tableProperties = snapshot.metadata.configuration)
         (v2CheckpointPath, Some(schemaOfDfWritten))
       } else {
         throw DeltaErrors.assertionFailedError(
@@ -1039,13 +1043,19 @@ object Checkpoints
    * that they don't have the capability to read table for which they were created.
    * This is needed in cases where commit 0 has been cleaned up and the reader needs to
    * read a checkpoint to read the [[Protocol]].
+   *
+   * @param tableProperties The configuration map from the table's [[Metadata]]. This is used to
+   *                        honor table properties that affect checkpoint Parquet files such as
+   *                        `delta.parquet.compression.codec`. Pass [[Map.empty]] if the table
+   *                        properties are not known (e.g., from synthetic test setups).
    */
   def createCheckpointV2ParquetFile(
       spark: SparkSession,
       ds: Dataset[Row],
       finalPath: Path,
       hadoopConf: Configuration,
-      useRename: Boolean): StructType = recordFrameProfile(
+      useRename: Boolean,
+      tableProperties: Map[String, String]): StructType = recordFrameProfile(
         "Checkpoints", "createCheckpointV2ParquetFile") {
     val df = ds.select(
       "txn", "add", "remove", "metaData", "protocol", "domainMetadata",
@@ -1053,7 +1063,10 @@ object Checkpoints
     val schema = df.schema.asNullable
     val format = new ParquetFileFormat()
     val job = Job.getInstance(hadoopConf)
-    val factory = format.prepareWrite(spark, job, Map.empty, schema)
+    val writeOptions = TableParquetCompressionCodecOption.getWriterOptions(
+      writerOptions = Map.empty,
+      tableProperties = tableProperties)
+    val factory = format.prepareWrite(spark, job, writeOptions, schema)
     val serConf = new SerializableConfiguration(job.getConfiguration)
     val finalSparkPath = SparkPath.fromPath(finalPath)
 
