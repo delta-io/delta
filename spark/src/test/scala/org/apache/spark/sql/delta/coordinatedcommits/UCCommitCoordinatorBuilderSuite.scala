@@ -463,6 +463,19 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
     assert(auth("token") == "legacy-token")
   }
 
+  test("extractAppVersions merges defaults with ucConfig entries") {
+    val ucConfig = Map(
+      "uri" -> "https://test.com",
+      "appVersions.Kernel" -> "4.0.0",
+      "appVersions.Delta V2 connector" -> "true"
+    )
+    val versions = UCTokenBasedRestClientFactory.extractAppVersions(ucConfig)
+    assert(versions("Kernel") === "4.0.0")
+    assert(versions("Delta V2 connector") === "true")
+    assert(versions("Delta") === io.delta.VERSION)
+    assert(versions("Spark") === org.apache.spark.SPARK_VERSION)
+  }
+
   test("buildForCatalog with legacy token format") {
     val catalogName = "test_catalog"
     val uri = "https://test-uri.com"
