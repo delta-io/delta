@@ -56,10 +56,8 @@ public class DeltaChangelog implements Changelog {
 
   @Override
   public Column[] columns() {
-    // Resolve the end-version schema lazily so that constructing a DeltaChangelog from the
-    // catalog stays side-effect free. The analyzer calls columns() once per query during
-    // resolution, and the scan path later validates that every per-commit Metadata.getSchema()
-    // matches this same end-version schema.
+    // Resolve lazily so catalog construction stays side-effect free. The scan path validates
+    // each per-commit Metadata against this same end-version schema.
     Snapshot endSnapshot = sparkTable.getSnapshotManager().loadSnapshotAt(endVersion);
     StructType endSchema = SchemaUtils.convertKernelSchemaToSparkSchema(endSnapshot.getSchema());
     StructType cdcSchema =

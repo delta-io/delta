@@ -76,11 +76,8 @@ public class DeltaChangelogBatch implements Batch {
   public InputPartition[] planInputPartitions() {
     List<InputPartition> partitions = new ArrayList<>();
 
-    // Eager schema-drift check: if the start-version snapshot's schema differs from the
-    // end-version reference (passed in as `dataSchema`), a Metadata-changing commit lies in
-    // the range. The per-commit Metadata loop below catches the case where Metadata also
-    // appears inside the range. This start-vs-end pre-check catches the case where the
-    // schema before our first iterated commit is already out of sync.
+    // Pre-check catches schema drift between start and end. The per-commit loop below catches
+    // in-range Metadata commits.
     StructType startSchema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
     if (!startSchema.equals(dataSchema)) {
       DeltaErrors.throwChangelogSchemaChangeInRange(
@@ -90,19 +87,15 @@ public class DeltaChangelogBatch implements Batch {
     // TODO: Remove StreamingHelper usage. The helper is generic, only the class name is
     // streaming-flavored.
     //
-    // The two `catch (RuntimeException e) { throw e; } catch (Exception e) { throw new
-    // RuntimeException(...) }` blocks below exist because try-with-resources requires catching
-    // Exception (CommitActions.close() declares it). Unchecked exceptions, including the
-    // IllegalStateExceptions thrown by buildPartition's orElseThrow, are re-thrown unchanged.
+    // try-with-resources forces a catch (Exception) below because CommitActions.close()
+    // declares it. Unchecked exceptions pass through unchanged.
     try (CloseableIterator<CommitActions> commitsIter =
         StreamingHelper.getCommitActionsFromRangeUnsafe(
             engine, (CommitRangeImpl) commitRange, snapshot.getPath(), CHANGELOG_ACTION_SET)) {
       while (commitsIter.hasNext()) {
-        // The SPIP analyzer re-partitions and re-sorts by (rowId, rowVersion) before the CDC
-        // post-processor inspects pairs, so it does not require any particular partition order
-        // from the connector. Direct-batch tests that bypass the analyzer do iterate partitions
-        // in emission order, though. Emitting RemoveFiles before AddFiles per commit gives
-        // those tests a deterministic preimage-then-postimage shape.
+        // Emit RemoveFiles before AddFiles per commit. The Spark analyzer re-sorts anyway, but
+        // direct-batch tests iterate in emission order and rely on the preimage-then-postimage
+        // shape.
         List<InputPartition> commitRemoves = new ArrayList<>();
         List<InputPartition> commitAdds = new ArrayList<>();
         try (CommitActions commit = commitsIter.next();
@@ -218,11 +211,8 @@ public class DeltaChangelogBatch implements Batch {
         scala.collection.immutable.Map$.MODULE$.empty();
     SQLConf sqlConf = SQLConf.get();
 
-    // Read-time Auto-CDF reads raw parquet here. The CDC tail columns (_change_type,
-    // _commit_version, _commit_timestamp) are added below by CDCPartitionReaderFactory as
-    // per-partition constants, not by PartitionUtils. This is unrelated to write-time CDF
-    // (streaming with readChangeFeed=true), which is the only consumer of the
-    // isWriteTimeCDCRead branch in PartitionUtils.
+    // Read-time Auto-CDF: tail columns are added by CDCPartitionReaderFactory below, so
+    // isWriteTimeCDCRead stays false (write-time streaming is the only true caller).
     PartitionReaderFactory delegate =
         PartitionUtils.createDeltaParquetReaderFactory(
             snapshot,

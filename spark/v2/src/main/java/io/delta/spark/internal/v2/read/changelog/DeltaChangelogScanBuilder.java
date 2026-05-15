@@ -44,22 +44,15 @@ public class DeltaChangelogScanBuilder implements ScanBuilder {
     DeltaSnapshotManager snapshotManager = sparkTable.getSnapshotManager();
     CommitRange commitRange =
         snapshotManager.getTableChanges(engine, startVersion, Optional.of(endVersion));
+    // Boundary checks: both endpoints must already carry the schema + RT state that
+    // DeltaChangelogBatch will validate each in-range Metadata action against. Without these,
+    // an RT-disabled boundary with no in-range toggle commit would surface as a raw
+    // IllegalStateException "missing baseRowId" downstream.
     Snapshot startSnapshot = snapshotManager.loadSnapshotAt(startVersion);
-
-    // Row-tracking boundary check: both endpoints of the requested range must already have row
-    // tracking enabled. The per-commit Metadata loop in DeltaChangelogBatch only fires for
-    // commits that carry a Metadata action, so an RT-disabled boundary state with no in-range
-    // toggle commit would otherwise slip through and surface as a raw "missing baseRowId"
-    // IllegalStateException downstream.
     SnapshotImpl startSnapshotImpl = (SnapshotImpl) startSnapshot;
     if (!RowTracking.isEnabled(startSnapshotImpl.getProtocol(), startSnapshotImpl.getMetadata())) {
       DeltaErrors.throwChangelogRowTrackingDisabledInRange(startVersion);
     }
-
-    // End-version reference: the schema and row-tracking state at endVersion define what
-    // DeltaChangelogBatch validates each commit's Metadata action against. Catching schema
-    // drift or row-tracking toggles here, at the read entry point, gives the user a clear
-    // analysis-time error rather than a corrupted output stream downstream.
     Snapshot endSnapshot = snapshotManager.loadSnapshotAt(endVersion);
     SnapshotImpl endSnapshotImpl = (SnapshotImpl) endSnapshot;
     StructType endSchema = SchemaUtils.convertKernelSchemaToSparkSchema(endSnapshot.getSchema());
