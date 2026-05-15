@@ -63,6 +63,7 @@ import org.apache.spark.sql.execution.datasources.{DataSource, PartitioningUtils
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.InsertableRelation
 import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
+import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 
 /**
@@ -82,6 +83,22 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
 
 
   val spark = SparkSession.active
+
+  /**
+   * When non-null, table operations are routed through this client instead of through the
+   * [[org.apache.spark.sql.connector.catalog.DelegatingCatalogExtension]] delegate that
+   * `AbstractDeltaCatalog` normally relies on. This lets the catalog inject custom
+   * interactions (e.g. talking to a REST endpoint, catalog-specific property handling,
+   * storage-credential vending) rather than going through the Spark
+   * [[org.apache.spark.sql.connector.catalog.TableCatalog]] API.
+   */
+  private[catalog] var deltaCatalogClient: AbstractDeltaCatalogClient = null
+
+  override def initialize(name: String, options: CaseInsensitiveStringMap): Unit = {
+    super.initialize(name, options)
+    deltaCatalogClient =
+      AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled(name, options, super.loadTable)
+  }
 
   private lazy val isUnityCatalog: Boolean = {
     val delegateField = classOf[DelegatingCatalogExtension].getDeclaredField("delegate")
@@ -290,7 +307,11 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       "DeltaCatalog", "loadTable") {
     setVariantBlockingConfigIfUC()
     try {
-      val table = super.loadTable(ident)
+      val table = if (deltaCatalogClient != null) {
+        deltaCatalogClient.loadTable(ident)
+      } else {
+        super.loadTable(ident)
+      }
 
       ServerSidePlannedTable.tryCreate(spark, ident, table, isUnityCatalog).foreach { sspt =>
         return sspt
