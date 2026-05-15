@@ -28,6 +28,7 @@ import io.delta.spark.internal.v2.read.DeltaParquetFileFormatV2;
 import io.delta.spark.internal.v2.read.SparkReaderFactory;
 import io.delta.spark.internal.v2.read.cdc.CDCReadFunction;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
+import io.delta.spark.internal.v2.read.cdc.CdcReadMode;
 import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorReadFunction;
 import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorSchemaContext;
 import io.delta.spark.internal.v2.read.rowtracking.RowTrackingReadFunction;
@@ -308,8 +309,10 @@ public class PartitionUtils {
    * </ol>
    *
    * @param snapshot The Delta table snapshot containing protocol, metadata, and table path
-   * @param isCDCRead If true, augments the read schema with CDC columns and wraps the reader with
-   *     {@link CDCReadFunction} to null-coalesce CDC metadata from per-file constants.
+   * @param cdcReadMode Selects the CDC entrypoint. {@link CdcReadMode#STREAMING} augments the read
+   *     schema with CDC columns and wraps the reader with {@link CDCReadFunction}. {@link
+   *     CdcReadMode#BATCH_CHANGELOG} leaves both untouched (an outer wrapper owns CDC injection).
+   *     {@link CdcReadMode#NONE} disables CDC handling entirely.
    */
   public static PartitionReaderFactory createDeltaParquetReaderFactory(
       Snapshot snapshot,
@@ -331,7 +334,7 @@ public class PartitionUtils {
         scalaOptions,
         hadoopConf,
         sqlConf,
-        /* isCDCRead */ false);
+        CdcReadMode.NONE);
   }
 
   public static PartitionReaderFactory createDeltaParquetReaderFactory(
@@ -344,7 +347,7 @@ public class PartitionUtils {
       scala.collection.immutable.Map<String, String> scalaOptions,
       Configuration hadoopConf,
       SQLConf sqlConf,
-      boolean isCDCRead) {
+      CdcReadMode cdcReadMode) {
     SnapshotImpl snapshotImpl = (SnapshotImpl) snapshot;
     // Use Path.toString() instead of toUri().toString() to avoid URL encoding issues.
     // toUri().toString() encodes special characters (e.g., space -> %20), which causes
@@ -355,24 +358,21 @@ public class PartitionUtils {
     // column-reorder wrapper below.
     final StructType originalReadDataSchema = readDataSchema;
 
-    boolean metadataColumnRequested =
-        Arrays.stream(readDataSchema.fields())
-            .anyMatch(field -> FileFormat$.MODULE$.METADATA_NAME().equals(field.name()));
-
-    // For CDC reads, build the schema context and augment readDataSchema with CDC columns
-    // before DV wrapping so that DV column indices account for them.
-    //
-    // Skip the schema augmentation when row tracking is also requested (Auto-CDF path): in
-    // that case the outer CDCPartitionReaderFactory in DeltaChangelogBatch injects the CDC
-    // tail columns as constants, so adding them here would cause a double-injection /
-    // schema-vs-reader misalignment.
+    // For streaming CDC reads, build the schema context and augment readDataSchema with CDC
+    // columns before DV wrapping so that DV column indices account for them. Auto-CDF batch
+    // reads (BATCH_CHANGELOG) skip this step — DeltaChangelogBatch's outer
+    // CDCPartitionReaderFactory injects the CDC tail columns as constants instead.
     Optional<CDCSchemaContext> cdcSchemaContext =
-        (isCDCRead && !metadataColumnRequested)
+        cdcReadMode.injectsCdcAtReaderLevel()
             ? Optional.of(new CDCSchemaContext(readDataSchema, partitionSchema))
             : Optional.empty();
     if (cdcSchemaContext.isPresent()) {
       readDataSchema = cdcSchemaContext.get().getReadDataSchemaWithCDC();
     }
+
+    boolean metadataColumnRequested =
+        Arrays.stream(readDataSchema.fields())
+            .anyMatch(field -> FileFormat$.MODULE$.METADATA_NAME().equals(field.name()));
     Optional<RowTrackingSchemaContext> rowTrackingSchemaContext = Optional.empty();
     if (metadataColumnRequested) {
       RowTrackingSchemaContext context =
@@ -409,7 +409,7 @@ public class PartitionUtils {
         dvSchemaContext.isPresent() ? Option.apply(Boolean.FALSE) : Option.empty();
     DeltaParquetFileFormatV2 deltaFormat =
         createDeltaParquetFileFormat(
-            snapshot, tablePath, optimizationsEnabled, useMetadataRowIndex, isCDCRead);
+            snapshot, tablePath, optimizationsEnabled, useMetadataRowIndex, cdcReadMode.isCdc());
 
     Function1<PartitionedFile, Iterator<InternalRow>> readFunc =
         deltaFormat.buildReaderWithPartitionValues(
@@ -436,13 +436,9 @@ public class PartitionUtils {
       readFunc = RowTrackingReadFunction.wrap(readFunc, rowTrackingSchemaContext.get());
     }
 
-    // TODO(#5319): add e2e test for CDC reads (full schema + column pruning) when CDC reads
-    // become user-reachable.
-    //
-    // When row tracking is also enabled (Auto-CDF path), the outer CDCPartitionReaderFactory
-    // in DeltaChangelogBatch injects the CDC tail columns (_change_type, _commit_version,
-    // _commit_timestamp); skip the inner CDCReadFunction wrapper to avoid double injection.
-    if (cdcSchemaContext.isPresent() && !rowTrackingSchemaContext.isPresent()) {
+    // TODO(#5319): add e2e test for CDC reads (full schema + column pruning) when streaming CDC
+    // reads become user-reachable end-to-end.
+    if (cdcSchemaContext.isPresent()) {
       readFunc = CDCReadFunction.wrap(readFunc, cdcSchemaContext.get(), enableVectorizedReader);
     }
 

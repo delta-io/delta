@@ -152,7 +152,7 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
             options,
             hadoopConf,
             sqlConf,
-            /* isCDCRead= */ false);
+            io.delta.spark.internal.v2.read.cdc.CdcReadMode.NONE);
 
     assertNotNull(factory, "PartitionReaderFactory should not be null");
   }
@@ -194,7 +194,7 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
             options,
             hadoopConf,
             sqlConf,
-            /* isCDCRead= */ true);
+            io.delta.spark.internal.v2.read.cdc.CdcReadMode.STREAMING);
 
     assertNotNull(factory, "CDC PartitionReaderFactory should not be null");
   }

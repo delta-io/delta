@@ -186,6 +186,9 @@ public class DeltaChangelogBatch implements Batch {
         scala.collection.immutable.Map$.MODULE$.empty();
     SQLConf sqlConf = SQLConf.get();
 
+    // BATCH_CHANGELOG: PartitionUtils does NOT inject CDC tail columns or wrap the reader with
+    // CDCReadFunction here. Auto-CDF's outer CDCPartitionReaderFactory below appends
+    // _change_type / _commit_version / _commit_timestamp as per-partition constants instead.
     PartitionReaderFactory delegate =
         PartitionUtils.createDeltaParquetReaderFactory(
             snapshot,
@@ -197,7 +200,7 @@ public class DeltaChangelogBatch implements Batch {
             scalaOptions,
             hadoopConf,
             sqlConf,
-            /* isCDCRead */ true);
+            io.delta.spark.internal.v2.read.cdc.CdcReadMode.BATCH_CHANGELOG);
 
     StructType outputSchema =
         readDataSchema
