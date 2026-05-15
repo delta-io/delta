@@ -1212,6 +1212,14 @@ lazy val storage = (project in file("storage"))
         ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
         ExclusionRule(organization = "com.fasterxml.jackson.dataformat")
       ),
+      // For UCDeltaTokenBasedRestClient credential vending via UCCredentialHadoopConfs.
+      "io.unitycatalog" % "unitycatalog-hadoop" % unityCatalogVersion excludeAll(
+        ExclusionRule(organization = "org.openapitools"),
+        ExclusionRule(organization = "com.fasterxml.jackson.core"),
+        ExclusionRule(organization = "com.fasterxml.jackson.module"),
+        ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
+        ExclusionRule(organization = "com.fasterxml.jackson.dataformat")
+      ),
 
       // Test Deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",

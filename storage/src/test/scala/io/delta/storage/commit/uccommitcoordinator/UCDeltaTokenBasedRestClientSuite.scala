@@ -24,6 +24,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import io.delta.storage.commit.{Commit, CommitFailedException, TableIdentifier}
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
+import io.delta.storage.commit.uccommitcoordinator.exceptions.NoSuchTableException
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 import io.unitycatalog.client.auth.TokenProvider
 
@@ -78,8 +79,16 @@ class UCDeltaTokenBasedRestClientSuite
 
   private def loadTableJson(
       tableUuid: String = testTableId,
-      format: String = "DELTA"): String =
+      format: String = "DELTA",
+      location: String = "s3://bucket/table",
+      tableType: String = "MANAGED"): String =
     s"""{"metadata":{"table-uuid":"$tableUuid","data-source-format":"$format",""" +
+    s""""table-type":"$tableType",""" +
+    s""""location":"$location",""" +
+    s""""columns":{"type":"struct","fields":[""" +
+    s"""{"name":"date","type":"string","nullable":true,"metadata":{}},""" +
+    s"""{"name":"value","type":"integer","nullable":true,"metadata":{}}""" +
+    s"""]},""" +
     s""""properties":{"key1":"val1"},"partition-columns":["date"],"created-time":1000}}"""
 
   private def readBody(exchange: HttpExchange): String = {
@@ -183,23 +192,89 @@ class UCDeltaTokenBasedRestClientSuite
 
   // --------------- loadTable ---------------
 
-  test("loadTable returns AbstractMetadata with correct fields") {
+  test("loadTable returns TableInfo with catalog identity and Delta metadata") {
     withClient { c =>
-      val m = c.loadTable(testCatalog, testSchema, testTable)
+      val info = c.loadTable(testIdentifier)
+      assert(info.getLocation === "s3://bucket/table")
+      assert(info.getUcTableId === testTableId)
+      assert(info.getTableType === UCDeltaModels.TableType.MANAGED)
+      val m = info.getMetadata
       assert(m.getName === testTable)
-      assert(m.getId === testTableId)
+      // UC's loadTable response does not carry the Delta Metadata.id; UC's table_uuid is exposed
+      // separately as TableInfo.getUcTableId.
+      assert(m.getId === null)
       assert(m.getProvider === "DELTA")
       assert(m.getConfiguration.get("key1") === "val1")
       assert(m.getPartitionColumns.get(0) === "date")
       assert(m.getCreatedTime === 1000L)
+      // Schema is a JSON string in Delta's wire format; parseable by Delta's schema readers.
+      val parsed = objectMapper.readTree(m.getSchemaString)
+      assert(parsed.get("type").asText() === "struct")
+      assert(parsed.get("fields").size() === 2)
+      assert(parsed.get("fields").get(0).get("name").asText() === "date")
+      assert(parsed.get("fields").get(1).get("type").asText() === "integer")
+    }
+  }
+
+  test("loadTable schema emits Delta camelCase wire format for array and map") {
+    val nested =
+      s"""{"metadata":{"table-uuid":"$testTableId","data-source-format":"DELTA",""" +
+      s""""table-type":"MANAGED","location":"s3://b/t","partition-columns":[],""" +
+      s""""properties":{},"created-time":1,""" +
+      s""""columns":{"type":"struct","fields":[""" +
+      s"""{"name":"a","type":{"type":"array","element-type":"string","contains-null":true},""" +
+      s""""nullable":true,"metadata":{}},""" +
+      s"""{"name":"m","type":{"type":"map","key-type":"string","value-type":"integer",""" +
+      s""""value-contains-null":false},"nullable":true,"metadata":{}}""" +
+      s"""]}}}"""
+    deltaHandler = (exchange, _) => sendJson(exchange, HttpStatus.SC_OK, nested)
+    withClient { c =>
+      val schema = c.loadTable(testIdentifier).getMetadata.getSchemaString
+      val parsed = objectMapper.readTree(schema)
+      val aType = parsed.get("fields").get(0).get("type")
+      assert(aType.get("type").asText() === "array")
+      assert(aType.get("elementType").asText() === "string")
+      assert(aType.get("containsNull").asBoolean() === true)
+      assert(aType.has("element-type") === false)
+      val mType = parsed.get("fields").get(1).get("type")
+      assert(mType.get("type").asText() === "map")
+      assert(mType.get("keyType").asText() === "string")
+      assert(mType.get("valueType").asText() === "integer")
+      assert(mType.get("valueContainsNull").asBoolean() === false)
+      assert(mType.has("key-type") === false)
     }
   }
 
   test("loadTable throws IOException on server error") {
     deltaHandler = (exchange, _) => sendJson(exchange, 500, """{"error":"fail"}""")
     withClient { c =>
-      val e = intercept[java.io.IOException] { c.loadTable(testCatalog, testSchema, testTable) }
+      val e = intercept[java.io.IOException] { c.loadTable(testIdentifier) }
       assert(e.getMessage.contains("HTTP 500"))
+    }
+  }
+
+  test("loadTable throws NoSuchTableException on 404") {
+    deltaHandler = (exchange, _) => sendJson(exchange, 404, """{"error":"not found"}""")
+    withClient { c =>
+      val e = intercept[NoSuchTableException] {
+        c.loadTable(testIdentifier)
+      }
+      assert(e.getMessage.contains(s"$testCatalog.$testSchema.$testTable"))
+      assert(e.getMessage.contains("not found"))
+    }
+  }
+
+  test("loadTable throws UnsupportedTableFormatException on 400 with that error type") {
+    deltaHandler = (exchange, _) => sendJson(
+      exchange, 400,
+      """{"error":{"code":400,"type":"UnsupportedTableFormatException",""" +
+        s""""message":"Table is not a Delta table: ${testCatalog}.${testSchema}.${testTable}"}}""")
+    withClient { c =>
+      val e = intercept[exceptions.UnsupportedTableFormatException] {
+        c.loadTable(testIdentifier)
+      }
+      assert(e.getMessage.contains(s"$testCatalog.$testSchema.$testTable"))
+      assert(e.getMessage.contains("not in Delta format"))
     }
   }
 
@@ -581,6 +656,8 @@ class UCDeltaTokenBasedRestClientSuite
       serverUri, tokenProvider(), Collections.emptyMap())
     client.close()
     intercept[IllegalStateException] { client.getMetastoreId() }
-    intercept[IllegalStateException] { client.loadTable("c", "s", "t") }
+    intercept[IllegalStateException] {
+      client.loadTable(new TableIdentifier("c", "s", "t"))
+    }
   }
 }

@@ -32,10 +32,12 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.apache.hadoop.fs.Path;
+import org.apache.log4j.Logger;
 import org.apache.spark.SparkConf;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.delta.catalog.UCDeltaCatalogClientImpl;
 import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -142,9 +144,59 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     // Set the catalog specific configs.
     UnityCatalogInfo uc = unityCatalogInfo();
     String catalogName = uc.catalogName();
-    return conf.set("spark.sql.catalog." + catalogName, "io.unitycatalog.spark.UCSingleCatalog")
-        .set("spark.sql.catalog." + catalogName + ".uri", uc.serverUri())
-        .set("spark.sql.catalog." + catalogName + ".token", uc.serverToken());
+    conf =
+        conf.set("spark.sql.catalog." + catalogName, "io.unitycatalog.spark.UCSingleCatalog")
+            .set("spark.sql.catalog." + catalogName + ".uri", uc.serverUri())
+            .set("spark.sql.catalog." + catalogName + ".token", uc.serverToken());
+    if (useDeltaRestApiForTests()) {
+      conf = conf.set("spark.sql.catalog." + catalogName + ".deltaRestApi.enabled", "true");
+    }
+    return conf;
+  }
+
+  /** Subclasses can override to false for A/B comparison with the legacy path. */
+  protected boolean useDeltaRestApiForTests() {
+    return true;
+  }
+
+  private static final Logger LOG = Logger.getLogger(UCDeltaTableIntegrationBaseTest.class);
+
+  private long deltaRestApiLoadsAtClassStart;
+  private long loadTableInvocationsAtClassStart;
+
+  @BeforeAll
+  public void captureDeltaRestApiBaseline() {
+    deltaRestApiLoadsAtClassStart =
+        UCDeltaCatalogClientImpl.SUCCESSFUL_DELTA_REST_API_LOADS().get();
+    loadTableInvocationsAtClassStart = UCDeltaCatalogClientImpl.LOAD_TABLE_INVOCATIONS().get();
+  }
+
+  @AfterAll
+  public void verifyDeltaRestApiExercisedAtClassLevel() {
+    if (!useDeltaRestApiForTests()) {
+      return;
+    }
+    long loadInvocationsAfter = UCDeltaCatalogClientImpl.LOAD_TABLE_INVOCATIONS().get();
+    if (loadInvocationsAfter <= loadTableInvocationsAtClassStart) {
+      // Every test in the suite was aborted (e.g. via Assumption.assumeTrue) before any
+      // loadTable call ran, so there is nothing to assert about the Delta REST API path.
+      return;
+    }
+    long after = UCDeltaCatalogClientImpl.SUCCESSFUL_DELTA_REST_API_LOADS().get();
+    if (after <= deltaRestApiLoadsAtClassStart) {
+      throw new AssertionError(
+          "Suite finished but no UCDeltaCatalogClientImpl.loadTable call actually returned a "
+              + "Delta table via the Delta REST API. deltaRestApi.enabled is on but every "
+              + "load either fell back to the legacy delegate or threw. baseline="
+              + deltaRestApiLoadsAtClassStart
+              + ", after="
+              + after);
+    }
+    LOG.info(
+        "[delta-api] "
+            + getClass().getSimpleName()
+            + " successful Delta REST API loads: "
+            + (after - deltaRestApiLoadsAtClassStart));
   }
 
   /** Stop the SparkSession after all tests. */

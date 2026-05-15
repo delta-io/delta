@@ -63,6 +63,7 @@ import org.apache.spark.sql.execution.datasources.{DataSource, PartitioningUtils
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.InsertableRelation
 import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
+import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 
 /**
@@ -82,6 +83,15 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
 
 
   val spark = SparkSession.active
+
+  /** Non-null when the catalog opted into the Delta REST API path via `deltaRestApi.enabled`. */
+  private[catalog] var deltaCatalogClient: DeltaCatalogClient = null
+
+  override def initialize(name: String, options: CaseInsensitiveStringMap): Unit = {
+    super.initialize(name, options)
+    deltaCatalogClient =
+      UCDeltaCatalogClientImpl.fromCatalogOptionsIfEnabled(name, options, super.loadTable _)
+  }
 
   private lazy val isUnityCatalog: Boolean = {
     val delegateField = classOf[DelegatingCatalogExtension].getDeclaredField("delegate")
@@ -290,7 +300,11 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       "DeltaCatalog", "loadTable") {
     setVariantBlockingConfigIfUC()
     try {
-      val table = super.loadTable(ident)
+      val table = if (deltaCatalogClient != null) {
+        deltaCatalogClient.loadTable(ident)
+      } else {
+        super.loadTable(ident)
+      }
 
       ServerSidePlannedTable.tryCreate(spark, ident, table, isUnityCatalog).foreach { sspt =>
         return sspt
