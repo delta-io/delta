@@ -266,15 +266,17 @@ trait UCClientFactory {
  * Recognised ucConfig keys:
  *  - `uri` (required) -- the UC server endpoint.
  *  - `auth.*` / `token` (legacy) -- authentication parameters for [[TokenProvider]].
- *  - `ucclient.impl` -- fully-qualified class name of the [[UCClient]] to instantiate.
- *  - `deltaRestApi.enabled` -- if `"true"` and no explicit impl, uses the Delta REST client.
+ *  - `deltaRestApi.enabled` -- if `"true"`, uses [[UCDeltaTokenBasedRestClient]];
+ *    otherwise uses [[UCTokenBasedRestClient]].
+ *  - `appVersions.*` -- caller-supplied version entries merged with defaults; e.g.
+ *    `appVersions.Kernel -> "0.7.0"` adds a `"Kernel"` entry to the version map.
  */
 object UCTokenBasedRestClientFactory extends UCClientFactory {
 
   final val URI_KEY = "uri"
   final val AUTH_PREFIX = "auth."
   final val DELTA_REST_API_ENABLED_KEY = "deltaRestApi.enabled"
-  final val UC_CLIENT_IMPL_KEY = "ucclient.impl"
+  final val APP_VERSIONS_PREFIX = "appVersions."
 
   private val DEFAULT_UC_CLIENT_CLASS: String = classOf[UCTokenBasedRestClient].getName
 
@@ -288,19 +290,20 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
     val authConfig = extractAuthConfig(ucConfig)
     val tokenProvider = TokenProvider.create(authConfig.asJava)
 
-    val className = ucConfig.getOrElse(UC_CLIENT_IMPL_KEY,
+    val className =
       if (ucConfig.get(DELTA_REST_API_ENABLED_KEY).exists(_.equalsIgnoreCase("true"))) {
         DELTA_UC_CLIENT_CLASS
       } else {
         DEFAULT_UC_CLIENT_CLASS
-      })
+      }
 
     val cls = Utils.classForName(className)
     require(classOf[UCClient].isAssignableFrom(cls),
       s"$className does not implement ${classOf[UCClient].getName}")
+    val appVersions = extractAppVersions(ucConfig)
     val ctor = cls.getConstructor(
       classOf[String], classOf[TokenProvider], classOf[java.util.Map[_, _]])
-    ctor.newInstance(uri, tokenProvider, defaultAppVersions.asJava).asInstanceOf[UCClient]
+    ctor.newInstance(uri, tokenProvider, appVersions.asJava).asInstanceOf[UCClient]
   }
 
   /** Java-friendly overload that accepts a java.util.Map. */
@@ -327,6 +330,19 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
         case None => Map.empty
       }
     }
+  }
+
+  /**
+   * Merges default app versions with any `appVersions.*` entries from ucConfig.
+   * Caller-supplied entries override defaults with the same key.
+   */
+  private[coordinatedcommits] def extractAppVersions(
+      ucConfig: Map[String, String]): Map[String, String] = {
+    val extra = ucConfig
+      .filterKeys(_.startsWith(APP_VERSIONS_PREFIX))
+      .map { case (k, v) => (k.stripPrefix(APP_VERSIONS_PREFIX), v) }
+      .toMap
+    defaultAppVersions ++ extra
   }
 
   private[coordinatedcommits] def defaultAppVersions: Map[String, String] = {
