@@ -62,6 +62,8 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
       s"(${cdcConfig.key}=true)")
   }
 
+  protected def executeDeleteSql(sqlText: String): Unit = spark.sql(sqlText)
+
   /** Load a CDC streaming DataFrame, with the CDC read option pre-set. */
   protected def loadCDCStream(
       path: String,
@@ -1081,8 +1083,8 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
       spark.range(start = 0L, end = 10L, step = 1L, numPartitions = 1).toDF("id")
         .write.format("delta").save(tablePath)
 
-      spark.sql(s"DELETE FROM delta.`$tablePath` WHERE id IN (1, 3, 6)")
-      spark.sql(s"DELETE FROM delta.`$tablePath` WHERE id IN (2, 4, 7)")
+      executeDeleteSql(s"DELETE FROM delta.`$tablePath` WHERE id IN (1, 3, 6)")
+      executeDeleteSql(s"DELETE FROM delta.`$tablePath` WHERE id IN (2, 4, 7)")
 
       val stream = loadStreamWithOptions(tablePath, Map(
         DeltaOptions.CDC_READ_OPTION -> "true",
@@ -1160,13 +1162,157 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
   }
 }
 
-class DeltaCDCStreamDeletionVectorSuite extends DeltaCDCStreamSuite
-  with DeletionVectorsTestUtils {
+/**
+ * Mixin that enables DVs for all operations and adds DV-specific CDC tests.
+ * Mixed into both [[DeltaCDCStreamDeletionVectorSuite]] (V1) and the V2 equivalent.
+ */
+trait DeltaCDCStreamDeletionVectorMixin extends DeletionVectorsTestUtils {
+  self: DeltaCDCStreamSuiteBase =>
+
+  import testImplicits._
+
   override def beforeAll(): Unit = {
     super.beforeAll()
     enableDeletionVectorsForAllSupportedOperations(spark)
   }
+
+  test("CDC DV-diff: only deleted rows appear, not surviving rows") {
+    // Explicitly guards against wrong DV filter polarity (IF_CONTAINED vs IF_NOT_CONTAINED):
+    // a wrong direction emits the 4 surviving rows instead of the 1 deleted row.
+    withTempDir { inputDir =>
+      spark.range(1, 6).toDF("id")
+        .repartition(1)
+        .write.format("delta").save(inputDir.getAbsolutePath)
+
+      executeDeleteSql(s"DELETE FROM delta.`${inputDir.getAbsolutePath}` WHERE id = 3")
+
+      val df = loadStreamWithOptions(inputDir.toString, Map(
+        DeltaOptions.CDC_READ_OPTION -> "true",
+        DeltaOptions.STARTING_VERSION_OPTION -> "1"
+      )).drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+
+      testStream(df)(
+        ProcessAllAvailable(),
+        CheckAnswer((3, "delete", 1))
+      )
+    }
+  }
+
+  test("CDC DV-diff: second delete emits only newly deleted rows, not prior deletions") {
+    withTempDir { inputDir =>
+      spark.range(1, 11).toDF("id")
+        .repartition(1)
+        .write.format("delta").save(inputDir.getAbsolutePath)
+
+      val tablePath = inputDir.getAbsolutePath
+      executeDeleteSql(s"DELETE FROM delta.`$tablePath` WHERE id = 3") // v1: Add(DV={3})+Remove
+      executeDeleteSql(s"DELETE FROM delta.`$tablePath` WHERE id = 7") // v2: diff = {7} only
+
+      val df = loadStreamWithOptions(inputDir.toString, Map(
+        DeltaOptions.CDC_READ_OPTION -> "true",
+        DeltaOptions.STARTING_VERSION_OPTION -> "2"
+      )).drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+
+      testStream(df)(
+        ProcessAllAvailable(),
+        CheckAnswer((7, "delete", 2))
+      )
+    }
+  }
+
+  test("CDC DV-diff: partitioned table includes correct partition values") {
+    withTempDir { inputDir =>
+      // id=1,2 in part=a; id=3,4 in part=b. Deleting id=2 leaves id=1 in part=a,
+      // so Delta uses a DV (not a partition-prune remove). Partition value must flow through.
+      Seq((1, "a"), (2, "a"), (3, "b"), (4, "b")).toDF("id", "part")
+        .write.format("delta").partitionBy("part").save(inputDir.getAbsolutePath)
+
+      executeDeleteSql(s"DELETE FROM delta.`${inputDir.getAbsolutePath}` WHERE id = 2")
+
+      val df = loadStreamWithOptions(inputDir.toString, Map(
+        DeltaOptions.CDC_READ_OPTION -> "true",
+        DeltaOptions.STARTING_VERSION_OPTION -> "1"
+      )).drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+
+      testStream(df)(
+        ProcessAllAvailable(),
+        CheckAnswer((2, "a", "delete", 1))
+      )
+    }
+  }
+
+  test("CDC DV-diff: delete spanning multiple files produces one DV pair per file") {
+    withTempDir { inputDir =>
+      // Two separate appends produce two distinct parquet files.
+      spark.range(1, 6).toDF("id").repartition(1)
+        .write.format("delta").save(inputDir.getAbsolutePath)
+      spark.range(6, 11).toDF("id").repartition(1)
+        .write.format("delta").mode("append").save(inputDir.getAbsolutePath)
+
+      // Delete one row from each file -> two same-path DV pairs in a single commit.
+      executeDeleteSql(
+        s"DELETE FROM delta.`${inputDir.getAbsolutePath}` WHERE id = 3 OR id = 8")
+
+      val df = loadStreamWithOptions(inputDir.toString, Map(
+        DeltaOptions.CDC_READ_OPTION -> "true",
+        DeltaOptions.STARTING_VERSION_OPTION -> "2"
+      )).drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+
+      testStream(df)(
+        ProcessAllAvailable(),
+        CheckAnswer((3L, "delete", 2L), (8L, "delete", 2L))
+      )
+    }
+  }
+
+  test("CDC DV-diff: multi-file commit admitted all-or-nothing under maxFilesPerTrigger") {
+    withTempDir { inputDir =>
+      spark.range(1, 6).toDF("id").repartition(1)
+        .write.format("delta").save(inputDir.getAbsolutePath)
+      spark.range(6, 11).toDF("id").repartition(1)
+        .write.format("delta").mode("append").save(inputDir.getAbsolutePath)
+
+      executeDeleteSql(
+        s"DELETE FROM delta.`${inputDir.getAbsolutePath}` WHERE id = 3 OR id = 8")
+
+      val df = loadStreamWithOptions(inputDir.toString, Map(
+        DeltaOptions.CDC_READ_OPTION -> "true",
+        DeltaOptions.STARTING_VERSION_OPTION -> "2",
+        DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "1"
+      )).drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+
+      testStream(df)(
+        ProcessAllAvailable(),
+        CheckAnswer((3L, "delete", 2L), (8L, "delete", 2L))
+      )
+    }
+  }
+
+  test("CDC DV-diff: maxBytesPerTrigger rate limits across DV-diff commits") {
+    withTempDir { inputDir =>
+      spark.range(1, 6).toDF("id").repartition(1)
+        .write.format("delta").save(inputDir.getAbsolutePath)
+
+      val tablePath = inputDir.getAbsolutePath
+      executeDeleteSql(s"DELETE FROM delta.`$tablePath` WHERE id = 2") // v1
+      executeDeleteSql(s"DELETE FROM delta.`$tablePath` WHERE id = 4") // v2
+
+      val df = loadStreamWithOptions(inputDir.toString, Map(
+        DeltaOptions.CDC_READ_OPTION -> "true",
+        DeltaOptions.STARTING_VERSION_OPTION -> "1",
+        "maxBytesPerTrigger" -> "1b"
+      )).drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+
+      testStream(df)(
+        ProcessAllAvailable(),
+        CheckAnswer((2, "delete", 1), (4, "delete", 2))
+      )
+    }
+  }
 }
+
+class DeltaCDCStreamDeletionVectorSuite extends DeltaCDCStreamSuite
+  with DeltaCDCStreamDeletionVectorMixin
 
 class DeltaCDCStreamSuite extends DeltaCDCStreamSuiteBase
 // Batch sizes 1, 2, and 100 exercise different backfill behaviors in the commit coordinator.

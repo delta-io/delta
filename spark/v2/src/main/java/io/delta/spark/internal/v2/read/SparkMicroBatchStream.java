@@ -79,6 +79,7 @@ import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset$;
 import org.apache.spark.sql.delta.sources.DeltaStreamUtils;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
+import org.apache.spark.sql.delta.v2.CDCDeletionVectorHelper;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
@@ -1850,7 +1851,7 @@ public class SparkMicroBatchStream
       Optional<DeltaSourceOffset> endOffsetOpt)
       throws IOException {
     // Phase 1: scan actions to validate metadata and collect CDC/Add/Remove files.
-    List<CDCDataFile> cdcFiles = new ArrayList<>();
+    List<CDCDataFile> explicitCdcFiles = new ArrayList<>();
     // Single ordered list for inferred CDC files, preserving delta-log action ordering.
     // DSv1 assigns IndexedFile.index via zipWithIndex on the original action sequence.
     List<CDCDataFile> inferredCdcFiles = new ArrayList<>();
@@ -1892,7 +1893,7 @@ public class SparkMicroBatchStream
           // Explicit CDC files
           Optional<CDCDataFile> cdcOpt = StreamingHelper.getCDCFile(batch, rowId, timestamp);
           if (cdcOpt.isPresent()) {
-            cdcFiles.add(cdcOpt.get());
+            explicitCdcFiles.add(cdcOpt.get());
             continue;
           }
 
@@ -1925,13 +1926,67 @@ public class SparkMicroBatchStream
 
     // Explicit CDC files and inferred files are mutually exclusive: if a commit contains any
     // AddCDCFile actions, only those are emitted and AddFile/RemoveFile are ignored.
-    if (!cdcFiles.isEmpty()) {
-      for (CDCDataFile cdcFile : cdcFiles) {
+    if (!explicitCdcFiles.isEmpty()) {
+      for (CDCDataFile cdcFile : explicitCdcFiles) {
         result.add(IndexedFile.cdc(version, fileIndex++, cdcFile));
       }
     } else {
-      for (CDCDataFile cdcFile : inferredCdcFiles) {
-        result.add(IndexedFile.cdc(version, fileIndex++, cdcFile));
+      // Bucket AddFile and RemoveFile by path to detect same-path pairs.
+      // DV-based deletes reuse the same parquet file (marking rows in the DV instead of rewriting),
+      // so both the Remove and Add reference the same path.
+      Map<String, AddFile> addByPath = new HashMap<>();
+      Map<String, RemoveFile> removeByPath = new HashMap<>();
+      for (CDCDataFile cdc : inferredCdcFiles) {
+        if (cdc.getAddFile() != null) {
+          AddFile prev = addByPath.put(cdc.getAddFile().getPath(), cdc.getAddFile());
+          Preconditions.checkArgument(
+              prev == null,
+              "Unexpected duplicate AddFile at path %s in a single commit",
+              cdc.getAddFile().getPath());
+        } else if (cdc.getRemoveFile() != null) {
+          RemoveFile prev = removeByPath.put(cdc.getRemoveFile().getPath(), cdc.getRemoveFile());
+          Preconditions.checkArgument(
+              prev == null,
+              "Unexpected duplicate RemoveFile at path %s in a single commit",
+              cdc.getRemoveFile().getPath());
+        }
+      }
+
+      Set<String> samePathKeys = new HashSet<>(addByPath.keySet());
+      samePathKeys.retainAll(removeByPath.keySet());
+
+      // Walk inferredCdcFiles in delta-log order. Non-pair files are emitted as-is. Same-path
+      // pairs are emitted at the FIRST occurrence of the path (the counterpart, encountered
+      // later in the loop, is skipped).
+      Set<String> emittedPairs = new HashSet<>();
+      for (CDCDataFile cdc : inferredCdcFiles) {
+        String path = cdc.getPath();
+        if (!samePathKeys.contains(path)) {
+          // File with unique paths: emit as-is.
+          result.add(IndexedFile.cdc(version, fileIndex++, cdc));
+        } else if (emittedPairs.add(path)) {
+          // First occurrence of a same-path pair: emit the consolidated pair entries.
+          AddFile add = addByPath.get(path);
+          RemoveFile remove = removeByPath.get(path);
+          if (add.getDeletionVector().isPresent() || remove.getDeletionVector().isPresent()) {
+            // DV-based delete/restore: compute the bitmap diff and emit one CDC file per diff
+            // entry. Path.toString() avoids percent-encoding that breaks DV file resolution.
+            String dataPath = snapshotAtSourceInit.getDataPath().toString();
+            for (CDCDataFile f :
+                CDCDeletionVectorHelper.generateDVDiffCDCFiles(
+                    add, remove, timestamp, dataPath, hadoopConf)) {
+              result.add(IndexedFile.cdc(version, fileIndex++, f));
+            }
+          } else {
+            // Same-path Add+Remove without DV: emit plain insert + delete.
+            result.add(
+                IndexedFile.cdc(version, fileIndex++, CDCDataFile.fromAddFile(add, timestamp)));
+            result.add(
+                IndexedFile.cdc(
+                    version, fileIndex++, CDCDataFile.fromRemoveFile(remove, timestamp)));
+          }
+        }
+        // Else: second occurrence of an already-emitted same-path pair; skip.
       }
     }
 
@@ -1958,7 +2013,8 @@ public class SparkMicroBatchStream
    * and appends an END sentinel only when all data files are admitted. Returns empty list on
    * batch-reject so the offset doesn't advance.
    */
-  private List<IndexedFile> applyPerCommitCDCAdmission(
+  @VisibleForTesting
+  List<IndexedFile> applyPerCommitCDCAdmission(
       List<IndexedFile> commitFiles,
       DeltaSource.AdmissionLimits admissionLimits,
       long commitVersion) {

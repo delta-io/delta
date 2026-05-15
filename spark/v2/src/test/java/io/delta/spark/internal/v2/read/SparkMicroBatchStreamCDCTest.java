@@ -15,6 +15,7 @@
  */
 package io.delta.spark.internal.v2.read;
 
+import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.delta.kernel.CommitActions;
@@ -23,6 +24,7 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction;
+import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.commitrange.CommitRangeImpl;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
@@ -39,6 +41,7 @@ import org.apache.spark.sql.catalyst.expressions.Expression;
 import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.delta.Snapshot;
+import org.apache.spark.sql.delta.commands.cdc.CDCReader;
 import org.apache.spark.sql.delta.sources.DeltaSource;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset$;
@@ -236,7 +239,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
       throws Exception {
     String tablePath = tempDir.getAbsolutePath();
     String tableName =
-        "test_cdc_compare_" + Math.abs(testDescription.hashCode()) + "_" + System.nanoTime();
+        "test_cdc_compare_" + (testDescription.hashCode() & 0x7fffffff) + "_" + System.nanoTime();
     createEmptyTestTable(tablePath, tableName);
     sql("ALTER TABLE %s SET TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')", tableName);
     setup.setup(tableName, tempDir);
@@ -1063,11 +1066,166 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
     java.nio.file.Files.writeString(commitFile, commitInfo + "\n" + remove + "\n" + add + "\n");
   }
 
+  @Test
+  public void testProcessCommit_samePath_noDV_emitsPlainInsertDelete(@TempDir File tempDir)
+      throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "test_cdc_samepath_nodv_" + (System.nanoTime() & 0x7fffffff);
+    createCDFEnabledTable(tablePath, tableName);
+    sql("INSERT INTO %s VALUES (1, 'A'), (2, 'B')", tableName);
+
+    // Write a synthetic commit where Add and Remove reference the same path but neither has a DV.
+    // This exercises the non-DV same-path branch that emits plain insert + delete.
+    long commitVersion = 3;
+    writeSyntheticSamePathNoDVCommit(tablePath, commitVersion);
+
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(tablePath));
+    deltaLog.update(false, Option.empty(), Option.empty());
+
+    SparkMicroBatchStream stream = createStream(tablePath);
+    CommitActions commit = getCommitActions(tablePath, commitVersion);
+
+    List<IndexedFile> files;
+    try (CloseableIterator<IndexedFile> iter =
+        stream.processCommitToIndexedFilesForCDC(
+            commit,
+            /* startVersion= */ commitVersion,
+            /* limits= */ Optional.empty(),
+            Optional.empty(),
+            /* lastProcessedVersion= */ commitVersion,
+            /* lastProcessedIndex= */ DeltaSourceOffset.BASE_INDEX())) {
+      files = collectAll(iter);
+    }
+
+    List<IndexedFile> dataFiles = new ArrayList<>();
+    for (IndexedFile f : files) {
+      if (f.getCDCDataFile() != null) dataFiles.add(f);
+    }
+    assertEquals(2, dataFiles.size(), "Expected exactly 2 CDC data files (insert + delete)");
+    for (IndexedFile f : dataFiles) {
+      assertFalse(
+          f.getCDCDataFile().getEffectiveDv().isPresent(),
+          "Plain same-path pair must not produce a DV-diff CDCDataFile");
+    }
+    long inserts =
+        dataFiles.stream()
+            .filter(f -> CDCReader.CDC_TYPE_INSERT().equals(f.getCDCDataFile().getChangeType()))
+            .count();
+    long deletes =
+        dataFiles.stream()
+            .filter(
+                f -> CDCReader.CDC_TYPE_DELETE_STRING().equals(f.getCDCDataFile().getChangeType()))
+            .count();
+    assertEquals(1, inserts, "Expected 1 insert");
+    assertEquals(1, deletes, "Expected 1 delete");
+  }
+
   /**
-   * Compare CDC file changes between DSv1 and DSv2. Delegates to {@link
-   * SparkMicroBatchStreamTest#compareFileChanges} for version/index/path comparison, then verifies
-   * CDC metadata on DSv2 data files.
+   * Writes a synthetic UPDATE commit where AddFile and RemoveFile reference the same path and
+   * neither has a DV. This exercises the non-DV same-path CDC branch.
    */
+  private void writeSyntheticSamePathNoDVCommit(String tablePath, long version) throws Exception {
+    String logDir = tablePath + "/_delta_log";
+    String filename = String.format("%020d.json", version);
+    java.nio.file.Path commitFile = java.nio.file.Paths.get(logDir, filename);
+
+    long ts = System.currentTimeMillis();
+    String commitInfo =
+        "{\"commitInfo\":{"
+            + "\"timestamp\":"
+            + ts
+            + ","
+            + "\"operation\":\"UPDATE\","
+            + "\"operationParameters\":{},"
+            + "\"isBlindAppend\":false,"
+            + "\"operationMetrics\":{"
+            + "\"numTargetRowsUpdated\":\"1\","
+            + "\"numTargetFilesAdded\":\"1\","
+            + "\"numTargetFilesRemoved\":\"1\""
+            + "}}}";
+    // Same path on both Remove and Add, no deletionVector on either side.
+    String remove =
+        "{\"remove\":{"
+            + "\"path\":\"same-file.parquet\","
+            + "\"deletionTimestamp\":"
+            + ts
+            + ","
+            + "\"dataChange\":true,"
+            + "\"partitionValues\":{},"
+            + "\"size\":100"
+            + "}}";
+    String add =
+        "{\"add\":{"
+            + "\"path\":\"same-file.parquet\","
+            + "\"partitionValues\":{},"
+            + "\"size\":100,"
+            + "\"modificationTime\":"
+            + ts
+            + ","
+            + "\"dataChange\":true"
+            + "}}";
+
+    java.nio.file.Files.writeString(commitFile, commitInfo + "\n" + remove + "\n" + add + "\n");
+  }
+
+  @Test
+  public void testApplyPerCommitCDCAdmission_dvDiffNoDvOnAdd_batchAdmitted(@TempDir File tempDir)
+      throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "test_admission_gap_" + (System.nanoTime() & 0x7fffffff);
+    createEmptyTestTable(tablePath, tableName);
+    sql("INSERT INTO %s VALUES (1, 'A')", tableName);
+
+    SparkMicroBatchStream stream = createStream(tablePath);
+
+    // Simulate a "Some+None" DV-diff result: the CDCDataFile is from fromDVDiff but the backing
+    // AddFile has NO deletion vector (restore case). hasDeletionVector() returns false.
+    AddFile addFileNoDv =
+        new AddFile(
+            AddFile.createAddFileRow(
+                new io.delta.kernel.types.StructType(),
+                "restore-file.parquet",
+                stringStringMapValue(java.util.Collections.emptyMap()),
+                1024L,
+                100L,
+                /* dataChange= */ true,
+                /* deletionVector= */ java.util.Optional.empty(),
+                java.util.Optional.empty(),
+                java.util.Optional.empty(),
+                java.util.Optional.empty(),
+                java.util.Optional.empty()));
+
+    CDCDataFile dvDiffFile =
+        CDCDataFile.fromDVDiff(
+            addFileNoDv,
+            CDCReader.CDC_TYPE_INSERT(),
+            /* commitTimestamp= */ 1000L,
+            /* dvBase64= */ "some-inline-dv==");
+    CDCDataFile plainInsert = CDCDataFile.fromAddFile(addFileNoDv, /* commitTimestamp= */ 1000L);
+
+    long version = 2;
+    List<IndexedFile> commitFiles = new ArrayList<>();
+    commitFiles.add(IndexedFile.sentinel(version, DeltaSourceOffset.BASE_INDEX()));
+    commitFiles.add(IndexedFile.cdc(version, 0, dvDiffFile));
+    commitFiles.add(IndexedFile.cdc(version, 1, plainInsert));
+
+    // With maxFilesPerTrigger=1: if batch admission is NOT triggered, the two files are split
+    // across batches. The bug: dvDiffFile.hasDeletionVector() == false because addFileNoDv has
+    // no DV, so requiresBatchAdmission is false and DSv2 allows splitting.
+    Optional<DeltaSource.AdmissionLimits> limits =
+        createAdmissionLimits(Optional.of(1), Optional.empty());
+    List<IndexedFile> result =
+        stream.applyPerCommitCDCAdmission(commitFiles, limits.get(), version);
+
+    // Both files must be admitted together: any DV-diff file (getEffectiveDv().isPresent())
+    // signals that the commit cannot be split, even when the backing AddFile has no DV.
+    long admittedData = result.stream().filter(IndexedFile::hasFileAction).count();
+    assertEquals(
+        2,
+        admittedData,
+        "DV-diff CDCDataFile must trigger batch admission even when AddFile has no DV");
+  }
+
   private void assertCDCFileChangesMatch(
       List<org.apache.spark.sql.delta.sources.IndexedFile> dsv1Files, List<IndexedFile> dsv2Files) {
     SparkMicroBatchStreamTest.compareFileChanges(dsv1Files, dsv2Files);
