@@ -15,13 +15,13 @@
  */
 package io.delta.spark.internal.v2.snapshot;
 
-import io.delta.kernel.Meta;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
 import io.delta.spark.internal.v2.snapshot.unitycatalog.UCManagedTableSnapshotManager;
 import io.delta.spark.internal.v2.snapshot.unitycatalog.UCTableInfo;
 import io.delta.spark.internal.v2.snapshot.unitycatalog.UCUtils;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import org.apache.spark.annotation.Experimental;
@@ -71,15 +71,16 @@ public final class SnapshotManagerFactory {
 
   private static UCManagedTableSnapshotManager createUCManagedSnapshotManager(
       UCTableInfo tableInfo, Engine kernelEngine) {
-    // Start from defaults (Delta, Spark, Scala, Java) and add connector-specific entries
-    Map<String, String> appVersions =
-        UCTokenBasedRestClientFactory$.MODULE$.defaultAppVersionsAsJava();
-    appVersions.put("Kernel", Meta.KERNEL_VERSION);
-    appVersions.put("Delta V2 connector", "true");
     UCClient ucClient =
-        UCTokenBasedRestClientFactory$.MODULE$.createUCClientWithVersions(
-            tableInfo.getUcUri(), tableInfo.getAuthConfig(), appVersions);
+        UCTokenBasedRestClientFactory$.MODULE$.createUCClient(toUcConfig(tableInfo));
     UCCatalogManagedClient ucCatalogClient = new UCCatalogManagedClient(ucClient);
     return new UCManagedTableSnapshotManager(ucCatalogClient, tableInfo, kernelEngine);
+  }
+
+  private static Map<String, String> toUcConfig(UCTableInfo info) {
+    Map<String, String> ucConfig = new HashMap<>();
+    ucConfig.put("uri", info.getUcUri());
+    info.getAuthConfig().forEach((k, v) -> ucConfig.put("auth." + k, v));
+    return ucConfig;
   }
 }

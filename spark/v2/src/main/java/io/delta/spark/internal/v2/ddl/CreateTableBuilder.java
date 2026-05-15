@@ -27,6 +27,7 @@ import io.delta.kernel.unitycatalog.UCTableIdentifier;
 import io.delta.spark.internal.v2.snapshot.unitycatalog.UCTableInfo;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
@@ -123,8 +124,7 @@ public final class CreateTableBuilder {
       String tableName,
       io.delta.kernel.types.StructType kernelSchema) {
     UCClient ucClient =
-        UCTokenBasedRestClientFactory$.MODULE$.createUCClient(
-            ucTableInfo.getUcUri(), ucTableInfo.getAuthConfig());
+        UCTokenBasedRestClientFactory$.MODULE$.createUCClient(toUcConfig(ucTableInfo));
     return new UCCatalogManagedClient(ucClient)
         .buildCreateTableTransaction(
             ucTableInfo.getTableId(),
@@ -132,5 +132,12 @@ public final class CreateTableBuilder {
             kernelSchema,
             DDLUtils.ENGINE_INFO,
             new UCTableIdentifier(catalogName, schemaName, tableName));
+  }
+
+  private static Map<String, String> toUcConfig(UCTableInfo info) {
+    Map<String, String> ucConfig = new HashMap<>();
+    ucConfig.put("uri", info.getUcUri());
+    info.getAuthConfig().forEach((k, v) -> ucConfig.put("auth." + k, v));
+    return ucConfig;
   }
 }
