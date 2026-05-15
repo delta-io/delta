@@ -51,7 +51,8 @@ case class TableCommitCoordinatorClient(
     logPath: Path,
     tableConf: Map[String, String],
     hadoopConf: Configuration,
-    logStore: LogStore) {
+    logStore: LogStore
+  ) {
 
   private def makeTableDesc(
       tableIdentifierOpt: Option[CatalystTableIdentifier]): TableDescriptor = {
@@ -130,13 +131,15 @@ object TableCommitCoordinatorClient {
     def apply(
       commitCoordinatorClient: JCommitCoordinatorClient,
       deltaLog: DeltaLog,
-      coordinatedCommitsTableConf: Map[String, String]): TableCommitCoordinatorClient = {
+      coordinatedCommitsTableConf: Map[String, String]
+    ): TableCommitCoordinatorClient = {
     val hadoopConf = deltaLog.newDeltaHadoopConf()
     new TableCommitCoordinatorClient(
       commitCoordinatorClient,
       deltaLog.logPath,
       coordinatedCommitsTableConf,
       hadoopConf,
-      deltaLog.store)
+      deltaLog.store
+    )
   }
 }
