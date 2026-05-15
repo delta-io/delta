@@ -788,10 +788,11 @@ When [In-Commit Timestamps](#in-commit-timestamps) are enabled, writers are requ
 
 The `commitInfo` action may include an optional boolean field `isIncrementalSafe`. When `true`, the writer asserts that this commit is incrementally safe: its effect on any aggregate derived from the log (e.g. those recorded in a [Version Checksum](#version-checksum-file)) can be computed from this commit's own `add` and `remove` actions alone. For example, given the Version Checksum at version `N`, a reader can derive `numFiles`, `tableSizeBytes`, and `fileSizeHistogram` at any later version by iteratively applying each subsequent commit's `add.size` and `remove.size`, provided every such commit asserts `isIncrementalSafe=true`. Specifically, the writer guarantees:
 
-1. If this commit emits an `add` whose `path` is already live in the immediately preceding snapshot, it also contains a `remove` for the existing [`(path, deletionVector.uniqueId)`](#add-file-and-remove-file) pair (e.g. a Deletion Vector update).
-2. Every `remove` action in this commit includes the `size` field (which is otherwise [optional](#add-file-and-remove-file)).
+1. **No double adds.** No [logical file](#add-file-and-remove-file) added by this commit was present in the previous snapshot.
+2. **No double removes.** Every logical file removed by this commit was present in the previous snapshot.
+3. Every `remove` action in this commit includes the `size` field (which is otherwise [optional](#add-file-and-remove-file)).
 
-In practice, ordinary DML and table-maintenance operations (e.g. `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `OPTIMIZE`) naturally satisfy both guarantees. The canonical counter-example is a `COMPUTE STATISTICS`-style operation that recomputes file-level statistics by emitting `add` actions for files already live in the table without paired `remove` actions; such an operation violates guarantee (1).
+In practice, ordinary DML and table-maintenance operations (e.g. `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `OPTIMIZE`) naturally satisfy these guarantees. The canonical counter-example is a `COMPUTE STATISTICS`-style operation that recomputes file-level statistics by re-adding logical files already present in the table; such an operation violates guarantee (1).
 
 An example of storing provenance information related to an `INSERT` operation:
 ```json
