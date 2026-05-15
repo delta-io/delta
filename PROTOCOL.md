@@ -782,9 +782,16 @@ A delta file can optionally contain additional provenance information about what
 When the `catalogManaged` table feature is enabled, the `commitInfo` action must have a field
 `txnId` that stores a unique transaction identifier string.
 
-Implementations are free to store any valid JSON-formatted data via the `commitInfo` action.
+The `commitInfo` action must be a JSON object. Implementations are free to store any fields within that object; table features may require additional fields or impose semantics on specific fields.
 
 When [In-Commit Timestamps](#in-commit-timestamps) are enabled, writers are required to include a `commitInfo` action with every commit, which must include the `inCommitTimestamp` field. Also, the `commitInfo` action must be first action in the commit.
+
+The `commitInfo` action may include an optional boolean field `isIncrementalSafe`. When `true`, the writer asserts that this commit is incrementally safe: its effect on any aggregate derived from the log (e.g. those recorded in a [Version Checksum](#version-checksum-file)) can be computed from this commit's own `add` and `remove` actions alone. For example, given the Version Checksum at version `N`, a reader can derive `numFiles`, `tableSizeBytes`, and `fileSizeHistogram` at any later version by iteratively applying each subsequent commit's `add.size` and `remove.size`, provided every such commit asserts `isIncrementalSafe=true`. Specifically, the writer guarantees:
+
+1. If this commit emits an `add` whose `path` is already live in the immediately preceding snapshot, it also contains a `remove` for the existing [`(path, deletionVector.uniqueId)`](#add-file-and-remove-file) pair (e.g. a Deletion Vector update).
+2. Every `remove` action in this commit includes the `size` field (which is otherwise [optional](#add-file-and-remove-file)).
+
+In practice, ordinary DML and table-maintenance operations (e.g. `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `OPTIMIZE`) naturally satisfy both guarantees. The canonical counter-example is a `COMPUTE STATISTICS`-style operation that recomputes file-level statistics by emitting `add` actions for files already live in the table without paired `remove` actions; such an operation violates guarantee (1).
 
 An example of storing provenance information related to an `INSERT` operation:
 ```json
@@ -795,6 +802,7 @@ An example of storing provenance information related to an `INSERT` operation:
     "userName":"michael@databricks.com",
     "operation":"INSERT",
     "operationParameters":{"mode":"Append","partitionBy":"[]"},
+    "isIncrementalSafe":true,
     "notebook":{
       "notebookId":"4443029",
       "notebookPath":"Users/michael@databricks.com/actions"},
