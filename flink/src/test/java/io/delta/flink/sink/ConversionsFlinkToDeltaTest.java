@@ -31,7 +31,7 @@ import org.apache.flink.table.types.logical.YearMonthIntervalType.YearMonthResol
 import org.junit.jupiter.api.Test;
 
 /** JUnit test suite for Flink to Delta type conversions. */
-public class ConversionsTest implements FlinkTypeTests {
+public class ConversionsFlinkToDeltaTest implements FlinkTypeTests {
 
   public static RowType row(RowField... fields) {
     return new RowType(Arrays.asList(fields));

@@ -16,10 +16,14 @@
 
 package io.delta.flink.sink;
 
+import io.delta.flink.sink.mergestrategy.AppendOnly;
+import io.delta.flink.sink.mergestrategy.CoWUpsert;
+import io.delta.flink.sink.mergestrategy.Upsert;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import java.io.Serializable;
+import java.util.Locale;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -114,6 +118,56 @@ public class DeltaSinkConf implements Serializable {
               "Schema evolution policy: 'no' disallows any change; 'newcolumn' allows adding new "
                   + "columns only.");
 
+  /**
+   * Write mode controlling how the sink interprets the incoming changelog.
+   *
+   * <p>Supported values match the {@link WriteMode} enum constants (case-insensitive):
+   *
+   * <ul>
+   *   <li>{@code "append"} (default): treat every row as an INSERT. Compatible with {@code
+   *       ChangelogMode.insertOnly()}.
+   *   <li>{@code "upsert"}: use the row {@code RowKind} together with a declared primary key to
+   *       merge incoming changes into the table. {@code INSERT}/{@code UPDATE_AFTER} rows replace
+   *       any existing row with the same primary key; {@code DELETE} rows remove the matching row.
+   *       {@code UPDATE_BEFORE} rows are ignored.
+   * </ul>
+   *
+   * <p>{@code upsert} mode requires a primary key declared on the Flink table (or supplied via
+   * {@link #PRIMARY_KEY}).
+   */
+  public static final ConfigOption<WriteMode> WRITE_MODE =
+      ConfigOptions.key("write.mode")
+          .enumType(WriteMode.class)
+          .defaultValue(WriteMode.APPEND)
+          .withDescription(
+              "Write semantics. 'append' (default) treats all incoming rows as INSERTs. "
+                  + "'upsert' merges incoming changes by primary key.");
+
+  /**
+   * Internal wire-format carrier for the primary-key column ordinals (0-based field indices into
+   * the sink schema) in {@code upsert} mode.
+   *
+   * <p><b>Not a public option.</b> Layers above the connector ({@link
+   * io.delta.flink.sink.sql.DeltaDynamicTableSink} for SQL and {@link DeltaSink.Builder} for the
+   * DataStream API) translate logical primary-key column names to ordinals against the resolved
+   * Flink schema and stamp the comma-separated ordinal list into this entry of the per-table
+   * configuration map. The map is serialized to TaskManagers, so this option must remain
+   * String-typed and round-trip cleanly.
+   *
+   * <p>Format: comma-separated, decimal, non-negative integers. Example: {@code "0,3"} declares a
+   * composite PK on field ordinals 0 and 3.
+   *
+   * <p>This option is intentionally <em>not</em> registered in {@code optionalOptions()} so that
+   * Flink SQL {@code WITH(...)} clauses cannot override the DDL primary key.
+   */
+  public static final ConfigOption<String> PRIMARY_KEY =
+      ConfigOptions.key("primary_key")
+          .stringType()
+          .noDefaultValue()
+          .withDescription(
+              "Comma-separated primary key column ordinals. Resolved by upper layers "
+                  + "from the table's PRIMARY KEY clause. Not a user-facing option.");
+
   // ----------------------------------------------------------------------
   // State
   // ----------------------------------------------------------------------
@@ -123,6 +177,12 @@ public class DeltaSinkConf implements Serializable {
   private final Map<String, String> conf;
   private final Configuration configuration;
   private final SchemaEvolutionPolicy schemaEvolutionPolicy;
+  private final WriteMode writeMode;
+  /**
+   * Primary-key column ordinals stored as a primitive {@code int[]} to avoid per-row boxing on the
+   * writer's hot path. Treat as read-only; callers must not mutate the returned array.
+   */
+  private final int[] primaryKeyOrdinals;
 
   private transient StructType sinkSchema;
 
@@ -141,7 +201,7 @@ public class DeltaSinkConf implements Serializable {
     // Materialize the raw Map into Flink Configuration for ConfigOption access.
     this.configuration = Configuration.fromMap(conf);
 
-    String mode = configuration.get(SCHEMA_EVOLUTION_MODE).toLowerCase();
+    String mode = configuration.get(SCHEMA_EVOLUTION_MODE).toLowerCase(Locale.ROOT);
     switch (mode) {
       case "newcolumn":
         this.schemaEvolutionPolicy = new NewColumnEvolution();
@@ -152,6 +212,67 @@ public class DeltaSinkConf implements Serializable {
       default:
         throw new IllegalArgumentException("unknown evolution mode:" + mode);
     }
+
+    this.writeMode = configuration.get(WRITE_MODE);
+    this.primaryKeyOrdinals = parsePrimaryKeyOrdinals(configuration.get(PRIMARY_KEY), sinkSchema);
+    if (writeMode == WriteMode.UPSERT && primaryKeyOrdinals.length == 0) {
+      throw new IllegalArgumentException(
+          "write.mode = 'upsert' requires a non-empty primary key. Declare "
+              + "'PRIMARY KEY (...) NOT ENFORCED' on the Flink table (SQL), or call "
+              + "DeltaSink.Builder.withPrimaryKey(...) (DataStream API).");
+    }
+  }
+
+  /**
+   * Parses the comma-separated ordinal list stored under {@link #PRIMARY_KEY} into a primitive
+   * {@code int[]}, validating that each ordinal is in range {@code [0, schema.length())}.
+   *
+   * @param raw raw option value; may be null or empty
+   * @param schema sink schema, used to validate ordinal ranges
+   * @return primitive array of validated, in-range ordinals (length 0 if {@code raw} was empty)
+   * @throws IllegalArgumentException if a segment is not a valid integer or is out of range
+   */
+  private static int[] parsePrimaryKeyOrdinals(String raw, StructType schema) {
+    if (raw == null || raw.trim().isEmpty()) {
+      return new int[0];
+    }
+    int width = schema.length();
+    String[] segments = raw.split(",");
+    int[] tmp = new int[segments.length];
+    int n = 0;
+    for (String segment : segments) {
+      String trimmed = segment.trim();
+      if (trimmed.isEmpty()) {
+        continue;
+      }
+      int ordinal;
+      try {
+        ordinal = Integer.parseInt(trimmed);
+      } catch (NumberFormatException e) {
+        throw new IllegalArgumentException(
+            "Invalid primary-key ordinal '"
+                + trimmed
+                + "' in '"
+                + PRIMARY_KEY.key()
+                + "'. Expected a non-negative integer.",
+            e);
+      }
+      if (ordinal < 0 || ordinal >= width) {
+        throw new IllegalArgumentException(
+            "Primary-key ordinal "
+                + ordinal
+                + " is out of range for sink schema of width "
+                + width
+                + ".");
+      }
+      tmp[n++] = ordinal;
+    }
+    if (n == segments.length) {
+      return tmp;
+    }
+    int[] result = new int[n];
+    System.arraycopy(tmp, 0, result, 0, n);
+    return result;
   }
 
   /**
@@ -189,6 +310,18 @@ public class DeltaSinkConf implements Serializable {
   }
 
   /**
+   * Creates a fresh {@link MergeStrategy} for the configured {@link WriteMode}.
+   *
+   * <p>Returns a new instance on every call — merge strategies hold per-checkpoint state and must
+   * not be shared across {@link DeltaSinkWriter} instances.
+   *
+   * @return {@link Upsert} when in upsert mode; {@link AppendOnly} otherwise
+   */
+  public MergeStrategy createMergeStrategy() {
+    return isUpsert() ? new CoWUpsert() : new AppendOnly();
+  }
+
+  /**
    * Creates a {@link FileRollingStrategy} based on the per-table configuration.
    *
    * <p>Default behavior: {@code count} strategy with {@link #FILE_ROLLING_COUNT} = -1 (disabled).
@@ -213,6 +346,33 @@ public class DeltaSinkConf implements Serializable {
    */
   public SchemaEvolutionPolicy getSchemaEvolutionPolicy() {
     return schemaEvolutionPolicy;
+  }
+
+  /**
+   * Returns the configured write mode.
+   *
+   * @return the write mode (defaults to {@link WriteMode#APPEND})
+   */
+  public WriteMode getWriteMode() {
+    return writeMode;
+  }
+
+  /** Convenience: {@code true} iff {@link #getWriteMode()} is {@link WriteMode#UPSERT}. */
+  public boolean isUpsert() {
+    return writeMode == WriteMode.UPSERT;
+  }
+
+  /**
+   * Returns the primary-key column ordinals (0-based indices into the sink schema) as a primitive
+   * {@code int[]}.
+   *
+   * <p>Length 0 for {@link WriteMode#APPEND}; non-zero, validated, and in-range for {@link
+   * WriteMode#UPSERT}. The returned array is the live backing array; callers <b>must not</b> mutate
+   * it (kept as {@code int[]} rather than wrapping per call to avoid hot-path allocations in {@link
+   * io.delta.flink.sink.DeltaSinkWriter}).
+   */
+  public int[] getPrimaryKeyOrdinals() {
+    return primaryKeyOrdinals;
   }
 
   /**
@@ -347,6 +507,27 @@ public class DeltaSinkConf implements Serializable {
       }
       return false;
     }
+  }
+
+  // ----------------------------------------------------------------------
+  // Write mode
+  // ----------------------------------------------------------------------
+
+  /**
+   * Write semantics selected via {@link #WRITE_MODE}.
+   *
+   * <p>This is independent from Flink's {@link org.apache.flink.table.connector.ChangelogMode}; the
+   * dynamic table sink translates between the two.
+   */
+  public enum WriteMode {
+    /** Append-only writes; every row treated as INSERT regardless of {@code RowKind}. */
+    APPEND,
+    /**
+     * Upsert writes by primary key. {@code INSERT}/{@code UPDATE_AFTER} rows replace any existing
+     * row with the same primary key; {@code DELETE} rows remove the matching row; {@code
+     * UPDATE_BEFORE} rows are ignored.
+     */
+    UPSERT
   }
 
   /** Rolls files based on number of records written. */
