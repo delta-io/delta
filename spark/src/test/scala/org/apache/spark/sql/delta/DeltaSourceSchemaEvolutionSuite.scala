@@ -844,12 +844,16 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
 
   test("identity columns shouldn't cause schema mismatches") {
     withTable("source") {
-      executeDml(
-        s"""
-          |CREATE TABLE source (key INT, id LONG GENERATED ALWAYS AS IDENTITY)
-          |USING DELTA
-        """.stripMargin
-      )
+      io.delta.tables.DeltaTable.create()
+        .tableName("source")
+        .addColumn(
+          io.delta.tables.DeltaTable.columnBuilder("key").dataType("INT").build())
+        .addColumn(
+          io.delta.tables.DeltaTable.columnBuilder("id")
+            .dataType("LONG")
+            .generatedAlwaysAsIdentity()
+            .build())
+        .execute()
 
       val deltaLog = DeltaLog.forTable(spark, TableIdentifier("source"))
       deltaLog.update()
@@ -857,8 +861,8 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       val checkpointLocation = getDefaultCheckpoint(deltaLog).toString
 
       def addData(values: Seq[Int]): Unit =
-        spark.createDataFrame(values.map(Row(_)).asJava, StructType.fromDDL("key INT"))
-          .write.format("delta").mode("append").saveAsTable("source")
+        executeDml(
+          s"INSERT INTO source (key) VALUES ${values.map(v => s"($v)").mkString(", ")}")
 
       def readStream(): DataFrame =
         spark.readStream

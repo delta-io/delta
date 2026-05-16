@@ -32,9 +32,8 @@ class RemoveColumnMappingStreamingReadV2Suite
 
   override protected def executeDml(sqlText: String): Unit = executeInV1Mode(sqlText)
 
-  // Tests that run without schema tracking. These exercise non-additive column-mapping schema
-  // change detection, which is supported on the V2 connector.
   override protected def shouldPassTests: Set[String] = Set(
+    // Tests that run without schema tracking.
     "Upgrade, StartStreamRead, Downgrade, FailNonAdditiveChange",
     "Upgrade, Downgrade, StartStreamRead, Success",
     "StartStreamRead, Upgrade, Rename, Downgrade, FailNonAdditiveChange",
@@ -50,18 +49,12 @@ class RemoveColumnMappingStreamingReadV2Suite
     "Upgrade, Drop, StartStreamRead, Downgrade, FailNonAdditiveChange",
     "Upgrade, Drop, StartStreamRead, Downgrade, Upgrade, FailNonAdditiveChange",
     "Upgrade, Rename, Downgrade, StartStreamRead, Success",
-    "Upgrade, Drop, Downgrade, StartStreamRead, Success"
-  )
-
-  // Tests that run with schema tracking enabled. The schema tracking log is not yet supported
-  // on the V2 connector.
-  override protected def shouldFailTests: Set[String] = Set(
-    // TODO(#5319): the three tests are not supported in v2 yet due to the gap of columnMapping
-    //  check util.
-    "StartStreamRead, Upgrade, Downgrade, SuccessAndFailSchemaTracking",
+    "Upgrade, Drop, Downgrade, StartStreamRead, Success",
     "Upgrade, Rename, Downgrade, StartStreamRead, Upgrade, SuccessAndFailSchemaTracking",
     "Upgrade, Drop, Downgrade, StartStreamRead, Upgrade, SuccessAndFailSchemaTracking",
-    // TODO(#5319): Move these to shouldPassTests as V2 schema tracking log support is implemented.
+    "StartStreamRead, Upgrade, Downgrade, SuccessAndFailSchemaTracking",
+
+    // Tests that run with schema tracking enabled.
     "StartStreamRead, Upgrade, Downgrade, SuccessAndFailSchemaTracking with schema tracking",
     "Upgrade, StartStreamRead, Downgrade, FailNonAdditiveChange with schema tracking",
     "Upgrade, Downgrade, StartStreamRead, Success with schema tracking",
@@ -88,6 +81,5 @@ class RemoveColumnMappingStreamingReadV2Suite
     "Upgrade, Rename, Downgrade, StartStreamRead, Upgrade, SuccessAndFailSchemaTracking" +
       " with schema tracking",
     "Upgrade, Drop, Downgrade, StartStreamRead, Upgrade, SuccessAndFailSchemaTracking" +
-      " with schema tracking"
-  )
+      " with schema tracking")
 }

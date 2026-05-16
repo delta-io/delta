@@ -34,6 +34,7 @@ import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
@@ -41,6 +42,7 @@ import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.spark.internal.v2.adapters.KernelMetadataAdapter;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.utils.PartitionUtils;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
@@ -54,13 +56,14 @@ import java.time.ZoneId;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
+import javax.annotation.Nullable;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.expressions.Literal$;
 import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.connector.read.streaming.*;
-import org.apache.spark.sql.delta.DeltaColumnMapping;
+import org.apache.spark.sql.delta.DeltaColumnMapping$;
 import org.apache.spark.sql.delta.DeltaErrors;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.delta.DeltaStartingVersion;
@@ -71,9 +74,11 @@ import org.apache.spark.sql.delta.TypeWidening;
 import org.apache.spark.sql.delta.sources.AdmittableFile;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSource;
+import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset$;
 import org.apache.spark.sql.delta.sources.DeltaStreamUtils;
+import org.apache.spark.sql.delta.sources.PersistedMetadata;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
@@ -115,6 +120,7 @@ public class SparkMicroBatchStream
                   DeltaAction.ADD,
                   DeltaAction.REMOVE,
                   DeltaAction.METADATA,
+                  DeltaAction.PROTOCOL,
                   DeltaAction.CDC,
                   DeltaAction.COMMITINFO)));
 
@@ -134,6 +140,7 @@ public class SparkMicroBatchStream
   private final boolean skipChangeCommits;
   private final SnapshotImpl snapshotAtSourceInit;
   private final String tableId;
+  private final SnapshotImpl readSnapshotAtSourceInit;
   private final StructType readSchemaAtSourceInit;
   private final boolean shouldValidateOffsets;
   private final Optional<Regex> excludeRegex;
@@ -147,6 +154,9 @@ public class SparkMicroBatchStream
   private final Configuration hadoopConf;
   private final SQLConf sqlConf;
   private final scala.collection.immutable.Map<String, String> scalaOptions;
+
+  /** Handler for non-additive schema evolution (rename/drop/type widening). */
+  private final MetadataEvolutionHandler metadataEvolutionHandler;
 
   /**
    * Tracks whether this is the first batch for this stream (no checkpointed offset).
@@ -218,7 +228,9 @@ public class SparkMicroBatchStream
       StructType readDataSchema,
       StructType ddlOrderedReadOutputSchema,
       Filter[] dataFilters,
-      scala.collection.immutable.Map<String, String> scalaOptions) {
+      scala.collection.immutable.Map<String, String> scalaOptions,
+      Option<DeltaSourceMetadataTrackingLog> metadataTrackingLog,
+      String metadataPath) {
     this.snapshotManager = Objects.requireNonNull(snapshotManager, "snapshotManager is null");
     this.hadoopConf = Objects.requireNonNull(hadoopConf, "hadoopConf is null");
     this.spark = Objects.requireNonNull(spark, "spark is null");
@@ -247,11 +259,29 @@ public class SparkMicroBatchStream
 
     this.snapshotAtSourceInit = (SnapshotImpl) snapshotAtSourceInit;
     this.tableId = this.snapshotAtSourceInit.getMetadata().getId();
-    // TODO(#5319): schema tracking for non-additive schema changes
+
+    // The effective snapshot for reading, mirroring v1's readSnapshotDescriptor. When schema
+    // tracking has a persisted entry, layer it onto the freshly loaded snapshotAtSourceInit so
+    // the read schema/protocol/config reflect the evolved state. The merged entry has already
+    // been written to the durable schema log during analysis (by SparkTable's call to
+    // getMetadataTrackingLogForMicroBatchStream with mergeConsecutiveSchemaChanges=true), so
+    // reading it back from the log here yields the same value V1 obtains.
+    Option<PersistedMetadata> persistedMetadataAtSourceInit =
+        metadataTrackingLog.isDefined()
+            ? metadataTrackingLog.get().getCurrentTrackedMetadata()
+            : Option.empty();
+    this.readSnapshotAtSourceInit =
+        Objects.requireNonNull(
+            persistedMetadataAtSourceInit.isDefined()
+                ? MetadataEvolutionHandler.buildReadSnapshotFromPersistedMetadata(
+                    this.snapshotAtSourceInit, engine, persistedMetadataAtSourceInit.get())
+                : this.snapshotAtSourceInit,
+            "readSnapshotAtSourceInit is null");
     this.readSchemaAtSourceInit =
         Objects.requireNonNull(
-            SchemaUtils.convertKernelSchemaToSparkSchema(snapshotAtSourceInit.getSchema()),
+            SchemaUtils.convertKernelSchemaToSparkSchema(readSnapshotAtSourceInit.getSchema()),
             "readSchemaAtSourceInit is null");
+
     this.shouldValidateOffsets =
         Objects.requireNonNull(
             (Boolean)
@@ -277,13 +307,29 @@ public class SparkMicroBatchStream
             DeltaStreamUtils.SchemaReadOptions$.MODULE$.fromSparkSession(
                 spark, isStreamingFromColumnMappingTable, isTypeWideningSupportedInProtocol),
             "schemaReadOptions is null");
+    this.metadataEvolutionHandler =
+        new MetadataEvolutionHandler(
+            spark,
+            tableId,
+            this.tablePath,
+            snapshotManager,
+            engine,
+            options,
+            schemaReadOptions,
+            metadataTrackingLog,
+            readSnapshotAtSourceInit.getMetadata(),
+            readSnapshotAtSourceInit.getProtocol(),
+            metadataPath);
     boolean shouldValidateSchemaOnRestart =
         (Boolean)
             spark
                 .sessionState()
                 .conf()
                 .getConf(DeltaSQLConf.STREAMING_SCHEMA_VALIDATION_ON_RESTART());
-    if (shouldValidateSchemaOnRestart) {
+    // When schema tracking is enabled, the MetadataEvolutionHandler manages schema changes via
+    // the schema log; the analysis-vs-snapshot mismatch this check guards against is expected on
+    // restart and is surfaced via the schema-log evolution exception instead.
+    if (shouldValidateSchemaOnRestart && !metadataEvolutionHandler.shouldTrackMetadataChange()) {
       validateSchemaCompatibilityOnStartup(dataSchema, partitionSchema, readSchemaAtSourceInit);
     }
   }
@@ -426,7 +472,40 @@ public class SparkMicroBatchStream
       DeltaSourceOffset previousOffset,
       Optional<DeltaSource.AdmissionLimits> limits,
       boolean isFirstBatch) {
-    // TODO(#5319): Special handling for schema tracking.
+    // Initialize schema tracking log eagerly if possible (fresh stream, first batch).
+    // This mirrors v1's getStartingOffsetFromSpecificDeltaVersion eager init path.
+    if (isFirstBatch) {
+      if (metadataEvolutionHandler.shouldInitializeMetadataTrackingEagerly()) {
+        metadataEvolutionHandler.initializeMetadataTrackingAndExitStream(
+            previousOffset.reservoirVersion(),
+            /* batchEndVersion= */ null,
+            /* alwaysFailUponLogInitialized= */ false);
+      }
+    } else {
+      long startVersionForMetadataLogInit;
+      if (previousOffset.index() == DeltaSourceOffset.BASE_INDEX()) {
+        startVersionForMetadataLogInit = previousOffset.reservoirVersion() - 1;
+      } else {
+        startVersionForMetadataLogInit = previousOffset.reservoirVersion();
+      }
+      if (metadataEvolutionHandler.shouldInitializeMetadataTrackingEagerly()) {
+        metadataEvolutionHandler.initializeMetadataTrackingAndExitStream(
+            startVersionForMetadataLogInit,
+            /* batchEndVersion= */ null,
+            /* alwaysFailUponLogInitialized= */ false);
+      }
+      checkReadIncompatibleSchemaChangeOnStreamStartOnce(startVersionForMetadataLogInit, null);
+    }
+
+    // Handle pending schema change offsets (two-barrier protocol).
+    if (metadataEvolutionHandler.shouldTrackMetadataChange()) {
+      Optional<DeltaSourceOffset> pendingOffset =
+          metadataEvolutionHandler.getNextOffsetFromPreviousOffsetIfPendingSchemaChange(
+              previousOffset);
+      if (pendingOffset.isPresent()) {
+        return pendingOffset;
+      }
+    }
 
     CloseableIterator<IndexedFile> changes =
         getFileChangesWithRateLimit(
@@ -473,6 +552,10 @@ public class SparkMicroBatchStream
     long fromIndex = startOffset.index();
     boolean isInitialSnapshot = startOffset.isInitialSnapshot();
 
+    // Validate and lazily initialize the metadata tracking log for planned batches during
+    // stream (re)start. Mirrors v1's validateAndInitMetadataLogForPlannedBatchesDuringStreamStart.
+    validateAndInitMetadataLogForPlannedBatchesDuringStreamStart(fromVersion, endOffset);
+
     List<PartitionedFile> partitionedFiles = new ArrayList<>();
     long totalBytesToRead = 0;
     boolean isCDC = options.readChangeFeed();
@@ -516,8 +599,10 @@ public class SparkMicroBatchStream
 
   @Override
   public PartitionReaderFactory createReaderFactory() {
+    // Use readSnapshotAtSourceInit (which has the evolved schema when schema tracking is active),
+    // mirroring v1's use of readSnapshotDescriptor in createDataFrame.
     return PartitionUtils.createDeltaParquetReaderFactory(
-        snapshotAtSourceInit,
+        readSnapshotAtSourceInit,
         dataSchema,
         partitionSchema,
         readDataSchema,
@@ -555,7 +640,10 @@ public class SparkMicroBatchStream
 
   @Override
   public void commit(Offset end) {
-    // TODO(#5319): update metadata tracking log.
+    // IMPORTANT: for future developers, please place any work you would like to do in commit()
+    // before updateMetadataTrackingLogAndFailTheStreamIfNeeded as it may throw an exception.
+    DeltaSourceOffset offset = DeltaSourceOffset.apply(tableId, end);
+    metadataEvolutionHandler.updateMetadataTrackingLogAndFailTheStreamIfNeeded(offset);
   }
 
   @Override
@@ -752,8 +840,10 @@ public class SparkMicroBatchStream
       changes = changes.takeWhile(admissionLimits::admit);
     }
 
-    // TODO(#5318): Stop at schema change barriers
-    return changes;
+    // Stop before any schema change barrier if detected.
+    // Mirrors v1's stopIndexedFileIteratorAtSchemaChangeBarrier call in
+    // getFileChangesWithRateLimit.
+    return metadataEvolutionHandler.stopIndexedFileIteratorAtSchemaChangeBarrier(changes);
   }
 
   /**
@@ -958,6 +1048,11 @@ public class SparkMicroBatchStream
   /** Resolves the version range and returns commit actions from delta logs. */
   private CloseableIterator<CommitActions> getCommitsFromRange(
       long startVersion, Optional<DeltaSourceOffset> endOffset, Set<DeltaAction> actionSet) {
+    // Schema tracking needs every metadata-change commit; failOnDataLoss=false may skip one.
+    Preconditions.checkArgument(
+        options.failOnDataLoss() || !metadataEvolutionHandler.shouldTrackMetadataChange(),
+        "Using schema from schema tracking log cannot tolerate missing commit files.");
+
     Optional<Long> endVersionOpt =
         endOffset.isPresent() ? Optional.of(endOffset.get().reservoirVersion()) : Optional.empty();
 
@@ -1050,35 +1145,47 @@ public class SparkMicroBatchStream
       // commit, downstream would produce incorrect results.
       //
       // TODO(#5318): consider caching the commit actions to avoid reading the same commit twice.
-      // TODO(#5319): don't verify metadata action when schema tracking is enabled
-      boolean shouldSkipCommit =
+      // When schema tracking is enabled, skip per-commit metadata verification — the handler
+      // manages schema changes through the barrier protocol instead.
+      boolean trackingMetadataChange = metadataEvolutionHandler.shouldTrackMetadataChange();
+      CommitValidationResult validationResult =
           validateCommitAndDecideSkipping(
               commit,
               version,
               startVersion,
               snapshotAtSourceInit.getPath(),
               endOffsetOpt,
-              /* verifyMetadataAction= */ true);
+              /* verifyMetadataAction= */ !trackingMetadataChange);
 
       // Second pass: Build a lazy iterator of IndexedFiles.
       //
-      //   BEGIN (BASE_INDEX) + actual file actions + END (END_INDEX)
+      //   BEGIN (BASE_INDEX) + [metadata barrier] + actual file actions + END (END_INDEX)
       //
       // These sentinel IndexedFiles have null file actions and are used for proper offset
       // tracking:
       //   - BASE_INDEX: marks "before any files in this version", allowing the offset to
       //                 reference the start of a version.
+      //   - METADATA_CHANGE_INDEX: schema change barrier (stops offset generation here).
       //   - END_INDEX:  marks end of version, triggers version advancement in
       //                 buildOffsetFromIndexedFile to skip re-reading completed versions.
       //
       // See DeltaSource.addBeginAndEndIndexOffsetsForVersion for the Scala equivalent.
       CloseableIterator<IndexedFile> fileActions =
-          shouldSkipCommit
+          validationResult.shouldSkipCommit
               ? Utils.toCloseableIterator(Collections.emptyIterator())
               : getFilesFromCommit(commit, version);
+
+      // If metadata tracking is active, inject schema change barrier sentinel before file
+      // actions. This mirrors v1's getMetadataOrProtocolChangeIndexedFileIterator concatenation
+      // in filterAndGetIndexedFiles.
+      CloseableIterator<IndexedFile> metadataBarrier =
+          metadataEvolutionHandler.getMetadataOrProtocolChangeIndexedFileIterator(
+              validationResult.metadataAction, validationResult.protocolAction, version);
+
       CloseableIterator<IndexedFile> inner =
           Utils.singletonCloseableIterator(
                   IndexedFile.sentinel(version, DeltaSourceOffset.BASE_INDEX()))
+              .combine(metadataBarrier)
               .combine(fileActions)
               .combine(
                   Utils.singletonCloseableIterator(
@@ -1136,6 +1243,22 @@ public class SparkMicroBatchStream
             });
   }
 
+  /** Result of commit validation, including skip decision and detected metadata/protocol. */
+  private static class CommitValidationResult {
+    final boolean shouldSkipCommit;
+    @Nullable final Metadata metadataAction;
+    @Nullable final Protocol protocolAction;
+
+    CommitValidationResult(
+        boolean shouldSkipCommit,
+        @Nullable Metadata metadataAction,
+        @Nullable Protocol protocolAction) {
+      this.shouldSkipCommit = shouldSkipCommit;
+      this.metadataAction = metadataAction;
+      this.protocolAction = protocolAction;
+    }
+  }
+
   /**
    * Validates a commit, fail the stream if it's invalid and decides whether to skip it. Mimics
    * DeltaSource.validateCommitAndDecideSkipping in Scala.
@@ -1146,10 +1269,10 @@ public class SparkMicroBatchStream
    * @param tablePath the path to the Delta table
    * @param endOffsetOpt optional end offset for boundary checking
    * @param verifyMetadataAction Whether to verify metadata action compatibility
-   * @return true if the commit should be skipped (no AddFiles emitted), false otherwise
+   * @return validation result containing skip decision and detected metadata/protocol actions
    * @throws RuntimeException if the commit is invalid.
    */
-  private boolean validateCommitAndDecideSkipping(
+  private CommitValidationResult validateCommitAndDecideSkipping(
       CommitActions commit,
       long version,
       long batchStartVersion,
@@ -1161,7 +1284,7 @@ public class SparkMicroBatchStream
       DeltaSourceOffset endOffset = endOffsetOpt.get();
       if (endOffset.reservoirVersion() == version
           && endOffset.index() == DeltaSourceOffset.BASE_INDEX()) {
-        return false;
+        return new CommitValidationResult(false, null, null);
       }
     }
 
@@ -1176,6 +1299,7 @@ public class SparkMicroBatchStream
     boolean hasFileAdd = false;
     boolean shouldSkipCommit = false;
     Metadata metadataAction = null;
+    Protocol protocolAction = null;
     String removeFileActionPath = null;
     String operation = null;
 
@@ -1213,6 +1337,12 @@ public class SparkMicroBatchStream
                     verifyMetadataAction);
           }
 
+          // Track Protocol for schema evolution barrier detection.
+          Optional<Protocol> protocolOpt = StreamingHelper.getProtocol(batch, rowId);
+          if (protocolOpt.isPresent()) {
+            protocolAction = protocolOpt.get();
+          }
+
           // Track CommitInfo for operation details in error messages.
           Optional<CommitInfo> commitInfoOpt = StreamingHelper.getCommitInfo(batch, rowId);
           if (commitInfoOpt.isPresent()) {
@@ -1242,7 +1372,7 @@ public class SparkMicroBatchStream
       }
     }
 
-    return shouldSkipCommit;
+    return new CommitValidationResult(shouldSkipCommit, metadataAction, protocolAction);
   }
 
   /**
@@ -1307,12 +1437,7 @@ public class SparkMicroBatchStream
               .toSeq();
     }
 
-    checkNonAdditiveSchemaChanges(
-        oldMetadata,
-        newMetadata,
-        oldPartitionColumns,
-        newPartitionColumns,
-        validatedDuringStreamStart);
+    checkNonAdditiveSchemaChanges(oldMetadata, newMetadata, validatedDuringStreamStart);
 
     // Other standard read compatibility changes
     if (!validatedDuringStreamStart
@@ -1350,17 +1475,11 @@ public class SparkMicroBatchStream
     }
   }
 
-  // TODO(#5319): schema tracking for non-additive schema changes
-  // TODO(#5319): Extract the entire non-additive schema check into a static utility and share it
-  // with v1 by refactoring DeltaColumnMapping.hasNoColumnMappingSchemaChanges so it can be reused
-  // by both v1 and v2.
-  // Non-additive schema changes include rename column, drop column and change column type
+  // Non-additive schema changes include rename column, drop column and change column type.
+  // When schema tracking is enabled, this method is NOT called — the MetadataEvolutionHandler
+  // manages these changes through the barrier protocol instead.
   private void checkNonAdditiveSchemaChanges(
-      Metadata oldMetadata,
-      Metadata newMetadata,
-      Seq<String> oldPartitionColumns,
-      Seq<String> newPartitionColumns,
-      boolean validatedDuringStreamStart) {
+      Metadata oldMetadata, Metadata newMetadata, boolean validatedDuringStreamStart) {
     StructType sparkNewSchema =
         SchemaUtils.convertKernelSchemaToSparkSchema(newMetadata.getSchema());
     StructType sparkOldSchema =
@@ -1377,39 +1496,43 @@ public class SparkMicroBatchStream
     } else if (schemaReadOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges()) {
       shouldTrackSchema = false;
     } else {
-      ColumnMappingMode NONE = ColumnMappingMode.NONE;
-      ColumnMappingMode oldMode =
-          ColumnMapping.getColumnMappingMode(oldMetadata.getConfiguration());
-      ColumnMappingMode newMode =
-          ColumnMapping.getColumnMappingMode(newMetadata.getConfiguration());
-      if (oldMode != NONE && newMode != NONE) {
-        Preconditions.checkArgument(oldMode == newMode, "changing mode is not supported");
-        shouldTrackSchema =
-            DeltaColumnMapping.hasColMappingOrPartitionSchemaChange(
-                sparkNewSchema,
-                sparkOldSchema,
-                newPartitionColumns,
-                oldPartitionColumns,
-                /* isBothColumnMappingEnabled */ true);
-      } else if (oldMode == NONE && newMode != NONE) {
-        // TODO(#5319): We should disallow user to upgrade column mapping mode for now since we
-        // don't support schema tracking
-        shouldTrackSchema = true;
-      } else {
-        // Prohibit reading across a downgrade.
-        shouldTrackSchema = oldMode != NONE && newMode == NONE;
-      }
+      // Delegate to the shared utility which handles all column mapping mode transitions
+      // (both enabled, upgrade from none, downgrade to none).
+      shouldTrackSchema =
+          !DeltaColumnMapping$.MODULE$.hasNoColumnMappingSchemaChanges(
+              new KernelMetadataAdapter(newMetadata),
+              new KernelMetadataAdapter(oldMetadata),
+              schemaReadOptions.allowUnsafeStreamingReadOnPartitionColumnChanges());
     }
 
     if (shouldTrackSchema) {
       throw (RuntimeException)
           DeltaErrors.blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges(
-              spark,
-              sparkOldSchema,
-              sparkNewSchema,
-              !validatedDuringStreamStart,
-              /* isV2DataSource= */ true);
+              spark, sparkOldSchema, sparkNewSchema, !validatedDuringStreamStart);
     }
+  }
+
+  /**
+   * Validate and lazily initialize the metadata tracking log for planned batches during stream
+   * (re)start. Mirrors v1's {@code validateAndInitMetadataLogForPlannedBatchesDuringStreamStart}.
+   *
+   * <p>Called from {@code planInputPartitions} (the v2 equivalent of v1's {@code getBatch}).
+   */
+  private void validateAndInitMetadataLogForPlannedBatchesDuringStreamStart(
+      long startVersion, DeltaSourceOffset endOffset) {
+    long endVersionForMetadataLogInit =
+        endOffset.index() == DeltaSourceOffset.BASE_INDEX()
+            ? endOffset.reservoirVersion() - 1
+            : endOffset.reservoirVersion();
+
+    // For eager initialization, we initialize the log right now.
+    if (metadataEvolutionHandler.shouldInitializeMetadataTrackingEagerly()) {
+      metadataEvolutionHandler.initializeMetadataTrackingAndExitStream(
+          startVersion, endVersionForMetadataLogInit, /* alwaysFailUponLogInitialized= */ false);
+    }
+
+    // Check for column mapping + streaming incompatible schema changes
+    checkReadIncompatibleSchemaChangeOnStreamStartOnce(startVersion, endVersionForMetadataLogInit);
   }
 
   /**
@@ -1436,7 +1559,9 @@ public class SparkMicroBatchStream
    */
   private void checkReadIncompatibleSchemaChangeOnStreamStartOnce(
       long batchStartVersion, Long batchEndVersion) {
-    // TODO(#5319): skip if enable schema tracking log
+    // When schema tracking is enabled, the MetadataEvolutionHandler manages schema changes
+    // through the barrier protocol — skip the traditional compatibility check.
+    if (metadataEvolutionHandler.shouldTrackMetadataChange()) return;
 
     if (hasCheckedReadIncompatibleSchemaChangesOnStreamStart) return;
 
@@ -1594,7 +1719,17 @@ public class SparkMicroBatchStream
 
   /** Loads snapshot files at the specified version. */
   private InitialSnapshotCache loadAndValidateSnapshot(long version) {
-    Snapshot snapshot = snapshotManager.loadSnapshotAt(version);
+    SnapshotImpl snapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(version);
+    // If schema tracking is already active and the initial snapshot has advanced since the tracked
+    // read snapshot, replace the tracked metadata/protocol before reading snapshot files.
+    if (metadataEvolutionHandler.shouldTrackMetadataChange()
+        && snapshot.getVersion() >= readSnapshotAtSourceInit.getVersion()) {
+      metadataEvolutionHandler.updateMetadataTrackingLogAndFailTheStreamIfNeeded(
+          snapshot.getMetadata(),
+          snapshot.getProtocol(),
+          snapshot.getVersion(),
+          /* replace= */ true);
+    }
     long commitTimestamp = snapshot.getTimestamp(engine);
 
     Scan scan = snapshot.getScanBuilder().build();
@@ -1924,7 +2059,8 @@ public class SparkMicroBatchStream
         existing == null,
         "Should not encounter two metadata actions in the same commit of version %d",
         version);
-    // TODO(#5319): don't verify metadata action when schema tracking is enabled
+    // When schema tracking is enabled, verifyMetadataAction is false — the handler manages
+    // schema changes through the barrier protocol instead.
     if (verifyMetadataAction) {
       Long batchEndVersion = endOffsetOpt.map(DeltaSourceOffset::reservoirVersion).orElse(null);
       checkReadIncompatibleSchemaChanges(
