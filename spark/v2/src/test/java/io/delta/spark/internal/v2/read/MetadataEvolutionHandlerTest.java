@@ -42,14 +42,20 @@ import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
 import java.io.File;
 import java.util.*;
+import java.util.stream.Stream;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.delta.DeltaRuntimeException;
+import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.DeltaStreamUtils;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
+import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import scala.Option;
 
 /** Unit tests for {@link MetadataEvolutionHandler}. */
@@ -968,5 +974,224 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
         "DELTA_STREAMING_SCHEMA_LOG_INIT_FAILED_INCOMPATIBLE_METADATA",
         ex.getErrorClass(),
         "Should throw incompatible-metadata error when range contains a column drop");
+  }
+
+  // ---------------------------------------------------------------------------
+  // getMetadataTrackingLogForMicroBatchStream
+  //
+  // Builds the tracking log from streaming options: empty when SCHEMA_TRACKING_LOCATION
+  // (or its alias) is unset; throws when set but the feature flag is off; otherwise
+  // returns a usable log.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Sets up a fresh empty Delta table at {@code tempDir/table} and invokes {@link
+   * MetadataEvolutionHandler#getMetadataTrackingLogForMicroBatchStream} with the given options. The
+   * other 5 arguments to the function are constants for these tests.
+   */
+  private Option<DeltaSourceMetadataTrackingLog> invokeGetTrackingLog(
+      File tempDir, Map<String, String> options) {
+    String tablePath = new File(tempDir, "table").getAbsolutePath();
+    String tableName = "t_" + UUID.randomUUID().toString().replace('-', '_');
+    createEmptyTestTable(tablePath, tableName);
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(tablePath, spark.sessionState().newHadoopConf());
+    SnapshotImpl snapshot = (SnapshotImpl) snapshotManager.loadLatestSnapshot();
+    return MetadataEvolutionHandler.getMetadataTrackingLogForMicroBatchStream(
+        spark,
+        snapshot,
+        options,
+        snapshotManager,
+        defaultEngine,
+        SparkMicroBatchStream.ACTION_SET,
+        Option.empty(),
+        /* mergeConsecutiveSchemaChanges= */ false);
+  }
+
+  /** No schema-tracking option → Option.empty. */
+  @Test
+  public void testGetTrackingLog_returnsEmptyWhenNoSchemaTrackingOption(@TempDir File tempDir) {
+    Option<DeltaSourceMetadataTrackingLog> result =
+        invokeGetTrackingLog(tempDir, Collections.emptyMap());
+    assertTrue(result.isEmpty());
+  }
+
+  /** Throws with the documented message when the feature flag is off. */
+  @Test
+  public void testGetTrackingLog_throwsWhenFeatureFlagDisabled(@TempDir File tempDir)
+      throws Exception {
+    String schemaLogPath = new File(tempDir, "schema_log").getAbsolutePath();
+    Map<String, String> options = new HashMap<>();
+    options.put(DeltaOptions.SCHEMA_TRACKING_LOCATION(), schemaLogPath);
+
+    withSQLConf(
+        DeltaSQLConf.DELTA_STREAMING_ENABLE_SCHEMA_TRACKING().key(),
+        "false",
+        () -> {
+          UnsupportedOperationException ex =
+              assertThrows(
+                  UnsupportedOperationException.class,
+                  () -> invokeGetTrackingLog(tempDir, options));
+          assertEquals(
+              "Schema tracking location is not supported for Delta streaming source",
+              ex.getMessage());
+        });
+  }
+
+  /** SCHEMA_TRACKING_LOCATION set → returns a usable tracking log. */
+  @Test
+  public void testGetTrackingLog_returnsLogWhenSchemaTrackingLocationSet(@TempDir File tempDir) {
+    String schemaLogPath = new File(tempDir, "schema_log").getAbsolutePath();
+    Map<String, String> options = new HashMap<>();
+    options.put(DeltaOptions.SCHEMA_TRACKING_LOCATION(), schemaLogPath);
+
+    Option<DeltaSourceMetadataTrackingLog> result = invokeGetTrackingLog(tempDir, options);
+    assertTrue(result.isDefined());
+    assertTrue(result.get().getCurrentTrackedMetadata().isEmpty());
+  }
+
+  /** Alias key ("schemaLocation") is also recognized. */
+  @Test
+  public void testGetTrackingLog_returnsLogWhenSchemaTrackingLocationAliasSet(
+      @TempDir File tempDir) {
+    String schemaLogPath = new File(tempDir, "schema_log").getAbsolutePath();
+    Map<String, String> options = new HashMap<>();
+    options.put(DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS(), schemaLogPath);
+
+    Option<DeltaSourceMetadataTrackingLog> result = invokeGetTrackingLog(tempDir, options);
+    assertTrue(result.isDefined());
+    assertTrue(result.get().getCurrentTrackedMetadata().isEmpty());
+  }
+
+  /** Option key lookup is case-insensitive (matches V1's CaseInsensitiveStringMap behavior). */
+  @Test
+  public void testGetTrackingLog_caseInsensitiveOptionKey(@TempDir File tempDir) {
+    String schemaLogPath = new File(tempDir, "schema_log").getAbsolutePath();
+    Map<String, String> options = new HashMap<>();
+    // Canonical key is "schemaTrackingLocation"; use a different casing here.
+    options.put("SCHEMATRACKINGLOCATION", schemaLogPath);
+
+    Option<DeltaSourceMetadataTrackingLog> result = invokeGetTrackingLog(tempDir, options);
+    assertTrue(result.isDefined());
+    assertTrue(result.get().getCurrentTrackedMetadata().isEmpty());
+  }
+
+  // ---------------------------------------------------------------------------
+  // shouldPropagateSchemaTrackingToTable
+  //
+  // True iff the read options carry SCHEMA_TRACKING_LOCATION (or its alias) AND
+  // the table options do not.
+  // ---------------------------------------------------------------------------
+
+  private static Stream<Arguments> shouldPropagateSchemaTrackingCases() {
+    String canonical = DeltaOptions.SCHEMA_TRACKING_LOCATION();
+    String alias = DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS();
+    return Stream.of(
+        // (readKey, tableKey, expected)
+        // Neither side carries the option -> no propagation needed.
+        Arguments.of(null, null, false),
+        // Read side has the option, table side does not -> propagate. Both option keys
+        // are recognized on the read side.
+        Arguments.of(canonical, null, true),
+        Arguments.of(alias, null, true),
+        // Table side carries the option (canonical or alias) -> already propagated.
+        Arguments.of(canonical, canonical, false),
+        Arguments.of(canonical, alias, false),
+        // Option lookups on both sides are case-insensitive.
+        Arguments.of(canonical.toUpperCase(), null, true),
+        Arguments.of(canonical, canonical.toUpperCase(), false));
+  }
+
+  @ParameterizedTest
+  @MethodSource("shouldPropagateSchemaTrackingCases")
+  public void testShouldPropagateSchemaTrackingToTable(
+      String readKey, String tableKey, boolean expected) {
+    Map<String, String> readOptionsMap = new HashMap<>();
+    if (readKey != null) {
+      readOptionsMap.put(readKey, "/some/path");
+    }
+    CaseInsensitiveStringMap readOptions = new CaseInsensitiveStringMap(readOptionsMap);
+
+    Map<String, String> tableOptions = new HashMap<>();
+    if (tableKey != null) {
+      tableOptions.put(tableKey, "/some/path");
+    }
+
+    assertEquals(
+        expected,
+        MetadataEvolutionHandler.shouldPropagateSchemaTrackingToTable(readOptions, tableOptions));
+  }
+
+  // ---------------------------------------------------------------------------
+  // getPersistedMetadataForMicroBatchStream
+  //
+  // Thin wrapper over getMetadataTrackingLogForMicroBatchStream that pulls the
+  // mergeConsecutiveSchemaChanges conf and returns the current persisted entry.
+  // ---------------------------------------------------------------------------
+
+  /** Sets up a fresh table and invokes the persisted-metadata helper with the given options. */
+  private Optional<PersistedMetadata> invokeGetPersistedMetadata(
+      File tempDir, Map<String, String> options) {
+    String tablePath = new File(tempDir, "table").getAbsolutePath();
+    String tableName = "t_" + UUID.randomUUID().toString().replace('-', '_');
+    createEmptyTestTable(tablePath, tableName);
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(tablePath, spark.sessionState().newHadoopConf());
+    SnapshotImpl snapshot = (SnapshotImpl) snapshotManager.loadLatestSnapshot();
+    return MetadataEvolutionHandler.getPersistedMetadataForMicroBatchStream(
+        spark, snapshot, options, snapshotManager, defaultEngine);
+  }
+
+  /** Schema-tracking set but the log has no entry → empty. */
+  @Test
+  public void testGetPersistedMetadata_returnsEmptyWhenLogIsEmpty(@TempDir File tempDir) {
+    String schemaLogPath = new File(tempDir, "schema_log").getAbsolutePath();
+    Map<String, String> options = new HashMap<>();
+    options.put(DeltaOptions.SCHEMA_TRACKING_LOCATION(), schemaLogPath);
+    assertFalse(invokeGetPersistedMetadata(tempDir, options).isPresent());
+  }
+
+  /** Schema-tracking set and the log has a seeded entry → returns that entry. */
+  @Test
+  public void testGetPersistedMetadata_returnsSeededEntry(@TempDir File tempDir) {
+    String tablePath = new File(tempDir, "table").getAbsolutePath();
+    String tableName = "t_" + UUID.randomUUID().toString().replace('-', '_');
+    createEmptyTestTable(tablePath, tableName);
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(tablePath, spark.sessionState().newHadoopConf());
+    SnapshotImpl snapshot = (SnapshotImpl) snapshotManager.loadLatestSnapshot();
+
+    String schemaLogPath = new File(tempDir, "schema_log").getAbsolutePath();
+    Map<String, String> options = new HashMap<>();
+    options.put(DeltaOptions.SCHEMA_TRACKING_LOCATION(), schemaLogPath);
+
+    // Open the log through the same code path the util uses, then seed an entry.
+    DeltaSourceMetadataTrackingLog trackingLog =
+        MetadataEvolutionHandler.getMetadataTrackingLogForMicroBatchStream(
+                spark,
+                snapshot,
+                options,
+                snapshotManager,
+                defaultEngine,
+                SparkMicroBatchStream.ACTION_SET,
+                Option.empty(),
+                /* mergeConsecutiveSchemaChanges= */ false)
+            .get();
+    // Use a non-zero version so it's distinct from a default-init entry.
+    long seededVersion = 42L;
+    PersistedMetadata seeded =
+        PersistedMetadata.apply(
+            snapshot.getMetadata().getId(),
+            seededVersion,
+            new KernelMetadataAdapter(snapshot.getMetadata()),
+            new KernelProtocolAdapter(snapshot.getProtocol()),
+            tablePath + "/_delta_log/_streaming_metadata");
+    trackingLog.writeNewMetadata(seeded, false);
+
+    Optional<PersistedMetadata> result =
+        MetadataEvolutionHandler.getPersistedMetadataForMicroBatchStream(
+            spark, snapshot, options, snapshotManager, defaultEngine);
+    assertTrue(result.isPresent());
+    assertEquals(seededVersion, result.get().deltaCommitVersion());
   }
 }

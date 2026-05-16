@@ -34,7 +34,11 @@ abstract class InMemoryCommitCoordinatorSuite(batchSize: Int)
     val cs = InMemoryCommitCoordinatorBuilder(batchSize).build(spark, Map.empty)
     val conf = cs.registerTable(
       deltaLog.logPath, Optional.empty(), -1L, initMetadata, Protocol(1, 1))
-    TableCommitCoordinatorClient(cs, deltaLog, conf.asScala.toMap)
+    TableCommitCoordinatorClient(
+      cs,
+      deltaLog,
+      conf.asScala.toMap
+    )
   }
 
   override protected def registerBackfillOp(

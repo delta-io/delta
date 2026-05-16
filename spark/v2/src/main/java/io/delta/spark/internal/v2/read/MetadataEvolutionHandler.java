@@ -16,6 +16,7 @@
 package io.delta.spark.internal.v2.read;
 
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
@@ -25,6 +26,7 @@ import io.delta.kernel.utils.CloseableIterator.BreakableFilterResult;
 import io.delta.spark.internal.v2.adapters.KernelMetadataAdapter;
 import io.delta.spark.internal.v2.adapters.KernelProtocolAdapter;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
+import io.delta.spark.internal.v2.utils.ScalaUtils;
 import io.delta.spark.internal.v2.utils.StreamingHelper;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -32,6 +34,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import javax.annotation.Nullable;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.delta.DeltaColumnMapping$;
@@ -39,6 +42,8 @@ import org.apache.spark.sql.delta.DeltaErrors;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.delta.TypeWideningMode;
 import org.apache.spark.sql.delta.schema.SchemaUtils$;
+import org.apache.spark.sql.delta.sources.DeltaDataSource$;
+import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataEvolutionSupport$;
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
@@ -46,6 +51,7 @@ import org.apache.spark.sql.delta.sources.DeltaStreamUtils;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
 import org.apache.spark.sql.delta.v2.interop.AbstractMetadata;
 import org.apache.spark.sql.delta.v2.interop.AbstractProtocol;
+import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import scala.Option;
@@ -53,8 +59,9 @@ import scala.collection.immutable.Seq;
 import scala.collection.immutable.Seq$;
 
 /**
- * V2 port of V1's {@code DeltaSourceMetadataEvolutionSupport} trait. Handles metadata evolution
- * (schema, table configuration, or protocol changes) for the v2 Delta streaming source.
+ * TODO(#5319): Support CDC V2 port of V1's {@code DeltaSourceMetadataEvolutionSupport} trait.
+ * Handles metadata evolution (schema, table configuration, or protocol changes) for the v2 Delta
+ * streaming source.
  *
  * <p>To safely evolve schema mid-stream, this class intercepts streaming at several stages to:
  *
@@ -397,7 +404,10 @@ public class MetadataEvolutionHandler {
   }
 
   /**
-   * V2 port of V1's {@code
+   * Picks the most recent metadata and most supportive protocol in {@code [startVersion,
+   * endVersion]} to seed the tracking log; throws if any earlier change is incompatible.
+   *
+   * <p>V2 port of V1's {@code
    * DeltaSourceMetadataEvolutionSupport.validateAndResolveMetadataForLogInitialization}.
    */
   private ValidatedMetadataAndProtocol validateAndResolveMetadataForLogInitialization(
@@ -469,5 +479,113 @@ public class MetadataEvolutionHandler {
       this.metadata = metadata;
       this.protocol = protocol;
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Static utilities
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Returns the persisted metadata from the schema-tracking log if configured, else empty.
+   *
+   * <p>The persisted metadata is the source of truth for the analyzed schema. With {@code
+   * mergeConsecutiveSchemaChanges=true}, the merger folds consecutive metadata-only commits and
+   * writes the merged entry back to the durable schema log; the execution-time {@link
+   * SparkMicroBatchStream} then re-reads the same merged entry via {@link
+   * DeltaSourceMetadataTrackingLog#getCurrentTrackedMetadata}.
+   */
+  public static Optional<PersistedMetadata> getPersistedMetadataForMicroBatchStream(
+      SparkSession spark,
+      SnapshotImpl snapshot,
+      Map<String, String> options,
+      DeltaSnapshotManager snapshotManager,
+      Engine engine) {
+    boolean mergeConsecutiveSchemaChanges =
+        (boolean)
+            spark
+                .sessionState()
+                .conf()
+                .getConf(
+                    DeltaSQLConf
+                        .DELTA_STREAMING_ENABLE_SCHEMA_TRACKING_MERGE_CONSECUTIVE_CHANGES());
+    Option<DeltaSourceMetadataTrackingLog> trackingLog =
+        getMetadataTrackingLogForMicroBatchStream(
+            spark,
+            snapshot,
+            options,
+            snapshotManager,
+            engine,
+            SparkMicroBatchStream.ACTION_SET,
+            /* sourceMetadataPathOpt= */ Option.empty(),
+            mergeConsecutiveSchemaChanges);
+    if (trackingLog.isEmpty()) {
+      return Optional.empty();
+    }
+    Option<PersistedMetadata> persisted = trackingLog.get().getCurrentTrackedMetadata();
+    return persisted.isDefined() ? Optional.of(persisted.get()) : Optional.empty();
+  }
+
+  /**
+   * Returns true when the read options carry a schema-tracking location but the table's own options
+   * do not — i.e. the {@code SparkTable} was built before the user-supplied {@code
+   * schemaTrackingLocation}/{@code schemaLocation} option was observed, so callers must rebuild the
+   * table with the option folded in for its schema to be driven by the tracking log.
+   */
+  public static boolean shouldPropagateSchemaTrackingToTable(
+      CaseInsensitiveStringMap readOptions, Map<String, String> tableOptions) {
+    CaseInsensitiveStringMap tableOptionsCI = new CaseInsensitiveStringMap(tableOptions);
+    boolean inReadOptions =
+        readOptions.containsKey(DeltaOptions.SCHEMA_TRACKING_LOCATION())
+            || readOptions.containsKey(DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS());
+    boolean inTableOptions =
+        tableOptionsCI.containsKey(DeltaOptions.SCHEMA_TRACKING_LOCATION())
+            || tableOptionsCI.containsKey(DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS());
+    return inReadOptions && !inTableOptions;
+  }
+
+  /**
+   * Builds the tracking log from streaming options: empty when {@code schemaTrackingLocation} is
+   * unset; throws when it is set but schema tracking is disabled in config.
+   *
+   * <p>V2 port of V1's {@code DeltaDataSource.getMetadataTrackingLogForDeltaSource}.
+   */
+  public static Option<DeltaSourceMetadataTrackingLog> getMetadataTrackingLogForMicroBatchStream(
+      SparkSession spark,
+      SnapshotImpl snapshot,
+      Map<String, String> options,
+      DeltaSnapshotManager snapshotManager,
+      Engine engine,
+      Set<DeltaLogActionUtils.DeltaAction> mergeActionSet,
+      Option<String> sourceMetadataPathOpt,
+      boolean mergeConsecutiveSchemaChanges) {
+    Option<String> locationOpt =
+        DeltaDataSource$.MODULE$.extractSchemaTrackingLocationConfig(
+            spark, ScalaUtils.toScalaMap(options));
+    if (locationOpt.isEmpty()) {
+      return Option.empty();
+    }
+    String location = locationOpt.get();
+    if (!(boolean)
+        spark
+            .sessionState()
+            .conf()
+            .getConf(DeltaSQLConf.DELTA_STREAMING_ENABLE_SCHEMA_TRACKING())) {
+      throw new UnsupportedOperationException(
+          "Schema tracking location is not supported for Delta streaming source");
+    }
+
+    String tablePath = snapshot.getPath();
+    return Option.apply(
+        DeltaSourceMetadataTrackingLog.create(
+            spark,
+            location,
+            snapshot.getMetadata().getId(),
+            tablePath,
+            ScalaUtils.toScalaMap(options),
+            sourceMetadataPathOpt,
+            // TODO(#5319): Implement v2 consecutiveSchema schema changes merger
+            /* mergeConsecutiveSchemaChanges= */ false,
+            /* consecutiveSchemaChangesMerger= */ Option.empty(),
+            /* initMetadataLogEagerly= */ true));
   }
 }

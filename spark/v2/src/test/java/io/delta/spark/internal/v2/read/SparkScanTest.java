@@ -733,7 +733,7 @@ public class SparkScanTest extends DeltaV2TestBase {
     // Test with blocked DeltaOptions, supported options, and custom user options
     Map<String, String> javaOptions = new HashMap<>();
     javaOptions.put("startingVersion", "0");
-    javaOptions.put("schemaTrackingLocation", "/tmp/schema-tracking");
+    javaOptions.put("endingTimestamp", "2024-01-01");
     javaOptions.put("myCustomOption", "value");
     scala.collection.immutable.Map<String, String> mixedOptions =
         ScalaUtils.toScalaMap(javaOptions);
@@ -747,10 +747,11 @@ public class SparkScanTest extends DeltaV2TestBase {
     // Verify exact error message - only the blocked option should appear
     // Note: DeltaOptions uses CaseInsensitiveMap which lowercases keys during iteration
     assertEquals(
-        "The following streaming options are not supported: [schematrackinglocation]. "
+        "The following streaming options are not supported: [endingtimestamp]. "
             + "Supported options are: [startingVersion, startingTimestamp, maxFilesPerTrigger, "
             + "maxBytesPerTrigger, ignoreFileDeletion, ignoreChanges, ignoreDeletes, "
-            + "skipChangeCommits, excludeRegex, failOnDataLoss, readChangeFeed, readChangeData].",
+            + "skipChangeCommits, excludeRegex, failOnDataLoss, readChangeFeed, readChangeData, "
+            + "schemaTrackingLocation, schemaLocation, streamingSourceTrackingId].",
         exception.getMessage());
   }
 

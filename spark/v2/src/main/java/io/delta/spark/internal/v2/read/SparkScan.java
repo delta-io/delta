@@ -75,7 +75,10 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
               DeltaOptions.EXCLUDE_REGEX_OPTION(),
               DeltaOptions.FAIL_ON_DATA_LOSS_OPTION(),
               DeltaOptions.CDC_READ_OPTION(),
-              DeltaOptions.CDC_READ_OPTION_LEGACY()));
+              DeltaOptions.CDC_READ_OPTION_LEGACY(),
+              DeltaOptions.SCHEMA_TRACKING_LOCATION(),
+              DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS(),
+              DeltaOptions.STREAMING_SOURCE_TRACKING_ID()));
 
   private static final Set<String> UNSUPPORTED_STREAMING_OPTIONS =
       Collections.unmodifiableSet(
@@ -83,9 +86,6 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
               Arrays.asList(
                   DeltaOptions.CDC_END_VERSION().toLowerCase(),
                   DeltaOptions.CDC_END_TIMESTAMP().toLowerCase(),
-                  DeltaOptions.SCHEMA_TRACKING_LOCATION().toLowerCase(),
-                  DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS().toLowerCase(),
-                  DeltaOptions.STREAMING_SOURCE_TRACKING_ID().toLowerCase(),
                   DeltaOptions.ALLOW_SOURCE_COLUMN_DROP().toLowerCase(),
                   DeltaOptions.ALLOW_SOURCE_COLUMN_RENAME().toLowerCase(),
                   DeltaOptions.ALLOW_SOURCE_COLUMN_TYPE_CHANGE().toLowerCase())));

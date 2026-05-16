@@ -21,10 +21,17 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
+import io.delta.spark.internal.v2.adapters.KernelMetadataAdapter;
+import io.delta.spark.internal.v2.adapters.KernelProtocolAdapter;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
+import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
 import java.io.File;
 import java.lang.reflect.Method;
 import java.net.URI;
@@ -35,6 +42,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.function.BiFunction;
 import java.util.stream.Stream;
 import org.apache.hadoop.fs.Path;
@@ -45,7 +53,11 @@ import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.SupportsWrite;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
+import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.delta.catalog.DeltaTableV2;
+import org.apache.spark.sql.delta.sources.DeltaSQLConf;
+import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
+import org.apache.spark.sql.delta.sources.PersistedMetadata;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
@@ -559,5 +571,183 @@ public class SparkTableTest extends DeltaV2TestBase {
     assertFalse(names.contains(CDCSchemaContext.CDC_COMMIT_VERSION), "unexpected _commit_version");
     assertFalse(
         names.contains(CDCSchemaContext.CDC_COMMIT_TIMESTAMP), "unexpected _commit_timestamp");
+  }
+
+  // ---------------------------------------------------------------------------
+  // Schema-tracking-aware schema construction
+  // ---------------------------------------------------------------------------
+
+  /** Empty schema-tracking log → snapshot schema is used as fallback. */
+  @Test
+  public void testSchemaTracking_emptyLogFallsBackToSnapshotSchema(@TempDir File tempDir) {
+    String tablePath = new File(tempDir, "table").getAbsolutePath();
+    String schemaLogPath = new File(tempDir, "schema_log").getAbsolutePath();
+    String tableName =
+        "test_schema_tracking_empty_log_" + UUID.randomUUID().toString().replace('-', '_');
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'",
+            tableName, tablePath));
+
+    Identifier identifier = Identifier.of(new String[] {"default"}, tableName);
+    Map<String, String> options = new HashMap<>();
+    options.put(DeltaOptions.SCHEMA_TRACKING_LOCATION(), schemaLogPath);
+
+    SparkTable table = new SparkTable(identifier, tablePath, options);
+
+    StructType schema = table.schema();
+    assertEquals(2, schema.fields().length);
+    assertEquals("id", schema.fields()[0].name());
+    assertEquals("name", schema.fields()[1].name());
+  }
+
+  /**
+   * Verifies that pre-seeded persisted metadata (older snapshot, fewer columns) overrides the
+   * current snapshot schema (which has been evolved with ALTER TABLE).
+   */
+  private void verifyPersistedEntryDrivesSparkTableSchema(
+      File tempDir, String optionKey, String tableNameSuffix, boolean usePathBasedConstructor) {
+    String tablePath = new File(tempDir, "table").getAbsolutePath();
+    String schemaLogPath = new File(tempDir, "schema_log").getAbsolutePath();
+    String tableName =
+        "test_schema_tracking_persisted_override_"
+            + tableNameSuffix
+            + "_"
+            + UUID.randomUUID().toString().replace('-', '_');
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, name STRING) USING delta "
+                + "PARTITIONED BY (name) LOCATION '%s'",
+            tableName, tablePath));
+
+    // Capture v0 metadata BEFORE evolving the table.
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(tablePath, spark.sessionState().newHadoopConf());
+    SnapshotImpl snapshotV0 = (SnapshotImpl) snapshotManager.loadSnapshotAt(0L);
+    Metadata metadataV0 = snapshotV0.getMetadata();
+    Protocol protocolV0 = snapshotV0.getProtocol();
+    String tableId = metadataV0.getId();
+
+    // Seed the schema log with v0's metadata (id INT data, name STRING partition).
+    DeltaSourceMetadataTrackingLog trackingLog =
+        DeltaSourceMetadataTrackingLog.create(
+            spark,
+            schemaLogPath,
+            tableId,
+            tablePath,
+            scala.collection.immutable.Map$.MODULE$.empty(),
+            scala.Option.empty(),
+            /* mergeConsecutiveSchemaChanges= */ false,
+            /* consecutiveSchemaChangesMerger= */ scala.Option.empty(),
+            /* initMetadataLogEagerly= */ true);
+    PersistedMetadata seededEntry =
+        PersistedMetadata.apply(
+            tableId,
+            0L,
+            new KernelMetadataAdapter(metadataV0),
+            new KernelProtocolAdapter(protocolV0),
+            tablePath + "/_delta_log/_streaming_metadata");
+    trackingLog.writeNewMetadata(seededEntry, false);
+
+    // Evolve the table — version 1 has an extra non-partition column.
+    spark.sql(String.format("ALTER TABLE %s ADD COLUMNS (value DOUBLE)", tableName));
+
+    // Construct SparkTable with the schema-tracking option pointing at the seeded log. The
+    // snapshot is at v1 (3 columns) but the persisted entry is at v0 (2 columns). Default to
+    // the catalog-table constructor since that's how production code typically loads the table.
+    Identifier identifier = Identifier.of(new String[] {"default"}, tableName);
+    Map<String, String> options = new HashMap<>();
+    options.put(optionKey, schemaLogPath);
+    SparkTable table;
+    if (usePathBasedConstructor) {
+      table = new SparkTable(identifier, tablePath, options);
+    } else {
+      CatalogTable catalogTable;
+      try {
+        catalogTable =
+            spark.sessionState().catalog().getTableMetadata(new TableIdentifier(tableName));
+      } catch (Exception e) {
+        throw new RuntimeException(e);
+      }
+      table = new SparkTable(identifier, catalogTable, options);
+    }
+
+    // Persisted metadata wins: schema reflects v0 (2 columns), not v1 (3 columns).
+    // Public schema layout is data fields followed by partition fields, so [id, name].
+    StructType schema = table.schema();
+    assertEquals(2, schema.fields().length, "Persisted entry should override snapshot schema");
+    assertEquals("id", schema.fields()[0].name());
+    assertEquals("name", schema.fields()[1].name());
+
+    // Partition column from the persisted entry's partitionSchema is also honored.
+    Transform[] partitioning = table.partitioning();
+    assertEquals(
+        1, partitioning.length, "Should have one partition column from the persisted entry");
+    assertEquals(
+        "name",
+        partitioning[0].references()[0].describe(),
+        "Partition column should be 'name' from the persisted entry");
+  }
+
+  /** Persisted entry overrides the snapshot schema when SCHEMA_TRACKING_LOCATION is set. */
+  @Test
+  public void testSchemaTracking_persistedEntryOverridesSnapshotSchema(@TempDir File tempDir) {
+    verifyPersistedEntryDrivesSparkTableSchema(
+        tempDir,
+        DeltaOptions.SCHEMA_TRACKING_LOCATION(),
+        "primary_key",
+        /* usePathBasedConstructor= */ false);
+  }
+
+  /** Alias key triggers the same code path. */
+  @Test
+  public void testSchemaTracking_persistedEntryOverridesSnapshotSchemaWithAliasKey(
+      @TempDir File tempDir) {
+    verifyPersistedEntryDrivesSparkTableSchema(
+        tempDir,
+        DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS(),
+        "alias_key",
+        /* usePathBasedConstructor= */ false);
+  }
+
+  /** Path-based constructor honors the persisted entry too. */
+  @Test
+  public void testSchemaTracking_persistedEntryOverridesSnapshotSchemaWithPathBasedConstructor(
+      @TempDir File tempDir) {
+    verifyPersistedEntryDrivesSparkTableSchema(
+        tempDir,
+        DeltaOptions.SCHEMA_TRACKING_LOCATION(),
+        "path_based_constructor",
+        /* usePathBasedConstructor= */ true);
+  }
+
+  /** Setting the option while the feature flag is off throws at construction. */
+  @Test
+  public void testSchemaTracking_throwsWhenFeatureFlagDisabled(@TempDir File tempDir)
+      throws Exception {
+    String tablePath = new File(tempDir, "table").getAbsolutePath();
+    String schemaLogPath = new File(tempDir, "schema_log").getAbsolutePath();
+    String tableName =
+        "test_schema_tracking_feature_flag_disabled_"
+            + UUID.randomUUID().toString().replace('-', '_');
+    spark.sql(
+        String.format("CREATE TABLE %s (id INT) USING delta LOCATION '%s'", tableName, tablePath));
+
+    Identifier identifier = Identifier.of(new String[] {"default"}, tableName);
+    Map<String, String> options = new HashMap<>();
+    options.put(DeltaOptions.SCHEMA_TRACKING_LOCATION(), schemaLogPath);
+
+    withSQLConf(
+        DeltaSQLConf.DELTA_STREAMING_ENABLE_SCHEMA_TRACKING().key(),
+        "false",
+        () -> {
+          UnsupportedOperationException ex =
+              assertThrows(
+                  UnsupportedOperationException.class,
+                  () -> new SparkTable(identifier, tablePath, options));
+          assertEquals(
+              "Schema tracking location is not supported for Delta streaming source",
+              ex.getMessage());
+        });
   }
 }
