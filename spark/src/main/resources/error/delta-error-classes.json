@@ -3586,16 +3586,10 @@
     ],
     "sqlState" : "0AKDE"
   },
-  "DELTA_CHANGELOG_UNBOUNDED_RANGE" : {
+  "DELTA_CHANGELOG_REQUIRES_V2_TABLE" : {
     "message" : [
-      "Delta CDC does not support unbounded ranges in batch reads. Specify a starting and ending version or timestamp."
-    ],
-    "sqlState" : "0AKDE"
-  },
-  "DELTA_CHANGELOG_SCHEMA_CHANGE_IN_RANGE" : {
-    "message" : [
-      "Delta CDC does not support reading a changelog range that includes a schema change.",
-      "Commit at version <version> changes the table schema. Pick a starting/ending version that brackets a single schema."
+      "Auto-CDF reads on `<tableName>` require the V2 Delta connector, but the catalog resolved the table to `<actualClassName>`.",
+      "Set the Delta V2 mode SQL conf to `STRICT` (or `AUTO`, if AUTO routes CHANGES queries) to read this table through the V2 connector."
     ],
     "sqlState" : "0AKDE"
   },
@@ -3606,10 +3600,16 @@
     ],
     "sqlState" : "0AKDE"
   },
-  "DELTA_CHANGELOG_REQUIRES_V2_TABLE" : {
+  "DELTA_CHANGELOG_SCHEMA_CHANGE_IN_RANGE" : {
     "message" : [
-      "Auto-CDF reads on `<tableName>` require the V2 Delta connector, but the catalog resolved the table to `<actualClassName>`.",
-      "Set the SQL conf `spark.databricks.delta.v2.enableMode` to `STRICT` (or `AUTO`, if AUTO routes CHANGES queries) to read this table through the V2 connector."
+      "Delta CDC does not support reading a changelog range that includes a schema change.",
+      "Commit at version <version> changes the table schema. Pick a starting/ending version that brackets a single schema."
+    ],
+    "sqlState" : "0AKDE"
+  },
+  "DELTA_CHANGELOG_UNBOUNDED_RANGE" : {
+    "message" : [
+      "Delta CDC does not support unbounded ranges in batch reads. Specify a starting and ending version or timestamp."
     ],
     "sqlState" : "0AKDE"
   }
