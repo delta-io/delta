@@ -1,5 +1,8 @@
 {
   "uc_table_id": "12345678-1234-1234-1234-123456789abc",
+  "catalog_name": "benchmark_catalog",
+  "schema_name": "benchmark_schema",
+  "table_name": "benchmark_table",
   "max_ratified_version": 3,
   "log_tail": [
     {

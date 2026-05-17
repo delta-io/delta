@@ -17,6 +17,7 @@ package io.delta.spark.internal.v2.snapshot.unitycatalog;
 
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.unitycatalog.UCTableIdentifier;
 import java.util.Collections;
 import java.util.Map;
 
@@ -30,13 +31,19 @@ public final class UCTableInfo {
 
   private final String tableId;
   private final String tablePath;
+  private final UCTableIdentifier tableIdentifier;
   private final String ucUri;
   private final Map<String, String> authConfig;
 
   public UCTableInfo(
-      String tableId, String tablePath, String ucUri, Map<String, String> authConfig) {
+      String tableId,
+      String tablePath,
+      UCTableIdentifier tableIdentifier,
+      String ucUri,
+      Map<String, String> authConfig) {
     this.tableId = requireNonNull(tableId, "tableId is null");
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
+    this.tableIdentifier = requireNonNull(tableIdentifier, "tableIdentifier is null");
     this.ucUri = requireNonNull(ucUri, "ucUri is null");
     this.authConfig = Collections.unmodifiableMap(requireNonNull(authConfig, "authConfig is null"));
   }
@@ -47,6 +54,10 @@ public final class UCTableInfo {
 
   public String getTablePath() {
     return tablePath;
+  }
+
+  public UCTableIdentifier getTableIdentifier() {
+    return tableIdentifier;
   }
 
   public String getUcUri() {

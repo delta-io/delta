@@ -206,6 +206,7 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
   override def getCommits(
       tableId: String,
       tableUri: URI,
+      tableIdentifier: TableIdentifier,
       startVersion: Optional[JLong],
       endVersion: Optional[JLong]): GetCommitsResponse = {
     val tableData = getTableDataElseThrow(tableId)

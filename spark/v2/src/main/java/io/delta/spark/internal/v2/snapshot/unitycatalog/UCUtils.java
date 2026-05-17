@@ -18,6 +18,7 @@ package io.delta.spark.internal.v2.snapshot.unitycatalog;
 import static java.util.Objects.requireNonNull;
 import static scala.jdk.javaapi.CollectionConverters.asJava;
 
+import io.delta.kernel.unitycatalog.UCTableIdentifier;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
 import java.util.Map;
 import java.util.Optional;
@@ -87,7 +88,13 @@ public final class UCUtils {
     UCCatalogConfig config = configOpt.get();
     String ucUri = config.uri();
 
-    return Optional.of(new UCTableInfo(tableId, tablePath, ucUri, asJava(config.authConfig())));
+    return Optional.of(
+        new UCTableInfo(
+            tableId,
+            tablePath,
+            extractTableIdentifier(catalogTable),
+            ucUri,
+            asJava(config.authConfig())));
   }
 
   private static String extractUCTableId(CatalogTable catalogTable) {
@@ -109,5 +116,24 @@ public final class UCUtils {
           "Cannot extract table path: location is null for table " + catalogTable.identifier());
     }
     return catalogTable.location().toString();
+  }
+
+  private static UCTableIdentifier extractTableIdentifier(CatalogTable catalogTable) {
+    scala.Option<String> catalogOption = catalogTable.identifier().catalog();
+    if (catalogOption.isEmpty()) {
+      throw new IllegalArgumentException(
+          "Unable to determine Unity Catalog for table "
+              + catalogTable.identifier()
+              + ": catalog name is missing.");
+    }
+    scala.Option<String> schemaOption = catalogTable.identifier().database();
+    if (schemaOption.isEmpty()) {
+      throw new IllegalArgumentException(
+          "Unable to determine Unity Catalog schema for table "
+              + catalogTable.identifier()
+              + ": schema name is missing.");
+    }
+    return new UCTableIdentifier(
+        catalogOption.get(), schemaOption.get(), catalogTable.identifier().table());
   }
 }

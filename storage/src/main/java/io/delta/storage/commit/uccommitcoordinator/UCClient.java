@@ -63,7 +63,9 @@ public interface UCClient extends AutoCloseable {
    * @param tableUri The URI of the storage location of the table (e.g.,
    *                 {@code s3://bucket/path/to/table}, not the {@code _delta_log} path).
    * @param tableIdentifier The three-part table identifier (catalog, schema, table name)
-   *                        for the table in Unity Catalog, or null if unavailable.
+   *                        for the table in Unity Catalog, or null when the caller has no
+   *                        catalog context. Implementations that require this value must
+   *                        reject null; implementations that don't use it may ignore it.
    * @param commit An Optional containing the Commit object with the changes to be committed.
    *               If empty, it indicates that no new data is being added in this commit.
    * @param lastKnownBackfilledVersion An Optional containing the last known backfilled version
@@ -110,6 +112,10 @@ public interface UCClient extends AutoCloseable {
    *                 (and not s3://bucket/path/to/table/_delta_log).
    *                 If the tableId exists but the tableUri is different from the one previously
    *                 registered (e.g., if the table as moved), the request will fail.
+   * @param tableIdentifier The three-part table identifier (catalog, schema, table name)
+   *                        for the table in Unity Catalog, or null when the caller has no
+   *                        catalog context. Implementations that require this value must
+   *                        reject null; implementations that don't use it may ignore it.
    * @param startVersion An Optional containing the start version of the range of commits to
    *                     retrieve.
    * @param endVersion An Optional containing the end version of the range of commits to retrieve.
@@ -124,6 +130,7 @@ public interface UCClient extends AutoCloseable {
   GetCommitsResponse getCommits(
       String tableId,
       URI tableUri,
+      TableIdentifier tableIdentifier,
       Optional<Long> startVersion,
       Optional<Long> endVersion) throws IOException, UCCommitCoordinatorException;
 

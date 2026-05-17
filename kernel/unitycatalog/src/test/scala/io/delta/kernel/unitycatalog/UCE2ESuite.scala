@@ -19,7 +19,6 @@ package io.delta.kernel.unitycatalog
 import java.util.Optional
 
 import scala.collection.JavaConverters._
-import scala.collection.mutable.ArrayBuffer
 
 import io.delta.kernel.{CommitRange, Operation}
 import io.delta.kernel.Snapshot
@@ -29,9 +28,8 @@ import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.unitycatalog.UCCatalogManagedCommitter
 import io.delta.kernel.utils.CloseableIterable
-import io.delta.storage.commit.{Commit, GetCommitsResponse}
+import io.delta.storage.commit.{GetCommitsResponse, TableIdentifier}
 
-import InMemoryUCClient.TableData
 import org.scalatest.funsuite.AnyFunSuite
 
 class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
@@ -385,6 +383,7 @@ class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
         ucClient,
         expCommitVersion = 3,
         expNumCatalogCommits = 3)
+      val ucTableIdentifier = new UCTableIdentifier("cat", "sch", "tbl")
 
       // Step 3: Publish all versions
       postCommitSnapshot3.publish(engine)
@@ -394,6 +393,7 @@ class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
         engine,
         testUcTableId,
         tablePath,
+        ucTableIdentifier,
         Optional.of(0),
         emptyLongOpt,
         emptyLongOpt,
@@ -410,6 +410,7 @@ class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
         engine,
         testUcTableId,
         tablePath,
+        ucTableIdentifier,
         Optional.of(0),
         emptyLongOpt,
         emptyLongOpt,
@@ -423,6 +424,7 @@ class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
         engine,
         testUcTableId,
         tablePath,
+        ucTableIdentifier,
         Optional.of(2),
         emptyLongOpt,
         emptyLongOpt,
@@ -446,9 +448,10 @@ object UCE2ESuite {
     override def getCommits(
         tableId: String,
         tableUri: java.net.URI,
+        tableIdentifier: TableIdentifier,
         startVersion: Optional[java.lang.Long],
         endVersion: Optional[java.lang.Long]): GetCommitsResponse = {
-      val response = super.getCommits(tableId, tableUri, startVersion, endVersion)
+      val response = super.getCommits(tableId, tableUri, tableIdentifier, startVersion, endVersion)
       maxVersionLimit match {
         case Some(limit) =>
           // Filter commits and limit maxRatifiedVersion

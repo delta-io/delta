@@ -16,7 +16,9 @@
 package io.delta.spark.internal.v2.snapshot.unitycatalog;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import io.delta.kernel.unitycatalog.UCTableIdentifier;
 import java.util.HashMap;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -29,6 +31,8 @@ class UCTableInfoTest {
     // Use distinctive values that would fail if implementation had hardcoded defaults
     String tableId = "uc_tbl_7f3a9b2c-e8d1-4f6a";
     String tablePath = "abfss://container@acct.dfs.core.windows.net/delta/v2";
+    UCTableIdentifier tableIdentifier =
+        new UCTableIdentifier("prod_catalog", "analytics", "page_views");
     String ucUri = "https://uc-server.example.net/api/2.1/uc";
     String ucToken = "dapi_Kx9mN$2pQr#7vWz";
 
@@ -36,14 +40,34 @@ class UCTableInfoTest {
     authConfig.put("type", "static");
     authConfig.put("token", ucToken);
 
-    UCTableInfo info = new UCTableInfo(tableId, tablePath, ucUri, authConfig);
+    UCTableInfo info = new UCTableInfo(tableId, tablePath, tableIdentifier, ucUri, authConfig);
 
     assertEquals(tableId, info.getTableId(), "Table ID should be stored correctly");
     assertEquals(tablePath, info.getTablePath(), "Table path should be stored correctly");
+    assertEquals(tableIdentifier, info.getTableIdentifier(), "Identifier should be stored");
     assertEquals(ucUri, info.getUcUri(), "UC URI should be stored correctly");
 
     Map<String, String> ret = info.getAuthConfig();
     assertEquals("static", ret.get("type"), "Type should be static");
     assertEquals(ucToken, ret.get("token"), "UC token should be stored correctly in configMap");
+  }
+
+  @Test
+  void testConstructorRequiresTableIdentifier() {
+    Map<String, String> authConfig = new HashMap<>();
+    authConfig.put("token", "fake-token");
+
+    NullPointerException ex =
+        assertThrows(
+            NullPointerException.class,
+            () ->
+                new UCTableInfo(
+                    "uc_tbl_123",
+                    "s3://bucket/table",
+                    null,
+                    "https://uc-server.example.net/api/2.1/uc",
+                    authConfig));
+
+    assertEquals("tableIdentifier is null", ex.getMessage());
   }
 }

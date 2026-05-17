@@ -513,7 +513,8 @@ class UCDeltaTokenBasedRestClientSuite
   test("getCommits throws UnsupportedOperationException") {
     withClient { c =>
       intercept[UnsupportedOperationException] {
-        c.getCommits(testTableId, new URI("s3://b/t"), Optional.empty(), Optional.empty())
+        c.getCommits(testTableId, new URI("s3://b/t"), testIdentifier,
+          Optional.empty(), Optional.empty())
       }
     }
   }

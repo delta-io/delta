@@ -199,6 +199,7 @@ public class UCTokenBasedRestClient implements UCClient {
   public GetCommitsResponse getCommits(
       String tableId,
       URI tableUri,
+      TableIdentifier tableIdentifier,
       Optional<Long> startVersion,
       Optional<Long> endVersion) throws IOException, UCCommitCoordinatorException {
     ensureOpen();
