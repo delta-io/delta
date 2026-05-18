@@ -67,8 +67,9 @@ import org.apache.spark.util.Utils
  * @param output SQL output of the command
  * @param protocol This is used to create a table with specific protocol version
  * @param allowCatalogManaged This is used to create UC managed table with catalogManaged feature
- * @param createTableFunc If specified, call this function to create the table, instead of
- *                        Spark `SessionCatalog#createTable` which is backed by Hive Metastore.
+ * @param createTableFunc If specified, call this function with the post-commit snapshot to create
+ *                        the table, instead of Spark `SessionCatalog#createTable` which is backed
+ *                        by Hive Metastore.
  */
 case class CreateDeltaTableCommand(
     override val table: CatalogTable,
@@ -80,7 +81,7 @@ case class CreateDeltaTableCommand(
     override val output: Seq[Attribute] = Nil,
     protocol: Option[Protocol] = None,
     override val allowCatalogManaged: Boolean = false,
-    createTableFunc: Option[CatalogTable => Unit] = None)
+    createTableFunc: Option[(CatalogTable, Snapshot) => Unit] = None)
   extends LeafRunnableCommand
   with DeltaCommand
   with DeltaLogging
