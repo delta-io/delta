@@ -340,12 +340,66 @@ public class SparkMicroBatchStream
   }
 
   private void initLastOffsetForTriggerAvailableNow(DeltaSourceOffset startOffsetOpt) {
-    lastOffsetForTriggerAvailableNow =
-        latestOffsetInternal(startOffsetOpt, ReadLimit.allAvailable());
+    // TODO(#6817): Explore unifying TAN offset computation into latestOffsetInternal.
+    // Blocked: latestOffset per-batch shares the same conditions but must NOT bypass rate limiting.
+    if (startOffsetOpt.isInitialSnapshot()) {
+      lastOffsetForTriggerAvailableNow =
+          computeLastOffsetForAvailableNowFromMetadata(startOffsetOpt);
+    } else {
+      lastOffsetForTriggerAvailableNow =
+          latestOffsetInternal(startOffsetOpt, ReadLimit.allAvailable());
+    }
 
     lastOffsetForTriggerAvailableNow.ifPresent(
         lastOffset ->
             logger.info("lastOffset for Trigger.AvailableNow has set to " + lastOffset.json()));
+  }
+
+  /**
+   * Computes Trigger.AvailableNow end offset from commit-log metadata without iterating snapshot
+   * files. O(delta_commits) and content-agnostic — works for both driver-local and distributed
+   * snapshot paths.
+   */
+  private Optional<DeltaSourceOffset> computeLastOffsetForAvailableNowFromMetadata(
+      DeltaSourceOffset startOffset) {
+    long snapshotVersion = startOffset.reservoirVersion();
+
+    checkReadIncompatibleSchemaChangeOnStreamStartOnce(
+        snapshotVersion, /* batchEndVersion= */ null);
+
+    // iteratorLast exhausts the iterator and closes it — do not wrap in try-with-resources
+    // (that would double-close). Use a plain try block for exception context.
+    try {
+      CloseableIterator<IndexedFile> deltaChanges =
+          filterDeltaLogs(snapshotVersion + 1, /* endOffset= */ Optional.empty());
+      Optional<IndexedFile> lastDelta = Utils.iteratorLast(deltaChanges);
+
+      if (lastDelta.isPresent()) {
+        IndexedFile lastFile = lastDelta.get();
+        return Optional.of(
+            DeltaSource.buildOffsetFromIndexedFile(
+                tableId,
+                lastFile.getVersion(),
+                lastFile.getIndex(),
+                startOffset.reservoirVersion(),
+                startOffset.isInitialSnapshot()));
+      }
+    } catch (UncheckedIOException e) {
+      throw new RuntimeException(
+          String.format(
+              "Failed to iterate delta changes for table %s after version %d",
+              tablePath, snapshotVersion),
+          e);
+    }
+
+    // No delta changes — END_INDEX bumps offset to (snapshotVersion + 1, BASE_INDEX, false).
+    return Optional.of(
+        DeltaSource.buildOffsetFromIndexedFile(
+            tableId,
+            snapshotVersion,
+            DeltaSourceOffset.END_INDEX(),
+            startOffset.reservoirVersion(),
+            startOffset.isInitialSnapshot()));
   }
 
   ////////////
