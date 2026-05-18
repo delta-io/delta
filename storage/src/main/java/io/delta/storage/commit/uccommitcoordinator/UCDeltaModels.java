@@ -105,36 +105,36 @@ public final class UCDeltaModels {
   /** Result of {@link UCDeltaClient#loadTable}. */
   public static final class TableInfo {
 
-    private final String location;
-    private final String ucTableId;
+    private final String tableId;
     private final TableType tableType;
+    private final String location;
     private final AbstractMetadata metadata;
     private final Map<String, String> storageProperties;
 
     public TableInfo(
-        String location,
-        String ucTableId,
+        String tableId,
         TableType tableType,
+        String location,
         AbstractMetadata metadata,
         Map<String, String> storageProperties) {
-      this.location = location;
-      this.ucTableId = ucTableId;
+      this.tableId = tableId;
       this.tableType = tableType;
+      this.location = location;
       this.metadata = metadata;
       this.storageProperties = storageProperties;
     }
 
-    public String getLocation() {
-      return location;
-    }
-
     /** UC's {@code table_uuid}; distinct from {@link AbstractMetadata#getId()} (the Delta id). */
-    public String getUcTableId() {
-      return ucTableId;
+    public String getTableId() {
+      return tableId;
     }
 
     public TableType getTableType() {
       return tableType;
+    }
+
+    public String getLocation() {
+      return location;
     }
 
     public AbstractMetadata getMetadata() {

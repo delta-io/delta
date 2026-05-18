@@ -57,13 +57,24 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
     assert(e.getMessage.contains("'uri' is required"))
   }
 
-  test("deltaRestApi.enabled=true requires token") {
+  test("deltaRestApi.enabled=true requires an auth configuration") {
     val catalog = new AbstractDeltaCatalog
     val e = intercept[IllegalArgumentException] {
       catalog.initialize("test_cat",
         options("deltaRestApi.enabled" -> "true", "uri" -> "http://uc"))
     }
-    assert(e.getMessage.contains("'token' is required"))
+    assert(e.getMessage.contains("auth configuration is required"))
+  }
+
+  test("auth.* options are passed through to TokenProvider (new format)") {
+    val catalog = new AbstractDeltaCatalog
+    catalog.initialize("test_cat",
+      options(
+        "deltaRestApi.enabled" -> "true",
+        "uri" -> "http://uc",
+        "auth.type" -> "static",
+        "auth.token" -> "tok"))
+    assert(catalog.deltaCatalogClient != null)
   }
 
   test("deltaRestApi.enabled=true with uri+token constructs the Delta REST API client") {
@@ -105,9 +116,9 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
       override def getCreatedTime: java.lang.Long = 42L
     }
     val info = new TableInfo(
-      "s3://bucket/table",
       "uuid-1",
       UCDeltaModels.TableType.EXTERNAL,
+      "s3://bucket/table",
       metadata,
       java.util.Map.of("fs.s3a.access.key", "key"))
 

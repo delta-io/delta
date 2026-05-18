@@ -196,12 +196,12 @@ class UCDeltaTokenBasedRestClientSuite
     withClient { c =>
       val info = c.loadTable(testIdentifier)
       assert(info.getLocation === "s3://bucket/table")
-      assert(info.getUcTableId === testTableId)
+      assert(info.getTableId === testTableId)
       assert(info.getTableType === UCDeltaModels.TableType.MANAGED)
       val m = info.getMetadata
       assert(m.getName === testTable)
       // UC's loadTable response does not carry the Delta Metadata.id; UC's table_uuid is exposed
-      // separately as TableInfo.getUcTableId.
+      // separately as TableInfo.getTableId.
       assert(m.getId === null)
       assert(m.getProvider === "DELTA")
       assert(m.getConfiguration.get("key1") === "val1")

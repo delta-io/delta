@@ -90,7 +90,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
   override def initialize(name: String, options: CaseInsensitiveStringMap): Unit = {
     super.initialize(name, options)
     deltaCatalogClient =
-      UCDeltaCatalogClientImpl.fromCatalogOptionsIfEnabled(name, options, super.loadTable _)
+      UCDeltaCatalogClientImpl.fromCatalogOptionsIfEnabled(name, options, super.loadTable)
   }
 
   private lazy val isUnityCatalog: Boolean = {

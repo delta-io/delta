@@ -193,21 +193,27 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
         hadoopConfSupplier != null ? hadoopConfSupplier : () -> new Configuration();
   }
 
-  /** Static-token factory; hides {@link TokenProvider} from callers. */
-  public static UCDeltaTokenBasedRestClient forStaticToken(
+  /**
+   * Factory for callers that can't depend on {@code io.unitycatalog.client} directly: pass
+   * a flat {@code authConfigs} map ({@code type} + provider-specific keys) and the factory
+   * constructs the {@link TokenProvider} internally.
+   */
+  public static UCDeltaTokenBasedRestClient create(
       String baseUri,
-      String token,
+      Map<String, String> authConfigs,
       Map<String, String> appVersions,
       boolean credentialRenewalEnabled,
       boolean credentialScopedFsEnabled,
       Supplier<Configuration> hadoopConfSupplier) {
-    Objects.requireNonNull(token, "token must not be null");
-    Map<String, String> tokenConfigs = new LinkedHashMap<>();
-    tokenConfigs.put("type", "static");
-    tokenConfigs.put("token", token);
+    Objects.requireNonNull(authConfigs, "authConfigs must not be null");
+    if (authConfigs.isEmpty()) {
+      throw new IllegalArgumentException(
+          "authConfigs must not be empty; expected at least a 'type' key plus the keys " +
+              "required by that TokenProvider type.");
+    }
     return new UCDeltaTokenBasedRestClient(
         baseUri,
-        TokenProvider.create(tokenConfigs),
+        TokenProvider.create(authConfigs),
         appVersions,
         credentialRenewalEnabled,
         credentialScopedFsEnabled,
@@ -518,13 +524,13 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       // recover. The exception carries the catalog-side TableInfo (with empty storageProperties)
       // so the caller can still build a CatalogTable.
       TableInfo withoutCreds = new TableInfo(
-          location, ucTableId, tableType, adapted, Collections.emptyMap());
+          ucTableId, tableType, location, adapted, Collections.emptyMap());
       throw new CredentialFetchFailedException(
           String.format("Credential fetch failed for table %s.%s.%s (HTTP %s): %s",
               catalog, schema, name, e.getCode(), e.getResponseBody()),
           e, withoutCreds);
     }
-    return new TableInfo(location, ucTableId, tableType, adapted, storageProps);
+    return new TableInfo(ucTableId, tableType, location, adapted, storageProps);
   }
 
   private UCDeltaModels.StagingTableInfo toStagingTableInfo(StagingTableResponse r) {
@@ -762,7 +768,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
 
     @Override
     public String getId() {
-      // UC's loadTable response carries the UC table_uuid (exposed via TableInfo.getUcTableId),
+      // UC's loadTable response carries the UC table_uuid (exposed via TableInfo.getTableId),
       // not the Delta Metadata.id. The Delta id only lives in the Delta log Metadata action and
       // is never sent to UC; callers that need it must read the log.
       return null;

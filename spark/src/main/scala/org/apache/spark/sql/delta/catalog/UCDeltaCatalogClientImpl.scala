@@ -195,9 +195,7 @@ object UCDeltaCatalogClientImpl extends Logging {
     val uri = Option(options.get("uri")).getOrElse(throw new IllegalArgumentException(
       s"'uri' is required when '$UCDeltaRestApiEnabledKey' is true " +
         s"(catalog '$catalogName')"))
-    val token = Option(options.get("token")).getOrElse(throw new IllegalArgumentException(
-      s"'token' is required when '$UCDeltaRestApiEnabledKey' is true " +
-        s"(catalog '$catalogName')"))
+    val authConfigs = extractAuthConfigs(options, catalogName)
     val appVersions = UCTokenBasedRestClientFactory.defaultAppVersionsAsJava
     val renewCredEnabled = options.getBoolean(RenewCredentialEnabledKey, true)
     val credScopedFsEnabled = options.getBoolean(CredScopedFsEnabledKey, false)
@@ -206,13 +204,44 @@ object UCDeltaCatalogClientImpl extends Logging {
       () => SparkSession.getActiveSession
         .map(_.sparkContext.hadoopConfiguration)
         .getOrElse(new Configuration())
-    val restClient = UCDeltaTokenBasedRestClient.forStaticToken(
+    val restClient = UCDeltaTokenBasedRestClient.create(
       uri,
-      token,
+      authConfigs,
       appVersions,
       renewCredEnabled,
       credScopedFsEnabled,
       hadoopConfSupplier)
     new UCDeltaCatalogClientImpl(catalogName, restClient, sspEnabled, fallbackLoadTable)
+  }
+
+  /**
+   * `auth.*` sub-keys (prefix stripped) feed `TokenProvider.create`. Legacy bare `token`
+   * is translated to `{type=static, token=<value>}`, only when no `auth.*` is present.
+   */
+  private[catalog] def extractAuthConfigs(
+      options: CaseInsensitiveStringMap,
+      catalogName: String): java.util.Map[String, String] = {
+    val authConfigs = new java.util.HashMap[String, String]()
+    val authPrefix = "auth."
+    // CaseInsensitiveStringMap.entrySet() returns keys already lowercased.
+    options.entrySet().asScala.foreach { e =>
+      val key = e.getKey
+      if (key.startsWith(authPrefix)) {
+        authConfigs.put(key.substring(authPrefix.length), e.getValue)
+      }
+    }
+    if (authConfigs.isEmpty) {
+      Option(options.get("token")).foreach { tok =>
+        authConfigs.put("type", "static")
+        authConfigs.put("token", tok)
+      }
+    }
+    if (authConfigs.isEmpty) {
+      throw new IllegalArgumentException(
+        s"auth configuration is required when '$UCDeltaRestApiEnabledKey' is true " +
+          s"(catalog '$catalogName'). Set either 'auth.type' (with the corresponding " +
+          s"auth.* keys) or the legacy 'token' option.")
+    }
+    authConfigs
   }
 }
