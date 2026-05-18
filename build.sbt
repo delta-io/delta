@@ -786,6 +786,23 @@ val unityCatalogVersion: String = sys.props.getOrElse(
   if (useDefaultUnityCatalogReleaseVersion) defaultUnityCatalogReleaseVersion
   else unityCatalogReleaseVersion.getOrElse(pinnedUnityCatalogVersion))
 
+/**
+ * Returns true when `current` is at least `target`. Numeric segments only; suffix after
+ * the first `-` (e.g. `-SNAPSHOT-abc1234`) is stripped before comparison.
+ */
+def isAtLeastVersion(current: String, target: String): Boolean = {
+  def parts(v: String): Seq[Int] =
+    v.takeWhile(_ != '-').split('.').iterator
+      .map(p => scala.util.Try(p.toInt).getOrElse(0)).toSeq
+  val cur = parts(current)
+  val tgt = parts(target)
+  val n = math.max(cur.length, tgt.length)
+  (0 until n).iterator
+    .map(i => (cur.lift(i).getOrElse(0), tgt.lift(i).getOrElse(0)))
+    .find { case (a, b) => a != b }
+    .forall { case (a, b) => a >= b }
+}
+
 val sparkUnityCatalogJacksonVersion = "2.15.4" // We are using Spark 4.0's Jackson version 2.15.x, to override Unity Catalog 0.3.0's version 2.18.x
 
 // Publishes the pinned UC jars to ~/.ivy2/local if they're not already cached there. Hooked
@@ -1217,6 +1234,19 @@ lazy val storage = (project in file("storage"))
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       // Jackson datatype module needed for UC SDK tests (excluded from main compile scope)
       "com.fasterxml.jackson.datatype" % "jackson-datatype-jsr310" % "2.15.4" % "test",
+    ) ++ (
+      // unitycatalog-hadoop ships from UC 0.5.0 onward; older versions don't publish the
+      // artifact, so resolving it would fail. Used by UCDeltaTokenBasedRestClient for
+      // credential vending via UCCredentialHadoopConfs.
+      if (isAtLeastVersion(unityCatalogVersion, "0.5.0")) {
+        Seq("io.unitycatalog" % "unitycatalog-hadoop" % unityCatalogVersion excludeAll(
+          ExclusionRule(organization = "org.openapitools"),
+          ExclusionRule(organization = "com.fasterxml.jackson.core"),
+          ExclusionRule(organization = "com.fasterxml.jackson.module"),
+          ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
+          ExclusionRule(organization = "com.fasterxml.jackson.dataformat")
+        ))
+      } else Nil
     ),
 
     // Publish the pinned UC jars before sbt tries to resolve them. storage is the transitive
