@@ -16,20 +16,15 @@
 
 package io.delta.storage.commit.uccommitcoordinator;
 
-import io.delta.storage.commit.actions.AbstractProtocol;
-import java.util.Collection;
+import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.UUID;
 
-/**
- * Delta-owned models for the UC Delta REST Catalog API. These decouple the {@link UCDeltaClient}
- * interface from any generated SDK types.
- */
+/** Delta-owned models for UC Delta APIs. */
 public final class UCDeltaModels {
-
   private UCDeltaModels() {}
 
   public enum TableType {
@@ -37,73 +32,257 @@ public final class UCDeltaModels {
     EXTERNAL
   }
 
-  public static class DeltaProtocol implements AbstractProtocol {
+  public enum DataSourceFormat {
+    DELTA("DELTA"),
+    ICEBERG("ICEBERG");
 
-    private int minReaderVersion;
-    private int minWriterVersion;
-    private final Set<String> readerFeatures = new HashSet<>();
-    private final Set<String> writerFeatures = new HashSet<>();
+    private final String value;
 
-    @Override
-    public int getMinReaderVersion() {
-      return minReaderVersion;
+    DataSourceFormat(String value) {
+      this.value = value;
     }
 
-    @Override
-    public int getMinWriterVersion() {
-      return minWriterVersion;
+    public String getValue() {
+      return value;
     }
+  }
 
-    @Override
-    public Set<String> getReaderFeatures() {
-      return readerFeatures;
-    }
+  public static class DeltaProtocol {
+    private Integer minReaderVersion;
+    private Integer minWriterVersion;
+    private List<String> readerFeatures;
+    private List<String> writerFeatures;
 
-    @Override
-    public Set<String> getWriterFeatures() {
-      return writerFeatures;
-    }
-
-    public DeltaProtocol minReaderVersion(int minReaderVersion) {
+    public DeltaProtocol minReaderVersion(Integer minReaderVersion) {
       this.minReaderVersion = minReaderVersion;
       return this;
     }
 
-    public DeltaProtocol minWriterVersion(int minWriterVersion) {
+    public Integer getMinReaderVersion() {
+      return minReaderVersion;
+    }
+
+    public void setMinReaderVersion(Integer minReaderVersion) {
+      this.minReaderVersion = minReaderVersion;
+    }
+
+    public DeltaProtocol minWriterVersion(Integer minWriterVersion) {
       this.minWriterVersion = minWriterVersion;
       return this;
     }
 
-    public DeltaProtocol readerFeatures(Collection<String> readerFeatures) {
-      this.readerFeatures.addAll(readerFeatures);
+    public Integer getMinWriterVersion() {
+      return minWriterVersion;
+    }
+
+    public void setMinWriterVersion(Integer minWriterVersion) {
+      this.minWriterVersion = minWriterVersion;
+    }
+
+    public DeltaProtocol readerFeatures(List<String> readerFeatures) {
+      this.readerFeatures = readerFeatures;
       return this;
     }
 
-    public DeltaProtocol writerFeatures(Collection<String> writerFeatures) {
-      this.writerFeatures.addAll(writerFeatures);
+    public DeltaProtocol addReaderFeaturesItem(String readerFeaturesItem) {
+      if (readerFeatures == null) {
+        readerFeatures = new ArrayList<>();
+      }
+      readerFeatures.add(readerFeaturesItem);
       return this;
     }
 
-    @Override
-    public boolean equals(Object o) {
-      if (this == o) return true;
-      if (!(o instanceof DeltaProtocol)) return false;
-      DeltaProtocol that = (DeltaProtocol) o;
-      return minReaderVersion == that.minReaderVersion
-          && minWriterVersion == that.minWriterVersion
-          && Objects.equals(readerFeatures, that.readerFeatures)
-          && Objects.equals(writerFeatures, that.writerFeatures);
+    public List<String> getReaderFeatures() {
+      return readerFeatures == null ? Collections.emptyList() : readerFeatures;
     }
 
-    @Override
-    public int hashCode() {
-      return Objects.hash(minReaderVersion, minWriterVersion, readerFeatures, writerFeatures);
+    public void setReaderFeatures(List<String> readerFeatures) {
+      this.readerFeatures = readerFeatures;
+    }
+
+    public DeltaProtocol writerFeatures(List<String> writerFeatures) {
+      this.writerFeatures = writerFeatures;
+      return this;
+    }
+
+    public DeltaProtocol addWriterFeaturesItem(String writerFeaturesItem) {
+      if (writerFeatures == null) {
+        writerFeatures = new ArrayList<>();
+      }
+      writerFeatures.add(writerFeaturesItem);
+      return this;
+    }
+
+    public List<String> getWriterFeatures() {
+      return writerFeatures == null ? Collections.emptyList() : writerFeatures;
+    }
+
+    public void setWriterFeatures(List<String> writerFeatures) {
+      this.writerFeatures = writerFeatures;
     }
   }
 
-  public static final class StagingTableInfo {
+  public static final class CreateTableRequest {
+    private String name;
+    private String location;
+    private TableType tableType;
+    private DataSourceFormat dataSourceFormat;
+    private String comment;
+    private String schemaString;
+    private List<String> partitionColumns;
+    private DeltaProtocol protocol;
+    private Map<String, String> properties;
+    private Long lastCommitTimestampMs;
 
-    private final String tableId;
+    public CreateTableRequest name(String name) {
+      this.name = name;
+      return this;
+    }
+
+    public String getName() {
+      return name;
+    }
+
+    public void setName(String name) {
+      this.name = name;
+    }
+
+    public CreateTableRequest location(String location) {
+      this.location = location;
+      return this;
+    }
+
+    public String getLocation() {
+      return location;
+    }
+
+    public void setLocation(String location) {
+      this.location = location;
+    }
+
+    public CreateTableRequest tableType(TableType tableType) {
+      this.tableType = tableType;
+      return this;
+    }
+
+    public TableType getTableType() {
+      return tableType;
+    }
+
+    public void setTableType(TableType tableType) {
+      this.tableType = tableType;
+    }
+
+    public CreateTableRequest dataSourceFormat(DataSourceFormat dataSourceFormat) {
+      this.dataSourceFormat = dataSourceFormat;
+      return this;
+    }
+
+    public DataSourceFormat getDataSourceFormat() {
+      return dataSourceFormat;
+    }
+
+    public void setDataSourceFormat(DataSourceFormat dataSourceFormat) {
+      this.dataSourceFormat = dataSourceFormat;
+    }
+
+    public CreateTableRequest comment(String comment) {
+      this.comment = comment;
+      return this;
+    }
+
+    public String getComment() {
+      return comment;
+    }
+
+    public void setComment(String comment) {
+      this.comment = comment;
+    }
+
+    public CreateTableRequest schemaString(String schemaString) {
+      this.schemaString = schemaString;
+      return this;
+    }
+
+    public String getSchemaString() {
+      return schemaString;
+    }
+
+    public void setSchemaString(String schemaString) {
+      this.schemaString = schemaString;
+    }
+
+    public CreateTableRequest partitionColumns(List<String> partitionColumns) {
+      this.partitionColumns = partitionColumns;
+      return this;
+    }
+
+    public CreateTableRequest addPartitionColumnsItem(String partitionColumnsItem) {
+      if (partitionColumns == null) {
+        partitionColumns = new ArrayList<>();
+      }
+      partitionColumns.add(partitionColumnsItem);
+      return this;
+    }
+
+    public List<String> getPartitionColumns() {
+      return partitionColumns == null ? Collections.emptyList() : partitionColumns;
+    }
+
+    public void setPartitionColumns(List<String> partitionColumns) {
+      this.partitionColumns = partitionColumns;
+    }
+
+    public CreateTableRequest protocol(DeltaProtocol protocol) {
+      this.protocol = protocol;
+      return this;
+    }
+
+    public DeltaProtocol getProtocol() {
+      return protocol;
+    }
+
+    public void setProtocol(DeltaProtocol protocol) {
+      this.protocol = protocol;
+    }
+
+    public CreateTableRequest properties(Map<String, String> properties) {
+      this.properties = properties;
+      return this;
+    }
+
+    public CreateTableRequest putPropertiesItem(String key, String propertiesItem) {
+      if (properties == null) {
+        properties = new LinkedHashMap<>();
+      }
+      properties.put(key, propertiesItem);
+      return this;
+    }
+
+    public Map<String, String> getProperties() {
+      return properties == null ? Collections.emptyMap() : properties;
+    }
+
+    public void setProperties(Map<String, String> properties) {
+      this.properties = properties;
+    }
+
+    public CreateTableRequest lastCommitTimestampMs(Long lastCommitTimestampMs) {
+      this.lastCommitTimestampMs = lastCommitTimestampMs;
+      return this;
+    }
+
+    public Long getLastCommitTimestampMs() {
+      return lastCommitTimestampMs;
+    }
+
+    public void setLastCommitTimestampMs(Long lastCommitTimestampMs) {
+      this.lastCommitTimestampMs = lastCommitTimestampMs;
+    }
+  }
+
+  public static final class StagingTableResponse {
+    private final UUID tableId;
     private final TableType tableType;
     private final String location;
     private final DeltaProtocol requiredProtocol;
@@ -111,8 +290,8 @@ public final class UCDeltaModels {
     private final Map<String, String> requiredProperties;
     private final Map<String, String> suggestedProperties;
 
-    public StagingTableInfo(
-        String tableId,
+    public StagingTableResponse(
+        UUID tableId,
         TableType tableType,
         String location,
         DeltaProtocol requiredProtocol,
@@ -128,7 +307,7 @@ public final class UCDeltaModels {
       this.suggestedProperties = suggestedProperties;
     }
 
-    public String getTableId() {
+    public UUID getTableId() {
       return tableId;
     }
 
