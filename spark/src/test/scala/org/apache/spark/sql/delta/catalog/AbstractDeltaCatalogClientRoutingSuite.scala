@@ -20,6 +20,8 @@ import java.net.URI
 import java.util
 import java.util.{Collections, Optional, UUID}
 
+import scala.jdk.CollectionConverters._
+
 import io.delta.storage.commit.{Commit, GetCommitsResponse, TableIdentifier => StorageTableIdentifier}
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCDeltaClient, UCDeltaModels}
@@ -29,14 +31,14 @@ import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.catalog.CatalogTableType
-import org.apache.spark.sql.connector.catalog.{Identifier, Table, V1Table}
+import org.apache.spark.sql.connector.catalog.{Identifier, Table, TableCatalog, V1Table}
 import org.apache.spark.sql.delta.IcebergConstants
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
- * Unit tests for the Delta REST API client wiring on [[AbstractDeltaCatalog]]. These verify
+ * Unit tests for the UC Delta API client wiring on [[AbstractDeltaCatalog]]. These verify
  * only the catalog-option / initialize plumbing and the loadTable dispatch decision; they do
  * not require a UC server.
  */
@@ -52,7 +54,7 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
     val catalog = new AbstractDeltaCatalog
     catalog.initialize("test_cat", options())
     assert(catalog.deltaCatalogClient.isEmpty,
-      "Delta REST API client should not be constructed when the catalog opts out")
+      "UC Delta API client should not be constructed when the catalog opts out")
   }
 
   test("deltaRestApi.enabled=true requires uri") {
@@ -83,14 +85,14 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
     assert(catalog.deltaCatalogClient.isDefined)
   }
 
-  test("deltaRestApi.enabled=true with uri+token constructs the Delta REST API client") {
+  test("deltaRestApi.enabled=true with uri+token constructs the UC Delta API client") {
     val catalog = new AbstractDeltaCatalog
     catalog.initialize("test_cat",
       options("deltaRestApi.enabled" -> "true", "uri" -> "http://uc", "token" -> "tok"))
     val client = catalog.deltaCatalogClient.getOrElse(
-      fail("Delta REST API client should be constructed when the catalog opts in"))
+      fail("UC Delta API client should be constructed when the catalog opts in"))
     assert(client.isInstanceOf[UCDeltaCatalogClientImpl],
-      s"Delta REST API client should be UCDeltaCatalogClientImpl, was ${client.getClass}")
+      s"UC Delta API client should be UCDeltaCatalogClientImpl, was ${client.getClass}")
   }
 
   test("AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled returns None when flag is off") {
@@ -109,6 +111,281 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
 
   private val noFallback: Identifier => Table =
     _ => throw new UnsupportedOperationException("fallback not expected in this test")
+
+  /**
+   * createStagingTable contract tests. The contract: only fresh managed Delta CREATE / CTAS
+   * requests with raw caller-supplied properties may reach this client. The routing boundary
+   * (`AbstractDeltaCatalog.maybeStageManagedDeltaCreate`) is responsible for that separation;
+   * if any "already-prepared" marker (LOCATION / IS_MANAGED_LOCATION / EXTERNAL / path-based
+   * ident) is seen here, it means some call site bypassed the boundary -- the impl fails
+   * loudly as defense-in-depth.
+   */
+  private def newRecordingClient(
+      requiredProtocol: UCDeltaModels.DeltaProtocol = null,
+      suggestedProtocol: UCDeltaModels.DeltaProtocol = null,
+      requiredProperties: util.Map[String, String] = java.util.Collections.emptyMap(),
+      suggestedProperties: util.Map[String, String] = java.util.Collections.emptyMap()
+  ): (UCDeltaCatalogClientImpl, RecordingStubUCDeltaClient) = {
+    val stub = new RecordingStubUCDeltaClient(
+      new StagingTableInfo(
+        /* tableId = */ UUID.fromString("00000000-0000-0000-0000-000000000001"),
+        /* tableType = */ UCDeltaModels.TableType.MANAGED,
+        /* location = */ "s3://bucket/staging/tbl",
+        requiredProtocol,
+        suggestedProtocol,
+        requiredProperties,
+        suggestedProperties,
+        /* storageProperties = */ java.util.Map.of("fs.s3a.access.key", "stage-key")))
+    val client = new UCDeltaCatalogClientImpl(catalogName = "main", ucClient = stub)
+    (client, stub)
+  }
+
+  private def protocol(
+      minReader: Int = 0,
+      minWriter: Int = 0,
+      readerFeatures: Seq[String] = Nil,
+      writerFeatures: Seq[String] = Nil): UCDeltaModels.DeltaProtocol = {
+    val p = new UCDeltaModels.DeltaProtocol()
+    if (minReader > 0) p.minReaderVersion(minReader)
+    if (minWriter > 0) p.minWriterVersion(minWriter)
+    if (readerFeatures.nonEmpty) p.readerFeatures(readerFeatures.asJava)
+    if (writerFeatures.nonEmpty) p.writerFeatures(writerFeatures.asJava)
+    p
+  }
+
+  private def javaMap(kv: (String, String)*): util.Map[String, String] = {
+    val m = new util.HashMap[String, String]()
+    kv.foreach { case (k, v) => m.put(k, v) }
+    m
+  }
+
+  private def stageProps(kv: (String, String)*): util.Map[String, String] = {
+    val m = new util.HashMap[String, String]()
+    kv.foreach { case (k, v) => m.put(k, v) }
+    m
+  }
+
+  test("createStagingTable: managed Delta create on the new path stages + augments props") {
+    val (client, stub) = newRecordingClient()
+    val ident = Identifier.of(Array("sch"), "tbl")
+    val out = client.createStagingTable(ident, stageProps("delta.catalogManaged" -> "supported"))
+    assert(stub.stagedRequests.size === 1, "should call UC createStagingTable exactly once")
+    assert(stub.stagedRequests.head === ("main", "sch", "tbl"))
+    assert(out.get(TableCatalog.PROP_LOCATION) === "s3://bucket/staging/tbl")
+    assert(out.get(TableCatalog.PROP_IS_MANAGED_LOCATION) === "true")
+    assert(out.get("fs.s3a.access.key") === "stage-key",
+      "credential properties must be copied onto the bare key")
+    assert(out.get(TableCatalog.OPTION_PREFIX + "fs.s3a.access.key") === "stage-key",
+      "credential properties must also be copied onto the `option.`-prefixed key so they " +
+        "are picked up as writeOptions downstream")
+  }
+
+  test("createStagingTable: PROP_LOCATION already set throws") {
+    val (client, stub) = newRecordingClient()
+    val ident = Identifier.of(Array("sch"), "tbl")
+    val in = stageProps(
+      "delta.catalogManaged" -> "supported",
+      TableCatalog.PROP_LOCATION -> "s3://already/staged")
+    val ex = intercept[IllegalStateException](client.createStagingTable(ident, in))
+    assert(ex.getMessage.contains(TableCatalog.PROP_LOCATION))
+    assert(stub.stagedRequests.isEmpty, "must not stage when failing the invariant check")
+  }
+
+  test("createStagingTable: PROP_IS_MANAGED_LOCATION already set throws") {
+    val (client, stub) = newRecordingClient()
+    val ident = Identifier.of(Array("sch"), "tbl")
+    val in = stageProps(
+      "delta.catalogManaged" -> "supported",
+      TableCatalog.PROP_IS_MANAGED_LOCATION -> "true")
+    val ex = intercept[IllegalStateException](client.createStagingTable(ident, in))
+    assert(ex.getMessage.contains(TableCatalog.PROP_IS_MANAGED_LOCATION))
+    assert(stub.stagedRequests.isEmpty)
+  }
+
+  test("createStagingTable: PROP_EXTERNAL set throws") {
+    val (client, stub) = newRecordingClient()
+    val ident = Identifier.of(Array("sch"), "tbl")
+    val in = stageProps(TableCatalog.PROP_EXTERNAL -> "true")
+    val ex = intercept[IllegalStateException](client.createStagingTable(ident, in))
+    assert(ex.getMessage.contains(TableCatalog.PROP_EXTERNAL))
+    assert(stub.stagedRequests.isEmpty)
+  }
+
+  // -------------------------------------------------------------------------
+  // createStagingTable: UC-returned required/suggested protocol + properties merging
+  // -------------------------------------------------------------------------
+
+  test("createStagingTable: required properties are merged into augmented props") {
+    val (client, _) = newRecordingClient(
+      requiredProperties = javaMap("delta.enableInCommitTimestamps" -> "true"))
+    val out = client.createStagingTable(
+      Identifier.of(Array("sch"), "tbl"),
+      stageProps("delta.catalogManaged" -> "supported"))
+    assert(out.get("delta.enableInCommitTimestamps") === "true")
+    assert(out.get("delta.catalogManaged") === "supported", "user props must survive merging")
+  }
+
+  test("createStagingTable: required property matching user value is fine (no throw)") {
+    val (client, _) = newRecordingClient(
+      requiredProperties = javaMap("delta.enableInCommitTimestamps" -> "true"))
+    val out = client.createStagingTable(
+      Identifier.of(Array("sch"), "tbl"),
+      stageProps(
+        "delta.catalogManaged" -> "supported",
+        "delta.enableInCommitTimestamps" -> "true"))
+    assert(out.get("delta.enableInCommitTimestamps") === "true")
+  }
+
+  test("createStagingTable: required property conflicting with user value throws") {
+    val (client, _) = newRecordingClient(
+      requiredProperties = javaMap("delta.enableInCommitTimestamps" -> "true"))
+    val ident = Identifier.of(Array("sch"), "tbl")
+    val e = intercept[IllegalArgumentException] {
+      client.createStagingTable(ident, stageProps(
+        "delta.catalogManaged" -> "supported",
+        "delta.enableInCommitTimestamps" -> "false"))
+    }
+    assert(e.getMessage.contains("'delta.enableInCommitTimestamps'='true'"),
+      "error must name the required key and value")
+    assert(e.getMessage.contains("'delta.enableInCommitTimestamps'='false'"),
+      "error must name the caller-supplied conflicting value")
+  }
+
+  test("createStagingTable: suggested property is applied when caller hasn't set it") {
+    val (client, _) = newRecordingClient(
+      suggestedProperties = javaMap("delta.someSuggested" -> "ucs-val"))
+    val out = client.createStagingTable(
+      Identifier.of(Array("sch"), "tbl"),
+      stageProps("delta.catalogManaged" -> "supported"))
+    assert(out.get("delta.someSuggested") === "ucs-val")
+  }
+
+  test("createStagingTable: suggested property defers to caller when both set") {
+    val (client, _) = newRecordingClient(
+      suggestedProperties = javaMap("delta.someSuggested" -> "ucs-val"))
+    val out = client.createStagingTable(
+      Identifier.of(Array("sch"), "tbl"),
+      stageProps(
+        "delta.catalogManaged" -> "supported",
+        "delta.someSuggested" -> "caller-val"))
+    assert(out.get("delta.someSuggested") === "caller-val",
+      "user TBLPROPERTIES must win over a suggested value")
+  }
+
+  test("createStagingTable: required protocol features are encoded as delta.feature.*") {
+    val (client, _) = newRecordingClient(
+      requiredProtocol = protocol(
+        minReader = 3, minWriter = 7,
+        readerFeatures = Seq("deletionVectors"),
+        writerFeatures = Seq("catalogManaged", "rowTracking")))
+    val out = client.createStagingTable(
+      Identifier.of(Array("sch"), "tbl"),
+      stageProps("delta.catalogManaged" -> "supported"))
+    assert(out.get("delta.feature.deletionVectors") === "supported")
+    assert(out.get("delta.feature.catalogManaged") === "supported")
+    assert(out.get("delta.feature.rowTracking") === "supported")
+    // Min reader/writer versions are intentionally not emitted -- Delta derives them from
+    // the feature list. Pinning them here would tell Delta we're explicitly in table-
+    // features mode and suppress legacy writer features (appendOnly, invariants) in the
+    // resulting protocol.
+    assert(!out.containsKey("delta.minReaderVersion"))
+    assert(!out.containsKey("delta.minWriterVersion"))
+  }
+
+  test("createStagingTable: suggested protocol features known to Delta are applied") {
+    val (client, _) = newRecordingClient(
+      suggestedProtocol = protocol(
+        readerFeatures = Seq("columnMapping"),
+        writerFeatures = Seq("domainMetadata")))
+    val out = client.createStagingTable(
+      Identifier.of(Array("sch"), "tbl"),
+      stageProps("delta.catalogManaged" -> "supported"))
+    assert(out.get("delta.feature.columnMapping") === "supported")
+    assert(out.get("delta.feature.domainMetadata") === "supported")
+  }
+
+  test("createStagingTable: suggested protocol feature unknown to Delta is silently skipped") {
+    // Capability negotiation: UC may suggest a feature this Delta version hasn't shipped.
+    // We just don't apply it -- the suggestion is opt-in, so skipping is graceful.
+    val (client, _) = newRecordingClient(
+      suggestedProtocol = protocol(writerFeatures = Seq("someFutureUnknownFeature")))
+    val out = client.createStagingTable(
+      Identifier.of(Array("sch"), "tbl"),
+      stageProps("delta.catalogManaged" -> "supported"))
+    assert(!out.containsKey("delta.feature.someFutureUnknownFeature"))
+  }
+
+  test("createStagingTable: required protocol feature unknown to Delta throws") {
+    val (client, _) = newRecordingClient(
+      requiredProtocol = protocol(writerFeatures = Seq("someFutureUnknownFeature")))
+    val e = intercept[IllegalArgumentException] {
+      client.createStagingTable(
+        Identifier.of(Array("sch"), "tbl"),
+        stageProps("delta.catalogManaged" -> "supported"))
+    }
+    assert(e.getMessage.contains("someFutureUnknownFeature"))
+    assert(e.getMessage.contains("Delta version does not support"),
+      "error must explain that the local Delta lacks the feature")
+  }
+
+  test("createStagingTable: suggested protocol feature defers to caller's existing value") {
+    val (client, _) = newRecordingClient(
+      suggestedProtocol = protocol(writerFeatures = Seq("rowTracking")))
+    val out = client.createStagingTable(
+      Identifier.of(Array("sch"), "tbl"),
+      stageProps(
+        "delta.catalogManaged" -> "supported",
+        "delta.feature.rowTracking" -> "disabled"))
+    assert(out.get("delta.feature.rowTracking") === "disabled",
+      "a caller-set delta.feature.* must win over a suggestion")
+  }
+
+  test("createStagingTable: required protocol feature conflicting with caller value throws") {
+    val (client, _) = newRecordingClient(
+      requiredProtocol = protocol(writerFeatures = Seq("catalogManaged")))
+    val e = intercept[IllegalArgumentException] {
+      client.createStagingTable(
+        Identifier.of(Array("sch"), "tbl"),
+        stageProps(
+          "delta.catalogManaged" -> "supported",
+          "delta.feature.catalogManaged" -> "disabled"))
+    }
+    assert(e.getMessage.contains("'delta.feature.catalogManaged'='supported'"))
+    assert(e.getMessage.contains("'delta.feature.catalogManaged'='disabled'"))
+  }
+
+  test("createStagingTable: null-valued required/suggested entries are skipped") {
+    // UC's contract: null on the wire means "engine substitutes at commit time" (e.g. the
+    // row-tracking materialized column names). They must not leak into stage-time TBLPROPERTIES
+    // -- Delta would reject them as unknown configs. The required-property branch is defensive
+    // against future engine-generated required keys; UC's current contract has none.
+    val req = new util.HashMap[String, String]()
+    req.put("delta.checkpointPolicy", "v2")                                   // non-null -> applied
+    req.put("delta.engineGeneratedPlaceholder", null)                         // null -> skipped
+    val sug = new util.HashMap[String, String]()
+    sug.put("delta.enableRowTracking", "true")                                // non-null -> applied
+    sug.put("delta.rowTracking.materializedRowIdColumnName", null)            // null -> skipped
+    val (client, _) = newRecordingClient(requiredProperties = req, suggestedProperties = sug)
+    val out = client.createStagingTable(
+      Identifier.of(Array("sch"), "tbl"),
+      stageProps("delta.catalogManaged" -> "supported"))
+    assert(out.get("delta.checkpointPolicy") === "v2")
+    assert(out.get("delta.enableRowTracking") === "true")
+    assert(!out.containsKey("delta.engineGeneratedPlaceholder"),
+      "null-valued required entry must be skipped (engine fills it at commit time)")
+    assert(!out.containsKey("delta.rowTracking.materializedRowIdColumnName"),
+      "null-valued suggested entry must be skipped")
+  }
+
+  test("createStagingTable: path-based identifier throws") {
+    val (client, stub) = newRecordingClient()
+    // `delta`.`/tmp/foo` style: single-component namespace + absolute filesystem path as name
+    val ident = Identifier.of(Array("delta"), "/tmp/foo")
+    val ex = intercept[IllegalStateException](
+      client.createStagingTable(ident, stageProps("delta.catalogManaged" -> "supported")))
+    assert(ex.getMessage.contains("path-based"))
+    assert(stub.stagedRequests.isEmpty)
+  }
 
   test("loadTable converts TableInfo to V1Table with catalog-supplied fields") {
     val tableId = UUID.randomUUID()
@@ -286,31 +563,26 @@ private class TestMetadata(
 }
 
 /**
- * Returns the result of {@code loadTableResult} (a by-name parameter) from
- * {@code loadTable}; throws on every other method. Pass a [[TableInfo]] to get a successful
- * load, or {@code throw new ...} to simulate UC-side failures.
- *
- * <p>Because {@code loadTableResult} is by-name, the body re-evaluates on every
- * {@code loadTable} invocation: a {@code throw} expression re-throws each time; a
- * {@link TableInfo} reference is rebound (cheap). For tests that need to vary the result
- * across calls, replace this with a {@code Supplier}-shaped constructor.
+ * Test base that throws [[UnsupportedOperationException]] from every [[UCDeltaClient]] method.
+ * Subclasses override only the methods exercised by their suite, so tests fail loud (instead
+ * of silently doing nothing) if the code under test calls a UC operation we didn't intend to
+ * cover. `close()` no-ops because tests close clients indiscriminately in teardown.
  */
-private class StubUCDeltaClient(loadTableResult: => TableInfo) extends UCDeltaClient {
+private abstract class ThrowingUCDeltaClient extends UCDeltaClient {
   override def getMetastoreId(): String = throw new UnsupportedOperationException
-  override def loadTable(tableIdentifier: StorageTableIdentifier): TableInfo = loadTableResult
+  override def loadTable(tableIdentifier: StorageTableIdentifier): TableInfo =
+    throw new UnsupportedOperationException
   override def createStagingTable(
-      catalog: String, schema: String, table: String): StagingTableInfo =
+      tableIdentifier: StorageTableIdentifier): StagingTableInfo =
     throw new UnsupportedOperationException
   override def createTable(
-      catalog: String,
-      schema: String,
-      name: String,
-      location: String,
+      tableId: String,
+      tableUri: URI,
+      tableIdentifier: StorageTableIdentifier,
       tableType: UcTableType,
-      comment: String,
-      partitionColumns: util.List[String],
-      protocol: DeltaProtocol,
-      properties: util.Map[String, String]): AbstractMetadata =
+      metadata: AbstractMetadata,
+      protocol: AbstractProtocol,
+      lastCommitTimestampMs: Long): TableInfo =
     throw new UnsupportedOperationException
   override def commit(
       tableId: String,
@@ -340,4 +612,35 @@ private class StubUCDeltaClient(loadTableResult: => TableInfo) extends UCDeltaCl
       properties: util.Map[String, String]): Unit =
     throw new UnsupportedOperationException
   override def close(): Unit = ()
+}
+
+/**
+ * Returns the result of {@code loadTableResult} (a by-name parameter) from
+ * {@code loadTable}; inherits throwing implementations for every other method. Pass a
+ * [[TableInfo]] to get a successful load, or {@code throw new ...} to simulate UC-side
+ * failures.
+ *
+ * <p>Because {@code loadTableResult} is by-name, the body re-evaluates on every
+ * {@code loadTable} invocation: a {@code throw} expression re-throws each time; a
+ * {@link TableInfo} reference is rebound (cheap). For tests that need to vary the result
+ * across calls, replace this with a {@code Supplier}-shaped constructor.
+ */
+private class StubUCDeltaClient(loadTableResult: => TableInfo) extends ThrowingUCDeltaClient {
+  override def loadTable(tableIdentifier: StorageTableIdentifier): TableInfo = loadTableResult
+}
+
+/**
+ * Returns a fixed [[StagingTableInfo]] from {@code createStagingTable} and records every
+ * call. Used by the {@code createStagingTable} contract tests to assert when staging is /
+ * isn't dispatched to UC.
+ */
+private class RecordingStubUCDeltaClient(info: StagingTableInfo) extends ThrowingUCDeltaClient {
+  val stagedRequests: scala.collection.mutable.ArrayBuffer[(String, String, String)] =
+    scala.collection.mutable.ArrayBuffer.empty
+  override def createStagingTable(
+      tableIdentifier: StorageTableIdentifier): StagingTableInfo = {
+    val ns = tableIdentifier.getNamespace
+    stagedRequests += ((ns(0), ns(1), tableIdentifier.getName))
+    info
+  }
 }

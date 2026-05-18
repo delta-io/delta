@@ -187,8 +187,8 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
   }
 
   /**
-   * Whether the class-level @AfterAll should assert that the Delta REST API actually served at
-   * least one load. Override to false in classes that intentionally exercise only the fallback path
+   * Whether the class-level @AfterAll should assert that the UC Delta API actually served at least
+   * one load. Override to false in classes that intentionally exercise only the fallback path
    * (which does NOT bump the successfulDeltaRestApiLoads counter), so the class-level check doesn't
    * false-positive when test sharding distributes methods across CI shards.
    */
@@ -216,14 +216,14 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     long loadInvocationsAfter = UCDeltaCatalogClientImpl.loadTableInvocationsForTesting();
     if (loadInvocationsAfter <= loadTableInvocationsAtClassStart) {
       // Every test in the suite was aborted (e.g. via Assumption.assumeTrue) before any
-      // loadTable call ran, so there is nothing to assert about the Delta REST API path.
+      // loadTable call ran, so there is nothing to assert about the UC Delta API path.
       return;
     }
     long after = UCDeltaCatalogClientImpl.successfulDeltaRestApiLoadsForTesting();
     if (after <= deltaRestApiLoadsAtClassStart) {
       throw new AssertionError(
           "Suite finished but no UCDeltaCatalogClientImpl.loadTable call actually returned a "
-              + "Delta table via the Delta REST API. deltaRestApi.enabled is on but every "
+              + "Delta table via the UC Delta API. deltaRestApi.enabled is on but every "
               + "load either fell back to the legacy delegate or threw. baseline="
               + deltaRestApiLoadsAtClassStart
               + ", after="
@@ -232,7 +232,7 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     LOG.info(
         "[delta-api] "
             + getClass().getSimpleName()
-            + " successful Delta REST API loads: "
+            + " successful UC Delta API loads: "
             + (after - deltaRestApiLoadsAtClassStart));
   }
 
