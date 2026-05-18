@@ -17,65 +17,56 @@
 package io.delta.storage.commit.uccommitcoordinator;
 
 import io.delta.storage.commit.actions.AbstractMetadata;
-import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.StagingTableInfo;
+import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.CreateTableRequest;
+import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.StagingTableResponse;
+
 import java.io.IOException;
-import java.util.List;
-import java.util.Map;
 
 /**
- * Extends {@link UCClient} with Delta table lifecycle operations backed by the UC Delta REST
- * Catalog API (load, stage, and create tables).
+ * Interface for Unity Catalog Delta APIs.
+ *
+ * <p>This keeps UC Delta Rest Catalog API operations separate from the legacy UC client.
+ * Implementations that do not support these APIs should use the default methods, which fail loudly.
  */
 public interface UCDeltaClient extends UCClient {
 
   /**
-   * Loads a table's metadata from Unity Catalog.
-   *
-   * @param catalog the catalog name
-   * @param schema  the schema name
-   * @param table   the table name
-   * @return the table's {@link AbstractMetadata}
-   * @throws IOException on network or API errors
+   * Returns whether this client can use UC Delta Rest Catalog API.
    */
-  AbstractMetadata loadTable(String catalog, String schema, String table) throws IOException;
+  default boolean supportsUCDeltaRestCatalogApi() {
+    return false;
+  }
 
   /**
-   * Reserves a staging slot for a new Delta table. The returned response contains the table ID,
-   * storage location, and protocol/property requirements that the caller must honor when
-   * finalizing the table with {@link #createTable}.
-   *
-   * @param catalog the catalog name
-   * @param schema  the schema name
-   * @param table   the table name
-   * @return a {@link StagingTableInfo} with the reserved table details
-   * @throws IOException on network or API errors
+   * Loads a Delta table from Unity Catalog through the UC Delta Rest Catalog API.
    */
-  StagingTableInfo createStagingTable(String catalog, String schema, String table)
-      throws IOException;
-
-  /**
-   * Finalizes a previously staged Delta table, making it visible in the catalog.
-   *
-   * @param catalog          the catalog name
-   * @param schema           the schema name
-   * @param name             the table name
-   * @param location         the storage location
-   * @param tableType        the table type (MANAGED or EXTERNAL), or {@code null}
-   * @param comment          the table comment, or {@code null}
-   * @param partitionColumns the partition column names, or {@code null}
-   * @param protocol         the required Delta protocol, or {@code null}
-   * @param properties       the table properties, or {@code null}
-   * @return the newly created table's {@link AbstractMetadata}
-   * @throws IOException on network or API errors
-   */
-  AbstractMetadata createTable(
+  default AbstractMetadata loadTable(
       String catalog,
       String schema,
-      String name,
-      String location,
-      UCDeltaModels.TableType tableType,
-      String comment,
-      List<String> partitionColumns,
-      UCDeltaModels.DeltaProtocol protocol,
-      Map<String, String> properties) throws IOException;
+      String table) throws IOException {
+    throw new UnsupportedOperationException(
+        "loadTable requires UC Delta Rest Catalog API support.");
+  }
+
+  /**
+   * Creates a Delta staging table in Unity Catalog through the UC Delta Rest Catalog API.
+   */
+  default StagingTableResponse createStagingTable(
+      String catalog,
+      String schema,
+      String table) throws IOException {
+    throw new UnsupportedOperationException(
+        "createStagingTable requires UC Delta Rest Catalog API support.");
+  }
+
+  /**
+   * Finalizes a staged Delta table in Unity Catalog through the UC Delta Rest Catalog API.
+   */
+  default AbstractMetadata createTable(
+      String catalog,
+      String schema,
+      CreateTableRequest request) throws IOException {
+    throw new UnsupportedOperationException(
+        "createTable requires UC Delta Rest Catalog API support.");
+  }
 }
