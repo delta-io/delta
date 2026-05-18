@@ -374,6 +374,13 @@ public class SparkMicroBatchStream
   }
 
   private void initLastOffsetForTriggerAvailableNow(DeltaSourceOffset startOffsetOpt) {
+    // TODO: Consider redesigning the Trigger.AvailableNow optimization into
+    //  latestOffsetInternal. Currently blocked because latestOffsetInternal has a second
+    //  call site (latestOffset per-batch) where the same conditions
+    //  (useDistributedInitialSnapshot && isInitialSnapshot) are true but rate limiting
+    //  must NOT be bypassed. Unifying requires either a new parameter to distinguish
+    //  the TAN-init context, or reworking AdmissionLimits to support a SQL-pushable
+    //  "all available" mode. See PR #6703 review discussion.
     if (useDistributedInitialSnapshot && startOffsetOpt.isInitialSnapshot()) {
       lastOffsetForTriggerAvailableNow = getLastOffsetForAvailableNowViaDataFrame(startOffsetOpt);
     } else {
@@ -961,6 +968,11 @@ public class SparkMicroBatchStream
     if (isInitialSnapshot) {
       // Lazily combine snapshot files with delta logs starting from fromVersion + 1.
       // filterDeltaLogs handles the case when no commits exist after fromVersion.
+      // TODO: Unify InitialSnapshotCache and DataFrameSnapshotCache behind a common
+      //  SnapshotFileSource interface (e.g. DriverBasedSnapshotSource vs
+      //  DataFrameSnapshotSource) to eliminate this dispatch and extend the distributed
+      //  path to CDC (getFileChangesWithRateLimitForCDC currently always uses the
+      //  driver-local path). See PR #6703 review discussion.
       CloseableIterator<IndexedFile> snapshotFiles;
       if (useDistributedInitialSnapshot) {
         snapshotFiles = getSnapshotFilesViaDataFrame(fromVersion, fromIndex);
