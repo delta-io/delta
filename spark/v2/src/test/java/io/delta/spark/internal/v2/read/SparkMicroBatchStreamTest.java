@@ -20,6 +20,8 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.delta.kernel.CommitActions;
 import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
@@ -4914,5 +4916,339 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
         () ->
             SparkMicroBatchStream.validateSchemaCompatibilityOnStartup(
                 dataSchema, partitionSchema, snapshotSchema));
+  }
+
+  @Test
+  public void testDistributedInitialSnapshot_handlesLargeSnapshot(@TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_df_snapshot_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+
+    insertVersions(
+        testTableName,
+        /* numVersions= */ 10,
+        /* rowsPerVersion= */ 5,
+        /* includeEmptyVersion= */ false);
+
+    String maxFilesKey = DeltaSQLConf.DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES().key();
+    String dfFlagKey = DeltaSQLConf.DELTA_STREAMING_USE_DISTRIBUTED_INITIAL_SNAPSHOT().key();
+    spark.conf().set(maxFilesKey, "5");
+    spark.conf().set(dfFlagKey, "true");
+
+    try {
+      Configuration hadoopConf = spark.sessionState().newHadoopConf();
+      PathBasedSnapshotManager snapshotManager =
+          new PathBasedSnapshotManager(testTablePath, hadoopConf);
+      SparkMicroBatchStream stream =
+          createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+
+      long version = snapshotManager.loadLatestSnapshot().getVersion();
+      long fromIndex = DeltaSourceOffset.BASE_INDEX();
+      boolean isInitialSnapshot = true;
+
+      List<IndexedFile> files = new ArrayList<>();
+      try (CloseableIterator<IndexedFile> iter =
+          stream.getFileChanges(version, fromIndex, isInitialSnapshot, Optional.empty())) {
+        while (iter.hasNext()) {
+          files.add(iter.next());
+        }
+      }
+
+      assertTrue(files.size() >= 2, "Should have at least one data file and END sentinel");
+      assertEquals(DeltaSourceOffset.END_INDEX(), files.get(files.size() - 1).getIndex());
+
+      // Verify data files are sorted by (modificationTime, path)
+      for (int i = 2; i < files.size() - 1; i++) {
+        IndexedFile prev = files.get(i - 1);
+        IndexedFile curr = files.get(i);
+        if (prev.getAddFile() != null && curr.getAddFile() != null) {
+          long prevTime = prev.getAddFile().getModificationTime();
+          long currTime = curr.getAddFile().getModificationTime();
+          assertTrue(
+              prevTime < currTime
+                  || (prevTime == currTime
+                      && prev.getAddFile().getPath().compareTo(curr.getAddFile().getPath()) <= 0),
+              "Files should be sorted by (modificationTime, path)");
+        }
+      }
+    } finally {
+      spark.conf().unset(maxFilesKey);
+      spark.conf().unset(dfFlagKey);
+    }
+  }
+
+  /** Verifies indices are contiguous 0-based (not partition-relative). */
+  @Test
+  public void testDistributedInitialSnapshot_hasContiguousIndices(@TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_df_contiguous_idx_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+
+    // Multiple versions force multiple partitions, exposing non-contiguous ID bugs.
+    insertVersions(
+        testTableName,
+        /* numVersions= */ 10,
+        /* rowsPerVersion= */ 5,
+        /* includeEmptyVersion= */ false);
+
+    String maxFilesKey = DeltaSQLConf.DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES().key();
+    String dfFlagKey = DeltaSQLConf.DELTA_STREAMING_USE_DISTRIBUTED_INITIAL_SNAPSHOT().key();
+    spark.conf().set(maxFilesKey, "10000");
+    spark.conf().set(dfFlagKey, "true");
+
+    try {
+      Configuration hadoopConf = spark.sessionState().newHadoopConf();
+      PathBasedSnapshotManager snapshotManager =
+          new PathBasedSnapshotManager(testTablePath, hadoopConf);
+      SparkMicroBatchStream stream =
+          createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+
+      long version = snapshotManager.loadLatestSnapshot().getVersion();
+      long fromIndex = DeltaSourceOffset.BASE_INDEX();
+      boolean isInitialSnapshot = true;
+
+      List<IndexedFile> files = new ArrayList<>();
+      try (CloseableIterator<IndexedFile> iter =
+          stream.getFileChanges(version, fromIndex, isInitialSnapshot, Optional.empty())) {
+        while (iter.hasNext()) {
+          files.add(iter.next());
+        }
+      }
+
+      assertThat(files).hasSizeGreaterThanOrEqualTo(2);
+      assertThat(files.get(files.size() - 1).getIndex()).isEqualTo(DeltaSourceOffset.END_INDEX());
+
+      List<Long> dataFileIndices =
+          files.stream()
+              .filter(f -> f.getAddFile() != null)
+              .map(IndexedFile::getIndex)
+              .collect(Collectors.toList());
+
+      assertThat(dataFileIndices).isNotEmpty();
+
+      // Verify contiguous 0-based: 0, 1, 2, ..., N-1
+      for (int i = 0; i < dataFileIndices.size(); i++) {
+        assertThat(dataFileIndices.get(i))
+            .as("Index at position %d should be %d (contiguous 0-based)", i, i)
+            .isEqualTo((long) i);
+      }
+    } finally {
+      spark.conf().unset(maxFilesKey);
+      spark.conf().unset(dfFlagKey);
+    }
+  }
+
+  /**
+   * Verifies that DataFrameBasedIndexedFileSnapshotCache.close() nulls the DataFrame and is
+   * idempotent.
+   */
+  @Test
+  public void testDataFrameBasedIndexedFileSnapshotCache_closeAndIdempotent() {
+    Dataset<Row> df =
+        spark.range(10).toDF("value").persist(org.apache.spark.storage.StorageLevel.MEMORY_ONLY());
+    df.count();
+
+    DataFrameBasedIndexedFileSnapshotCache source =
+        new DataFrameBasedIndexedFileSnapshotCache(42L, 1000L, df);
+    assertThat(source.getVersion()).isEqualTo(42L);
+    assertThat(source.getCommitTimestamp()).isEqualTo(1000L);
+    assertThat(source.getSortedAddFiles()).isNotNull();
+
+    // close() unpersists but does not null the DataFrame reference
+    source.close();
+    assertThat(source.getSortedAddFiles()).isNotNull();
+
+    // Second close: idempotent (unpersist on already-unpersisted is a no-op)
+    assertDoesNotThrow(source::close);
+  }
+
+  /**
+   * Verifies that DriverBasedIndexedFileSnapshotCache.getFiles(fromIndex) returns only unprocessed
+   * files + END sentinel when called with a fromIndex past some files.
+   */
+  @Test
+  public void testDriverBasedIndexedFileSnapshotCache_getFilesWithFromIndex() throws Exception {
+    long version = 5L;
+    long timestamp = 12345L;
+
+    // Build a mock IndexedFile list: [BEGIN, file(0), file(1), file(2), END]
+    List<IndexedFile> files = new ArrayList<>();
+    files.add(IndexedFile.sentinel(version, DeltaSourceOffset.BASE_INDEX()));
+    for (int i = 0; i < 3; i++) {
+      files.add(IndexedFile.addFile(version, i, createDummyAddFile("path" + i)));
+    }
+    files.add(IndexedFile.sentinel(version, DeltaSourceOffset.END_INDEX()));
+
+    DriverBasedIndexedFileSnapshotCache source =
+        new DriverBasedIndexedFileSnapshotCache(
+            version, Collections.unmodifiableList(files), timestamp);
+
+    assertThat(source.getVersion()).isEqualTo(version);
+    assertThat(source.getCommitTimestamp()).isEqualTo(timestamp);
+
+    // getFiles(BASE_INDEX) should return the full list
+    List<IndexedFile> allFiles = collectAll(source.getFiles(DeltaSourceOffset.BASE_INDEX()));
+    assertThat(allFiles).hasSize(5);
+    assertThat(allFiles.get(0).getIndex()).isEqualTo(DeltaSourceOffset.BASE_INDEX());
+    assertThat(allFiles.get(4).getIndex()).isEqualTo(DeltaSourceOffset.END_INDEX());
+
+    // getFiles(0) should skip BEGIN and file(0), returning [file(1), file(2), END]
+    List<IndexedFile> afterZero = collectAll(source.getFiles(0));
+    assertThat(afterZero).hasSize(3);
+    assertThat(afterZero.get(0).getIndex()).isEqualTo(1);
+    assertThat(afterZero.get(1).getIndex()).isEqualTo(2);
+    assertThat(afterZero.get(2).getIndex()).isEqualTo(DeltaSourceOffset.END_INDEX());
+
+    // getFiles(1) should return [file(2), END]
+    List<IndexedFile> afterOne = collectAll(source.getFiles(1));
+    assertThat(afterOne).hasSize(2);
+    assertThat(afterOne.get(0).getIndex()).isEqualTo(2);
+    assertThat(afterOne.get(1).getIndex()).isEqualTo(DeltaSourceOffset.END_INDEX());
+
+    // getFiles(2) should return [END] only
+    List<IndexedFile> afterTwo = collectAll(source.getFiles(2));
+    assertThat(afterTwo).hasSize(1);
+    assertThat(afterTwo.get(0).getIndex()).isEqualTo(DeltaSourceOffset.END_INDEX());
+
+    // getFiles(999) should return empty (clamped past end)
+    List<IndexedFile> pastEnd = collectAll(source.getFiles(999));
+    assertThat(pastEnd).isEmpty();
+
+    // close() is a no-op, should not throw
+    assertDoesNotThrow(source::close);
+  }
+
+  private static List<IndexedFile> collectAll(CloseableIterator<IndexedFile> iter)
+      throws Exception {
+    List<IndexedFile> result = new ArrayList<>();
+    try {
+      while (iter.hasNext()) {
+        result.add(iter.next());
+      }
+    } finally {
+      iter.close();
+    }
+    return result;
+  }
+
+  /**
+   * Verifies that stop() nulls the AtomicReference and unpersists, but the DataFrame reference on
+   * the cache object remains non-null (close() never nullifies the field).
+   */
+  @Test
+  public void testDistributedInitialSnapshot_stopLeavesDataFrameReferenceIntact(
+      @TempDir File tempDir) throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_df_stop_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+    insertVersions(
+        testTableName,
+        /* numVersions= */ 3,
+        /* rowsPerVersion= */ 2,
+        /* includeEmptyVersion= */ false);
+
+    String dfFlagKey = DeltaSQLConf.DELTA_STREAMING_USE_DISTRIBUTED_INITIAL_SNAPSHOT().key();
+    spark.conf().set(dfFlagKey, "true");
+
+    try {
+      Configuration hadoopConf = spark.sessionState().newHadoopConf();
+      PathBasedSnapshotManager snapshotManager =
+          new PathBasedSnapshotManager(testTablePath, hadoopConf);
+      SparkMicroBatchStream stream =
+          createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+
+      long version = snapshotManager.loadLatestSnapshot().getVersion();
+
+      // Access the internal AtomicReference via reflection
+      java.lang.reflect.Field cacheField =
+          SparkMicroBatchStream.class.getDeclaredField("cachedDataFrameSnapshot");
+      cacheField.setAccessible(true);
+      @SuppressWarnings("unchecked")
+      java.util.concurrent.atomic.AtomicReference<DataFrameSnapshotCache> cacheRef =
+          (java.util.concurrent.atomic.AtomicReference<DataFrameSnapshotCache>)
+              cacheField.get(stream);
+
+      // Build the cache via a normal getFileChanges call
+      try (CloseableIterator<IndexedFile> iter =
+          stream.getFileChanges(version, DeltaSourceOffset.BASE_INDEX(), true, Optional.empty())) {
+        assertTrue(iter.hasNext());
+      }
+
+      // Grab a direct reference to the cache before stop()
+      DataFrameSnapshotCache cached = cacheRef.get();
+      assertNotNull(cached, "Cache should have been built by getFileChanges");
+
+      // stop() nulls the AtomicReference and unpersists, but the reference stays non-null
+      stream.stop();
+      assertNull(cacheRef.get(), "AtomicReference should be null after stop()");
+      assertNotNull(
+          cached.getSortedAddFiles(),
+          "DataFrame reference should remain non-null after close() (only unpersisted)");
+    } finally {
+      spark.conf().unset(dfFlagKey);
+    }
+  }
+
+  /** DataFrame path returns only END sentinel for an empty table. */
+  @Test
+  public void testDistributedInitialSnapshot_emptyTable(@TempDir File tempDir) throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_df_empty_table_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+
+    // No insertVersions — table has CREATE TABLE metadata but zero data files
+
+    String maxFilesKey = DeltaSQLConf.DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES().key();
+    String dfFlagKey = DeltaSQLConf.DELTA_STREAMING_USE_DISTRIBUTED_INITIAL_SNAPSHOT().key();
+    spark.conf().set(maxFilesKey, "10000");
+    spark.conf().set(dfFlagKey, "true");
+
+    try {
+      Configuration hadoopConf = spark.sessionState().newHadoopConf();
+      PathBasedSnapshotManager snapshotManager =
+          new PathBasedSnapshotManager(testTablePath, hadoopConf);
+      SparkMicroBatchStream stream =
+          createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+
+      long version = snapshotManager.loadLatestSnapshot().getVersion();
+      long fromIndex = DeltaSourceOffset.BASE_INDEX();
+      boolean isInitialSnapshot = true;
+
+      List<IndexedFile> files = new ArrayList<>();
+      try (CloseableIterator<IndexedFile> iter =
+          stream.getFileChanges(version, fromIndex, isInitialSnapshot, Optional.empty())) {
+        while (iter.hasNext()) {
+          files.add(iter.next());
+        }
+      }
+
+      // Only END sentinel — no data files, BEGIN filtered by boundary check.
+      assertThat(files).hasSize(1);
+      assertThat(files.get(0).getIndex()).isEqualTo(DeltaSourceOffset.END_INDEX());
+      assertThat(files.get(0).getAddFile()).isNull();
+
+      assertThat(files.stream().noneMatch(IndexedFile::hasFileAction)).isTrue();
+    } finally {
+      spark.conf().unset(maxFilesKey);
+      spark.conf().unset(dfFlagKey);
+    }
+  }
+
+  private static AddFile createDummyAddFile(String path) {
+    return new AddFile(
+        AddFile.createAddFileRow(
+            /* physicalSchema= */ null,
+            path,
+            VectorUtils.stringStringMapValue(Collections.emptyMap()),
+            /* size= */ 100L,
+            /* modificationTime= */ System.currentTimeMillis(),
+            /* dataChange= */ true,
+            /* deletionVector= */ Optional.empty(),
+            /* tags= */ Optional.empty(),
+            /* baseRowId= */ Optional.empty(),
+            /* defaultRowCommitVersion= */ Optional.empty(),
+            /* stats= */ Optional.empty()));
   }
 }

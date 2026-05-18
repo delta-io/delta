@@ -48,6 +48,7 @@ import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.utils.PartitionUtils;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
+import io.delta.spark.internal.v2.utils.SerializableReadOnlySnapshot;
 import io.delta.spark.internal.v2.utils.StreamingHelper;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -189,20 +190,7 @@ public class SparkMicroBatchStream
   // getStartingVersion() must return the same value across multiple calls.
   private volatile Optional<Long> cachedStartingVersion = null;
 
-  // Cache for the initial snapshot files to avoid re-sorting on repeated access.
-  private static class InitialSnapshotCache {
-    final Long version;
-    final List<IndexedFile> files;
-    final long commitTimestamp;
-
-    InitialSnapshotCache(Long version, List<IndexedFile> files, long commitTimestamp) {
-      this.version = version;
-      this.files = files;
-      this.commitTimestamp = commitTimestamp;
-    }
-  }
-
-  private final AtomicReference<InitialSnapshotCache> cachedInitialSnapshot =
+  private final AtomicReference<IndexedFileSnapshotCache> cachedSnapshotCache =
       new AtomicReference<>(null);
 
   private final int maxInitialSnapshotFiles;
@@ -639,7 +627,18 @@ public class SparkMicroBatchStream
 
   @Override
   public void stop() {
-    cachedInitialSnapshot.set(null);
+    invalidateSnapshotCache();
+  }
+
+  private void invalidateSnapshotCache() {
+    IndexedFileSnapshotCache prev = cachedSnapshotCache.getAndSet(null);
+    if (prev != null) {
+      try {
+        prev.close();
+      } catch (Exception e) {
+        logger.warn("Failed to close cached snapshot cache", e);
+      }
+    }
   }
 
   /**
@@ -860,12 +859,13 @@ public class SparkMicroBatchStream
     if (isInitialSnapshot) {
       // Lazily combine snapshot files with delta logs starting from fromVersion + 1.
       // filterDeltaLogs handles the case when no commits exist after fromVersion.
-      InitialSnapshotCache snapshot = getSnapshotFiles(fromVersion);
-      CloseableIterator<IndexedFile> snapshotFiles =
-          Utils.toCloseableIterator(snapshot.files.iterator());
+      IndexedFileSnapshotCache snapshot = getOrCreateSnapshotCache(fromVersion);
+      CloseableIterator<IndexedFile> snapshotFiles = snapshot.getFiles(fromIndex);
       CloseableIterator<IndexedFile> deltaChanges = filterDeltaLogs(fromVersion + 1, endOffset);
       result = snapshotFiles.combine(deltaChanges);
     } else {
+      // Release cached snapshot — initial snapshot processing complete.
+      invalidateSnapshotCache();
       result = filterDeltaLogs(fromVersion, endOffset);
     }
 
@@ -892,10 +892,9 @@ public class SparkMicroBatchStream
     validateCDFEnabledOnTable(fromVersion);
     CloseableIterator<IndexedFile> result;
     if (isInitialSnapshot) {
-      InitialSnapshotCache snapshot = getSnapshotFiles(fromVersion);
-      long commitTimestamp = snapshot.commitTimestamp;
-      CloseableIterator<IndexedFile> snapshotFiles =
-          Utils.toCloseableIterator(snapshot.files.iterator());
+      IndexedFileSnapshotCache snapshot = getOrCreateSnapshotCache(fromVersion);
+      long commitTimestamp = snapshot.getCommitTimestamp();
+      CloseableIterator<IndexedFile> snapshotFiles = snapshot.getFiles(fromIndex);
       snapshotFiles =
           snapshotFiles.map(
               file ->
@@ -1693,40 +1692,74 @@ public class SparkMicroBatchStream
   }
 
   /**
-   * Get all files from a snapshot at the specified version, sorted by modificationTime and path,
-   * with indices assigned sequentially, and wrapped with BEGIN/END sentinels.
+   * Returns the cached {@link IndexedFileSnapshotCache} for the given version, creating one if
+   * needed. Builds a {@link DataFrameBasedIndexedFileSnapshotCache} when {@code
+   * useDistributedInitialSnapshot} is set, otherwise builds a {@link
+   * DriverBasedIndexedFileSnapshotCache}.
    *
-   * <p>Mimics DeltaSourceSnapshot in DSv1.
-   *
-   * @param version The snapshot version to read
-   * @return The cached or newly loaded initial snapshot
+   * <p>Thread-safety note: This check-then-act on cachedSnapshotCache is safe without additional
+   * synchronization because Spark's MicroBatchExecution drives the latestOffset() ->
+   * planInputPartitions() -> commit() lifecycle sequentially from a single thread. The only
+   * concurrent access is from stop(), which uses AtomicReference.getAndSet(null) for safe teardown.
    */
-  private InitialSnapshotCache getSnapshotFiles(long version) {
-    InitialSnapshotCache cache = cachedInitialSnapshot.get();
-
-    if (cache != null && cache.version != null && cache.version == version) {
-      return cache;
+  private IndexedFileSnapshotCache getOrCreateSnapshotCache(long version) {
+    IndexedFileSnapshotCache cached = cachedSnapshotCache.get();
+    if (cached != null && cached.getVersion() == version) {
+      return cached;
     }
 
-    InitialSnapshotCache newCache = loadAndValidateSnapshot(version);
-    cachedInitialSnapshot.set(newCache);
+    invalidateSnapshotCache();
 
-    return newCache;
+    IndexedFileSnapshotCache cache;
+    if (useDistributedInitialSnapshot) {
+      cache = buildDataFrameBasedSnapshotCache(version);
+    } else {
+      cache = buildDriverBasedSnapshotCache(version);
+    }
+    cachedSnapshotCache.set(cache);
+    return cache;
   }
 
-  /** Loads snapshot files at the specified version. */
-  private InitialSnapshotCache loadAndValidateSnapshot(long version) {
+  private DataFrameBasedIndexedFileSnapshotCache buildDataFrameBasedSnapshotCache(long version) {
+    // May differ from snapshotAtSourceInit on checkpoint restart. loadSnapshotAt is
+    // metadata-only on driver; log replay runs on executors via ScanFileRDD.
     SnapshotImpl snapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(version);
-    // If schema tracking is already active and the initial snapshot has advanced since the tracked
-    // read snapshot, replace the tracked metadata/protocol before reading snapshot files.
-    if (metadataEvolutionHandler.shouldTrackMetadataChange()
-        && snapshot.getVersion() >= readSnapshotAtSourceInit.getVersion()) {
-      metadataEvolutionHandler.updateMetadataTrackingLogAndFailTheStreamIfNeeded(
-          snapshot.getMetadata(),
-          snapshot.getProtocol(),
-          snapshot.getVersion(),
-          /* replace= */ true);
-    }
+    long commitTimestamp = snapshot.getTimestamp(engine);
+    SerializableReadOnlySnapshot serSnapshot =
+        SerializableReadOnlySnapshot.fromSnapshot(snapshot, hadoopConf);
+
+    ScanFileRDD rdd = new ScanFileRDD(spark.sparkContext(), serSnapshot);
+    Dataset<Row> sorted =
+        spark.createDataFrame(rdd, ScanFileRDD.SPARK_SCHEMA).orderBy("modificationTime", "path");
+
+    int numFields = ScanFileRDD.SPARK_SCHEMA.size();
+    StructType schemaWithIdx =
+        ScanFileRDD.SPARK_SCHEMA.add(
+            DataFrameBasedIndexedFileSnapshotCache.FILE_IDX_COL, DataTypes.LongType, false);
+    JavaRDD<Row> indexedRDD =
+        sorted
+            .javaRDD()
+            .zipWithIndex()
+            .map(
+                (Tuple2<Row, Long> tuple) -> {
+                  Row row = tuple._1();
+                  long idx = tuple._2();
+                  Object[] fields = new Object[numFields + 1];
+                  for (int i = 0; i < numFields; i++) {
+                    fields[i] = row.get(i);
+                  }
+                  fields[numFields] = idx;
+                  return RowFactory.create(fields);
+                });
+
+    Dataset<Row> df =
+        spark.createDataFrame(indexedRDD, schemaWithIdx).persist(snapshotCacheStorageLevel);
+
+    return new DataFrameBasedIndexedFileSnapshotCache(version, commitTimestamp, df);
+  }
+
+  private DriverBasedIndexedFileSnapshotCache buildDriverBasedSnapshotCache(long version) {
+    Snapshot snapshot = snapshotManager.loadSnapshotAt(version);
     long commitTimestamp = snapshot.getTimestamp(engine);
 
     Scan scan = snapshot.getScanBuilder().build();
@@ -1762,8 +1795,8 @@ public class SparkMicroBatchStream
           String.format("Failed to read snapshot files at version %d", version), e);
     }
 
-    // TODO(#5318): For large snapshots, consider external sorting.
     // CRITICAL: Sort by modificationTime, then path for deterministic ordering
+    // TODO(#5318): For large snapshots, consider external sorting.
     addFiles.sort(
         Comparator.comparing(AddFile::getModificationTime).thenComparing(AddFile::getPath));
 
@@ -1781,7 +1814,7 @@ public class SparkMicroBatchStream
     // Add END sentinel
     indexedFiles.add(IndexedFile.sentinel(version, DeltaSourceOffset.END_INDEX()));
 
-    return new InitialSnapshotCache(
+    return new DriverBasedIndexedFileSnapshotCache(
         version, Collections.unmodifiableList(indexedFiles), commitTimestamp);
   }
 
