@@ -2005,8 +2005,8 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
           assert(
             featuresAfter.contains(GEOSPATIAL_RW_FEATURE),
             s"geospatial should be present after, got: $featuresAfter")
-          assert(after.getProtocol.getMinReaderVersion >= 3)
-          assert(after.getProtocol.getMinWriterVersion >= 7)
+          assert(after.getProtocol.getMinReaderVersion == 3)
+          assert(after.getProtocol.getMinWriterVersion == 7)
         }
       }
     }
@@ -2053,8 +2053,8 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
       assert(
         features.contains(GEOSPATIAL_RW_FEATURE),
         s"geospatial should be present, got: $features")
-      assert(after.getProtocol.getMinReaderVersion >= 3)
-      assert(after.getProtocol.getMinWriterVersion >= 7)
+      assert(after.getProtocol.getMinReaderVersion == 3)
+      assert(after.getProtocol.getMinWriterVersion == 7)
     }
   }
 

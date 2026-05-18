@@ -2198,8 +2198,8 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
           val protocol = snapshot.getProtocol
           val supported = protocol.getImplicitlyAndExplicitlySupportedFeatures
           assert(supported.contains(GEOSPATIAL_RW_FEATURE), s"protocol features: $supported")
-          assert(protocol.getMinReaderVersion >= 3)
-          assert(protocol.getMinWriterVersion >= 7)
+          assert(protocol.getMinReaderVersion == 3)
+          assert(protocol.getMinWriterVersion == 7)
 
           // id-keyed compare; cross-file/cross-partition row order is not guaranteed.
           val expected = (rowsBatch1 ++ rowsBatch2).map { case (id, bytes) =>
