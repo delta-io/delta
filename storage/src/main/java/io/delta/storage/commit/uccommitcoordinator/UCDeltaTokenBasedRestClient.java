@@ -51,6 +51,7 @@ import io.unitycatalog.client.delta.model.StagingTableResponse;
 import io.unitycatalog.client.delta.model.StagingTableResponseRequiredProtocol;
 import io.unitycatalog.client.delta.model.StagingTableResponseSuggestedProtocol;
 import io.unitycatalog.client.delta.model.TableMetadata;
+import io.delta.storage.commit.uniform.IcebergMetadata;
 import io.unitycatalog.client.delta.model.UniformMetadata;
 import io.unitycatalog.client.delta.model.UniformMetadataIceberg;
 import io.unitycatalog.client.delta.model.UpdateTableRequest;
@@ -60,6 +61,7 @@ import io.unitycatalog.hadoop.UCCredentialHadoopConfs.TableOperation;
 
 import java.io.IOException;
 import java.net.URI;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -520,6 +522,8 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     UCDeltaModels.TableType tableType =
         UCDeltaModels.TableType.valueOf(m.getTableType().getValue());
     DeltaTableMetadata adapted = new DeltaTableMetadata(name, m);
+    io.delta.storage.commit.uniform.UniformMetadata uniformMetadata =
+        toStorageUniformMetadata(response.getUniform());
     Map<String, String> storageProps;
     try {
       storageProps = fetchTableCredentials(catalog, schema, name, location);
@@ -528,13 +532,41 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       // recover. The exception carries the catalog-side TableInfo (with empty storageProperties)
       // so the caller can still build a CatalogTable.
       TableInfo withoutCreds = new TableInfo(
-          ucTableId, tableType, location, adapted, Collections.emptyMap());
+          ucTableId, tableType, location, adapted, Collections.emptyMap(), uniformMetadata);
       throw new CredentialFetchFailedException(
           String.format("Credential fetch failed for table %s.%s.%s (HTTP %s): %s",
               catalog, schema, name, e.getCode(), e.getResponseBody()),
           e, withoutCreds);
     }
-    return new TableInfo(ucTableId, tableType, location, adapted, storageProps);
+    return new TableInfo(ucTableId, tableType, location, adapted, storageProps, uniformMetadata);
+  }
+
+  private static io.delta.storage.commit.uniform.UniformMetadata toStorageUniformMetadata(
+      UniformMetadata sdkUniform) {
+    if (sdkUniform == null) {
+      return null;
+    }
+    UniformMetadataIceberg sdkIceberg = sdkUniform.getIceberg();
+    if (sdkIceberg == null) {
+      return new io.delta.storage.commit.uniform.UniformMetadata(null);
+    }
+    String metadataLocation = sdkIceberg.getMetadataLocation();
+    Long rawVersion = sdkIceberg.getConvertedDeltaVersion();
+    Long rawTimestamp = sdkIceberg.getConvertedDeltaTimestamp();
+    if (metadataLocation == null || rawVersion == null || rawTimestamp == null) {
+      throw new IllegalStateException(
+          "UC returned a non-null UniformMetadataIceberg with missing required fields: "
+              + "metadataLocation="
+              + metadataLocation
+              + ", convertedDeltaVersion="
+              + rawVersion
+              + ", convertedDeltaTimestamp="
+              + rawTimestamp);
+    }
+    String convertedDeltaTimestamp = Instant.ofEpochMilli(rawTimestamp).toString();
+    IcebergMetadata icebergMetadata =
+        new IcebergMetadata(metadataLocation, rawVersion, convertedDeltaTimestamp);
+    return new io.delta.storage.commit.uniform.UniformMetadata(icebergMetadata);
   }
 
   private UCDeltaModels.StagingTableInfo toStagingTableInfo(StagingTableResponse r) {

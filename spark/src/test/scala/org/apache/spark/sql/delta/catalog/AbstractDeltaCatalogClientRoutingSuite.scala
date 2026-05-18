@@ -30,6 +30,7 @@ import io.delta.storage.commit.uniform.UniformMetadata
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.catalog.CatalogTableType
 import org.apache.spark.sql.connector.catalog.{Identifier, Table, V1Table}
+import org.apache.spark.sql.delta.IcebergConstants
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
@@ -201,6 +202,77 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
         case None => spark.conf.unset(sspKey)
       }
     }
+  }
+
+  test("toV1Table propagates UniForm Iceberg metadata into storage.properties") {
+    val tableId = UUID.randomUUID()
+    val metadata = new AbstractMetadata {
+      override def getId: String = null
+      override def getName: String = "tbl"
+      override def getDescription: String = null
+      override def getProvider: String = "DELTA"
+      override def getFormatOptions: util.Map[String, String] = Collections.emptyMap()
+      override def getSchemaString: String =
+        """{"type":"struct","fields":[{"name":"id","type":"long","nullable":true,"metadata":{}}]}"""
+      override def getPartitionColumns: util.List[String] = Collections.emptyList()
+      override def getConfiguration: util.Map[String, String] = Collections.emptyMap()
+      override def getCreatedTime: java.lang.Long = 0L
+    }
+    val iceberg = new io.delta.storage.commit.uniform.IcebergMetadata(
+      "s3://bucket/metadata/v1.metadata.json", 42L, "2025-01-04T03:13:11.423")
+    val uniform = new io.delta.storage.commit.uniform.UniformMetadata(iceberg)
+    val info = new TableInfo(
+      tableId,
+      UCDeltaModels.TableType.EXTERNAL,
+      "s3://bucket/table",
+      metadata,
+      Collections.emptyMap(),
+      uniform)
+
+    val client = new UCDeltaCatalogClientImpl(
+      catalogName = "main",
+      ucClient = new StubUCDeltaClient(info))
+
+    val v1 = client.loadTable(Identifier.of(Array("sch"), "tbl")).asInstanceOf[V1Table].catalogTable
+    val props = v1.storage.properties
+    assert(props.get(IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP) ===
+      Some("s3://bucket/metadata/v1.metadata.json"))
+    assert(props.get(IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP) ===
+      Some("42"))
+    assert(props.get(IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_TIMESTAMP_PROP) ===
+      Some("2025-01-04T03:13:11.423"))
+  }
+
+  test("toV1Table with no UniForm metadata leaves storage.properties without iceberg keys") {
+    val tableId = UUID.randomUUID()
+    val metadata = new AbstractMetadata {
+      override def getId: String = null
+      override def getName: String = "tbl"
+      override def getDescription: String = null
+      override def getProvider: String = "DELTA"
+      override def getFormatOptions: util.Map[String, String] = Collections.emptyMap()
+      override def getSchemaString: String =
+        """{"type":"struct","fields":[{"name":"id","type":"long","nullable":true,"metadata":{}}]}"""
+      override def getPartitionColumns: util.List[String] = Collections.emptyList()
+      override def getConfiguration: util.Map[String, String] = Collections.emptyMap()
+      override def getCreatedTime: java.lang.Long = 0L
+    }
+    val info = new TableInfo(
+      tableId,
+      UCDeltaModels.TableType.EXTERNAL,
+      "s3://bucket/table",
+      metadata,
+      Collections.emptyMap())
+
+    val client = new UCDeltaCatalogClientImpl(
+      catalogName = "main",
+      ucClient = new StubUCDeltaClient(info))
+
+    val v1 = client.loadTable(Identifier.of(Array("sch"), "tbl")).asInstanceOf[V1Table].catalogTable
+    val props = v1.storage.properties
+    assert(!props.contains(IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP))
+    assert(!props.contains(IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP))
+    assert(!props.contains(IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_TIMESTAMP_PROP))
   }
 
   test("loadTable without serverSidePlanningEnabled rethrows CredentialFetchFailedException") {
