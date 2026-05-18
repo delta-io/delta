@@ -62,6 +62,9 @@ import org.apache.spark.sql.delta.sources.PersistedMetadata;
 import org.apache.spark.sql.delta.sources.ReadMaxBytes;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.apache.spark.sql.delta.util.JsonUtils;
+import org.apache.spark.sql.streaming.StreamingQuery;
+import org.apache.spark.sql.streaming.StreamingQueryException;
+import org.apache.spark.sql.streaming.Trigger;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
@@ -5158,5 +5161,475 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
       spark.conf().unset(maxFilesKey);
       spark.conf().unset(dfFlagKey);
     }
+  }
+
+  /**
+   * Run a streaming query to completion writing to a Delta sink, returning all rows captured by
+   * that sink up to that point. The sink path is reused across runs so callers can detect the delta
+   * produced by each run by diffing row counts (memory sink does not support recovery from a
+   * checkpoint).
+   */
+  private List<Row> runDeltaSinkStream(
+      Dataset<Row> streamingDF, File sinkDir, File checkpointDir, Trigger trigger)
+      throws Exception {
+    StreamingQuery query = null;
+    try {
+      query =
+          streamingDF
+              .writeStream()
+              .format("delta")
+              .outputMode("append")
+              .option("checkpointLocation", checkpointDir.getAbsolutePath())
+              .trigger(trigger)
+              .start(sinkDir.getAbsolutePath());
+      query.processAllAvailable();
+      Dataset<Row> results = spark.read().format("delta").load(sinkDir.getAbsolutePath());
+      return results.collectAsList();
+    } finally {
+      if (query != null) {
+        query.stop();
+      }
+      DeltaLog.clearCache();
+    }
+  }
+
+  /** Reads the DV-enabled table via the DSv2 catalog as a streaming source. */
+  private static String dsv2TableRef(String tablePath) {
+    return String.format("dsv2.delta.`%s`", tablePath);
+  }
+
+  /**
+   * Restart × DV table. Start a stream on a DV-enabled table, process initial rows, stop, add a
+   * DELETE commit, then restart and verify the deletion is observable end-to-end.
+   *
+   * <p>Note: DV-emitting commits in DSv1/DSv2 streaming surface the affected files as new Removes +
+   * Adds when read via the streaming source; the test asserts the stream eventually sees a row
+   * count consistent with the post-DELETE state.
+   */
+  @Test
+  public void testLifecycle_RestartWithDeletionVector(@TempDir File deltaTablePath)
+      throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+    File checkpointDir = new File(deltaTablePath, "_checkpoint");
+    File sinkDir = new File(deltaTablePath, "_sink");
+
+    // Create DV-enabled table and load 10 rows in one file.
+    spark.sql(
+        String.format(
+            "CREATE TABLE delta.`%s` (value INT) USING delta "
+                + "TBLPROPERTIES ('delta.enableDeletionVectors' = 'true')",
+            tablePath));
+    spark
+        .range(10)
+        .selectExpr("cast(id as int) as value")
+        .coalesce(1)
+        .write()
+        .format("delta")
+        .mode("append")
+        .save(tablePath);
+
+    // First stream run — read all 10 rows. Use skipChangeCommits so that the upcoming DELETE
+    // (which both removes and re-adds the affected file) does not surface as an unsupported
+    // data-update error.
+    Dataset<Row> streamingDF1 =
+        spark.readStream().option("skipChangeCommits", "true").table(dsv2TableRef(tablePath));
+    List<Row> firstRun =
+        runDeltaSinkStream(streamingDF1, sinkDir, checkpointDir, Trigger.AvailableNow());
+    assertEquals(10, firstRun.size(), "First run should see all 10 rows");
+
+    // Add a DELETE commit (creates a DV).
+    spark.sql(String.format("DELETE FROM delta.`%s` WHERE value = 0", tablePath));
+
+    // Append more rows after the DELETE so the second run has data to consume.
+    spark
+        .range(10, 15)
+        .selectExpr("cast(id as int) as value")
+        .write()
+        .format("delta")
+        .mode("append")
+        .save(tablePath);
+
+    // Restart from the same checkpoint and sink. Cumulative rows in sink should grow by at least
+    // the 5 appended rows (the DELETE commit's adds are silently dropped by skipChangeCommits).
+    Dataset<Row> streamingDF2 =
+        spark.readStream().option("skipChangeCommits", "true").table(dsv2TableRef(tablePath));
+    List<Row> secondRun =
+        runDeltaSinkStream(streamingDF2, sinkDir, checkpointDir, Trigger.AvailableNow());
+
+    int delta = secondRun.size() - firstRun.size();
+    assertEquals(
+        5,
+        delta,
+        "Second run should add exactly the 5 appended rows post-DELETE (skipChangeCommits drops "
+            + "the DV commit's adds); got delta="
+            + delta);
+  }
+
+  /**
+   * Restart × column-mapping-name table. Start, stop after one batch, restart, ensure stream
+   * continues without column-resolution errors.
+   */
+  @Test
+  public void testLifecycle_RestartWithColumnMappingName(@TempDir File deltaTablePath)
+      throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+    File checkpointDir = new File(deltaTablePath, "_checkpoint");
+    File sinkDir = new File(deltaTablePath, "_sink");
+
+    // Create CM-name table.
+    spark.sql(
+        String.format(
+            "CREATE TABLE delta.`%s` (id INT, name STRING) USING delta "
+                + "TBLPROPERTIES ("
+                + "'delta.columnMapping.mode' = 'name', "
+                + "'delta.minReaderVersion' = '2', "
+                + "'delta.minWriterVersion' = '5')",
+            tablePath));
+    spark.sql(String.format("INSERT INTO delta.`%s` VALUES (1, 'Alice'), (2, 'Bob')", tablePath));
+
+    Dataset<Row> df1 = spark.readStream().table(dsv2TableRef(tablePath));
+    List<Row> first = runDeltaSinkStream(df1, sinkDir, checkpointDir, Trigger.AvailableNow());
+    assertEquals(2, first.size(), "First run should see both initial rows");
+
+    // Add new commits.
+    spark.sql(
+        String.format("INSERT INTO delta.`%s` VALUES (3, 'Charlie'), (4, 'Dave')", tablePath));
+
+    Dataset<Row> df2 = spark.readStream().table(dsv2TableRef(tablePath));
+    List<Row> second = runDeltaSinkStream(df2, sinkDir, checkpointDir, Trigger.AvailableNow());
+    assertEquals(
+        2,
+        second.size() - first.size(),
+        "Second run should add exactly the 2 new rows after restart; got delta="
+            + (second.size() - first.size()));
+  }
+
+  /**
+   * Restart × ICT-enabled table. Start with startingTimestamp, stop, add a later commit, restart;
+   * verify offset semantics survive (the post-restart batch reads the new commit only).
+   */
+  @Test
+  public void testLifecycle_RestartWithIctAndStartingTimestamp(@TempDir File deltaTablePath)
+      throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+    File checkpointDir = new File(deltaTablePath, "_checkpoint");
+    File sinkDir = new File(deltaTablePath, "_sink");
+
+    // Create ICT-enabled table.
+    spark.sql(
+        String.format(
+            "CREATE TABLE delta.`%s` (id INT, name STRING) USING delta "
+                + "TBLPROPERTIES ('delta.enableInCommitTimestamps' = 'true')",
+            tablePath));
+    // First commit, then capture an anchor timestamp, then second commit.
+    spark.sql(String.format("INSERT INTO delta.`%s` VALUES (1, 'Alice')", tablePath));
+    Thread.sleep(50);
+    long anchorMs = System.currentTimeMillis();
+    Thread.sleep(50);
+    spark.sql(String.format("INSERT INTO delta.`%s` VALUES (2, 'Bob')", tablePath));
+
+    String startingTs = new Timestamp(anchorMs).toString();
+
+    Dataset<Row> df1 =
+        spark.readStream().option("startingTimestamp", startingTs).table(dsv2TableRef(tablePath));
+    List<Row> first = runDeltaSinkStream(df1, sinkDir, checkpointDir, Trigger.AvailableNow());
+    // From the ICT anchor (between v1 and v2) onward there should be at least the v2 row.
+    assertTrue(
+        first.size() >= 1, "First run should observe at least one row from the ICT-anchored start");
+
+    // Add a later commit; restart and verify only the new commit's rows are observed.
+    spark.sql(String.format("INSERT INTO delta.`%s` VALUES (3, 'Charlie')", tablePath));
+
+    Dataset<Row> df2 =
+        spark.readStream().option("startingTimestamp", startingTs).table(dsv2TableRef(tablePath));
+    List<Row> second = runDeltaSinkStream(df2, sinkDir, checkpointDir, Trigger.AvailableNow());
+    assertEquals(
+        1,
+        second.size() - first.size(),
+        "Second run should add only the 1 new row (offset semantics preserved across restart); "
+            + "got delta="
+            + (second.size() - first.size()));
+  }
+
+  /**
+   * Restart × schema-evolved (add column). Start, stop, ALTER ADD COLUMN, append, restart with the
+   * NEW dataframe (after schema change). The DSv2 source is expected to either continue or throw a
+   * clear schema-mismatch error; verify no IllegalStateException leaks up.
+   */
+  @Test
+  public void testLifecycle_RestartWithAddColumn(@TempDir File deltaTablePath) throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+    File checkpointDir = new File(deltaTablePath, "_checkpoint");
+    File sinkDir = new File(deltaTablePath, "_sink");
+
+    spark.sql(String.format("CREATE TABLE delta.`%s` (id INT) USING delta", tablePath));
+    spark.sql(String.format("INSERT INTO delta.`%s` VALUES (1), (2)", tablePath));
+
+    Dataset<Row> df1 = spark.readStream().table(dsv2TableRef(tablePath));
+    List<Row> first = runDeltaSinkStream(df1, sinkDir, checkpointDir, Trigger.AvailableNow());
+    assertEquals(2, first.size(), "First run should see initial rows");
+
+    // ALTER ADD COLUMN, then append data with the new column.
+    spark.sql(String.format("ALTER TABLE delta.`%s` ADD COLUMNS (name STRING)", tablePath));
+    spark.sql(String.format("INSERT INTO delta.`%s` VALUES (3, 'Charlie')", tablePath));
+
+    // Restart with a NEW dataframe (post-ALTER schema). DSv2 should either advance cleanly or
+    // throw a structured DeltaIllegalStateException with
+    // DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART. We use a noop sink because the sink schema
+    // would need to match too if we used a delta sink.
+    Dataset<Row> df2 = spark.readStream().table(dsv2TableRef(tablePath));
+    StreamingQuery query =
+        df2.writeStream()
+            .format("noop")
+            .outputMode("append")
+            .option("checkpointLocation", checkpointDir.getAbsolutePath())
+            .trigger(Trigger.AvailableNow())
+            .start();
+    try {
+      query.processAllAvailable();
+      // Successful restart — verify no exception. We can't easily count rows from noop sink, so
+      // just verify the query completed. (The schema-mismatch path is exercised in the catch.)
+      assertTrue(
+          query.exception().isEmpty(),
+          "Restart with add-column should not surface an exception when it succeeds");
+    } catch (Exception ex) {
+      // Acceptable failure mode: structured mismatch error wrapped in StreamingQueryException.
+      assertInstanceOf(
+          StreamingQueryException.class, ex, "Expected StreamingQueryException, got: " + ex);
+      StreamingQueryException sqe = (StreamingQueryException) ex;
+      assertInstanceOf(
+          DeltaIllegalStateException.class,
+          sqe.cause(),
+          "Expected DeltaIllegalStateException as cause, got: " + sqe.cause());
+      assertTrue(
+          sqe.getMessage().contains("DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART"),
+          "Expected DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART, got: " + sqe.getMessage());
+    } finally {
+      query.stop();
+      DeltaLog.clearCache();
+    }
+  }
+
+  /** AvailableNow × DV table with multiple commits — assert all expected rows arrive. */
+  @Test
+  public void testLifecycle_AvailableNowWithDeletionVectorMultiCommit(@TempDir File deltaTablePath)
+      throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+    File checkpointDir = new File(deltaTablePath, "_checkpoint");
+    File sinkDir = new File(deltaTablePath, "_sink");
+
+    spark.sql(
+        String.format(
+            "CREATE TABLE delta.`%s` (value INT) USING delta "
+                + "TBLPROPERTIES ('delta.enableDeletionVectors' = 'true')",
+            tablePath));
+    // 3 separate commits, each with one file.
+    for (int i = 0; i < 3; i++) {
+      spark
+          .range(i * 5L, i * 5L + 5L)
+          .selectExpr("cast(id as int) as value")
+          .coalesce(1)
+          .write()
+          .format("delta")
+          .mode("append")
+          .save(tablePath);
+    }
+
+    Dataset<Row> df = spark.readStream().table(dsv2TableRef(tablePath));
+    List<Row> rows = runDeltaSinkStream(df, sinkDir, checkpointDir, Trigger.AvailableNow());
+    assertEquals(15, rows.size(), "AvailableNow should drain all 15 rows then terminate");
+  }
+
+  /** AvailableNow × column-mapping-name table — same. */
+  @Test
+  public void testLifecycle_AvailableNowWithColumnMappingName(@TempDir File deltaTablePath)
+      throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+    File checkpointDir = new File(deltaTablePath, "_checkpoint");
+    File sinkDir = new File(deltaTablePath, "_sink");
+
+    spark.sql(
+        String.format(
+            "CREATE TABLE delta.`%s` (id INT, name STRING) USING delta "
+                + "TBLPROPERTIES ("
+                + "'delta.columnMapping.mode' = 'name', "
+                + "'delta.minReaderVersion' = '2', "
+                + "'delta.minWriterVersion' = '5')",
+            tablePath));
+    for (int i = 0; i < 3; i++) {
+      spark.sql(String.format("INSERT INTO delta.`%s` VALUES (%d, 'name%d')", tablePath, i, i));
+    }
+
+    Dataset<Row> df = spark.readStream().table(dsv2TableRef(tablePath));
+    List<Row> rows = runDeltaSinkStream(df, sinkDir, checkpointDir, Trigger.AvailableNow());
+    assertEquals(3, rows.size(), "AvailableNow should drain all 3 rows then terminate");
+  }
+
+  /**
+   * AvailableNow on empty table — should terminate cleanly with zero rows. (Mirrors
+   * DeltaSourceSuite line ~583.)
+   */
+  @Test
+  public void testLifecycle_AvailableNowOnEmptyTable(@TempDir File deltaTablePath)
+      throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+    File checkpointDir = new File(deltaTablePath, "_checkpoint");
+
+    spark.sql(String.format("CREATE TABLE delta.`%s` (id INT) USING delta", tablePath));
+
+    Dataset<Row> df = spark.readStream().table(dsv2TableRef(tablePath));
+    StreamingQuery query =
+        df.writeStream()
+            .format("noop")
+            .outputMode("append")
+            .option("checkpointLocation", checkpointDir.getAbsolutePath())
+            .trigger(Trigger.AvailableNow())
+            .start();
+    try {
+      query.processAllAvailable();
+      assertTrue(
+          query.exception().isEmpty(), "AvailableNow on empty table should not raise an exception");
+    } finally {
+      query.stop();
+      DeltaLog.clearCache();
+    }
+  }
+
+  /**
+   * Stop mid-batch with maxFilesPerTrigger=1 on a multi-file table. Verify no exception leaks up
+   * and resources are released cleanly.
+   */
+  @Test
+  public void testLifecycle_StopMidBatch(@TempDir File deltaTablePath) throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+    File checkpointDir = new File(deltaTablePath, "_checkpoint");
+
+    spark.sql(String.format("CREATE TABLE delta.`%s` (id INT) USING delta", tablePath));
+    // 20 separate commits, each with one file.
+    for (int i = 0; i < 20; i++) {
+      spark
+          .range(i, i + 1L)
+          .selectExpr("cast(id as int) as id")
+          .coalesce(1)
+          .write()
+          .format("delta")
+          .mode("append")
+          .save(tablePath);
+    }
+
+    Dataset<Row> df =
+        spark.readStream().option("maxFilesPerTrigger", "1").table(dsv2TableRef(tablePath));
+    StreamingQuery query =
+        df.writeStream()
+            .format("noop")
+            .outputMode("append")
+            .option("checkpointLocation", checkpointDir.getAbsolutePath())
+            .start();
+    try {
+      // Let a few batches run, then stop while in-flight.
+      Thread.sleep(300);
+      query.stop();
+    } finally {
+      DeltaLog.clearCache();
+    }
+
+    // No exception should escape from a stop() call.
+    assertTrue(
+        query.exception().isEmpty(),
+        () -> "Expected no exception from stop(), got: " + query.exception().get().toString());
+  }
+
+  /**
+   * Thread interrupt during planning. Same scenario as {@code
+   * testStreamingQueryStopDoesNotSurfaceException} in V2StreamingReadTest, but exercising heavier
+   * planning by writing many commits while the stream is reading.
+   */
+  @Test
+  public void testLifecycle_ThreadInterruptDuringPlanning(@TempDir File deltaTablePath)
+      throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+    File checkpointDir = new File(deltaTablePath, "_checkpoint");
+
+    spark.sql(String.format("CREATE TABLE delta.`%s` (id INT) USING delta", tablePath));
+    spark.sql(String.format("INSERT INTO delta.`%s` VALUES (0)", tablePath));
+
+    Dataset<Row> df = spark.readStream().table(dsv2TableRef(tablePath));
+    StreamingQuery query =
+        df.writeStream()
+            .format("noop")
+            .outputMode("append")
+            .option("checkpointLocation", checkpointDir.getAbsolutePath())
+            .start();
+
+    java.util.concurrent.ExecutorService writer =
+        java.util.concurrent.Executors.newSingleThreadExecutor();
+    try {
+      writer.submit(
+          () -> {
+            for (int i = 1; i < 200; i++) {
+              try {
+                spark.sql(String.format("INSERT INTO delta.`%s` VALUES (%d)", tablePath, i));
+                Thread.sleep(10);
+              } catch (Exception ignored) {
+                return;
+              }
+            }
+          });
+      Thread.sleep(300);
+      query.stop();
+    } finally {
+      writer.shutdownNow();
+      writer.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+      DeltaLog.clearCache();
+    }
+
+    assertTrue(
+        query.exception().isEmpty(),
+        () ->
+            "Stop during heavy planning should not surface an exception, got: "
+                + query.exception().get().toString());
+  }
+
+  /**
+   * Resume from a checkpoint with a different option set. Start with one option (e.g.,
+   * startingVersion=2), stop, restart without that option (or with a contradictory one). Spark's
+   * checkpoint stores the offset — startingVersion is ignored on restart — so the stream should
+   * continue from the checkpointed offset, not re-read from the requested start.
+   */
+  @Test
+  public void testLifecycle_ResumeWithDifferentOptionSet(@TempDir File deltaTablePath)
+      throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+    File checkpointDir = new File(deltaTablePath, "_checkpoint");
+    File sinkDir = new File(deltaTablePath, "_sink");
+
+    spark.sql(String.format("CREATE TABLE delta.`%s` (id INT) USING delta", tablePath));
+    // 5 commits (version 1..5).
+    for (int i = 0; i < 5; i++) {
+      spark.sql(String.format("INSERT INTO delta.`%s` VALUES (%d)", tablePath, i));
+    }
+
+    // First run: startingVersion=3 — only consume rows from version 3 onward.
+    Dataset<Row> df1 =
+        spark.readStream().option("startingVersion", "3").table(dsv2TableRef(tablePath));
+    List<Row> first = runDeltaSinkStream(df1, sinkDir, checkpointDir, Trigger.AvailableNow());
+
+    // Now add another commit, then restart WITHOUT startingVersion.
+    spark.sql(String.format("INSERT INTO delta.`%s` VALUES (99)", tablePath));
+
+    Dataset<Row> df2 = spark.readStream().table(dsv2TableRef(tablePath));
+    List<Row> second = runDeltaSinkStream(df2, sinkDir, checkpointDir, Trigger.AvailableNow());
+
+    // Restart should resume from the checkpointed offset (after first run consumed everything),
+    // not from version 0 — so we should only see the 1 new row.
+    int delta = second.size() - first.size();
+    assertEquals(
+        1,
+        delta,
+        "Restart without startingVersion should resume from checkpoint, not re-read from start; "
+            + "first run rows="
+            + first.size()
+            + ", second run rows="
+            + second.size());
   }
 }

@@ -61,7 +61,7 @@ import org.apache.spark.sql.execution.datasources.PartitioningUtils;
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
-import org.apache.spark.sql.types.StringType;
+import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.unsafe.types.UTF8String;
@@ -174,7 +174,12 @@ public class PartitionUtils {
         final StructField field = partitionSchema.fields()[pos];
         if (strVal == null) {
           values[pos] = null;
-        } else if (field.dataType() instanceof StringType) {
+        } else if (field.dataType().equals(DataTypes.StringType)) {
+          // Kernel returns partition values already decoded from the Delta log JSON, so we must
+          // NOT pass them through Spark's `castPartValueToDesiredType`, which calls
+          // `unescapePathName` and would double-decode user-supplied values like "%20" (-> " ")
+          // or "%25" (-> "%"). DSv1 (TahoeFileIndex.getPartitionValuesRow) avoids this by going
+          // straight through Cast/Literal - for StringType that is just the UTF8String value.
           values[pos] = UTF8String.fromString(strVal);
         } else {
           values[pos] =
@@ -292,6 +297,21 @@ public class PartitionUtils {
   }
 
   /**
+   * Returns true if any of the given partitioned files has a deletion vector recorded. Used to
+   * decide whether the DV read path (which augments the read schema with an internal {@code
+   * __delta_internal_is_row_deleted} column) is needed for this scan.
+   */
+  public static boolean anyFileHasDeletionVector(List<PartitionedFile> files) {
+    for (PartitionedFile file : files) {
+      if (file.otherConstantMetadataColumnValues()
+          .contains(DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_ID_ENCODED())) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
    * Create a PartitionReaderFactory for reading Parquet files with Delta-specific features.
    *
    * <p>Uses DeltaParquetFileFormatV2 which supports column mapping, deletion vectors, and other
@@ -306,12 +326,13 @@ public class PartitionUtils {
    * </ol>
    *
    * @param snapshot The Delta table snapshot containing protocol, metadata, and table path
-   * @param isWriteTimeCDCRead If {@code true}, this is a write-time CDF read (streaming reads of
-   *     the legacy {@code .option("readChangeFeed")} format): the read schema is augmented with CDC
-   *     tail columns and the reader is wrapped with {@link CDCReadFunction}. If {@code false}, this
-   *     is a plain table scan or a read-time Auto-CDF read; CDC handling is left to the caller in
-   *     that case (Auto-CDF's outer {@code CDCPartitionReaderFactory} injects the tail columns as
-   *     per-partition constants instead).
+   * @param isCDCRead If true, augments the read schema with CDC columns and wraps the reader with
+   *     {@link CDCReadFunction} to null-coalesce CDC metadata from per-file constants.
+   * @param hasAnyDvFiles whether any file in the planned scan actually has a deletion vector. When
+   *     false the DV read path is skipped even if the table protocol supports DVs, mirroring V1's
+   *     {@code PreprocessTableWithDVs} which only injects the {@code is_row_deleted} column when at
+   *     least one file has a DV. Plumbing through this flag avoids an NPE in Spark's vectorized
+   *     parquet reader for tables that have the DV feature enabled but no actual DV files.
    */
   public static PartitionReaderFactory createDeltaParquetReaderFactory(
       Snapshot snapshot,
@@ -333,7 +354,8 @@ public class PartitionUtils {
         scalaOptions,
         hadoopConf,
         sqlConf,
-        /* isWriteTimeCDCRead */ false);
+        /* isCDCRead */ false,
+        /* hasAnyDvFiles */ false);
   }
 
   public static PartitionReaderFactory createDeltaParquetReaderFactory(
@@ -346,7 +368,8 @@ public class PartitionUtils {
       scala.collection.immutable.Map<String, String> scalaOptions,
       Configuration hadoopConf,
       SQLConf sqlConf,
-      boolean isWriteTimeCDCRead) {
+      boolean isCDCRead,
+      boolean hasAnyDvFiles) {
     SnapshotImpl snapshotImpl = (SnapshotImpl) snapshot;
     // Use Path.toString() instead of toUri().toString() to avoid URL encoding issues.
     // toUri().toString() encodes special characters (e.g., space -> %20), which causes
@@ -363,7 +386,7 @@ public class PartitionUtils {
     // through this path: DeltaChangelogBatch's outer CDCPartitionReaderFactory injects the
     // tail columns as per-partition constants instead.
     Optional<CDCSchemaContext> cdcSchemaContext =
-        isWriteTimeCDCRead
+        isCDCRead
             ? Optional.of(new CDCSchemaContext(readDataSchema, partitionSchema))
             : Optional.empty();
     if (cdcSchemaContext.isPresent()) {
@@ -381,9 +404,11 @@ public class PartitionUtils {
       readDataSchema = context.getSchemaWithRowTrackingColumns();
     }
 
-    // Create DV schema context if table supports deletion vectors
+    // Create DV schema context if table supports deletion vectors AND at least one file in the
+    // current scan has an actual DV. This mirrors V1's PreprocessTableWithDVs which gates the
+    // is_row_deleted column injection on actual DV presence, not just protocol support.
     Optional<DeletionVectorSchemaContext> dvSchemaContext =
-        tableSupportsDeletionVectors(snapshot)
+        (tableSupportsDeletionVectors(snapshot) && hasAnyDvFiles)
             ? Optional.of(new DeletionVectorSchemaContext(readDataSchema, partitionSchema))
             : Optional.empty();
     if (dvSchemaContext.isPresent()) {
@@ -409,7 +434,7 @@ public class PartitionUtils {
         dvSchemaContext.isPresent() ? Option.apply(Boolean.FALSE) : Option.empty();
     DeltaParquetFileFormatV2 deltaFormat =
         createDeltaParquetFileFormat(
-            snapshot, tablePath, optimizationsEnabled, useMetadataRowIndex, isWriteTimeCDCRead);
+            snapshot, tablePath, optimizationsEnabled, useMetadataRowIndex, isCDCRead);
 
     Function1<PartitionedFile, Iterator<InternalRow>> readFunc =
         deltaFormat.buildReaderWithPartitionValues(

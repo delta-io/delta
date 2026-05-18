@@ -149,7 +149,11 @@ public class ColumnVectorWithFilter extends ColumnVector {
    */
   @Override
   public ColumnVector getChild(int ordinal) {
-    // For non-struct types like VARIANT, getVariant(rowId) calls getChild(0).getBinary(rowId).
+    // Non-struct types (VARIANT, INTERVAL, etc.) don't have named struct children, but Spark's
+    // inherited accessors (e.g. getVariant, getInterval) still call getChild(0).getBinary(rowId)
+    // with the *output* row id. We must wrap the delegate child in ColumnVectorWithFilter so the
+    // row-id mapping is applied - returning the raw delegate child would silently drop the DV
+    // mapping and yield values from the wrong rows.
     if (!(dataType() instanceof StructType)) {
       return new ColumnVectorWithFilter(delegate.getChild(ordinal), rowIdMapping);
     }

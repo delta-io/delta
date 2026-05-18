@@ -249,10 +249,12 @@ public final class DeltaHistoryManager {
       } else {
         // We know the table was not catalogManaged here since ICT was not enabled ==> we don't
         // need to worry about catalogCommits.
-        // The requested timestamp is before ICT enablement, so the file modification-time
-        // search must be bounded to the pre-ICT commits.
+        // Start non-ICT linear search over [earliestVersion, ictEnablementCommit.version) - only
+        // those commits use file modification time as their timestamp source. Including the
+        // later ICT-enabled commits in this list is incorrect because their file mtimes may not
+        // reflect the recorded ICT (see DSv1 parity: getCommitFromNonICTRange).
         List<Commit> commits =
-            getCommits(engine, logPath, earliestVersion, ictEnablementCommit.version);
+            getCommits(engine, logPath, earliestVersion, ictEnablementCommit.getVersion());
         searchResult =
             lastCommitBeforeOrAtTimestamp(commits, timestamp)
                 .orElse(
@@ -515,10 +517,9 @@ public final class DeltaHistoryManager {
   }
 
   /**
-   * Returns the versions and modification timestamps of commits in the range {@code [start,
-   * endExclusive)}.
-   *
-   * <p>Guarantees that returned commits have monotonically increasing versions and timestamps.
+   * Returns the commit version and timestamps of all commits in {@code [start, endExclusive)}.
+   * Guarantees that the commits returned have both monotonically increasing versions and
+   * timestamps.
    */
   private static List<Commit> getCommits(Engine engine, Path logPath, long start, long endExclusive)
       throws TableNotFoundException {

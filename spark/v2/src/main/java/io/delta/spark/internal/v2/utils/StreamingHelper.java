@@ -140,6 +140,17 @@ public class StreamingHelper {
     return removeFile.getDataChange() ? Optional.of(removeFile) : Optional.empty();
   }
 
+  /** Get Protocol action from a batch at the specified row, if present. */
+  public static Optional<Protocol> getProtocol(ColumnarBatch batch, int rowId) {
+    int protocolIdx = batch.getSchema().indexOf(DeltaLogActionUtils.DeltaAction.PROTOCOL.colName);
+    if (protocolIdx < 0) {
+      return Optional.empty();
+    }
+    ColumnVector protocolVector = batch.getColumnVector(protocolIdx);
+    Protocol protocol = Protocol.fromColumnVector(protocolVector, rowId);
+    return Optional.ofNullable(protocol);
+  }
+
   /** Get Metadata action from a batch at the specified row, if present. */
   public static Optional<Metadata> getMetadata(ColumnarBatch columnarBatch, int rowId) {
     int metadataIdx =
@@ -148,15 +159,6 @@ public class StreamingHelper {
     Metadata metadata = Metadata.fromColumnVector(metadataVector, rowId);
 
     return Optional.ofNullable(metadata);
-  }
-
-  /** Get Protocol action from a batch at the specified row, if present. */
-  public static Optional<Protocol> getProtocol(ColumnarBatch batch, int rowId) {
-    int protocolIdx = getFieldIndex(batch, DeltaLogActionUtils.DeltaAction.PROTOCOL.colName);
-    ColumnVector protocolVector = batch.getColumnVector(protocolIdx);
-    Protocol protocol = Protocol.fromColumnVector(protocolVector, rowId);
-
-    return Optional.ofNullable(protocol);
   }
 
   /** Get CommitInfo action from a batch at the specified row, if present. */

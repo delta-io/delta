@@ -37,6 +37,7 @@ import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.actions.RemoveFile;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import io.delta.kernel.internal.util.Preconditions;
@@ -197,6 +198,15 @@ public class SparkMicroBatchStream
   private boolean isLastOffsetForTriggerAvailableNowInitialized = false;
 
   private boolean isTriggerAvailableNow = false;
+
+  /**
+   * Whether the most recent {@link #planInputPartitions} saw any file with an actual deletion
+   * vector. Read by {@link #createReaderFactory} to decide whether to enable the DV read path.
+   * Spark's MicroBatchScanExec evaluates {@code partitions} (which calls planInputPartitions)
+   * before {@code readerFactory} (which calls createReaderFactory) when constructing inputRDD, so
+   * this write happens-before the read.
+   */
+  private volatile boolean hasAnyDvInLastPlan = false;
 
   // Cached starting version to ensure idempotent behavior for "latest" starting version.
   // getStartingVersion() must return the same value across multiple calls.
@@ -632,6 +642,7 @@ public class SparkMicroBatchStream
 
     List<PartitionedFile> partitionedFiles = new ArrayList<>();
     long totalBytesToRead = 0;
+    boolean anyDv = false;
     boolean isCDC = options.readChangeFeed();
     ZoneId zoneId = ZoneId.of(sqlConf.sessionLocalTimeZone());
 
@@ -645,10 +656,15 @@ public class SparkMicroBatchStream
                 Optional.of(endOffset))
             : getFileChanges(fromVersion, fromIndex, isInitialSnapshot, Optional.of(endOffset))) {
       while (fileChanges.hasNext()) {
-        PartitionedFile pf = buildPartitionedFile(fileChanges.next(), isCDC, zoneId);
+        IndexedFile indexedFile = fileChanges.next();
+        PartitionedFile pf = buildPartitionedFile(indexedFile, isCDC, zoneId);
         if (pf == null) continue;
         totalBytesToRead += pf.fileSize();
         partitionedFiles.add(pf);
+        if (indexedFile.getAddFile() != null
+            && indexedFile.getAddFile().getDeletionVector().isPresent()) {
+          anyDv = true;
+        }
       }
     } catch (IOException e) {
       throw new RuntimeException(
@@ -667,6 +683,7 @@ public class SparkMicroBatchStream
       throw e;
     }
 
+    hasAnyDvInLastPlan = anyDv;
     return PartitionUtils.planInputPartitions(
         spark, partitionedFiles, totalBytesToRead, hadoopConf, sqlConf);
   }
@@ -685,7 +702,8 @@ public class SparkMicroBatchStream
         scalaOptions,
         hadoopConf,
         sqlConf,
-        /* isWriteTimeCDCRead */ options.readChangeFeed());
+        /* isCDCRead */ options.readChangeFeed(),
+        hasAnyDvInLastPlan);
   }
 
   /**
@@ -1419,6 +1437,14 @@ public class SparkMicroBatchStream
             }
           }
 
+          // Validate Protocol per-commit (mirrors DSv1 deltaLog.protocolRead(protocol)) and
+          // track for schema-evolution barrier detection.
+          Optional<Protocol> protocolOpt = StreamingHelper.getProtocol(batch, rowId);
+          if (protocolOpt.isPresent()) {
+            TableFeatures.validateKernelCanReadTheTable(protocolOpt.get(), tablePath);
+            protocolAction = protocolOpt.get();
+          }
+
           // Track Metadata for read-incompatible schema changes.
           Optional<Metadata> metadataOpt = StreamingHelper.getMetadata(batch, rowId);
           if (metadataOpt.isPresent()) {
@@ -1430,16 +1456,6 @@ public class SparkMicroBatchStream
                     batchStartVersion,
                     endOffsetOpt,
                     verifyMetadataAction);
-          }
-
-          // Track Protocol for schema evolution barrier detection.
-          Optional<Protocol> protocolOpt = StreamingHelper.getProtocol(batch, rowId);
-          if (protocolOpt.isPresent()) {
-            Preconditions.checkArgument(
-                protocolAction == null,
-                "Should not encounter two protocol actions in the same commit of version %d",
-                version);
-            protocolAction = protocolOpt.get();
           }
 
           // Track CommitInfo for operation details in error messages.

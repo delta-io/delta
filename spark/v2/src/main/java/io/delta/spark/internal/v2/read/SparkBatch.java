@@ -103,7 +103,9 @@ public class SparkBatch implements Batch {
         dataFilters,
         scalaOptions,
         hadoopConf,
-        sqlConf);
+        sqlConf,
+        /* isCDCRead */ false,
+        PartitionUtils.anyFileHasDeletionVector(partitionedFiles));
   }
 
   @Override

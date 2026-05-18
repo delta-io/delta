@@ -1688,11 +1688,11 @@ lazy val goldenTables = (project in file("connectors/golden-tables"))
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "commons-io" % "commons-io" % "2.8.0" % "test",
 
-      "io.delta" %% "delta-spark" % "3.3.2" % "test",
-      "org.apache.spark" %% "spark-sql" % defaultSparkVersion % "test",
-      "org.apache.spark" %% "spark-catalyst" % defaultSparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-core" % defaultSparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-sql" % defaultSparkVersion % "test" classifier "tests"
+      "io.delta" % "delta-spark_4.0_2.13" % "4.1.0" % "test",
+      "org.apache.spark" %% "spark-sql" % sparkVersionForKernelTest % "test",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersionForKernelTest % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkVersionForKernelTest % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % sparkVersionForKernelTest % "test" classifier "tests"
     )
   )
 

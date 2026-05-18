@@ -136,7 +136,13 @@ public class UCCatalogManagedClient {
 
                 metricsCollector.setNumCatalogCommits(response.getCommits().size());
 
-                final long maxUcTableVersion = response.getLatestTableVersion();
+                // UC returns latestTableVersion = -1 when the commit coordinator has never
+                // ratified any commit (e.g. an empty MANAGED table just after CREATE, where v0
+                // was direct-backfilled by `finalizeCreate` and not coordinated by UC). In that
+                // case the latest known table version is the v0 commit on disk, so treat -1 as
+                // 0 for downstream snapshot construction. See SnapshotBuilderImpl
+                // (catalogManaged tables require maxCatalogVersion >= 0).
+                final long maxUcTableVersion = Math.max(response.getLatestTableVersion(), 0L);
 
                 versionOpt.ifPresent(
                     version ->

@@ -217,7 +217,8 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
             options,
             hadoopConf,
             sqlConf,
-            /* isWriteTimeCDCRead */ false);
+            /* isCDCRead= */ false,
+            /* hasAnyDvFiles= */ false);
 
     assertNotNull(factory, "PartitionReaderFactory should not be null");
   }
@@ -259,7 +260,8 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
             options,
             hadoopConf,
             sqlConf,
-            /* isWriteTimeCDCRead */ true);
+            /* isCDCRead= */ true,
+            /* hasAnyDvFiles= */ false);
 
     assertNotNull(factory, "CDC PartitionReaderFactory should not be null");
   }
@@ -309,7 +311,8 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
             options,
             hadoopConf,
             sqlConf,
-            /* isWriteTimeCDCRead */ false);
+            /* isCDCRead */ false,
+            /* hasAnyDvFiles */ false);
 
     assertNotNull(factory, "isWriteTimeCDCRead=false PartitionReaderFactory should not be null");
   }

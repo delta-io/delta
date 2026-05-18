@@ -19,7 +19,9 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.rowtracking.MaterializedRowTrackingColumn;
 import java.io.Serializable;
 import java.util.Arrays;
+import org.apache.spark.sql.delta.RowCommitVersion;
 import org.apache.spark.sql.delta.RowCommitVersion$;
+import org.apache.spark.sql.delta.RowId;
 import org.apache.spark.sql.delta.RowId$;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat;
@@ -91,8 +93,15 @@ public class RowTrackingSchemaContext implements Serializable {
       String rowIdColumnName =
           MaterializedRowTrackingColumn.MATERIALIZED_ROW_ID.getPhysicalColumnName(
               metadata.getConfiguration());
+      // Tag with RowIdMetadataStructField marker so DeltaColumnMapping.createPhysicalSchema
+      // recognizes it as an internal field and skips the user-schema lookup that would otherwise
+      // fail to resolve the materialized physical column name.
+      org.apache.spark.sql.types.Metadata rowIdFieldMetadata =
+          RowId.RowIdMetadataStructField$.MODULE$.metadata(
+              rowIdColumnName, /* shouldSetIcebergReservedFieldId */ false);
       schemaWithRowTrackingColumns =
-          schemaWithRowTrackingColumns.add(rowIdColumnName, DataTypes.LongType, true);
+          schemaWithRowTrackingColumns.add(
+              rowIdColumnName, DataTypes.LongType, true, rowIdFieldMetadata);
       materializedRowIdIndex = index++;
       internalColumnsCount++;
 
@@ -107,8 +116,14 @@ public class RowTrackingSchemaContext implements Serializable {
       String rowCommitVersionColumnName =
           MaterializedRowTrackingColumn.MATERIALIZED_ROW_COMMIT_VERSION.getPhysicalColumnName(
               metadata.getConfiguration());
+      // Tag with RowCommitVersion.MetadataStructField marker so column-mapping schema transform
+      // recognizes this as an internal field rather than a user column.
+      org.apache.spark.sql.types.Metadata rowCommitVersionFieldMetadata =
+          RowCommitVersion.MetadataStructField$.MODULE$.metadata(
+              rowCommitVersionColumnName, /* shouldSetIcebergReservedFieldId */ false);
       schemaWithRowTrackingColumns =
-          schemaWithRowTrackingColumns.add(rowCommitVersionColumnName, DataTypes.LongType, true);
+          schemaWithRowTrackingColumns.add(
+              rowCommitVersionColumnName, DataTypes.LongType, true, rowCommitVersionFieldMetadata);
       materializedRowCommitVersionIndex = index++;
       internalColumnsCount++;
     }
