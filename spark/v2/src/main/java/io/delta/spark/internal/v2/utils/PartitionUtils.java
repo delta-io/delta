@@ -61,8 +61,10 @@ import org.apache.spark.sql.execution.datasources.PartitioningUtils;
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
+import org.apache.spark.sql.types.StringType;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
+import org.apache.spark.unsafe.types.UTF8String;
 import scala.Function1;
 import scala.Option;
 import scala.Tuple2;
@@ -170,10 +172,14 @@ public class PartitionUtils {
       final Integer pos = physicalNameToIndex.get(key);
       if (pos != null) {
         final StructField field = partitionSchema.fields()[pos];
-        values[pos] =
-            (strVal == null)
-                ? null
-                : PartitioningUtils.castPartValueToDesiredType(field.dataType(), strVal, zoneId);
+        if (strVal == null) {
+          values[pos] = null;
+        } else if (field.dataType() instanceof StringType) {
+          values[pos] = UTF8String.fromString(strVal);
+        } else {
+          values[pos] =
+              PartitioningUtils.castPartValueToDesiredType(field.dataType(), strVal, zoneId);
+        }
       }
     }
     return new GenericInternalRow(values);

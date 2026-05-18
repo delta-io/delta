@@ -143,7 +143,8 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "streaming read returns correct data from table with partition column in middle",
     "streaming read with column pruning and partition column in middle",
     "streaming read with column mapping id and partition column in middle",
-    "streaming read after column rename with partition column in middle"
+    "streaming read after column rename with partition column in middle",
+    "streaming read preserves percent-literal string partition value"
   )
 
   override protected def shouldFailTests: Set[String] = Set(
