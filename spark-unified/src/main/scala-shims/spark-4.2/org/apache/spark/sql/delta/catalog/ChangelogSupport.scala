@@ -16,14 +16,19 @@
 
 package org.apache.spark.sql.delta.catalog
 
+import java.util.Optional
+
 import io.delta.spark.internal.v2.catalog.SparkTable
 import io.delta.spark.internal.v2.read.changelog.DeltaChangelog
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.connector.catalog.{Changelog, ChangelogInfo, Identifier, TableCatalog}
+import org.apache.spark.sql.connector.catalog.{Changelog, ChangelogInfo, ChangelogRange, Identifier, Table, TableCatalog}
 import org.apache.spark.sql.connector.catalog.ChangelogRange.{TimestampRange, UnboundedRange, VersionRange}
-import org.apache.spark.sql.delta.DeltaErrors
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.{DeltaErrors, RowTracking}
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSQLConf}
+import org.apache.spark.sql.execution.datasources.v2.ChangelogTable
+import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
  * Mixed into a [[TableCatalog]] implementation to add Auto-CDF support. Provides the
@@ -44,7 +49,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
  * `false`). When the flag is off the trait delegates to the parent `loadChangelog` default,
  * which surfaces `UNSUPPORTED_FEATURE.CHANGE_DATA_CAPTURE`.
  */
-trait ChangelogSupport extends TableCatalog {
+trait ChangelogSupport extends TableCatalog with ReadTimeCDCSupport {
 
   override def loadChangelog(ident: Identifier, changelogInfo: ChangelogInfo): Changelog = {
     val spark = SparkSession.active
@@ -128,5 +133,104 @@ trait ChangelogSupport extends TableCatalog {
       throw DeltaErrors.startVersionAfterLatestVersion(adjustedStart, latest)
     }
     (adjustedStart, adjustedEnd)
+  }
+
+  // ===========================================================================================
+  // Read-time CDC routing (table_changes / .option("readChangeFeed", "true"))
+  // ===========================================================================================
+  //
+  // The catalog hook declared on [[AbstractDeltaCatalog]] is overridden here so V1 entry points
+  // (`TableChanges.toReadQuery` and `DeltaDataSource.getTable`) can hand a CDC read off to the
+  // DSv2 changelog Table without dragging V2 imports into sparkV1. The implementation only
+  // routes when:
+  //   - the request actually carries `readChangeFeed=true` / a CDC option, AND
+  //   - the table has row tracking enabled but no `delta.enableChangeDataFeed`, AND
+  //   - the [[DeltaSQLConf.DELTA_READ_TIME_CDF_ENABLED]] session flag is on.
+  // Tables outside that envelope fall back to the parent `None`, which keeps the legacy
+  // write-time `CDCReader` path (and its CHANGE_DATA_NOT_RECORDED error) intact.
+
+  // Read-time CDC routing for `table_changes(...)` and `.option("readChangeFeed", "true")`.
+  // Called from V1 entry points via the [[ReadTimeCDCSupport]] interface; returns the V2
+  // changelog Table when (and only when) the table has row tracking enabled, no
+  // `delta.enableChangeDataFeed` configured, and the session flag is on.
+  override def buildReadTimeCDCTable(
+      deltaTable: DeltaTableV2,
+      options: CaseInsensitiveStringMap): Option[Table] = {
+    val spark = deltaTable.spark
+    if (!CDCReader.isCDCRead(options)) return None
+    if (!spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_READ_TIME_CDF_ENABLED)) return None
+
+    val snapshot = deltaTable.initialSnapshot
+    if (CDCReader.isCDCEnabledOnTable(snapshot.metadata, spark)) return None
+    if (!RowTracking.isEnabled(snapshot.protocol, snapshot.metadata)) return None
+
+    val sparkTable = buildSparkTableForCDC(deltaTable, options)
+    val range = parseChangelogRangeFromOptions(options)
+    val (startVersion, endVersion) = resolveRange(sparkTable, range)
+    val changelog = new DeltaChangelog(deltaTable.name(), sparkTable, startVersion, endVersion)
+    // Use DROP_CARRYOVERS + computeUpdates=true to match the write-time CDF reader's defaults:
+    // a CoW rewrite that doesn't change the data is hidden (carry-over removal), and a
+    // delete+insert pair on the same rowId surfaces as update_preimage / update_postimage.
+    val info = new ChangelogInfo(
+      range,
+      ChangelogInfo.DeduplicationMode.DROP_CARRYOVERS,
+      /* computeUpdates = */ true)
+    Some(ChangelogTable(changelog, info))
+  }
+
+  /**
+   * Build a [[SparkTable]] for the same Delta table that [[DeltaTableV2]] resolved, dropping the
+   * CDC-specific options before construction. SparkTable inspects its options at construction
+   * time (line `this.isCDCRead = CDCReader.isCDCRead(options)`) and would otherwise refuse batch
+   * reads under `SparkScan.toBatch` -- but the changelog path bypasses `SparkScan` entirely, so
+   * stripping `readChangeFeed=true` here keeps SparkTable in non-CDC mode and reuses its
+   * SnapshotManager for the changelog reader.
+   */
+  private def buildSparkTableForCDC(
+      deltaTable: DeltaTableV2,
+      options: CaseInsensitiveStringMap): SparkTable = {
+    val nonCDCOptions = new java.util.HashMap[String, String](options.asCaseSensitiveMap())
+    nonCDCOptions.remove(DeltaDataSource.CDC_ENABLED_KEY)
+    nonCDCOptions.remove(DeltaDataSource.CDC_ENABLED_KEY_LEGACY)
+    val ident = Identifier.of(Array.empty[String], deltaTable.name())
+    deltaTable.catalogTable match {
+      case Some(catalogTable) => new SparkTable(ident, catalogTable, nonCDCOptions)
+      case None => new SparkTable(ident, deltaTable.path.toString, nonCDCOptions)
+    }
+  }
+
+  /** Build a [[ChangelogRange]] from CDC option keys (startingVersion/Timestamp + ending*). */
+  private def parseChangelogRangeFromOptions(
+      options: CaseInsensitiveStringMap): ChangelogRange = {
+    val hasStartVer = options.containsKey(DeltaDataSource.CDC_START_VERSION_KEY)
+    val hasStartTs = options.containsKey(DeltaDataSource.CDC_START_TIMESTAMP_KEY)
+    if (!hasStartVer && !hasStartTs) throw DeltaErrors.noStartVersionForCDC()
+    if (hasStartVer && hasStartTs) throw DeltaErrors.multipleCDCBoundaryException("starting")
+
+    val hasEndVer = options.containsKey(DeltaDataSource.CDC_END_VERSION_KEY)
+    val hasEndTs = options.containsKey(DeltaDataSource.CDC_END_TIMESTAMP_KEY)
+    if (hasEndVer && hasEndTs) throw DeltaErrors.multipleCDCBoundaryException("ending")
+
+    if (hasStartVer) {
+      val end: Optional[String] =
+        if (hasEndVer) Optional.of(options.get(DeltaDataSource.CDC_END_VERSION_KEY))
+        else Optional.empty()
+      new ChangelogRange.VersionRange(
+        options.get(DeltaDataSource.CDC_START_VERSION_KEY), end, true, true)
+    } else {
+      // Timestamp range: parse to micros (Catalyst convention) so `resolveRange` can divide by 1k
+      // to feed kernel's millisecond API.
+      val startMicros = toCatalystMicros(options.get(DeltaDataSource.CDC_START_TIMESTAMP_KEY))
+      val endMicros: Optional[java.lang.Long] = if (hasEndTs) {
+        Optional.of(toCatalystMicros(options.get(DeltaDataSource.CDC_END_TIMESTAMP_KEY)))
+      } else {
+        Optional.empty()
+      }
+      new ChangelogRange.TimestampRange(startMicros, endMicros, true, true)
+    }
+  }
+
+  private def toCatalystMicros(tsString: String): Long = {
+    java.sql.Timestamp.valueOf(tsString).getTime * 1000L
   }
 }

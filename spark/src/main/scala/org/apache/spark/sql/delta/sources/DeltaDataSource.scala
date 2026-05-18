@@ -109,7 +109,16 @@ class DeltaDataSource
     val options = new CaseInsensitiveStringMap(properties)
     val path = options.get("path")
     if (path == null) throw DeltaErrors.pathNotSpecifiedException
-    DeltaTableV2(SparkSession.active, new Path(path), options = options.asScala.toMap)
+    val spark = SparkSession.active
+    val deltaTable = DeltaTableV2(spark, new Path(path), options = options.asScala.toMap)
+    // Read-time CDC routing: when `.option("readChangeFeed", "true")` targets a table that has
+    // row tracking enabled but no `delta.enableChangeDataFeed`, hand the read off to the V2
+    // changelog Table the catalog returns so the V1 BaseRelation path is skipped entirely.
+    spark.sessionState.catalogManager.v2SessionCatalog match {
+      case c: org.apache.spark.sql.delta.catalog.ReadTimeCDCSupport =>
+        c.buildReadTimeCDCTable(deltaTable, options).getOrElse(deltaTable)
+      case _ => deltaTable
+    }
   }
 
   override def sourceSchema(

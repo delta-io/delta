@@ -22,7 +22,7 @@ import java.util.{Date, Locale}
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.catalog.{DeltaTableV2, ReadTimeCDCSupport}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaDataSource
 
@@ -32,7 +32,7 @@ import org.apache.spark.sql.catalyst.FunctionIdentifier
 import org.apache.spark.sql.catalyst.analysis.{FunctionRegistryBase, NamedRelation, TableFunctionRegistry, UnresolvedLeafNode, UnresolvedRelation}
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, ExpressionInfo, Literal, StringLiteral}
 import org.apache.spark.sql.catalyst.plans.logical.{LeafNode, LogicalPlan, UnaryNode}
-import org.apache.spark.sql.connector.catalog.V1Table
+import org.apache.spark.sql.connector.catalog.{CatalogPlugin, Identifier, V1Table}
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.datasources.v2.{DataSourceV2Relation, DataSourceV2RelationShim}
 import org.apache.spark.sql.types.{IntegerType, LongType, StringType, TimestampType}
@@ -195,13 +195,51 @@ case class TableChanges(
 
   /** Converts the table changes plan to a query over a Delta table */
   def toReadQuery: LogicalPlan = child.transformUp {
-    case DataSourceV2RelationShim(d: DeltaTableV2, _, _, _, options) =>
-      // withOptions empties the catalog table stats
-      d.withOptions(options.asScala.toMap).toLogicalRelation
+    case DataSourceV2RelationShim(d: DeltaTableV2, _, catalogOpt, identOpt, options) =>
+      // Try read-time CDC routing first (CDF disabled + row tracking enabled), and fallback to the
+      // legacy write-time path otherwise.
+      TableChanges.maybeRouteReadTimeCDC(d, catalogOpt, identOpt, options).getOrElse {
+        // withOptions empties the catalog table stats
+        d.withOptions(options.asScala.toMap).toLogicalRelation
+      }
     case r: NamedRelation =>
       throw DeltaErrors.notADeltaTableException(fnName, r.name)
     case l: LogicalRelation =>
       val relationName = l.catalogTable.map(_.identifier.toString).getOrElse("relation")
       throw DeltaErrors.notADeltaTableException(fnName, relationName)
+  }
+}
+
+object TableChanges {
+  /**
+   * If a read-time CDC routing applies, build a [[DataSourceV2Relation]] wrapping the
+   * V2 Table that the catalog provides (typically a `ChangelogTable` wrapping a kernel-based
+   * `DeltaChangelog`). Returns None when the catalog declines the routing -- either because
+   * the table is not read-time-CDC eligible (CDF enabled, row tracking missing, session flag
+   * off) or because the spark-unified implementation is not on the classpath.
+   *
+   * Lives in V1 (sparkV1) so [[TableChanges.toReadQuery]] can call it without dragging V2
+   * classes (`SparkTable`, `DeltaChangelog`) into this module. The catalog hook itself is
+   * declared on [[AbstractDeltaCatalog]] and implemented in spark-unified.
+   */
+  private[delta] def maybeRouteReadTimeCDC(
+      deltaTable: DeltaTableV2,
+      catalogOpt: Option[CatalogPlugin],
+      identOpt: Option[Identifier],
+      options: CaseInsensitiveStringMap): Option[LogicalPlan] = {
+    val readTimeCDC = catalogOpt
+      .collect { case c: ReadTimeCDCSupport => c }
+      .orElse {
+        // For `table_changes_by_path('/path/to/table', ...)` the DataSourceV2Relation has no
+        // catalog attached. Fall back to the session catalog so path-based CDC reads still get
+        // routing.
+        deltaTable.spark.sessionState.catalogManager.v2SessionCatalog match {
+          case c: ReadTimeCDCSupport => Some(c)
+          case _ => None
+        }
+      }
+    readTimeCDC.flatMap(_.buildReadTimeCDCTable(deltaTable, options)).map { table =>
+      DataSourceV2Relation.create(table, catalogOpt, identOpt, options)
+    }
   }
 }

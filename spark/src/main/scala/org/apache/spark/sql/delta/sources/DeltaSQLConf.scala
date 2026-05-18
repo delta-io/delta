@@ -2386,6 +2386,20 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_READ_TIME_CDF_ENABLED =
+    buildConf("changeDataFeed.readTimeCDF.enabled")
+      .internal()
+      .doc(
+        """When enabled, `table_changes(...)` and `.option("readChangeFeed", "true")` queries
+          |against a Delta table that has row tracking enabled but does NOT have
+          |`delta.enableChangeDataFeed` set are answered by the read-time CDC reader (the same
+          |kernel-based stack used by `CHANGES FROM ...`) instead of failing with
+          |CHANGE_DATA_NOT_RECORDED. Has no effect on tables where
+          |`delta.enableChangeDataFeed` is already set; those continue to use the write-time
+          |CDC reader unconditionally.""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP = {
     buildConf("changeDataFeed.timestampOutOfRange.enabled")
       .doc(

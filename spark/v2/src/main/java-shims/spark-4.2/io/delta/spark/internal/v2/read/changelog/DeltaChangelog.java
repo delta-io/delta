@@ -17,11 +17,11 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
  * V2 Changelog implementation for Delta tables.
  *
  * <p>Wraps the {@link SparkTable} resolved by {@code TableCatalog.loadTable(ident)}. The
- * connector-level work (snapshot loads, row tracking validation, metadata-action inspection
- * across the range) is deferred to the read path inside {@link DeltaChangelogBatch}. The schema
- * exposed by {@link #columns()} is the end-version schema. It matches the {@code dataSchema} the
- * scan builds against, so analysis-time column resolution agrees with the per-commit Metadata
- * validation performed at scan planning.
+ * connector-level work (snapshot loads, row tracking validation, metadata-action inspection across
+ * the range) is deferred to the read path inside {@link DeltaChangelogBatch}. The schema exposed by
+ * {@link #columns()} is the end-version schema. It matches the {@code dataSchema} the scan builds
+ * against, so analysis-time column resolution agrees with the per-commit Metadata validation
+ * performed at scan planning.
  *
  * <p>Row tracking is required at the table protocol. Without it the SPIP analyzer rule cannot
  * partition by {@code rowId / rowVersion}. Validation is performed by the read path, not here.
