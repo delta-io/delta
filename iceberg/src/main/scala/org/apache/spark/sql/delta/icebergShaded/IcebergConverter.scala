@@ -226,18 +226,19 @@ class IcebergConverter
 
 
   /**
-   * Reads the last converted Iceberg state from the catalogTable properties.
-   * The catalogTable does not have a deltaUniformIceberg field; instead the metadata location
-   * and last converted delta version are stored as plain table properties as a workaround
+   * Reads the last converted Iceberg state from the catalogTable.
+   * The Hive metastore path stores these in catalogTable.properties; the UC REST path stores
+   * them in catalogTable.storage.properties (populated from the LoadTableResponse uniform field).
    */
   protected def fetchLastConvertedIcebergInfo(
       catalogTable: CatalogTable,
       deltaLog: DeltaLog,
       enablingUniForm: Boolean): LastConvertedIcebergInfo = {
+    val icebergProps = catalogTable.properties ++ catalogTable.storage.properties
     val baseMetadataLocation =
-      catalogTable.properties.get(IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP)
+      icebergProps.get(IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP)
     val lastDeltaVersionConverted =
-      catalogTable.properties.get(
+      icebergProps.get(
         IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP).map(_.toLong)
     val lastConvertedIcebergTable =
       baseMetadataLocation.map(new HadoopTables(deltaLog.newDeltaHadoopConf()).load(_))

@@ -97,10 +97,11 @@ trait WriteDeltaHMSReadIceberg extends UniFormE2ETest
 /**
  * A [[DeltaCatalog]] subclass that enriches [[CatalogTable]] with the last converted Iceberg
  * metadata from [[InMemoryUCCommitCoordinator]] before loading the table. This simulates what
- * the real UC catalog does: returning
+ * the real UC REST catalog does: injecting
  * [[IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP]]
- * and [[IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP]] as catalog table
- * properties so that [[IcebergConverter]] can perform incremental conversion.
+ * and [[IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP]] into
+ * [[org.apache.spark.sql.catalyst.catalog.CatalogStorageFormat#properties]] (not
+ * [[CatalogTable#properties]]), matching the UC REST path in [[UCDeltaCatalogClientImpl]].
  */
 class UCBackedDeltaCatalog extends DeltaCatalog {
   override def loadCatalogTable(ident: Identifier, catalogTable: CatalogTable): Table = {
@@ -112,11 +113,12 @@ class UCBackedDeltaCatalog extends DeltaCatalog {
           .filter(_.getIcebergMetadata.isPresent)
           .map { meta =>
             val icebergMeta = meta.getIcebergMetadata.get
-            catalogTable.copy(properties = catalogTable.properties +
-              (IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP->
-                icebergMeta.getMetadataLocation) +
-              (IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP ->
-                icebergMeta.getConvertedDeltaVersion.toString))
+            catalogTable.copy(storage = catalogTable.storage.copy(
+              properties = catalogTable.storage.properties +
+                (IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP ->
+                  icebergMeta.getMetadataLocation) +
+                (IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP ->
+                  icebergMeta.getConvertedDeltaVersion.toString)))
           }
       }
     }.getOrElse(catalogTable)

@@ -22,6 +22,7 @@ import io.delta.storage.commit.{TableIdentifier => StorageTableIdentifier}
 import io.delta.storage.commit.uccommitcoordinator.{UCDeltaClient, UCDeltaModels}
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.{StagingTableInfo, TableInfo}
 import io.delta.storage.commit.actions.AbstractMetadata
+import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.catalog.CatalogTableType
@@ -141,6 +142,84 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
     val merged = v1.storage.properties
     assert(merged.get("ucTableId") === Some("uuid-1"))
     assert(merged.get("fs.s3a.access.key") === Some("key"))
+  }
+
+  test("toV1Table propagates UniForm Iceberg metadata into storage.properties") {
+    val metadata = new AbstractMetadata {
+      override def getId: String = null
+      override def getName: String = "tbl"
+      override def getDescription: String = null
+      override def getProvider: String = "DELTA"
+      override def getFormatOptions: java.util.Map[String, String] =
+        java.util.Collections.emptyMap()
+      override def getSchemaString: String =
+        """{"type":"struct","fields":[{"name":"id","type":"long","nullable":true,"metadata":{}}]}"""
+      override def getPartitionColumns: java.util.List[String] = java.util.Collections.emptyList()
+      override def getConfiguration: java.util.Map[String, String] =
+        java.util.Collections.emptyMap()
+      override def getCreatedTime: java.lang.Long = 0L
+    }
+    val icebergMeta = new IcebergMetadata(
+      "s3://bucket/table/metadata/v3.metadata.json",
+      /* convertedDeltaVersion = */ 5L,
+      /* convertedDeltaTimestamp = */ "2026-01-01T00:00:00.000")
+    val uniformMeta = new UniformMetadata(icebergMeta)
+    val info = new TableInfo(
+      "uuid-1",
+      UCDeltaModels.TableType.MANAGED,
+      "s3://bucket/table",
+      metadata,
+      java.util.Collections.emptyMap(),
+      uniformMeta)
+
+    val client = new UCDeltaCatalogClientImpl(
+      catalogName = "main",
+      ucClient = new StubUCDeltaClient(info))
+
+    val table = client.loadTable(Identifier.of(Array("sch"), "tbl"))
+    val v1 = table.asInstanceOf[V1Table].catalogTable
+    val storageProps = v1.storage.properties
+    assert(storageProps.get("deltaUniformIceberg.metadataLocation") ===
+      Some("s3://bucket/table/metadata/v3.metadata.json"),
+      "metadataLocation should be in storage.properties")
+    assert(storageProps.get("deltaUniformIceberg.convertedDeltaVersion") === Some("5"),
+      "convertedDeltaVersion should be in storage.properties")
+    assert(storageProps.get("deltaUniformIceberg.convertedDeltaTimestamp") ===
+      Some("2026-01-01T00:00:00.000"),
+      "convertedDeltaTimestamp should be in storage.properties")
+    assert(v1.properties.isEmpty, "catalogTable.properties should remain empty")
+  }
+
+  test("toV1Table with no UniForm metadata leaves storage.properties without iceberg keys") {
+    val metadata = new AbstractMetadata {
+      override def getId: String = null
+      override def getName: String = "tbl"
+      override def getDescription: String = null
+      override def getProvider: String = "DELTA"
+      override def getFormatOptions: java.util.Map[String, String] =
+        java.util.Collections.emptyMap()
+      override def getSchemaString: String =
+        """{"type":"struct","fields":[]}"""
+      override def getPartitionColumns: java.util.List[String] = java.util.Collections.emptyList()
+      override def getConfiguration: java.util.Map[String, String] =
+        java.util.Collections.emptyMap()
+      override def getCreatedTime: java.lang.Long = 0L
+    }
+    val info = new TableInfo(
+      "uuid-2",
+      UCDeltaModels.TableType.EXTERNAL,
+      "s3://bucket/table2",
+      metadata,
+      java.util.Collections.emptyMap())  // no uniformMetadata
+
+    val client = new UCDeltaCatalogClientImpl(
+      catalogName = "main",
+      ucClient = new StubUCDeltaClient(info))
+
+    val table = client.loadTable(Identifier.of(Array("sch"), "tbl"))
+    val storageProps = table.asInstanceOf[V1Table].catalogTable.storage.properties
+    assert(!storageProps.contains("deltaUniformIceberg.metadataLocation"))
+    assert(!storageProps.contains("deltaUniformIceberg.convertedDeltaVersion"))
   }
 }
 

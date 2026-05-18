@@ -18,6 +18,7 @@ package io.delta.storage.commit.uccommitcoordinator;
 
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
+import io.delta.storage.commit.uniform.UniformMetadata;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
@@ -110,6 +111,7 @@ public final class UCDeltaModels {
     private final String location;
     private final AbstractMetadata metadata;
     private final Map<String, String> storageProperties;
+    private final UniformMetadata uniformMetadata;
 
     public TableInfo(
         String tableId,
@@ -117,11 +119,22 @@ public final class UCDeltaModels {
         String location,
         AbstractMetadata metadata,
         Map<String, String> storageProperties) {
+      this(tableId, tableType, location, metadata, storageProperties, null);
+    }
+
+    public TableInfo(
+        String tableId,
+        TableType tableType,
+        String location,
+        AbstractMetadata metadata,
+        Map<String, String> storageProperties,
+        UniformMetadata uniformMetadata) {
       this.tableId = tableId;
       this.tableType = tableType;
       this.location = location;
       this.metadata = metadata;
       this.storageProperties = storageProperties;
+      this.uniformMetadata = uniformMetadata;
     }
 
     /** UC's {@code table_uuid}; distinct from {@link AbstractMetadata#getId()} (the Delta id). */
@@ -144,6 +157,11 @@ public final class UCDeltaModels {
     /** Hadoop-style storage options (e.g. catalog-vended credentials). */
     public Map<String, String> getStorageProperties() {
       return storageProperties == null ? Collections.emptyMap() : storageProperties;
+    }
+
+    /** UniForm conversion metadata, or {@code null} if the table has no UniForm enabled. */
+    public UniformMetadata getUniformMetadata() {
+      return uniformMetadata;
     }
   }
 
