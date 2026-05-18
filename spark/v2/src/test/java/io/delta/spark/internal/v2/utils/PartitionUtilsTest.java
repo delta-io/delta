@@ -152,7 +152,7 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
             options,
             hadoopConf,
             sqlConf,
-            /* isCDCRead= */ false);
+            /* isWriteTimeCDCRead */ false);
 
     assertNotNull(factory, "PartitionReaderFactory should not be null");
   }
@@ -194,9 +194,59 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
             options,
             hadoopConf,
             sqlConf,
-            /* isCDCRead= */ true);
+            /* isWriteTimeCDCRead */ true);
 
     assertNotNull(factory, "CDC PartitionReaderFactory should not be null");
+  }
+
+  /**
+   * Read-time Auto-CDF calls into PartitionUtils with {@code isWriteTimeCDCRead=false}. The factory
+   * is then a plain Parquet reader factory: PartitionUtils does not augment {@code readDataSchema}
+   * with CDC tail columns and does not wrap the reader with {@code CDCReadFunction}. The tail
+   * columns are added by {@code DeltaChangelogBatch.CDCPartitionReaderFactory} as per-partition
+   * constants instead.
+   */
+  @Test
+  public void testCreateDeltaParquetReaderFactory_NotWriteTimeCDCRead() {
+    String tablePath =
+        createTestTable("test_delta_reader_factory_batch_changelog_" + System.nanoTime(), true);
+
+    Table table = Table.forPath(defaultEngine, tablePath);
+    Snapshot snapshot = table.getLatestSnapshot(defaultEngine);
+
+    StructType dataSchema =
+        new StructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.LongType, true),
+            });
+    StructType partitionSchema =
+        new StructType(
+            new StructField[] {DataTypes.createStructField("part", DataTypes.StringType, true)});
+    StructType readDataSchema = dataSchema;
+    StructType ddlOrderedReadOutputSchema =
+        SchemaUtils.ddlOrderedOutputSchema(
+            SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema()),
+            readDataSchema,
+            partitionSchema);
+    Filter[] filters = new Filter[0];
+    scala.collection.immutable.Map<String, String> options = Map$.MODULE$.empty();
+    Configuration hadoopConf = new Configuration();
+    SQLConf sqlConf = SQLConf.get();
+
+    PartitionReaderFactory factory =
+        PartitionUtils.createDeltaParquetReaderFactory(
+            snapshot,
+            dataSchema,
+            partitionSchema,
+            readDataSchema,
+            ddlOrderedReadOutputSchema,
+            filters,
+            options,
+            hadoopConf,
+            sqlConf,
+            /* isWriteTimeCDCRead */ false);
+
+    assertNotNull(factory, "isWriteTimeCDCRead=false PartitionReaderFactory should not be null");
   }
 
   @Test

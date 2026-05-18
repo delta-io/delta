@@ -92,7 +92,8 @@ public class SparkBatch implements Batch {
 
   @Override
   public PartitionReaderFactory createReaderFactory() {
-    // TODO: support write-time CDF on batch reads.
+    // Non-CDC plain table scan. Write-time CDF streaming reads route through
+    // SparkMicroBatchStream; read-time Auto-CDF batch reads route through DeltaChangelogBatch.
     return PartitionUtils.createDeltaParquetReaderFactory(
         snapshot,
         dataSchema,
@@ -102,8 +103,7 @@ public class SparkBatch implements Batch {
         dataFilters,
         scalaOptions,
         hadoopConf,
-        sqlConf,
-        /* isCDCRead */ false);
+        sqlConf);
   }
 
   @Override

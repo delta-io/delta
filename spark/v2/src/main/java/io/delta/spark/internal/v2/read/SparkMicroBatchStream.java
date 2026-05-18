@@ -611,7 +611,7 @@ public class SparkMicroBatchStream
         scalaOptions,
         hadoopConf,
         sqlConf,
-        /* isCDCRead */ options.readChangeFeed());
+        /* isWriteTimeCDCRead */ options.readChangeFeed());
   }
 
   /**
