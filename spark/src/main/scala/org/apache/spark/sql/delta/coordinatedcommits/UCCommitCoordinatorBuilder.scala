@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
+import java.net.{URI, URISyntaxException}
 import java.util.concurrent.ConcurrentHashMap
 
 import scala.collection.JavaConverters._
@@ -196,13 +197,19 @@ object UCCommitCoordinatorBuilder
           .map { case (k, v) => (k.stripPrefix(prefix), v) }
           .toMap
 
-        if (!ucConfig.contains("uri")) {
-          logWarning(
-            log"Skipping catalog ${MDC(DeltaLogKeys.CATALOG, catalogName)} as it does " +
-              "not have uri configured in Spark Session.")
-          None
-        } else {
-          Some((catalogName, ucConfig))
+        ucConfig.get("uri") match {
+          case None =>
+            logWarning(
+              log"Skipping catalog ${MDC(DeltaLogKeys.CATALOG, catalogName)} as it does " +
+                "not have uri configured in Spark Session.")
+            None
+          case Some(uri) if !isValidUri(uri) =>
+            logWarning(
+              log"Skipping catalog ${MDC(DeltaLogKeys.CATALOG, catalogName)} as it has" +
+                log" an invalid uri ${MDC(DeltaLogKeys.URI, uri)}.")
+            None
+          case _ =>
+            Some((catalogName, ucConfig))
         }
       }
       .toList
@@ -216,6 +223,10 @@ object UCCommitCoordinatorBuilder
     getCatalogConfigs(spark).map {
       case (name, ucConfig) => name -> UCCatalogConfig(name, ucConfig)
     }.toMap
+  }
+
+  private def isValidUri(uri: String): Boolean = {
+    try { new URI(uri); true } catch { case _: URISyntaxException => false }
   }
 
   private def safeClose(ucClient: UCClient, uri: String): Unit = {
