@@ -386,6 +386,19 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
     }
   }
 
+  test("getCatalogConfigs skips catalog with invalid uri") {
+    val catalogName = "bad_uri_catalog"
+
+    withSQLConf(
+      s"spark.sql.catalog.$catalogName" -> "io.unitycatalog.spark.UCSingleCatalog",
+      s"spark.sql.catalog.$catalogName.uri" -> "://missing scheme",
+      s"spark.sql.catalog.$catalogName.token" -> "some-token"
+    ) {
+      val configs = UCCommitCoordinatorBuilder.getCatalogConfigs(spark)
+      assert(configs.isEmpty, "Catalog with invalid uri should be skipped")
+    }
+  }
+
   test("getCatalogConfigs prefers auth.* keys (both present)") {
     val catalogName = "mixed_catalog"
     val uri = "https://test-uri.com"
