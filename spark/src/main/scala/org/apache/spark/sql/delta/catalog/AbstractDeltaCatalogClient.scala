@@ -16,8 +16,12 @@
 
 package org.apache.spark.sql.delta.catalog
 
+import java.util
+
 import org.apache.spark.internal.Logging
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.connector.catalog.{Identifier, Table}
+import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.coordinatedcommits.UCTokenBasedRestClientFactory
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
@@ -39,6 +43,29 @@ private[catalog] trait AbstractDeltaCatalogClient {
    *   no record of this identifier
    */
   def loadTable(ident: Identifier): Table
+
+  /**
+   * Called by `AbstractDeltaCatalog.maybeStageManagedDeltaCreate` for a fresh managed-Delta
+   * CREATE / staged CREATE. Stages the table with the catalog (e.g. UC Delta API staging
+   * endpoint) and returns `properties` augmented with the catalog-supplied LOCATION, table
+   * id, and credentials.
+   *
+   * The caller filters out non-managed-create requests upstream; implementations may
+   * additionally enforce that invariant as defense-in-depth.
+   */
+  def createStagingTable(
+      ident: Identifier,
+      properties: util.Map[String, String]): util.Map[String, String]
+
+  /**
+   * Called by [[AbstractDeltaCatalog]] after Delta has written the initial commit, in place
+   * of the legacy `super.createTable` call. Implementations register the table with the
+   * catalog (e.g. via UC Delta API `createTable` endpoint).
+   */
+  def createTable(
+      ident: Identifier,
+      table: CatalogTable,
+      snapshot: Snapshot): Unit
 }
 
 /** Builds a [[AbstractDeltaCatalogClient]] from catalog options. */

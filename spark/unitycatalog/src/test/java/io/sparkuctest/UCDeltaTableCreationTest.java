@@ -75,6 +75,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       List.of(
           "delta.feature.appendOnly",
           DELTA_CATALOG_MANAGED_KEY,
+          "delta.feature.columnMapping",
           "delta.feature.deletionVectors",
           "delta.feature.domainMetadata",
           "delta.feature.inCommitTimestamp",

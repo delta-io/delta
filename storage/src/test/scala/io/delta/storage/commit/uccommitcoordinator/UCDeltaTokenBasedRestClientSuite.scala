@@ -555,12 +555,14 @@ class UCDeltaTokenBasedRestClientSuite
          |}""".stripMargin
 
     deltaHandler = (exchange, body) => {
-      captured = body
+      // Capture only the first request (the createStagingTable POST). Subsequent requests
+      // come from the credential fetch in toStagingTableInfo and have a different body shape.
+      if (captured == null) captured = body
       sendJson(exchange, HttpStatus.SC_OK, stagingJson)
     }
 
     withClient { c =>
-      val info = c.createStagingTable(testCatalog, testSchema, testTable)
+      val info = c.createStagingTable(testIdentifier)
 
       // verify request body
       val req = objectMapper.readTree(captured)
@@ -591,7 +593,7 @@ class UCDeltaTokenBasedRestClientSuite
       sendJson(exchange, HttpStatus.SC_INTERNAL_SERVER_ERROR, """{"error":"fail"}""")
     withClient { c =>
       val e = intercept[java.io.IOException] {
-        c.createStagingTable(testCatalog, testSchema, testTable)
+        c.createStagingTable(testIdentifier)
       }
       assert(e.getMessage.contains("HTTP 500"))
     }

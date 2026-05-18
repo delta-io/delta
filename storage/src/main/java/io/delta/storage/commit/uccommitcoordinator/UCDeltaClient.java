@@ -18,15 +18,15 @@ package io.delta.storage.commit.uccommitcoordinator;
 
 import io.delta.storage.commit.TableIdentifier;
 import io.delta.storage.commit.actions.AbstractMetadata;
+import io.delta.storage.commit.actions.AbstractProtocol;
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.StagingTableInfo;
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.TableInfo;
 import java.io.IOException;
-import java.util.List;
-import java.util.Map;
+import java.net.URI;
 
 /**
- * Extends {@link UCClient} with Delta table lifecycle operations backed by the UC Delta REST
- * Catalog API (load, stage, and create tables).
+ * Extends {@link UCClient} with Delta table lifecycle operations backed by the UC Delta API
+ * (load, stage, and create tables).
  */
 public interface UCDeltaClient extends UCClient {
 
@@ -45,38 +45,40 @@ public interface UCDeltaClient extends UCClient {
    * storage location, and protocol/property requirements that the caller must honor when
    * finalizing the table with {@link #createTable}.
    *
-   * @param catalog the catalog name
-   * @param schema  the schema name
-   * @param table   the table name
+   * @param tableIdentifier catalog + schema namespace and table name
    * @return a {@link StagingTableInfo} with the reserved table details
    * @throws IOException on network or API errors
    */
-  StagingTableInfo createStagingTable(String catalog, String schema, String table)
-      throws IOException;
+  StagingTableInfo createStagingTable(TableIdentifier tableIdentifier) throws IOException;
 
   /**
-   * Finalizes a previously staged Delta table, making it visible in the catalog.
+   * Finalizes a previously staged Delta table, making it visible in the catalog. Mirrors the
+   * shape of {@link UCClient#commit}: the catalog-level identity is conveyed by
+   * {@code tableId} / {@code tableUri} / {@code tableIdentifier}; the Delta-log shape is
+   * conveyed by an {@link AbstractMetadata} (description, schemaString, partitionColumns,
+   * configuration) and an {@link AbstractProtocol} (min reader/writer versions, reader/writer
+   * features).
    *
-   * @param catalog          the catalog name
-   * @param schema           the schema name
-   * @param name             the table name
-   * @param location         the storage location
-   * @param tableType        the table type (MANAGED or EXTERNAL), or {@code null}
-   * @param comment          the table comment, or {@code null}
-   * @param partitionColumns the partition column names, or {@code null}
-   * @param protocol         the required Delta protocol, or {@code null}
-   * @param properties       the table properties, or {@code null}
-   * @return the newly created table's {@link AbstractMetadata}
+   * @param tableId                the UC-allocated table id returned by
+   *                               {@link #createStagingTable}
+   * @param tableUri               the storage location of the staged table
+   * @param tableIdentifier        catalog + schema namespace and table name
+   * @param tableType              MANAGED or EXTERNAL
+   * @param metadata               the Delta metadata to register; only {@code description},
+   *                               {@code schemaString}, {@code partitionColumns}, and
+   *                               {@code configuration} are consumed
+   * @param protocol               the Delta protocol the table will be created with
+   * @param lastCommitTimestampMs  Delta-log timestamp of the initial commit; UC stores this on
+   *                               the catalog entry
+   * @return the newly created table's {@link TableInfo}
    * @throws IOException on network or API errors
    */
-  AbstractMetadata createTable(
-      String catalog,
-      String schema,
-      String name,
-      String location,
+  TableInfo createTable(
+      String tableId,
+      URI tableUri,
+      TableIdentifier tableIdentifier,
       UCDeltaModels.TableType tableType,
-      String comment,
-      List<String> partitionColumns,
-      UCDeltaModels.DeltaProtocol protocol,
-      Map<String, String> properties) throws IOException;
+      AbstractMetadata metadata,
+      AbstractProtocol protocol,
+      long lastCommitTimestampMs) throws IOException;
 }
