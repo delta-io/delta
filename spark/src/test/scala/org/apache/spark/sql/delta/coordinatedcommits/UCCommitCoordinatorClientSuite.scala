@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.coordinatedcommits
 
 import java.io.IOException
 import java.lang.{Long => JLong}
+import java.net.URI
 import java.util.{List => JList, Optional}
 
 import scala.collection.JavaConverters._
@@ -42,12 +43,18 @@ import io.delta.storage.commit.{
   Commit => JCommit,
   CommitFailedException => JCommitFailedException,
   CoordinatedCommitsUtils => JCoordinatedCommitsUtils,
+  GetCommitsResponse => JGetCommitsResponse,
   TableDescriptor,
+  TableIdentifier => JTableIdentifier,
   UpdatedActions
 }
+import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.{
+  UCClient,
   UCCommitCoordinatorClient,
-  UCCoordinatedCommitsUsageLogs}
+  UCCoordinatedCommitsUsageLogs,
+  UCDeltaClient,
+  UCDeltaModels}
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, LocalFileSystem, Path}
@@ -87,6 +94,89 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
     assert(usageLogs.exists { record =>
       record.tags.get("opType").contains(opType)
     })
+  }
+
+  private class RecordingDrcUCClient extends UCDeltaClient {
+    var catalog: String = _
+    var schema: String = _
+    var table: String = _
+    var request: UCDeltaModels.UpdateTableRequest = _
+
+    override def supportsUCDeltaRestCatalogApi(): Boolean = true
+
+    override def updateTable(
+        catalog: String,
+        schema: String,
+        table: String,
+        request: UCDeltaModels.UpdateTableRequest): AbstractMetadata = {
+      this.catalog = catalog
+      this.schema = schema
+      this.table = table
+      this.request = request
+      null
+    }
+
+    override def getMetastoreId(): String = metastoreId.toString
+
+    override def commit(
+        tableId: String,
+        tableUri: URI,
+        tableIdentifier: JTableIdentifier,
+        commit: Optional[JCommit],
+        lastKnownBackfilledVersion: Optional[JLong],
+        oldMetadata: Optional[AbstractMetadata],
+        newMetadata: Optional[AbstractMetadata],
+        oldProtocol: Optional[AbstractProtocol],
+        newProtocol: Optional[AbstractProtocol],
+        uniform: Optional[UniformMetadata]): Unit = {
+      throw new RuntimeException("legacy UC commit should not be called")
+    }
+
+    override def getCommits(
+        tableId: String,
+        tableUri: URI,
+        startVersion: Optional[JLong],
+        endVersion: Optional[JLong]): JGetCommitsResponse = null
+
+    override def finalizeCreate(
+        tableName: String,
+        catalogName: String,
+        schemaName: String,
+        storageLocation: String,
+        columns: JList[UCClient.ColumnDef],
+        properties: java.util.Map[String, String]): Unit = {}
+
+    override def close(): Unit = {}
+  }
+
+  private class TestableUCCommitCoordinatorClient(ucClient: UCClient)
+    extends UCCommitCoordinatorClient(Map.empty[String, String].asJava, ucClient) {
+
+    def callCommitToUC(
+        tableDesc: TableDescriptor,
+        logPath: Path,
+        commitFile: Optional[FileStatus],
+        commitVersion: Optional[JLong],
+        commitTimestamp: Optional[JLong],
+        lastKnownBackfilledVersion: Optional[JLong],
+        oldMetadata: Optional[AbstractMetadata],
+        newMetadata: Optional[AbstractMetadata],
+        oldProtocol: Optional[AbstractProtocol],
+        newProtocol: Optional[AbstractProtocol]): Unit = {
+      commitToUC(
+        tableUUID.toString,
+        tableDesc,
+        commitFile,
+        commitVersion,
+        commitTimestamp,
+        lastKnownBackfilledVersion,
+        CatalogTrackedInfo.EMPTY,
+        /* disown = */ false,
+        oldMetadata,
+        newMetadata,
+        oldProtocol,
+        newProtocol)
+    }
   }
 
   test("incorrect last known backfilled version") {
@@ -156,6 +246,74 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
         }
       }
     }
+  }
+
+  test("commitToUC uses UC Delta updateTable when DRC is supported") {
+    val recordingClient = new RecordingDrcUCClient
+    val client = new TestableUCCommitCoordinatorClient(recordingClient)
+    val logPath = new Path("file:/tmp/uc-table/_delta_log")
+    val tableDesc = new TableDescriptor(
+      logPath,
+      Optional.of(new JTableIdentifier(Array("main", "default"), "tbl")),
+      Map(UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> tableUUID.toString).asJava)
+    val commitFile = new FileStatus(
+      32L,
+      false,
+      1,
+      1024L,
+      200L,
+      new Path("file:/tmp/uc-table/_delta_log/_staged_commits/1.uuid.json"))
+    val oldMetadata = Metadata(
+      description = "old comment",
+      schemaString = """{"type":"struct","fields":[]}""",
+      partitionColumns = Nil,
+      configuration = Map("old.prop" -> "remove", "same.prop" -> "same"))
+    val newMetadata = oldMetadata.copy(
+      description = "new comment",
+      schemaString =
+        """{"type":"struct","fields":[""" +
+          """{"name":"id","type":"long","nullable":false,"metadata":{}}]}""",
+      partitionColumns = Seq("id"),
+      configuration = Map("new.prop" -> "set", "same.prop" -> "same"))
+
+    client.callCommitToUC(
+      tableDesc,
+      logPath,
+      Optional.of(commitFile),
+      Optional.of(JLong.valueOf(1L)),
+      Optional.of(JLong.valueOf(100L)),
+      Optional.of(JLong.valueOf(0L)),
+      Optional.of(oldMetadata),
+      Optional.of(newMetadata),
+      Optional.of(Protocol(1, 1)),
+      Optional.of(Protocol(1, 7)))
+
+    assert(recordingClient.catalog === "main")
+    assert(recordingClient.schema === "default")
+    assert(recordingClient.table === "tbl")
+    val request = recordingClient.request
+    assert(request.getRequirements.asScala.map(_.getType) ===
+      Seq(UCDeltaModels.TableRequirement.Type.ASSERT_TABLE_UUID))
+    assert(request.getRequirements.get(0).getUuid === tableUUID)
+    val updates = request.getUpdates.asScala
+    assert(updates.map(_.getAction) === Seq(
+      UCDeltaModels.TableUpdate.Action.ADD_COMMIT,
+      UCDeltaModels.TableUpdate.Action.SET_LATEST_BACKFILLED_VERSION,
+      UCDeltaModels.TableUpdate.Action.SET_COLUMNS,
+      UCDeltaModels.TableUpdate.Action.SET_PARTITION_COLUMNS,
+      UCDeltaModels.TableUpdate.Action.SET_TABLE_COMMENT,
+      UCDeltaModels.TableUpdate.Action.SET_PROPERTIES,
+      UCDeltaModels.TableUpdate.Action.REMOVE_PROPERTIES,
+      UCDeltaModels.TableUpdate.Action.SET_PROTOCOL))
+    assert(updates(0).getCommit.getVersion === 1L)
+    assert(updates(0).getCommit.getFileName === "1.uuid.json")
+    assert(updates(1).getLatestPublishedVersion === 0L)
+    assert(updates(2).getSchemaString.contains("\"name\":\"id\""))
+    assert(updates(3).getPartitionColumns.asScala === Seq("id"))
+    assert(updates(4).getComment === "new comment")
+    assert(updates(5).getPropertyUpdates.asScala === Map("new.prop" -> "set"))
+    assert(updates(6).getPropertyRemovals.asScala === Seq("old.prop"))
+    assert(updates(7).getProtocol.getMinWriterVersion === 7)
   }
 
   test("commit-limit-reached exception handling") {

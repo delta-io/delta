@@ -23,7 +23,12 @@ import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
 import io.delta.storage.commit.CommitCoordinatorClient
-import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCommitCoordinatorClient, UCTokenBasedRestClient}
+import io.delta.storage.commit.uccommitcoordinator.{
+  UCClient,
+  UCCommitCoordinatorClient,
+  UCDeltaClient,
+  UCTokenBasedRestClient
+}
 
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -31,6 +36,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import io.unitycatalog.client.auth.TokenProvider
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.util.Utils
 
 /**
  * Builder for Unity Catalog Commit Coordinator Clients.
@@ -84,7 +90,8 @@ object UCCommitCoordinatorBuilder
       spark: SparkSession,
       catalogName: String): CommitCoordinatorClient = {
     val client = getCatalogConfigs(spark).find(_._1 == catalogName) match {
-      case Some((_, uri, authConfig)) => ucClientFactory.createUCClient(uri, authConfig)
+      case Some((_, uri, authConfig)) =>
+        ucClientFactory.createUCClient(uri, authConfig, catalogName)
       case None =>
         throw new IllegalArgumentException(
           s"Catalog $catalogName not found in the provided SparkSession configurations.")
@@ -288,11 +295,31 @@ object UCCommitCoordinatorBuilder
 
 trait UCClientFactory {
   def createUCClient(uri: String, authConfig: Map[String, String]): UCClient
+
+  def createUCClient(
+      uri: String,
+      authConfig: Map[String, String],
+      catalogName: String): UCClient = {
+    createUCClient(uri, authConfig)
+  }
 }
 
 object UCTokenBasedRestClientFactory extends UCClientFactory {
+  private val UCDeltaTokenBasedRestClientClassName =
+    "io.delta.storage.commit.uccommitcoordinator.UCDeltaTokenBasedRestClient"
+
   override def createUCClient(uri: String, authConfig: Map[String, String]): UCClient = {
     createUCClientWithVersions(uri, authConfig, defaultAppVersions)
+  }
+
+  override def createUCClient(
+      uri: String,
+      authConfig: Map[String, String],
+      catalogName: String): UCClient = {
+    val tokenProvider = TokenProvider.create(authConfig.asJava)
+    val appVersions = defaultAppVersionsAsJava
+    createUCDeltaClient(uri, tokenProvider, appVersions, catalogName)
+      .getOrElse(new UCTokenBasedRestClient(uri, tokenProvider, appVersions))
   }
 
   /**
@@ -309,6 +336,27 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
     // as those are managed by the Unity Catalog client library
     val tokenProvider = TokenProvider.create(authConfig.asJava)
     new UCTokenBasedRestClient(uri, tokenProvider, appVersions.asJava)
+  }
+
+  private[delta] def createUCDeltaClient(
+      uri: String,
+      tokenProvider: TokenProvider,
+      appVersions: java.util.Map[String, String],
+      catalogName: String): Option[UCDeltaClient] = {
+    try {
+      val clientClass = Utils.classForName(UCDeltaTokenBasedRestClientClassName)
+      val constructor = clientClass.getConstructor(
+        classOf[String],
+        classOf[TokenProvider],
+        classOf[java.util.Map[String, String]],
+        classOf[String])
+      Some(constructor
+        .newInstance(uri, tokenProvider, appVersions, catalogName)
+        .asInstanceOf[UCDeltaClient])
+    } catch {
+      case _: ClassNotFoundException =>
+        None
+    }
   }
 
   private[coordinatedcommits] def defaultAppVersions: Map[String, String] = {
