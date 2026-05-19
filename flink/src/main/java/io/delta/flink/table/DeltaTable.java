@@ -20,6 +20,7 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Literal;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
@@ -165,4 +166,6 @@ public interface DeltaTable extends Serializable, AutoCloseable {
       CloseableIterator<FilteredColumnarBatch> data,
       Map<String, Literal> partitionValues)
       throws IOException;
+
+  CloseableIterator<Row> scan(Predicate predicate);
 }

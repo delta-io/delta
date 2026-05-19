@@ -16,6 +16,8 @@
 
 package io.delta.flink.table;
 
+import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
+
 import dev.failsafe.Failsafe;
 import dev.failsafe.Fallback;
 import dev.failsafe.RetryPolicy;
@@ -34,6 +36,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.TableAlreadyExistsException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.metrics.TransactionReport;
@@ -316,6 +319,19 @@ public abstract class AbstractKernelTable implements DeltaTable {
           return Transaction.generateAppendActions(
               localEngine, writeState, dataFiles, writeContext);
         });
+  }
+
+  @Override
+  public CloseableIterator<Row> scan(Predicate predicate) {
+    return snapshot()
+        .map(
+            s ->
+                s.getScanBuilder()
+                    .withFilter(predicate)
+                    .build()
+                    .getScanFiles(getEngine())
+                    .flatMap(FilteredColumnarBatch::getRows))
+        .orElse(toCloseableIterator(Collections.emptyIterator()));
   }
 
   /**
