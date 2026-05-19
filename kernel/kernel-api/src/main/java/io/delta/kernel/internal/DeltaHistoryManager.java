@@ -247,8 +247,10 @@ public final class DeltaHistoryManager {
                 placeholderEarliestCommit.getVersion());
         searchResult = new Commit(placeholderEarliestCommit.getVersion(), ict);
       } else {
-        // The requested timestamp is before ICT enablement, so the mtime search must be
-        // bounded to the pre-ICT filesystem commits.
+        // We know the table was not catalogManaged here since ICT was not enabled ==> we don't
+        // need to worry about catalogCommits.
+        // The requested timestamp is before ICT enablement, so the file modification-time
+        // search must be bounded to the pre-ICT commits.
         List<Commit> commits =
             getCommits(engine, logPath, earliestVersion, ictEnablementCommit.getVersion());
         searchResult =
