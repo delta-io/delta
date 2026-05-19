@@ -196,6 +196,89 @@ class DeltaSinkWriterTest extends TestHelper {
   }
 
   @Test
+  void testWriterMetricsAfterWriteAndPrepareCommit() {
+    withTempDir(
+        dir -> {
+          String tablePath = dir.getAbsolutePath();
+          StructType schema =
+              new StructType().add("id", IntegerType.INTEGER).add("part", StringType.STRING);
+
+          HadoopTable table =
+              new HadoopTable(
+                  URI.create(tablePath), Collections.emptyMap(), schema, List.of("part"));
+          table.open();
+
+          TestSinkWriterMetricGroup writerMetrics = new TestSinkWriterMetricGroup();
+
+          DeltaSinkWriter sinkWriter =
+              new DeltaSinkWriter.Builder()
+                  .withJobId("test-job")
+                  .withSubtaskId(0)
+                  .withAttemptNumber(1)
+                  .withDeltaTable(table)
+                  .withConf(new DeltaSinkConf(schema, Collections.emptyMap()))
+                  .withMetricGroup(writerMetrics)
+                  .build();
+
+          int rowCount = 20;
+          int numPartitions = 3;
+          for (int i = 0; i < rowCount; i++) {
+            sinkWriter.write(
+                GenericRowData.of(i, StringData.fromString("p" + (i % numPartitions))),
+                new TestSinkWriterContext(i * 100, i * 100));
+          }
+
+          assertEquals(rowCount, writerMetrics.getNumRecordsSendCounter().getCount());
+          assertEquals(0, writerMetrics.getNumRecordsSendErrorsCounter().getCount());
+
+          Collection<DeltaWriterResult> results = sinkWriter.prepareCommit();
+          assertEquals(numPartitions, results.size());
+
+          assertEquals(numPartitions, writerMetrics.counter("numFilesWritten").getCount());
+        });
+  }
+
+  @Test
+  void testWriterMetricsNumRecordsSendOnBinaryRowData() {
+    withTempDir(
+        dir -> {
+          String tablePath = dir.getAbsolutePath();
+          StructType schema =
+              new StructType().add("id", IntegerType.INTEGER).add("name", StringType.STRING);
+
+          HadoopTable table =
+              new HadoopTable(
+                  URI.create(tablePath), Collections.emptyMap(), schema, Collections.emptyList());
+          table.open();
+
+          TestSinkWriterMetricGroup writerMetrics = new TestSinkWriterMetricGroup();
+
+          DeltaSinkWriter sinkWriter =
+              new DeltaSinkWriter.Builder()
+                  .withJobId("test-job")
+                  .withSubtaskId(0)
+                  .withAttemptNumber(1)
+                  .withDeltaTable(table)
+                  .withConf(new DeltaSinkConf(schema, Collections.emptyMap()))
+                  .withMetricGroup(writerMetrics)
+                  .build();
+
+          for (int i = 0; i < 10; i++) {
+            sinkWriter.write(
+                GenericRowData.of(i, StringData.fromString("val" + i)),
+                new TestSinkWriterContext(i, i));
+          }
+
+          assertEquals(10, writerMetrics.getNumRecordsSendCounter().getCount());
+          assertEquals(0, writerMetrics.getNumRecordsSendErrorsCounter().getCount());
+
+          Collection<DeltaWriterResult> results = sinkWriter.prepareCommit();
+          assertEquals(1, results.size());
+          assertEquals(1, writerMetrics.counter("numFilesWritten").getCount());
+        });
+  }
+
+  @Test
   @Disabled("memory is stable on large amount of partitions")
   void testMemoryIsStableOnLargeAmountOfPartitions() {
     withTempDir(
