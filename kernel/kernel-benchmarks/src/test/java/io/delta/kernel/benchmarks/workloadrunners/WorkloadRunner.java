@@ -111,6 +111,7 @@ public abstract class WorkloadRunner {
           engine,
           ucCatalogInfo.getUcTableId(),
           tableUri.toString(),
+          ucCatalogInfo.getUcTableIdentifier(),
           versionOpt,
           Optional.empty() /* timestampOpt */);
     } else {

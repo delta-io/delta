@@ -480,16 +480,11 @@ lazy val sparkV2 = {
       libraryDependencies ++= Seq(
         "io.delta" % "delta-kernel-api" % v,
         "io.delta" % "delta-kernel-defaults" % v,
-        "io.delta" % "delta-kernel-unitycatalog" % v
-      ),
-      // Kernel main classes are pulled from Maven at version `v`, but several
-      // sparkV2 tests depend on test-only helpers (e.g. InMemoryUCClient,
-      // UCCatalogManagedTestUtils) that are not published. Build those test
-      // jars from the in-tree kernel sources and add them to the test classpath.
-      Test / unmanagedJars ++= Seq(
-        (kernelApi / Test / packageBin).value,
-        (kernelDefaults / Test / packageBin).value,
-        (kernelUnityCatalog / Test / packageBin).value
+        "io.delta" % "delta-kernel-unitycatalog" % v,
+        // sparkV2 tests depend on UC test helpers (InMemoryUCClient,
+        // UCCatalogManagedTestUtils) that live in kernel-unitycatalog's test sources.
+        // Consume them via the published tests-classifier jar.
+        "io.delta" % "delta-kernel-unitycatalog" % v % Test classifier "tests"
       )
     )
   }
@@ -1168,6 +1163,11 @@ lazy val kernelUnityCatalog = (project in file("kernel/unitycatalog"))
 
     // Publish the pinned UC jars before sbt tries to resolve them.
     update := update.dependsOn(ensurePinnedUnityCatalog).value,
+
+    // Also publish a test-jar (classifier = "tests") so consumers (e.g. sparkV2 in
+    // Maven mode) can depend on UC test helpers (InMemoryUCClient,
+    // UCCatalogManagedTestUtils) via a published artifact.
+    Test / publishArtifact := true,
 
     // Put the shaded kernel-api JAR on the classpath (compile & test)
     Compile / unmanagedJars += (kernelApi / Compile / packageBin).value,

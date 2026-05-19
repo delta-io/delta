@@ -203,6 +203,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   public GetCommitsResponse getCommits(
       String tableId,
       URI tableUri,
+      TableIdentifier tableIdentifier,
       Optional<Long> startVersion,
       Optional<Long> endVersion) throws IOException, UCCommitCoordinatorException {
     throw new UnsupportedOperationException(

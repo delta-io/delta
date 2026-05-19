@@ -17,15 +17,41 @@
 package io.delta.flink.table;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.delta.flink.MockHttp;
 import io.delta.flink.TestHelper;
 import io.delta.kernel.types.*;
+import io.delta.kernel.unitycatalog.UCTableIdentifier;
 import java.net.URI;
 import org.junit.jupiter.api.Test;
 
 /** JUnit 6 test suite for UnityCatalog. */
 class UnityCatalogTest extends TestHelper {
+
+  @Test
+  void testToUcTableIdentifier() {
+    UnityCatalog catalog = new UnityCatalog("main", URI.create("http://localhost"), "");
+
+    UCTableIdentifier twoPartIdentifier = catalog.toUcTableIdentifier("default.tbl");
+    assertEquals("main", twoPartIdentifier.getCatalogName());
+    assertEquals("default", twoPartIdentifier.getSchemaName());
+    assertEquals("tbl", twoPartIdentifier.getTableName());
+
+    UCTableIdentifier threePartIdentifier = catalog.toUcTableIdentifier("main.default.tbl");
+    assertEquals("main", threePartIdentifier.getCatalogName());
+    assertEquals("default", threePartIdentifier.getSchemaName());
+    assertEquals("tbl", threePartIdentifier.getTableName());
+  }
+
+  @Test
+  void testToUcTableIdentifierRejectsInvalidNames() {
+    UnityCatalog catalog = new UnityCatalog("main", URI.create("http://localhost"), "");
+
+    assertThrows(IllegalArgumentException.class, () -> catalog.toUcTableIdentifier("tbl"));
+    assertThrows(
+        IllegalArgumentException.class, () -> catalog.toUcTableIdentifier("other.default.tbl"));
+  }
 
   @Test
   void testGetTable() {
