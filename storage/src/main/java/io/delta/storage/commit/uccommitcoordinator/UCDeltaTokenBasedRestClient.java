@@ -311,7 +311,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
         .properties(properties);
 
     if (!columns.isEmpty()) {
-      sdkRequest.columns(DeltaSchemaConverter.toSDKStructType(columns));
+      sdkRequest.columns(UCDeltaSchemaConverter.toUCStructType(columns));
     }
 
     try {
@@ -595,7 +595,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     if (!Objects.equals(oldMetadata.getSchemaString(), newMetadata.getSchemaString())) {
       request.addUpdatesItem(new SetSchemaUpdate()
           .action("set-columns")
-          .columns(DeltaSchemaConverter.parseSchemaString(newMetadata.getSchemaString())));
+          .columns(UCDeltaSchemaConverter.parseSchemaString(newMetadata.getSchemaString())));
     }
     if (!Objects.equals(oldMetadata.getPartitionColumns(), newMetadata.getPartitionColumns())) {
       request.addUpdatesItem(new SetPartitionColumnsUpdate()
@@ -716,7 +716,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
 
     @Override
     public String getSchemaString() {
-      return DeltaSchemaConverter.serializeSchema(m.getColumns());
+      return UCDeltaSchemaConverter.serializeSchema(m.getColumns());
     }
 
     @Override

@@ -30,14 +30,15 @@ import io.unitycatalog.client.delta.model.StructType;
 import io.unitycatalog.client.delta.serde.DeltaTypeModule;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 /**
- * Bidirectional conversion between Delta's JSON schema wire format and the UC SDK's Delta
- * schema model ({@link StructType}, {@link DeltaType}, {@link PrimitiveType}).
+ * Conversion from the UC SDK's Delta schema model ({@link StructType}, {@link DeltaType},
+ * {@link PrimitiveType}) to Delta's JSON schema wire format. The reverse direction
+ * ({@link #parseSchemaString}) is reserved for a follow-up and currently throws.
  *
- * <h3>Why a custom mapper</h3>
- * The SDK's default {@link ObjectMapper} (from {@link JSON#getDefault()}) does not emit
+ * <p>The SDK's default {@link ObjectMapper} (from {@link JSON#getDefault()}) does not emit
  * Delta's wire format on its own:
  * <ul>
  *   <li>{@link PrimitiveType} serializes as {@code {"type":"integer"}} by default, but Delta
@@ -51,13 +52,10 @@ import java.util.Set;
  * </ul>
  * The resulting JSON is parseable by Delta's schema readers (e.g. {@code DataType.fromJson}).
  */
-final class DeltaSchemaConverter {
+final class UCDeltaSchemaConverter {
 
-  /**
-   * Primitive type names that the legacy create-table path ({@link #toSDKStructType}) accepts.
-   * Visible to the package for tests; not part of the converter's public surface.
-   */
-  static final Set<String> PRIMITIVE_TYPE_NAMES = Set.of(
+  /** Primitive type names that the legacy create-table path ({@link #toUCStructType}) accepts. */
+  private static final Set<String> PRIMITIVE_TYPE_NAMES = Set.of(
       "BOOLEAN", "BYTE", "SHORT", "INT", "LONG", "FLOAT", "DOUBLE",
       "DATE", "TIMESTAMP", "TIMESTAMP_NTZ", "STRING", "BINARY", "DECIMAL");
 
@@ -65,9 +63,9 @@ final class DeltaSchemaConverter {
    * Singleton mapper preconfigured to emit Delta's wire format
    * (bare-string primitives, camelCase keys for nested types). See class-level docs.
    */
-  static final ObjectMapper DELTA_SCHEMA_MAPPER = createDeltaSchemaMapper();
+  private static final ObjectMapper DELTA_SCHEMA_MAPPER = createDeltaSchemaMapper();
 
-  private DeltaSchemaConverter() {}
+  private UCDeltaSchemaConverter() {}
 
   /**
    * Serializes the SDK's {@link StructType} to Delta's JSON schema wire format. The resulting
@@ -98,22 +96,25 @@ final class DeltaSchemaConverter {
   }
 
   /**
-   * Converts the legacy create-table path's {@link UCClient.ColumnDef} list into the SDK's
+   * Converts the legacy create-table path's {@link UCClient.ColumnDef} list into the UC SDK's
    * {@link StructType}. Only primitive types are supported today; complex types throw
    * {@link UnsupportedOperationException}.
+   *
+   * @throws NullPointerException if {@code columns} is {@code null}.
    */
-  static StructType toSDKStructType(List<UCClient.ColumnDef> columns) {
+  static StructType toUCStructType(List<UCClient.ColumnDef> columns) {
+    Objects.requireNonNull(columns, "columns must not be null");
     StructType structType = new StructType();
     for (UCClient.ColumnDef col : columns) {
       structType.addFieldsItem(new StructField()
           .name(col.getName())
           .nullable(col.isNullable())
-          .type(toSDKDeltaType(col)));
+          .type(toUCDeltaType(col)));
     }
     return structType;
   }
 
-  private static PrimitiveType toSDKDeltaType(UCClient.ColumnDef col) {
+  private static PrimitiveType toUCDeltaType(UCClient.ColumnDef col) {
     if (!PRIMITIVE_TYPE_NAMES.contains(col.getTypeName())) {
       throw new UnsupportedOperationException(
           "Complex column type '" + col.getTypeName() + "' for column '" + col.getName() +
