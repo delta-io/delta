@@ -85,14 +85,14 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
   val spark = SparkSession.active
 
   /**
-   * When non-null, table operations are routed through this client instead of through the
+   * When defined, table operations are routed through this client instead of through the
    * [[org.apache.spark.sql.connector.catalog.DelegatingCatalogExtension]] delegate that
    * `AbstractDeltaCatalog` normally relies on. This lets the catalog inject custom
    * interactions (e.g. talking to a REST endpoint, catalog-specific property handling,
    * storage-credential vending) rather than going through the Spark
    * [[org.apache.spark.sql.connector.catalog.TableCatalog]] API.
    */
-  private[catalog] var deltaCatalogClient: AbstractDeltaCatalogClient = null
+  private[catalog] var deltaCatalogClient: Option[AbstractDeltaCatalogClient] = None
 
   override def initialize(name: String, options: CaseInsensitiveStringMap): Unit = {
     super.initialize(name, options)
@@ -307,11 +307,9 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       "DeltaCatalog", "loadTable") {
     setVariantBlockingConfigIfUC()
     try {
-      val table = if (deltaCatalogClient != null) {
-        deltaCatalogClient.loadTable(ident)
-      } else {
-        super.loadTable(ident)
-      }
+      val table = deltaCatalogClient
+        .map(_.loadTable(ident))
+        .getOrElse(super.loadTable(ident))
 
       ServerSidePlannedTable.tryCreate(spark, ident, table, isUnityCatalog).foreach { sspt =>
         return sspt

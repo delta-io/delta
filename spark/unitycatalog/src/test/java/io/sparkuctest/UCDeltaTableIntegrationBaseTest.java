@@ -159,6 +159,16 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     return true;
   }
 
+  /**
+   * Whether the class-level @AfterAll should assert that the Delta REST API actually served at
+   * least one load. Override to false in classes that intentionally exercise only the fallback path
+   * (which does NOT bump {@code SUCCESSFUL_DELTA_REST_API_LOADS}), so the class-level check doesn't
+   * false-positive when test sharding distributes methods across CI shards.
+   */
+  protected boolean expectDeltaRestApiSuccessAtClassLevel() {
+    return true;
+  }
+
   private static final Logger LOG = Logger.getLogger(UCDeltaTableIntegrationBaseTest.class);
 
   private long deltaRestApiLoadsAtClassStart;
@@ -173,7 +183,7 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
 
   @AfterAll
   public void verifyDeltaRestApiExercisedAtClassLevel() {
-    if (!useDeltaRestApiForTests()) {
+    if (!useDeltaRestApiForTests() || !expectDeltaRestApiSuccessAtClassLevel()) {
       return;
     }
     long loadInvocationsAfter = UCDeltaCatalogClientImpl.LOAD_TABLE_INVOCATIONS().get();
@@ -252,6 +262,18 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
    */
   protected void check(String tableName, List<List<String>> expected) {
     getSqlExecutor().checkWithSQL("SELECT * FROM " + tableName + " ORDER BY 1", expected);
+  }
+
+  /**
+   * Verify that {@code actual} equals {@code expected}, with an error message that includes both.
+   * Use this overload when the caller has already run the query and just needs to compare the row
+   * list (e.g. queries that aren't a plain {@code SELECT *}).
+   */
+  protected void check(List<List<String>> actual, List<List<String>> expected) {
+    if (!actual.equals(expected)) {
+      throw new AssertionError(
+          String.format("Query results do not match.\nExpected: %s\nActual: %s", expected, actual));
+    }
   }
 
   /** Helper method to run code with a temporary directory that gets cleaned up. */

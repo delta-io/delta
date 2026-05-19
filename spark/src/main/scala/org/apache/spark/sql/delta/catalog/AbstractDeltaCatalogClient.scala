@@ -55,30 +55,35 @@ private[catalog] object AbstractDeltaCatalogClient extends Logging {
     "org.apache.spark.sql.delta.catalog.UCDeltaCatalogClientImpl"
 
   /**
-   * Returns a [[AbstractDeltaCatalogClient]] when the catalog opted in via `deltaRestApi.enabled`,
-   * else `null`. The concrete impl is loaded reflectively so [[AbstractDeltaCatalog]] doesn't
-   * compile-depend on it; environments that don't ship [[UCDeltaCatalogClientImpl]] degrade
-   * to `null`.
+   * Returns a [[AbstractDeltaCatalogClient]] wrapped in [[Some]] when the catalog opted in via
+   * `deltaRestApi.enabled`, else [[None]]. The concrete impl is loaded reflectively so
+   * [[AbstractDeltaCatalog]] doesn't compile-depend on it.
+   *
+   * When opt-in is explicit but reflective loading fails (missing class, wrong type, missing
+   * MODULE$ field, etc.), this throws [[IllegalStateException]] rather than silently degrading
+   * to the legacy delegate. Following the [[deltaCatalogClient]] is `null` path when the user
+   * configured the opposite would mask a misconfiguration.
    */
   def fromCatalogOptionsIfEnabled(
       catalogName: String,
       options: CaseInsensitiveStringMap,
-      fallbackLoadTable: Identifier => Table): AbstractDeltaCatalogClient = {
-    if (options.getBoolean(UC_DELTA_REST_API_ENABLED_KEY, false)) {
-      val factory = try {
-        // scalastyle:off classforname
-        val cls = Class.forName(UC_DELTA_CATALOG_CLIENT_IMPL_CLASS_NAME + "$")
-        // scalastyle:on classforname
-        cls.getField("MODULE$").get(null).asInstanceOf[AbstractDeltaCatalogClientFactory]
-      } catch {
-        case _: ClassNotFoundException =>
-          logWarning(s"'$UC_DELTA_REST_API_ENABLED_KEY' is true but " +
-            s"$UC_DELTA_CATALOG_CLIENT_IMPL_CLASS_NAME is not on the classpath; skipping it.")
-          return null
-      }
-      factory.fromCatalogOptions(catalogName, options, fallbackLoadTable)
-    } else {
-      null
+      fallbackLoadTable: Identifier => Table): Option[AbstractDeltaCatalogClient] = {
+    if (!options.getBoolean(UC_DELTA_REST_API_ENABLED_KEY, false)) {
+      return None
     }
+    val factory = try {
+      // scalastyle:off classforname
+      val cls = Class.forName(UC_DELTA_CATALOG_CLIENT_IMPL_CLASS_NAME + "$")
+      // scalastyle:on classforname
+      cls.getField("MODULE$").get(null).asInstanceOf[AbstractDeltaCatalogClientFactory]
+    } catch {
+      case e: Exception =>
+        throw new IllegalStateException(
+          s"Failed to load $UC_DELTA_CATALOG_CLIENT_IMPL_CLASS_NAME though " +
+            s"'$UC_DELTA_REST_API_ENABLED_KEY' is true. Ensure the implementation JAR is on " +
+            s"the classpath, or remove '$UC_DELTA_REST_API_ENABLED_KEY' from the catalog " +
+            s"options to fall back to the legacy delegate.", e)
+    }
+    Some(factory.fromCatalogOptions(catalogName, options, fallbackLoadTable))
   }
 }

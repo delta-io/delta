@@ -76,9 +76,10 @@ private[catalog] class UCDeltaCatalogClientImpl(
             log"${MDC(DeltaLogKeys.EXCEPTION, e.getMessage)}")
           return fallbackLoadTable(ident)
         case e: CredentialFetchFailedException if serverSidePlanningEnabled =>
-          logWarning(
-            s"Credential fetch failed for ${fullQualifiedTableName(tid)}; enabling " +
-              s"server-side planning fallback. Cause: ${e.getMessage}")
+          logWarning(log"Credential fetch failed for " +
+            log"${MDC(DeltaLogKeys.TABLE_NAME, fullQualifiedTableName(tid))}; enabling " +
+            log"server-side planning fallback. Cause: " +
+            log"${MDC(DeltaLogKeys.EXCEPTION, e.getMessage)}")
           enableServerSidePlanningConfig(ident)
           e.getTableInfoWithoutCredentials
       }
@@ -104,7 +105,8 @@ private[catalog] class UCDeltaCatalogClientImpl(
     val ns = ident.namespace()
     require(
       ns.length == 1,
-      s"UC identifiers must be of the form <schema>.<table>; got namespace ${ns.mkString(".")}")
+      s"UC identifiers must be of the form <schema>.<table>; got namespace of length " +
+        s"${ns.length}: '${ns.mkString(".")}' (full identifier: '${ident.toString}')")
     new StorageTableIdentifier(Array(catalogName, ns(0)), ident.name())
   }
 
@@ -148,12 +150,21 @@ private[catalog] class UCDeltaCatalogClientImpl(
 }
 
 object UCDeltaCatalogClientImpl extends AbstractDeltaCatalogClientFactory with Logging {
-  /** Bumped at every loadTable entry, regardless of outcome. */
+  /**
+   * Test-only instrumentation. Bumped at every `loadTable` entry regardless of outcome.
+   * Read by integration tests (e.g. {@code UCDeltaTableIntegrationBaseTest}) to verify the
+   * Delta REST API path was exercised. Not part of any public API; do not depend on this
+   * from production code. Kept public so cross-package integration tests
+   * ({@code io.sparkuctest.*}) can read it without reflection.
+   */
   val LOAD_TABLE_INVOCATIONS: AtomicLong = new AtomicLong(0L)
 
   /**
-   * Bumped only when loadTable returned a Delta table from the Delta REST API (no fallback,
-   * no rethrow). Use this for "Delta REST actually served the load" assertions.
+   * Test-only instrumentation. Bumped only when `loadTable` returned a Delta table via the
+   * Delta REST API (no fallback, no rethrow). Read by integration tests to assert "Delta REST
+   * actually served the load." Not part of any public API; do not depend on this from
+   * production code. Kept public so cross-package integration tests
+   * ({@code io.sparkuctest.*}) can read it without reflection.
    */
   val SUCCESSFUL_DELTA_REST_API_LOADS: AtomicLong = new AtomicLong(0L)
 
