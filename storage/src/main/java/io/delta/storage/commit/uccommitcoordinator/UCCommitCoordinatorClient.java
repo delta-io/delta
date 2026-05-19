@@ -517,6 +517,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
         );
         LOG.info("Sleeping for " + sleepTime + "ms before retrying commit after transient error " +
           ioe.getMessage());
+        ioe.printStackTrace();
         try {
           Thread.sleep(sleepTime);
         } catch (InterruptedException e) {

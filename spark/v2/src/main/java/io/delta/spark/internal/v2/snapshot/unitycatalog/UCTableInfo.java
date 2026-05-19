@@ -19,6 +19,7 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.unitycatalog.UCTableIdentifier;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.Map;
 
 /**
@@ -66,5 +67,16 @@ public final class UCTableInfo {
 
   public Map<String, String> getAuthConfig() {
     return authConfig;
+  }
+
+  /**
+   * Builds a flat config map suitable for {@code UCTokenBasedRestClientFactory.createUCClient}.
+   * Re-adds the {@code auth.} prefix to auth config keys and includes {@code uri}.
+   */
+  public Map<String, String> toUcConfig() {
+    Map<String, String> ucConfig = new HashMap<>();
+    ucConfig.put("uri", ucUri);
+    authConfig.forEach((k, v) -> ucConfig.put("auth." + k, v));
+    return ucConfig;
   }
 }

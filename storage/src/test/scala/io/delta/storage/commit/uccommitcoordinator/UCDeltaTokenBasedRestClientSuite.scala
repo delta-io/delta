@@ -24,6 +24,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import io.delta.storage.commit.{Commit, CommitFailedException, TableIdentifier}
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
+import io.delta.storage.commit.uccommitcoordinator.exceptions.NoSuchTableException
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 import io.unitycatalog.client.auth.TokenProvider
 
@@ -78,8 +79,16 @@ class UCDeltaTokenBasedRestClientSuite
 
   private def loadTableJson(
       tableUuid: String = testTableId,
-      format: String = "DELTA"): String =
+      format: String = "DELTA",
+      location: String = "s3://bucket/table",
+      tableType: String = "MANAGED"): String =
     s"""{"metadata":{"table-uuid":"$tableUuid","data-source-format":"$format",""" +
+    s""""table-type":"$tableType",""" +
+    s""""location":"$location",""" +
+    s""""columns":{"type":"struct","fields":[""" +
+    s"""{"name":"date","type":"string","nullable":true,"metadata":{}},""" +
+    s"""{"name":"value","type":"integer","nullable":true,"metadata":{}}""" +
+    s"""]},""" +
     s""""properties":{"key1":"val1"},"partition-columns":["date"],"created-time":1000}}"""
 
   private def readBody(exchange: HttpExchange): String = {
@@ -183,23 +192,89 @@ class UCDeltaTokenBasedRestClientSuite
 
   // --------------- loadTable ---------------
 
-  test("loadTable returns AbstractMetadata with correct fields") {
+  test("loadTable returns TableInfo with catalog identity and Delta metadata") {
     withClient { c =>
-      val m = c.loadTable(testCatalog, testSchema, testTable)
+      val info = c.loadTable(testIdentifier)
+      assert(info.getLocation === "s3://bucket/table")
+      assert(info.getTableId === testTableId)
+      assert(info.getTableType === UCDeltaModels.TableType.MANAGED)
+      val m = info.getMetadata
       assert(m.getName === testTable)
-      assert(m.getId === testTableId)
+      // UC's loadTable response does not carry the Delta Metadata.id; UC's table_uuid is exposed
+      // separately as TableInfo.getTableId.
+      assert(m.getId === null)
       assert(m.getProvider === "DELTA")
       assert(m.getConfiguration.get("key1") === "val1")
       assert(m.getPartitionColumns.get(0) === "date")
       assert(m.getCreatedTime === 1000L)
+      // Schema is a JSON string in Delta's wire format; parseable by Delta's schema readers.
+      val parsed = objectMapper.readTree(m.getSchemaString)
+      assert(parsed.get("type").asText() === "struct")
+      assert(parsed.get("fields").size() === 2)
+      assert(parsed.get("fields").get(0).get("name").asText() === "date")
+      assert(parsed.get("fields").get(1).get("type").asText() === "integer")
+    }
+  }
+
+  test("loadTable schema emits Delta camelCase wire format for array and map") {
+    val nested =
+      s"""{"metadata":{"table-uuid":"$testTableId","data-source-format":"DELTA",""" +
+      s""""table-type":"MANAGED","location":"s3://b/t","partition-columns":[],""" +
+      s""""properties":{},"created-time":1,""" +
+      s""""columns":{"type":"struct","fields":[""" +
+      s"""{"name":"a","type":{"type":"array","element-type":"string","contains-null":true},""" +
+      s""""nullable":true,"metadata":{}},""" +
+      s"""{"name":"m","type":{"type":"map","key-type":"string","value-type":"integer",""" +
+      s""""value-contains-null":false},"nullable":true,"metadata":{}}""" +
+      s"""]}}}"""
+    deltaHandler = (exchange, _) => sendJson(exchange, HttpStatus.SC_OK, nested)
+    withClient { c =>
+      val schema = c.loadTable(testIdentifier).getMetadata.getSchemaString
+      val parsed = objectMapper.readTree(schema)
+      val aType = parsed.get("fields").get(0).get("type")
+      assert(aType.get("type").asText() === "array")
+      assert(aType.get("elementType").asText() === "string")
+      assert(aType.get("containsNull").asBoolean() === true)
+      assert(aType.has("element-type") === false)
+      val mType = parsed.get("fields").get(1).get("type")
+      assert(mType.get("type").asText() === "map")
+      assert(mType.get("keyType").asText() === "string")
+      assert(mType.get("valueType").asText() === "integer")
+      assert(mType.get("valueContainsNull").asBoolean() === false)
+      assert(mType.has("key-type") === false)
     }
   }
 
   test("loadTable throws IOException on server error") {
     deltaHandler = (exchange, _) => sendJson(exchange, 500, """{"error":"fail"}""")
     withClient { c =>
-      val e = intercept[java.io.IOException] { c.loadTable(testCatalog, testSchema, testTable) }
+      val e = intercept[java.io.IOException] { c.loadTable(testIdentifier) }
       assert(e.getMessage.contains("HTTP 500"))
+    }
+  }
+
+  test("loadTable throws NoSuchTableException on 404") {
+    deltaHandler = (exchange, _) => sendJson(exchange, 404, """{"error":"not found"}""")
+    withClient { c =>
+      val e = intercept[NoSuchTableException] {
+        c.loadTable(testIdentifier)
+      }
+      assert(e.getMessage.contains(s"$testCatalog.$testSchema.$testTable"))
+      assert(e.getMessage.contains("not found"))
+    }
+  }
+
+  test("loadTable throws UnsupportedTableFormatException on 400 with that error type") {
+    deltaHandler = (exchange, _) => sendJson(
+      exchange, 400,
+      """{"error":{"code":400,"type":"UnsupportedTableFormatException",""" +
+        s""""message":"Table is not a Delta table: ${testCatalog}.${testSchema}.${testTable}"}}""")
+    withClient { c =>
+      val e = intercept[exceptions.UnsupportedTableFormatException] {
+        c.loadTable(testIdentifier)
+      }
+      assert(e.getMessage.contains(s"$testCatalog.$testSchema.$testTable"))
+      assert(e.getMessage.contains("not in Delta format"))
     }
   }
 
@@ -510,10 +585,141 @@ class UCDeltaTokenBasedRestClientSuite
 
   // --------------- getCommits ---------------
 
-  test("getCommits throws UnsupportedOperationException") {
+  private def loadTableWithCommitsJson(
+      commits: Seq[(Long, String, Long, Long, Long)],
+      latestTableVersion: Long): String = {
+    val commitsJson = commits.map { case (version, fileName, fileSize, ts, modTs) =>
+      s"""{"version":$version,"file-name":"$fileName","file-size":$fileSize,""" +
+        s""""timestamp":$ts,"file-modification-timestamp":$modTs}"""
+    }.mkString("[", ",", "]")
+    s"""{"metadata":{"table-uuid":"$testTableId","data-source-format":"DELTA",""" +
+      s""""table-type":"MANAGED","location":"s3://bucket/table",""" +
+      s""""columns":{"type":"struct","fields":[]},"properties":{},""" +
+      s""""partition-columns":[],"created-time":1000},""" +
+      s""""commits":$commitsJson,"latest-table-version":$latestTableVersion}"""
+  }
+
+  test("getCommits returns commits from loadTable response") {
+    val commits = Seq(
+      (1L, "1.uuid.json", 100L, 1000L, 1001L),
+      (2L, "2.uuid.json", 200L, 2000L, 2001L),
+      (3L, "3.uuid.json", 300L, 3000L, 3001L))
+    deltaHandler = (exchange, _) =>
+      sendJson(exchange, HttpStatus.SC_OK, loadTableWithCommitsJson(commits, 3L))
     withClient { c =>
-      intercept[UnsupportedOperationException] {
+      val response = c.getCommits(
+        testTableId, new URI("s3://bucket/table"), testIdentifier,
+        Optional.empty(), Optional.empty())
+      assert(response.getCommits.size() === 3)
+      assert(response.getCommits.get(0).getVersion === 1L)
+      assert(response.getCommits.get(0).getCommitTimestamp === 1000L)
+      assert(response.getCommits.get(0).getFileStatus.getLen === 100L)
+      assert(response.getCommits.get(0).getFileStatus.getModificationTime === 1001L)
+      assert(response.getCommits.get(1).getVersion === 2L)
+      assert(response.getCommits.get(2).getVersion === 3L)
+      assert(response.getLatestTableVersion === 3L)
+    }
+  }
+
+  test("getCommits filters by startVersion") {
+    val commits = Seq(
+      (1L, "1.uuid.json", 100L, 1000L, 1001L),
+      (2L, "2.uuid.json", 200L, 2000L, 2001L),
+      (3L, "3.uuid.json", 300L, 3000L, 3001L))
+    deltaHandler = (exchange, _) =>
+      sendJson(exchange, HttpStatus.SC_OK, loadTableWithCommitsJson(commits, 3L))
+    withClient { c =>
+      val response = c.getCommits(
+        testTableId, new URI("s3://bucket/table"), testIdentifier,
+        Optional.of(java.lang.Long.valueOf(2L)), Optional.empty())
+      assert(response.getCommits.size() === 2)
+      assert(response.getCommits.get(0).getVersion === 2L)
+      assert(response.getCommits.get(1).getVersion === 3L)
+    }
+  }
+
+  test("getCommits filters by startVersion and endVersion") {
+    val commits = Seq(
+      (1L, "1.uuid.json", 100L, 1000L, 1001L),
+      (2L, "2.uuid.json", 200L, 2000L, 2001L),
+      (3L, "3.uuid.json", 300L, 3000L, 3001L),
+      (4L, "4.uuid.json", 400L, 4000L, 4001L))
+    deltaHandler = (exchange, _) =>
+      sendJson(exchange, HttpStatus.SC_OK, loadTableWithCommitsJson(commits, 4L))
+    withClient { c =>
+      val response = c.getCommits(
+        testTableId, new URI("s3://bucket/table"), testIdentifier,
+        Optional.of(java.lang.Long.valueOf(2L)), Optional.of(java.lang.Long.valueOf(3L)))
+      assert(response.getCommits.size() === 2)
+      assert(response.getCommits.get(0).getVersion === 2L)
+      assert(response.getCommits.get(1).getVersion === 3L)
+      assert(response.getLatestTableVersion === 4L)
+    }
+  }
+
+  test("getCommits returns empty list when no commits in response") {
+    deltaHandler = (exchange, _) =>
+      sendJson(exchange, HttpStatus.SC_OK, loadTableWithCommitsJson(Seq.empty, -1L))
+    withClient { c =>
+      val response = c.getCommits(
+        testTableId, new URI("s3://bucket/table"), testIdentifier,
+        Optional.empty(), Optional.empty())
+      assert(response.getCommits.isEmpty)
+      assert(response.getLatestTableVersion === -1L)
+    }
+  }
+
+  test("getCommits constructs correct file paths under _staged_commits") {
+    val commits = Seq((5L, "5.uuid.json", 500L, 5000L, 5001L))
+    deltaHandler = (exchange, _) =>
+      sendJson(exchange, HttpStatus.SC_OK, loadTableWithCommitsJson(commits, 5L))
+    withClient { c =>
+      val response = c.getCommits(
+        testTableId, new URI("s3://bucket/table"), testIdentifier,
+        Optional.empty(), Optional.empty())
+      val path = response.getCommits.get(0).getFileStatus.getPath.toString
+      assert(path.contains("_delta_log"))
+      assert(path.contains("_staged_commits"))
+      assert(path.endsWith("5.uuid.json"))
+    }
+  }
+
+  test("getCommits throws InvalidTargetTableException on 404") {
+    deltaHandler = (exchange, _) =>
+      sendJson(exchange, HttpStatus.SC_NOT_FOUND, """{"error":"not found"}""")
+    withClient { c =>
+      intercept[InvalidTargetTableException] {
         c.getCommits(testTableId, new URI("s3://b/t"), testIdentifier,
+          Optional.empty(), Optional.empty())
+      }
+    }
+  }
+
+  test("getCommits throws IOException on server error") {
+    deltaHandler = (exchange, _) =>
+      sendJson(exchange, HttpStatus.SC_INTERNAL_SERVER_ERROR, """{"error":"fail"}""")
+    withClient { c =>
+      val e = intercept[java.io.IOException] {
+        c.getCommits(testTableId, new URI("s3://b/t"), testIdentifier,
+          Optional.empty(), Optional.empty())
+      }
+      assert(e.getMessage.contains("HTTP 500"))
+    }
+  }
+
+  test("getCommits validates tableIdentifier is non-null") {
+    withClient { c =>
+      intercept[NullPointerException] {
+        c.getCommits(testTableId, new URI("s3://b/t"), null,
+          Optional.empty(), Optional.empty())
+      }
+    }
+  }
+
+  test("getCommits validates tableUri is non-null") {
+    withClient { c =>
+      intercept[NullPointerException] {
+        c.getCommits(testTableId, null, testIdentifier,
           Optional.empty(), Optional.empty())
       }
     }
@@ -582,6 +788,8 @@ class UCDeltaTokenBasedRestClientSuite
       serverUri, tokenProvider(), Collections.emptyMap())
     client.close()
     intercept[IllegalStateException] { client.getMetastoreId() }
-    intercept[IllegalStateException] { client.loadTable("c", "s", "t") }
+    intercept[IllegalStateException] {
+      client.loadTable(new TableIdentifier("c", "s", "t"))
+    }
   }
 }
