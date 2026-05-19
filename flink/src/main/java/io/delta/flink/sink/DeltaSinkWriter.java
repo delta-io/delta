@@ -22,7 +22,9 @@ import com.github.benmanes.caffeine.cache.RemovalCause;
 import com.github.benmanes.caffeine.cache.RemovalListener;
 import io.delta.flink.Conf;
 import io.delta.flink.table.DeltaTable;
+import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Literal;
+import io.delta.kernel.types.StructType;
 import java.io.IOException;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -79,6 +81,12 @@ public class DeltaSinkWriter
 
   private final SinkWriterMetricGroup metricGroup;
 
+  /**
+   * Strategy that owns per-checkpoint upsert/delete bookkeeping and turns it into Delta actions.
+   * Selected once at construction from {@link DeltaSinkConf#getWriteMode()}.
+   */
+  private final MergeStrategy mergeStrategy;
+
   private DeltaSinkWriter(
       String jobId,
       int subtaskId,
@@ -108,6 +116,12 @@ public class DeltaSinkWriter
                 .map(DeltaWriterTask::getResultBuffer)
                 .mapToLong(List::size)
                 .sum());
+
+    this.mergeStrategy = conf.createMergeStrategy();
+    LOG.debug(
+        "DeltaSinkWriter created in {} mode (primary-key ordinals = {})",
+        conf.getWriteMode(),
+        Arrays.toString(conf.getPrimaryKeyOrdinals()));
   }
 
   /**
@@ -128,13 +142,45 @@ public class DeltaSinkWriter
         partitionValues.entrySet().stream()
             .collect(Collectors.toMap(Map.Entry::getKey, entry -> entry.getValue().toString()));
 
-    writerTasksByPartition
-        .get(
-            writerKey,
-            (key) ->
-                new DeltaWriterTask(
-                    jobId, subtaskId, attemptNumber, deltaTable, conf, partitionValues))
-        .write(element, context);
+    // "Trust the provided RowKind" upsert policy:
+    //   - INSERT is taken at face value: the source claims this PK is new, so we just append.
+    //     This keeps the hot path cheap for INSERT-heavy workloads (e.g. CDC bootstrap).
+    //     Trade-off: if the source can redeliver an INSERT for a PK already in the table
+    //     across a checkpoint boundary (operator-induced source replay, CDC re-snapshot,
+    //     at-least-once source), the sink will produce duplicate rows for that PK. Flink's
+    //     own failover within a checkpoint is still safe via the transactional committer.
+    //   - UPDATE_AFTER carries a new image for an existing key. We record the PK so the
+    //     merge step removes the pre-image, then fall through to the INSERT case to append
+    //     the new image as a regular AddFile.
+    //   - UPDATE_BEFORE conveys no information the matching UPDATE_AFTER doesn't already
+    //     carry, so we drop it. Flink elides it for PK sinks anyway.
+    //   - DELETE records the PK; the merge step emits the corresponding RemoveFile/DV
+    //     without appending a row.
+    switch (element.getRowKind()) {
+      case UPDATE_AFTER:
+        mergeStrategy.recordUpsert(extractPrimaryKey(element), partitionValues);
+        // fall through: an UPDATE_AFTER is "record the PK for pre-image removal AND append
+        // the new image". The INSERT case below covers the append half.
+      case INSERT:
+        writerTasksByPartition
+            .get(
+                writerKey,
+                (key) ->
+                    new DeltaWriterTask(
+                        jobId, subtaskId, attemptNumber, deltaTable, conf, partitionValues))
+            .write(element, context);
+        break;
+      case UPDATE_BEFORE:
+        // Dropped — see policy comment above.
+        break;
+      case DELETE:
+        mergeStrategy.recordDelete(extractPrimaryKey(element), partitionValues);
+        break;
+      default:
+        // Defensive: if Flink ever introduces a new RowKind, we'd rather fail loudly than
+        // silently treat the row as a no-op while still incrementing the metric counters.
+        throw new IllegalStateException("Unexpected RowKind: " + element.getRowKind());
+    }
 
     // Recording Metrics
     if (element instanceof BinaryRowData) {
@@ -143,15 +189,49 @@ public class DeltaSinkWriter
     this.metricGroup.getNumRecordsSendCounter().inc();
   }
 
+  /**
+   * Extracts the primary-key values of {@code row} as a {@code List<Object>} in PK column order.
+   *
+   * <p>Uses {@link RowData#isNullAt} + {@link RowData}'s typed accessors so primitive types are
+   * boxed without going through the more expensive generic field access path.
+   */
+  private List<Literal> extractPrimaryKey(RowData row) {
+    StructType schema = conf.getSinkSchema();
+    int[] ordinals = conf.getPrimaryKeyOrdinals();
+    List<Literal> key = new ArrayList<>(ordinals.length);
+    for (int ord : ordinals) {
+      key.add(Conversions.FlinkToDelta.data(schema, row, ord));
+    }
+    return key;
+  }
+
   @Override
   public Collection<DeltaWriterResult> prepareCommit() {
     LOG.debug("Preparing commits");
 
     writerTasksByPartition.invalidateAll();
 
+    runMergeStrategy();
+
     List<DeltaWriterResult> results = List.copyOf(completedWrites);
     completedWrites.clear();
     return results;
+  }
+
+  /**
+   * Invoke the configured {@link MergeStrategy} for the current checkpoint and append any returned
+   * actions to {@code completedWrites}. The strategy owns its own per-checkpoint state and is
+   * responsible for resetting it inside {@link MergeStrategy#merge}, so we don't need a guard here.
+   */
+  private void runMergeStrategy() {
+    try {
+      List<Row> extraActions = mergeStrategy.merge(deltaTable, conf);
+      if (!extraActions.isEmpty()) {
+        completedWrites.add(new DeltaWriterResult(extraActions, new WriterResultContext()));
+      }
+    } catch (IOException e) {
+      throw new RuntimeException("merge failed for checkpoint", e);
+    }
   }
 
   @Override
