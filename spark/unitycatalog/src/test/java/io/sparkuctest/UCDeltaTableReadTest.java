@@ -18,6 +18,7 @@ package io.sparkuctest;
 
 import java.util.List;
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Assumptions;
 
 /**
  * Read operation test suite for Delta Table operations through Unity Catalog.
@@ -123,6 +124,12 @@ public class UCDeltaTableReadTest extends UCDeltaTableIntegrationBaseTest {
                 "For managed tables, path-based access should fail");
           } else {
             // For EXTERNAL tables, path-based access should work
+            // TODO: Enable remote external path reads after Delta wires DRC
+            // GET /delta/v1/temporary-path-credentials for delta.`path` access.
+            Assumptions.assumeFalse(
+                isUCRemoteConfigured(),
+                "Remote external delta.`path` reads require DRC temporary path credentials; "
+                    + "this PR only wires DRC table credentials for named UC table reads.");
             S3CredentialFileSystem.credentialCheckEnabled = false;
             try {
               check(

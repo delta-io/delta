@@ -129,10 +129,17 @@ public abstract class UnityCatalogSupport {
   public static final String UC_CATALOG_NAME = "UC_CATALOG_NAME";
   public static final String UC_SCHEMA_NAME = "UC_SCHEMA_NAME";
   public static final String UC_BASE_TABLE_LOCATION = "UC_BASE_TABLE_LOCATION";
+  public static final String UC_DELTA_REST_CATALOG_API_ENABLED =
+      "UC_DELTA_REST_CATALOG_API_ENABLED";
 
   protected static boolean isUCRemoteConfigured() {
     String ucRemote = System.getenv(UC_REMOTE);
     return ucRemote != null && ucRemote.equalsIgnoreCase("true");
+  }
+
+  protected static boolean isUCDeltaRestCatalogApiEnabled() {
+    String deltaRestApiEnabled = System.getenv(UC_DELTA_REST_CATALOG_API_ENABLED);
+    return deltaRestApiEnabled == null || deltaRestApiEnabled.equalsIgnoreCase("true");
   }
 
   /** The Unity Catalog info instance for subclasses access */
