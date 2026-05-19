@@ -16,13 +16,11 @@
 
 package io.delta.storage.commit.uccommitcoordinator.exceptions;
 
-import java.io.IOException;
-
 /**
  * Thrown by {@link io.delta.storage.commit.uccommitcoordinator.UCDeltaClient} operations when the
  * catalog reports that the requested table does not exist (HTTP 404).
  */
-public class NoSuchTableException extends IOException {
+public class NoSuchTableException extends RuntimeException {
   public NoSuchTableException(String message) {
     super(message);
   }

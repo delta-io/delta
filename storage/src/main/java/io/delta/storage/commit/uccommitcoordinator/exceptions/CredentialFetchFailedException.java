@@ -18,13 +18,12 @@ package io.delta.storage.commit.uccommitcoordinator.exceptions;
 
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaClient;
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.TableInfo;
-import java.io.IOException;
 
 /**
  * Thrown by {@link UCDeltaClient} when credential vending exhausts retries. Carries a
  * cred-less {@link TableInfo} so callers with a fallback (e.g. SSP) can recover.
  */
-public class CredentialFetchFailedException extends IOException {
+public class CredentialFetchFailedException extends RuntimeException {
 
   private final TableInfo tableInfoWithoutCredentials;
 

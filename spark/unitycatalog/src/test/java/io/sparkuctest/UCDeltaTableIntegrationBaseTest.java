@@ -38,6 +38,7 @@ import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.delta.catalog.UCDeltaCatalogClientImpl;
+import org.apache.spark.sql.delta.coordinatedcommits.UCTokenBasedRestClientFactory;
 import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -149,20 +150,27 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
             .set("spark.sql.catalog." + catalogName + ".uri", uc.serverUri())
             .set("spark.sql.catalog." + catalogName + ".token", uc.serverToken());
     if (useDeltaRestApiForTests()) {
-      conf = conf.set("spark.sql.catalog." + catalogName + ".deltaRestApi.enabled", "true");
+      conf =
+          conf.set(
+              "spark.sql.catalog."
+                  + catalogName
+                  + "."
+                  + UCTokenBasedRestClientFactory.DELTA_REST_API_ENABLED_KEY(),
+              "true");
     }
     return conf;
   }
 
   /** Subclasses can override to false for A/B comparison with the legacy path. */
   protected boolean useDeltaRestApiForTests() {
-    return true;
+    // TODO: turn this on once the Delta API is fully integrated.
+    return false;
   }
 
   /**
    * Whether the class-level @AfterAll should assert that the Delta REST API actually served at
    * least one load. Override to false in classes that intentionally exercise only the fallback path
-   * (which does NOT bump {@code SUCCESSFUL_DELTA_REST_API_LOADS}), so the class-level check doesn't
+   * (which does NOT bump the successfulDeltaRestApiLoads counter), so the class-level check doesn't
    * false-positive when test sharding distributes methods across CI shards.
    */
   protected boolean expectDeltaRestApiSuccessAtClassLevel() {
@@ -177,8 +185,8 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
   @BeforeAll
   public void captureDeltaRestApiBaseline() {
     deltaRestApiLoadsAtClassStart =
-        UCDeltaCatalogClientImpl.SUCCESSFUL_DELTA_REST_API_LOADS().get();
-    loadTableInvocationsAtClassStart = UCDeltaCatalogClientImpl.LOAD_TABLE_INVOCATIONS().get();
+        UCDeltaCatalogClientImpl.successfulDeltaRestApiLoadsForTesting();
+    loadTableInvocationsAtClassStart = UCDeltaCatalogClientImpl.loadTableInvocationsForTesting();
   }
 
   @AfterAll
@@ -186,13 +194,13 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     if (!useDeltaRestApiForTests() || !expectDeltaRestApiSuccessAtClassLevel()) {
       return;
     }
-    long loadInvocationsAfter = UCDeltaCatalogClientImpl.LOAD_TABLE_INVOCATIONS().get();
+    long loadInvocationsAfter = UCDeltaCatalogClientImpl.loadTableInvocationsForTesting();
     if (loadInvocationsAfter <= loadTableInvocationsAtClassStart) {
       // Every test in the suite was aborted (e.g. via Assumption.assumeTrue) before any
       // loadTable call ran, so there is nothing to assert about the Delta REST API path.
       return;
     }
-    long after = UCDeltaCatalogClientImpl.SUCCESSFUL_DELTA_REST_API_LOADS().get();
+    long after = UCDeltaCatalogClientImpl.successfulDeltaRestApiLoadsForTesting();
     if (after <= deltaRestApiLoadsAtClassStart) {
       throw new AssertionError(
           "Suite finished but no UCDeltaCatalogClientImpl.loadTable call actually returned a "

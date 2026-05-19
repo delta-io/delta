@@ -31,11 +31,16 @@ import org.junit.jupiter.api.Test;
  *
  * <p>This class disables the class-level "Delta REST API served at least one load" assertion (see
  * {@link #expectDeltaRestApiSuccessAtClassLevel()}) because its tests intentionally exercise only
- * the fallback path, which does not bump {@code SUCCESSFUL_DELTA_REST_API_LOADS}. CI sharding also
+ * the fallback path, which does not bump the successfulDeltaRestApiLoads counter. CI sharding also
  * makes a same-file "sanity" Delta test unreliable: methods can be distributed across shards, so
  * each shard's @AfterAll runs without a guarantee of seeing both methods.
  */
 public class UCDeltaTableNonDeltaFallbackTest extends UCDeltaTableIntegrationBaseTest {
+
+  @Override
+  protected boolean useDeltaRestApiForTests() {
+    return true;
+  }
 
   @Override
   protected boolean expectDeltaRestApiSuccessAtClassLevel() {
@@ -59,12 +64,12 @@ public class UCDeltaTableNonDeltaFallbackTest extends UCDeltaTableIntegrationBas
                 fullTableName, tablePath);
             sql("INSERT INTO %s VALUES (1, 'alpha'), (2, 'beta'), (3, 'gamma')", fullTableName);
 
-            long invocationsBefore = UCDeltaCatalogClientImpl.LOAD_TABLE_INVOCATIONS().get();
-            long successesBefore = UCDeltaCatalogClientImpl.SUCCESSFUL_DELTA_REST_API_LOADS().get();
+            long invocationsBefore = UCDeltaCatalogClientImpl.loadTableInvocationsForTesting();
+            long successesBefore = UCDeltaCatalogClientImpl.successfulDeltaRestApiLoadsForTesting();
 
             // The Delta REST API path runs first: ucClient.loadTable -> UC server returns
             // UnsupportedTableFormatException (table isn't Delta-format) -> the catch handler
-            // calls fallbackLoadTable(ident) which is super.loadTable from AbstractDeltaCatalog
+            // calls fallbackLoadTableFunc(ident) which is super.loadTable from AbstractDeltaCatalog
             // (i.e. the legacy DelegatingCatalogExtension delegate). The SELECT below succeeds
             // only if that fallback hands back a usable V1 table for the Parquet data.
             List<List<String>> rows = sql("SELECT id, name FROM %s ORDER BY id", fullTableName);
@@ -75,11 +80,11 @@ public class UCDeltaTableNonDeltaFallbackTest extends UCDeltaTableIntegrationBas
             // did NOT successfully serve the load. A future regression that silently returned
             // a (wrong) Delta table from the REST path would bump the success counter and fail
             // this assertion, even though the row data check above would also still pass.
-            long invocationsAfter = UCDeltaCatalogClientImpl.LOAD_TABLE_INVOCATIONS().get();
-            long successesAfter = UCDeltaCatalogClientImpl.SUCCESSFUL_DELTA_REST_API_LOADS().get();
+            long invocationsAfter = UCDeltaCatalogClientImpl.loadTableInvocationsForTesting();
+            long successesAfter = UCDeltaCatalogClientImpl.successfulDeltaRestApiLoadsForTesting();
             if (invocationsAfter <= invocationsBefore) {
               throw new AssertionError(
-                  "Expected LOAD_TABLE_INVOCATIONS to increase during the SELECT, but it did not"
+                  "Expected loadTableInvocations to increase during the SELECT, but it did not"
                       + " (before="
                       + invocationsBefore
                       + ", after="
@@ -88,7 +93,7 @@ public class UCDeltaTableNonDeltaFallbackTest extends UCDeltaTableIntegrationBas
             }
             if (successesAfter != successesBefore) {
               throw new AssertionError(
-                  "Expected SUCCESSFUL_DELTA_REST_API_LOADS to be unchanged (fallback path took"
+                  "Expected successfulDeltaRestApiLoads to be unchanged (fallback path took"
                       + " over), but it changed (before="
                       + successesBefore
                       + ", after="

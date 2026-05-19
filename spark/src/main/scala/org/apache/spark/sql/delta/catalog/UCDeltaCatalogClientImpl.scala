@@ -18,23 +18,17 @@ package org.apache.spark.sql.delta.catalog
 
 import java.net.URI
 import java.util.concurrent.atomic.AtomicLong
-import java.util.function.Supplier
 
 import scala.jdk.CollectionConverters._
 
 import io.delta.storage.commit.{TableIdentifier => StorageTableIdentifier}
-import io.delta.storage.commit.uccommitcoordinator.{
-  UCDeltaClient,
-  UCDeltaModels,
-  UCDeltaTokenBasedRestClient
-}
+import io.delta.storage.commit.uccommitcoordinator.{UCDeltaClient, UCDeltaModels}
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.TableInfo
 import io.delta.storage.commit.uccommitcoordinator.exceptions.{
   CredentialFetchFailedException,
   UnsupportedTableFormatException,
   NoSuchTableException => StorageNoSuchTableException
 }
-import org.apache.hadoop.conf.Configuration
 
 import org.apache.spark.internal.{Logging, MDC}
 import org.apache.spark.sql.SparkSession
@@ -60,11 +54,12 @@ private[catalog] class UCDeltaCatalogClientImpl(
     catalogName: String,
     ucClient: UCDeltaClient,
     serverSidePlanningEnabled: Boolean = false,
-    fallbackLoadTable: Identifier => Table = UCDeltaCatalogClientImpl.defaultFallbackLoadTable)
+    fallbackLoadTableFunc: Identifier => Table
+    = UCDeltaCatalogClientImpl.defaultFallbackLoadTableFunc)
   extends AbstractDeltaCatalogClient with Logging {
 
   override def loadTable(ident: Identifier): Table = {
-    UCDeltaCatalogClientImpl.LOAD_TABLE_INVOCATIONS.incrementAndGet()
+    UCDeltaCatalogClientImpl.loadTableInvocationsCounter.incrementAndGet()
     val tid = toStorageTableIdent(ident)
     val info =
       try ucClient.loadTable(tid)
@@ -74,7 +69,7 @@ private[catalog] class UCDeltaCatalogClientImpl(
           logInfo(log"Table ${MDC(DeltaLogKeys.TABLE_NAME, ident)} is not in Delta format; " +
             log"falling back to the legacy catalog path. Cause: " +
             log"${MDC(DeltaLogKeys.EXCEPTION, e.getMessage)}")
-          return fallbackLoadTable(ident)
+          return fallbackLoadTableFunc(ident)
         case e: CredentialFetchFailedException if serverSidePlanningEnabled =>
           logWarning(log"Credential fetch failed for " +
             log"${MDC(DeltaLogKeys.TABLE_NAME, fullQualifiedTableName(tid))}; enabling " +
@@ -83,7 +78,7 @@ private[catalog] class UCDeltaCatalogClientImpl(
           enableServerSidePlanningConfig(ident)
           e.getTableInfoWithoutCredentials
       }
-    UCDeltaCatalogClientImpl.SUCCESSFUL_DELTA_REST_API_LOADS.incrementAndGet()
+    UCDeltaCatalogClientImpl.successfulDeltaRestApiLoadsCounter.incrementAndGet()
     toV1Table(ident, info)
   }
 
@@ -150,93 +145,93 @@ private[catalog] class UCDeltaCatalogClientImpl(
 }
 
 object UCDeltaCatalogClientImpl extends AbstractDeltaCatalogClientFactory with Logging {
-  /**
-   * Test-only instrumentation. Bumped at every `loadTable` entry regardless of outcome.
-   * Read by integration tests (e.g. {@code UCDeltaTableIntegrationBaseTest}) to verify the
-   * Delta REST API path was exercised. Not part of any public API; do not depend on this
-   * from production code. Kept public so cross-package integration tests
-   * ({@code io.sparkuctest.*}) can read it without reflection.
-   */
-  val LOAD_TABLE_INVOCATIONS: AtomicLong = new AtomicLong(0L)
+  // Test-only instrumentation. The mutable counters are encapsulated so production code
+  // can neither read nor write them; read access is exposed via the `*ForTesting` methods
+  // below so cross-package integration tests (e.g. `io.sparkuctest.*`) don't need
+  // reflection.
+
+  /** Bumped at every `loadTable` entry regardless of outcome. Read via the *ForTesting API. */
+  private val loadTableInvocationsCounter: AtomicLong = new AtomicLong(0L)
 
   /**
-   * Test-only instrumentation. Bumped only when `loadTable` returned a Delta table via the
-   * Delta REST API (no fallback, no rethrow). Read by integration tests to assert "Delta REST
-   * actually served the load." Not part of any public API; do not depend on this from
-   * production code. Kept public so cross-package integration tests
-   * ({@code io.sparkuctest.*}) can read it without reflection.
+   * Bumped only when `loadTable` returned a Delta table via the Delta REST API (no fallback,
+   * no rethrow). Read via the *ForTesting API.
    */
-  val SUCCESSFUL_DELTA_REST_API_LOADS: AtomicLong = new AtomicLong(0L)
+  private val successfulDeltaRestApiLoadsCounter: AtomicLong = new AtomicLong(0L)
 
-  private[catalog] val RenewCredentialEnabledKey: String = "renewCredential.enabled"
-  private[catalog] val CredScopedFsEnabledKey: String = "credScopedFs.enabled"
+  /**
+   * Test-only read accessor for the `loadTable` invocation counter. Used by integration
+   * tests to verify the Delta REST API code path ran. Not part of any public API; production
+   * code must not depend on it.
+   */
+  def loadTableInvocationsForTesting: Long = loadTableInvocationsCounter.get()
+
+  /**
+   * Test-only read accessor for the count of `loadTable` calls served by the Delta REST API
+   * (no fallback, no rethrow). Not part of any public API.
+   */
+  def successfulDeltaRestApiLoadsForTesting: Long = successfulDeltaRestApiLoadsCounter.get()
+
   private[catalog] val ServerSidePlanningEnabledKey: String = "serverSidePlanning.enabled"
 
-  private[catalog] val defaultFallbackLoadTable: Identifier => Table = ident =>
+  private[catalog] val defaultFallbackLoadTableFunc: Identifier => Table = ident =>
     throw new IllegalStateException(
       s"Non-Delta table $ident cannot be served via the Delta REST API path and no " +
         "fallback catalog was configured.")
 
   /**
-   * Builds a [[UCDeltaCatalogClientImpl]] from catalog options. The `deltaRestApi.enabled`
-   * gate is the caller's responsibility
-   * ([[AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled]]).
-   * {@code fallbackLoadTable} is invoked when UC reports {@code UnsupportedTableFormatException}.
+   * Builds a [[UCDeltaCatalogClientImpl]] from catalog options. The `deltaRestApi.enabled` gate
+   * is the caller's responsibility ([[AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled]]).
+   * `fallbackLoadTableFunc` is invoked when UC reports `UnsupportedTableFormatException`. UC client
+   * construction is delegated to [[UCTokenBasedRestClientFactory]] with `renewCredential.enabled`
+   * defaulted to `true` and `credScopedFs.enabled` defaulted to `false` when not set.
    */
   override def fromCatalogOptions(
       catalogName: String,
       options: CaseInsensitiveStringMap,
-      fallbackLoadTable: Identifier => Table
+      fallbackLoadTableFunc: Identifier => Table
   ): UCDeltaCatalogClientImpl = {
-    val uri = Option(options.get("uri")).getOrElse(throw new IllegalArgumentException(
-      s"'uri' is required when 'deltaRestApi.enabled' is true (catalog '$catalogName')"))
-    val authConfigs = extractAuthConfigs(options, catalogName)
-    val appVersions = UCTokenBasedRestClientFactory.defaultAppVersionsAsJava
-    val renewCredEnabled = options.getBoolean(RenewCredentialEnabledKey, true)
-    val credScopedFsEnabled = options.getBoolean(CredScopedFsEnabledKey, false)
+    // Pre-flight: keep our user-facing errors instead of the factory's less specific ones.
+    if (options.get(UriKey) == null) {
+      throw new IllegalArgumentException(s"'$UriKey' is required (catalog '$catalogName')")
+    }
+    validateAuthConfigured(options, catalogName)
+
+    // `asCaseSensitiveMap()` preserves the user's original key case; `containsKey` is
+    // case-insensitive so defaults don't create duplicate keys.
+    val merged = new java.util.HashMap[String, String](options.asCaseSensitiveMap())
+    Seq(
+      UCTokenBasedRestClientFactory.DELTA_REST_API_ENABLED_KEY -> "true",
+      UCTokenBasedRestClientFactory.RENEW_CREDENTIAL_ENABLED_KEY -> "true",
+      UCTokenBasedRestClientFactory.CRED_SCOPED_FS_ENABLED_KEY -> "false"
+    ).foreach { case (k, v) => if (!options.containsKey(k)) merged.put(k, v) }
+    val ucClient = UCTokenBasedRestClientFactory
+      .createUCClient(new CaseInsensitiveStringMap(merged))
+      .asInstanceOf[UCDeltaClient]
+
     val sspEnabled = options.getBoolean(ServerSidePlanningEnabledKey, false)
-    val hadoopConfSupplier: Supplier[Configuration] =
-      () => SparkSession.getActiveSession
-        .map(_.sparkContext.hadoopConfiguration)
-        .getOrElse(new Configuration())
-    val restClient = UCDeltaTokenBasedRestClient.create(
-      uri,
-      authConfigs,
-      appVersions,
-      renewCredEnabled,
-      credScopedFsEnabled,
-      hadoopConfSupplier)
-    new UCDeltaCatalogClientImpl(catalogName, restClient, sspEnabled, fallbackLoadTable)
+    new UCDeltaCatalogClientImpl(catalogName, ucClient, sspEnabled, fallbackLoadTableFunc)
   }
 
+  private val UriKey: String = "uri"
+  private val AuthPrefix: String = "auth."
+  private val LegacyTokenKey: String = "token"
+
   /**
-   * `auth.*` sub-keys (prefix stripped) feed `TokenProvider.create`. Legacy bare `token`
-   * is translated to `{type=static, token=<value>}`, only when no `auth.*` is present.
+   * Pre-flight: ensure at least one of `auth.*` or legacy `token` is present, so the user
+   * sees a clear error (and catalog name) instead of the factory's internal failure when
+   * `TokenProvider.create` is handed an empty config.
    */
-  private[catalog] def extractAuthConfigs(
+  private[catalog] def validateAuthConfigured(
       options: CaseInsensitiveStringMap,
-      catalogName: String): java.util.Map[String, String] = {
-    val authConfigs = new java.util.HashMap[String, String]()
-    val authPrefix = "auth."
-    // CaseInsensitiveStringMap.entrySet() returns keys already lowercased.
-    options.entrySet().asScala.foreach { e =>
-      val key = e.getKey
-      if (key.startsWith(authPrefix)) {
-        authConfigs.put(key.substring(authPrefix.length), e.getValue)
-      }
-    }
-    if (authConfigs.isEmpty) {
-      Option(options.get("token")).foreach { tok =>
-        authConfigs.put("type", "static")
-        authConfigs.put("token", tok)
-      }
-    }
-    if (authConfigs.isEmpty) {
+      catalogName: String): Unit = {
+    val hasAuthPrefix = options.entrySet().asScala.exists(_.getKey.startsWith(AuthPrefix))
+    val hasLegacyToken = options.get(LegacyTokenKey) != null
+    if (!hasAuthPrefix && !hasLegacyToken) {
       throw new IllegalArgumentException(
         s"auth configuration is required when 'deltaRestApi.enabled' is true " +
-          s"(catalog '$catalogName'). Set either 'auth.type' (with the corresponding " +
-          s"auth.* keys) or the legacy 'token' option.")
+          s"(catalog '$catalogName'). Set either '${AuthPrefix}type' (with the corresponding " +
+          s"$AuthPrefix* keys) or the legacy '$LegacyTokenKey' option.")
     }
-    authConfigs
   }
 }
