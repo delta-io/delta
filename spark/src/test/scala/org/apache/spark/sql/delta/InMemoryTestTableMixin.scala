@@ -71,7 +71,7 @@ case object DSv2DMLSchemaEvolution extends org.scalatest.Tag("DSv2DMLSchemaEvolu
  */
 trait InMemoryTestTableMixin extends SharedSparkSession with InMemoryTestTableMixinShims  {
 
-  override protected def sparkConf: SparkConf = super.sparkConf
+  override def sparkConf: SparkConf = super.sparkConf
     .set("spark.sql.catalog.spark_catalog", classOf[InMemoryDeltaCatalog].getName)
 
   override protected def test
