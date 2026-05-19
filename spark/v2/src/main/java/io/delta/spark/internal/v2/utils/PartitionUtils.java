@@ -499,6 +499,13 @@ public class PartitionUtils {
    *
    * <p>The metadata is used by DeltaParquetFileFormat to generate the is_row_deleted column.
    */
+  // TODO Sandro (touch-point 4): expose this helper for the changelog path. Two options:
+  //   (a) flip visibility from `private static` to `public static` (smaller diff, but
+  //       requires the caller in DeltaChangelogBatch to deserialize the base64 string back
+  //       into a DeletionVectorDescriptor only to immediately re-serialize it here);
+  //   (b) add a sibling public helper that takes the base64 string directly (avoids the
+  //       redundant round-trip; cleaner if DeltaChangelogBatch already holds the base64 form).
+  // Pick based on what shape CDCInputPartition ends up carrying (touch-point 1).
   private static scala.collection.immutable.Map<String, Object> buildDvMetadata(
       Optional<DeletionVectorDescriptor> dvOpt) {
     Map<String, Object> metadata = new HashMap<>();

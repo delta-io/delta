@@ -106,6 +106,8 @@ public class DeltaChangelogBatch implements Batch {
               Optional<AddFile> addOpt = StreamingHelper.getAddFileWithDataChange(batch, rowId);
               if (addOpt.isPresent()) {
                 AddFile add = addOpt.get();
+                // TODO Sandro: extract DV via add.getDeletionVector(), serialize to base64,
+                // and pass into buildPartition (touch-point 2, plan touch-points).
                 commitAdds.add(
                     buildPartition(
                         add.getPath(),
@@ -120,6 +122,8 @@ public class DeltaChangelogBatch implements Batch {
               Optional<RemoveFile> removeOpt = StreamingHelper.getDataChangeRemove(batch, rowId);
               if (removeOpt.isPresent()) {
                 RemoveFile remove = removeOpt.get();
+                // TODO Sandro: extract DV via remove.getDeletionVector(), serialize to base64,
+                // and pass into buildPartition (touch-point 2, plan touch-points).
                 commitRemoves.add(
                     buildPartition(
                         remove.getPath(),
@@ -174,6 +178,8 @@ public class DeltaChangelogBatch implements Batch {
    * has already validated that row tracking is enabled at the start version of the read, so any
    * missing value here is an invariant violation rather than a user-facing error.
    */
+  // TODO Sandro: extend signature to accept the DV (base64 string or DeletionVectorDescriptor)
+  // and forward it to the CDCInputPartition constructor (touch-point 1 + 2).
   private static CDCInputPartition buildPartition(
       String path,
       long size,
@@ -243,6 +249,8 @@ public class DeltaChangelogBatch implements Batch {
     private final String changeType;
     private final long baseRowId;
     private final long defaultRowCommitVersion;
+    // TODO Sandro: add a nullable field carrying the DV info (base64 string) so it can be
+    // passed through to the reader factory (touch-point 1). Add the matching getter below.
 
     CDCInputPartition(
         String filePath,
@@ -252,6 +260,8 @@ public class DeltaChangelogBatch implements Batch {
         String changeType,
         long baseRowId,
         long defaultRowCommitVersion) {
+      // TODO Sandro: extend constructor signature with the new DV parameter and assign it here
+      // (touch-point 1).
       this.filePath = filePath;
       this.fileSize = fileSize;
       this.commitVersion = commitVersion;
@@ -288,6 +298,8 @@ public class DeltaChangelogBatch implements Batch {
     public long getDefaultRowCommitVersion() {
       return defaultRowCommitVersion;
     }
+
+    // TODO Sandro: add getter for the DV info field (touch-point 1).
   }
 
   /** Executor-side factory for CDC partition readers. */
@@ -321,6 +333,12 @@ public class DeltaChangelogBatch implements Batch {
               new Tuple2<>(
                   DefaultRowCommitVersion$.MODULE$.METADATA_STRUCT_FIELD_NAME(),
                   cdcPartition.getDefaultRowCommitVersion()));
+
+      // TODO Sandro: when cdcPartition has DV info, add BOTH constants together to constantMetadata
+      // (touch-point 3): FILE_ROW_INDEX_FILTER_ID_ENCODED -> base64 string, and
+      // FILE_ROW_INDEX_FILTER_TYPE -> RowIndexFilterType.IF_CONTAINED.
+      // Hard pre-condition: never set just one of the two (DeltaParquetFileFormat throws).
+      // Consider reusing PartitionUtils.buildDvMetadata (touch-point 4) instead of inlining here.
 
       PartitionedFile file =
           new PartitionedFile(
