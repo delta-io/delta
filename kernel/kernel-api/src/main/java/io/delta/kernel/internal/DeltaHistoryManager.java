@@ -247,10 +247,10 @@ public final class DeltaHistoryManager {
                 placeholderEarliestCommit.getVersion());
         searchResult = new Commit(placeholderEarliestCommit.getVersion(), ict);
       } else {
-        // We know the table was not catalogManaged here since ICT was not enabled ==> we don't
-        // need to worry about catalogCommits
-        // start non-ICT linear search over [earliestVersion, )
-        List<Commit> commits = getCommits(engine, logPath, earliestVersion);
+        // The requested timestamp is before ICT enablement, so the mtime search must be
+        // bounded to the pre-ICT filesystem commits.
+        List<Commit> commits =
+            getCommits(engine, logPath, earliestVersion, ictEnablementCommit.getVersion());
         searchResult =
             lastCommitBeforeOrAtTimestamp(commits, timestamp)
                 .orElse(
@@ -513,15 +513,16 @@ public final class DeltaHistoryManager {
   }
 
   /**
-   * Returns the commit version and timestamps of all commits starting from version {@code start}.
-   * Guarantees that the commits returned have both monotonically increasing versions and
-   * timestamps.
+   * Returns the versions and timestamps of commits in the range {@code [start, endExclusive)}.
+   *
+   * <p>Guarantees that returned commits have monotonically increasing versions and timestamps.
    */
-  private static List<Commit> getCommits(Engine engine, Path logPath, long start)
+  private static List<Commit> getCommits(Engine engine, Path logPath, long start, long endExclusive)
       throws TableNotFoundException {
     CloseableIterator<Commit> commits =
         listFrom(engine, logPath, start)
             .filter(fs -> FileNames.isCommitFile(getName(fs.getPath())))
+            .filter(fs -> FileNames.deltaVersion(fs.getPath()) < endExclusive)
             .map(fs -> new Commit(FileNames.deltaVersion(fs.getPath()), fs.getModificationTime()));
     return monotonizeCommitTimestamps(commits);
   }
