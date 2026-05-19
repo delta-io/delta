@@ -241,8 +241,8 @@ case class SparkVersionSpec(
   /** Whether this is an unreleased snapshot or master version */
   def isSnapshot: Boolean = isMaster || fullVersion.contains("SNAPSHOT")
 
-  /** Whether to export JARs instead of class directories (needed for Spark Connect on snapshots) */
-  def exportJars: Boolean = isSnapshot
+  /** Whether to export JARs instead of class directories (needed for Spark Connect on master) */
+  def exportJars: Boolean = isMaster
 
   /** Whether to generate Javadoc/Scaladoc for this version */
   def generateDocs: Boolean = isDefault
