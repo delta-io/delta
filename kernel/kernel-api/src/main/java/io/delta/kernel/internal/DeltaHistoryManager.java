@@ -252,7 +252,7 @@ public final class DeltaHistoryManager {
         // The requested timestamp is before ICT enablement, so the file modification-time
         // search must be bounded to the pre-ICT commits.
         List<Commit> commits =
-            getCommits(engine, logPath, earliestVersion, ictEnablementCommit.getVersion());
+            getCommits(engine, logPath, earliestVersion, ictEnablementCommit.version);
         searchResult =
             lastCommitBeforeOrAtTimestamp(commits, timestamp)
                 .orElse(
