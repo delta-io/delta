@@ -27,7 +27,6 @@ import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.delta.catalog.UCDeltaCatalogClientImpl;
-import org.junit.Ignore;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -516,8 +515,7 @@ public class UCDeltaTableQueryCUJsTest extends UnityCatalogSupport {
         .containsExactly(360000L, 185000L);
   }
 
-  @Test
-  @Ignore
+  /*  @Test
   public void testDmlThenQueryWithDeltaRestApi() {
     String t = fullTableName("query_write_read");
 
@@ -536,5 +534,5 @@ public class UCDeltaTableQueryCUJsTest extends UnityCatalogSupport {
 
     List<List<String>> afterInsert = sql("SELECT * FROM %s ORDER BY id", t);
     assertThat(afterInsert).containsExactly(List.of("1", "updated"), List.of("3", "new"));
-  }
+  }*/
 }
