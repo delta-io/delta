@@ -238,11 +238,11 @@ case class SparkVersionSpec(
   /** Returns log4j config file */
   def log4jConfig: String = "log4j2.properties"
 
-  /** Whether this is an unreleased snapshot version */
-  def isSnapshot: Boolean = fullVersion.contains("SNAPSHOT")
+  /** Whether this is an unreleased snapshot or master version */
+  def isSnapshot: Boolean = isMaster || fullVersion.contains("SNAPSHOT")
 
-  /** Whether to export JARs instead of class directories (needed for Spark Connect on master/snapshots) */
-  def exportJars: Boolean = isMaster || isSnapshot
+  /** Whether to export JARs instead of class directories (needed for Spark Connect on snapshots) */
+  def exportJars: Boolean = isSnapshot
 
   /** Whether to generate Javadoc/Scaladoc for this version */
   def generateDocs: Boolean = isDefault
@@ -514,7 +514,7 @@ object CrossSparkVersions extends AutoPlugin {
     // Step 2+: Publish Spark-dependent modules WITH suffix for each non-master Spark version
     // This gives users versioned artifacts like delta-spark_4.0_2.13, delta-spark_4.1_2.13
     val suffixedSparkSteps: Seq[ReleaseStep] = SparkVersionSpec.ALL_SPECS
-      .filterNot(spec => spec.isMaster || spec.isSnapshot)
+      .filterNot(_.isSnapshot)
       .map { spec =>
         { (state: State) =>
           runSbtSubprocess(
