@@ -618,7 +618,7 @@ trait DeltaSQLInMemoryTestUtils
    * Override for [[withTable]] that asserts no leftover physical parquet as a sanity-check
    * for V2 paths.
    */
-  override protected def withTable(tableNames: String*)(f: => Unit): Unit = {
+  override def withTable(tableNames: String*)(f: => Unit): Unit = {
     try {
       super.withTable(tableNames: _*) {
         f
@@ -634,7 +634,7 @@ trait DeltaSQLInMemoryTestUtils
   /**
    * Overrides for [[afterEach]], cleans the [[InMemoryDeltaCatalog]] after each test.
    */
-  override protected def afterEach(): Unit = {
+  override def afterEach(): Unit = {
     try {
       InMemoryDeltaCatalog.reset()
     } finally {
@@ -649,7 +649,7 @@ trait DeltaSQLInMemoryTestUtils
     }
   }
 
-  override protected def withTempDir(f: File => Unit): Unit = {
+  override def withTempDir(f: File => Unit): Unit = {
     super.withTempPath { dir =>
       f(dir)
       assertNoV1Writes(dir)

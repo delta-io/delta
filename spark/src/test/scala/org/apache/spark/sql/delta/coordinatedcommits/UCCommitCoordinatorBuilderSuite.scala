@@ -44,7 +44,17 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
     configMap: Map[String, String] = Map.empty,
     metastoreId: Option[String] = None,
     path: Option[String] = Some("io.unitycatalog.spark.UCSingleCatalog")
-  )
+  ) {
+    /**
+     * The ucConfig as it would appear after getCatalogConfigs
+     * parsing: all sub-keys under spark.sql.catalog.<name>.*
+     * with the prefix stripped. Includes `uri` when present.
+     */
+    def expectedUcConfig: Map[String, String] = {
+      val base = configMap
+      uri.map(u => base + ("uri" -> u)).getOrElse(base)
+    }
+  }
 
   def setupCatalogs(configs: CatalogTestConfig*)(testCode: => Unit): Unit = {
     val allConfigs = configs.flatMap { config =>
@@ -53,7 +63,6 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
         config.uri.map(uri => s"spark.sql.catalog.${config.name}.uri" -> uri)
       ).flatten
 
-      // Add all additional configurations from configMap (without any prefix)
       val additionalConfigs = config.configMap.map { case (key, value) =>
         s"spark.sql.catalog.${config.name}.$key" -> value
       }
@@ -64,14 +73,13 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
     withSQLConf(allConfigs: _*) {
       configs.foreach { config =>
         (config.uri, config.configMap.isEmpty, config.metastoreId) match {
-          case (Some(uri), false, Some(id)) =>
-            registerMetastoreId(uri, config.configMap, id)
-          case (Some(uri), false, None) =>
+          case (Some(_), false, Some(id)) =>
+            registerMetastoreId(config.expectedUcConfig, id)
+          case (Some(_), false, None) =>
             registerMetastoreIdException(
-              uri,
-              config.configMap,
+              config.expectedUcConfig,
               new RuntimeException("Invalid metastore ID"))
-          case _ => // Do nothing for incomplete configs
+          case _ =>
         }
       }
       testCode
@@ -97,14 +105,14 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
       val result = getCommitCoordinatorClient(expectedMetastoreId)
 
       assert(result.isInstanceOf[UCCommitCoordinatorClient])
-      verify(mockFactory, times(2)).createUCClient(catalog1.uri.get, catalog1.configMap)
-      verify(mockFactory).createUCClient(catalog2.uri.get, catalog2.configMap)
-      verify(mockFactory.createUCClient(catalog1.uri.get, catalog1.configMap))
+      verify(mockFactory, times(2)).createUCClient(catalog1.expectedUcConfig)
+      verify(mockFactory).createUCClient(catalog2.expectedUcConfig)
+      verify(mockFactory.createUCClient(catalog1.expectedUcConfig))
         .getMetastoreId
-      verify(mockFactory.createUCClient(catalog2.uri.get, catalog2.configMap))
+      verify(mockFactory.createUCClient(catalog2.expectedUcConfig))
         .getMetastoreId
-      verify(mockFactory.createUCClient(catalog2.uri.get, catalog2.configMap)).close()
-      verify(mockFactory.createUCClient(catalog1.uri.get, catalog1.configMap)).close()
+      verify(mockFactory.createUCClient(catalog2.expectedUcConfig)).close()
+      verify(mockFactory.createUCClient(catalog1.expectedUcConfig)).close()
     }
   }
 
@@ -114,20 +122,6 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
     assert(defaults("Spark") === org.apache.spark.SPARK_VERSION)
     assert(defaults("Scala") === scala.util.Properties.versionNumberString)
     assert(defaults("Java") === System.getProperty("java.version"))
-  }
-
-  test("createUCClientWithVersions passes custom app versions to UCClient") {
-    val customVersions = Map(
-      "Delta" -> io.delta.VERSION,
-      "Kernel" -> "4.0.0",
-      "Delta V2 connector" -> "true"
-    )
-    val defaults = UCTokenBasedRestClientFactory.defaultAppVersions
-    val merged = defaults ++ customVersions
-    assert(merged("Kernel") === "4.0.0")
-    assert(merged("Delta V2 connector") === "true")
-    assert(merged("Delta") === io.delta.VERSION)
-    assert(merged("Spark") === org.apache.spark.SPARK_VERSION)
   }
 
   test("build with missing metastore ID") {
@@ -154,9 +148,9 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
         getCommitCoordinatorClient(metastoreId)
       }
       assert(exception.getMessage.contains("No matching catalog found"))
-      verify(mockFactory).createUCClient(catalog.uri.get, catalog.configMap)
-      verify(mockFactory.createUCClient(catalog.uri.get, catalog.configMap)).getMetastoreId
-      verify(mockFactory.createUCClient(catalog.uri.get, catalog.configMap)).close()
+      verify(mockFactory).createUCClient(catalog.expectedUcConfig)
+      verify(mockFactory.createUCClient(catalog.expectedUcConfig)).getMetastoreId
+      verify(mockFactory.createUCClient(catalog.expectedUcConfig)).close()
     }
   }
 
@@ -180,14 +174,14 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
         getCommitCoordinatorClient(metastoreId)
       }
       assert(exception.getMessage.contains("Found multiple catalogs"))
-      verify(mockFactory).createUCClient(catalog1.uri.get, catalog1.configMap)
-      verify(mockFactory).createUCClient(catalog2.uri.get, catalog2.configMap)
-      verify(mockFactory.createUCClient(catalog1.uri.get, catalog1.configMap))
+      verify(mockFactory).createUCClient(catalog1.expectedUcConfig)
+      verify(mockFactory).createUCClient(catalog2.expectedUcConfig)
+      verify(mockFactory.createUCClient(catalog1.expectedUcConfig))
         .getMetastoreId
-      verify(mockFactory.createUCClient(catalog2.uri.get, catalog2.configMap))
+      verify(mockFactory.createUCClient(catalog2.expectedUcConfig))
         .getMetastoreId
-      verify(mockFactory.createUCClient(catalog1.uri.get, catalog1.configMap)).close()
-      verify(mockFactory.createUCClient(catalog2.uri.get, catalog2.configMap)).close()
+      verify(mockFactory.createUCClient(catalog1.expectedUcConfig)).close()
+      verify(mockFactory.createUCClient(catalog2.expectedUcConfig)).close()
     }
   }
 
@@ -220,10 +214,9 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
 
       assert(result.isInstanceOf[UCCommitCoordinatorClient])
       verify(mockFactory, times(2)).createUCClient(
-        validCatalog.uri.get,
-        validCatalog.configMap
+        validCatalog.expectedUcConfig
       )
-      verify(mockFactory.createUCClient(validCatalog.uri.get, validCatalog.configMap),
+      verify(mockFactory.createUCClient(validCatalog.expectedUcConfig),
         times(1)).close()
     }
   }
@@ -248,6 +241,7 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
     val metastoreId = "shared-metastore-id"
     val sharedUri = "https://shared-test-uri.com"
     val sharedConfigMap = Map("type" -> "static", "token" -> "shared-test-token")
+    val sharedUcConfig = sharedConfigMap + ("uri" -> sharedUri)
     val catalog1 = CatalogTestConfig(
       name = "catalog1",
       uri = Some(sharedUri),
@@ -271,9 +265,9 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
       val result = getCommitCoordinatorClient(metastoreId)
 
       assert(result.isInstanceOf[UCCommitCoordinatorClient])
-      verify(mockFactory, times(2)).createUCClient(sharedUri, sharedConfigMap)
-      verify(mockFactory.createUCClient(sharedUri, sharedConfigMap)).getMetastoreId
-      verify(mockFactory.createUCClient(sharedUri, sharedConfigMap)).close()
+      verify(mockFactory, times(2)).createUCClient(sharedUcConfig)
+      verify(mockFactory.createUCClient(sharedUcConfig)).getMetastoreId
+      verify(mockFactory.createUCClient(sharedUcConfig)).close()
     }
   }
 
@@ -293,30 +287,28 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
         getCommitCoordinatorClient(metastoreId)
       }
       assert(e.getMessage.contains("No matching catalog found"))
-      verify(mockFactory, never()).createUCClient(catalog.uri.get, catalog.configMap)
+      verify(mockFactory, never()).createUCClient(catalog.expectedUcConfig)
     }
   }
 
   private def registerMetastoreId(
-      uri: String,
-      configMap: Map[String, String],
+      ucConfig: Map[String, String],
       metastoreId: String): Unit = {
     val mockClient = org.mockito.Mockito.mock(classOf[UCClient])
     when(mockClient.getMetastoreId).thenReturn(metastoreId)
-    when(mockFactory.createUCClient(meq(uri), meq(configMap))).thenReturn(mockClient)
+    when(mockFactory.createUCClient(meq(ucConfig))).thenReturn(mockClient)
   }
 
   private def registerMetastoreIdException(
-      uri: String,
-      configMap: Map[String, String],
+      ucConfig: Map[String, String],
       exception: Throwable): Unit = {
     val mockClient = org.mockito.Mockito.mock(classOf[UCClient])
     when(mockClient.getMetastoreId).thenThrow(exception)
-    when(mockFactory.createUCClient(meq(uri), meq(configMap))).thenReturn(mockClient)
+    when(mockFactory.createUCClient(meq(ucConfig))).thenReturn(mockClient)
   }
 
-  test("getCatalogConfigs with legacy token format") {
-    val catalogName = "legacy_catalog"
+  test("getCatalogConfigs returns all sub-keys") {
+    val catalogName = "test_catalog"
     val uri = "https://test-uri.com"
     val token = "test-token"
 
@@ -328,15 +320,10 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
       val configs = UCCommitCoordinatorBuilder.getCatalogConfigs(spark)
       assert(configs.length == 1)
 
-      val (name, catalogUri, authConfigMap) = configs.head
+      val (name, ucConfig) = configs.head
       assert(name == catalogName)
-      assert(catalogUri == uri)
-
-      // Legacy token should be converted to new format
-      assert(authConfigMap.contains("type"))
-      assert(authConfigMap("type") == "static")
-      assert(authConfigMap.contains("token"))
-      assert(authConfigMap("token") == token)
+      assert(ucConfig("uri") == uri)
+      assert(ucConfig("token") == token)
     }
   }
 
@@ -354,11 +341,11 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
       val configs = UCCommitCoordinatorBuilder.getCatalogConfigs(spark)
       assert(configs.length == 1)
 
-      val (name, catalogUri, authConfigMap) = configs.head
+      val (name, ucConfig) = configs.head
       assert(name == catalogName)
-      assert(catalogUri == uri)
-      assert(authConfigMap("type") == "static")
-      assert(authConfigMap("token") == token)
+      assert(ucConfig("uri") == uri)
+      assert(ucConfig("auth.type") == "static")
+      assert(ucConfig("auth.token") == token)
     }
   }
 
@@ -377,30 +364,42 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
       val configs = UCCommitCoordinatorBuilder.getCatalogConfigs(spark)
       assert(configs.length == 1)
 
-      val (name, catalogUri, authConfigMap) = configs.head
+      val (name, ucConfig) = configs.head
       assert(name == catalogName)
-      assert(catalogUri == uri)
-      assert(authConfigMap("type") == "oauth")
-      assert(authConfigMap("oauth.uri") == "https://oauth.example.com")
-      assert(authConfigMap("oauth.client_id") == "client123")
-      assert(authConfigMap("oauth.client_secret") == "secret456")
+      assert(ucConfig("uri") == uri)
+      assert(ucConfig("auth.type") == "oauth")
+      assert(ucConfig("auth.oauth.uri") == "https://oauth.example.com")
+      assert(ucConfig("auth.oauth.client_id") == "client123")
+      assert(ucConfig("auth.oauth.client_secret") == "secret456")
     }
   }
 
-  test("getCatalogConfigs skips catalog with no auth configurations") {
-    val catalogName = "no_auth_catalog"
-    val uri = "https://test-uri.com"
+  test("getCatalogConfigs skips catalog without uri") {
+    val catalogName = "no_uri_catalog"
 
     withSQLConf(
       s"spark.sql.catalog.$catalogName" -> "io.unitycatalog.spark.UCSingleCatalog",
-      s"spark.sql.catalog.$catalogName.uri" -> uri
+      s"spark.sql.catalog.$catalogName.token" -> "some-token"
     ) {
       val configs = UCCommitCoordinatorBuilder.getCatalogConfigs(spark)
-      assert(configs.isEmpty, "Catalog without auth config should be skipped")
+      assert(configs.isEmpty, "Catalog without uri should be skipped")
     }
   }
 
-  test("getCatalogConfigs prefers new auth.* format over legacy token") {
+  test("getCatalogConfigs skips catalog with invalid uri") {
+    val catalogName = "bad_uri_catalog"
+
+    withSQLConf(
+      s"spark.sql.catalog.$catalogName" -> "io.unitycatalog.spark.UCSingleCatalog",
+      s"spark.sql.catalog.$catalogName.uri" -> "://missing scheme",
+      s"spark.sql.catalog.$catalogName.token" -> "some-token"
+    ) {
+      val configs = UCCommitCoordinatorBuilder.getCatalogConfigs(spark)
+      assert(configs.isEmpty, "Catalog with invalid uri should be skipped")
+    }
+  }
+
+  test("getCatalogConfigs prefers auth.* keys (both present)") {
     val catalogName = "mixed_catalog"
     val uri = "https://test-uri.com"
     val legacyToken = "legacy-token"
@@ -416,13 +415,15 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
       val configs = UCCommitCoordinatorBuilder.getCatalogConfigs(spark)
       assert(configs.length == 1)
 
-      val (name, catalogUri, authConfigMap) = configs.head
-      assert(name == catalogName)
-      assert(catalogUri == uri)
-      // New format should take precedence
-      assert(authConfigMap("type") == "static")
-      assert(authConfigMap("token") == newToken)
-      assert(!authConfigMap.contains(legacyToken))
+      val (_, ucConfig) = configs.head
+      assert(ucConfig("uri") == uri)
+      assert(ucConfig("auth.type") == "static")
+      assert(ucConfig("auth.token") == newToken)
+      assert(ucConfig("token") == legacyToken)
+
+      val catalogConfig = UCCatalogConfig(catalogName, ucConfig)
+      assert(catalogConfig.authConfig("type") == "static")
+      assert(catalogConfig.authConfig("token") == newToken)
     }
   }
 
@@ -435,23 +436,44 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
       "spark.sql.catalog.catalog2.uri" -> "https://uri2.com",
       "spark.sql.catalog.catalog2.auth.type" -> "static",
       "spark.sql.catalog.catalog2.auth.token" -> "token2",
-      "spark.sql.catalog.catalog3" -> "io.unitycatalog.spark.UCSingleCatalog",
-      "spark.sql.catalog.catalog3.uri" -> "https://uri3.com"
+      "spark.sql.catalog.catalog3" -> "io.unitycatalog.spark.UCSingleCatalog"
     ) {
       val configs = UCCommitCoordinatorBuilder.getCatalogConfigs(spark)
-      // Only catalog1 and catalog2 should be included (catalog3 has no auth)
       assert(configs.length == 2)
 
       val catalog1 = configs.find(_._1 == "catalog1")
       assert(catalog1.isDefined)
-      assert(catalog1.get._3("type") == "static")
-      assert(catalog1.get._3("token") == "token1")
+      assert(catalog1.get._2("uri") == "https://uri1.com")
+      assert(catalog1.get._2("token") == "token1")
 
       val catalog2 = configs.find(_._1 == "catalog2")
       assert(catalog2.isDefined)
-      assert(catalog2.get._3("type") == "static")
-      assert(catalog2.get._3("token") == "token2")
+      assert(catalog2.get._2("uri") == "https://uri2.com")
+      assert(catalog2.get._2("auth.type") == "static")
+      assert(catalog2.get._2("auth.token") == "token2")
     }
+  }
+
+  test("extractAuthConfig prefers auth.* over legacy token") {
+    val ucConfig = Map(
+      "uri" -> "https://test.com",
+      "token" -> "legacy-token",
+      "auth.type" -> "static",
+      "auth.token" -> "new-token"
+    )
+    val auth = UCTokenBasedRestClientFactory.extractAuthConfig(ucConfig)
+    assert(auth("type") == "static")
+    assert(auth("token") == "new-token")
+  }
+
+  test("extractAuthConfig falls back to legacy token") {
+    val ucConfig = Map(
+      "uri" -> "https://test.com",
+      "token" -> "legacy-token"
+    )
+    val auth = UCTokenBasedRestClientFactory.extractAuthConfig(ucConfig)
+    assert(auth("type") == "static")
+    assert(auth("token") == "legacy-token")
   }
 
   test("buildForCatalog with legacy token format") {
@@ -467,9 +489,7 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
       val result = UCCommitCoordinatorBuilder.buildForCatalog(spark, catalogName)
       assert(result.isInstanceOf[UCCommitCoordinatorClient])
 
-      // Verify that createUCClient was called with the converted auth config
       verify(mockFactory).createUCClient(
-        meq(uri),
         any[Map[String, String]]()
       )
     }
@@ -490,10 +510,22 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
       assert(result.isInstanceOf[UCCommitCoordinatorClient])
 
       verify(mockFactory).createUCClient(
-        meq(uri),
         any[Map[String, String]]()
       )
     }
+  }
+
+  test("extractAppVersions merges defaults with ucConfig entries") {
+    val ucConfig = Map(
+      "uri" -> "https://test.com",
+      "appVersions.Kernel" -> "0.7.0",
+      "appVersions.Delta V2 connector" -> "true"
+    )
+    val versions = UCTokenBasedRestClientFactory.extractAppVersions(ucConfig)
+    assert(versions("Delta") === io.delta.VERSION)
+    assert(versions("Spark") === org.apache.spark.SPARK_VERSION)
+    assert(versions("Kernel") === "0.7.0")
+    assert(versions("Delta V2 connector") === "true")
   }
 
   test("buildForCatalog with non-existent catalog") {
