@@ -123,8 +123,7 @@ public final class CreateTableBuilder {
       String tableName,
       io.delta.kernel.types.StructType kernelSchema) {
     UCClient ucClient =
-        UCTokenBasedRestClientFactory$.MODULE$.createUCClient(
-            ucTableInfo.getUcUri(), ucTableInfo.getAuthConfig());
+        UCTokenBasedRestClientFactory$.MODULE$.createUCClient(ucTableInfo.toUcConfig());
     return new UCCatalogManagedClient(ucClient)
         .buildCreateTableTransaction(
             ucTableInfo.getTableId(),
