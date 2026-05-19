@@ -26,7 +26,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * No-op {@link MergeStrategy} used by {@link DeltaSinkConf.WriteMode#APPEND}.
+ * No-op {@link MergeStrategy} used by append-mode sinks.
  *
  * <p>In append mode every incoming row is written via {@link DeltaTable#writeParquet} and no
  * existing files need to be modified. The writer must never call {@link #recordUpsert} or {@link
