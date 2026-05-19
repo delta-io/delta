@@ -936,6 +936,16 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
       }
     },
 
+    // Add delta-iceberg compiled classes and the shaded Iceberg jar so that UniForm Iceberg
+    // conversion works in integration tests.  We add only the class JARs (not iceberg-spark-runtime)
+    // to avoid conflicting with UC server's bundled Iceberg 1.9.2.
+    Test / unmanagedJars ++= {
+      if (supportIceberg) Seq(
+        Attributed.blank((iceberg / Compile / packageBin).value),
+        Attributed.blank((icebergShaded / assembly).value)
+      ) else Seq.empty
+    },
+
     Test / testOptions += Tests.Argument("-oDF"),
     Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
   )
