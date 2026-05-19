@@ -31,12 +31,10 @@ import io.unitycatalog.client.delta.serde.DeltaTypeModule;
 
 import java.util.List;
 import java.util.Objects;
-import java.util.Set;
 
 /**
- * Conversion from the UC SDK's Delta schema model ({@link StructType}, {@link DeltaType},
- * {@link PrimitiveType}) to Delta's JSON schema wire format. The reverse direction
- * ({@link #parseSchemaString}) is reserved for a follow-up and currently throws.
+ * Bidirectional conversion between the UC SDK's Delta schema model ({@link StructType},
+ * {@link DeltaType}, {@link PrimitiveType}) and Delta's JSON schema wire format.
  *
  * <p>The SDK's default {@link ObjectMapper} (from {@link JSON#getDefault()}) does not emit
  * Delta's wire format on its own:
@@ -53,11 +51,6 @@ import java.util.Set;
  * The resulting JSON is parseable by Delta's schema readers (e.g. {@code DataType.fromJson}).
  */
 final class UCDeltaSchemaConverter {
-
-  /** Primitive type names that the legacy create-table path ({@link #toUCStructType}) accepts. */
-  private static final Set<String> PRIMITIVE_TYPE_NAMES = Set.of(
-      "BOOLEAN", "BYTE", "SHORT", "INT", "LONG", "FLOAT", "DOUBLE",
-      "DATE", "TIMESTAMP", "TIMESTAMP_NTZ", "STRING", "BINARY", "DECIMAL");
 
   /**
    * Singleton mapper preconfigured to emit Delta's wire format
@@ -86,41 +79,66 @@ final class UCDeltaSchemaConverter {
   }
 
   /**
-   * Parses a Delta JSON schema string into the SDK's {@link StructType}. Reserved for the
-   * UpdateTable schema-diff path; not yet implemented.
+   * Parses a Delta JSON schema string (e.g. {@code AbstractMetadata#getSchemaString()}) into
+   * the UC SDK's {@link StructType}. Complex types (struct/array/map) and bare-string
+   * primitives are dispatched by the SDK's {@code DeltaTypeDeserializer} +
+   * {@code @JsonSubTypes} on {@link DeltaType}.
+   *
+   * @throws NullPointerException if {@code schemaString} is {@code null}.
+   * @throws IllegalStateException if the string is not a valid Delta JSON schema.
    */
   static StructType parseSchemaString(String schemaString) {
-    // TODO: implement full Delta schema string -> StructType conversion
-    throw new UnsupportedOperationException(
-        "Delta schema string to StructType conversion is not yet implemented.");
+    Objects.requireNonNull(schemaString, "schemaString must not be null");
+    try {
+      return DELTA_SCHEMA_MAPPER.readValue(schemaString, StructType.class);
+    } catch (JsonProcessingException e) {
+      throw new IllegalStateException(
+          "Failed to parse Delta JSON schema string: " + schemaString, e);
+    }
   }
 
   /**
-   * Converts the legacy create-table path's {@link UCClient.ColumnDef} list into the UC SDK's
-   * {@link StructType}. Only primitive types are supported today; complex types throw
-   * {@link UnsupportedOperationException}.
+   * Converts a {@link UCClient.ColumnDef} list into the UC SDK's {@link StructType}. Each
+   * column's {@code typeJson} is parsed as a full Spark {@link StructField}, preserving
+   * name/nullable/type/metadata. {@code typeText} / {@code typeName} are not consulted
+   * because they carry Spark DDL form (e.g. {@code "int"}), which diverges from the Delta
+   * wire form (e.g. {@code "integer"}) that {@code typeJson} carries.
    *
    * @throws NullPointerException if {@code columns} is {@code null}.
+   * @throws IllegalArgumentException if a column's {@code typeJson} is missing.
+   * @throws IllegalStateException if a column's {@code typeJson} fails to parse or is missing
+   *         the {@code "type"} field.
    */
   static StructType toUCStructType(List<UCClient.ColumnDef> columns) {
     Objects.requireNonNull(columns, "columns must not be null");
     StructType structType = new StructType();
     for (UCClient.ColumnDef col : columns) {
-      structType.addFieldsItem(new StructField()
-          .name(col.getName())
-          .nullable(col.isNullable())
-          .type(toUCDeltaType(col)));
+      structType.addFieldsItem(toUCStructField(col));
     }
     return structType;
   }
 
-  private static PrimitiveType toUCDeltaType(UCClient.ColumnDef col) {
-    if (!PRIMITIVE_TYPE_NAMES.contains(col.getTypeName())) {
-      throw new UnsupportedOperationException(
-          "Complex column type '" + col.getTypeName() + "' for column '" + col.getName() +
-              "' is not yet supported. Only primitive types are supported.");
+  private static StructField toUCStructField(UCClient.ColumnDef col) {
+    String typeJson = col.getTypeJson();
+    if (typeJson == null || typeJson.isEmpty()) {
+      throw new IllegalArgumentException(
+          "Cannot resolve type for column '" + col.getName() +
+              "': typeJson is empty (typeName='" + col.getTypeName() + "').");
     }
-    return new PrimitiveType().type(col.getTypeText());
+    StructField sdkField;
+    try {
+      sdkField = DELTA_SCHEMA_MAPPER.readValue(typeJson, StructField.class);
+    } catch (JsonProcessingException e) {
+      throw new IllegalStateException(
+          "Failed to parse typeJson for column '" + col.getName() +
+              "' (typeName='" + col.getTypeName() + "'): " + typeJson, e);
+    }
+    if (sdkField.getType() == null) {
+      throw new IllegalStateException(
+          "typeJson for column '" + col.getName() +
+              "' is missing the 'type' field: " + typeJson);
+    }
+    return sdkField;
   }
 
   private static ObjectMapper createDeltaSchemaMapper() {
