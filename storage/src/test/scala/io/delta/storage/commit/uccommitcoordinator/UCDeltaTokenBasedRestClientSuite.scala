@@ -585,10 +585,141 @@ class UCDeltaTokenBasedRestClientSuite
 
   // --------------- getCommits ---------------
 
-  test("getCommits throws UnsupportedOperationException") {
+  private def loadTableWithCommitsJson(
+      commits: Seq[(Long, String, Long, Long, Long)],
+      latestTableVersion: Long): String = {
+    val commitsJson = commits.map { case (version, fileName, fileSize, ts, modTs) =>
+      s"""{"version":$version,"file-name":"$fileName","file-size":$fileSize,""" +
+        s""""timestamp":$ts,"file-modification-timestamp":$modTs}"""
+    }.mkString("[", ",", "]")
+    s"""{"metadata":{"table-uuid":"$testTableId","data-source-format":"DELTA",""" +
+      s""""table-type":"MANAGED","location":"s3://bucket/table",""" +
+      s""""columns":{"type":"struct","fields":[]},"properties":{},""" +
+      s""""partition-columns":[],"created-time":1000},""" +
+      s""""commits":$commitsJson,"latest-table-version":$latestTableVersion}"""
+  }
+
+  test("getCommits returns commits from loadTable response") {
+    val commits = Seq(
+      (1L, "1.uuid.json", 100L, 1000L, 1001L),
+      (2L, "2.uuid.json", 200L, 2000L, 2001L),
+      (3L, "3.uuid.json", 300L, 3000L, 3001L))
+    deltaHandler = (exchange, _) =>
+      sendJson(exchange, HttpStatus.SC_OK, loadTableWithCommitsJson(commits, 3L))
     withClient { c =>
-      intercept[UnsupportedOperationException] {
+      val response = c.getCommits(
+        testTableId, new URI("s3://bucket/table"), testIdentifier,
+        Optional.empty(), Optional.empty())
+      assert(response.getCommits.size() === 3)
+      assert(response.getCommits.get(0).getVersion === 1L)
+      assert(response.getCommits.get(0).getCommitTimestamp === 1000L)
+      assert(response.getCommits.get(0).getFileStatus.getLen === 100L)
+      assert(response.getCommits.get(0).getFileStatus.getModificationTime === 1001L)
+      assert(response.getCommits.get(1).getVersion === 2L)
+      assert(response.getCommits.get(2).getVersion === 3L)
+      assert(response.getLatestTableVersion === 3L)
+    }
+  }
+
+  test("getCommits filters by startVersion") {
+    val commits = Seq(
+      (1L, "1.uuid.json", 100L, 1000L, 1001L),
+      (2L, "2.uuid.json", 200L, 2000L, 2001L),
+      (3L, "3.uuid.json", 300L, 3000L, 3001L))
+    deltaHandler = (exchange, _) =>
+      sendJson(exchange, HttpStatus.SC_OK, loadTableWithCommitsJson(commits, 3L))
+    withClient { c =>
+      val response = c.getCommits(
+        testTableId, new URI("s3://bucket/table"), testIdentifier,
+        Optional.of(java.lang.Long.valueOf(2L)), Optional.empty())
+      assert(response.getCommits.size() === 2)
+      assert(response.getCommits.get(0).getVersion === 2L)
+      assert(response.getCommits.get(1).getVersion === 3L)
+    }
+  }
+
+  test("getCommits filters by startVersion and endVersion") {
+    val commits = Seq(
+      (1L, "1.uuid.json", 100L, 1000L, 1001L),
+      (2L, "2.uuid.json", 200L, 2000L, 2001L),
+      (3L, "3.uuid.json", 300L, 3000L, 3001L),
+      (4L, "4.uuid.json", 400L, 4000L, 4001L))
+    deltaHandler = (exchange, _) =>
+      sendJson(exchange, HttpStatus.SC_OK, loadTableWithCommitsJson(commits, 4L))
+    withClient { c =>
+      val response = c.getCommits(
+        testTableId, new URI("s3://bucket/table"), testIdentifier,
+        Optional.of(java.lang.Long.valueOf(2L)), Optional.of(java.lang.Long.valueOf(3L)))
+      assert(response.getCommits.size() === 2)
+      assert(response.getCommits.get(0).getVersion === 2L)
+      assert(response.getCommits.get(1).getVersion === 3L)
+      assert(response.getLatestTableVersion === 4L)
+    }
+  }
+
+  test("getCommits returns empty list when no commits in response") {
+    deltaHandler = (exchange, _) =>
+      sendJson(exchange, HttpStatus.SC_OK, loadTableWithCommitsJson(Seq.empty, -1L))
+    withClient { c =>
+      val response = c.getCommits(
+        testTableId, new URI("s3://bucket/table"), testIdentifier,
+        Optional.empty(), Optional.empty())
+      assert(response.getCommits.isEmpty)
+      assert(response.getLatestTableVersion === -1L)
+    }
+  }
+
+  test("getCommits constructs correct file paths under _staged_commits") {
+    val commits = Seq((5L, "5.uuid.json", 500L, 5000L, 5001L))
+    deltaHandler = (exchange, _) =>
+      sendJson(exchange, HttpStatus.SC_OK, loadTableWithCommitsJson(commits, 5L))
+    withClient { c =>
+      val response = c.getCommits(
+        testTableId, new URI("s3://bucket/table"), testIdentifier,
+        Optional.empty(), Optional.empty())
+      val path = response.getCommits.get(0).getFileStatus.getPath.toString
+      assert(path.contains("_delta_log"))
+      assert(path.contains("_staged_commits"))
+      assert(path.endsWith("5.uuid.json"))
+    }
+  }
+
+  test("getCommits throws InvalidTargetTableException on 404") {
+    deltaHandler = (exchange, _) =>
+      sendJson(exchange, HttpStatus.SC_NOT_FOUND, """{"error":"not found"}""")
+    withClient { c =>
+      intercept[InvalidTargetTableException] {
         c.getCommits(testTableId, new URI("s3://b/t"), testIdentifier,
+          Optional.empty(), Optional.empty())
+      }
+    }
+  }
+
+  test("getCommits throws IOException on server error") {
+    deltaHandler = (exchange, _) =>
+      sendJson(exchange, HttpStatus.SC_INTERNAL_SERVER_ERROR, """{"error":"fail"}""")
+    withClient { c =>
+      val e = intercept[java.io.IOException] {
+        c.getCommits(testTableId, new URI("s3://b/t"), testIdentifier,
+          Optional.empty(), Optional.empty())
+      }
+      assert(e.getMessage.contains("HTTP 500"))
+    }
+  }
+
+  test("getCommits validates tableIdentifier is non-null") {
+    withClient { c =>
+      intercept[NullPointerException] {
+        c.getCommits(testTableId, new URI("s3://b/t"), null,
+          Optional.empty(), Optional.empty())
+      }
+    }
+  }
+
+  test("getCommits validates tableUri is non-null") {
+    withClient { c =>
+      intercept[NullPointerException] {
+        c.getCommits(testTableId, null, testIdentifier,
           Optional.empty(), Optional.empty())
       }
     }

@@ -364,6 +364,11 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
       "Java" -> System.getProperty("java.version")
     )
   }
+
+  private[delta] def defaultAppVersionsAsJava: java.util.Map[String, String] = {
+    import scala.collection.JavaConverters._
+    defaultAppVersions.asJava
+  }
 }
 
 /**

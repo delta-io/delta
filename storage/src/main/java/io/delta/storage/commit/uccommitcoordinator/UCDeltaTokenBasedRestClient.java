@@ -22,6 +22,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.CommitFailedException;
+import io.delta.storage.commit.CoordinatedCommitsUtils;
 import io.delta.storage.commit.GetCommitsResponse;
 import io.delta.storage.commit.TableIdentifier;
 import io.delta.storage.commit.actions.AbstractMetadata;
@@ -83,6 +84,8 @@ import java.util.UUID;
 import java.util.function.Supplier;
 
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FileStatus;
+import org.apache.hadoop.fs.Path;
 
 /**
  * A REST client implementation of {@link UCDeltaClient} that uses the UC Delta REST API for
@@ -339,9 +342,30 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       TableIdentifier tableIdentifier,
       Optional<Long> startVersion,
       Optional<Long> endVersion) throws IOException, UCCommitCoordinatorException {
-    throw new UnsupportedOperationException(
-        "getCommits is not yet supported by UCDeltaTokenBasedRestClient. " +
-            "A separate PR will add this once the tableIdentifier mapping is available.");
+    ensureOpen();
+    Objects.requireNonNull(tableIdentifier, "tableIdentifier must not be null");
+    Objects.requireNonNull(tableUri, "tableUri must not be null");
+
+    String catalog = tableIdentifier.getNamespace()[0];
+    String schema = tableIdentifier.getNamespace()[1];
+    String table = tableIdentifier.getName();
+
+    try {
+      LoadTableResponse response = deltaTablesApi.loadTable(catalog, schema, table);
+      return toGetCommitsResponse(response, tableUri, startVersion, endVersion);
+    } catch (ApiException e) {
+      int statusCode = e.getCode();
+      String responseBody = e.getResponseBody();
+
+      if (statusCode == HTTP_NOT_FOUND) {
+        throw new InvalidTargetTableException(
+            String.format("Table not found %s.%s.%s (HTTP %s): %s",
+                catalog, schema, table, statusCode, responseBody));
+      }
+      throw new IOException(
+          String.format("Failed to get commits for %s.%s.%s (HTTP %s): %s",
+              catalog, schema, table, statusCode, responseBody), e);
+    }
   }
 
   @Override
@@ -499,6 +523,39 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   // ===========================
   // Response Conversion Methods
   // ===========================
+
+  private GetCommitsResponse toGetCommitsResponse(
+      LoadTableResponse response, URI tableUri,
+      Optional<Long> startVersion, Optional<Long> endVersion) {
+    Path basePath = CoordinatedCommitsUtils.commitDirPath(
+        CoordinatedCommitsUtils.logDirPath(new Path(tableUri)));
+
+    long start = startVersion.orElse(0L);
+    List<Commit> commits = new ArrayList<>();
+    if (response.getCommits() != null) {
+      for (DeltaCommit dc : response.getCommits()) {
+        long v = dc.getVersion();
+        if (v >= start && (!endVersion.isPresent() || v <= endVersion.get())) {
+          commits.add(fromSDKDeltaCommit(dc, basePath));
+        }
+      }
+    }
+
+    long latestTableVersion = response.getLatestTableVersion() != null
+        ? response.getLatestTableVersion() : -1L;
+    return new GetCommitsResponse(commits, latestTableVersion);
+  }
+
+  private Commit fromSDKDeltaCommit(DeltaCommit dc, Path basePath) {
+    FileStatus fileStatus = new FileStatus(
+        dc.getFileSize(),
+        false /* isdir */,
+        0 /* block_replication */,
+        0 /* blocksize */,
+        dc.getFileModificationTimestamp(),
+        new Path(basePath, dc.getFileName()));
+    return new Commit(dc.getVersion(), fileStatus, dc.getTimestamp());
+  }
 
   private TableInfo toTableInfo(
       LoadTableResponse response, String catalog, String schema, String name) throws IOException {

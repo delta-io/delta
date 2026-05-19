@@ -89,12 +89,12 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
   }
 
   test("DeltaCatalogClient.fromCatalogOptionsIfEnabled returns null when the flag is off") {
-    val result = DeltaCatalogClient.fromCatalogOptionsIfEnabled("test_cat", options(), noFallback)
+    val result = AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled("test_cat", options(), noFallback)
     assert(result == null)
   }
 
   test("DeltaCatalogClient.fromCatalogOptionsIfEnabled returns non-null when the flag is on") {
-    val result = DeltaCatalogClient.fromCatalogOptionsIfEnabled(
+    val result = AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled(
       "test_cat",
       options("deltaRestApi.enabled" -> "true", "uri" -> "http://uc", "token" -> "tok"),
       noFallback)
@@ -181,6 +181,7 @@ private class StubUCDeltaClient(info: TableInfo) extends UCDeltaClient {
   override def getCommits(
       tableId: String,
       tableUri: java.net.URI,
+      tableIdentifier: io.delta.storage.commit.TableIdentifier,
       startVersion: java.util.Optional[java.lang.Long],
       endVersion: java.util.Optional[java.lang.Long]): io.delta.storage.commit.GetCommitsResponse =
     throw new UnsupportedOperationException
