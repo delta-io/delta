@@ -122,8 +122,11 @@ public class UCDeltaTableReadTest extends UCDeltaTableIntegrationBaseTest {
                 () -> sql("SELECT * FROM delta.`%s`", tablePath),
                 "For managed tables, path-based access should fail");
           } else {
-            // For EXTERNAL tables, path-based access should work
-            S3CredentialFileSystem.credentialCheckEnabled = false;
+            // Local UC OSS does not implement the UC Delta Rest Catalog API path credentials
+            // handler yet. Remote runs keep credential checks enabled and validate UC Delta Rest
+            // Catalog API path credential
+            // propagation.
+            S3CredentialFileSystem.credentialCheckEnabled = isUCRemoteConfigured();
             try {
               check(
                   sql("SELECT * FROM delta.`%s` ORDER BY id", tablePath),

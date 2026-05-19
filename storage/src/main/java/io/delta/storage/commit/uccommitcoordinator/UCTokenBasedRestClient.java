@@ -26,7 +26,6 @@ import io.delta.storage.commit.actions.AbstractProtocol;
 import io.delta.storage.commit.uniform.IcebergMetadata;
 import io.delta.storage.commit.uniform.UniformMetadata;
 import io.unitycatalog.client.ApiClient;
-import io.unitycatalog.client.ApiClientBuilder;
 import io.unitycatalog.client.ApiException;
 import io.unitycatalog.client.api.DeltaCommitsApi;
 import io.unitycatalog.client.api.MetastoresApi;
@@ -83,7 +82,7 @@ import java.util.*;
  * @see GetCommitsResponse
  * @see TokenProvider
  */
-public class UCTokenBasedRestClient implements UCClient {
+public class UCTokenBasedRestClient extends UCTokenBasedApiClientProvider implements UCClient {
 
   private DeltaCommitsApi deltaCommitsApi;
   private MetastoresApi metastoresApi;
@@ -109,21 +108,20 @@ public class UCTokenBasedRestClient implements UCClient {
       String baseUri,
       TokenProvider tokenProvider,
       Map<String, String> appVersions) {
-    Objects.requireNonNull(baseUri, "baseUri must not be null");
-    Objects.requireNonNull(tokenProvider, "tokenProvider must not be null");
-    Objects.requireNonNull(appVersions, "appVersions must not be null");
+    super(baseUri, tokenProvider, appVersions);
+    ApiClient apiClient = getApiClient();
+    this.deltaCommitsApi = new DeltaCommitsApi(apiClient);
+    this.metastoresApi = new MetastoresApi(apiClient);
+    this.tablesApi = new TablesApi(apiClient);
+  }
 
-    ApiClientBuilder builder = ApiClientBuilder.create()
-        .uri(baseUri)
-        .tokenProvider(tokenProvider);
-
-    appVersions.forEach((name, version) -> {
-      if (version != null) {
-        builder.addAppVersion(name, version);
-      }
-    });
-
-    ApiClient apiClient = builder.build();
+  public UCTokenBasedRestClient(
+      String baseUri,
+      TokenProvider tokenProvider,
+      Map<String, String> appVersions,
+      String catalog) {
+    super(baseUri, tokenProvider, appVersions, catalog);
+    ApiClient apiClient = getApiClient();
     this.deltaCommitsApi = new DeltaCommitsApi(apiClient);
     this.metastoresApi = new MetastoresApi(apiClient);
     this.tablesApi = new TablesApi(apiClient);
@@ -234,6 +232,7 @@ public class UCTokenBasedRestClient implements UCClient {
 
   @Override
   public void close() throws IOException {
+    super.close();
     // Nulling out the API instances makes them eligible for GC. Once garbage collected,
     // the underlying connection pool is freed and destroyed.
     this.deltaCommitsApi = null;
