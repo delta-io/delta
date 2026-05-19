@@ -382,13 +382,8 @@ public class SparkMicroBatchStream
   }
 
   private void initLastOffsetForTriggerAvailableNow(DeltaSourceOffset startOffsetOpt) {
-    // TODO: Consider redesigning the Trigger.AvailableNow optimization into
-    //  latestOffsetInternal. Currently blocked because latestOffsetInternal has a second
-    //  call site (latestOffset per-batch) where the same conditions
-    //  (useDistributedInitialSnapshot && isInitialSnapshot) are true but rate limiting
-    //  must NOT be bypassed. Unifying requires either a new parameter to distinguish
-    //  the TAN-init context, or reworking AdmissionLimits to support a SQL-pushable
-    //  "all available" mode. See PR #6703 review discussion.
+    // TODO(#6817): Explore unifying TAN offset computation into latestOffsetInternal.
+    // Blocked: latestOffset per-batch shares the same conditions but must NOT bypass rate limiting.
     if (useDistributedInitialSnapshot && startOffsetOpt.isInitialSnapshot()) {
       lastOffsetForTriggerAvailableNow = getLastOffsetForAvailableNowViaDataFrame(startOffsetOpt);
     } else {
@@ -402,19 +397,8 @@ public class SparkMicroBatchStream
   }
 
   /**
-   * Optimized end-offset computation for Trigger.AvailableNow when using the DataFrame-based
-   * initial snapshot path. Instead of iterating through all snapshot files via toLocalIterator()
-   * (which streams every file through the driver), this method constructs the end offset directly:
-   *
-   * <ol>
-   *   <li>Check for delta changes after the snapshot version (lightweight file-listing operation).
-   *   <li>If delta changes exist, iterate only through them (typically small) to find the last one.
-   *   <li>If no delta changes exist, build the end offset from the snapshot's END sentinel
-   *       directly.
-   * </ol>
-   *
-   * <p>This avoids O(n) driver memory pressure from iterating all snapshot files, which is the
-   * primary bottleneck that causes OOM for large tables with the default 1g driver heap.
+   * Computes the end offset for Trigger.AvailableNow without iterating all snapshot files. Avoids
+   * O(n) driver memory pressure that causes OOM for large tables.
    */
   private Optional<DeltaSourceOffset> getLastOffsetForAvailableNowViaDataFrame(
       DeltaSourceOffset startOffset) {
@@ -423,8 +407,6 @@ public class SparkMicroBatchStream
     checkReadIncompatibleSchemaChangeOnStreamStartOnce(
         snapshotVersion, /* batchEndVersion= */ null);
 
-    // Check for delta changes (commits) after the snapshot version.
-    // filterDeltaLogs returns an empty iterator if no new commits exist.
     try (CloseableIterator<IndexedFile> deltaChanges =
         filterDeltaLogs(snapshotVersion + 1, /* endOffset= */ Optional.empty())) {
       Optional<IndexedFile> lastDelta = Utils.iteratorLast(deltaChanges);
@@ -447,9 +429,7 @@ public class SparkMicroBatchStream
           e);
     }
 
-    // No delta changes after the snapshot. The logical end of the initial snapshot is the
-    // END sentinel. buildOffsetFromIndexedFile with END_INDEX automatically bumps to
-    // (snapshotVersion + 1, BASE_INDEX, isInitialSnapshot = false).
+    // No delta changes — END_INDEX bumps offset to (snapshotVersion + 1, BASE_INDEX, false).
     return Optional.of(
         DeltaSource.buildOffsetFromIndexedFile(
             tableId,
@@ -976,11 +956,7 @@ public class SparkMicroBatchStream
     if (isInitialSnapshot) {
       // Lazily combine snapshot files with delta logs starting from fromVersion + 1.
       // filterDeltaLogs handles the case when no commits exist after fromVersion.
-      // TODO: Unify InitialSnapshotCache and DataFrameSnapshotCache behind a common
-      //  SnapshotFileSource interface (e.g. DriverBasedSnapshotSource vs
-      //  DataFrameSnapshotSource) to eliminate this dispatch and extend the distributed
-      //  path to CDC (getFileChangesWithRateLimitForCDC currently always uses the
-      //  driver-local path). See PR #6703 review discussion.
+      // TODO: Unify behind SnapshotFileSource interface; extend distributed path to CDC.
       CloseableIterator<IndexedFile> snapshotFiles;
       if (useDistributedInitialSnapshot) {
         snapshotFiles = getSnapshotFilesViaDataFrame(fromVersion, fromIndex);
@@ -991,8 +967,7 @@ public class SparkMicroBatchStream
       CloseableIterator<IndexedFile> deltaChanges = filterDeltaLogs(fromVersion + 1, endOffset);
       result = snapshotFiles.combine(deltaChanges);
     } else {
-      // Initial snapshot processing is complete; release the cached DataFrame
-      // to free persisted storage that is no longer needed.
+      // Release cached DataFrame — initial snapshot processing complete.
       invalidateDataFrameCache();
       result = filterDeltaLogs(fromVersion, endOffset);
     }
@@ -1838,18 +1813,13 @@ public class SparkMicroBatchStream
 
   private CloseableIterator<IndexedFile> getSnapshotFilesViaDataFrame(
       long version, long fromIndex) {
-    // Safe without synchronization: MicroBatchExecution is single-threaded; stop() uses
-    // AtomicReference.getAndSet(null) for concurrent teardown.
+    // Single-threaded (MicroBatchExecution); AtomicReference handles concurrent stop().
     DataFrameSnapshotCache dfCache = cachedDataFrameSnapshot.get();
     if (dfCache == null || dfCache.getVersion() != version) {
       invalidateDataFrameCache();
 
-      // Load the snapshot at the requested version. This may differ from snapshotAtSourceInit
-      // when a query restarts from a checkpoint mid-initial-snapshot (the restarted query
-      // resumes at the checkpointed version, but snapshotAtSourceInit reflects the latest
-      // version at construction time). loadSnapshotAt is metadata-only on the driver
-      // (directory listing + LogSegment construction); the heavy work of replaying the log
-      // to produce AddFiles runs on executors via ScanFileRDD.
+      // May differ from snapshotAtSourceInit on checkpoint restart. loadSnapshotAt is
+      // metadata-only on driver; log replay runs on executors via ScanFileRDD.
       SnapshotImpl snapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(version);
       SerializableReadOnlySnapshot serSnapshot =
           SerializableReadOnlySnapshot.fromSnapshot(snapshot, hadoopConf);
@@ -1858,10 +1828,8 @@ public class SparkMicroBatchStream
       Dataset<Row> sorted =
           spark.createDataFrame(rdd, ScanFileRDD.SPARK_SCHEMA).orderBy("modificationTime", "path");
 
-      // Use zipWithIndex for contiguous 0-based indices, matching DSv1's
-      // DeltaSourceSnapshot and the driver path's sequential indexing.
-      // monotonically_increasing_id() produces non-contiguous partition-relative IDs
-      // that would break checkpoint compatibility.
+      // zipWithIndex for contiguous 0-based indices — monotonically_increasing_id() is
+      // non-contiguous across partitions and breaks checkpoint compatibility.
       int numFields = ScanFileRDD.SPARK_SCHEMA.size();
       StructType schemaWithIdx =
           ScanFileRDD.SPARK_SCHEMA.add(FILE_IDX_COL, DataTypes.LongType, false);
@@ -1890,9 +1858,7 @@ public class SparkMicroBatchStream
 
     Dataset<Row> df = dfCache.getSortedAddFiles();
 
-    // Push start-boundary filtering to executors so only unprocessed files are
-    // streamed to the driver. This converts the previous O(N²) full-scan per
-    // batch into O(remaining) per batch, which is O(N) total across all batches.
+    // Push filtering to executors: O(remaining) per batch instead of O(N) full-scan.
     if (fromIndex > DeltaSourceOffset.BASE_INDEX()) {
       df = df.where(functions.col(FILE_IDX_COL).gt(fromIndex));
     }
@@ -1900,16 +1866,7 @@ public class SparkMicroBatchStream
     return dataFrameToIndexedFiles(df, version);
   }
 
-  /**
-   * Converts an indexed DataFrame of AddFile rows into a lazy CloseableIterator of IndexedFiles,
-   * wrapped with BEGIN/END sentinels. Uses toLocalIterator() to stream rows from executors to the
-   * driver one at a time, avoiding pulling all data into driver memory.
-   *
-   * <p>The DataFrame must contain a {@link #FILE_IDX_COL} column (appended during cache creation)
-   * that holds a deterministic, monotonically increasing index for each file. This index is read
-   * directly from each row, so the caller can pre-filter the DataFrame (e.g. {@code WHERE _file_idx
-   * > lastProcessedIndex}) to skip already-processed files without re-scanning them on the driver.
-   */
+  /** Converts sorted AddFile DataFrame to lazy IndexedFile iterator with BEGIN/END sentinels. */
   private static CloseableIterator<IndexedFile> dataFrameToIndexedFiles(
       Dataset<Row> df, long version) {
 
@@ -1935,8 +1892,8 @@ public class SparkMicroBatchStream
         if (localIter.hasNext()) {
           Row sparkRow = localIter.next();
           long fileIdx = sparkRow.getLong(fileIdxOrdinal);
-          // SparkRowToKernelRow accesses ordinals 0..N-1 matching AddFile.SCHEMA_WITHOUT_STATS;
-          // the extra _file_idx column at the end is safely ignored.
+          // Extra _file_idx column at ordinal N is safely ignored (ordinal-based access up to
+          // schema size).
           io.delta.kernel.data.Row kernelRow =
               new SparkRowToKernelRow(sparkRow, AddFile.SCHEMA_WITHOUT_STATS);
           return IndexedFile.addFile(version, fileIdx, new AddFile(kernelRow));
