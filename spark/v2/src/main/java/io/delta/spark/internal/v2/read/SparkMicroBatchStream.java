@@ -231,6 +231,7 @@ public class SparkMicroBatchStream
 
   private final int maxInitialSnapshotFiles;
   private final boolean useDistributedInitialSnapshot;
+  private final StorageLevel snapshotCacheStorageLevel;
 
   public SparkMicroBatchStream(
       DeltaSnapshotManager snapshotManager,
@@ -316,6 +317,13 @@ public class SparkMicroBatchStream
                 .sessionState()
                 .conf()
                 .getConf(DeltaSQLConf.DELTA_STREAMING_USE_DISTRIBUTED_INITIAL_SNAPSHOT());
+    this.snapshotCacheStorageLevel =
+        StorageLevel.fromString(
+            (String)
+                spark
+                    .sessionState()
+                    .conf()
+                    .getConf(DeltaSQLConf.DELTA_SNAPSHOT_CACHE_STORAGE_LEVEL()));
 
     boolean isStreamingFromColumnMappingTable =
         ColumnMapping.getColumnMappingMode(
@@ -983,6 +991,9 @@ public class SparkMicroBatchStream
       CloseableIterator<IndexedFile> deltaChanges = filterDeltaLogs(fromVersion + 1, endOffset);
       result = snapshotFiles.combine(deltaChanges);
     } else {
+      // Initial snapshot processing is complete; release the cached DataFrame
+      // to free persisted storage that is no longer needed.
+      invalidateDataFrameCache();
       result = filterDeltaLogs(fromVersion, endOffset);
     }
 
@@ -1827,13 +1838,8 @@ public class SparkMicroBatchStream
 
   private CloseableIterator<IndexedFile> getSnapshotFilesViaDataFrame(
       long version, long fromIndex) {
-    // Thread-safety note: This check-then-act on cachedDataFrameSnapshot is safe without
-    // additional synchronization because Spark's MicroBatchExecution drives the
-    // latestOffset() -> planInputPartitions() -> commit() lifecycle sequentially from a
-    // single thread. The only concurrent access is from stop(), which uses
-    // AtomicReference.getAndSet(null) for safe teardown (see invalidateDataFrameCache()).
-    // The DataFrameSnapshotCache Javadoc documents "Callers synchronize externally" —
-    // the single-threaded MicroBatchExecution loop is that external synchronization.
+    // Safe without synchronization: MicroBatchExecution is single-threaded; stop() uses
+    // AtomicReference.getAndSet(null) for concurrent teardown.
     DataFrameSnapshotCache dfCache = cachedDataFrameSnapshot.get();
     if (dfCache == null || dfCache.getVersion() != version) {
       invalidateDataFrameCache();
@@ -1879,7 +1885,7 @@ public class SparkMicroBatchStream
                   });
 
       Dataset<Row> df =
-          spark.createDataFrame(indexedRDD, schemaWithIdx).persist(StorageLevel.DISK_ONLY());
+          spark.createDataFrame(indexedRDD, schemaWithIdx).persist(snapshotCacheStorageLevel);
 
       dfCache = new DataFrameSnapshotCache(version, df);
       cachedDataFrameSnapshot.set(dfCache);

@@ -3416,8 +3416,9 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .doc(
         "When enabled, the V2 streaming connector uses a distributed approach for " +
         "initial snapshot loading. This avoids driver OOM for large tables by running " +
-        "Kernel log replay on an executor and sorting files via Spark's distributed sort " +
-        "with DISK_ONLY persistence."
+        "Kernel log replay on an executor and sorting files via Spark's distributed sort. " +
+        "The persistence level is controlled by " +
+        "spark.databricks.delta.snapshotCache.storageLevel."
       )
       .booleanConf
       .createWithDefault(false)
