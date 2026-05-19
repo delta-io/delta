@@ -5056,6 +5056,71 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
     assertDoesNotThrow(cache::close);
   }
 
+  /**
+   * Verifies that getSnapshotFilesViaDataFrame recovers when stop() races and closes the cache
+   * (simulated by closing the cache via reflection before the next getFileChanges call).
+   */
+  @Test
+  public void testDistributedInitialSnapshot_recoversFromCacheRace(@TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_df_race_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+    insertVersions(
+        testTableName,
+        /* numVersions= */ 3,
+        /* rowsPerVersion= */ 2,
+        /* includeEmptyVersion= */ false);
+
+    String dfFlagKey = DeltaSQLConf.DELTA_STREAMING_USE_DISTRIBUTED_INITIAL_SNAPSHOT().key();
+    spark.conf().set(dfFlagKey, "true");
+
+    try {
+      Configuration hadoopConf = spark.sessionState().newHadoopConf();
+      PathBasedSnapshotManager snapshotManager =
+          new PathBasedSnapshotManager(testTablePath, hadoopConf);
+      SparkMicroBatchStream stream =
+          createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+
+      long version = snapshotManager.loadLatestSnapshot().getVersion();
+
+      // Access the internal AtomicReference via reflection to simulate race
+      java.lang.reflect.Field cacheField =
+          SparkMicroBatchStream.class.getDeclaredField("cachedDataFrameSnapshot");
+      cacheField.setAccessible(true);
+      @SuppressWarnings("unchecked")
+      java.util.concurrent.atomic.AtomicReference<DataFrameSnapshotCache> cacheRef =
+          (java.util.concurrent.atomic.AtomicReference<DataFrameSnapshotCache>)
+              cacheField.get(stream);
+
+      // First call builds the cache normally
+      try (CloseableIterator<IndexedFile> iter =
+          stream.getFileChanges(version, DeltaSourceOffset.BASE_INDEX(), true, Optional.empty())) {
+        assertTrue(iter.hasNext());
+      }
+
+      // Simulate single race: close the cache (as stop() would) but leave the ref in place
+      DataFrameSnapshotCache cached = cacheRef.get();
+      assertNotNull(cached, "Cache should have been built by the first getFileChanges call");
+      cached.close();
+      assertNull(cached.getSortedAddFiles(), "Cache should be closed (null DataFrame)");
+
+      // Next getFileChanges should detect the null DataFrame, rebuild, and succeed
+      List<IndexedFile> files = new ArrayList<>();
+      try (CloseableIterator<IndexedFile> iter =
+          stream.getFileChanges(version, DeltaSourceOffset.BASE_INDEX(), true, Optional.empty())) {
+        while (iter.hasNext()) {
+          files.add(iter.next());
+        }
+      }
+
+      assertTrue(files.size() >= 2, "Should recover and return data files + END sentinel");
+      assertEquals(DeltaSourceOffset.END_INDEX(), files.get(files.size() - 1).getIndex());
+    } finally {
+      spark.conf().unset(dfFlagKey);
+    }
+  }
+
   /** DataFrame path returns only END sentinel for an empty table. */
   @Test
   public void testDistributedInitialSnapshot_emptyTable(@TempDir File tempDir) throws Exception {

@@ -407,8 +407,11 @@ public class SparkMicroBatchStream
     checkReadIncompatibleSchemaChangeOnStreamStartOnce(
         snapshotVersion, /* batchEndVersion= */ null);
 
-    try (CloseableIterator<IndexedFile> deltaChanges =
-        filterDeltaLogs(snapshotVersion + 1, /* endOffset= */ Optional.empty())) {
+    // iteratorLast exhausts the iterator and closes it — do not wrap in try-with-resources
+    // (that would double-close). Use a plain try block for exception context.
+    try {
+      CloseableIterator<IndexedFile> deltaChanges =
+          filterDeltaLogs(snapshotVersion + 1, /* endOffset= */ Optional.empty());
       Optional<IndexedFile> lastDelta = Utils.iteratorLast(deltaChanges);
 
       if (lastDelta.isPresent()) {
@@ -421,7 +424,7 @@ public class SparkMicroBatchStream
                 startOffset.reservoirVersion(),
                 startOffset.isInitialSnapshot()));
       }
-    } catch (IOException e) {
+    } catch (UncheckedIOException e) {
       throw new RuntimeException(
           String.format(
               "Failed to iterate delta changes for table %s after version %d",
@@ -1813,50 +1816,17 @@ public class SparkMicroBatchStream
 
   private CloseableIterator<IndexedFile> getSnapshotFilesViaDataFrame(
       long version, long fromIndex) {
-    // Single-threaded (MicroBatchExecution); AtomicReference handles concurrent stop().
     DataFrameSnapshotCache dfCache = cachedDataFrameSnapshot.get();
-    if (dfCache == null || dfCache.getVersion() != version) {
+    if (dfCache == null || dfCache.getVersion() != version || dfCache.getSortedAddFiles() == null) {
+      // Cache miss, version mismatch, or stop() raced and closed the DataFrame — rebuild.
       invalidateDataFrameCache();
-
-      // May differ from snapshotAtSourceInit on checkpoint restart. loadSnapshotAt is
-      // metadata-only on driver; log replay runs on executors via ScanFileRDD.
-      SnapshotImpl snapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(version);
-      SerializableReadOnlySnapshot serSnapshot =
-          SerializableReadOnlySnapshot.fromSnapshot(snapshot, hadoopConf);
-
-      ScanFileRDD rdd = new ScanFileRDD(spark.sparkContext(), serSnapshot);
-      Dataset<Row> sorted =
-          spark.createDataFrame(rdd, ScanFileRDD.SPARK_SCHEMA).orderBy("modificationTime", "path");
-
-      // zipWithIndex for contiguous 0-based indices — monotonically_increasing_id() is
-      // non-contiguous across partitions and breaks checkpoint compatibility.
-      int numFields = ScanFileRDD.SPARK_SCHEMA.size();
-      StructType schemaWithIdx =
-          ScanFileRDD.SPARK_SCHEMA.add(FILE_IDX_COL, DataTypes.LongType, false);
-      JavaRDD<Row> indexedRDD =
-          sorted
-              .javaRDD()
-              .zipWithIndex()
-              .map(
-                  (Tuple2<Row, Long> tuple) -> {
-                    Row row = tuple._1();
-                    long idx = tuple._2();
-                    Object[] fields = new Object[numFields + 1];
-                    for (int i = 0; i < numFields; i++) {
-                      fields[i] = row.get(i);
-                    }
-                    fields[numFields] = idx;
-                    return RowFactory.create(fields);
-                  });
-
-      Dataset<Row> df =
-          spark.createDataFrame(indexedRDD, schemaWithIdx).persist(snapshotCacheStorageLevel);
-
-      dfCache = new DataFrameSnapshotCache(version, df);
+      dfCache = buildDataFrameSnapshotCache(version);
       cachedDataFrameSnapshot.set(dfCache);
     }
 
     Dataset<Row> df = dfCache.getSortedAddFiles();
+    Preconditions.checkState(
+        df != null, "DataFrame cache closed immediately after rebuild — stream is stopping");
 
     // Push filtering to executors: O(remaining) per batch instead of O(N) full-scan.
     if (fromIndex > DeltaSourceOffset.BASE_INDEX()) {
@@ -1864,6 +1834,45 @@ public class SparkMicroBatchStream
     }
 
     return dataFrameToIndexedFiles(df, version);
+  }
+
+  /** Builds a new persisted DataFrame cache for the initial snapshot at the given version. */
+  private DataFrameSnapshotCache buildDataFrameSnapshotCache(long version) {
+    // May differ from snapshotAtSourceInit on checkpoint restart. loadSnapshotAt is
+    // metadata-only on driver; log replay runs on executors via ScanFileRDD.
+    SnapshotImpl snapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(version);
+    SerializableReadOnlySnapshot serSnapshot =
+        SerializableReadOnlySnapshot.fromSnapshot(snapshot, hadoopConf);
+
+    ScanFileRDD rdd = new ScanFileRDD(spark.sparkContext(), serSnapshot);
+    Dataset<Row> sorted =
+        spark.createDataFrame(rdd, ScanFileRDD.SPARK_SCHEMA).orderBy("modificationTime", "path");
+
+    // zipWithIndex for contiguous 0-based indices — monotonically_increasing_id() is
+    // non-contiguous across partitions and breaks checkpoint compatibility.
+    int numFields = ScanFileRDD.SPARK_SCHEMA.size();
+    StructType schemaWithIdx =
+        ScanFileRDD.SPARK_SCHEMA.add(FILE_IDX_COL, DataTypes.LongType, false);
+    JavaRDD<Row> indexedRDD =
+        sorted
+            .javaRDD()
+            .zipWithIndex()
+            .map(
+                (Tuple2<Row, Long> tuple) -> {
+                  Row row = tuple._1();
+                  long idx = tuple._2();
+                  Object[] fields = new Object[numFields + 1];
+                  for (int i = 0; i < numFields; i++) {
+                    fields[i] = row.get(i);
+                  }
+                  fields[numFields] = idx;
+                  return RowFactory.create(fields);
+                });
+
+    Dataset<Row> df =
+        spark.createDataFrame(indexedRDD, schemaWithIdx).persist(snapshotCacheStorageLevel);
+
+    return new DataFrameSnapshotCache(version, df);
   }
 
   /** Converts sorted AddFile DataFrame to lazy IndexedFile iterator with BEGIN/END sentinels. */
