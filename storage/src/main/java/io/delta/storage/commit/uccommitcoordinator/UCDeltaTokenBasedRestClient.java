@@ -290,7 +290,6 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     Objects.requireNonNull(startVersion, "startVersion must not be null");
     Objects.requireNonNull(endVersion, "endVersion must not be null");
 
-    UUID expectedTableUuid = UUID.fromString(tableId);
     ResolvedTableName name = requireThreePartName(tableIdentifier);
 
     // The UC loadTable endpoint does not support server-side filtering by version range, so
@@ -311,14 +310,16 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     }
 
     TableMetadata metadata = response.getMetadata();
-    UUID actualTableUuid = metadata != null ? metadata.getTableUuid() : null;
-    if (!expectedTableUuid.equals(actualTableUuid)) {
+    String actualTableId = metadata != null && metadata.getTableUuid() != null
+        ? metadata.getTableUuid().toString()
+        : null;
+    if (!tableId.equals(actualTableId)) {
       throw new InvalidTargetTableException(
           String.format(
               "Table UUID mismatch for %s: expected %s but got %s",
               name.fullName,
-              expectedTableUuid,
-              actualTableUuid));
+              tableId,
+              actualTableId));
     }
 
     Path basePath = CoordinatedCommitsUtils.commitDirPath(
