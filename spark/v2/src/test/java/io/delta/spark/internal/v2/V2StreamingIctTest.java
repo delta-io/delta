@@ -41,116 +41,14 @@ import org.junit.jupiter.api.io.TempDir;
  * End-to-end streaming tests for tables with {@code delta.enableInCommitTimestamps}, run through
  * BOTH the DSv1 and DSv2 streaming readers and asserted for parity.
  *
- * <p>The cross-product test matrix only covers ICT helper-level behavior; this suite exercises full
- * streaming queries against ICT-enabled tables to find bugs in {@code startingTimestamp}/{@code
- * startingVersion} resolution, restart semantics, sub-second skew, mtime drift, mid-table ICT
- * enablement, AvailableNow trigger, deletion vectors, and column mapping.
- *
- * <p>DSv1 reference: {@code DeltaSourceSuite.testQuietly("startingTimestamp")} in {@code
- * spark/src/test/scala/org/apache/spark/sql/delta/DeltaSourceSuite.scala}. DSv1 is treated as the
- * oracle: every test runs both readers with identical options and compares the resulting rows.
+ * <p>DSv1 is treated as the oracle: every test runs both readers with identical options and
+ * compares the resulting rows.
  */
 public class V2StreamingIctTest extends V2TestBase {
 
   private static final long BASE_TS = 1700000000000L;
   private static final long ONE_MINUTE = 60_000L;
   private static final int ROWS_PER_COMMIT = 10;
-
-  /** Format epoch millis as a "yyyy-MM-dd HH:mm:ss.SSS" string in the session timezone. */
-  private String formatTs(long millis) {
-    String tz = spark.sessionState().conf().sessionLocalTimeZone();
-    SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS");
-    sdf.setTimeZone(TimeZone.getTimeZone(tz));
-    return sdf.format(new Date(millis));
-  }
-
-  /** Create an ICT-enabled table and append one data commit per timestamp. */
-  private void createIctTableWithCommits(String tablePath, long[] timestamps) {
-    spark.sql(
-        str(
-            "CREATE TABLE delta.`%s` (id BIGINT) USING delta "
-                + "TBLPROPERTIES ('delta.enableInCommitTimestamps' = 'true')",
-            tablePath));
-    DeltaLog log = DeltaLog.forTable(spark, tablePath);
-    for (int i = 0; i < timestamps.length; i++) {
-      appendRows(tablePath, (long) i * ROWS_PER_COMMIT);
-      // Versions: 0=CREATE TABLE, 1..N=appends.
-      IctTestUtils.modifyCommitTimestamp(log, /* version= */ i + 1, timestamps[i]);
-    }
-  }
-
-  private void appendRows(String tablePath, long rangeStart) {
-    spark
-        .range(rangeStart, rangeStart + ROWS_PER_COMMIT)
-        .write()
-        .format("delta")
-        .mode("append")
-        .save(tablePath);
-  }
-
-  private void appendIctRows(
-      String tablePath, DeltaLog log, long version, long rangeStart, long ict, long mtime) {
-    appendRows(tablePath, rangeStart);
-    setIctAndMtime(log, version, ict, mtime);
-  }
-
-  private void setIctAndMtime(DeltaLog log, long version, long ict, long mtime) {
-    IctTestUtils.modifyCommitTimestamp(log, version, ict);
-    IctTestUtils.setFileMtimeOnly(log, version, mtime);
-  }
-
-  /** Build a single-entry options map for a starting-timestamp stream. */
-  private static Map<String, String> startingTimestamp(String ts) {
-    Map<String, String> opts = new HashMap<>();
-    opts.put("startingTimestamp", ts);
-    return opts;
-  }
-
-  private List<Row> assertStartingTimestampRows(
-      String tablePath, String tag, long timestampMillis, int expectedRows, String expectation)
-      throws Exception {
-    List<Row> rows =
-        assertV1V2StreamingParity(tablePath, tag, startingTimestamp(formatTs(timestampMillis)));
-    assertEquals(expectedRows, rows.size(), () -> expectation + ", got: " + rows);
-    return rows;
-  }
-
-  private Dataset<Row> streamingRead(String tablePath, Map<String, String> options, boolean useV2) {
-    DataStreamReader reader = useV2 ? spark.readStream() : spark.readStream().format("delta");
-    for (Map.Entry<String, String> e : options.entrySet()) {
-      reader = reader.option(e.getKey(), e.getValue());
-    }
-    return useV2 ? reader.table(str("dsv2.delta.`%s`", tablePath)) : reader.load(tablePath);
-  }
-
-  /**
-   * Run the same streaming read against the DSv1 ("delta") and DSv2 ("dsv2.delta.`...`") sources
-   * with identical options and assert their row sets are equal. DSv1 is the oracle.
-   *
-   * @return the DSv1 row set (also equal to the DSv2 row set on success), sorted by id.
-   */
-  private List<Row> assertV1V2StreamingParity(
-      String tablePath, String tag, Map<String, String> options) throws Exception {
-    List<Row> v1Rows =
-        sortedById(processStreamingQuery(streamingRead(tablePath, options, false), tag + "_v1"));
-    List<Row> v2Rows =
-        sortedById(processStreamingQuery(streamingRead(tablePath, options, true), tag + "_v2"));
-
-    assertEquals(v1Rows.toString(), v2Rows.toString(), tag + ": V1 vs V2 row mismatch");
-    return v1Rows;
-  }
-
-  /** Sort rows by their first column ("id") so memory-sink ordering doesn't perturb compares. */
-  private static List<Row> sortedById(List<Row> rows) {
-    List<Row> copy = new ArrayList<>(rows);
-    copy.sort(
-        (a, b) -> {
-          long av = a.getLong(0);
-          long bv = b.getLong(0);
-          return Long.compare(av, bv);
-        });
-    return copy;
-  }
 
   @Test
   public void startingTimestampAtCommitIct(@TempDir File deltaTablePath) throws Exception {
@@ -232,31 +130,6 @@ public class V2StreamingIctTest extends V2TestBase {
     assertStartingTimestampAfterLatestError("V2", tablePath, "ict_after_latest_v2", futureTs, true);
   }
 
-  private void assertStartingTimestampAfterLatestError(
-      String label, String tablePath, String queryName, String timestamp, boolean useV2) {
-    Dataset<Row> df = streamingRead(tablePath, startingTimestamp(timestamp), useV2);
-    StreamingQueryException ex =
-        assertThrows(StreamingQueryException.class, () -> processStreamingQuery(df, queryName));
-    assertAfterLatestError(label, ex);
-  }
-
-  /** Assert a streaming query failure carries a DSv1-style "after the latest" message. */
-  private static void assertAfterLatestError(String label, StreamingQueryException ex) {
-    String msg = ex.getMessage() == null ? "" : ex.getMessage();
-    String causeMsg = ex.getCause() == null ? "" : String.valueOf(ex.getCause());
-    assertTrue(
-        msg.contains("after the latest")
-            || msg.contains("is after")
-            || causeMsg.contains("after the latest")
-            || causeMsg.contains("is after"),
-        () ->
-            label
-                + ": expected DSv1-style 'after the latest' error, got: "
-                + msg
-                + " / "
-                + causeMsg);
-  }
-
   @Test
   public void restartIgnoresStartingTimestamp(@TempDir File deltaTablePath) throws Exception {
     String tablePath = deltaTablePath.getAbsolutePath();
@@ -310,45 +183,6 @@ public class V2StreamingIctTest extends V2TestBase {
         ROWS_PER_COMMIT,
         v1Restart,
         () -> "Restart should ignore startingTimestamp and only process v3, got " + v1Restart);
-  }
-
-  /** Run a streaming query to completion against a parquet sink and return the row count. */
-  private long runRestartFirstPass(Dataset<Row> df, File checkpointDir, File outputDir)
-      throws Exception {
-    StreamingQuery q =
-        df.writeStream()
-            .format("parquet")
-            .option("path", outputDir.getAbsolutePath())
-            .option("checkpointLocation", checkpointDir.getAbsolutePath())
-            .outputMode("append")
-            .start();
-    try {
-      q.processAllAvailable();
-      return spark.read().parquet(outputDir.getAbsolutePath()).count();
-    } finally {
-      q.stop();
-      DeltaLog.clearCache();
-    }
-  }
-
-  /** Restart the query and return how many rows the second pass added on top of {@code prior}. */
-  private long runRestartSecondPass(Dataset<Row> df, File checkpointDir, File outputDir, long prior)
-      throws Exception {
-    StreamingQuery q =
-        df.writeStream()
-            .format("parquet")
-            .option("path", outputDir.getAbsolutePath())
-            .option("checkpointLocation", checkpointDir.getAbsolutePath())
-            .outputMode("append")
-            .start();
-    try {
-      q.processAllAvailable();
-      long total = spark.read().parquet(outputDir.getAbsolutePath()).count();
-      return total - prior;
-    } finally {
-      q.stop();
-      DeltaLog.clearCache();
-    }
   }
 
   @Test
@@ -423,27 +257,6 @@ public class V2StreamingIctTest extends V2TestBase {
         () -> "AvailableNow + ICT starting at v2 should read v2+v3, got " + v1Rows);
   }
 
-  /** Run an AvailableNow streaming query and return the COUNT(*) from its memory sink. */
-  private long runAvailableNow(Dataset<Row> df, String queryName, File checkpointDir)
-      throws Exception {
-    StreamingQuery q =
-        df.writeStream()
-            .format("memory")
-            .queryName(queryName)
-            .option("checkpointLocation", checkpointDir.getAbsolutePath())
-            .outputMode("append")
-            .trigger(Trigger.AvailableNow())
-            .start();
-    try {
-      q.processAllAvailable();
-      assertTrue(q.awaitTermination(60_000L), queryName + ": AvailableNow query should terminate");
-      return spark.sql("SELECT COUNT(*) FROM " + queryName).collectAsList().get(0).getLong(0);
-    } finally {
-      q.stop();
-      DeltaLog.clearCache();
-    }
-  }
-
   @Test
   public void columnMappingWithIct(@TempDir File deltaTablePath) throws Exception {
     String tablePath = deltaTablePath.getAbsolutePath();
@@ -469,5 +282,186 @@ public class V2StreamingIctTest extends V2TestBase {
         t2,
         ROWS_PER_COMMIT,
         "ICT + column mapping should read v2");
+  }
+
+  private List<Row> assertStartingTimestampRows(
+      String tablePath, String tag, long timestampMillis, int expectedRows, String expectation)
+      throws Exception {
+    List<Row> rows =
+        assertV1V2StreamingParity(tablePath, tag, startingTimestamp(formatTs(timestampMillis)));
+    assertEquals(expectedRows, rows.size(), () -> expectation + ", got: " + rows);
+    return rows;
+  }
+
+  private void assertStartingTimestampAfterLatestError(
+      String label, String tablePath, String queryName, String timestamp, boolean useV2) {
+    Dataset<Row> df = streamingRead(tablePath, startingTimestamp(timestamp), useV2);
+    StreamingQueryException ex =
+        assertThrows(StreamingQueryException.class, () -> processStreamingQuery(df, queryName));
+    assertAfterLatestError(label, ex);
+  }
+
+  /** Assert a streaming query failure carries a DSv1-style "after the latest" message. */
+  private static void assertAfterLatestError(String label, StreamingQueryException ex) {
+    String msg = ex.getMessage() == null ? "" : ex.getMessage();
+    String causeMsg = ex.getCause() == null ? "" : String.valueOf(ex.getCause());
+    assertTrue(
+        msg.contains("after the latest")
+            || msg.contains("is after")
+            || causeMsg.contains("after the latest")
+            || causeMsg.contains("is after"),
+        () ->
+            label
+                + ": expected DSv1-style 'after the latest' error, got: "
+                + msg
+                + " / "
+                + causeMsg);
+  }
+
+  /**
+   * Run the same streaming read against the DSv1 ("delta") and DSv2 ("dsv2.delta.`...`") sources
+   * with identical options and assert their row sets are equal. DSv1 is the oracle.
+   *
+   * @return the DSv1 row set (also equal to the DSv2 row set on success), sorted by id.
+   */
+  private List<Row> assertV1V2StreamingParity(
+      String tablePath, String tag, Map<String, String> options) throws Exception {
+    List<Row> v1Rows =
+        sortedById(processStreamingQuery(streamingRead(tablePath, options, false), tag + "_v1"));
+    List<Row> v2Rows =
+        sortedById(processStreamingQuery(streamingRead(tablePath, options, true), tag + "_v2"));
+
+    assertEquals(v1Rows.toString(), v2Rows.toString(), tag + ": V1 vs V2 row mismatch");
+    return v1Rows;
+  }
+
+  private Dataset<Row> streamingRead(String tablePath, Map<String, String> options, boolean useV2) {
+    DataStreamReader reader = useV2 ? spark.readStream() : spark.readStream().format("delta");
+    for (Map.Entry<String, String> e : options.entrySet()) {
+      reader = reader.option(e.getKey(), e.getValue());
+    }
+    return useV2 ? reader.table(str("dsv2.delta.`%s`", tablePath)) : reader.load(tablePath);
+  }
+
+  /** Create an ICT-enabled table and append one data commit per timestamp. */
+  private void createIctTableWithCommits(String tablePath, long[] timestamps) {
+    spark.sql(
+        str(
+            "CREATE TABLE delta.`%s` (id BIGINT) USING delta "
+                + "TBLPROPERTIES ('delta.enableInCommitTimestamps' = 'true')",
+            tablePath));
+    DeltaLog log = DeltaLog.forTable(spark, tablePath);
+    for (int i = 0; i < timestamps.length; i++) {
+      appendRows(tablePath, (long) i * ROWS_PER_COMMIT);
+      // Versions: 0=CREATE TABLE, 1..N=appends.
+      IctTestUtils.modifyCommitTimestamp(log, /* version= */ i + 1, timestamps[i]);
+    }
+  }
+
+  private void appendRows(String tablePath, long rangeStart) {
+    spark
+        .range(rangeStart, rangeStart + ROWS_PER_COMMIT)
+        .write()
+        .format("delta")
+        .mode("append")
+        .save(tablePath);
+  }
+
+  private void appendIctRows(
+      String tablePath, DeltaLog log, long version, long rangeStart, long ict, long mtime) {
+    appendRows(tablePath, rangeStart);
+    setIctAndMtime(log, version, ict, mtime);
+  }
+
+  private void setIctAndMtime(DeltaLog log, long version, long ict, long mtime) {
+    IctTestUtils.modifyCommitTimestamp(log, version, ict);
+    IctTestUtils.setFileMtimeOnly(log, version, mtime);
+  }
+
+  /** Run a streaming query to completion against a parquet sink and return the row count. */
+  private long runRestartFirstPass(Dataset<Row> df, File checkpointDir, File outputDir)
+      throws Exception {
+    StreamingQuery q =
+        df.writeStream()
+            .format("parquet")
+            .option("path", outputDir.getAbsolutePath())
+            .option("checkpointLocation", checkpointDir.getAbsolutePath())
+            .outputMode("append")
+            .start();
+    try {
+      q.processAllAvailable();
+      return spark.read().parquet(outputDir.getAbsolutePath()).count();
+    } finally {
+      q.stop();
+      DeltaLog.clearCache();
+    }
+  }
+
+  /** Restart the query and return how many rows the second pass added on top of {@code prior}. */
+  private long runRestartSecondPass(Dataset<Row> df, File checkpointDir, File outputDir, long prior)
+      throws Exception {
+    StreamingQuery q =
+        df.writeStream()
+            .format("parquet")
+            .option("path", outputDir.getAbsolutePath())
+            .option("checkpointLocation", checkpointDir.getAbsolutePath())
+            .outputMode("append")
+            .start();
+    try {
+      q.processAllAvailable();
+      long total = spark.read().parquet(outputDir.getAbsolutePath()).count();
+      return total - prior;
+    } finally {
+      q.stop();
+      DeltaLog.clearCache();
+    }
+  }
+
+  /** Run an AvailableNow streaming query and return the COUNT(*) from its memory sink. */
+  private long runAvailableNow(Dataset<Row> df, String queryName, File checkpointDir)
+      throws Exception {
+    StreamingQuery q =
+        df.writeStream()
+            .format("memory")
+            .queryName(queryName)
+            .option("checkpointLocation", checkpointDir.getAbsolutePath())
+            .outputMode("append")
+            .trigger(Trigger.AvailableNow())
+            .start();
+    try {
+      q.processAllAvailable();
+      assertTrue(q.awaitTermination(60_000L), queryName + ": AvailableNow query should terminate");
+      return spark.sql("SELECT COUNT(*) FROM " + queryName).collectAsList().get(0).getLong(0);
+    } finally {
+      q.stop();
+      DeltaLog.clearCache();
+    }
+  }
+
+  /** Format epoch millis as a "yyyy-MM-dd HH:mm:ss.SSS" string in the session timezone. */
+  private String formatTs(long millis) {
+    String tz = spark.sessionState().conf().sessionLocalTimeZone();
+    SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS");
+    sdf.setTimeZone(TimeZone.getTimeZone(tz));
+    return sdf.format(new Date(millis));
+  }
+
+  /** Build a single-entry options map for a starting-timestamp stream. */
+  private static Map<String, String> startingTimestamp(String ts) {
+    Map<String, String> opts = new HashMap<>();
+    opts.put("startingTimestamp", ts);
+    return opts;
+  }
+
+  /** Sort rows by their first column ("id") so memory-sink ordering doesn't perturb compares. */
+  private static List<Row> sortedById(List<Row> rows) {
+    List<Row> copy = new ArrayList<>(rows);
+    copy.sort(
+        (a, b) -> {
+          long av = a.getLong(0);
+          long bv = b.getLong(0);
+          return Long.compare(av, bv);
+        });
+    return copy;
   }
 }
