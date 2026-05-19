@@ -16,10 +16,6 @@
 
 package io.delta.storage.commit.uccommitcoordinator;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
-import com.fasterxml.jackson.annotation.JsonSetter;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.CommitFailedException;
 import io.delta.storage.commit.GetCommitsResponse;
@@ -33,21 +29,16 @@ import io.delta.storage.commit.uccommitcoordinator.exceptions.UnsupportedTableFo
 import io.unitycatalog.client.ApiClient;
 import io.unitycatalog.client.ApiClientBuilder;
 import io.unitycatalog.client.ApiException;
-import io.unitycatalog.client.JSON;
 import io.unitycatalog.client.api.MetastoresApi;
 import io.unitycatalog.client.auth.TokenProvider;
 import io.unitycatalog.client.delta.api.TablesApi;
 import io.unitycatalog.client.delta.model.AddCommitUpdate;
-import io.unitycatalog.client.delta.model.ArrayType;
 import io.unitycatalog.client.delta.model.AssertTableUUID;
 import io.unitycatalog.client.delta.model.CreateStagingTableRequest;
 import io.unitycatalog.client.delta.model.CreateTableRequest;
 import io.unitycatalog.client.delta.model.DeltaCommit;
 import io.unitycatalog.client.delta.model.DeltaProtocol;
-import io.unitycatalog.client.delta.model.DeltaType;
 import io.unitycatalog.client.delta.model.LoadTableResponse;
-import io.unitycatalog.client.delta.model.MapType;
-import io.unitycatalog.client.delta.model.PrimitiveType;
 import io.unitycatalog.client.delta.model.RemovePropertiesUpdate;
 import io.unitycatalog.client.delta.model.SetLatestBackfilledVersionUpdate;
 import io.unitycatalog.client.delta.model.SetPartitionColumnsUpdate;
@@ -58,13 +49,10 @@ import io.unitycatalog.client.delta.model.SetTableCommentUpdate;
 import io.unitycatalog.client.delta.model.StagingTableResponse;
 import io.unitycatalog.client.delta.model.StagingTableResponseRequiredProtocol;
 import io.unitycatalog.client.delta.model.StagingTableResponseSuggestedProtocol;
-import io.unitycatalog.client.delta.model.StructField;
-import io.unitycatalog.client.delta.model.StructType;
 import io.unitycatalog.client.delta.model.TableMetadata;
 import io.unitycatalog.client.delta.model.UniformMetadata;
 import io.unitycatalog.client.delta.model.UniformMetadataIceberg;
 import io.unitycatalog.client.delta.model.UpdateTableRequest;
-import io.unitycatalog.client.delta.serde.DeltaTypeModule;
 import io.unitycatalog.client.model.GetMetastoreSummaryResponse;
 import io.unitycatalog.hadoop.UCCredentialHadoopConfs;
 import io.unitycatalog.hadoop.UCCredentialHadoopConfs.TableOperation;
@@ -78,7 +66,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
 
@@ -97,47 +84,6 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
 
   private static final int HTTP_CONFLICT = 409;
   private static final int HTTP_NOT_FOUND = 404;
-
-  private static final Set<String> PRIMITIVE_TYPE_NAMES = Set.of(
-      "BOOLEAN", "BYTE", "SHORT", "INT", "LONG", "FLOAT", "DOUBLE",
-      "DATE", "TIMESTAMP", "TIMESTAMP_NTZ", "STRING", "BINARY", "DECIMAL");
-
-  /** Emits Delta's schema JSON wire format: bare-string primitives + camelCase field names. */
-  private static final ObjectMapper DELTA_SCHEMA_MAPPER = createDeltaSchemaMapper();
-
-  private static ObjectMapper createDeltaSchemaMapper() {
-    ObjectMapper m = JSON.getDefault().getMapper().copy();
-    m.registerModule(new DeltaTypeModule());
-    m.addMixIn(ArrayType.class, CamelCaseArrayMixin.class);
-    m.addMixIn(MapType.class, CamelCaseMapMixin.class);
-    return m;
-  }
-
-  abstract static class CamelCaseArrayMixin {
-    @JsonProperty("elementType")
-    abstract DeltaType getElementType();
-    @JsonSetter("elementType")
-    abstract void setElementType(DeltaType v);
-    @JsonProperty("containsNull")
-    abstract Boolean getContainsNull();
-    @JsonSetter("containsNull")
-    abstract void setContainsNull(Boolean v);
-  }
-
-  abstract static class CamelCaseMapMixin {
-    @JsonProperty("keyType")
-    abstract DeltaType getKeyType();
-    @JsonSetter("keyType")
-    abstract void setKeyType(DeltaType v);
-    @JsonProperty("valueType")
-    abstract DeltaType getValueType();
-    @JsonSetter("valueType")
-    abstract void setValueType(DeltaType v);
-    @JsonProperty("valueContainsNull")
-    abstract Boolean getValueContainsNull();
-    @JsonSetter("valueContainsNull")
-    abstract void setValueContainsNull(Boolean v);
-  }
 
   private TablesApi deltaTablesApi;
   private MetastoresApi metastoresApi;
@@ -365,7 +311,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
         .properties(properties);
 
     if (!columns.isEmpty()) {
-      sdkRequest.columns(toSDKStructType(columns));
+      sdkRequest.columns(DeltaSchemaConverter.toSDKStructType(columns));
     }
 
     try {
@@ -649,7 +595,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     if (!Objects.equals(oldMetadata.getSchemaString(), newMetadata.getSchemaString())) {
       request.addUpdatesItem(new SetSchemaUpdate()
           .action("set-columns")
-          .columns(parseSchemaString(newMetadata.getSchemaString())));
+          .columns(DeltaSchemaConverter.parseSchemaString(newMetadata.getSchemaString())));
     }
     if (!Objects.equals(oldMetadata.getPartitionColumns(), newMetadata.getPartitionColumns())) {
       request.addUpdatesItem(new SetPartitionColumnsUpdate()
@@ -692,32 +638,6 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
             .removals(toRemove));
       }
     }
-  }
-
-  private StructType toSDKStructType(List<ColumnDef> columns) {
-    StructType structType = new StructType();
-    for (ColumnDef col : columns) {
-      structType.addFieldsItem(new StructField()
-          .name(col.getName())
-          .nullable(col.isNullable())
-          .type(toSDKDeltaType(col)));
-    }
-    return structType;
-  }
-
-  private PrimitiveType toSDKDeltaType(ColumnDef col) {
-    if (!PRIMITIVE_TYPE_NAMES.contains(col.getTypeName())) {
-      throw new UnsupportedOperationException(
-          "Complex column type '" + col.getTypeName() + "' for column '" + col.getName() +
-              "' is not yet supported. Only primitive types are supported.");
-    }
-    return new PrimitiveType().type(col.getTypeText());
-  }
-
-  private StructType parseSchemaString(String schemaString) {
-    // TODO: implement full Delta schema string -> StructType conversion
-    throw new UnsupportedOperationException(
-        "Delta schema string to StructType conversion is not yet implemented.");
   }
 
   // ===========================
@@ -796,18 +716,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
 
     @Override
     public String getSchemaString() {
-      if (m.getColumns() == null) {
-        return null;
-      }
-      try {
-        // Serialize via a mapper that has DeltaTypeModule registered so primitives and decimals
-        // come out as bare strings (Delta's wire format), e.g. "integer" rather than
-        // {"type":"integer"}. The result is parseable by Delta's schema readers
-        // (e.g. DataType.fromJson on the Spark side).
-        return DELTA_SCHEMA_MAPPER.writeValueAsString(m.getColumns());
-      } catch (JsonProcessingException e) {
-        throw new IllegalStateException("Failed to serialize UC schema to Delta JSON", e);
-      }
+      return DeltaSchemaConverter.serializeSchema(m.getColumns());
     }
 
     @Override

@@ -18,7 +18,7 @@ package io.delta.storage.commit.uccommitcoordinator
 
 import java.net.{InetSocketAddress, URI}
 import java.nio.charset.StandardCharsets
-import java.util.{Collections, Optional, Set => JSet}
+import java.util.{Collections, Optional, Set => JSet, UUID}
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
@@ -38,7 +38,7 @@ class UCDeltaTokenBasedRestClientSuite
     with BeforeAndAfterAll
     with BeforeAndAfterEach {
 
-  private val testTableId = "550e8400-e29b-41d4-a716-446655440000"
+  private val testTableId = UUID.fromString("550e8400-e29b-41d4-a716-446655440000")
   private val testMetastoreId = "test-metastore-123"
   private val testCatalog = "cat"
   private val testSchema = "sch"
@@ -78,7 +78,7 @@ class UCDeltaTokenBasedRestClientSuite
   // --------------- helpers ---------------
 
   private def loadTableJson(
-      tableUuid: String = testTableId,
+      tableUuid: UUID = testTableId,
       format: String = "DELTA",
       location: String = "s3://bucket/table",
       tableType: String = "MANAGED"): String =
@@ -290,7 +290,7 @@ class UCDeltaTokenBasedRestClientSuite
     }
 
     withClient { c =>
-      c.commit(testTableId, new URI("s3://bucket/table"), testIdentifier,
+      c.commit(testTableId.toString, new URI("s3://bucket/table"), testIdentifier,
         Optional.of(createCommit(5L)), Optional.of(java.lang.Long.valueOf(3L)),
         Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty())
     }
@@ -299,7 +299,7 @@ class UCDeltaTokenBasedRestClientSuite
     val reqs = json.get("requirements")
     assert(reqs.size() === 1)
     assert(reqs.get(0).get("type").asText() === "assert-table-uuid")
-    assert(reqs.get(0).get("uuid").asText() === testTableId)
+    assert(reqs.get(0).get("uuid").asText() === testTableId.toString)
 
     val updates = json.get("updates")
     val actions = (0 until updates.size()).map(i => updates.get(i).get("action").asText()).toSet
@@ -331,7 +331,7 @@ class UCDeltaTokenBasedRestClientSuite
       })
 
     withClient { c =>
-      c.commit(testTableId, new URI("s3://b/t"), testIdentifier,
+      c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
         Optional.of(createCommit(1L)), Optional.empty(),
         Optional.of(oldMeta), Optional.of(newMeta),
         Optional.empty(), Optional.empty(), Optional.empty())
@@ -360,7 +360,7 @@ class UCDeltaTokenBasedRestClientSuite
       java.util.Set.of("columnMapping"), java.util.Set.of("columnMapping", "v2Checkpoint"))
 
     withClient { c =>
-      c.commit(testTableId, new URI("s3://b/t"), testIdentifier,
+      c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
         Optional.of(createCommit(1L)), Optional.empty(),
         Optional.empty(), Optional.empty(),
         Optional.of(oldProto), Optional.of(newProto), Optional.empty())
@@ -387,7 +387,7 @@ class UCDeltaTokenBasedRestClientSuite
     assert(m1 ne m2, "must be different objects")
 
     withClient { c =>
-      c.commit(testTableId, new URI("s3://b/t"), testIdentifier,
+      c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
         Optional.of(createCommit(1L)), Optional.empty(),
         Optional.of(m1), Optional.of(m2),
         Optional.empty(), Optional.empty(), Optional.empty())
@@ -413,7 +413,7 @@ class UCDeltaTokenBasedRestClientSuite
     assert(p1 ne p2, "must be different objects")
 
     withClient { c =>
-      c.commit(testTableId, new URI("s3://b/t"), testIdentifier,
+      c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
         Optional.of(createCommit(1L)), Optional.empty(),
         Optional.empty(), Optional.empty(),
         Optional.of(p1), Optional.of(p2), Optional.empty())
@@ -437,7 +437,7 @@ class UCDeltaTokenBasedRestClientSuite
       new IcebergMetadata("s3://bucket/v1.json", 42L, "1704337991423"))
 
     withClient { c =>
-      c.commit(testTableId, new URI("s3://b/t"), testIdentifier,
+      c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
         Optional.of(createCommit(1L)), Optional.empty(),
         Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
         Optional.of(uniform))
@@ -467,7 +467,7 @@ class UCDeltaTokenBasedRestClientSuite
       new IcebergMetadata("s3://bucket/v1.json", 42L, "2025-01-04T03:13:11.423Z"))
 
     withClient { c =>
-      c.commit(testTableId, new URI("s3://b/t"), testIdentifier,
+      c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
         Optional.of(createCommit(1L)), Optional.empty(),
         Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
         Optional.of(uniform))
@@ -495,7 +495,7 @@ class UCDeltaTokenBasedRestClientSuite
     }
     withClient { c =>
       val e = intercept[CommitFailedException] {
-        c.commit(testTableId, new URI("s3://b/t"), testIdentifier,
+        c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
           Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
           Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty())
       }
@@ -514,7 +514,7 @@ class UCDeltaTokenBasedRestClientSuite
     }
     withClient { c =>
       intercept[InvalidTargetTableException] {
-        c.commit(testTableId, new URI("s3://b/t"), testIdentifier,
+        c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
           Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
           Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty())
       }
@@ -588,7 +588,7 @@ class UCDeltaTokenBasedRestClientSuite
   test("getCommits throws UnsupportedOperationException") {
     withClient { c =>
       intercept[UnsupportedOperationException] {
-        c.getCommits(testTableId, new URI("s3://b/t"), testIdentifier,
+        c.getCommits(testTableId.toString, new URI("s3://b/t"), testIdentifier,
           Optional.empty(), Optional.empty())
       }
     }
