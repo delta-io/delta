@@ -294,6 +294,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     Objects.requireNonNull(startVersion, "startVersion must not be null");
     Objects.requireNonNull(endVersion, "endVersion must not be null");
 
+    UUID expectedTableUuid = UUID.fromString(tableId);
     String[] namespace = Objects.requireNonNull(
         tableIdentifier.getNamespace(), "tableIdentifier namespace must not be null");
     if (namespace.length != 2) {
@@ -305,6 +306,9 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     String table = Objects.requireNonNull(tableIdentifier.getName(), "table name must not be null");
     String fullName = catalog + "." + schema + "." + table;
 
+    // The UC loadTable endpoint does not support server-side filtering by version range, so
+    // we fetch the full unbackfilled commit window and filter client-side below. The server
+    // bounds the window size, so this list is not unbounded in practice.
     LoadTableResponse response;
     try {
       response = deltaTablesApi.loadTable(catalog, schema, table);
@@ -319,18 +323,15 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
           e);
     }
 
-    Objects.requireNonNull(response, "loadTable response must not be null");
-    String actualTableId = response.getMetadata() != null
-        && response.getMetadata().getTableUuid() != null
-            ? response.getMetadata().getTableUuid().toString()
-            : null;
-    if (!Objects.equals(tableId, actualTableId)) {
+    TableMetadata metadata = response.getMetadata();
+    UUID actualTableUuid = metadata != null ? metadata.getTableUuid() : null;
+    if (!expectedTableUuid.equals(actualTableUuid)) {
       throw new InvalidTargetTableException(
           String.format(
               "Table UUID mismatch for %s: expected %s but got %s",
               fullName,
-              tableId,
-              actualTableId));
+              expectedTableUuid,
+              actualTableUuid));
     }
 
     Path basePath = CoordinatedCommitsUtils.commitDirPath(
@@ -346,28 +347,32 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
         if (endVersion.isPresent() && version > endVersion.get()) {
           continue;
         }
-
-        commits.add(new Commit(
-            version,
-            new FileStatus(
-                Objects.requireNonNull(
-                    deltaCommit.getFileSize(), "commit fileSize must not be null"),
-                false /* isdir */,
-                0 /* block_replication */,
-                0 /* blocksize */,
-                Objects.requireNonNull(
-                    deltaCommit.getFileModificationTimestamp(),
-                    "commit fileModificationTimestamp must not be null"),
-                new Path(basePath, Objects.requireNonNull(
-                    deltaCommit.getFileName(), "commit fileName must not be null"))),
-            Objects.requireNonNull(
-                deltaCommit.getTimestamp(), "commit timestamp must not be null")));
+        commits.add(fromDeltaCommit(deltaCommit, basePath));
       }
     }
 
     long latestTableVersion = response.getLatestTableVersion() != null
         ? response.getLatestTableVersion() : -1L;
     return new GetCommitsResponse(commits, latestTableVersion);
+  }
+
+  /** Converts a UC SDK {@link DeltaCommit} to a Delta {@link Commit}. */
+  private Commit fromDeltaCommit(DeltaCommit deltaCommit, Path basePath) {
+    FileStatus fileStatus = new FileStatus(
+        Objects.requireNonNull(
+            deltaCommit.getFileSize(), "commit fileSize must not be null"),
+        false /* isdir */,
+        0 /* block_replication */,
+        0 /* blocksize */,
+        Objects.requireNonNull(
+            deltaCommit.getFileModificationTimestamp(),
+            "commit fileModificationTimestamp must not be null"),
+        new Path(basePath, Objects.requireNonNull(
+            deltaCommit.getFileName(), "commit fileName must not be null")));
+    return new Commit(
+        Objects.requireNonNull(deltaCommit.getVersion(), "commit version must not be null"),
+        fileStatus,
+        Objects.requireNonNull(deltaCommit.getTimestamp(), "commit timestamp must not be null"));
   }
 
   @Override
