@@ -67,6 +67,10 @@
   - [Writer Requirements for Variant Type](#writer-requirements-for-variant-type)
   - [Reader Requirements for Variant Data Type](#reader-requirements-for-variant-data-type)
   - [Compatibility with other Delta Features](#compatibility-with-other-delta-features)
+- [Variant Shredding](#variant-shredding)
+  - [Shredded Variant data in Parquet](#shredded-variant-data-in-parquet)
+  - [Writer Requirements for Variant Shredding](#writer-requirements-for-variant-shredding)
+  - [Reader Requirements for Variant Shredding](#reader-requirements-for-variant-shredding)
 - [Catalog-managed tables](#catalog-managed-tables)
   - [Terminology: Commits](#terminology-commits)
   - [Terminology: Delta Client](#terminology-delta-client)
@@ -115,6 +119,7 @@
   - [Deletion Vector Format](#deletion-vector-format)
     - [Deletion Vector File Storage Format](#deletion-vector-file-storage-format)
   - [Per-file Statistics](#per-file-statistics)
+    - [Statistics for Variant Columns](#statistics-for-variant-columns)
   - [Partition Value Serialization](#partition-value-serialization)
   - [Schema Serialization Format](#schema-serialization-format)
     - [Primitive Types](#primitive-types)
@@ -1826,6 +1831,7 @@ The schema serialization method is described in [Schema Serialization Format](#s
 To support this feature:
 - The table must be on Reader Version 3 and Writer Version 7
 - The feature `variantType` must exist in the table `protocol`'s `readerFeatures` and `writerFeatures`.
+- The feature `variantShredding` may also exist in the table `protocol`'s `readerFeatures` and `writerFeatures` (see [Variant Shredding](#variant-shredding)).
 
 ## Example JSON-Encoded Delta Table Schema with Variant types
 
@@ -1854,34 +1860,33 @@ To support this feature:
 
 ## Variant data in Parquet
 
-The Variant data type is represented as two binary encoded values, according to the [Spark Variant binary encoding specification](https://github.com/apache/spark/blob/master/common/variant/README.md).
+The Variant data type is logically represented as two binary encoded values, according to the [Parquet Variant binary encoding specification](https://github.com/apache/parquet-format/blob/master/VariantEncoding.md).
 The two binary values are named `value` and `metadata`.
 
-When writing Variant data to parquet files, the Variant data is written as a single Parquet struct, with the following fields:
+In parquet files, Variant can be represented in a "[shredded](https://github.com/apache/parquet-format/blob/master/VariantShredding.md)" format or an "[unshredded](https://github.com/apache/parquet-format/blob/master/VariantEncoding.md)" format. Tables containing "shredded" variants must also support the [Variant Shredding](#variant-shredding) feature.
+
+When writing unshredded Variant data to parquet files, the Variant data is written as a single Parquet struct, with the following fields:
 
 Struct field name | Parquet primitive type | Description
 -|-|-
-value | binary | The binary-encoded Variant value, as described in [Variant binary encoding](https://github.com/apache/spark/blob/master/common/variant/README.md)
-metadata | binary | The binary-encoded Variant metadata, as described in [Variant binary encoding](https://github.com/apache/spark/blob/master/common/variant/README.md)
+value | binary | The binary-encoded Variant value, as described in Variant binary encoding specification.
+metadata | binary | The binary-encoded Variant metadata, as described in Variant binary encoding specification.
 
 The parquet struct must include the two struct fields `value` and `metadata`.
 Supported writers must write the two binary fields, and supported readers must read the two binary fields.
 
-[Variant shredding](https://github.com/apache/parquet-format/blob/master/VariantShredding.md) will be introduced in a separate `variantShredding` table feature. will be introduced later, as a separate `variantShredding` table feature.
-
 ## Writer Requirements for Variant Data Type
 
-When Variant type is supported (`writerFeatures` field of a table's `protocol` action contains `variantType`), writers:
-- must write a column of type `variant` to parquet as a struct containing the fields `value` and `metadata` and storing values that conform to the [Variant binary encoding specification](https://github.com/apache/spark/blob/master/common/variant/README.md)
-- must not write a parquet struct field named `typed_value` to avoid confusion with the field required by [Variant shredding](https://github.com/apache/parquet-format/blob/master/VariantShredding.md) with the same name.
+When Variant type is supported but Variant shredding is not supported (`writerFeatures` field of a table's `protocol` action contains `variantType` but does not contain `variantShredding`), writers:
+- must write a column of type `variant` to parquet in the "unshredded" representation as a struct containing the fields `value` and `metadata` and storing values that conform to the Variant binary encoding specification.
 
 ## Reader Requirements for Variant Data Type
 
-When Variant type is supported (`readerFeatures` field of a table's `protocol` action contains `variantType`), readers:
-- must recognize and tolerate a `variant` data type in a Delta schema
-- must use the correct physical schema (struct-of-binary, with fields `value` and `metadata`) when reading a Variant data type from file
+When Variant type is supported but Variant shredding is not supported (`readerFeatures` field of a table's `protocol` action contains `variantType` but does not contain `variantShredding`), readers:
+- must recognize and tolerate a `variant` data type in a Delta schema.
+- must use the correct physical schema (struct-of-binary, with fields `value` and `metadata`) when reading a Variant data type from file.
 - must make the column available to the engine:
-    - [Recommended] Expose and interpret the struct-of-binary as a single Variant field in accordance with the [Spark Variant binary encoding specification](https://github.com/apache/spark/blob/master/common/variant/README.md).
+    - [Recommended] Expose and interpret the struct-of-binary as a single Variant field in accordance with the Parquet Variant binary encoding specification.
     - [Alternate] Expose the raw physical struct-of-binary, e.g. if the engine does not support Variant.
     - [Alternate] Convert the struct-of-binary to a string, and expose the string representation, e.g. if the engine does not support Variant.
 
@@ -1891,11 +1896,56 @@ Feature | Support for Variant Data Type
 -|-
 Partition Columns | **Supported:** A Variant column is allowed to be a non-partitioned column of a partitioned table. <br/> **Unsupported:** Variant is not a comparable data type, so it cannot be included in a partition column.
 Clustered Tables | **Supported:** A Variant column is allowed to be a non-clustering column of a clustered table. <br/> **Unsupported:** Variant is not a comparable data type, so it cannot be included in a clustering column.
-Delta Column Statistics | **Supported:** A Variant column supports the `nullCount` statistic. <br/> **Unsupported:** Variant is not a comparable data type, so a Variant column does not support the `minValues` and `maxValues` statistics.
+Delta Column Statistics | **Supported:** A Variant column supports the `nullCount` statistic. <br/> **Conditionally Supported:** A Variant column supports `minValues` and `maxValues` statistics if the table also enables the Variant shredding feature (see [Statistics for Variant Columns](#statistics-for-variant-columns)).
 Generated Columns | **Supported:** A Variant column is allowed to be used as a source in a generated column expression, as long as the Variant type is not the result type of the generated column expression. <br/> **Unsupported:** The Variant data type is not allowed to be the result type of a generated column expression.
 Delta CHECK Constraints | **Supported:** A Variant column is allowed to be used for a CHECK constraint expression.
 Default Column Values | **Supported:** A Variant column is allowed to have a default column value.
 Change Data Feed | **Supported:** A table using the Variant data type is allowed to enable the Delta Change Data Feed.
+
+# Variant Shredding
+
+This feature enables support for shredding of the Variant data type, to store and query Variant data more efficiently.
+Shredding a Variant value takes paths from the Variant value, and stores them as typed columns in the file.
+The shredding does not duplicate data, so if a value is stored in the typed column, it is removed from the Variant binary.
+Storing Variant values as typed columns is faster to access, and enables data skipping with statistics.
+
+The `variantShredding` feature depends on the `variantType` feature. When variant shredding is supported, `variantShredding` and `variantType` must be present in the table `protocol`'s `readerFeatures` and `writerFeatures`.
+
+Tables supporting Variant Shredding may also contain parquet files containing Variants represented in the "unshredded" format, and individual files may freely mix shredded and unshredded Variant columns.
+
+## Enablement
+- The table must be on Reader Version 3 and Writer Version 7.
+- The feature `variantType` must exist in the table `protocol`'s `readerFeatures` and `writerFeatures`.
+- The feature `variantShredding` must exist in the table `protocol`'s `readerFeatures` and `writerFeatures`.
+- The table property `delta.enableVariantShredding` must be set to `true`.
+
+If `delta.enableVariantShredding` is missing or has any value other than `true`, the feature is only supported, not enabled. This means that new files may not be written with shredded variant but existing files in the table may contain shredded variant if the table only supports variant shredding.
+
+## Shredded Variant data in Parquet
+
+Shredded Variant data is stored according to the [Parquet Variant Shredding specification](https://github.com/apache/parquet-format/blob/master/VariantShredding.md).
+The shredded Variant data written to parquet files is written as a single Parquet struct, with the following fields:
+
+Struct field name | Parquet primitive type | Description
+-|-|-
+metadata | binary | (required) The binary-encoded Variant metadata, as described in [Parquet Variant binary encoding](https://github.com/apache/parquet-format/blob/master/VariantEncoding.md)
+value | binary | (optional) The binary-encoded Variant value, as described in Parquet Variant binary encoding.
+typed_value | * | (optional) This can be any Parquet type representing the data stored in the Variant, so long as the shredding scheme adheres to the Parquet Variant Shredding specification.
+
+## Writer Requirements for Variant Shredding
+
+When Variant shredding is enabled (the `delta.enableVariantShredding` table property set to `true` and `variantShredding` is present in the table `protocol`'s `writerFeatures` and `readerFeatures`), writers:
+- can choose to shred a Variant column according to the [Parquet Variant Shredding specification](https://github.com/apache/parquet-format/blob/master/VariantShredding.md). In this case, writers are free to write variant columns in the "unshredded" format in parquet files, or write parquet files containing a mix of shredded and unshredded variant columns.
+
+Writers must ensure the `variantShredding` table feature is present in the table protocol's `writerFeatures` and `readerFeatures` when enabling variant shredding (setting the `delta.enableVariantShredding` table property to `true`). This ensures that `delta.enableVariantShredding = true` implies that the table supports and variant enables shredding.
+
+When Variant shredding is not enabled (the `delta.enableVariantShredding` table property is absent or is set to any value other than `true`),  column of type `variant` must not be written as a shredded Variant, but as an unshredded Variant.
+
+## Reader Requirements for Variant Shredding
+
+When Variant Shredding is supported (`readerFeatures` field of a table's `protocol` action contains `variantShredding`), readers:
+- must recognize and tolerate a `variant` data type in a Delta schema.
+- must recognize and correctly process a parquet schema that is either unshredded (only `metadata` and `value` struct fields) or shredded (`metadata`, optional `value`, and optional `typed_value` struct fields) when reading Variant data from files.
 
 # In-Commit Timestamps
 
@@ -2443,6 +2493,7 @@ Property | Description | Details
 -|-|-
 `delta.parquet.compression.codec` | Compression codec writers SHOULD use for new Parquet data and checkpoint files. Changing this property does not affect existing files; a table may contain files written with different codecs, which is a normal and expected state. | Widely supported values (matched case-insensitively): `uncompressed`/`none` (no compression), `snappy`, `gzip`, `lz4` (deprecated, Hadoop framing), `lz4_raw` ([LZ4 block format](https://parquet.apache.org/docs/file-format/data-pages/compression/#lz4_raw)), `zstd`.<br><br>When absent, writers SHOULD default to `zstd`. If a writer does not support or recognize the specified codec, it SHOULD abort with an appropriate error or fall back to a default codec.<br><br>Readers SHOULD support all codecs listed above regardless of the current property value. Parquet files written with other [parquet-supported codecs](https://parquet.apache.org/docs/file-format/data-pages/compression/) may also exist; readers MAY support reading these files.
 `delta.parquet.format.version` | Parquet data page format writers SHOULD use for new data files. This property is a directive to writers only; readers do not need to consult it, as Parquet pages are self-describing via the `PageType` field in each page header. Changing this property does not affect existing files; a table MAY contain files written with different data page versions, which is a normal and expected state. | Valid values: `1.0.0` (DataPageV1) and `2.x.x` (DataPageV2, where `x.x` is any minor.patch version). Recommended values are `1.0.0` and `2.12.0`.<br><br>When absent, writers SHOULD default to `1.0.0`. Writers SHOULD validate this property and abort if the value does not match `1.0.0` or `2.MINOR.PATCH`.<br><br>Readers SHOULD support both DataPageV1 and DataPageV2 pages regardless of this property's value. Tables intended for access by engines beyond the Delta Lake connectors SHOULD use `1.0.0`, as DataPageV2 support varies across the broader Parquet ecosystem.
+`delta.enableVariantShredding` | When `true`, writers could write variant data to parquet files in [shredded](#variant-shredding) format. | Valid values: `true` (shredding allowed) and `false` (shredding not allowed).<br><br>When enabled, writers must ensure that the `variantShredding` table feature is present in the table `protocol`'s `readerFeatures` and `writerFeatures`.
 
 # Appendix
 
@@ -2570,6 +2621,56 @@ minValues | A value that is equal to the smallest valid value[^1] present in the
 maxValues | A value that is equal to the largest valid value[^1] present in the file for this column. If all valid rows are null, this carries no information. | A value that is greater than or equal to all valid values[^1] present in this file for this column. If all valid rows are null, this carries no information.
 
 [^1]: String columns are cut off at a fixed prefix length. Timestamp columns are truncated down to milliseconds.
+
+### Statistics for Variant Columns
+
+- The `nullCount` stat for a Variant column is a LONG representing the nullcount for the Variant column itself (nullcount stats are not captured for individual paths within the Variant).
+- The `minValues` and `maxValues` stats for a Variant column are Variant objects, where the object keys are [normalized JSON path expressions](https://www.rfc-editor.org/rfc/rfc9535.html#name-normalized-paths), and the object values are the primitive Variant values representing the lower and upper bound for that field.
+- In JSON, the `minValues` and `maxValues` stats for a Variant column are [binary-encoded](https://github.com/apache/parquet-format/blob/master/VariantEncoding.md) Variant values, concatenating the `metadata` and `value`, and serialized to strings using [z85](https://rfc.zeromq.org/spec/32/) encoding (see example below).
+- In Parquet, the `minValues` and `maxValues` stats for a Variant column are Parquet Variant columns, following the Parquet Variant [encoding](https://github.com/apache/parquet-format/blob/master/VariantEncoding.md) and [shredding](https://github.com/apache/parquet-format/blob/master/VariantShredding.md) specifications.
+- In Parquet, the Variant `minValues` and `maxValues` stats are allowed to be shredded, but it is not required.
+- Each path in the Variant `minValues` (`maxValues`) value is the independently computed min (max) stat for the corresponding path in the file's Variant data, so e.g. `minValues.v:a` and `minValues.v:b` could come from different rows in the file.
+- Min/max stats may only be written for primitive (leaf) values, packed into a Variant representation.
+- Min/max stats may only be written for a path if that path has the same data type in every row of the data file.
+- If a path is present in both minValues and maxValues for a given file, the Variant type for that path must be the same in both.
+- A path may be present in minValues but not maxValues (or vice versa) for a given file. The paths and types can vary from file to file.
+- Subject to the above constraints, the writer of a given file determines which Variant leaf paths (if any) to emit statistics for.
+
+For a table with a single Variant column (`varCol: variant`) in its data schema, example statistics in JSON would look like:
+
+```
+"stats": {
+  "nullCount": {
+    "varCol": 2
+  }
+  "minValues": {
+    "varCol": "0S&u501fk+ze0(tB98CpzF6vU0rJl95HpNdvjbtatpi(cu0wW^cTu"
+  },
+  "maxValues": {
+    "varCol": "0S&u500&]LC42A9vqZe}wb#-i1}-a+cT!xdbWhT9cTx}7v<+K"
+  }
+}
+```
+The corresponding human-readable form is:
+```
+"stats": {
+  "nullCount": {
+    "varCol": 2
+  }
+  "minValues": {
+    "varCol": {
+      "$['a']" : "min-string",
+      "$['b']['c']" : 1
+    }
+  },
+  "maxValues": {
+    "varCol": {
+      "$['a']" : "variant",
+      "$['b']['c']" : 100
+    }
+  }
+}
+```
 
 ## Partition Value Serialization
 
