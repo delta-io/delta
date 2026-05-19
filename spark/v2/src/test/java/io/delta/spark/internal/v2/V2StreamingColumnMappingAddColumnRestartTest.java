@@ -19,8 +19,11 @@ package io.delta.spark.internal.v2;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.io.File;
+import java.util.Arrays;
+import java.util.List;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
+import org.apache.spark.sql.RowFactory;
 import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.streaming.DataStreamWriter;
 import org.apache.spark.sql.streaming.StreamingQuery;
@@ -239,6 +242,546 @@ public class V2StreamingColumnMappingAddColumnRestartTest extends V2TestBase {
         () ->
             "Expected DSv2 'does not support recovering from checkpoint location' error, got: "
                 + v2Msg);
+  }
+
+  /**
+   * Bug #29 (CM name) - ADD COLUMN mid-stream + restart from checkpoint. Mirrors DSv1 "column
+   * mapping + streaming - allowed workflows - column addition". DSv2 rejects the restart with "This
+   * query does not support recovering from checkpoint location".
+   */
+  @Test
+  public void testColumnMapping_addColumnMidStream(@TempDir File deltaTablePath) throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+    String dsv2TableRef = str("dsv2.delta.`%s`", tablePath);
+
+    spark.sql(
+        str(
+            "CREATE TABLE delta.`%s` (id STRING, value STRING) USING delta "
+                + "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')",
+            tablePath));
+    for (int i = 0; i < 5; i++) {
+      spark.sql(str("INSERT INTO delta.`%s` VALUES ('%d', '%d')", tablePath, i, i));
+    }
+
+    File checkpointDir = new File(deltaTablePath, "_checkpoint");
+    Dataset<Row> streamingDF = spark.readStream().table(dsv2TableRef);
+
+    StreamingQuery q1 =
+        streamingDF
+            .writeStream()
+            .format("noop")
+            .option("checkpointLocation", checkpointDir.getAbsolutePath())
+            .start();
+    q1.processAllAvailable();
+    q1.stop();
+
+    // Add column then write data in new schema
+    spark.sql(str("ALTER TABLE delta.`%s` ADD COLUMN (value2 STRING)", tablePath));
+    for (int i = 5; i < 10; i++) {
+      spark.sql(str("INSERT INTO delta.`%s` VALUES ('%d', '%d', '%d')", tablePath, i, i, i));
+    }
+
+    // Restart with a fresh DataFrame matching new schema. DSv1 expects only 5..10 to be ingested
+    // because the sink is reinitialized.
+    Dataset<Row> streamingDF2 = spark.readStream().table(dsv2TableRef);
+    List<Row> actualRows =
+        processStreamingQueryFromCheckpoint(streamingDF2, "test_cm_add_column_mid", checkpointDir);
+
+    List<Row> expected =
+        Arrays.asList(
+            RowFactory.create("5", "5", "5"),
+            RowFactory.create("6", "6", "6"),
+            RowFactory.create("7", "7", "7"),
+            RowFactory.create("8", "8", "8"),
+            RowFactory.create("9", "9", "9"));
+    assertDataEquals(actualRows, expected);
+  }
+
+  /**
+   * Bug #29 (CM name) - DROP COLUMN with unsafe flag + schema-tracking on. DSv2 rejects the restart
+   * even with schemaTrackingLocation set.
+   */
+  @Test
+  public void testColumnMapping_dropColumnUnsafe(@TempDir File deltaTablePath) throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+    String dsv2TableRef = str("dsv2.delta.`%s`", tablePath);
+
+    spark.sql(
+        str(
+            "CREATE TABLE delta.`%s` (id STRING, value STRING) USING delta "
+                + "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')",
+            tablePath));
+    for (int i = 0; i < 5; i++) {
+      spark.sql(str("INSERT INTO delta.`%s` VALUES ('%d', '%d')", tablePath, i, i));
+    }
+
+    File checkpointDir = new File(deltaTablePath, "_checkpoint");
+    File schemaTrackingDir = new File(checkpointDir, "_schema_tracking");
+
+    // First stream just to advance the checkpoint
+    Dataset<Row> df1 =
+        spark
+            .readStream()
+            .option("schemaTrackingLocation", schemaTrackingDir.getAbsolutePath())
+            .table(dsv2TableRef);
+    StreamingQuery q1 =
+        df1.writeStream()
+            .format("noop")
+            .option("checkpointLocation", checkpointDir.getAbsolutePath())
+            .start();
+    q1.processAllAvailable();
+    q1.stop();
+
+    // Drop column
+    spark.sql(str("ALTER TABLE delta.`%s` DROP COLUMN value", tablePath));
+    for (int i = 5; i < 10; i++) {
+      spark.sql(str("INSERT INTO delta.`%s` VALUES ('%d')", tablePath, i));
+    }
+
+    // Restart with unsafe flag enabled
+    withSQLConf(
+        "spark.databricks.delta.streaming.unsafeReadOnIncompatibleColumnMappingSchemaChanges.enabled",
+        "true",
+        () -> {
+          try {
+            Dataset<Row> df2 =
+                spark
+                    .readStream()
+                    .option("schemaTrackingLocation", schemaTrackingDir.getAbsolutePath())
+                    .table(dsv2TableRef);
+            List<Row> actualRows =
+                processStreamingQueryFromCheckpoint(df2, "test_cm_drop_col_unsafe", checkpointDir);
+            // After drop, post-drop rows have only id; we expect 5..9 with single column
+            List<Row> expected =
+                Arrays.asList(
+                    RowFactory.create("5"),
+                    RowFactory.create("6"),
+                    RowFactory.create("7"),
+                    RowFactory.create("8"),
+                    RowFactory.create("9"));
+            assertDataEquals(actualRows, expected);
+          } catch (Exception e) {
+            throw new RuntimeException(e);
+          }
+        });
+  }
+
+  /**
+   * Bug #29 (CM name) - RENAME COLUMN with unsafe flag + schema-tracking on. DSv2 rejects the
+   * restart even with schemaTrackingLocation set.
+   */
+  @Test
+  public void testColumnMapping_renameColumnUnsafe(@TempDir File deltaTablePath) throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+    String dsv2TableRef = str("dsv2.delta.`%s`", tablePath);
+
+    spark.sql(
+        str(
+            "CREATE TABLE delta.`%s` (id STRING, value STRING) USING delta "
+                + "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')",
+            tablePath));
+    for (int i = 0; i < 5; i++) {
+      spark.sql(str("INSERT INTO delta.`%s` VALUES ('%d', '%d')", tablePath, i, i));
+    }
+
+    File checkpointDir = new File(deltaTablePath, "_checkpoint");
+    File schemaTrackingDir = new File(checkpointDir, "_schema_tracking");
+
+    Dataset<Row> df1 =
+        spark
+            .readStream()
+            .option("schemaTrackingLocation", schemaTrackingDir.getAbsolutePath())
+            .table(dsv2TableRef);
+    StreamingQuery q1 =
+        df1.writeStream()
+            .format("noop")
+            .option("checkpointLocation", checkpointDir.getAbsolutePath())
+            .start();
+    q1.processAllAvailable();
+    q1.stop();
+
+    // Rename column
+    spark.sql(str("ALTER TABLE delta.`%s` RENAME COLUMN value TO value2", tablePath));
+    for (int i = 5; i < 10; i++) {
+      spark.sql(str("INSERT INTO delta.`%s` VALUES ('%d', '%d')", tablePath, i, i));
+    }
+
+    // Restart with unsafe flag enabled
+    withSQLConf(
+        "spark.databricks.delta.streaming.unsafeReadOnIncompatibleColumnMappingSchemaChanges.enabled",
+        "true",
+        () -> {
+          try {
+            Dataset<Row> df2 =
+                spark
+                    .readStream()
+                    .option("schemaTrackingLocation", schemaTrackingDir.getAbsolutePath())
+                    .table(dsv2TableRef);
+            List<Row> actualRows =
+                processStreamingQueryFromCheckpoint(
+                    df2, "test_cm_rename_col_unsafe", checkpointDir);
+            List<Row> expected =
+                Arrays.asList(
+                    RowFactory.create("5", "5"),
+                    RowFactory.create("6", "6"),
+                    RowFactory.create("7", "7"),
+                    RowFactory.create("8", "8"),
+                    RowFactory.create("9", "9"));
+            assertDataEquals(actualRows, expected);
+          } catch (Exception e) {
+            throw new RuntimeException(e);
+          }
+        });
+  }
+
+  /**
+   * Bug #29 (CM name) - restart from checkpoint with no schema change. DSv2 rejects the restart
+   * because the V2 read path does not advertise checkpoint-recovery support for CM tables.
+   */
+  @Test
+  public void testColumnMapping_restart(@TempDir File deltaTablePath) throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+    String dsv2TableRef = str("dsv2.delta.`%s`", tablePath);
+
+    spark.sql(
+        str(
+            "CREATE TABLE delta.`%s` (id INT, name STRING) USING delta "
+                + "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')",
+            tablePath));
+    spark.sql(str("INSERT INTO delta.`%s` VALUES (1, 'Alice'), (2, 'Bob')", tablePath));
+
+    File checkpointDir = new File(deltaTablePath, "_checkpoint");
+
+    // First stream - drains 1, 2
+    Dataset<Row> df1 = spark.readStream().table(dsv2TableRef);
+    StreamingQuery q1 =
+        df1.writeStream()
+            .format("memory")
+            .queryName("test_cm_restart_1")
+            .outputMode("append")
+            .option("checkpointLocation", checkpointDir.getAbsolutePath())
+            .start();
+    q1.processAllAvailable();
+    q1.stop();
+
+    // New writes
+    spark.sql(str("INSERT INTO delta.`%s` VALUES (3, 'Charlie'), (4, 'Dave')", tablePath));
+
+    // Restart from same checkpoint with fresh DataFrame
+    Dataset<Row> df2 = spark.readStream().table(dsv2TableRef);
+    StreamingQuery q2 =
+        df2.writeStream()
+            .format("memory")
+            .queryName("test_cm_restart_2")
+            .outputMode("append")
+            .option("checkpointLocation", checkpointDir.getAbsolutePath())
+            .start();
+    try {
+      q2.processAllAvailable();
+      List<Row> rows = spark.sql("SELECT * FROM test_cm_restart_2").collectAsList();
+      List<Row> expected =
+          Arrays.asList(RowFactory.create(3, "Charlie"), RowFactory.create(4, "Dave"));
+      assertDataEquals(rows, expected);
+    } finally {
+      q2.stop();
+    }
+  }
+
+  /**
+   * Bug #29 (CM name) - ADD COLUMN then RENAME COLUMN (sequential schema changes). DSv2 rejects the
+   * restart across the sequential schema changes.
+   */
+  @Test
+  public void testColumnMapping_addThenRename(@TempDir File deltaTablePath) throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+    String dsv2TableRef = str("dsv2.delta.`%s`", tablePath);
+
+    spark.sql(
+        str(
+            "CREATE TABLE delta.`%s` (id STRING, value STRING) USING delta "
+                + "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')",
+            tablePath));
+    for (int i = 0; i < 3; i++) {
+      spark.sql(str("INSERT INTO delta.`%s` VALUES ('%d', '%d')", tablePath, i, i));
+    }
+
+    File checkpointDir = new File(deltaTablePath, "_checkpoint");
+    File schemaTrackingDir = new File(checkpointDir, "_schema_tracking");
+
+    Dataset<Row> df1 =
+        spark
+            .readStream()
+            .option("schemaTrackingLocation", schemaTrackingDir.getAbsolutePath())
+            .table(dsv2TableRef);
+    StreamingQuery q1 =
+        df1.writeStream()
+            .format("noop")
+            .option("checkpointLocation", checkpointDir.getAbsolutePath())
+            .start();
+    q1.processAllAvailable();
+    q1.stop();
+
+    // Sequential schema changes: add new col then rename it
+    spark.sql(str("ALTER TABLE delta.`%s` ADD COLUMN extra STRING", tablePath));
+    spark.sql(str("ALTER TABLE delta.`%s` RENAME COLUMN extra TO extra2", tablePath));
+    for (int i = 3; i < 6; i++) {
+      spark.sql(str("INSERT INTO delta.`%s` VALUES ('%d', '%d', '%d')", tablePath, i, i, i));
+    }
+
+    // With unsafe flag
+    withSQLConf(
+        "spark.databricks.delta.streaming.unsafeReadOnIncompatibleColumnMappingSchemaChanges.enabled",
+        "true",
+        () -> {
+          try {
+            Dataset<Row> df2 =
+                spark
+                    .readStream()
+                    .option("schemaTrackingLocation", schemaTrackingDir.getAbsolutePath())
+                    .table(dsv2TableRef);
+            List<Row> rows =
+                processStreamingQueryFromCheckpoint(df2, "test_cm_add_then_rename", checkpointDir);
+            List<Row> expected =
+                Arrays.asList(
+                    RowFactory.create("3", "3", "3"),
+                    RowFactory.create("4", "4", "4"),
+                    RowFactory.create("5", "5", "5"));
+            assertDataEquals(rows, expected);
+          } catch (Exception e) {
+            throw new RuntimeException(e);
+          }
+        });
+  }
+
+  /**
+   * Bug #29 (CM id) - ADD COLUMN mid-stream + restart from checkpoint on an id-mode table. Mirrors
+   * the name-mode variant.
+   */
+  @Test
+  public void testColumnMappingId_addColumnMidStream(@TempDir File deltaTablePath)
+      throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+    String dsv2TableRef = str("dsv2.delta.`%s`", tablePath);
+
+    spark.sql(
+        str(
+            "CREATE TABLE delta.`%s` (id STRING, value STRING) USING delta "
+                + "TBLPROPERTIES ('delta.columnMapping.mode' = 'id', "
+                + "  'delta.minReaderVersion' = '2', "
+                + "  'delta.minWriterVersion' = '5')",
+            tablePath));
+    for (int i = 0; i < 5; i++) {
+      spark.sql(str("INSERT INTO delta.`%s` VALUES ('%d', '%d')", tablePath, i, i));
+    }
+
+    File checkpointDir = new File(deltaTablePath, "_checkpoint");
+    Dataset<Row> streamingDF = spark.readStream().table(dsv2TableRef);
+
+    StreamingQuery q1 =
+        streamingDF
+            .writeStream()
+            .format("noop")
+            .option("checkpointLocation", checkpointDir.getAbsolutePath())
+            .start();
+    q1.processAllAvailable();
+    q1.stop();
+
+    spark.sql(str("ALTER TABLE delta.`%s` ADD COLUMN (value2 STRING)", tablePath));
+    for (int i = 5; i < 10; i++) {
+      spark.sql(str("INSERT INTO delta.`%s` VALUES ('%d', '%d', '%d')", tablePath, i, i, i));
+    }
+
+    Dataset<Row> streamingDF2 = spark.readStream().table(dsv2TableRef);
+    List<Row> actualRows =
+        processStreamingQueryFromCheckpoint(
+            streamingDF2, "test_cm_id_add_column_mid", checkpointDir);
+
+    List<Row> expected =
+        Arrays.asList(
+            RowFactory.create("5", "5", "5"),
+            RowFactory.create("6", "6", "6"),
+            RowFactory.create("7", "7", "7"),
+            RowFactory.create("8", "8", "8"),
+            RowFactory.create("9", "9", "9"));
+    assertDataEquals(actualRows, expected);
+  }
+
+  /**
+   * Bug #29 (CM id) - RENAME COLUMN with unsafe flag on an id-mode table. DSv2 rejects the restart
+   * even with schemaTrackingLocation set.
+   */
+  @Test
+  public void testColumnMappingId_rename(@TempDir File deltaTablePath) throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+    String dsv2TableRef = str("dsv2.delta.`%s`", tablePath);
+
+    spark.sql(
+        str(
+            "CREATE TABLE delta.`%s` (id STRING, value STRING) USING delta "
+                + "TBLPROPERTIES ('delta.columnMapping.mode' = 'id', "
+                + "  'delta.minReaderVersion' = '2', "
+                + "  'delta.minWriterVersion' = '5')",
+            tablePath));
+    for (int i = 0; i < 5; i++) {
+      spark.sql(str("INSERT INTO delta.`%s` VALUES ('%d', '%d')", tablePath, i, i));
+    }
+
+    File checkpointDir = new File(deltaTablePath, "_checkpoint");
+    File schemaTrackingDir = new File(checkpointDir, "_schema_tracking");
+
+    Dataset<Row> df1 =
+        spark
+            .readStream()
+            .option("schemaTrackingLocation", schemaTrackingDir.getAbsolutePath())
+            .table(dsv2TableRef);
+    StreamingQuery q1 =
+        df1.writeStream()
+            .format("noop")
+            .option("checkpointLocation", checkpointDir.getAbsolutePath())
+            .start();
+    q1.processAllAvailable();
+    q1.stop();
+
+    spark.sql(str("ALTER TABLE delta.`%s` RENAME COLUMN value TO value2", tablePath));
+    for (int i = 5; i < 10; i++) {
+      spark.sql(str("INSERT INTO delta.`%s` VALUES ('%d', '%d')", tablePath, i, i));
+    }
+
+    withSQLConf(
+        "spark.databricks.delta.streaming.unsafeReadOnIncompatibleColumnMappingSchemaChanges.enabled",
+        "true",
+        () -> {
+          try {
+            Dataset<Row> df2 =
+                spark
+                    .readStream()
+                    .option("schemaTrackingLocation", schemaTrackingDir.getAbsolutePath())
+                    .table(dsv2TableRef);
+            List<Row> actualRows =
+                processStreamingQueryFromCheckpoint(
+                    df2, "test_cm_id_rename_col_unsafe", checkpointDir);
+            List<Row> expected =
+                Arrays.asList(
+                    RowFactory.create("5", "5"),
+                    RowFactory.create("6", "6"),
+                    RowFactory.create("7", "7"),
+                    RowFactory.create("8", "8"),
+                    RowFactory.create("9", "9"));
+            assertDataEquals(actualRows, expected);
+          } catch (Exception e) {
+            throw new RuntimeException(e);
+          }
+        });
+  }
+
+  /**
+   * Bug #29 (CM id) - nullability toggle (DROP NOT NULL) mid-stream. With schemaTrackingLocation,
+   * the restart from checkpoint must adopt the relaxed nullability and surface the post-toggle
+   * null-value row instead of raising DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART.
+   */
+  @Test
+  public void testColumnMappingId_nullabilityToggle(@TempDir File deltaTablePath) throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+    String dsv2TableRef = str("dsv2.delta.`%s`", tablePath);
+    File checkpointDir = new File(deltaTablePath, "_checkpoint");
+    File schemaTrackingDir = new File(checkpointDir, "_schema_tracking");
+    File outputDir = new File(deltaTablePath, "_out");
+
+    // CM-id table with a NOT NULL `value` column.
+    spark.sql(
+        str(
+            "CREATE TABLE delta.`%s` (id INT, value STRING NOT NULL) USING delta "
+                + "TBLPROPERTIES ('delta.columnMapping.mode' = 'id', "
+                + "  'delta.minReaderVersion' = '2', "
+                + "  'delta.minWriterVersion' = '5')",
+            tablePath));
+    spark.sql(str("INSERT INTO delta.`%s` VALUES (1, 'a'), (2, 'b')", tablePath));
+
+    // First run drains the 2 pre-toggle rows.
+    Dataset<Row> df1 =
+        spark
+            .readStream()
+            .option("schemaTrackingLocation", schemaTrackingDir.getAbsolutePath())
+            .table(dsv2TableRef);
+    StreamingQuery q1 =
+        df1.writeStream()
+            .format("parquet")
+            .outputMode("append")
+            .option("path", outputDir.getAbsolutePath())
+            .option("checkpointLocation", checkpointDir.getAbsolutePath())
+            .start();
+    try {
+      q1.processAllAvailable();
+    } finally {
+      q1.stop();
+      DeltaLog.clearCache();
+    }
+    long firstRunRows = spark.read().parquet(outputDir.getAbsolutePath()).count();
+    assertEquals(2L, firstRunRows, "first run should emit 2 pre-toggle rows");
+
+    // Drop NOT NULL on `value`, then INSERT a row with NULL value.
+    spark.sql(str("ALTER TABLE delta.`%s` ALTER COLUMN value DROP NOT NULL", tablePath));
+    spark.sql(str("INSERT INTO delta.`%s` VALUES (3, NULL)", tablePath));
+
+    // Restart from the same checkpoint + schema tracking log; the schema evolution handler must
+    // adopt the relaxed nullability and not raise SCHEMA_MISMATCH_ON_RESTART.
+    Dataset<Row> df2 =
+        spark
+            .readStream()
+            .option("schemaTrackingLocation", schemaTrackingDir.getAbsolutePath())
+            .table(dsv2TableRef);
+    StreamingQuery q2 =
+        df2.writeStream()
+            .format("parquet")
+            .outputMode("append")
+            .option("path", outputDir.getAbsolutePath())
+            .option("checkpointLocation", checkpointDir.getAbsolutePath())
+            .start();
+    try {
+      q2.processAllAvailable();
+      final StreamingQuery finalQ = q2;
+      assertTrue(
+          finalQ.exception().isEmpty(),
+          () ->
+              "Restart should not raise SCHEMA_MISMATCH_ON_RESTART: "
+                  + (finalQ.exception().isDefined() ? finalQ.exception().get().toString() : ""));
+    } finally {
+      q2.stop();
+      DeltaLog.clearCache();
+    }
+
+    // Sink should now contain all 3 rows including the post-toggle null-value row.
+    List<Row> sinkRows = spark.read().parquet(outputDir.getAbsolutePath()).collectAsList();
+    assertEquals(3, sinkRows.size(), () -> "expected 3 total rows, got " + sinkRows);
+    assertTrue(
+        sinkRows.stream().anyMatch(r -> r.isNullAt(1)),
+        () -> "post-toggle null-value row must surface, got " + sinkRows);
+  }
+
+  /**
+   * Process a streaming query that resumes from a specific checkpoint location, returning the rows
+   * materialized into a memory sink.
+   */
+  private List<Row> processStreamingQueryFromCheckpoint(
+      Dataset<Row> streamingDF, String queryName, File checkpointDir) throws Exception {
+    StreamingQuery query = null;
+    try {
+      query =
+          streamingDF
+              .writeStream()
+              .format("memory")
+              .queryName(queryName)
+              .outputMode("append")
+              .option("checkpointLocation", checkpointDir.getAbsolutePath())
+              .start();
+      query.processAllAvailable();
+      return spark.sql("SELECT * FROM " + queryName).collectAsList();
+    } finally {
+      if (query != null) {
+        query.stop();
+        DeltaLog.clearCache();
+      }
+    }
   }
 
   /**
