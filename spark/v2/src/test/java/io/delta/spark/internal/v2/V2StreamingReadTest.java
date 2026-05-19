@@ -1,5 +1,5 @@
 /*
- * Copyright (2025) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -792,6 +792,114 @@ public class V2StreamingReadTest extends V2TestBase {
       // The delta sink accumulates committed data from both runs.
       List<Row> allRows = spark.read().format("delta").load(sinkPath).collectAsList();
       assertDataEquals(allRows, expectedRows(10));
+    } finally {
+      spark.conf().unset(dfFlagKey);
+      DeltaLog.clearCache();
+    }
+  }
+
+  /**
+   * Verifies checkpoint resume when multiple new commits arrive between query interrupt and
+   * restart, exercising the {@code loadSnapshotAt(version)} fix on the distributed initial snapshot
+   * path.
+   *
+   * <p>When the query restarts, the checkpointed offset references the original snapshot version,
+   * but the table now has 3 additional commits. The source must use {@code loadSnapshotAt(version)}
+   * to reconstruct the snapshot at the checkpointed version rather than using the latest snapshot,
+   * which would have a different file set and version.
+   *
+   * <ol>
+   *   <li>Creates a 10-file table (1 row per file) and starts a streaming query with {@code
+   *       maxFilesPerTrigger=2}. Stops after at least one batch commits.
+   *   <li>While the query is down, appends 3 separate commits (3 rows each) to the source table.
+   *   <li>Restarts from the same checkpoint and processes all remaining data.
+   *   <li>Reads the delta sink and verifies all 19 rows are present with no duplicates.
+   * </ol>
+   */
+  @Test
+  public void testCheckpointResumeAfterNewCommitsWithDistributedInitialSnapshot(
+      @TempDir File tempDir) throws Exception {
+    File sourceDir = new File(tempDir, "source");
+    File sinkDir = new File(tempDir, "sink");
+    File checkpointDir = new File(tempDir, "checkpoint");
+    String sourcePath = sourceDir.getAbsolutePath();
+    String sinkPath = sinkDir.getAbsolutePath();
+    String checkpointPath = checkpointDir.getAbsolutePath();
+
+    String dfFlagKey = "spark.databricks.delta.streaming.distributedInitialSnapshot";
+    spark.conf().set(dfFlagKey, "true");
+
+    try {
+      createMultiVersionTable(sourcePath, 10, 1);
+      String dsv2TableRef = str("dsv2.delta.`%s`", sourcePath);
+
+      // First run: start with rate limiting, stop after at least one batch commits.
+      StreamingQuery q1 =
+          spark
+              .readStream()
+              .option("maxFilesPerTrigger", "2")
+              .table(dsv2TableRef)
+              .writeStream()
+              .format("delta")
+              .option("checkpointLocation", checkpointPath)
+              .start(sinkPath);
+
+      try {
+        long deadline = System.currentTimeMillis() + 30_000;
+        while (q1.lastProgress() == null || q1.lastProgress().numInputRows() == 0) {
+          assertTrue(
+              System.currentTimeMillis() < deadline,
+              "At least one batch should commit within 30 seconds");
+          if (q1.exception().isDefined()) {
+            throw q1.exception().get();
+          }
+          Thread.sleep(100);
+        }
+      } finally {
+        q1.stop();
+      }
+
+      long firstRunCount = spark.read().format("delta").load(sinkPath).count();
+      assertTrue(firstRunCount > 0, "First run should commit at least one batch of data");
+
+      // Append 3 separate commits while the query is down. Each commit adds 3 rows,
+      // advancing the table version beyond the checkpointed snapshot version.
+      for (int batch = 0; batch < 3; batch++) {
+        List<Row> rows = new ArrayList<>();
+        for (int r = 0; r < 3; r++) {
+          int id = 11 + batch * 3 + r;
+          rows.add(RowFactory.create(id, "User" + id, (double) id * 10));
+        }
+        spark
+            .createDataFrame(rows, TEST_SCHEMA)
+            .write()
+            .format("delta")
+            .mode("append")
+            .save(sourcePath);
+      }
+
+      // Second run: restart from checkpoint. The checkpointed offset references the
+      // original snapshot version, but the table is now 3 commits ahead.
+      StreamingQuery q2 =
+          spark
+              .readStream()
+              .option("maxFilesPerTrigger", "2")
+              .table(dsv2TableRef)
+              .writeStream()
+              .format("delta")
+              .option("checkpointLocation", checkpointPath)
+              .start(sinkPath);
+
+      try {
+        q2.processAllAvailable();
+      } finally {
+        q2.stop();
+      }
+
+      // The delta sink accumulates committed data from both runs.
+      // All 19 rows (10 initial + 9 appended) must be present with no duplicates.
+      List<Row> allRows = spark.read().format("delta").load(sinkPath).collectAsList();
+      assertDataEquals(allRows, expectedRows(19));
     } finally {
       spark.conf().unset(dfFlagKey);
       DeltaLog.clearCache();
