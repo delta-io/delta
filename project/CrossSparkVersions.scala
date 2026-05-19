@@ -511,7 +511,7 @@ object CrossSparkVersions extends AutoPlugin {
       )
     }
 
-    // Step 2+: Publish Spark-dependent modules WITH suffix for each released Spark version
+    // Step 2+: Publish Spark-dependent modules WITH suffix for each non-master Spark version
     // This gives users versioned artifacts like delta-spark_4.0_2.13, delta-spark_4.1_2.13
     val suffixedSparkSteps: Seq[ReleaseStep] = SparkVersionSpec.ALL_SPECS
       .filterNot(spec => spec.isMaster || spec.isSnapshot)
