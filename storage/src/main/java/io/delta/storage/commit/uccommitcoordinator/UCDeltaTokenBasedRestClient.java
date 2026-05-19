@@ -236,7 +236,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       throws IOException, CommitFailedException, UCCommitCoordinatorException {
     ensureOpen();
     Objects.requireNonNull(tableId, "tableId must not be null");
-    Objects.requireNonNull(tableIdentifier, "tableIdentifier must not be null");
+    ResolvedTableName name = resolveThreePartName(tableIdentifier);
 
     UpdateTableRequest request = new UpdateTableRequest();
     request.addRequirementsItem(new AssertTableUUID()
@@ -269,14 +269,10 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
           .protocol(toSDKDeltaProtocol(newProtocol.get())));
     }
 
-    String catalog = tableIdentifier.getNamespace()[0];
-    String schema = tableIdentifier.getNamespace()[1];
-    String table = tableIdentifier.getName();
-
     try {
-      deltaTablesApi.updateTable(catalog, schema, table, request);
+      deltaTablesApi.updateTable(name.catalog, name.schema, name.table, request);
     } catch (ApiException e) {
-      handleUpdateTableException(e, catalog, schema, table);
+      handleUpdateTableException(e, name.catalog, name.schema, name.table);
     }
   }
 
@@ -290,36 +286,26 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     ensureOpen();
     Objects.requireNonNull(tableId, "tableId must not be null");
     Objects.requireNonNull(tableUri, "tableUri must not be null");
-    Objects.requireNonNull(tableIdentifier, "tableIdentifier must not be null");
     Objects.requireNonNull(startVersion, "startVersion must not be null");
     Objects.requireNonNull(endVersion, "endVersion must not be null");
 
     UUID expectedTableUuid = UUID.fromString(tableId);
-    String[] namespace = Objects.requireNonNull(
-        tableIdentifier.getNamespace(), "tableIdentifier namespace must not be null");
-    if (namespace.length != 2) {
-      throw new IllegalArgumentException(
-          "tableIdentifier must be a three-part Unity Catalog table name");
-    }
-    String catalog = Objects.requireNonNull(namespace[0], "catalog name must not be null");
-    String schema = Objects.requireNonNull(namespace[1], "schema name must not be null");
-    String table = Objects.requireNonNull(tableIdentifier.getName(), "table name must not be null");
-    String fullName = catalog + "." + schema + "." + table;
+    ResolvedTableName name = resolveThreePartName(tableIdentifier);
 
     // The UC loadTable endpoint does not support server-side filtering by version range, so
     // we fetch the full unbackfilled commit window and filter client-side below. The server
     // bounds the window size, so this list is not unbounded in practice.
     LoadTableResponse response;
     try {
-      response = deltaTablesApi.loadTable(catalog, schema, table);
+      response = deltaTablesApi.loadTable(name.catalog, name.schema, name.table);
     } catch (ApiException e) {
       if (e.getCode() == HTTP_NOT_FOUND) {
-        throw new InvalidTargetTableException(
-            String.format("Table not found %s: %s", fullName, e.getResponseBody()));
+        throw new NoSuchTableException(
+            String.format("Table %s not found in Unity Catalog", name.fullName), e);
       }
       throw new IOException(
           String.format("Failed to load commits for table %s (HTTP %s): %s",
-              fullName, e.getCode(), e.getResponseBody()),
+              name.fullName, e.getCode(), e.getResponseBody()),
           e);
     }
 
@@ -329,7 +315,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       throw new InvalidTargetTableException(
           String.format(
               "Table UUID mismatch for %s: expected %s but got %s",
-              fullName,
+              name.fullName,
               expectedTableUuid,
               actualTableUuid));
     }
@@ -425,24 +411,16 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   @Override
   public TableInfo loadTable(TableIdentifier tableIdentifier) throws IOException {
     ensureOpen();
-    Objects.requireNonNull(tableIdentifier, "tableIdentifier must not be null");
-    String[] namespace = tableIdentifier.getNamespace();
-    if (namespace == null || namespace.length != 2) {
-      throw new IllegalArgumentException(
-          "UC tableIdentifier must have a 2-component namespace [catalog, schema]; got " +
-              (namespace == null ? "null" : java.util.Arrays.toString(namespace)));
-    }
-    String catalog = namespace[0];
-    String schema = namespace[1];
-    String table = tableIdentifier.getName();
+    ResolvedTableName name = resolveThreePartName(tableIdentifier);
 
     try {
       return toTableInfo(
-          deltaTablesApi.loadTable(catalog, schema, table), catalog, schema, table);
+          deltaTablesApi.loadTable(name.catalog, name.schema, name.table),
+          name.catalog, name.schema, name.table);
     } catch (ApiException e) {
       if (e.getCode() == HTTP_NOT_FOUND) {
         throw new NoSuchTableException(
-            String.format("Table %s.%s.%s not found in Unity Catalog", catalog, schema, table), e);
+            String.format("Table %s not found in Unity Catalog", name.fullName), e);
       }
       // UC encodes non-Delta-format errors as HTTP 400 with error.type =
       // "UnsupportedTableFormatException"; substring-match the body to avoid coupling to an
@@ -450,13 +428,13 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       String body = e.getResponseBody();
       if (body != null && body.contains("UnsupportedTableFormatException")) {
         throw new UnsupportedTableFormatException(
-            String.format("Table %s.%s.%s is not in Delta format; the Delta REST API cannot "
-                + "serve it. Body: %s", catalog, schema, table, body),
+            String.format("Table %s is not in Delta format; the Delta REST API cannot "
+                + "serve it. Body: %s", name.fullName, body),
             e);
       }
       throw new IOException(
-          String.format("Failed to load table %s.%s.%s (HTTP %s): %s",
-              catalog, schema, table, e.getCode(), e.getResponseBody()), e);
+          String.format("Failed to load table %s (HTTP %s): %s",
+              name.fullName, e.getCode(), e.getResponseBody()), e);
     }
   }
 
@@ -727,6 +705,25 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   }
 
   // ===========================
+  // Table Identifier Helpers
+  // ===========================
+
+  /**
+   * Validates that the given {@code tableIdentifier} is a Unity Catalog three-part
+   * (catalog.schema.table) name and returns its resolved parts.
+   */
+  private static ResolvedTableName resolveThreePartName(TableIdentifier tableIdentifier) {
+    Objects.requireNonNull(tableIdentifier, "tableIdentifier must not be null");
+    String[] namespace = tableIdentifier.getNamespace();
+    if (namespace == null || namespace.length != 2) {
+      throw new IllegalArgumentException(
+          "UC tableIdentifier must have a 2-component namespace [catalog, schema]; got " +
+              (namespace == null ? "null" : java.util.Arrays.toString(namespace)));
+    }
+    return new ResolvedTableName(namespace[0], namespace[1], tableIdentifier.getName());
+  }
+
+  // ===========================
   // Exception Handling
   // ===========================
 
@@ -758,6 +755,21 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   // ===========================
   // Inner Classes
   // ===========================
+
+  /** A Unity Catalog three-part table name resolved from a {@link TableIdentifier}. */
+  private static final class ResolvedTableName {
+    final String catalog;
+    final String schema;
+    final String table;
+    final String fullName;
+
+    ResolvedTableName(String catalog, String schema, String table) {
+      this.catalog = catalog;
+      this.schema = schema;
+      this.table = table;
+      this.fullName = catalog + "." + schema + "." + table;
+    }
+  }
 
   /**
    * Adapts a UC SDK {@link TableMetadata} to {@link AbstractMetadata}.

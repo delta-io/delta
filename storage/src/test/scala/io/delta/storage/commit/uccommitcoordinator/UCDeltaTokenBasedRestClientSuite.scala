@@ -669,13 +669,16 @@ class UCDeltaTokenBasedRestClientSuite
     }
   }
 
-  test("getCommits throws InvalidTargetTableException on 404") {
-    deltaHandler = (exchange, _) => sendJson(exchange, HttpStatus.SC_NOT_FOUND, "{}")
+  test("getCommits throws NoSuchTableException on 404") {
+    deltaHandler = (exchange, _) =>
+      sendJson(exchange, HttpStatus.SC_NOT_FOUND, """{"error":"not found"}""")
     withClient { c =>
-      intercept[InvalidTargetTableException] {
+      val e = intercept[NoSuchTableException] {
         c.getCommits(testTableId.toString, new URI("s3://b/t"), testIdentifier,
           Optional.empty(), Optional.empty())
       }
+      assert(e.getMessage.contains(s"$testCatalog.$testSchema.$testTable"))
+      assert(e.getMessage.contains("not found"))
     }
   }
 
