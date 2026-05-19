@@ -20,6 +20,8 @@ import java.net.{InetSocketAddress, URI}
 import java.nio.charset.StandardCharsets
 import java.util.{Collections, Optional, Set => JSet, UUID}
 
+import scala.jdk.CollectionConverters._
+
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import io.delta.storage.commit.{Commit, CommitFailedException, TableIdentifier}
@@ -32,7 +34,6 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 import org.apache.http.HttpStatus
 import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach}
 import org.scalatest.funsuite.AnyFunSuite
-import scala.jdk.CollectionConverters._
 
 class UCDeltaTokenBasedRestClientSuite
     extends AnyFunSuite
@@ -666,6 +667,14 @@ class UCDeltaTokenBasedRestClientSuite
         c.getCommits(testTableId.toString, new URI("s3://b/t"), null,
           Optional.empty(), Optional.empty())
       }
+      intercept[NullPointerException] {
+        c.getCommits(testTableId.toString, new URI("s3://b/t"), testIdentifier,
+          null, Optional.empty())
+      }
+      intercept[NullPointerException] {
+        c.getCommits(testTableId.toString, new URI("s3://b/t"), testIdentifier,
+          Optional.empty(), null)
+      }
     }
   }
 
@@ -683,14 +692,17 @@ class UCDeltaTokenBasedRestClientSuite
   }
 
   test("getCommits throws InvalidTargetTableException when table UUID does not match") {
+    val actualUuid = UUID.fromString("550e8400-e29b-41d4-a716-446655440001")
     deltaHandler = (exchange, _) =>
-      sendJson(exchange, HttpStatus.SC_OK,
-        loadTableJson(tableUuid = UUID.fromString("550e8400-e29b-41d4-a716-446655440001")))
+      sendJson(exchange, HttpStatus.SC_OK, loadTableJson(tableUuid = actualUuid))
     withClient { c =>
-      intercept[InvalidTargetTableException] {
+      val e = intercept[InvalidTargetTableException] {
         c.getCommits(testTableId.toString, new URI("s3://b/t"), testIdentifier,
           Optional.empty(), Optional.empty())
       }
+      assert(e.getMessage.contains(s"$testCatalog.$testSchema.$testTable"))
+      assert(e.getMessage.contains(testTableId.toString))
+      assert(e.getMessage.contains(actualUuid.toString))
     }
   }
 

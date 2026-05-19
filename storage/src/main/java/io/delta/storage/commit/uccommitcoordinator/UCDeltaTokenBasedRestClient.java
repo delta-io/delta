@@ -61,6 +61,7 @@ import io.unitycatalog.hadoop.UCCredentialHadoopConfs.TableOperation;
 import java.io.IOException;
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -236,7 +237,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       throws IOException, CommitFailedException, UCCommitCoordinatorException {
     ensureOpen();
     Objects.requireNonNull(tableId, "tableId must not be null");
-    ResolvedTableName name = resolveThreePartName(tableIdentifier);
+    ResolvedTableName name = requireThreePartName(tableIdentifier);
 
     UpdateTableRequest request = new UpdateTableRequest();
     request.addRequirementsItem(new AssertTableUUID()
@@ -290,7 +291,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     Objects.requireNonNull(endVersion, "endVersion must not be null");
 
     UUID expectedTableUuid = UUID.fromString(tableId);
-    ResolvedTableName name = resolveThreePartName(tableIdentifier);
+    ResolvedTableName name = requireThreePartName(tableIdentifier);
 
     // The UC loadTable endpoint does not support server-side filtering by version range, so
     // we fetch the full unbackfilled commit window and filter client-side below. The server
@@ -325,8 +326,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     List<Commit> commits = new ArrayList<>();
     if (response.getCommits() != null) {
       for (DeltaCommit deltaCommit : response.getCommits()) {
-        long version = Objects.requireNonNull(
-            deltaCommit.getVersion(), "commit version must not be null");
+        long version = deltaCommit.getVersion();
         if (startVersion.isPresent() && version < startVersion.get()) {
           continue;
         }
@@ -345,20 +345,13 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   /** Converts a UC SDK {@link DeltaCommit} to a Delta {@link Commit}. */
   private Commit fromDeltaCommit(DeltaCommit deltaCommit, Path basePath) {
     FileStatus fileStatus = new FileStatus(
-        Objects.requireNonNull(
-            deltaCommit.getFileSize(), "commit fileSize must not be null"),
+        deltaCommit.getFileSize(),
         false /* isdir */,
         0 /* block_replication */,
         0 /* blocksize */,
-        Objects.requireNonNull(
-            deltaCommit.getFileModificationTimestamp(),
-            "commit fileModificationTimestamp must not be null"),
-        new Path(basePath, Objects.requireNonNull(
-            deltaCommit.getFileName(), "commit fileName must not be null")));
-    return new Commit(
-        Objects.requireNonNull(deltaCommit.getVersion(), "commit version must not be null"),
-        fileStatus,
-        Objects.requireNonNull(deltaCommit.getTimestamp(), "commit timestamp must not be null"));
+        deltaCommit.getFileModificationTimestamp(),
+        new Path(basePath, deltaCommit.getFileName()));
+    return new Commit(deltaCommit.getVersion(), fileStatus, deltaCommit.getTimestamp());
   }
 
   @Override
@@ -411,7 +404,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   @Override
   public TableInfo loadTable(TableIdentifier tableIdentifier) throws IOException {
     ensureOpen();
-    ResolvedTableName name = resolveThreePartName(tableIdentifier);
+    ResolvedTableName name = requireThreePartName(tableIdentifier);
 
     try {
       return toTableInfo(
@@ -712,13 +705,13 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
    * Validates that the given {@code tableIdentifier} is a Unity Catalog three-part
    * (catalog.schema.table) name and returns its resolved parts.
    */
-  private static ResolvedTableName resolveThreePartName(TableIdentifier tableIdentifier) {
+  private static ResolvedTableName requireThreePartName(TableIdentifier tableIdentifier) {
     Objects.requireNonNull(tableIdentifier, "tableIdentifier must not be null");
     String[] namespace = tableIdentifier.getNamespace();
     if (namespace == null || namespace.length != 2) {
       throw new IllegalArgumentException(
           "UC tableIdentifier must have a 2-component namespace [catalog, schema]; got " +
-              (namespace == null ? "null" : java.util.Arrays.toString(namespace)));
+              (namespace == null ? "null" : Arrays.toString(namespace)));
     }
     return new ResolvedTableName(namespace[0], namespace[1], tableIdentifier.getName());
   }
