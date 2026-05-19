@@ -84,9 +84,7 @@ def prepare(root_dir, spark_version, kernel_version=None):
             delete_if_exists(os.path.expanduser(f"~/{filepath}/cache/io.delta"))
         delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/"))
     sbt_command = [sbt_path]
-    sbt_command = sbt_command + [
-        f"-DsparkVersion={spark_version}",
-    ]
+    sbt_command = sbt_command + [f"-DsparkVersion={spark_version}"]
     if kernel_version:
         sbt_command = sbt_command + [f"-DkernelVersion={kernel_version}"]
     run_cmd(sbt_command + ["clean", "publishM2"], stream_output=True)

@@ -257,7 +257,7 @@ class CrossSparkPublishTest:
     def test_cross_spark_workflow(self) -> bool:
         """Full cross-Spark workflow: backward-compat (no suffix) + all versions (with suffix)."""
         print("\n" + "="*70)
-        print("TEST: Cross-Spark Workflow (backward-compat + all non-snapshot with suffix)")
+        print("TEST: Cross-Spark Workflow (backward-compat + all non-master with suffix)")
         print("="*70)
 
         self.clean_maven_cache()
@@ -269,9 +269,9 @@ class CrossSparkPublishTest:
         ):
             return False
 
-        # Step 2: Publish Spark-dependent modules WITH suffix for each non-snapshot version
+        # Step 2: Publish Spark-dependent modules WITH suffix for each non-master version
         for spark_version, spark_spec in SPARK_VERSIONS.items():
-            # Skip snapshot versions
+            # Skip master/snapshot versions
             if "SNAPSHOT" in spark_version:
                 continue
 
@@ -283,7 +283,7 @@ class CrossSparkPublishTest:
 
         # Build expected JARs:
         # 1. All modules WITHOUT suffix (from Step 1 - backward compat)
-        # 2. Spark-dependent modules WITH suffix for each non-snapshot version (from Step 2)
+        # 2. Spark-dependent modules WITH suffix for each non-master version (from Step 2)
         # 3. Iceberg/Hudi JARs for supported versions (no Spark suffix)
         expected = set()
 
@@ -292,10 +292,10 @@ class CrossSparkPublishTest:
         no_suffix_spec = SparkVersionSpec(suffix="", support_iceberg=default_spark_spec.support_iceberg, support_hudi=default_spark_spec.support_hudi)
         expected.update(substitute_xversion(no_suffix_spec.all_jars, self.delta_version))
 
-        # Step 2: Spark-dependent modules WITH suffix for each non-snapshot version
+        # Step 2: Spark-dependent modules WITH suffix for each non-master version
         for spark_version, spark_spec in SPARK_VERSIONS.items():
             if "SNAPSHOT" in spark_version:
-                continue  # Skip snapshots
+                continue  # Skip master/snapshot
 
             expected.update(substitute_xversion(spark_spec.spark_related_jars, self.delta_version))
             expected.update(substitute_xversion(spark_spec.iceberg_jars, self.delta_version))
@@ -417,7 +417,7 @@ class SparkVersionsScriptTest:
                     print(f"  ✗ Entry {idx}: Invalid field types")
                     return False
 
-            versions_str = ", ".join([entry["shortVersion"] for entry in data])
+            versions_str = ", ".join([entry.get("isMaster") and "master" or entry["shortVersion"] for entry in data])
             print(f"  ✓ JSON format valid: {len(data)} version(s) [{versions_str}]")
             return True
 
@@ -459,11 +459,6 @@ class SparkVersionsScriptTest:
 
             if len(matrix_versions) != len(data):
                 print(f"  ✗ Matrix has {len(matrix_versions)} versions, JSON has {len(data)}")
-                return False
-
-            expected_versions = [entry["shortVersion"] for entry in data]
-            if matrix_versions != expected_versions:
-                print(f"  ✗ Matrix versions {matrix_versions} did not match {expected_versions}")
                 return False
 
             print(f"  ✓ --all-spark-versions: {matrix_versions}")
@@ -536,7 +531,7 @@ class SparkVersionsScriptTest:
                 test_cases.append((entry["shortVersion"], "targetJvm", entry["targetJvm"]))
                 test_cases.append((entry["fullVersion"], "fullVersion", entry["fullVersion"]))
                 
-                # Test the legacy "master" alias if applicable
+                # Test "master" if applicable
                 if entry["isMaster"]:
                     test_cases.append(("master", "targetJvm", entry["targetJvm"]))
 

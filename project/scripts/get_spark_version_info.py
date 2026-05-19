@@ -10,7 +10,7 @@ The script automatically generates the JSON file if it doesn't exist.
 Usage:
     # Get all Spark versions as JSON array
     python project/scripts/get_spark_version_info.py --all-spark-versions
-    # Output: ["4.0", "4.1"] or ["4.0", "4.1", "4.2"] if a snapshot is present
+    # Output: ["4.0", "4.1"] or ["master", "4.0"] if master is present
 
     # Get only released Spark versions (no snapshots)
     python project/scripts/get_spark_version_info.py --released-spark-versions
@@ -18,7 +18,6 @@ Usage:
 
     # Get a specific field for a Spark version (using short version or "master")
     python project/scripts/get_spark_version_info.py --get-field 4.0 targetJvm
-    python project/scripts/get_spark_version_info.py --get-field 4.2 targetJvm
     python project/scripts/get_spark_version_info.py --get-field master targetJvm
     # Output: "17"
 """
@@ -77,7 +76,7 @@ def main():
     parser.add_argument(
         "--all-spark-versions",
         action="store_true",
-        help="Output all Spark versions as JSON array (e.g., [\"4.0\", \"4.1\", \"4.2\"])"
+        help="Output all Spark versions as JSON array (e.g., [\"4.0\", \"4.1\"] or [\"master\", \"4.0\"])"
     )
     parser.add_argument(
         "--released-spark-versions",
@@ -102,8 +101,13 @@ def main():
         versions = load_spark_versions(json_path, repo_root)
 
         if args.all_spark_versions:
-            # Use short versions for matrix labels, including unreleased branch snapshots.
-            matrix_versions = [v["shortVersion"] for v in versions]
+            # For master version, use "master"; for others, use short version
+            matrix_versions = []
+            for v in versions:
+                if v.get("isMaster", False):
+                    matrix_versions.append("master")
+                else:
+                    matrix_versions.append(v["shortVersion"])
             print(json.dumps(matrix_versions))
 
         elif args.released_spark_versions:
