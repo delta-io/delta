@@ -44,7 +44,7 @@ import org.junit.jupiter.api.io.TempDir;
  * <p>DSv1 is treated as the oracle: every test runs both readers with identical options and
  * compares the resulting rows.
  */
-public class V2StreamingIctTest extends V2TestBase {
+public class V2StreamingInCommitTimestampTest extends V2TestBase {
 
   private static final long BASE_TS = 1700000000000L;
   private static final long ONE_MINUTE = 60_000L;
