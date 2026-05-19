@@ -20,6 +20,7 @@ import io.delta.kernel.internal.types.DataTypeJsonSerDe;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import java.io.Serializable;
+import java.util.Locale;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -114,6 +115,18 @@ public class DeltaSinkConf implements Serializable {
               "Schema evolution policy: 'no' disallows any change; 'newcolumn' allows adding new "
                   + "columns only.");
 
+  /**
+   * Internal carrier for primary-key column ordinals (0-based field indices into the sink schema).
+   *
+   * <p>Format: comma-separated, decimal, non-negative integers. Example: {@code "0,3"} declares a
+   * composite PK on field ordinals 0 and 3.
+   */
+  public static final ConfigOption<String> PRIMARY_KEY =
+      ConfigOptions.key("primary_key")
+          .stringType()
+          .noDefaultValue()
+          .withDescription("Comma-separated primary key column ordinals.");
+
   // ----------------------------------------------------------------------
   // State
   // ----------------------------------------------------------------------
@@ -123,6 +136,7 @@ public class DeltaSinkConf implements Serializable {
   private final Map<String, String> conf;
   private final Configuration configuration;
   private final SchemaEvolutionPolicy schemaEvolutionPolicy;
+  private final int[] primaryKeyOrdinals;
 
   private transient StructType sinkSchema;
 
@@ -141,7 +155,7 @@ public class DeltaSinkConf implements Serializable {
     // Materialize the raw Map into Flink Configuration for ConfigOption access.
     this.configuration = Configuration.fromMap(conf);
 
-    String mode = configuration.get(SCHEMA_EVOLUTION_MODE).toLowerCase();
+    String mode = configuration.get(SCHEMA_EVOLUTION_MODE).toLowerCase(Locale.ROOT);
     switch (mode) {
       case "newcolumn":
         this.schemaEvolutionPolicy = new NewColumnEvolution();
@@ -152,6 +166,51 @@ public class DeltaSinkConf implements Serializable {
       default:
         throw new IllegalArgumentException("unknown evolution mode:" + mode);
     }
+
+    this.primaryKeyOrdinals = parsePrimaryKeyOrdinals(configuration.get(PRIMARY_KEY), sinkSchema);
+  }
+
+  private static int[] parsePrimaryKeyOrdinals(String raw, StructType schema) {
+    if (raw == null || raw.trim().isEmpty()) {
+      return new int[0];
+    }
+    int width = schema.length();
+    String[] segments = raw.split(",");
+    int[] ordinals = new int[segments.length];
+    int n = 0;
+    for (String segment : segments) {
+      String trimmed = segment.trim();
+      if (trimmed.isEmpty()) {
+        continue;
+      }
+      int ordinal;
+      try {
+        ordinal = Integer.parseInt(trimmed);
+      } catch (NumberFormatException e) {
+        throw new IllegalArgumentException(
+            "Invalid primary-key ordinal '"
+                + trimmed
+                + "' in '"
+                + PRIMARY_KEY.key()
+                + "'. Expected a non-negative integer.",
+            e);
+      }
+      if (ordinal < 0 || ordinal >= width) {
+        throw new IllegalArgumentException(
+            "Primary-key ordinal "
+                + ordinal
+                + " is out of range for sink schema of width "
+                + width
+                + ".");
+      }
+      ordinals[n++] = ordinal;
+    }
+    if (n == segments.length) {
+      return ordinals;
+    }
+    int[] result = new int[n];
+    System.arraycopy(ordinals, 0, result, 0, n);
+    return result;
   }
 
   /**
@@ -213,6 +272,15 @@ public class DeltaSinkConf implements Serializable {
    */
   public SchemaEvolutionPolicy getSchemaEvolutionPolicy() {
     return schemaEvolutionPolicy;
+  }
+
+  /**
+   * Returns the primary-key column ordinals (0-based indices into the sink schema).
+   *
+   * <p>The returned array is the live backing array; callers must not mutate it.
+   */
+  public int[] getPrimaryKeyOrdinals() {
+    return primaryKeyOrdinals;
   }
 
   /**
