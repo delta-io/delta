@@ -1844,18 +1844,15 @@ public class SparkMicroBatchStream
     if (dfCache == null || dfCache.getVersion() != version) {
       invalidateDataFrameCache();
 
-      // The DataFrame path can only serve the version matching snapshotAtSourceInit because
-      // that snapshot's LogSegment was serialized into SerializableReadOnlySnapshot. A different
-      // version would require re-serializing a different LogSegment. This is intentionally more
-      // restrictive than the driver path (which can load any version via
-      // snapshotManager.loadSnapshotAt(version)).
-      Preconditions.checkArgument(
-          snapshotAtSourceInit.getVersion() == version,
-          "Expected snapshot version %d but snapshotAtSourceInit is at version %d",
-          version,
-          snapshotAtSourceInit.getVersion());
+      // Load the snapshot at the requested version. This may differ from snapshotAtSourceInit
+      // when a query restarts from a checkpoint mid-initial-snapshot (the restarted query
+      // resumes at the checkpointed version, but snapshotAtSourceInit reflects the latest
+      // version at construction time). loadSnapshotAt is metadata-only on the driver
+      // (directory listing + LogSegment construction); the heavy work of replaying the log
+      // to produce AddFiles runs on executors via ScanFileRDD.
+      SnapshotImpl snapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(version);
       SerializableReadOnlySnapshot serSnapshot =
-          SerializableReadOnlySnapshot.fromSnapshot(snapshotAtSourceInit, hadoopConf);
+          SerializableReadOnlySnapshot.fromSnapshot(snapshot, hadoopConf);
 
       ScanFileRDD rdd = new ScanFileRDD(spark.sparkContext(), serSnapshot);
       Dataset<Row> sorted =
