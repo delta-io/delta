@@ -74,7 +74,7 @@ trait InMemoryTestTableMixin extends SharedSparkSession with InMemoryTestTableMi
   override def sparkConf: SparkConf = super.sparkConf
     .set("spark.sql.catalog.spark_catalog", classOf[InMemoryDeltaCatalog].getName)
 
-  override def test
+  override protected def test
       (testName: String, testTags: org.scalatest.Tag*)
       (testFun: => Any)
       (implicit pos: org.scalactic.source.Position): Unit = {
