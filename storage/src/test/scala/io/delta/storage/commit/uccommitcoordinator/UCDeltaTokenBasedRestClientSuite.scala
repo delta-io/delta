@@ -32,6 +32,7 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 import org.apache.http.HttpStatus
 import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach}
 import org.scalatest.funsuite.AnyFunSuite
+import scala.jdk.CollectionConverters._
 
 class UCDeltaTokenBasedRestClientSuite
     extends AnyFunSuite
@@ -81,7 +82,9 @@ class UCDeltaTokenBasedRestClientSuite
       tableUuid: UUID = testTableId,
       format: String = "DELTA",
       location: String = "s3://bucket/table",
-      tableType: String = "MANAGED"): String =
+      tableType: String = "MANAGED",
+      commitsJson: String = "[]",
+      latestTableVersion: Long = -1L): String =
     s"""{"metadata":{"table-uuid":"$tableUuid","data-source-format":"$format",""" +
     s""""table-type":"$tableType",""" +
     s""""location":"$location",""" +
@@ -89,7 +92,17 @@ class UCDeltaTokenBasedRestClientSuite
     s"""{"name":"date","type":"string","nullable":true,"metadata":{}},""" +
     s"""{"name":"value","type":"integer","nullable":true,"metadata":{}}""" +
     s"""]},""" +
-    s""""properties":{"key1":"val1"},"partition-columns":["date"],"created-time":1000}}"""
+    s""""properties":{"key1":"val1"},"partition-columns":["date"],"created-time":1000},""" +
+    s""""commits":$commitsJson,"latest-table-version":$latestTableVersion}"""
+
+  private def deltaCommitJson(
+      version: Long,
+      fileName: String,
+      fileSize: Long,
+      timestamp: Long,
+      fileModificationTimestamp: Long): String =
+    s"""{"version":$version,"file-name":"$fileName","file-size":$fileSize,""" +
+    s""""timestamp":$timestamp,"file-modification-timestamp":$fileModificationTimestamp}"""
 
   private def readBody(exchange: HttpExchange): String = {
     val is = exchange.getRequestBody
@@ -585,9 +598,93 @@ class UCDeltaTokenBasedRestClientSuite
 
   // --------------- getCommits ---------------
 
-  test("getCommits throws UnsupportedOperationException") {
+  test("getCommits loads table by identifier and returns commits") {
+    var capturedMethod: String = null
+    var capturedPath: String = null
+    val commitsJson = "[" +
+      deltaCommitJson(2L, "00000000000000000002.uuid.json", 200L, 2000L, 2001L) +
+      "]"
+    deltaHandler = (exchange, _) => {
+      capturedMethod = exchange.getRequestMethod
+      capturedPath = exchange.getRequestURI.getPath
+      sendJson(exchange, HttpStatus.SC_OK,
+        loadTableJson(commitsJson = commitsJson, latestTableVersion = 2L))
+    }
+
     withClient { c =>
-      intercept[UnsupportedOperationException] {
+      val response = c.getCommits(testTableId.toString, new URI("s3://b/t"), testIdentifier,
+        Optional.empty(), Optional.empty())
+
+      assert(capturedMethod === "GET")
+      assert(capturedPath ===
+        "/api/2.1/unity-catalog/delta/v1/catalogs/cat/schemas/sch/tables/tbl")
+      assert(response.getLatestTableVersion === 2L)
+      assert(response.getCommits.size() === 1)
+
+      val commit = response.getCommits.get(0)
+      assert(commit.getVersion === 2L)
+      assert(commit.getCommitTimestamp === 2000L)
+      assert(commit.getFileStatus.getLen === 200L)
+      assert(commit.getFileStatus.getModificationTime === 2001L)
+      assert(commit.getFileStatus.getPath.toString ===
+        "s3://b/t/_delta_log/_staged_commits/00000000000000000002.uuid.json")
+    }
+  }
+
+  test("getCommits filters loaded commits by requested version range") {
+    val commitsJson = Seq(
+      deltaCommitJson(1L, "1.uuid.json", 100L, 1000L, 1001L),
+      deltaCommitJson(2L, "2.uuid.json", 200L, 2000L, 2001L),
+      deltaCommitJson(3L, "3.uuid.json", 300L, 3000L, 3001L),
+      deltaCommitJson(4L, "4.uuid.json", 400L, 4000L, 4001L)
+    ).mkString("[", ",", "]")
+    deltaHandler = (exchange, _) =>
+      sendJson(exchange, HttpStatus.SC_OK,
+        loadTableJson(commitsJson = commitsJson, latestTableVersion = 4L))
+
+    withClient { c =>
+      val response = c.getCommits(testTableId.toString, new URI("s3://b/t"), testIdentifier,
+        Optional.of(java.lang.Long.valueOf(2L)),
+        Optional.of(java.lang.Long.valueOf(3L)))
+
+      assert(response.getLatestTableVersion === 4L)
+      assert(response.getCommits.asScala.map(_.getVersion).toSeq === Seq(2L, 3L))
+    }
+  }
+
+  test("getCommits validates required parameters") {
+    withClient { c =>
+      intercept[NullPointerException] {
+        c.getCommits(null, new URI("s3://b/t"), testIdentifier,
+          Optional.empty(), Optional.empty())
+      }
+      intercept[NullPointerException] {
+        c.getCommits(testTableId.toString, null, testIdentifier,
+          Optional.empty(), Optional.empty())
+      }
+      intercept[NullPointerException] {
+        c.getCommits(testTableId.toString, new URI("s3://b/t"), null,
+          Optional.empty(), Optional.empty())
+      }
+    }
+  }
+
+  test("getCommits throws InvalidTargetTableException on 404") {
+    deltaHandler = (exchange, _) => sendJson(exchange, HttpStatus.SC_NOT_FOUND, "{}")
+    withClient { c =>
+      intercept[InvalidTargetTableException] {
+        c.getCommits(testTableId.toString, new URI("s3://b/t"), testIdentifier,
+          Optional.empty(), Optional.empty())
+      }
+    }
+  }
+
+  test("getCommits throws InvalidTargetTableException when table UUID does not match") {
+    deltaHandler = (exchange, _) =>
+      sendJson(exchange, HttpStatus.SC_OK,
+        loadTableJson(tableUuid = UUID.fromString("550e8400-e29b-41d4-a716-446655440001")))
+    withClient { c =>
+      intercept[InvalidTargetTableException] {
         c.getCommits(testTableId.toString, new URI("s3://b/t"), testIdentifier,
           Optional.empty(), Optional.empty())
       }

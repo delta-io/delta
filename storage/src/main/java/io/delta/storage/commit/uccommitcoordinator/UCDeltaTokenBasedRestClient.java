@@ -18,6 +18,7 @@ package io.delta.storage.commit.uccommitcoordinator;
 
 import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.CommitFailedException;
+import io.delta.storage.commit.CoordinatedCommitsUtils;
 import io.delta.storage.commit.GetCommitsResponse;
 import io.delta.storage.commit.TableIdentifier;
 import io.delta.storage.commit.actions.AbstractMetadata;
@@ -70,6 +71,8 @@ import java.util.UUID;
 import java.util.function.Supplier;
 
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FileStatus;
+import org.apache.hadoop.fs.Path;
 
 /**
  * A REST client implementation of {@link UCDeltaClient} that uses the UC Delta REST API for
@@ -284,9 +287,87 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       TableIdentifier tableIdentifier,
       Optional<Long> startVersion,
       Optional<Long> endVersion) throws IOException, UCCommitCoordinatorException {
-    throw new UnsupportedOperationException(
-        "getCommits is not yet supported by UCDeltaTokenBasedRestClient. " +
-            "A separate PR will add this once the tableIdentifier mapping is available.");
+    ensureOpen();
+    Objects.requireNonNull(tableId, "tableId must not be null");
+    Objects.requireNonNull(tableUri, "tableUri must not be null");
+    Objects.requireNonNull(tableIdentifier, "tableIdentifier must not be null");
+    Objects.requireNonNull(startVersion, "startVersion must not be null");
+    Objects.requireNonNull(endVersion, "endVersion must not be null");
+
+    String[] namespace = Objects.requireNonNull(
+        tableIdentifier.getNamespace(), "tableIdentifier namespace must not be null");
+    if (namespace.length != 2) {
+      throw new IllegalArgumentException(
+          "tableIdentifier must be a three-part Unity Catalog table name");
+    }
+    String catalog = Objects.requireNonNull(namespace[0], "catalog name must not be null");
+    String schema = Objects.requireNonNull(namespace[1], "schema name must not be null");
+    String table = Objects.requireNonNull(tableIdentifier.getName(), "table name must not be null");
+    String fullName = catalog + "." + schema + "." + table;
+
+    LoadTableResponse response;
+    try {
+      response = deltaTablesApi.loadTable(catalog, schema, table);
+    } catch (ApiException e) {
+      if (e.getCode() == HTTP_NOT_FOUND) {
+        throw new InvalidTargetTableException(
+            String.format("Table not found %s: %s", fullName, e.getResponseBody()));
+      }
+      throw new IOException(
+          String.format("Failed to load commits for table %s (HTTP %s): %s",
+              fullName, e.getCode(), e.getResponseBody()),
+          e);
+    }
+
+    Objects.requireNonNull(response, "loadTable response must not be null");
+    String actualTableId = response.getMetadata() != null
+        && response.getMetadata().getTableUuid() != null
+            ? response.getMetadata().getTableUuid().toString()
+            : null;
+    if (!Objects.equals(tableId, actualTableId)) {
+      throw new InvalidTargetTableException(
+          String.format(
+              "Table UUID mismatch for %s: expected %s but got %s",
+              fullName,
+              tableId,
+              actualTableId));
+    }
+
+    Path basePath = CoordinatedCommitsUtils.commitDirPath(
+        CoordinatedCommitsUtils.logDirPath(new Path(tableUri)));
+    List<Commit> commits = new ArrayList<>();
+    if (response.getCommits() != null) {
+      for (DeltaCommit deltaCommit : response.getCommits()) {
+        long version = Objects.requireNonNull(
+            deltaCommit.getVersion(), "commit version must not be null");
+        if (startVersion.isPresent() && version < startVersion.get()) {
+          continue;
+        }
+        if (endVersion.isPresent() && version > endVersion.get()) {
+          continue;
+        }
+
+        commits.add(new Commit(
+            version,
+            new FileStatus(
+                Objects.requireNonNull(
+                    deltaCommit.getFileSize(), "commit fileSize must not be null"),
+                false /* isdir */,
+                0 /* block_replication */,
+                0 /* blocksize */,
+                Objects.requireNonNull(
+                    deltaCommit.getFileModificationTimestamp(),
+                    "commit fileModificationTimestamp must not be null"),
+                new Path(basePath, Objects.requireNonNull(
+                    deltaCommit.getFileName(), "commit fileName must not be null"))),
+            Objects.requireNonNull(
+                deltaCommit.getTimestamp(), "commit timestamp must not be null")));
+      }
+    }
+
+    long latestTableVersion = response.getLatestTableVersion() != null
+        ? response.getLatestTableVersion() : -1L;
+    return new GetCommitsResponse(commits, latestTableVersion);
   }
 
   @Override
