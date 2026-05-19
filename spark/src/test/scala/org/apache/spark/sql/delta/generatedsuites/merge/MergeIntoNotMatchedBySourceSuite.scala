@@ -35,7 +35,7 @@ import org.apache.spark.sql.delta.rowid._
 class MergeIntoNotMatchedBySourceSQLInMemoryTableNameBasedSuite
   extends MergeIntoNotMatchedBySourceSuite
   with MergeIntoSQLMixin
-  with MergeIntoSuiteInMemoryTestTableMixin
+  with DeltaDMLInMemoryTestUtils
   with DeltaDMLTestUtilsNameBased
 
 class MergeIntoNotMatchedBySourceSQLNameBasedSuite

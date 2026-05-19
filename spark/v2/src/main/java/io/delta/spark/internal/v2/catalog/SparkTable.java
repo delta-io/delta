@@ -260,6 +260,15 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsM
   }
 
   /**
+   * Returns the snapshot manager backing this table. Catalog-driven features such as Auto-CDF
+   * (TableCatalog.loadChangelog) use this to resolve versions, timestamps, and snapshots without
+   * having to build their own snapshot manager.
+   */
+  public DeltaSnapshotManager getSnapshotManager() {
+    return snapshotManager;
+  }
+
+  /**
    * Returns the table name in a format compatible with DeltaTableV2.
    *
    * <p>For catalog-based tables, returns the fully qualified table name (e.g.,

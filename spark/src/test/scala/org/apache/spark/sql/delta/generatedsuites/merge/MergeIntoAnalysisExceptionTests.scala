@@ -35,7 +35,7 @@ import org.apache.spark.sql.delta.rowid._
 class MergeIntoAnalysisExceptionSQLInMemoryTableNameBasedSuite
   extends MergeIntoAnalysisExceptionTests
   with MergeIntoSQLMixin
-  with MergeIntoSuiteInMemoryTestTableMixin
+  with DeltaDMLInMemoryTestUtils
   with DeltaDMLTestUtilsNameBased
 
 class MergeIntoAnalysisExceptionSQLNameBasedSuite
