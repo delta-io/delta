@@ -22,6 +22,10 @@ import io.delta.storage.commit.GetCommitsResponse;
 import io.delta.storage.commit.TableIdentifier;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
+import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.TableInfo;
+import io.delta.storage.commit.uccommitcoordinator.exceptions.CredentialFetchFailedException;
+import io.delta.storage.commit.uccommitcoordinator.exceptions.NoSuchTableException;
+import io.delta.storage.commit.uccommitcoordinator.exceptions.UnsupportedTableFormatException;
 import io.unitycatalog.client.ApiClient;
 import io.unitycatalog.client.ApiClientBuilder;
 import io.unitycatalog.client.ApiException;
@@ -35,7 +39,6 @@ import io.unitycatalog.client.delta.model.CreateTableRequest;
 import io.unitycatalog.client.delta.model.DeltaCommit;
 import io.unitycatalog.client.delta.model.DeltaProtocol;
 import io.unitycatalog.client.delta.model.LoadTableResponse;
-import io.unitycatalog.client.delta.model.PrimitiveType;
 import io.unitycatalog.client.delta.model.RemovePropertiesUpdate;
 import io.unitycatalog.client.delta.model.SetLatestBackfilledVersionUpdate;
 import io.unitycatalog.client.delta.model.SetPartitionColumnsUpdate;
@@ -46,13 +49,13 @@ import io.unitycatalog.client.delta.model.SetTableCommentUpdate;
 import io.unitycatalog.client.delta.model.StagingTableResponse;
 import io.unitycatalog.client.delta.model.StagingTableResponseRequiredProtocol;
 import io.unitycatalog.client.delta.model.StagingTableResponseSuggestedProtocol;
-import io.unitycatalog.client.delta.model.StructField;
-import io.unitycatalog.client.delta.model.StructType;
 import io.unitycatalog.client.delta.model.TableMetadata;
 import io.unitycatalog.client.delta.model.UniformMetadata;
 import io.unitycatalog.client.delta.model.UniformMetadataIceberg;
 import io.unitycatalog.client.delta.model.UpdateTableRequest;
 import io.unitycatalog.client.model.GetMetastoreSummaryResponse;
+import io.unitycatalog.hadoop.UCCredentialHadoopConfs;
+import io.unitycatalog.hadoop.UCCredentialHadoopConfs.TableOperation;
 
 import java.io.IOException;
 import java.net.URI;
@@ -63,11 +66,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
+import java.util.function.Supplier;
+
+import org.apache.hadoop.conf.Configuration;
 
 /**
- * A REST client implementation of {@link UCDeltaClient} that uses the UC Delta REST Catalog API for
+ * A REST client implementation of {@link UCDeltaClient} that uses the UC Delta REST API for
  * all table lifecycle and commit coordination operations.
  *
  * <p>This client uses {@code io.unitycatalog.client.delta.api.TablesApi} for Delta-specific
@@ -80,24 +85,34 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   private static final int HTTP_CONFLICT = 409;
   private static final int HTTP_NOT_FOUND = 404;
 
-  private static final Set<String> PRIMITIVE_TYPE_NAMES = Set.of(
-      "BOOLEAN", "BYTE", "SHORT", "INT", "LONG", "FLOAT", "DOUBLE",
-      "DATE", "TIMESTAMP", "TIMESTAMP_NTZ", "STRING", "BINARY", "DECIMAL");
-
   private TablesApi deltaTablesApi;
   private MetastoresApi metastoresApi;
+  private final ApiClient apiClient;
+  private final String baseUri;
+  private final TokenProvider tokenProvider;
+  private final Map<String, String> appVersions;
+  private final boolean credentialRenewalEnabled;
+  private final boolean credentialScopedFsEnabled;
+  private final Supplier<Configuration> hadoopConfSupplier;
 
-  /**
-   * Constructs a new UCDeltaTokenBasedRestClient.
-   *
-   * @param baseUri       The base URI of the Unity Catalog server
-   * @param tokenProvider The TokenProvider to use for authentication
-   * @param appVersions   A map of application name to version string for telemetry
-   */
   public UCDeltaTokenBasedRestClient(
       String baseUri,
       TokenProvider tokenProvider,
       Map<String, String> appVersions) {
+    this(baseUri, tokenProvider, appVersions, false, false, null);
+  }
+
+  /**
+   * @param hadoopConfSupplier called once per request so engine-level changes are picked up;
+   *                           {@code null} defaults to {@code () -> new Configuration()}.
+   */
+  public UCDeltaTokenBasedRestClient(
+      String baseUri,
+      TokenProvider tokenProvider,
+      Map<String, String> appVersions,
+      boolean credentialRenewalEnabled,
+      boolean credentialScopedFsEnabled,
+      Supplier<Configuration> hadoopConfSupplier) {
     Objects.requireNonNull(baseUri, "baseUri must not be null");
     Objects.requireNonNull(tokenProvider, "tokenProvider must not be null");
     Objects.requireNonNull(appVersions, "appVersions must not be null");
@@ -112,9 +127,72 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       }
     });
 
-    ApiClient apiClient = builder.build();
-    this.deltaTablesApi = new TablesApi(apiClient);
-    this.metastoresApi = new MetastoresApi(apiClient);
+    this.apiClient = builder.build();
+    this.deltaTablesApi = new TablesApi(this.apiClient);
+    this.metastoresApi = new MetastoresApi(this.apiClient);
+    this.baseUri = baseUri;
+    this.tokenProvider = tokenProvider;
+    this.appVersions = appVersions;
+    this.credentialRenewalEnabled = credentialRenewalEnabled;
+    this.credentialScopedFsEnabled = credentialScopedFsEnabled;
+    this.hadoopConfSupplier = hadoopConfSupplier != null ? hadoopConfSupplier : Configuration::new;
+  }
+
+  /**
+   * Factory for callers that can't depend on {@code io.unitycatalog.client} directly: pass
+   * a flat {@code authConfigs} map ({@code type} + provider-specific keys) and the factory
+   * constructs the {@link TokenProvider} internally.
+   */
+  public static UCDeltaTokenBasedRestClient create(
+      String baseUri,
+      Map<String, String> authConfigs,
+      Map<String, String> appVersions,
+      boolean credentialRenewalEnabled,
+      boolean credentialScopedFsEnabled,
+      Supplier<Configuration> hadoopConfSupplier) {
+    Objects.requireNonNull(authConfigs, "authConfigs must not be null");
+    if (authConfigs.isEmpty()) {
+      throw new IllegalArgumentException(
+          "authConfigs must not be empty; expected at least a 'type' key plus the keys " +
+              "required by that TokenProvider type.");
+    }
+    return new UCDeltaTokenBasedRestClient(
+        baseUri,
+        TokenProvider.create(authConfigs),
+        appVersions,
+        credentialRenewalEnabled,
+        credentialScopedFsEnabled,
+        hadoopConfSupplier);
+  }
+
+  /** Fresh builder per call: scheme depends on the table's location, hadoopConf is live. */
+  private UCCredentialHadoopConfs.Builder newCredBuilder(String scheme) {
+    return UCCredentialHadoopConfs.builder(baseUri, scheme)
+        .tokenProvider(tokenProvider)
+        .apiClient(apiClient)
+        .enableCredentialRenewal(credentialRenewalEnabled)
+        .enableCredentialScopedFs(credentialScopedFsEnabled)
+        .addAppVersions(appVersions)
+        .hadoopConf(hadoopConfSupplier.get());
+  }
+
+  private static String schemeOf(String location) {
+    int colon = location.indexOf(':');
+    return colon > 0 ? location.substring(0, colon) : "";
+  }
+
+  private Map<String, String> fetchTableCredentials(
+      String catalog, String schema, String table, String location) throws ApiException {
+    UCCredentialHadoopConfs.Builder b = newCredBuilder(schemeOf(location));
+    try {
+      return b.buildForTable(catalog, schema, table, TableOperation.READ_WRITE, location);
+    } catch (ApiException rw) {
+      return b.buildForTable(catalog, schema, table, TableOperation.READ, location);
+    } catch (IllegalArgumentException malformed) {
+      // UC Hadoop's response validator (DeltaStorageCredentialUtil.requireSingleCloudConfig)
+      // throws when the scheme has no cloud cred (e.g. file://). Treat as no creds.
+      return Collections.emptyMap();
+    }
   }
 
   private void ensureOpen() {
@@ -233,7 +311,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
         .properties(properties);
 
     if (!columns.isEmpty()) {
-      sdkRequest.columns(toSDKStructType(columns));
+      sdkRequest.columns(UCDeltaSchemaConverter.toUCStructType(columns));
     }
 
     try {
@@ -259,17 +337,37 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   // ===========================
 
   @Override
-  public AbstractMetadata loadTable(
-      String catalog, String schema, String table) throws IOException {
+  public TableInfo loadTable(TableIdentifier tableIdentifier) throws IOException {
     ensureOpen();
-    Objects.requireNonNull(catalog, "catalog must not be null");
-    Objects.requireNonNull(schema, "schema must not be null");
-    Objects.requireNonNull(table, "table must not be null");
+    Objects.requireNonNull(tableIdentifier, "tableIdentifier must not be null");
+    String[] namespace = tableIdentifier.getNamespace();
+    if (namespace == null || namespace.length != 2) {
+      throw new IllegalArgumentException(
+          "UC tableIdentifier must have a 2-component namespace [catalog, schema]; got " +
+              (namespace == null ? "null" : java.util.Arrays.toString(namespace)));
+    }
+    String catalog = namespace[0];
+    String schema = namespace[1];
+    String table = tableIdentifier.getName();
 
     try {
-      LoadTableResponse response = deltaTablesApi.loadTable(catalog, schema, table);
-      return new DeltaTableMetadata(table, response.getMetadata());
+      return toTableInfo(
+          deltaTablesApi.loadTable(catalog, schema, table), catalog, schema, table);
     } catch (ApiException e) {
+      if (e.getCode() == HTTP_NOT_FOUND) {
+        throw new NoSuchTableException(
+            String.format("Table %s.%s.%s not found in Unity Catalog", catalog, schema, table), e);
+      }
+      // UC encodes non-Delta-format errors as HTTP 400 with error.type =
+      // "UnsupportedTableFormatException"; substring-match the body to avoid coupling to an
+      // ErrorResponse parser.
+      String body = e.getResponseBody();
+      if (body != null && body.contains("UnsupportedTableFormatException")) {
+        throw new UnsupportedTableFormatException(
+            String.format("Table %s.%s.%s is not in Delta format; the Delta REST API cannot "
+                + "serve it. Body: %s", catalog, schema, table, body),
+            e);
+      }
       throw new IOException(
           String.format("Failed to load table %s.%s.%s (HTTP %s): %s",
               catalog, schema, table, e.getCode(), e.getResponseBody()), e);
@@ -347,6 +445,40 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   // Response Conversion Methods
   // ===========================
 
+  private TableInfo toTableInfo(
+      LoadTableResponse response, String catalog, String schema, String name) throws IOException {
+    TableMetadata m = response.getMetadata();
+    String location = m.getLocation();
+    if (location == null) {
+      throw new IOException("UC returned null location for table " + name);
+    }
+    UUID ucTableId = m.getTableUuid();
+    if (ucTableId == null) {
+      throw new IOException("UC returned null table ID for table " + name);
+    }
+    if (m.getTableType() == null) {
+      throw new IOException("UC returned null table type for table " + name);
+    }
+    UCDeltaModels.TableType tableType =
+        UCDeltaModels.TableType.valueOf(m.getTableType().getValue());
+    DeltaTableMetadata adapted = new DeltaTableMetadata(name, m);
+    Map<String, String> storageProps;
+    try {
+      storageProps = fetchTableCredentials(catalog, schema, name, location);
+    } catch (ApiException e) {
+      // Surface as a typed failure so callers with a fallback (e.g. server-side planning) can
+      // recover. The exception carries the catalog-side TableInfo (with empty storageProperties)
+      // so the caller can still build a CatalogTable.
+      TableInfo withoutCreds = new TableInfo(
+          ucTableId, tableType, location, adapted, Collections.emptyMap());
+      throw new CredentialFetchFailedException(
+          String.format("Credential fetch failed for table %s.%s.%s (HTTP %s): %s",
+              catalog, schema, name, e.getCode(), e.getResponseBody()),
+          e, withoutCreds);
+    }
+    return new TableInfo(ucTableId, tableType, location, adapted, storageProps);
+  }
+
   private UCDeltaModels.StagingTableInfo toStagingTableInfo(StagingTableResponse r) {
     UCDeltaModels.TableType tableType = null;
     if (r.getTableType() != null) {
@@ -354,7 +486,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     }
 
     return new UCDeltaModels.StagingTableInfo(
-        r.getTableId() != null ? r.getTableId().toString() : null,
+        r.getTableId(),
         tableType,
         r.getLocation(),
         toDeltaProtocol(r.getRequiredProtocol()),
@@ -463,7 +595,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     if (!Objects.equals(oldMetadata.getSchemaString(), newMetadata.getSchemaString())) {
       request.addUpdatesItem(new SetSchemaUpdate()
           .action("set-columns")
-          .columns(parseSchemaString(newMetadata.getSchemaString())));
+          .columns(UCDeltaSchemaConverter.parseSchemaString(newMetadata.getSchemaString())));
     }
     if (!Objects.equals(oldMetadata.getPartitionColumns(), newMetadata.getPartitionColumns())) {
       request.addUpdatesItem(new SetPartitionColumnsUpdate()
@@ -506,32 +638,6 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
             .removals(toRemove));
       }
     }
-  }
-
-  private StructType toSDKStructType(List<ColumnDef> columns) {
-    StructType structType = new StructType();
-    for (ColumnDef col : columns) {
-      structType.addFieldsItem(new StructField()
-          .name(col.getName())
-          .nullable(col.isNullable())
-          .type(toSDKDeltaType(col)));
-    }
-    return structType;
-  }
-
-  private PrimitiveType toSDKDeltaType(ColumnDef col) {
-    if (!PRIMITIVE_TYPE_NAMES.contains(col.getTypeName())) {
-      throw new UnsupportedOperationException(
-          "Complex column type '" + col.getTypeName() + "' for column '" + col.getName() +
-              "' is not yet supported. Only primitive types are supported.");
-    }
-    return new PrimitiveType().type(col.getTypeText());
-  }
-
-  private StructType parseSchemaString(String schemaString) {
-    // TODO: implement full Delta schema string -> StructType conversion
-    throw new UnsupportedOperationException(
-        "Delta schema string to StructType conversion is not yet implemented.");
   }
 
   // ===========================
@@ -582,7 +688,10 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
 
     @Override
     public String getId() {
-      return m.getTableUuid() != null ? m.getTableUuid().toString() : null;
+      // UC's loadTable response carries the UC table_uuid (exposed via TableInfo.getTableId),
+      // not the Delta Metadata.id. The Delta id only lives in the Delta log Metadata action and
+      // is never sent to UC; callers that need it must read the log.
+      return null;
     }
 
     @Override
@@ -607,7 +716,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
 
     @Override
     public String getSchemaString() {
-      return m.getColumns() != null ? m.getColumns().toString() : null;
+      return UCDeltaSchemaConverter.serializeSchema(m.getColumns());
     }
 
     @Override
