@@ -17,6 +17,7 @@ package io.delta.spark.internal.v2.catalog;
 
 import static org.apache.spark.sql.connector.catalog.TableCapability.BATCH_READ;
 import static org.apache.spark.sql.connector.catalog.TableCapability.BATCH_WRITE;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -48,8 +49,10 @@ import java.util.stream.Stream;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.catalyst.TableIdentifier;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
+import org.apache.spark.sql.catalyst.expressions.FileSourceConstantMetadataStructField;
 import org.apache.spark.sql.connector.catalog.Column;
 import org.apache.spark.sql.connector.catalog.Identifier;
+import org.apache.spark.sql.connector.catalog.MetadataColumn;
 import org.apache.spark.sql.connector.catalog.SupportsWrite;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
@@ -58,6 +61,7 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
+import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
@@ -528,6 +532,70 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
         };
 
     assertNotNull(table.newWriteBuilder(writeInfo), "newWriteBuilder should return non-null");
+  }
+
+  @Test
+  public void testMetadataColumnsExposeSparkBaseFieldsWhenRowTrackingDisabled(
+      @TempDir File tempDir) {
+    String path = tempDir.getAbsolutePath();
+    spark.sql(
+        String.format(
+            "CREATE TABLE test_metadata_disabled (id INT) USING delta "
+                + "TBLPROPERTIES ('delta.enableRowTracking' = 'false') LOCATION '%s'",
+            path));
+
+    SparkTable table =
+        new SparkTable(Identifier.of(new String[] {"default"}, "test_metadata_disabled"), path);
+
+    MetadataColumn[] metadataColumns = table.metadataColumns();
+    assertEquals(1, metadataColumns.length, "Expected a single _metadata column");
+    assertEquals("_metadata", metadataColumns[0].name());
+
+    StructType metadataType = (StructType) metadataColumns[0].dataType();
+    assertArrayEquals(
+        new String[] {
+          FileFormat$.MODULE$.FILE_PATH(),
+          FileFormat$.MODULE$.FILE_NAME(),
+          FileFormat$.MODULE$.FILE_SIZE(),
+          FileFormat$.MODULE$.FILE_BLOCK_START(),
+          FileFormat$.MODULE$.FILE_BLOCK_LENGTH(),
+          FileFormat$.MODULE$.FILE_MODIFICATION_TIME()
+        },
+        metadataType.fieldNames(),
+        "Expected Spark base metadata fields (without row tracking) in FileFormat order");
+    assertTrue(
+        FileSourceConstantMetadataStructField.isValid(
+            metadataType.fields()[0].dataType(), metadataType.fields()[0].metadata()),
+        "file_path should be surfaced as a file-source constant metadata field");
+  }
+
+  @Test
+  public void testMetadataColumnsAppendRowTrackingAfterSparkBaseFieldsWhenEnabled(
+      @TempDir File tempDir) {
+    String path = tempDir.getAbsolutePath();
+    spark.sql(
+        String.format(
+            "CREATE TABLE test_metadata_enabled (id INT) USING delta "
+                + "TBLPROPERTIES ('delta.enableRowTracking' = 'true') LOCATION '%s'",
+            path));
+
+    SparkTable table =
+        new SparkTable(Identifier.of(new String[] {"default"}, "test_metadata_enabled"), path);
+
+    StructType metadataType = (StructType) table.metadataColumns()[0].dataType();
+    assertArrayEquals(
+        new String[] {
+          FileFormat$.MODULE$.FILE_PATH(),
+          FileFormat$.MODULE$.FILE_NAME(),
+          FileFormat$.MODULE$.FILE_SIZE(),
+          FileFormat$.MODULE$.FILE_BLOCK_START(),
+          FileFormat$.MODULE$.FILE_BLOCK_LENGTH(),
+          FileFormat$.MODULE$.FILE_MODIFICATION_TIME(),
+          "row_id",
+          "row_commit_version"
+        },
+        metadataType.fieldNames(),
+        "Row-tracking fields should follow the Spark base metadata fields");
   }
 
   @Test
