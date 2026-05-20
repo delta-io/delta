@@ -51,7 +51,7 @@ public class DeltaChangelogScanBuilder implements ScanBuilder {
     Snapshot startSnapshot = snapshotManager.loadSnapshotAt(startVersion);
     SnapshotImpl startSnapshotImpl = (SnapshotImpl) startSnapshot;
     if (!RowTracking.isEnabled(startSnapshotImpl.getProtocol(), startSnapshotImpl.getMetadata())) {
-      DeltaErrors.throwChangelogRowTrackingDisabledInRange(startVersion);
+      DeltaErrors.throwChangelogRequiresRowTracking(sparkTable.name());
     }
     Snapshot endSnapshot = snapshotManager.loadSnapshotAt(endVersion);
     SnapshotImpl endSnapshotImpl = (SnapshotImpl) endSnapshot;

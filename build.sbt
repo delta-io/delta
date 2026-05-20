@@ -551,7 +551,11 @@ lazy val spark = (project in file("spark-unified"))
         sparkDir / "src" / "test" / "scala",
         sparkDir / "src" / "test" / "java",
         unifiedDir / "src" / "test" / "scala",
-        unifiedDir / "src" / "test" / "java"
+        unifiedDir / "src" / "test" / "java",
+        // Version-specific shim test directory under spark-unified (the equivalent of what
+        // sparkDependentSettings adds, but rooted at this module's baseDirectory rather than
+        // sparkV1's, so changelog tests under scala-shims/spark-4.2 are discovered.)
+        unifiedDir / "src" / "test" / "scala-shims" / "spark-4.2"
       )
     },
     Test / unmanagedResourceDirectories := Seq(
