@@ -51,7 +51,7 @@ public class V2StreamingInCommitTimestampTest extends V2TestBase {
   private static final int ROWS_PER_COMMIT = 10;
 
   @Test
-  public void startingTimestampAtCommitIct(@TempDir File deltaTablePath) throws Exception {
+  public void testStartingTimestampAtCommitIct(@TempDir File deltaTablePath) throws Exception {
     String tablePath = deltaTablePath.getAbsolutePath();
     long t1 = BASE_TS;
     long t2 = t1 + ONE_MINUTE;
@@ -62,7 +62,7 @@ public class V2StreamingInCommitTimestampTest extends V2TestBase {
   }
 
   @Test
-  public void startingTimestampBetweenCommits(@TempDir File deltaTablePath) throws Exception {
+  public void testStartingTimestampBetweenCommits(@TempDir File deltaTablePath) throws Exception {
     String tablePath = deltaTablePath.getAbsolutePath();
     long t1 = BASE_TS;
     long t2 = t1 + 2 * ONE_MINUTE;
@@ -77,7 +77,7 @@ public class V2StreamingInCommitTimestampTest extends V2TestBase {
   }
 
   @Test
-  public void adjacentMillisecondIcts(@TempDir File deltaTablePath) throws Exception {
+  public void testAdjacentMillisecondIcts(@TempDir File deltaTablePath) throws Exception {
     String tablePath = deltaTablePath.getAbsolutePath();
     long sameMs = BASE_TS;
     // Adjacent millisecond timestamps verify the exact-match boundary at millisecond precision.
@@ -99,7 +99,7 @@ public class V2StreamingInCommitTimestampTest extends V2TestBase {
 
   // ICT wins over filesystem mtime drift
   @Test
-  public void mtimeDriftUsesIct(@TempDir File deltaTablePath) throws Exception {
+  public void testMtimeDriftUsesIct(@TempDir File deltaTablePath) throws Exception {
     String tablePath = deltaTablePath.getAbsolutePath();
     long t1 = BASE_TS;
     long t2 = t1 + ONE_MINUTE;
@@ -116,7 +116,8 @@ public class V2StreamingInCommitTimestampTest extends V2TestBase {
   }
 
   @Test
-  public void startingTimestampAfterLatestErrors(@TempDir File deltaTablePath) throws Exception {
+  public void testStartingTimestampAfterLatestErrors(@TempDir File deltaTablePath)
+      throws Exception {
     String tablePath = deltaTablePath.getAbsolutePath();
     long t1 = BASE_TS;
     long t2 = t1 + ONE_MINUTE;
@@ -131,7 +132,7 @@ public class V2StreamingInCommitTimestampTest extends V2TestBase {
   }
 
   @Test
-  public void restartIgnoresStartingTimestamp(@TempDir File deltaTablePath) throws Exception {
+  public void testRestartIgnoresStartingTimestamp(@TempDir File deltaTablePath) throws Exception {
     String tablePath = deltaTablePath.getAbsolutePath();
     long t1 = BASE_TS;
     long t2 = t1 + ONE_MINUTE;
@@ -186,7 +187,7 @@ public class V2StreamingInCommitTimestampTest extends V2TestBase {
   }
 
   @Test
-  public void midHistoryIctIgnoresPostIctMtimes(@TempDir File deltaTablePath) throws Exception {
+  public void testMidHistoryIctIgnoresPostIctMtimes(@TempDir File deltaTablePath) throws Exception {
     String tablePath = deltaTablePath.getAbsolutePath();
     spark.sql(str("CREATE TABLE delta.`%s` (id BIGINT) USING delta", tablePath));
     appendRows(tablePath, 0);
@@ -217,8 +218,8 @@ public class V2StreamingInCommitTimestampTest extends V2TestBase {
     long v5Ict = v4Ict + ONE_MINUTE;
     appendIctRows(tablePath, log, 5L, 3 * ROWS_PER_COMMIT, v5Ict, v5Mtime);
 
-    // This is logically before ICT starts but after v4's file mtime. The bounded search starts at
-    // v3 and emits v4+v5
+    // This is logically before ICT starts but after v4's file mtime. The bounded resolver returns
+    // v2; streaming starts at v3, so v4+v5 (20 rows) are emitted.
     long target = v4Mtime + 10_000L;
     assertStartingTimestampRows(
         tablePath,
@@ -229,7 +230,7 @@ public class V2StreamingInCommitTimestampTest extends V2TestBase {
   }
 
   @Test
-  public void availableNowWithIct(@TempDir File deltaTablePath) throws Exception {
+  public void testAvailableNowWithIct(@TempDir File deltaTablePath) throws Exception {
     String tablePath = deltaTablePath.getAbsolutePath();
     long t1 = BASE_TS;
     long t2 = t1 + ONE_MINUTE;
@@ -258,7 +259,7 @@ public class V2StreamingInCommitTimestampTest extends V2TestBase {
   }
 
   @Test
-  public void columnMappingWithIct(@TempDir File deltaTablePath) throws Exception {
+  public void testColumnMappingWithIct(@TempDir File deltaTablePath) throws Exception {
     String tablePath = deltaTablePath.getAbsolutePath();
     spark.sql(
         str(
@@ -331,7 +332,7 @@ public class V2StreamingInCommitTimestampTest extends V2TestBase {
     List<Row> v2Rows =
         sortedById(processStreamingQuery(streamingRead(tablePath, options, true), tag + "_v2"));
 
-    assertEquals(v1Rows.toString(), v2Rows.toString(), tag + ": V1 vs V2 row mismatch");
+    assertEquals(v1Rows, v2Rows, tag + ": V1 vs V2 row mismatch");
     return v1Rows;
   }
 
