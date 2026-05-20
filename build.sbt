@@ -551,11 +551,7 @@ lazy val spark = (project in file("spark-unified"))
         sparkDir / "src" / "test" / "scala",
         sparkDir / "src" / "test" / "java",
         unifiedDir / "src" / "test" / "scala",
-        unifiedDir / "src" / "test" / "java",
-        // Version-specific shim test directory under spark-unified (the equivalent of what
-        // sparkDependentSettings adds, but rooted at this module's baseDirectory rather than
-        // sparkV1's, so changelog tests under scala-shims/spark-4.2 are discovered.)
-        unifiedDir / "src" / "test" / "scala-shims" / "spark-4.2"
+        unifiedDir / "src" / "test" / "java"
       )
     },
     Test / unmanagedResourceDirectories := Seq(
@@ -564,6 +560,20 @@ lazy val spark = (project in file("spark-unified"))
     ),
 
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
+
+    // Mirror what `sparkDependentSettings` does for the version-specific test shim directory,
+    // but root it at this module's baseDirectory instead of `Test / baseDirectory` (which points
+    // at sparkV1). Without this, version-gated tests that live under spark-unified (e.g. the
+    // changelog tests under `scala-shims/spark-4.2`) are never compiled, and tests that exist
+    // only for Spark 4.2 would also be compiled against 4.0/4.1 if the path were unconditional.
+    Test / unmanagedSourceDirectories ++= {
+      val ver = sparkVersion.value
+      SparkVersionSpec.ALL_SPECS
+        .find(_.fullVersion == ver)
+        .flatMap(_.additionalSourceDir)
+        .map(dir => Seq(baseDirectory.value / "src" / "test" / dir))
+        .getOrElse(Seq.empty)
+    },
 
     // MiMa should use the generated JAR (not classDirectory) because we merge classes at package time
     mimaCurrentClassfiles := (Compile / packageBin).value,
