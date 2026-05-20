@@ -2138,7 +2138,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
           TableCommitCoordinatorClient(
             commitCoordinatorClient = new FileSystemBasedCommitCoordinatorClient(deltaLog),
             deltaLog = deltaLog,
-            coordinatedCommitsTableConf = snapshot.metadata.coordinatedCommitsTableConf)
+            coordinatedCommitsTableConf = snapshot.metadata.coordinatedCommitsTableConf
+          )
         }
       val updatedActions = new UpdatedActions(
         commitInfo, metadata, protocol, snapshot.metadata, snapshot.protocol)
@@ -2916,7 +2917,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
       TableCommitCoordinatorClient(
         new FileSystemBasedCommitCoordinatorClient(deltaLog),
         deltaLog,
-        snapshot.metadata.coordinatedCommitsTableConf)
+        snapshot.metadata.coordinatedCommitsTableConf
+      )
     }
     val commitFile = writeCommitFileImpl(
       attemptVersion, jsonActions, commitCoordinatorClient, currentTransactionInfo)

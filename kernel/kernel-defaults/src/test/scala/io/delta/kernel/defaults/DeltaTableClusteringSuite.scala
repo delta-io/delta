@@ -28,7 +28,6 @@ import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.expressions.Literal.ofInt
 import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.actions.DomainMetadata
-import io.delta.kernel.internal.clustering.ClusteringMetadataDomain
 import io.delta.kernel.internal.util.ColumnMapping
 import io.delta.kernel.internal.util.ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY
 import io.delta.kernel.types.{MapType, StructType}
@@ -507,6 +506,224 @@ trait DeltaTableClusteringSuiteBase extends AnyFunSuite with AbstractWriteUtils 
         assert(logicalColumn.getNames.length == 1)
         assert(logicalColumn.getNames()(0) == expectedLogicalName)
       }
+    }
+  }
+
+  test("getClusteringColumnInfos returns physical, logical, and data type") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // ===== GIVEN =====
+      val tableProperties = Map(ColumnMapping.COLUMN_MAPPING_MODE_KEY -> "id")
+      val clusteringColumns = List(new Column("part1"), new Column("part2"))
+
+      createEmptyTable(
+        engine,
+        tablePath,
+        testPartitionSchema,
+        tableProperties = tableProperties,
+        clusteringColsOpt = Some(clusteringColumns))
+
+      // ===== WHEN =====
+      val snapshot = getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath)
+      val infoOpt = snapshot.getClusteringColumnInfos
+      assert(infoOpt.isPresent, "clustered table must report clusteringColumnInfo")
+      val infos = infoOpt.get().asScala
+
+      // ===== THEN =====
+      assert(infos.size == 2)
+
+      // Under column mapping the physical reference is a stable identifier from the domain JSON
+      // and diverges from the user-facing logical name. We assert the divergence rather than the
+      // specific identifier format (which depends on the column-mapping mode).
+      infos.zipWithIndex.foreach { case (info, idx) =>
+        val expectedLogicalName = if (idx == 0) "part1" else "part2"
+
+        assert(info.getPhysicalColumn.getNames.length == 1)
+        assert(info.getLogicalColumn.getNames.length == 1)
+        assert(info.getLogicalColumn.getNames()(0) == expectedLogicalName)
+        assert(
+          info.getPhysicalColumn != info.getLogicalColumn,
+          s"physical=${info.getPhysicalColumn}, logical=${info.getLogicalColumn} " +
+            "must diverge when column mapping is enabled")
+
+        assert(
+          info.getDataType == INTEGER,
+          s"expected INTEGER data type for $expectedLogicalName, got ${info.getDataType}")
+      }
+    }
+  }
+
+  test("getClusteringColumnInfos under `name` column mapping mode") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // ===== GIVEN =====
+      // Exercise getClusteringColumnInfos with `name` column mapping (distinct write path from
+      // the `id`-mode test above). Like `id` mode, Kernel's writer assigns generated physical
+      // identifiers (e.g. `col-<uuid>`) to new fields, so physical and logical references
+      // diverge at create time.
+      val tableProperties = Map(ColumnMapping.COLUMN_MAPPING_MODE_KEY -> "name")
+      val clusteringColumns = List(new Column("part1"), new Column("part2"))
+
+      createEmptyTable(
+        engine,
+        tablePath,
+        testPartitionSchema,
+        tableProperties = tableProperties,
+        clusteringColsOpt = Some(clusteringColumns))
+
+      // ===== WHEN =====
+      val snapshot = getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath)
+      val infos = snapshot.getClusteringColumnInfos.get().asScala
+
+      // ===== THEN =====
+      assert(infos.size == 2)
+      infos.zipWithIndex.foreach { case (info, idx) =>
+        val expectedLogicalName = if (idx == 0) "part1" else "part2"
+
+        assert(info.getPhysicalColumn.getNames.length == 1)
+        assert(info.getLogicalColumn.getNames.length == 1)
+        assert(info.getLogicalColumn.getNames()(0) == expectedLogicalName)
+        assert(
+          info.getPhysicalColumn != info.getLogicalColumn,
+          s"physical=${info.getPhysicalColumn}, logical=${info.getLogicalColumn} " +
+            "must diverge when column mapping is enabled")
+        assert(info.getDataType == INTEGER)
+      }
+    }
+  }
+
+  test("getClusteringColumnInfos returns empty for unclustered table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(engine, tablePath, testPartitionSchema)
+      val snapshot = getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath)
+      assert(
+        !snapshot.getClusteringColumnInfos.isPresent,
+        "unclustered table must report empty clusteringColumnInfo")
+    }
+  }
+
+  test("getClusteringColumnInfos physical equals logical when column mapping is disabled") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val clusteringColumns = List(new Column("part1"), new Column("part2"))
+      createEmptyTable(
+        engine,
+        tablePath,
+        testPartitionSchema,
+        clusteringColsOpt = Some(clusteringColumns))
+
+      val snapshot = getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath)
+      val infos = snapshot.getClusteringColumnInfos.get().asScala
+
+      assert(infos.size == 2)
+      infos.foreach { info =>
+        // Without column mapping, physical name == logical name == user-facing name.
+        assert(
+          info.getPhysicalColumn == info.getLogicalColumn,
+          s"physical=${info.getPhysicalColumn}, logical=${info.getLogicalColumn} " +
+            "must match when column mapping is disabled")
+      }
+    }
+  }
+
+  test("getClusteringColumnInfos is cached -- subsequent calls return the same result") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val clusteringColumns = List(new Column("part1"))
+      createEmptyTable(
+        engine,
+        tablePath,
+        testPartitionSchema,
+        clusteringColsOpt = Some(clusteringColumns))
+
+      val snapshot = getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath)
+      val first = snapshot.getClusteringColumnInfos
+      val second = snapshot.getClusteringColumnInfos
+      // SnapshotImpl override returns the cached `Lazy<>` result, so identity should match.
+      assert(
+        first.get() eq second.get(),
+        "SnapshotImpl.getClusteringColumnInfos must return the cached Lazy<> result on " +
+          "subsequent calls")
+    }
+  }
+
+  test("getClusteringColumnInfos resolves nested-field clustering columns under column mapping") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // ===== GIVEN =====
+      // Schema with a nested struct so the clustering column path has more than one part.
+      val nestedSchema = new StructType()
+        .add("id", INTEGER)
+        .add(
+          "addr",
+          new StructType()
+            .add("city", INTEGER)
+            .add("zip", INTEGER))
+      val tableProperties = Map(ColumnMapping.COLUMN_MAPPING_MODE_KEY -> "id")
+      val clusteringColumns = List(new Column(Array("addr", "city")))
+
+      createEmptyTable(
+        engine,
+        tablePath,
+        nestedSchema,
+        tableProperties = tableProperties,
+        clusteringColsOpt = Some(clusteringColumns))
+
+      // ===== WHEN =====
+      val snapshot = getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath)
+      val infos = snapshot.getClusteringColumnInfos.get().asScala
+
+      // ===== THEN =====
+      assert(infos.size == 1)
+      val info = infos.head
+
+      // Physical path is multi-part. Under column mapping each part is a stable identifier from
+      // the domain JSON, distinct from the user-facing logical name; assert the divergence rather
+      // than a specific identifier format.
+      assert(info.getPhysicalColumn.getNames.length == 2)
+      assert(info.getLogicalColumn.getNames.toSeq == Seq("addr", "city"))
+      assert(
+        info.getPhysicalColumn != info.getLogicalColumn,
+        s"physical=${info.getPhysicalColumn}, logical=${info.getLogicalColumn} " +
+          "must diverge when column mapping is enabled")
+
+      assert(info.getDataType == INTEGER)
+    }
+  }
+
+  test("getClusteringColumnInfos throws KernelException when domain references " +
+    "a column not in the schema") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // ===== GIVEN =====
+      // Create a table without clustering, then inject a synthetic delta.clustering domain that
+      // references a physical column name absent from the schema. `useInternalApi = true` skips
+      // the public API's clustering-column-vs-schema validation so we can reach the read-time
+      // resolution path that getClusteringColumnInfos takes.
+      commitTransaction(
+        getCreateTxn(
+          engine,
+          tablePath,
+          testPartitionSchema,
+          withDomainMetadataSupported = true),
+        engine,
+        emptyIterable())
+
+      val staleDomain = new DomainMetadata(
+        "delta.clustering",
+        """{"clusteringColumns":[["does_not_exist"]]}""",
+        false)
+      commitTransaction(
+        createTxnWithDomainMetadatas(
+          engine,
+          tablePath,
+          Seq(staleDomain),
+          useInternalApi = true),
+        engine,
+        emptyIterable())
+
+      // ===== WHEN / THEN =====
+      val snapshot = getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath)
+      val ex = intercept[KernelException] {
+        snapshot.getClusteringColumnInfos.get()
+      }
+      assert(
+        ex.getMessage.contains("Column 'column(`does_not_exist`)' was not found"),
+        s"unexpected exception message: ${ex.getMessage}")
     }
   }
 }

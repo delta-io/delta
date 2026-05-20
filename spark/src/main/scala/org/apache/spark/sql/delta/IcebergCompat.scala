@@ -501,8 +501,7 @@ case class CheckAnySQLConf(confs: Seq[ConfigEntry[Boolean]]) extends IcebergComp
   override def apply(context: IcebergCompatContext): Unit = {
     val spark = context.spark
     if (!confs.exists(conf => spark.conf.get(conf))) {
-      val keys = confs.map(_.key).mkString(", ")
-      throw DeltaErrors.icebergCompatConfigNotEnabled(context.version, keys)
+      throw DeltaErrors.icebergCompatConfigNotEnabled(context.version)
     }
   }
 }

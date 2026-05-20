@@ -70,13 +70,8 @@ trait DeltaV2SourceSchemaEvolutionSuiteBase extends V2ForceTest {
     }
   }
 
-  // TODO(#5319): Move tests to shouldPassTests as V2 schema tracking log support is implemented.
-  override protected def shouldPassTests: Set[String] = Set.empty[String]
-
-  // All tests from StreamingSchemaEvolutionSuiteBase.
-  // Override in CDC suites to add CDC-specific tests.
-  override protected def shouldFailTests: Set[String] = Set(
-    // ========== Schema location validation ==========
+  override protected def shouldPassTests: Set[String] = Set(
+    // ========== Schema log unit test ==========
     "schema location not under checkpoint",
     "schema location same as checkpoint",
     "schema location using a different file system",
@@ -91,11 +86,14 @@ trait DeltaV2SourceSchemaEvolutionSuiteBase extends V2ForceTest {
     "schema / checkpoint location unit tests - " +
       "schema location and checkpoint location are the same but with explicit file scheme",
     "schema / checkpoint location unit tests - special characters in schema location",
+    "concurrent schema log modification should be detected",
+    "schema log replace current",
+    "backward-compat: latest version can read back older JSON",
+    "forward-compat: older version can read back newer JSON",
 
     // ========== Schema log core ==========
     "multiple delta source sharing same schema log is blocked",
     "schema log is applied",
-    "concurrent schema log modification should be detected",
     "schema log initialization with additive schema changes",
     "detect incompatible schema change while streaming",
     "detect incompatible schema change during first getBatch",
@@ -121,14 +119,10 @@ trait DeltaV2SourceSchemaEvolutionSuiteBase extends V2ForceTest {
     "schema evolution with Delta sink",
     "latestOffset should not progress before schema evolved",
     "unblock with sql conf",
+    "unblock with sql conf - nested struct",
     "schema tracking interacting with unsafe escape flag",
     "streaming with a column mapping upgrade",
-    "partition evolution",
-    "schema log replace current",
-
-    // ========== Backward/forward compatibility ==========
-    "backward-compat: latest version can read back older JSON",
-    "forward-compat: older version can read back newer JSON"
+    "partition evolution"
   )
 }
 
@@ -143,25 +137,24 @@ class DeltaV2SourceSchemaEvolutionIdColumnMappingSuite
     with DeltaV2SourceSchemaEvolutionSuiteBase
 
 // CDC suites
+// TODO(#5319): Support CDC non-additive schema evolution
+trait DeltaV2SourceSchemaEvolutionCDCSuiteBase extends DeltaV2SourceSchemaEvolutionSuiteBase {
+  self: StreamingSchemaEvolutionSuiteBase =>
+
+  override protected def shouldPassTests: Set[String] = Set.empty[String]
+
+  override protected def shouldFailTests: Set[String] =
+    super.shouldPassTests ++ super.shouldFailTests ++ Set(
+      // Additional tests from CDCStreamingSchemaEvolutionSuiteBase
+      "CDC streaming with schema evolution",
+      "protocol and configuration evolution"
+    )
+}
 
 class DeltaV2SourceSchemaEvolutionCDCNameColumnMappingSuite
   extends DeltaSourceSchemaEvolutionCDCNameColumnMappingSuite
-    with DeltaV2SourceSchemaEvolutionSuiteBase {
-
-  override protected def shouldFailTests: Set[String] = super.shouldFailTests ++ Set(
-    // Additional tests from CDCStreamingSchemaEvolutionSuiteBase
-    "CDC streaming with schema evolution",
-    "protocol and configuration evolution"
-  )
-}
+    with DeltaV2SourceSchemaEvolutionCDCSuiteBase
 
 class DeltaV2SourceSchemaEvolutionCDCIdColumnMappingSuite
   extends DeltaSourceSchemaEvolutionCDCIdColumnMappingSuite
-    with DeltaV2SourceSchemaEvolutionSuiteBase {
-
-  override protected def shouldFailTests: Set[String] = super.shouldFailTests ++ Set(
-    // Additional tests from CDCStreamingSchemaEvolutionSuiteBase
-    "CDC streaming with schema evolution",
-    "protocol and configuration evolution"
-  )
-}
+    with DeltaV2SourceSchemaEvolutionCDCSuiteBase

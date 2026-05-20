@@ -38,6 +38,7 @@ import io.delta.kernel.types.TimestampType;
 import io.delta.kernel.types.VariantType;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.Metadata;
@@ -119,6 +120,44 @@ public class SchemaUtils {
     } else {
       throw new IllegalArgumentException("unsupported data type " + kernelDataType);
     }
+  }
+
+  /**
+   * Projects the union of {@code readDataSchema} and {@code partitionSchema} into DDL order. Fields
+   * not present in {@code rawSchema} (e.g. {@code _metadata}) are appended at the tail in insertion
+   * order.
+   *
+   * @throws NullPointerException if any argument is null
+   */
+  public static org.apache.spark.sql.types.StructType ddlOrderedOutputSchema(
+      org.apache.spark.sql.types.StructType rawSchema,
+      org.apache.spark.sql.types.StructType readDataSchema,
+      org.apache.spark.sql.types.StructType partitionSchema) {
+    requireNonNull(rawSchema, "rawSchema is null");
+    requireNonNull(readDataSchema, "readDataSchema is null");
+    requireNonNull(partitionSchema, "partitionSchema is null");
+    if (partitionSchema.fields().length == 0) {
+      return readDataSchema;
+    }
+    LinkedHashMap<String, org.apache.spark.sql.types.StructField> fieldsByName =
+        new LinkedHashMap<>(readDataSchema.fields().length + partitionSchema.fields().length);
+    for (org.apache.spark.sql.types.StructField f : readDataSchema.fields()) {
+      fieldsByName.put(f.name(), f);
+    }
+    for (org.apache.spark.sql.types.StructField f : partitionSchema.fields()) {
+      fieldsByName.put(f.name(), f);
+    }
+    List<org.apache.spark.sql.types.StructField> ordered = new ArrayList<>(fieldsByName.size());
+    for (org.apache.spark.sql.types.StructField f : rawSchema.fields()) {
+      org.apache.spark.sql.types.StructField projected = fieldsByName.remove(f.name());
+      if (projected != null) {
+        ordered.add(projected);
+      }
+    }
+    // Append Spark-synthetic fields not in the persisted schema (e.g. _metadata).
+    ordered.addAll(fieldsByName.values());
+    return new org.apache.spark.sql.types.StructType(
+        ordered.toArray(new org.apache.spark.sql.types.StructField[0]));
   }
 
   //////////////////////

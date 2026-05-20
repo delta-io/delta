@@ -29,7 +29,7 @@ import org.apache.spark.sql.types.{ArrayType, IntegerType, MapType, StringType, 
 class DeltaDropColumnSuite extends QueryTest
   with DeltaArbitraryColumnNameSuiteBase {
 
-  override protected val sparkConf: SparkConf =
+  override protected def sparkConf: SparkConf =
     super.sparkConf.set(DeltaSQLConf.DELTA_ALTER_TABLE_DROP_COLUMN_ENABLED.key, "true")
 
   protected def dropTest(

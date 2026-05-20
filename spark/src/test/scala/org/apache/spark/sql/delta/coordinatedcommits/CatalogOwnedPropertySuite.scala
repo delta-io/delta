@@ -231,12 +231,16 @@ class CatalogOwnedPropertySuite extends QueryTest
       // Normal delta table.
       createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = false)
 
-      val error = intercept[IllegalStateException] {
+      val error = intercept[DeltaUnsupportedOperationException] {
         sql("REPLACE TABLE t1 (id LONG) USING delta TBLPROPERTIES " +
           s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
       }
-      assert(error.getMessage.contains(
-        "Specifying CatalogManaged in REPLACE TABLE command is not supported"))
+      checkError(
+        exception = error,
+        condition = "DELTA_REPLACE_TABLE_WITH_CATALOG_MANAGED_NOT_SUPPORTED",
+        sqlState = Some("0A000"),
+        parameters = Map("tableName" -> "(`[^`]+`\\.)*`t1`"),
+        matchPVals = true)
     }
   }
 
@@ -271,13 +275,17 @@ class CatalogOwnedPropertySuite extends QueryTest
       createTableAndValidateCatalogOwned(tableName = "t2", withCatalogOwned = false)
       sql("INSERT INTO t2 VALUES (1), (2)")
 
-      val error = intercept[IllegalStateException] {
+      val error = intercept[DeltaUnsupportedOperationException] {
         sql("REPLACE TABLE t1 USING delta TBLPROPERTIES " +
           s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported') " +
           s"AS SELECT * FROM t2")
       }
-      assert(error.getMessage.contains(
-        "Specifying CatalogManaged in REPLACE TABLE command is not supported"))
+      checkError(
+        exception = error,
+        condition = "DELTA_REPLACE_TABLE_WITH_CATALOG_MANAGED_NOT_SUPPORTED",
+        sqlState = Some("0A000"),
+        parameters = Map("tableName" -> "(`[^`]+`\\.)*`t1`"),
+        matchPVals = true)
     }
   }
 
@@ -449,12 +457,16 @@ class CatalogOwnedPropertySuite extends QueryTest
       sql("INSERT INTO t1 VALUES (1)")
 
       // CREATE OR REPLACE with CatalogManaged on existing non-CatalogManaged table should fail.
-      val error = intercept[IllegalStateException] {
+      val error = intercept[DeltaUnsupportedOperationException] {
         sql("CREATE OR REPLACE TABLE t1 (id LONG) USING delta TBLPROPERTIES " +
           s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
       }
-      assert(error.getMessage.contains(
-        "Specifying CatalogManaged in REPLACE TABLE command is not supported"))
+      checkError(
+        exception = error,
+        condition = "DELTA_REPLACE_TABLE_WITH_CATALOG_MANAGED_NOT_SUPPORTED",
+        sqlState = Some("0A000"),
+        parameters = Map("tableName" -> "(`[^`]+`\\.)*`t1`"),
+        matchPVals = true)
 
       // Original table should remain unchanged.
       validateCatalogOwnedAndUCTableId(tableName = "t1", expected = false)
