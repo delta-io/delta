@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
+import scala.collection.JavaConverters._
+
 import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCommitCoordinatorClient}
 import org.mockito.{Mock, Mockito}
 import org.mockito.ArgumentMatchers.{any, eq => meq}
@@ -50,9 +52,9 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
      * parsing: all sub-keys under spark.sql.catalog.<name>.*
      * with the prefix stripped. Includes `uri` when present.
      */
-    def expectedUcConfig: Map[String, String] = {
+    def expectedUcConfig: java.util.Map[String, String] = {
       val base = configMap
-      uri.map(u => base + ("uri" -> u)).getOrElse(base)
+      uri.map(u => base + ("uri" -> u)).getOrElse(base).asJava
     }
   }
 
@@ -241,7 +243,7 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
     val metastoreId = "shared-metastore-id"
     val sharedUri = "https://shared-test-uri.com"
     val sharedConfigMap = Map("type" -> "static", "token" -> "shared-test-token")
-    val sharedUcConfig = sharedConfigMap + ("uri" -> sharedUri)
+    val sharedUcConfig = (sharedConfigMap + ("uri" -> sharedUri)).asJava
     val catalog1 = CatalogTestConfig(
       name = "catalog1",
       uri = Some(sharedUri),
@@ -292,7 +294,7 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
   }
 
   private def registerMetastoreId(
-      ucConfig: Map[String, String],
+      ucConfig: java.util.Map[String, String],
       metastoreId: String): Unit = {
     val mockClient = org.mockito.Mockito.mock(classOf[UCClient])
     when(mockClient.getMetastoreId).thenReturn(metastoreId)
@@ -300,7 +302,7 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
   }
 
   private def registerMetastoreIdException(
-      ucConfig: Map[String, String],
+      ucConfig: java.util.Map[String, String],
       exception: Throwable): Unit = {
     val mockClient = org.mockito.Mockito.mock(classOf[UCClient])
     when(mockClient.getMetastoreId).thenThrow(exception)
@@ -461,7 +463,7 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
       "auth.type" -> "static",
       "auth.token" -> "new-token"
     )
-    val auth = UCTokenBasedRestClientFactory.extractAuthConfig(ucConfig)
+    val auth = UCTokenBasedRestClientFactory.extractAuthConfig(ucConfig.asJava)
     assert(auth("type") == "static")
     assert(auth("token") == "new-token")
   }
@@ -471,7 +473,7 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
       "uri" -> "https://test.com",
       "token" -> "legacy-token"
     )
-    val auth = UCTokenBasedRestClientFactory.extractAuthConfig(ucConfig)
+    val auth = UCTokenBasedRestClientFactory.extractAuthConfig(ucConfig.asJava)
     assert(auth("type") == "static")
     assert(auth("token") == "legacy-token")
   }
@@ -490,7 +492,7 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
       assert(result.isInstanceOf[UCCommitCoordinatorClient])
 
       verify(mockFactory).createUCClient(
-        any[Map[String, String]]()
+        any[java.util.Map[String, String]]()
       )
     }
   }
@@ -510,7 +512,7 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
       assert(result.isInstanceOf[UCCommitCoordinatorClient])
 
       verify(mockFactory).createUCClient(
-        any[Map[String, String]]()
+        any[java.util.Map[String, String]]()
       )
     }
   }
@@ -521,7 +523,7 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
       "appVersions.Kernel" -> "0.7.0",
       "appVersions.Delta V2 connector" -> "true"
     )
-    val versions = UCTokenBasedRestClientFactory.extractAppVersions(ucConfig)
+    val versions = UCTokenBasedRestClientFactory.extractAppVersions(ucConfig.asJava)
     assert(versions("Delta") === io.delta.VERSION)
     assert(versions("Spark") === org.apache.spark.SPARK_VERSION)
     assert(versions("Kernel") === "0.7.0")

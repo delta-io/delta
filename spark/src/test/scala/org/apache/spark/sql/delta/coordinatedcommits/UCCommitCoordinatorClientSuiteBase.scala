@@ -84,7 +84,7 @@ trait UCCommitCoordinatorClientSuiteBase extends CommitCoordinatorClientImplSuit
     CommitCoordinatorProvider.registerBuilder(UCCommitCoordinatorBuilder)
     ucCommitCoordinator = new InMemoryUCCommitCoordinator()
     ucClient = new InMemoryUCClient(metastoreId.toString, ucCommitCoordinator)
-    when(mockFactory.createUCClient(any[Map[String, String]]())).thenReturn(ucClient)
+    when(mockFactory.createUCClient(any[java.util.Map[String, String]]())).thenReturn(ucClient)
   }
   override protected def createTableCommitCoordinatorClient(
       deltaLog: DeltaLog): TableCommitCoordinatorClient = {
