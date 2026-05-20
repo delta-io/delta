@@ -78,7 +78,6 @@ class DeltaCatalogV1 extends AbstractDeltaCatalog
  */
 class AbstractDeltaCatalog extends DelegatingCatalogExtension
   with StagingTableCatalog
-  with SupportsPathIdentifier
   with DeltaLogging {
 
 
@@ -1106,13 +1105,15 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       case _ => throw DeltaErrors.unsupportedWriteStagedTable(name)
     }
   }
-}
 
-/**
- * A trait for handling table access through delta.`/some/path`. This is a stop-gap solution
- * until PathIdentifiers are implemented in Apache Spark.
- */
-trait SupportsPathIdentifier extends TableCatalog { self: AbstractDeltaCatalog =>
+  // Inlined from former `SupportsPathIdentifier` trait. The trait's self-type
+  // `self: AbstractDeltaCatalog =>` triggered a Scala-emitted runtime cast that failed
+  // for Java subclasses (e.g., the hybrid `DeltaCatalog` in `spark-unified`) under
+  // Spark 4.2's catalog plug-in dispatch. Moving the methods directly onto the class
+  // removes the self-type indirection while preserving all behavior.
+  //
+  // Handles table access through delta.`/some/path`. Stop-gap solution until
+  // PathIdentifiers are implemented in Apache Spark.
 
   private def supportSQLOnFile: Boolean = spark.sessionState.conf.runSQLonFile
 
