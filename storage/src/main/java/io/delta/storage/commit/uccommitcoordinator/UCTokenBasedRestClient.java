@@ -46,14 +46,12 @@ import io.unitycatalog.client.model.CreateTable;
 import io.unitycatalog.client.model.DataSourceFormat;
 import io.unitycatalog.client.model.GetMetastoreSummaryResponse;
 import io.unitycatalog.client.model.TableType;
-import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.Path;
 
 import java.io.IOException;
 import java.net.URI;
 import java.util.*;
-import java.util.function.Supplier;
 
 /**
  * A REST client implementation of {@link UCClient} for interacting with Unity Catalog's commit
@@ -129,22 +127,6 @@ public class UCTokenBasedRestClient implements UCClient {
     this.deltaCommitsApi = new DeltaCommitsApi(apiClient);
     this.metastoresApi = new MetastoresApi(apiClient);
     this.tablesApi = new TablesApi(apiClient);
-  }
-
-  /**
-   * 6-arg constructor for symmetry with {@link UCDeltaTokenBasedRestClient}. The
-   * {@code credentialRenewalEnabled}, {@code credentialScopedFsEnabled}, and
-   * {@code hadoopConfSupplier} parameters are not used by this client and are accepted only so
-   * that callers can construct either client uniformly by reflection.
-   */
-  public UCTokenBasedRestClient(
-      String baseUri,
-      TokenProvider tokenProvider,
-      Map<String, String> appVersions,
-      boolean credentialRenewalEnabled,
-      boolean credentialScopedFsEnabled,
-      Supplier<Configuration> hadoopConfSupplier) {
-    this(baseUri, tokenProvider, appVersions);
   }
 
   /**
