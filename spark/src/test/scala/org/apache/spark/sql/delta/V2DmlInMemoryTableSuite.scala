@@ -16,15 +16,9 @@
 
 package org.apache.spark.sql.delta
 
-import java.io.File
-import java.net.URI
-import java.nio.file.{Files, Path}
-
 import org.apache.spark.sql.delta.catalog.InMemorySparkTable
 
-import org.apache.spark.SparkConf
 import org.apache.spark.sql.{QueryTest, Row}
-import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog}
 import org.apache.spark.sql.test.SharedSparkSession
 
@@ -76,6 +70,35 @@ class V2DmlInMemoryTableSuite
       QueryTest.checkAnswer(
         sql(s"SELECT id, value FROM $tableName ORDER BY id"),
         Seq(Row(3L, "c")))
+    }
+  }
+
+  test("saveAsTable writes data into DSv2 InMemoryTable") {
+    import testImplicits._
+
+    val tableName = "v2_dml_test_save_as_table"
+    withTable(tableName) {
+      Seq((1L, "a"), (2L, "b")).toDF("id", "value").write.format("delta").saveAsTable(tableName)
+
+      QueryTest.checkAnswer(
+        sql(s"SELECT id, value FROM $tableName ORDER BY id"),
+        Seq(Row(1L, "a"), Row(2L, "b")))
+    }
+  }
+
+  test("createOrReplace writes data into DSv2 InMemoryTable") {
+    import testImplicits._
+
+    val tableName = "v2_dml_test_create_or_replace"
+    withTable(tableName) {
+      Seq((1L, "a"), (2L, "b")).toDF("id", "value")
+        .writeTo(tableName)
+        .using("delta")
+        .createOrReplace()
+
+      QueryTest.checkAnswer(
+        sql(s"SELECT id, value FROM $tableName ORDER BY id"),
+        Seq(Row(1L, "a"), Row(2L, "b")))
     }
   }
 
@@ -131,6 +154,19 @@ class V2DmlInMemoryTableSuite
   }
 
   test("should just throw, but is DSv2Incompatible", DSv2Incompatible("explicit skip")) {
+    assert(false, "this test should have been skipped")
+  }
+
+  test("should just throw, but is DSv2TemporarilyIncompatible",
+      DSv2TemporarilyIncompatible("explicit skip")) {
+    assert(false, "this test should have been skipped")
+  }
+
+  test("should just throw, but checks physical Delta plan", ChecksPhysicalDeltaPlan()) {
+    assert(false, "this test should have been skipped")
+  }
+
+  test("should just throw, but checks Delta internals", ChecksDeltaInternals()) {
     assert(false, "this test should have been skipped")
   }
 }

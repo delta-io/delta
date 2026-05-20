@@ -1357,6 +1357,11 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       s"set tblproperties (${DeltaConfigs.ENABLE_EXPIRED_LOG_CLEANUP.key} = false)")
   }
 
+  /** Rename a column on a path-based Delta table. V2 overrides this to route through V1 mode. */
+  protected def renameColumn(tablePath: String, oldName: String, newName: String): Unit = {
+    sql(s"ALTER TABLE delta.`$tablePath` RENAME COLUMN $oldName TO $newName")
+  }
+
   testQuietly("startingVersion") {
     withTempDir { tableDir =>
       val tablePath = tableDir.getCanonicalPath
@@ -3213,15 +3218,16 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   }
 
   test("reading from partitioned table succeeds during restart") {
-    // Regression test: partition columns declared in the middle of the schema (e.g.,
-    // (id, part, col3) with `part` as the partition column) must not trip the V2 restart
-    // schema check. DDL-only (no data): the restart validation runs without needing any
-    // files to be read. Data writes would trip a separate V2 partition-column read NPE
-    // (OnHeapColumnVector.getLong), tracked out-of-band.
+    // Regression: partition column `part` is in the MIDDLE of DDL on purpose. Moving it to the
+    // tail would silently bypass the V2 reorder path this test guards.
     withTempDirs { (inputDir, _, checkpointDir) =>
       val tablePath = inputDir.getCanonicalPath
       sql(s"CREATE TABLE delta.`$tablePath` (id LONG, part LONG, col3 INT) " +
         "USING delta PARTITIONED BY (part)")
+
+      Seq((1L, 10L, 100), (2L, 20L, 200), (3L, 30L, 300))
+        .toDF("id", "part", "col3")
+        .write.format("delta").mode("append").save(tablePath)
 
       def startStream(): StreamingQuery = loadStreamWithOptions(tablePath, Map.empty)
         .writeStream
@@ -3232,10 +3238,164 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       val q = startStream()
       try { q.processAllAvailable() } finally { q.stop() }
 
+      Seq((4L, 40L, 400), (5L, 50L, 500))
+        .toDF("id", "part", "col3")
+        .write.format("delta").mode("append").save(tablePath)
+
       val q2 = startStream()
       try { q2.processAllAvailable() } finally { q2.stop() }
     }
   }
+
+  test("reading from table with multiple partition columns succeeds during restart") {
+    withTempDirs { (inputDir, _, checkpointDir) =>
+      val tablePath = inputDir.getCanonicalPath
+      Seq((1L, "x", 10, "y", 1.5), (2L, "x", 20, "z", 2.5), (3L, "w", 30, "y", 3.5))
+        .toDF("a", "p1", "b", "p2", "c")
+        .write.format("delta").partitionBy("p2", "p1").save(tablePath)
+
+      def startStream(): StreamingQuery = loadStreamWithOptions(tablePath, Map.empty)
+        .writeStream
+        .format("noop")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .start()
+
+      val q = startStream()
+      try { q.processAllAvailable() } finally { q.stop() }
+
+      Seq((4L, "w", 40, "z", 4.5))
+        .toDF("a", "p1", "b", "p2", "c")
+        .write.format("delta").mode("append").save(tablePath)
+
+      val q2 = startStream()
+      try { q2.processAllAvailable() } finally { q2.stop() }
+    }
+  }
+
+  test("streaming read returns correct data from table with partition column in middle") {
+    withTempDirs { (inputDir, _, checkpointDir) =>
+      val tablePath = inputDir.getCanonicalPath
+      sql(s"CREATE TABLE delta.`$tablePath` (id LONG, part LONG, col3 INT) " +
+        "USING delta PARTITIONED BY (part)")
+
+      Seq((1L, 10L, 100), (2L, 20L, 200), (3L, 30L, 300))
+        .toDF("id", "part", "col3")
+        .write
+        .format("delta")
+        .mode("append")
+        .save(tablePath)
+
+      val streamingDF = loadStreamWithOptions(tablePath, Map.empty)
+      // User-facing schema must remain in DDL order (matches V1 streaming behavior).
+      assert(streamingDF.schema.fieldNames.toSeq === Seq("id", "part", "col3"))
+
+      val q = streamingDF
+        .writeStream
+        .format("memory")
+        .queryName("midPartitionStreamTest")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .start()
+      try {
+        q.processAllAvailable()
+        checkAnswer(
+          sql("SELECT * FROM midPartitionStreamTest ORDER BY id"),
+          Row(1L, 10L, 100) :: Row(2L, 20L, 200) :: Row(3L, 30L, 300) :: Nil)
+      } finally {
+        q.stop()
+      }
+    }
+  }
+
+  test("streaming read with column pruning and partition column in middle") {
+    withTempDirs { (inputDir, _, checkpointDir) =>
+      val tablePath = inputDir.getCanonicalPath
+      sql(s"CREATE TABLE delta.`$tablePath` (id LONG, part LONG, col3 INT) " +
+        "USING delta PARTITIONED BY (part)")
+      Seq((1L, 10L, 100), (2L, 20L, 200), (3L, 30L, 300))
+        .toDF("id", "part", "col3")
+        .write.format("delta").mode("append").save(tablePath)
+
+      val streamingDF = loadStreamWithOptions(tablePath, Map.empty).select("part", "id")
+      val q = streamingDF
+        .writeStream
+        .format("memory")
+        .queryName("midPartitionPruneStreamTest")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .start()
+      try {
+        q.processAllAvailable()
+        checkAnswer(
+          sql("SELECT * FROM midPartitionPruneStreamTest ORDER BY id"),
+          Row(10L, 1L) :: Row(20L, 2L) :: Row(30L, 3L) :: Nil)
+      } finally {
+        q.stop()
+      }
+    }
+  }
+
+  test("streaming read with column mapping id and partition column in middle") {
+    withTempDirs { (inputDir, _, checkpointDir) =>
+      val tablePath = inputDir.getCanonicalPath
+      sql(s"CREATE TABLE delta.`$tablePath` (id LONG, part LONG, col3 INT) " +
+        "USING delta PARTITIONED BY (part) " +
+        "TBLPROPERTIES ('delta.columnMapping.mode' = 'id')")
+      Seq((1L, 10L, 100), (2L, 20L, 200), (3L, 30L, 300))
+        .toDF("id", "part", "col3")
+        .write.format("delta").mode("append").save(tablePath)
+
+      val streamingDF = loadStreamWithOptions(tablePath, Map.empty)
+      assert(streamingDF.schema.fieldNames.toSeq === Seq("id", "part", "col3"))
+      val q = streamingDF
+        .writeStream
+        .format("memory")
+        .queryName("midPartitionCmIdStreamTest")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .start()
+      try {
+        q.processAllAvailable()
+        checkAnswer(
+          sql("SELECT * FROM midPartitionCmIdStreamTest ORDER BY id"),
+          Row(1L, 10L, 100) :: Row(2L, 20L, 200) :: Row(3L, 30L, 300) :: Nil)
+      } finally {
+        q.stop()
+      }
+    }
+  }
+
+  test("streaming read after column rename with partition column in middle") {
+    withTempDirs { (inputDir, _, checkpointDir) =>
+      val tablePath = inputDir.getCanonicalPath
+      sql(s"CREATE TABLE delta.`$tablePath` (id LONG, part LONG, original_col INT) " +
+        "USING delta PARTITIONED BY (part) " +
+        "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+      Seq((1L, 10L, 100)).toDF("id", "part", "original_col")
+        .write.format("delta").mode("append").save(tablePath)
+      renameColumn(tablePath, "original_col", "renamed_col")
+      Seq((2L, 20L, 200)).toDF("id", "part", "renamed_col")
+        .write.format("delta").mode("append").save(tablePath)
+      renameColumn(tablePath, "part", "renamed_part")
+      Seq((3L, 30L, 300)).toDF("id", "renamed_part", "renamed_col")
+        .write.format("delta").mode("append").save(tablePath)
+
+      val streamingDF = loadStreamWithOptions(tablePath, Map.empty)
+      assert(streamingDF.schema.fieldNames.toSeq === Seq("id", "renamed_part", "renamed_col"))
+      val q = streamingDF
+        .writeStream
+        .format("memory")
+        .queryName("midPartitionRenameStreamTest")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .start()
+      try {
+        q.processAllAvailable()
+        checkAnswer(
+          sql("SELECT * FROM midPartitionRenameStreamTest ORDER BY id"),
+          Row(1L, 10L, 100) :: Row(2L, 20L, 200) :: Row(3L, 30L, 300) :: Nil)
+      } finally {
+        q.stop()
+      }
+    }
+  }
+
 }
 
 /**

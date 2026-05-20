@@ -24,7 +24,7 @@ import scala.collection.JavaConverters._
 import scala.reflect.runtime.universe
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, Snapshot}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, Snapshot, SnapshotDescriptor}
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction, RemoveFile}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.PartitionUtils.{timestampPartitionPattern, utcFormatter}
@@ -109,7 +109,13 @@ object IcebergTransactionUtils
         // string is null/empty or not because this metric is required by Iceberg. If the number
         // of records is both unavailable here and unavailable in the Delta stats, Iceberg will
         // throw an exception when building the data file.
-        .withRecordCount(add.numLogicalRecords.getOrElse(-1L))
+        // Here, numPhysicalRecords is used as Iceberg's record count is position-oriented:
+        // it must reflect the total number of physical rows in the Parquet file,
+        // including rows masked by deletion vectors.
+        // This aligns with Delta's baseRowId assignment which reserves row ID space using
+        // numPhysicalRecords, and with Iceberg's row lineage where first_row_id + position
+        // must address every row in the file.
+        .withRecordCount(add.numPhysicalRecords.getOrElse(-1L))
 
     try {
       if (add.stats != null && add.stats.nonEmpty) {
@@ -130,10 +136,10 @@ object IcebergTransactionUtils
       tablePath: Path,
       partitionSpec: PartitionSpec,
       logicalToPhysicalPartitionNames: Map[String, String],
-      snapshot: Snapshot): DataFile = {
+      snapshot: SnapshotDescriptor): DataFile = {
     convertFileAction(
       remove, tablePath, partitionSpec, logicalToPhysicalPartitionNames, snapshot)
-      .withRecordCount(remove.numLogicalRecords.getOrElse(0L))
+      .withRecordCount(remove.numPhysicalRecords.getOrElse(0L))
       .build()
   }
 
@@ -142,7 +148,7 @@ object IcebergTransactionUtils
       tablePath: Path,
       partitionSpec: PartitionSpec,
       logicalToPhysicalPartitionNames: Map[String, String],
-      snapshot: Snapshot): DataFiles.Builder = {
+      snapshot: SnapshotDescriptor): DataFiles.Builder = {
     val absPath = canonicalizeFilePath(f, tablePath)
     var builder = DataFiles
       .builder(partitionSpec)

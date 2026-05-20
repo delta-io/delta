@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.scalatest.Tag
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.functions.{array, lit, struct}
@@ -51,7 +52,8 @@ trait MergeIntoSchemaEvolutionMixin extends QueryTest {
       expectErrorContains: String = null,
       expectErrorWithoutEvolutionContains: String = null): Unit =
     for (schemaEvolutionEnabled <- BOOLEAN_DOMAIN)
-    test(s"schema evolution - $name - schemaEvolutionEnabled= $schemaEvolutionEnabled") {
+    test(s"schema evolution - $name - schemaEvolutionEnabled= $schemaEvolutionEnabled",
+        DSv2DMLSchemaEvolution) {
       withTable("target", "source") {
         targetData.write.format("delta").saveAsTable("target")
         sourceData.write.format("delta").saveAsTable("source")
@@ -80,7 +82,7 @@ trait MergeIntoSchemaEvolutionMixin extends QueryTest {
    * either the expected result or the expected error message but not both.
    */
   // scalastyle:off argcount
-  protected def testEvolution(name: String)(
+  protected def testEvolution(name: String, testTags: Tag*)(
       targetData: => DataFrame,
       sourceData: => DataFrame,
       cond: String = "t.key = s.key",
@@ -120,14 +122,15 @@ trait MergeIntoSchemaEvolutionMixin extends QueryTest {
       }
     }
 
-    test(s"schema evolution - $name - with evolution disabled") {
+    val tagsWithSchemaEvolution = testTags :+ DSv2DMLSchemaEvolution
+    test(s"schema evolution - $name - with evolution disabled", tagsWithSchemaEvolution: _*) {
       withSQLConf(confs :+ (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "false"): _*) {
         executeMergeAndAssert(expectedWithoutEvolution, expectedSchemaWithoutEvolution,
           expectErrorWithoutEvolutionContains)
       }
     }
 
-    test(s"schema evolution - $name") {
+    test(s"schema evolution - $name", tagsWithSchemaEvolution: _*) {
       withSQLConf((confs :+ (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true")): _*) {
         executeMergeAndAssert(expected, expectedSchema, expectErrorContains)
       }
@@ -140,7 +143,7 @@ trait MergeIntoSchemaEvolutionMixin extends QueryTest {
    * that the target & source data and expected results are parsed as JSON strings for convenience.
    */
   // scalastyle:off argcount
-  protected def testNestedStructsEvolution(name: String)(
+  protected def testNestedStructsEvolution(name: String, testTags: Tag*)(
       target: Seq[String],
       source: Seq[String],
       targetSchema: StructType,
@@ -153,7 +156,7 @@ trait MergeIntoSchemaEvolutionMixin extends QueryTest {
       expectErrorContains: String = null,
       expectErrorWithoutEvolutionContains: String = null,
       confs: Seq[(String, String)] = Seq()): Unit = {
-    testEvolution(name) (
+    testEvolution(name, testTags: _*) (
       targetData = readFromJSON(target, targetSchema),
       sourceData = readFromJSON(source, sourceSchema),
       cond,
@@ -229,7 +232,8 @@ trait MergeIntoSchemaEvolutionCoreTests extends MergeIntoSchemaEvolutionMixin {
     ).toDF("key", "value", "extra"),
     expectedWithoutEvolution = Seq((1, 10), (2, 2)).toDF("key", "value"))
 
-  testNestedStructsEvolution("new nested source field added when updating top-level column")(
+  testNestedStructsEvolution("new nested source field added when updating top-level column",
+    DSv2Incompatible("Cannot cast error differs in DSv2"))(
     target = Seq("""{ "key": "A", "value": { "a": 1 } }"""),
     source = Seq("""{ "key": "A", "value": { "a": 2, "b": 3 } }"""),
     targetSchema = new StructType()
@@ -706,7 +710,7 @@ trait MergeIntoSchemaEvolutionBaseNewColumnTests extends MergeIntoSchemaEvolutio
       .toDF("key", "value"),
     expectErrorWithoutEvolutionContains = "cannot resolve s.value in UPDATE clause")
 
-  test("schema evolution enabled for the current command") {
+  test("schema evolution enabled for the current command", DSv2DMLSchemaEvolution) {
     withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "false") {
       withTable("target", "source") {
         Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value")
@@ -1156,7 +1160,8 @@ trait MergeIntoSchemaEvolutionNotMatchedBySourceTests extends MergeIntoSchemaEvo
     ).toDF("key", "value"),
     expectedWithoutEvolution = Seq((0, 0), (1, 10), (3, 31)).toDF("key", "value"))
 
-  testEvolution("new column referenced in matched condition but not inserted")(
+  testEvolution("new column referenced in matched condition but not inserted",
+    DSv2Incompatible("DSv2 MERGE schema evolution doesn't correctly handle DELETE"))(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF("key", "value", "extra"),
     clauses = delete(condition = "extra = 'extra1'") ::

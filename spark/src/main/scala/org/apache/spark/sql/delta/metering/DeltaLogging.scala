@@ -29,6 +29,7 @@ import com.databricks.spark.util.TagDefinitions.{
   TAG_TAHOE_PATH
 }
 import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.SnapshotDescriptor
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
@@ -64,22 +65,27 @@ trait DeltaLogging
   extends DeltaProgressReporter
   with DatabricksLogging {
 
+
   /**
    * Used to record the occurrence of a single event or report detailed, operation specific
    * statistics.
    *
-   * @param path Used to log the path of the delta table when `deltaLog` is null.
+   * Takes a [[DeltaLoggingProvider]] so call sites don't need to reach through `xxx.deltaLog`
+   * purely for telemetry. A `DeltaLog` itself is a [[DeltaLoggingProvider]], so existing call
+   * sites like `recordDeltaEvent(deltaLog, ...)` continue to work via subtyping.
+   *
+   * @param path Used to log the path of the delta table when `provider` is null.
    */
   protected def recordDeltaEvent(
-      deltaLog: DeltaLog,
+      provider: DeltaLoggingProvider,
       opType: String,
       tags: Map[TagDefinition, String] = Map.empty,
       data: AnyRef = null,
       path: Option[Path] = None): Unit = recordFrameProfile("Delta", "recordDeltaEvent") {
     try {
       val json = if (data != null) JsonUtils.toJson(data) else ""
-      val tableTags = if (deltaLog != null) {
-        getCommonTags(deltaLog, Try(deltaLog.unsafeVolatileSnapshot.metadata.id).getOrElse(null))
+      val tableTags = if (provider != null) {
+        provider.getCommonTags
       } else if (path.isDefined) {
         Map(TAG_TAHOE_PATH -> path.get.toString)
       } else {
@@ -112,16 +118,14 @@ trait DeltaLogging
     recordDeltaOperationInternal(Map(TAG_TAHOE_PATH -> tablePath), opType, tags)(thunk)
   }
 
-  /**
-   * Used to report the duration as well as the success or failure of an operation on a `deltaLog`.
-   */
+  /** Used to report the duration as well as the success or failure of an operation. */
   protected def recordDeltaOperation[A](
-      deltaLog: DeltaLog,
+      provider: DeltaLoggingProvider,
       opType: String,
       tags: Map[TagDefinition, String] = Map.empty)(
       thunk: => A): A = {
-    val tableTags: Map[TagDefinition, String] = if (deltaLog != null) {
-      getCommonTags(deltaLog, Try(deltaLog.unsafeVolatileSnapshot.metadata.id).getOrElse(null))
+    val tableTags: Map[TagDefinition, String] = if (provider != null) {
+      provider.getCommonTags
     } else {
       Map.empty
     }
@@ -157,7 +161,7 @@ trait DeltaLogging
       assert(check, msg)
     } else if (!check) {
       recordDeltaEvent(
-        deltaLog = deltaLog,
+        provider = deltaLog,
         opType = s"delta.assertions.$name",
         data = data,
         path = path
@@ -175,15 +179,6 @@ trait DeltaLogging
     thunk
   }
 
-  // Extract common tags from the delta log and snapshot.
-  def getCommonTags(deltaLog: DeltaLog, tahoeId: String): Map[TagDefinition, String] = {
-    (
-      Map(
-        TAG_TAHOE_ID -> tahoeId,
-        TAG_TAHOE_PATH -> Try(deltaLog.dataPath.toString).getOrElse(null)
-      )
-    )
-  }
 
   /*
    * Returns error data suitable for logging.
@@ -204,6 +199,25 @@ trait DeltaLogging
     }
     data
   }
+}
+
+/**
+ * An object that can provide the table-attribution tags needed when emitting a Delta usage log
+ * event or operation. Implemented by anything that logically represents "a particular Delta table"
+ * for telemetry purposes (e.g. [[DeltaLog]], [[Snapshot]]/[[SnapshotDescriptor]],
+ * [[OptimisticTransaction]]).
+ *
+ * Prefer passing a `DeltaLoggingProvider` rather than a raw `DeltaLog` when invoking
+ * `recordDeltaEvent` / `recordDeltaOperation`. This decouples call sites from `DeltaLog` and
+ * lets future refactors (e.g. kernelization) evolve the tag source without touching every
+ * logging call site.
+ */
+trait DeltaLoggingProvider {
+  /**
+   * Returns the common table tags that should be attached to every usage log event/operation
+   * recorded on behalf of this provider.
+   */
+  def getCommonTags: Map[TagDefinition, String]
 }
 
 object DeltaLogging {

@@ -387,7 +387,7 @@ case class AlterTableDropFeatureDeltaCommand(
       sparkSession: SparkSession,
       removableFeature: TableFeature with RemovableFeature): Seq[Row] = {
     val deltaLog = table.deltaLog
-    recordDeltaOperation(deltaLog, "delta.ddl.alter.dropFeature") {
+    recordDeltaOperation(table, "delta.ddl.alter.dropFeature") {
       // The removableFeature.preDowngradeCommand needs to adhere to the following requirements:
       //
       // a) Bring the table to a state the validation passes.
@@ -467,7 +467,7 @@ case class AlterTableDropFeatureDeltaCommand(
       txn.updateMetadata(metadataWithNewConfiguration)
       txn.commit(commitActions, op)
       recordDeltaEvent(
-        deltaLog = deltaLog,
+        provider = table,
         opType = "dropFeatureCompleted.withHistoryTruncation",
         data = Map("droppedFeature" -> removableFeature.name))
       Nil
@@ -507,8 +507,7 @@ case class AlterTableDropFeatureDeltaCommand(
   private def executeDropFeatureWithCheckpointProtection(
       sparkSession: SparkSession,
       removableFeature: TableFeature with RemovableFeature): Seq[Row] = {
-    val deltaLog = table.deltaLog
-    recordDeltaOperation(deltaLog, "delta.ddl.alter.dropFeatureWithCheckpointProtection") {
+    recordDeltaOperation(table, "delta.ddl.alter.dropFeatureWithCheckpointProtection") {
       var startTimeNs = System.nanoTime()
       val status = removableFeature
         .preDowngradeCommand(table)
@@ -570,7 +569,7 @@ case class AlterTableDropFeatureDeltaCommand(
       // This is a protected checkpoint.
       if (historyBarrierIsRequired) createCheckpointWithRetries(table, System.nanoTime())
       recordDeltaEvent(
-        deltaLog = deltaLog,
+        provider = table,
         opType = "dropFeatureCompleted.withCheckpointProtection",
         data = Map("droppedFeature" -> removableFeature.name))
       Nil
@@ -612,7 +611,7 @@ case class AlterTableAddColumnsDeltaCommand(
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
-    recordDeltaOperation(deltaLog, "delta.ddl.alter.addColumns") {
+    recordDeltaOperation(table, "delta.ddl.alter.addColumns") {
       val txn = startTransaction()
 
       if (SchemaUtils.filterRecursively(
@@ -714,7 +713,7 @@ case class AlterTableDropColumnsDeltaCommand(
       throw DeltaErrors.dropColumnNotSupported(suggestUpgrade = false)
     }
     val deltaLog = table.deltaLog
-    recordDeltaOperation(deltaLog, "delta.ddl.alter.dropColumns") {
+    recordDeltaOperation(table, "delta.ddl.alter.dropColumns") {
       val txn = startTransaction()
       val metadata = txn.metadata
       if (txn.metadata.columnMappingMode == NoMapping) {
@@ -783,7 +782,7 @@ case class AlterTableChangeColumnDeltaCommand(
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
-    recordDeltaOperation(deltaLog, "delta.ddl.alter.changeColumns") {
+    recordDeltaOperation(table, "delta.ddl.alter.changeColumns") {
       val txn = startTransaction()
       val metadata = txn.metadata
       val bypassCharVarcharToStringFix =
@@ -1158,7 +1157,7 @@ case class AlterTableReplaceColumnsDeltaCommand(
   extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
-    recordDeltaOperation(table.deltaLog, "delta.ddl.alter.replaceColumns") {
+    recordDeltaOperation(table, "delta.ddl.alter.replaceColumns") {
       val txn = startTransaction()
 
       val metadata = txn.metadata
@@ -1304,7 +1303,7 @@ case class AlterTableAddConstraintDeltaCommand(
     if (name == CharVarcharConstraint.INVARIANT_NAME) {
       throw DeltaErrors.invalidConstraintName(name)
     }
-    recordDeltaOperation(deltaLog, "delta.ddl.alter.addConstraint") {
+    recordDeltaOperation(table, "delta.ddl.alter.addConstraint") {
       val txn = startTransaction()
 
       getConstraintWithName(table, name, txn.metadata, sparkSession).foreach { oldExpr =>
@@ -1340,7 +1339,7 @@ case class AlterTableAddConstraintDeltaCommand(
       logInfo(log"Checking that ${MDC(DeltaLogKeys.EXPR, exprText)} " +
         log"is satisfied for existing data. This will require a full table scan.")
       recordDeltaOperation(
-          txn.snapshot.deltaLog,
+          txn,
           "delta.ddl.alter.addConstraint.checkExisting") {
         val n = df.where(Column(Or(Not(unresolvedExpr), IsUnknown(unresolvedExpr)))).count()
 
@@ -1372,7 +1371,7 @@ case class AlterTableDropConstraintDeltaCommand(
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
-    recordDeltaOperation(deltaLog, "delta.ddl.alter.dropConstraint") {
+    recordDeltaOperation(table, "delta.ddl.alter.dropConstraint") {
       val txn = startTransaction()
 
       val oldExprText = Constraints.getExprTextByName(name, txn.metadata, sparkSession)
@@ -1427,7 +1426,7 @@ case class AlterTableClusterByDeltaCommand(
           "newColumnsCount" -> 0))
       return Seq.empty
     }
-    recordDeltaOperation(deltaLog, "delta.ddl.alter.clusterBy") {
+    recordDeltaOperation(table, "delta.ddl.alter.clusterBy") {
       val txn = startTransaction()
 
       val clusteringColsLogicalNames = ClusteringColumnInfo.extractLogicalNames(txn.snapshot)

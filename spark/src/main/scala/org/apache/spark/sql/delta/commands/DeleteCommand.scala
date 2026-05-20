@@ -406,6 +406,15 @@ case class DeleteCommand(
     txn.registerSQLMetrics(sparkSession, metrics)
     sendDriverMetrics(sparkSession, metrics)
 
+    val alwaysReportSomeZero =
+      conf.getConf(DeltaSQLConf.METRICS_ALWAYS_REPORT_SOME_ZERO_METRICS)
+    def reportSomeZero(rowCount: Option[Long]): Option[Long] =
+      if (alwaysReportSomeZero) {
+        Some(rowCount.getOrElse(0L))
+      } else {
+        rowCount
+      }
+
     val numRecordsStats = NumRecordsStats.fromActions(deleteActions)
     val deleteMetric = DeleteMetric(
         condition = condition.map(_.sql).getOrElse("true"),
@@ -422,8 +431,8 @@ case class DeleteCommand(
         numPartitionsAfterSkipping,
         numPartitionsAddedTo,
         numPartitionsRemovedFrom,
-        numCopiedRows,
-        numDeletedRows,
+        reportSomeZero(numCopiedRows),
+        reportSomeZero(numDeletedRows),
         numAddedBytes,
         numRemovedBytes,
         changeFileBytes = changeFileBytes,

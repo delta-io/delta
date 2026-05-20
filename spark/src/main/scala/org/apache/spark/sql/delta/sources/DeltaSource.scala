@@ -143,13 +143,7 @@ trait DeltaSourceBase extends Source
    */
   protected val readSchemaAtSourceInit: StructType = readSnapshotDescriptor.metadata.schema
 
-  protected val readPartitionSchemaAtSourceInit: StructType =
-    readSnapshotDescriptor.metadata.partitionSchema
-
   protected val readProtocolAtSourceInit: Protocol = readSnapshotDescriptor.protocol
-
-  protected val readConfigurationsAtSourceInit: Map[String, String] =
-    readSnapshotDescriptor.metadata.configuration
 
   /**
    * Create a snapshot descriptor, customizing its metadata using metadata tracking if necessary
@@ -1413,14 +1407,14 @@ object DeltaSource extends DeltaLogging {
     } catch {
       case e: DeltaUnsupportedTableFeatureException =>
         recordDeltaEvent(
-          deltaLog = deltaLog,
+          provider = deltaLog,
           opType = "dropFeature.validateProtocolAt.unsupportedFeatureFound",
           data = Map("message" -> e.getMessage))
         throw e
       case NonFatal(e) => // Suppress rest errors.
         logWarning(log"Protocol validation failed with '${MDC(DeltaLogKeys.EXCEPTION, e)}'.")
         recordDeltaEvent(
-          deltaLog = deltaLog,
+          provider = deltaLog,
           opType = "dropFeature.validateProtocolAt.error",
           data = Map("message" -> e.getMessage))
     }

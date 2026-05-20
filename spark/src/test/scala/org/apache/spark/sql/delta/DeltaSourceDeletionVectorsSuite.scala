@@ -411,6 +411,63 @@ trait DeltaSourceDeletionVectorTests extends StreamTest
     }
   }
 
+  // Regression for #6578: ColumnVectorWithFilter.closeIfFreeable must not release the
+  // underlying Parquet vector's `nulls` array - the reader reuses it for the next batch.
+  test("streaming read with nulls and deletion vectors does not NPE") {
+    withTempDir { inputDir =>
+      val path = inputDir.getAbsolutePath
+      sql(
+        s"""CREATE TABLE delta.`$path` (id INT, value STRING, opt_int INT) USING delta
+           |TBLPROPERTIES ('delta.enableDeletionVectors' = 'true')""".stripMargin)
+      executeDml(
+        s"INSERT INTO delta.`$path` VALUES (1, null, null), (2, 'b', null), (null, null, null)")
+      executeDml(s"INSERT INTO delta.`$path` VALUES (3, 'c', 3), (null, 'x', 1)")
+
+      val df = loadStreamWithOptions(path, Map.empty)
+      testStream(df)(
+        AssertOnQuery { q =>
+          q.processAllAvailable()
+          true
+        },
+        AssertOnQuery { q =>
+          assert(
+            q.exception.isEmpty,
+            s"Expected no exception, but got: ${q.exception.map(_.toString).orNull}")
+          true
+        })
+    }
+  }
+
+  // Regression for #6578: ColumnVectorWithFilter.getChild must not assume dataType() is a
+  // StructType - Spark's ColumnVector.getVariant calls getChild(0) on VARIANT vectors.
+  test("streaming read with variant column and deletion vectors does not ClassCastException") {
+    withTempDir { inputDir =>
+      val path = inputDir.getAbsolutePath
+      sql(
+        s"""CREATE TABLE delta.`$path` (id INT, data VARIANT) USING delta
+           |TBLPROPERTIES ('delta.enableDeletionVectors' = 'true')""".stripMargin)
+      executeDml(
+        s"""INSERT INTO delta.`$path`
+           |SELECT 1, parse_json('{"key": "value"}')
+           |UNION ALL SELECT 2, parse_json('[1,2,3]')""".stripMargin)
+      executeDml(
+        s"""INSERT INTO delta.`$path` SELECT 3, parse_json('{"nested": {"a": 1}}')""".stripMargin)
+
+      val df = loadStreamWithOptions(path, Map.empty)
+      testStream(df)(
+        AssertOnQuery { q =>
+          q.processAllAvailable()
+          true
+        },
+        AssertOnQuery { q =>
+          assert(
+            q.exception.isEmpty,
+            s"Expected no exception, but got: ${q.exception.map(_.toString).orNull}")
+          true
+        })
+    }
+  }
+
   test("multiple deletion vectors per file with initial snapshot") {
     withTempDir { inputDir =>
       val path = inputDir.getAbsolutePath

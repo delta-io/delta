@@ -618,11 +618,11 @@ trait DeltaSQLInMemoryTestUtils
    * Override for [[withTable]] that asserts no leftover physical parquet as a sanity-check
    * for V2 paths.
    */
-  override protected def withTable(tableNames: String*)(f: => Unit): Unit = {
+  override def withTable(tableNames: String*)(f: => Unit): Unit = {
     try {
       super.withTable(tableNames: _*) {
         f
-        tableNames.foreach(assertNoParquetFiles)
+        tableNames.foreach(assertNoV1Writes)
       }
     } finally {
       for (tableName <- tableNames) {
@@ -634,7 +634,7 @@ trait DeltaSQLInMemoryTestUtils
   /**
    * Overrides for [[afterEach]], cleans the [[InMemoryDeltaCatalog]] after each test.
    */
-  override protected def afterEach(): Unit = {
+  override def afterEach(): Unit = {
     try {
       InMemoryDeltaCatalog.reset()
     } finally {
@@ -642,13 +642,25 @@ trait DeltaSQLInMemoryTestUtils
     }
   }
 
+  override def withTempPath(f: File => Unit): Unit = {
+    super.withTempPath { dir =>
+      f(dir)
+      assertNoV1Writes(dir)
+    }
+  }
+
+  override def withTempDir(f: File => Unit): Unit = {
+    super.withTempPath { dir =>
+      f(dir)
+      assertNoV1Writes(dir)
+    }
+  }
+
   /**
-   * Assert no parquet files are contain within the data directory for [[tableName]].
+   * Asserts no hints of V1 writes (e.g. parquet files) are in the data directory for [[tableName]].
    * Used to sanity-check our V2-only write paths.
    */
-  protected def assertNoParquetFiles(tableName: String): Unit = {
-    import java.nio.file.{Files, Path}
-
+  protected def assertNoV1Writes(tableName: String): Unit = {
     val ident = TableIdentifier(tableName)
 
     // Temp views don't create anything on the disk, but still use `withTable`.
@@ -660,6 +672,17 @@ trait DeltaSQLInMemoryTestUtils
 
     val catalogTable = spark.sessionState.catalog.getTableMetadata(ident)
     val dataPath = new File(new java.net.URI(catalogTable.location.toString))
+    assertNoV1Writes(dataPath)
+  }
+
+  protected def assertNoV1Writes(dataPath: File): Unit = {
+    assertNoParquetFiles(dataPath)
+  }
+
+
+  private def assertNoParquetFiles(dataPath: File): Unit = {
+    import java.nio.file.{Files, Path}
+
     if (dataPath.exists()) {
       val stream = Files.walk(dataPath.toPath)
       try {
@@ -667,9 +690,11 @@ trait DeltaSQLInMemoryTestUtils
           .filter(Files.isRegularFile(_))
           .filter(_.toString.endsWith(".parquet"))
           .toArray.map(_.asInstanceOf[Path].toString).toSeq
-        assert(parquetFiles.isEmpty,
-          s"Physical parquet files found while V2 in-memory mode is enabled. " +
-          s"DML may have fallen back to V1. Files: $parquetFiles")
+        if (parquetFiles.nonEmpty) {
+          fail(s"Found ${parquetFiles.length} parquet files in $dataPath while" +
+              s"V2 in-memory mode is enabled.\n" +
+              s"DML may have fallen back to V1.")
+        }
       } finally {
         stream.close()
       }
@@ -834,6 +859,14 @@ trait DeltaDMLInMemoryTestUtils
     extends DeltaDMLTestUtils
     with DeltaSQLInMemoryTestUtils {
 
+  protected def v2ErrorConditionMapping: Map[String, String] = Map(
+    "DELTA_AGGREGATION_NOT_SUPPORTED" -> "UNSUPPORTED_MERGE_CONDITION.AGGREGATE",
+    "DELTA_NON_DETERMINISTIC_FUNCTION_NOT_SUPPORTED" ->
+      "UNSUPPORTED_MERGE_CONDITION.NON_DETERMINISTIC",
+    "DELTA_MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW_IN_MERGE" -> "MERGE_CARDINALITY_VIOLATION",
+    "DELTA_MERGE_UNRESOLVED_EXPRESSION" -> "UNRESOLVED_COLUMN.WITH_SUGGESTION",
+    "DELTA_SUBQUERY_NOT_SUPPORTED" -> "UNSUPPORTED_MERGE_CONDITION.SUBQUERY")
+
   /**
    * Appends [[df]] into the test table.
    */
@@ -848,7 +881,45 @@ trait DeltaDMLInMemoryTestUtils
         s"CREATE TABLE $tableSQLIdentifier (${df.schema.toDDL}) USING delta $partitioning")
     }
     df.writeTo(tableSQLIdentifier).append()
-    assertNoParquetFiles(tableSQLIdentifier)
+    assertNoV1Writes(tableSQLIdentifier)
+  }
+
+  override def checkError(
+      exception: SparkThrowable,
+      condition: String,
+      sqlState: Option[String] = None,
+      parameters: Map[String, String] = Map.empty,
+      matchPVals: Boolean = false,
+      queryContext: Array[ExpectedContext] = Array.empty): Unit = {
+    v2ErrorConditionMapping.get(condition) match {
+      case Some(v2Condition) =>
+        assert(exception.getCondition == v2Condition,
+          s"Expected V2 condition '$v2Condition' (mapped from '$condition'), " +
+            s"got '${exception.getCondition}'")
+      case None =>
+        super.checkError(
+          exception = exception,
+          condition = condition,
+          sqlState = sqlState,
+          parameters = parameters,
+          matchPVals = matchPVals,
+          queryContext = queryContext)
+    }
+  }
+
+  /**
+   * Override errorContains to handle known error message differences between Delta V1 and DSv2.
+   * Eventually we'd want to migrate all usage of errorContains (deprecated) to checkError.
+   */
+  override protected def errorContains(errMsg: String, str: String): Unit = {
+    val mapped = str.toLowerCase(java.util.Locale.ROOT) match {
+      // Delta says "cannot resolve X in UPDATE/INSERT clause", Spark says "cannot be resolved"
+      case s if s.startsWith("cannot resolve") => "cannot be resolved"
+      // Delta says "No such struct field X in Y", Spark says "cannot be resolved"
+      case s if s.startsWith("no such struct field") => "cannot be resolved"
+      case _ => str
+    }
+    super.errorContains(errMsg, mapped)
   }
 }
 

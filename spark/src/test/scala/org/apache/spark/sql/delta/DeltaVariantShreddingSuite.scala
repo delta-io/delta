@@ -357,6 +357,146 @@ class DeltaVariantShreddingSuite
     }
   }
 
+  test("variantShredding requires variantType: ALTER with enableVariantShredding " +
+    "on table without variant column") {
+    withSQLConf(
+      DeltaSQLConf.FORCE_USE_PREVIEW_SHREDDING_FEATURE.key -> "false",
+      DeltaSQLConf.FORCE_USE_PREVIEW_VARIANT_FEATURE.key -> "false") {
+      withTable("tbl") {
+        sql("CREATE TABLE tbl(s STRING) USING DELTA")
+        sql(s"ALTER TABLE tbl SET TBLPROPERTIES " +
+          s"('${DeltaConfigs.ENABLE_VARIANT_SHREDDING.key}' = 'true')")
+        DeltaVariantShreddingSuite.assertVariantShreddingTableFeatures(
+          spark, "tbl", expectPreviewFeature = false, expectStableFeature = true)
+        DeltaVariantShreddingSuite.assertVariantTypeTableFeatures(
+          spark, "tbl", expectPreviewFeature = false, expectStableFeature = true)
+      }
+    }
+  }
+
+  test("variantShredding requires variantType: ALTER with " +
+    "'delta.feature.variantShredding=supported'") {
+    withSQLConf(
+      DeltaSQLConf.FORCE_USE_PREVIEW_SHREDDING_FEATURE.key -> "false",
+      DeltaSQLConf.FORCE_USE_PREVIEW_VARIANT_FEATURE.key -> "false") {
+      withTable("tbl") {
+        sql("CREATE TABLE tbl(s STRING) USING DELTA")
+        sql("ALTER TABLE tbl SET TBLPROPERTIES " +
+          "('delta.feature.variantShredding' = 'supported')")
+        DeltaVariantShreddingSuite.assertVariantShreddingTableFeatures(
+          spark, "tbl", expectPreviewFeature = false, expectStableFeature = true)
+        DeltaVariantShreddingSuite.assertVariantTypeTableFeatures(
+          spark, "tbl", expectPreviewFeature = false, expectStableFeature = true)
+      }
+    }
+  }
+
+  test("variantShredding requires variantType: table already has variantType-preview") {
+    withSQLConf(
+      DeltaSQLConf.FORCE_USE_PREVIEW_SHREDDING_FEATURE.key -> "false",
+      DeltaSQLConf.FORCE_USE_PREVIEW_VARIANT_FEATURE.key -> "true") {
+      withTable("tbl") {
+        sql("CREATE TABLE tbl(v VARIANT) USING DELTA")
+        DeltaVariantShreddingSuite.assertVariantTypeTableFeatures(
+          spark, "tbl", expectPreviewFeature = true, expectStableFeature = false)
+        sql(s"ALTER TABLE tbl SET TBLPROPERTIES " +
+          s"('${DeltaConfigs.ENABLE_VARIANT_SHREDDING.key}' = 'true')")
+        DeltaVariantShreddingSuite.assertVariantShreddingTableFeatures(
+          spark, "tbl", expectPreviewFeature = false, expectStableFeature = true)
+        DeltaVariantShreddingSuite.assertVariantTypeTableFeatures(
+          spark, "tbl", expectPreviewFeature = true, expectStableFeature = true)
+      }
+    }
+  }
+
+  test("variantShredding requires variantType: CREATE TABLE with enableVariantShredding") {
+    Seq(false, true).foreach { forcePreviewVariant =>
+      withSQLConf(
+        DeltaSQLConf.FORCE_USE_PREVIEW_SHREDDING_FEATURE.key -> "false",
+        DeltaSQLConf.FORCE_USE_PREVIEW_VARIANT_FEATURE.key -> forcePreviewVariant.toString) {
+        withTable("tbl") {
+          sql("CREATE TABLE tbl(s STRING) USING DELTA TBLPROPERTIES " +
+            s"('${DeltaConfigs.ENABLE_VARIANT_SHREDDING.key}' = 'true')")
+          DeltaVariantShreddingSuite.assertVariantShreddingTableFeatures(
+            spark, "tbl", expectPreviewFeature = false, expectStableFeature = true)
+          DeltaVariantShreddingSuite.assertVariantTypeTableFeatures(
+            spark, "tbl", expectPreviewFeature = false, expectStableFeature = true)
+        }
+      }
+    }
+  }
+
+  test("variantShredding requires variantType: CREATE TABLE with " +
+    "'delta.feature.variantShredding=supported'") {
+    withSQLConf(
+      DeltaSQLConf.FORCE_USE_PREVIEW_SHREDDING_FEATURE.key -> "false",
+      DeltaSQLConf.FORCE_USE_PREVIEW_VARIANT_FEATURE.key -> "false") {
+      withTable("tbl") {
+        sql("CREATE TABLE tbl(s STRING) USING DELTA TBLPROPERTIES " +
+          "('delta.feature.variantShredding' = 'supported')")
+        DeltaVariantShreddingSuite.assertVariantShreddingTableFeatures(
+          spark, "tbl", expectPreviewFeature = false, expectStableFeature = true)
+        DeltaVariantShreddingSuite.assertVariantTypeTableFeatures(
+          spark, "tbl", expectPreviewFeature = false, expectStableFeature = true)
+      }
+    }
+  }
+
+  test("variantShredding requires variantType: CREATE TABLE with variant column and " +
+    "FORCE_USE_PREVIEW_VARIANT_FEATURE=true") {
+    withSQLConf(
+      DeltaSQLConf.FORCE_USE_PREVIEW_SHREDDING_FEATURE.key -> "false",
+      DeltaSQLConf.FORCE_USE_PREVIEW_VARIANT_FEATURE.key -> "true") {
+      withTable("tbl") {
+        sql("CREATE TABLE tbl(v VARIANT) USING DELTA TBLPROPERTIES " +
+          s"('${DeltaConfigs.ENABLE_VARIANT_SHREDDING.key}' = 'true')")
+        DeltaVariantShreddingSuite.assertVariantShreddingTableFeatures(
+          spark, "tbl", expectPreviewFeature = false, expectStableFeature = true)
+        DeltaVariantShreddingSuite.assertVariantTypeTableFeatures(
+          spark, "tbl", expectPreviewFeature = true, expectStableFeature = true)
+      }
+    }
+  }
+
+  test("variantShredding-preview does not auto-add variantType when forcePreview=true") {
+    withSQLConf(
+      DeltaSQLConf.FORCE_USE_PREVIEW_SHREDDING_FEATURE.key -> "true",
+      DeltaSQLConf.FORCE_USE_PREVIEW_VARIANT_FEATURE.key -> "false") {
+      withTable("tbl") {
+        sql("CREATE TABLE tbl(s STRING) USING DELTA TBLPROPERTIES " +
+          s"('${DeltaConfigs.ENABLE_VARIANT_SHREDDING.key}' = 'true')")
+        DeltaVariantShreddingSuite.assertVariantShreddingTableFeatures(
+          spark, "tbl", expectPreviewFeature = true, expectStableFeature = false)
+        DeltaVariantShreddingSuite.assertVariantTypeTableFeatures(
+          spark, "tbl", expectPreviewFeature = false, expectStableFeature = false)
+      }
+    }
+  }
+
+  test("variantShredding-preview does not auto-add variantType when added manually") {
+    withSQLConf(
+      DeltaSQLConf.FORCE_USE_PREVIEW_SHREDDING_FEATURE.key -> "false",
+      DeltaSQLConf.FORCE_USE_PREVIEW_VARIANT_FEATURE.key -> "false") {
+      withTable("tbl") {
+        sql("CREATE TABLE tbl(s STRING) USING DELTA TBLPROPERTIES " +
+          "('delta.feature.variantShredding-preview' = 'supported')")
+        DeltaVariantShreddingSuite.assertVariantShreddingTableFeatures(
+          spark, "tbl", expectPreviewFeature = true, expectStableFeature = false)
+        DeltaVariantShreddingSuite.assertVariantTypeTableFeatures(
+          spark, "tbl", expectPreviewFeature = false, expectStableFeature = false)
+      }
+      withTable("tbl") {
+        sql("CREATE TABLE tbl(s STRING) USING DELTA")
+        sql("ALTER TABLE tbl SET TBLPROPERTIES " +
+          "('delta.feature.variantShredding-preview' = 'supported')")
+        DeltaVariantShreddingSuite.assertVariantShreddingTableFeatures(
+          spark, "tbl", expectPreviewFeature = true, expectStableFeature = false)
+        DeltaVariantShreddingSuite.assertVariantTypeTableFeatures(
+          spark, "tbl", expectPreviewFeature = false, expectStableFeature = false)
+      }
+    }
+  }
+
   test("enabling 'FORCE_USE_PREVIEW_VARIANT_FEATURE' on table with stable feature does not " +
     "require adding preview feature") {
     Seq(false, true).foreach { forcePreview =>
@@ -404,5 +544,16 @@ object DeltaVariantShreddingSuite {
       .readerAndWriterFeatures
     assert(expectPreviewFeature == features.contains(VariantShreddingPreviewTableFeature))
     assert(expectStableFeature == features.contains(VariantShreddingTableFeature))
+  }
+
+  def assertVariantTypeTableFeatures(
+      spark: SparkSession,
+      tableName: String,
+      expectPreviewFeature: Boolean,
+      expectStableFeature: Boolean): Unit = {
+    val features = DeltaLog.forTable(spark, TableIdentifier(tableName)).update().protocol
+      .readerAndWriterFeatures
+    assert(expectPreviewFeature == features.contains(VariantTypePreviewTableFeature))
+    assert(expectStableFeature == features.contains(VariantTypeTableFeature))
   }
 }
