@@ -27,6 +27,11 @@ import java.util.List;
  */
 public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
 
+  @Override
+  protected boolean useDeltaRestApiForTests() {
+    return true;
+  }
+
   @TestAllTableTypes
   public void testBasicInsertOperations(TableType tableType) throws Exception {
     withNewTable(

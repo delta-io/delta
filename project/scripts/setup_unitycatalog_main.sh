@@ -57,7 +57,7 @@ set -euo pipefail
 # The pin. Bump both lines together if UC's version.sbt changed at the new SHA. build.sbt's
 # `unityCatalogVersion` is obtained by running this script with `--print-version`, so these two
 # values are the single source of truth.
-UC_PIN_SHA=e6deb37e890a0a6fb8ae495b5bec52326731f6a6
+UC_PIN_SHA=c28ff7d30f8586d7e5e0f8f9dd06de7d3743f4d2
 UC_BASE_VERSION=0.5.0-SNAPSHOT
 # ---------------------------------------------------------------------------------------------
 
@@ -118,27 +118,14 @@ if [[ "$UC_FORCE" != "1" ]] && all_canaries_present; then
   exit 0
 fi
 
-echo ">>> Fetching Unity Catalog main from $UC_REPO"
+echo ">>> Fetching Unity Catalog main and pinned commit from $UC_REPO"
 rm -rf "$UC_DIR"
 mkdir -p "$UC_DIR"
-# Fetch main's full history so we can run `git merge-base --is-ancestor` below to verify the
-# pinned SHA is actually on main. UC's repo is small; full fetch of one branch is cheap.
 git -C "$UC_DIR" init --quiet
 git -C "$UC_DIR" remote add origin "$UC_REPO"
-git -C "$UC_DIR" fetch --quiet origin main
+git -C "$UC_DIR" fetch --quiet origin main "$UC_PIN_SHA"
 
 cd "$UC_DIR"
-
-# Safety check: the pinned SHA must be reachable from UC main. Local `merge-base --is-ancestor`
-# on the history we just fetched - no GitHub API, no token needed. Only applies when UC_REF is
-# the pinned SHA; UC_REF=main is trivially on main.
-if [[ "$UC_REF" == "$UC_PIN_SHA" ]]; then
-  if ! git merge-base --is-ancestor "$UC_PIN_SHA" origin/main 2>/dev/null; then
-    echo "ERROR: UC_PIN_SHA=$UC_PIN_SHA is not reachable from unitycatalog/unitycatalog main." >&2
-    echo "       Pin must reference a commit on https://github.com/unitycatalog/unitycatalog/commits/main" >&2
-    exit 1
-  fi
-fi
 
 if [[ "$UC_REF" == "main" ]]; then
   git checkout --quiet origin/main

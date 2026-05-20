@@ -271,6 +271,9 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     }
 
     try {
+      System.out.println("[delta-api] Calling UC Delta updateTable for "
+          + name.catalog + "." + name.schema + "." + name.table
+          + ", commitVersion=" + commit.map(c -> Long.toString(c.getVersion())).orElse("none"));
       deltaTablesApi.updateTable(name.catalog, name.schema, name.table, request);
     } catch (ApiException e) {
       handleUpdateTableException(e, name.catalog, name.schema, name.table);
