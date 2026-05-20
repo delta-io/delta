@@ -38,9 +38,10 @@ public class DeltaChangelogDvTest extends DeltaChangelogTestBase {
   // ===========================================================================================
 
   /**
-   * Create a DV-enabled, row-tracking-enabled table, then run the body under
-   * {@code spark.databricks.delta.v2.enableMode=STRICT} so CHANGES reads route through the V2
-   * path.
+   * Create a DV-enabled, row-tracking-enabled table. Writes (INSERT, DELETE) inside the body run
+   * under the session-default v2 mode (AUTO -&gt; V1 connector) so they go through the V1 write
+   * path that populates {@code numRecords} statistics required for row-tracking-enabled tables.
+   * The body is expected to wrap CHANGES reads in {@link #withStrictV2}.
    */
   private void withDvTable(String suffix, ThrowingConsumer body) throws Exception {
     String tableName = "dsv2_cdc_dv_" + suffix + "_" + System.nanoTime();
@@ -57,11 +58,16 @@ public class DeltaChangelogDvTest extends DeltaChangelogTestBase {
                               + "TBLPROPERTIES ('delta.enableDeletionVectors'='true', "
                               + "'delta.enableRowTracking'='true')",
                           tableName, tablePath));
-                  withSQLConf(
-                      "spark.databricks.delta.v2.enableMode",
-                      "STRICT",
-                      () -> body.accept(tableName, tablePath));
+                  body.accept(tableName, tablePath);
                 }));
+  }
+
+  /**
+   * Run the given action under {@code spark.databricks.delta.v2.enableMode=STRICT} so {@code
+   * TableCatalog.loadChangelog} routes the CHANGES read through the V2 path.
+   */
+  private void withStrictV2(ThrowingRunnable action) throws Exception {
+    withSQLConf("spark.databricks.delta.v2.enableMode", "STRICT", action);
   }
 
   @FunctionalInterface
@@ -112,10 +118,13 @@ public class DeltaChangelogDvTest extends DeltaChangelogTestBase {
           spark.sql(String.format("INSERT INTO %s VALUES (4,'d'),(5,'e'),(6,'f')", tableName));
           spark.sql(String.format("DELETE FROM %s WHERE id IN (2, 5)", tableName));
 
-          List<Row> rows = readChanges(tableName, 3, 3);
-          assertEquals(2, rows.size(), "Expected two deletes (one per file) at v3");
-          assertChange(rows.get(0), 2L, "b", "delete", 3L);
-          assertChange(rows.get(1), 5L, "e", "delete", 3L);
+          withStrictV2(
+              () -> {
+                List<Row> rows = readChanges(tableName, 3, 3);
+                assertEquals(2, rows.size(), "Expected two deletes (one per file) at v3");
+                assertChange(rows.get(0), 2L, "b", "delete", 3L);
+                assertChange(rows.get(1), 5L, "e", "delete", 3L);
+              });
         });
   }
 
@@ -134,10 +143,13 @@ public class DeltaChangelogDvTest extends DeltaChangelogTestBase {
           spark.sql(String.format("DELETE FROM %s WHERE id = 2", tableName)); // v2
           spark.sql(String.format("DELETE FROM %s WHERE id = 4", tableName)); // v3
 
-          List<Row> rows = readChanges(tableName, 2, 3);
-          assertEquals(2, rows.size(), "Expected one delete per commit in v2..v3");
-          assertChange(rows.get(0), 2L, "b", "delete", 2L);
-          assertChange(rows.get(1), 4L, "d", "delete", 3L);
+          withStrictV2(
+              () -> {
+                List<Row> rows = readChanges(tableName, 2, 3);
+                assertEquals(2, rows.size(), "Expected one delete per commit in v2..v3");
+                assertChange(rows.get(0), 2L, "b", "delete", 2L);
+                assertChange(rows.get(1), 4L, "d", "delete", 3L);
+              });
         });
   }
 }
