@@ -16,14 +16,12 @@
 
 package io.delta.storage.commit.uccommitcoordinator.exceptions;
 
-import java.io.IOException;
-
 /**
  * Thrown when the catalog refuses to serve a non-Delta table. Callers should fall back to a
  * non-Delta-REST-API load path. Emitted as HTTP 400 with {@code error.type =
  * "UnsupportedTableFormatException"} on the wire.
  */
-public class UnsupportedTableFormatException extends IOException {
+public class UnsupportedTableFormatException extends RuntimeException {
   public UnsupportedTableFormatException(String message) {
     super(message);
   }
