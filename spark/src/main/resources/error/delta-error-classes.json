@@ -128,6 +128,12 @@
     ],
     "sqlState" : "42703"
   },
+  "DELTA_BLOOM_FILTER_INVALID_PARAMETER_VALUE" : {
+    "message" : [
+      "Cannot create bloom filter index, invalid parameter value: '<message>'."
+    ],
+    "sqlState" : "22023"
+  },
   "DELTA_CANNOT_CHANGE_DATA_TYPE" : {
     "message" : [
       "Cannot change data type: <dataType>"
@@ -258,6 +264,12 @@
   "DELTA_CANNOT_RESOLVE_COLUMN" : {
     "message" : [
       "Can't resolve column <columnName> in <schema>"
+    ],
+    "sqlState" : "42703"
+  },
+  "DELTA_CANNOT_RESOLVE_EXPRESSION" : {
+    "message" : [
+      "Cannot resolve expression: <expression>"
     ],
     "sqlState" : "42703"
   },
@@ -770,6 +782,17 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_CONVERT_METASTORE_METADATA_MISMATCH" : {
+    "message" : [
+      "You are trying to convert a table which already has a delta log where the table properties in the catalog don't match the configuration in the delta log.",
+      "Table properties in catalog:",
+      "<tableProperties>",
+      "Delta configuration:",
+      "<configuration>",
+      "If you would like to merge the configurations (update existing fields and insert new ones), set the SQL configuration `<metadataCheckSqlConf>` to false."
+    ],
+    "sqlState" : "42K03"
+  },
   "DELTA_CONVERT_NON_PARQUET_TABLE" : {
     "message" : [
       "CONVERT TO DELTA only supports parquet tables, but you are trying to convert a <sourceName> source: <tableId>"
@@ -1080,6 +1103,16 @@
       "To use column mapping, create a new table and reload the data into it."
     ],
     "sqlState" : "XXKDS"
+  },
+  "DELTA_ERROR_FINDING_COLUMN_POSITION" : {
+    "message" : [
+      "Error while searching for the position of the column <column>.",
+      "Schema:",
+      "<schema>",
+      "Error:",
+      "<message>"
+    ],
+    "sqlState" : "42703"
   },
   "DELTA_EXCEED_CHAR_VARCHAR_LIMIT" : {
     "message" : [
@@ -1529,6 +1562,12 @@
     ],
     "sqlState" : "42613"
   },
+  "DELTA_IDENTITY_COLUMN_INCONSISTENT_METADATA" : {
+    "message" : [
+      "Inconsistent IDENTITY metadata for column <colName> detected: <hasStart>, <hasStep>, <hasInsert>"
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_ILLEGAL_FILE_FOUND" : {
     "message" : [
       "Illegal files found in a dataChange = false transaction. Files: <file>"
@@ -1682,6 +1721,12 @@
       "The commit succeeded at version <committedVersion>, but post-commit validation detected version <currentVersion>."
     ],
     "sqlState" : "XXKDS"
+  },
+  "DELTA_INVALID_CONSTRAINT_NAME" : {
+    "message" : [
+      "Cannot use <name> as the name of a CHECK constraint. This name is reserved."
+    ],
+    "sqlState" : "42939"
   },
   "DELTA_INVALID_FORMAT_FROM_SOURCE_VERSION" : {
     "message" : [
@@ -3212,6 +3257,12 @@
     ],
     "sqlState" : "42621"
   },
+  "DELTA_UNSUPPORTED_EXPRESSION_IN_TARGET_COLUMN" : {
+    "message" : [
+      "<optionalPrefixMessage>Found unsupported expression <expression> while parsing target column name parts."
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_UNSUPPORTED_FEATURES_FOR_READ" : {
     "message" : [
       "Unsupported Delta read feature: table \"<tableNameOrPath>\" requires reader table feature(s) that are unsupported by Delta Lake \"<deltaVersion>\": <unsupported>."
@@ -3284,6 +3335,12 @@
       "Nested field is not supported in the <operation> (field = <fieldName>)."
     ],
     "sqlState" : "0AKDC"
+  },
+  "DELTA_UNSUPPORTED_NESTED_FIELD_IN_UPDATE" : {
+    "message" : [
+      "<optionalPrefixMessage>Updating nested fields is only supported for StructType."
+    ],
+    "sqlState" : "0A000"
   },
   "DELTA_UNSUPPORTED_NON_EMPTY_CLONE" : {
     "message" : [
@@ -3554,54 +3611,5 @@
       "TBLPROPERTIES('delta.feature.allowColumnDefaults' = 'supported')."
     ],
     "sqlState" : "0AKDE"
-  },
-  "_LEGACY_ERROR_TEMP_DELTA_0001" : {
-    "message" : [
-      "Cannot use '<name>' as the name of a CHECK constraint."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_DELTA_0002" : {
-    "message" : [
-      "Cannot create bloom filter index, invalid parameter value: '<message>'."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_DELTA_0003" : {
-    "message" : [
-      "You are trying to convert a table which already has a delta log where the table properties in the catalog don't match the configuration in the delta log.",
-      "Table properties in catalog:",
-      "<tableProperties>",
-      "Delta configuration:",
-      "<configuration>",
-      "If you would like to merge the configurations (update existing fields and insert new ones), set the SQL configuration `<metadataCheckSqlConf>` to false."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_DELTA_0006" : {
-    "message" : [
-      "Inconsistent IDENTITY metadata for column <colName> detected: <hasStart>, <hasStep>, <hasInsert>"
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_DELTA_0008" : {
-    "message" : [
-      "Error while searching for position of column <column>.",
-      "Schema:",
-      "<schema>",
-      "Error:",
-      "<message>"
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_DELTA_0009" : {
-    "message" : [
-      "<optionalPrefixMessage>Updating nested fields is only supported for StructType."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_DELTA_0010" : {
-    "message" : [
-      "<optionalPrefixMessage>Found unsupported expression <expression> while parsing target column name parts."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_DELTA_0012" : {
-    "message" : [
-      "Could not resolve expression: <expression>"
-    ]
   }
 }
