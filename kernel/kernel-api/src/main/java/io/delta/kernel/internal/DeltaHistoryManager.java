@@ -524,8 +524,8 @@ public final class DeltaHistoryManager {
     CloseableIterator<Commit> commits =
         listFrom(engine, logPath, start)
             .filter(fs -> FileNames.isCommitFile(getName(fs.getPath())))
-            .filter(fs -> FileNames.deltaVersion(fs.getPath()) < endExclusive)
-            .map(fs -> new Commit(FileNames.deltaVersion(fs.getPath()), fs.getModificationTime()));
+            .map(fs -> new Commit(FileNames.deltaVersion(fs.getPath()), fs.getModificationTime()))
+            .filter(commit -> commit.version < endExclusive);
     return monotonizeCommitTimestamps(commits);
   }
 
