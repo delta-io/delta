@@ -593,7 +593,7 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
     Map<String, String> options = new HashMap<>();
     options.put(DeltaOptions.SCHEMA_TRACKING_LOCATION(), schemaLogPath);
 
-    SparkTable table = new SparkTable(identifier, tablePath, options);
+    DeltaV2Table table = new DeltaV2Table(identifier, tablePath, options);
 
     StructType schema = table.schema();
     assertEquals(2, schema.fields().length);
@@ -656,15 +656,15 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
     // Evolve the table — version 2 has an extra non-partition column.
     spark.sql(String.format("ALTER TABLE %s ADD COLUMNS (value DOUBLE)", tableName));
 
-    // Construct SparkTable with the schema-tracking option pointing at the seeded log. The
+    // Construct DeltaV2Table with the schema-tracking option pointing at the seeded log. The
     // snapshot is at v2 (3 columns) but the persisted entry is at v0 (2 columns). Default to
     // the catalog-table constructor since that's how production code typically loads the table.
     Identifier identifier = Identifier.of(new String[] {"default"}, tableName);
     Map<String, String> options = new HashMap<>();
     options.put(optionKey, schemaLogPath);
-    SparkTable table;
+    DeltaV2Table table;
     if (usePathBasedConstructor) {
-      table = new SparkTable(identifier, tablePath, options);
+      table = new DeltaV2Table(identifier, tablePath, options);
     } else {
       CatalogTable catalogTable;
       try {
@@ -673,7 +673,7 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
       } catch (Exception e) {
         throw new RuntimeException(e);
       }
-      table = new SparkTable(identifier, catalogTable, options);
+      table = new DeltaV2Table(identifier, catalogTable, options);
     }
 
     // Persisted metadata wins: schema reflects v0 (2 columns), not v2 (3 columns).
@@ -748,7 +748,7 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
           UnsupportedOperationException ex =
               assertThrows(
                   UnsupportedOperationException.class,
-                  () -> new SparkTable(identifier, tablePath, options));
+                  () -> new DeltaV2Table(identifier, tablePath, options));
           assertEquals(
               "Schema tracking location is not supported for Delta streaming source",
               ex.getMessage());
