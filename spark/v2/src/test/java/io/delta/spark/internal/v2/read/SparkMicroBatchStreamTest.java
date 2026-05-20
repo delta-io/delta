@@ -5049,20 +5049,21 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
     assertThat(cache.getVersion()).isEqualTo(42L);
     assertThat(cache.getSortedAddFiles()).isNotNull();
 
+    // close() unpersists but does not null the DataFrame reference
     cache.close();
-    assertThat(cache.getSortedAddFiles()).isNull();
+    assertThat(cache.getSortedAddFiles()).isNotNull();
 
-    // Second close: idempotent — no exception thrown
+    // Second close: idempotent (unpersist on already-unpersisted is a no-op)
     assertDoesNotThrow(cache::close);
   }
 
   /**
-   * Verifies that stop() (non-force invalidation) nulls the AtomicReference but leaves the
-   * DataFrame accessible for any in-flight readers holding a direct reference to the cache.
+   * Verifies that stop() nulls the AtomicReference and unpersists, but the DataFrame reference on
+   * the cache object remains non-null (close() never nullifies the field).
    */
   @Test
-  public void testDistributedInitialSnapshot_stopLeavesDataFrameAccessible(@TempDir File tempDir)
-      throws Exception {
+  public void testDistributedInitialSnapshot_stopLeavesDataFrameReferenceIntact(
+      @TempDir File tempDir) throws Exception {
     String testTablePath = tempDir.getAbsolutePath();
     String testTableName = "test_df_stop_" + System.nanoTime();
     createEmptyTestTable(testTablePath, testTableName);
@@ -5103,14 +5104,12 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
       DataFrameSnapshotCache cached = cacheRef.get();
       assertNotNull(cached, "Cache should have been built by getFileChanges");
 
-      // stop() nulls the AtomicReference but does NOT close the cache
+      // stop() nulls the AtomicReference and unpersists, but the reference stays non-null
       stream.stop();
       assertNull(cacheRef.get(), "AtomicReference should be null after stop()");
-
-      // The direct reference still has a valid DataFrame (not closed/nullified)
       assertNotNull(
           cached.getSortedAddFiles(),
-          "DataFrame should remain accessible after non-force invalidation");
+          "DataFrame reference should remain non-null after close() (only unpersisted)");
     } finally {
       spark.conf().unset(dfFlagKey);
     }

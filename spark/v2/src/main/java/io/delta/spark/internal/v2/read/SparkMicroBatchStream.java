@@ -731,12 +731,12 @@ public class SparkMicroBatchStream
   @Override
   public void stop() {
     cachedInitialSnapshot.set(null);
-    invalidateDataFrameCache(/* forceClose= */ false);
+    invalidateDataFrameCache();
   }
 
-  private void invalidateDataFrameCache(boolean forceClose) {
+  private void invalidateDataFrameCache() {
     DataFrameSnapshotCache prev = cachedDataFrameSnapshot.getAndSet(null);
-    if (forceClose && prev != null) {
+    if (prev != null) {
       prev.close();
     }
   }
@@ -971,7 +971,7 @@ public class SparkMicroBatchStream
       result = snapshotFiles.combine(deltaChanges);
     } else {
       // Release cached DataFrame — initial snapshot processing complete.
-      invalidateDataFrameCache(/* forceClose= */ true);
+      invalidateDataFrameCache();
       result = filterDeltaLogs(fromVersion, endOffset);
     }
 
@@ -1818,12 +1818,13 @@ public class SparkMicroBatchStream
       long version, long fromIndex) {
     DataFrameSnapshotCache dfCache = cachedDataFrameSnapshot.get();
     if (dfCache == null || dfCache.getVersion() != version) {
-      invalidateDataFrameCache(/* forceClose= */ true);
+      invalidateDataFrameCache();
       dfCache = buildDataFrameSnapshotCache(version);
       cachedDataFrameSnapshot.set(dfCache);
     }
 
     Dataset<Row> df = dfCache.getSortedAddFiles();
+    Preconditions.checkState(df != null, "DataFrameSnapshotCache has null DataFrame");
 
     // Push filtering to executors: O(remaining) per batch instead of O(N) full-scan.
     if (fromIndex > DeltaSourceOffset.BASE_INDEX()) {
