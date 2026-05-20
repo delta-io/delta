@@ -1825,8 +1825,9 @@ public class SparkMicroBatchStream
     }
 
     Dataset<Row> df = dfCache.getSortedAddFiles();
-    Preconditions.checkState(
-        df != null, "DataFrame cache closed immediately after rebuild — stream is stopping");
+    if (df == null) {
+      return Utils.toCloseableIterator(Collections.emptyIterator());
+    }
 
     // Push filtering to executors: O(remaining) per batch instead of O(N) full-scan.
     if (fromIndex > DeltaSourceOffset.BASE_INDEX()) {
