@@ -7,6 +7,7 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.commitrange.CommitRangeImpl;
@@ -34,7 +35,9 @@ import org.apache.spark.sql.connector.read.PartitionReader;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.delta.DefaultRowCommitVersion$;
 import org.apache.spark.sql.delta.DeltaErrors;
+import org.apache.spark.sql.delta.DeltaParquetFileFormat;
 import org.apache.spark.sql.delta.RowId$;
+import org.apache.spark.sql.delta.RowIndexFilterType;
 import org.apache.spark.sql.execution.datasources.FilePartition;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.internal.SQLConf;
@@ -106,8 +109,10 @@ public class DeltaChangelogBatch implements Batch {
               Optional<AddFile> addOpt = StreamingHelper.getAddFileWithDataChange(batch, rowId);
               if (addOpt.isPresent()) {
                 AddFile add = addOpt.get();
-                // TODO Sandro: extract DV via add.getDeletionVector(), serialize to base64,
-                // and pass into buildPartition (touch-point 2, plan touch-points).
+                String deletionVectorBase64 =
+                    add.getDeletionVector()
+                        .map(DeletionVectorDescriptor::serializeToBase64)
+                        .orElse(null);
                 commitAdds.add(
                     buildPartition(
                         add.getPath(),
@@ -117,13 +122,17 @@ public class DeltaChangelogBatch implements Batch {
                         commit.getTimestamp(),
                         add::getBaseRowId,
                         add::getDefaultRowCommitVersion,
-                        "AddFile"));
+                        "AddFile",
+                        deletionVectorBase64));
               }
               Optional<RemoveFile> removeOpt = StreamingHelper.getDataChangeRemove(batch, rowId);
               if (removeOpt.isPresent()) {
                 RemoveFile remove = removeOpt.get();
-                // TODO Sandro: extract DV via remove.getDeletionVector(), serialize to base64,
-                // and pass into buildPartition (touch-point 2, plan touch-points).
+                String deletionVectorBase64 =
+                    remove
+                        .getDeletionVector()
+                        .map(DeletionVectorDescriptor::serializeToBase64)
+                        .orElse(null);
                 commitRemoves.add(
                     buildPartition(
                         remove.getPath(),
@@ -133,7 +142,8 @@ public class DeltaChangelogBatch implements Batch {
                         commit.getTimestamp(),
                         remove::getBaseRowId,
                         remove::getDefaultRowCommitVersion,
-                        "RemoveFile"));
+                        "RemoveFile",
+                        deletionVectorBase64));
               }
               // Validate Metadata actions: schema and row-tracking config must match the
               // end-version baseline established by DeltaChangelogScanBuilder. Mid-range
@@ -178,8 +188,6 @@ public class DeltaChangelogBatch implements Batch {
    * has already validated that row tracking is enabled at the start version of the read, so any
    * missing value here is an invariant violation rather than a user-facing error.
    */
-  // TODO Sandro: extend signature to accept the DV (base64 string or DeletionVectorDescriptor)
-  // and forward it to the CDCInputPartition constructor (touch-point 1 + 2).
   private static CDCInputPartition buildPartition(
       String path,
       long size,
@@ -188,7 +196,8 @@ public class DeltaChangelogBatch implements Batch {
       long commitTimestampMillis,
       Supplier<Optional<Long>> baseRowIdAccessor,
       Supplier<Optional<Long>> defaultRowCommitVersionAccessor,
-      String actionDescription) {
+      String actionDescription,
+      String deletionVector) {
     long baseRowId =
         baseRowIdAccessor
             .get()
@@ -204,7 +213,14 @@ public class DeltaChangelogBatch implements Batch {
                     new IllegalStateException(
                         actionDescription + " " + path + " missing defaultRowCommitVersion"));
     return new CDCInputPartition(
-        path, size, commitVersion, commitTimestampMillis, changeType, baseRowId, defaultRcv);
+        path,
+        size,
+        commitVersion,
+        commitTimestampMillis,
+        changeType,
+        baseRowId,
+        defaultRcv,
+        deletionVector);
   }
 
   @Override
@@ -249,8 +265,7 @@ public class DeltaChangelogBatch implements Batch {
     private final String changeType;
     private final long baseRowId;
     private final long defaultRowCommitVersion;
-    // TODO Sandro: add a nullable field carrying the DV info (base64 string) so it can be
-    // passed through to the reader factory (touch-point 1). Add the matching getter below.
+    private final String deletionVectorInfo;
 
     CDCInputPartition(
         String filePath,
@@ -259,9 +274,8 @@ public class DeltaChangelogBatch implements Batch {
         long commitTimestampMillis,
         String changeType,
         long baseRowId,
-        long defaultRowCommitVersion) {
-      // TODO Sandro: extend constructor signature with the new DV parameter and assign it here
-      // (touch-point 1).
+        long defaultRowCommitVersion,
+        String deletionVectorInfo) {
       this.filePath = filePath;
       this.fileSize = fileSize;
       this.commitVersion = commitVersion;
@@ -269,6 +283,7 @@ public class DeltaChangelogBatch implements Batch {
       this.changeType = changeType;
       this.baseRowId = baseRowId;
       this.defaultRowCommitVersion = defaultRowCommitVersion;
+      this.deletionVectorInfo = deletionVectorInfo;
     }
 
     public String getFilePath() {
@@ -299,7 +314,9 @@ public class DeltaChangelogBatch implements Batch {
       return defaultRowCommitVersion;
     }
 
-    // TODO Sandro: add getter for the DV info field (touch-point 1).
+    public String getDeletionVectorInfo() {
+      return deletionVectorInfo;
+    }
   }
 
   /** Executor-side factory for CDC partition readers. */
@@ -334,11 +351,23 @@ public class DeltaChangelogBatch implements Batch {
                   DefaultRowCommitVersion$.MODULE$.METADATA_STRUCT_FIELD_NAME(),
                   cdcPartition.getDefaultRowCommitVersion()));
 
-      // TODO Sandro: when cdcPartition has DV info, add BOTH constants together to constantMetadata
-      // (touch-point 3): FILE_ROW_INDEX_FILTER_ID_ENCODED -> base64 string, and
-      // FILE_ROW_INDEX_FILTER_TYPE -> RowIndexFilterType.IF_CONTAINED.
-      // Hard pre-condition: never set just one of the two (DeltaParquetFileFormat throws).
-      // Consider reusing PartitionUtils.buildDvMetadata (touch-point 4) instead of inlining here.
+      // When the action carries a DV, set both Parquet reader constants together. Setting only
+      // one triggers IllegalStateException in DeltaParquetFileFormat. IF_CONTAINED makes the
+      // reader drop physical rows whose index is in the DV bitmap (visible-rows semantics).
+      // Could be replaced by a call to PartitionUtils.buildDvMetadata if its visibility is
+      // widened from private to public.
+      if (cdcPartition.getDeletionVectorInfo() != null) {
+        constantMetadata =
+            constantMetadata.$plus(
+                new Tuple2<>(
+                    DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_ID_ENCODED(),
+                    cdcPartition.getDeletionVectorInfo()));
+        constantMetadata =
+            constantMetadata.$plus(
+                new Tuple2<>(
+                    DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_TYPE(),
+                    RowIndexFilterType.IF_CONTAINED));
+      }
 
       PartitionedFile file =
           new PartitionedFile(
