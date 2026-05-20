@@ -16,24 +16,23 @@
 
 package io.sparkuctest;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.unitycatalog.client.delta.api.TablesApi;
 import io.unitycatalog.client.delta.model.LoadTableResponse;
-import java.io.InputStream;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.Path;
 import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.hadoop.HadoopTables;
+import org.apache.spark.sql.connector.catalog.Identifier;
+import org.apache.spark.sql.connector.catalog.TableCatalog;
+import org.apache.spark.sql.delta.catalog.DeltaTableV2;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
+import scala.collection.JavaConverters;
 
 /**
  * Integration test that verifies UniForm Iceberg incremental conversion works correctly on the UC
@@ -108,16 +107,20 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
   }
 
   /**
-   * Builds a Hadoop {@link Configuration} for reading Iceberg metadata from the embedded UC test's
-   * fake S3 filesystem. {@link S3CredentialFileSystem} maps {@code s3://fakeS3Bucket/...} to local
-   * paths and asserts that the static fake credentials are present in the conf.
+   * Builds a Hadoop {@link Configuration} seeded from the Spark session (which registers {@link
+   * S3CredentialFileSystem} as {@code fs.s3.impl}) and enriched with the UC-vended storage
+   * credentials from the table's catalog storage properties.
    */
-  private Configuration buildTestHadoopConf() {
-    Configuration conf = new Configuration(false);
-    conf.set("fs.s3.impl", S3CredentialFileSystem.class.getName());
-    conf.set("fs.s3a.access.key", "fakeAccessKey");
-    conf.set("fs.s3a.secret.key", "fakeSecretKey");
-    conf.set("fs.s3a.session.token", "fakeSessionToken");
+  private Configuration buildTestHadoopConf(String fullTableName) throws Exception {
+    String[] parts = fullTableName.split("\\.");
+    TableCatalog catalog = (TableCatalog) spark().sessionState().catalogManager().catalog(parts[0]);
+    DeltaTableV2 table =
+        (DeltaTableV2) catalog.loadTable(Identifier.of(new String[] {parts[1]}, parts[2]));
+    Configuration conf = spark().sessionState().newHadoopConf();
+    if (table.catalogTable().isDefined()) {
+      JavaConverters.mapAsJavaMap(table.catalogTable().get().storage().properties())
+          .forEach(conf::set);
+    }
     return conf;
   }
 
@@ -189,7 +192,7 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
       String fullTableName, long expectedConvertedDeltaVersion) throws Exception {
     String icebergMetadataPath =
         verifyUCMetadataAndFetchIcebergPath(fullTableName, expectedConvertedDeltaVersion);
-    Configuration conf = buildTestHadoopConf();
+    Configuration conf = buildTestHadoopConf(fullTableName);
     return readIcebergMetaViaHadoopTables(icebergMetadataPath, conf);
   }
 
@@ -207,3 +210,4 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
 
     return new IcebergMeta(properties, currentSnapshotId, parentSnapshotId);
   }
+}
