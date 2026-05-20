@@ -234,12 +234,13 @@ class IcebergConverter
       catalogTable: CatalogTable,
       deltaLog: DeltaLog,
       enablingUniForm: Boolean): LastConvertedIcebergInfo = {
-    val icebergProps = catalogTable.storage.properties
     val baseMetadataLocation =
-      icebergProps.get(IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP)
+      catalogTable.storage.properties
+        .get(IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP)
     val lastDeltaVersionConverted =
-      icebergProps.get(
-        IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP).map(_.toLong)
+      catalogTable.storage.properties
+        .get(IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP)
+        .map(_.toLong)
     val lastConvertedIcebergTable =
       baseMetadataLocation.map(new HadoopTables(deltaLog.newDeltaHadoopConf()).load(_))
     val lastConvertedIcebergSnapshotId =

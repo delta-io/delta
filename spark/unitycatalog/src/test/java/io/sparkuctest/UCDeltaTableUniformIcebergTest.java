@@ -21,6 +21,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.unitycatalog.client.delta.api.TablesApi;
 import io.unitycatalog.client.delta.model.LoadTableResponse;
 import java.io.InputStream;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -67,9 +68,11 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
    * never be written back to the UC catalog.
    */
   private void assertNoUniformPropsOnServer(String fullTableName) throws Exception {
-    io.unitycatalog.client.api.TablesApi ucApi =
-        new io.unitycatalog.client.api.TablesApi(unityCatalogInfo().createApiClient());
-    Map<String, String> serverProps = ucApi.getTable(fullTableName, false, false).getProperties();
+    String[] parts = fullTableName.split("\\.");
+    TablesApi deltaApi = new TablesApi(unityCatalogInfo().createApiClient());
+    LoadTableResponse resp = deltaApi.loadTable(parts[0], parts[1], parts[2]);
+    Map<String, String> serverProps =
+        resp.getMetadata() != null ? resp.getMetadata().getProperties() : null;
     if (serverProps == null) return;
     for (String key : serverProps.keySet()) {
       Assertions.assertFalse(
@@ -79,18 +82,29 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
   }
 
   /**
-   * Calls {@code loadTable} on the Delta REST API to get the Iceberg metadata JSON file path for
-   * the given table. The path points to the exact {@code .metadata.json} file written by the last
-   * UniForm conversion.
+   * Calls {@code loadTable} on the Delta REST API, validates the uniform fields in the response,
+   * and returns the Iceberg metadata JSON file path for the given table.
+   *
+   * @param expectedConvertedDeltaVersion the Delta version the server should report as converted
    */
-  private String icebergMetadataPath(String fullTableName) throws Exception {
+  private String verifyUCMetadataAndFetchIcebergPath(
+      String fullTableName, long expectedConvertedDeltaVersion) throws Exception {
     String[] parts = fullTableName.split("\\.");
     TablesApi deltaApi = new TablesApi(unityCatalogInfo().createApiClient());
     LoadTableResponse resp = deltaApi.loadTable(parts[0], parts[1], parts[2]);
     if (resp.getUniform() == null || resp.getUniform().getIceberg() == null) {
       throw new IllegalStateException("No Iceberg metadata found for table: " + fullTableName);
     }
-    return resp.getUniform().getIceberg().getMetadataLocation();
+    var iceberg = resp.getUniform().getIceberg();
+    Assertions.assertEquals(
+        expectedConvertedDeltaVersion,
+        iceberg.getConvertedDeltaVersion().longValue(),
+        "loadTable response convertedDeltaVersion mismatch");
+    Assertions.assertNotNull(
+        iceberg.getConvertedDeltaTimestamp(), "loadTable response convertedDeltaTimestamp is null");
+    // Validate timestamp is a valid epoch-millis value by parsing it as an Instant.
+    Instant.ofEpochMilli(iceberg.getConvertedDeltaTimestamp());
+    return iceberg.getMetadataLocation();
   }
 
   /**
@@ -123,7 +137,7 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
           sql("INSERT INTO %s VALUES (1, 'a')", fullTableName);
           check(fullTableName, List.of(row("1", "a")));
           assertNoUniformPropsOnServer(fullTableName);
-          IcebergMeta meta1 = readIcebergMeta(fullTableName);
+          IcebergMeta meta1 = verifyUCMetadataAndReadIceberg(fullTableName, 1L);
           Assertions.assertEquals(
               "1",
               meta1.properties.get("delta-version"),
@@ -138,7 +152,7 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
           sql("INSERT INTO %s VALUES (2, 'b')", fullTableName);
           check(fullTableName, List.of(row("1", "a"), row("2", "b")));
           assertNoUniformPropsOnServer(fullTableName);
-          IcebergMeta meta2 = readIcebergMeta(fullTableName);
+          IcebergMeta meta2 = verifyUCMetadataAndReadIceberg(fullTableName, 2L);
           Assertions.assertEquals(
               "2",
               meta2.properties.get("delta-version"),
@@ -171,8 +185,10 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
     }
   }
 
-  private IcebergMeta readIcebergMeta(String fullTableName) throws Exception {
-    String icebergMetadataPath = icebergMetadataPath(fullTableName);
+  private IcebergMeta verifyUCMetadataAndReadIceberg(
+      String fullTableName, long expectedConvertedDeltaVersion) throws Exception {
+    String icebergMetadataPath =
+        verifyUCMetadataAndFetchIcebergPath(fullTableName, expectedConvertedDeltaVersion);
     Configuration conf = buildTestHadoopConf();
     return readIcebergMetaViaHadoopTables(icebergMetadataPath, conf);
   }
@@ -191,46 +207,3 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
 
     return new IcebergMeta(properties, currentSnapshotId, parentSnapshotId);
   }
-
-  private IcebergMeta readIcebergMetaViaJson(String icebergMetadataPath, Configuration conf)
-      throws Exception {
-    // icebergMetadataPath is the specific metadata JSON file — read it directly.
-    Path metadataFilePath = new Path(icebergMetadataPath);
-    FileSystem fs = metadataFilePath.getFileSystem(conf);
-
-    String json;
-    try (InputStream in = fs.open(metadataFilePath)) {
-      json = new String(in.readAllBytes());
-    }
-
-    ObjectMapper mapper = new ObjectMapper();
-    JsonNode root = mapper.readTree(json);
-
-    // Extract table properties
-    Map<String, String> properties = new HashMap<>();
-    JsonNode propsNode = root.get("properties");
-    if (propsNode != null && !propsNode.isNull()) {
-      propsNode.fields().forEachRemaining(e -> properties.put(e.getKey(), e.getValue().asText()));
-    }
-
-    // Extract current-snapshot-id
-    long currentSnapshotId =
-        root.has("current-snapshot-id") ? root.get("current-snapshot-id").asLong(-1L) : -1L;
-
-    // Find parent-snapshot-id for the current snapshot in the snapshots array
-    long parentSnapshotId = -1L;
-    JsonNode snapshots = root.get("snapshots");
-    if (snapshots != null && currentSnapshotId != -1L) {
-      for (JsonNode snap : snapshots) {
-        if (snap.get("snapshot-id").asLong() == currentSnapshotId) {
-          if (snap.has("parent-snapshot-id")) {
-            parentSnapshotId = snap.get("parent-snapshot-id").asLong(-1L);
-          }
-          break;
-        }
-      }
-    }
-
-    return new IcebergMeta(properties, currentSnapshotId, parentSnapshotId);
-  }
-}
