@@ -656,7 +656,7 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
       val deltaLog = DeltaLog.forTable(spark, path)
       deltaLog.checkpoint()
       val snapshot = deltaLog.update()
-      val (updatedLogSegment, _) = deltaLog.getUpdatedLogSegment(
+      val (updatedLogSegment, _, _) = deltaLog.getUpdatedLogSegment(
         snapshot.logSegment,
         tableCommitCoordinatorClientOpt = None,
         catalogTableOpt = None

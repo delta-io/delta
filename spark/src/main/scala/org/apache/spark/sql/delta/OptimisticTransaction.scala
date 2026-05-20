@@ -59,6 +59,7 @@ import io.delta.storage.commit._
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
+import org.apache.spark.sql.delta.IcebergConstants
 import org.apache.commons.lang3.NotImplementedException
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
@@ -2735,7 +2736,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
       currentTransactionInfo: CurrentTransactionInfo,
       attemptNumber: Int,
       isolationLevel: IsolationLevel): Snapshot = {
-    val targetCatalogTable = catalogTable
+    // Use the catalogTable from currentTransactionInfo so that fresh uniform metadata
+    // propagated by checkForConflicts is used for iceberg incremental conversion on retry.
+    val targetCatalogTable = currentTransactionInfo.catalogTable
     // If the table requires atomic Iceberg metadata generation
     // , generate iceberg metadata and update the transaction info.
     var icebergMetadataGenerationDurationMsOpt: Option[Long] = None
@@ -2999,7 +3002,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
         tags = Map(TAG_LOG_STORE_CLASS -> deltaLog.store.getClass.getName)) {
 
     DeltaTableV2.withEnrichedUnsupportedTableException(catalogTable) {
-      val fileStatuses = getConflictingVersions(checkVersion)
+      val (fileStatuses, uniformMetadataOpt) = getConflictingVersions(checkVersion)
       val nextAttemptVersion = checkVersion + fileStatuses.size
 
       // validate that information about conflicting winning commit files is continuous and in the
@@ -3031,7 +3034,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
         log"${MDC(DeltaLogKeys.VERSION2, nextAttemptVersion)}) " +
         log"with current txn having " + txnDetailsLog)
 
-      val updatedCurrentTransactionInfo = {
+      val resolvedCurrentTransactionInfo = {
         if (expected.isEmpty) {
           currentTransactionInfo
         }
@@ -3045,6 +3048,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
         }
       }
 
+      val updatedCurrentTransactionInfo =
+        updateCatalogTableWithUniformMetadata(resolvedCurrentTransactionInfo, uniformMetadataOpt)
 
       logInfo(logPrefix +
         log"No conflicts with versions " +
@@ -3101,17 +3106,19 @@ trait OptimisticTransactionImpl extends TransactionHelper
   /** Returns the version that the first attempt will try to commit at. */
   private[delta] def getFirstAttemptVersion: Long = readVersion + 1L
 
-  /** Returns the conflicting commit information */
-  protected def getConflictingVersions(previousAttemptVersion: Long): Seq[FileStatus] = {
+  /** Returns conflicting commit file statuses and fresh uniform metadata from the listing. */
+  protected def getConflictingVersions(previousAttemptVersion: Long)
+    : (Seq[FileStatus], Option[io.delta.storage.commit.uniform.UniformMetadata]) = {
     assert(previousAttemptVersion == preCommitLogSegment.version + 1)
-    val (newPreCommitLogSegment, newCommitFileStatuses) = deltaLog.getUpdatedLogSegment(
-      preCommitLogSegment,
-      readSnapshotTableCommitCoordinatorClientOpt,
-      catalogTable)
+    val (newPreCommitLogSegment, newCommitFileStatuses, uniformMetadataOpt) =
+      deltaLog.getUpdatedLogSegment(
+        preCommitLogSegment,
+        readSnapshotTableCommitCoordinatorClientOpt,
+        catalogTable)
     assert(preCommitLogSegment.version + newCommitFileStatuses.size ==
       newPreCommitLogSegment.version)
     preCommitLogSegment = newPreCommitLogSegment
-    newCommitFileStatuses
+    (newCommitFileStatuses, uniformMetadataOpt)
   }
 
   protected def setCommitted(
@@ -3223,6 +3230,32 @@ trait OptimisticTransactionImpl extends TransactionHelper
         throwError("WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
           Array("ALTER TABLE"))
       case _ =>
+    }
+  }
+
+  /**
+   * Updates the catalogTable in CurrentTransactionInfo with fresh uniform metadata from
+   * getCommits, so that iceberg incremental conversion on retry uses the correct base version.
+   */
+  private def updateCatalogTableWithUniformMetadata(
+      txnInfo: CurrentTransactionInfo,
+      uniformMetadataOpt: Option[io.delta.storage.commit.uniform.UniformMetadata])
+    : CurrentTransactionInfo = {
+    uniformMetadataOpt.flatMap(_.getIcebergMetadata.toScala) match {
+      case None => txnInfo
+      case Some(iceberg) =>
+        txnInfo.catalogTable.map { ct =>
+          val freshProps = Map(
+            IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP ->
+              iceberg.getMetadataLocation,
+            IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP ->
+              iceberg.getConvertedDeltaVersion.toString,
+            IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_TIMESTAMP_PROP ->
+              iceberg.getConvertedDeltaTimestamp
+          )
+          val newStorage = ct.storage.copy(properties = ct.storage.properties ++ freshProps)
+          txnInfo.copy(catalogTable = Some(ct.copy(storage = newStorage)))
+        }.getOrElse(txnInfo)
     }
   }
 
