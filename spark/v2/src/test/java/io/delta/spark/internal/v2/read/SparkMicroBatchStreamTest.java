@@ -5057,14 +5057,14 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
   }
 
   /**
-   * Verifies that getSnapshotFilesViaDataFrame recovers when stop() races and closes the cache
-   * (simulated by closing the cache via reflection before the next getFileChanges call).
+   * Verifies that stop() (non-force invalidation) nulls the AtomicReference but leaves the
+   * DataFrame accessible for any in-flight readers holding a direct reference to the cache.
    */
   @Test
-  public void testDistributedInitialSnapshot_recoversFromCacheRace(@TempDir File tempDir)
+  public void testDistributedInitialSnapshot_stopLeavesDataFrameAccessible(@TempDir File tempDir)
       throws Exception {
     String testTablePath = tempDir.getAbsolutePath();
-    String testTableName = "test_df_race_" + System.nanoTime();
+    String testTableName = "test_df_stop_" + System.nanoTime();
     createEmptyTestTable(testTablePath, testTableName);
     insertVersions(
         testTableName,
@@ -5084,7 +5084,7 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
 
       long version = snapshotManager.loadLatestSnapshot().getVersion();
 
-      // Access the internal AtomicReference via reflection to simulate race
+      // Access the internal AtomicReference via reflection
       java.lang.reflect.Field cacheField =
           SparkMicroBatchStream.class.getDeclaredField("cachedDataFrameSnapshot");
       cacheField.setAccessible(true);
@@ -5093,29 +5093,24 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
           (java.util.concurrent.atomic.AtomicReference<DataFrameSnapshotCache>)
               cacheField.get(stream);
 
-      // First call builds the cache normally
+      // Build the cache via a normal getFileChanges call
       try (CloseableIterator<IndexedFile> iter =
           stream.getFileChanges(version, DeltaSourceOffset.BASE_INDEX(), true, Optional.empty())) {
         assertTrue(iter.hasNext());
       }
 
-      // Simulate single race: close the cache (as stop() would) but leave the ref in place
+      // Grab a direct reference to the cache before stop()
       DataFrameSnapshotCache cached = cacheRef.get();
-      assertNotNull(cached, "Cache should have been built by the first getFileChanges call");
-      cached.close();
-      assertNull(cached.getSortedAddFiles(), "Cache should be closed (null DataFrame)");
+      assertNotNull(cached, "Cache should have been built by getFileChanges");
 
-      // Next getFileChanges should detect the null DataFrame, rebuild, and succeed
-      List<IndexedFile> files = new ArrayList<>();
-      try (CloseableIterator<IndexedFile> iter =
-          stream.getFileChanges(version, DeltaSourceOffset.BASE_INDEX(), true, Optional.empty())) {
-        while (iter.hasNext()) {
-          files.add(iter.next());
-        }
-      }
+      // stop() nulls the AtomicReference but does NOT close the cache
+      stream.stop();
+      assertNull(cacheRef.get(), "AtomicReference should be null after stop()");
 
-      assertTrue(files.size() >= 2, "Should recover and return data files + END sentinel");
-      assertEquals(DeltaSourceOffset.END_INDEX(), files.get(files.size() - 1).getIndex());
+      // The direct reference still has a valid DataFrame (not closed/nullified)
+      assertNotNull(
+          cached.getSortedAddFiles(),
+          "DataFrame should remain accessible after non-force invalidation");
     } finally {
       spark.conf().unset(dfFlagKey);
     }

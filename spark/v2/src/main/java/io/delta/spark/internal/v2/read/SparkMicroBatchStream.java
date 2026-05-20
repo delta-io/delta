@@ -731,12 +731,12 @@ public class SparkMicroBatchStream
   @Override
   public void stop() {
     cachedInitialSnapshot.set(null);
-    invalidateDataFrameCache();
+    invalidateDataFrameCache(/* forceClose= */ false);
   }
 
-  private void invalidateDataFrameCache() {
+  private void invalidateDataFrameCache(boolean forceClose) {
     DataFrameSnapshotCache prev = cachedDataFrameSnapshot.getAndSet(null);
-    if (prev != null) {
+    if (forceClose && prev != null) {
       prev.close();
     }
   }
@@ -971,7 +971,7 @@ public class SparkMicroBatchStream
       result = snapshotFiles.combine(deltaChanges);
     } else {
       // Release cached DataFrame — initial snapshot processing complete.
-      invalidateDataFrameCache();
+      invalidateDataFrameCache(/* forceClose= */ true);
       result = filterDeltaLogs(fromVersion, endOffset);
     }
 
@@ -1817,17 +1817,13 @@ public class SparkMicroBatchStream
   private CloseableIterator<IndexedFile> getSnapshotFilesViaDataFrame(
       long version, long fromIndex) {
     DataFrameSnapshotCache dfCache = cachedDataFrameSnapshot.get();
-    if (dfCache == null || dfCache.getVersion() != version || dfCache.getSortedAddFiles() == null) {
-      // Cache miss, version mismatch, or stop() raced and closed the DataFrame — rebuild.
-      invalidateDataFrameCache();
+    if (dfCache == null || dfCache.getVersion() != version) {
+      invalidateDataFrameCache(/* forceClose= */ true);
       dfCache = buildDataFrameSnapshotCache(version);
       cachedDataFrameSnapshot.set(dfCache);
     }
 
     Dataset<Row> df = dfCache.getSortedAddFiles();
-    if (df == null) {
-      return Utils.toCloseableIterator(Collections.emptyIterator());
-    }
 
     // Push filtering to executors: O(remaining) per batch instead of O(N) full-scan.
     if (fromIndex > DeltaSourceOffset.BASE_INDEX()) {
