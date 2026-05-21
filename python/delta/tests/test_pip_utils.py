@@ -126,14 +126,24 @@ class PipUtilsExtraExcludesTests(unittest.TestCase):
         self.assertEqual(len(excludesList), 3)
 
     def test_delta_still_works_with_excludes(self) -> None:
+        # Verify extra_excludes was applied before testing Delta functionality.
+        excludesConf: Optional[str] = self.spark.conf.get("spark.jars.excludes")
+        self.assertIsNotNone(excludesConf)
+        self.assertIn("org.apache.derby:derby", excludesConf)  # type: ignore[arg-type]
+
         # Delta read/write must still work after excluding Derby.
         self.spark.range(0, 5).write.format("delta").save(self.tempFile)
         self.spark.read.format("delta").load(self.tempFile)
 
     def test_packages_unaffected_by_excludes(self) -> None:
+        # Verify extra_excludes was applied.
+        excludesConf: Optional[str] = self.spark.conf.get("spark.jars.excludes")
+        self.assertIsNotNone(excludesConf)
+        self.assertIn("org.apache.derby:derby", excludesConf)  # type: ignore[arg-type]
+
+        # spark.jars.packages must still contain the Delta artifact.
         packagesConf: Optional[str] = self.spark.conf.get("spark.jars.packages")
         assert packagesConf is not None
-        # Delta package must still be present.
         self.assertTrue(
             any("io.delta" in p for p in packagesConf.split(",")),
             "Delta package missing from spark.jars.packages",

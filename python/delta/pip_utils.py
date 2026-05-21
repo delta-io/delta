@@ -52,14 +52,18 @@ def configure_spark_with_delta_pip(
        resolving classpath conflicts. For example, when using ``enableHiveSupport()`` together
        with JDBC connectors (e.g. writing to PostgreSQL), Spark distributions that ship a
        partial Apache Derby installation (engine JARs present but not ``derbyclient``) may raise
-       ``java.lang.NoClassDefFoundError: org/apache/derby/client/ClientAutoloadedDriver`` because
-       Derby's service-loader entry references a class from the missing ``derbyclient`` JAR.
-       Excluding the Derby artifacts resolves this conflict:
+       ``java.lang.NoClassDefFoundError: org/apache/derby/client/ClientAutoloadedDriver``.
+       The root cause is that ``configure_spark_with_delta_pip`` uses ``spark.jars.packages``
+       to resolve Delta and its transitive Maven dependencies, which can include ``derbytools``
+       (via Hive). Once ``derbytools`` is on the application classloader, its
+       ``META-INF/services/java.sql.Driver`` entry causes ``DriverManager`` to load
+       ``ClientAutoloadedDriver`` — a class that lives in the absent ``derbyclient`` JAR.
+       Setting ``spark.jars.excludes`` prevents those Derby JARs from being added to the
+       application classloader during Maven resolution, which resolves the error:
 
         builder = SparkSession.builder \
             .master("local[*]") \
-            .appName("test") \
-            .enableHiveSupport()
+            .appName("test")
         excludes = ["org.apache.derby:derby", "org.apache.derby:derbyclient",
                     "org.apache.derby:derbytools"]
         spark = configure_spark_with_delta_pip(
@@ -71,6 +75,8 @@ def configure_spark_with_delta_pip(
     :param extra_excludes: Transitive dependencies to exclude from all resolved packages.
                            Each entry must be a ``groupId:artifactId`` string.
                            Sets ``spark.jars.excludes`` on the builder.
+
+                           .. versionadded:: 4.2.0
     :return: Updated SparkSession.Builder object
 
     .. versionadded:: 1.0
