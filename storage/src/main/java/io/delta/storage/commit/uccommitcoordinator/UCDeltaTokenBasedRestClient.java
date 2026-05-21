@@ -342,7 +342,9 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
 
     long latestTableVersion = response.getLatestTableVersion() != null
         ? response.getLatestTableVersion() : -1L;
-    return new GetCommitsResponse(commits, latestTableVersion);
+    Optional<io.delta.storage.commit.uniform.UniformMetadata> storageUniform =
+        toStorageUniformMetadata(response.getUniform());
+    return new GetCommitsResponse(commits, latestTableVersion, storageUniform);
   }
 
   /** Converts a UC SDK {@link DeltaCommit} to a Delta {@link Commit}. */

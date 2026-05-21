@@ -40,6 +40,7 @@ import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.spark.sql.delta.util.threads.DeltaThreadPool
 import com.fasterxml.jackson.annotation.JsonIgnore
 import io.delta.storage.commit.{Commit, GetCommitsResponse}
+import io.delta.storage.commit.uniform.{UniformMetadata => StorageUniformMetadata}
 import org.apache.hadoop.fs.{BlockLocation, FileStatus, LocatedFileStatus, Path}
 
 import org.apache.spark.{SparkContext, SparkException}
@@ -171,7 +172,8 @@ trait SnapshotManagement { self: DeltaLog =>
       tableCommitCoordinatorClientOpt: Option[TableCommitCoordinatorClient],
       catalogTableOpt: Option[CatalogTable],
       versionToLoad: Option[Long],
-      includeMinorCompactions: Boolean): (Option[Array[FileStatus]], Option[FileStatus]) = {
+      includeMinorCompactions: Boolean)
+  : (Option[Array[FileStatus]], Option[FileStatus], ListingExtras) = {
     val tableCommitCoordinatorClient = tableCommitCoordinatorClientOpt.getOrElse {
       val (filesOpt, checksumOpt) =
         listFromFileSystemInternal(
@@ -179,7 +181,7 @@ trait SnapshotManagement { self: DeltaLog =>
           versionToLoad,
           includeMinorCompactions
         )
-      return (filesOpt.map(_.map(_._1)), checksumOpt)
+      return (filesOpt.map(_.map(_._1)), checksumOpt, ListingExtras(None))
     }
 
     // Submit a potential async call to get commits from commit coordinator if available
@@ -316,7 +318,13 @@ trait SnapshotManagement { self: DeltaLog =>
       logTuplesFromFsListing.map(_._1) ++ unbackfilledCommitsFiltered
     }
     val latestChecksumOpt = additionalChecksumOpt.orElse(initialChecksumOpt)
-    (logTuplesToReturn, latestChecksumOpt)
+    val uniformMetadataOpt =
+      Option(unbackfilledCommitsResponse.getUniformMetadata.orElse(null))
+<<<<<<< HEAD
+    (logTuplesToReturn, latestChecksumOpt, uniformMetadataOpt)
+=======
+    (logTuplesToReturn, latestChecksumOpt, ListingExtras(uniformMetadataOpt))
+>>>>>>> 0a285f60b (Squashed commits:)
   }
 
   /**
@@ -342,9 +350,10 @@ trait SnapshotManagement { self: DeltaLog =>
       tableCommitCoordinatorClientOpt: Option[TableCommitCoordinatorClient],
       catalogTableOpt: Option[CatalogTable],
       versionToLoad: Option[Long],
-      includeMinorCompactions: Boolean): Option[Array[FileStatus]] = {
+      includeMinorCompactions: Boolean)
+  : (Option[Array[FileStatus]], ListingExtras) = {
     recordDeltaOperation(self, "delta.deltaLog.listDeltaAndCheckpointFiles") {
-      val (logTuplesOpt, latestChecksumOpt) =
+      val (logTuplesOpt, latestChecksumOpt, listingExtras) =
         listDeltaCompactedDeltaCheckpointFilesAndLatestChecksumFile(
           startVersion,
           tableCommitCoordinatorClientOpt,
@@ -352,7 +361,7 @@ trait SnapshotManagement { self: DeltaLog =>
           versionToLoad,
           includeMinorCompactions)
       lastSeenChecksumFileStatusOpt = latestChecksumOpt
-      logTuplesOpt
+      (logTuplesOpt, listingExtras)
     }
   }
 
@@ -393,7 +402,7 @@ trait SnapshotManagement { self: DeltaLog =>
       tableCommitCoordinatorClientOpt,
       catalogTableOpt,
       versionToLoad,
-      includeMinorCompactions)
+      includeMinorCompactions)._1
     getLogSegmentForVersion(
       versionToLoad,
       newFiles,
@@ -788,7 +797,7 @@ trait SnapshotManagement { self: DeltaLog =>
           catalogTableOpt = catalogTableOpt,
           versionToLoad = Some(snapshotVersion),
           includeMinorCompactions = false
-        ).getOrElse(Array.empty)
+        )._1.getOrElse(Array.empty)
         val (checkpoints, deltas) = filesSinceCheckpointVersion.partition(isCheckpointFile)
         if (deltas.isEmpty) {
           // We cannot find any delta files. Returns None as we cannot construct a `LogSegment` only
@@ -837,7 +846,7 @@ trait SnapshotManagement { self: DeltaLog =>
             versionToLoad = Some(snapshotVersion),
             includeMinorCompactions = false)
         val (deltas, deltaVersions) =
-          listFromResult
+          listFromResult._1
             .getOrElse(Array.empty)
             .flatMap(DeltaFile.unapply(_))
             .unzip
@@ -983,9 +992,9 @@ trait SnapshotManagement { self: DeltaLog =>
       oldLogSegment: LogSegment,
       tableCommitCoordinatorClientOpt: Option[TableCommitCoordinatorClient],
       catalogTableOpt: Option[CatalogTable]
-  ): (LogSegment, Seq[FileStatus]) = {
+  ): (LogSegment, ConflictingContext) = {
     val includeCompactions = spark.conf.get(DeltaSQLConf.DELTALOG_MINOR_COMPACTION_USE_FOR_READS)
-    val newFilesOpt = listDeltaCompactedDeltaAndCheckpointFiles(
+    val (newFilesOpt, listingExtras) = listDeltaCompactedDeltaAndCheckpointFiles(
         startVersion = oldLogSegment.version + 1,
         tableCommitCoordinatorClientOpt = tableCommitCoordinatorClientOpt,
         catalogTableOpt = catalogTableOpt,
@@ -999,7 +1008,7 @@ trait SnapshotManagement { self: DeltaLog =>
     val newFiles = newFilesOpt.filter(_.nonEmpty).getOrElse {
       // An empty listing likely implies a list-after-write inconsistency or that somebody clobbered
       // the Delta log.
-      return (oldLogSegment, Nil)
+      return (oldLogSegment, ConflictingContext(Nil, listingExtras.uniformMetadata))
     }
     val allFiles = (
       oldLogSegment.checkpointProvider.topLevelFiles ++
@@ -1019,7 +1028,9 @@ trait SnapshotManagement { self: DeltaLog =>
     val fileStatusesOfConflictingCommits = newFiles.collect {
       case DeltaFile(f, v) if v <= newLogSegment.version => f
     }
-    (newLogSegment, fileStatusesOfConflictingCommits)
+    (newLogSegment, ConflictingContext(
+      fileStatusesOfConflictingCommits, listingExtras.uniformMetadata)
+    )
   }
 
   /**
@@ -1622,6 +1633,12 @@ trait SnapshotManagement { self: DeltaLog =>
   // Visible for testing
   private[delta] def getCapturedSnapshot(): CapturedSnapshot = currentSnapshot
 }
+
+case class ListingExtras(uniformMetadata: Option[StorageUniformMetadata])
+
+case class ConflictingContext(
+    fileStatuses: Seq[FileStatus],
+    uniformMetadata: Option[StorageUniformMetadata])
 
 object SnapshotManagement extends DeltaLogging {
   // A thread pool for reading checkpoint files and collecting checkpoint v2 actions like
