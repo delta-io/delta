@@ -311,11 +311,20 @@ trait DeltaTableRefreshAndPinningSuiteBase
       writerSql("CREATE TABLE t (id INT, salary INT) USING delta " +
         "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
 
-      // Column IDs changed, so reading the view should fail
-      val e = intercept[DeltaAnalysisException] {
-        sql("SELECT * FROM v").collect()
+      if (v2EnableMode == "STRICT") {
+        // After DSv2 migration, SQL view behavior resolves tables by name.
+        // Column IDs are not captured, so drop/recreate works.
+        checkAnswer(sql("SELECT * FROM v"), Seq.empty)
+      } else {
+        // Column IDs changed, so reading the view should fail
+        checkError(
+          exception = intercept[DeltaAnalysisException] {
+            sql("SELECT * FROM v").collect()
+          },
+          condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
+          parameters = Map("schemaDiff" -> "(?s).*", "legacyFlagMessage" -> ""),
+          matchPVals = true)
       }
-      assert(e.getErrorClass == "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS")
     }
   }
 
@@ -346,10 +355,19 @@ trait DeltaTableRefreshAndPinningSuiteBase
       writerSql("ALTER TABLE t DROP COLUMN salary")
       writerSql("ALTER TABLE t ADD COLUMN salary INT")
 
-      val e = intercept[DeltaAnalysisException] {
-        sql("SELECT * FROM v").collect()
+      if (v2EnableMode == "STRICT") {
+        // After DSv2 migration, SQL views resolve columns by name, not column ID.
+        // The new salary column is empty (null) for the existing row.
+        checkAnswer(sql("SELECT * FROM v"), Row(1, null))
+      } else {
+        checkError(
+          exception = intercept[DeltaAnalysisException] {
+            sql("SELECT * FROM v").collect()
+          },
+          condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
+          parameters = Map("schemaDiff" -> "(?s).*", "legacyFlagMessage" -> ""),
+          matchPVals = true)
       }
-      assert(e.getErrorClass == "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS")
     }
   }
 
@@ -478,13 +496,18 @@ trait DeltaTableRefreshAndPinningSuiteBase
 
       writeExternalDropAndRecreateCommit("t", columnMapping = true)
 
-      checkError(
-        exception = intercept[DeltaAnalysisException] {
-          sql("SELECT * FROM v").collect()
-        },
-        condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
-        parameters = Map("schemaDiff" -> "(?s).*", "legacyFlagMessage" -> ""),
-        matchPVals = true)
+      if (v2EnableMode == "STRICT") {
+        // After DSv2 migration, SQL view behavior resolves tables by name.
+        checkAnswer(sql("SELECT * FROM v"), Seq.empty)
+      } else {
+        checkError(
+          exception = intercept[DeltaAnalysisException] {
+            sql("SELECT * FROM v").collect()
+          },
+          condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
+          parameters = Map("schemaDiff" -> "(?s).*", "legacyFlagMessage" -> ""),
+          matchPVals = true)
+      }
     }
   }
 
@@ -528,13 +551,18 @@ trait DeltaTableRefreshAndPinningSuiteBase
 
       writeExternalMetadataOnlyCommit("t", newMetadata)
 
-      checkError(
-        exception = intercept[DeltaAnalysisException] {
-          sql("SELECT * FROM v").collect()
-        },
-        condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
-        parameters = Map("schemaDiff" -> "(?s).*", "legacyFlagMessage" -> ""),
-        matchPVals = true)
+      if (v2EnableMode == "STRICT") {
+        // After DSv2 migration, SQL views resolve columns by name, not column ID.
+        checkAnswer(sql("SELECT * FROM v"), Row(1, null))
+      } else {
+        checkError(
+          exception = intercept[DeltaAnalysisException] {
+            sql("SELECT * FROM v").collect()
+          },
+          condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
+          parameters = Map("schemaDiff" -> "(?s).*", "legacyFlagMessage" -> ""),
+          matchPVals = true)
+      }
     }
   }
 
@@ -1155,11 +1183,17 @@ trait DeltaTableRefreshAndPinningSuiteBase
       Seq((2, 200, -1)).toDF("id", "salary", "new_column")
         .write.format("delta").mode("append").save(path)
 
-      // Schema change breaks the plan-shape match in CacheManager,
-      // so the cache is effectively invalidated.
-      checkAnswer(
-        sql("SELECT * FROM t ORDER BY id"),
-        Seq(Row(1, 100, null), Row(2, 200, -1)))
+      if (v2EnableMode == "STRICT") {
+        // After DSv2 migration, CACHE TABLE pins table state.
+        // External schema changes do not break cache pinning.
+        checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
+      } else {
+        // Schema change breaks the plan-shape match in CacheManager,
+        // so the cache is effectively invalidated.
+        checkAnswer(
+          sql("SELECT * FROM t ORDER BY id"),
+          Seq(Row(1, 100, null), Row(2, 200, -1)))
+      }
 
       sql("UNCACHE TABLE t")
     }
@@ -1181,11 +1215,17 @@ trait DeltaTableRefreshAndPinningSuiteBase
       Seq((2, 200, -1)).toDF("id", "salary", "new_column")
         .write.format("delta").mode("append").save(path)
 
-      // Schema change from the session invalidates the cache.
-      // Delta picks up all data.
-      checkAnswer(
-        sql("SELECT * FROM t ORDER BY id"),
-        Seq(Row(1, 100, null), Row(2, 200, -1)))
+      if (v2EnableMode == "STRICT") {
+        // After DSv2 migration, session schema change invalidates cache but
+        // external write is not visible (cache pins after refresh).
+        checkAnswer(sql("SELECT * FROM t"), Row(1, 100, null))
+      } else {
+        // Schema change from the session invalidates the cache.
+        // Delta picks up all data.
+        checkAnswer(
+          sql("SELECT * FROM t ORDER BY id"),
+          Seq(Row(1, 100, null), Row(2, 200, -1)))
+      }
 
       sql("UNCACHE TABLE t")
     }
