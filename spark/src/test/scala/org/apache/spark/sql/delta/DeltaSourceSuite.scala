@@ -3401,6 +3401,11 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       val tablePath = inputDir.getCanonicalPath
       sql(s"CREATE TABLE delta.`$tablePath` (id LONG, p STRING) " +
         "USING delta PARTITIONED BY (p)")
+      // Each value is chosen so that an erroneous second unescape would produce a result
+      // pairwise distinct from the input and from the other cases' bug results:
+      //   "%20"   -> bug result " "   (canonical space-collapse)
+      //   "%25"   -> bug result "%"   (self-encoding of `%`)
+      //   "a%2Fb" -> bug result "a/b" (embedded percent escape mid-string)
       Seq((1L, "%20"), (2L, "%25"), (3L, "a%2Fb")).toDF("id", "p")
         .write.format("delta").mode("append").save(tablePath)
 
