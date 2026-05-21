@@ -146,7 +146,8 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "streaming read after column rename with partition column in middle",
     "streaming read preserves percent-literal string partition value",
     "initial snapshot: checkpoint resume produces all rows without duplicates",
-    "initial snapshot: Trigger.AvailableNow processes all data and terminates"
+    "initial snapshot: Trigger.AvailableNow processes all data and terminates",
+    "initial snapshot: checkpoint resume after new commits produces all rows"
   )
 
   override protected def shouldFailTests: Set[String] = Set(

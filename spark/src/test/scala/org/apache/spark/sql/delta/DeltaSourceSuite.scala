@@ -3501,6 +3501,60 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
+  test("initial snapshot: checkpoint resume after new commits produces all rows") {
+    withTempDirs { (sourceDir, sinkDir, checkpointDir) =>
+      val sourcePath = sourceDir.getCanonicalPath
+      val sinkPath = sinkDir.getCanonicalPath
+      val checkpointPath = checkpointDir.getCanonicalPath
+
+      // Create a 10-version table (1 row each).
+      (0 until 10).foreach { i =>
+        Seq(i).toDF("value")
+          .write.mode("append").format("delta").save(sourcePath)
+      }
+
+      // First run: rate-limit to 2 files per trigger, process some data, then stop.
+      val q1 = loadStreamWithOptions(
+        sourcePath, Map(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "2"))
+        .writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointPath)
+        .start(sinkPath)
+      try {
+        q1.processAllAvailable()
+      } finally {
+        q1.stop()
+      }
+
+      val firstRunCount = spark.read.format("delta").load(sinkPath).count()
+      assert(firstRunCount > 0, "First run should produce at least some rows")
+
+      // Append 3 separate commits while the query is down.
+      (10 until 19).grouped(3).foreach { batch =>
+        batch.toDF("value")
+          .write.mode("append").format("delta").save(sourcePath)
+      }
+
+      // Second run: restart from checkpoint, process all remaining data.
+      val q2 = loadStreamWithOptions(
+        sourcePath, Map(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "2"))
+        .writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointPath)
+        .start(sinkPath)
+      try {
+        q2.processAllAvailable()
+      } finally {
+        q2.stop()
+      }
+
+      // All 19 rows (10 initial + 9 appended) must be present with no duplicates.
+      checkAnswer(
+        spark.read.format("delta").load(sinkPath),
+        (0 until 19).map(i => Row(i)))
+    }
+  }
+
 }
 
 /**
