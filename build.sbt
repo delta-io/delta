@@ -912,8 +912,9 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
       // Lombok for generating boilerplate code
       "org.projectlombok" % "lombok" % "1.18.34" % "test",
 
-      // Unity Catalog dependencies - exclude Jackson to use Spark's Jackson 2.15.x
-      "io.unitycatalog" %% "unitycatalog-spark" % unityCatalogVersion % "test" excludeAll(
+      // Unity Catalog dependencies - per-Spark-version artifact (unitycatalog-spark_4.X_2.13).
+      // Exclude Jackson to use Spark's Jackson 2.15.x
+      "io.unitycatalog" %% s"unitycatalog-spark_${CrossSparkVersions.getSparkVersionSpec().shortVersion}" % unityCatalogVersion % "test" excludeAll(
         ExclusionRule(organization = "com.fasterxml.jackson.core"),
         ExclusionRule(organization = "com.fasterxml.jackson.module"),
         ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
