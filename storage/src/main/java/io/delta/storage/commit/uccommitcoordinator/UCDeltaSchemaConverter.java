@@ -99,10 +99,11 @@ final class UCDeltaSchemaConverter {
 
   /**
    * Converts a {@link UCClient.ColumnDef} list into the UC SDK's {@link StructType}. Each
-   * column's {@code typeJson} is parsed as a full Spark {@link StructField}, preserving
+   * column's {@code typeJson} is parsed as a full {@link StructField}, preserving
    * name/nullable/type/metadata. {@code typeText} / {@code typeName} are not consulted
-   * because they carry Spark DDL form (e.g. {@code "int"}), which diverges from the Delta
-   * wire form (e.g. {@code "integer"}) that {@code typeJson} carries.
+   * because they carry the catalog's engine-side DDL textual form (e.g. {@code "int"}),
+   * which diverges from the Delta wire form (e.g. {@code "integer"}) that {@code typeJson}
+   * carries.
    *
    * @throws NullPointerException if {@code columns} is {@code null}.
    * @throws IllegalArgumentException if a column's {@code typeJson} is missing.
