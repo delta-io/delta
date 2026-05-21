@@ -1367,6 +1367,12 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     sql(s"ALTER TABLE delta.`$tablePath` RENAME COLUMN $oldName TO $newName")
   }
 
+  /** Enable ICT on a path-based Delta table. V2 overrides this to route through V1 mode. */
+  protected def enableInCommitTimestamps(tablePath: String): Unit = {
+    sql(s"ALTER TABLE delta.`$tablePath` " +
+      s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
+  }
+
   testQuietly("startingVersion") {
     withTempDir { tableDir =>
       val tablePath = tableDir.getCanonicalPath
@@ -1612,9 +1618,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
             preIctCommit2Mtime)
 
           val deltaLog = DeltaLog.forTable(spark, tablePath)
-          spark.sql(
-            s"ALTER TABLE delta.`$tablePath` " +
-              s"SET TBLPROPERTIES ('delta.enableInCommitTimestamps' = 'true')")
+          enableInCommitTimestamps(tablePath)
 
           val ictEnablementVersion = 3L
           val ictEnablementMtime = baseTimestamp + 60.minutes

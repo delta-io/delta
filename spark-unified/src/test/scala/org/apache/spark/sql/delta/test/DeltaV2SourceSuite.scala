@@ -52,6 +52,12 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     executeInV1Mode(s"ALTER TABLE delta.`$tablePath` RENAME COLUMN $oldName TO $newName")
   }
 
+  /** Path-based ALTER TABLE doesn't work under V2_ENABLE_MODE=STRICT; route through V1. */
+  override protected def enableInCommitTimestamps(tablePath: String): Unit = {
+    executeInV1Mode(s"ALTER TABLE delta.`$tablePath` " +
+      s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
+  }
+
   override protected def shouldPassTests: Set[String] = Set(
     // ========== Core streaming tests ==========
     "basic",
@@ -108,6 +114,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "startingVersion should be ignored when restarting from a checkpoint, withRowTracking = false",
     "startingVersion and startingTimestamp are both set",
     "startingTimestamp",
+    "startingTimestamp with mid-history ICT",
 
     // ========== Rate limiting tests ==========
     "maxFilesPerTrigger",
