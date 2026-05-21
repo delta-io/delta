@@ -515,7 +515,8 @@ public final class DeltaHistoryManager {
   }
 
   /**
-   * Returns the versions and timestamps of commits in the range {@code [start, endExclusive)}.
+   * Returns the versions and modification timestamps of commits in the range {@code [start,
+   * endExclusive)}.
    *
    * <p>Guarantees that returned commits have monotonically increasing versions and timestamps.
    */
