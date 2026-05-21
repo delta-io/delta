@@ -19,6 +19,7 @@ import static io.delta.kernel.internal.tablefeatures.TableFeatures.TYPE_WIDENING
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.TYPE_WIDENING_RW_PREVIEW_FEATURE;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.ImmutableSet;
 import io.delta.kernel.CommitActions;
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.Scan;
@@ -115,26 +116,16 @@ public class SparkMicroBatchStream
   private static final String FILE_IDX_COL = "_file_idx";
 
   public static final Set<DeltaAction> ACTION_SET =
-      Collections.unmodifiableSet(
-          new HashSet<>(
-              Arrays.asList(
-                  DeltaAction.ADD,
-                  DeltaAction.REMOVE,
-                  DeltaAction.METADATA,
-                  DeltaAction.PROTOCOL,
-                  DeltaAction.COMMITINFO)));
+      ImmutableSet.of(
+          DeltaAction.ADD,
+          DeltaAction.REMOVE,
+          DeltaAction.METADATA,
+          DeltaAction.PROTOCOL,
+          DeltaAction.COMMITINFO);
 
-  /** Action set for CDC reads. */
-  private static final Set<DeltaAction> CDC_ACTION_SET =
-      Collections.unmodifiableSet(
-          new HashSet<>(
-              Arrays.asList(
-                  DeltaAction.ADD,
-                  DeltaAction.REMOVE,
-                  DeltaAction.METADATA,
-                  DeltaAction.PROTOCOL,
-                  DeltaAction.CDC,
-                  DeltaAction.COMMITINFO)));
+  /** Action set for CDC reads: {@link #ACTION_SET} plus {@link DeltaAction#CDC}. */
+  public static final Set<DeltaAction> CDC_ACTION_SET =
+      ImmutableSet.<DeltaAction>builder().addAll(ACTION_SET).add(DeltaAction.CDC).build();
 
   /**
    * Max attempts to resolve the start version when failOnDataLoss=false. Attempt 1 is the initial
@@ -1031,7 +1022,13 @@ public class SparkMicroBatchStream
     }
 
     // Start boundary already applied above (before admission). Only apply end boundary here.
-    return applyEndBoundaryFiltering(result, endOffset);
+    result = applyEndBoundaryFiltering(result, endOffset);
+
+    // Stop before any schema change barrier if detected. V1's wrap is in
+    // DeltaSource.getFileChangesWithRateLimit, shared by CDC and non-CDC; V2 applies it inside
+    // this CDC-specific method because both planInputPartitions and the outer
+    // getFileChangesWithRateLimit reach the CDC iterator through here.
+    return metadataEvolutionHandler.stopIndexedFileIteratorAtSchemaChangeBarrier(result);
   }
 
   /**
@@ -2044,6 +2041,11 @@ public class SparkMicroBatchStream
   /**
    * Scans a commit's actions in a single pass: validates metadata, checks CDF is enabled, detects
    * no-op MERGEs, and collects CDC/Add/Remove files into IndexedFiles.
+   *
+   * <p>If schema tracking is on and this commit's metadata or protocol differs from source-init,
+   * returns a single barrier sentinel instead of BASE + files + END. V1 splits this across
+   * DeltaSourceCDCSupport.filterAndIndexDeltaLogs (barrier injection) and
+   * IndexedChangeFileSeq.filterFiles (short-circuit); V2 collapses both here.
    */
   private List<IndexedFile> collectAndBuildCDCIndexedFiles(
       CommitActions commit,
@@ -2052,6 +2054,8 @@ public class SparkMicroBatchStream
       long startVersion,
       Optional<DeltaSourceOffset> endOffsetOpt)
       throws IOException {
+    boolean trackingMetadataChange = metadataEvolutionHandler.shouldTrackMetadataChange();
+
     // Phase 1: scan actions to validate metadata and collect CDC/Add/Remove files.
     List<CDCDataFile> cdcFiles = new ArrayList<>();
     // Single ordered list for inferred CDC files, preserving delta-log action ordering.
@@ -2059,12 +2063,14 @@ public class SparkMicroBatchStream
     List<CDCDataFile> inferredCdcFiles = new ArrayList<>();
     boolean shouldSkip = false;
     Metadata metadataAction = null;
+    Protocol protocolAction = null;
 
     try (CloseableIterator<ColumnarBatch> actionsIter = commit.getActions()) {
       while (actionsIter.hasNext()) {
         ColumnarBatch batch = actionsIter.next();
         for (int rowId = 0; rowId < batch.getSize(); rowId++) {
-          // Metadata: check schema changes + CDF still enabled
+          // Metadata: check schema changes + CDF still enabled. Skip the read-compat check when
+          // tracking — the barrier protocol below handles divergence.
           Optional<Metadata> metadataOpt = StreamingHelper.getMetadata(batch, rowId);
           if (metadataOpt.isPresent()) {
             metadataAction =
@@ -2074,7 +2080,7 @@ public class SparkMicroBatchStream
                     version,
                     startVersion,
                     endOffsetOpt,
-                    /* verifyMetadataAction= */ true);
+                    /* verifyMetadataAction= */ !trackingMetadataChange);
             if (!isCDFEnabled(metadataAction)) {
               throw new RuntimeException(
                   DeltaErrors.changeDataNotRecordedException(
@@ -2082,6 +2088,16 @@ public class SparkMicroBatchStream
                       startVersion,
                       endOffsetOpt.map(DeltaSourceOffset::reservoirVersion).orElse(version)));
             }
+          }
+
+          // Protocol: captured so the barrier fires on protocol-only changes.
+          Optional<Protocol> protocolOpt = StreamingHelper.getProtocol(batch, rowId);
+          if (protocolOpt.isPresent()) {
+            Preconditions.checkArgument(
+                protocolAction == null,
+                "Should not encounter two protocol actions in the same commit of version %d",
+                version);
+            protocolAction = protocolOpt.get();
           }
 
           // CommitInfo: detect no-op MERGEs where the operation rewrites files without
@@ -2112,6 +2128,19 @@ public class SparkMicroBatchStream
             inferredCdcFiles.add(CDCDataFile.fromAddFile(addOpt.get(), timestamp));
           }
         }
+      }
+    }
+
+    // Schema-change barrier: emit only the barrier when this commit diverges from source-init.
+    // V1 injects in DeltaSourceCDCSupport.filterAndIndexDeltaLogs and short-circuits in
+    // IndexedChangeFileSeq.filterFiles; V2 does both here.
+    try (CloseableIterator<IndexedFile> barrierIter =
+        metadataEvolutionHandler.getMetadataOrProtocolChangeIndexedFileIterator(
+            metadataAction, protocolAction, version)) {
+      if (barrierIter.hasNext()) {
+        List<IndexedFile> result = new ArrayList<>();
+        result.add(barrierIter.next());
+        return result;
       }
     }
 
@@ -2156,15 +2185,22 @@ public class SparkMicroBatchStream
   /**
    * Per-commit CDC admission control. Mirrors DSv1's IndexedChangeFileSeq.filterFiles.
    *
-   * <p>Input is a single commit's IndexedFiles: an optional BASE sentinel (absent on resume when
-   * the sentinel was already processed) followed by data files. Applies batch or per-file admission
-   * and appends an END sentinel only when all data files are admitted. Returns empty list on
-   * batch-reject so the offset doesn't advance.
+   * <p>Input is a single commit's IndexedFiles: either a schema-change barrier (passed through
+   * unchanged), or an optional BASE sentinel followed by data files. Applies batch or per-file
+   * admission and appends an END sentinel only when all data files are admitted. Returns empty list
+   * on batch-reject so the offset doesn't advance.
    */
   private List<IndexedFile> applyPerCommitCDCAdmission(
       List<IndexedFile> commitFiles,
       DeltaSource.AdmissionLimits admissionLimits,
       long commitVersion) {
+    // Schema-change barrier: pass through. collectAndBuildCDCIndexedFiles returns the barrier as a
+    // singleton, so it can only appear as element 0.
+    if (!commitFiles.isEmpty()
+        && commitFiles.get(0).getIndex() == DeltaSourceOffset.METADATA_CHANGE_INDEX()) {
+      return new ArrayList<>(commitFiles);
+    }
+
     // Split out the optional BASE sentinel from data files.
     Optional<IndexedFile> baseSentinel = Optional.empty();
     List<IndexedFile> dataFiles = new ArrayList<>();
