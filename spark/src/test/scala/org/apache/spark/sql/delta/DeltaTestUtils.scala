@@ -505,13 +505,28 @@ object DeltaTestUtils extends DeltaTestUtilsBase {
   }
 
   def modifyCommitTimestamp(deltaLog: DeltaLog, version: Long, ts: Long): Unit = {
+    modifyCommitIctTimestamp(deltaLog, version, ts)
+    new File(DeltaCommitFileProvider(deltaLog.update()).deltaFile(version).toUri)
+      .setLastModified(ts)
+  }
+
+  def modifyCommitTimestamps(
+     deltaLog: DeltaLog,
+     version: Long,
+     mtimeTs: Long,
+     ictTs: Long): Unit = {
+    modifyCommitIctTimestamp(deltaLog, version, ictTs)
+    new File(DeltaCommitFileProvider(deltaLog.update()).deltaFile(version).toUri)
+      .setLastModified(mtimeTs)
+  }
+
+  def modifyCommitIctTimestamp(deltaLog: DeltaLog, version: Long, ts: Long): Unit = {
     val filePath = DeltaCommitFileProvider(deltaLog.update()).deltaFile(version)
     val file = new File(filePath.toUri)
     InCommitTimestampTestUtils.overwriteICTInDeltaFile(
       deltaLog,
       new Path(file.getPath),
       Some(ts))
-    file.setLastModified(ts)
     if (FileNames.isUnbackfilledDeltaFile(filePath)) {
       // Also change the ICT in the backfilled file if it exists.
       val backfilledFilePath = FileNames.unsafeDeltaFile(deltaLog.logPath, version)
