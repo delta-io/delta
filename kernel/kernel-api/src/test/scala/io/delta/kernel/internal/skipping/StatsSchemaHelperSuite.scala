@@ -17,6 +17,7 @@ package io.delta.kernel.internal.skipping
 
 import scala.collection.JavaConverters.setAsJavaSetConverter
 
+import io.delta.kernel.expressions.Column
 import io.delta.kernel.types.{ArrayType, BinaryType, BooleanType, ByteType, CollationIdentifier, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, MapType, ShortType, StringType, StructType, TimestampNTZType, TimestampType}
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -391,6 +392,44 @@ class StatsSchemaHelperSuite extends AnyFunSuite {
 
     val statsSchema = StatsSchemaHelper.getStatsSchema(dataSchema, collations.asJava)
     assert(statsSchema == expectedStatsSchema)
+  }
+
+  test("case-insensitive column lookup for skipping eligibility") {
+    // Schema uses mixed-case column names
+    val schema = new StructType()
+      .add("Value", IntegerType.INTEGER)
+      .add("Name", StringType.STRING)
+
+    val helper = new StatsSchemaHelper(schema)
+
+    // Exact case should work
+    assert(helper.isSkippingEligibleMinMaxColumn(new Column("Value")))
+    assert(helper.isSkippingEligibleNullCountColumn(new Column("Value")))
+
+    // Different casing should also work, this would have failed before the fix
+    assert(helper.isSkippingEligibleMinMaxColumn(new Column("value")))
+    assert(helper.isSkippingEligibleNullCountColumn(new Column("value")))
+    assert(helper.isSkippingEligibleMinMaxColumn(new Column("VALUE")))
+    assert(helper.isSkippingEligibleNullCountColumn(new Column("VALUE")))
+    assert(helper.isSkippingEligibleNullCountColumn(new Column("name")))
+    assert(helper.isSkippingEligibleNullCountColumn(new Column("NAME")))
+  }
+
+  test("case-insensitive nested column lookup for skipping eligibility") {
+    val schema = new StructType()
+      .add("Outer", new StructType().add("Inner", IntegerType.INTEGER))
+
+    val helper = new StatsSchemaHelper(schema)
+
+    // Exact case
+    assert(helper.isSkippingEligibleMinMaxColumn(new Column(Array("Outer", "Inner"))))
+    assert(helper.isSkippingEligibleNullCountColumn(new Column(Array("Outer", "Inner"))))
+
+    // Different casing would have failed before the fix
+    assert(helper.isSkippingEligibleMinMaxColumn(new Column(Array("outer", "inner"))))
+    assert(helper.isSkippingEligibleNullCountColumn(new Column(Array("outer", "inner"))))
+    assert(helper.isSkippingEligibleMinMaxColumn(new Column(Array("OUTER", "INNER"))))
+    assert(helper.isSkippingEligibleNullCountColumn(new Column(Array("OUTER", "INNER"))))
   }
 
   test("check getStatsSchema with collations - no eligible string columns") {
