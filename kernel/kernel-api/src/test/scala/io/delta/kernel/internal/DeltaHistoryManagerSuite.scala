@@ -710,6 +710,30 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     assert(activeCommit.getTimestamp == 110L)
   }
 
+  test("ICT time travel: pre-ICT search ignores post-ICT modification times later than ICT time") {
+    val modTimes = Seq(90L, 100L, 110L, 130L, 140L, 150L)
+    val deltasWithModTimes = modTimes.zipWithIndex.map { case (ts, version) =>
+      FileStatus.of(FileNames.deltaFile(logPath, version), 1, ts)
+    }
+    val deltaToICTMap = Map(3L -> 120L, 4L -> 125L, 5L -> 128L)
+
+    val engine = createMockFSAndJsonEngineForICT(deltasWithModTimes, deltaToICTMap)
+    val mockSnapshot = getMockSnapshot(
+      dataPath,
+      latestVersion = 5L,
+      Some((3L, deltaToICTMap(3L))))
+
+    // 115 is before ICT enablement so non-ICT search should only include the non-ICT commits
+    val activeCommit = getActiveCommitAtTimestamp(
+      engine,
+      mockSnapshot,
+      logPath,
+      timestamp = 115L)
+
+    assert(activeCommit.getVersion == 2L)
+    assert(activeCommit.getTimestamp == 110L)
+  }
+
   test("ICT time travel: non-ICT commits missing scenario") {
     val icts = Seq(100L, 200L, 300L)
     val modTimes = Seq(50L, 150L, 250L)
