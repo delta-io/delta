@@ -183,8 +183,7 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
 
   /** Subclasses can override to false for A/B comparison with the legacy path. */
   protected boolean useDeltaRestApiForTests() {
-    // TODO: turn this on once the Delta API is fully integrated.
-    return false;
+    return true;
   }
 
   /**
