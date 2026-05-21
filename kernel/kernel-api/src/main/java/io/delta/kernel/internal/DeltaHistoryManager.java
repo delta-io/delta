@@ -526,7 +526,7 @@ public final class DeltaHistoryManager {
         listFrom(engine, logPath, start)
             .filter(fs -> FileNames.isCommitFile(getName(fs.getPath())))
             .map(fs -> new Commit(FileNames.deltaVersion(fs.getPath()), fs.getModificationTime()))
-            .filter(commit -> commit.version < endExclusive);
+            .takeWhile(commit -> commit.version < endExclusive);
     return monotonizeCommitTimestamps(commits);
   }
 
