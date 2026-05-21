@@ -39,6 +39,7 @@ import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
+import org.apache.spark.unsafe.types.UTF8String;
 import org.junit.jupiter.api.Test;
 import scala.collection.immutable.Map$;
 
@@ -70,6 +71,37 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
     assertEquals(2024, row.getInt(0));
     assertEquals(11, row.getInt(1));
     assertEquals(25, row.getInt(2));
+  }
+
+  @Test
+  public void testGetPartitionRow_StringValueIsNotDoubleUrlDecoded() {
+    // Kernel's MapValue already holds the logical (decoded) string. Spark's
+    // castPartValueToDesiredType would unescapePathName again; each case below picks an input
+    // whose second-decode result is distinct from the input AND from the other cases' results,
+    // so a regression cannot coincidentally agree with the expected value.
+    //   "%20"   -> bug result " "   (canonical space-collapse)
+    //   "%25"   -> bug result "%"   (self-encoding of `%`)
+    //   "a%2Fb" -> bug result "a/b" (embedded percent escape mid-string)
+    StructType partitionSchema =
+        new StructType(
+            new StructField[] {
+              DataTypes.createStructField("p_space", DataTypes.StringType, true),
+              DataTypes.createStructField("p_percent", DataTypes.StringType, true),
+              DataTypes.createStructField("p_embedded", DataTypes.StringType, true)
+            });
+
+    Map<String, String> partitionValues = new HashMap<>();
+    partitionValues.put("p_space", "%20");
+    partitionValues.put("p_percent", "%25");
+    partitionValues.put("p_embedded", "a%2Fb");
+
+    InternalRow row =
+        PartitionUtils.getPartitionRow(
+            stringStringMapValue(partitionValues), partitionSchema, ZoneId.of("UTC"));
+
+    assertEquals(UTF8String.fromString("%20"), row.getUTF8String(0));
+    assertEquals(UTF8String.fromString("%25"), row.getUTF8String(1));
+    assertEquals(UTF8String.fromString("a%2Fb"), row.getUTF8String(2));
   }
 
   @Test

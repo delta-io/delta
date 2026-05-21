@@ -23,8 +23,8 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader
 
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule
-import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
+import org.apache.spark.sql.delta.shims.StreamingRelationV2Shim
 
 /**
  * TODO(#5319): remove this class after Spark supports directly create table reflect cdc/trackingLog
@@ -34,7 +34,7 @@ import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 class ApplyV2ReadOptions extends Rule[LogicalPlan] {
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {
-    case s @ StreamingRelationV2(_, _, table: SparkTable, extraOptions, _, _, _, _)
+    case s @ StreamingRelationV2Shim(_, _, table: SparkTable, extraOptions, _, _, _, _)
         if (CDCReader.isCDCRead(extraOptions) &&
               !s.output.exists(a => CDCSchemaContext.isCDCColumn(a.name))) ||
            MetadataEvolutionHandler.shouldPropagateSchemaTrackingToTable(

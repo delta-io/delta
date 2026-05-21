@@ -3396,6 +3396,37 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
+  test("streaming read preserves percent-literal string partition value") {
+    withTempDirs { (inputDir, _, checkpointDir) =>
+      val tablePath = inputDir.getCanonicalPath
+      sql(s"CREATE TABLE delta.`$tablePath` (id LONG, p STRING) " +
+        "USING delta PARTITIONED BY (p)")
+      // Each value is chosen so that an erroneous second unescape would produce a result
+      // pairwise distinct from the input and from the other cases' bug results:
+      //   "%20"   -> bug result " "   (canonical space-collapse)
+      //   "%25"   -> bug result "%"   (self-encoding of `%`)
+      //   "a%2Fb" -> bug result "a/b" (embedded percent escape mid-string)
+      Seq((1L, "%20"), (2L, "%25"), (3L, "a%2Fb")).toDF("id", "p")
+        .write.format("delta").mode("append").save(tablePath)
+
+      val streamingDF = loadStreamWithOptions(tablePath, Map.empty)
+      val q = streamingDF
+        .writeStream
+        .format("memory")
+        .queryName("percentLiteralPartStreamTest")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .start()
+      try {
+        q.processAllAvailable()
+        checkAnswer(
+          sql("SELECT * FROM percentLiteralPartStreamTest ORDER BY id"),
+          Row(1L, "%20") :: Row(2L, "%25") :: Row(3L, "a%2Fb") :: Nil)
+      } finally {
+        q.stop()
+      }
+    }
+  }
+
 }
 
 /**
