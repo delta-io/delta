@@ -64,6 +64,9 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
     }
   }
 
+  /** Spark 4.2+ fixes AMBIGUOUS_COLUMN_OR_FIELD for self-joins without aliases. */
+  protected lazy val ambiguousColumnFixed: Boolean = spark.version >= "4.2"
+
   protected def useExternalSession: Boolean = false
 
   /** Returns a session for performing writes. */
@@ -834,7 +837,7 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
   // verify the actual data.
   // ---------------------------------------------------------------------------
 
-  test("[3] connect scenario 1 (no alias): self-join after write throws") {
+  test("[3] connect scenario 1 (no alias): self-join after write") {
     withTable("t") {
       createSimpleTable("t")
       insertInitialData("t")
@@ -846,16 +849,17 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       val df2 = spark.table("t")
 
       val joined = df1.join(df2, df1("id") === df2("id"))
-      checkError(
-        exception = intercept[AnalysisException] {
-          joined.collect()
-        },
-        condition = "AMBIGUOUS_COLUMN_OR_FIELD"
-      )
+      if (ambiguousColumnFixed) {
+        assert(joined.collect().length == 2)
+      } else {
+        checkError(
+          exception = intercept[AnalysisException] { joined.collect() },
+          condition = "AMBIGUOUS_COLUMN_OR_FIELD")
+      }
     }
   }
 
-  test("[3] connect scenario 2 (no alias): self-join after ADD COLUMN throws") {
+  test("[3] connect scenario 2 (no alias): self-join after ADD COLUMN") {
     withTable("t") {
       createSimpleTable("t")
       insertInitialData("t")
@@ -868,16 +872,17 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       val df2 = spark.table("t")
 
       val joined = df1.join(df2, df1("id") === df2("id"))
-      checkError(
-        exception = intercept[AnalysisException] {
-          joined.collect()
-        },
-        condition = "AMBIGUOUS_COLUMN_OR_FIELD"
-      )
+      if (ambiguousColumnFixed) {
+        assert(joined.collect().length == 2)
+      } else {
+        checkError(
+          exception = intercept[AnalysisException] { joined.collect() },
+          condition = "AMBIGUOUS_COLUMN_OR_FIELD")
+      }
     }
   }
 
-  test("[3] connect scenario 3 (no alias): self-join after DROP COLUMN throws " +
+  test("[3] connect scenario 3 (no alias): self-join after DROP COLUMN " +
       "(column mapping)") {
     withTable("t") {
       createColumnMappingTable("t")
@@ -890,16 +895,17 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       val df2 = spark.table("t")
 
       val joined = df1.join(df2, df1("id") === df2("id"))
-      checkError(
-        exception = intercept[AnalysisException] {
-          joined.collect()
-        },
-        condition = "AMBIGUOUS_COLUMN_OR_FIELD"
-      )
+      if (ambiguousColumnFixed) {
+        assert(joined.collect().length == 1)
+      } else {
+        checkError(
+          exception = intercept[AnalysisException] { joined.collect() },
+          condition = "AMBIGUOUS_COLUMN_OR_FIELD")
+      }
     }
   }
 
-  test("[3] connect scenario 4 (no alias): self-join after DROP/recreate throws " +
+  test("[3] connect scenario 4 (no alias): self-join after DROP/recreate " +
       "(column mapping)") {
     withTable("t") {
       createColumnMappingTable("t")
@@ -914,16 +920,17 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       val df2 = spark.table("t")
 
       val joined = df1.join(df2, df1("id") === df2("id"))
-      checkError(
-        exception = intercept[AnalysisException] {
-          joined.collect()
-        },
-        condition = "AMBIGUOUS_COLUMN_OR_FIELD"
-      )
+      if (ambiguousColumnFixed) {
+        assert(joined.collect().length == 0)
+      } else {
+        checkError(
+          exception = intercept[AnalysisException] { joined.collect() },
+          condition = "AMBIGUOUS_COLUMN_OR_FIELD")
+      }
     }
   }
 
-  test("[3] connect scenario 4 (no alias): self-join after DROP/recreate throws " +
+  test("[3] connect scenario 4 (no alias): self-join after DROP/recreate " +
       "(no column mapping)") {
     withTable("t") {
       createSimpleTable("t")
@@ -937,16 +944,17 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       val df2 = spark.table("t")
 
       val joined = df1.join(df2, df1("id") === df2("id"))
-      checkError(
-        exception = intercept[AnalysisException] {
-          joined.collect()
-        },
-        condition = "AMBIGUOUS_COLUMN_OR_FIELD"
-      )
+      if (ambiguousColumnFixed) {
+        assert(joined.collect().length == 0)
+      } else {
+        checkError(
+          exception = intercept[AnalysisException] { joined.collect() },
+          condition = "AMBIGUOUS_COLUMN_OR_FIELD")
+      }
     }
   }
 
-  test("[3] connect scenario 5 (no alias): self-join after DROP/ADD same type throws " +
+  test("[3] connect scenario 5 (no alias): self-join after DROP/ADD same type " +
       "(column mapping)") {
     withTable("t") {
       createColumnMappingTable("t")
@@ -960,16 +968,17 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       val df2 = spark.table("t")
 
       val joined = df1.join(df2, df1("id") === df2("id"))
-      checkError(
-        exception = intercept[AnalysisException] {
-          joined.collect()
-        },
-        condition = "AMBIGUOUS_COLUMN_OR_FIELD"
-      )
+      if (ambiguousColumnFixed) {
+        assert(joined.collect().length == 1)
+      } else {
+        checkError(
+          exception = intercept[AnalysisException] { joined.collect() },
+          condition = "AMBIGUOUS_COLUMN_OR_FIELD")
+      }
     }
   }
 
-  test("[3] connect scenario 6 (no alias): self-join after DROP/ADD different type throws " +
+  test("[3] connect scenario 6 (no alias): self-join after DROP/ADD different type " +
       "(column mapping)") {
     withTable("t") {
       createColumnMappingTable("t")
@@ -983,16 +992,17 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       val df2 = spark.table("t")
 
       val joined = df1.join(df2, df1("id") === df2("id"))
-      checkError(
-        exception = intercept[AnalysisException] {
-          joined.collect()
-        },
-        condition = "AMBIGUOUS_COLUMN_OR_FIELD"
-      )
+      if (ambiguousColumnFixed) {
+        assert(joined.collect().length == 1)
+      } else {
+        checkError(
+          exception = intercept[AnalysisException] { joined.collect() },
+          condition = "AMBIGUOUS_COLUMN_OR_FIELD")
+      }
     }
   }
 
-  test("[3] connect scenario 7 (no alias): self-join after type widening throws " +
+  test("[3] connect scenario 7 (no alias): self-join after type widening " +
       "(type widening)") {
     withTable("t") {
       spark.sql(
@@ -1010,36 +1020,40 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       val df2 = spark.table("t")
 
       val joined = df1.join(df2, df1("id") === df2("id"))
-      checkError(
-        exception = intercept[AnalysisException] {
-          joined.collect()
-        },
-        condition = "AMBIGUOUS_COLUMN_OR_FIELD"
-      )
+      if (ambiguousColumnFixed) {
+        assert(joined.collect().length == 1)
+      } else {
+        checkError(
+          exception = intercept[AnalysisException] { joined.collect() },
+          condition = "AMBIGUOUS_COLUMN_OR_FIELD")
+      }
     }
   }
 
   // Section [3] continued: SQL JOIN without column aliases.
-  // The SQL equivalent of df1.join(df2, df1("id") === df2("id")) also throws
+  // On Spark < 4.2, the SQL equivalent of df1.join(df2) also throws
   // AMBIGUOUS_COLUMN_OR_FIELD because the output has duplicate column names.
+  // On Spark 4.2+, this is fixed and the join succeeds.
 
-  test("[3] connect scenario 1 (SQL JOIN no alias): self-join after write throws") {
+  test("[3] connect scenario 1 (SQL JOIN no alias): self-join after write") {
     withTable("t") {
       createSimpleTable("t")
       insertInitialData("t")
 
       writerSql("INSERT INTO t VALUES (2, 200)")
 
-      checkError(
-        exception = intercept[AnalysisException] {
-          spark.sql("SELECT * FROM t t1 JOIN t t2 ON t1.id = t2.id").collect()
-        },
-        condition = "AMBIGUOUS_COLUMN_OR_FIELD"
-      )
+      val sqlJoin = "SELECT * FROM t t1 JOIN t t2 ON t1.id = t2.id"
+      if (ambiguousColumnFixed) {
+        assert(spark.sql(sqlJoin).collect().length == 2)
+      } else {
+        checkError(
+          exception = intercept[AnalysisException] { spark.sql(sqlJoin).collect() },
+          condition = "AMBIGUOUS_COLUMN_OR_FIELD")
+      }
     }
   }
 
-  test("[3] connect scenario 2 (SQL JOIN no alias): self-join after ADD COLUMN throws") {
+  test("[3] connect scenario 2 (SQL JOIN no alias): self-join after ADD COLUMN") {
     withTable("t") {
       createSimpleTable("t")
       insertInitialData("t")
@@ -1047,16 +1061,18 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       writerSql("ALTER TABLE t ADD COLUMN new_column INT")
       writerSql("INSERT INTO t VALUES (2, 200, -1)")
 
-      checkError(
-        exception = intercept[AnalysisException] {
-          spark.sql("SELECT * FROM t t1 JOIN t t2 ON t1.id = t2.id").collect()
-        },
-        condition = "AMBIGUOUS_COLUMN_OR_FIELD"
-      )
+      val sqlJoin = "SELECT * FROM t t1 JOIN t t2 ON t1.id = t2.id"
+      if (ambiguousColumnFixed) {
+        assert(spark.sql(sqlJoin).collect().length == 2)
+      } else {
+        checkError(
+          exception = intercept[AnalysisException] { spark.sql(sqlJoin).collect() },
+          condition = "AMBIGUOUS_COLUMN_OR_FIELD")
+      }
     }
   }
 
-  test("[3] connect scenario 3 (SQL JOIN no alias): self-join after DROP COLUMN throws " +
+  test("[3] connect scenario 3 (SQL JOIN no alias): self-join after DROP COLUMN " +
       "(column mapping)") {
     withTable("t") {
       createColumnMappingTable("t")
@@ -1064,16 +1080,18 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
 
       writerSql("ALTER TABLE t DROP COLUMN salary")
 
-      checkError(
-        exception = intercept[AnalysisException] {
-          spark.sql("SELECT * FROM t t1 JOIN t t2 ON t1.id = t2.id").collect()
-        },
-        condition = "AMBIGUOUS_COLUMN_OR_FIELD"
-      )
+      val sqlJoin = "SELECT * FROM t t1 JOIN t t2 ON t1.id = t2.id"
+      if (ambiguousColumnFixed) {
+        assert(spark.sql(sqlJoin).collect().length == 1)
+      } else {
+        checkError(
+          exception = intercept[AnalysisException] { spark.sql(sqlJoin).collect() },
+          condition = "AMBIGUOUS_COLUMN_OR_FIELD")
+      }
     }
   }
 
-  test("[3] connect scenario 4 (SQL JOIN no alias): self-join after DROP/recreate throws " +
+  test("[3] connect scenario 4 (SQL JOIN no alias): self-join after DROP/recreate " +
       "(column mapping)") {
     withTable("t") {
       createColumnMappingTable("t")
@@ -1083,16 +1101,18 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       writerSql("CREATE TABLE t (id INT, salary INT) USING delta " +
         "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
 
-      checkError(
-        exception = intercept[AnalysisException] {
-          spark.sql("SELECT * FROM t t1 JOIN t t2 ON t1.id = t2.id").collect()
-        },
-        condition = "AMBIGUOUS_COLUMN_OR_FIELD"
-      )
+      val sqlJoin = "SELECT * FROM t t1 JOIN t t2 ON t1.id = t2.id"
+      if (ambiguousColumnFixed) {
+        assert(spark.sql(sqlJoin).collect().length == 0)
+      } else {
+        checkError(
+          exception = intercept[AnalysisException] { spark.sql(sqlJoin).collect() },
+          condition = "AMBIGUOUS_COLUMN_OR_FIELD")
+      }
     }
   }
 
-  test("[3] connect scenario 4 (SQL JOIN no alias): self-join after DROP/recreate throws " +
+  test("[3] connect scenario 4 (SQL JOIN no alias): self-join after DROP/recreate " +
       "(no column mapping)") {
     withTable("t") {
       createSimpleTable("t")
@@ -1101,17 +1121,19 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       writerSql("DROP TABLE t")
       writerSql("CREATE TABLE t (id INT, salary INT) USING delta")
 
-      checkError(
-        exception = intercept[AnalysisException] {
-          spark.sql("SELECT * FROM t t1 JOIN t t2 ON t1.id = t2.id").collect()
-        },
-        condition = "AMBIGUOUS_COLUMN_OR_FIELD"
-      )
+      val sqlJoin = "SELECT * FROM t t1 JOIN t t2 ON t1.id = t2.id"
+      if (ambiguousColumnFixed) {
+        assert(spark.sql(sqlJoin).collect().length == 0)
+      } else {
+        checkError(
+          exception = intercept[AnalysisException] { spark.sql(sqlJoin).collect() },
+          condition = "AMBIGUOUS_COLUMN_OR_FIELD")
+      }
     }
   }
 
   test("[3] connect scenario 5 (SQL JOIN no alias): self-join after DROP/ADD same type " +
-      "throws (column mapping)") {
+      "(column mapping)") {
     withTable("t") {
       createColumnMappingTable("t")
       insertInitialData("t")
@@ -1119,17 +1141,19 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       writerSql("ALTER TABLE t DROP COLUMN salary")
       writerSql("ALTER TABLE t ADD COLUMN salary INT")
 
-      checkError(
-        exception = intercept[AnalysisException] {
-          spark.sql("SELECT * FROM t t1 JOIN t t2 ON t1.id = t2.id").collect()
-        },
-        condition = "AMBIGUOUS_COLUMN_OR_FIELD"
-      )
+      val sqlJoin = "SELECT * FROM t t1 JOIN t t2 ON t1.id = t2.id"
+      if (ambiguousColumnFixed) {
+        assert(spark.sql(sqlJoin).collect().length == 1)
+      } else {
+        checkError(
+          exception = intercept[AnalysisException] { spark.sql(sqlJoin).collect() },
+          condition = "AMBIGUOUS_COLUMN_OR_FIELD")
+      }
     }
   }
 
   test("[3] connect scenario 6 (SQL JOIN no alias): self-join after DROP/ADD different " +
-      "type throws (column mapping)") {
+      "type (column mapping)") {
     withTable("t") {
       createColumnMappingTable("t")
       insertInitialData("t")
@@ -1137,16 +1161,18 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       writerSql("ALTER TABLE t DROP COLUMN salary")
       writerSql("ALTER TABLE t ADD COLUMN salary STRING")
 
-      checkError(
-        exception = intercept[AnalysisException] {
-          spark.sql("SELECT * FROM t t1 JOIN t t2 ON t1.id = t2.id").collect()
-        },
-        condition = "AMBIGUOUS_COLUMN_OR_FIELD"
-      )
+      val sqlJoin = "SELECT * FROM t t1 JOIN t t2 ON t1.id = t2.id"
+      if (ambiguousColumnFixed) {
+        assert(spark.sql(sqlJoin).collect().length == 1)
+      } else {
+        checkError(
+          exception = intercept[AnalysisException] { spark.sql(sqlJoin).collect() },
+          condition = "AMBIGUOUS_COLUMN_OR_FIELD")
+      }
     }
   }
 
-  test("[3] connect scenario 7 (SQL JOIN no alias): self-join after type widening throws " +
+  test("[3] connect scenario 7 (SQL JOIN no alias): self-join after type widening " +
       "(type widening)") {
     withTable("t") {
       spark.sql(
@@ -1159,11 +1185,13 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
 
       writerSql("ALTER TABLE t ALTER COLUMN salary TYPE BIGINT")
 
-      checkError(
-        exception = intercept[AnalysisException] {
-          spark.sql("SELECT * FROM t t1 JOIN t t2 ON t1.id = t2.id").collect()
-        },
-        condition = "AMBIGUOUS_COLUMN_OR_FIELD"
+      val sqlJoin = "SELECT * FROM t t1 JOIN t t2 ON t1.id = t2.id"
+      if (ambiguousColumnFixed) {
+        assert(spark.sql(sqlJoin).collect().length == 1)
+      } else {
+        checkError(
+          exception = intercept[AnalysisException] { spark.sql(sqlJoin).collect() },
+          condition = "AMBIGUOUS_COLUMN_OR_FIELD"
       )
     }
   }
