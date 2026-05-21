@@ -362,7 +362,10 @@ class InMemoryUCCommitCoordinator {
     withLock[JGetCommitsResponse](tableUUID) {
       val tableData = perTableMap.get(tableUUID)
       val commits = tableData.getCommits(startVersion, endVersion)
-      new JGetCommitsResponse(commits.asJava, tableData.lastRatifiedCommitVersion)
+      new JGetCommitsResponse(
+        commits.asJava,
+        tableData.lastRatifiedCommitVersion,
+        java.util.Optional.ofNullable(tableData.getCurrentUniformMetadataOpt.orNull))
     }
   }
 }
