@@ -385,9 +385,98 @@ public class V2RowTrackingReadTest extends DeltaV2TestBase {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  //  Helpers
-  // ---------------------------------------------------------------------------
+  /**
+   * Row tracking with a partition column declared in the MIDDLE of the DDL. Exercises the
+   * interaction between {@code RowTrackingReadFunction} (splices {@code _metadata} between data and
+   * partition columns) and {@code ColumnReorderReadFunction} (permutes data++partitions into DDL
+   * order). Without correct layering the row-mode path would emit values from the wrong column.
+   */
+  @Test
+  public void testReadWithRowTrackingAndPartitionColumnInMiddle(@TempDir File tempDir) {
+    String path = tempDir.getAbsolutePath();
+    spark.sql(
+        String.format(
+            "CREATE TABLE delta.`%s` (id LONG, part STRING, value DOUBLE) USING delta "
+                + "PARTITIONED BY (part) "
+                + "TBLPROPERTIES ('delta.enableRowTracking' = 'true')",
+            path));
+    spark.sql(
+        String.format(
+            "INSERT INTO delta.`%s` VALUES (1, 'a', 10.5), (2, 'b', 20.0), (3, 'a', 30.25)", path));
+
+    org.apache.spark.sql.Dataset<Row> df =
+        spark.sql(
+            String.format(
+                "SELECT id, part, value, _metadata.row_id FROM dsv2.delta.`%s` ORDER BY id", path));
+    assertArrayEquals(new String[] {"id", "part", "value", "row_id"}, df.schema().fieldNames());
+
+    List<Row> rows = df.collectAsList();
+    assertEquals(3, rows.size());
+    assertEquals(1L, rows.get(0).getLong(0));
+    assertEquals("a", rows.get(0).getString(1));
+    assertEquals(10.5d, rows.get(0).getDouble(2), 0.0d);
+    assertEquals(2L, rows.get(1).getLong(0));
+    assertEquals("b", rows.get(1).getString(1));
+    assertEquals(20.0d, rows.get(1).getDouble(2), 0.0d);
+    assertEquals(3L, rows.get(2).getLong(0));
+    assertEquals("a", rows.get(2).getString(1));
+    assertEquals(30.25d, rows.get(2).getDouble(2), 0.0d);
+    Set<Long> rowIds = new HashSet<>();
+    for (Row row : rows) {
+      assertTrue(rowIds.add(row.getLong(3)), "row_id should be unique");
+    }
+  }
+
+  @Test
+  public void testReadWithRowTrackingAndDeletionVectorAndPartitionColumnInMiddle(
+      @TempDir File tempDir) {
+    String path = tempDir.getAbsolutePath();
+    spark.sql(
+        String.format(
+            "CREATE TABLE delta.`%s` (id LONG, part LONG, value INT) USING delta "
+                + "PARTITIONED BY (part) "
+                + "TBLPROPERTIES ("
+                + "'delta.enableRowTracking' = 'true', "
+                + "'delta.enableDeletionVectors' = 'true')",
+            path));
+    // Insert enough rows so DELETE picks the DV path instead of rewriting whole files.
+    spark
+        .range(1000)
+        .selectExpr("id", "id % 4 AS part", "cast(id * 10 AS INT) AS value")
+        .write()
+        .format("delta")
+        .mode("append")
+        .save(path);
+    // Low-selectivity, non-partition predicate so Delta uses DVs.
+    spark.sql(String.format("DELETE FROM delta.`%s` WHERE id < 100", path));
+
+    DeltaLog deltaLog = DeltaLog.forTable(spark, path);
+    long numDVs =
+        (long)
+            deltaLog
+                .update(false, Option.empty(), Option.empty())
+                .numDeletionVectorsOpt()
+                .getOrElse(() -> 0L);
+    assertTrue(numDVs > 0, "Expected deletion vectors to be produced");
+
+    org.apache.spark.sql.Dataset<Row> df =
+        spark.sql(
+            String.format(
+                "SELECT id, part, value, _metadata.row_id FROM dsv2.delta.`%s` ORDER BY id", path));
+    assertArrayEquals(new String[] {"id", "part", "value", "row_id"}, df.schema().fieldNames());
+
+    List<Row> rows = df.collectAsList();
+    assertEquals(900, rows.size(), "Expected 900 surviving rows (id >= 100) after DV delete");
+    Set<Long> rowIds = new HashSet<>();
+    for (Row row : rows) {
+      long id = row.getLong(0);
+      long part = row.getLong(1);
+      int value = row.getInt(2);
+      assertEquals(id % 4, part, "Partition column should match insert formula");
+      assertEquals((int) (id * 10), value, "Value column should match insert formula");
+      assertTrue(rowIds.add(row.getLong(3)), "row_id should be unique under DV filtering");
+    }
+  }
 
   /**
    * Queries row tracking metadata via the DSv2 SQL path. V2 metadata columns are nested in

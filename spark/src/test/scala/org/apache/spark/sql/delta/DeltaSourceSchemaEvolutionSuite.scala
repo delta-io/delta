@@ -192,6 +192,22 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     }
   }
 
+  /** Like `addData`, but also fills nested struct fields recursively. */
+  protected def addNestedData(data: Seq[Int])(implicit log: DeltaLog): Unit = {
+    val schema = log.update().schema
+    def buildRow(s: StructType, value: String): Row = Row.fromSeq(s.fields.map { f =>
+      f.dataType match {
+        case sub: StructType => buildRow(sub, value)
+        case _ => value
+      }
+    })
+    data.foreach { i =>
+      val row = buildRow(schema, i.toString)
+      spark.createDataFrame(Seq(row).asJava, schema)
+        .write.format("delta").mode("append").save(log.dataPath.toString)
+    }
+  }
+
   protected def readStream(
       schemaLocation: Option[String] = None,
       sourceTrackingId: Option[String] = None,
@@ -846,12 +862,16 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
 
   test("identity columns shouldn't cause schema mismatches") {
     withTable("source") {
-      executeDml(
-        s"""
-          |CREATE TABLE source (key INT, id LONG GENERATED ALWAYS AS IDENTITY)
-          |USING DELTA
-        """.stripMargin
-      )
+      io.delta.tables.DeltaTable.create()
+        .tableName("source")
+        .addColumn(
+          io.delta.tables.DeltaTable.columnBuilder("key").dataType("INT").build())
+        .addColumn(
+          io.delta.tables.DeltaTable.columnBuilder("id")
+            .dataType("LONG")
+            .generatedAlwaysAsIdentity()
+            .build())
+        .execute()
 
       val deltaLog = DeltaLog.forTable(spark, TableIdentifier("source"))
       deltaLog.update()
@@ -859,8 +879,8 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       val checkpointLocation = getDefaultCheckpoint(deltaLog).toString
 
       def addData(values: Seq[Int]): Unit =
-        spark.createDataFrame(values.map(Row(_)).asJava, StructType.fromDDL("key INT"))
-          .write.format("delta").mode("append").saveAsTable("source")
+        executeDml(
+          s"INSERT INTO source (key) VALUES ${values.map(v => s"($v)").mkString(", ")}")
 
       def readStream(): DataFrame =
         spark.readStream
@@ -1971,6 +1991,43 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     }
   }
 
+  /**
+   * Same as `withSimpleStreamingDf` but with a nested struct column, so tests can exercise
+   * drop / rename of fields inside a struct: schema is `a STRING, s STRUCT<x STRING, y STRING>`.
+   */
+  protected def withNestedStructStreamingDf(f: (() => DataFrame, DeltaLog) => Unit): Unit = {
+    withTempDir { dir =>
+      val tablePath = dir.getCanonicalPath
+      val schema = StructType.fromDDL("a STRING, s STRUCT<x: STRING, y: STRING>")
+      val initialRow = Seq(Row("0", Row("0", "0")))
+      spark.createDataFrame(initialRow.asJava, schema)
+        .write.mode("append").format("delta").save(tablePath)
+      implicit val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+      val s0 = log.update()
+      val schemaLog = getDefaultSchemaLog()
+      schemaLog.writeNewMetadata(
+        PersistedMetadata(log.unsafeVolatileTableId, s0.version, s0.metadata, s0.protocol,
+          sourceMetadataPath = "")
+      )
+
+      def read(): DataFrame =
+        readStream(
+          Some(getDefaultSchemaLocation.toString),
+          startingVersion = Some(s0.version))
+
+      withSQLConf(
+        DeltaSQLConf.DELTA_STREAMING_SCHEMA_TRACKING_METADATA_PATH_CHECK_ENABLED.key -> "false") {
+        testStream(read())(
+          StartStream(checkpointLocation = getDefaultCheckpoint.toString),
+          ProcessAllAvailable(),
+          CheckAnswer(Row("0", Row("0", "0"))),
+          StopStream
+        )
+        f(read, log)
+      }
+    }
+  }
+
   testWithoutAllowStreamRestart("unblock with sql conf") {
     def testStreamFlow(
         changeSchema: DeltaLog => Unit,
@@ -2073,6 +2130,105 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
           columnChangeDetails =
             s"""Columns renamed:
                |'b' -> 'c'
+               |""".stripMargin,
+          getConfKV
+        )
+      }
+    }
+  }
+
+  testWithoutAllowStreamRestart("unblock with sql conf - nested struct") {
+    def testStreamFlow(
+        changeSchema: DeltaLog => Unit,
+        schemaChangeType: String,
+        columnChangeDetails: String,
+        getConfKV: (Int, Long) => (String, String)): Unit = {
+      withNestedStructStreamingDf { (readDf, log) =>
+        val ckptHash = (getDefaultCheckpoint(log).toString + "/sources/0").hashCode
+        changeSchema(log)
+        val v1 = log.update().version
+        addNestedData(Seq(1))(log)
+        // Encounter schema evolution exception
+        testStream(readDf())(
+          StartStream(checkpointLocation = getDefaultCheckpoint(log).toString),
+          ProcessAllAvailableIgnoreError,
+          CheckAnswer(Nil: _*),
+          ExpectMetadataEvolutionException
+        )
+        // Restart fails on SQL conf validation
+        testStream(readDf())(
+          StartStream(checkpointLocation = getDefaultCheckpoint(log).toString),
+          ProcessAllAvailableIgnoreError,
+          CheckAnswer(Nil: _*),
+          expectSqlConfException(schemaChangeType, v1, columnChangeDetails, ckptHash)
+        )
+        // With SQL Conf set we can move on
+        val (k, v) = getConfKV(ckptHash, v1)
+        withSQLConf(k -> v) {
+          testStream(readDf())(
+            StartStream(checkpointLocation = getDefaultCheckpoint(log).toString),
+            ProcessAllAvailable()
+          )
+        }
+      }
+    }
+
+    // Test drop column inside a nested struct (s.x)
+    Seq("allowSourceColumnRenameAndDrop", "allowSourceColumnDrop").foreach { allow =>
+      Seq(
+        (
+          (log: DeltaLog) => {
+            dropColumn("s.x")(log)
+            // Revert via add to ensure consecutive schema changes don't affect sql conf validation
+            addColumn("s.x")(log)
+          },
+          (ckptHash: Int, _: Long) =>
+            (s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming.$allow.ckpt_$ckptHash", "always")
+        ),
+        (
+          (log: DeltaLog) => {
+            dropColumn("s.x")(log)
+            addColumn("s.x")(log)
+          },
+          (ckptHash: Int, ver: Long) =>
+            (s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming.$allow.ckpt_$ckptHash", ver.toString)
+        )
+      ).foreach { case (changeSchema, getConfKV) =>
+        testStreamFlow(
+          changeSchema,
+          schemaChangeType = "DROP COLUMN",
+          columnChangeDetails =
+            s"""Columns dropped:
+               |'s.x'
+               |""".stripMargin,
+          getConfKV)
+      }
+    }
+
+    // Test rename column inside a nested struct (s.x -> s.z)
+    Seq("allowSourceColumnRenameAndDrop", "allowSourceColumnRename").foreach { allow =>
+      Seq(
+        (
+          (log: DeltaLog) => {
+            renameColumn("s.x", "z")(log)
+          },
+          (ckptHash: Int, _: Long) =>
+            (s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming.$allow.ckpt_$ckptHash", "always")
+        ),
+        (
+          (log: DeltaLog) => {
+            renameColumn("s.x", "z")(log)
+          },
+          (ckptHash: Int, ver: Long) =>
+            (s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming.$allow.ckpt_$ckptHash", ver.toString)
+        )
+      ).foreach { case (changeSchema, getConfKV) =>
+        testStreamFlow(
+          changeSchema,
+          schemaChangeType = "RENAME COLUMN",
+          columnChangeDetails =
+            s"""Columns renamed:
+               |'s.x' -> 's.z'
                |""".stripMargin,
           getConfKV
         )

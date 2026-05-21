@@ -112,6 +112,33 @@ private[delta] case class CurrentTransactionInfo(
   def isConflict(winningTxn: SetTransaction): Boolean = readAppIds.contains(winningTxn.appId)
 }
 
+object CurrentTransactionInfo {
+  // A helper method to construct dummy txnInfo that only
+  // fills in fields needed for Iceberg conversion
+  def forIcebergConversion(
+      metadata: Metadata,
+      protocol: Protocol,
+      readSnapshot: Snapshot,
+      actions: Seq[Action],
+      commitInfo: Option[CommitInfo]): CurrentTransactionInfo =
+    CurrentTransactionInfo(
+      txnId = "",
+      readPredicates = Vector.empty,
+      readFiles = Set.empty,
+      readWholeTable = false,
+      readAppIds = Set.empty,
+      metadata = metadata,
+      protocol = protocol,
+      actions = actions,
+      readSnapshot = readSnapshot,
+      commitInfo = commitInfo,
+      readRowIdHighWatermark = 0L,
+      catalogTable = None,
+      domainMetadata = Seq.empty,
+      op = DeltaOperations.ManualUpdate
+    )
+}
+
 /**
  * Summary of the Winning commit against which we want to check the conflict
  * @param actions - delta log actions committed by the winning commit

@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.coordinatedcommits
 
 import java.io.IOException
 import java.lang.{Long => JLong}
-import java.util.{List => JList, Optional}
+import java.util.{Collections, List => JList, Optional}
 
 import scala.collection.JavaConverters._
 import scala.jdk.OptionConverters._
@@ -42,7 +42,9 @@ import io.delta.storage.commit.{
   Commit => JCommit,
   CommitFailedException => JCommitFailedException,
   CoordinatedCommitsUtils => JCoordinatedCommitsUtils,
+  GetCommitsResponse => JGetCommitsResponse,
   TableDescriptor,
+  TableIdentifier => JTableIdentifier,
   UpdatedActions
 }
 import io.delta.storage.commit.uccommitcoordinator.{
@@ -87,6 +89,36 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
     assert(usageLogs.exists { record =>
       record.tags.get("opType").contains(opType)
     })
+  }
+
+  test("getCommits forwards table identifier to UCClient") {
+    withTempTableDir { tempDir =>
+      val log = DeltaLog.forTable(spark, tempDir.toString)
+      var capturedTableIdentifier: JTableIdentifier = null
+      val capturingUCClient = new InMemoryUCClient(metastoreId.toString, ucCommitCoordinator) {
+        override def getCommits(
+            tableId: String,
+            tableUri: java.net.URI,
+            tableIdentifier: JTableIdentifier,
+            startVersion: Optional[JLong],
+            endVersion: Optional[JLong]): JGetCommitsResponse = {
+          capturedTableIdentifier = tableIdentifier
+          new JGetCommitsResponse(Collections.emptyList(), -1L)
+        }
+      }
+      val tableCommitCoordinatorClient = TableCommitCoordinatorClient(
+        new UCCommitCoordinatorClient(Map.empty[String, String].asJava, capturingUCClient),
+        log,
+        Map(UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> tableUUID.toString)
+      )
+      val tableIdentifier = TableIdentifier("tbl", Some("default"), Some("main"))
+
+      tableCommitCoordinatorClient.getCommits(Some(tableIdentifier))
+
+      assert(capturedTableIdentifier != null)
+      assert(capturedTableIdentifier.getNamespace.toSeq == Seq("main", "default"))
+      assert(capturedTableIdentifier.getName == "tbl")
+    }
   }
 
   test("incorrect last known backfilled version") {

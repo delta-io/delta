@@ -712,6 +712,7 @@ public class SparkScanTest extends DeltaV2TestBase {
     javaOptions.put("startingVersion", "0");
     javaOptions.put("MaxFilesPerTrigger", "100");
     javaOptions.put("MAXBYTESPERTRIGGER", "1g");
+    javaOptions.put("readChangeFeed", "true");
     javaOptions.put("myCustomOption", "value");
     scala.collection.immutable.Map<String, String> supportedOptions =
         ScalaUtils.toScalaMap(javaOptions);
@@ -721,6 +722,7 @@ public class SparkScanTest extends DeltaV2TestBase {
     assertEquals(true, deltaOptions.maxFilesPerTrigger().isDefined());
     assertEquals(100, deltaOptions.maxFilesPerTrigger().get());
     assertEquals(true, deltaOptions.maxBytesPerTrigger().isDefined());
+    assertEquals(true, deltaOptions.readChangeFeed());
 
     // Should not throw - supported and custom options are allowed
     SparkScan.validateStreamingOptions(deltaOptions);
@@ -731,7 +733,7 @@ public class SparkScanTest extends DeltaV2TestBase {
     // Test with blocked DeltaOptions, supported options, and custom user options
     Map<String, String> javaOptions = new HashMap<>();
     javaOptions.put("startingVersion", "0");
-    javaOptions.put("readChangeFeed", "true");
+    javaOptions.put("endingTimestamp", "2024-01-01");
     javaOptions.put("myCustomOption", "value");
     scala.collection.immutable.Map<String, String> mixedOptions =
         ScalaUtils.toScalaMap(javaOptions);
@@ -745,10 +747,12 @@ public class SparkScanTest extends DeltaV2TestBase {
     // Verify exact error message - only the blocked option should appear
     // Note: DeltaOptions uses CaseInsensitiveMap which lowercases keys during iteration
     assertEquals(
-        "The following streaming options are not supported: [readchangefeed]. "
+        "The following streaming options are not supported: [endingtimestamp]. "
             + "Supported options are: [startingVersion, startingTimestamp, maxFilesPerTrigger, "
-            + "maxBytesPerTrigger, ignoreFileDeletion, ignoreChanges, ignoreDeletes, skipChangeCommits, "
-            + "excludeRegex, failOnDataLoss].",
+            + "maxBytesPerTrigger, ignoreFileDeletion, ignoreChanges, ignoreDeletes, "
+            + "skipChangeCommits, excludeRegex, failOnDataLoss, readChangeFeed, readChangeData, "
+            + "schemaTrackingLocation, schemaLocation, streamingSourceTrackingId, "
+            + "allowSourceColumnDrop, allowSourceColumnRename, allowSourceColumnTypeChange].",
         exception.getMessage());
   }
 

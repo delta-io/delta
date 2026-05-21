@@ -29,6 +29,7 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTableType}
 import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
 import org.apache.spark.sql.delta.Relocated.StreamingRelation
+import org.apache.spark.sql.delta.test.shims.StreamingRelationV2Shim
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
@@ -45,7 +46,7 @@ class ApplyV2StreamingSuite extends DeltaSQLCommandTest {
 
   private def assertV2(result: LogicalPlan): Unit = {
     result match {
-      case StreamingRelationV2(_, _, _: SparkTable, _, _, _, _, v1Relation) =>
+      case StreamingRelationV2Shim(_, _, _: SparkTable, _, _, _, _, v1Relation) =>
         assert(v1Relation.isEmpty)
       case other =>
         fail(s"Expected StreamingRelationV2, got $other")
