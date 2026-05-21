@@ -32,29 +32,30 @@ public class IndexedFile implements AdmittableFile {
   private final long version;
   private final long index;
   @Nullable private final AddFile addFile;
-  @Nullable private final CDCDataFile cdcFile;
+  @Nullable private final CDCDataFile cdcDataFile;
 
   /** Creates a sentinel IndexedFile (no file action) for offset tracking boundaries. */
   public static IndexedFile sentinel(long version, long index) {
-    return new IndexedFile(version, index, /* addFile= */ null, /* cdcFile= */ null);
+    return new IndexedFile(version, index, /* addFile= */ null, /* cdcDataFile= */ null);
   }
 
   /** Creates a CDC IndexedFile wrapping a CDCDataFile. */
-  public static IndexedFile cdc(long version, long index, CDCDataFile cdcFile) {
-    return new IndexedFile(version, index, /* addFile= */ null, cdcFile);
+  public static IndexedFile cdc(long version, long index, CDCDataFile cdcDataFile) {
+    return new IndexedFile(version, index, /* addFile= */ null, cdcDataFile);
   }
 
   /** Creates an IndexedFile for a non-CDC AddFile action. */
   public static IndexedFile addFile(long version, long index, AddFile addFile) {
-    return new IndexedFile(version, index, addFile, /* cdcFile= */ null);
+    return new IndexedFile(version, index, addFile, /* cdcDataFile= */ null);
   }
 
-  private IndexedFile(long version, long index, AddFile addFile, CDCDataFile cdcFile) {
-    checkState(addFile == null || cdcFile == null, "At most one of addFile, cdcFile can be set");
+  private IndexedFile(long version, long index, AddFile addFile, CDCDataFile cdcDataFile) {
+    checkState(
+        addFile == null || cdcDataFile == null, "At most one of addFile, cdcDataFile can be set");
     this.version = version;
     this.index = index;
     this.addFile = addFile;
-    this.cdcFile = cdcFile;
+    this.cdcDataFile = cdcDataFile;
   }
 
   public long getVersion() {
@@ -71,21 +72,26 @@ public class IndexedFile implements AdmittableFile {
   }
 
   @Nullable
-  public CDCDataFile getCDCFile() {
-    return cdcFile;
+  public CDCDataFile getCDCDataFile() {
+    return cdcDataFile;
+  }
+
+  /** Returns true if this IndexedFile wraps an explicit AddCDCFile action. */
+  public boolean isAddCDCFile() {
+    return cdcDataFile != null && cdcDataFile.isAddCDCFile();
   }
 
   @Override
   public boolean hasFileAction() {
-    return addFile != null || cdcFile != null;
+    return addFile != null || cdcDataFile != null;
   }
 
   @Override
   public long getFileSize() {
     if (addFile != null) {
       return addFile.getSize();
-    } else if (cdcFile != null) {
-      return cdcFile.getFileSize();
+    } else if (cdcDataFile != null) {
+      return cdcDataFile.getFileSize();
     }
     throw new IllegalStateException("check hasFileAction() before calling getFileSize()");
   }
@@ -99,8 +105,8 @@ public class IndexedFile implements AdmittableFile {
     if (addFile != null) {
       sb.append(", addFile=").append(addFile);
     }
-    if (cdcFile != null) {
-      sb.append(", cdcFile=").append(cdcFile);
+    if (cdcDataFile != null) {
+      sb.append(", cdcDataFile=").append(cdcDataFile);
     }
     sb.append('}');
     return sb.toString();

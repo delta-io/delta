@@ -233,7 +233,9 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
             // ensure that datatype validation behaves consistently between the two.
             if (clause == "REPLACE") {
               sql("DROP TABLE IF EXISTS dstTbl")
-              sql(s"CREATE TABLE dstTbl LIKE srcTbl LOCATION '${tmpDir.getAbsolutePath}'")
+              sql(
+                s"CREATE TABLE dstTbl LIKE srcTbl USING DELTA " +
+                  s"LOCATION '${tmpDir.getAbsolutePath}'")
             }
 
             Seq(
@@ -708,9 +710,8 @@ trait ClusteredTableDDLSuiteBase
       val e2 = intercept[DeltaAnalysisException] {
         sql(s"ALTER TABLE $testTable CLUSTER BY (id, id)")
       }
-      assert(e2.getErrorClass == "DELTA_DUPLICATE_COLUMNS_FOUND")
-      assert(e2.getSqlState == "42711")
-      assert(e2.getMessageParametersArray === Array("in CLUSTER BY", "`id`"))
+      checkError(e2, "DELTA_DUPLICATE_COLUMNS_FOUND.CLUSTER_BY", "42711",
+        Map("duplicateCols" -> "`id`"))
     }
   }
 

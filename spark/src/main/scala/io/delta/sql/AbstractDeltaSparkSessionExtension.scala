@@ -49,11 +49,21 @@ class AbstractDeltaSparkSessionExtension extends (SparkSessionExtensions => Unit
     extensions.injectParser { (_, parser) =>
       new DeltaSqlParser(parser)
     }
+    // We want this rule to run before resolution so that ResolveSchemaEvolution in Spark correctly
+    // sees when schema evolution is enabled. Ideally this should be injected in the pre-resolution
+    // phase, but there is no hook point there yet.
+    extensions.injectHintResolutionRule { session =>
+      new SetDSv2SchemaEvolutionShims(session)
+    }
     extensions.injectResolutionRule { session =>
       ResolveDeltaPathTable(session)
     }
     extensions.injectResolutionRule { session =>
       PreprocessTimeTravel(session)
+    }
+    // DeltaImplicitCast handles implicit casting for dataframe by-name V2WriteCommands.
+    extensions.injectResolutionRule { session =>
+      DeltaImplicitCast(session)
     }
     extensions.injectResolutionRule { _ => PropagateSchemaEvolutionWriteOptionShims }
     extensions.injectResolutionRule { session =>

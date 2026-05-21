@@ -19,11 +19,14 @@ import io.delta.kernel.defaults.internal.parquet.ParquetSchemaUtils.pruneSchema
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.internal.util.ColumnMapping
 import io.delta.kernel.internal.util.ColumnMapping.PARQUET_FIELD_NESTED_IDS_METADATA_KEY
-import io.delta.kernel.types.{ArrayType, DoubleType, FieldMetadata, MapType, StructType}
+import io.delta.kernel.types.{ArrayType, DoubleType, FieldMetadata, GeographyType, GeometryType, MapType, StructType}
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.LongType.LONG
 
+import org.apache.parquet.column.schema.EdgeInterpolationAlgorithm
+import org.apache.parquet.schema.LogicalTypeAnnotation
 import org.apache.parquet.schema.MessageTypeParser
+import org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName
 import org.scalatest.funsuite.AnyFunSuite
 
 class ParquetSchemaUtilsSuite extends AnyFunSuite with TestUtils {
@@ -437,6 +440,83 @@ class ParquetSchemaUtilsSuite extends AnyFunSuite with TestUtils {
         }
         assert(ex.getMessage.contains(expectedErrorMsg))
       }
+  }
+
+  test("toParquetSchema - GeometryType maps to BINARY with GEOMETRY annotation") {
+    val deltaSchema = new StructType()
+      .add("geom", new GeometryType("OGC:CRS84"))
+
+    val parquetSchema = ParquetSchemaUtils.toParquetSchema(deltaSchema)
+    val field = parquetSchema
+      .asGroupType()
+      .getType("geom")
+      .asPrimitiveType()
+
+    assert(field.getPrimitiveTypeName == PrimitiveTypeName.BINARY)
+    val annotation = field.getLogicalTypeAnnotation
+      .asInstanceOf[LogicalTypeAnnotation.GeometryLogicalTypeAnnotation]
+    assert(annotation.getCrs == "OGC:CRS84")
+  }
+
+  test("toParquetSchema - GeometryType with custom SRID preserves crs") {
+    val deltaSchema = new StructType()
+      .add("geom", new GeometryType("EPSG:4326"))
+
+    val parquetSchema = ParquetSchemaUtils.toParquetSchema(deltaSchema)
+    val annotation = parquetSchema
+      .asGroupType()
+      .getType("geom")
+      .asPrimitiveType()
+      .getLogicalTypeAnnotation
+      .asInstanceOf[LogicalTypeAnnotation.GeometryLogicalTypeAnnotation]
+
+    assert(annotation.getCrs == "EPSG:4326")
+  }
+
+  test("toParquetSchema - GeographyType maps to BINARY with GEOGRAPHY annotation") {
+    val deltaSchema = new StructType()
+      .add("geog", new GeographyType("OGC:CRS84", "spherical"))
+
+    val parquetSchema = ParquetSchemaUtils.toParquetSchema(deltaSchema)
+    val field = parquetSchema
+      .asGroupType()
+      .getType("geog")
+      .asPrimitiveType()
+
+    assert(field.getPrimitiveTypeName == PrimitiveTypeName.BINARY)
+    val annotation = field.getLogicalTypeAnnotation
+      .asInstanceOf[LogicalTypeAnnotation.GeographyLogicalTypeAnnotation]
+    assert(annotation.getCrs == "OGC:CRS84")
+    assert(annotation.getAlgorithm == EdgeInterpolationAlgorithm.SPHERICAL)
+  }
+
+  Seq(
+    "spherical" -> EdgeInterpolationAlgorithm.SPHERICAL,
+    "vincenty" -> EdgeInterpolationAlgorithm.VINCENTY,
+    "thomas" -> EdgeInterpolationAlgorithm.THOMAS,
+    "andoyer" -> EdgeInterpolationAlgorithm.ANDOYER,
+    "karney" -> EdgeInterpolationAlgorithm.KARNEY).foreach { case (algorithmStr, expectedAlg) =>
+    test(s"toParquetSchema - GeographyType algorithm '$algorithmStr' maps correctly") {
+      val deltaSchema = new StructType()
+        .add("geog", new GeographyType("OGC:CRS84", algorithmStr))
+
+      val parquetSchema = ParquetSchemaUtils.toParquetSchema(deltaSchema)
+      val annotation = parquetSchema
+        .asGroupType()
+        .getType("geog")
+        .asPrimitiveType()
+        .getLogicalTypeAnnotation
+        .asInstanceOf[LogicalTypeAnnotation.GeographyLogicalTypeAnnotation]
+
+      assert(annotation.getAlgorithm == expectedAlg)
+    }
+  }
+
+  test("GeographyType rejects unknown algorithm at construction time") {
+    val ex = intercept[IllegalArgumentException] {
+      new GeographyType("OGC:CRS84", "unknown_algo")
+    }
+    assert(ex.getMessage.contains("Algorithm must be one of"))
   }
 
   private def fieldMetadata(id: Int, nestedFieldIds: (String, Int)*): FieldMetadata = {

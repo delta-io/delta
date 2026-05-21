@@ -50,9 +50,32 @@ trait DeltaWriteOptions
 
   import DeltaOptions._
 
+  def isInsertAtomicReplaceOp: Boolean = isReplaceOnOrUsingDefined || replaceWhere.isDefined
+
+  def isInsertPartialOverwriteOp: Boolean =
+    isInsertAtomicReplaceOp || isDynamicPartitionOverwriteMode
+
   val replaceOn: Option[String] = options.get(REPLACE_ON_OPTION)
 
   val replaceUsing: Option[String] = options.get(REPLACE_USING_OPTION)
+
+  /** Parses the replaceUsing option into a list of distinct column names. */
+  def parsedReplaceUsingColsList: Option[Seq[String]] = {
+    replaceUsing.map { cols =>
+      // limit = -1 preserves trailing empty strings so we can detect trailing commas.
+      // scalastyle:off
+      val parsed =
+        cols.split(/* separator = */ ",", /* limit = */ -1).map(_.trim).toSeq.distinct
+      // scalastyle:on
+      if (parsed.exists(_.isEmpty)) {
+        throw DeltaErrors.illegalDeltaOptionException(
+          name = REPLACE_USING_OPTION,
+          input = cols,
+          explain = "must not contain empty column names")
+      }
+      parsed
+    }
+  }
 
   def isReplaceOnOrUsingDefined: Boolean =
     replaceOn.isDefined || replaceUsing.isDefined
@@ -285,6 +308,9 @@ object DeltaOptions extends DeltaLogging {
    */
   val TARGET_ALIAS_OPTION = "targetAlias"
 
+  /** Internal alias used by replaceUsing for column resolution. Not for external use. */
+  private[delta] val REPLACE_USING_INTERNAL_TABLE_ALIAS = "__replace_using_table_alias__"
+
   /** An option to overwrite only the data that matches predicates over partition columns. */
   val REPLACE_WHERE_OPTION = "replaceWhere"
   /** An option to allow automatic schema merging during a write operation. */
@@ -330,6 +356,7 @@ object DeltaOptions extends DeltaLogging {
   val TIMESTAMP_AS_OF = "timestampAsOf"
 
   val COMPRESSION = "compression"
+  val PARQUET_VERSION = "parquet.writer.version"
   val MAX_RECORDS_PER_FILE = "maxRecordsPerFile"
   val TXN_APP_ID = "txnAppId"
   val TXN_VERSION = "txnVersion"
@@ -358,6 +385,7 @@ object DeltaOptions extends DeltaLogging {
    * An option to control if delta will write partition columns to data files
    */
   val WRITE_PARTITION_COLUMNS = "writePartitionColumns"
+  val PARQUET_OUTPUT_TIMESTAMP_TYPE = SQLConf.PARQUET_OUTPUT_TIMESTAMP_TYPE.key
 
   val validOptionKeys : Set[String] = Set(
     IS_DATAFRAME_WRITER_V1_SAVE_AS_TABLE_OVERWRITE,
@@ -388,6 +416,8 @@ object DeltaOptions extends DeltaLogging {
     CDC_END_VERSION,
     COMPRESSION,
     MAX_RECORDS_PER_FILE,
+    PARQUET_VERSION,
+    PARQUET_OUTPUT_TIMESTAMP_TYPE,
     TXN_APP_ID,
     TXN_VERSION,
     SCHEMA_TRACKING_LOCATION,

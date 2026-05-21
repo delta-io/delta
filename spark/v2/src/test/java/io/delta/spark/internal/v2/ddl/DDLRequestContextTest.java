@@ -28,6 +28,7 @@ import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.types.TimestampType;
+import io.delta.kernel.unitycatalog.UCTableIdentifier;
 import io.delta.spark.internal.v2.snapshot.unitycatalog.UCTableInfo;
 import java.util.HashMap;
 import java.util.List;
@@ -55,7 +56,11 @@ public class DDLRequestContextTest {
         DataLayoutSpec.clustered(List.of(new Column("user_id"), new Column("event_ts")));
     UCTableInfo ucInfo =
         new UCTableInfo(
-            "uc-table-id-123", tablePath, "https://uc.example.com", Map.of("token", "fake-token"));
+            "uc-table-id-123",
+            tablePath,
+            new UCTableIdentifier("prod_catalog", "analytics", "page_views"),
+            "https://uc.example.com",
+            Map.of("token", "fake-token"));
     CreateTableTransactionBuilder txnBuilder =
         TableManager.buildCreateTableTransaction(tablePath, schema, "test");
 

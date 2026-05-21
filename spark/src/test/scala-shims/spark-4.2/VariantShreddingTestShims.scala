@@ -16,7 +16,10 @@
 
 package org.apache.spark.sql.delta.test.shims
 
+import java.math.{BigDecimal => JBigDecimal}
+
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.types.variant.Variant
 
 /**
  * Test shim for variant shredding to handle differences between Spark versions.
@@ -34,4 +37,6 @@ object VariantShreddingTestShims {
    * In Spark 4.2, this returns the actual SQLConf key.
    */
   val variantInferShreddingSchemaKey: String = SQLConf.VARIANT_INFER_SHREDDING_SCHEMA.key
+
+  def getDecimalWithOriginalScale(v: Variant): JBigDecimal = v.getDecimalWithOriginalScale()
 }

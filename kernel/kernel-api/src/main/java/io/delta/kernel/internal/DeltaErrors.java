@@ -36,9 +36,13 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Contains methods to create user-facing Delta exceptions. */
 public final class DeltaErrors {
+  private static final Logger logger = LoggerFactory.getLogger(DeltaErrors.class);
+
   private DeltaErrors() {}
 
   public static KernelException missingCheckpoint(String tablePath, long checkpointVersion) {
@@ -108,19 +112,10 @@ public final class DeltaErrors {
     return new CommitRangeNotFoundException(tablePath, startVersion, endVersionOpt);
   }
 
-  public static KernelException startVersionNotFound(
+  public static StartVersionNotFoundException startVersionNotFound(
       String tablePath, long startVersionRequested, Optional<Long> earliestAvailableVersion) {
-    String message =
-        String.format(
-            "%s: Requested table changes beginning with startVersion=%s but no log file found for "
-                + "version %s.",
-            tablePath, startVersionRequested, startVersionRequested);
-    if (earliestAvailableVersion.isPresent()) {
-      message =
-          message
-              + String.format(" Earliest available version is %s", earliestAvailableVersion.get());
-    }
-    return new KernelException(message);
+    return new StartVersionNotFoundException(
+        tablePath, startVersionRequested, earliestAvailableVersion);
   }
 
   public static KernelException endVersionNotFound(
@@ -634,6 +629,16 @@ public final class DeltaErrors {
       // originate from the engine implementation there are some edge cases such as
       // deserializeStructType)
       throw e;
+    } catch (KernelEngineException e) {
+      // Don't double-wrap: KernelEngineException is a sibling of KernelException (both extend
+      // RuntimeException), so it doesn't match the catch above. Without this, an already-wrapped
+      // engine exception gets re-wrapped by an outer wrapEngineException call, which hides the
+      // original cause one extra level deep and breaks direct-cause checks at consumers.
+      logger.debug(
+          "Rethrowing already-wrapped KernelEngineException while handling engine operation: {}",
+          String.format(msgString, args),
+          e);
+      throw e;
     } catch (RuntimeException e) {
       throw new KernelEngineException(String.format(msgString, args), e);
     }
@@ -652,6 +657,14 @@ public final class DeltaErrors {
       // Let any KernelExceptions fall through (even though these generally shouldn't
       // originate from the engine implementation there are some edge cases such as
       // deserializeStructType)
+      throw e;
+    } catch (KernelEngineException e) {
+      // See note in wrapEngineException: avoid double-wrapping an already-wrapped engine
+      // exception.
+      logger.debug(
+          "Rethrowing already-wrapped KernelEngineException while handling engine operation: {}",
+          String.format(msgString, args),
+          e);
       throw e;
     } catch (RuntimeException e) {
       throw new KernelEngineException(String.format(msgString, args), e);

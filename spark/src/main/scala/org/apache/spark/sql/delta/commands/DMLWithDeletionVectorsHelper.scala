@@ -308,6 +308,7 @@ object DeletionVectorBitmapGenerator {
   final val DELETED_ROW_INDEX_BITMAP = "deletedRowIndexSet"
   final val DELETED_ROW_INDEX_COUNT = "deletedRowIndexCount"
   final val MAX_ROW_INDEX_COL = "maxRowIndexCol"
+  final val FILE_PATH_COL = "dvFilePath"
 
   private class DeletionVectorSet(
     spark: SparkSession,
@@ -427,14 +428,15 @@ object DeletionVectorBitmapGenerator {
           serializedDV)
       }
       val filePathToDVDf = sparkSession.createDataset(filePathToDV)
+        .withColumnRenamed("path", FILE_PATH_COL)
 
-      val joinExpr = filePathToDVDf("path") === matchedRowsDf(FILE_NAME_COL)
+      val joinExpr = filePathToDVDf(FILE_PATH_COL) === matchedRowsDf(FILE_NAME_COL)
       // Perform leftOuter join to make sure we do not eliminate any rows because of path
       // encoding issues. If there is such an issue we will detect it during the aggregation
       // of the bitmaps.
       val joinedDf = matchedRowsDf.join(filePathToDVDf, joinExpr, "leftOuter")
         .drop(FILE_NAME_COL)
-        .withColumnRenamed("path", FILE_NAME_COL)
+        .withColumnRenamed(FILE_PATH_COL, FILE_NAME_COL)
       joinedDf
     } else {
       // When the table has no DVs, just add a column to indicate that the existing dv is null

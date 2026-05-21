@@ -422,39 +422,6 @@ class DeltaSinkSuite
     }
   }
 
-  test("incompatible schema merging throws errors - first batch then streaming") {
-    withTempDirs { (outputDir, checkpointDir) =>
-      val inputData = MemoryStream[Int]
-      val ds = inputData.toDS()
-      val dsWriter =
-        ds.map(i => (i, i * 1000))
-          .toDF("id", "value")
-          .writeStream
-          .option("checkpointLocation", checkpointDir.getCanonicalPath)
-          .format("delta")
-      spark.range(100).select('id, ('id * 3).cast("string") as "value")
-        .write
-        .format("delta")
-        .mode("append")
-        .save(outputDir.getCanonicalPath)
-
-      // More tests covering type changes can be found in [[DeltaSinkImplicitCastSuite]]. This only
-      // covers type changes disabled.
-      withSQLConf(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key -> "false") {
-        val wrapperException = intercept[StreamingQueryException] {
-          val q = dsWriter.start(outputDir.getCanonicalPath)
-          inputData.addData(1, 2, 3)
-          q.processAllAvailable()
-        }
-        assert(wrapperException.cause.isInstanceOf[AnalysisException])
-        checkError(
-          wrapperException.cause.asInstanceOf[AnalysisException],
-          "DELTA_FAILED_TO_MERGE_FIELDS",
-          parameters = Map("currentField" -> "id", "updateField" -> "id"))
-      }
-    }
-  }
-
   private def verifyDeltaSinkCatalog(f: DataStreamWriter[_] => StreamingQuery): Unit = {
     // Create a Delta sink whose target table is defined by our caller.
     val input = MemoryStream[Int]

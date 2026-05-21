@@ -22,11 +22,14 @@ import java.util.concurrent.atomic.AtomicInteger
 
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 
-import org.apache.spark.sql.delta.{CommittedTransaction, DeltaLog}
+import org.apache.spark.sql.delta.{CommittedTransaction, DeltaLog, DeltaOperations}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, RemoveFile}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.stats.FileSizeHistogramUtils
 import org.apache.spark.sql.delta.util.{CatalogTableUtils, JsonUtils}
+
+import org.apache.spark.sql.SaveMode
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
@@ -176,9 +179,16 @@ class UpdateMetricsHookSuite extends QueryTest
       Some(System.currentTimeMillis()),
       dataChange = true, size = Some(512L))
 
+    // Simulate a snapshot histogram reflecting the table state
+    val snapshotHist = FileSizeHistogramUtils.emptyHistogram
+    snapshotHist.insert(1024L)
+    snapshotHist.insert(2048L)
+    snapshotHist.insert(4096L)
+
     val actions: Seq[Action] = Seq(add1, add2, add3, removed)
     val request = UpdateMetricsHook.buildRequest(
-      "tbl-123", actions, committedVersion = 7L)
+      "tbl-123", actions, committedVersion = 7L,
+      snapshotHistogram = Some(snapshotHist))
     val report = request.report.commitReport
 
     assert(request.tableId == "tbl-123")
@@ -189,10 +199,10 @@ class UpdateMetricsHookSuite extends QueryTest
     assert(report.numBytesRemoved == 512L,
       "sum of remove sizes")
 
-    val hist = report.fileSizeHistogram
+    val hist = report.fileSizeHistogram.get
     assert(hist.commitVersion == 7L, "commit_version must be set")
     assert(hist.sortedBinBoundaries.head == 0L, "bins must start at 0")
-    assert(hist.fileCounts.sum == 3L, "histogram covers all AddFiles")
+    assert(hist.fileCounts.sum == 3L, "histogram covers all files")
     assert(hist.totalBytes.sum == 1024L + 2048L + 4096L, "histogram totalBytes")
   }
 
@@ -300,12 +310,12 @@ class UpdateMetricsHookSuite extends QueryTest
         numRowsInserted = Some(1000L),
         numRowsRemoved = Some(200L),
         numRowsUpdated = Some(50L),
-        fileSizeHistogram = FileSizeHistogramPayload(
+        fileSizeHistogram = Some(FileSizeHistogramPayload(
           sortedBinBoundaries = Seq(0L, 1024L),
           fileCounts = Seq(5L, 5L),
           totalBytes = Seq(2000L, 8000L),
           commitVersion = 42L
-        )
+        ))
       ))
     )
 
@@ -335,9 +345,9 @@ class UpdateMetricsHookSuite extends QueryTest
         numFilesRemoved = 0L,
         numBytesAdded = 100L,
         numBytesRemoved = 0L,
-        fileSizeHistogram = FileSizeHistogramPayload(
+        fileSizeHistogram = Some(FileSizeHistogramPayload(
           sortedBinBoundaries = Seq(0L), fileCounts = Seq(1L),
-          totalBytes = Seq(100L), commitVersion = 0L)
+          totalBytes = Seq(100L), commitVersion = 0L))
       ))
     )
 
@@ -379,9 +389,9 @@ class UpdateMetricsHookSuite extends QueryTest
         report = CommitReportEnvelope(CommitReport(
           numFilesAdded = 1L, numFilesRemoved = 0L,
           numBytesAdded = 100L, numBytesRemoved = 0L,
-          fileSizeHistogram = FileSizeHistogramPayload(
+          fileSizeHistogram = Some(FileSizeHistogramPayload(
             sortedBinBoundaries = Seq(0L), fileCounts = Seq(1L),
-            totalBytes = Seq(100L), commitVersion = 0L))))
+            totalBytes = Seq(100L), commitVersion = 0L)))))
       intercept[RuntimeException] {
         UpdateMetricsHook.sendMetrics(
           spark, request, catalogName = Some(TEST_CATALOG_NAME))
@@ -415,9 +425,9 @@ class UpdateMetricsHookSuite extends QueryTest
           numFilesAdded = 5L, numFilesRemoved = 0L,
           numBytesAdded = 5000L, numBytesRemoved = 0L,
           numRowsInserted = Some(100L),
-          fileSizeHistogram = FileSizeHistogramPayload(
+          fileSizeHistogram = Some(FileSizeHistogramPayload(
             sortedBinBoundaries = Seq(0L), fileCounts = Seq(5L),
-            totalBytes = Seq(5000L), commitVersion = 0L)))
+            totalBytes = Seq(5000L), commitVersion = 0L))))
       )
       UpdateMetricsHook.sendMetrics(
         spark, request, catalogName = Some(TEST_CATALOG_NAME))
@@ -466,9 +476,9 @@ class UpdateMetricsHookSuite extends QueryTest
         report = CommitReportEnvelope(CommitReport(
           numFilesAdded = 1L, numFilesRemoved = 0L,
           numBytesAdded = 100L, numBytesRemoved = 0L,
-          fileSizeHistogram = FileSizeHistogramPayload(
+          fileSizeHistogram = Some(FileSizeHistogramPayload(
             sortedBinBoundaries = Seq(0L), fileCounts = Seq(1L),
-            totalBytes = Seq(100L), commitVersion = 0L)))
+            totalBytes = Seq(100L), commitVersion = 0L))))
       )
       UpdateMetricsHook.sendMetrics(
         spark, request, catalogName = Some(authStaticCatalog))
@@ -522,7 +532,8 @@ class UpdateMetricsHookSuite extends QueryTest
         "Expected exactly 1 HTTP POST")
       val body = mockServer.getLastRequestBody()
       val expected = UpdateMetricsHook.buildRequest(
-        TEST_UC_TABLE_ID, Seq(commitInfo, addFile), 0L)
+        TEST_UC_TABLE_ID, Seq(commitInfo, addFile), 0L,
+        deltaLog.snapshot.checksumOpt.flatMap(_.histogramOpt))
       assert(
         JsonUtils.fromJson[Map[String, Any]](body) ==
           JsonUtils.fromJson[Map[String, Any]](
@@ -574,6 +585,79 @@ class UpdateMetricsHookSuite extends QueryTest
       UpdateMetricsHook.awaitCompletion(5000)
       assert(mockServer.getRequestCount() == 0,
         "no HTTP request for non-UC-managed table")
+    }
+  }
+
+  test("buildRequest: uses snapshot histogram when provided") {
+    val snapshotHist = FileSizeHistogramUtils.emptyHistogram
+    snapshotHist.insert(1024L)
+    snapshotHist.insert(2048L)
+    snapshotHist.insert(4096L)
+
+    // AddFile with a DIFFERENT size than what's in the snapshot histogram
+    val add = AddFile("f.parquet", Map.empty, 8192L,
+      System.currentTimeMillis(), dataChange = true)
+
+    val req = UpdateMetricsHook.buildRequest(
+      "tbl", Seq(add), committedVersion = 5L,
+      snapshotHistogram = Some(snapshotHist))
+    val hist = req.report.commitReport.fileSizeHistogram.get
+
+    assert(hist.fileCounts.sum == 3L,
+      "should use snapshot histogram file counts, not per-commit AddFiles")
+    assert(hist.totalBytes.sum == 1024L + 2048L + 4096L,
+      "should use snapshot histogram total bytes")
+    assert(hist.commitVersion == 5L)
+  }
+
+  test("buildRequest: omits histogram when snapshot is None") {
+    val add = AddFile("f.parquet", Map.empty, 1024L,
+      System.currentTimeMillis(), dataChange = true)
+    val req = UpdateMetricsHook.buildRequest(
+      "tbl", Seq(add), committedVersion = 3L,
+      snapshotHistogram = None)
+
+    assert(req.report.commitReport.fileSizeHistogram.isEmpty,
+      "histogram should be None when snapshot is unavailable")
+
+    val json = JsonUtils.toJson(req)
+    assert(!json.contains("file_size_histogram"),
+      "file_size_histogram should be absent from JSON when None")
+  }
+
+  test("run(): does not trigger state reconstruction") {
+    // Disable test-only CRC verification paths that would force state reconstruction.
+    // Matches the config pattern used by ChecksumSuite.
+    withSQLConf(
+      DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false",
+      DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true",
+      DeltaSQLConf.INCREMENTAL_COMMIT_FORCE_VERIFY_IN_TESTS.key -> "false",
+      DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_FORCE_VERIFICATION_MODE_FOR_NON_UTC_ENABLED.key ->
+        "false"
+    ) {
+      withMockMetricsServer() { (mockServer, deltaLog, ct) =>
+        // High-level Spark writes (DataFrame.write, INSERT) trigger state reconstruction
+        // during analysis. Use low-level commit API to get a post-commit snapshot where
+        // stateReconstructionTriggered is still false, so we can verify that the hook's
+        // async execution does not trigger it.
+        // Neither this commit nor the initial spark.range(1).write in withMockMetricsServer
+        // triggers UpdateMetricsHook because the table is path-based (no UC catalog table).
+        deltaLog
+          .startTransaction()
+          .commit(Seq.empty, DeltaOperations.Write(SaveMode.Append))
+        val postCommitSnapshot = deltaLog.snapshot
+        assert(!postCommitSnapshot.stateReconstructionTriggered,
+          "pre-condition: snapshot should not have state reconstruction before hook runs")
+
+        val txn = makeTxn(deltaLog, ct)
+        UpdateMetricsHook(Some(ct)).run(spark, txn)
+        assert(UpdateMetricsHook.awaitCompletion(10000),
+          "async hook should complete within timeout")
+        assert(mockServer.getRequestCount() == 1,
+          "hook should have sent metrics")
+        assert(!postCommitSnapshot.stateReconstructionTriggered,
+          "hook must not trigger state reconstruction")
+      }
     }
   }
 

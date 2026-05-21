@@ -46,8 +46,7 @@ private[delta] trait CompactionTestHelper extends QueryTest with DeltaSQLTestUti
 
   /** Create `numFilePartitions` partitions and each partition has `numFilesPerPartition` files. */
   def createFilesToPartitions(
-      numFilePartitions: Int, numFilesPerPartition: Int, dir: String)
-      (implicit spark: SparkSession): Unit = {
+      numFilePartitions: Int, numFilesPerPartition: Int, dir: String): Unit = {
     val totalNumFiles = numFilePartitions * numFilesPerPartition
     spark.range(start = 0, end = totalNumFiles, step = 1, numPartitions = totalNumFiles)
       .selectExpr(s"id % $numFilePartitions as c0", "id as c1")
@@ -59,8 +58,7 @@ private[delta] trait CompactionTestHelper extends QueryTest with DeltaSQLTestUti
   }
 
   /** Create `numFiles` files without any partition. */
-  def createFilesWithoutPartitions(
-      numFiles: Int, dir: String)(implicit spark: SparkSession): Unit = {
+  def createFilesWithoutPartitions(numFiles: Int, dir: String): Unit = {
     spark.range(start = 0, end = numFiles, step = 1, numPartitions = numFiles)
       .selectExpr("id as c0", "id as c1", "id as c2")
       .write

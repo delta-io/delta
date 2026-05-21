@@ -384,6 +384,40 @@
     ],
     "sqlState" : "22003"
   },
+  "DELTA_CHANGELOG_REQUIRES_ROW_TRACKING" : {
+    "message" : [
+      "Change data capture via CHANGES on `<tableName>` requires row tracking.",
+      "Enable it by setting TBLPROPERTIES ('delta.enableRowTracking' = 'true')."
+    ],
+    "sqlState" : "0AKDE"
+  },
+  "DELTA_CHANGELOG_REQUIRES_V2_TABLE" : {
+    "message" : [
+      "Auto-CDF reads on `<tableName>` require the V2 Delta connector, but the catalog resolved the table to `<actualClassName>`.",
+      "Set the Delta V2 mode SQL conf to `STRICT` (or `AUTO`, if AUTO routes CHANGES queries) to read this table through the V2 connector."
+    ],
+    "sqlState" : "0AKDE"
+  },
+  "DELTA_CHANGELOG_ROW_TRACKING_DISABLED_IN_RANGE" : {
+    "message" : [
+      "Delta CDC requires row tracking to remain enabled across the requested range.",
+      "Commit at version <version> disabled row tracking. Pick a starting/ending version that brackets a row-tracking-enabled state."
+    ],
+    "sqlState" : "0AKDE"
+  },
+  "DELTA_CHANGELOG_SCHEMA_CHANGE_IN_RANGE" : {
+    "message" : [
+      "Delta CDC does not support reading a changelog range that includes a schema change.",
+      "Commit at version <version> changes the table schema. Pick a starting/ending version that brackets a single schema."
+    ],
+    "sqlState" : "0AKDE"
+  },
+  "DELTA_CHANGELOG_UNBOUNDED_RANGE" : {
+    "message" : [
+      "Delta CDC does not support unbounded ranges in batch reads. Specify a starting and ending version or timestamp."
+    ],
+    "sqlState" : "0AKDE"
+  },
   "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA" : {
     "message" : [
       "Retrieving table changes between version <start> and <end> failed because of an incompatible data schema.",
@@ -919,8 +953,70 @@
   },
   "DELTA_DUPLICATE_COLUMNS_FOUND" : {
     "message" : [
-      "Found duplicate column(s) <coltype>: <duplicateCols>"
+      "Found duplicate column(s): <duplicateCols>."
     ],
+    "subClass" : {
+      "ADDING_COLUMNS" : {
+        "message" : [
+          "The duplicate was found while adding columns."
+        ]
+      },
+      "CLUSTER_BY" : {
+        "message" : [
+          "The duplicate was found in CLUSTER BY."
+        ]
+      },
+      "CONVERT_TO_DELTA" : {
+        "message" : [
+          "The duplicate was found during conversion to Delta."
+        ]
+      },
+      "DATA" : {
+        "message" : [
+          "The duplicate was found in the data being saved."
+        ]
+      },
+      "EXISTING_SCHEMA" : {
+        "message" : [
+          "The duplicate was found in the existing table schema."
+        ]
+      },
+      "METADATA_UPDATE" : {
+        "message" : [
+          "The duplicate was found in the metadata update."
+        ]
+      },
+      "PARTITION_COLUMNS" : {
+        "message" : [
+          "The duplicate was found in the partition columns."
+        ]
+      },
+      "PARTITION_SCHEMA" : {
+        "message" : [
+          "The duplicate was found in the partition schema."
+        ]
+      },
+      "READ_SCHEMA" : {
+        "message" : [
+          "The duplicate was found in the schema of the data being read."
+        ]
+      },
+      "REPLACING_COLUMNS" : {
+        "message" : [
+          "The duplicate was found while replacing columns."
+        ]
+      },
+      "SPECIFIED_COLUMNS" : {
+        "message" : [
+          "The duplicate was found in the specified columns."
+        ]
+      },
+      "TABLE_SCHEMA" : {
+        "message" : [
+          "The duplicate was found in the table schema."
+        ]
+      }
+    },
     "sqlState" : "42711"
   },
   "DELTA_DUPLICATE_COLUMNS_ON_INSERT" : {
@@ -1292,6 +1388,11 @@
           "IcebergCompatVersion = <version> is not supported. Supported versions are between 1 and <maxVersion> "
         ]
       },
+      "CONFIG_NOT_ENABLED" : {
+        "message" : [
+          "IcebergCompatV<version> is not enabled in this environment."
+        ]
+      },
       "DELETION_VECTORS_NOT_PURGED" : {
         "message" : [
           "IcebergCompatV<version> requires Deletion Vectors to be completely purged from the table. Please run the REORG TABLE APPLY (PURGE) command."
@@ -1508,6 +1609,18 @@
       "Column <columnName> is not specified in INSERT"
     ],
     "sqlState" : "42802"
+  },
+  "DELTA_INSERT_REPLACE_ON_AMBIGUOUS_COLUMNS_IN_CONDITION" : {
+    "message" : [
+      "Column(s) <columnNames> are ambiguous in the condition of INSERT REPLACE ON. Consider specifying an alias for these columns."
+    ],
+    "sqlState" : "42702"
+  },
+  "DELTA_INSERT_REPLACE_ON_UNRESOLVED_COLUMNS_IN_CONDITION" : {
+    "message" : [
+      "Column(s) <columnNames> cannot be resolved in the condition of INSERT REPLACE ON."
+    ],
+    "sqlState" : "42703"
   },
   "DELTA_INVALID_AUTO_COMPACT_TYPE" : {
     "message" : [
@@ -1765,6 +1878,12 @@
     ],
     "sqlState" : "42806"
   },
+  "DELTA_MERGE_INTO_EMPTY_SCHEMA_TARGET" : {
+    "message" : [
+      "Cannot MERGE INTO a table with no columns. The target table must have columns, or schema evolution must be enabled."
+    ],
+    "sqlState" : "428GU"
+  },
   "DELTA_MERGE_MATERIALIZE_SOURCE_FAILED_REPEATEDLY" : {
     "message" : [
       "Keeping the source of the MERGE statement materialized has failed repeatedly."
@@ -1812,7 +1931,7 @@
       "The table <tableName> already exists in the catalog but no metadata could be found for the table at the path <tablePath>.",
       "Did you manually delete files from the _delta_log directory? If so, then you should be able to recreate it as follows. First, drop the table by running `DROP TABLE <tableNameForDropCmd>`. Then, recreate it by running the current command again."
     ],
-    "sqlState" : "XXKDS"
+    "sqlState" : "42K03"
   },
   "DELTA_METADATA_CHANGED" : {
     "message" : [
@@ -2347,6 +2466,19 @@
     ],
     "sqlState" : "XXKDS"
   },
+  "DELTA_REPLACE_ON_OR_USING_TABLE_CONSTRAINT_VIOLATION" : {
+    "message" : [
+      "Written data violates a table constraint during REPLACE ON/USING '<replaceExpression>'.",
+      "<invariantViolationMessage>"
+    ],
+    "sqlState" : "44000"
+  },
+  "DELTA_REPLACE_TABLE_WITH_CATALOG_MANAGED_NOT_SUPPORTED" : {
+    "message" : [
+      "REPLACE TABLE cannot enable catalog-managed on the existing non-catalog-managed table <tableName>. Upgrade or recreate the table instead."
+    ],
+    "sqlState" : "0A000"
+  },
   "DELTA_REPLACE_WHERE_IN_OVERWRITE" : {
     "message" : [
       "You can't use replaceWhere in conjunction with an overwrite by filter"
@@ -2504,7 +2636,7 @@
   },
   "DELTA_SOURCE_TABLE_IGNORE_CHANGES" : {
     "message" : [
-      "Detected a data update (for example <file>) in the source table at version <version>. This is currently not supported. If this is going to happen regularly and you are okay to skip changes, set the option 'skipChangeCommits' to 'true'. If you would like the data update to be reflected, please restart this query with a fresh checkpoint directory. The source table can be found at path <dataPath>."
+      "Detected a data update (for example <changeInfo>) in the source table at version <version>. This is currently not supported. If this is going to happen regularly and you are okay to skip changes, set the option 'skipChangeCommits' to 'true'. If you would like the data update to be reflected, please restart this query with a fresh checkpoint directory. The source table can be found at path <dataPath>."
     ],
     "sqlState" : "0A000"
   },
@@ -2583,15 +2715,6 @@
       "Streaming read is not supported on tables with read-incompatible schema changes (e.g. rename or drop or datatype changes).",
       "Please provide a 'schemaTrackingLocation' to enable non-additive schema evolution for Delta stream processing.",
       "See <docLink> for more details.",
-      "Read schema: <readSchema>. Incompatible data schema: <incompatibleSchema>."
-    ],
-    "sqlState" : "42KD4"
-  },
-  "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE_V2" : {
-    "message" : [
-      "Streaming read is not supported on tables with read-incompatible schema changes (e.g. rename or drop or datatype changes).",
-      "Non-additive schema change handling is not supported in Delta source v2 yet.",
-      "For further information and possible next steps to resolve this issue, please review the documentation at <docLink>",
       "Read schema: <readSchema>. Incompatible data schema: <incompatibleSchema>."
     ],
     "sqlState" : "42KD4"
@@ -3392,6 +3515,12 @@
     ],
     "sqlState" : "42605"
   },
+  "INSERT_REPLACE_USING_DISALLOW_MISALIGNED_COLUMNS" : {
+    "message" : [
+      "INSERT REPLACE USING has misaligned columns: <misalignedReplaceUsingCols>. The replaceUsing columns must be at the same ordinal position in both the table and the source query."
+    ],
+    "sqlState" : "42802"
+  },
   "RESERVED_CDC_COLUMNS_ON_WRITE" : {
     "message" : [
       "",
@@ -3401,6 +3530,12 @@
       "<config> to false."
     ],
     "sqlState" : "42939"
+  },
+  "UNRESOLVED_INSERT_REPLACE_USING_COLUMN" : {
+    "message" : [
+      "Column <colName> cannot be resolved in <relationType>. Did you mean one of the following? [<suggestion>]."
+    ],
+    "sqlState" : "42703"
   },
   "WRONG_COLUMN_DEFAULTS_FOR_DELTA_ALTER_TABLE_ADD_COLUMN_NOT_SUPPORTED" : {
     "message" : [

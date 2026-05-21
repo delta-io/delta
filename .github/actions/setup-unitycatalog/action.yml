@@ -1,0 +1,36 @@
+name: "Set up pinned Unity Catalog build"
+description: >-
+  Publishes Unity Catalog jars from the commit pinned in project/scripts/setup_unitycatalog_main.sh
+  (the UC_PIN_SHA= line) to the runner's local Ivy / Maven caches, using GitHub Actions cache so the
+  slow UC build only runs the first time a pin is seen.
+
+runs:
+  using: "composite"
+  steps:
+    - name: Restore pinned UC cache
+      id: uc-cache
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        # ~/.ivy2/local is what sbt publishLocal writes to. ~/.m2 is for publishM2.
+        path: |
+          ~/.ivy2/local
+          ~/.m2/repository/io/unitycatalog
+        # Cache key hashes the setup script, so bumping UC_PIN_SHA (or any other script change)
+        # invalidates the cache.
+        key: uc-jars-${{ runner.os }}-${{ hashFiles('project/scripts/setup_unitycatalog_main.sh') }}
+    - name: Build Unity Catalog from pinned SHA
+      shell: bash
+      run: bash project/scripts/setup_unitycatalog_main.sh
+    - name: Save pinned UC cache
+      # Only attempt a save when the restore missed. When multiple parallel matrix jobs all see
+      # a cache miss (first CI run after a pin bump), only the first to reach this step wins the
+      # GHA cache reservation; the rest log "another job may be creating this cache" warnings.
+      # Gating on cache-hit means cached runs (the common steady state) skip the save entirely,
+      # which eliminates those warnings on every subsequent run.
+      if: steps.uc-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: |
+          ~/.ivy2/local
+          ~/.m2/repository/io/unitycatalog
+        key: uc-jars-${{ runner.os }}-${{ hashFiles('project/scripts/setup_unitycatalog_main.sh') }}

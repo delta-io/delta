@@ -63,6 +63,7 @@ import org.apache.spark.sql.execution.datasources.{DataSource, PartitioningUtils
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.InsertableRelation
 import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
+import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 
 /**
@@ -78,15 +79,43 @@ class DeltaCatalogV1 extends AbstractDeltaCatalog
 class AbstractDeltaCatalog extends DelegatingCatalogExtension
   with StagingTableCatalog
   with SupportsPathIdentifier
-  with DeltaLogging {
+  with DeltaLogging
+  with AbstractDeltaCatalogShims {
 
 
   val spark = SparkSession.active
+
+  /**
+   * When defined, table operations are routed through this client instead of through the
+   * [[org.apache.spark.sql.connector.catalog.DelegatingCatalogExtension]] delegate that
+   * `AbstractDeltaCatalog` normally relies on. This lets the catalog inject custom
+   * interactions (e.g. talking to a REST endpoint, catalog-specific property handling,
+   * storage-credential vending) rather than going through the Spark
+   * [[org.apache.spark.sql.connector.catalog.TableCatalog]] API.
+   */
+  private[catalog] var deltaCatalogClient: Option[AbstractDeltaCatalogClient] = None
+
+  override def initialize(name: String, options: CaseInsensitiveStringMap): Unit = {
+    super.initialize(name, options)
+    deltaCatalogClient =
+      AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled(name, options, super.loadTable)
+  }
 
   private lazy val isUnityCatalog: Boolean = {
     val delegateField = classOf[DelegatingCatalogExtension].getDeclaredField("delegate")
     delegateField.setAccessible(true)
     delegateField.get(this).getClass.getCanonicalName.startsWith("io.unitycatalog.")
+  }
+
+  /**
+   * In Unity Catalog environments, disable variant table feature support for Spark 4.0 clients
+   * that lack the parquet variant logical type annotation.
+   */
+  private def setVariantBlockingConfigIfUC(): Unit = {
+    if (isUnityCatalog) {
+      spark.conf.set(
+        DeltaSQLConf.DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40.key, "true")
+    }
   }
 
   /**
@@ -210,6 +239,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       )
 
     val writer = sourceQuery.map { df =>
+      val catalogTbl = Some(tableDesc)
       // For safety, only extract the file system options here, to create deltaLog.
       val fileSystemOptions = writeOptions.filter { case (k, _) =>
         DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
@@ -225,7 +255,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
           throw DeltaErrors.operationNotSupportedException("replaceUsing")
         }
       }
-      WriteIntoDelta(
+      val writeCmd = WriteIntoDelta(
         DeltaUtils.getDeltaLogFromTableOrPath(spark, existingTableOpt,
           new Path(loc), fileSystemOptions),
         operation.mode,
@@ -233,8 +263,22 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         withDb.partitionColumnNames,
         withDb.properties ++ commentOpt.map("comment" -> _),
         df,
-        Some(tableDesc),
+        catalogTbl,
         schemaInCatalog = if (newSchema != schema) Some(newSchema) else None)
+      if (deltaOptions.isReplaceOnOrUsingDefined &&
+          CreateDeltaTableLikeShims.isV1WriterSaveAsTableOverwrite(
+            deltaOptions, operation.mode)) {
+        DeltaInsertReplaceOnOrUsingCommand.createCmdForSaveAndSaveAsTable(
+          deltaTable = DeltaTableV2(
+            spark = spark,
+            path = writeCmd.deltaLog.dataPath,
+            catalogTable = catalogTbl),
+          data = df,
+          writeCmd = writeCmd,
+          apiOrigin = InsertReplaceOnOrUsingAPIOrigin.DFv1SaveAsTable)
+      } else {
+        writeCmd
+      }
     }
 
     CreateDeltaTableCommand(
@@ -262,8 +306,11 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
 
   override def loadTable(ident: Identifier): Table = recordFrameProfile(
       "DeltaCatalog", "loadTable") {
+    setVariantBlockingConfigIfUC()
     try {
-      val table = super.loadTable(ident)
+      val table = deltaCatalogClient
+        .map(_.loadTable(ident))
+        .getOrElse(super.loadTable(ident))
 
       ServerSidePlannedTable.tryCreate(spark, ident, table, isUnityCatalog).foreach { sspt =>
         return sspt
@@ -342,7 +389,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       }
       // Check that columns are not duplicated in the cluster by statement.
       PartitionUtils.checkColumnNameDuplication(
-        clusterBy.columnNames.map(_.toString), "in CLUSTER BY", resolver)
+        clusterBy.columnNames.map(_.toString), "CLUSTER_BY", resolver)
       // Check number of clustering columns is within allowed range.
       ClusteredTableUtils.validateNumClusteringColumns(
         clusterBy.columnNames.map(_.fieldNames.toSeq))
@@ -413,6 +460,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         // TODO: we should extract write options from table properties for all the cases. We
         //       can remove the UC check when we have confidence.
         val isUC = isUnityCatalog || properties.containsKey("test.simulateUC")
+        setVariantBlockingConfigIfUC()
         val (props, writeOptions) = if (isUC) {
           val (props, writeOptions) = getTablePropsAndWriteOptions(properties)
           expandTableProps(props, writeOptions, spark.sessionState.conf)
@@ -776,8 +824,8 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     }
   }
 
-  override def alterTable(ident: Identifier, changes: TableChange*): Table = recordFrameProfile(
-      "DeltaCatalog", "alterTable") {
+  override def alterTable(ident: Identifier, changes: TableChange*): Table =
+    recordFrameProfile("DeltaCatalog", "alterTable") {
     // We group the table changes by their type, since Delta applies each in a separate action.
     // We also must define an artificial type for SetLocation, since data source V2 considers
     // location just another property but it's special in catalog tables.

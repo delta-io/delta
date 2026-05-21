@@ -34,7 +34,7 @@ jobs:
           java-version: "11"
       - name: Generate docs
         run: |
-          build/sbt kernelGroup/unidoc
+          build/sbt -DuseDefaultUnityCatalogReleaseVersion=true kernelGroup/unidoc
           mkdir -p kernel/docs/snapshot/kernel-api/java
           mkdir -p kernel/docs/snapshot/kernel-defaults/java
           cp -r kernel/kernel-api/target/javaunidoc/. kernel/docs/snapshot/kernel-api/java/

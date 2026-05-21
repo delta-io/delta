@@ -23,6 +23,7 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.Operation;
 import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.Snapshot;
+import io.delta.kernel.clustering.ClusteringColumnInfo;
 import io.delta.kernel.commit.CatalogCommitter;
 import io.delta.kernel.commit.Committer;
 import io.delta.kernel.commit.PublishFailedException;
@@ -52,6 +53,7 @@ import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.metrics.SnapshotReport;
 import io.delta.kernel.statistics.SnapshotStatistics;
+import io.delta.kernel.statistics.TableStats;
 import io.delta.kernel.transaction.ReplaceTableTransactionBuilder;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
@@ -92,6 +94,7 @@ public class SnapshotImpl implements Snapshot {
 
   private Lazy<SnapshotReport> lazySnapshotReport;
   private Lazy<Optional<List<Column>>> lazyClusteringColumns;
+  private Lazy<Optional<List<ClusteringColumnInfo>>> lazyClusteringColumnInfos;
 
   /**
    * Indicates whether this snapshot was built as a "latest" snapshot query (i.e., no time-travel
@@ -137,6 +140,15 @@ public class SnapshotImpl implements Snapshot {
             () ->
                 ClusteringMetadataDomain.fromSnapshot(this)
                     .map(ClusteringMetadataDomain::getClusteringColumns));
+    // Cache the resolved per-column descriptors (physical/logical/data type) on first access
+    // so callers that read clustering metadata across multiple plan rules don't pay the
+    // schema walk repeatedly. Builds on top of `lazyClusteringColumns` -- each physical column
+    // is resolved against the snapshot's schema via ClusteringColumnInfo.resolveAll.
+    this.lazyClusteringColumnInfos =
+        new Lazy<>(
+            () ->
+                getPhysicalClusteringColumns()
+                    .map(physCols -> ClusteringColumnInfo.resolveAll(getSchema(), physCols)));
   }
 
   /////////////////
@@ -384,6 +396,17 @@ public class SnapshotImpl implements Snapshot {
   }
 
   /**
+   * Override of {@link Snapshot#getClusteringColumnInfos()} that returns the cached resolved
+   * descriptors (physical column, logical column, data type) for this snapshot. The first
+   * invocation computes the list by combining {@link #getPhysicalClusteringColumns()} with a
+   * column-mapping-aware schema walk; subsequent invocations return the cached result.
+   */
+  @Override
+  public Optional<List<ClusteringColumnInfo>> getClusteringColumnInfos() {
+    return lazyClusteringColumnInfos.get();
+  }
+
+  /**
    * Get the domain metadata map from the log replay, which lazily loads and replays a history of
    * domain metadata actions, resolving them to produce the current state of the domain metadata.
    * Only active domain metadata are included in this map.
@@ -473,6 +496,24 @@ public class SnapshotImpl implements Snapshot {
       }
 
       return Optional.of(Snapshot.ChecksumWriteMode.FULL);
+    }
+
+    @Override
+    public Optional<Integer> getIncrementalChecksumLoadCost() {
+      return getLogSegment()
+          .getLastSeenChecksum()
+          .map(file -> (int) (version - FileNames.getFileVersion(new Path(file.getPath()))));
+    }
+
+    @Override
+    public Optional<TableStats> getTableStats(Engine engine) throws IOException {
+      Optional<CRCInfo> crc = getCurrentCrcInfo();
+      if (!crc.isPresent()) {
+        crc =
+            ChecksumUtils.tryBuildCrcIncrementally(
+                engine, getLogSegment(), logReplay.getLastSeenCrcInfo());
+      }
+      return crc.map(c -> new TableStats(c.getTableSizeBytes(), c.getNumFiles()));
     }
   }
 }

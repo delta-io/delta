@@ -29,11 +29,13 @@ import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 import javax.annotation.Nonnull;
 
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogTrackedInfo;
 import io.delta.storage.CloseableIterator;
 import io.delta.storage.LogStore;
 import io.delta.storage.commit.*;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
+import io.delta.storage.commit.uniform.UniformMetadata;
 import io.delta.storage.internal.FileNameUtils;
 import io.delta.storage.internal.LogStoreErrors;
 import org.apache.hadoop.conf.Configuration;
@@ -157,7 +159,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
     return asyncExecutor.submit(task);
   }
 
-  protected String extractUCTableId(TableDescriptor tableDesc) {
+  public static String extractUCTableId(TableDescriptor tableDesc) {
     Map<String, String> tableConf = tableDesc.getTableConf();
     if (!tableConf.containsKey(UC_TABLE_ID_KEY)) {
       throw new IllegalStateException("UC Table ID not found in " + tableConf);
@@ -291,8 +293,27 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       tableDesc,
       commitVersion,
       actions,
-      updatedActions);
+      CatalogTrackedInfo.EMPTY
+      , updatedActions);
   }
+
+  public CommitResponse commit(
+      LogStore logStore,
+      Configuration hadoopConf,
+      TableDescriptor tableDesc,
+      long commitVersion,
+      Iterator<String> actions,
+      CatalogTrackedInfo catalogTrackedInfo,
+      UpdatedActions updatedActions) throws CommitFailedException {
+        return commitImpl(
+          logStore,
+          hadoopConf,
+          tableDesc,
+          commitVersion,
+          actions,
+          catalogTrackedInfo,
+          updatedActions);
+    }
 
   /**
    * Commits the provided actions as the specified version. The steps are as follows.
@@ -313,6 +334,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       TableDescriptor tableDesc,
       long commitVersion,
       Iterator<String> actions,
+      CatalogTrackedInfo catalogTrackedInfo,
       UpdatedActions updatedActions) throws CommitFailedException {
     Path logPath = tableDesc.getLogPath();
     Map<String, String> coordinatedCommitsTableConf = tableDesc.getTableConf();
@@ -424,23 +446,40 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       "timeSpentInGettingLastKnownBackfilledVersion",
       timeSpentInGettingLastKnownBackfilledVersion);
 
+    // SHOULD_PASS_METADATA_TO_UC gates metadata and protocol
+    // (same UC server-side rollout).
+    boolean metadataChanged =
+        updatedActions.getNewMetadata() != updatedActions.getOldMetadata();
+    boolean protocolChanged =
+        updatedActions.getNewProtocol() != updatedActions.getOldProtocol();
+    Optional<AbstractMetadata> oldMetadata =
+        optionalIf(SHOULD_PASS_METADATA_TO_UC && metadataChanged,
+            updatedActions.getOldMetadata());
+    Optional<AbstractMetadata> newMetadata =
+        optionalIf(SHOULD_PASS_METADATA_TO_UC && metadataChanged,
+            updatedActions.getNewMetadata());
+    Optional<AbstractProtocol> oldProtocol =
+        optionalIf(SHOULD_PASS_METADATA_TO_UC && protocolChanged,
+            updatedActions.getOldProtocol());
+    Optional<AbstractProtocol> newProtocol =
+        optionalIf(SHOULD_PASS_METADATA_TO_UC && protocolChanged,
+            updatedActions.getNewProtocol());
+
     int transientErrorRetryCount = 0;
     while (transientErrorRetryCount <= MAX_RETRIES_ON_TRANSIENT_ERROR) {
       try {
         commitToUC(
+          tableId,
           tableDesc,
-          logPath,
           Optional.of(commitFile),
           Optional.of(commitVersion),
           Optional.of(commitTimestamp),
           Optional.of(lastKnownBackfilledVersion.get()),
-          disown,
-          updatedActions.getNewMetadata() == updatedActions.getOldMetadata() || !SHOULD_PASS_METADATA_TO_UC ?
-            Optional.empty() :
-            Optional.of(updatedActions.getNewMetadata()),
-          updatedActions.getNewProtocol() == updatedActions.getOldProtocol() ?
-            Optional.empty() :
-            Optional.of(updatedActions.getNewProtocol())
+          catalogTrackedInfo,
+          oldMetadata,
+          newMetadata,
+          oldProtocol,
+          newProtocol
         );
         break;
       } catch (CommitFailedException cfe) {
@@ -637,14 +676,16 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
 
     long commitStartTime = System.currentTimeMillis();
     commitToUC(
+      tableId,
       tableDesc,
-      logPath,
       Optional.empty() /* commitFile */,
       Optional.empty() /* commitVersion */,
       Optional.empty() /* commitTimestamp */,
       Optional.of(updatedLastKnownBackfilledVersion),
-      true /* disown */,
+      CatalogTrackedInfo.EMPTY,
+      Optional.empty() /* oldMetadata */,
       Optional.empty() /* newMetadata */,
+      Optional.empty() /* oldProtocol */,
       Optional.empty() /* newProtocol */
     );
     long commitDuration = System.currentTimeMillis() - commitStartTime;
@@ -666,14 +707,16 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
   }
 
   protected void commitToUC(
+      String tableId,
       TableDescriptor tableDesc,
-      Path logPath,
       Optional<FileStatus> commitFile,
       Optional<Long> commitVersion,
       Optional<Long> commitTimestamp,
       Optional<Long> lastKnownBackfilledVersion,
-      boolean disown,
+      CatalogTrackedInfo catalogTrackedInfo,
+      Optional<AbstractMetadata> oldMetadata,
       Optional<AbstractMetadata> newMetadata,
+      Optional<AbstractProtocol> oldProtocol,
       Optional<AbstractProtocol> newProtocol
   ) throws IOException, CommitFailedException, UCCommitCoordinatorException
   {
@@ -685,14 +728,16 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
         "Commit timestamp should be specified when commitFile is present"))
     ));
     ucClient.commit(
-      extractUCTableId(tableDesc),
-      CoordinatedCommitsUtils.getTablePath(logPath).toUri(),
+      tableId,
+      CoordinatedCommitsUtils.getTablePath(tableDesc.getLogPath()).toUri(),
+      tableDesc.getTableIdentifier().orElse(null),
       commit,
       lastKnownBackfilledVersion,
-      disown,
+      oldMetadata,
       newMetadata,
+      oldProtocol,
       newProtocol,
-      Optional.empty() /* uniform */
+      catalogTrackedInfo.deltaUniformIceberg()
     );
   }
 
@@ -808,6 +853,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       return ucClient.getCommits(
         extractUCTableId(tableDesc),
         CoordinatedCommitsUtils.getTablePath(tableDesc.getLogPath()).toUri(),
+        tableDesc.getTableIdentifier().orElse(null),
         startVersion,
         endVersion);
     } catch (IOException | UCCommitCoordinatorException e) {
@@ -958,5 +1004,9 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       " is not supported by this version of the UC commit coordinator client. Please upgrade" +
       " the commit coordinator client to " + op + " this table.");
     }
+  }
+
+  private static <T> Optional<T> optionalIf(boolean condition, T value) {
+    return condition ? Optional.of(value) : Optional.empty();
   }
 }

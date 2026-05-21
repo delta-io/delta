@@ -26,12 +26,15 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.commitrange.CommitRangeImpl;
 import io.delta.kernel.internal.data.StructRow;
 import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.spark.internal.v2.read.CDCDataFile;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import java.io.IOException;
 import java.util.*;
@@ -50,9 +53,10 @@ public class StreamingHelper {
    * Returns the index of the field with the given name in the schema of the batch. Throws an {@link
    * IllegalArgumentException} if the field is not found.
    */
-  private static int getFieldIndex(ColumnarBatch batch, String fieldName) {
-    int index = batch.getSchema().indexOf(fieldName);
-    checkArgument(index >= 0, "Field '%s' not found in schema: %s", fieldName, batch.getSchema());
+  private static int getFieldIndex(ColumnarBatch columnarBatch, String fieldName) {
+    int index = columnarBatch.getSchema().indexOf(fieldName);
+    checkArgument(
+        index >= 0, "Field '%s' not found in schema: %s", fieldName, columnarBatch.getSchema());
     return index;
   }
 
@@ -60,9 +64,9 @@ public class StreamingHelper {
    * Get the version from a {@link ColumnarBatch} of Delta log actions. Assumes all rows in the
    * batch belong to the same commit version, so it reads the version from the first row (rowId=0).
    */
-  public static long getVersion(ColumnarBatch batch) {
-    int versionColIdx = getFieldIndex(batch, "version");
-    return batch.getColumnVector(versionColIdx).getLong(0);
+  public static long getVersion(ColumnarBatch columnarBatch) {
+    int versionColIdx = getFieldIndex(columnarBatch, "version");
+    return columnarBatch.getColumnVector(versionColIdx).getLong(0);
   }
 
   /**
@@ -96,9 +100,9 @@ public class StreamingHelper {
    * FilteredColumnarBatch with selection vectors, use {@link #getAddFile(FilteredColumnarBatch,
    * int)} instead.
    */
-  private static Optional<AddFile> getAddFile(ColumnarBatch batch, int rowId) {
-    int addIdx = getFieldIndex(batch, DeltaLogActionUtils.DeltaAction.ADD.colName);
-    ColumnVector addVector = batch.getColumnVector(addIdx);
+  private static Optional<AddFile> getAddFile(ColumnarBatch columnarBatch, int rowId) {
+    int addIdx = getFieldIndex(columnarBatch, DeltaLogActionUtils.DeltaAction.ADD.colName);
+    ColumnVector addVector = columnarBatch.getColumnVector(addIdx);
     if (addVector.isNullAt(rowId)) {
       return Optional.empty();
     }
@@ -106,22 +110,22 @@ public class StreamingHelper {
     Row addFileRow = StructRow.fromStructVector(addVector, rowId);
     checkState(
         addFileRow != null,
-        String.format("Failed to extract AddFile struct from batch at rowId=%d.", rowId));
+        String.format("Failed to extract AddFile struct from columnar batch at rowId=%d.", rowId));
 
     return Optional.of(new AddFile(addFileRow));
   }
 
   /** Get AddFile action from a batch at the specified row, if present and has dataChange=true. */
-  public static Optional<AddFile> getAddFileWithDataChange(ColumnarBatch batch, int rowId) {
-    return getAddFile(batch, rowId).filter(AddFile::getDataChange);
+  public static Optional<AddFile> getAddFileWithDataChange(ColumnarBatch columnarBatch, int rowId) {
+    return getAddFile(columnarBatch, rowId).filter(AddFile::getDataChange);
   }
 
   /**
    * Get RemoveFile action from a batch at the specified row, if present and has dataChange=true.
    */
-  public static Optional<RemoveFile> getDataChangeRemove(ColumnarBatch batch, int rowId) {
-    int removeIdx = getFieldIndex(batch, DeltaLogActionUtils.DeltaAction.REMOVE.colName);
-    ColumnVector removeVector = batch.getColumnVector(removeIdx);
+  public static Optional<RemoveFile> getDataChangeRemove(ColumnarBatch columnarBatch, int rowId) {
+    int removeIdx = getFieldIndex(columnarBatch, DeltaLogActionUtils.DeltaAction.REMOVE.colName);
+    ColumnVector removeVector = columnarBatch.getColumnVector(removeIdx);
     if (removeVector.isNullAt(rowId)) {
       return Optional.empty();
     }
@@ -129,19 +133,40 @@ public class StreamingHelper {
     Row removeFileRow = StructRow.fromStructVector(removeVector, rowId);
     checkState(
         removeFileRow != null,
-        String.format("Failed to extract RemoveFile struct from batch at rowId=%d.", rowId));
+        String.format(
+            "Failed to extract RemoveFile struct from columnar batch at rowId=%d.", rowId));
 
     RemoveFile removeFile = new RemoveFile(removeFileRow);
     return removeFile.getDataChange() ? Optional.of(removeFile) : Optional.empty();
   }
 
   /** Get Metadata action from a batch at the specified row, if present. */
-  public static Optional<Metadata> getMetadata(ColumnarBatch batch, int rowId) {
-    int metadataIdx = getFieldIndex(batch, DeltaLogActionUtils.DeltaAction.METADATA.colName);
-    ColumnVector metadataVector = batch.getColumnVector(metadataIdx);
+  public static Optional<Metadata> getMetadata(ColumnarBatch columnarBatch, int rowId) {
+    int metadataIdx =
+        getFieldIndex(columnarBatch, DeltaLogActionUtils.DeltaAction.METADATA.colName);
+    ColumnVector metadataVector = columnarBatch.getColumnVector(metadataIdx);
     Metadata metadata = Metadata.fromColumnVector(metadataVector, rowId);
 
     return Optional.ofNullable(metadata);
+  }
+
+  /** Get Protocol action from a batch at the specified row, if present. */
+  public static Optional<Protocol> getProtocol(ColumnarBatch batch, int rowId) {
+    int protocolIdx = getFieldIndex(batch, DeltaLogActionUtils.DeltaAction.PROTOCOL.colName);
+    ColumnVector protocolVector = batch.getColumnVector(protocolIdx);
+    Protocol protocol = Protocol.fromColumnVector(protocolVector, rowId);
+
+    return Optional.ofNullable(protocol);
+  }
+
+  /** Get CommitInfo action from a batch at the specified row, if present. */
+  public static Optional<CommitInfo> getCommitInfo(ColumnarBatch columnarBatch, int rowId) {
+    int commitInfoIdx =
+        getFieldIndex(columnarBatch, DeltaLogActionUtils.DeltaAction.COMMITINFO.colName);
+    ColumnVector commitInfoVector = columnarBatch.getColumnVector(commitInfoIdx);
+    CommitInfo commitInfo = CommitInfo.fromColumnVector(commitInfoVector, rowId);
+
+    return Optional.ofNullable(commitInfo);
   }
 
   /**
@@ -171,20 +196,24 @@ public class StreamingHelper {
   }
 
   /**
-   * Collects metadata actions from a commit range, mapping each version to its metadata.
+   * Collects {@link Metadata} actions from commits in {@code [startVersion, endVersionOpt]}
+   * (inclusive on both ends).
    *
-   * <p>This method is "unsafe" because it uses {@code getActionsFromRangeUnsafe()} which bypasses
-   * the standard snapshot requirement for protocol validation.
+   * <p><b>Returns:</b> a {@link LinkedHashMap} from commit version to its metadata action,
+   * preserving ascending version order. Versions with no metadata action are omitted.
    *
-   * <p>Returns a map preserving version order (via LinkedHashMap) where each version maps to its
-   * metadata action. Throws an exception if multiple metadata actions are found in the same commit.
+   * <p><b>Throws:</b> {@link IllegalArgumentException} if a single commit contains more than one
+   * metadata action; {@link RuntimeException} on underlying I/O errors.
    *
-   * @param startVersion the starting version (inclusive) of the commit range
-   * @param endVersionOpt optional ending version (exclusive) of the commit range
-   * @param snapshotManager the Delta snapshot manager
-   * @param engine the Delta engine
-   * @param tablePath the path to the Delta table
-   * @return a map from version number to metadata action, in version order
+   * <p><b>Unsafe:</b> bypasses the snapshot-based protocol validation that {@link
+   * io.delta.kernel.CommitRange#getCommitActions} would normally perform. Callers are responsible
+   * for ensuring protocol compatibility.
+   *
+   * @param startVersion inclusive starting version of the commit range
+   * @param endVersionOpt inclusive ending version, or empty to read through the latest
+   * @param snapshotManager snapshot manager backing the table
+   * @param engine Delta kernel engine
+   * @param tablePath path to the Delta table
    */
   public static Map<Long, Metadata> collectMetadataActionsFromRangeUnsafe(
       long startVersion,
@@ -192,14 +221,78 @@ public class StreamingHelper {
       DeltaSnapshotManager snapshotManager,
       Engine engine,
       String tablePath) {
+    return collectActionsFromRangeUnsafe(
+        startVersion,
+        endVersionOpt,
+        snapshotManager,
+        engine,
+        tablePath,
+        DeltaLogActionUtils.DeltaAction.METADATA,
+        StreamingHelper::getMetadata);
+  }
+
+  /**
+   * Collects {@link Protocol} actions from commits in {@code [startVersion, endVersionOpt]}
+   * (inclusive on both ends).
+   *
+   * <p><b>Returns:</b> a {@link LinkedHashMap} from commit version to its protocol action,
+   * preserving ascending version order. Versions with no protocol action are omitted.
+   *
+   * <p><b>Throws:</b> {@link IllegalArgumentException} if a single commit contains more than one
+   * protocol action; {@link RuntimeException} on underlying I/O errors.
+   *
+   * <p><b>Unsafe:</b> bypasses the snapshot-based protocol validation that {@link
+   * io.delta.kernel.CommitRange#getCommitActions} would normally perform. Callers are responsible
+   * for ensuring protocol compatibility.
+   *
+   * @param startVersion inclusive starting version of the commit range
+   * @param endVersionOpt inclusive ending version, or empty to read through the latest
+   * @param snapshotManager snapshot manager backing the table
+   * @param engine Delta kernel engine
+   * @param tablePath path to the Delta table
+   */
+  public static Map<Long, Protocol> collectProtocolActionsFromRangeUnsafe(
+      long startVersion,
+      Optional<Long> endVersionOpt,
+      DeltaSnapshotManager snapshotManager,
+      Engine engine,
+      String tablePath) {
+    return collectActionsFromRangeUnsafe(
+        startVersion,
+        endVersionOpt,
+        snapshotManager,
+        engine,
+        tablePath,
+        DeltaLogActionUtils.DeltaAction.PROTOCOL,
+        StreamingHelper::getProtocol);
+  }
+
+  /** Extracts an action of type {@code T} from a single row of a {@link ColumnarBatch}. */
+  @FunctionalInterface
+  private interface RowExtractor<T> {
+    Optional<T> extract(ColumnarBatch batch, int rowId);
+  }
+
+  /**
+   * Shared implementation for {@link #collectMetadataActionsFromRangeUnsafe} and {@link
+   * #collectProtocolActionsFromRangeUnsafe}: walks the commit range filtered to {@code actionType},
+   * applies {@code extractor} per row, and rejects commits with more than one matching action.
+   */
+  private static <T> Map<Long, T> collectActionsFromRangeUnsafe(
+      long startVersion,
+      Optional<Long> endVersionOpt,
+      DeltaSnapshotManager snapshotManager,
+      Engine engine,
+      String tablePath,
+      DeltaLogActionUtils.DeltaAction actionType,
+      RowExtractor<T> extractor) {
     CommitRangeImpl commitRange =
         (CommitRangeImpl) snapshotManager.getTableChanges(engine, startVersion, endVersionOpt);
     // LinkedHashMap to preserve insertion order
-    Map<Long, Metadata> versionToMetadata = new LinkedHashMap<>();
+    Map<Long, T> versionToAction = new LinkedHashMap<>();
 
     try (CloseableIterator<CommitActions> commitsIter =
-        getCommitActionsFromRangeUnsafe(
-            engine, commitRange, tablePath, Set.of(DeltaLogActionUtils.DeltaAction.METADATA))) {
+        getCommitActionsFromRangeUnsafe(engine, commitRange, tablePath, Set.of(actionType))) {
       while (commitsIter.hasNext()) {
         try (CommitActions commit = commitsIter.next()) {
           long version = commit.getVersion();
@@ -208,12 +301,13 @@ public class StreamingHelper {
               ColumnarBatch batch = actionsIter.next();
               int numRows = batch.getSize();
               for (int rowId = 0; rowId < numRows; rowId++) {
-                Optional<Metadata> metadataOpt = StreamingHelper.getMetadata(batch, rowId);
-                if (metadataOpt.isPresent()) {
-                  Metadata existing = versionToMetadata.putIfAbsent(version, metadataOpt.get());
+                Optional<T> actionOpt = extractor.extract(batch, rowId);
+                if (actionOpt.isPresent()) {
+                  T existing = versionToAction.putIfAbsent(version, actionOpt.get());
                   Preconditions.checkArgument(
                       existing == null,
-                      "Should not encounter two metadata actions in the same commit of version %d",
+                      "Should not encounter two %s actions in the same commit of version %d",
+                      actionType.colName,
                       version);
                 }
               }
@@ -229,8 +323,24 @@ public class StreamingHelper {
       // CommitActions.close() throws Exception
       throw new RuntimeException("Failed to process commits", e);
     }
+    return versionToAction;
+  }
 
-    return versionToMetadata;
+  /** Get explicit CDC file (AddCDCFile) from a batch at the specified row, if present. */
+  public static Optional<CDCDataFile> getCDCFile(
+      ColumnarBatch batch, int rowId, long commitTimestamp) {
+    int cdcIdx = getFieldIndex(batch, DeltaLogActionUtils.DeltaAction.CDC.colName);
+    ColumnVector cdcVector = batch.getColumnVector(cdcIdx);
+    if (cdcVector.isNullAt(rowId)) {
+      return Optional.empty();
+    }
+
+    Row cdcRow = StructRow.fromStructVector(cdcVector, rowId);
+    checkState(
+        cdcRow != null,
+        String.format("Failed to extract CDC struct from batch at rowId=%d.", rowId));
+
+    return Optional.of(CDCDataFile.fromAddCDCFile(cdcRow, commitTimestamp));
   }
 
   /** Private constructor to prevent instantiation of this utility class. */

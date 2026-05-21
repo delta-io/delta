@@ -32,6 +32,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils.CheckDeterministicOptions
 import org.apache.spark.sql.delta.util.FileNames
 import io.delta.storage.commit.UpdatedActions
+import io.delta.storage.commit.uniform.UniformMetadata
 import org.apache.hadoop.fs.FileStatus
 
 import org.apache.spark.internal.{MDC, MessageWithContext}
@@ -66,7 +67,9 @@ private[delta] case class CurrentTransactionInfo(
     val readRowIdHighWatermark: Long,
     val catalogTable: Option[CatalogTable],
     val domainMetadata: Seq[DomainMetadata],
-    val op: DeltaOperations.Operation) {
+    val op: DeltaOperations.Operation
+    , val convertedIcebergMetadata: Option[UniformMetadata] = None
+ ) {
 
   /**
    * Final actions to commit - including the [[CommitInfo]] which should always come first so we can
@@ -107,6 +110,33 @@ private[delta] case class CurrentTransactionInfo(
   val isRowTrackingUnBackfillTxn = op.name == ROW_TRACKING_UNBACKFILL_OPERATION_NAME
 
   def isConflict(winningTxn: SetTransaction): Boolean = readAppIds.contains(winningTxn.appId)
+}
+
+object CurrentTransactionInfo {
+  // A helper method to construct dummy txnInfo that only
+  // fills in fields needed for Iceberg conversion
+  def forIcebergConversion(
+      metadata: Metadata,
+      protocol: Protocol,
+      readSnapshot: Snapshot,
+      actions: Seq[Action],
+      commitInfo: Option[CommitInfo]): CurrentTransactionInfo =
+    CurrentTransactionInfo(
+      txnId = "",
+      readPredicates = Vector.empty,
+      readFiles = Set.empty,
+      readWholeTable = false,
+      readAppIds = Set.empty,
+      metadata = metadata,
+      protocol = protocol,
+      actions = actions,
+      readSnapshot = readSnapshot,
+      commitInfo = commitInfo,
+      readRowIdHighWatermark = 0L,
+      catalogTable = None,
+      domainMetadata = Seq.empty,
+      op = DeltaOperations.ManualUpdate
+    )
 }
 
 /**
@@ -330,7 +360,7 @@ private[delta] class ConflictChecker(
           // Sanity check.
           case m: Metadata if m != currentTransactionInfo.metadata =>
             recordDeltaEvent(
-              deltaLog = currentTransactionInfo.readSnapshot.deltaLog,
+              currentTransactionInfo.readSnapshot,
               opType = "dropFeature.conflictCheck.metadataMismatch",
               data = Map(
                 "transactionInfoMetadata" -> currentTransactionInfo.metadata,
@@ -1333,12 +1363,17 @@ private[delta] class ConflictChecker(
   /** A helper function for pretty printing a specific partition directory. */
   protected def getPrettyPartitionMessage(partitionValues: Map[String, String]): Option[String] = {
     val partitionColumns = currentTransactionInfo.partitionSchemaAtReadTime
-    if (partitionColumns.isEmpty || partitionValues == null) {
+    // Guard against null (e.g. RemoveFile written without extended metadata) and empty map
+    // (e.g. RemoveFile for a non-partitioned file or written by a client that omits partition
+    // values). Using getOrElse defensively also handles partially populated maps.
+    if (partitionColumns.isEmpty || partitionValues == null || partitionValues.isEmpty) {
       None
     } else {
       Some(
         partitionColumns.map { field =>
-          s"${field.name}=${partitionValues(DeltaColumnMapping.getPhysicalName(field))}"
+          val value =
+            partitionValues.getOrElse(DeltaColumnMapping.getPhysicalName(field), "null")
+          s"${field.name}=$value"
         }.mkString("[", ", ", "]")
       )
     }

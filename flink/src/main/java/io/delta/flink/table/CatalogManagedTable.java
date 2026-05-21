@@ -24,6 +24,7 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.transaction.CreateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
+import io.delta.kernel.unitycatalog.UCTableIdentifier;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCTokenBasedRestClient;
@@ -71,6 +72,12 @@ public class CatalogManagedTable extends AbstractKernelTable {
 
   protected transient UCClient ucClient;
   protected transient UCCatalogManagedClient catalogManagedClient;
+
+  private UCTableIdentifier getUcTableIdentifier() {
+    Preconditions.checkArgument(
+        catalog instanceof UnityCatalog, "Catalog-managed tables require a UnityCatalog catalog");
+    return ((UnityCatalog) catalog).toUcTableIdentifier(tableId);
+  }
 
   public CatalogManagedTable(
       DeltaCatalog catalog, String tableId, Map<String, String> conf, URI endpoint, String token) {
@@ -141,6 +148,7 @@ public class CatalogManagedTable extends AbstractKernelTable {
                 /* engine */ getEngine(),
                 /* ucTableId */ tableUUID,
                 /* tablePath */ tablePath.toString(),
+                /* ucTableIdentifier */ getUcTableIdentifier(),
                 /* versionOpt */ Optional.empty(),
                 /* timestampOpt */ Optional.empty()));
   }
@@ -182,6 +190,7 @@ public class CatalogManagedTable extends AbstractKernelTable {
           /* engine */ getEngine(),
           /* ucTableId */ getTableUUID(),
           /* tablePath */ getTablePath().toString(),
+          /* ucTableIdentifier */ getUcTableIdentifier(),
           /* startVersionOpt */ Optional.of(version),
           /* startTimestampOpt */ Optional.empty(),
           /* endVersionOpt */ Optional.empty(),

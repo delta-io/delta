@@ -18,6 +18,8 @@ package io.delta.spark.internal.v2.read;
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.TYPE_WIDENING_RW_FEATURE;
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.TYPE_WIDENING_RW_PREVIEW_FEATURE;
 
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.ImmutableSet;
 import io.delta.kernel.CommitActions;
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.Scan;
@@ -31,7 +33,9 @@ import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
@@ -39,10 +43,13 @@ import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.spark.internal.v2.adapters.KernelMetadataAdapter;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.utils.PartitionUtils;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
+import io.delta.spark.internal.v2.utils.SerializableReadOnlySnapshot;
+import io.delta.spark.internal.v2.utils.SparkRowToKernelRow;
 import io.delta.spark.internal.v2.utils.StreamingHelper;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -52,13 +59,18 @@ import java.time.ZoneId;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
+import javax.annotation.Nullable;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.spark.api.java.JavaRDD;
+import org.apache.spark.sql.Dataset;
+import org.apache.spark.sql.Row;
+import org.apache.spark.sql.RowFactory;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.expressions.Literal$;
 import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.connector.read.streaming.*;
-import org.apache.spark.sql.delta.DeltaColumnMapping;
+import org.apache.spark.sql.delta.DeltaColumnMapping$;
 import org.apache.spark.sql.delta.DeltaErrors;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.delta.DeltaStartingVersion;
@@ -66,27 +78,33 @@ import org.apache.spark.sql.delta.DeltaTimeTravelSpec;
 import org.apache.spark.sql.delta.StartingVersion;
 import org.apache.spark.sql.delta.StartingVersionLatest$;
 import org.apache.spark.sql.delta.TypeWidening;
+import org.apache.spark.sql.delta.sources.AdmittableFile;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSource;
+import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset$;
 import org.apache.spark.sql.delta.sources.DeltaStreamUtils;
-import org.apache.spark.sql.execution.datasources.FilePartition;
-import org.apache.spark.sql.execution.datasources.FilePartition$;
+import org.apache.spark.sql.delta.sources.PersistedMetadata;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
+import org.apache.spark.sql.functions;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.DataType;
+import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
+import org.apache.spark.storage.StorageLevel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import scala.Function2;
 import scala.Option;
 import scala.Some;
-import scala.collection.JavaConverters;
+import scala.Tuple2;
 import scala.collection.immutable.Seq;
 import scala.collection.immutable.Seq$;
 import scala.jdk.javaapi.CollectionConverters;
+import scala.runtime.AbstractFunction2;
 import scala.util.matching.Regex;
 
 // TODO(#5318): Use DeltaErrors error framework for consistent error handling.
@@ -95,9 +113,28 @@ public class SparkMicroBatchStream
 
   private static final Logger logger = LoggerFactory.getLogger(SparkMicroBatchStream.class);
 
-  private static final Set<DeltaAction> ACTION_SET =
-      Collections.unmodifiableSet(
-          new HashSet<>(Arrays.asList(DeltaAction.ADD, DeltaAction.REMOVE, DeltaAction.METADATA)));
+  private static final String FILE_IDX_COL = "_file_idx";
+
+  public static final Set<DeltaAction> ACTION_SET =
+      ImmutableSet.of(
+          DeltaAction.ADD,
+          DeltaAction.REMOVE,
+          DeltaAction.METADATA,
+          DeltaAction.PROTOCOL,
+          DeltaAction.COMMITINFO);
+
+  /** Action set for CDC reads: {@link #ACTION_SET} plus {@link DeltaAction#CDC}. */
+  public static final Set<DeltaAction> CDC_ACTION_SET =
+      ImmutableSet.<DeltaAction>builder().addAll(ACTION_SET).add(DeltaAction.CDC).build();
+
+  /**
+   * Max attempts to resolve the start version when failOnDataLoss=false. Attempt 1 is the initial
+   * try with the user's startVersion (surfaces the StartVersionNotFoundException that triggers the
+   * failOnDataLoss check). Attempt 2 retries with the earliest available version to recover when
+   * failOnDataLoss=false. Attempt 3 guards against a concurrent log-retention prune in the tiny
+   * window between attempt 2's exception and its retry.
+   */
+  private static final int FAIL_ON_DATA_LOSS_FALSE_MAX_ATTEMPTS = 3;
 
   private final Engine engine;
   private final DeltaSnapshotManager snapshotManager;
@@ -106,6 +143,7 @@ public class SparkMicroBatchStream
   private final boolean skipChangeCommits;
   private final SnapshotImpl snapshotAtSourceInit;
   private final String tableId;
+  private final SnapshotImpl readSnapshotAtSourceInit;
   private final StructType readSchemaAtSourceInit;
   private final boolean shouldValidateOffsets;
   private final Optional<Regex> excludeRegex;
@@ -114,10 +152,14 @@ public class SparkMicroBatchStream
   private final StructType readDataSchema;
   private final StructType dataSchema;
   private final StructType partitionSchema;
+  private final StructType ddlOrderedReadOutputSchema;
   private final Filter[] dataFilters;
   private final Configuration hadoopConf;
   private final SQLConf sqlConf;
   private final scala.collection.immutable.Map<String, String> scalaOptions;
+
+  /** Handler for non-additive schema evolution (rename/drop/type widening). */
+  private final MetadataEvolutionHandler metadataEvolutionHandler;
 
   /**
    * Tracks whether this is the first batch for this stream (no checkpointed offset).
@@ -140,6 +182,9 @@ public class SparkMicroBatchStream
    * changes (rename / drop).
    */
   private volatile boolean hasCheckedReadIncompatibleSchemaChangesOnStreamStart = false;
+
+  /** One-shot flag for {@link #validateCDFEnabledOnTable}. */
+  private volatile boolean cdfEnabledOnStreamStartValidated = false;
 
   /**
    * When AvailableNow is used, this offset will be the upper bound where this run of the query will
@@ -172,7 +217,12 @@ public class SparkMicroBatchStream
   private final AtomicReference<InitialSnapshotCache> cachedInitialSnapshot =
       new AtomicReference<>(null);
 
+  private final AtomicReference<DataFrameSnapshotCache> cachedDataFrameSnapshot =
+      new AtomicReference<>(null);
+
   private final int maxInitialSnapshotFiles;
+  private final boolean useDistributedInitialSnapshot;
+  private final StorageLevel snapshotCacheStorageLevel;
 
   public SparkMicroBatchStream(
       DeltaSnapshotManager snapshotManager,
@@ -184,8 +234,11 @@ public class SparkMicroBatchStream
       StructType dataSchema,
       StructType partitionSchema,
       StructType readDataSchema,
+      StructType ddlOrderedReadOutputSchema,
       Filter[] dataFilters,
-      scala.collection.immutable.Map<String, String> scalaOptions) {
+      scala.collection.immutable.Map<String, String> scalaOptions,
+      Option<DeltaSourceMetadataTrackingLog> metadataTrackingLog,
+      String metadataPath) {
     this.snapshotManager = Objects.requireNonNull(snapshotManager, "snapshotManager is null");
     this.hadoopConf = Objects.requireNonNull(hadoopConf, "hadoopConf is null");
     this.spark = Objects.requireNonNull(spark, "spark is null");
@@ -204,6 +257,8 @@ public class SparkMicroBatchStream
     this.dataSchema = Objects.requireNonNull(dataSchema, "dataSchema is null");
     this.partitionSchema = Objects.requireNonNull(partitionSchema, "partitionSchema is null");
     this.readDataSchema = Objects.requireNonNull(readDataSchema, "readDataSchema is null");
+    this.ddlOrderedReadOutputSchema =
+        Objects.requireNonNull(ddlOrderedReadOutputSchema, "ddlOrderedReadOutputSchema is null");
     this.dataFilters =
         Arrays.copyOf(
             Objects.requireNonNull(dataFilters, "dataFilters is null"), dataFilters.length);
@@ -212,11 +267,29 @@ public class SparkMicroBatchStream
 
     this.snapshotAtSourceInit = (SnapshotImpl) snapshotAtSourceInit;
     this.tableId = this.snapshotAtSourceInit.getMetadata().getId();
-    // TODO(#5319): schema tracking for non-additive schema changes
+
+    // The effective snapshot for reading, mirroring v1's readSnapshotDescriptor. When schema
+    // tracking has a persisted entry, layer it onto the freshly loaded snapshotAtSourceInit so
+    // the read schema/protocol/config reflect the evolved state. The merged entry has already
+    // been written to the durable schema log during analysis (by SparkTable's call to
+    // getPersistedMetadataForMicroBatchStream with mergeConsecutiveSchemaChanges=true), so
+    // reading it back from the log here yields the same value V1 obtains.
+    Option<PersistedMetadata> persistedMetadataAtSourceInit =
+        metadataTrackingLog.isDefined()
+            ? metadataTrackingLog.get().getCurrentTrackedMetadata()
+            : Option.empty();
+    this.readSnapshotAtSourceInit =
+        Objects.requireNonNull(
+            persistedMetadataAtSourceInit.isDefined()
+                ? MetadataEvolutionHandler.buildReadSnapshotFromPersistedMetadata(
+                    this.snapshotAtSourceInit, engine, persistedMetadataAtSourceInit.get())
+                : this.snapshotAtSourceInit,
+            "readSnapshotAtSourceInit is null");
     this.readSchemaAtSourceInit =
         Objects.requireNonNull(
-            SchemaUtils.convertKernelSchemaToSparkSchema(snapshotAtSourceInit.getSchema()),
+            SchemaUtils.convertKernelSchemaToSparkSchema(readSnapshotAtSourceInit.getSchema()),
             "readSchemaAtSourceInit is null");
+
     this.shouldValidateOffsets =
         Objects.requireNonNull(
             (Boolean)
@@ -229,6 +302,19 @@ public class SparkMicroBatchStream
                 .sessionState()
                 .conf()
                 .getConf(DeltaSQLConf.DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES());
+    this.useDistributedInitialSnapshot =
+        (Boolean)
+            spark
+                .sessionState()
+                .conf()
+                .getConf(DeltaSQLConf.DELTA_STREAMING_USE_DISTRIBUTED_INITIAL_SNAPSHOT());
+    this.snapshotCacheStorageLevel =
+        StorageLevel.fromString(
+            (String)
+                spark
+                    .sessionState()
+                    .conf()
+                    .getConf(DeltaSQLConf.DELTA_SNAPSHOT_CACHE_STORAGE_LEVEL()));
 
     boolean isStreamingFromColumnMappingTable =
         ColumnMapping.getColumnMappingMode(
@@ -242,7 +328,31 @@ public class SparkMicroBatchStream
             DeltaStreamUtils.SchemaReadOptions$.MODULE$.fromSparkSession(
                 spark, isStreamingFromColumnMappingTable, isTypeWideningSupportedInProtocol),
             "schemaReadOptions is null");
-    validateSchemaCompatibilityOnStartup(dataSchema, partitionSchema, readSchemaAtSourceInit);
+    this.metadataEvolutionHandler =
+        new MetadataEvolutionHandler(
+            spark,
+            tableId,
+            this.tablePath,
+            snapshotManager,
+            engine,
+            options,
+            schemaReadOptions,
+            metadataTrackingLog,
+            readSnapshotAtSourceInit.getMetadata(),
+            readSnapshotAtSourceInit.getProtocol(),
+            metadataPath);
+    boolean shouldValidateSchemaOnRestart =
+        (Boolean)
+            spark
+                .sessionState()
+                .conf()
+                .getConf(DeltaSQLConf.STREAMING_SCHEMA_VALIDATION_ON_RESTART());
+    // When schema tracking is enabled, the MetadataEvolutionHandler manages schema changes via
+    // the schema log; the analysis-vs-snapshot mismatch this check guards against is expected on
+    // restart and is surfaced via the schema-log evolution exception instead.
+    if (shouldValidateSchemaOnRestart && !metadataEvolutionHandler.shouldTrackMetadataChange()) {
+      validateSchemaCompatibilityOnStartup(dataSchema, partitionSchema, readSchemaAtSourceInit);
+    }
   }
 
   @Override
@@ -263,12 +373,64 @@ public class SparkMicroBatchStream
   }
 
   private void initLastOffsetForTriggerAvailableNow(DeltaSourceOffset startOffsetOpt) {
-    lastOffsetForTriggerAvailableNow =
-        latestOffsetInternal(startOffsetOpt, ReadLimit.allAvailable());
+    // TODO(#6817): Explore unifying TAN offset computation into latestOffsetInternal.
+    // Blocked: latestOffset per-batch shares the same conditions but must NOT bypass rate limiting.
+    if (useDistributedInitialSnapshot && startOffsetOpt.isInitialSnapshot()) {
+      lastOffsetForTriggerAvailableNow = getLastOffsetForAvailableNowViaDataFrame(startOffsetOpt);
+    } else {
+      lastOffsetForTriggerAvailableNow =
+          latestOffsetInternal(startOffsetOpt, ReadLimit.allAvailable());
+    }
 
     lastOffsetForTriggerAvailableNow.ifPresent(
         lastOffset ->
             logger.info("lastOffset for Trigger.AvailableNow has set to " + lastOffset.json()));
+  }
+
+  /**
+   * Computes the end offset for Trigger.AvailableNow without iterating all snapshot files. Avoids
+   * O(n) driver memory pressure that causes OOM for large tables.
+   */
+  private Optional<DeltaSourceOffset> getLastOffsetForAvailableNowViaDataFrame(
+      DeltaSourceOffset startOffset) {
+    long snapshotVersion = startOffset.reservoirVersion();
+
+    checkReadIncompatibleSchemaChangeOnStreamStartOnce(
+        snapshotVersion, /* batchEndVersion= */ null);
+
+    // iteratorLast exhausts the iterator and closes it — do not wrap in try-with-resources
+    // (that would double-close). Use a plain try block for exception context.
+    try {
+      CloseableIterator<IndexedFile> deltaChanges =
+          filterDeltaLogs(snapshotVersion + 1, /* endOffset= */ Optional.empty());
+      Optional<IndexedFile> lastDelta = Utils.iteratorLast(deltaChanges);
+
+      if (lastDelta.isPresent()) {
+        IndexedFile lastFile = lastDelta.get();
+        return Optional.of(
+            DeltaSource.buildOffsetFromIndexedFile(
+                tableId,
+                lastFile.getVersion(),
+                lastFile.getIndex(),
+                startOffset.reservoirVersion(),
+                startOffset.isInitialSnapshot()));
+      }
+    } catch (UncheckedIOException e) {
+      throw new RuntimeException(
+          String.format(
+              "Failed to iterate delta changes for table %s after version %d",
+              tablePath, snapshotVersion),
+          e);
+    }
+
+    // No delta changes — END_INDEX bumps offset to (snapshotVersion + 1, BASE_INDEX, false).
+    return Optional.of(
+        DeltaSource.buildOffsetFromIndexedFile(
+            tableId,
+            snapshotVersion,
+            DeltaSourceOffset.END_INDEX(),
+            startOffset.reservoirVersion(),
+            startOffset.isInitialSnapshot()));
   }
 
   ////////////
@@ -383,7 +545,40 @@ public class SparkMicroBatchStream
       DeltaSourceOffset previousOffset,
       Optional<DeltaSource.AdmissionLimits> limits,
       boolean isFirstBatch) {
-    // TODO(#5319): Special handling for schema tracking.
+    // Initialize schema tracking log eagerly if possible (fresh stream, first batch).
+    // This mirrors v1's getStartingOffsetFromSpecificDeltaVersion eager init path.
+    if (isFirstBatch) {
+      if (metadataEvolutionHandler.shouldInitializeMetadataTrackingEagerly()) {
+        metadataEvolutionHandler.initializeMetadataTrackingAndExitStream(
+            previousOffset.reservoirVersion(),
+            /* batchEndVersion= */ null,
+            /* alwaysFailUponLogInitialized= */ false);
+      }
+    } else {
+      long startVersionForMetadataLogInit;
+      if (previousOffset.index() == DeltaSourceOffset.BASE_INDEX()) {
+        startVersionForMetadataLogInit = previousOffset.reservoirVersion() - 1;
+      } else {
+        startVersionForMetadataLogInit = previousOffset.reservoirVersion();
+      }
+      if (metadataEvolutionHandler.shouldInitializeMetadataTrackingEagerly()) {
+        metadataEvolutionHandler.initializeMetadataTrackingAndExitStream(
+            startVersionForMetadataLogInit,
+            /* batchEndVersion= */ null,
+            /* alwaysFailUponLogInitialized= */ false);
+      }
+      checkReadIncompatibleSchemaChangeOnStreamStartOnce(startVersionForMetadataLogInit, null);
+    }
+
+    // Handle pending schema change offsets (two-barrier protocol).
+    if (metadataEvolutionHandler.shouldTrackMetadataChange()) {
+      Optional<DeltaSourceOffset> pendingOffset =
+          metadataEvolutionHandler.getNextOffsetFromPreviousOffsetIfPendingSchemaChange(
+              previousOffset);
+      if (pendingOffset.isPresent()) {
+        return pendingOffset;
+      }
+    }
 
     CloseableIterator<IndexedFile> changes =
         getFileChangesWithRateLimit(
@@ -430,27 +625,29 @@ public class SparkMicroBatchStream
     long fromIndex = startOffset.index();
     boolean isInitialSnapshot = startOffset.isInitialSnapshot();
 
+    // Validate and lazily initialize the metadata tracking log for planned batches during
+    // stream (re)start. Mirrors v1's validateAndInitMetadataLogForPlannedBatchesDuringStreamStart.
+    validateAndInitMetadataLogForPlannedBatchesDuringStreamStart(fromVersion, endOffset);
+
     List<PartitionedFile> partitionedFiles = new ArrayList<>();
     long totalBytesToRead = 0;
-    try (CloseableIterator<IndexedFile> fileChanges =
-        getFileChanges(fromVersion, fromIndex, isInitialSnapshot, Optional.of(endOffset))) {
-      while (fileChanges.hasNext()) {
-        IndexedFile indexedFile = fileChanges.next();
-        if (indexedFile.getAddFile() == null) {
-          continue;
-        }
-        AddFile addFile = indexedFile.getAddFile();
-        // TODO(#5319): Apply excludeRegex to RemoveFile/AddCDCFile when CDC is supported
-        if (excludeRegex.isPresent()
-            && excludeRegex.get().findFirstIn(addFile.getPath()).isDefined()) {
-          continue;
-        }
-        PartitionedFile partitionedFile =
-            PartitionUtils.buildPartitionedFile(
-                addFile, partitionSchema, tablePath, ZoneId.of(sqlConf.sessionLocalTimeZone()));
+    boolean isCDC = options.readChangeFeed();
+    ZoneId zoneId = ZoneId.of(sqlConf.sessionLocalTimeZone());
 
-        totalBytesToRead += addFile.getSize();
-        partitionedFiles.add(partitionedFile);
+    try (CloseableIterator<IndexedFile> fileChanges =
+        isCDC
+            ? getFileChangesWithRateLimitForCDC(
+                fromVersion,
+                fromIndex,
+                isInitialSnapshot,
+                /* limits= */ Optional.empty(),
+                Optional.of(endOffset))
+            : getFileChanges(fromVersion, fromIndex, isInitialSnapshot, Optional.of(endOffset))) {
+      while (fileChanges.hasNext()) {
+        PartitionedFile pf = buildPartitionedFile(fileChanges.next(), isCDC, zoneId);
+        if (pf == null) continue;
+        totalBytesToRead += pf.fileSize();
+        partitionedFiles.add(pf);
       }
     } catch (IOException e) {
       throw new RuntimeException(
@@ -469,27 +666,45 @@ public class SparkMicroBatchStream
       throw e;
     }
 
-    long maxSplitBytes =
-        PartitionUtils.calculateMaxSplitBytes(
-            spark, totalBytesToRead, partitionedFiles.size(), sqlConf);
-    // Partitions files into Spark FilePartitions.
-    Seq<FilePartition> filePartitions =
-        FilePartition$.MODULE$.getFilePartitions(
-            spark, JavaConverters.asScalaBuffer(partitionedFiles).toSeq(), maxSplitBytes);
-    return JavaConverters.seqAsJavaList(filePartitions).toArray(new InputPartition[0]);
+    return PartitionUtils.planInputPartitions(
+        spark, partitionedFiles, totalBytesToRead, hadoopConf, sqlConf);
   }
 
   @Override
   public PartitionReaderFactory createReaderFactory() {
+    // Use readSnapshotAtSourceInit (which has the evolved schema when schema tracking is active),
+    // mirroring v1's use of readSnapshotDescriptor in createDataFrame.
     return PartitionUtils.createDeltaParquetReaderFactory(
-        snapshotAtSourceInit,
+        readSnapshotAtSourceInit,
         dataSchema,
         partitionSchema,
         readDataSchema,
+        ddlOrderedReadOutputSchema,
         dataFilters,
         scalaOptions,
         hadoopConf,
-        sqlConf);
+        sqlConf,
+        /* isWriteTimeCDCRead */ options.readChangeFeed());
+  }
+
+  /**
+   * Returns a {@link PartitionedFile} for the given {@link IndexedFile}, or {@code null} if the
+   * file should be skipped (no AddFile/CDC payload, or path matches the excludeRegex).
+   */
+  private PartitionedFile buildPartitionedFile(
+      IndexedFile indexedFile, boolean isCDC, ZoneId zoneId) {
+    if (indexedFile.getAddFile() != null) {
+      AddFile addFile = indexedFile.getAddFile();
+      if (isExcludedPath(addFile.getPath())) return null;
+      return PartitionUtils.buildPartitionedFile(addFile, partitionSchema, tablePath, zoneId);
+    }
+    if (isCDC && indexedFile.getCDCDataFile() != null) {
+      CDCDataFile cdcFile = indexedFile.getCDCDataFile();
+      if (isExcludedPath(cdcFile.getPath())) return null;
+      return PartitionUtils.buildCDCPartitionedFile(
+          cdcFile, indexedFile.getVersion(), partitionSchema, tablePath, zoneId);
+    }
+    return null;
   }
 
   ///////////////
@@ -498,12 +713,23 @@ public class SparkMicroBatchStream
 
   @Override
   public void commit(Offset end) {
-    // TODO(#5319): update metadata tracking log.
+    // IMPORTANT: for future developers, please place any work you would like to do in commit()
+    // before updateMetadataTrackingLogAndFailTheStreamIfNeeded as it may throw an exception.
+    DeltaSourceOffset offset = DeltaSourceOffset.apply(tableId, end);
+    metadataEvolutionHandler.updateMetadataTrackingLogAndFailTheStreamIfNeeded(offset);
   }
 
   @Override
   public void stop() {
     cachedInitialSnapshot.set(null);
+    invalidateDataFrameCache();
+  }
+
+  private void invalidateDataFrameCache() {
+    DataFrameSnapshotCache prev = cachedDataFrameSnapshot.getAndSet(null);
+    if (prev != null) {
+      prev.close();
+    }
   }
 
   /**
@@ -518,6 +744,10 @@ public class SparkMicroBatchStream
       return Optional.of((ClosedByInterruptException) cause);
     }
     return Optional.empty();
+  }
+
+  private boolean isExcludedPath(String path) {
+    return excludeRegex.isPresent() && excludeRegex.get().findFirstIn(path).isDefined();
   }
 
   ///////////////////////
@@ -539,8 +769,8 @@ public class SparkMicroBatchStream
     // Note: returning a version beyond latest snapshot version won't be a problem as callers
     // of this function won't use the version to retrieve snapshot(refer to
     // [[getStartingOffset]]).
-    // TODO(#5319): fetch spark config if CDF is supported.
-    boolean allowOutOfRange = false;
+    boolean allowOutOfRange =
+        (Boolean) sqlConf.getConf(DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP());
 
     if (options.startingVersion().isDefined()) {
       DeltaStartingVersion startingVersion = options.startingVersion().get();
@@ -558,7 +788,7 @@ public class SparkMicroBatchStream
           // check is skipped, so this is technically not safe, but we keep it this way for
           // historical reasons.
           snapshotManager.checkVersionExists(
-              version, /* mustBeRecreatable= */ false, /* allowOutOfRange= */ false);
+              version, /* mustBeRecreatable= */ false, allowOutOfRange);
         }
         cachedStartingVersion = Optional.of(version);
         return cachedStartingVersion;
@@ -674,7 +904,10 @@ public class SparkMicroBatchStream
       long fromIndex,
       boolean isInitialSnapshot,
       Optional<DeltaSource.AdmissionLimits> limits) {
-    // TODO(#5319): getFileChangesForCDC if CDC is enabled.
+    if (options.readChangeFeed()) {
+      return getFileChangesWithRateLimitForCDC(
+          fromVersion, fromIndex, isInitialSnapshot, limits, /* endOffset= */ Optional.empty());
+    }
 
     CloseableIterator<IndexedFile> changes =
         getFileChanges(
@@ -688,8 +921,10 @@ public class SparkMicroBatchStream
       changes = changes.takeWhile(admissionLimits::admit);
     }
 
-    // TODO(#5318): Stop at schema change barriers
-    return changes;
+    // Stop before any schema change barrier if detected.
+    // Mirrors v1's stopIndexedFileIteratorAtSchemaChangeBarrier call in
+    // getFileChangesWithRateLimit.
+    return metadataEvolutionHandler.stopIndexedFileIteratorAtSchemaChangeBarrier(changes);
   }
 
   /**
@@ -715,12 +950,19 @@ public class SparkMicroBatchStream
     if (isInitialSnapshot) {
       // Lazily combine snapshot files with delta logs starting from fromVersion + 1.
       // filterDeltaLogs handles the case when no commits exist after fromVersion.
-      InitialSnapshotCache snapshot = getSnapshotFiles(fromVersion);
-      CloseableIterator<IndexedFile> snapshotFiles =
-          Utils.toCloseableIterator(snapshot.files.iterator());
+      // TODO: Unify behind SnapshotFileSource interface; extend distributed path to CDC.
+      CloseableIterator<IndexedFile> snapshotFiles;
+      if (useDistributedInitialSnapshot) {
+        snapshotFiles = getSnapshotFilesViaDataFrame(fromVersion, fromIndex);
+      } else {
+        InitialSnapshotCache snapshot = getSnapshotFiles(fromVersion);
+        snapshotFiles = Utils.toCloseableIterator(snapshot.files.iterator());
+      }
       CloseableIterator<IndexedFile> deltaChanges = filterDeltaLogs(fromVersion + 1, endOffset);
       result = snapshotFiles.combine(deltaChanges);
     } else {
+      // Release cached DataFrame — initial snapshot processing complete.
+      invalidateDataFrameCache();
       result = filterDeltaLogs(fromVersion, endOffset);
     }
 
@@ -728,7 +970,8 @@ public class SparkMicroBatchStream
   }
 
   /**
-   * Gets file changes for CDC mode. Mirrors DSv1: DeltaSourceCDCSupport.getFileChangesForCDC.
+   * Gets file changes for CDC mode with rate limiting. Mirrors DSv1:
+   * DeltaSourceCDCSupport.getFileChangesForCDC.
    *
    * @param fromVersion The starting version (exclusive with fromIndex)
    * @param fromIndex The starting index within fromVersion (exclusive)
@@ -737,13 +980,13 @@ public class SparkMicroBatchStream
    * @param endOffset The end offset (inclusive), or empty to read all available commits
    * @return An iterator of IndexedFile representing the CDC file changes
    */
-  CloseableIterator<IndexedFile> getFileChangesForCDC(
+  CloseableIterator<IndexedFile> getFileChangesWithRateLimitForCDC(
       long fromVersion,
       long fromIndex,
       boolean isInitialSnapshot,
       Optional<DeltaSource.AdmissionLimits> limits,
       Optional<DeltaSourceOffset> endOffset) {
-    validateCDFEnabledOnTable();
+    validateCDFEnabledOnTable(fromVersion);
     CloseableIterator<IndexedFile> result;
     if (isInitialSnapshot) {
       InitialSnapshotCache snapshot = getSnapshotFiles(fromVersion);
@@ -759,17 +1002,33 @@ public class SparkMicroBatchStream
                           file.getIndex(),
                           CDCDataFile.fromAddFile(file.getAddFile(), commitTimestamp))
                       : file);
+      // Filter already-processed files BEFORE admission so they don't consume the budget.
+      snapshotFiles =
+          snapshotFiles.filter(file -> isAfterStartBoundary(file, fromVersion, fromIndex));
+      // Admission for delta-log files happens inside filterDeltaLogsWithRateLimitForCDC
+      // (version-level + per-commit). Both share the same AdmissionLimits instance so
+      // the budget is continuous.
       if (limits.isPresent()) {
         snapshotFiles = snapshotFiles.takeWhile(limits.get()::admit);
       }
-      // TODO(#5319): combine with filterDeltaLogsForCDC for commits after snapshot
-      result = snapshotFiles;
+      CloseableIterator<IndexedFile> deltaChanges =
+          filterDeltaLogsWithRateLimitForCDC(
+              fromVersion + 1, fromVersion, fromIndex, limits, endOffset);
+      result = snapshotFiles.combine(deltaChanges);
     } else {
-      // TODO(#5319): incremental CDC via filterDeltaLogsForCDC
-      result = Utils.toCloseableIterator(Collections.emptyIterator());
+      result =
+          filterDeltaLogsWithRateLimitForCDC(
+              fromVersion, fromVersion, fromIndex, limits, endOffset);
     }
 
-    return applyBoundaryFiltering(result, fromVersion, fromIndex, endOffset);
+    // Start boundary already applied above (before admission). Only apply end boundary here.
+    result = applyEndBoundaryFiltering(result, endOffset);
+
+    // Stop before any schema change barrier if detected. V1's wrap is in
+    // DeltaSource.getFileChangesWithRateLimit, shared by CDC and non-CDC; V2 applies it inside
+    // this CDC-specific method because both planInputPartitions and the outer
+    // getFileChangesWithRateLimit reach the CDC iterator through here.
+    return metadataEvolutionHandler.stopIndexedFileIteratorAtSchemaChangeBarrier(result);
   }
 
   /**
@@ -787,12 +1046,26 @@ public class SparkMicroBatchStream
       long fromIndex,
       Optional<DeltaSourceOffset> endOffset) {
     // Check start boundary (exclusive)
-    result =
-        result.filter(
-            file ->
-                file.getVersion() > fromVersion
-                    || (file.getVersion() == fromVersion && file.getIndex() > fromIndex));
+    result = result.filter(file -> isAfterStartBoundary(file, fromVersion, fromIndex));
 
+    return applyEndBoundaryFiltering(result, endOffset);
+  }
+
+  /**
+   * Returns true if the file is strictly after the (exclusive) resume point (fromVersion,
+   * fromIndex).
+   */
+  private static boolean isAfterStartBoundary(IndexedFile file, long fromVersion, long fromIndex) {
+    return file.getVersion() > fromVersion
+        || (file.getVersion() == fromVersion && file.getIndex() > fromIndex);
+  }
+
+  /**
+   * Applies end boundary filtering only. Used by CDC paths where start boundary filtering is
+   * applied before admission to avoid wasting budget on already-processed files.
+   */
+  private CloseableIterator<IndexedFile> applyEndBoundaryFiltering(
+      CloseableIterator<IndexedFile> result, Optional<DeltaSourceOffset> endOffset) {
     // If endOffset is provided, we are getting a batch on a constructed range so we should use
     // the endOffset as the limit.
     // Otherwise, we are looking for a new offset, so we try to use the latestOffset we found for
@@ -814,24 +1087,66 @@ public class SparkMicroBatchStream
     return result;
   }
 
-  private void validateCDFEnabledOnTable() {
-    String cdcEnabled =
-        snapshotAtSourceInit
-            .getMetadata()
-            .getConfiguration()
-            .getOrDefault("delta.enableChangeDataFeed", "false");
-
-    if (!cdcEnabled.equalsIgnoreCase("true")) {
-      long version = snapshotAtSourceInit.getVersion();
-      // DeltaErrors.changeDataNotRecordedException returns a DeltaAnalysisException (checked),
-      // so we wrap it to propagate through the streaming pipeline.
-      Throwable error = DeltaErrors.changeDataNotRecordedException(version, version, version);
-      throw new RuntimeException(error.getMessage(), error);
+  @VisibleForTesting
+  void validateCDFEnabledOnTable(long startVersion) {
+    // Make sure CDF is enabled at startVersion during stream start.
+    if (cdfEnabledOnStreamStartValidated) {
+      return;
     }
+    SnapshotImpl startSnapshot;
+    if (startVersion == snapshotAtSourceInit.getVersion()) {
+      startSnapshot = snapshotAtSourceInit;
+    } else {
+      try {
+        startSnapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(startVersion);
+      } catch (io.delta.kernel.exceptions.KernelException e) {
+        // startVersion may not yet exist (e.g. startingVersion=latest resolves to latest+1).
+        // TODO(#6745): narrow this catch once kernel exposes a specific exception subclass
+        // for "version not yet materialized".
+        return;
+      }
+    }
+    if (!isCDFEnabled(startSnapshot.getMetadata())) {
+      throw new RuntimeException(
+          DeltaErrors.changeDataNotRecordedException(startVersion, startVersion, startVersion));
+    }
+    cdfEnabledOnStreamStartValidated = true;
   }
 
   private CloseableIterator<IndexedFile> filterDeltaLogs(
       long startVersion, Optional<DeltaSourceOffset> endOffset) {
+    return getCommitsFromRange(startVersion, endOffset, ACTION_SET)
+        .flatMap(commit -> processCommitToIndexedFiles(commit, startVersion, endOffset));
+  }
+
+  private CloseableIterator<IndexedFile> filterDeltaLogsWithRateLimitForCDC(
+      long startVersion,
+      long lastProcessedVersion,
+      long lastProcessedIndex,
+      Optional<DeltaSource.AdmissionLimits> limits,
+      Optional<DeltaSourceOffset> endOffset) {
+    CloseableIterator<CommitActions> commits =
+        getCommitsFromRange(startVersion, endOffset, CDC_ACTION_SET);
+
+    // Early exit: skip opening further commits once the budget is spent.
+    if (limits.isPresent()) {
+      commits = commits.takeWhile(commit -> limits.get().hasCapacity());
+    }
+
+    return commits.flatMap(
+        commit ->
+            processCommitToIndexedFilesForCDC(
+                commit, startVersion, limits, endOffset, lastProcessedVersion, lastProcessedIndex));
+  }
+
+  /** Resolves the version range and returns commit actions from delta logs. */
+  private CloseableIterator<CommitActions> getCommitsFromRange(
+      long startVersion, Optional<DeltaSourceOffset> endOffset, Set<DeltaAction> actionSet) {
+    // Schema tracking needs every metadata-change commit; failOnDataLoss=false may skip one.
+    Preconditions.checkArgument(
+        options.failOnDataLoss() || !metadataEvolutionHandler.shouldTrackMetadataChange(),
+        "Using schema from schema tracking log cannot tolerate missing commit files.");
+
     Optional<Long> endVersionOpt =
         endOffset.isPresent() ? Optional.of(endOffset.get().reservoirVersion()) : Optional.empty();
 
@@ -864,13 +1179,34 @@ public class SparkMicroBatchStream
       }
     }
 
-    CommitRange commitRange;
-    try {
-      commitRange = snapshotManager.getTableChanges(engine, startVersion, endVersionOpt);
-    } catch (io.delta.kernel.exceptions.CommitRangeNotFoundException e) {
-      // If the requested version range doesn't exist (e.g., we're asking for version 6 when
-      // the table only has versions 0-5).
-      return Utils.toCloseableIterator(Collections.emptyIterator());
+    // Start commit may be missing (e.g. due to log retention). When failOnDataLoss=false, skip
+    // to the earliest available version. Mid-log gaps still throw regardless of failOnDataLoss —
+    // stricter than DSv1.
+    CommitRange commitRange = null;
+    long earliestVersionToFetch = startVersion;
+    for (int attempt = 1; attempt <= FAIL_ON_DATA_LOSS_FALSE_MAX_ATTEMPTS; attempt++) {
+      try {
+        commitRange =
+            snapshotManager.getTableChanges(engine, earliestVersionToFetch, endVersionOpt);
+        break;
+      } catch (io.delta.kernel.exceptions.StartVersionNotFoundException e) {
+        if (options.failOnDataLoss()
+            || !e.getEarliestAvailableVersion().isPresent()
+            || attempt >= FAIL_ON_DATA_LOSS_FALSE_MAX_ATTEMPTS) {
+          throw e;
+        }
+        earliestVersionToFetch = e.getEarliestAvailableVersion().get();
+        logger.warn(
+            "Start version commit {} no longer exists for table {} (attempt {}/{}). "
+                + "Skipping to earliest available version {} because failOnDataLoss is false.",
+            startVersion,
+            tablePath,
+            attempt,
+            FAIL_ON_DATA_LOSS_FALSE_MAX_ATTEMPTS,
+            earliestVersionToFetch);
+      } catch (io.delta.kernel.exceptions.CommitRangeNotFoundException e) {
+        return Utils.toCloseableIterator(Collections.emptyIterator());
+      }
     }
 
     // Use getCommitActionsFromRangeUnsafe instead of CommitRange.getCommitActions() because:
@@ -879,15 +1215,11 @@ public class SparkMicroBatchStream
     //    (e.g., if log files have been cleaned up after checkpointing).
     // 2. This matches DSv1 behavior which uses snapshotAtSourceInit's P&M to interpret all
     //    AddFile actions and performs per-commit protocol validation.
-    CloseableIterator<CommitActions> commitsIterator =
-        StreamingHelper.getCommitActionsFromRangeUnsafe(
-            engine,
-            (io.delta.kernel.internal.commitrange.CommitRangeImpl) commitRange,
-            snapshotAtSourceInit.getPath(),
-            ACTION_SET);
-
-    return commitsIterator.flatMap(
-        commit -> processCommitToIndexedFiles(commit, startVersion, endOffset));
+    return StreamingHelper.getCommitActionsFromRangeUnsafe(
+        engine,
+        (io.delta.kernel.internal.commitrange.CommitRangeImpl) commitRange,
+        snapshotAtSourceInit.getPath(),
+        actionSet);
   }
 
   /**
@@ -907,35 +1239,47 @@ public class SparkMicroBatchStream
       // commit, downstream would produce incorrect results.
       //
       // TODO(#5318): consider caching the commit actions to avoid reading the same commit twice.
-      // TODO(#5319): don't verify metadata action when schema tracking is enabled
-      boolean shouldSkipCommit =
+      // When schema tracking is enabled, skip per-commit metadata verification — the handler
+      // manages schema changes through the barrier protocol instead.
+      boolean trackingMetadataChange = metadataEvolutionHandler.shouldTrackMetadataChange();
+      CommitValidationResult validationResult =
           validateCommitAndDecideSkipping(
               commit,
               version,
               startVersion,
               snapshotAtSourceInit.getPath(),
               endOffsetOpt,
-              /* verifyMetadataAction= */ true);
+              /* verifyMetadataAction= */ !trackingMetadataChange);
 
       // Second pass: Build a lazy iterator of IndexedFiles.
       //
-      //   BEGIN (BASE_INDEX) + actual file actions + END (END_INDEX)
+      //   BEGIN (BASE_INDEX) + [metadata barrier] + actual file actions + END (END_INDEX)
       //
       // These sentinel IndexedFiles have null file actions and are used for proper offset
       // tracking:
       //   - BASE_INDEX: marks "before any files in this version", allowing the offset to
       //                 reference the start of a version.
+      //   - METADATA_CHANGE_INDEX: schema change barrier (stops offset generation here).
       //   - END_INDEX:  marks end of version, triggers version advancement in
       //                 buildOffsetFromIndexedFile to skip re-reading completed versions.
       //
       // See DeltaSource.addBeginAndEndIndexOffsetsForVersion for the Scala equivalent.
       CloseableIterator<IndexedFile> fileActions =
-          shouldSkipCommit
+          validationResult.shouldSkipCommit
               ? Utils.toCloseableIterator(Collections.emptyIterator())
               : getFilesFromCommit(commit, version);
+
+      // If metadata tracking is active, inject schema change barrier sentinel before file
+      // actions. This mirrors v1's getMetadataOrProtocolChangeIndexedFileIterator concatenation
+      // in filterAndGetIndexedFiles.
+      CloseableIterator<IndexedFile> metadataBarrier =
+          metadataEvolutionHandler.getMetadataOrProtocolChangeIndexedFileIterator(
+              validationResult.metadataAction, validationResult.protocolAction, version);
+
       CloseableIterator<IndexedFile> inner =
           Utils.singletonCloseableIterator(
                   IndexedFile.sentinel(version, DeltaSourceOffset.BASE_INDEX()))
+              .combine(metadataBarrier)
               .combine(fileActions)
               .combine(
                   Utils.singletonCloseableIterator(
@@ -993,6 +1337,22 @@ public class SparkMicroBatchStream
             });
   }
 
+  /** Result of commit validation, including skip decision and detected metadata/protocol. */
+  private static class CommitValidationResult {
+    final boolean shouldSkipCommit;
+    @Nullable final Metadata metadataAction;
+    @Nullable final Protocol protocolAction;
+
+    CommitValidationResult(
+        boolean shouldSkipCommit,
+        @Nullable Metadata metadataAction,
+        @Nullable Protocol protocolAction) {
+      this.shouldSkipCommit = shouldSkipCommit;
+      this.metadataAction = metadataAction;
+      this.protocolAction = protocolAction;
+    }
+  }
+
   /**
    * Validates a commit, fail the stream if it's invalid and decides whether to skip it. Mimics
    * DeltaSource.validateCommitAndDecideSkipping in Scala.
@@ -1003,10 +1363,10 @@ public class SparkMicroBatchStream
    * @param tablePath the path to the Delta table
    * @param endOffsetOpt optional end offset for boundary checking
    * @param verifyMetadataAction Whether to verify metadata action compatibility
-   * @return true if the commit should be skipped (no AddFiles emitted), false otherwise
+   * @return validation result containing skip decision and detected metadata/protocol actions
    * @throws RuntimeException if the commit is invalid.
    */
-  private boolean validateCommitAndDecideSkipping(
+  private CommitValidationResult validateCommitAndDecideSkipping(
       CommitActions commit,
       long version,
       long batchStartVersion,
@@ -1018,7 +1378,7 @@ public class SparkMicroBatchStream
       DeltaSourceOffset endOffset = endOffsetOpt.get();
       if (endOffset.reservoirVersion() == version
           && endOffset.index() == DeltaSourceOffset.BASE_INDEX()) {
-        return false;
+        return new CommitValidationResult(false, null, null);
       }
     }
 
@@ -1033,7 +1393,9 @@ public class SparkMicroBatchStream
     boolean hasFileAdd = false;
     boolean shouldSkipCommit = false;
     Metadata metadataAction = null;
+    Protocol protocolAction = null;
     String removeFileActionPath = null;
+    String operation = null;
 
     try (CloseableIterator<ColumnarBatch> actionsIter = commit.getActions()) {
       while (actionsIter.hasNext()) {
@@ -1059,22 +1421,35 @@ public class SparkMicroBatchStream
           // Track Metadata for read-incompatible schema changes.
           Optional<Metadata> metadataOpt = StreamingHelper.getMetadata(batch, rowId);
           if (metadataOpt.isPresent()) {
-            Metadata metadata = metadataOpt.get();
+            metadataAction =
+                validateMetadata(
+                    metadataOpt.get(),
+                    metadataAction,
+                    version,
+                    batchStartVersion,
+                    endOffsetOpt,
+                    verifyMetadataAction);
+          }
+
+          // Track Protocol for schema evolution barrier detection.
+          Optional<Protocol> protocolOpt = StreamingHelper.getProtocol(batch, rowId);
+          if (protocolOpt.isPresent()) {
             Preconditions.checkArgument(
-                metadataAction == null,
-                "Should not encounter two metadata actions in the same commit of version %d",
+                protocolAction == null,
+                "Should not encounter two protocol actions in the same commit of version %d",
                 version);
-            metadataAction = metadata;
-            Long batchEndVersion =
-                endOffsetOpt.map(DeltaSourceOffset::reservoirVersion).orElse(null);
-            if (verifyMetadataAction) {
-              checkReadIncompatibleSchemaChanges(
-                  metadata,
-                  version,
-                  batchStartVersion,
-                  batchEndVersion,
-                  /* validatedDuringStreamStart */ false);
-            }
+            protocolAction = protocolOpt.get();
+          }
+
+          // Track CommitInfo for operation details in error messages.
+          Optional<CommitInfo> commitInfoOpt = StreamingHelper.getCommitInfo(batch, rowId);
+          if (commitInfoOpt.isPresent()) {
+            CommitInfo commitInfo = commitInfoOpt.get();
+            operation =
+                commitInfo
+                    .getOperation()
+                    .map(op -> String.format("%s (%s)", op, commitInfo.getOperationParameters()))
+                    .orElse(null);
           }
         }
       }
@@ -1085,9 +1460,9 @@ public class SparkMicroBatchStream
     if (removeFileActionPath != null) {
       if (hasFileAdd && !shouldAllowChanges) {
         // Commit contains data changes (adds + removes) and changes are disallowed.
-        // TODO(#5319): log CommitInfo action's operation instead of path
+        String changeInfo = operation != null ? operation : removeFileActionPath;
         throw (RuntimeException)
-            DeltaErrors.deltaSourceIgnoreChangesError(version, removeFileActionPath, tablePath);
+            DeltaErrors.deltaSourceIgnoreChangesError(version, changeInfo, tablePath);
       } else if (!hasFileAdd && !shouldAllowDeletes) {
         // Commit contains only removes (deletes) and deletes are disallowed.
         throw (RuntimeException)
@@ -1095,7 +1470,7 @@ public class SparkMicroBatchStream
       }
     }
 
-    return shouldSkipCommit;
+    return new CommitValidationResult(shouldSkipCommit, metadataAction, protocolAction);
   }
 
   /**
@@ -1160,12 +1535,7 @@ public class SparkMicroBatchStream
               .toSeq();
     }
 
-    checkNonAdditiveSchemaChanges(
-        oldMetadata,
-        newMetadata,
-        oldPartitionColumns,
-        newPartitionColumns,
-        validatedDuringStreamStart);
+    checkNonAdditiveSchemaChanges(oldMetadata, newMetadata, validatedDuringStreamStart);
 
     // Other standard read compatibility changes
     if (!validatedDuringStreamStart
@@ -1203,17 +1573,11 @@ public class SparkMicroBatchStream
     }
   }
 
-  // TODO(#5319): schema tracking for non-additive schema changes
-  // TODO(#5319): Extract the entire non-additive schema check into a static utility and share it
-  // with v1 by refactoring DeltaColumnMapping.hasNoColumnMappingSchemaChanges so it can be reused
-  // by both v1 and v2.
-  // Non-additive schema changes include rename column, drop column and change column type
+  // Non-additive schema changes include rename column, drop column and change column type.
+  // When schema tracking is enabled, this method is NOT called — the MetadataEvolutionHandler
+  // manages these changes through the barrier protocol instead.
   private void checkNonAdditiveSchemaChanges(
-      Metadata oldMetadata,
-      Metadata newMetadata,
-      Seq<String> oldPartitionColumns,
-      Seq<String> newPartitionColumns,
-      boolean validatedDuringStreamStart) {
+      Metadata oldMetadata, Metadata newMetadata, boolean validatedDuringStreamStart) {
     StructType sparkNewSchema =
         SchemaUtils.convertKernelSchemaToSparkSchema(newMetadata.getSchema());
     StructType sparkOldSchema =
@@ -1230,46 +1594,50 @@ public class SparkMicroBatchStream
     } else if (schemaReadOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges()) {
       shouldTrackSchema = false;
     } else {
-      ColumnMappingMode NONE = ColumnMappingMode.NONE;
-      ColumnMappingMode oldMode =
-          ColumnMapping.getColumnMappingMode(oldMetadata.getConfiguration());
-      ColumnMappingMode newMode =
-          ColumnMapping.getColumnMappingMode(newMetadata.getConfiguration());
-      if (oldMode != NONE && newMode != NONE) {
-        Preconditions.checkArgument(oldMode == newMode, "changing mode is not supported");
-        shouldTrackSchema =
-            DeltaColumnMapping.hasColMappingOrPartitionSchemaChange(
-                sparkNewSchema,
-                sparkOldSchema,
-                newPartitionColumns,
-                oldPartitionColumns,
-                /* isBothColumnMappingEnabled */ true);
-      } else if (oldMode == NONE && newMode != NONE) {
-        // TODO(#5319): We should disallow user to upgrade column mapping mode for now since we
-        // don't support schema tracking
-        shouldTrackSchema = true;
-      } else {
-        // Prohibit reading across a downgrade.
-        shouldTrackSchema = oldMode != NONE && newMode == NONE;
-      }
+      // Delegate to the shared utility which handles all column mapping mode transitions
+      // (both enabled, upgrade from none, downgrade to none).
+      shouldTrackSchema =
+          !DeltaColumnMapping$.MODULE$.hasNoColumnMappingSchemaChanges(
+              new KernelMetadataAdapter(newMetadata),
+              new KernelMetadataAdapter(oldMetadata),
+              schemaReadOptions.allowUnsafeStreamingReadOnPartitionColumnChanges());
     }
 
     if (shouldTrackSchema) {
       throw (RuntimeException)
           DeltaErrors.blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges(
-              spark,
-              sparkOldSchema,
-              sparkNewSchema,
-              !validatedDuringStreamStart,
-              /* isV2DataSource= */ true);
+              spark, sparkOldSchema, sparkNewSchema, !validatedDuringStreamStart);
     }
+  }
+
+  /**
+   * Validate and lazily initialize the metadata tracking log for planned batches during stream
+   * (re)start. Mirrors v1's {@code validateAndInitMetadataLogForPlannedBatchesDuringStreamStart}.
+   *
+   * <p>Called from {@code planInputPartitions} (the v2 equivalent of v1's {@code getBatch}).
+   */
+  private void validateAndInitMetadataLogForPlannedBatchesDuringStreamStart(
+      long startVersion, DeltaSourceOffset endOffset) {
+    long endVersionForMetadataLogInit =
+        endOffset.index() == DeltaSourceOffset.BASE_INDEX()
+            ? endOffset.reservoirVersion() - 1
+            : endOffset.reservoirVersion();
+
+    // For eager initialization, we initialize the log right now.
+    if (metadataEvolutionHandler.shouldInitializeMetadataTrackingEagerly()) {
+      metadataEvolutionHandler.initializeMetadataTrackingAndExitStream(
+          startVersion, endVersionForMetadataLogInit, /* alwaysFailUponLogInitialized= */ false);
+    }
+
+    // Check for column mapping + streaming incompatible schema changes
+    checkReadIncompatibleSchemaChangeOnStreamStartOnce(startVersion, endVersionForMetadataLogInit);
   }
 
   /**
    * Check read-incompatible schema changes during stream (re)start so we could fail fast.
    *
-   * <p>This is called ONCE during the first latestOffset call to catch edge cases that normal
-   * per-commit validation (checkReadIncompatibleSchemaChanges) misses.
+   * <p>This is called ONCE during the first latestOffset call to catch cases that normal per-commit
+   * validation (checkReadIncompatibleSchemaChanges) misses.
    *
    * <p><b>Why needed?</b> Normal validation only checks commits with metadata actions. If a stream
    * starts at version 1 with the latest version is version 3 and there is a schema change at
@@ -1289,7 +1657,9 @@ public class SparkMicroBatchStream
    */
   private void checkReadIncompatibleSchemaChangeOnStreamStartOnce(
       long batchStartVersion, Long batchEndVersion) {
-    // TODO(#5319): skip if enable schema tracking log
+    // When schema tracking is enabled, the MetadataEvolutionHandler manages schema changes
+    // through the barrier protocol — skip the traditional compatibility check.
+    if (metadataEvolutionHandler.shouldTrackMetadataChange()) return;
 
     if (hasCheckedReadIncompatibleSchemaChangesOnStreamStart) return;
 
@@ -1359,7 +1729,8 @@ public class SparkMicroBatchStream
    * @param partitionSchema partition columns from analysis time
    * @param snapshotSchema full table schema from the latest snapshot at stream start
    */
-  private void validateSchemaCompatibilityOnStartup(
+  @VisibleForTesting
+  static void validateSchemaCompatibilityOnStartup(
       StructType dataSchema, StructType partitionSchema, StructType snapshotSchema) {
     // Reconstruct the full analysis-time table schema from dataSchema + partitionSchema.
     // StructType is immutable — add() returns a new instance without modifying the original.
@@ -1367,11 +1738,37 @@ public class SparkMicroBatchStream
     for (StructField field : partitionSchema.fields()) {
       querySchema = querySchema.add(field);
     }
-
-    // Compare the structural schema of the analysis-time schema and snapshot schema.
-    if (!DataType.equalsStructurally(querySchema, snapshotSchema, /* ignoreNullability */ false)) {
+    // Sort both sides so a partition column declared in the middle of the table doesn't
+    // trip the check.
+    StructType sortedQuery = sortFieldsByName(querySchema);
+    StructType sortedSnapshot = sortFieldsByName(snapshotSchema);
+    // equalsStructurally checks types + nullability but ignores field names;
+    // equalsStructurallyByName checks names but ignores types/nullability.
+    boolean typesAndNullabilityMatch =
+        DataType.equalsStructurally(sortedQuery, sortedSnapshot, /* ignoreNullability= */ false);
+    boolean namesMatch =
+        DataType.equalsStructurallyByName(sortedQuery, sortedSnapshot, CASE_INSENSITIVE_RESOLVER);
+    if (!typesAndNullabilityMatch || !namesMatch) {
       throw DeltaErrors.streamingSchemaMismatchOnRestart(querySchema, snapshotSchema);
     }
+  }
+
+  private static final Function2<String, String, Object> CASE_INSENSITIVE_RESOLVER =
+      new AbstractFunction2<String, String, Object>() {
+        @Override
+        public Object apply(String a, String b) {
+          return a.equalsIgnoreCase(b);
+        }
+      };
+
+  private static StructType sortFieldsByName(StructType schema) {
+    StructField[] fields = Arrays.copyOf(schema.fields(), schema.fields().length);
+    Arrays.sort(fields, Comparator.comparing(StructField::name));
+    StructType result = new StructType();
+    for (StructField f : fields) {
+      result = result.add(f);
+    }
+    return result;
   }
 
   /**
@@ -1418,9 +1815,121 @@ public class SparkMicroBatchStream
     return newCache;
   }
 
+  private CloseableIterator<IndexedFile> getSnapshotFilesViaDataFrame(
+      long version, long fromIndex) {
+    DataFrameSnapshotCache dfCache = cachedDataFrameSnapshot.get();
+    if (dfCache == null || dfCache.getVersion() != version) {
+      invalidateDataFrameCache();
+      dfCache = buildDataFrameSnapshotCache(version);
+      cachedDataFrameSnapshot.set(dfCache);
+    }
+
+    Dataset<Row> df = dfCache.getSortedAddFiles();
+
+    // Push filtering to executors: O(remaining) per batch instead of O(N) full-scan.
+    if (fromIndex > DeltaSourceOffset.BASE_INDEX()) {
+      df = df.where(functions.col(FILE_IDX_COL).gt(fromIndex));
+    }
+
+    return dataFrameToIndexedFiles(df, version);
+  }
+
+  /** Builds a new persisted DataFrame cache for the initial snapshot at the given version. */
+  private DataFrameSnapshotCache buildDataFrameSnapshotCache(long version) {
+    // May differ from snapshotAtSourceInit on checkpoint restart. loadSnapshotAt is
+    // metadata-only on driver; log replay runs on executors via ScanFileRDD.
+    SnapshotImpl snapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(version);
+    SerializableReadOnlySnapshot serSnapshot =
+        SerializableReadOnlySnapshot.fromSnapshot(snapshot, hadoopConf);
+
+    ScanFileRDD rdd = new ScanFileRDD(spark.sparkContext(), serSnapshot);
+    Dataset<Row> sorted =
+        spark.createDataFrame(rdd, ScanFileRDD.SPARK_SCHEMA).orderBy("modificationTime", "path");
+
+    // zipWithIndex for contiguous 0-based indices — monotonically_increasing_id() is
+    // non-contiguous across partitions and breaks checkpoint compatibility.
+    int numFields = ScanFileRDD.SPARK_SCHEMA.size();
+    StructType schemaWithIdx =
+        ScanFileRDD.SPARK_SCHEMA.add(FILE_IDX_COL, DataTypes.LongType, false);
+    JavaRDD<Row> indexedRDD =
+        sorted
+            .javaRDD()
+            .zipWithIndex()
+            .map(
+                (Tuple2<Row, Long> tuple) -> {
+                  Row row = tuple._1();
+                  long idx = tuple._2();
+                  Object[] fields = new Object[numFields + 1];
+                  for (int i = 0; i < numFields; i++) {
+                    fields[i] = row.get(i);
+                  }
+                  fields[numFields] = idx;
+                  return RowFactory.create(fields);
+                });
+
+    Dataset<Row> df =
+        spark.createDataFrame(indexedRDD, schemaWithIdx).persist(snapshotCacheStorageLevel);
+
+    return new DataFrameSnapshotCache(version, df);
+  }
+
+  /** Converts sorted AddFile DataFrame to lazy IndexedFile iterator with BEGIN/END sentinels. */
+  private static CloseableIterator<IndexedFile> dataFrameToIndexedFiles(
+      Dataset<Row> df, long version) {
+
+    int fileIdxOrdinal = df.schema().fieldIndex(FILE_IDX_COL);
+    java.util.Iterator<Row> localIter = df.toLocalIterator();
+
+    return new CloseableIterator<IndexedFile>() {
+      private boolean sentBegin = false;
+      private boolean sentEnd = false;
+
+      @Override
+      public boolean hasNext() {
+        return !sentEnd;
+      }
+
+      @Override
+      public IndexedFile next() {
+        if (!sentBegin) {
+          sentBegin = true;
+          return IndexedFile.sentinel(version, DeltaSourceOffset.BASE_INDEX());
+        }
+
+        if (localIter.hasNext()) {
+          Row sparkRow = localIter.next();
+          long fileIdx = sparkRow.getLong(fileIdxOrdinal);
+          // Extra _file_idx column at ordinal N is safely ignored (ordinal-based access up to
+          // schema size).
+          io.delta.kernel.data.Row kernelRow =
+              new SparkRowToKernelRow(sparkRow, AddFile.SCHEMA_WITHOUT_STATS);
+          return IndexedFile.addFile(version, fileIdx, new AddFile(kernelRow));
+        }
+
+        sentEnd = true;
+        return IndexedFile.sentinel(version, DeltaSourceOffset.END_INDEX());
+      }
+
+      @Override
+      public void close() throws IOException {
+        // toLocalIterator() resources are managed by Spark
+      }
+    };
+  }
+
   /** Loads snapshot files at the specified version. */
   private InitialSnapshotCache loadAndValidateSnapshot(long version) {
-    Snapshot snapshot = snapshotManager.loadSnapshotAt(version);
+    SnapshotImpl snapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(version);
+    // If schema tracking is already active and the initial snapshot has advanced since the tracked
+    // read snapshot, replace the tracked metadata/protocol before reading snapshot files.
+    if (metadataEvolutionHandler.shouldTrackMetadataChange()
+        && snapshot.getVersion() >= readSnapshotAtSourceInit.getVersion()) {
+      metadataEvolutionHandler.updateMetadataTrackingLogAndFailTheStreamIfNeeded(
+          snapshot.getMetadata(),
+          snapshot.getProtocol(),
+          snapshot.getVersion(),
+          /* replace= */ true);
+    }
     long commitTimestamp = snapshot.getTimestamp(engine);
 
     Scan scan = snapshot.getScanBuilder().build();
@@ -1477,5 +1986,329 @@ public class SparkMicroBatchStream
 
     return new InitialSnapshotCache(
         version, Collections.unmodifiableList(indexedFiles), commitTimestamp);
+  }
+
+  /**
+   * Process a CDC commit into IndexedFiles. Validates metadata, collects CDC actions, and builds
+   * IndexedFiles.
+   *
+   * <p>Package-private for testing.
+   */
+  CloseableIterator<IndexedFile> processCommitToIndexedFilesForCDC(
+      CommitActions commit,
+      long startVersion,
+      Optional<DeltaSource.AdmissionLimits> limits,
+      Optional<DeltaSourceOffset> endOffsetOpt,
+      long lastProcessedVersion,
+      long lastProcessedIndex) {
+    try {
+      long version = commit.getVersion();
+      long timestamp = commit.getTimestamp();
+
+      if (isEndOffsetAtBaseIndex(endOffsetOpt, version)) {
+        return Utils.toCloseableIterator(
+            Arrays.asList(
+                    IndexedFile.sentinel(version, DeltaSourceOffset.BASE_INDEX()),
+                    IndexedFile.sentinel(version, DeltaSourceOffset.END_INDEX()))
+                .iterator());
+      }
+
+      List<IndexedFile> result =
+          collectAndBuildCDCIndexedFiles(commit, version, timestamp, startVersion, endOffsetOpt);
+
+      // Pre-filter already-processed files from the resume commit BEFORE admission so they
+      // don't consume budget.
+      if (version == lastProcessedVersion) {
+        result.removeIf(f -> !isAfterStartBoundary(f, lastProcessedVersion, lastProcessedIndex));
+      }
+
+      if (limits.isPresent()) {
+        result = applyPerCommitCDCAdmission(result, limits.get(), version);
+        if (result.isEmpty()) {
+          return Utils.toCloseableIterator(Collections.emptyIterator());
+        }
+      } else {
+        result.add(IndexedFile.sentinel(version, DeltaSourceOffset.END_INDEX()));
+      }
+      return Utils.toCloseableIterator(result.iterator());
+    } catch (IOException e) {
+      throw new RuntimeException(e);
+    } finally {
+      Utils.closeCloseables(commit);
+    }
+  }
+
+  /**
+   * Scans a commit's actions in a single pass: validates metadata, checks CDF is enabled, detects
+   * no-op MERGEs, and collects CDC/Add/Remove files into IndexedFiles.
+   *
+   * <p>If schema tracking is on and this commit's metadata or protocol differs from source-init,
+   * returns a single barrier sentinel instead of BASE + files + END. V1 splits this across
+   * DeltaSourceCDCSupport.filterAndIndexDeltaLogs (barrier injection) and
+   * IndexedChangeFileSeq.filterFiles (short-circuit); V2 collapses both here.
+   */
+  private List<IndexedFile> collectAndBuildCDCIndexedFiles(
+      CommitActions commit,
+      long version,
+      long timestamp,
+      long startVersion,
+      Optional<DeltaSourceOffset> endOffsetOpt)
+      throws IOException {
+    boolean trackingMetadataChange = metadataEvolutionHandler.shouldTrackMetadataChange();
+
+    // Phase 1: scan actions to validate metadata and collect CDC/Add/Remove files.
+    List<CDCDataFile> cdcFiles = new ArrayList<>();
+    // Single ordered list for inferred CDC files, preserving delta-log action ordering.
+    // DSv1 assigns IndexedFile.index via zipWithIndex on the original action sequence.
+    List<CDCDataFile> inferredCdcFiles = new ArrayList<>();
+    boolean shouldSkip = false;
+    Metadata metadataAction = null;
+    Protocol protocolAction = null;
+
+    try (CloseableIterator<ColumnarBatch> actionsIter = commit.getActions()) {
+      while (actionsIter.hasNext()) {
+        ColumnarBatch batch = actionsIter.next();
+        for (int rowId = 0; rowId < batch.getSize(); rowId++) {
+          // Metadata: check schema changes + CDF still enabled. Skip the read-compat check when
+          // tracking — the barrier protocol below handles divergence.
+          Optional<Metadata> metadataOpt = StreamingHelper.getMetadata(batch, rowId);
+          if (metadataOpt.isPresent()) {
+            metadataAction =
+                validateMetadata(
+                    metadataOpt.get(),
+                    metadataAction,
+                    version,
+                    startVersion,
+                    endOffsetOpt,
+                    /* verifyMetadataAction= */ !trackingMetadataChange);
+            if (!isCDFEnabled(metadataAction)) {
+              throw new RuntimeException(
+                  DeltaErrors.changeDataNotRecordedException(
+                      version,
+                      startVersion,
+                      endOffsetOpt.map(DeltaSourceOffset::reservoirVersion).orElse(version)));
+            }
+          }
+
+          // Protocol: captured so the barrier fires on protocol-only changes.
+          Optional<Protocol> protocolOpt = StreamingHelper.getProtocol(batch, rowId);
+          if (protocolOpt.isPresent()) {
+            Preconditions.checkArgument(
+                protocolAction == null,
+                "Should not encounter two protocol actions in the same commit of version %d",
+                version);
+            protocolAction = protocolOpt.get();
+          }
+
+          // CommitInfo: detect no-op MERGEs where the operation rewrites files without
+          // changing logical data. These produce file actions that cancel out; inferred CDC
+          // actions will be discarded after the scan to avoid emitting spurious changes.
+          Optional<CommitInfo> commitInfoOpt = StreamingHelper.getCommitInfo(batch, rowId);
+          if (commitInfoOpt.isPresent()) {
+            shouldSkip = shouldSkipFileActionsInCommit(commitInfoOpt.get());
+          }
+
+          // Explicit CDC files
+          Optional<CDCDataFile> cdcOpt = StreamingHelper.getCDCFile(batch, rowId, timestamp);
+          if (cdcOpt.isPresent()) {
+            cdcFiles.add(cdcOpt.get());
+            continue;
+          }
+
+          // RemoveFile(dataChange=true): collect for inferred CDC
+          Optional<RemoveFile> removeOpt = StreamingHelper.getDataChangeRemove(batch, rowId);
+          if (removeOpt.isPresent()) {
+            inferredCdcFiles.add(CDCDataFile.fromRemoveFile(removeOpt.get(), timestamp));
+            continue;
+          }
+
+          // AddFile(dataChange=true)
+          Optional<AddFile> addOpt = StreamingHelper.getAddFileWithDataChange(batch, rowId);
+          if (addOpt.isPresent()) {
+            inferredCdcFiles.add(CDCDataFile.fromAddFile(addOpt.get(), timestamp));
+          }
+        }
+      }
+    }
+
+    // Schema-change barrier: emit only the barrier when this commit diverges from source-init.
+    // V1 injects in DeltaSourceCDCSupport.filterAndIndexDeltaLogs and short-circuits in
+    // IndexedChangeFileSeq.filterFiles; V2 does both here.
+    try (CloseableIterator<IndexedFile> barrierIter =
+        metadataEvolutionHandler.getMetadataOrProtocolChangeIndexedFileIterator(
+            metadataAction, protocolAction, version)) {
+      if (barrierIter.hasNext()) {
+        List<IndexedFile> result = new ArrayList<>();
+        result.add(barrierIter.next());
+        return result;
+      }
+    }
+
+    // No-op MERGE: discard inferred actions (DSv1's isValidIndexedFile / shouldSkip).
+    // shouldSkip doesn't apply to explicit CDC files — only inferred Add/Remove.
+    if (shouldSkip) {
+      inferredCdcFiles.clear();
+    }
+
+    // Phase 2: build IndexedFiles from collected actions.
+    List<IndexedFile> result = new ArrayList<>();
+    result.add(IndexedFile.sentinel(version, DeltaSourceOffset.BASE_INDEX()));
+    long fileIndex = 0;
+
+    // Explicit CDC files and inferred files are mutually exclusive: if a commit contains any
+    // AddCDCFile actions, only those are emitted and AddFile/RemoveFile are ignored.
+    if (!cdcFiles.isEmpty()) {
+      for (CDCDataFile cdcFile : cdcFiles) {
+        result.add(IndexedFile.cdc(version, fileIndex++, cdcFile));
+      }
+    } else {
+      for (CDCDataFile cdcFile : inferredCdcFiles) {
+        result.add(IndexedFile.cdc(version, fileIndex++, cdcFile));
+      }
+    }
+
+    return result;
+  }
+
+  /** Detects no-op MERGEs whose file actions should be skipped for CDC. */
+  private static boolean shouldSkipFileActionsInCommit(CommitInfo commitInfo) {
+    boolean isMerge = commitInfo.getOperation().filter("MERGE"::equals).isPresent();
+    if (!isMerge) {
+      return false;
+    }
+    Map<String, String> metrics = commitInfo.getOperationMetrics();
+    return "0".equals(metrics.get("numTargetRowsInserted"))
+        && "0".equals(metrics.get("numTargetRowsUpdated"))
+        && "0".equals(metrics.get("numTargetRowsDeleted"));
+  }
+
+  /**
+   * Per-commit CDC admission control. Mirrors DSv1's IndexedChangeFileSeq.filterFiles.
+   *
+   * <p>Input is a single commit's IndexedFiles: either a schema-change barrier (passed through
+   * unchanged), or an optional BASE sentinel followed by data files. Applies batch or per-file
+   * admission and appends an END sentinel only when all data files are admitted. Returns empty list
+   * on batch-reject so the offset doesn't advance.
+   */
+  private List<IndexedFile> applyPerCommitCDCAdmission(
+      List<IndexedFile> commitFiles,
+      DeltaSource.AdmissionLimits admissionLimits,
+      long commitVersion) {
+    // Schema-change barrier: pass through. collectAndBuildCDCIndexedFiles returns the barrier as a
+    // singleton, so it can only appear as element 0.
+    if (!commitFiles.isEmpty()
+        && commitFiles.get(0).getIndex() == DeltaSourceOffset.METADATA_CHANGE_INDEX()) {
+      return new ArrayList<>(commitFiles);
+    }
+
+    // Split out the optional BASE sentinel from data files.
+    Optional<IndexedFile> baseSentinel = Optional.empty();
+    List<IndexedFile> dataFiles = new ArrayList<>();
+    for (IndexedFile file : commitFiles) {
+      if (file.hasFileAction()) {
+        dataFiles.add(file);
+      } else {
+        Preconditions.checkState(
+            !baseSentinel.isPresent(),
+            String.format(
+                "Expected at most one BASE sentinel per commit, got multiple for version %s",
+                commitVersion));
+        baseSentinel = Optional.of(file);
+      }
+    }
+
+    // Batch-admit all or nothing when we can't split the commit:
+    //   - Explicit CDC: can't separate update_preimage/postimage
+    //   - Inferred CDC with DVs: can't split add/remove pairs
+    boolean requiresBatchAdmission =
+        dataFiles.stream()
+            .anyMatch(
+                f ->
+                    f.isAddCDCFile()
+                        || (f.getCDCDataFile() != null && f.getCDCDataFile().hasDeletionVector()));
+
+    List<IndexedFile> admittedData;
+    if (requiresBatchAdmission) {
+      if (admissionLimits.admit(toScalaAdmittableSeq(dataFiles))) {
+        admittedData = dataFiles;
+      } else {
+        return Collections.emptyList();
+      }
+    } else {
+      admittedData = new ArrayList<>();
+      for (IndexedFile file : dataFiles) {
+        if (admissionLimits.admit(file)) {
+          admittedData.add(file);
+        } else {
+          break;
+        }
+      }
+    }
+
+    List<IndexedFile> result = new ArrayList<>();
+    baseSentinel.ifPresent(result::add);
+    result.addAll(admittedData);
+    // Append END only if the entire commit was admitted. Partial admission leaves the offset
+    // on the last admitted file so the next batch resumes from there.
+    if (admittedData.size() >= dataFiles.size()) {
+      result.add(IndexedFile.sentinel(commitVersion, DeltaSourceOffset.END_INDEX()));
+    }
+    return result;
+  }
+
+  /** Converts a list of IndexedFiles to a Scala Seq of AdmittableFile for batch admission. */
+  private static Seq<AdmittableFile> toScalaAdmittableSeq(List<IndexedFile> files) {
+    return CollectionConverters.asScala(
+            files.stream().map(f -> (AdmittableFile) f).collect(Collectors.toList()))
+        .toSeq();
+  }
+
+  private static boolean isCDFEnabled(Metadata metadata) {
+    // Fall back to the deprecated delta.enableChangeDataCapture key when
+    // delta.enableChangeDataFeed is not set.
+    Map<String, String> config = metadata.getConfiguration();
+    String value = config.get("delta.enableChangeDataFeed");
+    if (value == null) {
+      value = config.get("delta.enableChangeDataCapture");
+    }
+    return value != null && value.equalsIgnoreCase("true");
+  }
+
+  /** Checks if the endOffset is at BASE_INDEX for the given version (early exit condition). */
+  private static boolean isEndOffsetAtBaseIndex(
+      Optional<DeltaSourceOffset> endOffsetOpt, long version) {
+    return endOffsetOpt.isPresent()
+        && endOffsetOpt.get().reservoirVersion() == version
+        && endOffsetOpt.get().index() == DeltaSourceOffset.BASE_INDEX();
+  }
+
+  /**
+   * Validates a metadata action: checks for duplicates and read-incompatible schema changes.
+   *
+   * @return the validated metadata (for assignment back to the caller's tracking variable)
+   */
+  private Metadata validateMetadata(
+      Metadata metadata,
+      Metadata existing,
+      long version,
+      long startVersion,
+      Optional<DeltaSourceOffset> endOffsetOpt,
+      boolean verifyMetadataAction) {
+    Preconditions.checkArgument(
+        existing == null,
+        "Should not encounter two metadata actions in the same commit of version %d",
+        version);
+    // When schema tracking is enabled, verifyMetadataAction is false — the handler manages
+    // schema changes through the barrier protocol instead.
+    if (verifyMetadataAction) {
+      Long batchEndVersion = endOffsetOpt.map(DeltaSourceOffset::reservoirVersion).orElse(null);
+      checkReadIncompatibleSchemaChanges(
+          metadata,
+          version,
+          startVersion,
+          batchEndVersion,
+          /* validatedDuringStreamStart= */ false);
+    }
+    return metadata;
   }
 }

@@ -177,8 +177,6 @@ case class DeltaSink(
    */
   private def getWriteSchema(
       protocol: Protocol, metadata: Metadata, dataSchema: StructType): StructType = {
-    if (!sqlConf.getConf(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS)) return dataSchema
-
     if (canOverwriteSchema) return dataSchema
 
     val typeWideningMode = if (canMergeSchema && TypeWidening.isEnabled(protocol, metadata)) {
@@ -198,8 +196,6 @@ case class DeltaSink(
 
   /** Casts columns in the given dataframe to match the target schema. */
   private def castDataIfNeeded(data: DataFrame, targetSchema: StructType): DataFrame = {
-    if (!sqlConf.getConf(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS)) return data
-
     // We should respect 'spark.sql.caseSensitive' here but writing to a Delta sink is currently
     // case insensitive so we align with that.
     val targetTypes =

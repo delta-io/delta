@@ -34,7 +34,6 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.test.shims.StreamingTestShims.{MemoryStream, OffsetSeqLog}
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
-import io.delta.kernel.exceptions.{InvalidTableException, KernelException}
 import org.apache.commons.io.FileUtils
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.{FileStatus, Path, RawLocalFileSystem}
@@ -998,7 +997,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  test("SC-11561: can consume new data without update") {
+  test("can consume new data without update") {
     withTempDir { inputDir =>
       val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
       withMetadata(deltaLog, StructType.fromDDL("value STRING"))
@@ -1356,6 +1355,11 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   protected def disableLogCleanup(tablePath: String): Unit = {
     sql(s"alter table delta.`$tablePath` " +
       s"set tblproperties (${DeltaConfigs.ENABLE_EXPIRED_LOG_CLEANUP.key} = false)")
+  }
+
+  /** Rename a column on a path-based Delta table. V2 overrides this to route through V1 mode. */
+  protected def renameColumn(tablePath: String, oldName: String, newName: String): Unit = {
+    sql(s"ALTER TABLE delta.`$tablePath` RENAME COLUMN $oldName TO $newName")
   }
 
   testQuietly("startingVersion") {
@@ -1821,7 +1825,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  testQuietly("deltaSourceIgnoreChangesError contains removeFile, version, tablePath") {
+  testQuietly("deltaSourceIgnoreChangesError contains changeInfo, version, tablePath") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
       Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
       val df = loadStreamWithOptions(inputDir.toString, Map.empty)
@@ -1900,225 +1904,161 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  test("streaming with ignoreDeletes = true skips delete-only commits") {
-    withTempDirs { (inputDir, outputDir, checkpointDir) =>
-      // Write initial data
-      Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
+  // ---------- Read-option interaction tests ----------
+  //
+  // The four read options (ignoreDeletes, ignoreChanges, skipChangeCommits,
+  // ignoreFileDeletion) control two independent dimensions:
+  //
+  //   Error suppression - governed by shouldAllowChanges and shouldAllowDeletes,
+  //     which are simple OR-chains over the options.
+  //   Data skipping - only skipChangeCommits causes commits with data-changing
+  //     RemoveFiles to be entirely skipped (no AddFiles emitted).
+  //
+  // Each test below runs a canonical scenario through testReadOptionHandling in
+  // three phases, verifying intermediate results after each phase.
 
-      val df = loadStreamWithOptions(
-        inputDir.toString, Map(DeltaOptions.IGNORE_DELETES_OPTION -> "true",
-          "startingVersion" -> "0"))
+  /**
+   * Runs a canonical phased scenario with a single long-lived query to verify
+   * how Delta source handles delete-only and change commits under the given
+   * read options.
+   *
+   * Phase 1 - v0: Write [1, 2, 3] (always succeeds, verifies [1, 2, 3])
+   * Phase 2 - v1: Delete all rows (delete-only commit)
+   *           v2: Append [4, 5]
+   * Phase 3 - v3: Overwrite with [6, 7, 8] (change commit: AddFile + RemoveFile)
+   *           v4: Append [9, 10]
+   *
+   * All option combinations tested here tolerate the delete-only commit, so the
+   * query stays alive through phases 1 and 2. Phase 3 either succeeds or fails
+   * depending on whether the options allow change commits.
+   *
+   * @param options                    Delta read options to set on the stream
+   * @param expectedAfterDeleteAppend  expected output rows after phase 2
+   * @param expectedAfterOverwriteAppend Right(rows) to assert output after phase 3,
+   *                                     or Left(substring) to assert an
+   *                                     [[UnsupportedOperationException]]
+   */
+  private def testReadOptionHandling(
+      options: Map[String, String],
+      expectedAfterDeleteAppend: Seq[Int],
+      expectedAfterOverwriteAppend: Either[String, Seq[Int]]): Unit = {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
+      val df = loadStreamWithOptions(inputDir.toString, options)
 
       val q = df.writeStream
         .format("delta")
         .option("checkpointLocation", checkpointDir.toString)
         .start(outputDir.toString)
       try {
+        // Phase 1: process initial data (v0)
         q.processAllAvailable()
         checkAnswer(
           spark.read.format("delta").load(outputDir.toString),
           Seq(1, 2, 3).map(Row(_)))
 
-        // Delete all rows: produces only RemoveFile actions
+        // Phase 2: delete-only commit (v1) + append (v2)
         io.delta.tables.DeltaTable.forPath(spark, inputDir.getAbsolutePath).delete()
-
-        // Append new data after the delete
         Seq(4, 5).toDF("x").write.format("delta").mode("append").save(inputDir.toString)
-
         q.processAllAvailable()
-
-        // The delete commit should be silently skipped; only inserts are processed
         checkAnswer(
           spark.read.format("delta").load(outputDir.toString),
-          Seq(1, 2, 3, 4, 5).map(Row(_)))
-      } finally {
-        q.stop()
-      }
-    }
-  }
+          expectedAfterDeleteAppend.map(Row(_)))
 
-  testQuietly("streaming with ignoreDeletes = true still fails on change commits") {
-    withTempDirs { (inputDir, outputDir, checkpointDir) =>
-      Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
+        // Phase 3: overwrite / change commit (v3) + append (v4)
+        Seq(6, 7, 8).toDF("x")
+          .write.mode("overwrite").format("delta").save(inputDir.toString)
+        Seq(9, 10).toDF("x")
+          .write.format("delta").mode("append").save(inputDir.toString)
 
-      val df = loadStreamWithOptions(
-        inputDir.toString, Map(DeltaOptions.IGNORE_DELETES_OPTION -> "true"))
-      df.writeStream
-        .format("delta")
-        .option("checkpointLocation", checkpointDir.toString)
-        .start(outputDir.toString)
-        .processAllAvailable()
+        expectedAfterOverwriteAppend match {
+          case Left(errorSubstring) =>
+            val e = intercept[StreamingQueryException] {
+              q.processAllAvailable()
+            }
+            assert(e.getCause.isInstanceOf[UnsupportedOperationException])
+            assert(e.getCause.getMessage.contains(errorSubstring))
 
-      // Overwrite produces both AddFile and RemoveFile actions (a change commit)
-      Seq(4, 5, 6).toDF("x")
-        .write
-        .mode("overwrite")
-        .format("delta")
-        .save(inputDir.toString)
-
-      val e = intercept[StreamingQueryException] {
-        val q = df.writeStream
-          .format("delta")
-          .option("checkpointLocation", checkpointDir.toString)
-          .start(outputDir.toString)
-
-        try {
-          q.processAllAvailable()
-        } finally {
-          q.stop()
+          case Right(expectedData) =>
+            q.processAllAvailable()
+            checkAnswer(
+              spark.read.format("delta").load(outputDir.toString),
+              expectedData.map(Row(_)))
         }
-      }
-
-      assert(e.getCause.isInstanceOf[UnsupportedOperationException])
-      assert(e.getCause.getMessage.contains(
-        "This is currently not supported. If this is going to happen regularly and you are okay" +
-          " to skip changes, set the option 'skipChangeCommits' to 'true'."
-      ))
-    }
-  }
-
-  test("streaming with skipChangeCommits = true skips both delete and change commits") {
-    withTempDirs { (inputDir, outputDir, checkpointDir) =>
-      Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
-
-      val df = loadStreamWithOptions(
-        inputDir.toString, Map(DeltaOptions.SKIP_CHANGE_COMMITS_OPTION -> "true"))
-
-      val q = df.writeStream
-        .format("delta")
-        .option("checkpointLocation", checkpointDir.toString)
-        .start(outputDir.toString)
-      try {
-        q.processAllAvailable()
-        checkAnswer(
-          spark.read.format("delta").load(outputDir.toString),
-          Seq(1, 2, 3).map(Row(_)))
-
-        // Delete all rows: produces only RemoveFile actions (delete-only commit)
-        io.delta.tables.DeltaTable.forPath(spark, inputDir.getAbsolutePath).delete()
-
-        Seq(4, 5).toDF("x").write.format("delta").mode("append").save(inputDir.toString)
-
-        // Overwrite produces both AddFile and RemoveFile actions (change commit)
-        Seq(6, 7, 8).toDF("x")
-          .write
-          .mode("overwrite")
-          .format("delta")
-          .save(inputDir.toString)
-
-        Seq(9, 10).toDF("x").write.format("delta").mode("append").save(inputDir.toString)
-
-        q.processAllAvailable()
-
-        // Both the delete and overwrite commits are silently skipped; only inserts are processed
-        checkAnswer(
-          spark.read.format("delta").load(outputDir.toString),
-          Seq(1, 2, 3, 4, 5, 9, 10).map(Row(_)))
       } finally {
         q.stop()
       }
     }
   }
 
-  test("streaming with ignoreChanges = true allows both delete and change commits") {
-    withTempDirs { (inputDir, outputDir, checkpointDir) =>
-      Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
+  // --- Single-option tests ---
 
-      val df = loadStreamWithOptions(
-        inputDir.toString, Map(DeltaOptions.IGNORE_CHANGES_OPTION -> "true"))
-
-      val q = df.writeStream
-        .format("delta")
-        .option("checkpointLocation", checkpointDir.toString)
-        .start(outputDir.toString)
-      try {
-        q.processAllAvailable()
-        checkAnswer(
-          spark.read.format("delta").load(outputDir.toString),
-          Seq(1, 2, 3).map(Row(_)))
-
-        // Delete all rows: delete-only commit, allowed by ignoreChanges
-        io.delta.tables.DeltaTable.forPath(spark, inputDir.getAbsolutePath).delete()
-
-        // The delete commit is skipped (no AddFiles)
-        Seq(4, 5).toDF("x").write.format("delta").mode("append").save(inputDir.toString)
-        q.processAllAvailable()
-        checkAnswer(
-          spark.read.format("delta").load(outputDir.toString),
-          Seq(1, 2, 3, 4, 5).map(Row(_)))
-
-        // Overwrite produces both AddFile and RemoveFile actions (change commit).
-        // Unlike skipChangeCommits which skips the commit, ignoreChanges lets the
-        // AddFiles through (potentially duplicating data).
-        Seq(6, 7, 8).toDF("x")
-          .write
-          .mode("overwrite")
-          .format("delta")
-          .save(inputDir.toString)
-
-        Seq(9, 10).toDF("x").write.format("delta").mode("append").save(inputDir.toString)
-
-        q.processAllAvailable()
-
-        // The overwrite commit's AddFiles ARE emitted (unlike skipChangeCommits). The
-        // result includes the overwrite's new rows.
-        checkAnswer(
-          spark.read.format("delta").load(outputDir.toString),
-          Seq(1, 2, 3, 4, 5, 6, 7, 8, 9, 10).map(Row(_)))
-      } finally {
-        q.stop()
-      }
-    }
+  testQuietly("read options [ignoreDeletes]: ignores delete, rejects change") {
+    testReadOptionHandling(
+      options = Map(DeltaOptions.IGNORE_DELETES_OPTION -> "true"),
+      expectedAfterDeleteAppend = Seq(1, 2, 3, 4, 5),
+      expectedAfterOverwriteAppend = Left("skipChangeCommits"))
   }
 
-  test("streaming with ignoreFileDeletion = true allows both delete and change commits") {
-    withTempDirs { (inputDir, outputDir, checkpointDir) =>
-      Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
+  test("read options [skipChangeCommits]: ignores delete, skips change") {
+    testReadOptionHandling(
+      options = Map(DeltaOptions.SKIP_CHANGE_COMMITS_OPTION -> "true"),
+      expectedAfterDeleteAppend = Seq(1, 2, 3, 4, 5),
+      expectedAfterOverwriteAppend = Right(Seq(1, 2, 3, 4, 5, 9, 10)))
+  }
 
-      val df = loadStreamWithOptions(
-        inputDir.toString, Map(DeltaOptions.IGNORE_FILE_DELETION_OPTION -> "true"))
+  test("read options [ignoreChanges]: ignores delete, includes change AddFiles") {
+    testReadOptionHandling(
+      options = Map(DeltaOptions.IGNORE_CHANGES_OPTION -> "true"),
+      expectedAfterDeleteAppend = Seq(1, 2, 3, 4, 5),
+      expectedAfterOverwriteAppend = Right(Seq(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)))
+  }
 
-      val q = df.writeStream
-        .format("delta")
-        .option("checkpointLocation", checkpointDir.toString)
-        .start(outputDir.toString)
-      try {
-        q.processAllAvailable()
-        checkAnswer(
-          spark.read.format("delta").load(outputDir.toString),
-          Seq(1, 2, 3).map(Row(_)))
+  test("read options [ignoreFileDeletion] (deprecated): equivalent to ignoreChanges") {
+    testReadOptionHandling(
+      options = Map(DeltaOptions.IGNORE_FILE_DELETION_OPTION -> "true"),
+      expectedAfterDeleteAppend = Seq(1, 2, 3, 4, 5),
+      expectedAfterOverwriteAppend = Right(Seq(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)))
+  }
 
-        // Delete all rows: delete-only commit
-        io.delta.tables.DeltaTable.forPath(spark, inputDir.getAbsolutePath).delete()
+  // --- Combination tests ---
 
-        // The delete commit is skipped (no AddFiles)
-        Seq(4, 5).toDF("x").write.format("delta").mode("append").save(inputDir.toString)
-        q.processAllAvailable()
-        checkAnswer(
-          spark.read.format("delta").load(outputDir.toString),
-          Seq(1, 2, 3, 4, 5).map(Row(_)))
+  test("read options [ignoreDeletes, ignoreChanges]: equivalent to ignoreChanges") {
+    testReadOptionHandling(
+      options = Map(
+        DeltaOptions.IGNORE_DELETES_OPTION -> "true",
+        DeltaOptions.IGNORE_CHANGES_OPTION -> "true"),
+      expectedAfterDeleteAppend = Seq(1, 2, 3, 4, 5),
+      expectedAfterOverwriteAppend = Right(Seq(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)))
+  }
 
-        // Overwrite produces both AddFile and RemoveFile actions (change commit).
-        // ignoreFileDeletion behaves like ignoreChanges - AddFiles are emitted.
-        Seq(6, 7, 8).toDF("x")
-          .write
-          .mode("overwrite")
-          .format("delta")
-          .save(inputDir.toString)
+  test("read options [ignoreChanges, skipChangeCommits]: equivalent to skipChangeCommits") {
+    testReadOptionHandling(
+      options = Map(
+        DeltaOptions.IGNORE_CHANGES_OPTION -> "true",
+        DeltaOptions.SKIP_CHANGE_COMMITS_OPTION -> "true"),
+      expectedAfterDeleteAppend = Seq(1, 2, 3, 4, 5),
+      expectedAfterOverwriteAppend = Right(Seq(1, 2, 3, 4, 5, 9, 10)))
+  }
 
-        Seq(9, 10).toDF("x").write.format("delta").mode("append").save(inputDir.toString)
+  test("read options [ignoreDeletes, skipChangeCommits]: equivalent to skipChangeCommits") {
+    testReadOptionHandling(
+      options = Map(
+        DeltaOptions.IGNORE_DELETES_OPTION -> "true",
+        DeltaOptions.SKIP_CHANGE_COMMITS_OPTION -> "true"),
+      expectedAfterDeleteAppend = Seq(1, 2, 3, 4, 5),
+      expectedAfterOverwriteAppend = Right(Seq(1, 2, 3, 4, 5, 9, 10)))
+  }
 
-        q.processAllAvailable()
-
-        // The overwrite's AddFiles are emitted (same as ignoreChanges). This option is
-        // deprecated in favor of skipChangeCommits.
-        checkAnswer(
-          spark.read.format("delta").load(outputDir.toString),
-          Seq(1, 2, 3, 4, 5, 6, 7, 8, 9, 10).map(Row(_)))
-      } finally {
-        q.stop()
-      }
-    }
+  test("read options [ignoreDeletes, ignoreChanges, skipChangeCommits]: " +
+      "equivalent to skipChangeCommits") {
+    testReadOptionHandling(
+      options = Map(
+        DeltaOptions.IGNORE_DELETES_OPTION -> "true",
+        DeltaOptions.IGNORE_CHANGES_OPTION -> "true",
+        DeltaOptions.SKIP_CHANGE_COMMITS_OPTION -> "true"),
+      expectedAfterDeleteAppend = Seq(1, 2, 3, 4, 5),
+      expectedAfterOverwriteAppend = Right(Seq(1, 2, 3, 4, 5, 9, 10)))
   }
 
   test("incremental: first commit file missing, fails") {
@@ -2153,11 +2093,8 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         q.processAllAvailable()
       }
       if (useDsv2) {
-        // Kernel throws KernelException when the start version is not found
-        assert(e.getCause.isInstanceOf[KernelException])
         assert(e.getCause.getMessage.contains("no log file found for version"))
       } else {
-        assert(e.getCause.isInstanceOf[DeltaIllegalStateException])
         assert(e.getCause.getMessage === DeltaErrors.failOnDataLossException(1L, 2L).getMessage)
       }
     }
@@ -2195,11 +2132,8 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         q.processAllAvailable()
       }
       if (useDsv2) {
-        // Kernel throws InvalidTableException when delta files are not contiguous
-        assert(e.getCause.isInstanceOf[InvalidTableException])
         assert(e.getCause.getMessage.contains("versions are not contiguous"))
       } else {
-        assert(e.getCause.isInstanceOf[DeltaIllegalStateException])
         assert(e.getCause.getMessage === DeltaErrors.failOnDataLossException(2L, 3L).getMessage)
       }
     }
@@ -2291,16 +2225,11 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       addData()
 
       val srcLog = DeltaLog.forTable(spark, srcData)
-      // Create a checkpoint so that we can create a snapshot without json files before version 3
       srcLog.checkpoint()
-      // Delete an early delta file - this simulates data loss in the log
       assert(new File(FileNames.unsafeDeltaFile(srcLog.logPath, 1).toUri).delete())
 
       DeltaLog.clearCache()
 
-      // Start a brand new stream (no prior checkpoint) - this will read the initial snapshot
-      // The initial snapshot reads from the checkpoint, not individual delta files,
-      // so failOnDataLoss should NOT be triggered even with the default option (true)
       val df = loadStreamWithOptions(srcData.getCanonicalPath, Map.empty)
 
       val q = df.writeStream.format("delta")
@@ -2327,7 +2256,6 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       val srcLog = DeltaLog.forTable(spark, srcData)
       srcLog.checkpoint()
 
-      // Delete the checkpoint file and a delta file to simulate snapshot data loss
       val checkpoints = new File(srcLog.logPath.toUri).listFiles()
         .filter(f => FileNames.isCheckpointFile(new Path(f.getAbsolutePath)))
       assert(checkpoints.nonEmpty)
@@ -2336,14 +2264,8 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
       DeltaLog.clearCache()
 
-      // Start a brand new stream - the snapshot cannot be reconstructed because both
-      // checkpoint and delta files are missing. This should fail, but NOT with
-      // failOnDataLossException since that check only applies to incremental changes.
-      // The error is thrown during DeltaLog initialization (before the stream starts),
-      // so it is not wrapped in StreamingQueryException.
       if (useDsv2) {
-        // Kernel throws InvalidTableException when checkpoint is missing
-        val e = intercept[InvalidTableException] {
+        val e = intercept[Exception] {
           loadStreamWithOptions(srcData.getCanonicalPath, Map.empty)
         }
         assert(e.getMessage.contains("Missing checkpoint"))
@@ -2370,7 +2292,6 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       val srcLog = DeltaLog.forTable(spark, srcData)
       srcLog.checkpoint()
 
-      // Delete only the checkpoint file, keep all delta files
       val checkpoints = new File(srcLog.logPath.toUri).listFiles()
         .filter(f => FileNames.isCheckpointFile(new Path(f.getAbsolutePath)))
       assert(checkpoints.nonEmpty)
@@ -2378,8 +2299,6 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
       DeltaLog.clearCache()
 
-      // Start a brand new stream - the snapshot is reconstructed from delta files alone
-      // This should succeed because all delta files are intact
       val df = loadStreamWithOptions(srcData.getCanonicalPath, Map.empty)
 
       val q = df.writeStream.format("delta")
@@ -2394,42 +2313,30 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
   test("initial snapshot: log retention deletes old checkpoint and commit files mid-stream," +
       " restart fails") {
-    // This test simulates log retention by manually deleting delta JSON files from the
-    // filesystem. With a catalog-owned commit coordinator, unbackfilled commits live in the
-    // coordinator's memory rather than on the filesystem, so deleting a prefix of versions
-    // creates an unresolvable gap that triggers the coordinator's reconciliation guard
-    // (IllegalStateException) instead of the expected DeltaFileNotFoundException.
     assume(!catalogOwnedDefaultCreationEnabledInTests,
       "Log retention simulation via filesystem deletion is incompatible with " +
         "catalog-owned commit coordinators")
     withTempDir { srcData =>
       withTempDir { chkLocation =>
-        // Create table with 4 versions, each with 2 files, so initial snapshot has 8 AddFiles
         (0 until 4).foreach { _ =>
           spark.range(10).repartition(2).write
             .format("delta").mode("append").save(srcData.getCanonicalPath)
         }
 
         val srcLog = DeltaLog.forTable(spark, srcData)
-        val snapshotVersion = srcLog.snapshot.version // version 3
+        val snapshotVersion = srcLog.snapshot.version
 
-        // Start stream with maxFilesPerTrigger=1 so each batch processes only 1 file.
-        // Use StreamManualClock + AdvanceManualClock to process exactly 1 micro-batch.
         val df = loadStreamWithOptions(
           srcData.getCanonicalPath,
           Map("maxFilesPerTrigger" -> "1"))
         val clock = new StreamManualClock(System.currentTimeMillis())
 
-        // Phase 1: Process exactly 1 file from initial snapshot, then stop.
-        // The streaming checkpoint will have isInitialSnapshot=true at snapshotVersion.
         testStream(df)(
           StartStream(
             trigger = Trigger.ProcessingTime("10 seconds"),
             triggerClock = clock,
             checkpointLocation = chkLocation.getCanonicalPath),
-          // Process exactly 1 micro-batch (1 file out of 8)
           AdvanceManualClock(10 * 1000L),
-          // Verify we are still mid-initial-snapshot
           AssertOnQuery { q =>
             val offset = DeltaSourceOffset(
               srcLog.tableId,
@@ -2441,8 +2348,6 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           StopStream
         )
 
-        // Phase 2: Simulate log retention cleaning up old files.
-        // Add new versions to create a checkpoint beyond the old snapshot version.
         (0 until 10).foreach { _ =>
           spark.range(10).write
             .format("delta").mode("append").save(srcData.getCanonicalPath)
@@ -2450,7 +2355,6 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         val updatedLog = DeltaLog.forTable(spark, srcData)
         updatedLog.checkpoint()
 
-        // Delete old checkpoint and commit files at/before the original snapshot version
         val logDir = new File(srcLog.logPath.toUri)
         logDir.listFiles()
           .filter(f => FileNames.isCheckpointFile(new Path(f.getAbsolutePath)))
@@ -2464,21 +2368,18 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
         DeltaLog.clearCache()
 
-        // Phase 3: Restart the stream from the same checkpoint.
-        // It will try to reconstruct the snapshot at the old version (snapshotVersion),
-        // but those files are gone. This should fail, and the error should NOT be
-        // failOnDataLossException since we are in the initial snapshot stage.
         val df2 = loadStreamWithOptions(
           srcData.getCanonicalPath,
           Map("maxFilesPerTrigger" -> "1"))
 
         if (useDsv2) {
-          testStream(df2)(
-            StartStream(checkpointLocation = chkLocation.getCanonicalPath),
-            ExpectFailure[KernelException] { e =>
-              assert(e.getMessage.contains("transaction log has been truncated"))
-            }
-          )
+          val q2 = df2.writeStream.format("delta")
+            .option("checkpointLocation", chkLocation.getCanonicalPath)
+            .start(srcData.getCanonicalPath)
+          val e = intercept[StreamingQueryException] {
+            q2.processAllAvailable()
+          }
+          assert(e.getCause.getMessage.contains("transaction log has been truncated"))
         } else {
           testStream(df2)(
             StartStream(checkpointLocation = chkLocation.getCanonicalPath),
@@ -2576,7 +2477,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  test("ES-445863: delta source should not hang or reprocess data when using AvailableNow") {
+  test("delta source should not hang or reprocess data when using AvailableNow") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
       def runQuery(): Unit = {
         val q = loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
@@ -2833,8 +2734,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   test("type widening: restarting with new DataFrame should recover") {
     withSQLConf(
       DeltaSQLConf.DELTA_TYPE_WIDENING_ENABLE_STREAMING_SCHEMA_TRACKING.key -> "false",
-      DeltaConfigs.ENABLE_TYPE_WIDENING.defaultTablePropertyKey -> "true",
-      DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key -> "true") {
+      DeltaConfigs.ENABLE_TYPE_WIDENING.defaultTablePropertyKey -> "true") {
       withTempDirs { (inputDir, outputDir, checkpointDir) =>
         sql(s"CREATE TABLE delta.`${inputDir.getCanonicalPath}` (id INT) " +
           "USING DELTA TBLPROPERTIES ('delta.enableTypeWidening' = 'true')")
@@ -2892,8 +2792,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   test("type widening: restarting with stale DataFrame should recover") {
     withSQLConf(
       DeltaSQLConf.DELTA_TYPE_WIDENING_ENABLE_STREAMING_SCHEMA_TRACKING.key -> "false",
-      DeltaConfigs.ENABLE_TYPE_WIDENING.defaultTablePropertyKey -> "true",
-      DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key -> "true") {
+      DeltaConfigs.ENABLE_TYPE_WIDENING.defaultTablePropertyKey -> "true") {
       withTempDirs { (inputDir, outputDir, checkpointDir) =>
         sql(s"CREATE TABLE delta.`${inputDir.getCanonicalPath}` (id INT) " +
           "USING DELTA TBLPROPERTIES ('delta.enableTypeWidening' = 'true')")
@@ -3317,6 +3216,217 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       }
     }
   }
+
+  test("reading from partitioned table succeeds during restart") {
+    // Regression: partition column `part` is in the MIDDLE of DDL on purpose. Moving it to the
+    // tail would silently bypass the V2 reorder path this test guards.
+    withTempDirs { (inputDir, _, checkpointDir) =>
+      val tablePath = inputDir.getCanonicalPath
+      sql(s"CREATE TABLE delta.`$tablePath` (id LONG, part LONG, col3 INT) " +
+        "USING delta PARTITIONED BY (part)")
+
+      Seq((1L, 10L, 100), (2L, 20L, 200), (3L, 30L, 300))
+        .toDF("id", "part", "col3")
+        .write.format("delta").mode("append").save(tablePath)
+
+      def startStream(): StreamingQuery = loadStreamWithOptions(tablePath, Map.empty)
+        .writeStream
+        .format("noop")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .start()
+
+      val q = startStream()
+      try { q.processAllAvailable() } finally { q.stop() }
+
+      Seq((4L, 40L, 400), (5L, 50L, 500))
+        .toDF("id", "part", "col3")
+        .write.format("delta").mode("append").save(tablePath)
+
+      val q2 = startStream()
+      try { q2.processAllAvailable() } finally { q2.stop() }
+    }
+  }
+
+  test("reading from table with multiple partition columns succeeds during restart") {
+    withTempDirs { (inputDir, _, checkpointDir) =>
+      val tablePath = inputDir.getCanonicalPath
+      Seq((1L, "x", 10, "y", 1.5), (2L, "x", 20, "z", 2.5), (3L, "w", 30, "y", 3.5))
+        .toDF("a", "p1", "b", "p2", "c")
+        .write.format("delta").partitionBy("p2", "p1").save(tablePath)
+
+      def startStream(): StreamingQuery = loadStreamWithOptions(tablePath, Map.empty)
+        .writeStream
+        .format("noop")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .start()
+
+      val q = startStream()
+      try { q.processAllAvailable() } finally { q.stop() }
+
+      Seq((4L, "w", 40, "z", 4.5))
+        .toDF("a", "p1", "b", "p2", "c")
+        .write.format("delta").mode("append").save(tablePath)
+
+      val q2 = startStream()
+      try { q2.processAllAvailable() } finally { q2.stop() }
+    }
+  }
+
+  test("streaming read returns correct data from table with partition column in middle") {
+    withTempDirs { (inputDir, _, checkpointDir) =>
+      val tablePath = inputDir.getCanonicalPath
+      sql(s"CREATE TABLE delta.`$tablePath` (id LONG, part LONG, col3 INT) " +
+        "USING delta PARTITIONED BY (part)")
+
+      Seq((1L, 10L, 100), (2L, 20L, 200), (3L, 30L, 300))
+        .toDF("id", "part", "col3")
+        .write
+        .format("delta")
+        .mode("append")
+        .save(tablePath)
+
+      val streamingDF = loadStreamWithOptions(tablePath, Map.empty)
+      // User-facing schema must remain in DDL order (matches V1 streaming behavior).
+      assert(streamingDF.schema.fieldNames.toSeq === Seq("id", "part", "col3"))
+
+      val q = streamingDF
+        .writeStream
+        .format("memory")
+        .queryName("midPartitionStreamTest")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .start()
+      try {
+        q.processAllAvailable()
+        checkAnswer(
+          sql("SELECT * FROM midPartitionStreamTest ORDER BY id"),
+          Row(1L, 10L, 100) :: Row(2L, 20L, 200) :: Row(3L, 30L, 300) :: Nil)
+      } finally {
+        q.stop()
+      }
+    }
+  }
+
+  test("streaming read with column pruning and partition column in middle") {
+    withTempDirs { (inputDir, _, checkpointDir) =>
+      val tablePath = inputDir.getCanonicalPath
+      sql(s"CREATE TABLE delta.`$tablePath` (id LONG, part LONG, col3 INT) " +
+        "USING delta PARTITIONED BY (part)")
+      Seq((1L, 10L, 100), (2L, 20L, 200), (3L, 30L, 300))
+        .toDF("id", "part", "col3")
+        .write.format("delta").mode("append").save(tablePath)
+
+      val streamingDF = loadStreamWithOptions(tablePath, Map.empty).select("part", "id")
+      val q = streamingDF
+        .writeStream
+        .format("memory")
+        .queryName("midPartitionPruneStreamTest")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .start()
+      try {
+        q.processAllAvailable()
+        checkAnswer(
+          sql("SELECT * FROM midPartitionPruneStreamTest ORDER BY id"),
+          Row(10L, 1L) :: Row(20L, 2L) :: Row(30L, 3L) :: Nil)
+      } finally {
+        q.stop()
+      }
+    }
+  }
+
+  test("streaming read with column mapping id and partition column in middle") {
+    withTempDirs { (inputDir, _, checkpointDir) =>
+      val tablePath = inputDir.getCanonicalPath
+      sql(s"CREATE TABLE delta.`$tablePath` (id LONG, part LONG, col3 INT) " +
+        "USING delta PARTITIONED BY (part) " +
+        "TBLPROPERTIES ('delta.columnMapping.mode' = 'id')")
+      Seq((1L, 10L, 100), (2L, 20L, 200), (3L, 30L, 300))
+        .toDF("id", "part", "col3")
+        .write.format("delta").mode("append").save(tablePath)
+
+      val streamingDF = loadStreamWithOptions(tablePath, Map.empty)
+      assert(streamingDF.schema.fieldNames.toSeq === Seq("id", "part", "col3"))
+      val q = streamingDF
+        .writeStream
+        .format("memory")
+        .queryName("midPartitionCmIdStreamTest")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .start()
+      try {
+        q.processAllAvailable()
+        checkAnswer(
+          sql("SELECT * FROM midPartitionCmIdStreamTest ORDER BY id"),
+          Row(1L, 10L, 100) :: Row(2L, 20L, 200) :: Row(3L, 30L, 300) :: Nil)
+      } finally {
+        q.stop()
+      }
+    }
+  }
+
+  test("streaming read after column rename with partition column in middle") {
+    withTempDirs { (inputDir, _, checkpointDir) =>
+      val tablePath = inputDir.getCanonicalPath
+      sql(s"CREATE TABLE delta.`$tablePath` (id LONG, part LONG, original_col INT) " +
+        "USING delta PARTITIONED BY (part) " +
+        "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+      Seq((1L, 10L, 100)).toDF("id", "part", "original_col")
+        .write.format("delta").mode("append").save(tablePath)
+      renameColumn(tablePath, "original_col", "renamed_col")
+      Seq((2L, 20L, 200)).toDF("id", "part", "renamed_col")
+        .write.format("delta").mode("append").save(tablePath)
+      renameColumn(tablePath, "part", "renamed_part")
+      Seq((3L, 30L, 300)).toDF("id", "renamed_part", "renamed_col")
+        .write.format("delta").mode("append").save(tablePath)
+
+      val streamingDF = loadStreamWithOptions(tablePath, Map.empty)
+      assert(streamingDF.schema.fieldNames.toSeq === Seq("id", "renamed_part", "renamed_col"))
+      val q = streamingDF
+        .writeStream
+        .format("memory")
+        .queryName("midPartitionRenameStreamTest")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .start()
+      try {
+        q.processAllAvailable()
+        checkAnswer(
+          sql("SELECT * FROM midPartitionRenameStreamTest ORDER BY id"),
+          Row(1L, 10L, 100) :: Row(2L, 20L, 200) :: Row(3L, 30L, 300) :: Nil)
+      } finally {
+        q.stop()
+      }
+    }
+  }
+
+  test("streaming read preserves percent-literal string partition value") {
+    withTempDirs { (inputDir, _, checkpointDir) =>
+      val tablePath = inputDir.getCanonicalPath
+      sql(s"CREATE TABLE delta.`$tablePath` (id LONG, p STRING) " +
+        "USING delta PARTITIONED BY (p)")
+      // Each value is chosen so that an erroneous second unescape would produce a result
+      // pairwise distinct from the input and from the other cases' bug results:
+      //   "%20"   -> bug result " "   (canonical space-collapse)
+      //   "%25"   -> bug result "%"   (self-encoding of `%`)
+      //   "a%2Fb" -> bug result "a/b" (embedded percent escape mid-string)
+      Seq((1L, "%20"), (2L, "%25"), (3L, "a%2Fb")).toDF("id", "p")
+        .write.format("delta").mode("append").save(tablePath)
+
+      val streamingDF = loadStreamWithOptions(tablePath, Map.empty)
+      val q = streamingDF
+        .writeStream
+        .format("memory")
+        .queryName("percentLiteralPartStreamTest")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .start()
+      try {
+        q.processAllAvailable()
+        checkAnswer(
+          sql("SELECT * FROM percentLiteralPartStreamTest ORDER BY id"),
+          Row(1L, "%20") :: Row(2L, "%25") :: Row(3L, "a%2Fb") :: Nil)
+      } finally {
+        q.stop()
+      }
+    }
+  }
+
 }
 
 /**

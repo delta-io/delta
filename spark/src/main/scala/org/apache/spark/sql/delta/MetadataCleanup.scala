@@ -199,7 +199,7 @@ trait MetadataCleanup extends DeltaLogging {
    * protocol we skip the cleanup.
    */
   private def metadataCleanupAllowed(
-      snapshot: Snapshot,
+      snapshot: SnapshotDescriptor,
       fileCutOffTime: Long): Boolean = {
     def expandVersionRange(currentRange: VersionRange, versionToCover: Long): VersionRange =
       versionRange(currentRange.start.min(versionToCover), currentRange.end.max(versionToCover))

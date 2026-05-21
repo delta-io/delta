@@ -21,14 +21,16 @@ import java.util.{Locale, TimeZone}
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
+import scala.util.Try
 
+import com.databricks.spark.util.TagDefinition
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.Action.logSchema
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CommitCoordinatorClient, CommitCoordinatorProvider, CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.expressions.EncodeNestedVariantAsZ85String
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
-import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider}
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DataSkippingReader
@@ -57,7 +59,7 @@ import org.apache.spark.util.Utils
  * A description of a Delta [[Snapshot]], including basic information such its [[DeltaLog]]
  * metadata, protocol, and version.
  */
-trait SnapshotDescriptor {
+trait SnapshotDescriptor extends DeltaLoggingProvider {
   def deltaLog: DeltaLog
   def version: Long
   def metadata: Metadata
@@ -73,6 +75,13 @@ trait SnapshotDescriptor {
     version >= 0 &&
       protocol.readerAndWriterFeatureNames.contains(CatalogOwnedTableFeature.name)
   }
+
+  /**
+   * Recording tags for this snapshot, anchored to the snapshot's own `metadata.id` (as opposed to
+   * the latest volatile metadata id that a bare [[DeltaLog]] would report).
+   */
+  override def getCommonTags: Map[TagDefinition, String] =
+    deltaLog.getCommonTags(Try(metadata.id).getOrElse(null))
 }
 
 /**
@@ -237,7 +246,8 @@ class Snapshot(
    * Use [[stateReconstruction]] to create a representation of the actions in this table.
    * Cache the resultant output.
    */
-  private lazy val cachedState = recordFrameProfile("Delta", "snapshot.cachedState") {
+  private lazy val cachedState =
+    recordFrameProfile("Delta", "snapshot.cachedState") {
     stateReconstructionTriggered = true
     cacheDS(stateReconstruction, s"Delta Table State #$version - $redactedPath")
   }
@@ -368,7 +378,8 @@ class Snapshot(
   }
 
   /** The current set of actions in this [[Snapshot]] as a typed Dataset. */
-  def stateDS: Dataset[SingleAction] = recordFrameProfile("Delta", "stateDS") {
+  def stateDS: Dataset[SingleAction] =
+    recordFrameProfile("Delta", "stateDS") {
     cachedState.getDS
   }
 
@@ -649,7 +660,10 @@ class Snapshot(
     deletedRecordCountsHistogramOpt = checksumOpt.flatMap(_.deletedRecordCountsHistogramOpt)
       .orElse(Option.when(_computedStateTriggered)(deletedRecordCountsHistogramOpt).flatten)
       .filter(_ => deletionVectorsReadableAndHistogramEnabled),
-    histogramOpt = checksumOpt.flatMap(_.histogramOpt)
+    histogramOpt = Option.when(fileSizeHistogramEnabled) {
+      checksumOpt.flatMap(_.histogramOpt)
+        .orElse(Option.when(_computedStateTriggered)(fileSizeHistogram).flatten)
+    }.flatten
   )
 
   /** Returns the data schema of the table, used for reading stats */

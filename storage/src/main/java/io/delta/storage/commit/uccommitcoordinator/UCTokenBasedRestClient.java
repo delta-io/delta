@@ -20,6 +20,7 @@ import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.CommitFailedException;
 import io.delta.storage.commit.CoordinatedCommitsUtils;
 import io.delta.storage.commit.GetCommitsResponse;
+import io.delta.storage.commit.TableIdentifier;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
 import io.delta.storage.commit.uniform.IcebergMetadata;
@@ -45,12 +46,14 @@ import io.unitycatalog.client.model.CreateTable;
 import io.unitycatalog.client.model.DataSourceFormat;
 import io.unitycatalog.client.model.GetMetastoreSummaryResponse;
 import io.unitycatalog.client.model.TableType;
+import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.Path;
 
 import java.io.IOException;
 import java.net.URI;
 import java.util.*;
+import java.util.function.Supplier;
 
 /**
  * A REST client implementation of {@link UCClient} for interacting with Unity Catalog's commit
@@ -129,6 +132,22 @@ public class UCTokenBasedRestClient implements UCClient {
   }
 
   /**
+   * 6-arg constructor for symmetry with {@link UCDeltaTokenBasedRestClient}. The
+   * {@code credentialRenewalEnabled}, {@code credentialScopedFsEnabled}, and
+   * {@code hadoopConfSupplier} parameters are not used by this client and are accepted only so
+   * that callers can construct either client uniformly by reflection.
+   */
+  public UCTokenBasedRestClient(
+      String baseUri,
+      TokenProvider tokenProvider,
+      Map<String, String> appVersions,
+      boolean credentialRenewalEnabled,
+      boolean credentialScopedFsEnabled,
+      Supplier<Configuration> hadoopConfSupplier) {
+    this(baseUri, tokenProvider, appVersions);
+  }
+
+  /**
    * Ensures the client has not been closed. Must be called before any API operation.
    */
   private void ensureOpen() {
@@ -153,10 +172,12 @@ public class UCTokenBasedRestClient implements UCClient {
   public void commit(
       String tableId,
       URI tableUri,
+      TableIdentifier tableIdentifier,
       Optional<Commit> commit,
       Optional<Long> lastKnownBackfilledVersion,
-      boolean disown,
+      Optional<AbstractMetadata> oldMetadata,
       Optional<AbstractMetadata> newMetadata,
+      Optional<AbstractProtocol> oldProtocol,
       Optional<AbstractProtocol> newProtocol,
       Optional<UniformMetadata> uniform
   ) throws IOException, CommitFailedException, UCCommitCoordinatorException {
@@ -182,8 +203,8 @@ public class UCTokenBasedRestClient implements UCClient {
     uniform.flatMap(u -> u.getIcebergMetadata().map(this::toDeltaUniformIceberg))
         .ifPresent(iceberg -> deltaCommit.uniform(new DeltaUniform().iceberg(iceberg)));
 
-    // Note: protocol and disown are not part of the DeltaCommit schema in the Unity Catalog
-    // OpenAPI spec. They are intentionally not sent.
+    // Note: tableIdentifier, oldMetadata, oldProtocol, and newProtocol are not part of the
+    // DeltaCommit schema in the Unity Catalog OpenAPI spec. They are intentionally not sent.
 
     try {
       deltaCommitsApi.commit(deltaCommit);
@@ -196,6 +217,7 @@ public class UCTokenBasedRestClient implements UCClient {
   public GetCommitsResponse getCommits(
       String tableId,
       URI tableUri,
+      TableIdentifier tableIdentifier,
       Optional<Long> startVersion,
       Optional<Long> endVersion) throws IOException, UCCommitCoordinatorException {
     ensureOpen();
@@ -268,13 +290,15 @@ public class UCTokenBasedRestClient implements UCClient {
    *   <li>metadataLocation -> metadata_location</li>
    *   <li>convertedDeltaVersion -> converted_delta_version</li>
    *   <li>convertedDeltaTimestamp -> converted_delta_timestamp</li>
+   *   <li>baseConvertedDeltaVersion -> base_converted_delta_version (optional)</li>
    * </ul>
    */
   private DeltaUniformIceberg toDeltaUniformIceberg(IcebergMetadata iceberg) {
     return new DeltaUniformIceberg()
         .metadataLocation(URI.create(iceberg.getMetadataLocation()))
         .convertedDeltaVersion(iceberg.getConvertedDeltaVersion())
-        .convertedDeltaTimestamp(iceberg.getConvertedDeltaTimestamp());
+        .convertedDeltaTimestamp(iceberg.getConvertedDeltaTimestamp())
+        .baseConvertedDeltaVersion(iceberg.getBaseConvertedDeltaVersion().orElse(null));
   }
 
   /**

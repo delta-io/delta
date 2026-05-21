@@ -63,6 +63,10 @@ val protoVersion = "3.25.1"
 val grpcVersion = "1.62.2"
 val flinkVersion = "2.0.1"
 
+// Optional kernel version override. See `project/KernelVersion.scala` for the
+// resolution rule and `-DkernelVersion=<v>` semantics.
+val kernelVersionOpt: Option[String] = KernelVersion.kernelVersionOpt
+
 // Define the ecosystem support flags.
 val supportIceberg = CrossSparkVersions.getSparkVersionSpec().supportIceberg
 val supportHudi = CrossSparkVersions.getSparkVersionSpec().supportHudi
@@ -450,49 +454,74 @@ lazy val sparkV1Filtered = (project in file("spark-v1-filtered"))
 // ============================================================
 // Spark Module 3: sparkV2 (Kernel-based DSv2 connector, depends on v1-filtered)
 // ============================================================
-lazy val sparkV2 = (project in file("spark/v2"))
-  .dependsOn(sparkV1Filtered)
-  .dependsOn(kernelDefaults)
-  .dependsOn(kernelUnityCatalog % "compile->compile;test->test")
-  .dependsOn(goldenTables % "test")
-  .settings(
-    name := "delta-spark-v2",
-    commonSettings,
-    javafmtCheckSettings,
-    skipReleaseSettings, // Internal module - not published to Maven
-    CrossSparkVersions.sparkDependentSettings(sparkVersion),
-    exportJars := true,  // Export as JAR to avoid classpath conflicts
+lazy val sparkV2 = {
+  // When kernelVersionOpt is set, consume the kernel from Maven instead of the
+  // local source projects: drop the project dependsOn / kernelApi unmanagedJars
+  // wiring and add the matching Maven artifacts at that version.
+  val kernelSourceDeps: Project => Project = kernelVersionOpt match {
+    case None => p => p
+      .dependsOn(kernelDefaults)
+      .dependsOn(kernelUnityCatalog % "compile->compile;test->test")
+    case Some(_) => p => p
+  }
+  val kernelDepSettings: Seq[Setting[_]] = kernelVersionOpt match {
+    case None => Seq(
+      // make sure shaded kernel-api jar exists before compiling/testing
+      Compile / compile := (Compile / compile)
+        .dependsOn(kernelApi / Compile / packageBin).value,
+      Test / test := (Test / test)
+        .dependsOn(kernelApi / Compile / packageBin).value,
+      Test / unmanagedJars += (kernelApi / Test / packageBin).value,
+      Compile / unmanagedJars ++= Seq(
+        (kernelApi / Compile / packageBin).value
+      )
+    )
+    case Some(v) => Seq(
+      libraryDependencies ++= Seq(
+        "io.delta" % "delta-kernel-api" % v,
+        "io.delta" % "delta-kernel-defaults" % v,
+        "io.delta" % "delta-kernel-unitycatalog" % v,
+        // sparkV2 tests depend on UC test helpers (InMemoryUCClient,
+        // UCCatalogManagedTestUtils) that live in kernel-unitycatalog's test sources.
+        // Consume them via the published tests-classifier jar.
+        "io.delta" % "delta-kernel-unitycatalog" % v % Test classifier "tests"
+      )
+    )
+  }
 
-    Test / javaOptions ++= Seq("-ea"),
-    // make sure shaded kernel-api jar exists before compiling/testing
-    Compile / compile := (Compile / compile)
-      .dependsOn(kernelApi / Compile / packageBin).value,
-    Test / test := (Test / test)
-      .dependsOn(kernelApi / Compile / packageBin).value,
-    Test / unmanagedJars += (kernelApi / Test / packageBin).value,
-    Compile / unmanagedJars ++= Seq(
-      (kernelApi / Compile / packageBin).value
-    ),
-    libraryDependencies ++= Seq(
-      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
-      "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
-      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
+  kernelSourceDeps(Project("sparkV2", file("spark/v2")).dependsOn(sparkV1Filtered))
+    .dependsOn(goldenTables % "test")
+    .settings(
+      name := "delta-spark-v2",
+      commonSettings,
+      javafmtCheckSettings,
+      skipReleaseSettings, // Internal module - not published to Maven
+      CrossSparkVersions.sparkDependentSettings(sparkVersion),
+      exportJars := true,  // Export as JAR to avoid classpath conflicts
 
-      // Test dependencies
-      "org.junit.jupiter" % "junit-jupiter-api" % "5.11.4" % "test",
-      "org.junit.jupiter" % "junit-jupiter-engine" % "5.11.4" % "test",
-      "org.junit.jupiter" % "junit-jupiter-params" % "5.11.4" % "test",
-      "com.github.sbt.junit" % "jupiter-interface" % "0.17.0" % "test",
-      // Spark test classes for Scala/Java test utilities
-      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
-      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
-      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
-      // ScalaTest for test utilities (needed by Spark test classes)
-      "org.scalatest" %% "scalatest" % scalaTestVersion % "test"
-    ),
-    Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
-    TestParallelization.settings
-  )
+      Test / javaOptions ++= Seq("-ea"),
+      libraryDependencies ++= Seq(
+        "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
+        "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
+        "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
+
+        // Test dependencies
+        "org.junit.jupiter" % "junit-jupiter-api" % "5.11.4" % "test",
+        "org.junit.jupiter" % "junit-jupiter-engine" % "5.11.4" % "test",
+        "org.junit.jupiter" % "junit-jupiter-params" % "5.11.4" % "test",
+        "com.github.sbt.junit" % "jupiter-interface" % "0.17.0" % "test",
+        // Spark test classes for Scala/Java test utilities
+        "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
+        "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
+        "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
+        // ScalaTest for test utilities (needed by Spark test classes)
+        "org.scalatest" %% "scalatest" % scalaTestVersion % "test"
+      ),
+      Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
+      TestParallelization.settings
+    )
+    .settings(kernelDepSettings: _*)
+}
 
 
 // ============================================================
@@ -723,8 +752,119 @@ lazy val contribs = (project in file("contribs"))
   ).configureUnidoc()
 
 
-val unityCatalogVersion = sys.props.getOrElse("unityCatalogVersion", "0.4.0")
+// Unity Catalog version. Three modes, in priority order:
+//
+//  1. `-DuseDefaultUnityCatalogReleaseVersion=true`: use `defaultUnityCatalogReleaseVersion`
+//     below -- the last released UC version on Maven Central. For workflows that don't actually
+//     need DRC APIs (e.g. unidoc, lint) and want to skip the pinned UC build. Shared across
+//     workflows by reading this single constant, so bumping is a one-line change here.
+//
+//  2. Release mode: set `unityCatalogReleaseVersion = Some("0.5.0")` (or whatever released
+//     version the release branch ships against). sbt resolves the coordinate from Maven Central
+//     like any other dependency.
+//
+//  3. Pinned mode (default): leave `unityCatalogReleaseVersion = None`. The version string
+//     comes from `setup_unitycatalog_main.sh --print-version`, which encodes both the pinned
+//     UC main SHA and UC's declared base version; the script is the single source of truth.
+//     The same script (without the flag) publishes the matching jars to ~/.ivy2/local when
+//     `ensurePinnedUnityCatalog` decides they're missing.
+//
+// Override with -DunityCatalogVersion=<anything> for ad-hoc experiments.
+val unityCatalogReleaseVersion: Option[String] = None
+val defaultUnityCatalogReleaseVersion = "0.4.1"
+val useDefaultUnityCatalogReleaseVersion: Boolean =
+  sys.props.getOrElse("useDefaultUnityCatalogReleaseVersion", "false").toBoolean
+val unityCatalogSetupScript = "project/scripts/setup_unitycatalog_main.sh"
+
+// Lazy so release-mode / useDefaultUnityCatalogReleaseVersion builds never shell out.
+lazy val pinnedUnityCatalogVersion: String = {
+  import scala.sys.process._
+  Process(Seq("bash", unityCatalogSetupScript, "--print-version")).!!.trim
+}
+val unityCatalogVersion: String = sys.props.getOrElse(
+  "unityCatalogVersion",
+  if (useDefaultUnityCatalogReleaseVersion) defaultUnityCatalogReleaseVersion
+  else unityCatalogReleaseVersion.getOrElse(pinnedUnityCatalogVersion))
+
+/**
+ * Returns true when `current` is at least `target`. Numeric segments only; suffix after
+ * the first `-` (e.g. `-SNAPSHOT-abc1234`) is stripped before comparison.
+ */
+def isAtLeastVersion(current: String, target: String): Boolean = {
+  def parts(v: String): Seq[Int] =
+    v.takeWhile(_ != '-').split('.').iterator
+      .map(p => scala.util.Try(p.toInt).getOrElse(0)).toSeq
+  val cur = parts(current)
+  val tgt = parts(target)
+  val n = math.max(cur.length, tgt.length)
+  (0 until n).iterator
+    .map(i => (cur.lift(i).getOrElse(0), tgt.lift(i).getOrElse(0)))
+    .find { case (a, b) => a != b }
+    .forall { case (a, b) => a >= b }
+}
+
 val sparkUnityCatalogJacksonVersion = "2.15.4" // We are using Spark 4.0's Jackson version 2.15.x, to override Unity Catalog 0.3.0's version 2.18.x
+
+// Publishes the pinned UC jars to ~/.ivy2/local if they're not already cached there. Hooked
+// into `update` on the UC-dependent projects below, so plain `sbt testOnly ...` on a clean
+// checkout just works. No-op in release mode. Opt out with
+// `-Ddelta.autoBuildPinnedUnityCatalog=false`, in which case sbt errors with a pointer to the
+// setup script.
+val ensurePinnedUnityCatalog = taskKey[Unit](
+  "Publish the pinned UC jars locally if the Ivy coordinate isn't already cached.")
+
+// Extracted so the task body can read as a short guard rather than three nested ifs.
+def publishPinnedUnityCatalog(log: sbt.util.Logger, canary: java.io.File): Unit = {
+  val shouldAutoBuild =
+    sys.props.getOrElse("delta.autoBuildPinnedUnityCatalog", "true").toBoolean
+  if (!shouldAutoBuild) {
+    sys.error(
+      s"""|Pinned Unity Catalog jars are not published locally for coordinate
+          |$unityCatalogVersion.
+          |Auto-build is disabled (-Ddelta.autoBuildPinnedUnityCatalog=false).
+          |Run: bash $unityCatalogSetupScript""".stripMargin)
+  }
+  log.info(s"[UC] Pinned UC jars not found for coordinate $unityCatalogVersion.")
+  log.info(
+    s"[UC] Running $unityCatalogSetupScript - takes ~3-5 minutes on a cold cache, <1s on a warm one.")
+  import scala.sys.process._
+  val procLogger = ProcessLogger(
+    line => log.info(s"[UC setup] $line"),
+    line => log.warn(s"[UC setup] $line"))
+  val exit = Process(Seq("bash", unityCatalogSetupScript)).!(procLogger)
+  if (exit != 0) {
+    sys.error(
+      s"[UC] $unityCatalogSetupScript exited with code $exit. Run it manually to see full output.")
+  }
+  if (!canary.exists) {
+    sys.error(
+      s"[UC] $unityCatalogSetupScript succeeded but ${canary.getAbsolutePath} is still missing - " +
+        "the publish target layout may have changed.")
+  }
+}
+
+Global / ensurePinnedUnityCatalog := {
+  // Resolve the .value dependencies eagerly - sbt's task macro warns when
+  // `.value` appears inside conditional branches.
+  val log = streams.value.log
+  // No-op whenever the effective version resolves to something Maven Central can serve:
+  // release mode, -DuseDefaultUnityCatalogReleaseVersion=true, or -DunityCatalogVersion=<released>.
+  val usingReleasedVersion = useDefaultUnityCatalogReleaseVersion ||
+    sys.props.contains("unityCatalogVersion")
+  if (unityCatalogReleaseVersion.isEmpty && !usingReleasedVersion) {
+    val home = file(sys.props("user.home"))
+    // Check both layouts: a restored sbt cache can pre-populate ivy alone, leaving m2 empty -
+    // checking only ivy would silently skip the slow publish and break mvn-based consumers.
+    val ivy2Canary = home / ".ivy2" / "local" / "io.unitycatalog" /
+      "unitycatalog-client" / unityCatalogVersion / "ivys" / "ivy.xml"
+    val m2Canary = home / ".m2" / "repository" / "io" / "unitycatalog" /
+      "unitycatalog-client" / unityCatalogVersion /
+      s"unitycatalog-client-$unityCatalogVersion.pom"
+    if (!ivy2Canary.exists || !m2Canary.exists) {
+      publishPinnedUnityCatalog(log, ivy2Canary)
+    }
+  }
+}
 
 lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
@@ -735,6 +875,9 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
     skipReleaseSettings,
     javafmtCheckSettings(),
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
+
+    // Publish the pinned UC jars before sbt tries to resolve them.
+    update := update.dependsOn(ensurePinnedUnityCatalog).value,
 
     // This is a test-only module - no production sources
     Compile / sources := Seq.empty,
@@ -822,7 +965,7 @@ lazy val sharing = (project in file("sharing"))
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
 
-      "io.delta" %% "delta-sharing-client" % "1.3.10",
+      "io.delta" %% "delta-sharing-client" % "1.4.0",
 
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
@@ -974,7 +1117,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion,
       "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
       "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.13.5",
-      "org.apache.parquet" % "parquet-hadoop" % "1.12.3",
+      "org.apache.parquet" % "parquet-hadoop" % "1.16.0",
 
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "junit" % "junit" % "4.13.2" % "test",
@@ -1015,7 +1158,7 @@ lazy val kernelBenchmarks = (project in file("kernel/kernel-benchmarks"))
     exportJars := false,
     javafmtCheckSettings,
     scalafmtCheckSettings,
-    
+
     libraryDependencies ++= Seq(
       "org.openjdk.jmh" % "jmh-core" % "1.37" % "test",
       "org.openjdk.jmh" % "jmh-generator-annprocess" % "1.37" % "test",
@@ -1034,6 +1177,14 @@ lazy val kernelUnityCatalog = (project in file("kernel/unitycatalog"))
     javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
     scalaStyleSettings,
     scalafmtCheckSettings,
+
+    // Publish the pinned UC jars before sbt tries to resolve them.
+    update := update.dependsOn(ensurePinnedUnityCatalog).value,
+
+    // Also publish a test-jar (classifier = "tests") so consumers (e.g. sparkV2 in
+    // Maven mode) can depend on UC test helpers (InMemoryUCClient,
+    // UCCatalogManagedTestUtils) via a published artifact.
+    Test / publishArtifact := true,
 
     // Put the shaded kernel-api JAR on the classpath (compile & test)
     Compile / unmanagedJars += (kernelApi / Compile / packageBin).value,
@@ -1083,7 +1234,25 @@ lazy val storage = (project in file("storage"))
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       // Jackson datatype module needed for UC SDK tests (excluded from main compile scope)
       "com.fasterxml.jackson.datatype" % "jackson-datatype-jsr310" % "2.15.4" % "test",
+    ) ++ (
+      // unitycatalog-hadoop ships from UC 0.5.0 onward; older versions don't publish the
+      // artifact, so resolving it would fail. Used by UCDeltaTokenBasedRestClient for
+      // credential vending via UCCredentialHadoopConfs.
+      if (isAtLeastVersion(unityCatalogVersion, "0.5.0")) {
+        Seq("io.unitycatalog" % "unitycatalog-hadoop" % unityCatalogVersion excludeAll(
+          ExclusionRule(organization = "org.openapitools"),
+          ExclusionRule(organization = "com.fasterxml.jackson.core"),
+          ExclusionRule(organization = "com.fasterxml.jackson.module"),
+          ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
+          ExclusionRule(organization = "com.fasterxml.jackson.dataformat")
+        ))
+      } else Nil
     ),
+
+    // Publish the pinned UC jars before sbt tries to resolve them. storage is the transitive
+    // UC-client entry point for most of the build graph (sparkV1, sparkV2, kernelDefaults, etc.
+    // all .dependsOn(storage)), so hooking here covers nearly every compile path.
+    update := update.dependsOn(ensurePinnedUnityCatalog).value,
 
     // Unidoc settings
     unidocSourceFilePatterns += SourceFilePattern("/LogStore.java", "/CloseableIterator.java"),
@@ -1143,9 +1312,18 @@ val deltaIcebergSparkIncludePrefixes = Seq(
 
   // We only want the files in this project from this package. e.g. we want to exclude
   // org/apache/spark/sql/delta/commands/convert/ConvertTargetFile.class (from delta-spark project).
+  "org/apache/spark/sql/delta/commands/convert/DataFileWrapper",
+  "org/apache/spark/sql/delta/commands/convert/DelegatingIcebergTable",
   "org/apache/spark/sql/delta/commands/convert/IcebergFileManifest",
+  "org/apache/spark/sql/delta/commands/convert/IcebergPartitionConverter",
   "org/apache/spark/sql/delta/commands/convert/IcebergSchemaUtils",
-  "org/apache/spark/sql/delta/commands/convert/IcebergTable"
+  "org/apache/spark/sql/delta/commands/convert/IcebergSparkWrappers",
+  "org/apache/spark/sql/delta/commands/convert/IcebergStatsUtils",
+  "org/apache/spark/sql/delta/commands/convert/IcebergTable",
+  "org/apache/spark/sql/delta/commands/convert/IcebergTableLike",
+  "org/apache/spark/sql/delta/commands/convert/ManifestFileWrapper",
+  "org/apache/spark/sql/delta/commands/convert/PartitionFieldSummaryWrapper",
+  "org/apache/spark/sql/delta/commands/convert/TypeToSparkTypeWithCustomCast"
 )
 
 // Build using: build/sbt clean icebergShaded/compile iceberg/compile
@@ -1350,7 +1528,7 @@ lazy val hudi = (project in file("hudi"))
             ExclusionRule(organization = "org.apache.zookeeper"),
           ),
           "org.apache.spark" %% "spark-avro" % sparkVersion.value % "test" excludeAll ExclusionRule(organization = "org.apache.hadoop"),
-          "org.apache.parquet" % "parquet-avro" % "1.12.3" % "compile"
+          "org.apache.parquet" % "parquet-avro" % "1.16.0" % "compile"
         )
       } else {
         Seq.empty
@@ -1439,6 +1617,10 @@ lazy val flink = (project in file("flink"))
       "--add-opens=java.base/java.util=ALL-UNNAMED" // for Flink with Java 17.
     ),
     crossPaths := false,
+
+    // Publish the pinned UC jars before sbt tries to resolve them.
+    update := update.dependsOn(ensurePinnedUnityCatalog).value,
+
     libraryDependencies ++= Seq(
       "org.apache.flink" % "flink-core" % flinkVersion % "provided",
       "org.apache.flink" % "flink-table-common" % flinkVersion % "provided",

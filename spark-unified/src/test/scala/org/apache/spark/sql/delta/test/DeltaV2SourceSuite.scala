@@ -1,5 +1,5 @@
 /*
- * Copyright (2021) The Delta Lake Project Authors.
+ * Copyright (2025) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -46,13 +46,20 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     )
   }
 
-  private lazy val shouldPassTests = Set(
+  /** Path-based ALTER TABLE doesn't work under V2_ENABLE_MODE=STRICT; route through V1. */
+  override protected def renameColumn(
+      tablePath: String, oldName: String, newName: String): Unit = {
+    executeInV1Mode(s"ALTER TABLE delta.`$tablePath` RENAME COLUMN $oldName TO $newName")
+  }
+
+  override protected def shouldPassTests: Set[String] = Set(
     // ========== Core streaming tests ==========
     "basic",
     "initial snapshot ends at base index of next version",
     "new commits arrive after stream initialization - with explicit startingVersion",
-    "SC-11561: can consume new data without update",
+    "can consume new data without update",
     "Delta sources don't write offsets with null json",
+    "reading from partitioned table succeeds during restart",
 
     // === Schema Evolution ===
     "add column: restarting with new DataFrame should recover",
@@ -69,15 +76,20 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
 
     // === Read options ===
     "excludeRegex works and doesn't mess up offsets across restarts - parquet version",
-    "streaming with ignoreDeletes = true skips delete-only commits",
-    "streaming with ignoreDeletes = true still fails on change commits",
-    "streaming with skipChangeCommits = true skips both delete and change commits",
-    "streaming with ignoreChanges = true allows both delete and change commits",
-    "streaming with ignoreFileDeletion = true allows both delete and change commits",
+    "read options [ignoreDeletes]: ignores delete, rejects change",
+    "read options [skipChangeCommits]: ignores delete, skips change",
+    "read options [ignoreChanges]: ignores delete, includes change AddFiles",
+    "read options [ignoreFileDeletion] (deprecated): equivalent to ignoreChanges",
+    "read options [ignoreDeletes, ignoreChanges]: equivalent to ignoreChanges",
+    "read options [ignoreChanges, skipChangeCommits]: equivalent to skipChangeCommits",
+    "read options [ignoreDeletes, skipChangeCommits]: equivalent to skipChangeCommits",
+    "read options [ignoreDeletes, ignoreChanges, skipChangeCommits]: " +
+      "equivalent to skipChangeCommits",
 
     // === Commit/Checkpoint file missing detection ===
     "incremental: first commit file missing, fails",
     "incremental: commit file gap between versions, fails",
+    "incremental: first commit file missing, failOnDataLoss=false succeeds",
     "initial snapshot: commit file missing but checkpoint intact, succeeds",
     "initial snapshot: both checkpoint and commit file missing, fails",
     "initial snapshot: log retention deletes old checkpoint and commit files mid-stream," +
@@ -110,7 +122,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "maxBytesPerTrigger: max bytes and max files together",
     "Trigger.AvailableNow with an empty table",
     "Rate limited Delta source advances with non-data inserts",
-    "ES-445863: delta source should not hang or reprocess data when using AvailableNow",
+    "delta source should not hang or reprocess data when using AvailableNow",
     "startingVersion should work with rate time",
     "maxFilesPerTrigger: metadata checkpoint",
     "maxBytesPerTrigger: metadata checkpoint",
@@ -118,7 +130,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     // ========== Error handling tests ==========
     "streaming query should fail when table is deleted and recreated with new id",
     "deltaSourceIgnoreDeleteError contains removeFile, version, tablePath",
-    "deltaSourceIgnoreChangesError contains removeFile, version, tablePath",
+    "deltaSourceIgnoreChangesError contains changeInfo, version, tablePath",
     "excludeRegex throws good error on bad regex pattern",
 
     // ========== Misc tests ==========
@@ -126,10 +138,16 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "should not attempt to read a non exist version",
     "can delete old files of a snapshot without update",
     "Delta source advances with non-data inserts and generates empty dataframe for " +
-      "non-data operations"
+      "non-data operations",
+    "reading from table with multiple partition columns succeeds during restart",
+    "streaming read returns correct data from table with partition column in middle",
+    "streaming read with column pruning and partition column in middle",
+    "streaming read with column mapping id and partition column in middle",
+    "streaming read after column rename with partition column in middle",
+    "streaming read preserves percent-literal string partition value"
   )
 
-  private lazy val shouldFailTests = Set(
+  override protected def shouldFailTests: Set[String] = Set(
     // === Null Type Column Handling ===
     "streaming delta source should not drop null columns",
     "streaming delta source should drop null columns without feature flag",
@@ -142,7 +160,8 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "type widening: restarting with stale DataFrame should recover",
 
     // === Data Loss Detection ===
-    "incremental: first commit file missing, failOnDataLoss=false succeeds",
+    // V2 only tolerates missing start versions with failOnDataLoss=false; mid-log gaps still
+    // throw InvalidTableException because non-contiguous versions are not a log-retention scenario.
     "incremental: commit file gap between versions, failOnDataLoss=false succeeds",
     // Kernel cannot reconstruct snapshot without checkpoint file (_last_checkpoint still
     // points to deleted checkpoint). V1 falls back to delta files; Kernel does not.
@@ -165,15 +184,4 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     // Calls deltaSource.createSource() directly
     "createSource should create source with empty or matching table schema provided"
   )
-
-  override protected def shouldFail(testName: String): Boolean = {
-    val inPassList = shouldPassTests.contains(testName)
-    val inFailList = shouldFailTests.contains(testName)
-
-    assert(inPassList || inFailList, s"Test '$testName' not in shouldPassTests or shouldFailTests")
-    assert(!(inPassList && inFailList),
-      s"Test '$testName' in both shouldPassTests and shouldFailTests")
-
-    inFailList
-  }
 }

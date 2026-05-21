@@ -24,6 +24,7 @@ Usage:
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -33,8 +34,13 @@ def generate_spark_versions_json(repo_root: Path) -> bool:
     """Generate the spark-versions.json file by running sbt exportSparkVersionsJson."""
     try:
         print("Generating spark-versions.json...", file=sys.stderr)
+        cmd = ["build/sbt"]
+        kernel_version = os.getenv("KERNEL_VERSION")
+        if kernel_version:
+            cmd.append(f"-DkernelVersion={kernel_version}")
+        cmd.append("exportSparkVersionsJson")
         subprocess.run(
-            ["build/sbt", "exportSparkVersionsJson"],
+            cmd,
             cwd=repo_root,
             check=True,
             stdout=subprocess.DEVNULL,
@@ -116,12 +122,16 @@ def main():
             spark_version, field = args.get_field
             
             # Find the version entry by matching:
+            # - "default" matches isDefault=true
             # - "master" matches isMaster=true
             # - short version like "4.0" matches shortVersion
             # - full version like "4.0.1" matches fullVersion
             version_entry = None
             for v in versions:
-                if spark_version == "master" and v.get("isMaster", False):
+                if spark_version == "default" and v.get("isDefault", False):
+                    version_entry = v
+                    break
+                elif spark_version == "master" and v.get("isMaster", False):
                     version_entry = v
                     break
                 elif spark_version == v["shortVersion"] or spark_version == v["fullVersion"]:

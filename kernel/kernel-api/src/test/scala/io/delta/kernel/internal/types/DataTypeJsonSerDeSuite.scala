@@ -187,10 +187,23 @@ class DataTypeJsonSerDeSuite extends AnyFunSuite {
     val expectedMsg = "Algorithm must be one of: spherical, vincenty, thomas, andoyer, karney"
     checkError[IllegalArgumentException](
       "\"geography(EPSG:4326, planar)\"",
-      expectedMsg)
+      expectedMsg + ", got: planar")
+    checkError[IllegalArgumentException](
+      "\"geography(OGC:CRS84, BoGuS)\"",
+      expectedMsg + ", got: BoGuS")
     checkError[IllegalArgumentException](
       "\"geography(haversine)\"",
-      expectedMsg)
+      expectedMsg + ", got: haversine")
+  }
+
+  test("parseDataType: geography accepts case-insensitive algorithm") {
+    // Uppercase algorithm input is accepted.
+    assert(parse("\"geography(OGC:CRS84, SPHERICAL)\"")
+      === new GeographyType("OGC:CRS84", "SPHERICAL"))
+    assert(parse("\"geography(ViNcEnTy)\"")
+      === new GeographyType("OGC:CRS84", "ViNcEnTy"))
+    assert(parse("\"geography(OGC:CRS84, Spherical)\"")
+      === new GeographyType("OGC:CRS84", "Spherical"))
   }
 
   /* ---------------  Complex types ----------------- */

@@ -29,10 +29,11 @@ import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
-import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider}
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.ENABLE_TABLE_REDIRECT_FEATURE
+import com.databricks.spark.util.TagDefinition
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{DataFrame, Dataset, SaveMode, SparkSession}
@@ -70,7 +71,8 @@ class DeltaTableV2 private(
   extends Table
   with SupportsWrite
   with V2TableWithV1Fallback
-  with DeltaLogging {
+  with DeltaLogging
+  with DeltaLoggingProvider {
 
   case class PathInfo(
       rootPath: Path,
@@ -129,6 +131,9 @@ class DeltaTableV2 private(
         catalogTable)
     }
   }
+
+  override def getCommonTags: Map[TagDefinition, String] = deltaLog.getCommonTags
+
 
   /**
    * Updates the delta log for this table and returns a new snapshot
@@ -431,8 +436,21 @@ class DeltaTableV2 private(
     deltaTableV2
   }
 
-  override def toString: String =
-    s"DeltaTableV2($spark,$path,$catalogTable,$tableIdentifier,$timeTravelOpt,$options)"
+  // Filter fs.* keys from CatalogTable storage properties and from options before stringifying,
+  // to prevent catalog-injected or user-supplied credentials from leaking into exception messages,
+  // EXPLAIN output, and logs.
+  override def toString: String = {
+    val safeCatalogTable = catalogTable.map { ct =>
+      ct.copy(storage = ct.storage.copy(properties =
+        ct.storage.properties.filterNot { case (k, _) =>
+          DeltaTableV2.HIDDEN_STORAGE_PROPERTY_PREFIXES.exists(k.startsWith)
+        }))
+    }
+    val safeOptions = options.filterNot { case (k, _) =>
+      DeltaTableV2.HIDDEN_STORAGE_PROPERTY_PREFIXES.exists(k.startsWith)
+    }
+    s"DeltaTableV2($spark,$path,$safeCatalogTable,$tableIdentifier,$timeTravelOpt,$safeOptions)"
+  }
 }
 
 object DeltaTableV2 {

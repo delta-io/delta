@@ -656,6 +656,18 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val METRICS_ALWAYS_REPORT_SOME_ZERO_METRICS =
+    buildConf("metrics.alwaysReportSomeZeroMetrics")
+      .internal()
+      .doc(
+        """When enabled, DELETE operation metrics (numCopiedRows, numDeletedRows) always report
+          |Some(0) instead of None, even in cases where 0 rows are guaranteed to be copied or
+          |deleted. This aligns DELETE with UPDATE which already always reports Some(0). When
+          |disabled, reverts to the legacy behavior where DELETE returns None for these cases.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_VACUUM_RETENTION_WINDOW_IGNORE_ENABLED =
     buildConf("vacuum.retentionWindowIgnore.enabled")
       .internal()
@@ -728,6 +740,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .doc("If true, enables schema merging on appends and on overwrites.")
       .booleanConf
       .createWithDefault(false)
+
+  val DELTA_MERGE_INSERT_FIX_CASE_SENSITIVE_DUPLICATE_COLUMNS =
+    buildConf("merge.insert.fixCaseSensitiveDuplicateColumns")
+      .internal()
+      .doc("Internal flag controlling a fix for case-variant duplicate columns in MERGE INSERT " +
+        "clauses (e.g., `colUtc` and `colUTC`). On tables with generated or identity columns, " +
+        "such duplicates would otherwise trigger an internal AssertionError in " +
+        "`resolveImplicitColumns` instead of a user-facing error. Disabling this fix restores " +
+        "the prior behavior.")
+      .booleanConf
+      .createWithDefault(true)
 
   val DELTA_MERGE_SCHEMA_EVOLUTION_FIX_NESTED_STRUCT_ALIGNMENT =
     buildConf("schemaEvolution.merge.fixNestedStructAlignment")
@@ -1013,6 +1036,18 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_MERGE_INTO_EMPTY_SCHEMA_TARGET_CHECK_ENABLED =
+    buildConf("merge.emptySchemaTargetCheck.enabled")
+      .internal()
+      .doc(
+        """
+          |When enabled, MERGE INTO a Delta table with an empty schema fails with a user-facing
+          |DELTA_MERGE_INTO_EMPTY_SCHEMA_TARGET error unless schema evolution is enabled. When
+          |disabled, the legacy behavior is preserved (Assertion is thrown during resolution).
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val MERGE_INSERT_ONLY_ENABLED =
     buildConf("merge.optimizeInsertOnlyMerge.enabled")
       .internal()
@@ -1077,6 +1112,20 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
 
     final val list = Set(NONE, ALL, AUTO)
   }
+
+  val INSERT_REPLACE_ON_OR_USING_MATERIALIZE_SOURCE =
+    buildConf("insertReplaceOnOrUsing.materializeSource")
+      .internal()
+      .doc("When to materialize the source plan during INSERT REPLACE ON/USING execution. " +
+        "The value 'none' means source will never be materialized. " +
+        "The value 'all' means source will always be materialized. " +
+        "The value 'auto' means sources will not be materialized when they are certain to be " +
+        "deterministic."
+      )
+      .stringConf
+      .transform(_.toLowerCase(Locale.ROOT))
+      .checkValues(MergeMaterializeSource.list)
+      .createWithDefault(MergeMaterializeSource.AUTO)
 
   val MERGE_MATERIALIZE_SOURCE =
     buildConf("merge.materializeSource")
@@ -1575,6 +1624,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_FILE_SIZE_HISTOGRAM_ENABLED =
+    buildConf("fileSizeHistogramMetrics.enabled")
+      .internal()
+      .doc(s"""When enabled, each delta transaction reports file size distribution histogram
+              |of all the files in the latest snapshot after the commit and histograms of new
+              |files added and old files removed.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_CHECKPOINT_THROW_EXCEPTION_WHEN_FAILED =
       buildConf("checkpoint.exceptionThrowing.enabled")
         .internal()
@@ -1840,6 +1898,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .internal()
       .doc("Whether to validate whether delta streaming source generates a smaller offset and " +
         "moves backward.")
+      .booleanConf
+      .createWithDefault(true)
+
+  // TODO(#6591): remove this kill switch once the V2 schema validation has soaked in production.
+  val STREAMING_SCHEMA_VALIDATION_ON_RESTART =
+    buildConf("streaming.schemaValidationOnRestart.enabled")
+      .internal()
+      .doc("Whether to validate that the analysis-time schema matches the latest snapshot " +
+        "schema when a V2 streaming query restarts from checkpoint with a stale DataFrame.")
       .booleanConf
       .createWithDefault(true)
 
@@ -2109,6 +2176,22 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_UNIFORM_ICEBERG_TABLE_V3_ENABLED =
+    buildConf("uniform.iceberg.v3.enabled")
+      .internal()
+      .doc("If true, allow users to create/upgrade Uniform Iceberg v3 tables.")
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_UNIFORM_ICEBERG_GEOSPATIAL_ENABLED =
+    buildConf("uniform.iceberg.geospatial.enabled")
+      .internal()
+      .doc("If true, allow Delta tables with GeometryType/GeographyType columns to use " +
+        "IcebergCompatV3 (Uniform/DBI). Defaults to false until geospatial Uniform support " +
+        "is fully validated.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_UNIFORM_ICEBERG_SYNC_CONVERT_ENABLED =
     buildConf("uniform.iceberg.sync.convert.enabled")
       .doc("If enabled, iceberg conversion will be done synchronously. " +
@@ -2140,6 +2223,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .internal()
       .booleanConf
       .createWithDefault(true)
+
+  val DELTA_UNIFORM_ICEBERG_MAX_ACTIONS_TO_CONVERT_FOR_COMMIT_LARGE =
+    buildConf("uniform.iceberg.maxActionsToConvertForCommitLarge")
+    .doc("""
+           |The maximum number of pending Delta actions to convert to Iceberg in case of a
+           |commit large. Iceberg conversion requires to load actions into memory, which
+           |would bring much memory pressure. To prevent users see OOM directly, a validation
+           |on number of actions to convert exists for reminding users.
+           |""".stripMargin)
+    .intConf
+    .createWithDefault(1000000)
 
   val DELTA_OPTIMIZE_MIN_FILE_SIZE =
     buildConf("optimize.minFileSize")
@@ -2281,6 +2375,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_CHANGELOG_V2_ENABLED =
+    buildConf("changelogV2.enabled")
+      .internal()
+      .doc(
+        """When enabled, the V2 connector's hybrid DeltaCatalog answers
+          |CHANGES FROM ... batch queries (TableCatalog.loadChangelog) using the
+          |kernel-based Auto-CDF reader stack. When disabled, the catalog falls back to the
+          |default behavior (UNSUPPORTED_FEATURE.CHANGE_DATA_CAPTURE).""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP = {
     buildConf("changeDataFeed.timestampOutOfRange.enabled")
       .doc(
@@ -2395,18 +2500,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
-  val DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS =
-    buildConf("streaming.sink.allowImplicitCasts")
-      .internal()
-      .doc(
-        """Whether to accept writing data to a Delta streaming sink when the data type doesn't
-          |match the type in the underlying Delta table. When true, data is cast to the expected
-          |type before the write. When false, the write fails.
-          |The casting behavior is governed by 'spark.sql.storeAssignmentPolicy'.
-          |""".stripMargin)
-      .booleanConf
-      .createWithDefault(true)
-
   val DELTA_STREAMING_SINK_IMPLICIT_CAST_FOR_TYPE_MISMATCH_ONLY =
     buildConf("streaming.sink.implicitCastForTypeMismatchOnly")
       .internal()
@@ -2417,8 +2510,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           |nested field in the data and table schema.
           |When false, missing, extra or reordered columns or nested fields also trigger adding an
           |implicit cast.
-          |Only takes effect when implicit casting is enabled in streaming writes to a Delta table
-          |via `spark.databricks.delta.streaming.sink.allowImplicitCasts`.
           |""".stripMargin)
       .booleanConf
       .createWithDefault(true)
@@ -2431,8 +2522,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           |When true, the code paths handling implicit casting in streaming will escape column names
           |to properly handle e.g. dots in column names.
           |This is a kill-switch and shouldn't be disabled unless necessary to mitigate an issue.
-          |Only takes effect when implicit casting is enabled in streaming writes to a Delta table
-          |via `spark.databricks.delta.streaming.sink.allowImplicitCasts`.
           |""".stripMargin)
       .booleanConf
       .createWithDefault(true)
@@ -2677,6 +2766,24 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
              |""".stripMargin)
       .booleanConf
       .createWithDefault(true)
+
+  // TODO:
+  // 1. Either block nested subqueries or add more testing coverage.
+  //    Currently we cannot block them because the [[postHocResolutionRule]]
+  //    runs after Spark's analyzer has already decorrelated inner
+  //    [[SubqueryExpression]] nodes, so they are no longer visible in the
+  //    condition by the time [[PreprocessTableDelete]] fires.
+  // 2. Support non-deterministic sources in DELETE with subqueries. At the
+  //    moment, each of the 2 DELETE jobs does a JOIN between the source and
+  //    target due to subquery decorrelation. The source can return different
+  //    data for each of the JOINs.
+  val ALLOW_EXISTS_SUBQUERY_IN_DELETE =
+    buildConf("delete.allowExistsSubquery")
+      .internal()
+      .doc("Allow EXISTS/NOT EXISTS subqueries in DELETE conditions. " +
+        "Other subquery types (IN, lateral, scalar, ...) are not supported.")
+      .booleanConf
+      .createWithDefault(false)
 
   val DELETE_USE_PERSISTENT_DELETION_VECTORS =
     buildConf("delete.deletionVectors.persistent")
@@ -3085,17 +3192,46 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
     .booleanConf
     .createWithDefault(true)
 
+  val DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40 =
+    buildConf("variant.disableVariantTableFeatureForSpark40")
+    .internal()
+    .doc(
+      """
+        | If true, disables support for the 'variantType' and 'variantType-preview' table
+        | features on Spark 4.0 clients. Spark 4.0 does not support the parquet variant
+        | logical type annotation, which causes interoperability issues with Spark 4.1+.
+        |""".stripMargin)
+    .booleanConf
+    .createWithDefault(false)
+
   val COLLECT_VARIANT_DATA_SKIPPING_STATS =
     buildConf("variantShredding.collectVariantDataSkippingStats")
     .internal()
     .doc(
       """
-        | If enabled, Spark writes to Delta could collect data skipping stats for Variant
-        | columns. Currently, this config is used to ensure that new checkpoints preserve previous
-        | Variant stats."""
+        | If enabled, Variant columns are allowed to be in the stats schema. This means that
+        | variant stats collection would be allowed and variant stats would be preserved during
+        | checkpointing and state reconstruction."""
         .stripMargin)
     .booleanConf
     .createWithDefault(true)
+
+  val PARSE_FOOTER_FOR_VARIANT_DATA_SKIPPING_STATS =
+    buildConf("variantShredding.parseFooterForStats")
+    .internal()
+    .doc(
+      """
+        | If enabled, re-read written parquet file to compute variant stats from the footer."""
+        .stripMargin)
+    .booleanConf
+    .createWithDefault(false)
+
+  val DELTA_STATS_LIMIT_PER_VARIANT =
+    buildConf("stats.limitPerVariant")
+    .internal()
+    .doc("The maximum number of data skipping stats to collect from each Variant column.")
+    .intConf
+    .createWithDefault(0)
 
   ///////////
   // TESTING
@@ -3147,6 +3283,27 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         "UTC_TIMESTAMP_PARTITION_VALUES normalized timestamp partition values on write. However, " +
         "data written before this flag existed may not be normalized and needs to be normalized " +
         "on read."
+      )
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_FAIL_ON_PARTITION_VALUE_PARSING_ERROR =
+    buildConf("failOnPartitionValueParsingError")
+      .internal()
+      .doc(
+        "When true, we will fail (rethrow) if there is an error when parsing partition values " +
+        "to their actual types. When false, we will fall back to using partition value strings."
+      )
+      .booleanConf
+      .createWithDefault(DeltaUtils.isTesting)
+
+  val DELTA_DYNAMIC_PARTITION_OVERWRITE_PARSE_PARTITION_VALUES =
+    buildConf("dynamicPartitionOverwrite.parsePartitionValues")
+      .internal()
+      .doc(
+        "When true, we will parse partition values to their actual types for comparison during " +
+        "dynamic partition overwrite file filtering, instead of using raw strings. " +
+        "This helps prevent issues with inconsistently formatted partition values."
       )
       .booleanConf
       .createWithDefault(true)
@@ -3232,12 +3389,49 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValues(Set("AUTO", "NONE", "STRICT"))
       .createWithDefault("AUTO")
 
+  val DELTA_DF_WRITE_ALLOW_IMPLICIT_CASTS =
+    buildConf("dml.insert.dfByName.allowImplicitCasts")
+      .internal()
+      .doc(
+        """Whether to perform implicit casting when writing to a Delta
+          |table using the DataFrame V1/2 API (e.g. df.write.save(),
+          |df.write.saveAsTable(), df.writeTo.append()) for by-name
+          |inserts. When true, data is cast to match the target table
+          |schema when there is a type mismatch. When false, the write
+          |fails on type mismatch. The casting behavior is governed by
+          |'spark.sql.storeAssignmentPolicy'.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES =
     buildConf("streaming.initialSnapshotMaxFiles")
       .internal()
       .doc("Maximum number of files allowed in initial snapshot for V2 streaming.")
       .intConf
       .createWithDefault(100000)
+
+  val DELTA_STREAMING_USE_DISTRIBUTED_INITIAL_SNAPSHOT =
+    buildConf("streaming.distributedInitialSnapshot")
+      .internal()
+      .doc(
+        "When enabled, the V2 streaming connector uses a distributed approach for " +
+        "initial snapshot loading. This avoids driver OOM for large tables by running " +
+        "Kernel log replay on an executor and sorting files via Spark's distributed sort. " +
+        "The persistence level is controlled by " +
+        "spark.databricks.delta.snapshotCache.storageLevel."
+      )
+      .booleanConf
+      .createWithDefault(false)
+
+  val TABLE_PARQUET_V2_DEFAULT_TIMESTAMP_ENCODING =
+    buildConf("table.parquetV2.timestampOutputType")
+      .internal()
+      .doc("Sets the Parquet timestamp type to use when writing to Delta tables with Parquet " +
+        "format version 2.12.0 or higher. The default is TIMESTAMP_MICROS, which stores number " +
+        "microseconds from the Unix epoch as an int64 value in Parquet.")
+      .stringConf
+      .checkValues(SQLConf.ParquetOutputTimestampType.values.map(_.toString))
+      .createWithDefault(SQLConf.ParquetOutputTimestampType.TIMESTAMP_MICROS.toString)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

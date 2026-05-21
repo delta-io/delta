@@ -386,6 +386,7 @@ object TableFeature {
       TypeWideningTableFeature,
       IcebergCompatV1TableFeature,
       IcebergCompatV2TableFeature,
+      IcebergCompatV3TableFeature,
       DeletionVectorsTableFeature,
       VacuumProtocolCheckTableFeature,
       V2CheckpointTableFeature,
@@ -806,6 +807,8 @@ object VariantShreddingTableFeature
     // feature is enabled so old tables with only the preview table feature can be read.
     !protocol.isFeatureSupported(VariantShreddingPreviewTableFeature)
   }
+
+  override def requiredFeatures: Set[TableFeature] = Set(VariantTypeTableFeature)
 }
 
 object DeletionVectorsTableFeature
@@ -1018,6 +1021,23 @@ object IcebergCompatV2TableFeature extends WriterFeature(name = "icebergCompatV2
 
   override def requiredFeatures: Set[TableFeature] = Set(ColumnMappingTableFeature)
 }
+
+object IcebergCompatV3TableFeature extends WriterFeature(name = "icebergCompatV3")
+  with FeatureAutomaticallyEnabledByMetadata {
+
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
+
+  override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol,
+      metadata: Metadata,
+      spark: SparkSession): Boolean = IcebergCompatV3.isEnabled(metadata)
+
+  override def requiredFeatures: Set[TableFeature] =
+    Set(ColumnMappingTableFeature, RowTrackingFeature)
+}
+
 
 /**
  * Clustering table feature is enabled when a table is created with CLUSTER BY clause.
@@ -1357,7 +1377,7 @@ object CheckpointProtectionTableFeature
    * Gets the version requiring checkpoint protection from `snapshot`. If the table property is
    * not set, return the default value 0.
    */
-  def getCheckpointProtectionVersion(snapshot: Snapshot): Long = {
+  def getCheckpointProtectionVersion(snapshot: SnapshotDescriptor): Long = {
     getCheckpointProtectionVersionOption(snapshot.protocol, snapshot.metadata).getOrElse(0)
   }
 
@@ -1384,7 +1404,7 @@ object CheckpointProtectionTableFeature
   }
 
   def historyPriorToCheckpointProtectionVersionIsTruncated(
-      snapshot: Snapshot,
+      snapshot: SnapshotDescriptor,
       catalogTableOpt: Option[CatalogTable]): Boolean = {
     val checkpointProtectionVersion = getCheckpointProtectionVersion(snapshot)
     if (checkpointProtectionVersion <= 0) return true
