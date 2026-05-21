@@ -18,10 +18,14 @@ package io.delta.spark.internal.v2;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.delta.spark.internal.v2.utils.IctTestUtils;
 import java.io.File;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Date;
 import java.util.List;
+import java.util.TimeZone;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -80,6 +84,84 @@ public class V2StreamingReadTest extends V2TestBase {
     List<Row> actualRows = processStreamingQuery(streamingDF, "test_with_starting_version");
     List<Row> expectedRows =
         Arrays.asList(RowFactory.create(2, "Bob", 200.0), RowFactory.create(3, "Charlie", 300.0));
+
+    assertDataEquals(actualRows, expectedRows);
+  }
+
+  @Test
+  public void testStreamingReadWithStartingTimestampBeforeMidHistoryIct(
+      @TempDir File deltaTablePath) throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+    int rowsPerCommit = 10;
+    long baseTimestamp = 1700000000000L;
+    long oneMinute = TimeUnit.MINUTES.toMillis(1);
+
+    spark.sql(str("CREATE TABLE delta.`%s` (id BIGINT) USING delta", tablePath));
+    spark.range(0, rowsPerCommit).write().format("delta").mode("append").save(tablePath);
+    spark
+        .range(rowsPerCommit, 2L * rowsPerCommit)
+        .write()
+        .format("delta")
+        .mode("append")
+        .save(tablePath);
+
+    DeltaLog log = DeltaLog.forTable(spark, tablePath);
+    long v0Mtime = baseTimestamp - oneMinute;
+    long v1Mtime = baseTimestamp;
+    long v2Mtime = baseTimestamp + 30_000L;
+    IctTestUtils.setFileMtimeOnly(log, 0L, v0Mtime);
+    IctTestUtils.setFileMtimeOnly(log, 1L, v1Mtime);
+    IctTestUtils.setFileMtimeOnly(log, 2L, v2Mtime);
+
+    spark.sql(
+        str(
+            "ALTER TABLE delta.`%s` SET TBLPROPERTIES ('delta.enableInCommitTimestamps' = 'true')",
+            tablePath));
+    long v3Mtime = baseTimestamp + oneMinute;
+    long v3Ict = baseTimestamp + 150_000L;
+    IctTestUtils.modifyCommitTimestamp(log, 3L, v3Ict);
+    IctTestUtils.setFileMtimeOnly(log, 3L, v3Mtime);
+
+    long v4Mtime = baseTimestamp + 2 * oneMinute;
+    long v4Ict = v3Ict + oneMinute;
+    spark
+        .range(2L * rowsPerCommit, 3L * rowsPerCommit)
+        .write()
+        .format("delta")
+        .mode("append")
+        .save(tablePath);
+    IctTestUtils.modifyCommitTimestamp(log, 4L, v4Ict);
+    IctTestUtils.setFileMtimeOnly(log, 4L, v4Mtime);
+
+    long v5Mtime = v4Mtime + 20_000L;
+    long v5Ict = v4Ict + oneMinute;
+    spark
+        .range(3L * rowsPerCommit, 4L * rowsPerCommit)
+        .write()
+        .format("delta")
+        .mode("append")
+        .save(tablePath);
+    IctTestUtils.modifyCommitTimestamp(log, 5L, v5Ict);
+    IctTestUtils.setFileMtimeOnly(log, 5L, v5Mtime);
+
+    // This timestamp is before ICT enablement but after post-ICT file mtimes. The V2 reader must
+    // resolve it using only pre-ICT modification times, then stream the data commits after that.
+    long targetTimestamp = v4Mtime + 10_000L;
+    String timezone = spark.sessionState().conf().sessionLocalTimeZone();
+    SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS");
+    formatter.setTimeZone(TimeZone.getTimeZone(timezone));
+    Dataset<Row> streamingDF =
+        spark
+            .readStream()
+            .option("startingTimestamp", formatter.format(new Date(targetTimestamp)))
+            .table(str("dsv2.delta.`%s`", tablePath));
+
+    List<Row> actualRows =
+        processStreamingQuery(streamingDF, "test_starting_timestamp_mid_history_ict");
+    List<Row> expectedRows =
+        LongStream.range(2L * rowsPerCommit, 4L * rowsPerCommit)
+            .mapToObj(id -> RowFactory.create(id))
+            .collect(Collectors.toList());
 
     assertDataEquals(actualRows, expectedRows);
   }
