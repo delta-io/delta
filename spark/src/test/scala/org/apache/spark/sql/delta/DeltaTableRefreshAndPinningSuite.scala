@@ -1376,3 +1376,16 @@ class DeltaTableRefreshAndPinningAutoModeExternalSessionSuite
   override protected def useExternalSession: Boolean = true
 }
 
+/** V2_ENABLE_MODE = STRICT, same-session writes. */
+class DeltaTableRefreshAndPinningStrictModeSuite
+  extends DeltaTableRefreshAndPinningSuiteBase {
+  override protected def v2EnableMode: String = "STRICT"
+}
+
+/** V2_ENABLE_MODE = STRICT with external session writes. */
+class DeltaTableRefreshAndPinningStrictModeExternalSessionSuite
+  extends DeltaTableRefreshAndPinningSuiteBase {
+  override protected def v2EnableMode: String = "STRICT"
+  override protected def useExternalSession: Boolean = true
+}
+
