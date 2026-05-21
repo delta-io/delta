@@ -22,7 +22,7 @@ import java.nio.file.FileAlreadyExistsException
 import java.util.concurrent.{CountDownLatch, Executors, TimeUnit}
 
 import scala.collection.JavaConverters._
-import scala.concurrent.{Await, ExecutionContext, Future}
+import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration._
 
 import com.databricks.spark.util.Log4jUsageLogger
@@ -44,7 +44,7 @@ import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.expressions.{EqualTo, Literal}
 import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.types.{IntegerType, StructType, TimestampType}
-import org.apache.spark.util.ManualClock
+import org.apache.spark.util.{ManualClock, ThreadUtils}
 
 
 class OptimisticTransactionSuite
@@ -1701,7 +1701,7 @@ class OptimisticTransactionSuite
             }
           }
           scanLatch.countDown()
-          Await.result(Future.sequence(scanFutures), 60.seconds)
+          ThreadUtils.awaitResult(Future.sequence(scanFutures), 60.seconds)
         } finally {
           scanPool.shutdown()
           scanPool.awaitTermination(60, TimeUnit.SECONDS)
@@ -1737,7 +1737,7 @@ class OptimisticTransactionSuite
           assert(readyLatch.await(60, TimeUnit.SECONDS),
             "Timed out waiting for stress workers to reach the start barrier.")
           startLatch.countDown()
-          Await.result(Future.sequence(futures), 120.seconds)
+          ThreadUtils.awaitResult(Future.sequence(futures), 120.seconds)
         } finally {
           pool.shutdown()
           pool.awaitTermination(60, TimeUnit.SECONDS)
