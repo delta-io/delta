@@ -496,6 +496,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
           DeltaAction.ADD,
           DeltaAction.REMOVE,
           DeltaAction.METADATA,
+          DeltaAction.PROTOCOL,
           DeltaAction.CDC,
           DeltaAction.COMMITINFO);
 
@@ -807,6 +808,274 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
     assertCDCFileChangesMatch(dsv1Call2, dsv2Call2);
     long dsv2DataCount2 = dsv2Call2.stream().filter(IndexedFile::hasFileAction).count();
     assertTrue(dsv2DataCount2 > 0, "Call 2 should return new data files (not stall)");
+  }
+
+  /**
+   * Per-commit barrier emission: a metadata-only commit on a CDC stream with schema tracking must
+   * produce a barrier sentinel (METADATA_CHANGE_INDEX) as element [0], followed by an END sentinel
+   * (limits=empty branch appends END after the barrier).
+   *
+   * <p>Setup: v0=CREATE, v1=ALTER ENABLE CDF, v2=INSERT, v3=ALTER ADD COLUMNS (metadata-only).
+   * Tracking log is seeded at v2, so v3 diverges from source-init.
+   */
+  @Test
+  public void testProcessCommit_emitsBarrierAtSchemaChange(@TempDir File tempDir) throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "test_cdc_process_barrier_" + System.nanoTime();
+    createCDFEnabledTable(tablePath, tableName); // v0=CREATE, v1=ALTER ENABLE CDF
+    sql("INSERT INTO %s VALUES (1, 'a')", tableName); // v2 data
+    sql("ALTER TABLE %s ADD COLUMNS (c3 INT)", tableName); // v3 metadata-only
+
+    String schemaLogPath = new File(tempDir, "schema_log").getAbsolutePath();
+    SparkMicroBatchStream stream =
+        createStreamWithSeededTrackingLog(tablePath, schemaLogPath, /* seededVersion= */ 2L);
+
+    long commitVersion = 3L;
+    CommitActions commit = getCommitActions(tablePath, commitVersion);
+    List<IndexedFile> files;
+    // lastProcessedVersion = commitVersion - 1: fresh process, the start-boundary filter
+    // doesn't run, so the barrier (which has index < BASE_INDEX) is preserved.
+    try (CloseableIterator<IndexedFile> iter =
+        stream.processCommitToIndexedFilesForCDC(
+            commit,
+            /* startVersion= */ commitVersion,
+            /* limits= */ Optional.empty(),
+            /* endOffsetOpt= */ Optional.empty(),
+            /* lastProcessedVersion= */ commitVersion - 1,
+            /* lastProcessedIndex= */ DeltaSourceOffset.BASE_INDEX())) {
+      files = collectAll(iter);
+    }
+
+    // limits=empty branch appends an END sentinel after the barrier.
+    assertEquals(2, files.size(), "Expected [barrier, END], got " + files.size());
+    IndexedFile barrier = files.get(0);
+    assertEquals(commitVersion, barrier.getVersion(), "Barrier must be at v3");
+    assertEquals(
+        DeltaSourceOffset.METADATA_CHANGE_INDEX(),
+        barrier.getIndex(),
+        "First entry must be the schema-change barrier sentinel");
+    assertFalse(barrier.hasFileAction(), "Barrier must not carry a file action");
+
+    IndexedFile end = files.get(1);
+    assertEquals(DeltaSourceOffset.END_INDEX(), end.getIndex(), "Second entry must be END");
+  }
+
+  /**
+   * On a CDC stream with schema tracking, a metadata-change commit must emit a barrier sentinel
+   * (METADATA_CHANGE_INDEX) and the iterator must truncate after it — no files from later commits
+   * appear in the same batch. Exercises four pieces of the CDC schema-tracking wiring at once:
+   *
+   * <ol>
+   *   <li>Metadata/protocol capture in {@code collectAndBuildCDCIndexedFiles}.
+   *   <li>Barrier emission via {@code getMetadataOrProtocolChangeIndexedFileIterator}.
+   *   <li>Barrier passthrough in {@code applyPerCommitCDCAdmission}.
+   *   <li>{@code stopIndexedFileIteratorAtSchemaChangeBarrier} truncating across commits.
+   * </ol>
+   *
+   * <p>Setup: v0=CREATE, v1=ALTER ENABLE CDF, v2=INSERT, v3=ALTER ADD COLUMNS (metadata-only),
+   * v4=INSERT. Tracking log is seeded at v2 (pre-ALTER schema), so v3 diverges from source-init.
+   */
+  @Test
+  public void testGetFileChangesForCDC_emitsBarrierAtSchemaChange(@TempDir File tempDir)
+      throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "test_cdc_barrier_" + System.nanoTime();
+    createCDFEnabledTable(tablePath, tableName); // v0=CREATE, v1=ALTER ENABLE CDF
+    sql("INSERT INTO %s VALUES (1, 'a')", tableName); // v2 data
+    sql("ALTER TABLE %s ADD COLUMNS (c3 INT)", tableName); // v3 metadata-only
+    sql("INSERT INTO %s VALUES (2, 'b', 99)", tableName); // v4 post-barrier
+
+    String schemaLogPath = new File(tempDir, "schema_log").getAbsolutePath();
+    SparkMicroBatchStream stream =
+        createStreamWithSeededTrackingLog(tablePath, schemaLogPath, /* seededVersion= */ 2L);
+
+    // Drive the stream from v2 (inclusive). Expected output structure:
+    //   v2: BASE + CDC data + END  (pre-barrier commit, fully emitted)
+    //   v3: barrier at METADATA_CHANGE_INDEX
+    //   v4: nothing — truncated.
+    List<IndexedFile> result;
+    try (CloseableIterator<IndexedFile> iter =
+        stream.getFileChangesWithRateLimitForCDC(
+            /* fromVersion= */ 2L,
+            /* fromIndex= */ DeltaSourceOffset.BASE_INDEX(),
+            /* isInitialSnapshot= */ false,
+            /* limits= */ Optional.empty(),
+            /* endOffset= */ Optional.empty())) {
+      result = collectAll(iter);
+    }
+
+    assertFalse(result.isEmpty(), "Expected at least the barrier in the output");
+    IndexedFile last = result.get(result.size() - 1);
+    assertEquals(
+        DeltaSourceOffset.METADATA_CHANGE_INDEX(),
+        last.getIndex(),
+        "Last entry must be the schema-change barrier sentinel");
+    assertEquals(3L, last.getVersion(), "Barrier must be at v3 (the ALTER commit)");
+
+    for (IndexedFile f : result) {
+      assertNotEquals(
+          4L, f.getVersion(), "v4 must not appear — stopIterator truncates at the barrier");
+    }
+  }
+
+  /**
+   * Same as {@link #testProcessCommit_emitsBarrierAtSchemaChange} but the divergence is a
+   * protocol-only ALTER (minReaderVersion/minWriterVersion bump). Targets the protocol-capture
+   * branch in {@code collectAndBuildCDCIndexedFiles} — without it, protocol-only commits would not
+   * fire the barrier.
+   *
+   * <p>Setup: v0=CREATE, v1=ALTER ENABLE CDF, v2=INSERT, v3=ALTER reader/writer protocol versions.
+   */
+  @Test
+  public void testProcessCommit_emitsBarrierAtProtocolChange(@TempDir File tempDir)
+      throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "test_cdc_process_protocol_barrier_" + System.nanoTime();
+    createCDFEnabledTable(tablePath, tableName); // v0, v1
+    sql("INSERT INTO %s VALUES (1, 'a')", tableName); // v2 data
+    sql(
+        "ALTER TABLE %s SET TBLPROPERTIES "
+            + "('delta.minReaderVersion' = '2', 'delta.minWriterVersion' = '5')",
+        tableName); // v3 protocol-only
+
+    String schemaLogPath = new File(tempDir, "schema_log").getAbsolutePath();
+    SparkMicroBatchStream stream =
+        createStreamWithSeededTrackingLog(tablePath, schemaLogPath, /* seededVersion= */ 2L);
+
+    long commitVersion = 3L;
+    CommitActions commit = getCommitActions(tablePath, commitVersion);
+    List<IndexedFile> files;
+    try (CloseableIterator<IndexedFile> iter =
+        stream.processCommitToIndexedFilesForCDC(
+            commit,
+            /* startVersion= */ commitVersion,
+            /* limits= */ Optional.empty(),
+            /* endOffsetOpt= */ Optional.empty(),
+            /* lastProcessedVersion= */ commitVersion - 1,
+            /* lastProcessedIndex= */ DeltaSourceOffset.BASE_INDEX())) {
+      files = collectAll(iter);
+    }
+
+    assertEquals(2, files.size(), "Expected [barrier, END], got " + files.size());
+    IndexedFile barrier = files.get(0);
+    assertEquals(commitVersion, barrier.getVersion());
+    assertEquals(
+        DeltaSourceOffset.METADATA_CHANGE_INDEX(),
+        barrier.getIndex(),
+        "First entry must be the schema-change barrier sentinel (fired by protocol change)");
+  }
+
+  /**
+   * The barrier sentinel must survive {@code applyPerCommitCDCAdmission} when limits are set —
+   * admission is bypassed for barrier-only commits. Without that bypass, admission would treat the
+   * barrier as a normal file action and either lose it or count it against the budget.
+   *
+   * <p>Setup: v0=CREATE, v1=ALTER ENABLE CDF, v2=INSERT, v3=ALTER ADD COLUMNS (metadata-only).
+   */
+  @Test
+  public void testProcessCommit_barrierSurvivesAdmissionLimit(@TempDir File tempDir)
+      throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "test_cdc_barrier_admission_" + System.nanoTime();
+    createCDFEnabledTable(tablePath, tableName); // v0, v1
+    sql("INSERT INTO %s VALUES (1, 'a')", tableName); // v2 data
+    sql("ALTER TABLE %s ADD COLUMNS (c3 INT)", tableName); // v3 metadata-only
+
+    String schemaLogPath = new File(tempDir, "schema_log").getAbsolutePath();
+    SparkMicroBatchStream stream =
+        createStreamWithSeededTrackingLog(tablePath, schemaLogPath, /* seededVersion= */ 2L);
+
+    long commitVersion = 3L;
+    CommitActions commit = getCommitActions(tablePath, commitVersion);
+    Optional<DeltaSource.AdmissionLimits> limits =
+        createAdmissionLimits(/* maxFiles= */ Optional.of(1), /* maxBytes= */ Optional.empty());
+
+    List<IndexedFile> files;
+    try (CloseableIterator<IndexedFile> iter =
+        stream.processCommitToIndexedFilesForCDC(
+            commit,
+            /* startVersion= */ commitVersion,
+            /* limits= */ limits,
+            /* endOffsetOpt= */ Optional.empty(),
+            /* lastProcessedVersion= */ commitVersion - 1,
+            /* lastProcessedIndex= */ DeltaSourceOffset.BASE_INDEX())) {
+      files = collectAll(iter);
+    }
+
+    // With limits set, applyPerCommitCDCAdmission returns the barrier list unchanged (no END
+    // appended — END is only added in the no-limits branch).
+    assertEquals(
+        1, files.size(), "Barrier must pass through admission unchanged (1 entry expected)");
+    IndexedFile barrier = files.get(0);
+    assertEquals(commitVersion, barrier.getVersion());
+    assertEquals(
+        DeltaSourceOffset.METADATA_CHANGE_INDEX(),
+        barrier.getIndex(),
+        "Barrier sentinel must survive admission");
+  }
+
+  /**
+   * Builds a stream where the schema-tracking log has been seeded with the table's metadata at
+   * {@code seededVersion}. {@code mergeConsecutiveSchemaChanges=false} so the merger doesn't fold
+   * later metadata into the seeded entry — useful when the test wants a specific divergence point.
+   */
+  private SparkMicroBatchStream createStreamWithSeededTrackingLog(
+      String tablePath, String schemaLogPath, long seededVersion) {
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
+    Engine engine = DefaultEngine.create(hadoopConf);
+
+    Map<String, String> javaOptions = new HashMap<>();
+    javaOptions.put(DeltaOptions.SCHEMA_TRACKING_LOCATION(), schemaLogPath);
+    javaOptions.put("readChangeFeed", "true");
+    scala.collection.immutable.Map<String, String> scalaOptions =
+        ScalaUtils.toScalaMap(javaOptions);
+    DeltaOptions deltaOptions = new DeltaOptions(scalaOptions, spark.sessionState().conf());
+
+    io.delta.kernel.internal.SnapshotImpl latestSnapshot =
+        (io.delta.kernel.internal.SnapshotImpl) snapshotManager.loadLatestSnapshot();
+    io.delta.kernel.internal.SnapshotImpl seededSnapshot =
+        (io.delta.kernel.internal.SnapshotImpl) snapshotManager.loadSnapshotAt(seededVersion);
+
+    org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog trackingLog =
+        MetadataEvolutionHandler.getMetadataTrackingLogForMicroBatchStream(
+                spark,
+                latestSnapshot,
+                javaOptions,
+                snapshotManager,
+                engine,
+                Option.empty(),
+                /* mergeConsecutiveSchemaChanges= */ false)
+            .get();
+    org.apache.spark.sql.delta.sources.PersistedMetadata seeded =
+        org.apache.spark.sql.delta.sources.PersistedMetadata.apply(
+            seededSnapshot.getMetadata().getId(),
+            seededVersion,
+            new io.delta.spark.internal.v2.adapters.KernelMetadataAdapter(
+                seededSnapshot.getMetadata()),
+            new io.delta.spark.internal.v2.adapters.KernelProtocolAdapter(
+                seededSnapshot.getProtocol()),
+            tablePath + "/_delta_log/_streaming_metadata");
+    trackingLog.writeNewMetadata(seeded, /* replaceCurrent= */ false);
+
+    StructType tableSchema =
+        io.delta.spark.internal.v2.utils.SchemaUtils.convertKernelSchemaToSparkSchema(
+            seededSnapshot.getSchema());
+    return new SparkMicroBatchStream(
+        snapshotManager,
+        latestSnapshot,
+        hadoopConf,
+        spark,
+        deltaOptions,
+        tablePath,
+        tableSchema,
+        /* partitionSchema= */ new StructType(),
+        /* readDataSchema= */ tableSchema,
+        /* ddlOrderedReadOutputSchema= */ tableSchema,
+        /* dataFilters= */ new org.apache.spark.sql.sources.Filter[0],
+        scalaOptions,
+        Option.apply(trackingLog),
+        tablePath + "/_checkpoint");
   }
 
   /**
