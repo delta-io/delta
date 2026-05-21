@@ -144,7 +144,9 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "streaming read with column pruning and partition column in middle",
     "streaming read with column mapping id and partition column in middle",
     "streaming read after column rename with partition column in middle",
-    "streaming read preserves percent-literal string partition value"
+    "streaming read preserves percent-literal string partition value",
+    "initial snapshot: checkpoint resume produces all rows without duplicates",
+    "initial snapshot: Trigger.AvailableNow processes all data and terminates"
   )
 
   override protected def shouldFailTests: Set[String] = Set(

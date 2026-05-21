@@ -3401,11 +3401,6 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       val tablePath = inputDir.getCanonicalPath
       sql(s"CREATE TABLE delta.`$tablePath` (id LONG, p STRING) " +
         "USING delta PARTITIONED BY (p)")
-      // Each value is chosen so that an erroneous second unescape would produce a result
-      // pairwise distinct from the input and from the other cases' bug results:
-      //   "%20"   -> bug result " "   (canonical space-collapse)
-      //   "%25"   -> bug result "%"   (self-encoding of `%`)
-      //   "a%2Fb" -> bug result "a/b" (embedded percent escape mid-string)
       Seq((1L, "%20"), (2L, "%25"), (3L, "a%2Fb")).toDF("id", "p")
         .write.format("delta").mode("append").save(tablePath)
 
@@ -3424,6 +3419,80 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       } finally {
         q.stop()
       }
+    }
+  }
+
+  test("initial snapshot: checkpoint resume produces all rows without duplicates") {
+    withTempDirs { (sourceDir, sinkDir, checkpointDir) =>
+      val sourcePath = sourceDir.getCanonicalPath
+      val sinkPath = sinkDir.getCanonicalPath
+      val checkpointPath = checkpointDir.getCanonicalPath
+
+      (0 until 10).foreach { i =>
+        Seq(i).toDF("value")
+          .write.mode("append").format("delta").save(sourcePath)
+      }
+
+      val q1 = loadStreamWithOptions(
+        sourcePath, Map(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "2"))
+        .writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointPath)
+        .start(sinkPath)
+      try {
+        q1.processAllAvailable()
+      } finally {
+        q1.stop()
+      }
+
+      val firstRunCount = spark.read.format("delta").load(sinkPath).count()
+      assert(firstRunCount > 0, "First run should produce at least some rows")
+
+      val q2 = loadStreamWithOptions(
+        sourcePath, Map(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "2"))
+        .writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointPath)
+        .start(sinkPath)
+      try {
+        q2.processAllAvailable()
+      } finally {
+        q2.stop()
+      }
+
+      checkAnswer(
+        spark.read.format("delta").load(sinkPath),
+        (0 until 10).map(i => Row(i)))
+    }
+  }
+
+  test("initial snapshot: Trigger.AvailableNow processes all data and terminates") {
+    withTempDirs { (sourceDir, sinkDir, checkpointDir) =>
+      val sourcePath = sourceDir.getCanonicalPath
+      val sinkPath = sinkDir.getCanonicalPath
+      val checkpointPath = checkpointDir.getCanonicalPath
+
+      (0 until 10).foreach { i =>
+        Seq(i).toDF("value")
+          .write.mode("append").format("delta").save(sourcePath)
+      }
+
+      val q = loadStreamWithOptions(sourcePath, Map.empty)
+        .writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointPath)
+        .trigger(Trigger.AvailableNow())
+        .start(sinkPath)
+      try {
+        assert(q.awaitTermination(60000),
+          "Trigger.AvailableNow query should terminate within 60 seconds")
+      } finally {
+        q.stop()
+      }
+
+      checkAnswer(
+        spark.read.format("delta").load(sinkPath),
+        (0 until 10).map(i => Row(i)))
     }
   }
 
