@@ -38,11 +38,6 @@ import org.junit.jupiter.api.Test;
 public class UCDeltaTableNonDeltaFallbackTest extends UCDeltaTableIntegrationBaseTest {
 
   @Override
-  protected boolean useDeltaRestApiForTests() {
-    return true;
-  }
-
-  @Override
   protected boolean expectDeltaRestApiSuccessAtClassLevel() {
     return false;
   }
