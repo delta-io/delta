@@ -93,15 +93,18 @@ class UniFormConverterSuite extends
     )
   }
 
+  /** Simulates the UC REST catalog path: Iceberg props in storage.properties. */
   def catalogTableWithDeltaUniformIceberg(
       catalogTable: CatalogTable,
       metadataPath: String,
       convertedDeltaVersion: Long): CatalogTable =
     catalogTable.copy(
-      properties = catalogTable.properties +
-        (IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP -> metadataPath) +
-        (IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP ->
-          convertedDeltaVersion.toString)
+      storage = catalogTable.storage.copy(
+        properties = catalogTable.storage.properties +
+          (IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP -> metadataPath) +
+          (IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP ->
+            convertedDeltaVersion.toString)
+      )
     )
 
   def assertDeltaCommitRangeEvent(

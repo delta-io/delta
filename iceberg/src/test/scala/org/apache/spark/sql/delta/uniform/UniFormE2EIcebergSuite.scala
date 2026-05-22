@@ -31,7 +31,8 @@ import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.connector.catalog.{Identifier, Table}
-import org.apache.spark.sql.delta.{DeltaLog, IcebergConstants}
+import com.databricks.spark.util.Log4jUsageLogger
+import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations, DeltaTestUtils, IcebergConstants}
 import org.apache.spark.sql.delta.DeltaConfigs.{
   COORDINATED_COMMITS_COORDINATOR_CONF,
   COORDINATED_COMMITS_COORDINATOR_NAME
@@ -97,13 +98,17 @@ trait WriteDeltaHMSReadIceberg extends UniFormE2ETest
 /**
  * A [[DeltaCatalog]] subclass that enriches [[CatalogTable]] with the last converted Iceberg
  * metadata from [[InMemoryUCCommitCoordinator]] before loading the table. This simulates what
- * the real UC catalog does: returning
+ * the real UC REST catalog does: injecting
  * [[IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP]]
- * and [[IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP]] as catalog table
- * properties so that [[IcebergConverter]] can perform incremental conversion.
+ * and [[IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP]] into
+ * catalog storage properties, matching the UC REST path in [[UCDeltaCatalogClientImpl]].
  */
 class UCBackedDeltaCatalog extends DeltaCatalog {
   override def loadCatalogTable(ident: Identifier, catalogTable: CatalogTable): Table = {
+    val forbiddenKeys = catalogTable.properties.keys.filter(_.startsWith("deltaUniformIceberg."))
+    assert(forbiddenKeys.isEmpty,
+      s"deltaUniformIceberg.* keys must only appear in storage.properties, " +
+        s"never in catalogTable.properties. Found: ${forbiddenKeys.mkString(", ")}")
     val enriched = UCBackedDeltaCatalog.currentCoordinator.flatMap { coordinator =>
       val deltaLog = DeltaLog.forTable(spark, new Path(catalogTable.location))
       val tableConf = deltaLog.update().metadata.coordinatedCommitsTableConf
@@ -112,11 +117,12 @@ class UCBackedDeltaCatalog extends DeltaCatalog {
           .filter(_.getIcebergMetadata.isPresent)
           .map { meta =>
             val icebergMeta = meta.getIcebergMetadata.get
-            catalogTable.copy(properties = catalogTable.properties +
-              (IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP->
-                icebergMeta.getMetadataLocation) +
-              (IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP ->
-                icebergMeta.getConvertedDeltaVersion.toString))
+            catalogTable.copy(storage = catalogTable.storage.copy(
+              properties = catalogTable.storage.properties +
+                (IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP ->
+                  icebergMeta.getMetadataLocation) +
+                (IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP ->
+                  icebergMeta.getConvertedDeltaVersion.toString)))
           }
       }
     }.getOrElse(catalogTable)
@@ -240,7 +246,77 @@ trait WriteDeltaUCCCReadIceberg extends UniFormE2ETest
  */
 class UniFormE2EIcebergUCSuite extends UniFormE2EIcebergSuiteBase
     with WriteDeltaUCCCReadIceberg {
-  // No test should go here. Please add tests in [[UniFormE2EIcebergSuiteBase]]
+  // Tests that don't require CC infrastructure should be added in [[UniFormE2EIcebergSuiteBase]].
+  // Tests that specifically exercise the UC commit coordinator path may be added here.
   override def extraTableProperties(compatVersion: Int): String =
     super.extraTableProperties(compatVersion) + requiredTableProperties
+
+  test("conflict resolution refreshes catalogTable with fresh uniform metadata " +
+      "for incremental Iceberg conversion") {
+    val tableName = "test_cc_conflict_iceberg_refresh"
+    withTable(tableName) {
+      // Create a CC + UniForm table.
+      write(
+        s"""CREATE TABLE $tableName (id INT) USING DELTA
+           |TBLPROPERTIES (
+           |  'delta.columnMapping.mode' = 'name',
+           |  'delta.enableIcebergCompatV2' = 'true',
+           |  'delta.universalFormat.enabledFormats' = 'iceberg'
+           |  $requiredTableProperties
+           |)""".stripMargin)
+
+      // v1: insert row 1 — triggers atomic Iceberg conversion at v1.
+      write(s"INSERT INTO $tableName VALUES (1)")
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+      val v1Snapshot = deltaLog.update()
+      val tableId = v1Snapshot.metadata.coordinatedCommitsTableConf
+        .get(UCCommitCoordinatorClient.UC_TABLE_ID_KEY).get
+      val v1IcebergMeta =
+        ucCommitCoordinator.getUniformMetadata(tableId).get.getIcebergMetadata.get
+
+      // Build a stale catalog table: raw HMS catalog enriched with v1 Iceberg metadata.
+      // This simulates a transaction that started before v2 was committed.
+      val rawCatalogTable =
+        spark.sessionState.catalog.getTableMetadata(TableIdentifier(tableName))
+      val staleCatalogTable = rawCatalogTable.copy(
+        storage = rawCatalogTable.storage.copy(
+          properties = rawCatalogTable.storage.properties +
+            (IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP ->
+              v1IcebergMeta.getMetadataLocation) +
+            (IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP ->
+              v1IcebergMeta.getConvertedDeltaVersion.toString)
+        )
+      )
+
+      // v2: insert row 2 — the "winning" commit that the stale txn will conflict with.
+      write(s"INSERT INTO $tableName VALUES (2)")
+
+      // Start a transaction with stale v1 snapshot and stale v1 Iceberg catalog.
+      // It will try to commit as v2, hit a conflict, then retry as v3.
+      // During conflict resolution, getCommits returns v2's UniformMetadata, which
+      // refreshes catalogTable to convertedDeltaVersion=2. The retry commit then converts
+      // only v3 incrementally (fromVersion=3, toVersion=3) rather than from stale v1.
+      val txn = deltaLog.startTransaction(Some(staleCatalogTable), Some(v1Snapshot))
+      val events = Log4jUsageLogger.track {
+        txn.commit(Seq.empty, DeltaOperations.ManualUpdate)
+      }
+
+      // Latest version is now 3. There are two deltaCommitRange events: one from the failed
+      // first attempt (v2, using stale v1 base) and one from the successful retry (v3).
+      // The retry must use the refreshed catalog (convertedDeltaVersion=2 from v2's
+      // UniformMetadata), so conversion covers only v3 (fromVersion=3, toVersion=3).
+      // Without the fix, the retry would still use the stale v1 base and fromVersion would be 2.
+      val latestVersion = deltaLog.update().version
+      val rangeEvents = DeltaTestUtils.filterUsageRecords(
+        events, "delta.iceberg.conversion.deltaCommitRange")
+      assert(rangeEvents.size >= 2,
+        s"Expected >=2 deltaCommitRange events (failed attempt + retry), got ${rangeEvents.size}")
+      val retryEventData = JsonUtils.fromJson[Map[String, Any]](rangeEvents.last.blob)
+      assert(retryEventData("fromVersion") === latestVersion,
+        s"Expected fromVersion=$latestVersion (fresh v2 base), " +
+        s"got ${retryEventData("fromVersion")} (stale v1 base would give ${latestVersion - 1})")
+      assert(retryEventData("toVersion") === latestVersion,
+        s"Expected toVersion=$latestVersion")
+    }
+  }
 }

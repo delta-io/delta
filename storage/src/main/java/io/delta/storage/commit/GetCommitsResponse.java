@@ -18,7 +18,9 @@ package io.delta.storage.commit;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
+import io.delta.storage.commit.uniform.UniformMetadata;
 import org.apache.hadoop.fs.Path;
 
 /**
@@ -31,9 +33,19 @@ public class GetCommitsResponse {
 
   private long latestTableVersion;
 
+  private Optional<UniformMetadata> uniformMetadata;
+
   public GetCommitsResponse(List<Commit> commits, long latestTableVersion) {
+    this(commits, latestTableVersion, Optional.empty());
+  }
+
+  public GetCommitsResponse(
+      List<Commit> commits,
+      long latestTableVersion,
+      Optional<UniformMetadata> uniformMetadata) {
     this.commits = commits;
     this.latestTableVersion = latestTableVersion;
+    this.uniformMetadata = uniformMetadata;
   }
 
   public List<Commit> getCommits() {
@@ -42,6 +54,10 @@ public class GetCommitsResponse {
 
   public long getLatestTableVersion() {
     return latestTableVersion;
+  }
+
+  public Optional<UniformMetadata> getUniformMetadata() {
+    return uniformMetadata;
   }
 }
 

@@ -842,7 +842,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
         .stream()
         .sorted(Comparator.comparingLong(Commit::getVersion))
         .collect(Collectors.toList());
-    return new GetCommitsResponse(sortedCommits, resp.getLatestTableVersion());
+    return new GetCommitsResponse(sortedCommits, resp.getLatestTableVersion(), resp.getUniformMetadata());
   }
 
   protected GetCommitsResponse getCommitsFromUCImpl(
