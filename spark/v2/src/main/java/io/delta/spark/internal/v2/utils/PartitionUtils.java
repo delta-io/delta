@@ -198,7 +198,7 @@ public class PartitionUtils {
       AddFile addFile, StructType partitionSchema, String tablePath, ZoneId zoneId) {
     scala.collection.immutable.Map<String, Object> metadata =
         mergeIntoScalaMap(
-            buildDvMetadata(addFile.getDeletionVector()),
+            buildDvMetadataScala(addFile.getDeletionVector()),
             buildRowTrackingMetadata(addFile.getBaseRowId(), addFile.getDefaultRowCommitVersion()));
     return makePartitionedFile(
         new Path(tablePath, addFile.getPath()).toString(),
@@ -497,23 +497,20 @@ public class PartitionUtils {
    *
    * <p>The metadata is used by DeltaParquetFileFormat to generate the is_row_deleted column.
    */
-  // TODO Sandro (touch-point 4): expose this helper for the changelog path. Two options:
-  //   (a) flip visibility from `private static` to `public static` (smaller diff, but
-  //       requires the caller in DeltaChangelogBatch to deserialize the base64 string back
-  //       into a DeletionVectorDescriptor only to immediately re-serialize it here);
-  //   (b) add a sibling public helper that takes the base64 string directly (avoids the
-  //       redundant round-trip; cleaner if DeltaChangelogBatch already holds the base64 form).
-  // Pick based on what shape CDCInputPartition ends up carrying (touch-point 1).
-  private static scala.collection.immutable.Map<String, Object> buildDvMetadata(
-      Optional<DeletionVectorDescriptor> dvOpt) {
+  public static Map<String, Object> buildDvMetadata(String dvBase64) {
     Map<String, Object> metadata = new HashMap<>();
-    if (dvOpt.isPresent()) {
-      metadata.put(
-          DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_ID_ENCODED(),
-          dvOpt.get().serializeToBase64());
+    if (dvBase64 != null) {
+      metadata.put(DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_ID_ENCODED(), dvBase64);
       metadata.put(
           DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_TYPE(), RowIndexFilterType.IF_CONTAINED);
     }
+    return metadata;
+  }
+
+  private static scala.collection.immutable.Map<String, Object> buildDvMetadataScala(
+      Optional<DeletionVectorDescriptor> dvOpt) {
+    Map<String, Object> metadata =
+        buildDvMetadata(dvOpt.map(DeletionVectorDescriptor::serializeToBase64).orElse(null));
     return scala.collection.immutable.Map$.MODULE$.from(CollectionConverters.asScala(metadata));
   }
 

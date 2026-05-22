@@ -35,9 +35,7 @@ import org.apache.spark.sql.connector.read.PartitionReader;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.delta.DefaultRowCommitVersion$;
 import org.apache.spark.sql.delta.DeltaErrors;
-import org.apache.spark.sql.delta.DeltaParquetFileFormat;
 import org.apache.spark.sql.delta.RowId$;
-import org.apache.spark.sql.delta.RowIndexFilterType;
 import org.apache.spark.sql.execution.datasources.FilePartition;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.internal.SQLConf;
@@ -358,19 +356,10 @@ public class DeltaChangelogBatch implements Batch {
       // When the action carries a DV, set both Parquet reader constants together. Setting only
       // one triggers IllegalStateException in DeltaParquetFileFormat. IF_CONTAINED makes the
       // reader drop physical rows whose index is in the DV bitmap (visible-rows semantics).
-      // Could be replaced by a call to PartitionUtils.buildDvMetadata if its visibility is
-      // widened from private to public.
-      if (cdcPartition.getDeletionVectorInfo() != null) {
+      for (java.util.Map.Entry<String, Object> entry :
+          PartitionUtils.buildDvMetadata(cdcPartition.getDeletionVectorInfo()).entrySet()) {
         constantMetadata =
-            constantMetadata.$plus(
-                new Tuple2<>(
-                    DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_ID_ENCODED(),
-                    cdcPartition.getDeletionVectorInfo()));
-        constantMetadata =
-            constantMetadata.$plus(
-                new Tuple2<>(
-                    DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_TYPE(),
-                    RowIndexFilterType.IF_CONTAINED));
+            constantMetadata.$plus(new Tuple2<>(entry.getKey(), entry.getValue()));
       }
 
       PartitionedFile file =

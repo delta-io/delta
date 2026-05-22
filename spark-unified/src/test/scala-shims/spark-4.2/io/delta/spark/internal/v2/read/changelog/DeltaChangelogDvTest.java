@@ -38,10 +38,8 @@ public class DeltaChangelogDvTest extends DeltaChangelogTestBase {
   // ===========================================================================================
 
   /**
-   * Create a DV-enabled, row-tracking-enabled table. Writes (INSERT, DELETE) inside the body run
-   * under the session-default v2 mode (AUTO -&gt; V1 connector) so they go through the V1 write
-   * path that populates {@code numRecords} statistics required for row-tracking-enabled tables.
-   * The body is expected to wrap CHANGES reads in {@link #withStrictV2}.
+   * Create a DV-enabled, row-tracking-enabled table. The body is expected to wrap CHANGES reads
+   * in {@link #withStrictV2} so they route through the V2 path.
    */
   private void withDvTable(String suffix, ThrowingConsumer body) throws Exception {
     String tableName = "dsv2_cdc_dv_" + suffix + "_" + System.nanoTime();
