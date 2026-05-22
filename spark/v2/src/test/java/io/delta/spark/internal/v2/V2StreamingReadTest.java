@@ -1,5 +1,5 @@
 /*
- * Copyright (2025) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,9 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -555,5 +557,83 @@ public class V2StreamingReadTest extends V2TestBase {
             RowFactory.create(2L, "x", 20, "z", 2.5),
             RowFactory.create(3L, "w", 30, "y", 3.5));
     assertDataEquals(actualRows, expectedRows);
+  }
+
+  // ---- Distributed Initial Snapshot Tests ----
+
+  /**
+   * Creates a Delta table with multiple versions, each containing {@code rowsPerVersion} rows. Rows
+   * use TEST_SCHEMA (id INT, name STRING, value DOUBLE) with deterministic values derived from the
+   * row's global position: id=pos, name="User{pos}", value=pos*10.0.
+   */
+  private void createMultiVersionTable(String tablePath, int numVersions, int rowsPerVersion) {
+    for (int v = 0; v < numVersions; v++) {
+      List<Row> rows = new ArrayList<>();
+      for (int r = 0; r < rowsPerVersion; r++) {
+        int id = v * rowsPerVersion + r + 1;
+        rows.add(RowFactory.create(id, "User" + id, (double) id * 10));
+      }
+      Dataset<Row> df = spark.createDataFrame(rows, TEST_SCHEMA);
+      if (v == 0) {
+        df.write().format("delta").save(tablePath);
+      } else {
+        df.write().format("delta").mode("append").save(tablePath);
+      }
+    }
+  }
+
+  private List<Row> expectedRows(int totalRows) {
+    List<Row> rows = new ArrayList<>();
+    for (int i = 1; i <= totalRows; i++) {
+      rows.add(RowFactory.create(i, "User" + i, (double) i * 10));
+    }
+    return rows;
+  }
+
+  /**
+   * Parity regression test: the distributed initial snapshot path must produce identical results to
+   * the driver path. This is the primary regression guard — if the distributed path ever diverges
+   * (wrong sort order, missed files, duplicate rows), this test catches it.
+   */
+  @Test
+  public void testDistributedInitialSnapshotParityWithDriverPath(@TempDir File deltaTablePath)
+      throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+    String dfFlagKey = "spark.databricks.delta.streaming.distributedInitialSnapshot";
+
+    createMultiVersionTable(tablePath, 5, 2);
+    String dsv2TableRef = str("dsv2.delta.`%s`", tablePath);
+
+    try {
+      // Driver path (distributedInitialSnapshot = false, the default)
+      spark.conf().unset(dfFlagKey);
+      Dataset<Row> driverStream = spark.readStream().table(dsv2TableRef);
+      List<Row> driverRows =
+          processStreamingQuery(driverStream, "parity_driver_" + System.nanoTime());
+
+      // Distributed path
+      spark.conf().set(dfFlagKey, "true");
+      Dataset<Row> distributedStream = spark.readStream().table(dsv2TableRef);
+      List<Row> distributedRows =
+          processStreamingQuery(distributedStream, "parity_distributed_" + System.nanoTime());
+
+      assertEquals(
+          driverRows.size(),
+          distributedRows.size(),
+          () ->
+              "Row count mismatch: driver="
+                  + driverRows.size()
+                  + " distributed="
+                  + distributedRows.size());
+
+      Set<Row> driverSet = new HashSet<>(driverRows);
+      Set<Row> distributedSet = new HashSet<>(distributedRows);
+      assertEquals(
+          driverSet,
+          distributedSet,
+          "Distributed path must produce identical results to driver path");
+    } finally {
+      spark.conf().unset(dfFlagKey);
+    }
   }
 }
