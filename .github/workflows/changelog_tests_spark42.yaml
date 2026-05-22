@@ -1,0 +1,71 @@
+name: "V2 Changelog Tests (Spark 4.2)"
+
+# Runs only the V2 changelog tests against Spark 4.2-preview4. Scope is
+# narrowly the tests under io.delta.spark.internal.v2.read.changelog.*
+# in spark-unified/test, which is what PR #6830 (test classpath fix) and
+# PR #6832 (DV support) actually exercise. The full Delta test suite
+# against Spark 4.2 is run by spark_test.yaml as a matrix lane with
+# continue-on-error: true, and includes pre-existing UC connector
+# incompatibilities (UCProxy bytecode against Spark 4.0's
+# CatalogStorageFormat.copy) that are not in scope for these PRs.
+#
+# This workflow exists on the fork-CI branches only and is meant as
+# proof that the changelog tests pass against a real Spark 4.2 release.
+
+on:
+  push:
+    branches: [fix-changelog-fork-ci, auto-cdf-dv-fork-ci]
+    paths-ignore:
+      - '**.md'
+      - '**.txt'
+  pull_request:
+    branches: [master]
+    paths-ignore:
+      - '**.md'
+      - '**.txt'
+
+jobs:
+  changelog-tests:
+    name: "Changelog tests on Spark 4.2"
+    runs-on: ubuntu-24.04
+    env:
+      SCALA_VERSION: "2.13.16"
+      SPARK_VERSION: "master"
+    steps:
+      - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
+      - name: install java
+        uses: actions/setup-java@17f84c3641ba7b8f6deff6309fc4c864478f5d62 # v3.14.1
+        with:
+          distribution: "zulu"
+          java-version: "17"
+      - name: Restore SBT cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2
+            ~/.cache/coursier
+          key: delta-sbt-cache-changelog-spark4.2-scala2.13.16
+      - name: Set up pinned Unity Catalog
+        uses: ./.github/actions/setup-unitycatalog
+      - name: Run V2 changelog tests on Spark 4.2
+        run: |
+          ./build/sbt -DsparkVersion=master \
+            "set every scalastyleFailOnError := false" \
+            "spark/testOnly io.delta.spark.internal.v2.read.changelog.*"
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: changelog-test-reports
+          path: "**/target/test-reports/*.xml"
+          retention-days: 7
+      - name: Save SBT cache
+        if: github.event_name == 'push'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2
+            ~/.cache/coursier
+          key: delta-sbt-cache-changelog-spark4.2-scala2.13.16
