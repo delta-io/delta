@@ -153,8 +153,8 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
       UCDeltaModels.TableType.EXTERNAL,
       "s3://bucket/no-creds-table",
       metadata,
-      Collections.emptyMap(),
-      Optional.empty()) // no storage properties either
+      Collections.emptyMap(), // no storage properties either
+      Optional.empty())
     val credEx = new CredentialFetchFailedException(
       "creds exhausted", new RuntimeException("simulated"), tableInfoNoCreds)
 
