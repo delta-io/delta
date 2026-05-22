@@ -20,6 +20,8 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.delta.kernel.CommitActions;
 import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
@@ -5038,23 +5040,97 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
     }
   }
 
-  /** Verifies that DataFrameSnapshotCache.close() nulls the DataFrame and is idempotent. */
+  /**
+   * Verifies that DataFrameBasedIndexedFileSnapshotCache.close() nulls the DataFrame and is
+   * idempotent.
+   */
   @Test
-  public void testDataFrameSnapshotCache_closeAndIdempotent() {
+  public void testDataFrameBasedIndexedFileSnapshotCache_closeAndIdempotent() {
     Dataset<Row> df =
         spark.range(10).toDF("value").persist(org.apache.spark.storage.StorageLevel.MEMORY_ONLY());
     df.count();
 
-    DataFrameSnapshotCache cache = new DataFrameSnapshotCache(42L, df);
-    assertThat(cache.getVersion()).isEqualTo(42L);
-    assertThat(cache.getSortedAddFiles()).isNotNull();
+    DataFrameBasedIndexedFileSnapshotCache source =
+        new DataFrameBasedIndexedFileSnapshotCache(42L, 1000L, df);
+    assertThat(source.getVersion()).isEqualTo(42L);
+    assertThat(source.getCommitTimestamp()).isEqualTo(1000L);
+    assertThat(source.getSortedAddFiles()).isNotNull();
 
     // close() unpersists but does not null the DataFrame reference
-    cache.close();
-    assertThat(cache.getSortedAddFiles()).isNotNull();
+    source.close();
+    assertThat(source.getSortedAddFiles()).isNotNull();
 
     // Second close: idempotent (unpersist on already-unpersisted is a no-op)
-    assertDoesNotThrow(cache::close);
+    assertDoesNotThrow(source::close);
+  }
+
+  /**
+   * Verifies that DriverBasedIndexedFileSnapshotCache.getFiles(fromIndex) returns only unprocessed
+   * files + END sentinel when called with a fromIndex past some files.
+   */
+  @Test
+  public void testDriverBasedIndexedFileSnapshotCache_getFilesWithFromIndex() throws Exception {
+    long version = 5L;
+    long timestamp = 12345L;
+
+    // Build a mock IndexedFile list: [BEGIN, file(0), file(1), file(2), END]
+    List<IndexedFile> files = new ArrayList<>();
+    files.add(IndexedFile.sentinel(version, DeltaSourceOffset.BASE_INDEX()));
+    for (int i = 0; i < 3; i++) {
+      files.add(IndexedFile.addFile(version, i, createDummyAddFile("path" + i)));
+    }
+    files.add(IndexedFile.sentinel(version, DeltaSourceOffset.END_INDEX()));
+
+    DriverBasedIndexedFileSnapshotCache source =
+        new DriverBasedIndexedFileSnapshotCache(
+            version, Collections.unmodifiableList(files), timestamp);
+
+    assertThat(source.getVersion()).isEqualTo(version);
+    assertThat(source.getCommitTimestamp()).isEqualTo(timestamp);
+
+    // getFiles(BASE_INDEX) should return the full list
+    List<IndexedFile> allFiles = collectAll(source.getFiles(DeltaSourceOffset.BASE_INDEX()));
+    assertThat(allFiles).hasSize(5);
+    assertThat(allFiles.get(0).getIndex()).isEqualTo(DeltaSourceOffset.BASE_INDEX());
+    assertThat(allFiles.get(4).getIndex()).isEqualTo(DeltaSourceOffset.END_INDEX());
+
+    // getFiles(0) should skip BEGIN and file(0), returning [file(1), file(2), END]
+    List<IndexedFile> afterZero = collectAll(source.getFiles(0));
+    assertThat(afterZero).hasSize(3);
+    assertThat(afterZero.get(0).getIndex()).isEqualTo(1);
+    assertThat(afterZero.get(1).getIndex()).isEqualTo(2);
+    assertThat(afterZero.get(2).getIndex()).isEqualTo(DeltaSourceOffset.END_INDEX());
+
+    // getFiles(1) should return [file(2), END]
+    List<IndexedFile> afterOne = collectAll(source.getFiles(1));
+    assertThat(afterOne).hasSize(2);
+    assertThat(afterOne.get(0).getIndex()).isEqualTo(2);
+    assertThat(afterOne.get(1).getIndex()).isEqualTo(DeltaSourceOffset.END_INDEX());
+
+    // getFiles(2) should return [END] only
+    List<IndexedFile> afterTwo = collectAll(source.getFiles(2));
+    assertThat(afterTwo).hasSize(1);
+    assertThat(afterTwo.get(0).getIndex()).isEqualTo(DeltaSourceOffset.END_INDEX());
+
+    // getFiles(999) should return empty (clamped past end)
+    List<IndexedFile> pastEnd = collectAll(source.getFiles(999));
+    assertThat(pastEnd).isEmpty();
+
+    // close() is a no-op, should not throw
+    assertDoesNotThrow(source::close);
+  }
+
+  private static List<IndexedFile> collectAll(CloseableIterator<IndexedFile> iter)
+      throws Exception {
+    List<IndexedFile> result = new ArrayList<>();
+    try {
+      while (iter.hasNext()) {
+        result.add(iter.next());
+      }
+    } finally {
+      iter.close();
+    }
+    return result;
   }
 
   /**
@@ -5158,5 +5234,21 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
       spark.conf().unset(maxFilesKey);
       spark.conf().unset(dfFlagKey);
     }
+  }
+
+  private static AddFile createDummyAddFile(String path) {
+    return new AddFile(
+        AddFile.createAddFileRow(
+            /* physicalSchema= */ null,
+            path,
+            VectorUtils.stringStringMapValue(Collections.emptyMap()),
+            /* size= */ 100L,
+            /* modificationTime= */ System.currentTimeMillis(),
+            /* dataChange= */ true,
+            /* deletionVector= */ Optional.empty(),
+            /* tags= */ Optional.empty(),
+            /* baseRowId= */ Optional.empty(),
+            /* defaultRowCommitVersion= */ Optional.empty(),
+            /* stats= */ Optional.empty()));
   }
 }
