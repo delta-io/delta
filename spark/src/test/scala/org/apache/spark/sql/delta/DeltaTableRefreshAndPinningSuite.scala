@@ -1126,15 +1126,16 @@ trait DeltaTableRefreshAndPinningSuiteBase
 
       checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
 
-      // Write via path to bypass catalog cache invalidation
-      val path = getTablePath("t")
-      Seq((2, 200)).toDF("id", "salary")
-        .write.format("delta").mode("append").save(path)
+      // True external write bypassing the session catalog
+      writeExternalCommit("t", Seq((2, 200)).toDF("id", "salary"))
 
-      // Delta refreshes table versions via PrepareDeltaScan. The version change
-      // breaks the plan shape match in CacheManager, so the cache entry is not
-      // reused and fresh data is returned.
-      // This means CACHE TABLE does not truly pin data in Delta.
+      // In NONE/AUTO mode, Delta's PrepareDeltaScan refreshes the snapshot,
+      // breaking the plan-shape match in CacheManager. In STRICT mode,
+      // PrepareDeltaScan does not apply to V2 plans.
+      // However, SparkTable.equals() includes initialSnapshot.getVersion()
+      // and DeltaCatalog.loadTable() creates a new SparkTable each time,
+      // so CacheManager.sameResult() returns false regardless of V2 mode.
+      // Both paths result in a cache miss and fresh data.
       checkAnswer(
         sql("SELECT * FROM t ORDER BY id"),
         Seq(Row(1, 100), Row(2, 200)))
@@ -1154,10 +1155,8 @@ trait DeltaTableRefreshAndPinningSuiteBase
       // Session write invalidates the cache
       sql("INSERT INTO t VALUES (2, 200)")
 
-      // External write via path
-      val path = getTablePath("t")
-      Seq((3, 300)).toDF("id", "salary")
-        .write.format("delta").mode("append").save(path)
+      // True external write bypassing the session catalog
+      writeExternalCommit("t", Seq((3, 300)).toDF("id", "salary"))
 
       // After a session write invalidates the cache, Delta picks up all data
       // from the log.
@@ -1177,17 +1176,22 @@ trait DeltaTableRefreshAndPinningSuiteBase
 
       checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
 
-      // External schema change via path-based metadata update
-      val path = getTablePath("t")
-      sql(s"ALTER TABLE delta.`$path` ADD COLUMN new_column INT")
-      Seq((2, 200, -1)).toDF("id", "salary", "new_column")
-        .write.format("delta").mode("append").save(path)
+      // External schema change + data write via direct filesystem commit
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("t"))
+      val currentMetadata = deltaLog.snapshot.metadata
+      val newSchema = currentMetadata.schema
+        .add("new_column", IntegerType, nullable = true)
+      val newMetadata = currentMetadata.copy(schemaString = newSchema.json)
+      writeExternalCommit(
+        "t",
+        Seq((2, 200, -1)).toDF("id", "salary", "new_column"),
+        newMetadata = Some(newMetadata))
 
       // Schema change breaks the plan-shape match in CacheManager,
       // so the cache is effectively invalidated.
       // NOTE: The design doc proposes that after DSv2 migration, CACHE TABLE
       // should pin table state and return (1, 100) only. This requires
-      // Spark-side changes: today SparkTable.equals() includes
+      // Spark-side changes: SparkTable.equals() includes
       // initialSnapshot.getVersion() and DeltaCatalog.loadTable() creates a
       // new SparkTable with the latest snapshot on every call, so
       // CacheManager.sameResult() always returns false when the version
@@ -1212,16 +1216,14 @@ trait DeltaTableRefreshAndPinningSuiteBase
       // Session schema change
       sql("ALTER TABLE t ADD COLUMN new_column INT")
 
-      // External write via path
-      val path = getTablePath("t")
-      Seq((2, 200, -1)).toDF("id", "salary", "new_column")
-        .write.format("delta").mode("append").save(path)
+      // True external write bypassing the session catalog
+      writeExternalCommit("t", Seq((2, 200, -1)).toDF("id", "salary", "new_column"))
 
       // Schema change from the session invalidates the cache.
       // Delta picks up all data.
       // NOTE: The design doc proposes that after DSv2 migration, the result
       // should be (1, 100, null) only (session schema change visible, external
-      // write not). This requires Spark-side cache pinning changes: today
+      // write not). This requires Spark-side cache pinning changes:
       // SparkTable.equals() includes initialSnapshot.getVersion() and
       // DeltaCatalog.loadTable() creates a new SparkTable each time, so
       // CacheManager never matches the cached plan after version changes.
