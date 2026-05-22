@@ -52,3 +52,4 @@ jobs:
         run: |
           source .venv/bin/activate
           TEST_PARALLELISM_COUNT=4 python run-tests.py --group iceberg --spark-version 4.0
+          TEST_PARALLELISM_COUNT=4 python run-tests.py --group iceberg --spark-version 4.1
