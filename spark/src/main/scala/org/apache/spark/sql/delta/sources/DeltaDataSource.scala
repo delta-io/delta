@@ -340,9 +340,10 @@ class DeltaDataSource
   }
 
   /**
-   * Extend the default `supportsDataType` to allow VariantType.
+   * Extend the default `supportsDataType` to allow GeoSpatial types and VariantType.
    */
   override def supportsDataType(dt: DataType): Boolean = {
+    DeltaGeoSpatial.isGeoSpatialType(dt) ||
     dt.isInstanceOf[VariantType] || super.supportsDataType(dt)
   }
 

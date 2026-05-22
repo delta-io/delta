@@ -71,6 +71,7 @@ private[spark] class TestClientForDeltaFormatSharing(
     TimestampNTZTableFeature,
     TypeWideningPreviewTableFeature,
     TypeWideningTableFeature,
+    GeoSpatialTableFeature,
     VariantTypePreviewTableFeature,
     VariantTypeTableFeature,
     VariantShreddingPreviewTableFeature,
