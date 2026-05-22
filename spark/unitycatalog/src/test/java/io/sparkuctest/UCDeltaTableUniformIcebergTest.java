@@ -34,9 +34,7 @@ import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import scala.collection.JavaConverters;
 
-/**
- * Integration test that verifies UniForm Iceberg behaviors
- */
+/** Integration test that verifies UniForm Iceberg behaviors */
 public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseTest {
 
   @Override
@@ -115,8 +113,8 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
   }
 
   /**
-   * Verifies UniForm Iceberg incremental conversion works correctly on the UC
-   * REST path (real embedded UC server).
+   * Verifies UniForm Iceberg incremental conversion works correctly on the UC REST path (real
+   * embedded UC server).
    *
    * <p>The test creates a UniForm-enabled Delta table, writes twice, and verifies:
    *
