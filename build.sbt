@@ -561,11 +561,7 @@ lazy val spark = (project in file("spark-unified"))
 
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
 
-    // Mirror what `sparkDependentSettings` does for the version-specific test shim directory,
-    // but root it at this module's baseDirectory instead of `Test / baseDirectory` (which points
-    // at sparkV1). Without this, version-gated tests that live under spark-unified (e.g. the
-    // changelog tests under `scala-shims/spark-4.2`) are never compiled, and tests that exist
-    // only for Spark 4.2 would also be compiled against 4.0/4.1 if the path were unconditional.
+    // Add version-specific test shim directory, e.g. `src/test/scala-shims/spark-4.2`.
     Test / unmanagedSourceDirectories ++= {
       val ver = sparkVersion.value
       SparkVersionSpec.ALL_SPECS
