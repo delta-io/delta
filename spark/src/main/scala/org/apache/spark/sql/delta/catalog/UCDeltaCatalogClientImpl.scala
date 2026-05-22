@@ -45,7 +45,7 @@ import org.apache.spark.sql.catalyst.catalog.{
   CatalogTableType
 }
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, Table, TableCatalog, V1Table}
-import org.apache.spark.sql.delta.TableFeature
+import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, TableFeature}
 import org.apache.spark.sql.delta.actions.{DomainMetadata, Metadata, Protocol}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED
 import org.apache.spark.sql.delta.coordinatedcommits.UCTokenBasedRestClientFactory
@@ -249,6 +249,122 @@ private[catalog] class UCDeltaCatalogClientImpl(
   }
 
   // -------------------------------------------------------------------------
+  // DeltaCatalogClient: buildReplaceProps
+  // -------------------------------------------------------------------------
+
+  /**
+   * Loads the existing table from UC and builds the REPLACE-augmented property map.
+   * Mirrors master `UCSingleCatalog.loadExistingManagedTablePropsForReplace`. Caller
+   * validations:
+   *   - reject caller-supplied `UC_TABLE_ID_KEY` (UC owns the table identity);
+   *   - reject `delta.feature.catalogManaged` override (must equal `supported`);
+   *   - reject `PROP_LOCATION` (cannot relocate an existing managed table);
+   *   - reject `PROP_PROVIDER` that differs from the existing table's provider
+   *     (cannot change table format via REPLACE).
+   *
+   * `PROP_IS_MANAGED_LOCATION` is not rejected here -- Spark V2's REPLACE / CREATE OR REPLACE
+   * paths inject it for existing managed tables, and `buildReplaceProps` overrides it to
+   * `true` regardless.
+   *
+   * Existing-table preconditions:
+   *   - tableType MANAGED + provider DELTA + `delta.feature.catalogManaged=supported`
+   *     (catalog-managed Delta table).
+   *
+   * Augments:
+   *   - `PROP_PROVIDER` = existing provider (defense if caller omitted USING);
+   *   - `PROP_IS_MANAGED_LOCATION` = `true`;
+   *   - storage credentials from `info.getStorageProperties`, filtered through the
+   *     `fs.*` Hadoop credential namespace, mirrored bare + `option.`-prefixed.
+   */
+  override def buildReplaceProps(
+      ident: Identifier,
+      properties: util.Map[String, String]): util.Map[String, String] = {
+    val fqtn = fullQualifiedTableName(ident)
+    rejectSystemManagedProperties(properties, fqtn)
+    rejectCatalogManagedOverride(properties, fqtn)
+    if (properties.containsKey(TableCatalog.PROP_LOCATION)) {
+      throw new UnsupportedOperationException(
+        s"REPLACE TABLE cannot specify '${TableCatalog.PROP_LOCATION}' on the existing " +
+          s"UC-managed Delta table $fqtn.")
+    }
+    val info =
+      try ucClient.loadTable(toStorageTableIdent(ident))
+      catch { case _: StorageNoSuchTableException => throw new NoSuchTableException(ident) }
+    requireCatalogManagedDeltaTable(info, fqtn)
+    val existingProvider =
+      Option(info.getMetadata.getProvider)
+        .map(_.toLowerCase(java.util.Locale.ROOT))
+        .getOrElse("delta")
+    Option(properties.get(TableCatalog.PROP_PROVIDER))
+      .filterNot(_.equalsIgnoreCase(existingProvider))
+      .foreach(p => throw new UnsupportedOperationException(
+        s"REPLACE TABLE on $fqtn cannot change table format from " +
+          s"'$existingProvider' to '${p.toLowerCase(java.util.Locale.ROOT)}'."))
+    val augmented = new util.HashMap[String, String](properties)
+    augmented.put(TableCatalog.PROP_PROVIDER, existingProvider)
+    augmented.put(TableCatalog.PROP_IS_MANAGED_LOCATION, "true")
+    // Mirror credentials into the `option.`-prefixed namespace so
+    // `getTablePropsAndWriteOptions` routes them into writeOptions for Hadoop config
+    // injection (mirrors `UCSingleCatalog.setCredentialProps`).
+    info.getStorageProperties.asScala.foreach { case (k, v) =>
+      if (k.startsWith("fs.")) {
+        augmented.put(k, v)
+        augmented.put(TableCatalog.OPTION_PREFIX + k, v)
+      }
+    }
+    augmented
+  }
+
+  /** Reject caller attempts to set properties that the catalog manages. */
+  private def rejectSystemManagedProperties(
+      properties: util.Map[String, String], qualified: String): Unit = {
+    if (properties.containsKey(UC_TABLE_ID_KEY)) {
+      throw new IllegalArgumentException(
+        s"REPLACE TABLE on $qualified cannot specify catalog-managed property " +
+          s"'$UC_TABLE_ID_KEY'.")
+    }
+  }
+
+  /** Reject `delta.feature.catalogManaged` override to anything other than `supported`. */
+  private def rejectCatalogManagedOverride(
+      properties: util.Map[String, String], qualified: String): Unit = {
+    val key = s"delta.feature.${CatalogOwnedTableFeature.name}"
+    Option(properties.get(key))
+      .filter(_ != FEATURE_PROP_SUPPORTED)
+      .foreach(v => throw new IllegalArgumentException(
+        s"REPLACE TABLE on $qualified cannot override '$key'='$v'; expected " +
+          s"'$FEATURE_PROP_SUPPORTED'."))
+  }
+
+  /**
+   * Existing table must be tableType=MANAGED, provider=delta, and carry the
+   * `delta.feature.catalogManaged=supported` configuration. Mirrors
+   * `UCSingleCatalog.isCatalogManagedDeltaTable`.
+   */
+  private def requireCatalogManagedDeltaTable(info: TableInfo, qualified: String): Unit = {
+    if (info.getTableType != UCDeltaModels.TableType.MANAGED) {
+      throw new UnsupportedOperationException(
+        s"REPLACE TABLE is only supported for catalog-managed UC Delta tables; " +
+          s"$qualified is ${info.getTableType}.")
+    }
+    val provider = Option(info.getMetadata.getProvider).map(_.toLowerCase(java.util.Locale.ROOT))
+    if (!provider.contains("delta")) {
+      throw new UnsupportedOperationException(
+        s"REPLACE TABLE is only supported for UC Delta tables; $qualified is " +
+          s"${provider.getOrElse("<unknown>")}.")
+    }
+    val catalogManagedKey = s"delta.feature.${CatalogOwnedTableFeature.name}"
+    val isCatalogManaged = Option(info.getMetadata.getConfiguration)
+      .map(_.asScala.toMap)
+      .exists(_.get(catalogManagedKey).contains(FEATURE_PROP_SUPPORTED))
+    if (!isCatalogManaged) {
+      throw new UnsupportedOperationException(
+        s"REPLACE TABLE is only supported for catalog-managed UC Delta tables; " +
+          s"$qualified is not catalog-managed ('$catalogManagedKey' is not set).")
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // DeltaCatalogClient: createTable
   // -------------------------------------------------------------------------
 
@@ -350,7 +466,7 @@ private[catalog] class UCDeltaCatalogClientImpl(
 
   private def toV1Table(ident: Identifier, info: TableInfo): V1Table = {
     val m = info.getMetadata
-    val properties = Option(m.getConfiguration)
+    val tableConfig = Option(m.getConfiguration)
       .map(_.asScala.toMap)
       .getOrElse(Map.empty[String, String])
     val partitionColumns = Option(m.getPartitionColumns)
@@ -373,9 +489,12 @@ private[catalog] class UCDeltaCatalogClientImpl(
             iceberg.getConvertedDeltaTimestamp
         )
       }.getOrElse(Map.empty[String, String])
+    // Match master UC's V1Table shape: pack tableConfig + credentials + UniForm into
+    // `storage.properties`, leave `catalogTable.properties` empty. Required for
+    // downstream streaming/routing compatibility.
     val storage = CatalogStorageFormat.empty.copy(
       locationUri = Some(new URI(info.getLocation)),
-      properties = properties ++ info.getStorageProperties.asScala.toMap ++ uniformProps)
+      properties = tableConfig ++ info.getStorageProperties.asScala.toMap ++ uniformProps)
     val catalogTable = CatalogTable(
       identifier = TableIdentifier(ident.name(), ident.namespace().headOption, Some(catalogName)),
       tableType = fromUcTableType(info.getTableType),

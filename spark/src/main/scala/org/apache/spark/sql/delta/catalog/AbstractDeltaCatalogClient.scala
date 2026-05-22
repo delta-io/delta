@@ -60,6 +60,22 @@ private[catalog] trait AbstractDeltaCatalogClient {
       properties: util.Map[String, String]): util.Map[String, String]
 
   /**
+   * Called by `AbstractDeltaCatalog.maybeLoadForManagedDeltaReplace` and
+   * `AbstractDeltaCatalog.maybeStageManagedDeltaCreateOrReplace` (existing-branch) for
+   * REPLACE / RTAS / CREATE OR REPLACE on an existing managed-Delta table. Loads the
+   * existing table from the catalog and returns `properties` augmented with
+   * `PROP_IS_MANAGED_LOCATION=true` plus storage credentials.
+   *
+   * @throws org.apache.spark.sql.catalyst.analysis.NoSuchTableException
+   *   if the catalog has no record of this identifier.
+   * @throws UnsupportedOperationException
+   *   if the existing table is not MANAGED.
+   */
+  def buildReplaceProps(
+      ident: Identifier,
+      properties: util.Map[String, String]): util.Map[String, String]
+
+  /**
    * Called by [[AbstractDeltaCatalog]] after Delta has written the initial commit, in place
    * of the legacy `super.createTable` call. Implementations register the table with the
    * catalog (e.g. via UC Delta API `createTable` endpoint).

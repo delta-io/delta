@@ -503,10 +503,9 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     }
 
   /**
-   * Routing boundary for the UC Delta API path. Stages via
-   * [[AbstractDeltaCatalogClient.createStagingTable]] for a fresh managed-Delta CREATE;
-   * otherwise returns `properties` unchanged so the regular delegate flow handles it. Only
-   * the fresh-create call sites ([[createTable]] / [[stageCreate]]) invoke this.
+   * Returns true when this request should be routed through the UC Delta API path (whether
+   * via [[AbstractDeltaCatalogClient.createStagingTable]] for CREATE or
+   * [[AbstractDeltaCatalogClient.loadTable]] for REPLACE / CREATE OR REPLACE).
    *
    * Pass-through cases:
    *   - delegate isn't Unity Catalog;
@@ -514,22 +513,58 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
    *   - `PROP_LOCATION` or `PROP_EXTERNAL` is set (external create);
    *   - the identifier is path-based (e.g. `delta`.`/tmp/foo`).
    */
-  private def maybeStageManagedDeltaCreate(
+  private def shouldRouteThroughDeltaApi(
       ident: Identifier,
-      properties: util.Map[String, String]): util.Map[String, String] = {
+      properties: util.Map[String, String]): Boolean = {
     if (!isUnityCatalog ||
         deltaCatalogClient.isEmpty ||
         properties.containsKey(TableCatalog.PROP_LOCATION) ||
-        properties.containsKey(TableCatalog.PROP_EXTERNAL) ||
-        // CREATE-OR-REPLACE on an existing managed table -- UCSingleCatalog sets this without
-        // setting PROP_LOCATION (location comes from the existing table's snapshot). Skip the
-        // new path so we don't allocate a fresh staging location for an existing table.
-        properties.containsKey(TableCatalog.PROP_IS_MANAGED_LOCATION)) {
-      return properties
+        properties.containsKey(TableCatalog.PROP_EXTERNAL)) {
+      return false
     }
     val ns = ident.namespace()
-    if (ns.length == 1 && new Path(ident.name()).isAbsolute) return properties
+    !(ns.length == 1 && new Path(ident.name()).isAbsolute)
+  }
+
+  /**
+   * Routing boundary for the UC Delta API fresh CREATE path. Stages via
+   * [[AbstractDeltaCatalogClient.createStagingTable]] for a fresh managed-Delta CREATE;
+   * otherwise returns `properties` unchanged so the regular delegate flow handles it. Only
+   * the fresh-create call sites ([[createTable]] / [[stageCreate]]) invoke this.
+   */
+  private def maybeStageManagedDeltaCreate(
+      ident: Identifier,
+      properties: util.Map[String, String]): util.Map[String, String] = {
+    if (!shouldRouteThroughDeltaApi(ident, properties)) return properties
     deltaCatalogClient.get.createStagingTable(ident, properties)
+  }
+
+  /**
+   * Routing boundary for REPLACE / RTAS. Delegates the load + property-build to
+   * [[AbstractDeltaCatalogClient.buildReplaceProps]]; throws via that client when the
+   * existing table is missing or non-MANAGED.
+   */
+  private def maybeLoadForManagedDeltaReplace(
+      ident: Identifier,
+      properties: util.Map[String, String]): util.Map[String, String] = {
+    if (!shouldRouteThroughDeltaApi(ident, properties)) return properties
+    deltaCatalogClient.get.buildReplaceProps(ident, properties)
+  }
+
+  /**
+   * Combined boundary for CREATE OR REPLACE:
+   *   - existing table -> [[AbstractDeltaCatalogClient.buildReplaceProps]]
+   *   - missing ([[NoSuchTableException]]) -> fresh-create staging
+   */
+  private def maybeStageManagedDeltaCreateOrReplace(
+      ident: Identifier,
+      properties: util.Map[String, String]): util.Map[String, String] = {
+    if (!shouldRouteThroughDeltaApi(ident, properties)) return properties
+    try deltaCatalogClient.get.buildReplaceProps(ident, properties)
+    catch {
+      case _: NoSuchTableException =>
+        deltaCatalogClient.get.createStagingTable(ident, properties)
+    }
   }
 
   override def stageReplace(
@@ -543,7 +578,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
           ident,
           schema,
           partitions,
-          properties,
+          maybeLoadForManagedDeltaReplace(ident, properties),
           TableCreationModes.Replace
         )
       } else {
@@ -561,14 +596,11 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       properties: util.Map[String, String]): StagedTable =
     recordFrameProfile("DeltaCatalog", "stageCreateOrReplace") {
       if (DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))) {
-        // Fresh CREATE-OR-REPLACE (no existing PROP_LOCATION) routes through the same
-        // staging boundary as `createTable` / `stageCreate`; REPLACE-existing (PROP_LOCATION
-        // set by the upstream catalog) is filtered out inside the boundary.
         new StagedDeltaTableV2(
           ident,
           schema,
           partitions,
-          maybeStageManagedDeltaCreate(ident, properties),
+          maybeStageManagedDeltaCreateOrReplace(ident, properties),
           TableCreationModes.CreateOrReplace
         )
       } else {
