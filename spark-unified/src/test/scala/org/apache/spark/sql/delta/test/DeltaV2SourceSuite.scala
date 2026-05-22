@@ -188,3 +188,17 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "createSource should create source with empty or matching table schema provided"
   )
 }
+
+/**
+ * Runs DeltaV2SourceSuite with the distributed initial snapshot path enabled.
+ * Every test that reads from the beginning (no startingVersion) automatically
+ * exercises the DataFrame-based snapshot cache.
+ */
+class DeltaV2SourceDistributedInitialSnapshotSuite extends DeltaV2SourceSuite {
+  import org.apache.spark.sql.delta.sources.DeltaSQLConf
+
+  override protected def sparkConf: org.apache.spark.SparkConf = {
+    super.sparkConf.set(
+      DeltaSQLConf.DELTA_STREAMING_USE_DISTRIBUTED_INITIAL_SNAPSHOT.key, "true")
+  }
+}
