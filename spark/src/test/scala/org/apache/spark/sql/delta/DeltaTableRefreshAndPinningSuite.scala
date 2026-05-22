@@ -1183,17 +1183,19 @@ trait DeltaTableRefreshAndPinningSuiteBase
       Seq((2, 200, -1)).toDF("id", "salary", "new_column")
         .write.format("delta").mode("append").save(path)
 
-      if (v2EnableMode == "STRICT") {
-        // After DSv2 migration, CACHE TABLE pins table state.
-        // External schema changes do not break cache pinning.
-        checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
-      } else {
-        // Schema change breaks the plan-shape match in CacheManager,
-        // so the cache is effectively invalidated.
-        checkAnswer(
-          sql("SELECT * FROM t ORDER BY id"),
-          Seq(Row(1, 100, null), Row(2, 200, -1)))
-      }
+      // Schema change breaks the plan-shape match in CacheManager,
+      // so the cache is effectively invalidated.
+      // NOTE: The design doc proposes that after DSv2 migration, CACHE TABLE
+      // should pin table state and return (1, 100) only. This requires
+      // Spark-side changes: today SparkTable.equals() includes
+      // initialSnapshot.getVersion() and DeltaCatalog.loadTable() creates a
+      // new SparkTable with the latest snapshot on every call, so
+      // CacheManager.sameResult() always returns false when the version
+      // changes. Cache pinning needs Spark to stop reloading tables for
+      // cached plans (see "Refreshing and pinning tables in Spark" design doc).
+      checkAnswer(
+        sql("SELECT * FROM t ORDER BY id"),
+        Seq(Row(1, 100, null), Row(2, 200, -1)))
 
       sql("UNCACHE TABLE t")
     }
@@ -1215,17 +1217,17 @@ trait DeltaTableRefreshAndPinningSuiteBase
       Seq((2, 200, -1)).toDF("id", "salary", "new_column")
         .write.format("delta").mode("append").save(path)
 
-      if (v2EnableMode == "STRICT") {
-        // After DSv2 migration, session schema change invalidates cache but
-        // external write is not visible (cache pins after refresh).
-        checkAnswer(sql("SELECT * FROM t"), Row(1, 100, null))
-      } else {
-        // Schema change from the session invalidates the cache.
-        // Delta picks up all data.
-        checkAnswer(
-          sql("SELECT * FROM t ORDER BY id"),
-          Seq(Row(1, 100, null), Row(2, 200, -1)))
-      }
+      // Schema change from the session invalidates the cache.
+      // Delta picks up all data.
+      // NOTE: The design doc proposes that after DSv2 migration, the result
+      // should be (1, 100, null) only (session schema change visible, external
+      // write not). This requires Spark-side cache pinning changes: today
+      // SparkTable.equals() includes initialSnapshot.getVersion() and
+      // DeltaCatalog.loadTable() creates a new SparkTable each time, so
+      // CacheManager never matches the cached plan after version changes.
+      checkAnswer(
+        sql("SELECT * FROM t ORDER BY id"),
+        Seq(Row(1, 100, null), Row(2, 200, -1)))
 
       sql("UNCACHE TABLE t")
     }
