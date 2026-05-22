@@ -90,6 +90,10 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
       loadSnapshot(ucCatalogManagedClient, tablePath = null)
     }
     assertThrows[NullPointerException] {
+      // ucTableIdentifier is null
+      loadSnapshot(ucCatalogManagedClient, ucTableIdentifier = null)
+    }
+    assertThrows[NullPointerException] {
       // versionToLoad is null
       loadSnapshot(ucCatalogManagedClient, versionToLoad = null)
     }
@@ -151,6 +155,26 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
   test("loadTable correctly loads a UC table -- versionToLoad is empty => load latest") {
     // Since versionToLoad is empty, it asserts that the latest version (2) is loaded
     testCatalogManagedTable()
+  }
+
+  test("loadTable forwards table identifier to getCommits") {
+    withUCClientAndTestTable { (ucClient, tablePath, _) =>
+      val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
+      val ucTableIdentifier = new UCTableIdentifier("cat", "sch", "tbl")
+
+      ucCatalogManagedClient.loadSnapshot(
+        defaultEngine,
+        testUcTableId,
+        tablePath,
+        ucTableIdentifier,
+        emptyLongOpt,
+        emptyLongOpt)
+
+      val tableIdentifier = ucClient.getLastGetCommitsTableIdentifier
+      assert(tableIdentifier != null)
+      assert(tableIdentifier.getNamespace.toSeq == Seq("cat", "sch"))
+      assert(tableIdentifier.getName == "tbl")
+    }
   }
 
   /* ---- Time-travel-by-version tests --- */

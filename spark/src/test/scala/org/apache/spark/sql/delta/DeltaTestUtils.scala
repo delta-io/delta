@@ -633,7 +633,7 @@ trait DeltaSQLInMemoryTestUtils
    * Override for [[withTable]] that asserts no leftover physical parquet as a sanity-check
    * for V2 paths.
    */
-  override protected def withTable(tableNames: String*)(f: => Unit): Unit = {
+  override def withTable(tableNames: String*)(f: => Unit): Unit = {
     try {
       super.withTable(tableNames: _*) {
         f
@@ -649,7 +649,7 @@ trait DeltaSQLInMemoryTestUtils
   /**
    * Overrides for [[afterEach]], cleans the [[InMemoryDeltaCatalog]] after each test.
    */
-  override protected def afterEach(): Unit = {
+  override def afterEach(): Unit = {
     try {
       InMemoryDeltaCatalog.reset()
     } finally {
@@ -664,7 +664,7 @@ trait DeltaSQLInMemoryTestUtils
     }
   }
 
-  override protected def withTempDir(f: File => Unit): Unit = {
+  override def withTempDir(f: File => Unit): Unit = {
     super.withTempPath { dir =>
       f(dir)
       assertNoV1Writes(dir)
@@ -874,6 +874,14 @@ trait DeltaDMLInMemoryTestUtils
     extends DeltaDMLTestUtils
     with DeltaSQLInMemoryTestUtils {
 
+  protected def v2ErrorConditionMapping: Map[String, String] = Map(
+    "DELTA_AGGREGATION_NOT_SUPPORTED" -> "UNSUPPORTED_MERGE_CONDITION.AGGREGATE",
+    "DELTA_NON_DETERMINISTIC_FUNCTION_NOT_SUPPORTED" ->
+      "UNSUPPORTED_MERGE_CONDITION.NON_DETERMINISTIC",
+    "DELTA_MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW_IN_MERGE" -> "MERGE_CARDINALITY_VIOLATION",
+    "DELTA_MERGE_UNRESOLVED_EXPRESSION" -> "UNRESOLVED_COLUMN.WITH_SUGGESTION",
+    "DELTA_SUBQUERY_NOT_SUPPORTED" -> "UNSUPPORTED_MERGE_CONDITION.SUBQUERY")
+
   /**
    * Appends [[df]] into the test table.
    */
@@ -889,6 +897,29 @@ trait DeltaDMLInMemoryTestUtils
     }
     df.writeTo(tableSQLIdentifier).append()
     assertNoV1Writes(tableSQLIdentifier)
+  }
+
+  override def checkError(
+      exception: SparkThrowable,
+      condition: String,
+      sqlState: Option[String] = None,
+      parameters: Map[String, String] = Map.empty,
+      matchPVals: Boolean = false,
+      queryContext: Array[ExpectedContext] = Array.empty): Unit = {
+    v2ErrorConditionMapping.get(condition) match {
+      case Some(v2Condition) =>
+        assert(exception.getCondition == v2Condition,
+          s"Expected V2 condition '$v2Condition' (mapped from '$condition'), " +
+            s"got '${exception.getCondition}'")
+      case None =>
+        super.checkError(
+          exception = exception,
+          condition = condition,
+          sqlState = sqlState,
+          parameters = parameters,
+          matchPVals = matchPVals,
+          queryContext = queryContext)
+    }
   }
 
   /**

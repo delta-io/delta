@@ -16,6 +16,7 @@
 
 package io.delta.storage.commit.uccommitcoordinator;
 
+import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
 import java.util.Collection;
 import java.util.Collections;
@@ -23,9 +24,10 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 
 /**
- * Delta-owned models for the UC Delta REST Catalog API. These decouple the {@link UCDeltaClient}
+ * Delta-owned models for the UC Delta REST API. These decouple the {@link UCDeltaClient}
  * interface from any generated SDK types.
  */
 public final class UCDeltaModels {
@@ -101,9 +103,54 @@ public final class UCDeltaModels {
     }
   }
 
+  /** Result of {@link UCDeltaClient#loadTable}. */
+  public static final class TableInfo {
+
+    private final UUID tableId;
+    private final TableType tableType;
+    private final String location;
+    private final AbstractMetadata metadata;
+    private final Map<String, String> storageProperties;
+
+    public TableInfo(
+        UUID tableId,
+        TableType tableType,
+        String location,
+        AbstractMetadata metadata,
+        Map<String, String> storageProperties) {
+      this.tableId = tableId;
+      this.tableType = tableType;
+      this.location = location;
+      this.metadata = metadata;
+      this.storageProperties = storageProperties;
+    }
+
+    /** UC's {@code table_uuid}; distinct from {@link AbstractMetadata#getId()} (the Delta id). */
+    public UUID getTableId() {
+      return tableId;
+    }
+
+    public TableType getTableType() {
+      return tableType;
+    }
+
+    public String getLocation() {
+      return location;
+    }
+
+    public AbstractMetadata getMetadata() {
+      return metadata;
+    }
+
+    /** Hadoop-style storage options (e.g. catalog-vended credentials). */
+    public Map<String, String> getStorageProperties() {
+      return storageProperties == null ? Collections.emptyMap() : storageProperties;
+    }
+  }
+
   public static final class StagingTableInfo {
 
-    private final String tableId;
+    private final UUID tableId;
     private final TableType tableType;
     private final String location;
     private final DeltaProtocol requiredProtocol;
@@ -112,7 +159,7 @@ public final class UCDeltaModels {
     private final Map<String, String> suggestedProperties;
 
     public StagingTableInfo(
-        String tableId,
+        UUID tableId,
         TableType tableType,
         String location,
         DeltaProtocol requiredProtocol,
@@ -128,7 +175,7 @@ public final class UCDeltaModels {
       this.suggestedProperties = suggestedProperties;
     }
 
-    public String getTableId() {
+    public UUID getTableId() {
       return tableId;
     }
 

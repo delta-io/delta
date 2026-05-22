@@ -209,15 +209,12 @@ class DeltaVariantShreddingSuite
         .isFeatureSupported(VariantShreddingPreviewTableFeature),
         s"Table tbl contains ShreddedVariantTableFeature descriptor when its not supposed to"
       )
-      checkError(
+      checkInvalidBooleanTablePropertyError(
         intercept[SparkException] {
           sql(s"ALTER TABLE tbl " +
             s"SET TBLPROPERTIES('${DeltaConfigs.ENABLE_VARIANT_SHREDDING.key}' = 'bla')")
         },
-        "_LEGACY_ERROR_TEMP_2045",
-        parameters = Map(
-          "message" -> "For input string: \"bla\""
-        )
+        invalidValue = "bla"
       )
       assert(!getProtocolForTable("tbl")
         .readerAndWriterFeatures.contains(VariantShreddingPreviewTableFeature))

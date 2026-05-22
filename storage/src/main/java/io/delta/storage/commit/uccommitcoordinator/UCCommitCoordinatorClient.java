@@ -853,6 +853,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       return ucClient.getCommits(
         extractUCTableId(tableDesc),
         CoordinatedCommitsUtils.getTablePath(tableDesc.getLogPath()).toUri(),
+        tableDesc.getTableIdentifier().orElse(null),
         startVersion,
         endVersion);
     } catch (IOException | UCCommitCoordinatorException e) {

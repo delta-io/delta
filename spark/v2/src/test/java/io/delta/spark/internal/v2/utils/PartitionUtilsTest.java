@@ -39,6 +39,7 @@ import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
+import org.apache.spark.unsafe.types.UTF8String;
 import org.junit.jupiter.api.Test;
 import scala.collection.immutable.Map$;
 
@@ -70,6 +71,37 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
     assertEquals(2024, row.getInt(0));
     assertEquals(11, row.getInt(1));
     assertEquals(25, row.getInt(2));
+  }
+
+  @Test
+  public void testGetPartitionRow_StringValueIsNotDoubleUrlDecoded() {
+    // Kernel's MapValue already holds the logical (decoded) string. Spark's
+    // castPartValueToDesiredType would unescapePathName again; each case below picks an input
+    // whose second-decode result is distinct from the input AND from the other cases' results,
+    // so a regression cannot coincidentally agree with the expected value.
+    //   "%20"   -> bug result " "   (canonical space-collapse)
+    //   "%25"   -> bug result "%"   (self-encoding of `%`)
+    //   "a%2Fb" -> bug result "a/b" (embedded percent escape mid-string)
+    StructType partitionSchema =
+        new StructType(
+            new StructField[] {
+              DataTypes.createStructField("p_space", DataTypes.StringType, true),
+              DataTypes.createStructField("p_percent", DataTypes.StringType, true),
+              DataTypes.createStructField("p_embedded", DataTypes.StringType, true)
+            });
+
+    Map<String, String> partitionValues = new HashMap<>();
+    partitionValues.put("p_space", "%20");
+    partitionValues.put("p_percent", "%25");
+    partitionValues.put("p_embedded", "a%2Fb");
+
+    InternalRow row =
+        PartitionUtils.getPartitionRow(
+            stringStringMapValue(partitionValues), partitionSchema, ZoneId.of("UTC"));
+
+    assertEquals(UTF8String.fromString("%20"), row.getUTF8String(0));
+    assertEquals(UTF8String.fromString("%25"), row.getUTF8String(1));
+    assertEquals(UTF8String.fromString("a%2Fb"), row.getUTF8String(2));
   }
 
   @Test
@@ -152,7 +184,7 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
             options,
             hadoopConf,
             sqlConf,
-            /* isCDCRead= */ false);
+            /* isWriteTimeCDCRead */ false);
 
     assertNotNull(factory, "PartitionReaderFactory should not be null");
   }
@@ -194,9 +226,59 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
             options,
             hadoopConf,
             sqlConf,
-            /* isCDCRead= */ true);
+            /* isWriteTimeCDCRead */ true);
 
     assertNotNull(factory, "CDC PartitionReaderFactory should not be null");
+  }
+
+  /**
+   * Read-time Auto-CDF calls into PartitionUtils with {@code isWriteTimeCDCRead=false}. The factory
+   * is then a plain Parquet reader factory: PartitionUtils does not augment {@code readDataSchema}
+   * with CDC tail columns and does not wrap the reader with {@code CDCReadFunction}. The tail
+   * columns are added by {@code DeltaChangelogBatch.CDCPartitionReaderFactory} as per-partition
+   * constants instead.
+   */
+  @Test
+  public void testCreateDeltaParquetReaderFactory_NotWriteTimeCDCRead() {
+    String tablePath =
+        createTestTable("test_delta_reader_factory_batch_changelog_" + System.nanoTime(), true);
+
+    Table table = Table.forPath(defaultEngine, tablePath);
+    Snapshot snapshot = table.getLatestSnapshot(defaultEngine);
+
+    StructType dataSchema =
+        new StructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.LongType, true),
+            });
+    StructType partitionSchema =
+        new StructType(
+            new StructField[] {DataTypes.createStructField("part", DataTypes.StringType, true)});
+    StructType readDataSchema = dataSchema;
+    StructType ddlOrderedReadOutputSchema =
+        SchemaUtils.ddlOrderedOutputSchema(
+            SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema()),
+            readDataSchema,
+            partitionSchema);
+    Filter[] filters = new Filter[0];
+    scala.collection.immutable.Map<String, String> options = Map$.MODULE$.empty();
+    Configuration hadoopConf = new Configuration();
+    SQLConf sqlConf = SQLConf.get();
+
+    PartitionReaderFactory factory =
+        PartitionUtils.createDeltaParquetReaderFactory(
+            snapshot,
+            dataSchema,
+            partitionSchema,
+            readDataSchema,
+            ddlOrderedReadOutputSchema,
+            filters,
+            options,
+            hadoopConf,
+            sqlConf,
+            /* isWriteTimeCDCRead */ false);
+
+    assertNotNull(factory, "isWriteTimeCDCRead=false PartitionReaderFactory should not be null");
   }
 
   @Test

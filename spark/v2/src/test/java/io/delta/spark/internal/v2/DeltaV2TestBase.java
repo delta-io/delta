@@ -130,6 +130,19 @@ public abstract class DeltaV2TestBase {
     }
   }
 
+  /** Runs the given action and removes the table directory afterwards. */
+  protected void withTable(String tablePath, ThrowingRunnable action) throws Exception {
+    try {
+      action.run();
+    } finally {
+      try {
+        org.apache.commons.io.FileUtils.deleteDirectory(new java.io.File(tablePath));
+      } catch (java.io.IOException ignored) {
+        // Test cleanup best-effort.
+      }
+    }
+  }
+
   protected static void createPartitionedTable(String tableName, String path) {
     spark.sql(
         String.format(

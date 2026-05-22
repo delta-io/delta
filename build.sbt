@@ -480,16 +480,11 @@ lazy val sparkV2 = {
       libraryDependencies ++= Seq(
         "io.delta" % "delta-kernel-api" % v,
         "io.delta" % "delta-kernel-defaults" % v,
-        "io.delta" % "delta-kernel-unitycatalog" % v
-      ),
-      // Kernel main classes are pulled from Maven at version `v`, but several
-      // sparkV2 tests depend on test-only helpers (e.g. InMemoryUCClient,
-      // UCCatalogManagedTestUtils) that are not published. Build those test
-      // jars from the in-tree kernel sources and add them to the test classpath.
-      Test / unmanagedJars ++= Seq(
-        (kernelApi / Test / packageBin).value,
-        (kernelDefaults / Test / packageBin).value,
-        (kernelUnityCatalog / Test / packageBin).value
+        "io.delta" % "delta-kernel-unitycatalog" % v,
+        // sparkV2 tests depend on UC test helpers (InMemoryUCClient,
+        // UCCatalogManagedTestUtils) that live in kernel-unitycatalog's test sources.
+        // Consume them via the published tests-classifier jar.
+        "io.delta" % "delta-kernel-unitycatalog" % v % Test classifier "tests"
       )
     )
   }
@@ -790,6 +785,23 @@ val unityCatalogVersion: String = sys.props.getOrElse(
   "unityCatalogVersion",
   if (useDefaultUnityCatalogReleaseVersion) defaultUnityCatalogReleaseVersion
   else unityCatalogReleaseVersion.getOrElse(pinnedUnityCatalogVersion))
+
+/**
+ * Returns true when `current` is at least `target`. Numeric segments only; suffix after
+ * the first `-` (e.g. `-SNAPSHOT-abc1234`) is stripped before comparison.
+ */
+def isAtLeastVersion(current: String, target: String): Boolean = {
+  def parts(v: String): Seq[Int] =
+    v.takeWhile(_ != '-').split('.').iterator
+      .map(p => scala.util.Try(p.toInt).getOrElse(0)).toSeq
+  val cur = parts(current)
+  val tgt = parts(target)
+  val n = math.max(cur.length, tgt.length)
+  (0 until n).iterator
+    .map(i => (cur.lift(i).getOrElse(0), tgt.lift(i).getOrElse(0)))
+    .find { case (a, b) => a != b }
+    .forall { case (a, b) => a >= b }
+}
 
 val sparkUnityCatalogJacksonVersion = "2.15.4" // We are using Spark 4.0's Jackson version 2.15.x, to override Unity Catalog 0.3.0's version 2.18.x
 
@@ -1169,6 +1181,11 @@ lazy val kernelUnityCatalog = (project in file("kernel/unitycatalog"))
     // Publish the pinned UC jars before sbt tries to resolve them.
     update := update.dependsOn(ensurePinnedUnityCatalog).value,
 
+    // Also publish a test-jar (classifier = "tests") so consumers (e.g. sparkV2 in
+    // Maven mode) can depend on UC test helpers (InMemoryUCClient,
+    // UCCatalogManagedTestUtils) via a published artifact.
+    Test / publishArtifact := true,
+
     // Put the shaded kernel-api JAR on the classpath (compile & test)
     Compile / unmanagedJars += (kernelApi / Compile / packageBin).value,
     Test / unmanagedJars += (kernelApi / Compile / packageBin).value,
@@ -1217,6 +1234,19 @@ lazy val storage = (project in file("storage"))
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       // Jackson datatype module needed for UC SDK tests (excluded from main compile scope)
       "com.fasterxml.jackson.datatype" % "jackson-datatype-jsr310" % "2.15.4" % "test",
+    ) ++ (
+      // unitycatalog-hadoop ships from UC 0.5.0 onward; older versions don't publish the
+      // artifact, so resolving it would fail. Used by UCDeltaTokenBasedRestClient for
+      // credential vending via UCCredentialHadoopConfs.
+      if (isAtLeastVersion(unityCatalogVersion, "0.5.0")) {
+        Seq("io.unitycatalog" % "unitycatalog-hadoop" % unityCatalogVersion excludeAll(
+          ExclusionRule(organization = "org.openapitools"),
+          ExclusionRule(organization = "com.fasterxml.jackson.core"),
+          ExclusionRule(organization = "com.fasterxml.jackson.module"),
+          ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
+          ExclusionRule(organization = "com.fasterxml.jackson.dataformat")
+        ))
+      } else Nil
     ),
 
     // Publish the pinned UC jars before sbt tries to resolve them. storage is the transitive

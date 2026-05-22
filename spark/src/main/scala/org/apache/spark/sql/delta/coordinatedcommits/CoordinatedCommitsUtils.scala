@@ -123,8 +123,8 @@ object CatalogOwnedTableUtils extends DeltaLogging {
               logPath = snapshot.deltaLog.logPath,
               tableConf = snapshot.metadata.configuration,
               hadoopConf = snapshot.deltaLog.newDeltaHadoopConf(),
-              logStore = snapshot.deltaLog.store)
-            )
+              logStore = snapshot.deltaLog.store
+            ))
           }
       }
       // This table is catalog owned table but catalogTableOpt is not defined. This means

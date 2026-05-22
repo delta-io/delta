@@ -46,12 +46,14 @@ import io.unitycatalog.client.model.CreateTable;
 import io.unitycatalog.client.model.DataSourceFormat;
 import io.unitycatalog.client.model.GetMetastoreSummaryResponse;
 import io.unitycatalog.client.model.TableType;
+import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.Path;
 
 import java.io.IOException;
 import java.net.URI;
 import java.util.*;
+import java.util.function.Supplier;
 
 /**
  * A REST client implementation of {@link UCClient} for interacting with Unity Catalog's commit
@@ -130,6 +132,22 @@ public class UCTokenBasedRestClient implements UCClient {
   }
 
   /**
+   * 6-arg constructor for symmetry with {@link UCDeltaTokenBasedRestClient}. The
+   * {@code credentialRenewalEnabled}, {@code credentialScopedFsEnabled}, and
+   * {@code hadoopConfSupplier} parameters are not used by this client and are accepted only so
+   * that callers can construct either client uniformly by reflection.
+   */
+  public UCTokenBasedRestClient(
+      String baseUri,
+      TokenProvider tokenProvider,
+      Map<String, String> appVersions,
+      boolean credentialRenewalEnabled,
+      boolean credentialScopedFsEnabled,
+      Supplier<Configuration> hadoopConfSupplier) {
+    this(baseUri, tokenProvider, appVersions);
+  }
+
+  /**
    * Ensures the client has not been closed. Must be called before any API operation.
    */
   private void ensureOpen() {
@@ -199,6 +217,7 @@ public class UCTokenBasedRestClient implements UCClient {
   public GetCommitsResponse getCommits(
       String tableId,
       URI tableUri,
+      TableIdentifier tableIdentifier,
       Optional<Long> startVersion,
       Optional<Long> endVersion) throws IOException, UCCommitCoordinatorException {
     ensureOpen();
