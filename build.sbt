@@ -542,7 +542,8 @@ lazy val spark = (project in file("spark-unified"))
     // The released jar contains a pre-#5320 DeltaCatalog.class that shadows
     // the in-tree unified DeltaCatalog at the same FQN and produces
     // ClassCastException / NoSuchMethodError on Spark 4.2.
-    excludeDependencies += ExclusionRule("io.delta", "delta-spark_2.13"),
+    // Scoped to Test so MiMa's compile-time previous-ABI lookup still resolves.
+    Test / excludeDependencies += ExclusionRule("io.delta", "delta-spark_2.13"),
     commonSettings,
     scalaStyleSettings,
     sparkMimaSettings,
