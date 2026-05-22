@@ -1129,16 +1129,20 @@ trait DeltaTableRefreshAndPinningSuiteBase
       // True external write bypassing the session catalog
       writeExternalCommit("t", Seq((2, 200)).toDF("id", "salary"))
 
-      // In NONE/AUTO mode, Delta's PrepareDeltaScan refreshes the snapshot,
-      // breaking the plan-shape match in CacheManager. In STRICT mode,
-      // PrepareDeltaScan does not apply to V2 plans.
-      // However, SparkTable.equals() includes initialSnapshot.getVersion()
-      // and DeltaCatalog.loadTable() creates a new SparkTable each time,
-      // so CacheManager.sameResult() returns false regardless of V2 mode.
-      // Both paths result in a cache miss and fresh data.
-      checkAnswer(
-        sql("SELECT * FROM t ORDER BY id"),
-        Seq(Row(1, 100), Row(2, 200)))
+      if (v2EnableMode == "STRICT") {
+        // In STRICT mode (DSv2), writeExternalCommit bypasses DeltaLog so
+        // the cached SparkTable's version is unchanged. CacheManager matches
+        // the cached plan and returns pinned data. This is the proposed DSv2
+        // behavior (SPARK-54022): CACHE TABLE pins table state against
+        // external writes.
+        checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
+      } else {
+        // In NONE/AUTO mode, Delta's PrepareDeltaScan refreshes the snapshot
+        // via DeltaLog, breaking the plan-shape match in CacheManager.
+        checkAnswer(
+          sql("SELECT * FROM t ORDER BY id"),
+          Seq(Row(1, 100), Row(2, 200)))
+      }
 
       sql("UNCACHE TABLE t")
     }
@@ -1158,11 +1162,20 @@ trait DeltaTableRefreshAndPinningSuiteBase
       // True external write bypassing the session catalog
       writeExternalCommit("t", Seq((3, 300)).toDF("id", "salary"))
 
-      // After a session write invalidates the cache, Delta picks up all data
-      // from the log.
-      checkAnswer(
-        sql("SELECT * FROM t ORDER BY id"),
-        Seq(Row(1, 100), Row(2, 200), Row(3, 300)))
+      if (v2EnableMode == "STRICT") {
+        // In STRICT mode (DSv2), session INSERT invalidates cache, but the
+        // subsequent external write via writeExternalCommit bypasses DeltaLog
+        // so it is invisible. This is the proposed DSv2 behavior (SPARK-54022).
+        checkAnswer(
+          sql("SELECT * FROM t ORDER BY id"),
+          Seq(Row(1, 100), Row(2, 200)))
+      } else {
+        // In NONE/AUTO mode, PrepareDeltaScan refreshes the snapshot and
+        // picks up all data from the log.
+        checkAnswer(
+          sql("SELECT * FROM t ORDER BY id"),
+          Seq(Row(1, 100), Row(2, 200), Row(3, 300)))
+      }
 
       sql("UNCACHE TABLE t")
     }
@@ -1187,19 +1200,18 @@ trait DeltaTableRefreshAndPinningSuiteBase
         Seq((2, 200, -1)).toDF("id", "salary", "new_column"),
         newMetadata = Some(newMetadata))
 
-      // Schema change breaks the plan-shape match in CacheManager,
-      // so the cache is effectively invalidated.
-      // NOTE: The design doc proposes that after DSv2 migration, CACHE TABLE
-      // should pin table state and return (1, 100) only. This requires
-      // Spark-side changes: SparkTable.equals() includes
-      // initialSnapshot.getVersion() and DeltaCatalog.loadTable() creates a
-      // new SparkTable with the latest snapshot on every call, so
-      // CacheManager.sameResult() always returns false when the version
-      // changes. Cache pinning needs Spark to stop reloading tables for
-      // cached plans (see "Refreshing and pinning tables in Spark" design doc).
-      checkAnswer(
-        sql("SELECT * FROM t ORDER BY id"),
-        Seq(Row(1, 100, null), Row(2, 200, -1)))
+      if (v2EnableMode == "STRICT") {
+        // In STRICT mode (DSv2), writeExternalCommit bypasses DeltaLog so
+        // the cached SparkTable's version is unchanged. Cache pins both
+        // data and schema. This is the proposed DSv2 behavior (SPARK-54022).
+        checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
+      } else {
+        // In NONE/AUTO mode, schema change breaks the plan-shape match in
+        // CacheManager, so the cache is effectively invalidated.
+        checkAnswer(
+          sql("SELECT * FROM t ORDER BY id"),
+          Seq(Row(1, 100, null), Row(2, 200, -1)))
+      }
 
       sql("UNCACHE TABLE t")
     }
@@ -1219,17 +1231,18 @@ trait DeltaTableRefreshAndPinningSuiteBase
       // True external write bypassing the session catalog
       writeExternalCommit("t", Seq((2, 200, -1)).toDF("id", "salary", "new_column"))
 
-      // Schema change from the session invalidates the cache.
-      // Delta picks up all data.
-      // NOTE: The design doc proposes that after DSv2 migration, the result
-      // should be (1, 100, null) only (session schema change visible, external
-      // write not). This requires Spark-side cache pinning changes:
-      // SparkTable.equals() includes initialSnapshot.getVersion() and
-      // DeltaCatalog.loadTable() creates a new SparkTable each time, so
-      // CacheManager never matches the cached plan after version changes.
-      checkAnswer(
-        sql("SELECT * FROM t ORDER BY id"),
-        Seq(Row(1, 100, null), Row(2, 200, -1)))
+      if (v2EnableMode == "STRICT") {
+        // In STRICT mode (DSv2), session ALTER TABLE invalidates cache,
+        // but external write via writeExternalCommit bypasses DeltaLog and
+        // is invisible. This is the proposed DSv2 behavior (SPARK-54022).
+        checkAnswer(sql("SELECT * FROM t"), Row(1, 100, null))
+      } else {
+        // In NONE/AUTO mode, schema change from the session invalidates the
+        // cache. Delta picks up all data including the external write.
+        checkAnswer(
+          sql("SELECT * FROM t ORDER BY id"),
+          Seq(Row(1, 100, null), Row(2, 200, -1)))
+      }
 
       sql("UNCACHE TABLE t")
     }
