@@ -58,10 +58,7 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
     String[] parts = fullTableName.split("\\.");
     TablesApi deltaApi = new TablesApi(unityCatalogInfo().createApiClient());
     LoadTableResponse resp = deltaApi.loadTable(parts[0], parts[1], parts[2]);
-    Map<String, String> serverProps =
-        resp.getMetadata() != null ? resp.getMetadata().getProperties() : null;
-    if (serverProps == null) return;
-    for (String key : serverProps.keySet()) {
+    for (String key : resp.getMetadata().getProperties().keySet()) {
       Assertions.assertFalse(
           key.startsWith("deltaUniformIceberg."),
           "Server-side table properties must not contain in-memory-only key: " + key);

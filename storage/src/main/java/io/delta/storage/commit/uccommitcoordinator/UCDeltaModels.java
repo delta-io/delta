@@ -24,6 +24,7 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -112,16 +113,7 @@ public final class UCDeltaModels {
     private final String location;
     private final AbstractMetadata metadata;
     private final Map<String, String> storageProperties;
-    private final UniformMetadata uniformMetadata;
-
-    public TableInfo(
-        UUID tableId,
-        TableType tableType,
-        String location,
-        AbstractMetadata metadata,
-        Map<String, String> storageProperties) {
-      this(tableId, tableType, location, metadata, storageProperties, null);
-    }
+    private final Optional<UniformMetadata> uniformMetadata;
 
     public TableInfo(
         UUID tableId,
@@ -129,7 +121,7 @@ public final class UCDeltaModels {
         String location,
         AbstractMetadata metadata,
         Map<String, String> storageProperties,
-        UniformMetadata uniformMetadata) {
+        Optional<UniformMetadata> uniformMetadata) {
       this.tableId = tableId;
       this.tableType = tableType;
       this.location = location;
@@ -160,8 +152,8 @@ public final class UCDeltaModels {
       return storageProperties == null ? Collections.emptyMap() : storageProperties;
     }
 
-    /** UniForm conversion metadata, or {@code null} if the table has no UniForm enabled. */
-    public UniformMetadata getUniformMetadata() {
+    /** UniForm conversion metadata, or empty if the table has no UniForm enabled. */
+    public Optional<UniformMetadata> getUniformMetadata() {
       return uniformMetadata;
     }
   }

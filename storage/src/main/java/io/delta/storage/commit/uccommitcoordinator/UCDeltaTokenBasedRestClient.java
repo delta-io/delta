@@ -522,7 +522,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     UCDeltaModels.TableType tableType =
         UCDeltaModels.TableType.valueOf(m.getTableType().getValue());
     DeltaTableMetadata adapted = new DeltaTableMetadata(name, m);
-    io.delta.storage.commit.uniform.UniformMetadata uniformMetadata =
+    Optional<io.delta.storage.commit.uniform.UniformMetadata> uniformMetadata =
         toStorageUniformMetadata(response.getUniform());
     Map<String, String> storageProps;
     try {
@@ -541,14 +541,14 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     return new TableInfo(ucTableId, tableType, location, adapted, storageProps, uniformMetadata);
   }
 
-  private static io.delta.storage.commit.uniform.UniformMetadata toStorageUniformMetadata(
-      UniformMetadata sdkUniform) {
+  private static Optional<io.delta.storage.commit.uniform.UniformMetadata>
+      toStorageUniformMetadata(UniformMetadata sdkUniform) {
     if (sdkUniform == null) {
-      return null;
+      return Optional.empty();
     }
     UniformMetadataIceberg sdkIceberg = sdkUniform.getIceberg();
     if (sdkIceberg == null) {
-      return new io.delta.storage.commit.uniform.UniformMetadata(null);
+      return Optional.of(new io.delta.storage.commit.uniform.UniformMetadata(null));
     }
     String metadataLocation = sdkIceberg.getMetadataLocation();
     Long rawVersion = sdkIceberg.getConvertedDeltaVersion();
@@ -566,7 +566,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     String convertedDeltaTimestamp = Instant.ofEpochMilli(rawTimestamp).toString();
     IcebergMetadata icebergMetadata =
         new IcebergMetadata(metadataLocation, rawVersion, convertedDeltaTimestamp);
-    return new io.delta.storage.commit.uniform.UniformMetadata(icebergMetadata);
+    return Optional.of(new io.delta.storage.commit.uniform.UniformMetadata(icebergMetadata));
   }
 
   private UCDeltaModels.StagingTableInfo toStagingTableInfo(StagingTableResponse r) {

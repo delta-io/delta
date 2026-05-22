@@ -126,7 +126,7 @@ private[catalog] class UCDeltaCatalogClientImpl(
       .getOrElse(new StructType())
     // workaround for tracking UniForm metadata inside catalogTable
     // Those are only kept in-memory by client and would not be written back to UC
-    val uniformProps = Option(info.getUniformMetadata)
+    val uniformProps = info.getUniformMetadata.toScala
       .flatMap(u => u.getIcebergMetadata.toScala)
       .map { iceberg =>
         Map(

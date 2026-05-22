@@ -121,7 +121,8 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
       UCDeltaModels.TableType.EXTERNAL,
       "s3://bucket/table",
       metadata,
-      util.Map.of("fs.s3a.access.key", "key"))
+      util.Map.of("fs.s3a.access.key", "key"),
+      Optional.empty())
 
     val client = new UCDeltaCatalogClientImpl(
       catalogName = "main",
@@ -152,7 +153,8 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
       UCDeltaModels.TableType.EXTERNAL,
       "s3://bucket/no-creds-table",
       metadata,
-      Collections.emptyMap()) // no storage properties either
+      Collections.emptyMap(),
+      Optional.empty()) // no storage properties either
     val credEx = new CredentialFetchFailedException(
       "creds exhausted", new RuntimeException("simulated"), tableInfoNoCreds)
 
@@ -195,7 +197,7 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
       "s3://bucket/table",
       metadata,
       Collections.emptyMap(),
-      uniform)
+      Optional.of(uniform))
 
     val client = new UCDeltaCatalogClientImpl(
       catalogName = "main",
@@ -225,7 +227,8 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
       UCDeltaModels.TableType.MANAGED,
       "s3://bucket/table",
       metadata,
-      Collections.emptyMap())
+      Collections.emptyMap(),
+      Optional.empty())
 
     val client = new UCDeltaCatalogClientImpl(
       catalogName = "main",
