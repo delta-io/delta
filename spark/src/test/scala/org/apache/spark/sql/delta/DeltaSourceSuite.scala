@@ -1356,21 +1356,17 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       .select($"ts".cast("string")).as[String].head()
   }
 
+  /**
+   * Executes a DML SQL statement (DELETE, INSERT, etc.).
+   * Overridable so that V2 suites can route DML through the V1 connector,
+   * since SparkTable (V2) is read-only and does not support writes.
+   */
+  protected def executeDml(sqlText: String): Unit = sql(sqlText)
+
   /** Disable log cleanup to avoid deleting logs we are testing. */
   protected def disableLogCleanup(tablePath: String): Unit = {
-    sql(s"alter table delta.`$tablePath` " +
+    executeDml(s"alter table delta.`$tablePath` " +
       s"set tblproperties (${DeltaConfigs.ENABLE_EXPIRED_LOG_CLEANUP.key} = false)")
-  }
-
-  /** Rename a column on a path-based Delta table. V2 overrides this to route through V1 mode. */
-  protected def renameColumn(tablePath: String, oldName: String, newName: String): Unit = {
-    sql(s"ALTER TABLE delta.`$tablePath` RENAME COLUMN $oldName TO $newName")
-  }
-
-  /** Enable ICT on a path-based Delta table. V2 overrides this to route through V1 mode. */
-  protected def enableInCommitTimestamps(tablePath: String): Unit = {
-    sql(s"ALTER TABLE delta.`$tablePath` " +
-      s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
   }
 
   testQuietly("startingVersion") {
@@ -1618,7 +1614,8 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
             preIctCommit2Mtime)
 
           val deltaLog = DeltaLog.forTable(spark, tablePath)
-          enableInCommitTimestamps(tablePath)
+          executeDml(s"ALTER TABLE delta.`$tablePath` " +
+            s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
 
           val ictEnablementVersion = 3L
           val ictEnablementMtime = baseTimestamp + 60.minutes
@@ -3454,10 +3451,10 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
       Seq((1L, 10L, 100)).toDF("id", "part", "original_col")
         .write.format("delta").mode("append").save(tablePath)
-      renameColumn(tablePath, "original_col", "renamed_col")
+      executeDml(s"ALTER TABLE delta.`$tablePath` RENAME COLUMN original_col TO renamed_col")
       Seq((2L, 20L, 200)).toDF("id", "part", "renamed_col")
         .write.format("delta").mode("append").save(tablePath)
-      renameColumn(tablePath, "part", "renamed_part")
+      executeDml(s"ALTER TABLE delta.`$tablePath` RENAME COLUMN part TO renamed_part")
       Seq((3L, 30L, 300)).toDF("id", "renamed_part", "renamed_col")
         .write.format("delta").mode("append").save(tablePath)
 
