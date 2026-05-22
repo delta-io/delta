@@ -35,23 +35,13 @@ import org.junit.jupiter.api.Test;
 import scala.collection.JavaConverters;
 
 /**
- * Integration test that verifies UniForm Iceberg incremental conversion works correctly on the UC
- * REST path (real embedded UC server).
- *
- * <p>The test creates a UniForm-enabled Delta table, writes twice, and verifies:
- *
- * <ul>
- *   <li>Write 1 → full Iceberg conversion: no {@code base-delta-version} table property.
- *   <li>Write 2 → incremental conversion: {@code base-delta-version} equals the prior converted
- *       Delta version, and the Iceberg snapshot chain is preserved.
- * </ul>
+ * Integration test that verifies UniForm Iceberg behaviors
  */
 public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseTest {
 
   @Override
   protected boolean useDeltaRestApiForTests() {
-    // Todo: return true once updateTable endpoint is fully implemented on server side
-    return false;
+    return true;
   }
 
   private static final String UNIFORM_TABLE_PROPS =
@@ -124,6 +114,18 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
     return conf;
   }
 
+  /**
+   * Verifies UniForm Iceberg incremental conversion works correctly on the UC
+   * REST path (real embedded UC server).
+   *
+   * <p>The test creates a UniForm-enabled Delta table, writes twice, and verifies:
+   *
+   * <ul>
+   *   <li>Write 1 → full Iceberg conversion: no {@code base-delta-version} table property.
+   *   <li>Write 2 → incremental conversion: {@code base-delta-version} equals the prior converted
+   *       Delta version, and the Iceberg snapshot chain is preserved.
+   * </ul>
+   */
   @Test
   public void uniformIcebergIncrementalConversion() throws Exception {
     Assumptions.assumeTrue(
