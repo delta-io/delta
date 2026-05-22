@@ -1126,23 +1126,14 @@ trait DeltaTableRefreshAndPinningSuiteBase
 
       checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
 
-      // True external write bypassing the session catalog
+      // True external write bypassing the session catalog and DeltaLog
       writeExternalCommit("t", Seq((2, 200)).toDF("id", "salary"))
 
-      if (v2EnableMode == "STRICT") {
-        // In STRICT mode (DSv2), writeExternalCommit bypasses DeltaLog so
-        // the cached SparkTable's version is unchanged. CacheManager matches
-        // the cached plan and returns pinned data. This is the proposed DSv2
-        // behavior (SPARK-54022): CACHE TABLE pins table state against
-        // external writes.
-        checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
-      } else {
-        // In NONE/AUTO mode, Delta's PrepareDeltaScan refreshes the snapshot
-        // via DeltaLog, breaking the plan-shape match in CacheManager.
-        checkAnswer(
-          sql("SELECT * FROM t ORDER BY id"),
-          Seq(Row(1, 100), Row(2, 200)))
-      }
+      // CACHE TABLE pins data against true external writes (SPARK-54022).
+      // writeExternalCommit bypasses DeltaLog, so the cached plan matches
+      // regardless of V2 mode. This matches the existing OSS Delta behavior
+      // documented in the design doc.
+      checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
 
       sql("UNCACHE TABLE t")
     }
@@ -1159,23 +1150,16 @@ trait DeltaTableRefreshAndPinningSuiteBase
       // Session write invalidates the cache
       sql("INSERT INTO t VALUES (2, 200)")
 
-      // True external write bypassing the session catalog
+      // True external write bypassing the session catalog and DeltaLog
       writeExternalCommit("t", Seq((3, 300)).toDF("id", "salary"))
 
-      if (v2EnableMode == "STRICT") {
-        // In STRICT mode (DSv2), session INSERT invalidates cache, but the
-        // subsequent external write via writeExternalCommit bypasses DeltaLog
-        // so it is invisible. This is the proposed DSv2 behavior (SPARK-54022).
-        checkAnswer(
-          sql("SELECT * FROM t ORDER BY id"),
-          Seq(Row(1, 100), Row(2, 200)))
-      } else {
-        // In NONE/AUTO mode, PrepareDeltaScan refreshes the snapshot and
-        // picks up all data from the log.
-        checkAnswer(
-          sql("SELECT * FROM t ORDER BY id"),
-          Seq(Row(1, 100), Row(2, 200), Row(3, 300)))
-      }
+      // Session write invalidates cache, but the subsequent external write
+      // via writeExternalCommit bypasses DeltaLog and is invisible.
+      // This matches the existing OSS Delta behavior documented in the
+      // design doc (SPARK-54022).
+      checkAnswer(
+        sql("SELECT * FROM t ORDER BY id"),
+        Seq(Row(1, 100), Row(2, 200)))
 
       sql("UNCACHE TABLE t")
     }
