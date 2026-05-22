@@ -28,6 +28,8 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
 
   override protected def useDsv2: Boolean = true
 
+  override protected def executeDml(sqlText: String): Unit = executeInV1Mode(sqlText)
+
   /**
    * Override disableLogCleanup to use DeltaLog API instead of SQL ALTER TABLE.
    * Path-based ALTER TABLE doesn't work properly with V2_ENABLE_MODE=STRICT.
@@ -44,12 +46,6 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
       DeltaOperations.SetTableProperties(
         Map(DeltaConfigs.ENABLE_EXPIRED_LOG_CLEANUP.key -> "false"))
     )
-  }
-
-  /** Path-based ALTER TABLE doesn't work under V2_ENABLE_MODE=STRICT; route through V1. */
-  override protected def renameColumn(
-      tablePath: String, oldName: String, newName: String): Unit = {
-    executeInV1Mode(s"ALTER TABLE delta.`$tablePath` RENAME COLUMN $oldName TO $newName")
   }
 
   override protected def shouldPassTests: Set[String] = Set(
@@ -108,6 +104,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "startingVersion should be ignored when restarting from a checkpoint, withRowTracking = false",
     "startingVersion and startingTimestamp are both set",
     "startingTimestamp",
+    "startingTimestamp with mid-history ICT",
 
     // ========== Rate limiting tests ==========
     "maxFilesPerTrigger",

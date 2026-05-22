@@ -26,7 +26,7 @@ import scala.concurrent.duration._
 import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.DataFrameUtils
-import org.apache.spark.sql.delta.DeltaTestUtils.modifyCommitTimestamp
+import org.apache.spark.sql.delta.DeltaTestUtils.{modifyCommitTimestamp, modifyCommitTimestamps}
 import org.apache.spark.sql.delta.Relocated
 import org.apache.spark.sql.delta.actions.{AddFile, Protocol}
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSQLConf, DeltaSource, DeltaSourceOffset}
@@ -1351,15 +1351,22 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     duration.toMillis
   }
 
-  /** Disable log cleanup to avoid deleting logs we are testing. */
-  protected def disableLogCleanup(tablePath: String): Unit = {
-    sql(s"alter table delta.`$tablePath` " +
-      s"set tblproperties (${DeltaConfigs.ENABLE_EXPIRED_LOG_CLEANUP.key} = false)")
+  private def sparkTimestampString(timestamp: Long): String = {
+    Seq(new Timestamp(timestamp)).toDF("ts")
+      .select($"ts".cast("string")).as[String].head()
   }
 
-  /** Rename a column on a path-based Delta table. V2 overrides this to route through V1 mode. */
-  protected def renameColumn(tablePath: String, oldName: String, newName: String): Unit = {
-    sql(s"ALTER TABLE delta.`$tablePath` RENAME COLUMN $oldName TO $newName")
+  /**
+   * Executes a DML SQL statement (DELETE, INSERT, etc.).
+   * Overridable so that V2 suites can route DML through the V1 connector,
+   * since SparkTable (V2) is read-only and does not support writes.
+   */
+  protected def executeDml(sqlText: String): Unit = sql(sqlText)
+
+  /** Disable log cleanup to avoid deleting logs we are testing. */
+  protected def disableLogCleanup(tablePath: String): Unit = {
+    executeDml(s"alter table delta.`$tablePath` " +
+      s"set tblproperties (${DeltaConfigs.ENABLE_EXPIRED_LOG_CLEANUP.key} = false)")
   }
 
   testQuietly("startingVersion") {
@@ -1586,6 +1593,80 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           checkAnswer(
             spark.table("startingTimestamp_test"),
             (10 until 20).map(_.toLong).toDF())
+        }
+      }
+    }
+  }
+
+  testWithDefaultCommitCoordinatorUnset("startingTimestamp with mid-history ICT") {
+    withSQLConf(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> "false") {
+      withTempDir { tableDir =>
+        withTempView("startingTimestamp_test") {
+          val tablePath = tableDir.getCanonicalPath
+          val baseTimestamp = 1594795800000L // 2020-07-14 23:50:00 PDT
+          val preIctCommit0Mtime = baseTimestamp
+          val preIctCommit1Mtime = baseTimestamp + 20.minutes
+          val preIctCommit2Mtime = baseTimestamp + 40.minutes
+          generateCommits(
+            tablePath,
+            preIctCommit0Mtime,
+            preIctCommit1Mtime,
+            preIctCommit2Mtime)
+
+          val deltaLog = DeltaLog.forTable(spark, tablePath)
+          executeDml(s"ALTER TABLE delta.`$tablePath` " +
+            s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
+
+          val ictEnablementVersion = 3L
+          val ictEnablementMtime = baseTimestamp + 60.minutes
+          val ictEnablementTimestamp = baseTimestamp + 2.hours
+          modifyCommitTimestamps(
+            deltaLog,
+            ictEnablementVersion,
+            ictEnablementMtime,
+            ictEnablementTimestamp)
+
+          val firstPostIctVersion = 4L
+          val firstPostIctRows = 40L until 50L
+          val firstPostIctMtime = baseTimestamp + 80.minutes
+          val firstPostIctTimestamp = baseTimestamp + 3.hours
+          spark.range(firstPostIctRows.start, firstPostIctRows.end)
+            .write.format("delta").mode("append").save(tablePath)
+          modifyCommitTimestamps(
+            deltaLog,
+            firstPostIctVersion,
+            firstPostIctMtime,
+            firstPostIctTimestamp)
+
+          val secondPostIctVersion = 5L
+          val secondPostIctRows = 50L until 60L
+          val secondPostIctMtime = baseTimestamp + 100.minutes
+          val secondPostIctTimestamp = baseTimestamp + 4.hours
+          spark.range(secondPostIctRows.start, secondPostIctRows.end)
+            .write.format("delta").mode("append").save(tablePath)
+          modifyCommitTimestamps(
+            deltaLog,
+            secondPostIctVersion,
+            secondPostIctMtime,
+            secondPostIctTimestamp)
+
+          // Trap zone: after the first post-ICT file mtime, but before ICT enablement's ICT.
+          val startingTimestamp = sparkTimestampString(baseTimestamp + 81.minutes)
+          val q = loadStreamWithOptions(
+            tablePath,
+            Map("startingTimestamp" -> startingTimestamp))
+            .writeStream
+            .format("memory")
+            .queryName("startingTimestamp_test")
+            .start()
+          try {
+            q.processAllAvailable()
+            // The timestamp resolves to v2; v3 only enables ICT, so rows start at v4.
+            val expectedRows = (firstPostIctRows ++ secondPostIctRows).map(Row(_))
+            checkAnswer(spark.table("startingTimestamp_test"), expectedRows)
+          } finally {
+            q.stop()
+          }
         }
       }
     }
@@ -3370,10 +3451,10 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
       Seq((1L, 10L, 100)).toDF("id", "part", "original_col")
         .write.format("delta").mode("append").save(tablePath)
-      renameColumn(tablePath, "original_col", "renamed_col")
+      executeDml(s"ALTER TABLE delta.`$tablePath` RENAME COLUMN original_col TO renamed_col")
       Seq((2L, 20L, 200)).toDF("id", "part", "renamed_col")
         .write.format("delta").mode("append").save(tablePath)
-      renameColumn(tablePath, "part", "renamed_part")
+      executeDml(s"ALTER TABLE delta.`$tablePath` RENAME COLUMN part TO renamed_part")
       Seq((3L, 30L, 300)).toDF("id", "renamed_part", "renamed_col")
         .write.format("delta").mode("append").save(tablePath)
 
