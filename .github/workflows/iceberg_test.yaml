@@ -12,12 +12,13 @@ on:
       - '**.txt'
 jobs:
   test:
-    name: "DIL: Scala ${{ matrix.scala }}"
+    name: "DIL: Spark ${{ matrix.spark_version }}, Scala ${{ matrix.scala }}"
     runs-on: ubuntu-24.04
     strategy:
       matrix:
         # These Scala versions must match those in the build.sbt
         scala: [2.13.16]
+        spark_version: ["4.0", "4.1"]
     env:
       SCALA_VERSION: ${{ matrix.scala }}
     steps:
@@ -38,7 +39,7 @@ jobs:
           # the above directories when we use the key for the first time. After that, each run will
           # just use the cache. The cache is immutable so we need to use a new key when trying to
           # cache new stuff.
-          key: delta-sbt-cache-spark4.0-scala${{ matrix.scala }}
+          key: delta-sbt-cache-spark${{ matrix.spark_version }}-scala${{ matrix.scala }}
       - name: Set up uv
         run: bash project/scripts/install-uv.sh
       - name: Install Python via uv
@@ -51,5 +52,4 @@ jobs:
         # when changing TEST_PARALLELISM_COUNT make sure to also change it in spark_master_test.yaml
         run: |
           source .venv/bin/activate
-          TEST_PARALLELISM_COUNT=4 python run-tests.py --group iceberg --spark-version 4.0
-          TEST_PARALLELISM_COUNT=4 python run-tests.py --group iceberg --spark-version 4.1
+          TEST_PARALLELISM_COUNT=4 python run-tests.py --group iceberg --spark-version ${{ matrix.spark_version }}
