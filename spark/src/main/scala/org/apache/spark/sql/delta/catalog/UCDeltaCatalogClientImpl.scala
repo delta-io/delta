@@ -46,7 +46,8 @@ import org.apache.spark.sql.catalyst.catalog.{
 }
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, Table, TableCatalog, V1Table}
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
-import org.apache.spark.sql.delta.{Snapshot, TableFeature}
+import org.apache.spark.sql.delta.TableFeature
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED
 import org.apache.spark.sql.delta.coordinatedcommits.UCTokenBasedRestClientFactory
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.IcebergConstants
@@ -182,8 +183,8 @@ private[catalog] class UCDeltaCatalogClientImpl(
     features.foreach { feature =>
       if (TableFeature.featureNameToFeature(feature).isDefined) {
         val key = s"delta.feature.$feature"
-        if (required) putRequiredOrThrow(augmented, key, "supported", ident)
-        else augmented.putIfAbsent(key, "supported")
+        if (required) putRequiredOrThrow(augmented, key, FEATURE_PROP_SUPPORTED, ident)
+        else augmented.putIfAbsent(key, FEATURE_PROP_SUPPORTED)
       } else if (required) {
         throw new IllegalArgumentException(
           s"Cannot create table $ident: catalog requires Delta protocol feature " +
@@ -226,19 +227,12 @@ private[catalog] class UCDeltaCatalogClientImpl(
       snapshotTimestamp: Long): Unit = {
     val locationUri = table.storage.locationUri.getOrElse(throw new IllegalArgumentException(
       s"createTable requires a storage location on the CatalogTable for $ident"))
-    // Strip V2-only catalog keys (location, owner, ...) before sending the configuration
-    // to UC; they don't belong in table properties.
-    val cleanedConfiguration =
-      table.properties
-        .filterKeys(k => !UCDeltaCatalogClientImpl.ReservedV2TableProperties.contains(k))
-        .toMap
     ucClient.createTable(
       locationUri,
       toStorageTableIdent(ident),
       toUcTableType(table.tableType),
       metadata.copy(
-        description = table.comment.orNull,
-        configuration = cleanedConfiguration),
+        description = table.comment.orNull),
       protocol,
       snapshotTimestamp)
   }
@@ -295,7 +289,7 @@ private[catalog] class UCDeltaCatalogClientImpl(
     val ns = ident.namespace()
     require(
       ns.length == 1,
-      s"UC identifiers must be of the form <schema>.<table>; got namespace of length " +
+      s"UC table identifiers must be of the form <schema>.<table>; got namespace of length " +
         s"${ns.length}: '${ns.mkString(".")}' (full identifier: '${ident.toString}')")
     new StorageTableIdentifier(Array(catalogName, ns(0)), ident.name())
   }
@@ -388,13 +382,6 @@ object UCDeltaCatalogClientImpl extends AbstractDeltaCatalogClientFactory with L
    */
   def successfulDeltaRestApiLoadsForTesting: Long = successfulDeltaRestApiLoadsCounter.get()
 
-  /**
-   * V2-only catalog property keys that must be stripped before sending the configuration to
-   * UC (`location`, `owner`, `provider`, ...). Reuses Spark's canonical reserved-key list so
-   * future additions on the Spark side flow through automatically.
-   */
-  private val ReservedV2TableProperties: Set[String] = CatalogV2Util.TABLE_RESERVED_PROPERTIES.toSet
-
   private[catalog] val ServerSidePlanningEnabledKey: String = "serverSidePlanning.enabled"
 
   private[catalog] val defaultFallbackLoadTableFunc: Identifier => Table = ident =>
@@ -425,9 +412,8 @@ object UCDeltaCatalogClientImpl extends AbstractDeltaCatalogClientFactory with L
     Seq(
       UCTokenBasedRestClientFactory.DELTA_REST_API_ENABLED_KEY -> "true",
       UCTokenBasedRestClientFactory.RENEW_CREDENTIAL_ENABLED_KEY -> "true",
-      UCTokenBasedRestClientFactory.CRED_SCOPED_FS_ENABLED_KEY -> "false").foreach { case (k, v) =>
-      if (!options.containsKey(k)) merged.put(k, v)
-    }
+      UCTokenBasedRestClientFactory.CRED_SCOPED_FS_ENABLED_KEY -> "false"
+    ).foreach { case (k, v) => if (!options.containsKey(k)) merged.put(k, v) }
     val ucClient = UCTokenBasedRestClientFactory
       .createUCClient(new CaseInsensitiveStringMap(merged))
       .asInstanceOf[UCDeltaClient]

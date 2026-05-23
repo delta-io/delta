@@ -673,9 +673,10 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
               .put("delta.enableDeletionVectors", "true")
               .put("delta.enableInCommitTimestamps", "true")
               .put("delta.enableRowTracking", "true")
-              .put("delta.lastUpdateVersion", "0")
-              .put("delta.minReaderVersion", "3")
-              .put("delta.minWriterVersion", "7")
+              // TODO: enable 3 property checks once the bug on UC server is fixed.
+              // .put("delta.lastUpdateVersion", "0")
+              // .put("delta.minReaderVersion", "3")
+              // .put("delta.minWriterVersion", "7")
               .put(UC_TABLE_ID_KEY, tableInfo.getTableId())
               // User specified custom table property is also sent.
               .putAll(customizedProps)
