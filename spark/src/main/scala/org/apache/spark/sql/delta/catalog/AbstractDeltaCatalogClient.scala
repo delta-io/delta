@@ -21,7 +21,7 @@ import java.util
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.connector.catalog.{Identifier, Table}
-import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{DomainMetadata, Metadata, Protocol}
 import org.apache.spark.sql.delta.coordinatedcommits.UCTokenBasedRestClientFactory
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
@@ -66,6 +66,7 @@ private[catalog] trait AbstractDeltaCatalogClient {
       ident: Identifier,
       table: CatalogTable,
       metadata: Metadata,
+      domainMetadata: Seq[DomainMetadata],
       protocol: Protocol,
       snapshotTimestamp: Long): Unit
 }

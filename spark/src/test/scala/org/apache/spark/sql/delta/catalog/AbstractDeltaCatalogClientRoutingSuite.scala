@@ -23,7 +23,7 @@ import java.util.{Collections, Optional, UUID}
 import scala.jdk.CollectionConverters._
 
 import io.delta.storage.commit.{Commit, GetCommitsResponse, TableIdentifier => StorageTableIdentifier}
-import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
+import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCDeltaClient, UCDeltaModels}
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.{DeltaProtocol, StagingTableInfo, TableInfo, TableType => UcTableType}
 import io.delta.storage.commit.uccommitcoordinator.exceptions.CredentialFetchFailedException
@@ -581,6 +581,7 @@ private abstract class ThrowingUCDeltaClient extends UCDeltaClient {
       tableType: UcTableType,
       metadata: AbstractMetadata,
       protocol: AbstractProtocol,
+      domainMetadata: util.List[AbstractDomainMetadata],
       lastCommitTimestampMs: Long): TableInfo =
     throw new UnsupportedOperationException
   override def commit(

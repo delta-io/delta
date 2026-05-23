@@ -16,11 +16,15 @@
 
 package io.delta.storage.commit.uccommitcoordinator;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.CommitFailedException;
 import io.delta.storage.commit.CoordinatedCommitsUtils;
 import io.delta.storage.commit.GetCommitsResponse;
 import io.delta.storage.commit.TableIdentifier;
+import io.delta.storage.commit.actions.AbstractDomainMetadata;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.TableInfo;
@@ -35,12 +39,15 @@ import io.unitycatalog.client.auth.TokenProvider;
 import io.unitycatalog.client.delta.api.TablesApi;
 import io.unitycatalog.client.delta.model.AddCommitUpdate;
 import io.unitycatalog.client.delta.model.AssertTableUUID;
+import io.unitycatalog.client.delta.model.ClusteringDomainMetadata;
 import io.unitycatalog.client.delta.model.CreateStagingTableRequest;
 import io.unitycatalog.client.delta.model.CreateTableRequest;
+import io.unitycatalog.client.delta.model.DomainMetadataUpdates;
 import io.unitycatalog.client.delta.model.DeltaCommit;
 import io.unitycatalog.client.delta.model.DeltaProtocol;
 import io.unitycatalog.client.delta.model.LoadTableResponse;
 import io.unitycatalog.client.delta.model.RemovePropertiesUpdate;
+import io.unitycatalog.client.delta.model.RowTrackingDomainMetadata;
 import io.unitycatalog.client.delta.model.SetLatestBackfilledVersionUpdate;
 import io.unitycatalog.client.delta.model.SetPartitionColumnsUpdate;
 import io.unitycatalog.client.delta.model.SetPropertiesUpdate;
@@ -476,12 +483,14 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       UCDeltaModels.TableType tableType,
       AbstractMetadata metadata,
       AbstractProtocol protocol,
+      List<AbstractDomainMetadata> domainMetadata,
       long lastCommitTimestampMs) throws IOException {
     ensureOpen();
     Objects.requireNonNull(tableUri, "tableUri must not be null");
     Objects.requireNonNull(tableType, "tableType must not be null");
     Objects.requireNonNull(metadata, "metadata must not be null");
     Objects.requireNonNull(protocol, "protocol must not be null");
+    Objects.requireNonNull(domainMetadata, "domainMetadata must not be null");
     ResolvedTableName name = requireThreePartName(tableIdentifier);
     String schemaJson = metadata.getSchemaString();
     Objects.requireNonNull(schemaJson, "metadata.schemaString must not be null");
@@ -505,6 +514,10 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       Map<String, String> configuration = metadata.getConfiguration();
       if (configuration != null && !configuration.isEmpty()) {
         sdkRequest.properties(configuration);
+      }
+      DomainMetadataUpdates updates = toSDKDomainMetadataUpdates(domainMetadata);
+      if (updates != null) {
+        sdkRequest.domainMetadata(updates);
       }
 
       return toTableInfo(
@@ -670,6 +683,72 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       protocol.writerFeatures(new ArrayList<>(p.getWriterFeatures()));
     }
     return protocol;
+  }
+
+  /**
+   * Maps Delta {@link AbstractDomainMetadata} entries onto the UC SDK's typed {@link
+   * DomainMetadataUpdates}. UC models only {@code delta.clustering} and {@code
+   * delta.rowTracking}; entries for unknown domains are dropped silently. Returns {@code null}
+   * when no known-domain entries were produced.
+   *
+   * <p>Each {@code configuration} JSON is parsed into a typed DTO so a shape mismatch fails at
+   * parse time with a Jackson error rather than at first use after an unchecked cast.
+   *
+   * <p>Package-private for unit testing.
+   */
+  static DomainMetadataUpdates toSDKDomainMetadataUpdates(
+      List<AbstractDomainMetadata> entries) throws IOException {
+    DomainMetadataUpdates updates = new DomainMetadataUpdates();
+    boolean any = false;
+    for (AbstractDomainMetadata dm : entries) {
+      // This function is for createTable only for now.
+      if (dm.isRemoved()) {
+        continue;
+      }
+      switch (dm.getDomain()) {
+        case "delta.clustering": {
+          ClusteringDomainConfig config = DOMAIN_METADATA_MAPPER.readValue(
+              dm.getConfiguration(), ClusteringDomainConfig.class);
+          if (config.clusteringColumns != null) {
+            updates.setDeltaClustering(
+                new ClusteringDomainMetadata().clusteringColumns(config.clusteringColumns));
+            any = true;
+          }
+          break;
+        }
+        case "delta.rowTracking": {
+          RowTrackingDomainConfig config = DOMAIN_METADATA_MAPPER.readValue(
+              dm.getConfiguration(), RowTrackingDomainConfig.class);
+          if (config.rowIdHighWaterMark != null) {
+            updates.setDeltaRowTracking(
+                new RowTrackingDomainMetadata().rowIdHighWaterMark(config.rowIdHighWaterMark));
+            any = true;
+          }
+          break;
+        }
+        default:
+          // Unknown domain — UC SDK has no field for it; skip.
+          break;
+      }
+    }
+    return any ? updates : null;
+  }
+
+  // Tolerant of unknown fields so a future Delta-side addition to a domain config doesn't
+  // break this parser.
+  private static final ObjectMapper DOMAIN_METADATA_MAPPER = new ObjectMapper()
+      .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+
+  /** Typed view of the {@code delta.clustering} domain configuration. */
+  @JsonIgnoreProperties(ignoreUnknown = true)
+  private static final class ClusteringDomainConfig {
+    public List<List<String>> clusteringColumns;
+  }
+
+  /** Typed view of the {@code delta.rowTracking} domain configuration. */
+  @JsonIgnoreProperties(ignoreUnknown = true)
+  private static final class RowTrackingDomainConfig {
+    public Long rowIdHighWaterMark;
   }
 
   private UniformMetadata toSDKUniformMetadata(

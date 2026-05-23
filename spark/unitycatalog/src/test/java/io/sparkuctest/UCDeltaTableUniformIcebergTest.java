@@ -39,7 +39,10 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
 
   @Override
   protected boolean useDeltaRestApiForTests() {
-    return true;
+    // UniForm-Iceberg-V2 can't have `deletionVectors` enabled but UC server requires it. This
+    // test has to disable UC Delta API for now.
+    // TODO: turn it on once UC server no longer requires deletionVectors
+    return false;
   }
 
   private static final String UNIFORM_TABLE_PROPS =

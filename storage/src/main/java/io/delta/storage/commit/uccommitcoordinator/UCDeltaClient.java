@@ -17,12 +17,14 @@
 package io.delta.storage.commit.uccommitcoordinator;
 
 import io.delta.storage.commit.TableIdentifier;
+import io.delta.storage.commit.actions.AbstractDomainMetadata;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.StagingTableInfo;
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.TableInfo;
 import java.io.IOException;
 import java.net.URI;
+import java.util.List;
 
 /**
  * Extends {@link UCClient} with Delta table lifecycle operations backed by the UC Delta API
@@ -66,6 +68,8 @@ public interface UCDeltaClient extends UCClient {
    *                               {@code schemaString}, {@code partitionColumns}, and
    *                               {@code configuration} are consumed
    * @param protocol               the Delta protocol the table will be created with
+   * @param domainMetadata         the snapshot's domain-metadata entries (e.g. clustering,
+   *                               row-tracking); pass an empty list when none are set
    * @param lastCommitTimestampMs  Delta-log timestamp of the initial commit; UC stores this on
    *                               the catalog entry
    * @return the newly created table's {@link TableInfo}
@@ -77,5 +81,6 @@ public interface UCDeltaClient extends UCClient {
       UCDeltaModels.TableType tableType,
       AbstractMetadata metadata,
       AbstractProtocol protocol,
+      List<AbstractDomainMetadata> domainMetadata,
       long lastCommitTimestampMs) throws IOException;
 }

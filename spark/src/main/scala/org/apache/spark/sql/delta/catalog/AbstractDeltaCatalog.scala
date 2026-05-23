@@ -303,7 +303,12 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
           deltaCatalogClient match {
             case Some(client) if v1Table.tableType == CatalogTableType.MANAGED =>
               client.createTable(
-                ident, v1Table, snapshot.metadata, snapshot.protocol, snapshot.timestamp)
+                ident,
+                v1Table,
+                snapshot.metadata,
+                snapshot.domainMetadata,
+                snapshot.protocol,
+                snapshot.timestamp)
             case _ =>
               val t = V1Table(v1Table)
               super.createTable(ident, t.columns(), t.partitioning, t.properties)
