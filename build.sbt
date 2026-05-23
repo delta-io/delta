@@ -948,6 +948,15 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
       }
     },
 
+    // Add delta-iceberg compiled classes so that UniForm Iceberg conversion works in integration
+    // tests.
+    Test / unmanagedJars ++= {
+      if (supportIceberg) Seq(
+        Attributed.blank((iceberg / Compile / packageBin).value)
+      ) else Seq.empty
+    },
+
+    Test / javaOptions += s"-DsupportIceberg=${supportIceberg}",
     Test / testOptions += Tests.Argument("-oDF"),
     Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
   )
