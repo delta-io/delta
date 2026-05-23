@@ -24,7 +24,7 @@ import scala.jdk.CollectionConverters._
 import scala.jdk.OptionConverters._
 
 import io.delta.storage.commit.{TableIdentifier => StorageTableIdentifier}
-import io.delta.storage.commit.actions.AbstractProtocol
+import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.{UCDeltaClient, UCDeltaModels}
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.TableInfo
@@ -45,8 +45,8 @@ import org.apache.spark.sql.catalyst.catalog.{
   CatalogTableType
 }
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, Table, TableCatalog, V1Table}
-import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.TableFeature
+import org.apache.spark.sql.delta.actions.{DomainMetadata, Metadata, Protocol}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED
 import org.apache.spark.sql.delta.coordinatedcommits.UCTokenBasedRestClientFactory
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -223,17 +223,26 @@ private[catalog] class UCDeltaCatalogClientImpl(
       ident: Identifier,
       table: CatalogTable,
       metadata: Metadata,
+      domainMetadata: Seq[DomainMetadata],
       protocol: Protocol,
       snapshotTimestamp: Long): Unit = {
     val locationUri = table.storage.locationUri.getOrElse(throw new IllegalArgumentException(
       s"createTable requires a storage location on the CatalogTable for $ident"))
+    // Strip V2-only catalog keys (location, owner, ...) before sending the configuration
+    // to UC; they don't belong in table properties.
+    val cleanedConfiguration =
+      metadata.configuration
+        .filterKeys(k => !UCDeltaCatalogClientImpl.ReservedV2TableProperties.contains(k))
+        .toMap
     ucClient.createTable(
       locationUri,
       toStorageTableIdent(ident),
       toUcTableType(table.tableType),
       metadata.copy(
-        description = table.comment.orNull),
+        description = table.comment.orNull,
+        configuration = cleanedConfiguration),
       protocol,
+      domainMetadata.map(d => d: AbstractDomainMetadata).asJava,
       snapshotTimestamp)
   }
 
@@ -381,6 +390,13 @@ object UCDeltaCatalogClientImpl extends AbstractDeltaCatalogClientFactory with L
    * (no fallback, no rethrow). Not part of any public API.
    */
   def successfulDeltaRestApiLoadsForTesting: Long = successfulDeltaRestApiLoadsCounter.get()
+
+  /**
+   * V2-only catalog property keys that must be stripped before sending the configuration to
+   * UC (`location`, `owner`, `provider`, ...). Reuses Spark's canonical reserved-key list so
+   * future additions on the Spark side flow through automatically.
+   */
+  private val ReservedV2TableProperties: Set[String] = CatalogV2Util.TABLE_RESERVED_PROPERTIES.toSet
 
   private[catalog] val ServerSidePlanningEnabledKey: String = "serverSidePlanning.enabled"
 
