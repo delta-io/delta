@@ -21,7 +21,7 @@ import java.util
 import java.util.{Collections, Optional, UUID}
 
 import io.delta.storage.commit.{Commit, GetCommitsResponse, TableIdentifier => StorageTableIdentifier}
-import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
+import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCDeltaClient, UCDeltaModels}
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.{DeltaProtocol, StagingTableInfo, TableInfo, TableType => UcTableType}
 import io.delta.storage.commit.uccommitcoordinator.exceptions.CredentialFetchFailedException
@@ -312,6 +312,7 @@ private class StubUCDeltaClient(loadTableResult: => TableInfo) extends UCDeltaCl
       protocol: DeltaProtocol,
       properties: util.Map[String, String]): AbstractMetadata =
     throw new UnsupportedOperationException
+  // scalastyle:off argcount
   override def commit(
       tableId: String,
       tableUri: URI,
@@ -322,7 +323,9 @@ private class StubUCDeltaClient(loadTableResult: => TableInfo) extends UCDeltaCl
       newMetadata: Optional[AbstractMetadata],
       oldProtocol: Optional[AbstractProtocol],
       newProtocol: Optional[AbstractProtocol],
-      uniform: Optional[UniformMetadata]): Unit =
+      uniform: Optional[UniformMetadata],
+      domainMetadatas: java.util.List[AbstractDomainMetadata]): Unit =
+    // scalastyle:on argcount
     throw new UnsupportedOperationException
   override def getCommits(
       tableId: String,

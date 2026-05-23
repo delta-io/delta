@@ -25,7 +25,7 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
 import io.delta.storage.commit.{Commit, CommitFailedException, GetCommitsResponse, TableIdentifier}
-import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
+import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.{InvalidTargetTableException, UCClient}
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 
@@ -166,10 +166,12 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       newMetadata,
       Optional.empty(), // oldProtocol
       newProtocol,
-      Optional.empty() // uniform
+      Optional.empty(), // uniform
+      java.util.Collections.emptyList() // domainMetadatas
     )
   }
 
+  // scalastyle:off argcount
   override def commit(
       tableId: String,
       tableUri: URI,
@@ -180,7 +182,9 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       newMetadata: Optional[AbstractMetadata],
       oldProtocol: Optional[AbstractProtocol],
       newProtocol: Optional[AbstractProtocol],
-      uniform: Optional[UniformMetadata]): Unit = {
+      uniform: Optional[UniformMetadata],
+      domainMetadatas: java.util.List[AbstractDomainMetadata]): Unit = {
+    // scalastyle:on argcount
     forceThrowInCommitMethod()
 
     val tableData = getOrCreateTableIfNotExists(tableId)

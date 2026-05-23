@@ -20,6 +20,7 @@ import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.CommitFailedException;
 import io.delta.storage.commit.GetCommitsResponse;
 import io.delta.storage.commit.TableIdentifier;
+import io.delta.storage.commit.actions.AbstractDomainMetadata;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
 import io.delta.storage.commit.uniform.UniformMetadata;
@@ -86,6 +87,10 @@ public interface UCClient extends AutoCloseable {
    * @param uniform An Optional containing UniForm metadata for Delta Universal Format support.
    *                If present, this metadata will be used by UC to manage format conversions
    *                (e.g., Iceberg, Hudi).
+   * @param domainMetadatas The domain metadata actions being committed in this transaction.
+   *                        Each action encodes its own intent: {@code removed == false} means
+   *                        upsert, {@code removed == true} means delete. Implementations that
+   *                        do not support domain metadata may ignore this parameter.
    * @throws IOException if there's an error during the commit process, such as network issues.
    * @throws CommitFailedException if the commit fails due to conflicts or other logical errors.
    * @throws UCCommitCoordinatorException if there's an error specific to the Unity Catalog
@@ -101,7 +106,8 @@ public interface UCClient extends AutoCloseable {
       Optional<AbstractMetadata> newMetadata,
       Optional<AbstractProtocol> oldProtocol,
       Optional<AbstractProtocol> newProtocol,
-      Optional<UniformMetadata> uniform
+      Optional<UniformMetadata> uniform,
+      List<AbstractDomainMetadata> domainMetadatas
   ) throws IOException, CommitFailedException, UCCommitCoordinatorException;
 
   /**

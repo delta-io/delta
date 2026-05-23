@@ -29,6 +29,7 @@ import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.internal.files.ParsedPublishedDeltaData;
 import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.unitycatalog.adapters.DomainMetadataAdapter;
 import io.delta.kernel.unitycatalog.adapters.MetadataAdapter;
 import io.delta.kernel.unitycatalog.adapters.ProtocolAdapter;
 import io.delta.kernel.unitycatalog.adapters.UniformAdapter;
@@ -38,6 +39,7 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.TableIdentifier;
+import io.delta.storage.commit.actions.AbstractDomainMetadata;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorException;
 import io.delta.storage.commit.uniform.UniformMetadata;
@@ -46,6 +48,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import org.apache.hadoop.fs.Path;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -317,6 +320,14 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
     return commitMetadata.getNewMetadataOpt();
   }
 
+  /** Adapts the kernel domain metadata list to the storage-layer interface. */
+  private static List<AbstractDomainMetadata> toDomainMetadataAdapters(
+      CommitMetadata commitMetadata) {
+    return commitMetadata.getCommitDomainMetadatas().stream()
+        .map(DomainMetadataAdapter::new)
+        .collect(Collectors.toList());
+  }
+
   ////////////////////
   // Helper methods //
   ////////////////////
@@ -462,7 +473,8 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
                 generateMetadataPayloadOpt(commitMetadata).map(MetadataAdapter::new),
                 Optional.empty() /* oldProtocol */,
                 commitMetadata.getNewProtocolOpt().map(ProtocolAdapter::new),
-                uniformMetadataOpt);
+                uniformMetadataOpt,
+                toDomainMetadataAdapters(commitMetadata));
             return null;
           } catch (io.delta.storage.commit.CommitFailedException cfe) {
             throw storageCFEtoKernelCFE(cfe);

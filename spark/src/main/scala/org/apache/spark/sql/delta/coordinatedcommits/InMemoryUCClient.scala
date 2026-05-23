@@ -22,7 +22,7 @@ import java.util.Optional
 
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import io.delta.storage.commit.{Commit => JCommit, GetCommitsResponse => JGetCommitsResponse, TableIdentifier}
-import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
+import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.UCClient
 import io.delta.storage.commit.uniform.UniformMetadata
 
@@ -58,6 +58,7 @@ class InMemoryUCClient(
 
   override def getMetastoreId: String = metastoreId
 
+  // scalastyle:off argcount
   override def commit(
       tableId: String,
       tableUri: URI,
@@ -68,7 +69,10 @@ class InMemoryUCClient(
       newMetadata: Optional[AbstractMetadata],
       oldProtocol: Optional[AbstractProtocol],
       newProtocol: Optional[AbstractProtocol],
-      uniform: Optional[UniformMetadata] = Optional.empty()): Unit = {
+      uniform: Optional[UniformMetadata] = Optional.empty(),
+      domainMetadatas: java.util.List[AbstractDomainMetadata] =
+        java.util.Collections.emptyList()): Unit = {
+    // scalastyle:on argcount
     ucCommitCoordinator.commitToCoordinator(
       tableId,
       tableUri,

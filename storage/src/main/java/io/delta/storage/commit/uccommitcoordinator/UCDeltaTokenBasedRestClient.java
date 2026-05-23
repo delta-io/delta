@@ -21,6 +21,7 @@ import io.delta.storage.commit.CommitFailedException;
 import io.delta.storage.commit.CoordinatedCommitsUtils;
 import io.delta.storage.commit.GetCommitsResponse;
 import io.delta.storage.commit.TableIdentifier;
+import io.delta.storage.commit.actions.AbstractDomainMetadata;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.TableInfo;
@@ -35,6 +36,11 @@ import io.unitycatalog.client.auth.TokenProvider;
 import io.unitycatalog.client.delta.api.TablesApi;
 import io.unitycatalog.client.delta.model.AddCommitUpdate;
 import io.unitycatalog.client.delta.model.AssertTableUUID;
+import io.unitycatalog.client.delta.model.ClusteringDomainMetadata;
+import io.unitycatalog.client.delta.model.DomainMetadataUpdates;
+import io.unitycatalog.client.delta.model.RemoveDomainMetadataUpdate;
+import io.unitycatalog.client.delta.model.RowTrackingDomainMetadata;
+import io.unitycatalog.client.delta.model.SetDomainMetadataUpdate;
 import io.unitycatalog.client.delta.model.CreateStagingTableRequest;
 import io.unitycatalog.client.delta.model.CreateTableRequest;
 import io.unitycatalog.client.delta.model.DeltaCommit;
@@ -73,9 +79,13 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Supplier;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.Path;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * A REST client implementation of {@link UCDeltaClient} that uses the UC Delta REST API for
@@ -88,6 +98,9 @@ import org.apache.hadoop.fs.Path;
  */
 public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
 
+  private static final Logger LOG =
+      LoggerFactory.getLogger(UCDeltaTokenBasedRestClient.class);
+  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
   private static final int HTTP_CONFLICT = 409;
   private static final int HTTP_NOT_FOUND = 404;
 
@@ -235,7 +248,8 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       Optional<AbstractMetadata> newMetadata,
       Optional<AbstractProtocol> oldProtocol,
       Optional<AbstractProtocol> newProtocol,
-      Optional<io.delta.storage.commit.uniform.UniformMetadata> uniform)
+      Optional<io.delta.storage.commit.uniform.UniformMetadata> uniform,
+      List<AbstractDomainMetadata> domainMetadatas)
       throws IOException, CommitFailedException, UCCommitCoordinatorException {
     ensureOpen();
     Objects.requireNonNull(tableId, "tableId must not be null");
@@ -253,6 +267,8 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       uniform.ifPresent(u -> addCommit.uniform(toSDKUniformMetadata(u)));
       request.addUpdatesItem(addCommit);
     });
+
+    addDomainMetadataUpdates(request, domainMetadatas);
 
     lastKnownBackfilledVersion.ifPresent(v ->
         request.addUpdatesItem(new SetLatestBackfilledVersionUpdate()
@@ -641,6 +657,100 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       protocol.writerFeatures(new ArrayList<>(p.getWriterFeatures()));
     }
     return protocol;
+  }
+
+  private void addDomainMetadataUpdates(
+      UpdateTableRequest request, List<AbstractDomainMetadata> domainMetadatas) {
+    if (domainMetadatas == null || domainMetadatas.isEmpty()) {
+      return;
+    }
+
+    List<String> removedDomains = new ArrayList<>();
+    DomainMetadataUpdates setUpdates = new DomainMetadataUpdates();
+    boolean hasSetUpdates = false;
+
+    for (AbstractDomainMetadata dm : domainMetadatas) {
+      if (dm.isRemoved()) {
+        removedDomains.add(dm.getDomain());
+      } else {
+        hasSetUpdates |= populateDomainMetadataUpdates(setUpdates, dm);
+      }
+    }
+
+    if (hasSetUpdates) {
+      request.addUpdatesItem(new SetDomainMetadataUpdate()
+          .action("set-domain-metadata")
+          .updates(setUpdates));
+    }
+    if (!removedDomains.isEmpty()) {
+      request.addUpdatesItem(new RemoveDomainMetadataUpdate()
+          .action("remove-domain-metadata")
+          .domains(removedDomains));
+    }
+  }
+
+  /**
+   * Populates the typed SDK model in {@code updates} for a given domain metadata action.
+   * Returns true if the domain was recognized and populated, false otherwise.
+   */
+  private boolean populateDomainMetadataUpdates(
+      DomainMetadataUpdates updates, AbstractDomainMetadata dm) {
+    String config = dm.getConfiguration();
+    switch (dm.getDomain()) {
+      case "delta.clustering":
+        ClusteringDomainMetadata clustering = parseClusteringDomainMetadata(config);
+        if (clustering != null) {
+          updates.deltaClustering(clustering);
+          return true;
+        }
+        return false;
+      case "delta.rowTracking":
+        RowTrackingDomainMetadata rowTracking = parseRowTrackingDomainMetadata(config);
+        if (rowTracking != null) {
+          updates.deltaRowTracking(rowTracking);
+          return true;
+        }
+        return false;
+      default:
+        LOG.warn("Unknown domain metadata domain '{}'; skipping.", dm.getDomain());
+        return false;
+    }
+  }
+
+  private ClusteringDomainMetadata parseClusteringDomainMetadata(String configJson) {
+    try {
+      JsonNode node = OBJECT_MAPPER.readTree(configJson);
+      ClusteringDomainMetadata sdkModel = new ClusteringDomainMetadata();
+      if (node.has("clusteringColumns")) {
+        List<List<String>> columns = new ArrayList<>();
+        for (JsonNode colArray : node.get("clusteringColumns")) {
+          List<String> colParts = new ArrayList<>();
+          for (JsonNode part : colArray) {
+            colParts.add(part.asText());
+          }
+          columns.add(colParts);
+        }
+        sdkModel.clusteringColumns(columns);
+      }
+      return sdkModel;
+    } catch (Exception e) {
+      LOG.warn("Failed to parse clustering domain metadata config; skipping.", e);
+      return null;
+    }
+  }
+
+  private RowTrackingDomainMetadata parseRowTrackingDomainMetadata(String configJson) {
+    try {
+      JsonNode node = OBJECT_MAPPER.readTree(configJson);
+      RowTrackingDomainMetadata sdkModel = new RowTrackingDomainMetadata();
+      if (node.has("rowIdHighWaterMark")) {
+        sdkModel.rowIdHighWaterMark(node.get("rowIdHighWaterMark").asLong());
+      }
+      return sdkModel;
+    } catch (Exception e) {
+      LOG.warn("Failed to parse row tracking domain metadata config; skipping.", e);
+      return null;
+    }
   }
 
   private UniformMetadata toSDKUniformMetadata(

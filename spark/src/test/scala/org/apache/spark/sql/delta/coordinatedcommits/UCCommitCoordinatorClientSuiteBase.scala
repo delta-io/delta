@@ -126,7 +126,8 @@ trait UCCommitCoordinatorClientSuiteBase extends CommitCoordinatorClientImplSuit
       Optional.empty(), // newMetadata
       Optional.empty(), // oldProtocol
       Optional.empty(), // newProtocol
-      Optional.empty() /* uniform */)
+      Optional.empty(), // uniform
+      java.util.Collections.emptyList() /* domainMetadatas */)
   }
 
   override protected def validateBackfillStrategy(

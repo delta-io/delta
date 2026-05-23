@@ -155,7 +155,8 @@ class UCTokenBasedRestClientSuite
     withClient { client =>
       client.commit(testTableId, testTableUri, null,
         Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
-        Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty())
+        Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
+        Collections.emptyList())
     }
   }
 
@@ -171,7 +172,8 @@ class UCTokenBasedRestClientSuite
         Optional.of(createMetadata()),
         Optional.empty(),
         Optional.empty(),
-        Optional.empty())
+        Optional.empty(),
+        Collections.emptyList())
     }
   }
 
@@ -180,12 +182,12 @@ class UCTokenBasedRestClientSuite
       intercept[NullPointerException] {
         client.commit(null, testTableUri, null, Optional.empty(),
           Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
-          Optional.empty(), Optional.empty())
+          Optional.empty(), Optional.empty(), Collections.emptyList())
       }
       intercept[NullPointerException] {
         client.commit(testTableId, null, null, Optional.empty(),
           Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
-          Optional.empty(), Optional.empty())
+          Optional.empty(), Optional.empty(), Collections.emptyList())
       }
     }
   }
@@ -196,7 +198,8 @@ class UCTokenBasedRestClientSuite
       withClient { client =>
         client.commit(testTableId, testTableUri, null,
           Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
-          Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty())
+          Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
+          Collections.emptyList())
       }
     }
 
@@ -301,7 +304,7 @@ class UCTokenBasedRestClientSuite
         client.commit(testTableId, testTableUri, null,
           Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
           Optional.empty(), Optional.empty(), Optional.empty(),
-          Optional.of(new UniformMetadata(icebergMeta)))
+          Optional.of(new UniformMetadata(icebergMeta)), Collections.emptyList())
       }
 
       val json: JsonNode = objectMapper.readTree(capturedBody)
@@ -334,7 +337,8 @@ class UCTokenBasedRestClientSuite
     withClient { client =>
       client.commit(testTableId, testTableUri, null,
         Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
-        Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty())
+        Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
+        Collections.emptyList())
     }
 
     val json = objectMapper.readTree(capturedBody)
@@ -352,7 +356,7 @@ class UCTokenBasedRestClientSuite
       client.commit(testTableId, testTableUri, null,
         Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
         Optional.empty(), Optional.empty(), Optional.empty(),
-        Optional.of(new UniformMetadata(null)))
+        Optional.of(new UniformMetadata(null)), Collections.emptyList())
     }
 
     val json = objectMapper.readTree(capturedBody)
