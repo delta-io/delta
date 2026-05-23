@@ -603,4 +603,93 @@ class DataSkippingUtilsSuite extends AnyFunSuite with TestUtils {
       assert(dataSkippingPredicateOpt == expectedDataSkippingPredicate)
     }
   }
+
+  test("check constructDataSkippingFilter for IN predicate") {
+    val testCases = Seq(
+      // (schema, predicate, expectedDataSkippingPredicateOpt)
+      // Basic IN with integers: a IN (1, 5, 3) => file_min <= 5 AND file_max >= 1
+      (
+        new StructType()
+          .add("a", IntegerType.INTEGER),
+        new Predicate("IN", Seq[Expression](col("a"), literal(1), literal(5), literal(3)).asJava),
+        Some(
+          dataSkippingPredicate(
+            "AND",
+            dataSkippingPredicate(
+              "<=",
+              Seq(nestedCol(s"$MIN.a"), literal(5)),
+              Set(nestedCol(s"$MIN.a"))),
+            dataSkippingPredicate(
+              ">=",
+              Seq(nestedCol(s"$MAX.a"), literal(1)),
+              Set(nestedCol(s"$MAX.a")))))),
+      // Single value IN: a IN (10) => file_min <= 10 AND file_max >= 10
+      (
+        new StructType()
+          .add("a", IntegerType.INTEGER),
+        new Predicate("IN", Seq[Expression](col("a"), literal(10)).asJava),
+        Some(
+          dataSkippingPredicate(
+            "AND",
+            dataSkippingPredicate(
+              "<=",
+              Seq(nestedCol(s"$MIN.a"), literal(10)),
+              Set(nestedCol(s"$MIN.a"))),
+            dataSkippingPredicate(
+              ">=",
+              Seq(nestedCol(s"$MAX.a"), literal(10)),
+              Set(nestedCol(s"$MAX.a")))))),
+      // IN with strings: a IN ("apple", "banana", "cherry")
+      (
+        new StructType()
+          .add("a", StringType.STRING),
+        new Predicate(
+          "IN",
+          Seq[Expression](col("a"), literal("apple"), literal("banana"), literal("cherry")).asJava),
+        Some(
+          dataSkippingPredicate(
+            "AND",
+            dataSkippingPredicate(
+              "<=",
+              Seq(nestedCol(s"$MIN.a"), literal("cherry")),
+              Set(nestedCol(s"$MIN.a"))),
+            dataSkippingPredicate(
+              ">=",
+              Seq(nestedCol(s"$MAX.a"), literal("apple")),
+              Set(nestedCol(s"$MAX.a")))))),
+      // Column not eligible (not in schema stats) - should return None
+      (
+        new StructType()
+          .add("b", IntegerType.INTEGER),
+        new Predicate("IN", Seq[Expression](col("a"), literal(1), literal(2)).asJava),
+        None),
+      // Non-literal value in IN list - should return None
+      (
+        new StructType()
+          .add("a", IntegerType.INTEGER)
+          .add("b", IntegerType.INTEGER),
+        new Predicate("IN", Seq[Expression](col("a"), literal(1), col("b")).asJava),
+        None),
+      // First child is not a column - should return None
+      (
+        new StructType()
+          .add("a", IntegerType.INTEGER),
+        new Predicate("IN", Seq[Expression](literal(1), literal(2), literal(3)).asJava),
+        None))
+
+    testCases.foreach { case (schema, predicate, expectedDataSkippingPredicateOpt) =>
+      val dataSkippingPredicateOpt =
+        JavaOptionalOps(constructDataSkippingFilter(predicate, schema)).toScala
+      (dataSkippingPredicateOpt, expectedDataSkippingPredicateOpt) match {
+        case (Some(dataSkippingPredicate), Some(expectedDataSkippingPredicate)) =>
+          assert(
+            dataSkippingPredicate == expectedDataSkippingPredicate,
+            s"For predicate $predicate: expected $expectedDataSkippingPredicate, " +
+              s"got $dataSkippingPredicate")
+        case (None, None) => // pass
+        case _ =>
+          fail(s"Expected $expectedDataSkippingPredicateOpt, found $dataSkippingPredicateOpt")
+      }
+    }
+  }
 }
