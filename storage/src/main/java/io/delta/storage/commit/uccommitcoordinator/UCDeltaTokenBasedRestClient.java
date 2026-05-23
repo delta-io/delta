@@ -208,6 +208,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   private Map<String, String> fetchStagingCredentials(String location, String tableId)
       throws ApiException {
     try {
+      // TODO: move to the new staging table only endpoint once it's ready
       return newCredBuilder(schemeOf(location))
           .buildForTable(tableId, TableOperation.READ_WRITE);
     } catch (IllegalArgumentException | NullPointerException missingCred) {
