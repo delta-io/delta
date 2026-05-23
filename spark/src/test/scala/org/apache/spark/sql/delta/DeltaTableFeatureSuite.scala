@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import java.io.File
+import java.util.Locale
 
 import scala.collection.mutable
 
@@ -146,6 +147,19 @@ class DeltaTableFeatureSuite
           TestWriterFeatureWithTransitiveDependency.name,
           TestFeatureWithDependency.name,
           TestReaderWriterFeature.name))
+  }
+
+  test("isFeatureSupportedInTableConfigs checks only the requested feature") {
+    val lowerCaseFeatureKey = propertyKey(TestReaderWriterFeature).toLowerCase(Locale.ROOT)
+    val configs = Map(
+      lowerCaseFeatureKey -> "Supported",
+      propertyKey("unknownFeatureForTargetedLookupTest") -> FEATURE_PROP_SUPPORTED)
+
+    assert(isFeatureSupportedInTableConfigs(configs, TestReaderWriterFeature))
+    assert(!isFeatureSupportedInTableConfigs(configs, TestWriterFeature))
+    assert(!isFeatureSupportedInTableConfigs(
+      Map(propertyKey(TestReaderWriterFeature) -> FEATURE_PROP_ENABLED),
+      TestReaderWriterFeature))
   }
 
   test("implicitly-enabled features") {

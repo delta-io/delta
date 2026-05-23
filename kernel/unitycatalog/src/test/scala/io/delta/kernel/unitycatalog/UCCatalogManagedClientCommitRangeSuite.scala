@@ -19,7 +19,7 @@ import java.util.Optional
 
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.KernelException
-import io.delta.storage.commit.uccommitcoordinator.{InvalidTargetTableException, UCClient}
+import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -31,6 +31,7 @@ class UCCatalogManagedClientCommitRangeSuite extends AnyFunSuite with UCCatalogM
       engine: Engine = defaultEngine,
       ucTableId: String = "testUcTableId",
       tablePath: String = "testUcTablePath",
+      ucTableIdentifier: UCTableIdentifier = new UCTableIdentifier("cat", "sch", "tbl"),
       startVersionOpt: Optional[java.lang.Long] = emptyLongOpt,
       startTimestampOpt: Optional[java.lang.Long] = emptyLongOpt,
       endVersionOpt: Optional[java.lang.Long] = emptyLongOpt,
@@ -39,6 +40,7 @@ class UCCatalogManagedClientCommitRangeSuite extends AnyFunSuite with UCCatalogM
       engine,
       ucTableId,
       tablePath,
+      ucTableIdentifier,
       startVersionOpt,
       startTimestampOpt,
       endVersionOpt,
@@ -83,6 +85,10 @@ class UCCatalogManagedClientCommitRangeSuite extends AnyFunSuite with UCCatalogM
     assertThrows[NullPointerException] {
       // tablePath is null
       loadCommitRange(ucCatalogManagedClient, tablePath = null)
+    }
+    assertThrows[NullPointerException] {
+      // ucTableIdentifier is null
+      loadCommitRange(ucCatalogManagedClient, ucTableIdentifier = null)
     }
     assertThrows[NullPointerException] {
       // startVersionOpt is null

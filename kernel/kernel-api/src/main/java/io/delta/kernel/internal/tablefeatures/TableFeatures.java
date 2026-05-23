@@ -256,14 +256,13 @@ public class TableFeatures {
 
   /* ---- Start: variantShredding ---- */
   // Base class for variantShredding and variantShredding-preview features. Both features have
-  // identical behavior. Now that variantShredding has graduated to GA:
+  // identical behavior.
   //
-  // - When `delta.enableVariantShredding` is set to true, the GA feature (`variantShredding`)
-  //   is automatically enabled unless the table already has `variantShredding-preview` in its
-  //   protocol (to avoid breaking clients that only understand the preview feature).
-  // - The preview feature (`variantShredding-preview`) is never auto-enabled. To use it on a
-  //   new table, a user must explicitly set `delta.feature.variantShredding-preview=supported`
-  //   in the table properties.
+  // - When `delta.enableVariantShredding` is set to true, the preview feature
+  //   (`variantShredding-preview`) is automatically enabled unless the table already has
+  //   `variantShredding` in its protocol.
+  // - The GA feature (`variantShredding`) is never auto-enabled via metadata. To use it on a
+  //   new table, users must explicitly set `delta.feature.variantShredding=supported`.
   private static class VariantShreddingTableFeatureBase extends TableFeature.ReaderWriterFeature {
     VariantShreddingTableFeatureBase(String featureName) {
       super(featureName, /* minReaderVersion = */ 3, /* minWriterVersion = */ 7);
@@ -275,27 +274,32 @@ public class TableFeatures {
     }
   }
 
-  private static class VariantShreddingTableFeature extends VariantShreddingTableFeatureBase
-      implements FeatureAutoEnabledByMetadata {
+  private static class VariantShreddingTableFeature extends VariantShreddingTableFeatureBase {
     VariantShreddingTableFeature() {
       super("variantShredding");
+    }
+  }
+
+  private static class VariantShreddingPreviewTableFeature extends VariantShreddingTableFeatureBase
+      implements FeatureAutoEnabledByMetadata {
+    VariantShreddingPreviewTableFeature() {
+      super("variantShredding-preview");
     }
 
     @Override
     public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
       return TableConfig.VARIANT_SHREDDING_ENABLED.fromMetadata(metadata)
           &&
-          // Don't automatically enable the stable feature if the preview feature is
-          // already supported, to avoid possibly breaking old clients that only
-          // support the preview feature.
-          !protocol.supportsFeature(VARIANT_SHREDDING_PREVIEW_RW_FEATURE);
+          // Don't automatically enable the preview feature if the GA feature is already
+          // supported, so the protocol of a table that opted into GA is left unchanged.
+          !protocol.supportsFeature(VARIANT_SHREDDING_RW_FEATURE);
     }
   }
 
   public static final TableFeature VARIANT_SHREDDING_RW_FEATURE =
       new VariantShreddingTableFeature();
   public static final TableFeature VARIANT_SHREDDING_PREVIEW_RW_FEATURE =
-      new VariantShreddingTableFeatureBase("variantShredding-preview");
+      new VariantShreddingPreviewTableFeature();
   /* ---- End: variantShredding ---- */
 
   public static final TableFeature DOMAIN_METADATA_W_FEATURE = new DomainMetadataFeature();

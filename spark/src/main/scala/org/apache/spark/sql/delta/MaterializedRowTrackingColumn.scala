@@ -117,7 +117,7 @@ abstract class MaterializedRowTrackingColumn {
    * in 'dataFrame' if one is available. Otherwise returns None.
    */
   private[delta] def getAttribute(
-      snapshot: Snapshot, dataFrame: DataFrame): Option[Attribute] = {
+      snapshot: SnapshotDescriptor, dataFrame: DataFrame): Option[Attribute] = {
     if (!RowTracking.isEnabled(snapshot.protocol, snapshot.metadata)) {
       return None
     }

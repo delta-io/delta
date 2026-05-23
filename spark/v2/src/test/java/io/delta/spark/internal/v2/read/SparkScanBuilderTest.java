@@ -97,6 +97,66 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
   }
 
   @Test
+  public void testPruneColumns_filtersMixedCaseCDCColumn(@TempDir File tempDir) throws Exception {
+    String path = tempDir.getAbsolutePath();
+    String tableName = "scan_builder_mixed_case_cdc_test";
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, name STRING, dep_id INT) USING delta PARTITIONED BY (dep_id) LOCATION '%s'",
+            tableName, path));
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf());
+    Snapshot snapshot = snapshotManager.loadLatestSnapshot();
+    StructType dataSchema =
+        DataTypes.createStructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.IntegerType, true),
+              DataTypes.createStructField("name", DataTypes.StringType, true)
+            });
+    StructType partitionSchema =
+        DataTypes.createStructType(
+            new StructField[] {DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)});
+    StructType tableSchema =
+        DataTypes.createStructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.IntegerType, true),
+              DataTypes.createStructField("name", DataTypes.StringType, true),
+              DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)
+            });
+    SparkScanBuilder builder =
+        new SparkScanBuilder(
+            tableName,
+            snapshot,
+            snapshotManager,
+            dataSchema,
+            partitionSchema,
+            tableSchema,
+            Optional.empty(),
+            CaseInsensitiveStringMap.empty());
+
+    StructType requiredSchema =
+        DataTypes.createStructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.IntegerType, true),
+              DataTypes.createStructField("_Change_Type", DataTypes.StringType, true)
+            });
+    builder.pruneColumns(requiredSchema);
+
+    StructType requiredDataSchema = getRequiredDataSchema(builder);
+    for (StructField f : requiredDataSchema.fields()) {
+      assertTrue(
+          !f.name().equalsIgnoreCase("_change_type"),
+          "Mixed-case CDC column survived pruneColumns: " + f.name());
+    }
+  }
+
+  private StructType getRequiredDataSchema(SparkScanBuilder builder) throws Exception {
+    Field field = SparkScanBuilder.class.getDeclaredField("requiredDataSchema");
+    field.setAccessible(true);
+    return (StructType) field.get(builder);
+  }
+
+  @Test
   public void testToMicroBatchStream_returnsSparkMicroBatchStream(@TempDir File tempDir) {
     String path = tempDir.getAbsolutePath();
     String tableName = "microbatch_test";

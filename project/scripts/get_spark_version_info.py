@@ -24,6 +24,7 @@ Usage:
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -33,8 +34,13 @@ def generate_spark_versions_json(repo_root: Path) -> bool:
     """Generate the spark-versions.json file by running sbt exportSparkVersionsJson."""
     try:
         print("Generating spark-versions.json...", file=sys.stderr)
+        cmd = ["build/sbt"]
+        kernel_version = os.getenv("KERNEL_VERSION")
+        if kernel_version:
+            cmd.append(f"-DkernelVersion={kernel_version}")
+        cmd.append("exportSparkVersionsJson")
         subprocess.run(
-            ["build/sbt", "exportSparkVersionsJson"],
+            cmd,
             cwd=repo_root,
             check=True,
             stdout=subprocess.DEVNULL,

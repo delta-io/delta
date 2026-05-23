@@ -33,6 +33,7 @@ import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.test.shims.StreamingTestShims.MemoryStream
 import org.apache.spark.sql.delta.util.FileNames
 
+import org.apache.spark.SparkException
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, Dataset, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.quietly
@@ -1878,6 +1879,124 @@ trait GeneratedColumnSuiteBase
           sql(s"SELECT * FROM ${tgt}"),
           Seq(Row(1, 2, null), Row(2, 3, 4))
         )
+      }
+    }
+  }
+
+  test("MERGE INSERT with duplicate columns differing only in case") {
+    // Regression test: when the INSERT clause contains columns that differ only in case
+    // (e.g., "c2" and "C2"), the duplicate check should catch them and throw a proper
+    // user-facing error instead of hitting an internal AssertionError in
+    // resolveImplicitColumns.
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(
+          tableName = src,
+          path = None,
+          schemaString = "c1 INT, c2 INT",
+          generatedColumns = Map.empty,
+          partitionColumns = Seq.empty
+        )
+        sql(s"INSERT INTO ${src} VALUES (2, 4)")
+        createTable(
+          tableName = tgt,
+          path = None,
+          schemaString = "c1 INT, c2 INT, c3 INT",
+          generatedColumns = Map("c3" -> "c1 + c2"),
+          partitionColumns = Seq.empty
+        )
+        sql(s"INSERT INTO ${tgt} VALUES (1, 2, 3)")
+
+        val e = intercept[AnalysisException] {
+          sql(s"""
+                 |MERGE INTO ${tgt}
+                 |USING ${src}
+                 |ON ${tgt}.c1 = ${src}.c1
+                 |WHEN NOT MATCHED THEN INSERT (c1, c2, C2)
+                 |VALUES (${src}.c1, ${src}.c2, ${src}.c2)
+                 |""".stripMargin)
+        }
+        assert(e.getMessage.contains("Duplicate column names in INSERT clause"))
+      }
+    }
+  }
+
+  test("MERGE INSERT with case-variant duplicate columns and fix disabled") {
+    // When the safer flag is disabled, case-variant duplicates bypass the duplicate check
+    // and instead trigger the internal AssertionError in resolveImplicitColumns on tables
+    // with generated columns. Kept as an A/B test pinning the prior failure mode.
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(
+          tableName = src,
+          path = None,
+          schemaString = "c1 INT, c2 INT",
+          generatedColumns = Map.empty,
+          partitionColumns = Seq.empty
+        )
+        sql(s"INSERT INTO ${src} VALUES (2, 4)")
+        createTable(
+          tableName = tgt,
+          path = None,
+          schemaString = "c1 INT, c2 INT, c3 INT",
+          generatedColumns = Map("c3" -> "c1 + c2"),
+          partitionColumns = Seq.empty
+        )
+        sql(s"INSERT INTO ${tgt} VALUES (1, 2, 3)")
+
+        withSQLConf(
+          DeltaSQLConf.DELTA_MERGE_INSERT_FIX_CASE_SENSITIVE_DUPLICATE_COLUMNS.key -> "false"
+        ) {
+          val e = intercept[SparkException] {
+            sql(s"""
+                   |MERGE INTO ${tgt}
+                   |USING ${src}
+                   |ON ${tgt}.c1 = ${src}.c1
+                   |WHEN NOT MATCHED THEN INSERT (c1, c2, C2)
+                   |VALUES (${src}.c1, ${src}.c2, ${src}.c2)
+                   |""".stripMargin)
+          }
+          assert(e.getCause.isInstanceOf[AssertionError])
+          assert(e.getCause.getMessage.contains(
+            "Invalid number of columns in INSERT clause"))
+        }
+      }
+    }
+  }
+
+  test("MERGE INSERT case-variant duplicates without generated or identity columns allowed") {
+    // Companion to the previous tests: when the target has no generated or identity columns,
+    // the case-insensitive duplicate check should NOT fire even with the fix enabled, to
+    // match existing behavior (see `MergeIntoSchemaEvolutionSuite: case-insensitive insert`).
+    // Without generated or identity columns `resolveImplicitColumns` early-returns, so the
+    // assertion path is unreachable and `alignedActions` silently absorbs the duplicate.
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(
+          tableName = src,
+          path = None,
+          schemaString = "c1 INT, c2 INT",
+          generatedColumns = Map.empty,
+          partitionColumns = Seq.empty
+        )
+        sql(s"INSERT INTO ${src} VALUES (2, 4)")
+        createTable(
+          tableName = tgt,
+          path = None,
+          schemaString = "c1 INT, c2 INT",
+          generatedColumns = Map.empty,
+          partitionColumns = Seq.empty
+        )
+        sql(s"INSERT INTO ${tgt} VALUES (1, 2)")
+
+        sql(s"""
+               |MERGE INTO ${tgt}
+               |USING ${src}
+               |ON ${tgt}.c1 = ${src}.c1
+               |WHEN NOT MATCHED THEN INSERT (c1, c2, C2)
+               |VALUES (${src}.c1, ${src}.c2, ${src}.c2)
+               |""".stripMargin)
+        checkAnswer(sql(s"SELECT * FROM ${tgt}"), Seq(Row(1, 2), Row(2, 4)))
       }
     }
   }

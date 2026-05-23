@@ -657,7 +657,7 @@ trait DataSkippingReaderBase
   override def filesForScan(filters: Seq[Expression], keepNumRecords: Boolean): DeltaScan = {
     val startTime = System.currentTimeMillis()
     if (filters == Seq(TrueLiteral) || filters.isEmpty || schema.isEmpty) {
-      recordDeltaOperation(deltaLog, "delta.skipping.none") {
+      recordDeltaOperation(snapshotToScan, "delta.skipping.none") {
         // When there are no filters we can just return allFiles with no extra processing
         val forceCollectRowCount =
           spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_ALWAYS_COLLECT_STATS)
@@ -730,7 +730,7 @@ trait DataSkippingReaderBase
         dataSkippingType =
           getCorrectDataSkippingType(DeltaDataSkippingType.partitionFilteringOnlyV1)
       )
-    } else recordDeltaOperation(deltaLog, "delta.skipping.data") {
+    } else recordDeltaOperation(snapshotToScan, "delta.skipping.data") {
       val finalPartitionFilters = constructPartitionFilters(partitionFilters)
 
       val dataSkippingType = if (partitionFilters.isEmpty) {
@@ -763,7 +763,8 @@ trait DataSkippingReaderBase
       //    rough heuristic, require the table to no longer be considered a "small delta table."
       // 3. At least 1 data filter was not already used for data skipping.
       val shouldRewriteDataFiltersAsPartitionLike =
-        spark.conf.get(DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ENABLED) &&
+        useStats &&
+          spark.conf.get(DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ENABLED) &&
           ClusteredTableUtils.isSupported(snapshotToScan.protocol) &&
           snapshotToScan.numOfFilesIfKnown.exists(_ >=
             spark.conf.get(DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_THRESHOLD)) &&
@@ -829,7 +830,7 @@ trait DataSkippingReaderBase
    * Statistics about the amount of data that will be read are gathered and returned.
    */
   override def filesForScan(limit: Long, partitionFilters: Seq[Expression]): DeltaScan =
-    recordDeltaOperation(deltaLog, "delta.skipping.filteredLimit") {
+    recordDeltaOperation(snapshotToScan, "delta.skipping.filteredLimit") {
       val startTime = System.currentTimeMillis()
       val finalPartitionFilters = constructPartitionFilters(partitionFilters)
 
