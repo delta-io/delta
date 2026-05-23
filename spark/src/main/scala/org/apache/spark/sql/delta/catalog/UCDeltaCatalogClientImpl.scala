@@ -45,6 +45,7 @@ import org.apache.spark.sql.catalyst.catalog.{
   CatalogTableType
 }
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, Table, TableCatalog, V1Table}
+import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.{Snapshot, TableFeature}
 import org.apache.spark.sql.delta.coordinatedcommits.UCTokenBasedRestClientFactory
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -176,8 +177,8 @@ private[catalog] class UCDeltaCatalogClientImpl(
       required: Boolean): Unit = {
     if (protocol == null) return
     val features =
-      Option(protocol.getReaderFeatures).map(_.asScala).getOrElse(Iterable.empty) ++
-        Option(protocol.getWriterFeatures).map(_.asScala).getOrElse(Iterable.empty)
+      (Option(protocol.getReaderFeatures).map(_.asScala).getOrElse(Iterable.empty) ++
+        Option(protocol.getWriterFeatures).map(_.asScala).getOrElse(Iterable.empty)).toSet
     features.foreach { feature =>
       if (TableFeature.featureNameToFeature(feature).isDefined) {
         val key = s"delta.feature.$feature"
@@ -220,31 +221,26 @@ private[catalog] class UCDeltaCatalogClientImpl(
   override def createTable(
       ident: Identifier,
       table: CatalogTable,
-      snapshot: Snapshot): Unit = {
+      metadata: Metadata,
+      protocol: Protocol,
+      snapshotTimestamp: Long): Unit = {
     val locationUri = table.storage.locationUri.getOrElse(throw new IllegalArgumentException(
       s"createTable requires a storage location on the CatalogTable for $ident"))
-    val tableId = table.properties.getOrElse(
-      UC_TABLE_ID_KEY,
-      throw new IllegalStateException(
-        s"createTable requires the staged UC table id ('$UC_TABLE_ID_KEY') in table " +
-          s"properties for $ident; the upstream stage step must populate it."))
     // Strip V2-only catalog keys (location, owner, ...) before sending the configuration
     // to UC; they don't belong in table properties.
     val cleanedConfiguration =
       table.properties
         .filterKeys(k => !UCDeltaCatalogClientImpl.ReservedV2TableProperties.contains(k))
         .toMap
-    val metadata = snapshot.metadata.copy(
-      description = table.comment.orNull,
-      configuration = cleanedConfiguration)
     ucClient.createTable(
-      tableId,
       locationUri,
       toStorageTableIdent(ident),
       toUcTableType(table.tableType),
-      metadata,
-      snapshot.protocol,
-      snapshot.timestamp)
+      metadata.copy(
+        description = table.comment.orNull,
+        configuration = cleanedConfiguration),
+      protocol,
+      snapshotTimestamp)
   }
 
   // -------------------------------------------------------------------------
