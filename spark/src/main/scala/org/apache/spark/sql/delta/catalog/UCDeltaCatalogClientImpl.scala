@@ -23,7 +23,7 @@ import scala.jdk.CollectionConverters._
 import scala.jdk.OptionConverters._
 
 import io.delta.storage.commit.{TableIdentifier => StorageTableIdentifier}
-import io.delta.storage.commit.uccommitcoordinator.{UCDeltaClient, UCDeltaModels}
+import io.delta.storage.commit.uccommitcoordinator.{UCConfigUtils, UCDeltaClient, UCDeltaModels}
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.TableInfo
 import io.delta.storage.commit.uccommitcoordinator.exceptions.{
   CredentialFetchFailedException,
@@ -213,16 +213,12 @@ object UCDeltaCatalogClientImpl extends AbstractDeltaCatalogClientFactory with L
     }
     validateAuthConfigured(options, catalogName)
 
-    // `asCaseSensitiveMap()` preserves the user's original key case; `containsKey` is
-    // case-insensitive so defaults don't create duplicate keys.
     val merged = new java.util.HashMap[String, String](options.asCaseSensitiveMap())
-    Seq(
-      UCTokenBasedRestClientFactory.DELTA_REST_API_ENABLED_KEY -> "true",
-      UCTokenBasedRestClientFactory.RENEW_CREDENTIAL_ENABLED_KEY -> "true",
-      UCTokenBasedRestClientFactory.CRED_SCOPED_FS_ENABLED_KEY -> "false"
-    ).foreach { case (k, v) => if (!options.containsKey(k)) merged.put(k, v) }
+    if (!options.containsKey(UCTokenBasedRestClientFactory.DELTA_REST_API_ENABLED_KEY)) {
+      merged.put(UCTokenBasedRestClientFactory.DELTA_REST_API_ENABLED_KEY, "true")
+    }
     val ucClient = UCTokenBasedRestClientFactory
-      .createUCClient(new CaseInsensitiveStringMap(merged))
+      .createUCClient(merged)
       .asInstanceOf[UCDeltaClient]
 
     val sspEnabled = options.getBoolean(ServerSidePlanningEnabledKey, false)
@@ -241,9 +237,7 @@ object UCDeltaCatalogClientImpl extends AbstractDeltaCatalogClientFactory with L
   private[catalog] def validateAuthConfigured(
       options: CaseInsensitiveStringMap,
       catalogName: String): Unit = {
-    val hasAuthPrefix = options.entrySet().asScala.exists(_.getKey.startsWith(AuthPrefix))
-    val hasLegacyToken = options.get(LegacyTokenKey) != null
-    if (!hasAuthPrefix && !hasLegacyToken) {
+    if (!UCConfigUtils.hasAuthConfig(options.asCaseSensitiveMap())) {
       throw new IllegalArgumentException(
         s"auth configuration is required when 'deltaRestApi.enabled' is true " +
           s"(catalog '$catalogName'). Set either '${AuthPrefix}type' (with the corresponding " +
