@@ -59,8 +59,6 @@ public interface UCDeltaClient extends UCClient {
    * configuration) and an {@link AbstractProtocol} (min reader/writer versions, reader/writer
    * features).
    *
-   * @param tableId                the UC-allocated table id returned by
-   *                               {@link #createStagingTable}
    * @param tableUri               the storage location of the staged table
    * @param tableIdentifier        catalog + schema namespace and table name
    * @param tableType              MANAGED or EXTERNAL
@@ -74,7 +72,6 @@ public interface UCDeltaClient extends UCClient {
    * @throws IOException on network or API errors
    */
   TableInfo createTable(
-      String tableId,
       URI tableUri,
       TableIdentifier tableIdentifier,
       UCDeltaModels.TableType tableType,

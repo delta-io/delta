@@ -470,7 +470,6 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
 
   @Override
   public TableInfo createTable(
-      String tableId,
       URI tableUri,
       TableIdentifier tableIdentifier,
       UCDeltaModels.TableType tableType,
@@ -478,7 +477,6 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       AbstractProtocol protocol,
       long lastCommitTimestampMs) throws IOException {
     ensureOpen();
-    Objects.requireNonNull(tableId, "tableId must not be null");
     Objects.requireNonNull(tableUri, "tableUri must not be null");
     Objects.requireNonNull(tableType, "tableType must not be null");
     Objects.requireNonNull(metadata, "metadata must not be null");

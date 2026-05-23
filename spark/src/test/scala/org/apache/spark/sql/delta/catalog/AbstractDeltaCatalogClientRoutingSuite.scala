@@ -576,7 +576,6 @@ private abstract class ThrowingUCDeltaClient extends UCDeltaClient {
       tableIdentifier: StorageTableIdentifier): StagingTableInfo =
     throw new UnsupportedOperationException
   override def createTable(
-      tableId: String,
       tableUri: URI,
       tableIdentifier: StorageTableIdentifier,
       tableType: UcTableType,
