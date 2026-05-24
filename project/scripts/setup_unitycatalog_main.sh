@@ -42,10 +42,17 @@
 #   4. Open a focused PR.
 #
 # Environment overrides:
-#   UC_DIR   directory to clone into       (default: /tmp/unitycatalog)
-#   UC_REPO  git remote URL                (default: upstream unitycatalog)
-#   UC_REF   must be `main` or UC_PIN_SHA  (default: UC_PIN_SHA below)
-#   UC_FORCE set to "1" to rebuild even when the Ivy artifact exists
+#   UC_DIR        directory to clone into                 (default: /tmp/unitycatalog)
+#   UC_REPO       git remote URL                          (default: upstream unitycatalog)
+#   UC_REF        must be `main` or UC_PIN_SHA            (default: UC_PIN_SHA below)
+#   UC_FORCE      set to "1" to rebuild even when the Ivy artifact exists
+#   SPARK_VERSION Spark major.minor UC should build for   (default: 4.1)
+#                 Forwarded as -DsparkVersion to UC's sbt; also determines the published artifact
+#                 name (unitycatalog-spark_${X.Y}_2.13). Delta's build.sbt sets this from
+#                 CrossSparkVersions when invoking the script; matrix CI workflows set it from
+#                 `matrix.spark_version`. Default matches UC's own default in
+#                 project/spark-versions.json - workflows that don't care which Spark variant UC
+#                 builds (kernel/flink/etc.) inherit it.
 #
 # UC_REF is restricted to exactly two values by design: the pinned SHA (the normal case) or
 # `main` (for the floating-main canary flow). Any other value is rejected. CI should never set
@@ -57,7 +64,7 @@ set -euo pipefail
 # The pin. Bump both lines together if UC's version.sbt changed at the new SHA. build.sbt's
 # `unityCatalogVersion` is obtained by running this script with `--print-version`, so these two
 # values are the single source of truth.
-UC_PIN_SHA=cd6fec685e9c2ce23fd85552ffac94c7b7e9cbd6
+UC_PIN_SHA=af090e73979bc216a0fe8feff59a5bbce0f41f14
 UC_BASE_VERSION=0.5.0-SNAPSHOT
 # ---------------------------------------------------------------------------------------------
 
@@ -65,6 +72,7 @@ UC_DIR="${UC_DIR:-/tmp/unitycatalog}"
 UC_REPO="${UC_REPO:-https://github.com/unitycatalog/unitycatalog.git}"
 UC_REF="${UC_REF:-$UC_PIN_SHA}"
 UC_FORCE="${UC_FORCE:-0}"
+SPARK_VERSION="${SPARK_VERSION:-4.1}"
 
 # Enforce the two-value contract. Anything else is either a typo or a misuse and would bypass the
 # safety check below.
@@ -92,15 +100,19 @@ fi
 # Canonical Ivy + Maven artifact paths. Delta depends on all three UC modules; sbt resolves from
 # ~/.ivy2/local, mvn (kernel-examples integration tests) resolves from ~/.m2/repository. If any
 # is missing in either layout we must re-publish.
+# UC publishes its Spark connector under a per-Spark-version coordinate
+# (e.g. unitycatalog-spark_4.1_2.13). The suffix tracks SPARK_VERSION so the
+# canary check matches whatever variant we tell UC to build below.
+UC_SPARK_ARTIFACT="unitycatalog-spark_${SPARK_VERSION}_2.13"
 IVY_LOCAL="$HOME/.ivy2/local/io.unitycatalog"
 IVY_CANARY_CLIENT="$IVY_LOCAL/unitycatalog-client/$UC_VERSION/ivys/ivy.xml"
 IVY_CANARY_SERVER="$IVY_LOCAL/unitycatalog-server/$UC_VERSION/ivys/ivy.xml"
-IVY_CANARY_SPARK="$IVY_LOCAL/unitycatalog-spark_2.13/$UC_VERSION/ivys/ivy.xml"
+IVY_CANARY_SPARK="$IVY_LOCAL/$UC_SPARK_ARTIFACT/$UC_VERSION/ivys/ivy.xml"
 IVY_CANARY_HADOOP="$IVY_LOCAL/unitycatalog-hadoop/$UC_VERSION/ivys/ivy.xml"
 M2_LOCAL="$HOME/.m2/repository/io/unitycatalog"
 M2_CANARY_CLIENT="$M2_LOCAL/unitycatalog-client/$UC_VERSION/unitycatalog-client-$UC_VERSION.pom"
 M2_CANARY_SERVER="$M2_LOCAL/unitycatalog-server/$UC_VERSION/unitycatalog-server-$UC_VERSION.pom"
-M2_CANARY_SPARK="$M2_LOCAL/unitycatalog-spark_2.13/$UC_VERSION/unitycatalog-spark_2.13-$UC_VERSION.pom"
+M2_CANARY_SPARK="$M2_LOCAL/$UC_SPARK_ARTIFACT/$UC_VERSION/$UC_SPARK_ARTIFACT-$UC_VERSION.pom"
 M2_CANARY_HADOOP="$M2_LOCAL/unitycatalog-hadoop/$UC_VERSION/unitycatalog-hadoop-$UC_VERSION.pom"
 ALL_CANARIES=("$IVY_CANARY_CLIENT" "$IVY_CANARY_SERVER" "$IVY_CANARY_SPARK" "$IVY_CANARY_HADOOP"
               "$M2_CANARY_CLIENT" "$M2_CANARY_SERVER" "$M2_CANARY_SPARK" "$M2_CANARY_HADOOP")
@@ -161,9 +173,25 @@ fi
 # coordinate. Applied as a persistent setting so it sticks across the two sbt invocations below.
 SET_VERSION_CMD="set ThisBuild / version := \"$UC_VERSION\""
 
+# Force publishLocal / publishM2 to overwrite existing artifacts. UC artifacts at the same
+# coordinate can be left behind from a prior run (e.g. cross-Spark publish re-invokes this
+# script for a different sparkVersion while client/server/hadoop are already in ~/.ivy2/local
+# and ~/.m2 from the first invocation). publishLocalConfiguration / publishM2Configuration are
+# task settings scoped per-project (ThisBuild / Global don't propagate), so we set them on each
+# project we publish. Both configs need overriding: publishLocal uses the former, publishM2
+# uses the latter.
+SET_OVERWRITE_CMDS=()
+for p in client server hadoop spark; do
+  SET_OVERWRITE_CMDS+=(
+    "set $p / publishLocalConfiguration := ($p / publishLocalConfiguration).value.withOverwrite(true)"
+    "set $p / publishM2Configuration := ($p / publishM2Configuration).value.withOverwrite(true)"
+  )
+done
+
 echo ">>> Building and publishing UC client + server to local Maven repo"
 ./build/sbt \
   "$SET_VERSION_CMD" \
+  "${SET_OVERWRITE_CMDS[@]}" \
   "set client / Compile / packageDoc / publishArtifact := false" \
   clean \
   client/generate \
@@ -175,10 +203,18 @@ echo ">>> Building and publishing UC client + server to local Maven repo"
   hadoop/publishM2
 
 # spark/publishM2 can hit a transient coursier lock race - retry up to 3 times.
-echo ">>> Building and publishing UC spark module to local Maven repo"
+# -DsparkVersion picks the Spark variant UC builds against; the resulting artifact is
+# unitycatalog-spark_${SPARK_VERSION}_2.13, matching UC_SPARK_ARTIFACT above.
+# -DskipDeltaSpark=true drops UC's test-only delta-spark_X.Y dep, which would otherwise
+# fail resolution: we publish UC before Delta itself is built, and on snapshot Spark
+# versions (e.g. 4.2) no matching delta-spark release exists at all.
+echo ">>> Building and publishing UC spark module (Spark $SPARK_VERSION) to local Maven repo"
 for attempt in 1 2 3; do
   if ./build/sbt \
+    -DsparkVersion="$SPARK_VERSION" \
+    -DskipDeltaSpark=true \
     "$SET_VERSION_CMD" \
+    "${SET_OVERWRITE_CMDS[@]}" \
     "set client / Compile / packageDoc / publishArtifact := false" \
     spark/publishLocal \
     spark/publishM2; then

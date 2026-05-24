@@ -786,6 +786,12 @@ val unityCatalogVersion: String = sys.props.getOrElse(
   if (useDefaultUnityCatalogReleaseVersion) defaultUnityCatalogReleaseVersion
   else unityCatalogReleaseVersion.getOrElse(pinnedUnityCatalogVersion))
 
+// UC publishes its Spark connector per Spark major.minor (e.g. unitycatalog-spark_4.1). This
+// is the artifact name without the Scala suffix - sbt's `%%` appends `_2.13` for dep
+// resolution; the canary check below appends `_2.13` explicitly for the Ivy/Maven path.
+val unityCatalogSparkArtifactName: String =
+  s"unitycatalog-spark_${CrossSparkVersions.getSparkVersionSpec().shortVersion}"
+
 /**
  * Returns true when `current` is at least `target`. Numeric segments only; suffix after
  * the first `-` (e.g. `-SNAPSHOT-abc1234`) is stripped before comparison.
@@ -831,7 +837,12 @@ def publishPinnedUnityCatalog(log: sbt.util.Logger, canary: java.io.File): Unit 
   val procLogger = ProcessLogger(
     line => log.info(s"[UC setup] $line"),
     line => log.warn(s"[UC setup] $line"))
-  val exit = Process(Seq("bash", unityCatalogSetupScript)).!(procLogger)
+  // SPARK_VERSION tells the script which Spark variant to build (forwarded to UC's sbt as
+  // -DsparkVersion).
+  val exit = Process(
+    Seq("bash", unityCatalogSetupScript),
+    None,
+    "SPARK_VERSION" -> CrossSparkVersions.getSparkVersionSpec().shortVersion).!(procLogger)
   if (exit != 0) {
     sys.error(
       s"[UC] $unityCatalogSetupScript exited with code $exit. Run it manually to see full output.")
@@ -853,13 +864,17 @@ Global / ensurePinnedUnityCatalog := {
     sys.props.contains("unityCatalogVersion")
   if (unityCatalogReleaseVersion.isEmpty && !usingReleasedVersion) {
     val home = file(sys.props("user.home"))
+    // Canary on the spark artifact, not client/server: those are Spark-version-independent and
+    // would short-circuit the trigger when only the active Spark version changed, leaving the
+    // needed unitycatalog-spark_${X.Y}_2.13 unpublished.
+    val sparkArtifact = s"${unityCatalogSparkArtifactName}_2.13"
     // Check both layouts: a restored sbt cache can pre-populate ivy alone, leaving m2 empty -
     // checking only ivy would silently skip the slow publish and break mvn-based consumers.
     val ivy2Canary = home / ".ivy2" / "local" / "io.unitycatalog" /
-      "unitycatalog-client" / unityCatalogVersion / "ivys" / "ivy.xml"
+      sparkArtifact / unityCatalogVersion / "ivys" / "ivy.xml"
     val m2Canary = home / ".m2" / "repository" / "io" / "unitycatalog" /
-      "unitycatalog-client" / unityCatalogVersion /
-      s"unitycatalog-client-$unityCatalogVersion.pom"
+      sparkArtifact / unityCatalogVersion /
+      s"$sparkArtifact-$unityCatalogVersion.pom"
     if (!ivy2Canary.exists || !m2Canary.exists) {
       publishPinnedUnityCatalog(log, ivy2Canary)
     }
@@ -913,7 +928,7 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
       "org.projectlombok" % "lombok" % "1.18.34" % "test",
 
       // Unity Catalog dependencies - exclude Jackson to use Spark's Jackson 2.15.x
-      "io.unitycatalog" %% "unitycatalog-spark" % unityCatalogVersion % "test" excludeAll(
+      "io.unitycatalog" %% unityCatalogSparkArtifactName % unityCatalogVersion % "test" excludeAll(
         ExclusionRule(organization = "com.fasterxml.jackson.core"),
         ExclusionRule(organization = "com.fasterxml.jackson.module"),
         ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
