@@ -1,7 +1,7 @@
 package io.delta.spark.internal.v2.read.changelog;
 
 import io.delta.kernel.Snapshot;
-import io.delta.spark.internal.v2.catalog.SparkTable;
+import io.delta.spark.internal.v2.catalog.DeltaV2Table;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import org.apache.spark.sql.connector.catalog.CatalogV2Util;
 import org.apache.spark.sql.connector.catalog.Changelog;
@@ -16,7 +16,7 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 /**
  * V2 Changelog implementation for Delta tables.
  *
- * <p>Wraps the {@link SparkTable} resolved by {@code TableCatalog.loadTable(ident)}. The
+ * <p>Wraps the {@link DeltaV2Table} resolved by {@code TableCatalog.loadTable(ident)}. The
  * connector-level work (snapshot loads, row tracking validation, metadata-action inspection
  * across the range) is deferred to the read path inside {@link DeltaChangelogBatch}. The schema
  * exposed by {@link #columns()} is the end-version schema. It matches the {@code dataSchema} the
@@ -29,7 +29,7 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 public class DeltaChangelog implements Changelog {
 
   private final String tableName;
-  private final SparkTable sparkTable;
+  private final DeltaV2Table sparkTable;
   private final long startVersion;
   private final long endVersion;
 
@@ -42,7 +42,7 @@ public class DeltaChangelog implements Changelog {
           .add(ROW_COMMIT_VERSION_FIELD, DataTypes.LongType, false);
 
   public DeltaChangelog(
-      String tableName, SparkTable sparkTable, long startVersion, long endVersion) {
+      String tableName, DeltaV2Table sparkTable, long startVersion, long endVersion) {
     this.tableName = tableName;
     this.sparkTable = sparkTable;
     this.startVersion = startVersion;

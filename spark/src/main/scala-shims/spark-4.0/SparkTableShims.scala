@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.connector.catalog.TableCapability
 
-/** Shim to build [[SparkTable]] against different Spark versions. */
+/** Shim to build [[DeltaV2Table]] against different Spark versions. */
 object SparkTableShims {
   // Capability [[TableCapability.AUTOMATIC_SCHEMA_EVOLUTION]] is not available in Spark 4.0.
   val schemaEvolutionCapability: Option[TableCapability] = None
