@@ -22,7 +22,7 @@ import org.apache.spark.sql.Row;
 public class DataFrameSnapshotCache implements AutoCloseable {
 
   private final long version;
-  private Dataset<Row> sortedAddFiles;
+  private final Dataset<Row> sortedAddFiles;
 
   public DataFrameSnapshotCache(long version, Dataset<Row> sortedAddFiles) {
     this.version = version;
@@ -39,10 +39,6 @@ public class DataFrameSnapshotCache implements AutoCloseable {
 
   @Override
   public void close() {
-    Dataset<Row> df = sortedAddFiles;
-    if (df != null) {
-      df.unpersist();
-      sortedAddFiles = null;
-    }
+    sortedAddFiles.unpersist();
   }
 }

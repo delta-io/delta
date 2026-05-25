@@ -25,11 +25,12 @@ import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCDeltaClient, UCDeltaModels}
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.{DeltaProtocol, StagingTableInfo, TableInfo, TableType => UcTableType}
 import io.delta.storage.commit.uccommitcoordinator.exceptions.CredentialFetchFailedException
-import io.delta.storage.commit.uniform.UniformMetadata
+import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.catalog.CatalogTableType
 import org.apache.spark.sql.connector.catalog.{Identifier, Table, V1Table}
+import org.apache.spark.sql.delta.IcebergConstants
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
@@ -111,25 +112,17 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
 
   test("loadTable converts TableInfo to V1Table with catalog-supplied fields") {
     val tableId = UUID.randomUUID()
-    val metadata = new AbstractMetadata {
-      override def getId: String = null
-      override def getName: String = "tbl"
-      override def getDescription: String = "a test table"
-      override def getProvider: String = "DELTA"
-      override def getFormatOptions: util.Map[String, String] = Collections.emptyMap()
-      override def getSchemaString: String =
-        """{"type":"struct","fields":[{"name":"id","type":"long","nullable":true,"metadata":{}}]}"""
-      override def getPartitionColumns: util.List[String] = Collections.emptyList()
-      override def getConfiguration: util.Map[String, String] =
-        util.Map.of("ucTableId", tableId.toString, "delta.feature.x", "supported")
-      override def getCreatedTime: java.lang.Long = 42L
-    }
+    val metadata = new TestMetadata(
+      description = "a test table",
+      configuration = util.Map.of("ucTableId", tableId.toString, "delta.feature.x", "supported"),
+      createdTime = 42L)
     val info = new TableInfo(
       tableId,
       UCDeltaModels.TableType.EXTERNAL,
       "s3://bucket/table",
       metadata,
-      util.Map.of("fs.s3a.access.key", "key"))
+      util.Map.of("fs.s3a.access.key", "key"),
+      Optional.empty())
 
     val client = new UCDeltaCatalogClientImpl(
       catalogName = "main",
@@ -154,25 +147,14 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
 
   test("loadTable falls back to SSP on CredentialFetchFailedException when SSP is enabled") {
     val tableId = UUID.randomUUID()
-    val metadata = new AbstractMetadata {
-      override def getId: String = null
-      override def getName: String = "tbl"
-      override def getDescription: String = null
-      override def getProvider: String = "DELTA"
-      override def getFormatOptions: util.Map[String, String] = Collections.emptyMap()
-      override def getSchemaString: String =
-        """{"type":"struct","fields":[{"name":"id","type":"long","nullable":true,"metadata":{}}]}"""
-      override def getPartitionColumns: util.List[String] = Collections.emptyList()
-      // No credential properties; this is the "without credentials" TableInfo.
-      override def getConfiguration: util.Map[String, String] = Collections.emptyMap()
-      override def getCreatedTime: java.lang.Long = 0L
-    }
+    val metadata = new TestMetadata() // no credential properties
     val tableInfoNoCreds = new TableInfo(
       tableId,
       UCDeltaModels.TableType.EXTERNAL,
       "s3://bucket/no-creds-table",
       metadata,
-      Collections.emptyMap()) // no storage properties either
+      Collections.emptyMap(), // no storage properties either
+      Optional.empty())
     val credEx = new CredentialFetchFailedException(
       "creds exhausted", new RuntimeException("simulated"), tableInfoNoCreds)
 
@@ -203,6 +185,67 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
     }
   }
 
+  test("toV1Table propagates UniForm Iceberg metadata into storage.properties") {
+    val tableId = UUID.randomUUID()
+    val metadata = new TestMetadata()
+    val iceberg =
+      new IcebergMetadata("s3://bucket/metadata/v1.metadata.json", 42L, "2025-01-04T03:13:11.423")
+    val uniform = new UniformMetadata(iceberg)
+    val info = new TableInfo(
+      tableId,
+      UCDeltaModels.TableType.MANAGED,
+      "s3://bucket/table",
+      metadata,
+      Collections.emptyMap(),
+      Optional.of(uniform))
+
+    val client = new UCDeltaCatalogClientImpl(
+      catalogName = "main",
+      ucClient = new StubUCDeltaClient(info))
+
+    val v1 = client.loadTable(Identifier.of(Array("sch"), "tbl")).asInstanceOf[V1Table].catalogTable
+    val props = v1.storage.properties
+    assert(props.get(IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP) ===
+      Some("s3://bucket/metadata/v1.metadata.json"))
+    assert(props.get(IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP) ===
+      Some("42"))
+    assert(props.get(IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_TIMESTAMP_PROP) ===
+      Some("2025-01-04T03:13:11.423"))
+    // uniform keys must NOT appear in catalogTable.properties (only in storage.properties)
+    assert(!v1.properties.contains(IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP))
+    assert(!v1.properties.contains(
+      IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP)
+    )
+    assert(!v1.properties.contains(IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_TIMESTAMP_PROP))
+  }
+
+  test("toV1Table with no UniForm metadata leaves storage.properties without iceberg keys") {
+    val tableId = UUID.randomUUID()
+    val metadata = new TestMetadata()
+    val info = new TableInfo(
+      tableId,
+      UCDeltaModels.TableType.MANAGED,
+      "s3://bucket/table",
+      metadata,
+      Collections.emptyMap(),
+      Optional.empty())
+
+    val client = new UCDeltaCatalogClientImpl(
+      catalogName = "main",
+      ucClient = new StubUCDeltaClient(info))
+
+    val v1 = client.loadTable(Identifier.of(Array("sch"), "tbl")).asInstanceOf[V1Table].catalogTable
+    val props = v1.storage.properties
+    assert(!props.contains(IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP))
+    assert(!props.contains(IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP))
+    assert(!props.contains(IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_TIMESTAMP_PROP))
+    assert(!v1.properties.contains(IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP))
+    assert(!v1.properties.contains(
+      IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP)
+    )
+    assert(!v1.properties.contains(IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_TIMESTAMP_PROP))
+  }
+
   test("loadTable without serverSidePlanningEnabled rethrows CredentialFetchFailedException") {
     val ex = new CredentialFetchFailedException(
       "creds exhausted", new RuntimeException("simulated"), null)
@@ -215,6 +258,31 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
     }
     assert(thrown eq ex)
   }
+}
+
+/**
+ * Concrete [[AbstractMetadata]] for tests. All fields default to sensible no-op values so
+ * callers only override what they care about.
+ */
+private class TestMetadata(
+    id: String = null,
+    name: String = "tbl",
+    description: String = null,
+    provider: String = "DELTA",
+    schemaString: String =
+      """{"type":"struct","fields":[{"name":"id","type":"long","nullable":true,"metadata":{}}]}""",
+    configuration: util.Map[String, String] = Collections.emptyMap(),
+    createdTime: java.lang.Long = 0L
+) extends AbstractMetadata {
+  override def getId: String = id
+  override def getName: String = name
+  override def getDescription: String = description
+  override def getProvider: String = provider
+  override def getFormatOptions: util.Map[String, String] = Collections.emptyMap()
+  override def getSchemaString: String = schemaString
+  override def getPartitionColumns: util.List[String] = Collections.emptyList()
+  override def getConfiguration: util.Map[String, String] = configuration
+  override def getCreatedTime: java.lang.Long = createdTime
 }
 
 /**

@@ -1003,7 +1003,6 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
         options,
         snapshotManager,
         defaultEngine,
-        SparkMicroBatchStream.ACTION_SET,
         Option.empty(),
         /* mergeConsecutiveSchemaChanges= */ false);
   }
@@ -1180,7 +1179,6 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
                       options,
                       snapshotManager,
                       defaultEngine,
-                      SparkMicroBatchStream.ACTION_SET,
                       Option.empty(),
                       /* mergeConsecutiveSchemaChanges= */ false)
                   .get();
@@ -1430,7 +1428,7 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
 
     Option<PersistedMetadata> result =
         MetadataEvolutionHandler.getMergedConsecutiveMetadataChanges(
-            current, snapshotManager, defaultEngine, tablePath, SparkMicroBatchStream.ACTION_SET);
+            current, snapshotManager, defaultEngine, tablePath);
 
     if (expectedMergedVersion == EXPECTED_NO_MERGE) {
       assertTrue(result.isEmpty());
@@ -1454,5 +1452,53 @@ public class MetadataEvolutionHandlerTest extends DeltaV2TestBase {
     assertEquals(expected.dataSchemaJson(), result.get().dataSchemaJson());
     assertEquals(expected.partitionSchemaJson(), result.get().partitionSchemaJson());
     assertEquals(expected.protocolJson(), result.get().protocolJson());
+  }
+
+  /**
+   * On a CDF-enabled table, the merger must stop at a commit that contains AddCDCFile actions —
+   * UPDATE on a CDF table writes Add + Remove + AddCDCFile, and the merger should recognize the
+   * AddCDCFile as a file action and not merge past it.
+   *
+   * <p>Setup: v0=CREATE CDF, v1=INSERT seed, v2=ALTER ADD c3, v3=ALTER RENAME, v4=UPDATE(CDC).
+   * Walking from current=v2, the merger should advance through v3 (metadata-only) and stop at v4.
+   */
+  @Test
+  public void testGetMergedConsecutive_stopsAtCdfUpdateCommit(@TempDir File tempDir) {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "t_" + UUID.randomUUID().toString().replace('-', '_');
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s' "
+                + "TBLPROPERTIES ('delta.columnMapping.mode' = 'name', "
+                + "'delta.enableChangeDataFeed' = 'true')",
+            tableName, tablePath)); // v0
+    spark.sql(String.format("INSERT INTO %s VALUES (1, 'a')", tableName)); // v1
+    spark.sql(String.format("ALTER TABLE %s ADD COLUMNS (c3 INT)", tableName)); // v2
+    spark.sql(String.format("ALTER TABLE %s RENAME COLUMN name TO display_name", tableName)); // v3
+    spark.sql(String.format("UPDATE %s SET c3 = 10 WHERE id = 1", tableName)); // v4
+
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(tablePath, spark.sessionState().newHadoopConf());
+
+    // current = v2 (the ALTER ADD COLUMN). Merger walks forward from here.
+    SnapshotImpl v2Snapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(2L);
+    PersistedMetadata current =
+        PersistedMetadata.apply(
+            "test-table-id",
+            2L,
+            new KernelMetadataAdapter(v2Snapshot.getMetadata()),
+            new KernelProtocolAdapter(v2Snapshot.getProtocol()),
+            tablePath + "/_delta_log/_streaming_metadata");
+
+    Option<PersistedMetadata> result =
+        MetadataEvolutionHandler.getMergedConsecutiveMetadataChanges(
+            current, snapshotManager, defaultEngine, tablePath);
+
+    // v3 is metadata-only → merge advances to v3. v4 has file actions → stop.
+    assertTrue(result.isDefined());
+    assertEquals(3L, result.get().deltaCommitVersion());
+
+    SnapshotImpl v3Snapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(3L);
+    assertEquals(v3Snapshot.getMetadata().getSchemaString(), result.get().dataSchemaJson());
   }
 }

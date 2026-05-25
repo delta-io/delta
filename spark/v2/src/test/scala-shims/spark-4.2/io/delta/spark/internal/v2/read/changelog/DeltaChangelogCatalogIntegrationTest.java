@@ -78,7 +78,7 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
                   spark.sql(String.format("INSERT INTO %s VALUES (5, 'Eve')", tableName));
                   // Auto-CDF requires the V2 connector at read time. Writes above run in the
                   // session-default mode (AUTO → V1 connector for INSERT). The CHANGES read in
-                  // the test body needs STRICT to ensure loadTable returns a V2 SparkTable.
+                  // the test body needs STRICT to ensure loadTable returns a V2 DeltaV2Table.
                   withSQLConf(
                       "spark.databricks.delta.v2.enableMode",
                       "STRICT",

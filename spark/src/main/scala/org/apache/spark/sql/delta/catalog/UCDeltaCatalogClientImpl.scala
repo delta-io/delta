@@ -20,6 +20,7 @@ import java.net.URI
 import java.util.concurrent.atomic.AtomicLong
 
 import scala.jdk.CollectionConverters._
+import scala.jdk.OptionConverters._
 
 import io.delta.storage.commit.{TableIdentifier => StorageTableIdentifier}
 import io.delta.storage.commit.uccommitcoordinator.{UCDeltaClient, UCDeltaModels}
@@ -42,6 +43,7 @@ import org.apache.spark.sql.catalyst.catalog.{
 import org.apache.spark.sql.connector.catalog.{Identifier, Table, V1Table}
 import org.apache.spark.sql.delta.coordinatedcommits.UCTokenBasedRestClientFactory
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
+import org.apache.spark.sql.delta.IcebergConstants
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.types.{DataType, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
@@ -122,9 +124,23 @@ private[catalog] class UCDeltaCatalogClientImpl(
     val schema = Option(m.getSchemaString)
       .map(DataType.fromJson(_).asInstanceOf[StructType])
       .getOrElse(new StructType())
+    // workaround for tracking UniForm metadata inside catalogTable
+    // Those are only kept in-memory by client and would not be written back to UC
+    val uniformProps = info.getUniformMetadata.toScala
+      .flatMap(u => u.getIcebergMetadata.toScala)
+      .map { iceberg =>
+        Map(
+          IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP ->
+            iceberg.getMetadataLocation,
+          IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP ->
+            iceberg.getConvertedDeltaVersion.toString,
+          IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_TIMESTAMP_PROP ->
+            iceberg.getConvertedDeltaTimestamp
+        )
+      }.getOrElse(Map.empty[String, String])
     val storage = CatalogStorageFormat.empty.copy(
       locationUri = Some(new URI(info.getLocation)),
-      properties = properties ++ info.getStorageProperties.asScala.toMap)
+      properties = properties ++ info.getStorageProperties.asScala.toMap ++ uniformProps)
     val catalogTable = CatalogTable(
       identifier = TableIdentifier(ident.name(), ident.namespace().headOption, Some(catalogName)),
       tableType = fromUcTableType(info.getTableType),

@@ -715,9 +715,14 @@ class UCDeltaTokenBasedRestClientSuite
       sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
     }
 
+    // `typeJson` is parsed as a full StructField (see UCDeltaSchemaConverter.toUCStructType),
+    // matching what UC emits via `toStructFieldJson` -- so name/nullable/metadata are sourced
+    // from the JSON, not from the surrounding ColumnDef fields.
     val columns = java.util.List.of(
-      new UCClient.ColumnDef("id", "LONG", "long", """{"type":"long"}""", false, 0),
-      new UCClient.ColumnDef("name", "STRING", "string", """{"type":"string"}""", true, 1))
+      new UCClient.ColumnDef("id", "LONG", "long",
+        """{"name":"id","type":"long","nullable":false,"metadata":{}}""", false, 0),
+      new UCClient.ColumnDef("name", "STRING", "string",
+        """{"name":"name","type":"string","nullable":true,"metadata":{}}""", true, 1))
     val props = new java.util.HashMap[String, String]()
     props.put("delta.minReaderVersion", "1")
 

@@ -137,14 +137,11 @@ class DeltaV2SourceSchemaEvolutionIdColumnMappingSuite
     with DeltaV2SourceSchemaEvolutionSuiteBase
 
 // CDC suites
-// TODO(#5319): Support CDC non-additive schema evolution
 trait DeltaV2SourceSchemaEvolutionCDCSuiteBase extends DeltaV2SourceSchemaEvolutionSuiteBase {
   self: StreamingSchemaEvolutionSuiteBase =>
 
-  override protected def shouldPassTests: Set[String] = Set.empty[String]
-
-  override protected def shouldFailTests: Set[String] =
-    super.shouldPassTests ++ super.shouldFailTests ++ Set(
+  override protected def shouldPassTests: Set[String] =
+    super.shouldPassTests ++ Set(
       // Additional tests from CDCStreamingSchemaEvolutionSuiteBase
       "CDC streaming with schema evolution",
       "protocol and configuration evolution"

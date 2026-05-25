@@ -75,9 +75,8 @@ import scala.collection.immutable.Seq;
 import scala.collection.immutable.Seq$;
 
 /**
- * TODO(#5319): Support CDC V2 port of V1's {@code DeltaSourceMetadataEvolutionSupport} trait.
- * Handles metadata evolution (schema, table configuration, or protocol changes) for the v2 Delta
- * streaming source.
+ * V2 port of V1's {@code DeltaSourceMetadataEvolutionSupport} trait. Handles metadata evolution
+ * (schema, table configuration, or protocol changes) for the v2 Delta streaming source.
  *
  * <p>To safely evolve schema mid-stream, this class intercepts streaming at several stages to:
  *
@@ -531,7 +530,6 @@ public class MetadataEvolutionHandler {
             options,
             snapshotManager,
             engine,
-            SparkMicroBatchStream.ACTION_SET,
             /* sourceMetadataPathOpt= */ Option.empty(),
             mergeConsecutiveSchemaChanges);
     if (trackingLog.isEmpty()) {
@@ -543,7 +541,7 @@ public class MetadataEvolutionHandler {
 
   /**
    * Returns true when the read options carry a schema-tracking location but the table's own options
-   * do not — i.e. the {@code SparkTable} was built before the user-supplied {@code
+   * do not — i.e. the {@code DeltaV2Table} was built before the user-supplied {@code
    * schemaTrackingLocation}/{@code schemaLocation} option was observed, so callers must rebuild the
    * table with the option folded in for its schema to be driven by the tracking log.
    */
@@ -670,7 +668,6 @@ public class MetadataEvolutionHandler {
       Map<String, String> options,
       DeltaSnapshotManager snapshotManager,
       Engine engine,
-      Set<DeltaLogActionUtils.DeltaAction> mergeActionSet,
       Option<String> sourceMetadataPathOpt,
       boolean mergeConsecutiveSchemaChanges) {
     Option<String> locationOpt =
@@ -702,7 +699,7 @@ public class MetadataEvolutionHandler {
             /* consecutiveSchemaChangesMerger= */ Option.apply(
                 currentMetadata ->
                     getMergedConsecutiveMetadataChanges(
-                        currentMetadata, snapshotManager, engine, tablePath, mergeActionSet)),
+                        currentMetadata, snapshotManager, engine, tablePath)),
             /* initMetadataLogEagerly= */ true));
   }
 
@@ -711,8 +708,7 @@ public class MetadataEvolutionHandler {
       PersistedMetadata currentMetadata,
       DeltaSnapshotManager snapshotManager,
       Engine engine,
-      String tablePath,
-      Set<DeltaLogActionUtils.DeltaAction> mergeActionSet) {
+      String tablePath) {
     final long currentMetadataVersion = currentMetadata.deltaCommitVersion();
     // We start from the currentSchemaVersion so that we can stop early in case the current
     // version still has file actions that potentially needs to be processed.
@@ -725,8 +721,9 @@ public class MetadataEvolutionHandler {
             snapshotManager.getTableChanges(engine, currentMetadataVersion, Optional.empty());
 
     try (CloseableIterator<CommitActions> commitsIter =
+        // Always include CDC: the merger must stop on any file action
         StreamingHelper.getCommitActionsFromRangeUnsafe(
-            engine, commitRange, tablePath, mergeActionSet)) {
+            engine, commitRange, tablePath, SparkMicroBatchStream.CDC_ACTION_SET)) {
       while (commitsIter.hasNext()) {
         try (CommitActions commit = commitsIter.next()) {
           long version = commit.getVersion();
@@ -742,10 +739,11 @@ public class MetadataEvolutionHandler {
               int addIdx = batch.getSchema().indexOf(DeltaLogActionUtils.DeltaAction.ADD.colName);
               int removeIdx =
                   batch.getSchema().indexOf(DeltaLogActionUtils.DeltaAction.REMOVE.colName);
+              int cdcIdx = batch.getSchema().indexOf(DeltaLogActionUtils.DeltaAction.CDC.colName);
               ColumnVector addVec = addIdx >= 0 ? batch.getColumnVector(addIdx) : null;
               ColumnVector removeVec = removeIdx >= 0 ? batch.getColumnVector(removeIdx) : null;
+              ColumnVector cdcVec = cdcIdx >= 0 ? batch.getColumnVector(cdcIdx) : null;
 
-              // TODO(#5319): handle AddCDCFile as well
               for (int rowId = 0; rowId < numRows; rowId++) {
                 Optional<Metadata> m = StreamingHelper.getMetadata(batch, rowId);
                 if (m.isPresent()) {
@@ -764,7 +762,8 @@ public class MetadataEvolutionHandler {
                   protocolAction = p.get();
                 }
                 if ((addVec != null && !addVec.isNullAt(rowId))
-                    || (removeVec != null && !removeVec.isNullAt(rowId))) {
+                    || (removeVec != null && !removeVec.isNullAt(rowId))
+                    || (cdcVec != null && !cdcVec.isNullAt(rowId))) {
                   hasFileAction = true;
                   break outer;
                 }

@@ -3410,6 +3410,19 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .intConf
       .createWithDefault(100000)
 
+  val DELTA_STREAMING_USE_DISTRIBUTED_INITIAL_SNAPSHOT =
+    buildConf("streaming.distributedInitialSnapshot")
+      .internal()
+      .doc(
+        "When enabled, the V2 streaming connector uses a distributed approach for " +
+        "initial snapshot loading. This avoids driver OOM for large tables by running " +
+        "Kernel log replay on an executor and sorting files via Spark's distributed sort. " +
+        "The persistence level is controlled by " +
+        "spark.databricks.delta.snapshotCache.storageLevel."
+      )
+      .booleanConf
+      .createWithDefault(false)
+
   val TABLE_PARQUET_V2_DEFAULT_TIMESTAMP_ENCODING =
     buildConf("table.parquetV2.timestampOutputType")
       .internal()
