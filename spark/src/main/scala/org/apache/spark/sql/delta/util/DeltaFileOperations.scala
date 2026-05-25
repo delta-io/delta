@@ -40,6 +40,8 @@ import org.apache.spark.{SparkEnv, SparkException, TaskContext}
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{Dataset, SparkSession}
+import org.apache.spark.sql.execution.datasources.parquet.ParquetToSparkSchemaConverter
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.util.{SerializableConfiguration, ThreadUtils}
 
 /**
@@ -417,6 +419,18 @@ object DeltaFileOperations extends DeltaLogging {
         }
       }
     }.flatten
+  }
+
+  /**
+   * Build a [[ParquetToSparkSchemaConverter]] from a serializable snapshot of `SQLConf` entries
+   * (e.g. from `SQLConf.getAllConfs`). Safe to call on executors, and uses the `(conf: SQLConf)`
+   * auxiliary constructor, whose signature is stable across Spark patch releases.
+   */
+  def buildParquetToSparkSchemaConverter(
+      sqlConfEntries: Map[String, String]): ParquetToSparkSchemaConverter = {
+    val sqlConf = new SQLConf()
+    sqlConfEntries.foreach { case (key, value) => sqlConf.setConfString(key, value) }
+    new ParquetToSparkSchemaConverter(sqlConf)
   }
 
   /**

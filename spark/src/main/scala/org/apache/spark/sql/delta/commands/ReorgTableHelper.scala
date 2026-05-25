@@ -25,8 +25,7 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.execution.datasources.parquet.{ParquetFileFormat, ParquetToSparkSchemaConverter}
-import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.types.{AtomicType, StructField, StructType}
 import org.apache.spark.util.SerializableConfiguration
 
@@ -109,13 +108,14 @@ trait ReorgTableHelper extends Serializable {
 
     val serializedConf = new SerializableConfiguration(snapshot.deltaLog.newDeltaHadoopConf())
     val dataPath = new Path(snapshot.dataPath.toString)
+    // Captured on the driver and serialized into the executor closure below.
+    val sqlConfEntries = spark.sessionState.conf.getAllConfs
 
     import org.apache.spark.sql.delta.implicits._
 
     files.toDF(spark).as[AddFile].mapPartitions { iter =>
-      val sqlConf = SparkSession.active.sessionState.conf
       filterParquetFiles(
-        sqlConf,
+        sqlConfEntries,
         iter.toList,
         dataPath,
         serializedConf.value,
@@ -124,7 +124,7 @@ trait ReorgTableHelper extends Serializable {
   }
 
   protected def filterParquetFiles(
-      sqlConf: SQLConf,
+      sqlConfEntries: Map[String, String],
       files: Seq[AddFile],
       dataPath: Path,
       configuration: Configuration,
@@ -148,10 +148,7 @@ trait ReorgTableHelper extends Serializable {
       fileStatuses.toList,
       ignoreCorruptFiles)
 
-    // Spark 4.0.1 changed the primary ctor signature (added a param), which breaks binary
-    // compatibility for code compiled against Spark 4.0.0. Use the stable SQLConf-based ctor
-    // that takes the current SparkSession's SQLConf instead.
-    val converter = new ParquetToSparkSchemaConverter(sqlConf)
+    val converter = DeltaFileOperations.buildParquetToSparkSchemaConverter(sqlConfEntries)
 
     val filesNeedToRewrite = footers.filter { footer =>
       val fileSchema = ParquetFileFormat.readSchemaFromFooter(footer, converter)
