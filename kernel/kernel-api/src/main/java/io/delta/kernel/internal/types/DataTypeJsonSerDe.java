@@ -467,7 +467,7 @@ public class DataTypeJsonSerDe {
         return new DecimalType(precision, scale);
       }
 
-      // geometry has a special pattern with an CRS
+      // geometry has a special pattern with a CRS
       Matcher geometryMatcher = GEOMETRY_PATTERN.matcher(name);
       if (geometryMatcher.matches()) {
         String crs = geometryMatcher.group(1);

@@ -21,9 +21,9 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * The data type representing geography values. A Geography must have a fixed Spatial Reference
- * System Identifier (CRS) that defines the coordinate system and an algorithm that determines how
- * geometric calculations are performed.
+ * The data type representing geography values. A Geography must have a fixed Coordinate Reference
+ * System (CRS) that defines the coordinate system and an algorithm that determines how geometric
+ * calculations are performed.
  *
  * <p>The CRS is specified as a string and the algorithm defines the calculation method. The engine
  * is responsible for validating and interpreting the CRS and algorithm values.
@@ -49,7 +49,7 @@ public final class GeographyType extends DataType {
   /**
    * Returns a GeographyType with the specified CRS and default algorithm.
    *
-   * @param crs the Spatial Reference System Identifier (any non-null, non-empty string)
+   * @param crs the Coordinate Reference System (any non-null, non-empty string)
    */
   public static GeographyType ofCRS(String crs) {
     return new GeographyType(crs, DEFAULT_ALGORITHM);
@@ -67,7 +67,7 @@ public final class GeographyType extends DataType {
   /**
    * Create a GeographyType with the specified CRS and algorithm.
    *
-   * @param crs the Spatial Reference System Identifier (any non-null, non-empty string)
+   * @param crs the Coordinate Reference System (any non-null, non-empty string)
    * @param algorithm the algorithm for geometric calculations (any non-null, non-empty string)
    * @throws IllegalArgumentException if the CRS or algorithm is null or empty or algorithm is
    *     invalid
@@ -89,7 +89,7 @@ public final class GeographyType extends DataType {
   }
 
   /**
-   * Get the Spatial Reference System Identifier.
+   * Get the Coordinate Reference System.
    *
    * @return the CRS string
    */

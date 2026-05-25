@@ -19,8 +19,8 @@ import io.delta.kernel.annotation.Evolving;
 import java.util.Objects;
 
 /**
- * The data type representing geometry values. A Geometry must have a fixed Spatial Reference System
- * Identifier (CRS) that defines the coordinate system.
+ * The data type representing geometry values. A Geometry must have a fixed Coordinate Reference
+ * System (CRS) that defines the coordinate system.
  *
  * <p>The CRS is specified as a string The engine is responsible for validating and interpreting the
  * CRS value.
@@ -42,7 +42,7 @@ public final class GeometryType extends DataType {
   /**
    * Returns a GeometryType with the specified CRS.
    *
-   * @param crs the Spatial Reference System Identifier (any non-null, non-empty string)
+   * @param crs the Coordinate Reference System (any non-null, non-empty string)
    */
   public static GeometryType ofCRS(String crs) {
     return new GeometryType(crs);
@@ -51,7 +51,7 @@ public final class GeometryType extends DataType {
   /**
    * Create a GeometryType with the specified CRS.
    *
-   * @param crs the Spatial Reference System Identifier (any non-null, non-empty string)
+   * @param crs the Coordinate Reference System (any non-null, non-empty string)
    * @throws IllegalArgumentException if the CRS is null or empty
    */
   public GeometryType(String crs) {
@@ -62,7 +62,7 @@ public final class GeometryType extends DataType {
   }
 
   /**
-   * Get the Spatial Reference System Identifier.
+   * Get the Coordinate Reference System.
    *
    * @return the CRS string
    */
