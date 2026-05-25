@@ -24,6 +24,13 @@ import io.delta.kernel.types.{GeometryType, IntegerType, StructType}
 
 import org.scalatest.funsuite.AnyFunSuite
 
+/**
+ * End-to-end tests for data skipping with geometry column types using
+ * the StGeometryBoxesIntersect predicate.
+ *
+ * Tests bypass the Parquet writer by injecting DataFileStatistics with
+ * geometry min/max literals directly into the Delta log.
+ */
 class GeometryDataSkippingSuite extends AnyFunSuite with WriteUtils with GeoTestUtils {
 
   // 4-quadrant layout + 1 null-stats file (f4, never skipped):
@@ -35,12 +42,14 @@ class GeometryDataSkippingSuite extends AnyFunSuite with WriteUtils with GeoTest
   //         |  f0  |        |  f3  |
   //    y=0  +------+        +------+
   //         x=0    x=3      x=7    x=10
-  private val fileExtents: Seq[Option[(Double, Double, Double, Double)]] = Seq(
-    Some((0.0, 0.0, 3.0, 3.0)),
-    Some((7.0, 7.0, 10.0, 10.0)),
-    Some((0.0, 7.0, 3.0, 10.0)),
-    Some((7.0, 0.0, 10.0, 3.0)),
-    None)
+  private val fileExtents: Seq[Option[(Double, Double, Double, Double)]] =
+    Seq(
+      Some((0.0, 0.0, 3.0, 3.0)), // SW - file 0
+      Some((7.0, 7.0, 10.0, 10.0)), // NE - file 1
+      Some((0.0, 7.0, 3.0, 10.0)), // NW - file 2
+      Some((7.0, 0.0, 10.0, 3.0)), // SE - file 3
+      None // null stats - file 4 (never skipped)
+    )
 
   private val colType = new GeometryType("OGC:CRS84")
   private val geomCol = new Column("geom")
