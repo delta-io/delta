@@ -22,7 +22,7 @@ import io.delta.golden.GoldenTableUtils$;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.expressions.Predicate;
-import io.delta.spark.internal.v2.catalog.SparkTable;
+import io.delta.spark.internal.v2.catalog.DeltaV2Table;
 import java.io.File;
 import java.lang.reflect.Field;
 import java.math.BigDecimal;
@@ -94,8 +94,8 @@ public class SparkGoldenTableTest {
                 put("key2", "value2");
               }
             });
-    SparkTable table =
-        new SparkTable(
+    DeltaV2Table table =
+        new DeltaV2Table(
             Identifier.of(new String[] {"spark_catalog", "default"}, tableName),
             tablePath,
             options);
@@ -378,7 +378,7 @@ public class SparkGoldenTableTest {
   }
 
   private void checkSupportsPushDownFilters(
-      SparkTable table,
+      DeltaV2Table table,
       CaseInsensitiveStringMap scanOptions,
       Filter[] inputFilters,
       Filter[] expectedPostScanFilters,
@@ -445,8 +445,8 @@ public class SparkGoldenTableTest {
   public void testDsv2InteralWithNestedStruct() {
     String tableName = "data-reader-nested-struct";
     String tablePath = goldenTablePath(tableName);
-    SparkTable table =
-        new SparkTable(
+    DeltaV2Table table =
+        new DeltaV2Table(
             Identifier.of(new String[] {"spark_catalog", "default"}, tableName), tablePath);
 
     StructType expectedSchema =

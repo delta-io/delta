@@ -1359,7 +1359,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   /**
    * Executes a DML SQL statement (DELETE, INSERT, etc.).
    * Overridable so that V2 suites can route DML through the V1 connector,
-   * since SparkTable (V2) is read-only and does not support writes.
+   * since DeltaV2Table (V2) is read-only and does not support writes.
    */
   protected def executeDml(sqlText: String): Unit = sql(sqlText)
 

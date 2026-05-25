@@ -271,7 +271,7 @@ public class SparkMicroBatchStream
     // The effective snapshot for reading, mirroring v1's readSnapshotDescriptor. When schema
     // tracking has a persisted entry, layer it onto the freshly loaded snapshotAtSourceInit so
     // the read schema/protocol/config reflect the evolved state. The merged entry has already
-    // been written to the durable schema log during analysis (by SparkTable's call to
+    // been written to the durable schema log during analysis (by DeltaV2Table's call to
     // getPersistedMetadataForMicroBatchStream with mergeConsecutiveSchemaChanges=true), so
     // reading it back from the log here yields the same value V1 obtains.
     Option<PersistedMetadata> persistedMetadataAtSourceInit =
