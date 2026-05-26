@@ -29,7 +29,9 @@ import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.connector.read.Statistics;
 import org.apache.spark.sql.connector.read.SupportsPushDownFilters;
 import org.apache.spark.sql.connector.read.SupportsPushDownRequiredColumns;
+import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.sources.Filter;
+import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
@@ -40,6 +42,9 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
  */
 public class SparkScanBuilder
     implements ScanBuilder, SupportsPushDownRequiredColumns, SupportsPushDownFilters {
+
+  public static final String STREAMING_METADATA_SCHEMA_OPTION =
+      "__delta_internal_v2_streaming_metadata_schema";
 
   private io.delta.kernel.ScanBuilder kernelScanBuilder;
   private final Snapshot initialSnapshot;
@@ -87,14 +92,49 @@ public class SparkScanBuilder
     this.partitionSchema = requireNonNull(partitionSchema, "partitionSchema is null");
     this.tableSchema = requireNonNull(tableSchema, "tableSchema is null");
     this.catalogStats = requireNonNull(catalogStats, "catalogStats is null");
-    this.options = requireNonNull(options, "options is null");
-    this.requiredDataSchema = this.dataSchema;
+    CaseInsensitiveStringMap originalOptions = requireNonNull(options, "options is null");
+    this.options = removeInternalOptions(originalOptions);
+    this.requiredDataSchema = withStreamingMetadataSchema(this.dataSchema, originalOptions);
     this.partitionColumnSet =
         Arrays.stream(this.partitionSchema.fields())
             .map(f -> f.name().toLowerCase(Locale.ROOT))
             .collect(Collectors.toSet());
     this.pushedKernelPredicates = new Predicate[0];
     this.dataFilters = new Filter[0];
+  }
+
+  private static CaseInsensitiveStringMap removeInternalOptions(CaseInsensitiveStringMap options) {
+    Map<String, String> publicOptions = new HashMap<>(options.asCaseSensitiveMap());
+    publicOptions.keySet().removeIf(key -> key.equalsIgnoreCase(STREAMING_METADATA_SCHEMA_OPTION));
+    return new CaseInsensitiveStringMap(publicOptions);
+  }
+
+  private static StructType withStreamingMetadataSchema(
+      StructType dataSchema, CaseInsensitiveStringMap options) {
+    String metadataSchemaJson = options.get(STREAMING_METADATA_SCHEMA_OPTION);
+    if (metadataSchemaJson == null) {
+      return dataSchema;
+    }
+
+    DataType parsed = DataType.fromJson(metadataSchemaJson);
+    if (!(parsed instanceof StructType)) {
+      throw new IllegalArgumentException(
+          STREAMING_METADATA_SCHEMA_OPTION + " must contain a StructType");
+    }
+
+    StructType metadataSchema = (StructType) parsed;
+    StructField[] metadataFields = metadataSchema.fields();
+    String metadataColumnName = FileFormat$.MODULE$.METADATA_NAME();
+    if (metadataFields.length != 1 || !metadataColumnName.equals(metadataFields[0].name())) {
+      throw new IllegalArgumentException(
+          STREAMING_METADATA_SCHEMA_OPTION + " must contain only " + metadataColumnName);
+    }
+    if (Arrays.stream(dataSchema.fields())
+        .anyMatch(field -> metadataColumnName.equalsIgnoreCase(field.name()))) {
+      throw new IllegalArgumentException("Data schema already contains " + metadataColumnName);
+    }
+
+    return dataSchema.add(metadataFields[0]);
   }
 
   @Override

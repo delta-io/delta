@@ -33,6 +33,7 @@ import org.apache.spark.sql.streaming.DataStreamReader;
 import org.apache.spark.sql.streaming.StreamingQuery;
 import org.apache.spark.sql.streaming.Trigger;
 import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
@@ -125,6 +126,34 @@ public class UCDeltaTableDataFrameStreamingTest extends UCDeltaTableIntegrationB
               .start()
               .awaitTermination();
           assertThat(result).containsExactlyInAnyOrder(4, 5);
+        });
+  }
+
+  @Test
+  public void testManagedStreamingReadRowIdMetadata() throws Exception {
+    withNewTable(
+        "streaming_row_id_metadata_test",
+        "id INT",
+        TableType.MANAGED,
+        tableName -> {
+          sql("INSERT INTO %s VALUES (1), (2), (3)", tableName);
+          List<Row> rows = new ArrayList<>();
+          spark()
+              .readStream()
+              .format("delta")
+              .table(tableName)
+              .selectExpr("id", "_metadata.row_id AS rid")
+              .writeStream()
+              .trigger(Trigger.AvailableNow())
+              .option("checkpointLocation", checkpoint())
+              .foreachBatch(
+                  (VoidFunction2<Dataset<Row>, Long>) (df, id) -> rows.addAll(df.collectAsList()))
+              .start()
+              .awaitTermination();
+
+          assertThat(rows).hasSize(3);
+          assertThat(rows).extracting(r -> r.getInt(0)).containsExactlyInAnyOrder(1, 2, 3);
+          assertThat(rows).extracting(r -> r.getLong(1)).doesNotHaveDuplicates();
         });
   }
 
