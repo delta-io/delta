@@ -356,6 +356,12 @@ public class DeltaV2Table implements Table, SupportsRead, SupportsWrite, Support
 
   @Override
   public ScanBuilder newScanBuilder(CaseInsensitiveStringMap scanOptions) {
+    // Refresh to the latest snapshot at scan time, matching the V1 connector's behavior where
+    // TahoeLogFileIndex.getSnapshotToScan() calls deltaLog.update() during query optimization.
+    // Without this, each SparkTable instance stays pinned to the snapshot captured at construction
+    // time, so a self-join of DataFrames created before and after a write sees different versions.
+    Snapshot snapshotToScan = snapshotManager.loadLatestSnapshot();
+
     Map<String, String> combined = new HashMap<>(this.options);
     combined.putAll(scanOptions.asCaseSensitiveMap());
     CaseInsensitiveStringMap merged = new CaseInsensitiveStringMap(combined);
@@ -370,7 +376,7 @@ public class DeltaV2Table implements Table, SupportsRead, SupportsWrite, Support
                         schemaProvider.getPartitionSchema()));
     return new SparkScanBuilder(
         name(),
-        initialSnapshot,
+        snapshotToScan,
         snapshotManager,
         schemaProvider.getDataSchema(),
         schemaProvider.getPartitionSchema(),
