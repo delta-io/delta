@@ -1420,13 +1420,29 @@ class DeltaTableRefreshAndPinningAutoModeExternalSessionSuite
   override protected def useExternalSession: Boolean = true
 }
 
-/** V2_ENABLE_MODE = STRICT, same-session writes. */
+/**
+ * V2_ENABLE_MODE = STRICT, same-session writes.
+ *
+ * Known failures: In STRICT mode, all table operations go through the DSv2 catalog path.
+ * The V2 catalog (DeltaCatalog) caches the table schema at lookup time. When ALTER TABLE
+ * ADD/DROP COLUMN modifies the schema, subsequent INSERT in the same session still resolves
+ * the table against the cached (stale) schema, causing INSERT_COLUMN_ARITY_MISMATCH errors.
+ * The external write tests also fail because the V2 path commits through a different codepath
+ * that may not update the shared DeltaLog snapshot, causing writeExternalCommit to compute
+ * the wrong next version (FileAlreadyExistsException).
+ * These are V2 catalog infrastructure limitations, not bugs in the test logic.
+ */
 class DeltaTableRefreshAndPinningStrictModeSuite
   extends DeltaTableRefreshAndPinningSuiteBase {
   override protected def v2EnableMode: String = "STRICT"
 }
 
-/** V2_ENABLE_MODE = STRICT with external session writes. */
+/**
+ * V2_ENABLE_MODE = STRICT with external session writes.
+ *
+ * Known failures: Same V2 catalog schema caching issues as DeltaTableRefreshAndPinningStrictModeSuite.
+ * See that class's Scaladoc for details.
+ */
 class DeltaTableRefreshAndPinningStrictModeExternalSessionSuite
   extends DeltaTableRefreshAndPinningSuiteBase {
   override protected def v2EnableMode: String = "STRICT"

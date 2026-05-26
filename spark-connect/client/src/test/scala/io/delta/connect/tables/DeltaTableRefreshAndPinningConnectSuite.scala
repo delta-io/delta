@@ -1910,6 +1910,14 @@ class DeltaTableRefreshAndPinningConnectExternalSessionSuite
  * V2_ENABLE_MODE = STRICT with Connect, same-session writes.
  * Sets the server-side V2 enable mode to STRICT so that all table operations
  * go through the DSv2 connector path.
+ *
+ * Known failures: STRICT mode triggers the Delta Kernel V2 connector, which requires
+ * DefaultEngine from the delta-kernel-defaults module. The Connect test server
+ * (RemoteSparkSession) starts SparkSubmit with only the jars in the spark assembly
+ * directory, which does not include the kernel-defaults jar. All tests fail with
+ * ClassNotFoundException: io/delta/kernel/defaults/engine/DefaultEngine.
+ * To fix, the RemoteSparkSession server startup would need to include kernel jars
+ * on the classpath.
  */
 class DeltaTableRefreshAndPinningConnectStrictModeSuite
   extends DeltaTableRefreshAndPinningConnectSuiteBase {
@@ -1921,6 +1929,9 @@ class DeltaTableRefreshAndPinningConnectStrictModeSuite
 
 /**
  * V2_ENABLE_MODE = STRICT with Connect, external session writes.
+ *
+ * Known failures: Same kernel jar classpath issue as
+ * DeltaTableRefreshAndPinningConnectStrictModeSuite. See that class's Scaladoc for details.
  */
 class DeltaTableRefreshAndPinningConnectStrictModeExternalSessionSuite
   extends DeltaTableRefreshAndPinningConnectSuiteBase {
