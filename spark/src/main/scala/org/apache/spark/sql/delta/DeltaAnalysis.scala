@@ -705,8 +705,8 @@ class DeltaAnalysis(protected val session: SparkSession)
 
     case origStreamWrite: WriteToStream =>
       // The command could have Delta as source and/or sink. We need to look at both.
-      val streamWrite = origStreamWrite match {
-        case WriteToStream(_, _, sink @ DeltaSink(_, _, _, _, _, None), _, _, _, _, Some(ct)) =>
+      val streamWrite = (origStreamWrite.sink, origStreamWrite.catalogTable) match {
+        case (sink @ DeltaSink(_, _, _, _, _, None), Some(ct)) =>
           // The command has a catalog table, but the DeltaSink does not. This happens because
           // DeltaDataSource.createSink (Spark API) didn't have access to the catalog table when it
           // created the DeltaSink. Fortunately we can fix it up here.
