@@ -286,14 +286,14 @@ trait DeltaTableRefreshAndPinningSuiteBase
           parameters = Map("tableName" -> ".*", "tableColumns" -> ".*",
             "dataColumns" -> ".*", "reason" -> ".*"),
           matchPVals = true)
-        return
-      }
+      } else {
       writerSql("INSERT INTO t VALUES (2, 200, -1)")
 
       // View preserves original schema (id, salary) but picks up new data
       checkAnswer(
         sql("SELECT * FROM v ORDER BY id"),
         Seq(Row(1, 100), Row(2, 200)))
+      }
     }
   }
 
@@ -446,13 +446,13 @@ trait DeltaTableRefreshAndPinningSuiteBase
           writeExternalCommit("t", Seq((2, 200)).toDF("id", "salary"))
         }
         assert(exception.getMessage != null)
-        return
-      }
+      } else {
       writeExternalCommit("t", Seq((2, 200)).toDF("id", "salary"))
 
       checkAnswer(
         sql("SELECT * FROM v ORDER BY id"),
         Seq(Row(1, 100), Row(2, 200)))
+      }
     }
   }
 
@@ -479,8 +479,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
             newMetadata = Some(newMetadata))
         }
         assert(exception.getMessage != null)
-        return
-      }
+      } else {
       writeExternalCommit(
         "t",
         Seq((2, 200, -1)).toDF("id", "salary", "new_column"),
@@ -490,6 +489,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
       checkAnswer(
         sql("SELECT * FROM v ORDER BY id"),
         Seq(Row(1, 100), Row(2, 200)))
+      }
     }
   }
 
@@ -513,8 +513,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
           writeExternalMetadataOnlyCommit("t", newMetadata)
         }
         assert(exception.getMessage != null)
-        return
-      }
+      } else {
       writeExternalMetadataOnlyCommit("t", newMetadata)
 
       checkError(
@@ -524,6 +523,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
         condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
         parameters = Map("schemaDiff" -> "(?s).*", "legacyFlagMessage" -> ""),
         matchPVals = true)
+      }
     }
   }
 
@@ -542,8 +542,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
           writeExternalDropAndRecreateCommit("t", columnMapping = true)
         }
         assert(exception.getMessage != null)
-        return
-      }
+      } else {
       writeExternalDropAndRecreateCommit("t", columnMapping = true)
 
       checkError(
@@ -553,6 +552,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
         condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
         parameters = Map("schemaDiff" -> "(?s).*", "legacyFlagMessage" -> ""),
         matchPVals = true)
+      }
     }
   }
 
@@ -571,12 +571,12 @@ trait DeltaTableRefreshAndPinningSuiteBase
           writeExternalDropAndRecreateCommit("t", columnMapping = false)
         }
         assert(exception.getMessage != null)
-        return
-      }
+      } else {
       writeExternalDropAndRecreateCommit("t", columnMapping = false)
 
       // Without column mapping, no column ID check. Existing data is removed.
       checkAnswer(sql("SELECT * FROM v"), Seq.empty)
+      }
     }
   }
 
@@ -608,8 +608,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
           writeExternalMetadataOnlyCommit("t", newMetadata)
         }
         assert(exception.getMessage != null)
-        return
-      }
+      } else {
       writeExternalMetadataOnlyCommit("t", newMetadata)
 
       checkError(
@@ -619,6 +618,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
         condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
         parameters = Map("schemaDiff" -> "(?s).*", "legacyFlagMessage" -> ""),
         matchPVals = true)
+      }
     }
   }
 
@@ -650,8 +650,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
           writeExternalMetadataOnlyCommit("t", newMetadata)
         }
         assert(exception.getMessage != null)
-        return
-      }
+      } else {
       writeExternalMetadataOnlyCommit("t", newMetadata)
 
       checkError(
@@ -661,6 +660,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
         condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
         parameters = Map("schemaDiff" -> "(?s).*", "legacyFlagMessage" -> ""),
         matchPVals = true)
+      }
     }
   }
 
@@ -692,8 +692,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
           writeExternalMetadataOnlyCommit("t", newMetadata)
         }
         assert(exception.getMessage != null)
-        return
-      }
+      } else {
       writeExternalMetadataOnlyCommit("t", newMetadata)
 
       checkError(
@@ -703,6 +702,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
         condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
         parameters = Map("schemaDiff" -> "(?s).*", "legacyFlagMessage" -> ""),
         matchPVals = true)
+      }
     }
   }
 
@@ -743,13 +743,13 @@ trait DeltaTableRefreshAndPinningSuiteBase
           parameters = Map("tableName" -> ".*", "tableColumns" -> ".*",
             "dataColumns" -> ".*", "reason" -> ".*"),
           matchPVals = true)
-        return
-      }
+      } else {
       writerSql("INSERT INTO t VALUES (2, 200, -1)")
 
       checkAnswer(
         sql("SELECT * FROM t ORDER BY id"),
         Seq(Row(1, 100, null), Row(2, 200, -1)))
+      }
     }
   }
 
@@ -785,13 +785,13 @@ trait DeltaTableRefreshAndPinningSuiteBase
           writeExternalCommit("t", Seq((2, 200)).toDF("id", "salary"))
         }
         assert(exception.getMessage != null)
-        return
-      }
+      } else {
       writeExternalCommit("t", Seq((2, 200)).toDF("id", "salary"))
 
       checkAnswer(
         sql("SELECT * FROM t ORDER BY id"),
         Seq(Row(1, 100), Row(2, 200)))
+      }
     }
   }
 
@@ -817,8 +817,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
             newMetadata = Some(newMetadata))
         }
         assert(exception.getMessage != null)
-        return
-      }
+      } else {
       writeExternalCommit(
         "t",
         Seq((2, 200, -1)).toDF("id", "salary", "new_column"),
@@ -827,6 +826,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
       checkAnswer(
         sql("SELECT * FROM t ORDER BY id"),
         Seq(Row(1, 100, null), Row(2, 200, -1)))
+      }
     }
   }
 
@@ -843,11 +843,11 @@ trait DeltaTableRefreshAndPinningSuiteBase
           writeExternalDropAndRecreateCommit("t", columnMapping = false)
         }
         assert(exception.getMessage != null)
-        return
-      }
+      } else {
       writeExternalDropAndRecreateCommit("t", columnMapping = false)
 
       checkAnswer(sql("SELECT * FROM t"), Seq.empty)
+      }
     }
   }
 
@@ -892,8 +892,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
           parameters = Map("tableName" -> ".*", "tableColumns" -> ".*",
             "dataColumns" -> ".*", "reason" -> ".*"),
           matchPVals = true)
-        return
-      }
+      } else {
       writerSql("INSERT INTO t VALUES (2, 200, -1)")
 
       val df2 = spark.table("t")
@@ -915,6 +914,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
           df1("id"), df1("salary"),
           df2("id"), df2("salary"), df2("new_column")).orderBy(df1("id")),
         Seq(Row(1, 100, 1, 100, null), Row(2, 200, 2, 200, -1)))
+      }
     }
   }
 
@@ -1121,8 +1121,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
           parameters = Map("tableName" -> ".*", "tableColumns" -> ".*",
             "dataColumns" -> ".*", "reason" -> ".*"),
           matchPVals = true)
-        return
-      }
+      } else {
       writerSql("INSERT INTO t VALUES (2, 200, -1)")
 
       // df pins original schema (id, salary) but picks up latest version data
@@ -1134,6 +1133,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
       checkAnswer(
         sql("SELECT * FROM t ORDER BY id"),
         Seq(Row(1, 100, null), Row(2, 200, -1)))
+      }
     }
   }
 
@@ -1268,8 +1268,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
         }
         assert(exception.getMessage != null)
         sql("UNCACHE TABLE t")
-        return
-      }
+      } else {
       // True external write bypassing the session catalog and DeltaLog
       writeExternalCommit("t", Seq((2, 200)).toDF("id", "salary"))
 
@@ -1280,6 +1279,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
       checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
 
       sql("UNCACHE TABLE t")
+      }
     }
   }
 
@@ -1301,8 +1301,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
         }
         assert(exception.getMessage != null)
         sql("UNCACHE TABLE t")
-        return
-      }
+      } else {
       // True external write bypassing the session catalog and DeltaLog
       writeExternalCommit("t", Seq((3, 300)).toDF("id", "salary"))
 
@@ -1315,6 +1314,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
         Seq(Row(1, 100), Row(2, 200)))
 
       sql("UNCACHE TABLE t")
+      }
     }
   }
 
@@ -1342,8 +1342,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
         }
         assert(exception.getMessage != null)
         sql("UNCACHE TABLE t")
-        return
-      }
+      } else {
       writeExternalCommit(
         "t",
         Seq((2, 200, -1)).toDF("id", "salary", "new_column"),
@@ -1356,6 +1355,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
         Seq(Row(1, 100, null), Row(2, 200, -1)))
 
       sql("UNCACHE TABLE t")
+      }
     }
   }
 
@@ -1377,8 +1377,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
         }
         assert(exception.getMessage != null)
         sql("UNCACHE TABLE t")
-        return
-      }
+      } else {
       // True external write bypassing the session catalog
       writeExternalCommit("t", Seq((2, 200, -1)).toDF("id", "salary", "new_column"))
 
@@ -1389,6 +1388,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
         Seq(Row(1, 100, null), Row(2, 200, -1)))
 
       sql("UNCACHE TABLE t")
+      }
     }
   }
 
@@ -1428,8 +1428,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
         }
         assert(exception.getMessage != null)
         sql("UNCACHE TABLE IF EXISTS t")
-        return
-      }
+      } else {
       // External write bypassing the session catalog
       writeExternalCommit("t", Seq((2, 200)).toDF("id", "salary"))
 
@@ -1442,6 +1441,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
       checkAnswer(
         sql("SELECT * FROM t ORDER BY id"),
         Seq(Row(1, 100), Row(2, 200)))
+      }
     }
   }
 
@@ -1463,8 +1463,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
         }
         assert(exception.getMessage != null)
         sql("UNCACHE TABLE IF EXISTS t")
-        return
-      }
+      } else {
       // External write bypassing the session catalog
       writeExternalCommit("t", Seq((3, 300)).toDF("id", "salary"))
 
@@ -1482,6 +1481,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
       checkAnswer(
         sql("SELECT * FROM t ORDER BY id"),
         Seq(Row(1, 100), Row(2, 200), Row(3, 300)))
+      }
     }
   }
 
@@ -1512,8 +1512,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
         }
         assert(exception.getMessage != null)
         sql("UNCACHE TABLE IF EXISTS t")
-        return
-      }
+      } else {
       // External schema change + data write
       writeExternalCommit(
         "t",
@@ -1533,6 +1532,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
       checkAnswer(
         sql("SELECT * FROM t ORDER BY id"),
         Seq(Row(1, 100, null), Row(2, 200, -1)))
+      }
     }
   }
 
@@ -1555,8 +1555,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
         }
         assert(exception.getMessage != null)
         sql("UNCACHE TABLE IF EXISTS t")
-        return
-      }
+      } else {
       // External data write
       writeExternalCommit("t", Seq((2, 200, -1)).toDF("id", "salary", "new_column"))
 
@@ -1575,6 +1574,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
       checkAnswer(
         sql("SELECT * FROM t ORDER BY id"),
         Seq(Row(1, 100, null), Row(2, 200, -1)))
+      }
     }
   }
 }
