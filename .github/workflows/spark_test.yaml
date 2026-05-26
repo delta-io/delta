@@ -12,7 +12,7 @@ on:
       - '**.txt'
 jobs:
   # Generate Spark versions matrix from CrossSparkVersions.scala
-  # This ensures the workflow always uses the versions defined in the build
+  # This ensures the workflow always uses the versions defined in the build.
   generate-matrix:
     name: "Generate Spark Versions Matrix"
     runs-on: ubuntu-24.04
