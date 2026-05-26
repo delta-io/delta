@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       SCALA_VERSION: "2.13.16"
-      SPARK_VERSION: "master"
+      SPARK_VERSION: "4.2"
     steps:
       - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
       - name: install java
@@ -50,7 +50,7 @@ jobs:
         uses: ./.github/actions/setup-unitycatalog
       - name: Run V2 changelog tests on Spark 4.2
         run: |
-          ./build/sbt -DsparkVersion=master \
+          ./build/sbt -DsparkVersion=4.2 \
             "set every scalastyleFailOnError := false" \
             "spark/testOnly io.delta.spark.internal.v2.read.changelog.*"
       - name: Upload test reports
