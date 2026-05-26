@@ -109,12 +109,6 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
   }
 
   /**
-   * Controls whether `createTableFunc` is supplied to [[CreateDeltaTableCommand]].
-   * Overridable so test catalogs can enable the path without a real UC delegate.
-   */
-  protected def useCreateTableFunc: Boolean = isUnityCatalog
-
-  /**
    * In Unity Catalog environments, disable variant table feature support for Spark 4.0 clients
    * that lack the parquet variant logical type annotation.
    */
@@ -301,7 +295,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       // TODO: Spark `V2SessionCatalog` mistakenly treat tables with location as EXTERNAL table.
       //       Before this bug is fixed, we should only call the catalog plugin API to create tables
       //       if UC is enabled to replace `V2SessionCatalog`.
-      createTableFunc = Option.when(useCreateTableFunc) {
+      createTableFunc = Option.when(isUnityCatalog) {
         (
           v1Table: CatalogTable,
           snapshot: Snapshot,
