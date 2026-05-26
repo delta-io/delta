@@ -286,18 +286,15 @@ object SparkVersionSpec {
     jacksonVersion = "2.18.2"
   )
 
-  private val spark42Snapshot = SparkVersionSpec(
-    fullVersion = "4.2.0-SNAPSHOT",
+  private val spark42Preview = SparkVersionSpec(
+    fullVersion = "4.2.0-preview5",
     targetJvm = "17",
     additionalSourceDir = Some("scala-shims/spark-4.2"),
     supportIceberg = false,
     supportHudi = false,
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,
-    jacksonVersion = "2.18.2",
-    // Artifact updates in maven central for roaringbitmap stopped after 1.3.0.
-    // Spark branch-4.2 uses 1.5.3. Relevant Spark PR here https://github.com/apache/spark/pull/52892
-    additionalResolvers = Seq("jitpack" at "https://jitpack.io")
+    jacksonVersion = "2.18.2"
   )
 
   /** Default Spark version */
@@ -307,7 +304,7 @@ object SparkVersionSpec {
   val MASTER: Option[SparkVersionSpec] = None
 
   /** All supported Spark versions - internal use only */
-  val ALL_SPECS = Seq(spark40, spark41, spark42Snapshot)
+  val ALL_SPECS = Seq(spark40, spark41, spark42Preview)
 }
 
 /** See docs on top of this file */
