@@ -138,37 +138,152 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
           sql("INSERT INTO %s VALUES (1, 'a')", fullTableName);
           check(fullTableName, List.of(row("1", "a")));
           assertNoUniformPropsOnServer(fullTableName);
-          IcebergMeta meta1 = verifyUCMetadataAndReadIceberg(fullTableName, 1L);
-          Assertions.assertEquals(
-              "1",
-              meta1.properties.get("delta-version"),
-              "After first write, delta-version in Iceberg metadata should be 1");
-          Assertions.assertNull(
-              meta1.properties.get("base-delta-version"),
-              "First (full) conversion must NOT set base-delta-version");
-          Assertions.assertTrue(
-              meta1.currentSnapshotId != -1L, "Iceberg snapshot should exist after first write");
+          IcebergMeta meta1 = verifyNonIncrementalUniForm(fullTableName, 1L);
 
           // Write 2 — must produce an incremental conversion on the Delta REST API path
           sql("INSERT INTO %s VALUES (2, 'b')", fullTableName);
           check(fullTableName, List.of(row("1", "a"), row("2", "b")));
           assertNoUniformPropsOnServer(fullTableName);
-          IcebergMeta meta2 = verifyUCMetadataAndReadIceberg(fullTableName, 2L);
-          Assertions.assertEquals(
-              "2",
-              meta2.properties.get("delta-version"),
-              "After second write, delta-version in Iceberg metadata should be 2");
-          if (useDeltaRestApiForTests()) {
-            Assertions.assertEquals(
-                "1",
-                meta2.properties.get("base-delta-version"),
-                "Second conversion must be incremental: base-delta-version should equal 1");
-            Assertions.assertEquals(
-                meta1.currentSnapshotId,
-                meta2.currentSnapshotParentId,
-                "Iceberg snapshot chain must be preserved: parent of snapshot-2 must be snapshot-1");
+          verifyIncrementalUniForm(fullTableName, 2L, 1L, meta1.currentSnapshotId);
+        });
+  }
+
+  /**
+   * Verifies that {@code RESTORE TABLE} (which internally uses {@code commitLarge}) produces an
+   * incremental Iceberg conversion on the UC REST path.
+   *
+   * <p>The test writes two versions, then restores to version 1. At restore time the current
+   * snapshot already carries Iceberg metadata (from the version-2 conversion), so {@code
+   * commitLarge} performs an incremental conversion and the Iceberg snapshot chain is preserved.
+   *
+   * <p>Note: {@code CREATE OR REPLACE TABLE ... SHALLOW CLONE} on a UC-managed table is currently
+   * blocked by the UC-managed metadata-change guard (Delta tracks {@code REPLACE TABLE} as a
+   * metadata change). CLONE-based {@code commitLarge} tests will be added once that restriction is
+   * lifted.
+   */
+  @Test
+  public void uniformIcebergCommitLargeConversion() throws Exception {
+    Assumptions.assumeTrue(
+        Boolean.getBoolean("supportIceberg"),
+        "Skipping: Iceberg support not available for this Spark version");
+    withNewTable(
+        "uniform_iceberg_restore",
+        "id INT, data STRING",
+        null,
+        TableType.MANAGED,
+        UNIFORM_TABLE_PROPS,
+        fullTableName -> {
+          // Write 1 — non-incremental Iceberg conversion (no prior state)
+          sql("INSERT INTO %s VALUES (1, 'a')", fullTableName);
+          assertNoUniformPropsOnServer(fullTableName);
+          IcebergMeta meta1 = verifyNonIncrementalUniForm(fullTableName, 1L);
+
+          // Write 2 — regular incremental conversion
+          sql("INSERT INTO %s VALUES (2, 'b')", fullTableName);
+          assertNoUniformPropsOnServer(fullTableName);
+          IcebergMeta meta2 =
+              verifyIncrementalUniForm(fullTableName, 2L, 1L, meta1.currentSnapshotId);
+
+          // RESTORE to version 1 → commitLarge, incremental.
+          // INSERT did not change schema or configuration, so RESTORE passes the UC-managed
+          // metadata guard. readSnapshot (v2) carries Iceberg metadata → incremental.
+          sql("RESTORE TABLE %s TO VERSION AS OF 1", fullTableName);
+          assertNoUniformPropsOnServer(fullTableName);
+          long restoreVersion = currentVersion(fullTableName);
+          verifyIncrementalUniForm(fullTableName, restoreVersion, 2L, meta2.currentSnapshotId);
+        });
+  }
+
+  /**
+   * Verifies that {@code CREATE OR REPLACE TABLE ... SHALLOW CLONE} on a UC-managed UniForm table
+   * is currently rejected with {@code DELTA_OPERATION_NOT_ALLOWED}.
+   *
+   * <p>{@code REPLACE TABLE} via CLONE always copies the source's column-mapping physical-name
+   * UUIDs, which differ from the target's, triggering the UC-managed metadata-change guard in
+   * {@code throwIfUCManagedMetadataChanged}. This test documents the current behavior; it should be
+   * updated to assert success once the restriction is lifted.
+   */
+  @Test
+  public void uniformIcebergCloneReplaceBlocked() throws Exception {
+    Assumptions.assumeTrue(
+        Boolean.getBoolean("supportIceberg"),
+        "Skipping: Iceberg support not available for this Spark version");
+    String sourceFullName = fullTableName("cl_blocked_source");
+    withNewTable(
+        "cl_blocked_target",
+        "col1 INT",
+        null,
+        TableType.MANAGED,
+        UNIFORM_TABLE_PROPS,
+        targetFullName -> {
+          sql(
+              "CREATE TABLE %s (col1 INT) USING DELTA TBLPROPERTIES ("
+                  + "'delta.feature.catalogManaged'='supported', "
+                  + "'delta.columnMapping.mode'='name')",
+              sourceFullName);
+          try {
+            sql("INSERT INTO %s VALUES (1), (2), (3)", sourceFullName);
+            assertThrowsWithCauseContaining(
+                "Metadata changes on Unity Catalog managed tables",
+                () ->
+                    sql(
+                        "CREATE OR REPLACE TABLE %s SHALLOW CLONE %s TBLPROPERTIES ("
+                            + "'delta.enableIcebergCompatV2'='true', "
+                            + "'delta.universalFormat.enabledFormats'='iceberg', "
+                            + "'delta.enableDeletionVectors'='false')",
+                        targetFullName, sourceFullName));
+          } finally {
+            sql("DROP TABLE IF EXISTS %s", sourceFullName);
           }
         });
+  }
+
+  // ---------- UniForm assertion helpers ----------
+
+  /**
+   * Verifies a non-incremental UniForm Iceberg conversion: {@code delta-version} matches the
+   * expected version, {@code base-delta-version} is absent, and a snapshot exists.
+   */
+  private IcebergMeta verifyNonIncrementalUniForm(String fullTableName, long expectedDeltaVersion)
+      throws Exception {
+    IcebergMeta meta = verifyUCMetadataAndReadIceberg(fullTableName, expectedDeltaVersion);
+    Assertions.assertEquals(
+        String.valueOf(expectedDeltaVersion),
+        meta.properties.get("delta-version"),
+        "delta-version mismatch after non-incremental conversion");
+    Assertions.assertNull(
+        meta.properties.get("base-delta-version"),
+        "Non-incremental conversion must not set base-delta-version");
+    Assertions.assertTrue(
+        meta.currentSnapshotId != -1L, "Iceberg snapshot should exist after conversion");
+    return meta;
+  }
+
+  /**
+   * Verifies an incremental UniForm Iceberg conversion: {@code delta-version} matches, {@code
+   * base-delta-version} equals {@code expectedBaseDeltaVersion}, and the Iceberg snapshot chain is
+   * preserved ({@code currentSnapshotParentId} equals {@code expectedParentSnapshotId}).
+   */
+  private IcebergMeta verifyIncrementalUniForm(
+      String fullTableName,
+      long expectedDeltaVersion,
+      long expectedBaseDeltaVersion,
+      long expectedParentSnapshotId)
+      throws Exception {
+    IcebergMeta meta = verifyUCMetadataAndReadIceberg(fullTableName, expectedDeltaVersion);
+    Assertions.assertEquals(
+        String.valueOf(expectedDeltaVersion),
+        meta.properties.get("delta-version"),
+        "delta-version mismatch after incremental conversion");
+    Assertions.assertEquals(
+        String.valueOf(expectedBaseDeltaVersion),
+        meta.properties.get("base-delta-version"),
+        "Incremental conversion: base-delta-version should equal prior converted version");
+    Assertions.assertEquals(
+        expectedParentSnapshotId,
+        meta.currentSnapshotParentId,
+        "Iceberg snapshot chain must be preserved: parent snapshot ID mismatch");
+    return meta;
   }
 
   // ---------- Iceberg metadata reading ----------
