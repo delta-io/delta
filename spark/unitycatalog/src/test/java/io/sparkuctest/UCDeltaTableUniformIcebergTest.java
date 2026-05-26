@@ -238,6 +238,51 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
         });
   }
 
+  /**
+   * Verifies that disabling then re-enabling UniForm starts a fresh Iceberg history line: the first
+   * conversion after re-enable is non-incremental (no {@code base-delta-version}) and produces a
+   * new {@code metadataLocation}.
+   */
+  @Test
+  public void uniformIcebergReEnable() throws Exception {
+    Assumptions.assumeTrue(
+        Boolean.getBoolean("supportIceberg"),
+        "Skipping: Iceberg support not available for this Spark version");
+    withNewTable(
+        "uniform_iceberg_reenable",
+        "id INT, data STRING",
+        null,
+        TableType.MANAGED,
+        UNIFORM_TABLE_PROPS,
+        fullTableName -> {
+          // Write 1: initial full Iceberg conversion
+          sql("INSERT INTO %s VALUES (1, 'a')", fullTableName);
+          assertNoUniformPropsOnServer(fullTableName);
+          String metadataPath1 = verifyUCMetadataAndFetchIcebergPath(fullTableName, 1L);
+
+          // Disable then re-enable UniForm
+          sql(
+              "ALTER TABLE %s UNSET TBLPROPERTIES ('delta.universalFormat.enabledFormats')",
+              fullTableName);
+          sql(
+              "ALTER TABLE %s SET TBLPROPERTIES ('delta.universalFormat.enabledFormats'='iceberg')",
+              fullTableName);
+
+          // Write after re-enable: must start a new Iceberg history line (non-incremental)
+          sql("INSERT INTO %s VALUES (2, 'b')", fullTableName);
+          check(fullTableName, List.of(row("1", "a"), row("2", "b")));
+          assertNoUniformPropsOnServer(fullTableName);
+          long versionAfterReEnable = currentVersion(fullTableName);
+          verifyNonIncrementalUniForm(fullTableName, versionAfterReEnable);
+          String metadataPath2 =
+              verifyUCMetadataAndFetchIcebergPath(fullTableName, versionAfterReEnable);
+          Assertions.assertNotEquals(
+              metadataPath1,
+              metadataPath2,
+              "Re-enable must start a new Iceberg history (metadataLocation must change)");
+        });
+  }
+
   // ---------- UniForm assertion helpers ----------
 
   /**
