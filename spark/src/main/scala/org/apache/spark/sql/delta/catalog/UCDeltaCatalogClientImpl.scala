@@ -86,7 +86,7 @@ private[catalog] class UCDeltaCatalogClientImpl(
           return fallbackLoadTableFunc(ident)
         case e: CredentialFetchFailedException if serverSidePlanningEnabled =>
           logWarning(log"Credential fetch failed for " +
-            log"${MDC(DeltaLogKeys.TABLE_NAME, fullQualifiedTableName(tid))}; enabling " +
+            log"${MDC(DeltaLogKeys.TABLE_NAME, fullQualifiedTableName(ident))}; enabling " +
             log"server-side planning fallback. Cause: " +
             log"${MDC(DeltaLogKeys.EXCEPTION, e.getMessage)}")
           enableServerSidePlanningConfig(ident)
@@ -166,6 +166,13 @@ private[catalog] class UCDeltaCatalogClientImpl(
    * `CreateDeltaTableCommand` protocol-upgrade flow picks them up. A feature unknown to
    * this Delta version throws when `required`, is silently skipped when suggested.
    *
+   * Treat the "unknown feature" branch as a hard compatibility gap, not a bug: the
+   * catalog server enforces the Delta protocol features it requires, and this client only
+   * supports the subset that its bundled Delta version understands. If the catalog
+   * requires a newer feature, upgrade Delta on the client side (or, if appropriate,
+   * relax the requirement on the server). See the Delta protocol spec for the full
+   * feature list: https://github.com/delta-io/delta/blob/master/PROTOCOL.md
+   *
    * We intentionally do NOT emit `delta.minReaderVersion`/`delta.minWriterVersion`: Delta
    * derives those from the feature list, and pinning them here would put Delta into
    * explicit table-features mode, suppressing implicit legacy writer features
@@ -183,13 +190,16 @@ private[catalog] class UCDeltaCatalogClientImpl(
     features.foreach { feature =>
       if (TableFeature.featureNameToFeature(feature).isDefined) {
         val key = s"delta.feature.$feature"
-        if (required) putRequiredOrThrow(augmented, key, FEATURE_PROP_SUPPORTED, ident)
+        if (required) putRequiredFeatureOrThrow(augmented, key, ident)
         else augmented.putIfAbsent(key, FEATURE_PROP_SUPPORTED)
       } else if (required) {
+        val qualifiedName = fullQualifiedTableName(ident)
         throw new IllegalArgumentException(
-          s"Cannot create table $ident: catalog requires Delta protocol feature " +
+          s"Cannot create table $qualifiedName: catalog requires Delta protocol feature " +
             s"'$feature' but this Delta version does not support it. Upgrade Delta or " +
-            s"ask the catalog to relax the requirement.")
+            "ask the catalog to relax the requirement. See " +
+            "https://github.com/delta-io/delta/blob/master/PROTOCOL.md for the full " +
+            "Delta protocol feature list.")
       }
     }
   }
@@ -207,12 +217,35 @@ private[catalog] class UCDeltaCatalogClientImpl(
       ident: Identifier): Unit = {
     val existing = augmented.get(key)
     if (existing != null && existing != requiredValue) {
+      val qualifiedName = fullQualifiedTableName(ident)
       throw new IllegalArgumentException(
-        s"Cannot create table $ident: catalog requires table property '$key'=" +
+        s"Cannot create table $qualifiedName: catalog requires table property '$key'=" +
           s"'$requiredValue' but the caller supplied '$key'='$existing'. Remove the " +
           s"conflicting TBLPROPERTIES entry and retry.")
     }
     augmented.put(key, requiredValue)
+  }
+
+  /**
+   * Specialized variant of [[putRequiredOrThrow]] for `delta.feature.<name>=supported` keys.
+   * The error message phrases the conflict in terms of "table feature" rather than "table
+   * property" because `delta.feature.<name>` is a feature flag that only accepts the value
+   * `supported`; any other value reaching here is a user-side mistake, not a property
+   * override.
+   */
+  private def putRequiredFeatureOrThrow(
+      augmented: util.Map[String, String],
+      featureKey: String,
+      ident: Identifier): Unit = {
+    val existing = augmented.get(featureKey)
+    if (existing != null && existing != FEATURE_PROP_SUPPORTED) {
+      val qualifiedName = fullQualifiedTableName(ident)
+      throw new IllegalArgumentException(
+        s"Cannot create table $qualifiedName: catalog requires Delta table feature " +
+          s"'$featureKey'='$FEATURE_PROP_SUPPORTED' but the caller supplied " +
+          s"'$featureKey'='$existing'. Remove the conflicting TBLPROPERTIES entry and retry.")
+    }
+    augmented.put(featureKey, FEATURE_PROP_SUPPORTED)
   }
 
   // -------------------------------------------------------------------------
@@ -225,13 +258,19 @@ private[catalog] class UCDeltaCatalogClientImpl(
       metadata: Metadata,
       domainMetadata: Seq[DomainMetadata],
       protocol: Protocol,
-      snapshotTimestamp: Long): Unit = {
+      lastCommitTimestampMs: Long): Unit = {
+    if (table.tableType != CatalogTableType.MANAGED) {
+      throw new IllegalArgumentException(
+        s"UC Delta API createTable only supports MANAGED tables; " +
+          s"got ${table.tableType} for ${fullQualifiedTableName(ident)}.")
+    }
     val locationUri = table.storage.locationUri.getOrElse(throw new IllegalArgumentException(
-      s"createTable requires a storage location on the CatalogTable for $ident"))
+      s"createTable requires a storage location on the CatalogTable for " +
+        s"${fullQualifiedTableName(ident)}"))
     // Strip V2-only catalog keys (location, owner, ...) before sending the configuration
     // to UC; they don't belong in table properties.
     val cleanedConfiguration =
-      metadata.configuration
+      metadata.configuration.view
         .filterKeys(k => !UCDeltaCatalogClientImpl.ReservedV2TableProperties.contains(k))
         .toMap
     ucClient.createTable(
@@ -243,7 +282,7 @@ private[catalog] class UCDeltaCatalogClientImpl(
         configuration = cleanedConfiguration),
       protocol,
       domainMetadata.map(d => d: AbstractDomainMetadata).asJava,
-      snapshotTimestamp)
+      lastCommitTimestampMs)
   }
 
   // -------------------------------------------------------------------------
@@ -259,10 +298,11 @@ private[catalog] class UCDeltaCatalogClientImpl(
   private def requireUnpreparedManagedDeltaCreate(
       ident: Identifier,
       properties: util.Map[String, String]): Unit = {
+    val qualifiedName = fullQualifiedTableName(ident)
     def bail(reason: String): Nothing = throw new IllegalStateException(
-      s"Managed Delta create for $ident reached the UC Delta API path in an unexpected " +
-        s"state: $reason. The upstream catalog must only route fresh managed Delta CREATE / " +
-        "CTAS here with raw caller-supplied properties.")
+      s"Managed Delta create for $qualifiedName reached the UC Delta API path in an " +
+        s"unexpected state: $reason. The upstream catalog must only route fresh managed " +
+        "Delta CREATE / CTAS here with raw caller-supplied properties.")
     if (properties.containsKey(TableCatalog.PROP_LOCATION)) {
       bail(s"${TableCatalog.PROP_LOCATION} is already set")
     }
@@ -298,16 +338,15 @@ private[catalog] class UCDeltaCatalogClientImpl(
     val ns = ident.namespace()
     require(
       ns.length == 1,
-      s"UC table identifiers must be of the form <schema>.<table>; got namespace of length " +
-        s"${ns.length}: '${ns.mkString(".")}' (full identifier: '${ident.toString}')")
+      s"UC table identifier must be one of <schema>.<table> or <catalog>.<schema>.<table>; " +
+        s"got namespace of length ${ns.length}: '${ns.mkString(".")}' " +
+        s"(full identifier: '${ident.toString}')")
     new StorageTableIdentifier(Array(catalogName, ns(0)), ident.name())
   }
 
-  /** Three-part dotted name from a `[catalog, schema]` + `name` storage identifier. */
-  private def fullQualifiedTableName(t: StorageTableIdentifier): String = {
-    val ns = t.getNamespace
-    s"${ns(0)}.${ns(1)}.${t.getName}"
-  }
+  /** Three-part dotted `catalog.schema.table` name for a Spark V2 `Identifier`. */
+  private def fullQualifiedTableName(ident: Identifier): String =
+    s"$catalogName.${ident.namespace().mkString(".")}.${ident.name()}"
 
   private def toV1Table(ident: Identifier, info: TableInfo): V1Table = {
     val m = info.getMetadata

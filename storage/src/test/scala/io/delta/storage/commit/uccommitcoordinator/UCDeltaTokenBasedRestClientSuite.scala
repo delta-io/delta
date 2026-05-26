@@ -643,15 +643,15 @@ class UCDeltaTokenBasedRestClientSuite
     assert(out.getDeltaRowTracking.getRowIdHighWaterMark === 7L)
   }
 
-  test("toSDKDomainMetadataUpdates: unknown domains are silently skipped") {
-    // Only the rowTracking entry should land; unknown.future has no SDK field.
-    val out = UCDeltaTokenBasedRestClient.toSDKDomainMetadataUpdates(
-      java.util.List.of(
-        dm("unknown.future", """{"someField":"x"}"""),
-        dm("delta.rowTracking", """{"rowIdHighWaterMark":1}""")))
-    assert(out !== null)
-    assert(out.getDeltaRowTracking.getRowIdHighWaterMark === 1L)
-    assert(out.getDeltaClustering === null)
+  test("toSDKDomainMetadataUpdates: unknown domains throw IOException") {
+    val ex = intercept[java.io.IOException] {
+      UCDeltaTokenBasedRestClient.toSDKDomainMetadataUpdates(
+        java.util.List.of(
+          dm("unknown.future", """{"someField":"x"}"""),
+          dm("delta.rowTracking", """{"rowIdHighWaterMark":1}""")))
+    }
+    assert(ex.getMessage.contains("unknown.future"))
+    assert(ex.getMessage.contains("UC SDK only models"))
   }
 
   test("toSDKDomainMetadataUpdates: tombstones (removed=true) are skipped") {
@@ -665,11 +665,13 @@ class UCDeltaTokenBasedRestClientSuite
     assert(out.getDeltaRowTracking.getRowIdHighWaterMark === 1L)
   }
 
-  test("toSDKDomainMetadataUpdates: all-tombstones / all-unknown returns null") {
+  test("toSDKDomainMetadataUpdates: all-tombstones returns null") {
+    // Tombstones are skipped via `continue` before the switch, so they don't reach the
+    // unknown-domain throw. An all-tombstone batch produces no updates and yields null.
     val out = UCDeltaTokenBasedRestClient.toSDKDomainMetadataUpdates(
       java.util.List.of(
         dm("delta.clustering", """{"clusteringColumns":[["c1"]]}""", removed = true),
-        dm("unknown.future", """{"x":1}""")))
+        dm("delta.rowTracking", """{"rowIdHighWaterMark":1}""", removed = true)))
     assert(out === null)
   }
 

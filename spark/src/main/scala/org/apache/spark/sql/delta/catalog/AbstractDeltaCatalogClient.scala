@@ -50,8 +50,10 @@ private[catalog] trait AbstractDeltaCatalogClient {
    * endpoint) and returns `properties` augmented with the catalog-supplied LOCATION, table
    * id, and credentials.
    *
-   * The caller filters out non-managed-create requests upstream; implementations may
-   * additionally enforce that invariant as defense-in-depth.
+   * The caller is expected to route only fresh managed-Delta CREATE / CTAS requests here
+   * (external / REPLACE-existing / path-based requests are filtered out upstream).
+   * Implementations should re-verify that contract on entry rather than trusting the
+   * caller blindly.
    */
   def createStagingTable(
       ident: Identifier,
@@ -61,6 +63,10 @@ private[catalog] trait AbstractDeltaCatalogClient {
    * Called by [[AbstractDeltaCatalog]] after Delta has written the initial commit, in place
    * of the legacy `super.createTable` call. Implementations register the table with the
    * catalog (e.g. via UC Delta API `createTable` endpoint).
+   *
+   * @param lastCommitTimestampMs wall-clock timestamp of the latest commit that produced
+   *   `metadata` / `protocol`, used by the catalog as the authoritative "last updated"
+   *   timestamp on the registered entry.
    */
   def createTable(
       ident: Identifier,
@@ -68,7 +74,7 @@ private[catalog] trait AbstractDeltaCatalogClient {
       metadata: Metadata,
       domainMetadata: Seq[DomainMetadata],
       protocol: Protocol,
-      snapshotTimestamp: Long): Unit
+      lastCommitTimestampMs: Long): Unit
 }
 
 /** Builds a [[AbstractDeltaCatalogClient]] from catalog options. */
