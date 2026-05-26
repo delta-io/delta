@@ -536,13 +536,6 @@ lazy val spark = (project in file("spark-unified"))
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
     name := "delta-spark",
-    // Exclude the released `delta-spark` jar that sparkV2's test deps
-    // (kernelUnityCatalog test->test -> kernelDefaults test->test ->
-    // "io.delta" %% "delta-spark" % "4.0.0" % "test") pull in transitively.
-    // The released jar contains a pre-#5320 DeltaCatalog.class that shadows
-    // the in-tree unified DeltaCatalog at the same FQN and produces
-    // ClassCastException / NoSuchMethodError on Spark 4.2.
-    // Scoped to Test so MiMa's compile-time previous-ABI lookup still resolves.
     Test / excludeDependencies += ExclusionRule("io.delta", "delta-spark_2.13"),
     commonSettings,
     scalaStyleSettings,
