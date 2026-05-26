@@ -50,7 +50,7 @@ import org.apache.spark.sql.delta.implicits.addFileEncoder
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider}
 import org.apache.spark.sql.delta.redirect.{RedirectFeature, TableRedirectConfiguration}
-import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
+import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils, UnsupportedDataTypeInfo}
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.stats._
 import org.apache.spark.sql.delta.stats.FileSizeHistogramUtils
@@ -75,6 +75,7 @@ import org.apache.spark.sql.catalyst.util.{CharVarcharUtils, ResolveDefaultColum
 import org.apache.spark.sql.delta.clustering.ClusteringMetadataDomain
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{StructField, StructType}
+import org.apache.spark.sql.types.DataType
 import org.apache.spark.util.{Clock, Utils}
 
 object CoordinatedCommitType extends Enumeration {
@@ -2609,6 +2610,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
     // feature is not enabled.
     if (!protocol.isFeatureSupported(AllowColumnDefaultsTableFeature)) {
       checkNoColumnDefaults(op)
+    } else {
+      checkColumnDefaults(op)
     }
 
     finalActions
@@ -3274,6 +3277,55 @@ trait OptimisticTransactionImpl extends TransactionHelper
     } else {
       logInfo(log"No need to generate Iceberg metadata for the table pre-commit")
       (txnInfo, false)
+    }
+  }
+
+  /**
+   * If the operation assigns or modifies column default values, this method checks that the
+   * default values are only added on types that support them and throws an error if not.
+   */
+  protected def checkColumnDefaults(op: DeltaOperations.Operation): Unit = {
+    def isDefaultUsedOnUnsupportedColumn(column: StructField): Boolean = {
+      usesDefaults(column) && !typeAllowedForDefaults(column.dataType)
+    }
+
+    def typeAllowedForDefaults(dataType: DataType): Boolean = {
+      !SchemaUtils.typeExistsRecursively(dataType) {
+        case dt if DeltaGeoSpatial.isGeoSpatialType(dt) => true
+        case _ => false
+      }
+    }
+
+    def usesDefaults(column: StructField): Boolean = {
+      column.metadata.contains(ResolveDefaultColumns.CURRENT_DEFAULT_COLUMN_METADATA_KEY) ||
+        column.metadata.contains(ResolveDefaultColumns.EXISTS_DEFAULT_COLUMN_METADATA_KEY)
+    }
+
+    val unsupportedColumns: Seq[StructField] = op match {
+      case change: ChangeColumn if isDefaultUsedOnUnsupportedColumn(change.newColumn) =>
+        Seq(change.newColumn)
+      case changes: ChangeColumns =>
+        changes.columns.collect {
+          case c if isDefaultUsedOnUnsupportedColumn(c.newColumn) => c.newColumn
+        }
+      case create: CreateTable =>
+        create.metadata.schema.fields.filter(c => isDefaultUsedOnUnsupportedColumn(c))
+      case replace: ReplaceColumns =>
+        replace.columns.filter(c => isDefaultUsedOnUnsupportedColumn(c))
+      case replace: ReplaceTable =>
+        replace.metadata.schema.fields.filter(c => isDefaultUsedOnUnsupportedColumn(c))
+      case update: UpdateSchema =>
+        update.newSchema.fields.filter(c => isDefaultUsedOnUnsupportedColumn(c))
+      case _ =>
+        Seq.empty
+    }
+
+    if (unsupportedColumns.nonEmpty) {
+      val unsupportedColInfos = unsupportedColumns.map(
+        c => UnsupportedDataTypeInfo(c.name, c.dataType))
+      throw DeltaErrors.operationNotSupportedForDataTypes(
+        "COLUMN DEFAULT",
+        unsupportedColInfos.head, unsupportedColInfos.tail: _*)
     }
   }
 

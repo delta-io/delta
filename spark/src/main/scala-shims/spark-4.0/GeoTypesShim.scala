@@ -33,4 +33,12 @@ object GeoTypesShim {
    * `None` for non-geospatial types or geospatial types with supported SRIDs.
    */
   def unsupportedSrid(dt: DataType): Option[Int] = None
+
+  /**
+   * Geospatial Catalyst expression classes whitelisted for user-provided expressions
+   * (e.g. generated columns, check constraints). Empty on Spark 4.0 because the ST_*
+   * expressions live in `org.apache.spark.sql.catalyst.expressions.st` only from
+   * Spark 4.1 onward.
+   */
+  val geoExpressions: Set[Class[_]] = Set.empty[Class[_]]
 }

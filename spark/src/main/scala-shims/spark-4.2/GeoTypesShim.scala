@@ -16,6 +16,9 @@
 
 package org.apache.spark.sql.delta.shims
 
+import org.apache.spark.sql.catalyst.expressions.st.{
+  ST_AsBinary, ST_GeogFromWKB, ST_GeomFromWKB, ST_SetSrid, ST_Srid}
+
 import org.apache.spark.sql.types.{DataType, GeographyType, GeometryType}
 
 /**
@@ -38,4 +41,15 @@ object GeoTypesShim {
     case g: GeographyType if !GeographyType.isSridSupported(g.srid) => Some(g.srid)
     case _ => None
   }
+
+  /**
+   * Geospatial Catalyst expression classes whitelisted for user-provided expressions
+   * (e.g. generated columns, check constraints).
+   */
+  val geoExpressions: Set[Class[_]] = Set(
+    classOf[ST_AsBinary],
+    classOf[ST_GeogFromWKB],
+    classOf[ST_GeomFromWKB],
+    classOf[ST_SetSrid],
+    classOf[ST_Srid])
 }

@@ -136,7 +136,7 @@ object UniversalFormat extends DeltaLogging {
       }
       SchemaUtils.findAnyTypeRecursively(newestMetadata.schema) { f =>
         f.isInstanceOf[NullType] | f.isInstanceOf[ByteType] | f.isInstanceOf[ShortType] |
-        f.isInstanceOf[TimestampNTZType]
+        f.isInstanceOf[TimestampNTZType] | DeltaGeoSpatial.isGeoSpatialType(f)
       } match {
         case Some(unsupportedType) =>
           throw DeltaErrors.uniFormHudiSchemaCompat(unsupportedType)
