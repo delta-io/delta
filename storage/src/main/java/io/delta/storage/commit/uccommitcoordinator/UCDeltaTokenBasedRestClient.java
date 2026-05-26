@@ -46,8 +46,10 @@ import io.unitycatalog.client.delta.model.DomainMetadataUpdates;
 import io.unitycatalog.client.delta.model.DeltaCommit;
 import io.unitycatalog.client.delta.model.DeltaProtocol;
 import io.unitycatalog.client.delta.model.LoadTableResponse;
+import io.unitycatalog.client.delta.model.RemoveDomainMetadataUpdate;
 import io.unitycatalog.client.delta.model.RemovePropertiesUpdate;
 import io.unitycatalog.client.delta.model.RowTrackingDomainMetadata;
+import io.unitycatalog.client.delta.model.SetDomainMetadataUpdate;
 import io.unitycatalog.client.delta.model.SetLatestBackfilledVersionUpdate;
 import io.unitycatalog.client.delta.model.SetPartitionColumnsUpdate;
 import io.unitycatalog.client.delta.model.SetPropertiesUpdate;
@@ -261,10 +263,12 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       Optional<AbstractMetadata> newMetadata,
       Optional<AbstractProtocol> oldProtocol,
       Optional<AbstractProtocol> newProtocol,
+      List<AbstractDomainMetadata> domainMetadata,
       Optional<io.delta.storage.commit.uniform.UniformMetadata> uniform)
       throws IOException, CommitFailedException, UCCommitCoordinatorException {
     ensureOpen();
     Objects.requireNonNull(tableId, "tableId must not be null");
+    Objects.requireNonNull(domainMetadata, "domainMetadata must not be null");
     ResolvedTableName name = requireThreePartName(tableIdentifier);
 
     UpdateTableRequest request = new UpdateTableRequest();
@@ -296,6 +300,27 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       request.addUpdatesItem(new SetProtocolUpdate()
           .action("set-protocol")
           .protocol(toSDKDeltaProtocol(newProtocol.get())));
+    }
+    List<AbstractDomainMetadata> domainMetadataToSet = new ArrayList<>();
+    List<String> domainMetadataToRemove = new ArrayList<>();
+    for (AbstractDomainMetadata dm : domainMetadata) {
+      Objects.requireNonNull(dm, "domainMetadata entry must not be null");
+      if (dm.isRemoved()) {
+        domainMetadataToRemove.add(dm.getDomain());
+      } else {
+        domainMetadataToSet.add(dm);
+      }
+    }
+    DomainMetadataUpdates domainMetadataUpdates = toSDKDomainMetadataUpdates(domainMetadataToSet);
+    if (domainMetadataUpdates != null) {
+      request.addUpdatesItem(new SetDomainMetadataUpdate()
+          .action("set-domain-metadata")
+          .updates(domainMetadataUpdates));
+    }
+    if (!domainMetadataToRemove.isEmpty()) {
+      request.addUpdatesItem(new RemoveDomainMetadataUpdate()
+          .action("remove-domain-metadata")
+          .domains(domainMetadataToRemove));
     }
 
     try {
@@ -689,8 +714,8 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   /**
    * Maps Delta {@link AbstractDomainMetadata} entries onto the UC SDK's typed {@link
    * DomainMetadataUpdates}. UC models only {@code delta.clustering} and {@code
-   * delta.rowTracking}; entries for unknown domains are dropped silently. Returns {@code null}
-   * when no known-domain entries were produced.
+   * delta.rowTracking}; entries for unknown domains fail loudly to avoid silently dropping Delta
+   * log state. Returns {@code null} when no known-domain entries were produced.
    *
    * <p>Each {@code configuration} JSON is parsed into a typed DTO so a shape mismatch fails at
    * parse time with a Jackson error rather than at first use after an unchecked cast.
@@ -702,7 +727,6 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     DomainMetadataUpdates updates = new DomainMetadataUpdates();
     boolean any = false;
     for (AbstractDomainMetadata dm : entries) {
-      // This function is for createTable only for now.
       if (dm.isRemoved()) {
         continue;
       }

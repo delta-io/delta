@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.coordinatedcommits
 
 import java.io.File
-import java.util.{Optional, UUID}
+import java.util.{Collections, Optional, UUID}
 
 import scala.collection.JavaConverters._
 
@@ -126,6 +126,7 @@ trait UCCommitCoordinatorClientSuiteBase extends CommitCoordinatorClientImplSuit
       Optional.empty(), // newMetadata
       Optional.empty(), // oldProtocol
       Optional.empty(), // newProtocol
+      Collections.emptyList(), // domainMetadata
       Optional.empty() /* uniform */)
   }
 

@@ -20,6 +20,7 @@ import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.CommitFailedException;
 import io.delta.storage.commit.GetCommitsResponse;
 import io.delta.storage.commit.TableIdentifier;
+import io.delta.storage.commit.actions.AbstractDomainMetadata;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
 import io.delta.storage.commit.uniform.UniformMetadata;
@@ -83,6 +84,9 @@ public interface UCClient extends AutoCloseable {
    *                    If present, UC can validate the current protocol state.
    * @param newProtocol An Optional containing a new protocol version to be applied to the table.
    *                    If present, the table's protocol will be updated atomically with the commit.
+   * @param domainMetadata A list containing domain metadata actions to apply atomically with this
+   *                       commit. Implementations that do not support domain metadata may ignore
+   *                       this list.
    * @param uniform An Optional containing UniForm metadata for Delta Universal Format support.
    *                If present, this metadata will be used by UC to manage format conversions
    *                (e.g., Iceberg, Hudi).
@@ -101,6 +105,7 @@ public interface UCClient extends AutoCloseable {
       Optional<AbstractMetadata> newMetadata,
       Optional<AbstractProtocol> oldProtocol,
       Optional<AbstractProtocol> newProtocol,
+      List<AbstractDomainMetadata> domainMetadata,
       Optional<UniformMetadata> uniform
   ) throws IOException, CommitFailedException, UCCommitCoordinatorException;
 

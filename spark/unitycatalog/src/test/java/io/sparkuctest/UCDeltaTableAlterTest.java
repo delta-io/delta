@@ -301,6 +301,8 @@ public class UCDeltaTableAlterTest extends UCDeltaTableIntegrationBaseTest {
           LoadTableResponse response = loadTableViaDeltaRest(tableName);
           assertEquals(
               "supported", response.getMetadata().getProperties().get("delta.feature.clustering"));
+          assertEquals(
+              "[[\"id\"]]", response.getMetadata().getProperties().get("clusteringColumns"));
         });
   }
 

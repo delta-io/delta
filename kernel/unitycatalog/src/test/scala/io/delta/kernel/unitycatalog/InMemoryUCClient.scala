@@ -18,14 +18,14 @@ package io.delta.kernel.unitycatalog
 
 import java.lang.{Long => JLong}
 import java.net.URI
-import java.util.Optional
+import java.util.{Collections, List => JList, Optional}
 import java.util.concurrent.ConcurrentHashMap
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
 import io.delta.storage.commit.{Commit, CommitFailedException, GetCommitsResponse, TableIdentifier}
-import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
+import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.{InvalidTargetTableException, UCClient}
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 
@@ -166,10 +166,12 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       newMetadata,
       Optional.empty(), // oldProtocol
       newProtocol,
+      Collections.emptyList(), // domainMetadata
       Optional.empty() // uniform
     )
   }
 
+  // scalastyle:off argcount
   override def commit(
       tableId: String,
       tableUri: URI,
@@ -180,6 +182,7 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       newMetadata: Optional[AbstractMetadata],
       oldProtocol: Optional[AbstractProtocol],
       newProtocol: Optional[AbstractProtocol],
+      domainMetadata: JList[AbstractDomainMetadata],
       uniform: Optional[UniformMetadata]): Unit = {
     forceThrowInCommitMethod()
 
@@ -202,6 +205,7 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       }
     }
   }
+  // scalastyle:on argcount
 
   override def getCommits(
       tableId: String,

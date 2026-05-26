@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.nio.file.FileAlreadyExistsException
 import java.time.Instant
-import java.util.{ConcurrentModificationException, Optional, UUID}
+import java.util.{ArrayList, ConcurrentModificationException, Optional, UUID}
 import java.util.concurrent.TimeUnit.{MINUTES, NANOSECONDS}
 
 import scala.collection.JavaConverters._
@@ -57,7 +57,7 @@ import org.apache.spark.sql.delta.stats.FileSizeHistogramUtils
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils, PartitionUtils, TransactionHelper}
 import org.apache.spark.sql.util.ScalaExtensions._
 import io.delta.storage.commit._
-import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
+import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 import org.apache.commons.lang3.NotImplementedException
@@ -2055,7 +2055,16 @@ trait OptimisticTransactionImpl extends TransactionHelper
         deltaLog.createLogDirectoriesIfNotExists()
       }
       val fsWriteStartNano = System.nanoTime()
-      val jsonActions = allActions.map(_.json)
+      // commitLarge streams actions; collect domain metadata while serializing so UC can apply
+      // the same domain updates atomically with the commit.
+      val domainMetadata = new ArrayList[AbstractDomainMetadata]()
+      val jsonActions = allActions.map { action =>
+        action match {
+          case dm: DomainMetadata => domainMetadata.add(dm)
+          case _ =>
+        }
+        action.json
+      }
       var commitSizeBytes = 0L
       jsonActions.map { action =>
           commitSizeBytes += action.size
@@ -2069,7 +2078,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
           )
         }
       val updatedActions = new UpdatedActions(
-        commitInfo, metadata, protocol, snapshot.metadata, snapshot.protocol)
+        commitInfo, metadata, protocol, snapshot.metadata, snapshot.protocol, domainMetadata)
       val commitResponse = TransactionExecutionObserver.withObserver(executionObserver) {
         effectiveTableCommitCoordinatorClient.commit(
           attemptVersion,

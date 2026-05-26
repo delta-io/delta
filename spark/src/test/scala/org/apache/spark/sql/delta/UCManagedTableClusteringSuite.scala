@@ -17,7 +17,11 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.DomainMetadata
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.{
+  CatalogOwnedTableUtils,
+  CatalogOwnedTestBaseSuite,
+  TrackingCommitCoordinatorClient
+}
 import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumn}
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 
@@ -66,6 +70,14 @@ class UCManagedTableClusteringSuite
 
       assert(version === snap.version + 1)
       assert(updatedSnapshot.domainMetadata.exists(_.configuration.contains("name")))
+
+      val coordinator = getCatalogOwnedCommitCoordinatorClient(
+        CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING)
+        .asInstanceOf[TrackingCommitCoordinatorClient]
+      val domainMetadata = coordinator.lastCommitUpdatedActions.getDomainMetadata
+      assert(domainMetadata.size() === 1)
+      assert(domainMetadata.get(0).getDomain === "delta.clustering")
+      assert(domainMetadata.get(0).getConfiguration.contains("name"))
     }
   }
 

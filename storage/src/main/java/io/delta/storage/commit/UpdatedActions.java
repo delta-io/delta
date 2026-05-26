@@ -17,8 +17,11 @@
 package io.delta.storage.commit;
 
 import io.delta.storage.commit.actions.AbstractCommitInfo;
+import io.delta.storage.commit.actions.AbstractDomainMetadata;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
+import java.util.Collections;
+import java.util.List;
 
 /**
  * A container class to inform the CommitCoordinatorClient about any changes in Protocol/Metadata
@@ -35,17 +38,30 @@ public class UpdatedActions {
 
   private AbstractProtocol oldProtocol;
 
+  private List<AbstractDomainMetadata> domainMetadata;
+
   public UpdatedActions(
       AbstractCommitInfo commitInfo,
       AbstractMetadata newMetadata,
       AbstractProtocol newProtocol,
       AbstractMetadata oldMetadata,
       AbstractProtocol oldProtocol) {
+    this(commitInfo, newMetadata, newProtocol, oldMetadata, oldProtocol, Collections.emptyList());
+  }
+
+  public UpdatedActions(
+      AbstractCommitInfo commitInfo,
+      AbstractMetadata newMetadata,
+      AbstractProtocol newProtocol,
+      AbstractMetadata oldMetadata,
+      AbstractProtocol oldProtocol,
+      List<AbstractDomainMetadata> domainMetadata) {
     this.commitInfo = commitInfo;
     this.newMetadata = newMetadata;
     this.newProtocol = newProtocol;
     this.oldMetadata = oldMetadata;
     this.oldProtocol = oldProtocol;
+    this.domainMetadata = domainMetadata == null ? Collections.emptyList() : domainMetadata;
   }
 
   public AbstractCommitInfo getCommitInfo() {
@@ -66,5 +82,9 @@ public class UpdatedActions {
 
   public AbstractProtocol getOldProtocol() {
     return oldProtocol;
+  }
+
+  public List<AbstractDomainMetadata> getDomainMetadata() {
+    return domainMetadata;
   }
 }

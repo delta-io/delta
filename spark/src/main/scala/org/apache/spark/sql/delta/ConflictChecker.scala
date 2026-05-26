@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.util.concurrent.TimeUnit
 
+import scala.collection.JavaConverters._
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.DeltaOperations.{OP_SET_TBLPROPERTIES, ROW_TRACKING_BACKFILL_OPERATION_NAME, ROW_TRACKING_UNBACKFILL_OPERATION_NAME}
@@ -32,6 +33,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils.CheckDeterministicOptions
 import org.apache.spark.sql.delta.util.FileNames
 import io.delta.storage.commit.UpdatedActions
+import io.delta.storage.commit.actions.{AbstractDomainMetadata => StorageAbstractDomainMetadata}
 import io.delta.storage.commit.uniform.UniformMetadata
 import org.apache.hadoop.fs.FileStatus
 
@@ -88,7 +90,13 @@ private[delta] case class CurrentTransactionInfo(
   def getUpdatedActions(
       oldMetadata: Metadata,
       oldProtocol: Protocol): UpdatedActions = {
-    new UpdatedActions(commitInfo.get, metadata, protocol, oldMetadata, oldProtocol)
+    new UpdatedActions(
+      commitInfo.get,
+      metadata,
+      protocol,
+      oldMetadata,
+      oldProtocol,
+      domainMetadata.map(_.asInstanceOf[StorageAbstractDomainMetadata]).asJava)
   }
 
   /** Whether this transaction wants to make any [[Metadata]] update */

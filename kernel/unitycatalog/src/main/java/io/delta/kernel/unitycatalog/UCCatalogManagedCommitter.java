@@ -462,6 +462,7 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
                 generateMetadataPayloadOpt(commitMetadata).map(MetadataAdapter::new),
                 Optional.empty() /* oldProtocol */,
                 commitMetadata.getNewProtocolOpt().map(ProtocolAdapter::new),
+                Collections.emptyList() /* domainMetadata */,
                 uniformMetadataOpt);
             return null;
           } catch (io.delta.storage.commit.CommitFailedException cfe) {

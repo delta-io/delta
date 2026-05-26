@@ -608,6 +608,7 @@ class TrackingCommitCoordinatorClient(
   val numGetCommitsCalled = new AtomicInteger(0)
   val numBackfillToVersionCalled = new AtomicInteger(0)
   val numRegisterTableCalled = new AtomicInteger(0)
+  @volatile var lastCommitUpdatedActions: UpdatedActions = _
 
   def recordOperation[T](op: String)(f: => T): T = {
     val oldInsideOperation = TrackingCommitCoordinatorClient.insideOperation.get()
@@ -635,6 +636,7 @@ class TrackingCommitCoordinatorClient(
       commitVersion: Long,
       actions: java.util.Iterator[String],
       updatedActions: UpdatedActions): CommitResponse = recordOperation("commit") {
+    lastCommitUpdatedActions = updatedActions
     delegatingCommitCoordinatorClient.commit(
       logStore,
       hadoopConf,
@@ -679,6 +681,7 @@ class TrackingCommitCoordinatorClient(
     numCommitsCalled.set(0)
     numGetCommitsCalled.set(0)
     numBackfillToVersionCalled.set(0)
+    lastCommitUpdatedActions = null
   }
 
   override def registerTable(
