@@ -95,6 +95,7 @@ import org.apache.hadoop.fs.Path;
  */
 public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
 
+  private static final int HTTP_BAD_REQUEST = 400;
   private static final int HTTP_CONFLICT = 409;
   private static final int HTTP_NOT_FOUND = 404;
 
@@ -872,6 +873,13 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     String responseBody = e.getResponseBody();
 
     switch (statusCode) {
+      case HTTP_BAD_REQUEST:
+        throw new CommitFailedException(
+            false /* retryable */,
+            false /* conflict */,
+            String.format("Invalid updateTable request for %s.%s.%s: %s",
+                catalog, schema, table, responseBody),
+            e);
       case HTTP_CONFLICT:
         throw new CommitFailedException(
             true /* retryable */,

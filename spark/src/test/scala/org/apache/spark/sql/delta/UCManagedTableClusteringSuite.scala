@@ -24,29 +24,17 @@ import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.catalyst.TableIdentifier
 
 /**
- * Unit tests for the kill switch that blocks clustering column changes on UC-managed
- * CatalogOwned tables. These tests bypass UCSingleCatalog (only available in sparkUnityCatalog)
- * by overriding [[OptimisticTransaction.isUCManagedTable]] in a test-local subclass.
- *
- * The kill switch fires in [[OptimisticTransaction.commitLarge]], which is used by RESTORE TABLE
- * and bypasses prepareCommit.
+ * Unit tests for clustering domain metadata changes on CatalogOwned tables through
+ * [[OptimisticTransaction.commitLarge]], which is used by RESTORE TABLE and bypasses
+ * prepareCommit.
  */
-class UCManagedTableKillSwitchSuite
+class UCManagedTableClusteringSuite
   extends CatalogOwnedTestBaseSuite
   with DeltaSQLTestUtils
   with DeltaSQLCommandTest {
 
   // Enable CatalogOwned by default so every CREATE TABLE produces a CatalogOwned table.
   override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
-
-  /**
-   * Test subclass that pretends it targets a UC-managed table, bypassing the real
-   * [[CatalogOwnedTableUtils.getCatalogName]] check that requires UCSingleCatalog.
-   */
-  private class UCManagedTxn(log: DeltaLog, snap: Snapshot)
-      extends OptimisticTransaction(log, None, snap) {
-    override protected[delta] lazy val isUCManagedTable: Boolean = true
-  }
 
   private val clusteringOnId: Seq[DomainMetadata] =
     Seq(ClusteredTableUtils.createDomainMetadata(Seq(ClusteringColumn(Seq("id")))))
@@ -65,27 +53,28 @@ class UCManagedTableKillSwitchSuite
     (log, snap)
   }
 
-  test("commitLarge blocks clustering change on UC-managed CatalogOwned table") {
+  test("commitLarge allows clustering change on CatalogOwned table") {
     withTable("tbl") {
       val (log, snap) = createClusteredTable("tbl")
-      val ex = intercept[DeltaAnalysisException] {
-        new UCManagedTxn(log, snap).commitLarge(
-          spark,
-          clusteringOnName.iterator,
-          newProtocolOpt = None,
-          op = DeltaOperations.Restore(Some(0L), None),
-          context = Map.empty,
-          metrics = Map.empty)
-      }
-      assert(ex.getMessage.contains("Clustering column changes on Unity Catalog managed tables"))
+      val (version, updatedSnapshot) = new OptimisticTransaction(log, None, snap).commitLarge(
+        spark,
+        clusteringOnName.iterator,
+        newProtocolOpt = None,
+        op = DeltaOperations.Restore(Some(0L), None),
+        context = Map.empty,
+        metrics = Map.empty)
+
+      assert(version === snap.version + 1)
+      assert(updatedSnapshot.domainMetadata.exists(_.configuration.contains("name")))
     }
   }
 
-  test("commit with unchanged clustering is allowed on UC-managed CatalogOwned table") {
+  test("commit with unchanged clustering is allowed on CatalogOwned table") {
     withTable("tbl") {
       val (log, snap) = createClusteredTable("tbl")
-      // Commit the same clustering DomainMetadata that the snapshot already has - must not throw.
-      new UCManagedTxn(log, snap).commit(clusteringOnId, DeltaOperations.ManualUpdate)
+      // Commit the same clustering DomainMetadata that the snapshot already has.
+      new OptimisticTransaction(log, None, snap)
+        .commit(clusteringOnId, DeltaOperations.ManualUpdate)
     }
   }
 }
