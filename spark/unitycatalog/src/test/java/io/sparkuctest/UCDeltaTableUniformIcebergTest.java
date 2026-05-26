@@ -66,32 +66,6 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
   }
 
   /**
-   * Calls {@code loadTable} on the Delta REST API, validates the uniform fields in the response,
-   * and returns the Iceberg metadata JSON file path for the given table.
-   *
-   * @param expectedConvertedDeltaVersion the Delta version the server should report as converted
-   */
-  private String verifyUCMetadataAndFetchIcebergPath(
-      String fullTableName, long expectedConvertedDeltaVersion) throws Exception {
-    String[] parts = fullTableName.split("\\.");
-    TablesApi deltaApi = new TablesApi(unityCatalogInfo().createApiClient());
-    LoadTableResponse resp = deltaApi.loadTable(parts[0], parts[1], parts[2]);
-    if (resp.getUniform() == null || resp.getUniform().getIceberg() == null) {
-      throw new IllegalStateException("No Iceberg metadata found for table: " + fullTableName);
-    }
-    var iceberg = resp.getUniform().getIceberg();
-    Assertions.assertEquals(
-        expectedConvertedDeltaVersion,
-        iceberg.getConvertedDeltaVersion().longValue(),
-        "loadTable response convertedDeltaVersion mismatch");
-    Assertions.assertNotNull(
-        iceberg.getConvertedDeltaTimestamp(), "loadTable response convertedDeltaTimestamp is null");
-    // Validate timestamp is a valid epoch-millis value by parsing it as an Instant.
-    Instant.ofEpochMilli(iceberg.getConvertedDeltaTimestamp());
-    return iceberg.getMetadataLocation();
-  }
-
-  /**
    * Builds a Hadoop {@link Configuration} seeded from the Spark session (which registers {@link
    * S3CredentialFileSystem} as {@code fs.s3.impl}) and enriched with the UC-vended storage
    * credentials from the table's catalog storage properties.
@@ -110,6 +84,58 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
   }
 
   /**
+   * Verifies a non-incremental UniForm Iceberg conversion: converted {@code delta-version} matches
+   * the expected version and {@code base-delta-version} is absent.
+   *
+   * @param expectSnapshot whether to assert that an Iceberg current snapshot exists. Pass {@code
+   *     true} for CTAS or any write that produces data files (snapshot must exist); pass {@code
+   *     false} for an empty {@code CREATE TABLE} where the initial Iceberg state has no snapshot.
+   */
+  private IcebergMeta verifyNonIncrementalUniForm(
+      String fullTableName, long expectedDeltaVersion, boolean expectSnapshot) throws Exception {
+    IcebergMeta meta = verifyUCMetadataAndReadIceberg(fullTableName, expectedDeltaVersion);
+    Assertions.assertEquals(
+        String.valueOf(expectedDeltaVersion),
+        meta.properties.get("delta-version"),
+        "delta-version mismatch after non-incremental conversion");
+    Assertions.assertNull(
+        meta.properties.get("base-delta-version"),
+        "Non-incremental conversion must not set base-delta-version");
+    if (expectSnapshot) {
+      Assertions.assertTrue(
+          meta.currentSnapshotId != -1L, "Iceberg snapshot should exist after conversion");
+    }
+    return meta;
+  }
+
+  /**
+   * Verifies an incremental UniForm Iceberg conversion: converted {@code delta-version} matches,
+   * {@code base-delta-version} equals {@code expectedBaseDeltaVersion}, and the Iceberg snapshot
+   * chain is preserved ({@code currentSnapshotParentId} equals {@code expectedParentSnapshotId}).
+   */
+  private IcebergMeta verifyIncrementalUniForm(
+      String fullTableName,
+      long expectedDeltaVersion,
+      long expectedBaseDeltaVersion,
+      long expectedParentSnapshotId)
+      throws Exception {
+    IcebergMeta meta = verifyUCMetadataAndReadIceberg(fullTableName, expectedDeltaVersion);
+    Assertions.assertEquals(
+        String.valueOf(expectedDeltaVersion),
+        meta.properties.get("delta-version"),
+        "delta-version mismatch after incremental conversion");
+    Assertions.assertEquals(
+        String.valueOf(expectedBaseDeltaVersion),
+        meta.properties.get("base-delta-version"),
+        "Incremental conversion: base-delta-version should equal prior converted version");
+    Assertions.assertEquals(
+        expectedParentSnapshotId,
+        meta.currentSnapshotParentId,
+        "Iceberg snapshot chain must be preserved: parent snapshot ID mismatch");
+    return meta;
+  }
+
+  /**
    * Verifies UniForm Iceberg incremental conversion works correctly on the UC REST path (real
    * embedded UC server).
    *
@@ -118,13 +144,13 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
    * <ul>
    *   <li>CREATE TABLE → full Iceberg conversion at delta v0: no {@code base-delta-version}.
    *   <li>Write 1 → incremental conversion: {@code base-delta-version=0} (the CREATE TABLE
-   *       version), Iceberg snapshot parent equals the CREATE TABLE snapshot (or -1 if empty).
-   *   <li>Write 2 → incremental conversion: {@code base-delta-version=1}, and the Iceberg snapshot
-   *       chain is preserved.
+   *       version), Iceberg snapshot parent equals the CREATE TABLE snapshot.
+   *   <li>Write 2 → incremental conversion: {@code base-delta-version=1}, Iceberg snapshot chain
+   *       preserved.
    * </ul>
    */
   @Test
-  public void uniformIcebergIncrementalConversion() throws Exception {
+  public void uniformIcebergIncrementalConversionTest() throws Exception {
     Assumptions.assumeTrue(
         Boolean.getBoolean("supportIceberg"),
         "Skipping: Iceberg support not available for this Spark version");
@@ -136,53 +162,64 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
         UNIFORM_TABLE_PROPS,
         fullTableName -> {
           // CREATE TABLE atomically generates a full Iceberg conversion at delta version 0.
-          IcebergMeta metaCreate = verifyUCMetadataAndReadIceberg(fullTableName, 0L);
-          Assertions.assertEquals(
-              "0",
-              metaCreate.properties.get("delta-version"),
-              "CREATE TABLE must produce Iceberg metadata at delta-version 0");
-          Assertions.assertNull(
-              metaCreate.properties.get("base-delta-version"),
-              "CREATE TABLE Iceberg conversion must be full (no base-delta-version)");
+          // The empty table has no data files, so no Iceberg snapshot exists yet.
+          IcebergMeta meta0 =
+              verifyNonIncrementalUniForm(fullTableName, 0L, /* expectSnapshot= */ false);
 
-          // Write 1 — incremental conversion (base = delta v0 from CREATE TABLE)
+          // Write 1 — incremental from delta v0 (CREATE TABLE)
           sql("INSERT INTO %s VALUES (1, 'a')", fullTableName);
           check(fullTableName, List.of(row("1", "a")));
           assertNoUniformPropsOnServer(fullTableName);
-          IcebergMeta meta1 = verifyUCMetadataAndReadIceberg(fullTableName, 1L);
-          Assertions.assertEquals(
-              "1",
-              meta1.properties.get("delta-version"),
-              "After first write, delta-version in Iceberg metadata should be 1");
-          Assertions.assertEquals(
-              "0",
-              meta1.properties.get("base-delta-version"),
-              "First write must be incremental from CREATE TABLE (base-delta-version = 0)");
-          Assertions.assertTrue(
-              meta1.currentSnapshotId != -1L, "Iceberg snapshot should exist after first write");
-          Assertions.assertEquals(
-              metaCreate.currentSnapshotId,
-              meta1.currentSnapshotParentId,
-              "First write snapshot's parent must equal the CREATE TABLE snapshot");
+          IcebergMeta meta1 =
+              verifyIncrementalUniForm(
+                  fullTableName, 1L, 0L, /* expectedParentSnapshotId= */ meta0.currentSnapshotId);
 
-          // Write 2 — incremental conversion from delta v1
+          // Write 2 — incremental from delta v1
           sql("INSERT INTO %s VALUES (2, 'b')", fullTableName);
           check(fullTableName, List.of(row("1", "a"), row("2", "b")));
           assertNoUniformPropsOnServer(fullTableName);
-          IcebergMeta meta2 = verifyUCMetadataAndReadIceberg(fullTableName, 2L);
-          Assertions.assertEquals(
-              "2",
-              meta2.properties.get("delta-version"),
-              "After second write, delta-version in Iceberg metadata should be 2");
-          Assertions.assertEquals(
-              "1",
-              meta2.properties.get("base-delta-version"),
-              "Second conversion must be incremental: base-delta-version should equal 1");
-          Assertions.assertEquals(
-              meta1.currentSnapshotId,
-              meta2.currentSnapshotParentId,
-              "Iceberg snapshot chain must be preserved: parent of snapshot-2 must be snapshot-1");
+          verifyIncrementalUniForm(
+              fullTableName, 2L, 1L, /* expectedParentSnapshotId= */ meta1.currentSnapshotId);
         });
+  }
+
+  /**
+   * Verifies UniForm Iceberg incremental conversion for a CTAS (CREATE TABLE AS SELECT) table.
+   *
+   * <p>CTAS writes data into the table atomically at delta version 0, so the initial Iceberg
+   * conversion at v0 is non-incremental and already has a snapshot. Subsequent writes must be
+   * incremental and preserve the snapshot chain.
+   */
+  @Test
+  public void uniformIcebergCTASTest() throws Exception {
+    Assumptions.assumeTrue(
+        Boolean.getBoolean("supportIceberg"),
+        "Skipping: Iceberg support not available for this Spark version");
+    String fullTableName = fullTableName("uniform_iceberg_ctas");
+    sql("DROP TABLE IF EXISTS %s", fullTableName);
+    try {
+      // CTAS: schema is inferred from the SELECT; data lands atomically at delta version 0.
+      sql(
+          "CREATE TABLE %s USING DELTA"
+              + " TBLPROPERTIES ('delta.feature.catalogManaged'='supported', %s)"
+              + " AS SELECT 1 AS id, 'a' AS data",
+          fullTableName, UNIFORM_TABLE_PROPS);
+
+      // CTAS writes data at delta v0, so the initial Iceberg conversion has a snapshot.
+      check(fullTableName, List.of(row("1", "a")));
+      assertNoUniformPropsOnServer(fullTableName);
+      IcebergMeta meta0 =
+          verifyNonIncrementalUniForm(fullTableName, 0L, /* expectSnapshot= */ true);
+
+      // Write 1 — incremental from delta v0 (CTAS)
+      sql("INSERT INTO %s VALUES (2, 'b')", fullTableName);
+      check(fullTableName, List.of(row("1", "a"), row("2", "b")));
+      assertNoUniformPropsOnServer(fullTableName);
+      verifyIncrementalUniForm(
+          fullTableName, 1L, 0L, /* expectedParentSnapshotId= */ meta0.currentSnapshotId);
+    } finally {
+      sql("DROP TABLE IF EXISTS %s", fullTableName);
+    }
   }
 
   // ---------- Iceberg metadata reading ----------
@@ -206,6 +243,32 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
         verifyUCMetadataAndFetchIcebergPath(fullTableName, expectedConvertedDeltaVersion);
     Configuration conf = buildTestHadoopConf(fullTableName);
     return readIcebergMetaViaHadoopTables(icebergMetadataPath, conf);
+  }
+
+  /**
+   * Calls {@code loadTable} on the Delta REST API, validates the uniform fields in the response,
+   * and returns the Iceberg metadata JSON file path for the given table.
+   *
+   * @param expectedConvertedDeltaVersion the Delta version the server should report as converted
+   */
+  private String verifyUCMetadataAndFetchIcebergPath(
+      String fullTableName, long expectedConvertedDeltaVersion) throws Exception {
+    String[] parts = fullTableName.split("\\.");
+    TablesApi deltaApi = new TablesApi(unityCatalogInfo().createApiClient());
+    LoadTableResponse resp = deltaApi.loadTable(parts[0], parts[1], parts[2]);
+    if (resp.getUniform() == null || resp.getUniform().getIceberg() == null) {
+      throw new IllegalStateException("No Iceberg metadata found for table: " + fullTableName);
+    }
+    var iceberg = resp.getUniform().getIceberg();
+    Assertions.assertEquals(
+        expectedConvertedDeltaVersion,
+        iceberg.getConvertedDeltaVersion().longValue(),
+        "loadTable response convertedDeltaVersion mismatch");
+    Assertions.assertNotNull(
+        iceberg.getConvertedDeltaTimestamp(), "loadTable response convertedDeltaTimestamp is null");
+    // Validate timestamp is a valid epoch-millis value by parsing it as an Instant.
+    Instant.ofEpochMilli(iceberg.getConvertedDeltaTimestamp());
+    return iceberg.getMetadataLocation();
   }
 
   private IcebergMeta readIcebergMetaViaHadoopTables(String icebergMetadataPath, Configuration conf)
