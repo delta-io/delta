@@ -653,11 +653,11 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
     // default) cannot fast-forward the seeded v0 entry past the upcoming v2 ALTER TABLE.
     spark.sql(String.format("INSERT INTO %s VALUES (1, 'a')", tableName));
 
-    // Evolve the table — version 2 has an extra non-partition column.
+    // Evolve the table — version 1 has an extra non-partition column.
     spark.sql(String.format("ALTER TABLE %s ADD COLUMNS (value DOUBLE)", tableName));
 
     // Construct DeltaV2Table with the schema-tracking option pointing at the seeded log. The
-    // snapshot is at v2 (3 columns) but the persisted entry is at v0 (2 columns). Default to
+    // snapshot is at v1 (3 columns) but the persisted entry is at v0 (2 columns). Default to
     // the catalog-table constructor since that's how production code typically loads the table.
     Identifier identifier = Identifier.of(new String[] {"default"}, tableName);
     Map<String, String> options = new HashMap<>();
@@ -676,7 +676,7 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
       table = new DeltaV2Table(identifier, catalogTable, options);
     }
 
-    // Persisted metadata wins: schema reflects v0 (2 columns), not v2 (3 columns).
+    // Persisted metadata wins: schema reflects v0 (2 columns), not v1 (3 columns).
     // Public schema layout is data fields followed by partition fields, so [id, name].
     StructType schema = table.schema();
     assertEquals(2, schema.fields().length, "Persisted entry should override snapshot schema");
