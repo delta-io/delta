@@ -119,10 +119,14 @@ class DeltaParquetFormatVersionSuite
    * Guard for tests that need SPARK-56414 behavior (per-write options overriding session conf
    * in Parquet writes). SPARK-56414 is merged into Spark 4.2, but Delta's DeltaFileFormatWriter
    * (a fork of FileFormatWriter) does not yet call mergeWriteOptionsIntoHadoopConf. Skip on
-   * SNAPSHOT until DeltaFileFormatWriter is updated.
+   * Spark pre-release builds (SNAPSHOT, preview) until DeltaFileFormatWriter is updated.
    */
   private def assumeSpark56414Available(): Unit = {
-    assume(spark.version >= "4.2" && !spark.version.contains("SNAPSHOT"),
+    val sparkVersion = spark.version
+    assume(
+      sparkVersion >= "4.2" &&
+        !sparkVersion.contains("SNAPSHOT") &&
+        !sparkVersion.contains("preview"),
       "DeltaFileFormatWriter does not yet merge per-write options into Hadoop conf (SPARK-56414)")
   }
 

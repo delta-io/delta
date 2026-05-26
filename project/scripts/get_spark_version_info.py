@@ -111,10 +111,11 @@ def main():
             print(json.dumps(matrix_versions))
 
         elif args.released_spark_versions:
-            # Only include released versions (no -SNAPSHOT in fullVersion)
+            # Only include released versions: no `-` suffix means the fullVersion is a
+            # plain `X.Y.Z` (excludes `-SNAPSHOT`, `-previewN`, `-rcN`, etc.).
             matrix_versions = []
             for v in versions:
-                if "-SNAPSHOT" not in v["fullVersion"]:
+                if "-" not in v["fullVersion"]:
                     matrix_versions.append(v["shortVersion"])
             print(json.dumps(matrix_versions))
 
