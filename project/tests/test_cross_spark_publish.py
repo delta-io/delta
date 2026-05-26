@@ -108,7 +108,7 @@ class SparkVersionSpec:
 SPARK_VERSIONS: Dict[str, SparkVersionSpec] = {
     "4.0.1": SparkVersionSpec(suffix="_4.0", support_iceberg=True, support_hudi=True),
     "4.1.0": SparkVersionSpec(suffix="_4.1", support_iceberg=False, support_hudi=False),
-    "4.2.0-SNAPSHOT": SparkVersionSpec(suffix="_4.2", support_iceberg=False, support_hudi=False)
+    "4.2.0-preview5": SparkVersionSpec(suffix="_4.2", support_iceberg=False, support_hudi=False)
 }
 
 # The default Spark version
@@ -320,9 +320,9 @@ class CrossSparkPublishTest:
             )
 
             # Parse output - each line is a Spark version
-            # Version format: X.Y.Z or X.Y.Z-SNAPSHOT
+            # Version format: X.Y.Z, X.Y.Z-SNAPSHOT, X.Y.Z-previewN
             import re
-            version_pattern = re.compile(r'^\d+\.\d+\.\d+(-SNAPSHOT)?$')
+            version_pattern = re.compile(r'^\d+\.\d+\.\d+(-(SNAPSHOT|preview\d+))?$')
 
             build_versions = set()
             for line in result.stdout.strip().split('\n'):
@@ -469,7 +469,7 @@ class SparkVersionsScriptTest:
             return False
 
     def test_released_spark_versions(self) -> bool:
-        """Test that --released-spark-versions excludes snapshots."""
+        """Test that --released-spark-versions excludes snapshots and pre-releases."""
         if not self.ensure_json_exists():
             return False
 
@@ -493,22 +493,30 @@ class SparkVersionsScriptTest:
                 print("  ✗ All entries must be strings")
                 return False
 
-            # Load JSON and verify snapshots are excluded
+            # Load JSON and verify pre-release versions are excluded
+            # (`-SNAPSHOT`, `-previewN`).
+            pre_release_markers = ("-SNAPSHOT", "-preview")
+
+            def is_pre_release(full_version: str) -> bool:
+                return any(m in full_version for m in pre_release_markers)
+
             with open(self.json_path, 'r') as f:
                 data = json.load(f)
 
-            expected_count = sum(1 for entry in data if "-SNAPSHOT" not in entry["fullVersion"])
+            expected_count = sum(1 for entry in data if not is_pre_release(entry["fullVersion"]))
             if len(released_versions) != expected_count:
                 print(f"  ✗ Expected {expected_count} released versions, got {len(released_versions)}")
                 return False
 
-            # Verify no snapshot versions included
+            # Verify no pre-release versions included (rough check via shortVersion lookup)
+            full_versions_by_short = {entry["shortVersion"]: entry["fullVersion"] for entry in data}
             for version in released_versions:
-                if "SNAPSHOT" in version.upper():
-                    print(f"  ✗ Released versions should not include snapshots: {version}")
+                full = full_versions_by_short.get(version, "")
+                if is_pre_release(full):
+                    print(f"  ✗ Released versions should not include pre-releases: {version} ({full})")
                     return False
 
-            print(f"  ✓ --released-spark-versions: {released_versions} (snapshots excluded)")
+            print(f"  ✓ --released-spark-versions: {released_versions} (snapshots and previews excluded)")
             return True
 
         except (subprocess.CalledProcessError, json.JSONDecodeError) as e:
