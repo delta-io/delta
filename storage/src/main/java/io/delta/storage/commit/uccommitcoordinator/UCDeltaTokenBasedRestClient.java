@@ -705,8 +705,9 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       if (dm.isRemoved()) {
         continue;
       }
-      switch (dm.getDomain()) {
-        case "delta.clustering": {
+      String domain = dm.getDomain();
+      switch (domain) {
+        case DomainMetadataUpdates.JSON_PROPERTY_DELTA_CLUSTERING: {
           ClusteringDomainConfig config = DOMAIN_METADATA_MAPPER.readValue(
               dm.getConfiguration(), ClusteringDomainConfig.class);
           if (config.clusteringColumns != null) {
@@ -716,7 +717,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
           }
           break;
         }
-        case "delta.rowTracking": {
+        case DomainMetadataUpdates.JSON_PROPERTY_DELTA_ROW_TRACKING: {
           RowTrackingDomainConfig config = DOMAIN_METADATA_MAPPER.readValue(
               dm.getConfiguration(), RowTrackingDomainConfig.class);
           if (config.rowIdHighWaterMark != null) {
@@ -727,8 +728,11 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
           break;
         }
         default:
-          // Unknown domain — UC SDK has no field for it; skip.
-          break;
+          throw new IOException(
+              "Unsupported Delta domain metadata domain '" + domain + "': UC SDK only models "
+                  + DomainMetadataUpdates.JSON_PROPERTY_DELTA_CLUSTERING + " and "
+                  + DomainMetadataUpdates.JSON_PROPERTY_DELTA_ROW_TRACKING + ". Add SDK "
+                  + "support before issuing writes that produce this domain.");
       }
     }
     return any ? updates : null;
