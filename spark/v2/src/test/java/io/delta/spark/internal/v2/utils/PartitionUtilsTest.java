@@ -451,18 +451,22 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
             pf.fileSize(),
             pf.otherConstantMetadataColumnValues());
     assertEquals(
-        FileFormat$.MODULE$.BASE_METADATA_EXTRACTORS()
+        FileFormat$.MODULE$
+            .BASE_METADATA_EXTRACTORS()
             .apply(FileFormat$.MODULE$.FILE_PATH())
             .apply(referenceFile),
-        FileFormat$.MODULE$.BASE_METADATA_EXTRACTORS()
+        FileFormat$.MODULE$
+            .BASE_METADATA_EXTRACTORS()
             .apply(FileFormat$.MODULE$.FILE_PATH())
             .apply(pf),
         "_metadata.file_path: AddFile.path + tablePath (same as buildPartitionedFile) must match");
     assertEquals(
-        FileFormat$.MODULE$.BASE_METADATA_EXTRACTORS()
+        FileFormat$.MODULE$
+            .BASE_METADATA_EXTRACTORS()
             .apply(FileFormat$.MODULE$.FILE_NAME())
             .apply(referenceFile),
-        FileFormat$.MODULE$.BASE_METADATA_EXTRACTORS()
+        FileFormat$.MODULE$
+            .BASE_METADATA_EXTRACTORS()
             .apply(FileFormat$.MODULE$.FILE_NAME())
             .apply(pf),
         "_metadata.file_name: must match name derived from the same combined path");

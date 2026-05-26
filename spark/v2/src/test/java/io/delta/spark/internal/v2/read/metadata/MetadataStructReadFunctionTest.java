@@ -89,7 +89,8 @@ public class MetadataStructReadFunctionTest {
     assertEquals(2, out.numFields());
     InternalRow metadata = out.getStruct(1, 2);
     assertEquals(
-        FileFormat$.MODULE$.BASE_METADATA_EXTRACTORS()
+        FileFormat$.MODULE$
+            .BASE_METADATA_EXTRACTORS()
             .apply(FileFormat$.MODULE$.FILE_PATH())
             .apply(file),
         metadata.getUTF8String(0));
@@ -129,12 +130,14 @@ public class MetadataStructReadFunctionTest {
     InternalRow metadata = result.get(0).getStruct(1, 6);
 
     assertEquals(
-        FileFormat$.MODULE$.BASE_METADATA_EXTRACTORS()
+        FileFormat$.MODULE$
+            .BASE_METADATA_EXTRACTORS()
             .apply(FileFormat$.MODULE$.FILE_PATH())
             .apply(file),
         metadata.getUTF8String(0));
     assertEquals(
-        FileFormat$.MODULE$.BASE_METADATA_EXTRACTORS()
+        FileFormat$.MODULE$
+            .BASE_METADATA_EXTRACTORS()
             .apply(FileFormat$.MODULE$.FILE_NAME())
             .apply(file),
         metadata.getUTF8String(1));

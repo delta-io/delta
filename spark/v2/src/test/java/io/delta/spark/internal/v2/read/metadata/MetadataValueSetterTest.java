@@ -55,7 +55,8 @@ public class MetadataValueSetterTest {
     bound.setValue(metadataRow, 0, row(1L));
 
     assertEquals(
-        FileFormat$.MODULE$.BASE_METADATA_EXTRACTORS()
+        FileFormat$.MODULE$
+            .BASE_METADATA_EXTRACTORS()
             .apply(FileFormat$.MODULE$.FILE_PATH())
             .apply(file),
         metadataRow.get(0, null));
