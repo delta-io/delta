@@ -1905,3 +1905,28 @@ class DeltaTableRefreshAndPinningConnectExternalSessionSuite
   extends DeltaTableRefreshAndPinningConnectSuiteBase {
   override protected def useExternalSession: Boolean = true
 }
+
+/**
+ * V2_ENABLE_MODE = STRICT with Connect, same-session writes.
+ * Sets the server-side V2 enable mode to STRICT so that all table operations
+ * go through the DSv2 connector path.
+ */
+class DeltaTableRefreshAndPinningConnectStrictModeSuite
+  extends DeltaTableRefreshAndPinningConnectSuiteBase {
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    spark.sql("SET spark.databricks.delta.v2.enableMode=STRICT")
+  }
+}
+
+/**
+ * V2_ENABLE_MODE = STRICT with Connect, external session writes.
+ */
+class DeltaTableRefreshAndPinningConnectStrictModeExternalSessionSuite
+  extends DeltaTableRefreshAndPinningConnectSuiteBase {
+  override protected def useExternalSession: Boolean = true
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    spark.sql("SET spark.databricks.delta.v2.enableMode=STRICT")
+  }
+}
