@@ -89,8 +89,10 @@ public class MetadataStructReadFunctionTest {
     assertEquals(2, out.numFields());
     InternalRow metadata = out.getStruct(1, 2);
     assertEquals(
-        FileFormat$.MODULE$.getDisplayPath(file.filePath(), true),
-        metadata.getUTF8String(0).toString());
+        FileFormat$.MODULE$.BASE_METADATA_EXTRACTORS()
+            .apply(FileFormat$.MODULE$.FILE_PATH())
+            .apply(file),
+        metadata.getUTF8String(0));
     assertEquals(9999L, metadata.getLong(1));
   }
 
@@ -127,10 +129,15 @@ public class MetadataStructReadFunctionTest {
     InternalRow metadata = result.get(0).getStruct(1, 6);
 
     assertEquals(
-        FileFormat$.MODULE$.getDisplayPath(file.filePath(), true),
-        metadata.getUTF8String(0).toString());
+        FileFormat$.MODULE$.BASE_METADATA_EXTRACTORS()
+            .apply(FileFormat$.MODULE$.FILE_PATH())
+            .apply(file),
+        metadata.getUTF8String(0));
     assertEquals(
-        FileFormat$.MODULE$.getDisplayName(file.filePath()), metadata.getUTF8String(1).toString());
+        FileFormat$.MODULE$.BASE_METADATA_EXTRACTORS()
+            .apply(FileFormat$.MODULE$.FILE_NAME())
+            .apply(file),
+        metadata.getUTF8String(1));
     assertEquals(999L, metadata.getLong(2));
     assertEquals(7L, metadata.getLong(3));
     assertEquals(42L, metadata.getLong(4));

@@ -31,7 +31,6 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.read.CDCDataFile;
 import java.io.IOException;
-import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.time.ZoneId;
@@ -441,14 +440,32 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
     SparkPath reconstructed =
         SparkPath.fromUrlString(new Path(normalizedTablePath, addFile.getPath()).toString());
 
+    PartitionedFile referenceFile =
+        new PartitionedFile(
+            pf.partitionValues(),
+            reconstructed,
+            pf.start(),
+            pf.length(),
+            pf.locations(),
+            pf.modificationTime(),
+            pf.fileSize(),
+            pf.otherConstantMetadataColumnValues());
     assertEquals(
-        FileFormat$.MODULE$.getDisplayPath(reconstructed, true),
-        FileFormat$.MODULE$.getDisplayPath(pf.filePath(), true),
+        FileFormat$.MODULE$.BASE_METADATA_EXTRACTORS()
+            .apply(FileFormat$.MODULE$.FILE_PATH())
+            .apply(referenceFile),
+        FileFormat$.MODULE$.BASE_METADATA_EXTRACTORS()
+            .apply(FileFormat$.MODULE$.FILE_PATH())
+            .apply(pf),
         "_metadata.file_path: AddFile.path + tablePath (same as buildPartitionedFile) must match");
     assertEquals(
-        FileFormat$.MODULE$.getDisplayName(reconstructed),
-        FileFormat$.MODULE$.getDisplayName(pf.filePath()),
-        "_metadata.file_name: must match display name derived from the same combined path");
+        FileFormat$.MODULE$.BASE_METADATA_EXTRACTORS()
+            .apply(FileFormat$.MODULE$.FILE_NAME())
+            .apply(referenceFile),
+        FileFormat$.MODULE$.BASE_METADATA_EXTRACTORS()
+            .apply(FileFormat$.MODULE$.FILE_NAME())
+            .apply(pf),
+        "_metadata.file_name: must match name derived from the same combined path");
 
     assertEquals(0L, pf.start());
     assertEquals(addFile.getSize(), pf.length());
@@ -458,12 +475,11 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
 
   /**
    * Table root containing spaces: {@link PartitionUtils#buildPartitionedFile} still builds a {@link
-   * SparkPath} string from {@code Path(table, addFile.path)}, but {@code FileFormat.getDisplayPath}
-   * (and thus SQL {@code _metadata.file_path}) parses that string as a URI and can throw {@link
-   * URISyntaxException} until the path is URI-safe.
+   * SparkPath} string from {@code Path(table, addFile.path)}. The url-encoded form must match a
+   * direct {@code Path(table, addFile.path)} reconstruction.
    */
   @Test
-  public void testBuildPartitionedFile_SpaceInTableDirectory_GetDisplayPathNotUriSafe()
+  public void testBuildPartitionedFile_SpaceInTableDirectory_PathStringMatchesReconstruction()
       throws Exception {
     String unique = "meta_space_" + System.nanoTime();
     java.nio.file.Path parent =
@@ -491,9 +507,6 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
         reconstructed.urlEncoded(),
         pf.filePath().urlEncoded(),
         "One-shot path string from AddFile + table root matches PartitionedFile.filePath");
-
-    assertThrows(
-        URISyntaxException.class, () -> FileFormat$.MODULE$.getDisplayPath(pf.filePath(), true));
   }
 
   @Test

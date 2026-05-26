@@ -25,7 +25,6 @@ import org.apache.spark.sql.delta.DefaultRowCommitVersion$;
 import org.apache.spark.sql.delta.RowId$;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
-import org.apache.spark.unsafe.types.UTF8String;
 import org.junit.jupiter.api.Test;
 import scala.Tuple2;
 import scala.collection.immutable.Map$;
@@ -56,8 +55,10 @@ public class MetadataValueSetterTest {
     bound.setValue(metadataRow, 0, row(1L));
 
     assertEquals(
-        FileFormat$.MODULE$.getDisplayPath(file.filePath(), true),
-        ((UTF8String) metadataRow.get(0, null)).toString());
+        FileFormat$.MODULE$.BASE_METADATA_EXTRACTORS()
+            .apply(FileFormat$.MODULE$.FILE_PATH())
+            .apply(file),
+        metadataRow.get(0, null));
   }
 
   @Test
