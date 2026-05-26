@@ -1191,8 +1191,8 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       } else {
         checkError(
           exception = intercept[AnalysisException] { spark.sql(sqlJoin).collect() },
-          condition = "AMBIGUOUS_COLUMN_OR_FIELD"
-      )
+          condition = "AMBIGUOUS_COLUMN_OR_FIELD")
+      }
     }
   }
 
