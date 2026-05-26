@@ -1636,8 +1636,8 @@ class DeltaTableRefreshAndPinningStrictModeSuite
 /**
  * V2_ENABLE_MODE = STRICT with external session writes.
  *
- * Known failures: Same V2 catalog schema caching issues as DeltaTableRefreshAndPinningStrictModeSuite.
- * See that class's Scaladoc for details.
+ * Known failures: Same V2 catalog schema caching issues as
+ * DeltaTableRefreshAndPinningStrictModeSuite. See that class for details.
  */
 class DeltaTableRefreshAndPinningStrictModeExternalSessionSuite
   extends DeltaTableRefreshAndPinningSuiteBase {

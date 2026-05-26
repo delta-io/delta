@@ -1922,14 +1922,15 @@ class DeltaTableRefreshAndPinningConnectStrictModeSuite
 
   // All tests fail because Connect server lacks delta-kernel-defaults jar.
   // Wrap every test to assert the expected ClassNotFoundException.
-  override def test(testName: String)(testFun: => Any)(implicit
+  override def test(
+      testName: String,
+      testTags: org.scalatest.Tag*)(
+      testFun: => Any)(implicit
       pos: org.scalactic.source.Position): Unit = {
-    super.test(testName) {
-      val exception = intercept[SparkException] {
-        testFun
-      }
+    super.test(testName, testTags: _*) {
+      val exception = intercept[SparkException] { testFun }
       assert(exception.getMessage.contains("DefaultEngine"),
-        s"Expected DefaultEngine ClassNotFoundException but got: ${exception.getMessage}")
+        s"Expected DefaultEngine error but got: ${exception.getMessage}")
     }(pos)
   }
 }
@@ -1949,14 +1950,15 @@ class DeltaTableRefreshAndPinningConnectStrictModeExternalSessionSuite
   }
 
   // All tests fail because Connect server lacks delta-kernel-defaults jar.
-  override def test(testName: String)(testFun: => Any)(implicit
+  override def test(
+      testName: String,
+      testTags: org.scalatest.Tag*)(
+      testFun: => Any)(implicit
       pos: org.scalactic.source.Position): Unit = {
-    super.test(testName) {
-      val exception = intercept[SparkException] {
-        testFun
-      }
+    super.test(testName, testTags: _*) {
+      val exception = intercept[SparkException] { testFun }
       assert(exception.getMessage.contains("DefaultEngine"),
-        s"Expected DefaultEngine ClassNotFoundException but got: ${exception.getMessage}")
+        s"Expected DefaultEngine error but got: ${exception.getMessage}")
     }(pos)
   }
 }
