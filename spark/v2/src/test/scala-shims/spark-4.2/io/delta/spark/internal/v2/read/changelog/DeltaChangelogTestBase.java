@@ -40,9 +40,10 @@ public abstract class DeltaChangelogTestBase extends DeltaV2TestBase {
 
   @BeforeAll
   public static void setUpChangelogSparkAndEngine() {
+    String sparkVersion = org.apache.spark.package$.MODULE$.SPARK_VERSION();
     org.junit.jupiter.api.Assumptions.assumeFalse(
-        org.apache.spark.package$.MODULE$.SPARK_VERSION().contains("SNAPSHOT"),
-        "Changelog tests are temporarily skipped on Spark SNAPSHOT builds"
+        sparkVersion.contains("SNAPSHOT") || sparkVersion.contains("preview"),
+        "Changelog tests are temporarily skipped on Spark pre-release builds (SNAPSHOT/preview)"
             + " due to a DeltaCatalog/AbstractDeltaCatalog classpath issue in sparkV2");
     if (spark != null) {
       spark.stop();
