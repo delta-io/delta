@@ -32,6 +32,7 @@ import scala.util.control.NonFatal
 import com.databricks.spark.util.TagDefinition
 import com.databricks.spark.util.TagDefinitions.TAG_LOG_STORE_CLASS
 import org.apache.spark.sql.delta.ClassicColumnConversions._
+import org.apache.spark.sql.delta.DeltaGeoSpatial
 import org.apache.spark.sql.delta.DeltaOperations.{ChangeColumn, ChangeColumns, CreateTable, Operation, ReplaceColumns, ReplaceTable, UpdateSchema}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
@@ -1078,6 +1079,19 @@ trait OptimisticTransactionImpl extends TransactionHelper
         throw DeltaErrors.unsupportedDataTypes(unsupportedTypes.head, unsupportedTypes.tail: _*)
       }
     }
+
+    // even though we've just called SchemaUtils.findUnsupportedDataTypes, we didn't have
+    // spark config there.
+    // so we need to check again here.
+    if (!DeltaGeoSpatial.isPreviewEnabled(spark)) {
+      val geoTypeOpt = DeltaGeoSpatial.findGeoColumnsRecursively(metadata.schema)
+      geoTypeOpt.foreach { geoType =>
+        throw new AnalysisException("UNSUPPORTED_DATATYPE", Map("typeName" -> geoType.toString))
+      }
+    } else {
+      DeltaGeoSpatial.assertSridSupported(metadata.schema)
+    }
+
 
     if (spark.conf.get(DeltaSQLConf.DELTA_TABLE_PROPERTY_CONSTRAINTS_CHECK_ENABLED)) {
       Protocol.assertTablePropertyConstraintsSatisfied(spark, metadata, snapshot)
@@ -2494,6 +2508,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
     newMetadata = metadataUpdate1.orElse(newMetadata)
 
     var finalActions = newMetadata.toSeq ++ newProtocol.toSeq ++ otherActions
+
+    DeltaGeoSpatial.validateCommitActions(spark, protocol, finalActions)
 
     // Block future cases of CDF + Column Mapping changes + file changes
     // This check requires having called
