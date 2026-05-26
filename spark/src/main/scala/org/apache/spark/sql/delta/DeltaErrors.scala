@@ -614,7 +614,7 @@ trait DeltaErrorsBase
 
   /**
    * Auto-CDF batch read rejected because the table resolved by the catalog is not a V2
-   * [[io.delta.spark.internal.v2.catalog.DeltaV2Table]]. The V2 connector is the only path that
+   * [[io.delta.spark.internal.v2.catalog.SparkTable]]. The V2 connector is the only path that
    * implements the catalog-driven CHANGES surface. V1 Delta tables (`DeltaTableV2`) continue to
    * use the legacy CDF path that does not go through `TableCatalog.loadChangelog`.
    *

@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.delta.spark.internal.v2.catalog.DeltaV2Table;
+import io.delta.spark.internal.v2.catalog.SparkTable;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
 import java.sql.Timestamp;
@@ -78,7 +78,7 @@ public class DeltaChangelogDirectBatchExecutionTest extends DeltaChangelogTestBa
           DeltaChangelog changelog =
               new DeltaChangelog(
                   tableName,
-                  new DeltaV2Table(Identifier.of(new String[0], tableName), tablePath),
+                  new SparkTable(Identifier.of(new String[0], tableName), tablePath),
                   0L,
                   latestVersion);
           ScanBuilder scanBuilder =
@@ -149,7 +149,7 @@ public class DeltaChangelogDirectBatchExecutionTest extends DeltaChangelogTestBa
           DeltaChangelog changelog =
               new DeltaChangelog(
                   tableName,
-                  new DeltaV2Table(Identifier.of(new String[0], tableName), tablePath),
+                  new SparkTable(Identifier.of(new String[0], tableName), tablePath),
                   0L,
                   latestVersion);
 
@@ -199,7 +199,7 @@ public class DeltaChangelogDirectBatchExecutionTest extends DeltaChangelogTestBa
           DeltaChangelog changelog =
               new DeltaChangelog(
                   tableName,
-                  new DeltaV2Table(Identifier.of(new String[0], tableName), tablePath),
+                  new SparkTable(Identifier.of(new String[0], tableName), tablePath),
                   0L,
                   latestVersion);
           Scan scan =
@@ -272,7 +272,7 @@ public class DeltaChangelogDirectBatchExecutionTest extends DeltaChangelogTestBa
           DeltaChangelog changelog =
               new DeltaChangelog(
                   tableName,
-                  new DeltaV2Table(Identifier.of(new String[0], tableName), tablePath),
+                  new SparkTable(Identifier.of(new String[0], tableName), tablePath),
                   2L,
                   3L);
           Scan scan =

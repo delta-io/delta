@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.catalog
 
-import io.delta.spark.internal.v2.catalog.DeltaV2Table
+import io.delta.spark.internal.v2.catalog.SparkTable
 import io.delta.spark.internal.v2.read.changelog.DeltaChangelog
 
 import org.apache.spark.sql.SparkSession
@@ -34,7 +34,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
  * `TableCatalog` implementation.
  *
  * <p>The trait is intentionally thin. `loadChangelog` resolves the table via the catalog's own
- * `loadTable`, validates that the result is a V2 [[DeltaV2Table]] (read-time CDF only flows
+ * `loadTable`, validates that the result is a V2 [[SparkTable]] (read-time CDF only flows
  * through the V2 connector. V1 tables go through the legacy Delta CDF path), resolves the
  * requested [[ChangelogRange]] against the table's snapshot manager, and wraps everything into
  * a [[DeltaChangelog]]. All connector-level work (loading snapshots, validating row tracking,
@@ -54,7 +54,7 @@ trait ChangelogSupport extends TableCatalog {
       return super.loadChangelog(ident, changelogInfo)
     }
     val sparkTable = loadTable(ident) match {
-      case st: DeltaV2Table => st
+      case st: SparkTable => st
       case other =>
         // Auto-CDF only supports the V2 connector. V1 Delta tables (DeltaTableV2 under the
         // hood) keep going through the legacy CDF path that DeltaCatalog already exposes.
@@ -71,7 +71,7 @@ trait ChangelogSupport extends TableCatalog {
    * subtracts 1) and are validated. `UnboundedRange` is rejected on batch reads.
    */
   private def resolveRange(
-      sparkTable: DeltaV2Table,
+      sparkTable: SparkTable,
       range: org.apache.spark.sql.connector.catalog.ChangelogRange): (Long, Long) = {
     val snapshotManager = sparkTable.getSnapshotManager
     val latestVersion = snapshotManager.loadLatestSnapshot().getVersion
