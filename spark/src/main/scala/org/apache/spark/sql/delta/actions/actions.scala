@@ -44,6 +44,7 @@ import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize
 import com.fasterxml.jackson.databind.node.ObjectNode
 import io.delta.storage.commit.actions.{
   AbstractCommitInfo => StorageAbstractCommitInfo,
+  AbstractDomainMetadata => StorageAbstractDomainMetadata,
   AbstractMetadata => StorageAbstractMetadata,
   AbstractProtocol => StorageAbstractProtocol
 }
@@ -668,8 +669,11 @@ case class SetTransaction(
 case class DomainMetadata(
     domain: String,
     configuration: String,
-    removed: Boolean) extends Action {
+    removed: Boolean) extends Action with StorageAbstractDomainMetadata {
   override def wrap: SingleAction = SingleAction(domainMetadata = this)
+  override def getDomain: String = domain
+  override def getConfiguration: String = configuration
+  override def isRemoved: Boolean = removed
 }
 
 /** Actions pertaining to the addition and removal of files. */
