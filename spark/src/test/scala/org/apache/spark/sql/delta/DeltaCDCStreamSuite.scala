@@ -1127,6 +1127,73 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
     }
   }
 
+  test("CDC stream: CDC column in the middle of data columns") {
+    withTempDir { inputDir =>
+      val path = inputDir.getCanonicalPath
+      Seq((1, "a"), (2, "b")).toDF("id", "name")
+        .write.format("delta").save(path)
+
+      val df = loadCDCStream(path, Map(DeltaOptions.STARTING_VERSION_OPTION -> "0"))
+        .select("id", "_change_type", "name")
+
+      testStream(df)(
+        ProcessAllAvailable(),
+        CheckAnswer((1, "insert", "a"), (2, "insert", "b"))
+      )
+    }
+  }
+
+  test("CDC stream: CDC column at the head") {
+    withTempDir { inputDir =>
+      val path = inputDir.getCanonicalPath
+      Seq((1, "a"), (2, "b")).toDF("id", "name")
+        .write.format("delta").save(path)
+
+      // _commit_version is always a per-file constant (never in the parquet file).
+      val df = loadCDCStream(path, Map(DeltaOptions.STARTING_VERSION_OPTION -> "0"))
+        .select("_commit_version", "id", "name")
+
+      testStream(df)(
+        ProcessAllAvailable(),
+        CheckAnswer((0L, 1, "a"), (0L, 2, "b"))
+      )
+    }
+  }
+
+  test("CDC stream: select only an always-constant CDC column") {
+    withTempDir { inputDir =>
+      val path = inputDir.getCanonicalPath
+      Seq((1, "a"), (2, "b")).toDF("id", "name")
+        .write.format("delta").save(path)
+
+      // _commit_version exercises the always-constant path without _change_type to short-circuit.
+      val df = loadCDCStream(path, Map(DeltaOptions.STARTING_VERSION_OPTION -> "0"))
+        .select("id", "_commit_version")
+
+      testStream(df)(
+        ProcessAllAvailable(),
+        CheckAnswer((1, 0L), (2, 0L))
+      )
+    }
+  }
+
+  test("CDC stream: two CDC columns interleaved with data columns") {
+    withTempDir { inputDir =>
+      val path = inputDir.getCanonicalPath
+      Seq((1, "a"), (2, "b")).toDF("id", "name")
+        .write.format("delta").save(path)
+
+      val df = loadCDCStream(path, Map(DeltaOptions.STARTING_VERSION_OPTION -> "0"))
+        .select("_change_type", "id", "_commit_version", "name")
+
+      testStream(df)(
+        ProcessAllAvailable(),
+        CheckAnswer(("insert", 1, 0L, "a"), ("insert", 2, 0L, "b"))
+      )
+    }
+  }
+
+
   test("CDC stream rejects reading row tracking metadata fields") {
     // Per Delta protocol ("Reader Requirements for Row Tracking"), readers cannot expose row
     // IDs or row commit versions while reading change data files from `cdc` actions. v1

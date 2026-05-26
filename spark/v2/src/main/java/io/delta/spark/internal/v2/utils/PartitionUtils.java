@@ -365,19 +365,6 @@ public class PartitionUtils {
     // column-reorder wrapper below.
     final StructType originalReadDataSchema = readDataSchema;
 
-    // For write-time CDF reads (streaming with readChangeFeed=true), build the schema context
-    // and augment readDataSchema with CDC tail columns before DV wrapping so that DV column
-    // indices account for them. Read-time CDF (Auto-CDF, via DeltaChangelogBatch) does not go
-    // through this path: DeltaChangelogBatch's outer CDCPartitionReaderFactory injects the
-    // tail columns as per-partition constants instead.
-    Optional<CDCSchemaContext> cdcSchemaContext =
-        isWriteTimeCDCRead
-            ? Optional.of(new CDCSchemaContext(readDataSchema, partitionSchema))
-            : Optional.empty();
-    if (cdcSchemaContext.isPresent()) {
-      readDataSchema = cdcSchemaContext.get().getReadDataSchemaWithCDC();
-    }
-
     boolean metadataColumnRequested =
         Arrays.stream(readDataSchema.fields())
             .anyMatch(field -> FileFormat$.MODULE$.METADATA_NAME().equals(field.name()));
@@ -444,15 +431,14 @@ public class PartitionUtils {
       readFunc = RowTrackingReadFunction.wrap(readFunc, rowTrackingSchemaContext.get());
     }
 
-    // TODO(#5319): add e2e test for CDC reads (full schema + column pruning) when streaming CDC
-    // reads become user-reachable end-to-end.
-    if (cdcSchemaContext.isPresent()) {
-      readFunc = CDCReadFunction.wrap(readFunc, cdcSchemaContext.get(), enableVectorizedReader);
+    if (isWriteTimeCDCRead) {
+      if (rowTrackingSchemaContext.isPresent()) {
+        throw new UnsupportedOperationException(
+            "CDC reads combined with row tracking are not supported");
+      }
+      CDCSchemaContext cdcSchemaContext = new CDCSchemaContext(readDataSchema, partitionSchema);
+      readFunc = CDCReadFunction.wrap(readFunc, cdcSchemaContext, enableVectorizedReader);
     }
-
-    // DV and RT strip their internal helpers before yielding; CDC appends its fields at the tail.
-    // The wrapper infers the source layout from (data, partition, target) - CDC tail fields end up
-    // identity-mapped while data/partition columns are permuted into DDL order.
     readFunc =
         ColumnReorderReadFunction.wrap(
             readFunc,

@@ -167,10 +167,11 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     this.deltaOptions = new DeltaOptions(scalaOptions, sqlConf);
     this.isCDCRead = deltaOptions.readChangeFeed();
     this.zoneId = ZoneId.of(sqlConf.sessionLocalTimeZone());
-    StructType ddlOrdered =
-        SchemaUtils.ddlOrderedOutputSchema(tableSchema, readDataSchema, partitionSchema);
     this.ddlOrderedReadOutputSchema =
-        isCDCRead ? CDCSchemaContext.appendCDCColumns(ddlOrdered) : ddlOrdered;
+        SchemaUtils.ddlOrderedOutputSchema(
+            Objects.requireNonNull(tableSchema, "tableSchema is null"),
+            readDataSchema,
+            partitionSchema);
   }
 
   /** Read schema for the scan, in the table's DDL column order. */
@@ -270,7 +271,8 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
     return new SparkMicroBatchStream(
         snapshotManager,
-        latestSnapshot,
+        snapshotManager.loadLatestSnapshot(),
+        initialSnapshot,
         hadoopConf,
         spark,
         deltaOptions,

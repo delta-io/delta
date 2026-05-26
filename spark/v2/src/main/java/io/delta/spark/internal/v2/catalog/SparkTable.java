@@ -367,11 +367,15 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsM
                         stats,
                         schemaProvider.getDataSchema(),
                         schemaProvider.getPartitionSchema()));
+    StructType scanDataSchema = schemaProvider.getDataSchema();
+    if (CDCReader.isCDCRead(merged)) {
+      scanDataSchema = CDCSchemaContext.appendCDCColumns(scanDataSchema);
+    }
     return new SparkScanBuilder(
         name(),
         initialSnapshot,
         snapshotManager,
-        schemaProvider.getDataSchema(),
+        scanDataSchema,
         schemaProvider.getPartitionSchema(),
         schemaProvider.getRawSchema(),
         catalogStats,

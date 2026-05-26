@@ -2052,6 +2052,7 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
         new SparkMicroBatchStream(
             snapshotManager,
             snapshotManager.loadLatestSnapshot(),
+            snapshotManager.loadLatestSnapshot(),
             spark.sessionState().newHadoopConf(),
             spark,
             emptyDeltaOptions(),
@@ -2239,6 +2240,7 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
     SparkMicroBatchStream stream =
         new SparkMicroBatchStream(
             snapshotManager,
+            snapshotManager.loadLatestSnapshot(),
             snapshotManager.loadLatestSnapshot(),
             spark.sessionState().newHadoopConf(),
             spark,
@@ -4300,6 +4302,7 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
     return new SparkMicroBatchStream(
         snapshotManager,
         snapshot,
+        snapshot,
         hadoopConf,
         spark,
         options,
@@ -4325,6 +4328,7 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
     io.delta.kernel.Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     return new SparkMicroBatchStream(
         snapshotManager,
+        snapshot,
         snapshot,
         hadoopConf,
         spark,
@@ -4780,10 +4784,12 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
   public void testValidateSchema_partitionColumnInMiddle_succeeds() {
     // Reproduces the bug fixed in PR #6583: partition column declared in the middle of the
     // table schema must not trip the structural equality check on stream restart.
-    StructType dataSchema =
-        new StructType().add("id", DataTypes.LongType).add("col3", DataTypes.IntegerType);
-    StructType partitionSchema = new StructType().add("part", DataTypes.LongType);
-    StructType snapshotSchema =
+    StructType analysisTimeSchema =
+        new StructType()
+            .add("id", DataTypes.LongType)
+            .add("part", DataTypes.LongType)
+            .add("col3", DataTypes.IntegerType);
+    StructType streamStartSchema =
         new StructType()
             .add("id", DataTypes.LongType)
             .add("part", DataTypes.LongType)
@@ -4792,15 +4798,17 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
     assertDoesNotThrow(
         () ->
             SparkMicroBatchStream.validateSchemaCompatibilityOnStartup(
-                dataSchema, partitionSchema, snapshotSchema));
+                analysisTimeSchema, streamStartSchema));
   }
 
   @Test
   public void testValidateSchema_partitionColumnAtEnd_succeeds() {
-    StructType dataSchema =
-        new StructType().add("id", DataTypes.LongType).add("col3", DataTypes.IntegerType);
-    StructType partitionSchema = new StructType().add("part", DataTypes.LongType);
-    StructType snapshotSchema =
+    StructType analysisTimeSchema =
+        new StructType()
+            .add("id", DataTypes.LongType)
+            .add("col3", DataTypes.IntegerType)
+            .add("part", DataTypes.LongType);
+    StructType streamStartSchema =
         new StructType()
             .add("id", DataTypes.LongType)
             .add("col3", DataTypes.IntegerType)
@@ -4809,18 +4817,18 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
     assertDoesNotThrow(
         () ->
             SparkMicroBatchStream.validateSchemaCompatibilityOnStartup(
-                dataSchema, partitionSchema, snapshotSchema));
+                analysisTimeSchema, streamStartSchema));
   }
 
   @Test
   public void testValidateSchema_analysisHasExtraColumn_throws() {
-    StructType dataSchema =
+    StructType analysisTimeSchema =
         new StructType()
             .add("id", DataTypes.LongType)
+            .add("part", DataTypes.LongType)
             .add("col3", DataTypes.IntegerType)
             .add("dropped", DataTypes.StringType);
-    StructType partitionSchema = new StructType().add("part", DataTypes.LongType);
-    StructType snapshotSchema =
+    StructType streamStartSchema =
         new StructType()
             .add("id", DataTypes.LongType)
             .add("part", DataTypes.LongType)
@@ -4831,16 +4839,18 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
             DeltaIllegalStateException.class,
             () ->
                 SparkMicroBatchStream.validateSchemaCompatibilityOnStartup(
-                    dataSchema, partitionSchema, snapshotSchema));
+                    analysisTimeSchema, streamStartSchema));
     assertTrue(ex.getMessage().contains("DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART"));
   }
 
   @Test
   public void testValidateSchema_snapshotHasExtraColumn_throws() {
-    StructType dataSchema =
-        new StructType().add("id", DataTypes.LongType).add("col3", DataTypes.IntegerType);
-    StructType partitionSchema = new StructType().add("part", DataTypes.LongType);
-    StructType snapshotSchema =
+    StructType analysisTimeSchema =
+        new StructType()
+            .add("id", DataTypes.LongType)
+            .add("part", DataTypes.LongType)
+            .add("col3", DataTypes.IntegerType);
+    StructType streamStartSchema =
         new StructType()
             .add("id", DataTypes.LongType)
             .add("part", DataTypes.LongType)
@@ -4852,16 +4862,18 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
             DeltaIllegalStateException.class,
             () ->
                 SparkMicroBatchStream.validateSchemaCompatibilityOnStartup(
-                    dataSchema, partitionSchema, snapshotSchema));
+                    analysisTimeSchema, streamStartSchema));
     assertTrue(ex.getMessage().contains("DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART"));
   }
 
   @Test
   public void testValidateSchema_columnTypeChanged_throws() {
-    StructType dataSchema =
-        new StructType().add("id", DataTypes.IntegerType).add("col3", DataTypes.IntegerType);
-    StructType partitionSchema = new StructType().add("part", DataTypes.LongType);
-    StructType snapshotSchema =
+    StructType analysisTimeSchema =
+        new StructType()
+            .add("id", DataTypes.IntegerType)
+            .add("part", DataTypes.LongType)
+            .add("col3", DataTypes.IntegerType);
+    StructType streamStartSchema =
         new StructType()
             .add("id", DataTypes.LongType)
             .add("part", DataTypes.LongType)
@@ -4872,48 +4884,42 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
             DeltaIllegalStateException.class,
             () ->
                 SparkMicroBatchStream.validateSchemaCompatibilityOnStartup(
-                    dataSchema, partitionSchema, snapshotSchema));
+                    analysisTimeSchema, streamStartSchema));
     assertTrue(ex.getMessage().contains("DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART"));
   }
 
   @Test
   public void testValidateSchema_nestedStructMatches_succeeds() {
     StructType inner = new StructType().add("x", DataTypes.IntegerType);
-    StructType dataSchema = new StructType().add("id", DataTypes.LongType).add("data", inner);
-    StructType partitionSchema = new StructType();
-    StructType snapshotSchema = new StructType().add("id", DataTypes.LongType).add("data", inner);
+    StructType schema = new StructType().add("id", DataTypes.LongType).add("data", inner);
 
     assertDoesNotThrow(
-        () ->
-            SparkMicroBatchStream.validateSchemaCompatibilityOnStartup(
-                dataSchema, partitionSchema, snapshotSchema));
+        () -> SparkMicroBatchStream.validateSchemaCompatibilityOnStartup(schema, schema));
   }
 
   @Test
   public void testValidateSchema_columnRenamed_throws() {
-    StructType dataSchema = new StructType().add("a", DataTypes.IntegerType);
-    StructType partitionSchema = new StructType();
-    StructType snapshotSchema = new StructType().add("b", DataTypes.IntegerType);
+    StructType analysisTimeSchema = new StructType().add("a", DataTypes.IntegerType);
+    StructType streamStartSchema = new StructType().add("b", DataTypes.IntegerType);
 
     DeltaIllegalStateException ex =
         assertThrows(
             DeltaIllegalStateException.class,
             () ->
                 SparkMicroBatchStream.validateSchemaCompatibilityOnStartup(
-                    dataSchema, partitionSchema, snapshotSchema));
+                    analysisTimeSchema, streamStartSchema));
     assertTrue(ex.getMessage().contains("DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART"));
   }
 
   @Test
   public void testValidateSchema_columnNameCaseDiffers_succeeds() {
-    StructType dataSchema = new StructType().add("Id", DataTypes.IntegerType);
-    StructType partitionSchema = new StructType();
-    StructType snapshotSchema = new StructType().add("id", DataTypes.IntegerType);
+    StructType analysisTimeSchema = new StructType().add("Id", DataTypes.IntegerType);
+    StructType streamStartSchema = new StructType().add("id", DataTypes.IntegerType);
 
     assertDoesNotThrow(
         () ->
             SparkMicroBatchStream.validateSchemaCompatibilityOnStartup(
-                dataSchema, partitionSchema, snapshotSchema));
+                analysisTimeSchema, streamStartSchema));
   }
 
   @Test

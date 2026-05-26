@@ -35,9 +35,21 @@ import scala.Function1;
 import scala.collection.Iterator;
 import scala.jdk.javaapi.CollectionConverters;
 
+/**
+ * Tests for {@link CDCReadFunction} under the schema-side simplification: input rows match {@code
+ * readDataSchema ++ partition} where CDC columns sit inside {@code readDataSchema} at user-
+ * requested positions; output preserves that shape with CDC values substituted in place.
+ */
 public class CDCReadFunctionTest {
 
-  private static final StructType DATA_SCHEMA = new StructType().add("id", DataTypes.IntegerType);
+  // readDataSchema with all CDC columns appended at the end (a typical no-pruning case).
+  private static final StructType READ_DATA_SCHEMA_TAIL_CDC =
+      new StructType()
+          .add("id", DataTypes.IntegerType)
+          .add(CDCSchemaContext.CDC_TYPE_COLUMN, DataTypes.StringType)
+          .add(CDCSchemaContext.CDC_COMMIT_VERSION, DataTypes.LongType)
+          .add(CDCSchemaContext.CDC_COMMIT_TIMESTAMP, DataTypes.TimestampType);
+
   private static final StructType PARTITION_SCHEMA =
       new StructType().add("country", DataTypes.StringType);
 
@@ -48,12 +60,11 @@ public class CDCReadFunctionTest {
 
   @Test
   public void testInferredCDC_rowPath_nullCoalescesAllCDCColumns() {
-    // Internal: [id, _change_type(null), _commit_version(null), _commit_timestamp(null), country]
-    // Output:   [id, country, _change_type, _commit_version, _commit_timestamp]
-    List<InternalRow> inputRows =
-        List.of(row(1, null, null, null, "US"), row(2, null, null, null, "UK"));
+    // Input rows shape: [id, _change_type(null), _commit_version(null), _commit_timestamp(null)]
+    // Output preserves shape, with CDC constants substituted at their positions.
+    List<InternalRow> inputRows = List.of(row(1, null, null, null), row(2, null, null, null));
 
-    CDCSchemaContext context = new CDCSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA);
+    CDCSchemaContext context = new CDCSchemaContext(READ_DATA_SCHEMA_TAIL_CDC, new StructType());
     PartitionedFile file =
         createCDCPartitionedFile("insert", COMMIT_VERSION, COMMIT_TIMESTAMP_MICROS);
 
@@ -65,20 +76,41 @@ public class CDCReadFunctionTest {
     assertRowsEquals(
         result,
         List.of(
-            row(1, "US", "insert", COMMIT_VERSION, COMMIT_TIMESTAMP_MICROS),
-            row(2, "UK", "insert", COMMIT_VERSION, COMMIT_TIMESTAMP_MICROS)));
+            row(1, "insert", COMMIT_VERSION, COMMIT_TIMESTAMP_MICROS),
+            row(2, "insert", COMMIT_VERSION, COMMIT_TIMESTAMP_MICROS)));
+  }
+
+  @Test
+  public void testInferredCDC_rowPath_withPartitionColumn() {
+    // Input rows shape: readDataSchema ++ partition =
+    //   [id, _change_type(null), _commit_version(null), _commit_timestamp(null), country]
+    List<InternalRow> inputRows =
+        List.of(row(1, null, null, null, "US"), row(2, null, null, null, "UK"));
+
+    CDCSchemaContext context = new CDCSchemaContext(READ_DATA_SCHEMA_TAIL_CDC, PARTITION_SCHEMA);
+    PartitionedFile file =
+        createCDCPartitionedFile("insert", COMMIT_VERSION, COMMIT_TIMESTAMP_MICROS);
+
+    Function1<PartitionedFile, Iterator<InternalRow>> baseReader = mockReader(inputRows);
+    CDCReadFunction readFunc = CDCReadFunction.wrap(baseReader, context, false);
+
+    List<InternalRow> result = collectRows(readFunc.apply(file));
+
+    assertRowsEquals(
+        result,
+        List.of(
+            row(1, "insert", COMMIT_VERSION, COMMIT_TIMESTAMP_MICROS, "US"),
+            row(2, "insert", COMMIT_VERSION, COMMIT_TIMESTAMP_MICROS, "UK")));
   }
 
   @Test
   public void testExplicitCDC_rowPath_preservesChangeTypeFromParquet() {
-    // Explicit CDC (AddCDCFile): _change_type comes from Parquet, should be preserved.
+    // Explicit CDC (AddCDCFile): _change_type comes from parquet, should be preserved.
     // Only _commit_version and _commit_timestamp are injected.
     List<InternalRow> inputRows =
-        List.of(
-            row(1, "update_preimage", null, null, "US"),
-            row(2, "update_postimage", null, null, "UK"));
+        List.of(row(1, "update_preimage", null, null), row(2, "update_postimage", null, null));
 
-    CDCSchemaContext context = new CDCSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA);
+    CDCSchemaContext context = new CDCSchemaContext(READ_DATA_SCHEMA_TAIL_CDC, new StructType());
     PartitionedFile file =
         createExplicitCDCPartitionedFile(COMMIT_VERSION, COMMIT_TIMESTAMP_MICROS);
 
@@ -90,16 +122,16 @@ public class CDCReadFunctionTest {
     assertRowsEquals(
         result,
         List.of(
-            row(1, "US", "update_preimage", COMMIT_VERSION, COMMIT_TIMESTAMP_MICROS),
-            row(2, "UK", "update_postimage", COMMIT_VERSION, COMMIT_TIMESTAMP_MICROS)));
+            row(1, "update_preimage", COMMIT_VERSION, COMMIT_TIMESTAMP_MICROS),
+            row(2, "update_postimage", COMMIT_VERSION, COMMIT_TIMESTAMP_MICROS)));
   }
 
   @Test
   public void testDeleteCDC_rowPath_injectsDeleteChangeType() {
     // RemoveFile -> delete: _change_type = "delete"
-    List<InternalRow> inputRows = List.of(row(1, null, null, null, "US"));
+    List<InternalRow> inputRows = List.of(row(1, null, null, null));
 
-    CDCSchemaContext context = new CDCSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA);
+    CDCSchemaContext context = new CDCSchemaContext(READ_DATA_SCHEMA_TAIL_CDC, new StructType());
     PartitionedFile file =
         createCDCPartitionedFile("delete", COMMIT_VERSION, COMMIT_TIMESTAMP_MICROS);
 
@@ -108,34 +140,43 @@ public class CDCReadFunctionTest {
 
     List<InternalRow> result = collectRows(readFunc.apply(file));
 
+    assertRowsEquals(result, List.of(row(1, "delete", COMMIT_VERSION, COMMIT_TIMESTAMP_MICROS)));
+  }
+
+  @Test
+  public void testInferredCDC_rowPath_withCDCColumnInMiddle() {
+    // readDataSchema with _change_type interleaved between data columns:
+    //   [id, _change_type, name, _commit_version, _commit_timestamp]
+    StructType schema =
+        new StructType()
+            .add("id", DataTypes.IntegerType)
+            .add(CDCSchemaContext.CDC_TYPE_COLUMN, DataTypes.StringType)
+            .add("name", DataTypes.StringType)
+            .add(CDCSchemaContext.CDC_COMMIT_VERSION, DataTypes.LongType)
+            .add(CDCSchemaContext.CDC_COMMIT_TIMESTAMP, DataTypes.TimestampType);
+    List<InternalRow> inputRows = List.of(row(1, null, "a", null, null));
+
+    CDCSchemaContext context = new CDCSchemaContext(schema, new StructType());
+    PartitionedFile file =
+        createCDCPartitionedFile("insert", COMMIT_VERSION, COMMIT_TIMESTAMP_MICROS);
+
+    CDCReadFunction readFunc = CDCReadFunction.wrap(mockReader(inputRows), context, false);
+    List<InternalRow> result = collectRows(readFunc.apply(file));
+
     assertRowsEquals(
-        result, List.of(row(1, "US", "delete", COMMIT_VERSION, COMMIT_TIMESTAMP_MICROS)));
+        result, List.of(row(1, "insert", "a", COMMIT_VERSION, COMMIT_TIMESTAMP_MICROS)));
   }
 
   // ===== Vectorized tests =====
 
   @Test
   public void testInferredCDC_vectorizedPath_replacesColumnVectors() {
-    // 3-row batch: [id, _change_type(null), _commit_version(null), _commit_timestamp(null)]
+    // Input batch shape matches readDataSchema = [id, _change_type, _commit_version,
+    // _commit_timestamp]; CDC columns null-filled by parquet schema evolution.
     int numRows = 3;
-    WritableColumnVector idCol = new OnHeapColumnVector(numRows, DataTypes.IntegerType);
-    WritableColumnVector changeTypeCol = new OnHeapColumnVector(numRows, DataTypes.StringType);
-    WritableColumnVector commitVersionCol = new OnHeapColumnVector(numRows, DataTypes.LongType);
-    WritableColumnVector commitTimestampCol = new OnHeapColumnVector(numRows, DataTypes.LongType);
+    ColumnarBatch batch = makeInferredCdcBatch(new int[] {1, 2, 3});
 
-    for (int i = 0; i < numRows; i++) {
-      idCol.putInt(i, i + 1);
-      changeTypeCol.putNull(i);
-      commitVersionCol.putNull(i);
-      commitTimestampCol.putNull(i);
-    }
-
-    ColumnarBatch batch =
-        new ColumnarBatch(
-            new ColumnVector[] {idCol, changeTypeCol, commitVersionCol, commitTimestampCol},
-            numRows);
-
-    CDCSchemaContext context = new CDCSchemaContext(DATA_SCHEMA, new StructType());
+    CDCSchemaContext context = new CDCSchemaContext(READ_DATA_SCHEMA_TAIL_CDC, new StructType());
     PartitionedFile file =
         createCDCPartitionedFile("insert", COMMIT_VERSION, COMMIT_TIMESTAMP_MICROS);
 
@@ -146,27 +187,26 @@ public class CDCReadFunctionTest {
     assertEquals(1, result.size());
     ColumnarBatch resultBatch = result.get(0);
     assertEquals(numRows, resultBatch.numRows());
+    // Output preserves input shape.
     assertEquals(4, resultBatch.numCols());
 
-    // Check id column preserved
+    // id column preserved at position 0.
     assertEquals(1, resultBatch.column(0).getInt(0));
     assertEquals(2, resultBatch.column(0).getInt(1));
+    assertEquals(3, resultBatch.column(0).getInt(2));
 
-    // Check _change_type replaced with "insert"
-    assertEquals("insert", resultBatch.column(1).getUTF8String(0).toString());
-    assertEquals("insert", resultBatch.column(1).getUTF8String(1).toString());
-
-    // Check _commit_version replaced for all rows
+    // _change_type at position 1 replaced with "insert" constant.
     for (int i = 0; i < numRows; i++) {
+      assertEquals("insert", resultBatch.column(1).getUTF8String(i).toString());
       assertEquals(COMMIT_VERSION, resultBatch.column(2).getLong(i));
       assertEquals(COMMIT_TIMESTAMP_MICROS, resultBatch.column(3).getLong(i));
     }
   }
 
   @Test
-  public void testInferredCDC_vectorizedPath_reordersPartitionColumns() {
-    // Internal: [id(0), _change_type(1), _commit_version(2), _commit_timestamp(3), country(4)]
-    // Output:   [id(0), country(1), _change_type(2), _commit_version(3), _commit_timestamp(4)]
+  public void testInferredCDC_vectorizedPath_withPartitionColumn() {
+    // Input batch shape: readDataSchema ++ partition =
+    //   [id, _change_type, _commit_version, _commit_timestamp, country]
     int numRows = 2;
     WritableColumnVector idCol = new OnHeapColumnVector(numRows, DataTypes.IntegerType);
     WritableColumnVector changeTypeCol = new OnHeapColumnVector(numRows, DataTypes.StringType);
@@ -192,7 +232,7 @@ public class CDCReadFunctionTest {
             },
             numRows);
 
-    CDCSchemaContext context = new CDCSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA);
+    CDCSchemaContext context = new CDCSchemaContext(READ_DATA_SCHEMA_TAIL_CDC, PARTITION_SCHEMA);
     PartitionedFile file =
         createCDCPartitionedFile("insert", COMMIT_VERSION, COMMIT_TIMESTAMP_MICROS);
 
@@ -202,29 +242,27 @@ public class CDCReadFunctionTest {
 
     assertEquals(1, result.size());
     ColumnarBatch resultBatch = result.get(0);
-    assertEquals(numRows, resultBatch.numRows());
+    // Output preserves input shape (5 cols).
     assertEquals(5, resultBatch.numCols());
 
     assertEquals(42, resultBatch.column(0).getInt(0));
     assertEquals(43, resultBatch.column(0).getInt(1));
-    // country remapped from internal[4] to output[1]
-    assertEquals("US", resultBatch.column(1).getUTF8String(0).toString());
-    assertEquals("UK", resultBatch.column(1).getUTF8String(1).toString());
     for (int i = 0; i < numRows; i++) {
-      assertEquals("insert", resultBatch.column(2).getUTF8String(i).toString());
-      assertEquals(COMMIT_VERSION, resultBatch.column(3).getLong(i));
-      assertEquals(COMMIT_TIMESTAMP_MICROS, resultBatch.column(4).getLong(i));
+      assertEquals("insert", resultBatch.column(1).getUTF8String(i).toString());
+      assertEquals(COMMIT_VERSION, resultBatch.column(2).getLong(i));
+      assertEquals(COMMIT_TIMESTAMP_MICROS, resultBatch.column(3).getLong(i));
     }
+    // Partition column unchanged at position 4.
+    assertEquals("US", resultBatch.column(4).getUTF8String(0).toString());
+    assertEquals("UK", resultBatch.column(4).getUTF8String(1).toString());
   }
 
   @Test
   public void testInferredCDC_vectorizedPath_handlesMultipleBatches() {
-    // Two batches, each with different rows, should both be processed correctly with the
-    // same per-file CDC constants applied.
     ColumnarBatch batch1 = makeInferredCdcBatch(new int[] {10, 20});
     ColumnarBatch batch2 = makeInferredCdcBatch(new int[] {30, 40, 50});
 
-    CDCSchemaContext context = new CDCSchemaContext(DATA_SCHEMA, new StructType());
+    CDCSchemaContext context = new CDCSchemaContext(READ_DATA_SCHEMA_TAIL_CDC, new StructType());
     PartitionedFile file =
         createCDCPartitionedFile("insert", COMMIT_VERSION, COMMIT_TIMESTAMP_MICROS);
 
@@ -280,7 +318,7 @@ public class CDCReadFunctionTest {
             new ColumnVector[] {idCol, changeTypeCol, commitVersionCol, commitTimestampCol},
             numRows);
 
-    CDCSchemaContext context = new CDCSchemaContext(DATA_SCHEMA, new StructType());
+    CDCSchemaContext context = new CDCSchemaContext(READ_DATA_SCHEMA_TAIL_CDC, new StructType());
     PartitionedFile file =
         createExplicitCDCPartitionedFile(COMMIT_VERSION, COMMIT_TIMESTAMP_MICROS);
 
@@ -291,11 +329,11 @@ public class CDCReadFunctionTest {
     assertEquals(1, result.size());
     ColumnarBatch resultBatch = result.get(0);
 
-    // _change_type should be the ORIGINAL vector (not replaced)
+    // _change_type should be the ORIGINAL vector (not replaced).
     assertEquals("update_preimage", resultBatch.column(1).getUTF8String(0).toString());
     assertEquals("update_postimage", resultBatch.column(1).getUTF8String(1).toString());
 
-    // _commit_version and _commit_timestamp replaced with constants for all rows
+    // _commit_version and _commit_timestamp replaced with constants for all rows.
     for (int i = 0; i < numRows; i++) {
       assertEquals(COMMIT_VERSION, resultBatch.column(2).getLong(i));
       assertEquals(COMMIT_TIMESTAMP_MICROS, resultBatch.column(3).getLong(i));
@@ -305,7 +343,7 @@ public class CDCReadFunctionTest {
   // ===== Helpers =====
 
   /**
-   * Build a ColumnarBatch shaped like an inferred-CDC parquet batch (no partition column): {@code
+   * Build a ColumnarBatch shaped like an inferred-CDC reader output (no partition column): {@code
    * [id, _change_type(null), _commit_version(null), _commit_timestamp(null)]}.
    */
   private static ColumnarBatch makeInferredCdcBatch(int[] ids) {
