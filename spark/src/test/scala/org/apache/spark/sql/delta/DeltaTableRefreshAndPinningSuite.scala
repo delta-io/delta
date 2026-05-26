@@ -1420,9 +1420,16 @@ class DeltaTableRefreshAndPinningAutoModeExternalSessionSuite
   override protected def useExternalSession: Boolean = true
 }
 
-// STRICT mode suites are omitted because V2_ENABLE_MODE=STRICT has a known issue where
-// the V2 catalog caches table schema at lookup time, so ALTER TABLE ADD/DROP COLUMN
-// followed by INSERT in the same session sees stale schema. This is a V2 catalog
-// limitation, not a Delta-specific bug. Tests will be added once the catalog invalidation
-// is fixed.
+/** V2_ENABLE_MODE = STRICT, same-session writes. */
+class DeltaTableRefreshAndPinningStrictModeSuite
+  extends DeltaTableRefreshAndPinningSuiteBase {
+  override protected def v2EnableMode: String = "STRICT"
+}
+
+/** V2_ENABLE_MODE = STRICT with external session writes. */
+class DeltaTableRefreshAndPinningStrictModeExternalSessionSuite
+  extends DeltaTableRefreshAndPinningSuiteBase {
+  override protected def v2EnableMode: String = "STRICT"
+  override protected def useExternalSession: Boolean = true
+}
 
