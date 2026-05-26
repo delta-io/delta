@@ -20,7 +20,7 @@ import java.time.Instant
 
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 
-import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeltaErrors, DeltaOptions, Snapshot, UniversalFormat}
+import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeltaErrors, DeltaOptions, IcebergConstants, Snapshot, UniversalFormat}
 import org.apache.spark.sql.delta.hooks.{UpdateCatalog, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -157,11 +157,8 @@ trait CreateDeltaTableLike extends SQLConfHelper {
    * value ready to be forwarded to the catalog's createTable API. Returns [[None]] when UniForm
    * is not enabled on the table or when the converter is unavailable.
    *
-   * We pass `snapshot` as both the metadata source and the `readSnapshot`. Because
-   * `readSnapshot.metadata` already has Iceberg enabled, `enablingUniForm` is set to false
-   * inside the converter. However, since the freshly created `catalogTable` carries no prior
-   * `deltaUniformIceberg.metadataLocation`, `fetchLastConvertedIcebergInfo` returns all-None,
-   * which causes the converter to start a brand-new Iceberg table - correct for CTAS.
+   * The in-memory Iceberg props are explicitly stripped from
+   * `catalogTable.storage` for extra safety.
    */
   private def getUniformMetadataForCreate(
       snapshot: Snapshot,
@@ -173,10 +170,16 @@ trait CreateDeltaTableLike extends SQLConfHelper {
       readSnapshot = snapshot,
       actions = snapshot.allFiles.collect().toSeq,
       commitInfo = None)
-    // createTable always use full conversion
+    // Strip any stale in-memory Iceberg props from storage so that fetchLastConvertedIcebergInfo
+    // sees no prior state and always performs a full (non-incremental) conversion.
+    val cleanedCatalogTable = catalogTable.copy(
+      storage = catalogTable.storage.copy(
+        properties = catalogTable.storage.properties
+          - IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP
+          - IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP))
     val (metadataPath, _) =
       snapshot.deltaLog.icebergConverter.convertUncommitedTxn(
-        dummyTxnInfo, snapshot.version, snapshot.deltaLog, catalogTable)
+        dummyTxnInfo, snapshot.version, snapshot.deltaLog, cleanedCatalogTable)
     Some(new UniformMetadata(new IcebergMetadata(
       metadataPath,
       snapshot.version,
