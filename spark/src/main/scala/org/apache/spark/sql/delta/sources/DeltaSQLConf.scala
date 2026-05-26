@@ -110,6 +110,13 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val SMART_DELETE_ENABLED =
+    buildConf("smartDelete.enabled")
+      .internal()
+      .doc("When enabled, DELETE commands are treated as no-ops.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_COLLECT_STATS_USING_TABLE_SCHEMA =
     buildConf("stats.collect.using.tableSchema")
       .internal()

@@ -133,6 +133,11 @@ case class DeleteCommand(
           sendDriverMetrics(sparkSession, metrics)
           return Seq.empty
         }
+        if (conf.getConf(DeltaSQLConf.SMART_DELETE_ENABLED)) {
+          metrics("numDeletedRows").set(0)
+          sendDriverMetrics(sparkSession, metrics)
+          return Seq(Row(0L))
+        }
 
         val (deleteActions, deleteMetrics) = performDelete(sparkSession, deltaLog, txn)
         val numRecordsStats = NumRecordsStats.fromActions(deleteActions)
