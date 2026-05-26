@@ -16,7 +16,7 @@
 
 package io.delta.sql
 
-import io.delta.internal.{ApplyV2ReadOptions, ApplyV2Streaming}
+import io.delta.internal.{ApplyV2ReadOptions, ApplyV2Streaming, ResolveTableChangesV2}
 import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule
@@ -89,6 +89,11 @@ class DeltaSparkSessionExtension extends AbstractDeltaSparkSessionExtension {
     // ApplyV2Streaming so it sees both V1-converted and catalog-loaded relations.
     extensions.injectResolutionRule { _ =>
       new ApplyV2ReadOptions
+    }
+
+    // Resolve CDF batch reads to use Spark's DSv2 CDC implementation.
+    extensions.injectResolutionRule { _ =>
+      new ResolveTableChangesV2
     }
   }
 

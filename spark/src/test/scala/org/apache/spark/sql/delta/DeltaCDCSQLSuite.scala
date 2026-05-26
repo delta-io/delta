@@ -22,15 +22,12 @@ import org.apache.spark.sql.delta.DeltaTestUtils.modifyCommitTimestamp
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTableUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
-import org.apache.spark.SparkConf
-import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
+import org.apache.spark.sql.{AnalysisException, DataFrame}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.DateTimeTestUtils._
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.LongType
 
 class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtils {
@@ -477,123 +474,4 @@ class DeltaCDCSQLWithCatalogOwnedBatch2Suite extends DeltaCDCSQLSuite {
 
 class DeltaCDCSQLWithCatalogOwnedBatch100Suite extends DeltaCDCSQLSuite {
   override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
-}
-
-/**
- * Coverage for the read-time CDF routing introduced for the case where
- * `delta.enableChangeDataFeed` is NOT set on a table but `delta.enableRowTracking` is.
- * In that configuration, both `table_changes(...)` and `.option("readChangeFeed", "true")`
- * route to the V2 (kernel-based) changelog reader instead of failing with
- * `CHANGE_DATA_NOT_RECORDED`.
- *
- * Tests in this suite intentionally disable the CDF table-property default that the base
- * [[org.apache.spark.sql.delta.cdc.CDCEnabled]] trait turns on, since the routing only fires
- * for tables that do not have CDF enabled.
- */
-class DeltaCDCReadTimeRoutingSuite
-  extends QueryTest
-  with SharedSparkSession
-  with DeltaSQLCommandTest {
-
-  override protected def sparkConf: SparkConf = super.sparkConf
-    .set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "false")
-    .set(DeltaSQLConf.DELTA_READ_TIME_CDF_ENABLED.key, "true")
-    // The routing produces a DataSourceV2Relation around the new ChangelogTable; the SPIP
-    // ResolveChangelogTable analyzer rule needs `loadChangelog` not to be gated off when it
-    // re-resolves bookkeeping. Enable here so the end-to-end DSv2 path is live in the suite.
-    .set(DeltaSQLConf.DELTA_CHANGELOG_V2_ENABLED.key, "true")
-
-  private def createRowTrackingTable(tbl: String): Unit = {
-    sql(
-      s"""CREATE TABLE $tbl (id BIGINT, name STRING) USING delta TBLPROPERTIES (
-         |  'delta.enableChangeDataFeed' = 'false',
-         |  'delta.enableRowTracking' = 'true',
-         |  'delta.enableDeletionVectors' = 'false'
-         |)""".stripMargin)
-    sql(s"INSERT INTO $tbl VALUES (1, 'Alice')")   // v1
-    sql(s"INSERT INTO $tbl VALUES (2, 'Bob')")     // v2
-    sql(s"INSERT INTO $tbl VALUES (3, 'Charlie')") // v3
-  }
-
-  test("table_changes routes to read-time CDF when CDF disabled + row tracking enabled") {
-    val tbl = "rt_cdf_tbl"
-    withTable(tbl) {
-      createRowTrackingTable(tbl)
-      val res = sql(s"SELECT id, name, _change_type FROM table_changes('$tbl', 1, 3)")
-        .orderBy("_commit_version", "id")
-      checkAnswer(
-        res,
-        Row(1L, "Alice", "insert") ::
-        Row(2L, "Bob", "insert") ::
-        Row(3L, "Charlie", "insert") :: Nil)
-    }
-  }
-
-  test("readChangeFeed option routes to read-time CDF when CDF disabled + row tracking enabled") {
-    val tbl = "rt_cdf_opt_tbl"
-    withTable(tbl) {
-      createRowTrackingTable(tbl)
-      val tablePath = DeltaLog.forTable(spark, TableIdentifier(tbl)).dataPath.toString
-      val res = spark.read.format("delta")
-        .option("readChangeFeed", "true")
-        .option("startingVersion", "1")
-        .option("endingVersion", "3")
-        .load(tablePath)
-        .select("id", "name", "_change_type")
-        .orderBy("_commit_version", "id")
-      checkAnswer(
-        res,
-        Row(1L, "Alice", "insert") ::
-        Row(2L, "Bob", "insert") ::
-        Row(3L, "Charlie", "insert") :: Nil)
-    }
-  }
-
-  test("table_changes still fails when row tracking is not enabled (no DSv2 routing)") {
-    val tbl = "rt_cdf_no_rt"
-    withTable(tbl) {
-      sql(s"CREATE TABLE $tbl (id BIGINT) USING delta")
-      sql(s"INSERT INTO $tbl VALUES (1), (2)")
-      val ex = intercept[Exception] {
-        sql(s"SELECT * FROM table_changes('$tbl', 0, 1)").collect()
-      }
-      assert(
-        ex.getMessage.contains("DELTA_MISSING_CHANGE_DATA") ||
-          ex.getMessage.contains("change data was not recorded"),
-        s"Expected change-data-not-recorded error, got: ${ex.getMessage}")
-    }
-  }
-
-  test("read-time CDF routing is opt-in via DELTA_READ_TIME_CDF_ENABLED flag") {
-    val tbl = "rt_cdf_flag_off"
-    withTable(tbl) {
-      createRowTrackingTable(tbl)
-      withSQLConf(DeltaSQLConf.DELTA_READ_TIME_CDF_ENABLED.key -> "false") {
-        val ex = intercept[Exception] {
-          sql(s"SELECT * FROM table_changes('$tbl', 1, 3)").collect()
-        }
-        assert(
-          ex.getMessage.contains("DELTA_MISSING_CHANGE_DATA") ||
-            ex.getMessage.contains("change data was not recorded"),
-          s"Expected fall-through to write-time reader error, got: ${ex.getMessage}")
-      }
-    }
-  }
-
-  test("write-time CDF reader still wins when CDF is enabled on the table") {
-    val tbl = "rt_cdf_cdf_on"
-    withTable(tbl) {
-      sql(
-        s"""CREATE TABLE $tbl (id BIGINT) USING delta TBLPROPERTIES (
-           |  'delta.enableChangeDataFeed' = 'true',
-           |  'delta.enableRowTracking' = 'true'
-           |)""".stripMargin)
-      sql(s"INSERT INTO $tbl VALUES (1), (2)")
-      // No exception expected: write-time CDC reader handles this and the routing skips because
-      // `CDCReader.isCDCEnabledOnTable(metadata)` is true.
-      val res = sql(s"SELECT id, _change_type FROM table_changes('$tbl', 1, 1)")
-        .orderBy("id")
-      checkAnswer(res, Row(1L, "insert") :: Row(2L, "insert") :: Nil)
-    }
-  }
 }

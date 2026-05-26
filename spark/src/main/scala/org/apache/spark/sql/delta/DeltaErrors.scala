@@ -613,6 +613,17 @@ trait DeltaErrorsBase
   }
 
   /**
+   * Read-time CDC reader rejected a reader option it doesn't honor (e.g. `computeUpdates`,
+   * `deduplicationMode`, `startingBoundInclusive`, `endingBoundInclusive`). See
+   * [[io.delta.internal.ResolveTableChangesV2.rejectUnsupportedOptions]] for the rejected set.
+   */
+  def changelogUnsupportedOption(option: String): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_CHANGELOG_UNSUPPORTED_OPTION",
+      messageParameters = Array(option))
+  }
+
+  /**
    * Auto-CDF batch read rejected because the table resolved by the catalog is not a V2
    * [[io.delta.spark.internal.v2.catalog.SparkTable]]. The V2 connector is the only path that
    * implements the catalog-driven CHANGES surface. V1 Delta tables (`DeltaTableV2`) continue to
