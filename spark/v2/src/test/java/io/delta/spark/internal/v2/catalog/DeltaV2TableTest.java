@@ -68,7 +68,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import scala.Option;
 
-public class SparkTableTest extends DeltaV2TestBase {
+public class DeltaV2TableTest extends DeltaV2TestBase {
 
   @ParameterizedTest(name = "{0} - {1}")
   @MethodSource("tableTestCases")
@@ -80,18 +80,18 @@ public class SparkTableTest extends DeltaV2TestBase {
     testCase.createTableSql.apply(tableName, path);
     Identifier identifier = Identifier.of(new String[] {"default"}, tableName);
 
-    // Create SparkTable based on construction method
-    SparkTable kernelTable;
+    // Create DeltaV2Table based on construction method
+    DeltaV2Table kernelTable;
     CatalogTable catalogTable = null;
 
     switch (method) {
       case FROM_PATH:
-        kernelTable = new SparkTable(identifier, path);
+        kernelTable = new DeltaV2Table(identifier, path);
         break;
       case FROM_CATALOG_TABLE:
         catalogTable =
             spark.sessionState().catalog().getTableMetadata(new TableIdentifier(tableName));
-        kernelTable = new SparkTable(identifier, catalogTable, Collections.emptyMap());
+        kernelTable = new DeltaV2Table(identifier, catalogTable, Collections.emptyMap());
         break;
       default:
         throw new IllegalArgumentException("Unknown construction method: " + method);
@@ -131,7 +131,7 @@ public class SparkTableTest extends DeltaV2TestBase {
     }
 
     // ===== Verify schema consistency with DeltaTableV2 =====
-    // This ensures SparkTable (Kernel-based) returns the same schema as DeltaTableV2 (V1-based)
+    // This ensures DeltaV2Table (Kernel-based) returns the same schema as DeltaTableV2 (V1-based)
     // Both should properly remove internal Delta metadata (e.g., column mapping physical names)
     DeltaTableV2 deltaTableV2;
     switch (method) {
@@ -163,7 +163,7 @@ public class SparkTableTest extends DeltaV2TestBase {
     assertEquals(
         deltaTableV2.schema(),
         sparkSchema,
-        "SparkTable schema should match DeltaTableV2 schema for test case: " + testCase.name);
+        "DeltaV2Table schema should match DeltaTableV2 schema for test case: " + testCase.name);
 
     // ===== Test partitioning =====
     Transform[] partitioning = kernelTable.partitioning();
@@ -194,12 +194,12 @@ public class SparkTableTest extends DeltaV2TestBase {
       case FROM_PATH:
         assertFalse(
             retrievedCatalogTable.isPresent(),
-            "Path-based SparkTable should not have catalog table");
+            "Path-based DeltaV2Table should not have catalog table");
         break;
       case FROM_CATALOG_TABLE:
         assertTrue(
             retrievedCatalogTable.isPresent(),
-            "CatalogTable-based SparkTable should have catalog table");
+            "CatalogTable-based DeltaV2Table should have catalog table");
         assertEquals(
             catalogTable,
             retrievedCatalogTable.get(),
@@ -212,7 +212,7 @@ public class SparkTableTest extends DeltaV2TestBase {
     assertEquals(new Path(path), retrievedPath, "getTablePath should return Path from tablePath");
   }
 
-  /** Enum to represent different construction methods for SparkTable */
+  /** Enum to represent different construction methods for DeltaV2Table */
   enum ConstructionMethod {
     FROM_PATH("Path"),
     FROM_CATALOG_TABLE("CatalogTable");
@@ -368,7 +368,7 @@ public class SparkTableTest extends DeltaV2TestBase {
       throws Exception {
     // Access the private static method via reflection
     Method getDecodedPath =
-        SparkTable.class.getDeclaredMethod("getDecodedPath", java.net.URI.class);
+        DeltaV2Table.class.getDeclaredMethod("getDecodedPath", java.net.URI.class);
     getDecodedPath.setAccessible(true);
 
     URI uri = new URI(uriString);
@@ -386,7 +386,7 @@ public class SparkTableTest extends DeltaV2TestBase {
   public void testGetDecodedPathDecodesUrlEncodedCharacters() throws Exception {
     // Access the private static method via reflection
     Method getDecodedPath =
-        SparkTable.class.getDeclaredMethod("getDecodedPath", java.net.URI.class);
+        DeltaV2Table.class.getDeclaredMethod("getDecodedPath", java.net.URI.class);
     getDecodedPath.setAccessible(true);
 
     // Test URL-encoded path: "spark%25dir%25prefix" should decode to "spark%dir%prefix"
@@ -419,9 +419,9 @@ public class SparkTableTest extends DeltaV2TestBase {
     Identifier identifier = Identifier.of(new String[] {"default"}, "test_equals");
     Map<String, String> options = Collections.singletonMap("key", "value");
 
-    SparkTable table1 = new SparkTable(identifier, path, options);
-    SparkTable table2 = new SparkTable(identifier, path, options);
-    SparkTable table3 = new SparkTable(identifier, path, Collections.emptyMap());
+    DeltaV2Table table1 = new DeltaV2Table(identifier, path, options);
+    DeltaV2Table table2 = new DeltaV2Table(identifier, path, options);
+    DeltaV2Table table3 = new DeltaV2Table(identifier, path, Collections.emptyMap());
 
     // Same identifier, path, and options should be equal
     assertEquals(table1, table2);
@@ -444,13 +444,13 @@ public class SparkTableTest extends DeltaV2TestBase {
     Identifier identifier = Identifier.of(new String[] {"default"}, "test_catalog");
 
     // Create table1 and table2 with separately fetched CatalogTable objects (not same instance)
-    SparkTable table1 =
-        new SparkTable(
+    DeltaV2Table table1 =
+        new DeltaV2Table(
             identifier,
             spark.sessionState().catalog().getTableMetadata(new TableIdentifier("test_catalog1")),
             Collections.emptyMap());
-    SparkTable table2 =
-        new SparkTable(
+    DeltaV2Table table2 =
+        new DeltaV2Table(
             identifier,
             spark.sessionState().catalog().getTableMetadata(new TableIdentifier("test_catalog1")),
             Collections.emptyMap());
@@ -460,8 +460,8 @@ public class SparkTableTest extends DeltaV2TestBase {
     assertEquals(table1.hashCode(), table2.hashCode());
 
     // Different catalogTable should not be equal
-    SparkTable table3 =
-        new SparkTable(
+    DeltaV2Table table3 =
+        new DeltaV2Table(
             identifier,
             spark.sessionState().catalog().getTableMetadata(new TableIdentifier("test_catalog2")),
             Collections.emptyMap());
@@ -469,7 +469,7 @@ public class SparkTableTest extends DeltaV2TestBase {
     assertNotEquals(table1.hashCode(), table3.hashCode());
 
     // Path-based table (no catalogTable) should not equal catalog-based table
-    SparkTable table4 = new SparkTable(identifier, path1, Collections.emptyMap());
+    DeltaV2Table table4 = new DeltaV2Table(identifier, path1, Collections.emptyMap());
     assertNotEquals(table1, table4);
     assertNotEquals(table1.hashCode(), table4.hashCode());
   }
@@ -481,20 +481,20 @@ public class SparkTableTest extends DeltaV2TestBase {
 
     Identifier identifier = Identifier.of(new String[] {"default"}, "test_snapshot");
 
-    // Create first SparkTable instance at version 0
-    SparkTable table1 = new SparkTable(identifier, path);
+    // Create first DeltaV2Table instance at version 0
+    DeltaV2Table table1 = new DeltaV2Table(identifier, path);
 
     // Modify the table to create a new version
     spark.sql("INSERT INTO test_snapshot VALUES (1)");
 
-    // Create second SparkTable instance at version 1
-    SparkTable table2 = new SparkTable(identifier, path);
+    // Create second DeltaV2Table instance at version 1
+    DeltaV2Table table2 = new DeltaV2Table(identifier, path);
 
     // Same identifier and path but different snapshot versions should not be equal
     assertNotEquals(
         table1,
         table2,
-        "SparkTable instances with different snapshot versions should not be equal");
+        "DeltaV2Table instances with different snapshot versions should not be equal");
     assertNotEquals(
         table1.hashCode(),
         table2.hashCode(),
@@ -507,8 +507,8 @@ public class SparkTableTest extends DeltaV2TestBase {
     spark.sql(
         String.format("CREATE TABLE test_write_builder (id INT) USING delta LOCATION '%s'", path));
 
-    SparkTable table =
-        new SparkTable(Identifier.of(new String[] {"default"}, "test_write_builder"), path);
+    DeltaV2Table table =
+        new DeltaV2Table(Identifier.of(new String[] {"default"}, "test_write_builder"), path);
     LogicalWriteInfo writeInfo =
         new LogicalWriteInfo() {
           @Override
@@ -537,7 +537,7 @@ public class SparkTableTest extends DeltaV2TestBase {
 
     Identifier identifier = Identifier.of(new String[] {"default"}, "test_cdc_on");
     Map<String, String> options = Collections.singletonMap("readChangeFeed", "true");
-    SparkTable table = new SparkTable(identifier, path, options);
+    DeltaV2Table table = new DeltaV2Table(identifier, path, options);
 
     StructType schema = table.schema();
     List<String> names = Arrays.asList(schema.fieldNames());
@@ -563,7 +563,7 @@ public class SparkTableTest extends DeltaV2TestBase {
     spark.sql(String.format("CREATE TABLE test_cdc_off (id INT) USING delta LOCATION '%s'", path));
 
     Identifier identifier = Identifier.of(new String[] {"default"}, "test_cdc_off");
-    SparkTable table = new SparkTable(identifier, path, Collections.emptyMap());
+    DeltaV2Table table = new DeltaV2Table(identifier, path, Collections.emptyMap());
 
     StructType schema = table.schema();
     List<String> names = Arrays.asList(schema.fieldNames());
@@ -593,7 +593,7 @@ public class SparkTableTest extends DeltaV2TestBase {
     Map<String, String> options = new HashMap<>();
     options.put(DeltaOptions.SCHEMA_TRACKING_LOCATION(), schemaLogPath);
 
-    SparkTable table = new SparkTable(identifier, tablePath, options);
+    DeltaV2Table table = new DeltaV2Table(identifier, tablePath, options);
 
     StructType schema = table.schema();
     assertEquals(2, schema.fields().length);
@@ -653,18 +653,18 @@ public class SparkTableTest extends DeltaV2TestBase {
     // default) cannot fast-forward the seeded v0 entry past the upcoming v2 ALTER TABLE.
     spark.sql(String.format("INSERT INTO %s VALUES (1, 'a')", tableName));
 
-    // Evolve the table — version 2 has an extra non-partition column.
+    // Evolve the table — version 1 has an extra non-partition column.
     spark.sql(String.format("ALTER TABLE %s ADD COLUMNS (value DOUBLE)", tableName));
 
-    // Construct SparkTable with the schema-tracking option pointing at the seeded log. The
-    // snapshot is at v2 (3 columns) but the persisted entry is at v0 (2 columns). Default to
+    // Construct DeltaV2Table with the schema-tracking option pointing at the seeded log. The
+    // snapshot is at v1 (3 columns) but the persisted entry is at v0 (2 columns). Default to
     // the catalog-table constructor since that's how production code typically loads the table.
     Identifier identifier = Identifier.of(new String[] {"default"}, tableName);
     Map<String, String> options = new HashMap<>();
     options.put(optionKey, schemaLogPath);
-    SparkTable table;
+    DeltaV2Table table;
     if (usePathBasedConstructor) {
-      table = new SparkTable(identifier, tablePath, options);
+      table = new DeltaV2Table(identifier, tablePath, options);
     } else {
       CatalogTable catalogTable;
       try {
@@ -673,10 +673,10 @@ public class SparkTableTest extends DeltaV2TestBase {
       } catch (Exception e) {
         throw new RuntimeException(e);
       }
-      table = new SparkTable(identifier, catalogTable, options);
+      table = new DeltaV2Table(identifier, catalogTable, options);
     }
 
-    // Persisted metadata wins: schema reflects v0 (2 columns), not v2 (3 columns).
+    // Persisted metadata wins: schema reflects v0 (2 columns), not v1 (3 columns).
     // Public schema layout is data fields followed by partition fields, so [id, name].
     StructType schema = table.schema();
     assertEquals(2, schema.fields().length, "Persisted entry should override snapshot schema");
@@ -748,7 +748,7 @@ public class SparkTableTest extends DeltaV2TestBase {
           UnsupportedOperationException ex =
               assertThrows(
                   UnsupportedOperationException.class,
-                  () -> new SparkTable(identifier, tablePath, options));
+                  () -> new DeltaV2Table(identifier, tablePath, options));
           assertEquals(
               "Schema tracking location is not supported for Delta streaming source",
               ex.getMessage());
