@@ -541,7 +541,7 @@ public class MetadataEvolutionHandler {
 
   /**
    * Returns true when the read options carry a schema-tracking location but the table's own options
-   * do not — i.e. the {@code DeltaV2Table} was built before the user-supplied {@code
+   * do not — i.e. the {@code SparkTable} was built before the user-supplied {@code
    * schemaTrackingLocation}/{@code schemaLocation} option was observed, so callers must rebuild the
    * table with the option folded in for its schema to be driven by the tracking log.
    */

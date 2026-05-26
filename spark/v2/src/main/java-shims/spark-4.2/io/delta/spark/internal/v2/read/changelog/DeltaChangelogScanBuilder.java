@@ -6,7 +6,7 @@ import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.rowtracking.RowTracking;
-import io.delta.spark.internal.v2.catalog.DeltaV2Table;
+import io.delta.spark.internal.v2.catalog.SparkTable;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import java.util.Objects;
@@ -22,13 +22,13 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
 public class DeltaChangelogScanBuilder implements ScanBuilder {
 
-  private final DeltaV2Table sparkTable;
+  private final SparkTable sparkTable;
   private final long startVersion;
   private final long endVersion;
   private final CaseInsensitiveStringMap options;
 
   public DeltaChangelogScanBuilder(
-      DeltaV2Table sparkTable, long startVersion, long endVersion, CaseInsensitiveStringMap options) {
+      SparkTable sparkTable, long startVersion, long endVersion, CaseInsensitiveStringMap options) {
     this.sparkTable = sparkTable;
     this.startVersion = startVersion;
     this.endVersion = endVersion;

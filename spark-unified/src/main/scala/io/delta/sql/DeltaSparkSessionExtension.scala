@@ -76,7 +76,7 @@ class DeltaSparkSessionExtension extends AbstractDeltaSparkSessionExtension {
     super.apply(extensions)
 
     // Register a post-hoc resolution rule that rewrites V1 StreamingRelation plans that
-    // read catalog owned Delta tables into V2 StreamingRelationV2 plans backed by DeltaV2Table.
+    // read catalog owned Delta tables into V2 StreamingRelationV2 plans backed by SparkTable.
     //
     // NOTE: This rule is functional (not a placeholder). Binary compatibility concerns are
     // handled separately via the nested NoOpRule class below (kept for MiMa).
@@ -84,7 +84,7 @@ class DeltaSparkSessionExtension extends AbstractDeltaSparkSessionExtension {
       new ApplyV2Streaming(session)
     }
 
-    // Plumb read options into V2 StreamingRelationV2's DeltaV2Table when those options change a
+    // Plumb read options into V2 StreamingRelationV2's SparkTable when those options change a
     // property the table derives from them (today: CDC; future: schema evolution). Runs after
     // ApplyV2Streaming so it sees both V1-converted and catalog-loaded relations.
     extensions.injectResolutionRule { _ =>
