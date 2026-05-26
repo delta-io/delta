@@ -47,7 +47,7 @@ import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.Try
 
-import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaErrors}
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaErrors, DeltaGeoSpatial}
 import org.apache.hadoop.fs.Path
 import org.apache.spark.unsafe.types.UTF8String
 
@@ -615,8 +615,10 @@ private[delta] object PartitionUtils {
 
     partitionColumnsSchema(schema, partitionColumns, caseSensitive).foreach {
       field => field.dataType match {
-        // Variant types are not orderable and thus cannot be partition columns.
-        case a: AtomicType if !a.isInstanceOf[VariantType] => // OK
+        // Variant, Geometry and Geography types are not orderable and thus cannot be partition
+        // columns.
+        case a: AtomicType
+          if !a.isInstanceOf[VariantType] && !DeltaGeoSpatial.isGeoSpatialType(a) => // OK
         case _ => throw DeltaErrors.cannotUseDataTypeForPartitionColumnError(field)
       }
     }
