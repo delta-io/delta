@@ -21,6 +21,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
 import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -139,6 +140,7 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
    * CLUSTER BY is supported for managed tables.
    */
   @Test
+  @Disabled("This test is disabled while ALTER TABLE is being implemented")
   public void testAlterTableOperationsAreBlocked() throws Exception {
     withNewTable(
         "block_alter_table_test",

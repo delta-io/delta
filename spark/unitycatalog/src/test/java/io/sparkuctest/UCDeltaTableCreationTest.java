@@ -664,9 +664,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       final Map<String, String> expectedClusteringProperties =
           withCluster
               ? ImmutableMap.<String, String>builder()
-                  // TODO: change delta.clusteringColumns to clusteringColumns once UC server is
-                  //  fixed.
-                  .put("delta.clusteringColumns", "[[\"" + clusterColumn.get() + "\"]]")
+                  .put("clusteringColumns", "[[\"" + clusterColumn.get() + "\"]]")
                   .put("delta.feature.clustering", SUPPORTED)
                   .build()
               : ImmutableMap.of();
@@ -676,10 +674,9 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
               .put("delta.enableDeletionVectors", "true")
               .put("delta.enableInCommitTimestamps", "true")
               .put("delta.enableRowTracking", "true")
-              // TODO: enable 3 property checks once the bug on UC server is fixed.
-              // .put("delta.lastUpdateVersion", "0")
-              // .put("delta.minReaderVersion", "3")
-              // .put("delta.minWriterVersion", "7")
+              .put("delta.lastUpdateVersion", "0")
+              .put("delta.minReaderVersion", "3")
+              .put("delta.minWriterVersion", "7")
               .put(UC_TABLE_ID_KEY, tableInfo.getTableId())
               // User specified custom table property is also sent.
               .putAll(customizedProps)
