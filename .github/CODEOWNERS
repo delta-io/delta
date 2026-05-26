@@ -6,6 +6,7 @@
 /build/                         @tdas
 /build.sbt                      @tdas
 /project/                       @tdas
+/project/scripts/               @tdas @openinx @yili-db
 /version.sbt                    @tdas
 
 # Python client, examples, and tooling
