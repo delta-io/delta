@@ -26,6 +26,7 @@ import scala.jdk.OptionConverters._
 import io.delta.storage.commit.{TableIdentifier => StorageTableIdentifier}
 import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.{UCDeltaClient, UCDeltaModels}
+import io.delta.storage.commit.uniform.{UniformMetadata => StorageUniformMetadata}
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.TableInfo
 import io.delta.storage.commit.uccommitcoordinator.exceptions.{
@@ -258,7 +259,8 @@ private[catalog] class UCDeltaCatalogClientImpl(
       metadata: Metadata,
       domainMetadata: Seq[DomainMetadata],
       protocol: Protocol,
-      lastCommitTimestampMs: Long): Unit = {
+      lastCommitTimestampMs: Long,
+      uniformMetadata: Option[StorageUniformMetadata] = None): Unit = {
     if (table.tableType != CatalogTableType.MANAGED) {
       throw new IllegalArgumentException(
         s"UC Delta API createTable only supports MANAGED tables; " +
@@ -282,7 +284,8 @@ private[catalog] class UCDeltaCatalogClientImpl(
         configuration = cleanedConfiguration),
       protocol,
       domainMetadata.map(d => d: AbstractDomainMetadata).asJava,
-      lastCommitTimestampMs)
+      lastCommitTimestampMs,
+      uniformMetadata.toJava)
   }
 
   // -------------------------------------------------------------------------

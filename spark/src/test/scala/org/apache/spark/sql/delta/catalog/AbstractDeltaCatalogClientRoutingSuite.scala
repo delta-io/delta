@@ -582,7 +582,8 @@ private abstract class ThrowingUCDeltaClient extends UCDeltaClient {
       metadata: AbstractMetadata,
       protocol: AbstractProtocol,
       domainMetadata: util.List[AbstractDomainMetadata],
-      lastCommitTimestampMs: Long): TableInfo =
+      lastCommitTimestampMs: Long,
+      uniformMetadata: Optional[UniformMetadata]): TableInfo =
     throw new UnsupportedOperationException
   override def commit(
       tableId: String,

@@ -16,7 +16,11 @@
 
 package org.apache.spark.sql.delta.commands
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaOptions, Snapshot}
+import java.time.Instant
+
+import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
+
+import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeltaErrors, DeltaOptions, Snapshot, UniversalFormat}
 import org.apache.spark.sql.delta.hooks.{UpdateCatalog, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -27,6 +31,16 @@ import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.util.CharVarcharUtils
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.types.StructType
+
+/**
+ * Additional metadata supplied to [[CreateDeltaTableLike.updateCatalog]]'s `createTableFunc`
+ * alongside the cleaned [[CatalogTable]] and post-commit [[Snapshot]].
+ *
+ * @param uniformMetadata UniForm Iceberg metadata generated atomically with the initial snapshot;
+ *   [[None]] when UniForm is not enabled on the table.
+ */
+case class CreateTableAdditionalMetadata(
+    uniformMetadata: Option[UniformMetadata] = None)
 
 /**
  * A common trait implementing utility functions (e.g. catalog operations) for all commands that
@@ -91,14 +105,17 @@ trait CreateDeltaTableLike extends SQLConfHelper {
       snapshot: Snapshot,
       query: Option[LogicalPlan],
       didNotChangeMetadata: Boolean,
-      createTableFunc: Option[(CatalogTable, Snapshot) => Unit] = None
+      createTableFunc: Option[(CatalogTable, Snapshot, CreateTableAdditionalMetadata) => Unit] =
+        None
   ): Unit = {
     val cleaned = cleanupTableDefinition(spark, table, snapshot)
     operation match {
       case _ if tableByPath => // do nothing with the metastore if this is by path
       case TableCreationModes.Create =>
         if (createTableFunc.isDefined) {
-          createTableFunc.get.apply(cleaned, snapshot)
+          val additionalMeta = CreateTableAdditionalMetadata(
+            uniformMetadata = getUniformMetadataForCreate(snapshot, cleaned))
+          createTableFunc.get.apply(cleaned, snapshot, additionalMeta)
         } else {
           spark.sessionState.catalog.createTable(
             cleaned,
@@ -120,7 +137,9 @@ trait CreateDeltaTableLike extends SQLConfHelper {
           case Some(createFunc) =>
             // This is the new missing-table path where creation is delegated through the V2
             // catalog plugin (for example Unity Catalog) instead of SessionCatalog.createTable().
-            createFunc(cleaned, snapshot)
+            val additionalMeta = CreateTableAdditionalMetadata(
+              uniformMetadata = getUniformMetadataForCreate(snapshot, cleaned))
+            createFunc(cleaned, snapshot, additionalMeta)
           case None =>
             spark.sessionState.catalog.createTable(
               cleaned,
@@ -131,6 +150,37 @@ trait CreateDeltaTableLike extends SQLConfHelper {
     if (conf.getConf(DeltaSQLConf.HMS_FORCE_ALTER_TABLE_DATA_SCHEMA)) {
       spark.sessionState.catalog.alterTableDataSchema(cleaned.identifier, cleaned.schema)
     }
+  }
+
+  /**
+   * Runs Iceberg conversion for the freshly committed snapshot and returns a [[UniformMetadata]]
+   * value ready to be forwarded to the catalog's createTable API. Returns [[None]] when UniForm
+   * is not enabled on the table or when the converter is unavailable.
+   *
+   * We pass `snapshot` as both the metadata source and the `readSnapshot`. Because
+   * `readSnapshot.metadata` already has Iceberg enabled, `enablingUniForm` is set to false
+   * inside the converter. However, since the freshly created `catalogTable` carries no prior
+   * `deltaUniformIceberg.metadataLocation`, `fetchLastConvertedIcebergInfo` returns all-None,
+   * which causes the converter to start a brand-new Iceberg table - correct for CTAS.
+   */
+  private def getUniformMetadataForCreate(
+      snapshot: Snapshot,
+      catalogTable: CatalogTable): Option[UniformMetadata] = {
+    if (!UniversalFormat.icebergEnabled(snapshot.metadata)) return None
+    val dummyTxnInfo = CurrentTransactionInfo.forIcebergConversion(
+      metadata = snapshot.metadata,
+      protocol = snapshot.protocol,
+      readSnapshot = snapshot,
+      actions = snapshot.allFiles.collect().toSeq,
+      commitInfo = None)
+    // createTable always use full conversion
+    val (metadataPath, _) =
+      snapshot.deltaLog.icebergConverter.convertUncommitedTxn(
+        dummyTxnInfo, snapshot.version, snapshot.deltaLog, catalogTable)
+    Some(new UniformMetadata(new IcebergMetadata(
+      metadataPath,
+      snapshot.version,
+      Instant.now.toString)))
   }
 
   /** Clean up the information we pass on to store in the catalog. */

@@ -39,8 +39,7 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
 
   @Override
   protected boolean useDeltaRestApiForTests() {
-    // UniForm-Iceberg isn't supported by creating a table yet.
-    return false;
+    return true;
   }
 
   private static final String UNIFORM_TABLE_PROPS =
@@ -114,12 +113,14 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
    * Verifies UniForm Iceberg incremental conversion works correctly on the UC REST path (real
    * embedded UC server).
    *
-   * <p>The test creates a UniForm-enabled Delta table, writes twice, and verifies:
+   * <p>The test creates a UniForm-enabled Delta table and verifies:
    *
    * <ul>
-   *   <li>Write 1 → full Iceberg conversion: no {@code base-delta-version} table property.
-   *   <li>Write 2 → incremental conversion: {@code base-delta-version} equals the prior converted
-   *       Delta version, and the Iceberg snapshot chain is preserved.
+   *   <li>CREATE TABLE → full Iceberg conversion at delta v0: no {@code base-delta-version}.
+   *   <li>Write 1 → incremental conversion: {@code base-delta-version=0} (the CREATE TABLE
+   *       version), Iceberg snapshot parent equals the CREATE TABLE snapshot (or -1 if empty).
+   *   <li>Write 2 → incremental conversion: {@code base-delta-version=1}, and the Iceberg snapshot
+   *       chain is preserved.
    * </ul>
    */
   @Test
@@ -134,7 +135,17 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
         TableType.MANAGED,
         UNIFORM_TABLE_PROPS,
         fullTableName -> {
-          // Write 1 — full Iceberg conversion (no prior Iceberg state)
+          // CREATE TABLE atomically generates a full Iceberg conversion at delta version 0.
+          IcebergMeta metaCreate = verifyUCMetadataAndReadIceberg(fullTableName, 0L);
+          Assertions.assertEquals(
+              "0",
+              metaCreate.properties.get("delta-version"),
+              "CREATE TABLE must produce Iceberg metadata at delta-version 0");
+          Assertions.assertNull(
+              metaCreate.properties.get("base-delta-version"),
+              "CREATE TABLE Iceberg conversion must be full (no base-delta-version)");
+
+          // Write 1 — incremental conversion (base = delta v0 from CREATE TABLE)
           sql("INSERT INTO %s VALUES (1, 'a')", fullTableName);
           check(fullTableName, List.of(row("1", "a")));
           assertNoUniformPropsOnServer(fullTableName);
@@ -143,13 +154,18 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
               "1",
               meta1.properties.get("delta-version"),
               "After first write, delta-version in Iceberg metadata should be 1");
-          Assertions.assertNull(
+          Assertions.assertEquals(
+              "0",
               meta1.properties.get("base-delta-version"),
-              "First (full) conversion must NOT set base-delta-version");
+              "First write must be incremental from CREATE TABLE (base-delta-version = 0)");
           Assertions.assertTrue(
               meta1.currentSnapshotId != -1L, "Iceberg snapshot should exist after first write");
+          Assertions.assertEquals(
+              metaCreate.currentSnapshotId,
+              meta1.currentSnapshotParentId,
+              "First write snapshot's parent must equal the CREATE TABLE snapshot");
 
-          // Write 2 — must produce an incremental conversion on the Delta REST API path
+          // Write 2 — incremental conversion from delta v1
           sql("INSERT INTO %s VALUES (2, 'b')", fullTableName);
           check(fullTableName, List.of(row("1", "a"), row("2", "b")));
           assertNoUniformPropsOnServer(fullTableName);
@@ -158,16 +174,14 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
               "2",
               meta2.properties.get("delta-version"),
               "After second write, delta-version in Iceberg metadata should be 2");
-          if (useDeltaRestApiForTests()) {
-            Assertions.assertEquals(
-                "1",
-                meta2.properties.get("base-delta-version"),
-                "Second conversion must be incremental: base-delta-version should equal 1");
-            Assertions.assertEquals(
-                meta1.currentSnapshotId,
-                meta2.currentSnapshotParentId,
-                "Iceberg snapshot chain must be preserved: parent of snapshot-2 must be snapshot-1");
-          }
+          Assertions.assertEquals(
+              "1",
+              meta2.properties.get("base-delta-version"),
+              "Second conversion must be incremental: base-delta-version should equal 1");
+          Assertions.assertEquals(
+              meta1.currentSnapshotId,
+              meta2.currentSnapshotParentId,
+              "Iceberg snapshot chain must be preserved: parent of snapshot-2 must be snapshot-1");
         });
   }
 

@@ -18,6 +18,8 @@ package org.apache.spark.sql.delta.catalog
 
 import java.util
 
+import io.delta.storage.commit.uniform.UniformMetadata
+
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.connector.catalog.{Identifier, Table}
@@ -67,6 +69,8 @@ private[catalog] trait AbstractDeltaCatalogClient {
    * @param lastCommitTimestampMs wall-clock timestamp of the latest commit that produced
    *   `metadata` / `protocol`, used by the catalog as the authoritative "last updated"
    *   timestamp on the registered entry.
+   * @param uniformMetadata UniForm Iceberg metadata generated atomically with the initial
+   *   snapshot; [[None]] when the table was not created with UniForm enabled.
    */
   def createTable(
       ident: Identifier,
@@ -74,7 +78,8 @@ private[catalog] trait AbstractDeltaCatalogClient {
       metadata: Metadata,
       domainMetadata: Seq[DomainMetadata],
       protocol: Protocol,
-      lastCommitTimestampMs: Long): Unit
+      lastCommitTimestampMs: Long,
+      uniformMetadata: Option[UniformMetadata] = None): Unit
 }
 
 /** Builds a [[AbstractDeltaCatalogClient]] from catalog options. */
