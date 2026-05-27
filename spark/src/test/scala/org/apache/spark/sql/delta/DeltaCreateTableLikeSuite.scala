@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import java.io.File
 import java.util.UUID
 
+import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.commands.{
   CreateDeltaTableCommand,
@@ -381,7 +382,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
             snapshot,
             query = None,
             didNotChangeMetadata = true,
-            createTableFunc = Some((_: CatalogTable) => {
+            createTableFunc = Some((_: CatalogTable, _: Snapshot) => {
               createCallbackCalls += 1
             }))
         }

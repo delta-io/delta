@@ -80,6 +80,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
           "delta.feature.inCommitTimestamp",
           "delta.feature.invariants",
           "delta.feature.rowTracking",
+          "delta.feature.columnMapping",
           "delta.feature.v2Checkpoint",
           "delta.feature.vacuumProtocolCheck");
   private static final Map<String, String> EXPECTED_MANAGED_TABLE_FEATURES_PROPERTIES =
@@ -688,6 +689,10 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
               "delta.rowTracking.materializedRowCommitVersionColumnName",
               "delta.rowTracking.materializedRowIdColumnName");
 
+      // `delta.rowTracking.rowIdHighWaterMark` is emitted when using UC Delta API only.
+      // Difference servers may or may not persist it as a table property.
+      final Set<String> ignoredPropertyKeys = Set.of("delta.rowTracking.rowIdHighWaterMark");
+
       // This is combination of expectedOtherProperties and
       //  EXPECTED_MANAGED_TABLE_FEATURES_PROPERTIES.
       Map<String, String> expectedProperties =
@@ -709,7 +714,8 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
               .filter(
                   entry ->
                       !expectedProperties.containsKey(entry.getKey())
-                          && !expectedPropertiesWithVariableValue.contains(entry.getKey()))
+                          && !expectedPropertiesWithVariableValue.contains(entry.getKey())
+                          && !ignoredPropertyKeys.contains(entry.getKey()))
               .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
       assertThat(unexpectedTablePropertiesFromServer).isEmpty();
     } else {

@@ -39,7 +39,8 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
 
   @Override
   protected boolean useDeltaRestApiForTests() {
-    return true;
+    // UniForm-Iceberg isn't supported by creating a table yet.
+    return false;
   }
 
   private static final String UNIFORM_TABLE_PROPS =
