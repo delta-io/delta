@@ -519,6 +519,21 @@ public class PartitionUtils {
   }
 
   /**
+   * Public overload that takes a base64-serialized DV string directly and uses {@code IF_CONTAINED}
+   * filter semantics (visible-rows semantics for the changelog read path). Returns an empty map
+   * when {@code dvBase64} is {@code null}.
+   */
+  public static Map<String, Object> buildDvMetadata(String dvBase64) {
+    Map<String, Object> metadata = new HashMap<>();
+    if (dvBase64 != null) {
+      metadata.put(DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_ID_ENCODED(), dvBase64);
+      metadata.put(
+          DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_TYPE(), RowIndexFilterType.IF_CONTAINED);
+    }
+    return metadata;
+  }
+
+  /**
    * Build metadata map for PartitionedFile containing row tracking descriptor if present.
    *
    * <p>The metadata is used by DeltaParquetFileFormat to generate row-tracking values.
