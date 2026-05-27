@@ -323,16 +323,20 @@ class DeltaGeoSuite extends QueryTest
     assert(roundtripped === nested)
   }
 
-  test("assertSridSupported throws AnalysisException for negative SRID on Geometry") {
-    val schema = new StructType().add("g", GeometryType(-1))
+  test("assertSridSupported throws AnalysisException for unsupported SRID on Geometry") {
+    // `GeometryType("ANY")` produces a type whose `srid == MIXED_SRID (-1)`. Spark accepts that
+    // type at construction, but `GeometryType.isSridSupported(-1)` is false, so it's exactly the
+    // gap that `DeltaGeoSpatial.assertSridSupported` is meant to catch. (Direct `GeometryType(-1)`
+    // would now throw `ST_INVALID_SRID_VALUE` from the int constructor and never reach Delta.)
+    val schema = new StructType().add("g", GeometryType("ANY"))
     val ex = intercept[AnalysisException] {
       DeltaGeoSpatial.assertSridSupported(schema)
     }
     assert(ex.getCondition == "DELTA_GEOSPATIAL_SRID_NOT_SUPPORTED")
   }
 
-  test("assertSridSupported throws AnalysisException for negative SRID on Geography") {
-    val schema = new StructType().add("g", GeographyType(-7))
+  test("assertSridSupported throws AnalysisException for unsupported SRID on Geography") {
+    val schema = new StructType().add("g", GeographyType("ANY"))
     val ex = intercept[AnalysisException] {
       DeltaGeoSpatial.assertSridSupported(schema)
     }
@@ -347,8 +351,8 @@ class DeltaGeoSuite extends QueryTest
     DeltaGeoSpatial.assertSridSupported(schema)
   }
 
-  test("validateCommitActions rejects negative-SRID metadata even when preview is enabled") {
-    val schema = new StructType().add("g", GeometryType(-3))
+  test("validateCommitActions rejects unsupported-SRID metadata even when preview is enabled") {
+    val schema = new StructType().add("g", GeometryType("ANY"))
     val metadata = metadataWithSchema(schema)
     val protocol = Protocol(
       GeoSpatialTableFeature.minReaderVersion,
@@ -375,7 +379,11 @@ class DeltaGeoSuite extends QueryTest
   }
 
   test("AllowedUserProvidedExpressions whitelists the ST_ classes via the shim") {
-    val whitelist = AllowedUserProvidedExpressions.expressions
+    // The geo ST_* classes are appended to `checkConstraintExpressions` (not `expressions`)
+    // because DBR exposes them only inside CHECK constraints, not generated columns. The
+    // shim adds the same five classes on OSS so we can keep the constraint-only contract in
+    // lockstep with DBR.
+    val whitelist = AllowedUserProvidedExpressions.checkConstraintExpressions
     assert(whitelist.contains(classOf[ST_AsBinary]))
     assert(whitelist.contains(classOf[ST_GeogFromWKB]))
     assert(whitelist.contains(classOf[ST_GeomFromWKB]))
@@ -414,7 +422,9 @@ class DeltaGeoSuite extends QueryTest
   test("ZORDER BY a geometry column is rejected with DELTA_OPERATION_NOT_SUPPORTED_FOR_DATATYPES") {
     withTable("tbl") {
       sql(s"CREATE TABLE tbl(id INT, g GEOMETRY($DefaultSrid)) USING delta")
-      sql(s"INSERT INTO tbl VALUES (1, NULL)")
+      // No INSERT — `validateZorderByColumns` runs against the snapshot schema before any data
+      // is touched. Inserting geo values would fail in OSS Spark's Parquet writer, which doesn't
+      // (yet) know how to write GeometryType.
       val ex = intercept[AnalysisException] {
         sql("OPTIMIZE tbl ZORDER BY (g)")
       }
@@ -423,15 +433,41 @@ class DeltaGeoSuite extends QueryTest
     }
   }
 
-  test("Column default values are rejected on geometry columns") {
+  test("Column default values are rejected on geometry columns at CREATE TABLE") {
+    // `CREATE TABLE ... DEFAULT ...` goes through `CreateTable`, which is one of the ops
+    // `OptimisticTransactionImpl.checkColumnDefaults` matches on. (Note: `ALTER TABLE ADD COLUMN
+    // ... DEFAULT ...` is always rejected by Spark with
+    // `WRONG_COLUMN_DEFAULTS_FOR_DELTA_ALTER_TABLE_ADD_COLUMN_NOT_SUPPORTED` regardless of type
+    // and never reaches the Delta-side check.)
+    //
+    // Use a unique table name + explicit LOCATION inside a temp dir: the CREATE TABLE is
+    // expected to throw, but the catalog/Hadoop FS will already have created the table
+    // directory by the time `checkColumnDefaults` fires, and the default `withTable` cleanup
+    // (just `DROP TABLE IF EXISTS`) would leave that directory behind because the table was
+    // never actually registered. Pointing LOCATION at a `withTempDir` path ensures it is
+    // cleaned up regardless, so subsequent tests can re-create their own `tbl`.
+    withTempDir { tempDir =>
+      withTable("tbl_geo_default_create") {
+        val ex = intercept[AnalysisException] {
+          sql(s"CREATE TABLE tbl_geo_default_create(g GEOMETRY($DefaultSrid) DEFAULT NULL) " +
+            s"USING delta LOCATION '${tempDir.getAbsolutePath}/t' " +
+            "TBLPROPERTIES('delta.feature.allowColumnDefaults' = 'supported')")
+        }
+        assert(ex.getCondition == "DELTA_OPERATION_NOT_SUPPORTED_FOR_DATATYPES",
+          s"Expected DELTA_OPERATION_NOT_SUPPORTED_FOR_DATATYPES, got: ${ex.getCondition}")
+      }
+    }
+  }
+
+  test("Column default values are rejected on geometry columns via ALTER COLUMN SET DEFAULT") {
+    // `ALTER TABLE ... ALTER COLUMN ... SET DEFAULT ...` goes through `ChangeColumn`, which is
+    // also matched by `checkColumnDefaults`.
     withTable("tbl") {
-      sql("CREATE TABLE tbl(id INT) USING delta " +
+      sql(s"CREATE TABLE tbl(g GEOMETRY($DefaultSrid)) USING delta " +
         "TBLPROPERTIES('delta.feature.allowColumnDefaults' = 'supported')")
       val ex = intercept[AnalysisException] {
-        sql(s"ALTER TABLE tbl ADD COLUMN g GEOMETRY($DefaultSrid) DEFAULT NULL")
+        sql("ALTER TABLE tbl ALTER COLUMN g SET DEFAULT NULL")
       }
-      // The check is in OptimisticTransactionImpl.checkColumnDefaults, throwing
-      // DELTA_OPERATION_NOT_SUPPORTED_FOR_DATATYPES with operation "COLUMN DEFAULT".
       assert(ex.getCondition == "DELTA_OPERATION_NOT_SUPPORTED_FOR_DATATYPES",
         s"Expected DELTA_OPERATION_NOT_SUPPORTED_FOR_DATATYPES, got: ${ex.getCondition}")
     }

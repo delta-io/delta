@@ -21,7 +21,7 @@ import org.apache.spark.sql.delta.schema.{SchemaUtils, UnsupportedDataTypeInfo}
 import org.apache.spark.sql.delta.shims.GeoTypesShim
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
-import org.apache.spark.sql.{AnalysisException, SparkSession}
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DataType, StructType}
 
@@ -84,9 +84,9 @@ object DeltaGeoSpatial {
     SchemaUtils.typeExistsRecursively(schema) { dt =>
       GeoTypesShim.unsupportedSrid(dt) match {
         case Some(srid) =>
-          throw new AnalysisException(
-            "DELTA_GEOSPATIAL_SRID_NOT_SUPPORTED",
-            Map("srid" -> srid.toString))
+          throw new DeltaAnalysisException(
+            errorClass = "DELTA_GEOSPATIAL_SRID_NOT_SUPPORTED",
+            messageParameters = Array(srid.toString))
         case None => false
       }
     }
