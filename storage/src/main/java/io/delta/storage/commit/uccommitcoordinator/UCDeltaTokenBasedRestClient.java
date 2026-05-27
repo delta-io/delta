@@ -215,9 +215,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   private Map<String, String> fetchStagingCredentials(String location, String tableId)
       throws ApiException {
     try {
-      // TODO: move to the new staging table only endpoint once it's ready
-      return newCredBuilder(schemeOf(location))
-          .buildForTable(tableId, TableOperation.READ_WRITE);
+      return newCredBuilder(schemeOf(location)).buildForStagingTable(tableId, location);
     } catch (IllegalArgumentException | NullPointerException missingCred) {
       // The legacy buildForTable(tableId, op) path consumes AwsCredentials fields without
       // validating; missing creds in the response surface as NPE rather than the typed error
