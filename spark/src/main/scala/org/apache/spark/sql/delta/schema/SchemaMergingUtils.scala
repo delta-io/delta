@@ -19,8 +19,10 @@ package org.apache.spark.sql.delta.schema
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{DeltaAnalysisException, TypeWideningMode}
+import org.apache.spark.sql.delta.shims.GeoTypesShim
 
 import org.apache.spark.sql.catalyst.analysis.{Resolver, TypeCoercion, UnresolvedAttribute}
+import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.types._
 
@@ -313,7 +315,11 @@ object SchemaMergingUtils {
    * there's no valid cast.
    */
   private def typeForImplicitCast(sourceType: DataType, targetType: DataType): Option[DataType] = {
-    TypeCoercion.implicitCast(sourceType, targetType)
+    if (GeoTypesShim.isGeoSpatialType(sourceType) || GeoTypesShim.isGeoSpatialType(targetType)) {
+      None
+    } else {
+      TypeCoercion.implicitCast(Literal.default(sourceType), targetType).map(_.dataType)
+    }
   }
 
   def toFieldMap(
