@@ -3000,13 +3000,13 @@ trait OptimisticTransactionImpl extends TransactionHelper
         tags = Map(TAG_LOG_STORE_CLASS -> deltaLog.store.getClass.getName)) {
 
     DeltaTableV2.withEnrichedUnsupportedTableException(catalogTable) {
-      val (fileStatuses, uniformMetadataOpt) = getConflictingVersions(checkVersion)
-      val nextAttemptVersion = checkVersion + conflictingContext.fileStatuses.size
+      val conflictingContext = getConflictingVersions(checkVersion)
+      val nextAttemptVersion = checkVersion + conflictingContext.conflictingCommitFiles.size
 
       // validate that information about conflicting winning commit files is continuous and in the
       // right order.
       val expected = (checkVersion until nextAttemptVersion)
-      val found = conflictingContext.fileStatuses.map(deltaVersion)
+      val found = conflictingContext.conflictingCommitFiles.map(deltaVersion)
       val mismatch = expected.zip(found).dropWhile{ case (v1, v2) => v1 == v2 }.take(10)
       assert(mismatch.isEmpty,
         s"Expected ${mismatch.map(_._1).mkString(",")} but got ${mismatch.map(_._2).mkString(",")}")
@@ -3041,7 +3041,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
             currentTransactionInfo = currentTransactionInfo,
             firstWinningVersion = expected.head,
             lastWinningVersion = expected.last,
-            conflictingCommitFiles = conflictingContext.fileStatuses,
+            conflictingCommitFiles = conflictingContext.conflictingCommitFiles,
             commitIsolationLevel = commitIsolationLevel)
         }
       }
@@ -3114,7 +3114,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
         preCommitLogSegment,
         readSnapshotTableCommitCoordinatorClientOpt,
         catalogTable)
-    assert(preCommitLogSegment.version + conflictingContext.fileStatuses.size ==
+    assert(preCommitLogSegment.version + conflictingContext.conflictingCommitFiles.size ==
       newPreCommitLogSegment.version)
     preCommitLogSegment = newPreCommitLogSegment
     conflictingContext

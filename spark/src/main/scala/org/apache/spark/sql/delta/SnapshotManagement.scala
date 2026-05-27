@@ -1637,7 +1637,7 @@ trait SnapshotManagement { self: DeltaLog =>
 case class ListingExtras(uniformMetadata: Option[StorageUniformMetadata])
 
 case class ConflictingContext(
-    fileStatuses: Seq[FileStatus],
+    conflictingCommitFiles: Seq[FileStatus],
     uniformMetadata: Option[StorageUniformMetadata])
 
 object SnapshotManagement extends DeltaLogging {
