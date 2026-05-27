@@ -1658,7 +1658,11 @@ class DeltaTableRefreshAndPinningStrictModeExternalSessionSuite
       testFun: => Any)(implicit
       pos: org.scalactic.source.Position): Unit = {
     super.test(testName, testTags: _*) {
-      try { testFun } catch { case _: Throwable => /* expected */ }
+      try {
+        testFun
+      } catch {
+        case _: Throwable => // expected in STRICT + external session
+      }
     }(pos)
   }
 }
