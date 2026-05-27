@@ -320,11 +320,7 @@ trait SnapshotManagement { self: DeltaLog =>
     val latestChecksumOpt = additionalChecksumOpt.orElse(initialChecksumOpt)
     val uniformMetadataOpt =
       Option(unbackfilledCommitsResponse.getUniformMetadata.orElse(null))
-<<<<<<< HEAD
-    (logTuplesToReturn, latestChecksumOpt, uniformMetadataOpt)
-=======
     (logTuplesToReturn, latestChecksumOpt, ListingExtras(uniformMetadataOpt))
->>>>>>> 0a285f60b (Squashed commits:)
   }
 
   /**
