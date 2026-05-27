@@ -36,9 +36,7 @@ object GeoTypesShim {
 
   /**
    * Geospatial Catalyst expression classes whitelisted for user-provided expressions
-   * (e.g. CHECK constraints). Empty on Spark 4.0 because the ST_* expressions live in
-   * `org.apache.spark.sql.catalyst.expressions.st` only from Spark 4.1 onward (SPARK-53760).
-   * The GeoSpatial table feature is therefore effectively a no-op on Spark 4.0.
+   * (e.g. generated columns, check constraints).
    */
   val geoExpressions: Set[Class[_]] = Set.empty[Class[_]]
 }
