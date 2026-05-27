@@ -1185,6 +1185,8 @@ object V2CheckpointTableFeature
 
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
 
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
+
   private def isV2CheckpointSupportNeededByMetadata(metadata: Metadata): Boolean =
     DeltaConfigs.CHECKPOINT_POLICY.fromMetaData(metadata).needsV2CheckpointSupport
 
