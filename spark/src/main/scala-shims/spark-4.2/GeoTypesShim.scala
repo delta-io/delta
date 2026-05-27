@@ -44,7 +44,12 @@ object GeoTypesShim {
 
   /**
    * Geospatial Catalyst expression classes whitelisted for user-provided expressions
-   * (e.g. generated columns, check constraints).
+   * (e.g. CHECK constraints; see `AllowedUserProvidedExpressions.checkConstraintExpressions`).
+   *
+   * Only the WKB/SRID-handling ST_* classes that ship as concrete Catalyst expressions in
+   * `org.apache.spark.sql.catalyst.expressions.st` (introduced with SPARK-53760) are exposed
+   * here, since they are the stable entry points for round-tripping geo values through
+   * binary representations.
    */
   val geoExpressions: Set[Class[_]] = Set(
     classOf[ST_AsBinary],

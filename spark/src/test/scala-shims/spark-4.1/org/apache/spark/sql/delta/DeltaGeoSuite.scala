@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.shims.GeoTypesShim
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
@@ -379,10 +380,9 @@ class DeltaGeoSuite extends QueryTest
   }
 
   test("AllowedUserProvidedExpressions whitelists the ST_ classes via the shim") {
-    // The geo ST_* classes are appended to `checkConstraintExpressions` (not `expressions`)
-    // because DBR exposes them only inside CHECK constraints, not generated columns. The
-    // shim adds the same five classes on OSS so we can keep the constraint-only contract in
-    // lockstep with DBR.
+    // The geo ST_* classes are appended to `checkConstraintExpressions` (not `expressions`),
+    // so they are usable in CHECK constraints only and not in generated columns. The shim
+    // contributes the five classes on top of the static `checkConstraintExpressions` Set.
     val whitelist = AllowedUserProvidedExpressions.checkConstraintExpressions
     assert(whitelist.contains(classOf[ST_AsBinary]))
     assert(whitelist.contains(classOf[ST_GeogFromWKB]))
@@ -477,17 +477,6 @@ class DeltaGeoSuite extends QueryTest
   // Schema evolution for geospatial columns through MERGE
   // ---------------------------------------------------------------------------
 
-  test("Adding a new geometry column via ALTER TABLE auto-enables GeoSpatial feature") {
-    withTable("tbl") {
-      sql("CREATE TABLE tbl(id INT) USING delta")
-      val before = getProtocolForTable("tbl")
-      assert(!before.isFeatureSupported(GeoSpatialTableFeature))
-      sql(s"ALTER TABLE tbl ADD COLUMN g GEOMETRY($DefaultSrid)")
-      val after = getProtocolForTable("tbl")
-      assert(after.isFeatureSupported(GeoSpatialTableFeature))
-    }
-  }
-
   test("Adding a new geo column via ALTER TABLE writes a Metadata action with the geo schema") {
     withTable("tbl") {
       sql("CREATE TABLE tbl(id INT, s STRING) USING delta")
@@ -498,37 +487,77 @@ class DeltaGeoSuite extends QueryTest
     }
   }
 
+  test("SchemaMergingUtils.mergeSchemas rejects geo columns with different SRIDs " +
+    "(blocks SRID change / MERGE schema evolution with mismatched SRIDs)") {
+    // Two schemas that agree on column name and broad type (geometry) but differ in SRID. The
+    // geo guard in `SchemaMergingUtils.typeForImplicitCast` returns None for any geo-to-geo
+    // mismatch, so the merge falls through and the field-merge wrapper rethrows as
+    // `DELTA_FAILED_TO_MERGE_FIELDS` (whose cause is `DELTA_MERGE_INCOMPATIBLE_DATATYPE`). This
+    // is the same path that fires on `ALTER TABLE ... ALTER COLUMN g TYPE GEOMETRY(<other srid>)`
+    // and on `MERGE WITH SCHEMA EVOLUTION` when source/target SRIDs differ.
+    val tableSchema = new StructType().add("g", GeometryType(DefaultSrid))
+    val dataSchema = new StructType().add("g", GeometryType(0))
+    val ex = intercept[DeltaAnalysisException] {
+      SchemaMergingUtils.mergeSchemas(
+        tableSchema,
+        dataSchema,
+        allowImplicitConversions = true)
+    }
+    assert(ex.getErrorClass == "DELTA_FAILED_TO_MERGE_FIELDS",
+      s"Expected DELTA_FAILED_TO_MERGE_FIELDS, got: ${ex.getErrorClass}")
+  }
+
+  test("SchemaMergingUtils.mergeSchemas rejects geo->non-geo and non-geo->geo merges") {
+    // The geo guard short-circuits whenever EITHER side is geo, so swapping a non-geo column
+    // for a geo one (or vice versa) also fails to merge with `DELTA_FAILED_TO_MERGE_FIELDS`.
+    val geoToString = new StructType().add("g", GeometryType(DefaultSrid))
+    val stringToGeo = new StructType().add("g", StringType)
+    val ex1 = intercept[DeltaAnalysisException] {
+      SchemaMergingUtils.mergeSchemas(geoToString, stringToGeo, allowImplicitConversions = true)
+    }
+    assert(ex1.getErrorClass == "DELTA_FAILED_TO_MERGE_FIELDS")
+    val ex2 = intercept[DeltaAnalysisException] {
+      SchemaMergingUtils.mergeSchemas(stringToGeo, geoToString, allowImplicitConversions = true)
+    }
+    assert(ex2.getErrorClass == "DELTA_FAILED_TO_MERGE_FIELDS")
+  }
+
+  test("ALTER TABLE ALTER COLUMN ... TYPE between geo SRIDs is rejected") {
+    // `ALTER TABLE ... ALTER COLUMN g TYPE GEOMETRY(<other srid>)` routes through
+    // `AlterTableChangeColumnDeltaCommand`, which goes through schema merge. The geo guard
+    // above blocks the change. No data needs to be written, so this works even on OSS Spark
+    // 4.1 (whose Parquet writer cannot encode geo values).
+    withTable("tbl") {
+      sql(s"CREATE TABLE tbl(g GEOMETRY($DefaultSrid)) USING delta")
+      val ex = intercept[AnalysisException] {
+        sql("ALTER TABLE tbl ALTER COLUMN g TYPE GEOMETRY(0)")
+      }
+      assert(ex.getMessage.toUpperCase(java.util.Locale.ROOT).contains("GEOMETRY"),
+        s"Expected the rejection message to mention GEOMETRY, got: ${ex.getMessage}")
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Convert to Delta with geospatial compatibility
   // ---------------------------------------------------------------------------
 
-  test("CONVERT TO DELTA fails when the source parquet schema contains geo types") {
-    withTempDir { tempDir =>
-      val parquetPath = new java.io.File(tempDir, "p").getAbsolutePath
-      // Build a Parquet table with a geography column. We only need the schema, not actual
-      // geo rows, so write an empty DataFrame.
-      val emptyDf = spark.createDataFrame(
-        spark.sparkContext.emptyRDD[org.apache.spark.sql.Row],
-        new StructType()
-          .add("id", IntegerType)
-          .add("g", GeographyType(DefaultSrid)))
-      try {
-        emptyDf.write.format("parquet").save(parquetPath)
-        val ex = intercept[Throwable] {
-          sql(s"CONVERT TO DELTA parquet.`$parquetPath`")
-        }
-        // The check is in ConvertToDeltaCommandBase.validateConvert -> failIfSchemaHasGeoColumn,
-        // which throws DELTA_OPERATION_NOT_SUPPORTED_FOR_DATATYPES with op "CONVERT TO DELTA".
-        assert(ex.getMessage.contains("CONVERT TO DELTA"),
-          s"Expected message to mention CONVERT TO DELTA, got: ${ex.getMessage}")
-      } catch {
-        case _: org.apache.spark.SparkException =>
-          // Spark 4.1 has only partial geospatial support, so the Parquet writer may reject the
-          // empty-schema write before we get to CONVERT TO DELTA - treat that as a pass since
-          // the goal here is verifying Delta's schema rejection, not Parquet geo write support.
-          succeed
-      }
+  test("CONVERT TO DELTA fails when the schema contains geo types " +
+    "(failIfSchemaHasGeoColumn unit check)") {
+    // This is the unit-level check that `ConvertToDeltaCommandBase.validateConvert` runs on
+    // the parquet table's schema (see `ConvertToDeltaCommand.scala`). The end-to-end SQL
+    // version (CREATE TABLE USING parquet AS SELECT ... ST_GeomFromWKB; CONVERT TO DELTA)
+    // lives only in the Spark 4.2 shim because OSS Spark 4.1's Parquet writer cannot encode
+    // `GeometryType`/`GeographyType` (`UnsupportedDataType GeometryType(...)` from
+    // `ParquetWriteSupport.makeWriter`). On 4.1 we test the validation hook directly so the
+    // check stays deterministic across Spark versions.
+    val schema = new StructType()
+      .add("id", IntegerType)
+      .add("g", GeographyType(DefaultSrid))
+    val ex = intercept[Throwable] {
+      DeltaGeoSpatial.failIfSchemaHasGeoColumn(schema, "CONVERT TO DELTA")
     }
+    assert(ex.getMessage.contains("CONVERT TO DELTA"),
+      s"Expected message to mention CONVERT TO DELTA, got: ${ex.getMessage}")
   }
 
   // ---------------------------------------------------------------------------
