@@ -495,9 +495,9 @@ public class PartitionUtils {
   /**
    * Build metadata map for PartitionedFile containing DV descriptor if present.
    *
-   * <p>The metadata is used by DeltaParquetFileFormat to generate the is_row_deleted column.
-   * Uses {@code IF_CONTAINED} filter semantics (visible-rows semantics). Returns an empty map
-   * when {@code dvBase64} is {@code null}.
+   * <p>The metadata is used by DeltaParquetFileFormat to generate the is_row_deleted column. Uses
+   * {@code IF_CONTAINED} filter semantics (visible-rows semantics). Returns an empty map when
+   * {@code dvBase64} is {@code null}.
    */
   public static Map<String, Object> buildDvMetadata(String dvBase64) {
     Map<String, Object> metadata = new HashMap<>();
