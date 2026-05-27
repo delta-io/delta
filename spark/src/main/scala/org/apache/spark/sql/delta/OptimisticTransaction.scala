@@ -1554,6 +1554,11 @@ trait OptimisticTransactionImpl extends TransactionHelper
     }
   }
 
+  /** Ensure that actions do not contain duplicates for the same path. */
+  protected def checkNoDuplicateActions(actions: Seq[Action]): Unit = {
+    ConflictChecker.checkNoDuplicateActions(actions.iterator).foreach(_ => ())
+  }
+
   /**
    * Checks if the passed-in actions have internal SetTransaction conflicts, will throw exceptions
    * in case of conflicts. This function will also remove duplicated [[SetTransaction]]s.
@@ -1834,6 +1839,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
         }
 
       validateActionsAddFileInvariants(preparedActions, metadata)
+
+      if (spark.conf.get(DeltaSQLConf.DELTA_DUPLICATE_ACTION_CHECK_ENABLED)) {
+        checkNoDuplicateActions(preparedActions)
+      }
 
       // Find the isolation level to use for this commit
       val isolationLevelToUse = getIsolationLevelToUse(preparedActions, op)
@@ -3107,7 +3116,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
           winningCommitSummary,
           commitIsolationLevel)
 
-        updatedCurrentTransactionInfo = conflictChecker.checkConflicts()
+        updatedCurrentTransactionInfo = conflictChecker.checkConflictsAndValidateActions()
 
         logInfo(logPrefix +
           log"No conflicts in version ${MDC(DeltaLogKeys.VERSION, otherCommitVersion)}, " +
