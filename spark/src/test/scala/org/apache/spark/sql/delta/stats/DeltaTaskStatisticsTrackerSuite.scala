@@ -69,12 +69,14 @@ class DeltaTaskStatisticsTrackerSuite
       val (statsColExpr, resolvedStatsDataSchema) =
         DeltaWriteStatsUtils.getStatsColExpr(
           spark, dataRenamed.queryExecution.analyzed.output, statsCollection)
-      val filePath = new Path(dir.getAbsolutePath, "part-00000-test.parquet").toString
-      val tracker = new DeltaTaskStatisticsTracker(
+      val rootPath = new Path(dir.getAbsolutePath)
+      val jobTracker = new DeltaJobStatisticsTracker(
+        deltaLog.newDeltaHadoopConf(),
+        rootPath,
         resolvedStatsDataSchema,
-        statsColExpr,
-        new Path(dir.getAbsolutePath),
-        deltaLog.newDeltaHadoopConf())
+        statsColExpr)
+      val tracker = jobTracker.newTaskInstance().asInstanceOf[DeltaTaskStatisticsTracker]
+      val filePath = new Path(rootPath, "part-00000-test.parquet").toString
 
       tracker.newFile(filePath)
       dataRenamed.queryExecution.toRdd.collect().foreach { row =>
