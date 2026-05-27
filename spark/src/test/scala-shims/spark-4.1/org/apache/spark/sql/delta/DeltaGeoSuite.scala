@@ -422,7 +422,7 @@ class DeltaGeoSuite extends QueryTest
   test("ZORDER BY a geometry column is rejected with DELTA_OPERATION_NOT_SUPPORTED_FOR_DATATYPES") {
     withTable("tbl") {
       sql(s"CREATE TABLE tbl(id INT, g GEOMETRY($DefaultSrid)) USING delta")
-      // No INSERT — `validateZorderByColumns` runs against the snapshot schema before any data
+      // No INSERT - `validateZorderByColumns` runs against the snapshot schema before any data
       // is touched. Inserting geo values would fail in OSS Spark's Parquet writer, which doesn't
       // (yet) know how to write GeometryType.
       val ex = intercept[AnalysisException] {
@@ -524,7 +524,7 @@ class DeltaGeoSuite extends QueryTest
       } catch {
         case _: org.apache.spark.SparkException =>
           // Spark 4.1 has only partial geospatial support, so the Parquet writer may reject the
-          // empty-schema write before we get to CONVERT TO DELTA — treat that as a pass since
+          // empty-schema write before we get to CONVERT TO DELTA - treat that as a pass since
           // the goal here is verifying Delta's schema rejection, not Parquet geo write support.
           succeed
       }
