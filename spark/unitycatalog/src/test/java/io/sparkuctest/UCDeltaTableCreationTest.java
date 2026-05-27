@@ -306,21 +306,34 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     LOG.info("Running table creation test: " + options);
 
     String fullTableName = options.fullTableName();
+    final boolean supportsTableMetadataChange = false;
     if (replaceTable) {
       // First, create a different table to replace.
-      sql(
-          "CREATE TABLE %s USING DELTA %s AS SELECT %s AS col1",
-          fullTableName, MANAGED_TBLPROPERTIES_CLAUSE_OTHER, "0.1");
+      if (supportsTableMetadataChange) {
+        // First, create a different table to replace.
+        sql(
+            "CREATE TABLE %s USING DELTA %s AS SELECT %s AS col1",
+            fullTableName, MANAGED_TBLPROPERTIES_CLAUSE_OTHER, "0.1");
+      } else {
+        // Seed an identical table to replace -- same schema, partition, cluster, comment, and
+        // tblproperties as the upcoming REPLACE so the operation does not change metadata.
+        // Insert distinct data so REPLACE has something to overwrite; the post-REPLACE
+        // assertions verify the seed data is gone.
+        options.setReplaceTable(false);
+        sql(options.createTableSql());
+        options.setReplaceTable(true);
+        sql("INSERT INTO %s VALUES (99, 'pre-replace')", fullTableName);
+      }
       tablesToCleanUp.add(fullTableName);
     }
 
-    // TODO: Remove the block if UC and delta support the atomic RT and RTAS.
-    if (replaceTable) {
+    if (replaceTable && tableType == TableType.EXTERNAL) {
+      // EXTERNAL tables REPLACE not yet supported.
       assertThatThrownBy(() -> sql(options.createTableSql()));
       return;
     }
 
-    // Create table
+    // Create table (or REPLACE the seed fixture above)
     sql(options.createTableSql());
     tablesToCleanUp.add(fullTableName);
     // Basic read/write test
