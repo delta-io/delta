@@ -681,6 +681,16 @@ trait DeltaErrorsBase
         s"different versions ${version1} and ${version2}.")
   }
 
+  def duplicateActionCheckFailed(
+      actionType: String,
+      path: String,
+      conflictingPath: String): Throwable = {
+    new DeltaRuntimeException(
+      errorClass = "DELTA_DUPLICATE_ACTIONS_FOUND",
+      messageParameters = Array(actionType, path, conflictingPath)
+    )
+  }
+
   def unexpectedChangeFilesFound(changeFiles: String): Throwable = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_UNEXPECTED_CHANGE_FILES_FOUND",

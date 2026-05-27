@@ -957,6 +957,14 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_DUPLICATE_ACTIONS_FOUND" : {
+    "message" : [
+      "File operation '<actionType>' for path <path> was specified several times.",
+      "It conflicts with <conflictingPath>. ",
+      "It is not valid for multiple file operations with the same path to exist in a single commit."
+    ],
+    "sqlState" : "2D521"
+  },
   "DELTA_DUPLICATE_COLUMNS_FOUND" : {
     "message" : [
       "Found duplicate column(s): <duplicateCols>."
