@@ -790,6 +790,9 @@ private[delta] class ConflictChecker(
         case DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key =>
           currentTransactionInfo.protocol.isFeatureSupported(DeletionVectorsTableFeature) &&
             value.toBoolean
+        case DeltaConfigs.CHECKPOINT_POLICY.key =>
+          currentTransactionInfo.protocol.isFeatureSupported(V2CheckpointTableFeature) &&
+            value == CheckpointPolicy.V2.name
         case _ => true
       }
     }
