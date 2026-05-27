@@ -379,6 +379,45 @@ class UniFormConverterSuite extends
     }
   }
 
+  test("overwriteSchema=false (default) with DataFrame should preserve nested field IDs " +
+      "and not bump Iceberg metadata") {
+    val tableName = "test_overwrite_default_nested_ids"
+    withTable(tableName) {
+      spark.sql(
+        s"""CREATE TABLE $tableName (id INT, tags MAP<STRING, STRING>, vals ARRAY<INT>)
+           |USING DELTA TBLPROPERTIES (
+           |  'delta.columnMapping.mode' = 'name',
+           |  'delta.enableIcebergCompatV2' = 'true',
+           |  'delta.universalFormat.enabledFormats' = 'iceberg'
+           |)""".stripMargin)
+      spark.sql(s"INSERT INTO $tableName VALUES (1, map('k', 'v'), array(10))")
+
+      val tableId = TableIdentifier(tableName)
+      val deltaLogBefore = DeltaLog.forTable(spark, tableId).update()
+      val maxIdBefore = DeltaConfigs.COLUMN_MAPPING_MAX_ID.fromMetaData(deltaLogBefore.metadata)
+      val metaBefore = latestIcebergTable(tableName).asInstanceOf[BaseTable].operations().current()
+      val schemaIdBefore = metaBefore.currentSchemaId()
+      val lastColIdBefore = metaBefore.lastColumnId()
+
+      spark.table(tableName)
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .saveAsTable(tableName)
+
+      val deltaLogAfter = DeltaLog.forTable(spark, tableId).update()
+      val maxIdAfter = DeltaConfigs.COLUMN_MAPPING_MAX_ID.fromMetaData(deltaLogAfter.metadata)
+      assert(maxIdAfter === maxIdBefore,
+        s"Delta columnMappingMaxId should not change (before=$maxIdBefore, after=$maxIdAfter)")
+
+      val metaAfter = latestIcebergTable(tableName).asInstanceOf[BaseTable].operations().current()
+      assert(metaAfter.currentSchemaId() === schemaIdBefore,
+        "Iceberg current-schema-id should not change on overwrite with same schema")
+      assert(metaAfter.lastColumnId() === lastColIdBefore,
+        "Iceberg last-column-id should not change on overwrite with same schema")
+    }
+  }
+
   test("IcebergConverter convertUncommitedTxn - incremental conversion") {
     val tableName = "test_incremental_conversion"
     withTable(tableName) {
