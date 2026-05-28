@@ -51,7 +51,7 @@ jobs:
       - name: install java
         uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
         with:
-          distribution: "zulu"
+          distribution: "temurin"
           java-version: "17"
       - name: Restore SBT cache
         id: cache-sbt
@@ -98,14 +98,14 @@ jobs:
       - name: install java 17 for UC build
         uses: actions/setup-java@17f84c3641ba7b8f6deff6309fc4c864478f5d62 # v3.14.1
         with:
-          distribution: "zulu"
+          distribution: "temurin"
           java-version: "17"
       - name: Set up pinned Unity Catalog
         uses: ./.github/actions/setup-unitycatalog
       - name: install java 11 for integration test
         uses: actions/setup-java@17f84c3641ba7b8f6deff6309fc4c864478f5d62 # v3.14.1
         with:
-          distribution: "zulu"
+          distribution: "temurin"
           java-version: "11"
       - name: Run integration tests
         run: |
