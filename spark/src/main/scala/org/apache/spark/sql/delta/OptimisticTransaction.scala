@@ -1695,7 +1695,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     // If this transaction commits to the redirect destination location, then there is no
     // need to validate the subsequent no-redirect rules.
     val configuration = deltaLog.newDeltaHadoopConf()
-    val dataPath = snapshot.deltaLog.dataPath.toUri.getPath
+    val dataPath = snapshot.dataPath.toUri.getPath
     val catalog = spark.sessionState.catalog
     val isRedirectDest = redirectConfig.spec.isRedirectDest(catalog, configuration, dataPath)
     if (isRedirectDest) return

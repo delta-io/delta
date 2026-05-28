@@ -108,7 +108,7 @@ trait ReorgTableHelper extends Serializable {
       filterFileFn: StructType => Boolean): Seq[AddFile] = {
 
     val serializedConf = new SerializableConfiguration(snapshot.deltaLog.newDeltaHadoopConf())
-    val dataPath = new Path(snapshot.deltaLog.dataPath.toString)
+    val dataPath = new Path(snapshot.dataPath.toString)
 
     import org.apache.spark.sql.delta.implicits._
 

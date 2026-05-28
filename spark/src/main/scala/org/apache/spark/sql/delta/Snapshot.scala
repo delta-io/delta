@@ -67,6 +67,8 @@ trait SnapshotDescriptor extends DeltaLoggingProvider {
 
   def schema: StructType = metadata.schema
 
+  def dataPath: Path
+
   protected[delta] def numOfFilesIfKnown: Option[Long]
   protected[delta] def sizeInBytesIfKnown: Option[Long]
 
@@ -120,6 +122,8 @@ class Snapshot(
   import DeltaLogFileIndex.COMMIT_VERSION_COLUMN
   // For implicits which re-use Encoder:
   import org.apache.spark.sql.delta.implicits._
+
+  override def dataPath: Path = deltaLog.dataPath
 
   protected def spark = SparkSession.active
 
