@@ -23,6 +23,12 @@ import java.util.Optional;
 
 import io.delta.storage.commit.uniform.UniformMetadata;
 
+/**
+ * Extended response for {@link CommitCoordinatorClient#getCommits} implementations backed by the
+ * Delta REST loadTable API..
+ * Currently, it carries additional {@link UniformMetadata} returned
+ * by the loadTable response alongside the standard commits and latest table version.
+ */
 public class GetCommitsFromLoadTableResponse extends GetCommitsResponse {
 
   private final Optional<UniformMetadata> uniformMetadata;
