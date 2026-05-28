@@ -31,7 +31,7 @@ import org.apache.spark.sql.streaming.StreamTest
  * The base suite runs through the DSv1 connector; DeltaV2SourceRowTrackingStreamingSuite
  * re-runs the same tests through the DSv2 connector via V2ForceTest.
  */
-trait DeltaSourceRowTrackingStreamingSuiteBase extends StreamTest
+trait DeltaSourceRowTrackingSuiteBase extends StreamTest
   with DeltaSourceSuiteBase
   with DeltaColumnMappingTestUtils {
 
@@ -226,6 +226,6 @@ trait DeltaSourceRowTrackingStreamingSuiteBase extends StreamTest
     }
   }
 
-class DeltaSourceRowTrackingStreamingSuite
-  extends DeltaSourceRowTrackingStreamingSuiteBase
+class DeltaSourceRowTrackingSuite
+  extends DeltaSourceRowTrackingSuiteBase
   with DeltaSQLCommandTest

@@ -16,14 +16,14 @@
 
 package org.apache.spark.sql.delta.test
 
-import org.apache.spark.sql.delta.DeltaSourceRowTrackingStreamingSuiteBase
+import org.apache.spark.sql.delta.DeltaSourceRowTrackingSuiteBase
 
 /**
  * Runs DeltaSourceRowTrackingStreamingSuite through the DSv2 connector
  * (V2_ENABLE_MODE=STRICT, routes via DeltaCatalog -> DeltaTableV2).
  */
-class DeltaV2SourceRowTrackingStreamingSuite
-  extends DeltaSourceRowTrackingStreamingSuiteBase
+class DeltaV2SourceRowTrackingSuite
+  extends DeltaSourceRowTrackingSuiteBase
   with V2ForceTest {
 
   override protected def useDsv2: Boolean = true
