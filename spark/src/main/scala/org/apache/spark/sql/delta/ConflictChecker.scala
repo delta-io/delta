@@ -752,7 +752,11 @@ private[delta] class ConflictChecker(
     val dvsAllowList =
         Set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key)
 
+    val v2CheckpointAllowList =
+        Set(DeltaConfigs.CHECKPOINT_POLICY.key)
+
     rowTrackingAllowList ++ columnMappingAllowList ++ dvsAllowList
+      .++(v2CheckpointAllowList)
   }
 
   /**
@@ -817,6 +821,9 @@ private[delta] class ConflictChecker(
         case DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key =>
           currentTransactionInfo.protocol.isFeatureSupported(DeletionVectorsTableFeature) &&
             value.toBoolean
+        case DeltaConfigs.CHECKPOINT_POLICY.key =>
+          currentTransactionInfo.protocol.isFeatureSupported(V2CheckpointTableFeature) &&
+            value == CheckpointPolicy.V2.name
         case _ => true
       }
     }
