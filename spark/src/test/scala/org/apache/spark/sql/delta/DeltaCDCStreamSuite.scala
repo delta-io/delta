@@ -1160,6 +1160,95 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
       )
     }
   }
+
+  test("CDC stream on partitioned table strips partition and CDC columns correctly") {
+    // pruneColumns in CDC mode must strip both CDC tail columns (injected by CDCReadFunction)
+    // and the partition column (not in data files) while keeping data columns intact.
+    withTempDir { inputDir =>
+      val path = inputDir.getCanonicalPath
+      // DDL order: id, part (partition), name. Part sits in the middle.
+      Seq((1L, "a", "Alice"), (2L, "b", "Bob")).toDF("id", "part", "name")
+        .write.format("delta")
+        .option("delta.enableChangeDataFeed", "true")
+        .partitionBy("part")
+        .save(path)
+
+      val df = loadCDCStream(path, Map(DeltaOptions.STARTING_VERSION_OPTION -> "0"))
+        .select("id", "part", "name")
+
+      testStream(df)(
+        ProcessAllAvailable(),
+        CheckAnswer((1L, "a", "Alice"), (2L, "b", "Bob"))
+      )
+    }
+  }
+
+  test("CDC stream on column-mapped table passes through correctly") {
+    // pruneColumns in CDC mode must handle column-mapped fields (logical->physical name
+    // translation) while stripping CDC tail columns.
+    withTempDir { inputDir =>
+      val path = inputDir.getCanonicalPath
+      Seq((1L, "Alice"), (2L, "Bob")).toDF("id", "user_name")
+        .write.format("delta")
+        .option(DeltaConfigs.COLUMN_MAPPING_MODE.key, "name")
+        .option("delta.enableChangeDataFeed", "true")
+        .save(path)
+
+      val df = loadCDCStream(path, Map(DeltaOptions.STARTING_VERSION_OPTION -> "0"))
+        .select("id", "user_name")
+
+      testStream(df)(
+        ProcessAllAvailable(),
+        CheckAnswer((1L, "Alice"), (2L, "Bob"))
+      )
+    }
+  }
+
+  test("CDC stream on row-tracking table works when _metadata not selected") {
+    // The protocol prohibition fires only when row-tracking metadata is actually requested.
+    // A CDC stream that reads only data columns must work even if the table has row tracking.
+    withTempDir { inputDir =>
+      val path = inputDir.getCanonicalPath
+      Seq((1L, "Alice"), (2L, "Bob")).toDF("id", "name")
+        .write.format("delta")
+        .option("delta.enableChangeDataFeed", "true")
+        .option("delta.enableRowTracking", "true")
+        .save(path)
+
+      val df = loadCDCStream(path, Map(DeltaOptions.STARTING_VERSION_OPTION -> "0"))
+        .select("id", "name")
+
+      testStream(df)(
+        ProcessAllAvailable(),
+        CheckAnswer((1L, "Alice"), (2L, "Bob"))
+      )
+    }
+  }
+
+  test("CDC stream on row-tracking column-mapped table rejects _metadata.row_id") {
+    // Combines the RT-rejection protocol requirement with column mapping. The rejection must
+    // fire before column-mapping translation, regardless of column mapping being enabled.
+    withTempDir { inputDir =>
+      val path = inputDir.getCanonicalPath
+      Seq((1L, "Alice"), (2L, "Bob")).toDF("id", "user_name")
+        .write.format("delta")
+        .option(DeltaConfigs.COLUMN_MAPPING_MODE.key, "name")
+        .option("delta.enableChangeDataFeed", "true")
+        .option("delta.enableRowTracking", "true")
+        .save(path)
+
+      val ex = intercept[Exception] {
+        val df = loadCDCStream(path, Map(DeltaOptions.STARTING_VERSION_OPTION -> "0"))
+          .selectExpr("id", "_metadata.row_id")
+        testStream(df)(ProcessAllAvailable())
+      }
+      assert(
+        ex.getMessage.toLowerCase(Locale.ROOT).contains("row_id") ||
+          ex.getMessage.toLowerCase(Locale.ROOT).contains("cannot be resolved"),
+        s"Expected error mentioning row_id under CDC + CM, got: ${ex.getMessage}"
+      )
+    }
+  }
 }
 
 /**
