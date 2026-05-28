@@ -529,17 +529,11 @@ lazy val sparkV2 = {
 // ============================================================
 lazy val spark = (project in file("spark-unified"))
   .dependsOn(sparkV1)
-  // test->test so spark-unified test sources can reuse helpers like
-  // DeltaV2TestBase from sparkV2's test scope.
-  .dependsOn(sparkV2 % "compile->compile;test->test")
+  .dependsOn(sparkV2)
   .dependsOn(storage)
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
     name := "delta-spark",
-    // Exclude the released `delta-spark` jar that sparkV2's test deps
-    // (kernelUnityCatalog test->test -> kernelDefaults test->test ->
-    // "io.delta" %% "delta-spark" % "4.0.0" % "test") pull in transitively.
-    Test / excludeDependencies += ExclusionRule("io.delta", "delta-spark_2.13"),
     commonSettings,
     scalaStyleSettings,
     sparkMimaSettings,
