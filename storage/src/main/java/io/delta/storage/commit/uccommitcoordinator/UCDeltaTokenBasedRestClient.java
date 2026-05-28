@@ -16,11 +16,15 @@
 
 package io.delta.storage.commit.uccommitcoordinator;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.CommitFailedException;
 import io.delta.storage.commit.CoordinatedCommitsUtils;
 import io.delta.storage.commit.GetCommitsResponse;
 import io.delta.storage.commit.TableIdentifier;
+import io.delta.storage.commit.actions.AbstractDomainMetadata;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.TableInfo;
@@ -35,12 +39,15 @@ import io.unitycatalog.client.auth.TokenProvider;
 import io.unitycatalog.client.delta.api.TablesApi;
 import io.unitycatalog.client.delta.model.AddCommitUpdate;
 import io.unitycatalog.client.delta.model.AssertTableUUID;
+import io.unitycatalog.client.delta.model.ClusteringDomainMetadata;
 import io.unitycatalog.client.delta.model.CreateStagingTableRequest;
 import io.unitycatalog.client.delta.model.CreateTableRequest;
+import io.unitycatalog.client.delta.model.DomainMetadataUpdates;
 import io.unitycatalog.client.delta.model.DeltaCommit;
 import io.unitycatalog.client.delta.model.DeltaProtocol;
 import io.unitycatalog.client.delta.model.LoadTableResponse;
 import io.unitycatalog.client.delta.model.RemovePropertiesUpdate;
+import io.unitycatalog.client.delta.model.RowTrackingDomainMetadata;
 import io.unitycatalog.client.delta.model.SetLatestBackfilledVersionUpdate;
 import io.unitycatalog.client.delta.model.SetPartitionColumnsUpdate;
 import io.unitycatalog.client.delta.model.SetPropertiesUpdate;
@@ -78,7 +85,7 @@ import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.Path;
 
 /**
- * A REST client implementation of {@link UCDeltaClient} that uses the UC Delta REST API for
+ * A REST client implementation of {@link UCDeltaClient} that uses the UC Delta API for
  * all table lifecycle and commit coordination operations.
  *
  * <p>This client uses {@code io.unitycatalog.client.delta.api.TablesApi} for Delta-specific
@@ -88,6 +95,7 @@ import org.apache.hadoop.fs.Path;
  */
 public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
 
+  private static final int HTTP_BAD_REQUEST = 400;
   private static final int HTTP_CONFLICT = 409;
   private static final int HTTP_NOT_FOUND = 404;
 
@@ -197,6 +205,22 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     } catch (IllegalArgumentException malformed) {
       // UC Hadoop's response validator (DeltaStorageCredentialUtil.requireSingleCloudConfig)
       // throws when the scheme has no cloud cred (e.g. file://). Treat as no creds.
+      return Collections.emptyMap();
+    }
+  }
+
+  /**
+   * Uses the legacy {@code buildForTable(tableId, op)} because the UC hadoop package doesn't
+   * support UC Delta API staging credential endpoint yet.
+   */
+  private Map<String, String> fetchStagingCredentials(String location, String tableId)
+      throws ApiException {
+    try {
+      return newCredBuilder(schemeOf(location)).buildForStagingTable(tableId, location);
+    } catch (IllegalArgumentException | NullPointerException missingCred) {
+      // The legacy buildForTable(tableId, op) path consumes AwsCredentials fields without
+      // validating; missing creds in the response surface as NPE rather than the typed error
+      // the Delta path uses. Treat both as no creds.
       return Collections.emptyMap();
     }
   }
@@ -424,7 +448,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       String body = e.getResponseBody();
       if (body != null && body.contains("UnsupportedTableFormatException")) {
         throw new UnsupportedTableFormatException(
-            String.format("Table %s is not in Delta format; the Delta REST API cannot "
+            String.format("Table %s is not in Delta format; the UC Delta API cannot "
                 + "serve it. Body: %s", name.fullName, body),
             e);
       }
@@ -435,69 +459,75 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   }
 
   @Override
-  public UCDeltaModels.StagingTableInfo createStagingTable(
-      String catalog, String schema, String table) throws IOException {
+  public UCDeltaModels.StagingTableInfo createStagingTable(TableIdentifier tableIdentifier)
+      throws IOException {
     ensureOpen();
-    Objects.requireNonNull(catalog, "catalog must not be null");
-    Objects.requireNonNull(schema, "schema must not be null");
-    Objects.requireNonNull(table, "table must not be null");
-
+    ResolvedTableName name = requireThreePartName(tableIdentifier);
     try {
-      CreateStagingTableRequest request = new CreateStagingTableRequest().name(table);
+      CreateStagingTableRequest request = new CreateStagingTableRequest().name(name.table);
       StagingTableResponse response =
-          deltaTablesApi.createStagingTable(catalog, schema, request);
+          deltaTablesApi.createStagingTable(name.catalog, name.schema, request);
       return toStagingTableInfo(response);
     } catch (ApiException e) {
       throw new IOException(
-          String.format("Failed to create staging table %s.%s.%s (HTTP %s): %s",
-              catalog, schema, table, e.getCode(), e.getResponseBody()), e);
+          String.format("Failed to create staging table %s (HTTP %s): %s",
+              name.fullName, e.getCode(), e.getResponseBody()), e);
     }
   }
 
   @Override
-  public AbstractMetadata createTable(
-      String catalog,
-      String schema,
-      String name,
-      String location,
+  public TableInfo createTable(
+      URI tableUri,
+      TableIdentifier tableIdentifier,
       UCDeltaModels.TableType tableType,
-      String comment,
-      List<String> partitionColumns,
-      UCDeltaModels.DeltaProtocol protocol,
-      Map<String, String> properties) throws IOException {
+      AbstractMetadata metadata,
+      AbstractProtocol protocol,
+      List<AbstractDomainMetadata> domainMetadata,
+      long lastCommitTimestampMs) throws IOException {
     ensureOpen();
-    Objects.requireNonNull(catalog, "catalog must not be null");
-    Objects.requireNonNull(schema, "schema must not be null");
-    Objects.requireNonNull(name, "name must not be null");
+    Objects.requireNonNull(tableUri, "tableUri must not be null");
+    Objects.requireNonNull(tableType, "tableType must not be null");
+    Objects.requireNonNull(metadata, "metadata must not be null");
+    Objects.requireNonNull(protocol, "protocol must not be null");
+    Objects.requireNonNull(domainMetadata, "domainMetadata must not be null");
+    ResolvedTableName name = requireThreePartName(tableIdentifier);
+    String schemaJson = metadata.getSchemaString();
+    Objects.requireNonNull(schemaJson, "metadata.schemaString must not be null");
 
     try {
       CreateTableRequest sdkRequest = new CreateTableRequest()
-          .name(name)
-          .location(location);
-      if (tableType != null) {
-        sdkRequest.tableType(
-            io.unitycatalog.client.delta.model.TableType.fromValue(tableType.name()));
+          .name(name.table)
+          .location(tableUri.toString())
+          .tableType(io.unitycatalog.client.delta.model.TableType.fromValue(tableType.name()))
+          .dataSourceFormat(io.unitycatalog.client.delta.model.DataSourceFormat.DELTA)
+          .columns(UCDeltaSchemaConverter.parseSchemaString(schemaJson))
+          .protocol(toSDKDeltaProtocol(protocol))
+          .lastCommitTimestampMs(lastCommitTimestampMs);
+      if (metadata.getDescription() != null) {
+        sdkRequest.comment(metadata.getDescription());
       }
-      if (comment != null) {
-        sdkRequest.comment(comment);
-      }
+      List<String> partitionColumns = metadata.getPartitionColumns();
       if (partitionColumns != null && !partitionColumns.isEmpty()) {
         sdkRequest.partitionColumns(partitionColumns);
       }
-      if (protocol != null) {
-        sdkRequest.protocol(toSDKDeltaProtocol(protocol));
+      Map<String, String> configuration = metadata.getConfiguration();
+      if (configuration != null && !configuration.isEmpty()) {
+        sdkRequest.properties(configuration);
       }
-      if (properties != null && !properties.isEmpty()) {
-        sdkRequest.properties(properties);
+      DomainMetadataUpdates updates = toSDKDomainMetadataUpdates(domainMetadata);
+      if (updates != null) {
+        sdkRequest.domainMetadata(updates);
       }
 
-      LoadTableResponse response =
-          deltaTablesApi.createTable(catalog, schema, sdkRequest);
-      return new DeltaTableMetadata(name, response.getMetadata());
+      return toTableInfo(
+          deltaTablesApi.createTable(name.catalog, name.schema, sdkRequest),
+          name.catalog,
+          name.schema,
+          name.table);
     } catch (ApiException e) {
       throw new IOException(
-          String.format("Failed to create table %s.%s.%s (HTTP %s): %s",
-              catalog, schema, name, e.getCode(), e.getResponseBody()), e);
+          String.format("Failed to create table %s (HTTP %s): %s",
+              name.fullName, e.getCode(), e.getResponseBody()), e);
     }
   }
 
@@ -569,20 +599,31 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     return Optional.of(new io.delta.storage.commit.uniform.UniformMetadata(icebergMetadata));
   }
 
-  private UCDeltaModels.StagingTableInfo toStagingTableInfo(StagingTableResponse r) {
-    UCDeltaModels.TableType tableType = null;
-    if (r.getTableType() != null) {
-      tableType = UCDeltaModels.TableType.valueOf(r.getTableType().getValue());
+  private UCDeltaModels.StagingTableInfo toStagingTableInfo(StagingTableResponse r)
+      throws IOException, ApiException {
+    if (r.getTableId() == null) {
+      throw new IOException("UC returned null tableId for staging table");
     }
-
+    if (r.getLocation() == null) {
+      throw new IOException("UC returned null location for staging table");
+    }
+    if (r.getTableType() == null) {
+      throw new IOException("UC returned null tableType for staging table");
+    }
+    UUID tableId = r.getTableId();
+    String location = r.getLocation();
+    UCDeltaModels.TableType tableType =
+        UCDeltaModels.TableType.valueOf(r.getTableType().getValue());
+    Map<String, String> storageProps = fetchStagingCredentials(location, tableId.toString());
     return new UCDeltaModels.StagingTableInfo(
-        r.getTableId(),
+        tableId,
         tableType,
-        r.getLocation(),
+        location,
         toDeltaProtocol(r.getRequiredProtocol()),
         toDeltaProtocol(r.getSuggestedProtocol()),
         r.getRequiredProperties(),
-        r.getSuggestedProperties());
+        r.getSuggestedProperties(),
+        storageProps);
   }
 
   private UCDeltaModels.DeltaProtocol toDeltaProtocol(StagingTableResponseRequiredProtocol p) {
@@ -641,6 +682,76 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       protocol.writerFeatures(new ArrayList<>(p.getWriterFeatures()));
     }
     return protocol;
+  }
+
+  /**
+   * Maps Delta {@link AbstractDomainMetadata} entries onto the UC SDK's typed {@link
+   * DomainMetadataUpdates}. UC models only {@code delta.clustering} and {@code
+   * delta.rowTracking}; entries for unknown domains are dropped silently. Returns {@code null}
+   * when no known-domain entries were produced.
+   *
+   * <p>Each {@code configuration} JSON is parsed into a typed DTO so a shape mismatch fails at
+   * parse time with a Jackson error rather than at first use after an unchecked cast.
+   *
+   * <p>Package-private for unit testing.
+   */
+  static DomainMetadataUpdates toSDKDomainMetadataUpdates(
+      List<AbstractDomainMetadata> entries) throws IOException {
+    DomainMetadataUpdates updates = new DomainMetadataUpdates();
+    boolean any = false;
+    for (AbstractDomainMetadata dm : entries) {
+      // This function is for createTable only for now.
+      if (dm.isRemoved()) {
+        continue;
+      }
+      String domain = dm.getDomain();
+      switch (domain) {
+        case DomainMetadataUpdates.JSON_PROPERTY_DELTA_CLUSTERING: {
+          ClusteringDomainConfig config = DOMAIN_METADATA_MAPPER.readValue(
+              dm.getConfiguration(), ClusteringDomainConfig.class);
+          if (config.clusteringColumns != null) {
+            updates.setDeltaClustering(
+                new ClusteringDomainMetadata().clusteringColumns(config.clusteringColumns));
+            any = true;
+          }
+          break;
+        }
+        case DomainMetadataUpdates.JSON_PROPERTY_DELTA_ROW_TRACKING: {
+          RowTrackingDomainConfig config = DOMAIN_METADATA_MAPPER.readValue(
+              dm.getConfiguration(), RowTrackingDomainConfig.class);
+          if (config.rowIdHighWaterMark != null) {
+            updates.setDeltaRowTracking(
+                new RowTrackingDomainMetadata().rowIdHighWaterMark(config.rowIdHighWaterMark));
+            any = true;
+          }
+          break;
+        }
+        default:
+          throw new IOException(
+              "Unsupported Delta domain metadata domain '" + domain + "': UC SDK only models "
+                  + DomainMetadataUpdates.JSON_PROPERTY_DELTA_CLUSTERING + " and "
+                  + DomainMetadataUpdates.JSON_PROPERTY_DELTA_ROW_TRACKING + ". Add SDK "
+                  + "support before issuing writes that produce this domain.");
+      }
+    }
+    return any ? updates : null;
+  }
+
+  // Tolerant of unknown fields so a future Delta-side addition to a domain config doesn't
+  // break this parser.
+  private static final ObjectMapper DOMAIN_METADATA_MAPPER = new ObjectMapper()
+      .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+
+  /** Typed view of the {@code delta.clustering} domain configuration. */
+  @JsonIgnoreProperties(ignoreUnknown = true)
+  private static final class ClusteringDomainConfig {
+    public List<List<String>> clusteringColumns;
+  }
+
+  /** Typed view of the {@code delta.rowTracking} domain configuration. */
+  @JsonIgnoreProperties(ignoreUnknown = true)
+  private static final class RowTrackingDomainConfig {
+    public Long rowIdHighWaterMark;
   }
 
   private UniformMetadata toSDKUniformMetadata(
@@ -760,6 +871,13 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     String responseBody = e.getResponseBody();
 
     switch (statusCode) {
+      case HTTP_BAD_REQUEST:
+        throw new CommitFailedException(
+            false /* retryable */,
+            false /* conflict */,
+            String.format("Invalid updateTable request for %s.%s.%s: %s",
+                catalog, schema, table, responseBody),
+            e);
       case HTTP_CONFLICT:
         throw new CommitFailedException(
             true /* retryable */,

@@ -22,7 +22,7 @@ import java.util.{HashMap => JHashMap}
 import scala.jdk.CollectionConverters._
 
 import io.delta.kernel.internal.SnapshotImpl
-import io.delta.spark.internal.v2.catalog.SparkTable
+import io.delta.spark.internal.v2.catalog.DeltaV2Table
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -53,7 +53,7 @@ class ApplyV2ReadOptionsSuite extends DeltaSQLCommandTest {
 
   private def assertV2(result: LogicalPlan): Unit = {
     result match {
-      case StreamingRelationV2Shim(_, _, _: SparkTable, _, _, _, _, v1Relation) =>
+      case StreamingRelationV2Shim(_, _, _: DeltaV2Table, _, _, _, _, v1Relation) =>
         assert(v1Relation.isEmpty)
       case other =>
         fail(s"Expected StreamingRelationV2, got $other")
@@ -156,7 +156,7 @@ class ApplyV2ReadOptionsSuite extends DeltaSQLCommandTest {
         catalogTable.identifier.table)
       // Build the input table without the CDC option so its schema lacks CDC columns. The rule
       // should rebuild the table with the CDC option from extraOptions and append CDC columns.
-      val table = new SparkTable(ident, catalogTable, new JHashMap[String, String]())
+      val table = new DeltaV2Table(ident, catalogTable, new JHashMap[String, String]())
       val cdcOpts = new JHashMap[String, String]()
       cdcOpts.put(DeltaOptions.CDC_READ_OPTION, "true")
       val extraOptions = new CaseInsensitiveStringMap(cdcOpts)
@@ -193,7 +193,7 @@ class ApplyV2ReadOptionsSuite extends DeltaSQLCommandTest {
       val ident = Identifier.of(
         catalogTable.identifier.database.toArray,
         catalogTable.identifier.table)
-      val table = new SparkTable(ident, catalogTable, new JHashMap[String, String]())
+      val table = new DeltaV2Table(ident, catalogTable, new JHashMap[String, String]())
 
       val plan = StreamingRelationV2(
         source = None,
@@ -220,7 +220,7 @@ class ApplyV2ReadOptionsSuite extends DeltaSQLCommandTest {
       val ident = Identifier.of(
         catalogTable.identifier.database.toArray,
         catalogTable.identifier.table)
-      val table = new SparkTable(ident, catalogTable, new JHashMap[String, String]())
+      val table = new DeltaV2Table(ident, catalogTable, new JHashMap[String, String]())
       val cdcOpts = new JHashMap[String, String]()
       cdcOpts.put(DeltaOptions.CDC_READ_OPTION, "true")
       val extraOptions = new CaseInsensitiveStringMap(cdcOpts)
@@ -252,7 +252,7 @@ class ApplyV2ReadOptionsSuite extends DeltaSQLCommandTest {
   private val seededFieldNames: Seq[String] = Seq("id", "extra")
 
   private def buildStreamingRelationV2(
-      table: SparkTable, extraOptions: Map[String, String]): StreamingRelationV2 = {
+      table: DeltaV2Table, extraOptions: Map[String, String]): StreamingRelationV2 = {
     StreamingRelationV2(
       source = None,
       sourceName = "delta",
@@ -291,29 +291,29 @@ class ApplyV2ReadOptionsSuite extends DeltaSQLCommandTest {
   }
 
   /** Asserts the table's schema matches the entry written by [[seedSchemaLogWithExtraColumn]]. */
-  private def assertSchemaMatchesSeededLogEntry(table: SparkTable): Unit = {
+  private def assertSchemaMatchesSeededLogEntry(table: DeltaV2Table): Unit = {
     assert(table.schema.fieldNames.toSeq == seededFieldNames)
     assert(table.schema.fields(1).dataType == StringType)
   }
 
   /**
-   * Build a catalog-backed SparkTable rooted at `tableLocationUri`. Mirrors the common production
+   * Build a catalog-backed DeltaV2Table rooted at `tableLocationUri`. Mirrors the common production
    * path through DeltaCatalog and is the default for tests that do not specifically distinguish
    * between path-based and catalog-based construction.
    */
   private def buildCatalogBasedSparkTable(
-      tableLocationUri: URI, options: JHashMap[String, String]): SparkTable = {
+      tableLocationUri: URI, options: JHashMap[String, String]): DeltaV2Table = {
     val catalogTable = createCatalogTable(tableLocationUri, ucManaged = false)
     val identifier = Identifier.of(
       catalogTable.identifier.database.toArray, catalogTable.identifier.table)
-    new SparkTable(identifier, catalogTable, options)
+    new DeltaV2Table(identifier, catalogTable, options)
   }
 
   private def applyReadOptions(plan: LogicalPlan): LogicalPlan = {
     new ApplyV2ReadOptions().apply(plan)
   }
 
-  test("schema-tracking rebuild: path-based SparkTable picks up the persisted schema") {
+  test("schema-tracking rebuild: path-based DeltaV2Table picks up the persisted schema") {
     withTempDir { tableDir =>
       withTempDir { schemaLogDir =>
         val tablePath = tableDir.getCanonicalPath
@@ -322,16 +322,16 @@ class ApplyV2ReadOptionsSuite extends DeltaSQLCommandTest {
         seedSchemaLogWithExtraColumn(tablePath, schemaLogPath)
 
         val identifier = Identifier.of(Array("default"), "tbl")
-        val table = new SparkTable(identifier, tablePath)
+        val table = new DeltaV2Table(identifier, tablePath)
         assert(!table.getOptions.containsKey(DeltaOptions.SCHEMA_TRACKING_LOCATION))
 
         val plan = buildStreamingRelationV2(
           table, Map(DeltaOptions.SCHEMA_TRACKING_LOCATION -> schemaLogPath))
         val result = applyReadOptions(plan)
         assertV2(result)
-        val rebuiltTable = result.asInstanceOf[StreamingRelationV2].table.asInstanceOf[SparkTable]
+        val rebuiltTable = result.asInstanceOf[StreamingRelationV2].table.asInstanceOf[DeltaV2Table]
 
-        assert(rebuiltTable ne table, "rebuild should produce a new SparkTable")
+        assert(rebuiltTable ne table, "rebuild should produce a new DeltaV2Table")
         assert(rebuiltTable.getOptions.containsKey(DeltaOptions.SCHEMA_TRACKING_LOCATION))
         assert(rebuiltTable.getOptions.get(DeltaOptions.SCHEMA_TRACKING_LOCATION) ==
           schemaLogPath)
@@ -349,7 +349,7 @@ class ApplyV2ReadOptionsSuite extends DeltaSQLCommandTest {
     }
   }
 
-  test("schema-tracking rebuild: catalog-based SparkTable picks up the persisted schema and " +
+  test("schema-tracking rebuild: catalog-based DeltaV2Table picks up the persisted schema and " +
       "keeps its CatalogTable") {
     withTempDir { tableDir =>
       withTempDir { schemaLogDir =>
@@ -366,7 +366,7 @@ class ApplyV2ReadOptionsSuite extends DeltaSQLCommandTest {
           table, Map(DeltaOptions.SCHEMA_TRACKING_LOCATION -> schemaLogPath))
         val result = applyReadOptions(plan)
         assertV2(result)
-        val rebuiltTable = result.asInstanceOf[StreamingRelationV2].table.asInstanceOf[SparkTable]
+        val rebuiltTable = result.asInstanceOf[StreamingRelationV2].table.asInstanceOf[DeltaV2Table]
 
         assert(rebuiltTable.getOptions.containsKey(DeltaOptions.SCHEMA_TRACKING_LOCATION))
         assert(rebuiltTable.getCatalogTable.isPresent,
@@ -390,7 +390,7 @@ class ApplyV2ReadOptionsSuite extends DeltaSQLCommandTest {
           table, Map(DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS -> schemaLogPath))
         val result = applyReadOptions(plan)
         assertV2(result)
-        val rebuiltTable = result.asInstanceOf[StreamingRelationV2].table.asInstanceOf[SparkTable]
+        val rebuiltTable = result.asInstanceOf[StreamingRelationV2].table.asInstanceOf[DeltaV2Table]
 
         assert(rebuiltTable.getOptions.containsKey(DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS))
         assert(rebuiltTable.getOptions.get(DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS) ==
@@ -412,7 +412,7 @@ class ApplyV2ReadOptionsSuite extends DeltaSQLCommandTest {
     }
   }
 
-  test("schema-tracking rebuild: skipped when SparkTable already carries the " +
+  test("schema-tracking rebuild: skipped when DeltaV2Table already carries the " +
       "schema-tracking option") {
     withTempDir { tableDir =>
       withTempDir { schemaLogDir =>
@@ -436,7 +436,7 @@ class ApplyV2ReadOptionsSuite extends DeltaSQLCommandTest {
     // Counterpart to the V2 rebuild tests above: those start from StreamingRelationV2 and exercise
     // the rebuild branch. This test starts from a V1 StreamingRelation carrying the schema-tracking
     // option in dataSource.options, and verifies the V1 -> V2 conversion branch hands the option to
-    // the new SparkTable so its schema is driven by the persisted log entry.
+    // the new DeltaV2Table so its schema is driven by the persisted log entry.
     withTempDir { tableDir =>
       withTempDir { schemaLogDir =>
         val tablePath = tableDir.getCanonicalPath
@@ -460,7 +460,7 @@ class ApplyV2ReadOptionsSuite extends DeltaSQLCommandTest {
           val result = applyRules(plan)
           assertV2(result)
           val convertedTable =
-            result.asInstanceOf[StreamingRelationV2].table.asInstanceOf[SparkTable]
+            result.asInstanceOf[StreamingRelationV2].table.asInstanceOf[DeltaV2Table]
           assert(convertedTable.getOptions.containsKey(DeltaOptions.SCHEMA_TRACKING_LOCATION))
           assert(convertedTable.getOptions.get(DeltaOptions.SCHEMA_TRACKING_LOCATION) ==
             schemaLogPath)
@@ -487,7 +487,7 @@ class ApplyV2ReadOptionsSuite extends DeltaSQLCommandTest {
 
         val result = applyReadOptions(plan)
         assertV2(result)
-        val rebuilt = result.asInstanceOf[StreamingRelationV2].table.asInstanceOf[SparkTable]
+        val rebuilt = result.asInstanceOf[StreamingRelationV2].table.asInstanceOf[DeltaV2Table]
 
         // Both options land on the rebuilt table in a single pass.
         assert(rebuilt.getOptions.get(DeltaOptions.SCHEMA_TRACKING_LOCATION) == schemaLogPath)

@@ -42,8 +42,6 @@ import shadedForDelta.org.apache.iceberg.rest.PlanStatus;
 import shadedForDelta.org.apache.iceberg.rest.responses.PlanTableScanResponse;
 import shadedForDelta.org.apache.iceberg.expressions.Expression;
 import shadedForDelta.org.apache.iceberg.expressions.ResidualEvaluator;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -307,25 +305,6 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
     return TableIdentifier.of(namespace, tableName);
   }
 
-  /**
-   * Extract min-rows-requested from JSON string using Jackson.
-   * Iceberg 1.11 added this field, but we're on 1.10.0, so we parse it from JSON.
-   */
-  private Long extractMinRowsRequested(String jsonBody) {
-    if (jsonBody == null || jsonBody.trim().isEmpty()) {
-      return null;
-    }
-    try {
-      ObjectMapper mapper = new ObjectMapper();
-      JsonNode root = mapper.readTree(jsonBody);
-      JsonNode minRowsNode = root.get("min-rows-requested");
-      return minRowsNode != null ? minRowsNode.asLong() : null;
-    } catch (Exception e) {
-      LOG.warn("Failed to extract min-rows-requested from JSON: {}", e.getMessage());
-      return null;
-    }
-  }
-
   private PlanTableScanRequest parsePlanRequest(HTTPRequest request) {
     // The request body should be a JSON string
     Object body = request.body();
@@ -346,20 +325,11 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
     TableIdentifier tableIdent = extractTableIdentifier(request.path());
     LOG.debug("Table identifier: {}", tableIdent);
 
-    // Extract JSON body for parsing both the request and min-rows-requested
-    Object body = request.body();
-    if (body == null) {
-      throw new IllegalArgumentException("Request body is null");
-    }
-    String jsonBody = body.toString();
-
-    // Extract min-rows-requested (not supported in Iceberg 1.10, so parse from JSON)
-    Long minRowsRequested = extractMinRowsRequested(jsonBody);
-    LOG.debug("Extracted min-rows-requested: {}", minRowsRequested);
-
-    // Parse request
-    PlanTableScanRequest planRequest = PlanTableScanRequestParser.fromJson(jsonBody);
-    LOG.debug("Plan request parsed: snapshotId={}", planRequest.snapshotId());
+    // Parse request (min-rows-requested is natively supported in Iceberg 1.11.0)
+    PlanTableScanRequest planRequest = parsePlanRequest(request);
+    Long minRowsRequested = planRequest.minRowsRequested();
+    LOG.debug("Plan request parsed: snapshotId={}, minRowsRequested={}",
+        planRequest.snapshotId(), minRowsRequested);
 
     // Load table from catalog
     Table table = catalog.loadTable(tableIdent);

@@ -29,7 +29,7 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Delta-owned models for the UC Delta REST API. These decouple the {@link UCDeltaClient}
+ * Delta-owned models for the UC Delta API. These decouple the {@link UCDeltaClient}
  * interface from any generated SDK types.
  */
 public final class UCDeltaModels {
@@ -105,7 +105,7 @@ public final class UCDeltaModels {
     }
   }
 
-  /** Result of {@link UCDeltaClient#loadTable}. */
+  /** Result of {@link UCDeltaClient#loadTable} / {@link UCDeltaClient#createTable}. */
   public static final class TableInfo {
 
     private final UUID tableId;
@@ -163,19 +163,21 @@ public final class UCDeltaModels {
     private final UUID tableId;
     private final TableType tableType;
     private final String location;
-    private final DeltaProtocol requiredProtocol;
-    private final DeltaProtocol suggestedProtocol;
+    private final AbstractProtocol requiredProtocol;
+    private final AbstractProtocol suggestedProtocol;
     private final Map<String, String> requiredProperties;
     private final Map<String, String> suggestedProperties;
+    private final Map<String, String> storageProperties;
 
     public StagingTableInfo(
         UUID tableId,
         TableType tableType,
         String location,
-        DeltaProtocol requiredProtocol,
-        DeltaProtocol suggestedProtocol,
+        AbstractProtocol requiredProtocol,
+        AbstractProtocol suggestedProtocol,
         Map<String, String> requiredProperties,
-        Map<String, String> suggestedProperties) {
+        Map<String, String> suggestedProperties,
+        Map<String, String> storageProperties) {
       this.tableId = tableId;
       this.tableType = tableType;
       this.location = location;
@@ -183,6 +185,7 @@ public final class UCDeltaModels {
       this.suggestedProtocol = suggestedProtocol;
       this.requiredProperties = requiredProperties;
       this.suggestedProperties = suggestedProperties;
+      this.storageProperties = storageProperties;
     }
 
     public UUID getTableId() {
@@ -197,11 +200,11 @@ public final class UCDeltaModels {
       return location;
     }
 
-    public DeltaProtocol getRequiredProtocol() {
+    public AbstractProtocol getRequiredProtocol() {
       return requiredProtocol;
     }
 
-    public DeltaProtocol getSuggestedProtocol() {
+    public AbstractProtocol getSuggestedProtocol() {
       return suggestedProtocol;
     }
 
@@ -211,6 +214,11 @@ public final class UCDeltaModels {
 
     public Map<String, String> getSuggestedProperties() {
       return suggestedProperties == null ? Collections.emptyMap() : suggestedProperties;
+    }
+
+    /** Hadoop-style storage options (e.g. catalog-vended credentials). */
+    public Map<String, String> getStorageProperties() {
+      return storageProperties == null ? Collections.emptyMap() : storageProperties;
     }
   }
 }

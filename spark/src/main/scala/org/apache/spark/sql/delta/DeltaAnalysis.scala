@@ -705,8 +705,10 @@ class DeltaAnalysis(protected val session: SparkSession)
 
     case origStreamWrite: WriteToStream =>
       // The command could have Delta as source and/or sink. We need to look at both.
-      val streamWrite = origStreamWrite match {
-        case WriteToStream(_, _, sink @ DeltaSink(_, _, _, _, _, None), _, _, _, _, Some(ct)) =>
+      // Use field access rather than positional destructuring because WriteToStream's
+      // constructor signature differs across Spark versions.
+      val streamWrite = (origStreamWrite.sink, origStreamWrite.catalogTable) match {
+        case (sink @ DeltaSink(_, _, _, _, _, None), Some(ct)) =>
           // The command has a catalog table, but the DeltaSink does not. This happens because
           // DeltaDataSource.createSink (Spark API) didn't have access to the catalog table when it
           // created the DeltaSink. Fortunately we can fix it up here.
@@ -1026,7 +1028,7 @@ class DeltaAnalysis(protected val session: SparkSession)
         DeltaDataSource.extractSchemaTrackingLocationConfig(session, opts)
           .foreach { rootSchemaTrackingLocation =>
             // TODO(#5319): use table path instead of name so path vs catalog access of the same
-            //  table conflicts at analysis time (matches V1). Needs a SparkTable-side accessor.
+            //  table conflicts at analysis time (matches V1). Needs a DeltaV2Table-side accessor.
             val tableId = table.name.replace(":", "").replace("/", "_")
             val sourceIdOpt = opts.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID)
             val schemaTrackingLocation =

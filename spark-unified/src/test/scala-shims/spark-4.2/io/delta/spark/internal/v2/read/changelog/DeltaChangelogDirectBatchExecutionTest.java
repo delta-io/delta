@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.delta.spark.internal.v2.catalog.SparkTable;
+import io.delta.spark.internal.v2.catalog.DeltaV2Table;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
 import java.sql.Timestamp;
@@ -43,6 +43,8 @@ import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * Direct (non-analyzer) batch execution contract test for Delta changelog classes.
@@ -52,9 +54,11 @@ import org.junit.jupiter.api.Test;
  */
 public class DeltaChangelogDirectBatchExecutionTest extends DeltaChangelogTestBase {
 
-  @Test
-  public void testDirectBatchExecutionWithExplicitExpectedRows() throws Exception {
-    String tableName = "dsv2_changelog_direct_" + System.nanoTime();
+  @ParameterizedTest(name = "enableDvs={0}")
+  @ValueSource(booleans = {false, true})
+  public void testDirectBatchExecutionWithExplicitExpectedRows(boolean enableDvs) throws Exception {
+    String tableName =
+        "dsv2_changelog_direct_dv" + enableDvs + "_" + System.nanoTime();
     String tablePath = System.getProperty("java.io.tmpdir") + "/" + tableName;
 
     withTable(
@@ -64,8 +68,8 @@ public class DeltaChangelogDirectBatchExecutionTest extends DeltaChangelogTestBa
               String.format(
                   "CREATE TABLE %s (id BIGINT, name STRING) USING delta "
                       + "LOCATION '%s' TBLPROPERTIES "
-                      + "('delta.enableDeletionVectors'='false', 'delta.enableRowTracking'='true')",
-                  tableName, tablePath));
+                      + "('delta.enableDeletionVectors'='%s', 'delta.enableRowTracking'='true')",
+                  tableName, tablePath, enableDvs));
           spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice'), (2, 'Bob')", tableName));
           spark.sql(String.format("DELETE FROM %s WHERE id = 1", tableName));
 
@@ -78,7 +82,7 @@ public class DeltaChangelogDirectBatchExecutionTest extends DeltaChangelogTestBa
           DeltaChangelog changelog =
               new DeltaChangelog(
                   tableName,
-                  new SparkTable(Identifier.of(new String[0], tableName), tablePath),
+                  new DeltaV2Table(Identifier.of(new String[0], tableName), tablePath),
                   0L,
                   latestVersion);
           ScanBuilder scanBuilder =
@@ -149,7 +153,7 @@ public class DeltaChangelogDirectBatchExecutionTest extends DeltaChangelogTestBa
           DeltaChangelog changelog =
               new DeltaChangelog(
                   tableName,
-                  new SparkTable(Identifier.of(new String[0], tableName), tablePath),
+                  new DeltaV2Table(Identifier.of(new String[0], tableName), tablePath),
                   0L,
                   latestVersion);
 
@@ -173,9 +177,11 @@ public class DeltaChangelogDirectBatchExecutionTest extends DeltaChangelogTestBa
    * connector must surface both halves of that pair as raw DELETE + INSERT rows so Spark's
    * post-processor can derive the update.
    */
-  @Test
-  public void testUpdateProducesPairedDeleteAndInsert() throws Exception {
-    String tableName = "dsv2_changelog_direct_update_" + System.nanoTime();
+  @ParameterizedTest(name = "enableDvs={0}")
+  @ValueSource(booleans = {false, true})
+  public void testUpdateProducesPairedDeleteAndInsert(boolean enableDvs) throws Exception {
+    String tableName =
+        "dsv2_changelog_direct_update_dv" + enableDvs + "_" + System.nanoTime();
     String tablePath = System.getProperty("java.io.tmpdir") + "/" + tableName;
 
     withTable(
@@ -185,8 +191,8 @@ public class DeltaChangelogDirectBatchExecutionTest extends DeltaChangelogTestBa
               String.format(
                   "CREATE TABLE %s (id BIGINT, name STRING) USING delta LOCATION '%s' "
                       + "TBLPROPERTIES "
-                      + "('delta.enableDeletionVectors'='false', 'delta.enableRowTracking'='true')",
-                  tableName, tablePath));
+                      + "('delta.enableDeletionVectors'='%s', 'delta.enableRowTracking'='true')",
+                  tableName, tablePath, enableDvs));
           spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice')", tableName));
           spark.sql(String.format("UPDATE %s SET name = 'AliceX' WHERE id = 1", tableName));
 
@@ -199,7 +205,7 @@ public class DeltaChangelogDirectBatchExecutionTest extends DeltaChangelogTestBa
           DeltaChangelog changelog =
               new DeltaChangelog(
                   tableName,
-                  new SparkTable(Identifier.of(new String[0], tableName), tablePath),
+                  new DeltaV2Table(Identifier.of(new String[0], tableName), tablePath),
                   0L,
                   latestVersion);
           Scan scan =
@@ -272,7 +278,7 @@ public class DeltaChangelogDirectBatchExecutionTest extends DeltaChangelogTestBa
           DeltaChangelog changelog =
               new DeltaChangelog(
                   tableName,
-                  new SparkTable(Identifier.of(new String[0], tableName), tablePath),
+                  new DeltaV2Table(Identifier.of(new String[0], tableName), tablePath),
                   2L,
                   3L);
           Scan scan =
