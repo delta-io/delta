@@ -518,7 +518,13 @@ lazy val sparkV2 = {
         "org.scalatest" %% "scalatest" % scalaTestVersion % "test"
       ),
       Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
-      TestParallelization.settings
+      TestParallelization.settings,
+      // Add spark-unified JAR to the test classpath so tests can register
+      // DeltaSparkSessionExtension (which includes ApplyV2ReadOptions for CDC schema).
+      // LocalProject resolves by string name at task-execution time, not at build-definition
+      // load time, avoiding the circular lazy-val initialization that `spark / ...` causes
+      // (spark already depends on sparkV2 at compile scope).
+      Test / unmanagedJars += (LocalProject("spark") / Compile / packageBin).value
     )
     .settings(kernelDepSettings: _*)
 }
