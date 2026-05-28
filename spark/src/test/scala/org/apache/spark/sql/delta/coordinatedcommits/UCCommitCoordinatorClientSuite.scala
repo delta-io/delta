@@ -190,6 +190,103 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
     }
   }
 
+  private def emptyListingLogStore(
+      log: DeltaLog,
+      hadoopConf: Configuration): io.delta.storage.LogStore = {
+    new LogStoreInverseAdaptor(log.store, hadoopConf) {
+      override def listFrom(
+          path: Path,
+          hadoopConf: Configuration): java.util.Iterator[FileStatus] = {
+        Collections.emptyIterator[FileStatus]()
+      }
+    }
+  }
+
+  private def commitRecord(logPath: Path, version: Long): JCommit = {
+    val commitPath = new Path(new Path(logPath, "_staged_commits"), s"$version.json")
+    val fileStatus = new FileStatus(1L, false, 0, 0L, version, commitPath)
+    new JCommit(version, fileStatus, version)
+  }
+
+  private def clientReturningCommits(response: JGetCommitsResponse): UCCommitCoordinatorClient = {
+    new UCCommitCoordinatorClient(Map.empty[String, String].asJava, null) {
+      override def getCommits(
+          tableDesc: TableDescriptor,
+          startVersion: JLong,
+          endVersion: JLong): JGetCommitsResponse = response
+    }
+  }
+
+  test("getLastKnownBackfilledVersion verifies physical zero when UC boundary is zero") {
+    withTempTableDir { tempDir =>
+      val log = DeltaLog.forTable(spark, tempDir.toString)
+      val logPath = log.logPath
+      val hadoopConf = log.newDeltaHadoopConf()
+      val tableDesc = new TableDescriptor(
+        logPath,
+        Optional.empty(),
+        Map(UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> tableUUID.toString).asJava)
+      val ucCommitCoordinatorClient = clientReturningCommits(
+        new JGetCommitsResponse(Seq(commitRecord(logPath, 1L)).asJava, 1L))
+
+      writeCommitZero(logPath)
+
+      assert(ucCommitCoordinatorClient.getLastKnownBackfilledVersion(
+        2,
+        hadoopConf,
+        emptyListingLogStore(log, hadoopConf),
+        tableDesc) == 0L)
+    }
+  }
+
+  test("getLastKnownBackfilledVersion rejects missing physical zero") {
+    withTempTableDir { tempDir =>
+      val log = DeltaLog.forTable(spark, tempDir.toString)
+      val logPath = log.logPath
+      val hadoopConf = log.newDeltaHadoopConf()
+      val tableDesc = new TableDescriptor(
+        logPath,
+        Optional.empty(),
+        Map(UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> tableUUID.toString).asJava)
+      val ucCommitCoordinatorClient = clientReturningCommits(
+        new JGetCommitsResponse(Seq(commitRecord(logPath, 1L)).asJava, 1L))
+
+      val e = intercept[IllegalStateException] {
+        ucCommitCoordinatorClient.getLastKnownBackfilledVersion(
+          2,
+          hadoopConf,
+          emptyListingLogStore(log, hadoopConf),
+          tableDesc)
+      }
+      assert(e.getMessage.contains("Couldn't find any backfilled commit"))
+    }
+  }
+
+  test("getLastKnownBackfilledVersion rejects missing inferred predecessor") {
+    withTempTableDir { tempDir =>
+      val log = DeltaLog.forTable(spark, tempDir.toString)
+      val logPath = log.logPath
+      val hadoopConf = log.newDeltaHadoopConf()
+      val tableDesc = new TableDescriptor(
+        logPath,
+        Optional.empty(),
+        Map(UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> tableUUID.toString).asJava)
+      val ucCommitCoordinatorClient = clientReturningCommits(
+        new JGetCommitsResponse(Seq(commitRecord(logPath, 2L)).asJava, 2L))
+
+      writeCommitZero(logPath)
+
+      val e = intercept[IllegalStateException] {
+        ucCommitCoordinatorClient.getLastKnownBackfilledVersion(
+          3,
+          hadoopConf,
+          emptyListingLogStore(log, hadoopConf),
+          tableDesc)
+      }
+      assert(e.getMessage.contains("Couldn't find any backfilled commit"))
+    }
+  }
+
   test("commit-limit-reached exception handling") {
     withTempTableDir { tempDir =>
       val log = DeltaLog.forTable(spark, tempDir.toString)
