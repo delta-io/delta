@@ -64,7 +64,7 @@ public class DeltaV2Table
     implements Table,
         SupportsRead,
         SupportsWrite,
-        SupportsMetadataColumns
+        SupportsMetadataColumns,
         DeltaV2TableMarker {
   private static final String METADATA_COLUMN_NAME = FileFormat$.MODULE$.METADATA_NAME();
   private static final String ROW_ID_METADATA_FIELD_NAME = RowId$.MODULE$.ROW_ID();

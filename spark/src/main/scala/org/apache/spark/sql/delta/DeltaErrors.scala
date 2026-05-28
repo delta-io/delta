@@ -595,6 +595,17 @@ trait DeltaErrorsBase
   }
 
   /**
+   * Read-time CDC reader rejected a reader option it doesn't honor (e.g. `computeUpdates`,
+   * `deduplicationMode`, `startingBoundInclusive`, `endingBoundInclusive`). See
+   * `ResolveTableChangesV2.rejectUnsupportedOptions` for the rejected set.
+   */
+  def changelogUnsupportedOption(option: String): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_CHANGELOG_UNSUPPORTED_OPTION",
+      messageParameters = Array(option))
+  }
+
+  /**
    * Throwable used for invalid CDC 'start' and 'end' options, where end < start
    */
   def endBeforeStartVersionInCDC(start: Long, end: Long): Throwable = {
@@ -637,17 +648,6 @@ trait DeltaErrorsBase
     throw new DeltaAnalysisException(
       errorClass = "DELTA_CHANGELOG_UNBOUNDED_RANGE",
       messageParameters = Array.empty[String])
-  }
-
-  /**
-   * Read-time CDC reader rejected a reader option it doesn't honor (e.g. `computeUpdates`,
-   * `deduplicationMode`, `startingBoundInclusive`, `endingBoundInclusive`). See
-   * [[io.delta.internal.ResolveTableChangesV2.rejectUnsupportedOptions]] for the rejected set.
-   */
-  def changelogUnsupportedOption(option: String): Throwable = {
-    new DeltaIllegalArgumentException(
-      errorClass = "DELTA_CHANGELOG_UNSUPPORTED_OPTION",
-      messageParameters = Array(option))
   }
 
   /**

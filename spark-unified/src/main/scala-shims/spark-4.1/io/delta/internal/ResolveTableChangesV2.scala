@@ -14,22 +14,13 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.catalog
+package io.delta.internal
 
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.execution.datasources.v2.DataSourceV2RelationShim
+import org.apache.spark.sql.catalyst.rules.Rule
 
-/**
- * Trait allowing V1 code path to identify a V2 [[SparkTable]] without taking a dependency on that
- * class that lives in a different target.
- */
-trait SparkTableMarker
-
-object SparkTableMarker {
-
-  /** Whether the given plan is a relation over a [[SparkTable]]. */
-  def isSparkTableRelation(child: LogicalPlan): Boolean = child match {
-    case DataSourceV2RelationShim(_: SparkTableMarker, _, _, _, _) => true
-    case _ => false
-  }
+/** No-op shim of `ResolveTableChangesV2` for Spark 4.1. */
+class ResolveTableChangesV2(session: SparkSession) extends Rule[LogicalPlan] {
+  override def apply(plan: LogicalPlan): LogicalPlan = plan
 }

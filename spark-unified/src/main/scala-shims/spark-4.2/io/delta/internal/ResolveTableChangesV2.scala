@@ -16,7 +16,7 @@
 
 package io.delta.internal
 
-import io.delta.spark.internal.v2.catalog.SparkTable
+import io.delta.spark.internal.v2.catalog.DeltaV2Table
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.analysis.ChangelogInfoUtils
@@ -24,39 +24,46 @@ import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.connector.catalog.{ChangelogInfo, Identifier}
 import org.apache.spark.sql.delta.{DeltaErrors, TableChanges}
-import org.apache.spark.sql.delta.catalog.{ChangelogSupport, SparkTableMarker}
+import org.apache.spark.sql.delta.catalog.{ChangelogSupport, DeltaV2TableMarker}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.execution.datasources.v2.{ChangelogTable, DataSourceV2Relation, DataSourceV2RelationShim}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
- * Resolves CDF reads against V2 [[SparkTable]] tables (`table_changes(...)` and
+ * Resolves CDF reads against V2 [[DeltaV2Table]] tables (`table_changes(...)` and
  * `.option("readChangeFeed", "true").table(name)`) into the kernel-based DSv2 changelog plan.
  *
  * V1 [[org.apache.spark.sql.delta.catalog.DeltaTableV2]] CDC reads stay on the legacy path
  * handled by [[org.apache.spark.sql.delta.DeltaAnalysis]]'s `TableChanges` rule -- the V1 rule
- * skips itself when it sees a [[org.apache.spark.sql.delta.catalog.SparkTableMarker]]
- * child (the marker `SparkTable` mixes in) so this rule can take over without contention.
+ * skips itself when it sees a [[org.apache.spark.sql.delta.catalog.DeltaV2TableMarker]]
+ * child (the marker `DeltaV2Table` mixes in) so this rule can take over without contention.
  */
-class ResolveTableChangesV2 extends Rule[LogicalPlan] {
+class ResolveTableChangesV2(session: SparkSession) extends Rule[LogicalPlan] {
 
-  override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {
-    // `table_changes('t', 0, 5)` where the catalog returned SparkTable. Rewrite the inner
-    // `DataSourceV2Relation(SparkTable)` into a `ChangelogTable` plan; the result replaces
-    // the entire `TableChanges` node.
-    case tc: TableChanges if tc.child.resolved &&
-        plan.exists(SparkTableMarker.isSparkTableRelation) =>
-      tc.child.transformDown {
-        case DataSourceV2RelationShim(_: SparkTable, _, Some(catalog: ChangelogSupport),
-            Some(ident), options) =>
-          buildChangelogRelation(catalog, ident, options)
-      }
+  override def apply(plan: LogicalPlan): LogicalPlan = {
 
-    // `.option("readChangeFeed", "true").table(name)` where the catalog returned SparkTable
-    // (no `TableChanges` wrapper -- the relation flows straight into the query).
-    case DataSourceV2RelationShim(_: SparkTable, _, Some(catalog: ChangelogSupport),
-        Some(ident), options) if CDCReader.isCDCRead(options) =>
-      buildChangelogRelation(catalog, ident, options)
+    if (!session.sessionState.conf.getConf(DeltaSQLConf.DELTA_CHANGELOG_V2_ENABLED)) return plan
+
+    plan.resolveOperators {
+      // `table_changes('t', 0, 5)` where the catalog returned DeltaV2Table. Rewrite the inner
+      // `DataSourceV2Relation(DeltaV2Table)` into a `ChangelogTable` plan; the result replaces
+      // the entire `TableChanges` node.
+      case tc: TableChanges if tc.child.resolved &&
+        plan.exists(DeltaV2TableMarker.isDeltaV2TableRelation) =>
+        tc.child.transformDown {
+          case DataSourceV2RelationShim(_: DeltaV2Table,
+          _, Some(catalog: ChangelogSupport), Some(ident), options) =>
+            buildChangelogRelation(catalog, ident, options)
+        }
+
+      // `.option("readChangeFeed", "true").table(name)` where the catalog returned DeltaV2Table
+      // (no `TableChanges` wrapper -- the relation flows straight into the query).
+      case DataSourceV2RelationShim(_: DeltaV2Table,
+      _, Some(catalog: ChangelogSupport), Some(ident), options)
+        if CDCReader.isCDCRead(options) =>
+        buildChangelogRelation(catalog, ident, options)
+    }
   }
 
   /**
@@ -70,17 +77,15 @@ class ResolveTableChangesV2 extends Rule[LogicalPlan] {
     // We can use [[ChangelogInfoUtils.fromOptions]] directly here because Spark's CDC options
     // match Delta's CDF options, e.p. startingVersion, endingVersion.
     val baseInfo = ChangelogInfoUtils.fromOptions(
-      options, SparkSession.active.sessionState.conf.sessionLocalTimeZone)
+      options,
+      session.sessionState.conf.sessionLocalTimeZone)
     val info = new ChangelogInfo(
       baseInfo.range(),
       ChangelogInfo.DeduplicationMode.DROP_CARRYOVERS,
       /* computeUpdates = */ true)
     val changelog = catalog.loadChangelog(ident, info)
     DataSourceV2Relation.create(
-      ChangelogTable(changelog, info),
-      Some(catalog.asInstanceOf[org.apache.spark.sql.connector.catalog.CatalogPlugin]),
-      Some(ident),
-      options)
+      ChangelogTable(changelog, info), Some(catalog), Some(ident), options)
   }
 
   /**

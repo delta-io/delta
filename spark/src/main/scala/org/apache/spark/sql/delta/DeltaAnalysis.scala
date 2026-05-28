@@ -27,8 +27,8 @@ import org.apache.spark.sql.delta.Relocated._
 import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.DeltaErrors.{TemporallyUnstableInputException, TimestampEarlierThanCommitRetentionException}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
+import org.apache.spark.sql.delta.catalog.{DeltaTableV2, DeltaV2TableMarker}
 import org.apache.spark.sql.delta.catalog.DeltaCatalogV1
-import org.apache.spark.sql.delta.catalog.{DeltaTableV2, SparkTableMarker}
 import org.apache.spark.sql.delta.catalog.IcebergTablePlaceHolder
 import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -393,7 +393,7 @@ class DeltaAnalysis(protected val session: SparkSession)
 
     case tc: TableChanges if tc.child.resolved &&
         // Skip CDF over DSv2 table, this will be resolved in [[ResolveTableChangesV2]].
-        !tc.child.exists(SparkTableMarker.isSparkTableRelation) =>
+        !tc.child.exists(DeltaV2TableMarker.isDeltaV2TableRelation) =>
       tc.toReadQuery
 
     // Here we take advantage of CreateDeltaTableCommand which takes a LogicalPlan for CTAS in order
