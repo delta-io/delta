@@ -58,6 +58,7 @@ import org.apache.spark.sql.catalyst.plans.logical.RestoreTableStatement
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.streaming.{StreamingRelationV2, WriteToStream}
 import org.apache.spark.sql.catalyst.trees.TreeNodeTag
+import org.apache.spark.sql.delta.shims.StreamingRelationV2Shim
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttribute
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
@@ -1020,12 +1021,12 @@ class DeltaAnalysis(protected val session: SparkSession)
             // Save schema location for this streaming relation
             schemaLocationMap.put(streamingRelation, schemaTrackingLocation.stripSuffix("/"))
           }
-      case streamingRelationV2 @ StreamingRelationV2(_, _, table, extraOptions, _, _, _, _) =>
+      case streamingRelationV2 @ StreamingRelationV2Shim(_, _, table, extraOptions, _, _, _, _) =>
         val opts = extraOptions.asCaseSensitiveMap.asScala.toMap
         DeltaDataSource.extractSchemaTrackingLocationConfig(session, opts)
           .foreach { rootSchemaTrackingLocation =>
             // TODO(#5319): use table path instead of name so path vs catalog access of the same
-            //  table conflicts at analysis time (matches V1). Needs a SparkTable-side accessor.
+            //  table conflicts at analysis time (matches V1). Needs a DeltaV2Table-side accessor.
             val tableId = table.name.replace(":", "").replace("/", "_")
             val sourceIdOpt = opts.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID)
             val schemaTrackingLocation =

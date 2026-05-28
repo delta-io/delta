@@ -7,6 +7,7 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.commitrange.CommitRangeImpl;
@@ -106,6 +107,10 @@ public class DeltaChangelogBatch implements Batch {
               Optional<AddFile> addOpt = StreamingHelper.getAddFileWithDataChange(batch, rowId);
               if (addOpt.isPresent()) {
                 AddFile add = addOpt.get();
+                String deletionVectorBase64 =
+                    add.getDeletionVector()
+                        .map(DeletionVectorDescriptor::serializeToBase64)
+                        .orElse(null);
                 commitAdds.add(
                     buildPartition(
                         add.getPath(),
@@ -115,11 +120,17 @@ public class DeltaChangelogBatch implements Batch {
                         commit.getTimestamp(),
                         add::getBaseRowId,
                         add::getDefaultRowCommitVersion,
-                        "AddFile"));
+                        "AddFile",
+                        deletionVectorBase64));
               }
               Optional<RemoveFile> removeOpt = StreamingHelper.getDataChangeRemove(batch, rowId);
               if (removeOpt.isPresent()) {
                 RemoveFile remove = removeOpt.get();
+                String deletionVectorBase64 =
+                    remove
+                        .getDeletionVector()
+                        .map(DeletionVectorDescriptor::serializeToBase64)
+                        .orElse(null);
                 commitRemoves.add(
                     buildPartition(
                         remove.getPath(),
@@ -129,7 +140,8 @@ public class DeltaChangelogBatch implements Batch {
                         commit.getTimestamp(),
                         remove::getBaseRowId,
                         remove::getDefaultRowCommitVersion,
-                        "RemoveFile"));
+                        "RemoveFile",
+                        deletionVectorBase64));
               }
               // Validate Metadata actions: schema and row-tracking config must match the
               // end-version baseline established by DeltaChangelogScanBuilder. Mid-range
@@ -155,7 +167,10 @@ public class DeltaChangelogBatch implements Batch {
         } catch (RuntimeException e) {
           throw e;
         } catch (Exception e) {
-          throw new RuntimeException("Failed to process CDC commit actions", e);
+          // Include the inner message so AnalysisException error classes
+          // (e.g. DELTA_CHANGELOG_ROW_TRACKING_DISABLED_IN_RANGE) reach the user.
+          throw new RuntimeException(
+              "Failed to process CDC commit actions: " + e.getMessage(), e);
         }
         partitions.addAll(commitRemoves);
         partitions.addAll(commitAdds);
@@ -163,7 +178,8 @@ public class DeltaChangelogBatch implements Batch {
     } catch (RuntimeException e) {
       throw e;
     } catch (Exception e) {
-      throw new RuntimeException("Failed to plan CDC input partitions", e);
+      throw new RuntimeException(
+          "Failed to plan CDC input partitions: " + e.getMessage(), e);
     }
     return partitions.toArray(new InputPartition[0]);
   }
@@ -182,7 +198,8 @@ public class DeltaChangelogBatch implements Batch {
       long commitTimestampMillis,
       Supplier<Optional<Long>> baseRowIdAccessor,
       Supplier<Optional<Long>> defaultRowCommitVersionAccessor,
-      String actionDescription) {
+      String actionDescription,
+      String deletionVector) {
     long baseRowId =
         baseRowIdAccessor
             .get()
@@ -198,7 +215,14 @@ public class DeltaChangelogBatch implements Batch {
                     new IllegalStateException(
                         actionDescription + " " + path + " missing defaultRowCommitVersion"));
     return new CDCInputPartition(
-        path, size, commitVersion, commitTimestampMillis, changeType, baseRowId, defaultRcv);
+        path,
+        size,
+        commitVersion,
+        commitTimestampMillis,
+        changeType,
+        baseRowId,
+        defaultRcv,
+        deletionVector);
   }
 
   @Override
@@ -243,6 +267,7 @@ public class DeltaChangelogBatch implements Batch {
     private final String changeType;
     private final long baseRowId;
     private final long defaultRowCommitVersion;
+    private final String deletionVectorInfo;
 
     CDCInputPartition(
         String filePath,
@@ -251,7 +276,8 @@ public class DeltaChangelogBatch implements Batch {
         long commitTimestampMillis,
         String changeType,
         long baseRowId,
-        long defaultRowCommitVersion) {
+        long defaultRowCommitVersion,
+        String deletionVectorInfo) {
       this.filePath = filePath;
       this.fileSize = fileSize;
       this.commitVersion = commitVersion;
@@ -259,6 +285,7 @@ public class DeltaChangelogBatch implements Batch {
       this.changeType = changeType;
       this.baseRowId = baseRowId;
       this.defaultRowCommitVersion = defaultRowCommitVersion;
+      this.deletionVectorInfo = deletionVectorInfo;
     }
 
     public String getFilePath() {
@@ -287,6 +314,10 @@ public class DeltaChangelogBatch implements Batch {
 
     public long getDefaultRowCommitVersion() {
       return defaultRowCommitVersion;
+    }
+
+    public String getDeletionVectorInfo() {
+      return deletionVectorInfo;
     }
   }
 
@@ -321,6 +352,15 @@ public class DeltaChangelogBatch implements Batch {
               new Tuple2<>(
                   DefaultRowCommitVersion$.MODULE$.METADATA_STRUCT_FIELD_NAME(),
                   cdcPartition.getDefaultRowCommitVersion()));
+
+      // When the action carries a DV, set both Parquet reader constants together. Setting only
+      // one triggers IllegalStateException in DeltaParquetFileFormat. IF_CONTAINED makes the
+      // reader drop physical rows whose index is in the DV bitmap (visible-rows semantics).
+      for (java.util.Map.Entry<String, Object> entry :
+          PartitionUtils.buildDvMetadata(cdcPartition.getDeletionVectorInfo()).entrySet()) {
+        constantMetadata =
+            constantMetadata.$plus(new Tuple2<>(entry.getKey(), entry.getValue()));
+      }
 
       PartitionedFile file =
           new PartitionedFile(

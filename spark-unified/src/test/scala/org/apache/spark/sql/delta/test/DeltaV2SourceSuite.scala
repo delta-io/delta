@@ -28,6 +28,8 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
 
   override protected def useDsv2: Boolean = true
 
+  override protected def executeDml(sqlText: String): Unit = executeInV1Mode(sqlText)
+
   /**
    * Override disableLogCleanup to use DeltaLog API instead of SQL ALTER TABLE.
    * Path-based ALTER TABLE doesn't work properly with V2_ENABLE_MODE=STRICT.
@@ -44,12 +46,6 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
       DeltaOperations.SetTableProperties(
         Map(DeltaConfigs.ENABLE_EXPIRED_LOG_CLEANUP.key -> "false"))
     )
-  }
-
-  /** Path-based ALTER TABLE doesn't work under V2_ENABLE_MODE=STRICT; route through V1. */
-  override protected def renameColumn(
-      tablePath: String, oldName: String, newName: String): Unit = {
-    executeInV1Mode(s"ALTER TABLE delta.`$tablePath` RENAME COLUMN $oldName TO $newName")
   }
 
   override protected def shouldPassTests: Set[String] = Set(
@@ -108,6 +104,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "startingVersion should be ignored when restarting from a checkpoint, withRowTracking = false",
     "startingVersion and startingTimestamp are both set",
     "startingTimestamp",
+    "startingTimestamp with mid-history ICT",
 
     // ========== Rate limiting tests ==========
     "maxFilesPerTrigger",
@@ -143,7 +140,11 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "streaming read returns correct data from table with partition column in middle",
     "streaming read with column pruning and partition column in middle",
     "streaming read with column mapping id and partition column in middle",
-    "streaming read after column rename with partition column in middle"
+    "streaming read after column rename with partition column in middle",
+    "streaming read preserves percent-literal string partition value",
+    "initial snapshot: checkpoint resume produces all rows without duplicates",
+    "initial snapshot: Trigger.AvailableNow processes all data and terminates",
+    "initial snapshot: checkpoint resume after new commits produces all rows"
   )
 
   override protected def shouldFailTests: Set[String] = Set(
@@ -183,4 +184,18 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     // Calls deltaSource.createSource() directly
     "createSource should create source with empty or matching table schema provided"
   )
+}
+
+/**
+ * Runs DeltaV2SourceSuite with the distributed initial snapshot path enabled.
+ * Every test that reads from the beginning (no startingVersion) automatically
+ * exercises the DataFrame-based snapshot cache.
+ */
+class DeltaV2SourceDistributedInitialSnapshotSuite extends DeltaV2SourceSuite {
+  import org.apache.spark.sql.delta.sources.DeltaSQLConf
+
+  override protected def sparkConf: org.apache.spark.SparkConf = {
+    super.sparkConf.set(
+      DeltaSQLConf.DELTA_STREAMING_USE_DISTRIBUTED_INITIAL_SNAPSHOT.key, "true")
+  }
 }

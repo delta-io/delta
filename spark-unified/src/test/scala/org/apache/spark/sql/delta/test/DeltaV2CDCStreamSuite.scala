@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.test
 
-import org.apache.spark.sql.delta.{DeltaCDCStreamSuite, DeltaConfigs, DeltaLog, DeltaOperations}
+import org.apache.spark.sql.delta.{DeltaCDCStreamDeletionVectorMixin, DeltaCDCStreamSuite, DeltaConfigs, DeltaLog, DeltaOperations}
 
 /**
  * Test suite that runs DeltaCDCStreamSuite using the V2 connector (V2_ENABLE_MODE=STRICT).
@@ -35,7 +35,10 @@ class DeltaV2CDCStreamSuite extends DeltaCDCStreamSuite with V2ForceTest {
         Map(DeltaConfigs.CHANGE_DATA_FEED.key -> "true")))
   }
 
-  override protected lazy val shouldPassTests = Set(
+  // V2 doesn't support write ops; run DELETE in V1 mode.
+  override protected def executeDeleteSql(sqlText: String): Unit = executeInV1Mode(sqlText)
+
+  override protected def shouldPassTests: Set[String] = Set(
     // ========== Core CDC streaming tests ==========
     "no startingVersion should result fetch the entire snapshot",
     "CDC initial snapshot should end at base index of next version",
@@ -52,12 +55,18 @@ class DeltaV2CDCStreamSuite extends DeltaCDCStreamSuite with V2ForceTest {
     "cdc streams should be able to get offset when there only RemoveFiles",
     "cdc streams should work starting from RemoveFile",
     "cdc streams should work starting from AddCDCFile",
+    "double delete-only on the same file",
 
     // ========== Rate limiting tests ==========
     "rateLimit - maxFilesPerTrigger - overall",
     "rateLimit - maxBytesPerTrigger - overall",
     "rateLimit - maxFilesPerTrigger - starting from initial snapshot",
     "rateLimit - maxBytesPerTrigger - starting from initial snapshot",
+    "rateLimit - maxFilesPerTrigger - should not deadlock",
+    "rateLimit - maxBytesPerTrigger - should not deadlock",
+    "maxFilesPerTrigger - 2 successive AddCDCFile commits",
+    "maxFilesPerTrigger - batch reject stops iteration to prevent data loss",
+    "maxFilesPerTrigger with Trigger.AvailableNow respects read limits",
 
     // ========== Misc tests ==========
     "check starting[Version/Timestamp] > latest version without error",
@@ -71,19 +80,29 @@ class DeltaV2CDCStreamSuite extends DeltaCDCStreamSuite with V2ForceTest {
     "CDC stream rejects reading row tracking metadata fields"
   )
 
-  override protected lazy val shouldFailTests = Set(
+  override protected def shouldFailTests: Set[String] = Set(
     // === Error message format differs in V2 (missing [DELTA_VERSION_NOT_FOUND] prefix) ===
     "starting[Version/Timestamp] > latest version",
-    // === sql("DELETE FROM delta.`...`") not supported under STRICT V2 mode ===
-    "double delete-only on the same file",
-    // === TODO(#6591): Pre-existing vectorized partitioned-CDC bug (PlainIntegerDictionary / NPE).
-    "rateLimit - maxFilesPerTrigger - should not deadlock",
-    "rateLimit - maxBytesPerTrigger - should not deadlock",
-    "maxFilesPerTrigger - 2 successive AddCDCFile commits",
-    "maxFilesPerTrigger - batch reject stops iteration to prevent data loss",
-    "maxFilesPerTrigger with Trigger.AvailableNow respects read limits",
     // === V2 wraps DeltaAnalysisException in RuntimeException, so the test's
     // === ExpectFailure[DeltaAnalysisException] cause-class check fails.
     "startingVersion before CDF was enabled rejects with change-data-not-recorded"
   )
+}
+
+/**
+ * Runs DeltaCDCStreamSuite with DVs enabled using the V2 connector (V2_ENABLE_MODE=STRICT).
+ */
+class DeltaV2CDCStreamDeletionVectorSuite
+    extends DeltaV2CDCStreamSuite with DeltaCDCStreamDeletionVectorMixin {
+
+  override protected def shouldPassTests: Set[String] =
+    super.shouldPassTests ++
+      Set(
+        "CDC DV-diff: only deleted rows appear, not surviving rows",
+        "CDC DV-diff: second delete emits only newly deleted rows, not prior deletions",
+        "CDC DV-diff: partitioned table includes correct partition values",
+        "CDC DV-diff: delete spanning multiple files produces one DV pair per file",
+        "CDC DV-diff: multi-file commit admitted all-or-nothing under maxFilesPerTrigger",
+        "CDC DV-diff: maxBytesPerTrigger rate limits across DV-diff commits"
+      )
 }

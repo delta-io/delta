@@ -61,8 +61,10 @@ import org.apache.spark.sql.execution.datasources.PartitioningUtils;
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
+import org.apache.spark.sql.types.StringType;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
+import org.apache.spark.unsafe.types.UTF8String;
 import scala.Function1;
 import scala.Option;
 import scala.Tuple2;
@@ -170,10 +172,14 @@ public class PartitionUtils {
       final Integer pos = physicalNameToIndex.get(key);
       if (pos != null) {
         final StructField field = partitionSchema.fields()[pos];
-        values[pos] =
-            (strVal == null)
-                ? null
-                : PartitioningUtils.castPartValueToDesiredType(field.dataType(), strVal, zoneId);
+        if (strVal == null) {
+          values[pos] = null;
+        } else if (field.dataType() instanceof StringType) {
+          values[pos] = UTF8String.fromString(strVal);
+        } else {
+          values[pos] =
+              PartitioningUtils.castPartValueToDesiredType(field.dataType(), strVal, zoneId);
+        }
       }
     }
     return new GenericInternalRow(values);
@@ -192,7 +198,7 @@ public class PartitionUtils {
       AddFile addFile, StructType partitionSchema, String tablePath, ZoneId zoneId) {
     scala.collection.immutable.Map<String, Object> metadata =
         mergeIntoScalaMap(
-            buildDvMetadata(addFile.getDeletionVector()),
+            buildDvMetadataScala(addFile.getDeletionVector()),
             buildRowTrackingMetadata(addFile.getBaseRowId(), addFile.getDefaultRowCommitVersion()));
     return makePartitionedFile(
         new Path(tablePath, addFile.getPath()).toString(),
@@ -224,8 +230,11 @@ public class PartitionUtils {
     if (!cdcFile.isAddCDCFile()) {
       cdcConstants.put(CDCSchemaContext.CDC_TYPE_COLUMN, cdcFile.getChangeType());
     }
+    Optional<String> effectiveDv = cdcFile.getEffectiveDv();
     scala.collection.immutable.Map<String, Object> metadata =
-        buildDvMetadata(getCDCFileDvDescriptor(cdcFile));
+        effectiveDv.isPresent()
+            ? buildDvMetadata(effectiveDv.get(), cdcFile.getDvFilterType())
+            : scala.collection.immutable.Map$.MODULE$.empty();
     for (Map.Entry<String, Object> entry : cdcConstants.entrySet()) {
       metadata = metadata.$plus(new Tuple2<>(entry.getKey(), entry.getValue()));
     }
@@ -280,17 +289,6 @@ public class PartitionUtils {
       result = result.$plus(new Tuple2<>(entry.getKey(), entry.getValue()));
     }
     return result;
-  }
-
-  private static Optional<DeletionVectorDescriptor> getCDCFileDvDescriptor(
-      io.delta.spark.internal.v2.read.CDCDataFile cdcFile) {
-    if (cdcFile.getAddFile() != null) {
-      return cdcFile.getAddFile().getDeletionVector();
-    }
-    if (cdcFile.getRemoveFile() != null) {
-      return cdcFile.getRemoveFile().getDeletionVector();
-    }
-    return Optional.empty();
   }
 
   /**
@@ -497,18 +495,32 @@ public class PartitionUtils {
   /**
    * Build metadata map for PartitionedFile containing DV descriptor if present.
    *
-   * <p>The metadata is used by DeltaParquetFileFormat to generate the is_row_deleted column.
+   * <p>The metadata is used by DeltaParquetFileFormat to generate the is_row_deleted column. Uses
+   * {@code IF_CONTAINED} filter semantics (visible-rows semantics). Returns an empty map when
+   * {@code dvBase64} is {@code null}.
    */
-  private static scala.collection.immutable.Map<String, Object> buildDvMetadata(
-      Optional<DeletionVectorDescriptor> dvOpt) {
+  public static Map<String, Object> buildDvMetadata(String dvBase64) {
     Map<String, Object> metadata = new HashMap<>();
-    if (dvOpt.isPresent()) {
-      metadata.put(
-          DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_ID_ENCODED(),
-          dvOpt.get().serializeToBase64());
+    if (dvBase64 != null) {
+      metadata.put(DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_ID_ENCODED(), dvBase64);
       metadata.put(
           DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_TYPE(), RowIndexFilterType.IF_CONTAINED);
     }
+    return metadata;
+  }
+
+  private static scala.collection.immutable.Map<String, Object> buildDvMetadataScala(
+      Optional<DeletionVectorDescriptor> dvOpt) {
+    Map<String, Object> metadata =
+        buildDvMetadata(dvOpt.map(DeletionVectorDescriptor::serializeToBase64).orElse(null));
+    return scala.collection.immutable.Map$.MODULE$.from(CollectionConverters.asScala(metadata));
+  }
+
+  private static scala.collection.immutable.Map<String, Object> buildDvMetadata(
+      String dvBase64, RowIndexFilterType filterType) {
+    Map<String, Object> metadata = new HashMap<>();
+    metadata.put(DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_ID_ENCODED(), dvBase64);
+    metadata.put(DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_TYPE(), filterType);
     return scala.collection.immutable.Map$.MODULE$.from(CollectionConverters.asScala(metadata));
   }
 

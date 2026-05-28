@@ -41,6 +41,7 @@ import org.apache.spark.sql.delta.catalog.UCDeltaCatalogClientImpl;
 import org.apache.spark.sql.delta.coordinatedcommits.UCTokenBasedRestClientFactory;
 import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DynamicContainer;
 import org.junit.jupiter.api.DynamicTest;
@@ -59,6 +60,23 @@ import org.opentest4j.TestAbortedException;
 public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSupport {
   public static final List<TableType> ALL_TABLE_TYPES =
       List.of(TableType.EXTERNAL, TableType.MANAGED);
+
+  protected static String sparkVersion() {
+    return org.apache.spark.package$.MODULE$.SPARK_VERSION();
+  }
+
+  protected static boolean isSparkMasterSnapshot() {
+    return sparkVersion().contains("SNAPSHOT");
+  }
+
+  protected static void assumeUcSparkMasterCompatible(String suiteName) {
+    Assumptions.assumeFalse(
+        isSparkMasterSnapshot(),
+        suiteName
+            + " are temporarily skipped on Spark master because the current Unity Catalog "
+            + "Spark connector does not yet support the current Spark master "
+            + "CatalogStorageFormat ABI.");
+  }
 
   /**
    * Tests with this annotation will test against ALL_TABLE_TYPES. Example:
@@ -114,6 +132,8 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
   /** Create the SparkSession before all tests. */
   @BeforeAll
   public void setUpSpark() {
+    assumeUcSparkMasterCompatible("Unity Catalog integration tests");
+
     // UC server is started by UnityCatalogSupport.setupServer()
     // And the BeforeAll of parent class UnityCatalogSupport will be called before this method.
 
@@ -163,13 +183,12 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
 
   /** Subclasses can override to false for A/B comparison with the legacy path. */
   protected boolean useDeltaRestApiForTests() {
-    // TODO: turn this on once the Delta API is fully integrated.
-    return false;
+    return true;
   }
 
   /**
-   * Whether the class-level @AfterAll should assert that the Delta REST API actually served at
-   * least one load. Override to false in classes that intentionally exercise only the fallback path
+   * Whether the class-level @AfterAll should assert that the UC Delta API actually served at least
+   * one load. Override to false in classes that intentionally exercise only the fallback path
    * (which does NOT bump the successfulDeltaRestApiLoads counter), so the class-level check doesn't
    * false-positive when test sharding distributes methods across CI shards.
    */
@@ -197,14 +216,14 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     long loadInvocationsAfter = UCDeltaCatalogClientImpl.loadTableInvocationsForTesting();
     if (loadInvocationsAfter <= loadTableInvocationsAtClassStart) {
       // Every test in the suite was aborted (e.g. via Assumption.assumeTrue) before any
-      // loadTable call ran, so there is nothing to assert about the Delta REST API path.
+      // loadTable call ran, so there is nothing to assert about the UC Delta API path.
       return;
     }
     long after = UCDeltaCatalogClientImpl.successfulDeltaRestApiLoadsForTesting();
     if (after <= deltaRestApiLoadsAtClassStart) {
       throw new AssertionError(
           "Suite finished but no UCDeltaCatalogClientImpl.loadTable call actually returned a "
-              + "Delta table via the Delta REST API. deltaRestApi.enabled is on but every "
+              + "Delta table via the UC Delta API. deltaRestApi.enabled is on but every "
               + "load either fell back to the legacy delegate or threw. baseline="
               + deltaRestApiLoadsAtClassStart
               + ", after="
@@ -213,7 +232,7 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     LOG.info(
         "[delta-api] "
             + getClass().getSimpleName()
-            + " successful Delta REST API loads: "
+            + " successful UC Delta API loads: "
             + (after - deltaRestApiLoadsAtClassStart));
   }
 

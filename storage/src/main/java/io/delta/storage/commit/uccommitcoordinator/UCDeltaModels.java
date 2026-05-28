@@ -18,16 +18,18 @@ package io.delta.storage.commit.uccommitcoordinator;
 
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
+import io.delta.storage.commit.uniform.UniformMetadata;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
 /**
- * Delta-owned models for the UC Delta REST API. These decouple the {@link UCDeltaClient}
+ * Delta-owned models for the UC Delta API. These decouple the {@link UCDeltaClient}
  * interface from any generated SDK types.
  */
 public final class UCDeltaModels {
@@ -103,7 +105,7 @@ public final class UCDeltaModels {
     }
   }
 
-  /** Result of {@link UCDeltaClient#loadTable}. */
+  /** Result of {@link UCDeltaClient#loadTable} / {@link UCDeltaClient#createTable}. */
   public static final class TableInfo {
 
     private final UUID tableId;
@@ -111,18 +113,21 @@ public final class UCDeltaModels {
     private final String location;
     private final AbstractMetadata metadata;
     private final Map<String, String> storageProperties;
+    private final Optional<UniformMetadata> uniformMetadata;
 
     public TableInfo(
         UUID tableId,
         TableType tableType,
         String location,
         AbstractMetadata metadata,
-        Map<String, String> storageProperties) {
+        Map<String, String> storageProperties,
+        Optional<UniformMetadata> uniformMetadata) {
       this.tableId = tableId;
       this.tableType = tableType;
       this.location = location;
       this.metadata = metadata;
       this.storageProperties = storageProperties;
+      this.uniformMetadata = uniformMetadata;
     }
 
     /** UC's {@code table_uuid}; distinct from {@link AbstractMetadata#getId()} (the Delta id). */
@@ -146,6 +151,11 @@ public final class UCDeltaModels {
     public Map<String, String> getStorageProperties() {
       return storageProperties == null ? Collections.emptyMap() : storageProperties;
     }
+
+    /** UniForm conversion metadata, or empty if the table has no UniForm enabled. */
+    public Optional<UniformMetadata> getUniformMetadata() {
+      return uniformMetadata;
+    }
   }
 
   public static final class StagingTableInfo {
@@ -153,19 +163,21 @@ public final class UCDeltaModels {
     private final UUID tableId;
     private final TableType tableType;
     private final String location;
-    private final DeltaProtocol requiredProtocol;
-    private final DeltaProtocol suggestedProtocol;
+    private final AbstractProtocol requiredProtocol;
+    private final AbstractProtocol suggestedProtocol;
     private final Map<String, String> requiredProperties;
     private final Map<String, String> suggestedProperties;
+    private final Map<String, String> storageProperties;
 
     public StagingTableInfo(
         UUID tableId,
         TableType tableType,
         String location,
-        DeltaProtocol requiredProtocol,
-        DeltaProtocol suggestedProtocol,
+        AbstractProtocol requiredProtocol,
+        AbstractProtocol suggestedProtocol,
         Map<String, String> requiredProperties,
-        Map<String, String> suggestedProperties) {
+        Map<String, String> suggestedProperties,
+        Map<String, String> storageProperties) {
       this.tableId = tableId;
       this.tableType = tableType;
       this.location = location;
@@ -173,6 +185,7 @@ public final class UCDeltaModels {
       this.suggestedProtocol = suggestedProtocol;
       this.requiredProperties = requiredProperties;
       this.suggestedProperties = suggestedProperties;
+      this.storageProperties = storageProperties;
     }
 
     public UUID getTableId() {
@@ -187,11 +200,11 @@ public final class UCDeltaModels {
       return location;
     }
 
-    public DeltaProtocol getRequiredProtocol() {
+    public AbstractProtocol getRequiredProtocol() {
       return requiredProtocol;
     }
 
-    public DeltaProtocol getSuggestedProtocol() {
+    public AbstractProtocol getSuggestedProtocol() {
       return suggestedProtocol;
     }
 
@@ -201,6 +214,11 @@ public final class UCDeltaModels {
 
     public Map<String, String> getSuggestedProperties() {
       return suggestedProperties == null ? Collections.emptyMap() : suggestedProperties;
+    }
+
+    /** Hadoop-style storage options (e.g. catalog-vended credentials). */
+    public Map<String, String> getStorageProperties() {
+      return storageProperties == null ? Collections.emptyMap() : storageProperties;
     }
   }
 }
