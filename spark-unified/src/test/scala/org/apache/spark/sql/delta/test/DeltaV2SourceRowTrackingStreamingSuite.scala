@@ -34,7 +34,9 @@ class DeltaV2SourceRowTrackingStreamingSuite
     "_metadata.row_id preserved through deletion vector filtering",
     "_metadata.row_id with partition column in middle of DDL schema",
     "_metadata.row_id with column mapping name mode",
-    "_metadata.row_id with partition and column mapping"
+    "_metadata.row_id with partition and column mapping",
+    "CDC stream on row-tracking table works when _metadata not selected",
+    "CDC stream on row-tracking column-mapped table rejects _metadata.row_id"
   )
 
   override protected lazy val shouldFailTests: Set[String] = Set.empty

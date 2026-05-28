@@ -178,6 +178,54 @@ trait DeltaSourceRowTrackingStreamingSuiteBase extends StreamTest
   }
 }
 
+  test("CDC stream on row-tracking table works when _metadata not selected") {
+    // The protocol prohibition fires only when row-tracking metadata is actually requested.
+    // A CDC stream that reads only data columns must work even if the table has row tracking.
+    withTempDir { inputDir =>
+      val path = inputDir.getCanonicalPath
+      Seq((1L, "Alice"), (2L, "Bob")).toDF("id", "name")
+        .write.format("delta")
+        .option("delta.enableChangeDataFeed", "true")
+        .option("delta.enableRowTracking", "true")
+        .save(path)
+
+      val df = loadStreamWithOptions(
+            path, Map("readChangeFeed" -> "true", "startingVersion" -> "0"))
+        .select("id", "name")
+
+      testStream(df)(
+        ProcessAllAvailable(),
+        CheckAnswer((1L, "Alice"), (2L, "Bob"))
+      )
+    }
+  }
+
+  test("CDC stream on row-tracking column-mapped table rejects _metadata.row_id") {
+    // The RT-protocol rejection fires before column-mapping translation; column mapping
+    // being enabled must not bypass the guard.
+    withTempDir { inputDir =>
+      val path = inputDir.getCanonicalPath
+      Seq((1L, "Alice"), (2L, "Bob")).toDF("id", "user_name")
+        .write.format("delta")
+        .option(DeltaConfigs.COLUMN_MAPPING_MODE.key, "name")
+        .option("delta.enableChangeDataFeed", "true")
+        .option("delta.enableRowTracking", "true")
+        .save(path)
+
+      val ex = intercept[Exception] {
+        val df = loadStreamWithOptions(
+              path, Map("readChangeFeed" -> "true", "startingVersion" -> "0"))
+          .selectExpr("id", "_metadata.row_id")
+        testStream(df)(ProcessAllAvailable())
+      }
+      assert(
+        ex.getMessage.toLowerCase(Locale.ROOT).contains("row_id") ||
+          ex.getMessage.toLowerCase(Locale.ROOT).contains("cannot be resolved"),
+        s"Expected error mentioning row_id under CDC + CM, got: ${ex.getMessage}"
+      )
+    }
+  }
+
 class DeltaSourceRowTrackingStreamingSuite
   extends DeltaSourceRowTrackingStreamingSuiteBase
   with DeltaSQLCommandTest

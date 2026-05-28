@@ -1204,51 +1204,6 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
     }
   }
 
-  test("CDC stream on row-tracking table works when _metadata not selected") {
-    // The protocol prohibition fires only when row-tracking metadata is actually requested.
-    // A CDC stream that reads only data columns must work even if the table has row tracking.
-    withTempDir { inputDir =>
-      val path = inputDir.getCanonicalPath
-      Seq((1L, "Alice"), (2L, "Bob")).toDF("id", "name")
-        .write.format("delta")
-        .option("delta.enableChangeDataFeed", "true")
-        .option("delta.enableRowTracking", "true")
-        .save(path)
-
-      val df = loadCDCStream(path, Map(DeltaOptions.STARTING_VERSION_OPTION -> "0"))
-        .select("id", "name")
-
-      testStream(df)(
-        ProcessAllAvailable(),
-        CheckAnswer((1L, "Alice"), (2L, "Bob"))
-      )
-    }
-  }
-
-  test("CDC stream on row-tracking column-mapped table rejects _metadata.row_id") {
-    // Combines the RT-rejection protocol requirement with column mapping. The rejection must
-    // fire before column-mapping translation, regardless of column mapping being enabled.
-    withTempDir { inputDir =>
-      val path = inputDir.getCanonicalPath
-      Seq((1L, "Alice"), (2L, "Bob")).toDF("id", "user_name")
-        .write.format("delta")
-        .option(DeltaConfigs.COLUMN_MAPPING_MODE.key, "name")
-        .option("delta.enableChangeDataFeed", "true")
-        .option("delta.enableRowTracking", "true")
-        .save(path)
-
-      val ex = intercept[Exception] {
-        val df = loadCDCStream(path, Map(DeltaOptions.STARTING_VERSION_OPTION -> "0"))
-          .selectExpr("id", "_metadata.row_id")
-        testStream(df)(ProcessAllAvailable())
-      }
-      assert(
-        ex.getMessage.toLowerCase(Locale.ROOT).contains("row_id") ||
-          ex.getMessage.toLowerCase(Locale.ROOT).contains("cannot be resolved"),
-        s"Expected error mentioning row_id under CDC + CM, got: ${ex.getMessage}"
-      )
-    }
-  }
 }
 
 /**
@@ -1443,7 +1398,10 @@ abstract class DeltaCDCStreamColumnMappingSuiteBase extends DeltaCDCStreamSuite
     "column mapping + streaming - allowed workflows - column addition",
     "column mapping + streaming - allowed workflows - upgrade to name mode",
     "column mapping + streaming: blocking workflow - drop column",
-    "column mapping + streaming: blocking workflow - rename column"
+    "column mapping + streaming: blocking workflow - rename column",
+
+    // CDC + column mapping combination
+    "CDC stream on column-mapped table passes through correctly"
   )
 
 }
