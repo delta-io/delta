@@ -517,6 +517,26 @@ class UCDeltaTokenBasedRestClientSuite
     }
   }
 
+  test("commit throws non-retryable CommitFailedException on 400") {
+    deltaHandler = (exchange, _) => {
+      if (exchange.getRequestMethod == "POST") {
+        sendJson(exchange, HttpStatus.SC_BAD_REQUEST,
+          """{"error":"bad request"}""")
+      } else {
+        sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+      }
+    }
+    withClient { c =>
+      val e = intercept[CommitFailedException] {
+        c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
+          Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
+          Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty())
+      }
+      assert(!e.getRetryable && !e.getConflict)
+      assert(e.getMessage.contains("Invalid updateTable request"))
+    }
+  }
+
   test("commit throws InvalidTargetTableException on 404") {
     deltaHandler = (exchange, _) => {
       if (exchange.getRequestMethod == "POST") {
