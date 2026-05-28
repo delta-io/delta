@@ -542,17 +542,23 @@ lazy val spark = (project in file("spark-unified"))
     // Set Test baseDirectory before sparkDependentSettings() so it uses the correct directory
     Test / baseDirectory := (sparkV1 / baseDirectory).value,
 
-    // Test sources from spark/ directory (sparkV1's directory) AND spark-unified's own directory
-    // MUST be set BEFORE crossSparkSettings() to avoid overwriting version-specific directories
+    // Test sources from spark/ directory (sparkV1's directory) AND spark-unified's own directory,
+    // plus the version-specific shim directory (e.g. `src/test/scala-shims/spark-4.2`).
+    // MUST be set BEFORE crossSparkSettings() to avoid overwriting version-specific directories.
     Test / unmanagedSourceDirectories := {
       val sparkDir = (sparkV1 / baseDirectory).value
       val unifiedDir = baseDirectory.value
+      val shimDir = SparkVersionSpec.ALL_SPECS
+        .find(_.fullVersion == sparkVersion.value)
+        .flatMap(_.additionalSourceDir)
+        .map(dir => unifiedDir / "src" / "test" / dir)
+        .toSeq
       Seq(
         sparkDir / "src" / "test" / "scala",
         sparkDir / "src" / "test" / "java",
         unifiedDir / "src" / "test" / "scala",
         unifiedDir / "src" / "test" / "java"
-      )
+      ) ++ shimDir
     },
     Test / unmanagedResourceDirectories := Seq(
       (sparkV1 / baseDirectory).value / "src" / "test" / "resources",
@@ -560,16 +566,6 @@ lazy val spark = (project in file("spark-unified"))
     ),
 
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
-
-    // Add version-specific test shim directory, e.g. `src/test/scala-shims/spark-4.2`.
-    Test / unmanagedSourceDirectories ++= {
-      val ver = sparkVersion.value
-      SparkVersionSpec.ALL_SPECS
-        .find(_.fullVersion == ver)
-        .flatMap(_.additionalSourceDir)
-        .map(dir => Seq(baseDirectory.value / "src" / "test" / dir))
-        .getOrElse(Seq.empty)
-    },
 
     // MiMa should use the generated JAR (not classDirectory) because we merge classes at package time
     mimaCurrentClassfiles := (Compile / packageBin).value,
