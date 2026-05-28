@@ -548,17 +548,18 @@ lazy val spark = (project in file("spark-unified"))
     Test / unmanagedSourceDirectories := {
       val sparkDir = (sparkV1 / baseDirectory).value
       val unifiedDir = baseDirectory.value
-      val shimDir = SparkVersionSpec.ALL_SPECS
+      // Every supported Spark version sets additionalSourceDir, see SparkVersionSpec.ALL_SPECS.
+      val shimDir = unifiedDir / "src" / "test" / SparkVersionSpec.ALL_SPECS
         .find(_.fullVersion == sparkVersion.value)
         .flatMap(_.additionalSourceDir)
-        .map(dir => unifiedDir / "src" / "test" / dir)
-        .toSeq
+        .get
       Seq(
         sparkDir / "src" / "test" / "scala",
         sparkDir / "src" / "test" / "java",
         unifiedDir / "src" / "test" / "scala",
-        unifiedDir / "src" / "test" / "java"
-      ) ++ shimDir
+        unifiedDir / "src" / "test" / "java",
+        shimDir
+      )
     },
     Test / unmanagedResourceDirectories := Seq(
       (sparkV1 / baseDirectory).value / "src" / "test" / "resources",
