@@ -314,8 +314,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       tablesToCleanUp.add(fullTableName);
     }
 
-    // TODO: Remove the block if UC and delta support the atomic RT and RTAS.
-    if (replaceTable) {
+    if (replaceTable && tableType == TableType.EXTERNAL) {
       assertThatThrownBy(() -> sql(options.createTableSql()));
       return;
     }
@@ -341,7 +340,9 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
         options.getExternalTableLocation(),
         withCluster,
         options.getClusterColumn(),
-        options.getPartitionColumn());
+        options.getPartitionColumn(),
+        replaceTable && tableType == TableType.MANAGED ? "1" : "0",
+        !(replaceTable && tableType == TableType.MANAGED));
   }
 
   @Test
@@ -422,7 +423,9 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
                   null,
                   false,
                   Optional.empty(),
-                  Optional.empty());
+                  Optional.empty(),
+                  "0",
+                  true);
               String ucTableIdBeforeReplace = currentUcTableId(tableName);
               long versionBeforeReplace = currentVersion(tableName);
 
@@ -607,7 +610,9 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
         externalTableLocation,
         false,
         Optional.empty(),
-        Optional.empty());
+        Optional.empty(),
+        "0",
+        true);
   }
 
   private void assertUCTableInfo(
@@ -619,7 +624,9 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       String externalTableLocation,
       boolean withCluster,
       Optional<String> clusterColumn,
-      Optional<String> partitionColumn)
+      Optional<String> partitionColumn,
+      String expectedLastUpdateVersion,
+      boolean expectClusteringColumnsProperty)
       throws ApiException {
     UnityCatalogInfo uc = unityCatalogInfo();
     String catalogName = uc.catalogName();
@@ -660,12 +667,16 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       Map<String, String> tablePropertiesFromServer = tableInfo.getProperties();
       tablePropertiesFromServer.remove("table_type", "MANAGED"); // New property by Spark 4.1
 
-      // CLUSTER BY has two extra properties
+      // CLUSTER BY has two extra properties, except managed REPLACE does not send clustering
+      // domain metadata to UC yet.
       final Map<String, String> expectedClusteringProperties =
           withCluster
               ? ImmutableMap.<String, String>builder()
-                  .put("clusteringColumns", "[[\"" + clusterColumn.get() + "\"]]")
                   .put("delta.feature.clustering", SUPPORTED)
+                  .putAll(
+                      expectClusteringColumnsProperty
+                          ? Map.of("clusteringColumns", "[[\"" + clusterColumn.get() + "\"]]")
+                          : Map.of())
                   .build()
               : ImmutableMap.of();
       final Map<String, String> expectedOtherProperties =
@@ -674,7 +685,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
               .put("delta.enableDeletionVectors", "true")
               .put("delta.enableInCommitTimestamps", "true")
               .put("delta.enableRowTracking", "true")
-              .put("delta.lastUpdateVersion", "0")
+              .put("delta.lastUpdateVersion", expectedLastUpdateVersion)
               .put("delta.minReaderVersion", "3")
               .put("delta.minWriterVersion", "7")
               .put(UC_TABLE_ID_KEY, tableInfo.getTableId())

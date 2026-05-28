@@ -37,6 +37,7 @@ import org.apache.spark.sql.delta.DeltaOperations.{ChangeColumn, ChangeColumns, 
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.clustering.ClusteringMetadataDomain
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
@@ -72,7 +73,6 @@ import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical.UnsetTableProperties
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.catalyst.util.{CharVarcharUtils, ResolveDefaultColumns}
-import org.apache.spark.sql.delta.clustering.ClusteringMetadataDomain
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.sql.types.DataType
@@ -598,45 +598,6 @@ trait OptimisticTransactionImpl extends TransactionHelper
     assert(newMetadata.isEmpty,
       "Cannot change the metadata more than once in a transaction.")
     updateMetadataInternal(proposedNewMetadata, ignoreDefaultProperties)
-    // Temporary: block metadata changes on UC-managed CatalogOwned tables until Delta supports
-    // propagating metadata updates to UC. UC is identified by catalog implementation class (handles
-    // "spark_catalog" registration). New table creation is naturally excluded because
-    // isCatalogOwned is false until the first commit. REPLACE TABLE is currently also blocked
-    // here and will need to be explicitly allowed once UC supports metadata propagation.
-    // Intentionally conservative: configuration is compared as a whole map, which also
-    // catches Delta-internal additions (e.g. table-feature flags). This is acceptable for
-    // a temporary kill switch - once Delta supports propagating metadata updates to UC,
-    // this check will be removed entirely.
-    if (!isCreatingNewTable) {
-      throwIfUCManagedMetadataChanged(snapshot.metadata, context = "updateMetadata")
-    }
-  }
-
-  /**
-   * Returns true if the proposed metadata differs from the existing metadata for a UC-managed
-   * table.
-   */
-  private def hasUCManagedMetadataChange(
-      existingMetadata: Metadata,
-      proposedMetadata: Metadata): Boolean = {
-    proposedMetadata.schemaString != existingMetadata.schemaString ||
-      proposedMetadata.partitionColumns != existingMetadata.partitionColumns ||
-      proposedMetadata.description != existingMetadata.description ||
-      proposedMetadata.configuration != existingMetadata.configuration
-  }
-
-  private def throwIfUCManagedMetadataChanged(
-      existingMetadata: Metadata,
-      context: String): Unit = {
-    val proposedMetadata = newMetadata.getOrElse(existingMetadata)
-    if (isUCManagedTable && hasUCManagedMetadataChange(existingMetadata, proposedMetadata)) {
-      logWarning(log"Blocking UC-managed metadata update during " +
-        log"${MDC(DeltaLogKeys.OPERATION, context)} because metadata changed: " +
-        log"${MDC(DeltaLogKeys.METADATA_OLD, existingMetadata)} => " +
-        log"${MDC(DeltaLogKeys.METADATA_NEW, proposedMetadata)}")
-      throw DeltaErrors.operationNotSupportedException(
-        "Metadata changes on Unity Catalog managed tables")
-    }
   }
 
   /**
@@ -1005,9 +966,6 @@ trait OptimisticTransactionImpl extends TransactionHelper
       newConfs = newConfsWithoutICT ++ existingICTConfs
     }
     newMetadata = Some(newMetadata.get.copy(configuration = newConfs))
-    throwIfUCManagedMetadataChanged(
-      snapshot.metadata,
-      context = "updateMetadataForNewTableInReplace")
   }
 
   /**
