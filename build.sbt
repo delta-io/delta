@@ -542,16 +542,23 @@ lazy val spark = (project in file("spark-unified"))
     // Set Test baseDirectory before sparkDependentSettings() so it uses the correct directory
     Test / baseDirectory := (sparkV1 / baseDirectory).value,
 
-    // Test sources from spark/ directory (sparkV1's directory) AND spark-unified's own directory
-    // MUST be set BEFORE crossSparkSettings() to avoid overwriting version-specific directories
+    // Test sources from spark/ directory (sparkV1's directory) AND spark-unified's own directory,
+    // plus the version-specific shim directory (e.g. `src/test/scala-shims/spark-4.2`).
+    // MUST be set BEFORE crossSparkSettings() to avoid overwriting version-specific directories.
     Test / unmanagedSourceDirectories := {
       val sparkDir = (sparkV1 / baseDirectory).value
       val unifiedDir = baseDirectory.value
+      // Every supported Spark version sets additionalSourceDir, see SparkVersionSpec.ALL_SPECS.
+      val shimDir = unifiedDir / "src" / "test" / SparkVersionSpec.ALL_SPECS
+        .find(_.fullVersion == sparkVersion.value)
+        .flatMap(_.additionalSourceDir)
+        .get
       Seq(
         sparkDir / "src" / "test" / "scala",
         sparkDir / "src" / "test" / "java",
         unifiedDir / "src" / "test" / "scala",
-        unifiedDir / "src" / "test" / "java"
+        unifiedDir / "src" / "test" / "java",
+        shimDir
       )
     },
     Test / unmanagedResourceDirectories := Seq(
@@ -661,6 +668,10 @@ lazy val spark = (project in file("spark-unified"))
       "org.scalatestplus" %% "scalacheck-1-15" % "3.2.9.0" % "test",
       "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
+      "org.junit.jupiter" % "junit-jupiter-api" % "5.11.4" % "test",
+      "org.junit.jupiter" % "junit-jupiter-engine" % "5.11.4" % "test",
+      "org.junit.jupiter" % "junit-jupiter-params" % "5.11.4" % "test",
+      "com.github.sbt.junit" % "jupiter-interface" % "0.17.0" % "test",
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
