@@ -18,13 +18,13 @@ package io.delta.sharing.spark
 
 import scala.reflect.ClassTag
 
-import org.apache.spark.sql.delta.GeoSpatialTableFeature
 import io.delta.sharing.client.{DeltaSharingClient, DeltaSharingRestClient}
 import io.delta.sharing.client.model.{DeltaTableFiles, DeltaTableMetadata, Table, TemporaryCredentials}
 import io.delta.sharing.spark.DeltaSharingUtils._
 
 import org.apache.spark.{SharedSparkContext, SparkEnv, SparkFunSuite}
 import org.apache.spark.delta.sharing.TableRefreshResult
+import org.apache.spark.sql.delta.GeoSpatialTableFeature
 import org.apache.spark.storage.BlockId
 
 class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
