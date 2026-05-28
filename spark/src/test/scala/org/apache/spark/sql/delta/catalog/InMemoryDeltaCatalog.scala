@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.catalog
 
 import java.util
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 
 import scala.jdk.CollectionConverters._
@@ -41,6 +42,7 @@ import org.apache.spark.sql.connector.write.{
   SupportsTruncate,
   V1Write,
   WriteBuilder}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.InsertableRelation
 import org.apache.spark.sql.types.StructType
 
@@ -146,6 +148,17 @@ object InMemoryDeltaCatalog {
   private val tables = new ConcurrentHashMap[String, InMemorySparkTable]()
 
   /**
+   * Normalize the table [[ident]] using the same case-sensitivity rules as the session catalog.
+   */
+  private def normalize(ident: Identifier): String = {
+    normalize(ident.name())
+  }
+
+  private def normalize(name: String): String = {
+    if (SQLConf.get.caseSensitiveAnalysis) name else name.toLowerCase(Locale.ROOT)
+  }
+
+  /**
    * Get or create a table defined by [[ident]].
    * [[catalogTable]] and [[spark]] are used to discover the table schema.
    *
@@ -155,7 +168,7 @@ object InMemoryDeltaCatalog {
       ident: Identifier,
       catalogTable: CatalogTable,
       spark: SparkSession): InMemorySparkTable = {
-    val tableName = ident.name()
+    val tableName = normalize(ident)
     tables.computeIfAbsent(tableName, _ => {
       val deltaTable = DeltaTableV2(
         spark, new Path(catalogTable.location), catalogTable = Some(catalogTable))
@@ -186,7 +199,7 @@ object InMemoryDeltaCatalog {
       case _ => throw new IllegalArgumentException(
         s"Expected InMemorySparkTable but got ${table.getClass.getName}")
     }
-    tables.put(ident.name(), newTable)
+    tables.put(normalize(ident), newTable)
     newTable
   }
 
@@ -195,12 +208,12 @@ object InMemoryDeltaCatalog {
    * Returns true if there was a table and it was removed, false otherwise.
    */
   def dropTable(ident: Identifier): Boolean =
-    tables.remove(ident.name()) != null
+    tables.remove(normalize(ident)) != null
 
   /**
    * Check whether table [[name]] exists here.
    */
-  def contains(name: String): Boolean = tables.containsKey(name)
+  def contains(name: String): Boolean = tables.containsKey(normalize(name))
 
   /**
    * Reset the catalog, removing all created tables from the storage.
