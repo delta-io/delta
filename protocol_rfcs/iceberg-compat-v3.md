@@ -22,6 +22,8 @@ To support this feature:
 
 This table feature is enabled when the table property `delta.enableIcebergCompatV3` is set to `true`.
 
+> **NOTE:** Unlike IcebergCompatV1 and IcebergCompatV2, this feature does _NOT_ forbid supporting and enabling Deletion Vectors on the table.
+
 ## Writer Requirements for IcebergCompatV3
 
 When this feature is supported and enabled, writers must:

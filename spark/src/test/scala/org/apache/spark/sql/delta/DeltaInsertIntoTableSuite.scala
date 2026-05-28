@@ -168,7 +168,8 @@ class DeltaInsertIntoSQLSuite
     // true (due to case sensitivity) so that we call resolveQueryColumnsByName and hit the right
     // code path.
 
-    // when the number of columns does not match, throw an arity mismatch error.
+    // when the number of columns does not match and schema evolution is disabled, throw
+    // an arity mismatch error.
     testInsertByNameError(
       targetSchema = "(A int)",
       expectedErrorClass = "INSERT_COLUMN_ARITY_MISMATCH.TOO_MANY_DATA_COLUMNS")
@@ -1054,9 +1055,9 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
       QueryTest.checkAnswer(
         descriptionDf.filter(
           "!(col_name in ('Catalog', 'Created Time', 'Created By', 'Database', " +
-            "'index', 'Is_managed_location', 'Location', 'Name', 'Owner', 'Partition Provider'," +
-            "'Provider', 'Table', 'Table Properties',  'Type', '_partition', 'Last Access', " +
-            "'Statistics', ''))"),
+            "'index', 'Is_managed_location', 'Location', 'Name', 'Namespace', 'Owner', " +
+            "'Partition Provider', 'Provider', 'Table', 'Table Properties', 'Type', " +
+            "'_partition', 'Last Access', 'Statistics', ''))"),
         Seq(
           Row("# Column Default Values", "", ""),
           Row("# Detailed Table Information", "", ""),
@@ -1077,13 +1078,19 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
            |$tblPropertiesAllowDefaults
         """.stripMargin)
       val currentCatalog = spark.sessionState.catalogManager.currentCatalog.name()
+      val stringTypeSql =
+        if (org.apache.spark.SPARK_VERSION.startsWith("4.2")) {
+          "STRING COLLATE UTF8_BINARY"
+        } else {
+          "STRING"
+        }
       QueryTest.checkAnswer(sql("SHOW CREATE TABLE T"),
         Seq(
           Row(
             s"""CREATE TABLE ${currentCatalog}.default.T (
                |  a BIGINT,
                |  b BIGINT DEFAULT 42,
-               |  c STRING DEFAULT 'abc, "def"' COMMENT 'comment')
+               |  c $stringTypeSql DEFAULT 'abc, "def"' COMMENT 'comment')
                |USING parquet
                |COMMENT 'This is a comment'
                |TBLPROPERTIES (
@@ -1558,6 +1565,24 @@ abstract class DeltaInsertIntoTests(
         sql(s"SELECT data FROM $t1 where ts = timestamp'2025-11-26 04:00:00.123456'"), Seq(Row(6)))
 
       checkAnswer(sql(s"SELECT count(distinct(ts)) from $t1"), Seq(Row(6)))
+    }
+  }
+
+  // FIXME: Documenting existing behaviour. Fixing this should be a bugfix and not behavior change.
+  test("insertInto: __HIVE_DEFAULT_PARTITION__ results in null partition column") {
+    val t1 = "tbl"
+    withTable(t1) {
+      sql(s"CREATE TABLE $t1 (part string, data string) USING $v2Format PARTITIONED BY (part)")
+
+      // Insert with __HIVE_DEFAULT_PARTITION__ as partition value
+      // __HIVE_DEFAULT_PARTITION__ is a tombstone value for null partition column
+      sql(s"INSERT INTO $t1 VALUES ('__HIVE_DEFAULT_PARTITION__', 'test')")
+
+      // Verify that the partition column is null
+      checkAnswer(
+        sql(s"SELECT part, data FROM $t1"),
+        Seq(Row(null, "test"))
+      )
     }
   }
 

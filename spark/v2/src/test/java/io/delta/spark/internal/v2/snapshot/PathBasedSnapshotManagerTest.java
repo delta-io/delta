@@ -22,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.internal.DeltaHistoryManager;
-import io.delta.spark.internal.v2.SparkDsv2TestBase;
+import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.exception.VersionNotFoundException;
 import java.io.File;
 import java.sql.Timestamp;
@@ -36,7 +36,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import scala.Option;
 
-public class PathBasedSnapshotManagerTest extends SparkDsv2TestBase {
+public class PathBasedSnapshotManagerTest extends DeltaV2TestBase {
 
   private PathBasedSnapshotManager snapshotManager;
 

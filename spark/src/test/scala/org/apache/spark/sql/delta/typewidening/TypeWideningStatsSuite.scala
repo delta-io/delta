@@ -89,6 +89,17 @@ trait TypeWideningStatsTests { self: QueryTest with TypeWideningTestMixin =>
   }
 
   /**
+   * Returns the type used to store parsed stat values for the given column in the checkpoint if
+   * these are present.
+   */
+  def getStructStatsType(checkpoint: LastCheckpointInfo, colName: String)
+    : Option[DataType] = {
+    checkpoint.checkpointSchema.flatMap {
+      _.findNestedField(Seq("add", "stats_parsed", "minValues", colName))
+    }.map(_._2.dataType)
+  }
+
+  /**
    * Checks that stats and parsed partition values are stored in the checkpoint when enabled and
    * that their type matches the expected type.
    */
@@ -104,6 +115,8 @@ trait TypeWideningStatsTests { self: QueryTest with TypeWideningTestMixin =>
 
     val expectedPartitionStats = if (partitioned && structStatsEnabled) Some(colType) else None
     assert(getPartitionValuesType(checkpoint, colName) === expectedPartitionStats)
+    val expectedStructStats = if (!partitioned && structStatsEnabled) Some(colType) else None
+    assert(getStructStatsType(checkpoint, colName) === expectedStructStats)
   }
 
   /**
@@ -138,7 +151,8 @@ trait TypeWideningStatsTests { self: QueryTest with TypeWideningTestMixin =>
     // Ensure there's no new checkpoint after the type change.
     assert(getLatestCheckpoint.semanticEquals(initialCheckpoint))
 
-    val canSkipFiles = jsonStatsEnabled || partitioned
+    // Struct stats can be used as fallback for non-partition values when json stats are disabled.
+    val canSkipFiles = jsonStatsEnabled || partitioned || structStatsEnabled
 
     // The last file added isn't part of the checkpoint, it always has stats that can be used for
     // skipping even when checkpoint stats can't be used for skipping.

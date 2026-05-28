@@ -1,0 +1,51 @@
+# Requirements for spark_python_test.yaml — Spark 4.1+ variant
+# Python: 3.10
+#
+# To regenerate the lock file:
+#   UV_EXCLUDE_NEWER="2026-03-10T00:00:00Z" uv pip compile \
+#     --python-version 3.10 \
+#     --python-platform linux \
+#     --generate-hashes \
+#     -o spark4.1.lock \
+#     spark4.1.in
+#
+# NOTE: pyspark is NOT included — it's installed separately in the workflow
+# because its version is dynamically resolved from the build matrix.
+
+# Build tooling (pip pinned for -SNAPSHOT version string compatibility)
+pip==24.0
+setuptools==41.1.0
+wheel==0.33.4
+
+# Linting & formatting
+flake8==3.9.0
+black==23.12.1
+pydocstyle==3.0.0
+
+# Type checking
+mypy==1.8.0
+mypy-protobuf==3.3.0
+importlib_metadata==3.10.0
+
+# Packaging
+cryptography==37.0.4
+twine==4.0.1
+pypandoc==1.3.3
+
+# Data / analytics
+pandas==2.2.0
+pyarrow==15.0.0
+numpy==1.22.4
+
+# PySpark transitive dependency (installed via --no-deps, so we lock py4j here)
+py4j==0.10.9.9
+
+# gRPC / protobuf (Spark Connect — Spark 4.1+)
+# From https://github.com/apache/spark/blob/branch-4.1/dev/requirements.txt
+grpcio==1.76.0
+grpcio-status==1.76.0
+googleapis-common-protos==1.71.0
+protobuf==6.33.0
+zstandard==0.25.0
+googleapis-common-protos-stubs==2.2.0
+grpc-stubs==1.24.11

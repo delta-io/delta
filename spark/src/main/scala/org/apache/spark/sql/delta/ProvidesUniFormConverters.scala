@@ -20,7 +20,6 @@ import java.lang.reflect.InvocationTargetException
 
 import org.apache.commons.lang3.exception.ExceptionUtils
 
-import org.apache.spark.sql.SparkSession
 import org.apache.spark.util.Utils
 
 trait ProvidesUniFormConverters { self: DeltaLog =>
@@ -30,10 +29,8 @@ trait ProvidesUniFormConverters { self: DeltaLog =>
    * shaded iceberg module.
    */
   protected lazy val _icebergConverter: UniversalFormatConverter = try {
-    val clazz =
-      Utils.classForName("org.apache.spark.sql.delta.icebergShaded.IcebergConverter")
-    val constructor = clazz.getConstructor(classOf[SparkSession])
-    constructor.newInstance(spark)
+    val clazz = Utils.classForName("org.apache.spark.sql.delta.icebergShaded.IcebergConverter")
+    clazz.getConstructor().newInstance()
   } catch {
     case e: ClassNotFoundException =>
       logError(log"Failed to find Iceberg converter class", e)
@@ -45,10 +42,8 @@ trait ProvidesUniFormConverters { self: DeltaLog =>
   }
 
   protected lazy val _hudiConverter: UniversalFormatConverter = try {
-    val clazz =
-      Utils.classForName("org.apache.spark.sql.delta.hudi.HudiConverter")
-    val constructor = clazz.getConstructor(classOf[SparkSession])
-    constructor.newInstance(spark)
+    val clazz = Utils.classForName("org.apache.spark.sql.delta.hudi.HudiConverter")
+    clazz.getConstructor().newInstance()
   } catch {
     case e: ClassNotFoundException =>
       logError(log"Failed to find Hudi converter class", e)

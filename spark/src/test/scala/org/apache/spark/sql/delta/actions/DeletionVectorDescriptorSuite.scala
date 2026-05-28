@@ -135,6 +135,30 @@ class DeletionVectorDescriptorSuite extends SparkFunSuite {
     }
   }
 
+  test("base64 round-trip for inline DV") {
+    val dv = inlineInLog(testDVData, cardinality = 3)
+    val encoded = dv.serializeToBase64()
+    val decoded = DeletionVectorDescriptor.deserializeFromBase64(encoded)
+    assert(decoded === dv)
+  }
+
+  for {
+    offset <- Seq(None, Some(0), Some(25))
+    label <- Seq("relative path", "absolute path")
+  } {
+    test(s"base64 round-trip for $label DV with offset=$offset") {
+      val dv = label match {
+        case "relative path" => onDiskWithRelativePath(
+          UUID.randomUUID(), randomPrefix = "prefix", sizeInBytes = 15, cardinality = 25, offset)
+        case "absolute path" => onDiskWithAbsolutePath(
+          testDVAbsPath, sizeInBytes = 15, cardinality = 10, offset)
+      }
+      val encoded = dv.serializeToBase64()
+      val decoded = DeletionVectorDescriptor.deserializeFromBase64(encoded)
+      assert(decoded === dv)
+    }
+  }
+
   private def assertCardinality(dv: DeletionVectorDescriptor, expSize: Int): Unit = {
     if (expSize == 0) {
       assert(dv.isEmpty, s"Expected DV to be empty: $dv")

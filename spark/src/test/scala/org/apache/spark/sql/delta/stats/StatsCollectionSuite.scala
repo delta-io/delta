@@ -24,11 +24,12 @@ import java.time.LocalDateTime
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaColumnMapping
 import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatisticsCollection.{ASCII_MAX_CHARACTER, UTF8_MAX_CHARACTER}
 import org.apache.spark.sql.delta.test.{DeltaExceptionTestUtils, DeltaSQLCommandTest, DeltaSQLTestUtils, TestsStatistics}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
 import org.scalatest.exceptions.TestFailedException
 
@@ -81,6 +82,8 @@ class StatsCollectionSuite
         )
         override def columnMappingMode: DeltaColumnMappingMode = deltaLog.snapshot.columnMappingMode
         override val protocol: Protocol = snapshot.protocol
+        override def getDataSkippingStringPrefixLength: Int =
+          StatsCollectionUtils.getDataSkippingStringPrefixLength(spark, snapshot.metadata)
       }
 
       val correctAnswer = dataRenamed
@@ -923,6 +926,210 @@ class StatsCollectionSuite
     val df = getStatsDf(deltaLog, Seq($"numRecords", minValues, maxValues))
     val numRecordsCol = df.schema.head.name
     df.withColumnRenamed(numRecordsCol, "numRecords")
+  }
+
+  /**
+   * Checks if the min/max values in the collected stats for the given string column are truncated
+   * to the expected length.
+   */
+  private def checkDataSkippingStringPrefixLength(
+      tableName: String,
+      columnName: String,
+      expectedLength: Int,
+      minValueRowContent: String,
+      maxValueRowContent: String): Unit = {
+    val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tableName))
+    val physicalColumnName = DeltaColumnMapping.getPhysicalName(
+      SchemaUtils.findNestedFieldIgnoreCase(snapshot.schema, Seq(columnName)).get)
+
+    val statsDf = statsDF(deltaLog)
+    val minValue = statsDf
+      .select(min(s"`struct(minValues.$physicalColumnName)`.$physicalColumnName"))
+      .collect().head
+      .getString(0)
+    val maxValue = statsDf
+      .select(max(s"`struct(maxValues.$physicalColumnName)`.$physicalColumnName"))
+      .collect().head
+      .getString(0)
+
+    assert(minValue == minValueRowContent.take(expectedLength))
+    assert(maxValue == maxValueRowContent.take(expectedLength) + ASCII_MAX_CHARACTER)
+  }
+
+  statsTest("Data-skipping-string-prefix-length delta table property override: basic") {
+    val tableName = "delta_table"
+    val strCol = "strCol"
+    withTable(tableName) {
+      val (a1000, b1000, c1000) = ("a" * 1000, "b" * 1000, "c" * 1000)
+
+      // Create a table with table property override.
+      sql(
+        s"""
+           | create table $tableName ($strCol string) using delta tblproperties
+           | ('${DeltaConfigs.DATA_SKIPPING_STRING_PREFIX_LENGTH.key}' = '64')
+           |""".stripMargin)
+      sql(s"insert into $tableName values ('$a1000'), ('$b1000'), ('$c1000')")
+      checkDataSkippingStringPrefixLength(
+        tableName,
+        columnName = strCol,
+        expectedLength = 64,
+        minValueRowContent = a1000,
+        maxValueRowContent = c1000
+      )
+    }
+  }
+
+  statsTest("Data-skipping-string-prefix-length delta table property override: recompute stats") {
+    val tableName = "delta_table"
+    val strCol = "strCol"
+    withTable(tableName) {
+      val (a1000, b1000, c1000) = ("a" * 1000, "b" * 1000, "c" * 1000)
+
+      // Create a table without table property override.
+      sql(s"create table $tableName ($strCol string) using delta")
+      sql(s"insert into $tableName values ('$a1000'), ('$b1000'), ('$c1000')")
+      checkDataSkippingStringPrefixLength(
+        tableName,
+        columnName = strCol,
+        expectedLength = DeltaSQLConf.DATA_SKIPPING_STRING_PREFIX_LENGTH.defaultValue.get,
+        minValueRowContent = a1000,
+        maxValueRowContent = c1000
+      )
+
+      // Set the table property override and recompute stats.
+      sql(
+        s"""
+           | alter table $tableName set tblproperties
+           | ('${DeltaConfigs.DATA_SKIPPING_STRING_PREFIX_LENGTH.key}' = '64')
+           | """.stripMargin)
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+      StatisticsCollection.recompute(spark, deltaLog)
+      checkDataSkippingStringPrefixLength(
+        tableName,
+        columnName = strCol,
+        expectedLength = 64,
+        minValueRowContent = a1000,
+        maxValueRowContent = c1000
+      )
+    }
+  }
+
+  statsTest("Data-skipping-string-prefix-length delta table property override: RTAS") {
+    val tableName = "delta_table"
+    val sourceTableName = "source_table"
+    val strCol = "strCol"
+    withTable(tableName, sourceTableName) {
+      val (a1000, b1000, c1000) = ("a" * 1000, "b" * 1000, "c" * 1000)
+      val (x1000, y1000, z1000) = ("x" * 1000, "y" * 1000, "z" * 1000)
+
+      // Create a source table.
+      sql(s"create table $sourceTableName ($strCol string) using delta")
+      sql(s"insert into $sourceTableName values ('$a1000'), ('$b1000'), ('$c1000')")
+
+      // Create a table without table property override.
+      sql(s"create table $tableName (strCol string) using delta")
+      sql(s"insert into $tableName values ('$x1000'), ('$y1000'), ('$z1000')")
+      checkDataSkippingStringPrefixLength(
+        tableName,
+        columnName = strCol,
+        expectedLength = DeltaSQLConf.DATA_SKIPPING_STRING_PREFIX_LENGTH.defaultValue.get,
+        minValueRowContent = x1000,
+        maxValueRowContent = z1000
+      )
+
+      // Replace the table with table property override by selecting from the source table.
+      sql(
+        s"""
+           | replace table $tableName using delta tblproperties
+           | ('${DeltaConfigs.DATA_SKIPPING_STRING_PREFIX_LENGTH.key}' = '64')
+           | as (select * from $sourceTableName)
+           | """.stripMargin)
+      checkDataSkippingStringPrefixLength(
+        tableName,
+        columnName = strCol,
+        expectedLength = 64,
+        minValueRowContent = a1000,
+        maxValueRowContent = c1000
+      )
+    }
+  }
+
+  statsTest("Data-skipping-string-prefix-length delta table property override: Add/Remove Files") {
+    /**
+     * In the commit JSON file at the given version, checks if the min/max values for the given
+     * string column stored in the Add/Remove File action are truncated to the expected length.
+     */
+    def checkStringPrefixLengthInAction(
+        tableName: String,
+        version: Long,
+        action: String,
+        columnName: String,
+        expectedLength: Int,
+        minValueRowContent: String,
+        maxValueRowContent: String): Unit = {
+      val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tableName))
+      val physicalColumnName = DeltaColumnMapping.getPhysicalName(
+        SchemaUtils.findNestedFieldIgnoreCase(snapshot.schema, Seq(columnName)).get)
+      val commit = spark.read.json(FileNames.unsafeDeltaFile(deltaLog.logPath, version).toString)
+      val actionFile = commit.filter(col(action).isNotNull).select(s"$action.*")
+      val minMaxStatsSchema = StructType(Seq(
+        StructField("minValues", StructType(Seq(StructField(physicalColumnName, StringType)))),
+        StructField("maxValues", StructType(Seq(StructField(physicalColumnName, StringType))))
+      ))
+      val actionFileWithParsedStats = actionFile.withColumn(
+        "parsed_stats", from_json(col("stats"), minMaxStatsSchema))
+      val minValue = actionFileWithParsedStats
+        .select(min(col(s"parsed_stats.minValues.$physicalColumnName")))
+        .collect().head.getString(0)
+      val maxValue = actionFileWithParsedStats
+        .select(max(col(s"parsed_stats.maxValues.$physicalColumnName")))
+        .collect().head.getString(0)
+
+      assert(minValue == minValueRowContent.take(expectedLength))
+      assert(maxValue == maxValueRowContent.take(expectedLength) + ASCII_MAX_CHARACTER)
+    }
+
+    val tableName = "delta_table"
+    val strCol = "strCol"
+    withTable(tableName) {
+      // Create a table without table property override.
+      sql(s"create table $tableName ($strCol string) using delta")
+
+      val (a1000, b1000, c1000) = ("a" * 1000, "b" * 1000, "c" * 1000)
+
+      sql(s"insert into $tableName values ('$a1000'), ('$b1000'), ('$c1000')")
+      // [Add File] Min: "a" * 32, Max: "c" * 32
+      checkStringPrefixLengthInAction(
+        tableName,
+        version = 1,
+        action = "add",
+        columnName = strCol,
+        expectedLength = DeltaSQLConf.DATA_SKIPPING_STRING_PREFIX_LENGTH.defaultValue.get,
+        minValueRowContent = a1000,
+        maxValueRowContent = c1000
+      )
+
+      // Set the table property override.
+      sql(
+        s"""
+           | alter table $tableName set tblproperties
+           | ('${DeltaConfigs.DATA_SKIPPING_STRING_PREFIX_LENGTH.key}' = '64')
+           | """.stripMargin)
+
+      val (x1000, y1000, z1000) = ("x" * 1000, "y" * 1000, "z" * 1000)
+
+      sql(s"insert into $tableName values ('$x1000'), ('$y1000'), ('$z1000')")
+      // [Add File] Min: "x" * 64, Max: "z" * 64
+      checkStringPrefixLengthInAction(
+        tableName,
+        version = 3,
+        action = "add",
+        columnName = strCol,
+        expectedLength = 64,
+        minValueRowContent = x1000,
+        maxValueRowContent = z1000
+      )
+    }
   }
 }
 

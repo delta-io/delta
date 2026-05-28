@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.commands
 
 import scala.collection.mutable
+import scala.util.Try
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
@@ -85,7 +86,8 @@ case class WriteIntoDelta(
     override val configuration: Map[String, String],
     override val data: DataFrame,
     val catalogTableOpt: Option[CatalogTable] = None,
-    schemaInCatalog: Option[StructType] = None
+    schemaInCatalog: Option[StructType] = None,
+    isInsertReplaceUsingByName: Boolean = false
     )
   extends LeafRunnableCommand
   with ImplicitMetadataOperation
@@ -110,10 +112,20 @@ case class WriteIntoDelta(
         txn, sparkSession
       )
       val operation = DeltaOperations.Write(
-        mode, Option(partitionColumns),
-        options.replaceWhere, options.userMetadata
+        mode = mode,
+        partitionBy = Option(partitionColumns),
+        predicate = options.replaceWhere,
+        userMetadata = options.userMetadata,
+        isDynamicPartitionOverwrite =
+          if (Try(options.isDynamicPartitionOverwriteMode).getOrElse(false)) Some(true) else None,
+        canOverwriteSchema = if (options.canOverwriteSchema) Some(true) else None,
+        canMergeSchema = if (options.canMergeSchema) Some(true) else None,
+        replaceOnCond = options.replaceOn,
+        replaceUsingCols = options.replaceUsing
       )
-      txn.commitIfNeeded(taggedCommitData.actions, operation, tags = taggedCommitData.stringTags)
+      insertAtomicReplaceExecutionObserver.commit {
+        txn.commitIfNeeded(taggedCommitData.actions, operation, tags = taggedCommitData.stringTags)
+      }
     }
     Seq.empty
   }
@@ -134,9 +146,9 @@ case class WriteIntoDelta(
         DeltaLog.assertRemovable(txn.snapshot)
       }
     }
-    val isReplaceWhere = mode == SaveMode.Overwrite && options.replaceWhere.nonEmpty
     val finalClusterBySpecOpt =
-      if (mode == SaveMode.Append || isReplaceWhere) {
+      if (mode == SaveMode.Append ||
+          (isOverwriteOperation && options.isInsertAtomicReplaceOp)) {
         clusterBySpecOpt.foreach { clusterBySpec =>
           ClusteredTableUtils.validateClusteringColumnsInSnapshot(txn.snapshot, clusterBySpec)
         }
@@ -175,7 +187,7 @@ case class WriteIntoDelta(
     val newDomainMetadata = getNewDomainMetadata(
       txn,
       canUpdateMetadata,
-      isReplacingTable = isOverwriteOperation && options.replaceWhere.isEmpty,
+      isReplacingTable = isOverwriteOperation && !options.isInsertAtomicReplaceOp,
       finalClusterBySpecOpt
     )
 
@@ -211,25 +223,31 @@ case class WriteIntoDelta(
       throw DeltaErrors.overwriteSchemaUsedWithDynamicPartitionOverwrite()
     }
 
-    // Validate partition predicates
-    var containsDataFilters = false
-    val replaceWhere = options.replaceWhere.flatMap { replace =>
-      val parsed = parsePredicates(sparkSession, replace)
-      if (replaceWhereOnDataColsEnabled) {
-        // Helps split the predicate into separate expressions
-        val (metadataPredicates, dataFilters) = DeltaTableUtils.splitMetadataAndDataPredicates(
-          parsed.head, txn.metadata.partitionColumns, sparkSession)
-        if (rearrangeOnly && dataFilters.nonEmpty) {
-          throw DeltaErrors.replaceWhereWithFilterDataChangeUnset(dataFilters.mkString(","))
-        }
-        containsDataFilters = dataFilters.nonEmpty
-        Some(metadataPredicates ++ dataFilters)
-      } else if (mode == SaveMode.Overwrite) {
-        verifyPartitionPredicates(sparkSession, txn.metadata.partitionColumns, parsed)
-        Some(parsed)
-      } else {
-        None
-      }
+    if (options.isReplaceOnOrUsingDefined) {
+      validateReplaceOnOrUsingOptionCombinations(options, isOverwriteOperation)
+    }
+
+    val ReplaceWhereExprsAndDataFilterPresenceInExprs(
+        maybeAliasedReplaceWhereExprsOpt, containsDataFiltersInReplaceWhere) =
+      getReplaceWhereExprsAndDataFilterPresenceInExprs(
+        sparkSession = sparkSession,
+        txn = txn,
+        options = options,
+        replaceWhereOnDataColsEnabled = replaceWhereOnDataColsEnabled,
+        mode = mode)
+
+    val replaceOnOrUsingExprOpt = if (options.isReplaceOnOrUsingDefined && isOverwriteOperation) {
+      Some(Seq(getReplaceOnOrUsingExprOpt(
+        sparkSession, txn, options, isInsertReplaceUsingByName)))
+    } else {
+      None
+    }
+
+    val containsDataFilters = if (options.replaceWhere.isDefined) {
+      containsDataFiltersInReplaceWhere
+    } else {
+      // replaceOn/Using deletes rows that satisfy an EXISTS subquery, which is a data filter.
+      options.isReplaceOnOrUsingDefined
     }
 
     if (txn.readVersion < 0) {
@@ -237,15 +255,31 @@ case class WriteIntoDelta(
       deltaLog.createLogDirectoriesIfNotExists()
     }
 
-    val (newFiles, addFiles, deletedFiles) = (mode, replaceWhere) match {
-      case (SaveMode.Overwrite, Some(predicates)) if !replaceWhereOnDataColsEnabled =>
+    assert(maybeAliasedReplaceWhereExprsOpt.isEmpty || replaceOnOrUsingExprOpt.isEmpty,
+      "replaceWhere, replaceOn or replaceUsing cannot be specified at the same time.")
+    val atomicReplaceExprsOpt =
+      replaceOnOrUsingExprOpt.orElse(maybeAliasedReplaceWhereExprsOpt)
+
+    val (newFiles, addFiles, deletedFiles) = (mode, atomicReplaceExprsOpt) match {
+      case (SaveMode.Overwrite, Some(parsedPredicatesMaybeAliased))
+          if options.replaceWhere.isDefined && !replaceWhereOnDataColsEnabled =>
         // fall back to match on partition cols only when replaceArbitrary is disabled.
         val newFiles = txn.writeFiles(data, Some(options))
         val addFiles = newFiles.collect { case a: AddFile => a }
+        // Strip alias from predicates for partition file matching, since [[filterFileList]]
+        // resolves predicates against the partition schema.
+        val strippedTargetAliasPredicates =
+          stripTargetAliasIfExists(
+            sparkSession = sparkSession,
+            exprs = parsedPredicatesMaybeAliased,
+            targetAlias = options.targetAlias)
         // Check to make sure the files we wrote out were actually valid.
-        val matchingFiles = DeltaLog.filterFileList(
-          txn.metadata.partitionSchema, addFiles.toDF(sparkSession), predicates).as[AddFile]
-          .collect()
+        val matchingFiles =
+          DeltaLog.filterFileList(
+            partitionSchema = txn.metadata.partitionSchema,
+            files = addFiles.toDF(sparkSession),
+            partitionFilters = strippedTargetAliasPredicates).as[AddFile]
+            .collect()
         val invalidFiles = addFiles.toSet -- matchingFiles
         if (invalidFiles.nonEmpty) {
           val badPartitions = invalidFiles
@@ -254,11 +288,28 @@ case class WriteIntoDelta(
             .mkString(", ")
           throw DeltaErrors.replaceWhereMismatchException(options.replaceWhere.get, badPartitions)
         }
-        (newFiles, addFiles, txn.filterFiles(predicates).map(_.remove))
+        (newFiles, addFiles, txn.filterFiles(strippedTargetAliasPredicates).map(_.remove))
       case (SaveMode.Overwrite, Some(conditions)) if txn.snapshot.version >= 0 =>
-        val constraints = extractConstraints(sparkSession, conditions)
+        assert(options.replaceWhere.isDefined || options.isReplaceOnOrUsingDefined,
+          "Either 'replaceWhere', 'replaceOn', or `replaceUsing` must be specified.")
+        val constraints = if (options.replaceWhere.isDefined) {
+          // Strip alias because check constraint is applied against unaliased table schema.
+          extractConstraints(
+            sparkSession = sparkSession,
+            exprs = stripTargetAliasIfExists(
+              sparkSession = sparkSession,
+              exprs = conditions,
+              targetAlias = options.targetAlias))
+        } else {
+          Seq.empty
+        }
 
-        val removedFileActions = removeFiles(sparkSession, txn, conditions)
+        val cdcEnabled = CDCReader.isCDCEnabledOnTable(txn.metadata, sparkSession) &&
+          (options.isReplaceOnOrUsingDefined ||
+            sparkSession.conf.get(DeltaSQLConf.REPLACEWHERE_DATACOLUMNS_WITH_CDF_ENABLED))
+        val removedFileActions = insertAtomicReplaceExecutionObserver.delete {
+          removeFiles(sparkSession, txn, conditions)
+        }
         val cdcExistsInRemoveOp = removedFileActions.exists(_.isInstanceOf[AddCDCFile])
 
         // The above REMOVE will not produce explicit CDF data when persistent DV is enabled.
@@ -267,8 +318,7 @@ case class WriteIntoDelta(
         // or (ii) all CDF data can be deduced from [[AddFile]] and [[RemoveFile]].
         val dataToWrite =
           if (containsDataFilters &&
-              CDCReader.isCDCEnabledOnTable(txn.metadata, sparkSession) &&
-              sparkSession.conf.get(DeltaSQLConf.REPLACEWHERE_DATACOLUMNS_WITH_CDF_ENABLED) &&
+              cdcEnabled &&
               cdcExistsInRemoveOp) {
             var dataWithDefaultExprs = data
             // Add identity columns if they are not in `data`.
@@ -312,11 +362,14 @@ case class WriteIntoDelta(
           } else {
             data
           }
-        val newFiles = try txn.writeFiles(dataToWrite, Some(options), constraints) catch {
-          case e: InvariantViolationException =>
-            throw DeltaErrors.replaceWhereMismatchException(
-              options.replaceWhere.get,
-              e)
+        val newFiles = insertAtomicReplaceExecutionObserver.insert {
+          try txn.writeFiles(dataToWrite, Some(options), constraints) catch {
+            case e: InvariantViolationException if options.replaceWhere.isDefined =>
+              throw DeltaErrors.replaceWhereMismatchException(options.replaceWhere.get, e)
+            case e: InvariantViolationException if options.isReplaceOnOrUsingDefined =>
+              throw DeltaErrors.replaceOnOrUsingConstraintViolationException(
+                options.replaceOn.orElse(options.replaceUsing).get, e)
+          }
         }
         (newFiles,
           newFiles.collect { case a: AddFile => a },
@@ -326,12 +379,34 @@ case class WriteIntoDelta(
           txn, data, options
         )
         val addFiles = newFiles.collect { case a: AddFile => a }
+
+        if (!useDynamicPartitionOverwriteMode &&
+            options.useNullIntolerantEqualityWithDPO.isDefined) {
+          throw DeltaErrors.illegalDeltaOptionException(
+            name = DeltaOptions.USE_NULL_INTOLERANT_EQUALITY_WITH_DPO,
+            input = options.useNullIntolerantEqualityWithDPO.get.toString,
+            explain = "This option should be specified only in Dynamic Partition Overwrite mode.")
+        }
+
         val deletedFiles = if (useDynamicPartitionOverwriteMode) {
           // with dynamic partition overwrite for any partition that is being written to all
           // existing data in that partition will be deleted.
-          // the selection what to delete is on the next two lines
-          val updatePartitions = addFiles.map(_.partitionValues).toSet
-          txn.filterFiles(updatePartitions).map(_.remove)
+          // the selection what to delete is determined by `filesToFilter`.
+
+          // Dynamic Partition Overwrite (DPO) uses null-tolerant equality, meaning NULL partitions
+          // in the table will be overwritten if there are matching NULL values in the query.
+          // This option simulates null-intolerant equality by not including partitions with
+          // NULL values in the set of partitions to be overwritten.
+          val filesToFilter =
+            if (options.useNullIntolerantEqualityWithDPO.contains(true)) {
+              addFiles.collect { case addFile
+                if addFile.partitionValues.forall { case (_, value) => value != null }
+                  => addFile
+              }
+            } else {
+              addFiles
+            }
+          txn.filterFiles(filesToFilter).map(_.remove)
         } else {
           txn.filterFiles().map(_.remove)
         }
@@ -343,10 +418,13 @@ case class WriteIntoDelta(
         (newFiles, newFiles.collect { case a: AddFile => a }, Nil)
     }
 
-    // Need to handle replace where metrics separately.
-    if (replaceWhere.nonEmpty && replaceWhereOnDataColsEnabled &&
-        sparkSession.conf.get(DeltaSQLConf.REPLACEWHERE_METRICS_ENABLED)) {
-      registerReplaceWhereMetrics(sparkSession, txn, newFiles, deletedFiles)
+    val shouldRecordReplaceWhereOpMetrics =
+      maybeAliasedReplaceWhereExprsOpt.nonEmpty && replaceWhereOnDataColsEnabled &&
+      sparkSession.conf.get(DeltaSQLConf.REPLACEWHERE_METRICS_ENABLED)
+    val shouldRecordInsertReplaceOpMetrics =
+      shouldRecordReplaceWhereOpMetrics || replaceOnOrUsingExprOpt.isDefined
+    if (shouldRecordInsertReplaceOpMetrics) {
+      registerInsertReplaceMetrics(sparkSession, txn, newFiles, deletedFiles)
     } else if (mode == SaveMode.Overwrite &&
         sparkSession.conf.get(DeltaSQLConf.OVERWRITE_REMOVE_METRICS_ENABLED)) {
       registerOverwriteRemoveMetrics(sparkSession, txn, deletedFiles)
@@ -385,15 +463,23 @@ case class WriteIntoDelta(
       spark: SparkSession,
       txn: OptimisticTransaction,
       conditions: Seq[Expression]): Seq[Action] = {
-    val relation = LogicalRelation(
-        txn.deltaLog.createRelation(snapshotToUseOpt = Some(txn.snapshot),
-          catalogTableOpt = txn.catalogTable))
+    val relation = createTableRelation(txn, tableAliasOpt = options.targetAlias)
     val processedCondition = conditions.reduceOption(And)
-    val command = spark.sessionState.analyzer.execute(
+    // Clone the spark session to enable EXISTS subquery support in DELETE,
+    // which is needed for replaceOn/replaceUsing conditions. Subqueries are
+    // not allowed for replaceWhere because arbitrary EXISTS subquery
+    // conditions in DELETE are not supported.
+    val sparkWithSubqueryDelete = spark.cloneSession()
+    val allowExistsSubqueryForReplaceOnOrUsing = options.isReplaceOnOrUsingDefined.toString
+    sparkWithSubqueryDelete.conf.set(
+      key = DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key,
+      value = allowExistsSubqueryForReplaceOnOrUsing)
+    val command = sparkWithSubqueryDelete.sessionState.analyzer.execute(
       DeleteFromTable(relation, processedCondition.getOrElse(Literal.TrueLiteral)))
-    spark.sessionState.analyzer.checkAnalysis(command)
+    sparkWithSubqueryDelete.sessionState.analyzer.checkAnalysis(command)
+    val deleteCmd = command.asInstanceOf[DeleteCommand]
     val (deleteActions, deleteMetrics) =
-      command.asInstanceOf[DeleteCommand].performDelete(spark, txn.deltaLog, txn)
+      deleteCmd.performDelete(sparkWithSubqueryDelete, txn.deltaLog, txn)
     recordDeltaEvent(
       deltaLog,
       "delta.dml.write.removeFiles.stats",

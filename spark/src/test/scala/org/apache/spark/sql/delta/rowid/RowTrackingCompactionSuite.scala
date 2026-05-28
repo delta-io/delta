@@ -73,11 +73,11 @@ trait RowTrackingCompactionTestsBase
       val deltaLog = DeltaLog.forTable(spark, dir)
       val snapshot = deltaLog.update()
       val materializedRowIdColName = MaterializedRowId.getMaterializedColumnNameOrThrow(
-        snapshot.protocol, snapshot.metadata, deltaLog.tableId)
+        snapshot.protocol, snapshot.metadata, deltaLog.unsafeVolatileTableId)
       df = df.withMaterializedRowIdColumn(materializedRowIdColName, col("value"))
       val materializedRowCommitVersionColName =
         MaterializedRowCommitVersion.getMaterializedColumnNameOrThrow(
-          snapshot.protocol, snapshot.metadata, deltaLog.tableId)
+          snapshot.protocol, snapshot.metadata, deltaLog.unsafeVolatileTableId)
       df = df.withMaterializedRowCommitVersionColumn(
         materializedRowCommitVersionColName, col("value"))
     }

@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.{DataSkippingReaderConf, StatisticsCollection}
 import org.apache.spark.sql.delta.util.{DeltaSqlParserUtils, JsonUtils}
+import org.apache.spark.sql.delta.util.ParquetFormatVersion
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.util.{DateTimeConstants, IntervalUtils}
@@ -610,6 +611,23 @@ trait DeltaConfigsBase extends DeltaLogging {
     validationFunction = _ => true,
     helpMessage = "needs to be a boolean.")
 
+  /*
+   * This is the table property that determines which Parquet format version should be used when
+   * writing new Parquet files on the table.
+   */
+  val PARQUET_FORMAT_VERSION: DeltaConfig[Option[String]] =
+    buildConfig[Option[String]](
+      "parquet.format.version",
+      ParquetFormatVersion.V1_0_0.getVersion(),
+      fromString = v => Option(v),
+      validationFunction = v => {
+        v.foreach(s => ParquetFormatVersion.resolve(s))
+        true
+      },
+      s"needs to be a valid Parquet format version " +
+      s"(${ParquetFormatVersion.values().map(_.getVersion).mkString(", ")})"
+    )
+
   val ENABLE_VARIANT_SHREDDING = buildConfig[Boolean](
     key = "enableVariantShredding",
     defaultValue = "false",
@@ -669,6 +687,18 @@ trait DeltaConfigsBase extends DeltaLogging {
       |name is specified in dataSkippingStatsColumns, statistics for all its leaf fields will be
       |collected.
       |""".stripMargin)
+
+  /**
+   * For string columns, how long prefix to store in the data skipping index.
+   * Note that the behavior from table property overrides the config:
+   * [[DeltaSQLConf.DATA_SKIPPING_STRING_PREFIX_LENGTH]]
+   */
+  val DATA_SKIPPING_STRING_PREFIX_LENGTH = buildConfig[Option[Int]](
+    "dataSkippingStringPrefixLength",
+    null,
+    v => Option(v).map(_.toInt),
+    v => v.forall(_ >= 0),
+    "needs to be greater or equal to zero.")
 
   val SYMLINK_FORMAT_MANIFEST_ENABLED = buildConfig[Boolean](
     s"${hooks.GenerateSymlinkManifest.CONFIG_NAME_ROOT}.enabled",
@@ -837,6 +867,27 @@ trait DeltaConfigsBase extends DeltaLogging {
     fromString = v => Option(v).map(_.toBoolean),
     validationFunction = _ => true,
     helpMessage = "needs to be a boolean."
+  )
+
+  val ICEBERG_COMPAT_V3_ENABLED = buildConfig[Option[Boolean]](
+    key = "enableIcebergCompatV3",
+    defaultValue = null,
+    fromString = v => Option(v).map(_.toBoolean),
+    validationFunction = _ => true,
+    helpMessage = "needs to be a boolean."
+  )
+
+  /**
+   * Guard property automatically set when a new IcebergCompat table is created
+   * Atomic UniForm Iceberg conversion requires this property to be present
+   */
+  val ICEBERG_ATOMIC_CONVERSION_SUPPORTED = buildConfig[Boolean](
+    "universalFormat.iceberg.atomicConversion.supported",
+    "false",
+    _.toBoolean,
+    _ => true,
+    "needs to be a boolean.",
+    userConfigurable = true
   )
 
   val CAST_ICEBERG_TIME_TYPE = buildConfig[Boolean](

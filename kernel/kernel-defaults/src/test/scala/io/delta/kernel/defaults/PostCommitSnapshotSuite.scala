@@ -311,4 +311,29 @@ class PostCommitSnapshotSuite
       postCommitSnapshot.publish(engine) // Should not throw -- there are no catalog commits!
     }
   }
+
+  test("publishing on a postCommitSnapshot will return a snapshot") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      var result = appendData(
+        engine,
+        tablePath,
+        isNewTable = true,
+        schema = testSchema,
+        data = seqOfUnpartitionedDataBatch1)
+
+      var postCommitSnapshot = result.getPostCommitSnapshot.get().asInstanceOf[SnapshotImpl]
+      var postPublishSnapshot = postCommitSnapshot.publish(engine)
+      assert(postPublishSnapshot == postCommitSnapshot)
+
+      result = appendData(
+        engine,
+        tablePath,
+        isNewTable = false,
+        data = seqOfUnpartitionedDataBatch1)
+
+      postCommitSnapshot = result.getPostCommitSnapshot.get().asInstanceOf[SnapshotImpl]
+      postPublishSnapshot = postCommitSnapshot.publish(engine)
+      assert(postPublishSnapshot == postCommitSnapshot)
+    }
+  }
 }

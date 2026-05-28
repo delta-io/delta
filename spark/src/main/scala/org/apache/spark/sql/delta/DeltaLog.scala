@@ -27,14 +27,16 @@ import scala.collection.mutable
 import scala.util.Try
 import scala.util.control.NonFatal
 
+import com.databricks.spark.util.TagDefinition
 import com.databricks.spark.util.TagDefinitions._
+import org.apache.spark.sql.delta.v2.interop.DeltaV2TableManager
 import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeLogFileIndex}
-import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider}
 import org.apache.spark.sql.delta.redirect.RedirectFeature
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources._
@@ -88,10 +90,35 @@ class DeltaLog private(
   with SnapshotManagement
   with DeltaFileFormat
   with ProvidesUniFormConverters
-  with ReadChecksum {
+  with ReadChecksum
+  with DeltaLoggingProvider
+  with DeltaV2TableManager {
 
   import org.apache.spark.sql.delta.files.TahoeFileIndex
   import org.apache.spark.sql.delta.util.FileNames._
+
+  /**
+   * Recording tags for this `DeltaLog`. Uses the latest volatile snapshot's metadata id, which may
+   * lag behind the snapshot a caller is operating on. Callers that hold a specific
+   * [[Snapshot]]/[[SnapshotDescriptor]] should prefer logging against that instead, so the tags
+   * reflect the exact snapshot version being observed.
+   */
+  override def getCommonTags: Map[TagDefinition, String] =
+    getCommonTags(Try(unsafeVolatileSnapshot.metadata.id).getOrElse(null))
+
+  /**
+   * Variant of [[getCommonTags]] where the caller supplies the tahoe id explicitly (typically a
+   * specific snapshot's `metadata.id`). Used by [[DeltaLoggingProvider]] implementations that
+   * refer to a specific snapshot version (e.g. [[Snapshot]], [[OptimisticTransaction]]).
+   */
+  def getCommonTags(tahoeId: String): Map[TagDefinition, String] = {
+    (
+      Map(
+        TAG_TAHOE_ID -> tahoeId,
+        TAG_TAHOE_PATH -> Try(dataPath.toString).getOrElse(null)
+      )
+    )
+  }
 
   /**
    * Path to sidecar directory.
@@ -158,22 +185,37 @@ class DeltaLog private(
         && spark.conf.get(DeltaSQLConf.INCREMENTAL_COMMIT_FORCE_VERIFY_IN_TESTS))
   }
 
-  /** The unique identifier for this table. */
-  def tableId: String = unsafeVolatileMetadata.id // safe because table id never changes
+  /**
+   * The unique identifier for this table.
+   *
+   * WARNING: This value is volatile and can change during the lifetime of a DeltaLog instance,
+   * e.g., when the snapshot is updated and the new snapshot has a different table id. Use with
+   * care.
+   */
+  def unsafeVolatileTableId: String = unsafeVolatileMetadata.id
 
   /** Returns the truncated table ID for logging purposes. */
-  private[delta] def truncatedTableId: String = tableId.split("-").head
+  private[delta] def truncatedUnsafeVolatileTableId: String =
+    unsafeVolatileTableId.split("-").head
+
+  /**
+   * WARNING: This API is unsafe and deprecated. It will be removed in future versions.
+   * Use the above unsafeVolatileTableId to get the most recently cached table id.
+   */
+  @deprecated("This method is deprecated and will be removed in future versions. " +
+    "Use unsafeVolatileTableId instead", "18.0")
+  def tableId: String = unsafeVolatileTableId
 
   def getInitialCatalogTable: Option[CatalogTable] = initialCatalogTable
   /**
-   * Combines the tableId with the path of the table to ensure uniqueness. Normally `tableId`
+   * Combines the table id with the path of the table to ensure uniqueness. Normally the table id
    * should be globally unique, but nothing stops users from copying a Delta table directly to
-   * a separate location, where the transaction log is copied directly, causing the tableIds to
+   * a separate location, where the transaction log is copied directly, causing the table ids to
    * match. When users mutate the copied table, and then try to perform some checks joining the
-   * two tables, optimizations that depend on `tableId` alone may not be correct. Hence we use a
+   * two tables, optimizations that depend on the table id alone may not be correct. Hence we use a
    * composite id.
    */
-  private[delta] def compositeId: (String, Path) = tableId -> dataPath
+  private[delta] def compositeId: (String, Path) = unsafeVolatileTableId -> dataPath
 
   /**
    * Creates a [[LogicalRelation]] for a given [[DeltaLogFileIndex]], with all necessary file source
@@ -285,7 +327,7 @@ class DeltaLog private(
 
     val txn = startTransaction(catalogTable, Some(snapshot))
     try {
-      SchemaMergingUtils.checkColumnNameDuplication(txn.metadata.schema, "in the table schema")
+      SchemaMergingUtils.checkColumnNameDuplication(txn.metadata.schema, "TABLE_SCHEMA")
     } catch {
       case e: AnalysisException =>
         throw DeltaErrors.duplicateColumnsOnUpdateTable(e)
@@ -396,8 +438,24 @@ class DeltaLog private(
         Seq.empty
       }
 
+    // Spark 4.0 does not support the parquet variant logical type annotation. When
+    // the config is enabled, treat the variant table features as unsupported to block
+    // all interactions with variant tables on Spark 4.0 clients.
+    val unsupportedVariantFeatures =
+      if (org.apache.spark.SPARK_VERSION.startsWith("4.0") &&
+          spark.conf.get(DeltaSQLConf.DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40)) {
+        Seq(
+          VariantTypeTableFeature,
+          VariantTypePreviewTableFeature,
+          VariantShreddingTableFeature,
+          VariantShreddingPreviewTableFeature)
+      } else {
+        Seq.empty
+      }
+
     val clientSupportedProtocol =
-      Action.supportedProtocolVersion(featuresToExclude = unsupportedTestFeatures)
+      Action.supportedProtocolVersion(
+        featuresToExclude = unsupportedTestFeatures ++ unsupportedVariantFeatures)
     // Depending on the operation, pull related protocol versions out of Protocol objects.
     // `getEnabledFeatures` is a pointer to pull reader/writer features out of a Protocol.
     val (clientSupportedVersions, tableRequiredVersion, getEnabledFeatures) = readOrWrite match {
@@ -1196,7 +1254,7 @@ object DeltaLog extends DeltaLogging {
    * Checks whether this table only accepts appends. If so it will throw an error in operations that
    * can remove data such as DELETE/UPDATE/MERGE.
    */
-  def assertRemovable(snapshot: Snapshot): Unit = {
+  def assertRemovable(snapshot: SnapshotDescriptor): Unit = {
     val metadata = snapshot.metadata
     if (DeltaConfigs.IS_APPEND_ONLY.fromMetaData(metadata)) {
       throw DeltaErrors.modifyAppendOnlyTableException(metadata.name)

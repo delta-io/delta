@@ -162,7 +162,11 @@ abstract class DynamoDBCommitCoordinatorClientSuite(batchSize: Long)
     val cs = TestDynamoDBCommitCoordinatorBuilder(batchSize = batchSize).build(spark, Map.empty)
     val tableConf = cs.registerTable(
       deltaLog.logPath, Optional.empty(), -1L, Metadata(), Protocol(1, 1))
-    TableCommitCoordinatorClient(cs, deltaLog, tableConf.asScala.toMap)
+    TableCommitCoordinatorClient(
+      cs,
+      deltaLog,
+      tableConf.asScala.toMap
+    )
   }
 
   override protected def registerBackfillOp(

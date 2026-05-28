@@ -17,7 +17,6 @@
 package org.apache.spark.sql.delta.coordinatedcommits
 
 import java.io.File
-import java.net.URI
 import java.util.{Optional, UUID}
 
 import scala.collection.JavaConverters._
@@ -35,7 +34,7 @@ import io.delta.storage.commit.{
 }
 import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCommitCoordinatorClient}
 import org.apache.hadoop.fs.Path
-import org.mockito.ArgumentMatchers.{any, anyString}
+import org.mockito.ArgumentMatchers.any
 import org.mockito.Mock
 import org.mockito.Mockito
 import org.mockito.Mockito.{mock, when}
@@ -85,7 +84,7 @@ trait UCCommitCoordinatorClientSuiteBase extends CommitCoordinatorClientImplSuit
     CommitCoordinatorProvider.registerBuilder(UCCommitCoordinatorBuilder)
     ucCommitCoordinator = new InMemoryUCCommitCoordinator()
     ucClient = new InMemoryUCClient(metastoreId.toString, ucCommitCoordinator)
-    when(mockFactory.createUCClient(anyString(), any[Map[String, String]]())).thenReturn(ucClient)
+    when(mockFactory.createUCClient(any[java.util.Map[String, String]]())).thenReturn(ucClient)
   }
   override protected def createTableCommitCoordinatorClient(
       deltaLog: DeltaLog): TableCommitCoordinatorClient = {
@@ -120,11 +119,14 @@ trait UCCommitCoordinatorClientSuiteBase extends CommitCoordinatorClientImplSuit
     ucClient.commit(
       tableUUID.toString,
       JCoordinatedCommitsUtils.getTablePath(deltaLog.logPath).toUri,
-      Optional.empty(),
+      null, // tableIdentifier
+      Optional.empty(), // commit
       Optional.of(version),
-      false,
-      Optional.empty(),
-      Optional.empty())
+      Optional.empty(), // oldMetadata
+      Optional.empty(), // newMetadata
+      Optional.empty(), // oldProtocol
+      Optional.empty(), // newProtocol
+      Optional.empty() /* uniform */)
   }
 
   override protected def validateBackfillStrategy(

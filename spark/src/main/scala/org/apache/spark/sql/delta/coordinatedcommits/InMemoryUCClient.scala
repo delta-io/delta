@@ -21,9 +21,10 @@ import java.net.URI
 import java.util.Optional
 
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
-import io.delta.storage.commit.{Commit => JCommit, GetCommitsResponse => JGetCommitsResponse}
+import io.delta.storage.commit.{Commit => JCommit, GetCommitsResponse => JGetCommitsResponse, TableIdentifier}
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.UCClient
+import io.delta.storage.commit.uniform.UniformMetadata
 
 /**
  * An in-memory implementation of [[UCClient]] for testing purposes.
@@ -43,6 +44,7 @@ import io.delta.storage.commit.uccommitcoordinator.UCClient
  * val getCommitsResponse = client.getCommits(
  *     "tableId",
  *     new URI("tableUri"),
+ *     /* tableIdentifier = */ null,
  *     Optional.empty(),
  *     Optional.empty())
  * }}}
@@ -59,11 +61,14 @@ class InMemoryUCClient(
   override def commit(
       tableId: String,
       tableUri: URI,
+      tableIdentifier: TableIdentifier,
       commit: Optional[JCommit],
       lastKnownBackfilledVersion: Optional[JLong],
-      disown: Boolean,
+      oldMetadata: Optional[AbstractMetadata],
       newMetadata: Optional[AbstractMetadata],
-      newProtocol: Optional[AbstractProtocol]): Unit = {
+      oldProtocol: Optional[AbstractProtocol],
+      newProtocol: Optional[AbstractProtocol],
+      uniform: Optional[UniformMetadata] = Optional.empty()): Unit = {
     ucCommitCoordinator.commitToCoordinator(
       tableId,
       tableUri,
@@ -73,14 +78,17 @@ class InMemoryUCClient(
       Option(commit.orElse(null)).map(_.getFileStatus.getModificationTime),
       Option(commit.orElse(null)).map(_.getCommitTimestamp),
       Option(lastKnownBackfilledVersion.orElse(null)).map(_.toLong),
-      disown,
+      false, // disown (unused, kept for InMemoryUCCommitCoordinator compatibility)
       Option(newProtocol.orElse(null)).map(_.asInstanceOf[Protocol]),
-      Option(newMetadata.orElse(null)).map(_.asInstanceOf[Metadata]))
+      Option(newMetadata.orElse(null)).map(_.asInstanceOf[Metadata]),
+      Option(uniform.orElse(null))
+    )
   }
 
   override def getCommits(
       tableId: String,
       tableUri: URI,
+      tableIdentifier: TableIdentifier,
       startVersion: Optional[JLong],
       endVersion: Optional[JLong]): JGetCommitsResponse = {
     ucCommitCoordinator.getCommitsFromCoordinator(
@@ -89,6 +97,14 @@ class InMemoryUCClient(
       Option(startVersion.orElse(null)).map(_.toLong),
       Option(endVersion.orElse(null)).map(_.toLong))
   }
+
+  override def finalizeCreate(
+      tableName: String,
+      catalogName: String,
+      schemaName: String,
+      storageLocation: String,
+      columns: java.util.List[UCClient.ColumnDef],
+      properties: java.util.Map[String, String]): Unit = {}
 
   override def close(): Unit = {}
 }

@@ -19,9 +19,11 @@ package org.apache.spark.sql.delta.files
 import scala.collection.mutable.ListBuffer
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.constraints.{Constraint, Constraints, DeltaInvariantCheckerExec}
+import org.apache.spark.sql.delta.expressions.EncodeNestedVariantAsZ85String
 import org.apache.spark.sql.delta.hooks.AutoCompact
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.perf.DeltaOptimizedWriterExec
@@ -31,12 +33,14 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.DELTA_COLLECT_STATS_USING_TABLE_SCHEMA
 import org.apache.spark.sql.delta.stats.{
   DeltaJobStatisticsTracker,
-  StatisticsCollection
+  StatisticsCollection,
+  StatsCollectionUtils
 }
+import org.apache.spark.sql.delta.util.TableParquetVersionOption
 import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
+import org.apache.spark.sql.{Column, DataFrame, Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
@@ -129,7 +133,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
 
     // Validate that write columns for Row IDs have the correct name.
     RowId.throwIfMaterializedRowIdColumnNameIsInvalid(
-      normalizedData, metadata, protocol, deltaLog.tableId)
+      normalizedData, metadata, protocol, deltaLog.unsafeVolatileTableId)
 
     val nullAsDefault = options.isDefined &&
       options.get.options.contains(ColumnWithDefaultExprUtils.USE_NULL_AS_DEFAULT_DELTA_OPTION)
@@ -327,7 +331,8 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       statsDataSchema: Seq[Attribute],
       statsCollection: StatisticsCollection): (Expression, Seq[Attribute]) = {
     val resolvedPlan = DataFrameUtils.ofRows(spark, LocalRelation(statsDataSchema))
-      .select(to_json(statsCollection.statsCollector))
+      .select(to_json(Column(
+        EncodeNestedVariantAsZ85String(statsCollection.statsCollector.expr))))
       .queryExecution.analyzed
 
     // We have to use the new attributes with regenerated attribute IDs, because the Analyzer
@@ -371,6 +376,8 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
         override val spark: SparkSession = data.sparkSession
         override val statsColumnSpec = StatisticsCollection.configuredDeltaStatsColumnSpec(metadata)
         override val protocol: Protocol = newProtocol.getOrElse(snapshot.protocol)
+        override def getDataSkippingStringPrefixLength: Int =
+          StatsCollectionUtils.getDataSkippingStringPrefixLength(spark, metadata)
       }
       val (statsColExpr, newOutputStatsCollectionSchema) =
         getStatsColExpr(outputStatsCollectionSchema, statsCollection)
@@ -472,16 +479,23 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
         protocol.isFeatureSupported(MaterializePartitionColumnsTableFeature)
       // Retain only a minimal selection of Spark writer options to avoid any potential
       // compatibility issues
-      val options = (writeOptions match {
+      val filteredOptions = (writeOptions match {
         case None => Map.empty[String, String]
         case Some(writeOptions) =>
           writeOptions.options.filterKeys { key =>
             key.equalsIgnoreCase(DeltaOptions.MAX_RECORDS_PER_FILE) ||
-              key.equalsIgnoreCase(DeltaOptions.COMPRESSION)
+              key.equalsIgnoreCase(DeltaOptions.COMPRESSION) ||
+              key.equalsIgnoreCase(DeltaOptions.PARQUET_VERSION) ||
+              key.equalsIgnoreCase(DeltaOptions.PARQUET_OUTPUT_TIMESTAMP_TYPE)
           }.toMap
-      }) + (DeltaOptions.WRITE_PARTITION_COLUMNS -> writePartitionColumns.toString) ++
+      }) + (DeltaOptions.WRITE_PARTITION_COLUMNS -> writePartitionColumns.toString)
+      val options = filteredOptions ++
         VariantShreddingShims.getVariantInferShreddingSchemaOptions(
-          DeltaConfigs.ENABLE_VARIANT_SHREDDING.fromMetaData(metadata))
+          DeltaConfigs.ENABLE_VARIANT_SHREDDING.fromMetaData(metadata)) ++
+        TableParquetVersionOption.getWriterOptions(
+          spark = spark,
+          writerOptions = filteredOptions,
+          tableProperties = metadata.configuration)
 
       try {
         DeltaFileFormatWriter.write(

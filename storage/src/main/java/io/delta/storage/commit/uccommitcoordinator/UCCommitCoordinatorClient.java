@@ -29,11 +29,13 @@ import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 import javax.annotation.Nonnull;
 
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogTrackedInfo;
 import io.delta.storage.CloseableIterator;
 import io.delta.storage.LogStore;
 import io.delta.storage.commit.*;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
+import io.delta.storage.commit.uniform.UniformMetadata;
 import io.delta.storage.internal.FileNameUtils;
 import io.delta.storage.internal.LogStoreErrors;
 import org.apache.hadoop.conf.Configuration;
@@ -151,7 +153,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
     return asyncExecutor.submit(task);
   }
 
-  protected String extractUCTableId(TableDescriptor tableDesc) {
+  public static String extractUCTableId(TableDescriptor tableDesc) {
     Map<String, String> tableConf = tableDesc.getTableConf();
     if (!tableConf.containsKey(UC_TABLE_ID_KEY)) {
       throw new IllegalStateException("UC Table ID not found in " + tableConf);
@@ -194,7 +196,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
 
   /**
    * Find the last known backfilled version by doing a listing of the last
-   * [[BACKFILL_LISTING_OFFSET]] commits. If no backfilled commits are found
+   * {@link #BACKFILL_LISTING_OFFSET} commits. If no backfilled commits are found
    * among those, a UC call is made to get the oldest tracked commit in UC.
    */
   public long getLastKnownBackfilledVersion(
@@ -285,8 +287,27 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       tableDesc,
       commitVersion,
       actions,
-      updatedActions);
+      CatalogTrackedInfo.EMPTY
+      , updatedActions);
   }
+
+  public CommitResponse commit(
+      LogStore logStore,
+      Configuration hadoopConf,
+      TableDescriptor tableDesc,
+      long commitVersion,
+      Iterator<String> actions,
+      CatalogTrackedInfo catalogTrackedInfo,
+      UpdatedActions updatedActions) throws CommitFailedException {
+        return commitImpl(
+          logStore,
+          hadoopConf,
+          tableDesc,
+          commitVersion,
+          actions,
+          catalogTrackedInfo,
+          updatedActions);
+    }
 
   /**
    * Commits the provided actions as the specified version. The steps are as follows.
@@ -307,6 +328,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       TableDescriptor tableDesc,
       long commitVersion,
       Iterator<String> actions,
+      CatalogTrackedInfo catalogTrackedInfo,
       UpdatedActions updatedActions) throws CommitFailedException {
     Path logPath = tableDesc.getLogPath();
     Map<String, String> coordinatedCommitsTableConf = tableDesc.getTableConf();
@@ -418,23 +440,34 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       "timeSpentInGettingLastKnownBackfilledVersion",
       timeSpentInGettingLastKnownBackfilledVersion);
 
+    boolean metadataChanged =
+        updatedActions.getNewMetadata() != updatedActions.getOldMetadata();
+    boolean protocolChanged =
+        updatedActions.getNewProtocol() != updatedActions.getOldProtocol();
+    Optional<AbstractMetadata> oldMetadata =
+        optionalIf(metadataChanged, updatedActions.getOldMetadata());
+    Optional<AbstractMetadata> newMetadata =
+        optionalIf(metadataChanged, updatedActions.getNewMetadata());
+    Optional<AbstractProtocol> oldProtocol =
+        optionalIf(protocolChanged, updatedActions.getOldProtocol());
+    Optional<AbstractProtocol> newProtocol =
+        optionalIf(protocolChanged, updatedActions.getNewProtocol());
+
     int transientErrorRetryCount = 0;
     while (transientErrorRetryCount <= MAX_RETRIES_ON_TRANSIENT_ERROR) {
       try {
         commitToUC(
+          tableId,
           tableDesc,
-          logPath,
           Optional.of(commitFile),
           Optional.of(commitVersion),
           Optional.of(commitTimestamp),
           Optional.of(lastKnownBackfilledVersion.get()),
-          disown,
-          updatedActions.getNewMetadata() == updatedActions.getOldMetadata() ?
-            Optional.empty() :
-            Optional.of(updatedActions.getNewMetadata()),
-          updatedActions.getNewProtocol() == updatedActions.getOldProtocol() ?
-            Optional.empty() :
-            Optional.of(updatedActions.getNewProtocol())
+          catalogTrackedInfo,
+          oldMetadata,
+          newMetadata,
+          oldProtocol,
+          newProtocol
         );
         break;
       } catch (CommitFailedException cfe) {
@@ -631,14 +664,16 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
 
     long commitStartTime = System.currentTimeMillis();
     commitToUC(
+      tableId,
       tableDesc,
-      logPath,
       Optional.empty() /* commitFile */,
       Optional.empty() /* commitVersion */,
       Optional.empty() /* commitTimestamp */,
       Optional.of(updatedLastKnownBackfilledVersion),
-      true /* disown */,
+      CatalogTrackedInfo.EMPTY,
+      Optional.empty() /* oldMetadata */,
       Optional.empty() /* newMetadata */,
+      Optional.empty() /* oldProtocol */,
       Optional.empty() /* newProtocol */
     );
     long commitDuration = System.currentTimeMillis() - commitStartTime;
@@ -660,14 +695,16 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
   }
 
   protected void commitToUC(
+      String tableId,
       TableDescriptor tableDesc,
-      Path logPath,
       Optional<FileStatus> commitFile,
       Optional<Long> commitVersion,
       Optional<Long> commitTimestamp,
       Optional<Long> lastKnownBackfilledVersion,
-      boolean disown,
+      CatalogTrackedInfo catalogTrackedInfo,
+      Optional<AbstractMetadata> oldMetadata,
       Optional<AbstractMetadata> newMetadata,
+      Optional<AbstractProtocol> oldProtocol,
       Optional<AbstractProtocol> newProtocol
   ) throws IOException, CommitFailedException, UCCommitCoordinatorException
   {
@@ -679,13 +716,16 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
         "Commit timestamp should be specified when commitFile is present"))
     ));
     ucClient.commit(
-      extractUCTableId(tableDesc),
-      CoordinatedCommitsUtils.getTablePath(logPath).toUri(),
+      tableId,
+      CoordinatedCommitsUtils.getTablePath(tableDesc.getLogPath()).toUri(),
+      tableDesc.getTableIdentifier().orElse(null),
       commit,
       lastKnownBackfilledVersion,
-      disown,
+      oldMetadata,
       newMetadata,
-      newProtocol
+      oldProtocol,
+      newProtocol,
+      catalogTrackedInfo.deltaUniformIceberg()
     );
   }
 
@@ -716,7 +756,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
    *    delete the commit for v from its database.
    * 6. Now this client retries commit v (without conflict resolution since conflict=false
    *    in step 3).
-   * 7. UC rejects the commit because v <= latest_table_version and returns a retryable
+   * 7. UC rejects the commit because v {@literal <=} latest_table_version and returns a retryable
    *    conflict (retryable=true, conflict=true).
    *
    * Without this check, Delta's default response to retryable=true, conflict=true would be to
@@ -724,7 +764,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
    * commit the contents of v as v+2. This would result in duplicate data being written.
    *
    * This method prevents that by checking if the backfilled commit (v.json) has the same
-   * content as our retry attempt (v.<uuid>.json). If yes, we know our original commit
+   * content as our retry attempt (v.{@literal <uuid>}.json). If yes, we know our original commit
    * succeeded and can safely ignore the conflict and exit early without rebasing.
    *
    * Below is a concrete example of the failure and retry sequence:
@@ -733,9 +773,9 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
    * - Attempt 2: Try to commit v without conflict resolution since conflict=false in attempt-1.
    *              UC responds with retryable=true, conflict=true in the above scenario.
    *              (i.e. v is backfilled and latest version is v+1).
-   * - Fix: Compare v.<uuid>.json and v.json and *early exit* here.
+   * - Fix: Compare v.{@literal <uuid>}.json and v.json and *early exit* here.
    * - Attempt 3: [Without fix] Rebase, conflict-resolution + Try to commit v+2
-   *              => double-commit for contents of v => bug.
+   *              {@literal =>} double-commit for contents of v {@literal =>} bug.
    */
   protected boolean hasSameContent(
       LogStore logStore,
@@ -801,6 +841,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       return ucClient.getCommits(
         extractUCTableId(tableDesc),
         CoordinatedCommitsUtils.getTablePath(tableDesc.getLogPath()).toUri(),
+        tableDesc.getTableIdentifier().orElse(null),
         startVersion,
         endVersion);
     } catch (IOException | UCCommitCoordinatorException e) {
@@ -951,5 +992,9 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       " is not supported by this version of the UC commit coordinator client. Please upgrade" +
       " the commit coordinator client to " + op + " this table.");
     }
+  }
+
+  private static <T> Optional<T> optionalIf(boolean condition, T value) {
+    return condition ? Optional.of(value) : Optional.empty();
   }
 }

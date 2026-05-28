@@ -83,15 +83,12 @@ trait TypeWideningTableFeatureEnablementTests extends QueryTest
     assert(ex.getMessage.contains("For input string: \"bla\""))
     sql(s"CREATE TABLE delta.`$tempPath` (a int) USING DELTA " +
        s"TBLPROPERTIES ('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'false')")
-    checkError(
+    checkInvalidBooleanTablePropertyError(
       intercept[SparkException] {
         sql(s"ALTER TABLE delta.`$tempPath` " +
           s"SET TBLPROPERTIES ('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'bla')")
       },
-      "_LEGACY_ERROR_TEMP_2045",
-      parameters = Map(
-        "message" -> "For input string: \"bla\""
-      )
+      invalidValue = "bla"
     )
     assert(!isTypeWideningSupported)
     assert(!isTypeWideningEnabled)
@@ -435,7 +432,7 @@ trait TypeWideningTableFeatureAdvancedTests extends QueryTest
       .putMetadataArray("delta.typeChanges", Array(
         new MetadataBuilder()
           .putString("toType", "string")
-          .putString("fromType", "int")
+          .putString("fromType", "integer")
           .putLong("tableVersion", 2)
           .putString("fieldPath", "element")
           .build()

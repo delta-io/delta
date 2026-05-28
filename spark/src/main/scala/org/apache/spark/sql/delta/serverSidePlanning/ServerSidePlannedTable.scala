@@ -34,24 +34,12 @@ import org.apache.spark.sql.execution.datasources.{FileFormat, PartitionedFile}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.sources.{And, Filter}
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.sql.util.CaseInsensitiveStringMap
+import org.apache.spark.sql.util.{CaseInsensitiveStringMap, SchemaUtils}
 
 /**
  * Companion object for ServerSidePlannedTable with factory methods.
  */
 object ServerSidePlannedTable extends DeltaLogging {
-  /**
-   * Property keys that indicate table credentials are available.
-   * Unity Catalog tables may expose temporary credentials via these properties.
-   */
-  private val CREDENTIAL_PROPERTY_KEYS = Seq(
-    "storage.credential",
-    "aws.temporary.credentials",
-    "azure.temporary.credentials",
-    "gcs.temporary.credentials",
-    "credential"
-  )
-
   /**
    * Determine if server-side planning should be used based on catalog type,
    * credential availability, and configuration.
@@ -161,15 +149,19 @@ object ServerSidePlannedTable extends DeltaLogging {
 
   /**
    * Check if a table has credentials available.
-   * Unity Catalog tables may lack credentials when accessed without proper permissions.
-   * UC injects credentials as table properties, see:
-   * https://github.com/unitycatalog/unitycatalog/blob/main/connectors/spark/src/main/scala/
-   *   io/unitycatalog/spark/UCSingleCatalog.scala#L260
+   * UC injects credentials as table properties with "option.fs.*" prefix for filesystem configs.
+   * See: CredPropsUtil in UCSingleCatalog.
    */
   private def hasCredentials(table: Table): Boolean = {
-    // Check table properties for credential information
     val properties = table.properties()
-    CREDENTIAL_PROPERTY_KEYS.exists(key => properties.containsKey(key))
+    val keys = properties.keySet()
+    val iter = keys.iterator()
+    while (iter.hasNext) {
+      if (iter.next().startsWith("option.fs.")) {
+        return true
+      }
+    }
+    false
   }
 }
 
@@ -187,7 +179,7 @@ class ServerSidePlannedTable(
     tableName: String,
     tableSchema: StructType,
     planningClient: ServerSidePlanningClient)
-    extends Table with SupportsRead with DeltaLogging {
+    extends Table with SupportsRead with AutoCloseable with DeltaLogging {
 
   // Returns fully qualified name (e.g., "catalog.database.table").
   // The databaseName parameter receives ident.namespace().mkString(".") from DeltaCatalog,
@@ -203,12 +195,17 @@ class ServerSidePlannedTable(
   override def newScanBuilder(options: CaseInsensitiveStringMap): ScanBuilder = {
     new ServerSidePlannedScanBuilder(spark, databaseName, tableName, tableSchema, planningClient)
   }
+
+  override def close(): Unit = {
+    planningClient.close()
+  }
 }
 
 /**
  * ScanBuilder that uses ServerSidePlanningClient to plan the scan.
  * Implements SupportsPushDownFilters to enable WHERE clause pushdown to the server.
  * Implements SupportsPushDownRequiredColumns to enable column pruning pushdown to the server.
+ * Implements SupportsPushDownLimit to enable LIMIT pushdown to the server.
  */
 class ServerSidePlannedScanBuilder(
     spark: SparkSession,
@@ -216,7 +213,11 @@ class ServerSidePlannedScanBuilder(
     tableName: String,
     tableSchema: StructType,
     planningClient: ServerSidePlanningClient)
-  extends ScanBuilder with SupportsPushDownFilters with SupportsPushDownRequiredColumns {
+  extends ScanBuilder
+  with SupportsPushDownFilters
+  with SupportsPushDownRequiredColumns
+  with SupportsPushDownLimit
+  with DeltaLogging {
 
   // Filters that have been pushed down and will be sent to the server
   private var _pushedFilters: Array[Filter] = Array.empty
@@ -224,12 +225,52 @@ class ServerSidePlannedScanBuilder(
   // Required schema (columns to read). Defaults to full table schema.
   private var _requiredSchema: StructType = tableSchema
 
+  // Limit that has been pushed down. None means no limit.
+  private var _limit: Option[Int] = None
+
+  /**
+   * Push filters to the server-side planning client.
+   *
+   * Strategy:
+   * - If ALL filters convert to server's native format: Returns empty array (no residuals)
+   *   This enables Spark to push down LIMIT in addition to filters
+   * - If ANY filter fails conversion: Returns all filters as residuals
+   *   This falls back to safety mode where Spark re-applies all filters locally
+   *
+   * The server receives converted filters in both cases, but residuals provide a safety net
+   * for correctness if the server silently ignores unsupported filters.
+   */
   override def pushFilters(filters: Array[Filter]): Array[Filter] = {
-    // Store filters to send to catalog, but return all as residuals.
-    // Since we don't know what the catalog can handle yet, we conservatively claim we handle
-    // none. Even if the catalog applies some filters, Spark will redundantly re-apply them.
+    // Store filters to send to IRC server
     _pushedFilters = filters
-    filters  // Return all as residuals
+
+    // Strategy: Check if all filters can be converted upfront
+    // Case 1: ALL convert -> return empty residuals -> enables filter+limit pushdown
+    // Case 2: ANY fails -> return all residuals -> only filter pushdown (safety mode)
+
+    if (filters.isEmpty) {
+      // No filters to push
+      return Array.empty
+    }
+
+    // Check if all filters are convertible
+    val allConvertible = planningClient.canConvertFilters(filters)
+
+    if (allConvertible) {
+      // All filters successfully converted to server's native format
+      // Trust that the server can handle them - return no residuals
+      // This enables Spark to call pushLimit() for combined filter+limit pushdown
+      logInfo(s"All ${filters.length} filters convertible, " +
+              "returning empty residuals to enable limit pushdown")
+      Array.empty
+    } else {
+      // At least one filter failed to convert
+      // Return all filters as residuals for safety (Spark will re-apply)
+      // Note: Server will still receive converted filters, but Spark provides safety net
+      logWarning(s"Some filters failed to convert, " +
+                 "returning all as residuals (limit pushdown disabled)")
+      filters
+    }
   }
 
   override def pushedFilters(): Array[Filter] = _pushedFilters
@@ -238,9 +279,20 @@ class ServerSidePlannedScanBuilder(
     _requiredSchema = requiredSchema
   }
 
+  override def pushLimit(limit: Int): Boolean = {
+    _limit = Some(limit)
+    true  // Return true to indicate the limit is fully pushed down to the server
+  }
+
+  override def isPartiallyPushed(): Boolean = {
+    // Return true if we have a limit - indicates partial pushdown so Spark applies it too
+    _limit.isDefined
+  }
+
   override def build(): Scan = {
     new ServerSidePlannedScan(
-      spark, databaseName, tableName, tableSchema, planningClient, _pushedFilters, _requiredSchema)
+      spark, databaseName, tableName, tableSchema, planningClient, _pushedFilters, _requiredSchema,
+      _limit)
   }
 }
 
@@ -254,7 +306,8 @@ class ServerSidePlannedScan(
     tableSchema: StructType,
     planningClient: ServerSidePlanningClient,
     pushedFilters: Array[Filter],
-    requiredSchema: StructType) extends Scan with Batch {
+    requiredSchema: StructType,
+    limit: Option[Int]) extends Scan with Batch {
 
   override def readSchema(): StructType = requiredSchema
 
@@ -275,20 +328,40 @@ class ServerSidePlannedScan(
 
   // Only pass projection if columns are actually pruned (not SELECT *)
   // Extract field names for planning client (server only needs names, not types)
+  // Use Spark's SchemaUtils.explodeNestedFieldNames to flatten and escape field names,
+  // then filter out parent structs by keeping only fields that have no children.
+  // For example, for schema STRUCT<a: STRUCT<b.c: STRING>>:
+  //   - explodeNestedFieldNames returns: ["a", "a.`b.c`"]
+  //   - We filter to leaf fields only: ["a.`b.c`"]
+  // This ensures projections only include actual data columns, not parent containers.
   private val projectionColumnNames: Option[Seq[String]] = {
     if (requiredSchema.fieldNames.toSet == tableSchema.fieldNames.toSet) {
       None
     } else {
-      Some(requiredSchema.fieldNames.toSeq)
+      val allFields = SchemaUtils.explodeNestedFieldNames(requiredSchema)
+      Some(allFields.filter { field =>
+        !allFields.exists(other => other.startsWith(field + "."))
+      })
     }
   }
 
-  // Call the server-side planning API to get the scan plan with files AND credentials
-  private val scanPlan: ScanPlan = planningClient.planScan(
-    databaseName,
-    tableName,
-    combinedFilter,
-    projectionColumnNames)
+  // Call the server-side planning API to get the scan plan with files AND credentials.
+  // Close the client after planning - the scan plan contains all data needed for partition
+  // creation and reading, so the client (and its HTTP connection) is no longer needed.
+  private lazy val scanPlan: ScanPlan = {
+    val plan = planningClient.planScan(
+      databaseName,
+      tableName,
+      combinedFilter,
+      projectionColumnNames,
+      limit)
+    planningClient.close()
+    plan
+  }
+
+  // Explicitly signal that columnar is unsupported to prevent early enumeration of the partitions
+  override def columnarSupportMode(): Scan.ColumnarSupportMode =
+    Scan.ColumnarSupportMode.UNSUPPORTED
 
   override def planInputPartitions(): Array[InputPartition] = {
     // Convert each file to an InputPartition
@@ -339,23 +412,11 @@ class ServerSidePlannedFilePartitionReaderFactory(
   private val hadoopConf = {
     val conf = spark.sessionState.newHadoopConf()
 
-    // Inject temporary credentials from IRC server response
-    credentials.foreach { creds =>
-      creds match {
-        case S3Credentials(accessKeyId, secretAccessKey, sessionToken) =>
-          conf.set("fs.s3a.access.key", accessKeyId)
-          conf.set("fs.s3a.secret.key", secretAccessKey)
-          conf.set("fs.s3a.session.token", sessionToken)
-
-        case AzureCredentials(accountName, sasToken, containerName) =>
-          // Format: fs.azure.sas.<container>.<account>.dfs.core.windows.net
-          val sasKey = s"fs.azure.sas.$containerName.$accountName.dfs.core.windows.net"
-          conf.set(sasKey, sasToken)
-
-        case GcsCredentials(oauth2Token) =>
-          conf.set("fs.gs.auth.access.token", oauth2Token)
-      }
-    }
+    // Inject temporary credentials from IRC server response.
+    // Disable FileSystem cache for S3, Azure, and GCS so each scan uses fresh credentials
+    // (avoids AccessDenied when temp creds expire and a cached FS is reused).
+    // Aligns with CredPropsUtil in the Unity Catalog connector.
+    credentials.foreach(_.configure(conf))
 
     new SerializableConfiguration(conf)
   }
@@ -411,21 +472,32 @@ class ServerSidePlannedFilePartitionReader(
     length = partition.fileSizeInBytes
   )
 
-  // Call the pre-built reader function with our PartitionedFile
-  // This happens on the executor and doesn't need SparkSession
-  private lazy val readerIterator: Iterator[InternalRow] = {
-    readerBuilder(partitionedFile)
+  // Track the iterator so we can close it properly
+  // Using Option to avoid initializing the iterator if close() is called before next()
+  private var readerIterator: Option[Iterator[InternalRow]] = None
+
+  // Get or create the reader iterator
+  private def getIterator: Iterator[InternalRow] = {
+    readerIterator.getOrElse {
+      val iter = readerBuilder(partitionedFile)
+      readerIterator = Some(iter)
+      iter
+    }
   }
 
   override def next(): Boolean = {
-    readerIterator.hasNext
+    getIterator.hasNext
   }
 
   override def get(): InternalRow = {
-    readerIterator.next()
+    getIterator.next()
   }
 
   override def close(): Unit = {
-    // Reader cleanup is handled by Spark
+    // Close the iterator if it implements AutoCloseable (which Parquet iterators do)
+    readerIterator.foreach {
+      case closeable: AutoCloseable => closeable.close()
+      case _ => // No cleanup needed
+    }
   }
 }

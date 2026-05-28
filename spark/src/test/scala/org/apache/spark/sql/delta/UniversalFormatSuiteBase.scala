@@ -445,12 +445,14 @@ trait UniversalFormatMiscSuiteBase extends IcebergCompatUtilsBase with Universal
         )
         updatedConfiguration = getUpdatedConfiguration(configurationUnderTest)
 
-        assert(updatedConfiguration.size == 5)
+        assert(updatedConfiguration.size == 6)
         assert(updatedConfiguration("dummykey") == "dummyvalue")
         assert(updatedConfiguration("delta.universalFormat.enabledFormats") == "iceberg")
         assert(updatedConfiguration("delta.columnMapping.mode") == "name")
         assert(updatedConfiguration(s"delta.enableIcebergCompatV$icv") == "true")
         assert(updatedConfiguration("delta.columnMapping.maxColumnId") == "1")
+        assert(updatedConfiguration(
+          DeltaConfigs.ICEBERG_ATOMIC_CONVERSION_SUPPORTED.key) == "true")
 
         configurationUnderTest = Map(
           s"delta.enableIcebergCompatV$icv" -> "true",
@@ -459,12 +461,47 @@ trait UniversalFormatMiscSuiteBase extends IcebergCompatUtilsBase with Universal
           "delta.columnMapping.mode" -> "id"
         )
         updatedConfiguration = getUpdatedConfiguration(configurationUnderTest)
-        assert(updatedConfiguration.size == 4)
+          assert(updatedConfiguration.size == 6)
+          assert(updatedConfiguration("delta.columnMapping.maxColumnId") == "1")
+        assert(updatedConfiguration(
+          DeltaConfigs.ICEBERG_ATOMIC_CONVERSION_SUPPORTED.key) == "true")
         assert(updatedConfiguration("dummykey") == "dummyvalue")
         assert(updatedConfiguration("delta.columnMapping.mode") == "id")
         assert(updatedConfiguration("delta.universalFormat.enabledFormats") == "iceberg")
         assert(updatedConfiguration(s"delta.enableIcebergCompatV$icv") == "true")
       }
+    }
+  }
+
+  test("enforceDependenciesInConfiguration preserves existing atomic guard property") {
+    withTempTableAndDir { case (id, _) =>
+      executeSql(s"CREATE TABLE $id (id INT) USING DELTA")
+      val catalogTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier(id))
+
+      def getConfig: Map[String, String] = {
+        val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(id))
+        UniversalFormat.enforceDependenciesInConfiguration(
+          spark, catalogTable,
+          Map(DeltaConfigs.ICEBERG_COMPAT_V2_ENABLED.key -> "true"),
+          snapshot
+        )
+      }
+
+      // Case 1: snapshot has no guard -> auto-set to "true"
+      assert(getConfig.get(
+        DeltaConfigs.ICEBERG_ATOMIC_CONVERSION_SUPPORTED.key).contains("true"))
+
+      // Case 2: snapshot has guard = false -> preserve false
+      executeSql(s"ALTER TABLE $id SET TBLPROPERTIES " +
+        s"('${DeltaConfigs.ICEBERG_ATOMIC_CONVERSION_SUPPORTED.key}' = 'false')")
+      assert(getConfig.get(
+        DeltaConfigs.ICEBERG_ATOMIC_CONVERSION_SUPPORTED.key).contains("false"))
+
+      // Case 3: snapshot has guard = true -> preserve true
+      executeSql(s"ALTER TABLE $id SET TBLPROPERTIES " +
+        s"('${DeltaConfigs.ICEBERG_ATOMIC_CONVERSION_SUPPORTED.key}' = 'true')")
+      assert(getConfig.get(
+        DeltaConfigs.ICEBERG_ATOMIC_CONVERSION_SUPPORTED.key).contains("true"))
     }
   }
 

@@ -17,7 +17,7 @@ package io.delta.kernel.defaults
 
 import java.io.File
 import java.nio.file.Files
-import java.util.{Locale, Optional}
+import java.util.{Locale, Optional, UUID}
 
 import scala.collection.immutable.Seq
 import scala.jdk.CollectionConverters._
@@ -37,10 +37,12 @@ import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.internal.{ScanImpl, SnapshotImpl, TableConfig}
 import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElement
+import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
 import io.delta.kernel.internal.types.DataTypeJsonSerDe
 import io.delta.kernel.internal.util.{Clock, JsonUtils}
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
+import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.shaded.com.fasterxml.jackson.databind.node.ObjectNode
 import io.delta.kernel.transaction.DataLayoutSpec
 import io.delta.kernel.types._
@@ -1031,6 +1033,132 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
     }
   }
 
+  test("create table with collated columns - collations writer feature in protocol") {
+    Seq(
+      new StructType()
+        .add("id", IntegerType.INTEGER)
+        .add("val", new StringType("ICU.UNICODE")),
+      new StructType()
+        .add("id", IntegerType.INTEGER)
+        .add("val", new StringType("ICU.SR_CYRL_SRB")),
+      new StructType()
+        .add("id", IntegerType.INTEGER)
+        .add(
+          "info",
+          new StructType()
+            .add("name", new StringType("ICU.UNICODE.74.1"))),
+      new StructType()
+        .add("id", IntegerType.INTEGER)
+        .add("tags", new ArrayType(new StringType("SPARK.UTF8_LCASE"), true)),
+      new StructType()
+        .add("id", IntegerType.INTEGER)
+        .add(
+          "props",
+          new MapType(StringType.STRING, new StringType("ICU.UNICODE"), true))).foreach { schema =>
+      withTempDirAndEngine { (tblPath, engine) =>
+        appendData(
+          engine,
+          tblPath,
+          isNewTable = true,
+          schema,
+          data = Seq.empty)
+
+        val protocol = getProtocol(engine, tblPath)
+        assert(protocol.getWriterFeatures.contains("collations"))
+      }
+    }
+  }
+
+  test("create table without collated columns - collations feature NOT in protocol") {
+    withTempDirAndEngine { (tblPath, engine) =>
+      val schema = new StructType()
+        .add("id", IntegerType.INTEGER)
+        .add("name", StringType.STRING) // default UTF8_BINARY collation
+
+      appendData(
+        engine,
+        tblPath,
+        isNewTable = true,
+        schema,
+        data = Seq.empty)
+
+      val protocol = getProtocol(engine, tblPath)
+      assert(
+        !protocol.getWriterFeatures.contains("collations"),
+        "Should NOT have 'collations' writer feature when schema has no custom collations")
+    }
+  }
+
+  test("write to golden table with collated columns (utf8_binary, utf8_lcase, unicode)") {
+    Seq(
+      ("collations-table", "collations"),
+      ("collations-preview-table", "collations-preview")).foreach {
+      case (collationTable, feature) =>
+        withTempDirAndEngine { (tblPath, engine) =>
+          copyTable(collationTable, tblPath)
+
+          val utf8Lcase = new StringType("SPARK.UTF8_LCASE")
+          val unicode = new StringType("ICU.UNICODE")
+
+          val schema = new StructType()
+            .add("id", IntegerType.INTEGER)
+            .add("utf8_binary_col", StringType.STRING)
+            .add("utf8_lcase_col", utf8Lcase)
+            .add("unicode_col", unicode)
+
+          // Verify golden table schema has expected collations
+          val goldenMetadata = getMetadata(engine, tblPath)
+          val goldenSchema =
+            DataTypeJsonSerDe.deserializeStructType(goldenMetadata.getSchemaString())
+          assert(goldenSchema === schema)
+
+          // Verify protocol has the expected collations writer feature
+          val protocol = getProtocol(engine, tblPath)
+          assert(protocol.getWriterFeatures.contains(feature))
+
+          // First append: data batch uses matching collations
+          val data1 = generateData(schema, Seq.empty, Map.empty, batchSize = 10, numBatches = 1)
+
+          val commitResult1 = appendData(
+            engine,
+            tblPath,
+            data = Seq(Map.empty[String, Literal] -> data1))
+
+          verifyCommitResult(commitResult1, expVersion = 1, expIsReadyForCheckpoint = false)
+          verifyCommitInfo(tblPath, version = 1, partitionCols = null)
+          verifyWrittenContent(tblPath, schema, data1.flatMap(_.toTestRows))
+
+          // Second append: data batch uses different collations than the table schema
+          val diffCollationSchema = new StructType()
+            .add("id", IntegerType.INTEGER)
+            .add("utf8_binary_col", new StringType("ICU.UNICODE.75.1"))
+            .add("utf8_lcase_col", new StringType("SPARK.UTF8_BINARY"))
+            .add("unicode_col", utf8Lcase)
+
+          val data2 =
+            generateData(diffCollationSchema, Seq.empty, Map.empty, batchSize = 5, numBatches = 1)
+
+          val commitResult2 = appendData(
+            engine,
+            tblPath,
+            data = Seq(Map.empty[String, Literal] -> data2))
+
+          verifyCommitResult(commitResult2, expVersion = 2, expIsReadyForCheckpoint = false)
+          verifyCommitInfo(tblPath, version = 2, partitionCols = null)
+          verifyWrittenContent(tblPath, schema, (data1 ++ data2).flatMap(_.toTestRows))
+
+          // Verify the schema is preserved with collations after writes
+          val metadata = getMetadata(engine, tblPath)
+          val parsedSchema = DataTypeJsonSerDe.deserializeStructType(metadata.getSchemaString())
+          assert(parsedSchema === schema)
+
+          // After writes, the feature flags must not have changed
+          val protocolAfterWrite = getProtocol(engine, tblPath)
+          assert(protocolAfterWrite.getWriterFeatures.contains(feature))
+        }
+    }
+  }
+
   ///////////////////////////////////////////////////////////////////////////
   // Create table and insert data tests (CTAS & INSERT)
   ///////////////////////////////////////////////////////////////////////////
@@ -1829,6 +1957,108 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
           expIsReadyForCheckpoint = false)
         verifyCommitInfo(tablePath = tablePath, version = 0)
         verifyWrittenContent(tablePath, testSchema, expData)
+      }
+    }
+  }
+
+  ///////////////////////////////////////////////////////////////////////////
+  // Change Data Feed (CDF) tests
+  ///////////////////////////////////////////////////////////////////////////
+
+  private def createAddFileRow(
+      path: String = s"part-${UUID.randomUUID()}.parquet",
+      dataChange: Boolean = true): Row = {
+    import io.delta.kernel.internal.actions.{AddFile, SingleAction}
+    import io.delta.kernel.internal.util.PartitionUtils
+
+    val partitionValues = PartitionUtils.serializePartitionMap(
+      java.util.Collections.emptyMap[String, Literal]())
+
+    val addFileRow = AddFile.createAddFileRow(
+      testSchema,
+      path,
+      partitionValues,
+      100L, // size
+      System.currentTimeMillis(), // modificationTime
+      dataChange,
+      Optional.empty(), // deletionVector
+      Optional.empty(), // tags
+      Optional.empty(), // baseRowId
+      Optional.empty(), // defaultRowCommitVersion
+      Optional.empty() // stats
+    )
+
+    SingleAction.createAddFileSingleAction(addFileRow)
+  }
+
+  // Helper to create a mock RemoveFile action row
+  private def createRemoveFileRow(
+      path: String,
+      dataChange: Boolean = true): Row = {
+    import io.delta.kernel.internal.actions.{RemoveFile, SingleAction}
+
+    val removeFileRow = new GenericRow(
+      RemoveFile.FULL_SCHEMA,
+      Map[Integer, Object](
+        Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("path")) -> path,
+        Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("deletionTimestamp")) -> Long.box(
+          System.currentTimeMillis()),
+        Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("dataChange")) -> Boolean.box(dataChange),
+        Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("size")) -> Long.box(100L)).asJava)
+
+    SingleAction.createRemoveFileSingleAction(removeFileRow)
+  }
+
+  // Test cases: (description, actions, shouldSucceed)
+  val cdfTestCases: Seq[(String, Seq[Row], Boolean)] = Seq(
+    ("add with dataChange=true", Seq(createAddFileRow(dataChange = true)), true),
+    ("add with dataChange=false", Seq(createAddFileRow(dataChange = false)), true),
+    (
+      "multiple adds with dataChange=true",
+      Seq(createAddFileRow(dataChange = true), createAddFileRow(dataChange = true)),
+      true),
+    (
+      "multiple removes with dataChange=true", {
+        val path1 = "file1.parquet"
+        val path2 = "file2.parquet"
+        Seq(
+          createAddFileRow(path1, dataChange = false),
+          createAddFileRow(path2, dataChange = false),
+          createRemoveFileRow(path1, dataChange = true),
+          createRemoveFileRow(path2, dataChange = true))
+      },
+      true),
+    (
+      "add dataChange=true, remove dataChange=false", {
+        val path = "file1.parquet"
+        Seq(
+          createAddFileRow(path, dataChange = true),
+          createRemoveFileRow(path, dataChange = false))
+      },
+      true),
+    (
+      "add dataChange=true, remove dataChange=true", {
+        val path = "file1.parquet"
+        Seq(createAddFileRow(path, dataChange = true), createRemoveFileRow(path, dataChange = true))
+      },
+      false))
+
+  cdfTestCases.foreach { case (desc, actions, shouldSucceed) =>
+    test(s"CDF-enabled table: $desc - ${if (shouldSucceed) "succeeds" else "fails"}") {
+      withTempDirAndEngine { (tablePath, engine) =>
+        val tableProps = Map(TableConfig.CHANGE_DATA_FEED_ENABLED.getKey -> "true")
+        val txn = getCreateTxn(engine, tablePath, testSchema, tableProperties = tableProps)
+
+        val actionsIterable = inMemoryIterable(toCloseableIterator(actions.asJava.iterator()))
+
+        if (shouldSucceed) {
+          val result = commitTransaction(txn, engine, actionsIterable)
+          assert(result.getVersion === 0)
+        } else {
+          intercept[KernelException] {
+            commitTransaction(txn, engine, actionsIterable)
+          }
+        }
       }
     }
   }

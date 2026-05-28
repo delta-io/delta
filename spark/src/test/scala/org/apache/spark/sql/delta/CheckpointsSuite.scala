@@ -32,7 +32,9 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.DeltaCommitFileProvider
+import org.apache.spark.sql.delta.shims.VariantStatsShims
+import org.apache.spark.sql.delta.test.shims.VariantShreddingTestShims
+import org.apache.spark.sql.delta.util.{Codec, DeltaCommitFileProvider, DeltaStatsJsonUtils, JsonUtils}
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
@@ -43,8 +45,12 @@ import org.apache.hadoop.util.Progressable
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.types.variant.{Variant, VariantUtil}
+import org.apache.spark.unsafe.types.VariantVal
 
 class CheckpointsSuite
   extends QueryTest
@@ -247,7 +253,12 @@ class CheckpointsSuite
           "fs.gs.impl" -> classOf[FakeGCSFileSystemValidatingCheckpoint].getName,
           "fs.gs.impl.disable.cache" -> "true") {
         val gsPath = s"gs://${tempDir.getCanonicalPath}"
-        spark.range(1).write.format("delta").save(gsPath)
+        val writer = spark.range(1).write.format("delta")
+        if (catalogOwnedDefaultCreationEnabledInTests) {
+          // Setting checkpointPolicy=classic because this test is intended for v1 checkpoint only.
+          writer.option(DeltaConfigs.CHECKPOINT_POLICY.key, "classic")
+        }
+        writer.save(gsPath)
         DeltaLog.clearCache()
         val deltaLog = DeltaLog.forTable(spark, new Path(gsPath))
         deltaLog.checkpoint()
@@ -444,6 +455,15 @@ class CheckpointsSuite
               "metaData",
               "protocol",
               "domainMetadata")
+          // For CCv1.5 table, v2 checkpoints is enabled by default.
+          if (catalogOwnedDefaultCreationEnabledInTests) {
+            // V2 checkpoint's schema is shared by sidecar files (contains all file actions)
+            // and the main v2 checkpoint file (contains all non-file actions).
+            // So file actions (e.g. `txn`, `add`, `remove`) are not included in the main v2
+            // checkpoint file.
+            expectedCheckpointSchema = Seq(
+              "checkpointMetadata", "domainMetadata", "metaData", "protocol", "sidecar")
+          }
           assert(checkpointSchema.fieldNames.toSeq == expectedCheckpointSchema)
         }
       }
@@ -742,12 +762,16 @@ class CheckpointsSuite
         lastCheckpointInfoOpt.get
       }
 
+      // For CCv1.5 table, row tracking is enabled by default, there will be an extra
+      // DomainMetadata added by RowTracking as a non file action.
+      val domainMetadataAddedByRowTracking = if (catalogOwnedDefaultCreationEnabledInTests) 1 else 0
       // Append 1 AddFile [AddFile-2]
       val lc1 = writeCheckpoint(adds = 1, nonFileActionThreshold = 10, sidecarActionThreshold = 10)
       assert(lc1.v2Checkpoint.nonEmpty)
       // 3 non file actions - protocol/metadata/checkpointMetadata, 1 sidecar
       assert(
         lc1.v2Checkpoint.get.nonFileActions.get.size === 3
+          + domainMetadataAddedByRowTracking
       )
       assert(lc1.v2Checkpoint.get.sidecarFiles.get.size === 1)
 
@@ -758,11 +782,13 @@ class CheckpointsSuite
         adds = 8,
         sidecarActionThreshold = 10,
         nonFileActionThreshold = 4
+          + domainMetadataAddedByRowTracking
       )
       assert(lc2.v2Checkpoint.nonEmpty)
       // 4 non file actions - protocol/metadata/checkpointMetadata/setTxn, 1 sidecar
       assert(
         lc2.v2Checkpoint.get.nonFileActions.get.size === 4
+          + domainMetadataAddedByRowTracking
       )
       assert(lc2.v2Checkpoint.get.sidecarFiles.get.size === 1)
 
@@ -793,6 +819,7 @@ class CheckpointsSuite
         // total 30 file actions, across 15 sidecar files (2 actions per file)
         assert(
           lc5.v2Checkpoint.get.nonFileActions.get.size === 4
+            + domainMetadataAddedByRowTracking
         )
         assert(lc5.v2Checkpoint.get.sidecarFiles.isEmpty)
       }
@@ -1018,6 +1045,681 @@ class CheckpointsSuite
 
       }
       assert(filterUsageRecords(usageRecords2, "delta.log.cleanup").size > 0)
+    }
+  }
+
+  testDifferentCheckpoints("Ensure variant stats in checkpoint") { (policy, _) =>
+    // Test all combinations of (writeStatsAsJson, writeStatsAsStruct)
+    // Skip (false, false) as that would have no stats at all
+    val combinations = Seq(
+      (true, false),
+      (false, true),
+      (true, true)
+    )
+
+    // Test with collectVariantStats = false and true
+    Seq(false, true).foreach { collectVariantStats =>
+      combinations.foreach { case (writeStatsAsJson, writeStatsAsStruct) =>
+        withClue(s"collectVariantStats=$collectVariantStats, " +
+            s"writeStatsAsJson=$writeStatsAsJson, writeStatsAsStruct=$writeStatsAsStruct") {
+          withSQLConf(
+            DeltaSQLConf.COLLECT_VARIANT_DATA_SKIPPING_STATS.key -> collectVariantStats.toString
+          ) {
+            withTempDir { tempDir =>
+              // Load golden table with variant stats (no checkpoint)
+              val source = new File("src/test/resources/delta/variant-stats-no-checkpoint")
+              val target = new File(tempDir, "variant-stats-table")
+
+              FileUtils.copyDirectory(source, target)
+
+              val tablePath = target.getAbsolutePath
+
+              // Set the stats configuration via ALTER TABLE
+              spark.sql(s"ALTER TABLE delta.`$tablePath` SET TBLPROPERTIES " +
+                s"('${DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_JSON.key}' = '$writeStatsAsJson', " +
+                s"'${DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_STRUCT.key}' = '$writeStatsAsStruct')")
+
+              if (policy == CheckpointPolicy.V2) {
+                spark.sql(s"ALTER TABLE delta.`$tablePath` SET TBLPROPERTIES " +
+                  s"('${DeltaConfigs.CHECKPOINT_POLICY.key}' = 'v2')")
+              }
+
+              val deltaLog = DeltaLog.forTable(spark, tablePath)
+              val snapshot = deltaLog.update()
+
+              deltaLog.checkpoint(snapshot)
+              val checkpointFile = if (policy.needsV2CheckpointSupport) {
+                val provider = getV2CheckpointProvider(deltaLog)
+                provider.sidecarFileStatuses.head.getPath
+              } else {
+                FileNames.checkpointFileSingular(deltaLog.logPath, deltaLog.snapshot.version)
+              }
+
+              val checkpointDf = spark.read.format("parquet").load(checkpointFile.toString)
+                .filter(col("add").isNotNull)
+
+              // Helper function to decode Z85 and get variant JSON
+              def decodeZ85ToVariantJson(z85String: String): String = {
+                val decoded = Codec.Base85Codec.decodeBytes(z85String, z85String.length)
+                val metadataSize = VariantStatsShims.metadataSize(decoded)
+                val value = decoded.slice(metadataSize, decoded.length)
+                val variant = new Variant(value, decoded)
+                variant.toJson(java.time.ZoneId.of("UTC"))
+              }
+
+              // Verify stats in add.stats (JSON format) when writeStatsAsJson=true
+              if (writeStatsAsJson) {
+                val checkpointStatsJson = checkpointDf
+                  .selectExpr(
+                    s"get_json_object(add.stats, '$$.minValues.v')",
+                    s"get_json_object(add.stats, '$$.maxValues.v')",
+                    s"get_json_object(add.stats, '$$.minValues.nv.v')",
+                    s"get_json_object(add.stats, '$$.maxValues.nv.v')").collect().head
+
+                // Verify top-level variant column stats
+                val actualMinTopLevel = decodeZ85ToVariantJson(checkpointStatsJson.getString(0))
+                val actualMaxTopLevel = decodeZ85ToVariantJson(checkpointStatsJson.getString(1))
+                assert(actualMinTopLevel == """{"$['id']":0,"$['name']":"1"}""")
+                assert(actualMaxTopLevel == """{"$['id']":9,"$['name']":"9"}""")
+
+                // Verify nested variant column stats
+                val actualMinNested = decodeZ85ToVariantJson(checkpointStatsJson.getString(2))
+                val actualMaxNested = decodeZ85ToVariantJson(checkpointStatsJson.getString(3))
+                assert(actualMinNested == """{"$['id']":10,"$['name']":"11"}""")
+                assert(actualMaxNested == """{"$['id']":19,"$['name']":"20"}""")
+              }
+
+              // Verify stats in add.stats_parsed (struct format) when writeStatsAsStruct=true
+              if (writeStatsAsStruct) {
+                if (collectVariantStats) {
+                  val checkpointStatsParsed = checkpointDf
+                    .selectExpr(
+                      "add.stats_parsed.minValues.v",
+                      "add.stats_parsed.maxValues.v",
+                      "add.stats_parsed.minValues.nv.v",
+                      "add.stats_parsed.maxValues.nv.v").collect().head
+
+                  // Verify top-level variant column stats
+                  val minVariantTopLevel = checkpointStatsParsed.getAs[VariantVal](0)
+                  val maxVariantTopLevel = checkpointStatsParsed.getAs[VariantVal](1)
+                  val minTopLevelVariant =
+                    new Variant(minVariantTopLevel.getValue, minVariantTopLevel.getMetadata)
+                  val maxTopLevelVariant =
+                    new Variant(maxVariantTopLevel.getValue, maxVariantTopLevel.getMetadata)
+                  assert(minTopLevelVariant.toJson(java.time.ZoneId.of("UTC")) ==
+                    """{"$['id']":0,"$['name']":"1"}""")
+                  assert(maxTopLevelVariant.toJson(java.time.ZoneId.of("UTC")) ==
+                    """{"$['id']":9,"$['name']":"9"}""")
+
+                  // Verify nested variant column stats
+                  val minVariantNested = checkpointStatsParsed.getAs[VariantVal](2)
+                  val maxVariantNested = checkpointStatsParsed.getAs[VariantVal](3)
+                  val minNestedVariant =
+                    new Variant(minVariantNested.getValue, minVariantNested.getMetadata)
+                  val maxNestedVariant =
+                    new Variant(maxVariantNested.getValue, maxVariantNested.getMetadata)
+                  assert(minNestedVariant.toJson(java.time.ZoneId.of("UTC")) ==
+                    """{"$['id']":10,"$['name']":"11"}""")
+                  assert(maxNestedVariant.toJson(java.time.ZoneId.of("UTC")) ==
+                    """{"$['id']":19,"$['name']":"20"}""")
+                } else {
+                  // When collectVariantStats=false, variant columns should not be in stats_parsed
+                  val statsParsedSchema = checkpointDf
+                    .select("add.stats_parsed.minValues", "add.stats_parsed.maxValues")
+                    .schema
+                  val minValuesFields = statsParsedSchema("minValues").dataType
+                    .asInstanceOf[StructType].fieldNames
+                  val maxValuesFields = statsParsedSchema("maxValues").dataType
+                    .asInstanceOf[StructType].fieldNames
+                  assert(!minValuesFields.contains("v"),
+                    "minValues should not contain 'v' when collectVariantStats=false")
+                  assert(!maxValuesFields.contains("v"),
+                    "maxValues should not contain 'v' when collectVariantStats=false")
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  testDifferentCheckpoints("Ensure variant stats are preserved during state reconstruction") {
+    case (_, _) =>
+    // Test different combinations of (writeStatsAsJson, writeStatsAsStruct)
+    // The golden table contains variant stats but NO checkpoint.
+    // We set the checkpoint properties and create the checkpoint in this test.
+    val combinations = Seq(
+      ("true", "false"),
+      ("false", "true"),
+      ("true", "true")
+      // Note: ("false", "false") would have no stats at all, so not testing it
+    )
+
+    // Expected Z85-encoded value for variant `0` (the golden table contains `id::variant`
+    // where id=0)
+    // This is the Z85 encoding of the variant binary representation of integer 0
+    val expectedZ85 = "0rAf3bMW#D00%Fx0000000000"
+
+    combinations.foreach { case (jsonStats, structStats) =>
+      withClue(s"writeStatsAsJson=$jsonStats, writeStatsAsStruct=$structStats") {
+        withTempDir { tempDir =>
+          // Copy golden table to temp directory
+          val source = new File("src/test/resources/delta/variant-stats-state-reconstruction")
+          val target = new File(tempDir, "variant-stats-table")
+          FileUtils.copyDirectory(source, target)
+
+          val tablePath = target.getAbsolutePath
+
+          // Set checkpoint properties
+          spark.sql(
+            s"""ALTER TABLE delta.`$tablePath` SET TBLPROPERTIES (
+            |  'delta.checkpoint.writeStatsAsJson' = '$jsonStats',
+            |  'delta.checkpoint.writeStatsAsStruct' = '$structStats'
+            |)""".stripMargin)
+
+          // Create checkpoint with the new properties
+          val deltaLog = DeltaLog.forTable(spark, tablePath)
+          deltaLog.checkpoint(deltaLog.update())
+
+          // Clear cache to ensure fresh state reconstruction from checkpoint
+          DeltaLog.clearCache()
+
+          val snapshot = deltaLog.update()
+
+          // Get the reconstructed state and verify variant stats are present
+          val addFilesWithStats = snapshot.stateDS
+            .filter("add IS NOT NULL")
+            .filter("add.stats IS NOT NULL AND add.stats != ''")
+            .collect()
+
+          assert(
+            addFilesWithStats.nonEmpty,
+            s"Expected at least one AddFile with stats for " +
+              s"writeStatsAsJson=$jsonStats, writeStatsAsStruct=$structStats")
+
+          // Verify that the stats contain the expected Z85-encoded variant
+          val statsContainZ85 = addFilesWithStats.exists { action =>
+            val stats = action.add.stats
+            stats != null && stats.contains(expectedZ85)
+          }
+
+          assert(
+            statsContainZ85,
+            s"Expected stats to contain Z85-encoded variant '$expectedZ85' for " +
+              s"writeStatsAsJson=$jsonStats, writeStatsAsStruct=$structStats. " +
+              s"Actual stats: ${addFilesWithStats.map(_.add.stats).mkString(", ")}")
+        }
+      }
+    }
+  }
+
+  test("DML with DVs corrupts variant stats when collectVariantDataSkippingStats is disabled") {
+    // This test reads from golden files containing the variant logical type annotation
+    assume(VariantShreddingTestShims.variantInferShreddingSchemaSupported,
+      "parse_json requires Spark 4.1+")
+
+    // This test verifies that when:
+    // 1. A table has variant stats
+    // 2. collectVariantDataSkippingStats is disabled in OSS
+    // 3. Deletion vectors are enabled
+    // 4. A DML operation (UPDATE/DELETE/MERGE) is performed
+    // The variant stats are lost because updateStatsToWideBounds doesn't preserve
+    // the Z85 encoding properly when re-serializing stats.
+    Seq("UPDATE", "DELETE", "MERGE").foreach { dmlOp =>
+      withClue(s"DML operation: $dmlOp") {
+        withSQLConf(
+          DeltaSQLConf.COLLECT_VARIANT_DATA_SKIPPING_STATS.key -> "false",
+          DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key -> "true",
+          DeltaSQLConf.UPDATE_USE_PERSISTENT_DELETION_VECTORS.key -> "true",
+          DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key -> "true") {
+          withTempDir { tempDir =>
+            // Load golden table with variant stats (no checkpoint)
+            val source = new File("src/test/resources/delta/variant-stats-no-checkpoint")
+            val target = new File(tempDir, "variant-stats-table")
+            FileUtils.copyDirectory(source, target)
+
+            val tablePath = target.getAbsolutePath
+
+            // Enable deletion vectors on the table
+            spark.sql(s"ALTER TABLE delta.`$tablePath` SET TBLPROPERTIES " +
+              s"('${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}' = 'true')")
+
+            val deltaLog = DeltaLog.forTable(spark, tablePath)
+
+            // Verify variant stats are present initially (Z85-encoded)
+            val initialSnapshot = deltaLog.update()
+            val initialAddFiles = initialSnapshot.allFiles.collect()
+            val initialStatsWithVariant = initialAddFiles.filter { addFile =>
+              addFile.stats != null && addFile.stats.contains("\"v\":")
+            }
+            assert(
+              initialStatsWithVariant.nonEmpty,
+              "Expected variant stats to be present initially")
+
+            // Perform DML operation that uses DVs
+            dmlOp match {
+              case "UPDATE" =>
+                spark.sql(s"""UPDATE delta.`$tablePath` SET v = parse_json('{"updated":true}') """ +
+                  """WHERE i = 100""")
+              case "DELETE" =>
+                spark.sql(s"""DELETE FROM delta.`$tablePath` WHERE i = 100""")
+              case "MERGE" =>
+                spark.sql(
+                  s"""MERGE INTO delta.`$tablePath` AS target
+                     |USING (SELECT 100 AS i, parse_json('{"merged":true}') AS v) AS source
+                     |ON target.i = source.i
+                     |WHEN MATCHED THEN UPDATE SET target.v = source.v
+                     |""".stripMargin)
+            }
+
+            // After DML with DVs, verify that variant stats are lost
+            val afterSnapshot = deltaLog.update()
+            val filesWithDVs = afterSnapshot.allFiles.collect().filter(_.deletionVector != null)
+
+            assert(filesWithDVs.nonEmpty, s"Expected files with DVs after $dmlOp")
+
+            // Files that went through updateStatsToWideBounds should lose variant stats
+            // because the Z85 encoding is not preserved when re-serializing.
+            // The variant stats are dropped from minValues/maxValues entirely.
+            filesWithDVs.foreach { addFile =>
+              val stats = addFile.stats
+              assert(stats != null, "Stats should not be null")
+
+              // Parse the stats JSON to check minValues and maxValues
+              // The variant stats (v, nv.v) should be absent from minValues/maxValues
+              // after DML because OSS doesn't preserve the Z85-encoded variant stats
+              val statsJson = JsonUtils.fromJson[Map[String, Any]](stats)
+              val minValues = statsJson.get("minValues").map(_.asInstanceOf[Map[String, Any]])
+              val maxValues = statsJson.get("maxValues").map(_.asInstanceOf[Map[String, Any]])
+
+              // Check that variant column 'v' is not in minValues/maxValues
+              // (it was present in the original stats as a Z85-encoded string)
+              val minValuesHasVariant = minValues.exists(_.contains("v"))
+              val maxValuesHasVariant = maxValues.exists(_.contains("v"))
+
+              assert(
+                !minValuesHasVariant && !maxValuesHasVariant,
+                s"Expected variant stats to be absent from minValues/maxValues after $dmlOp " +
+                  s"with DVs, but found: $stats")
+            }
+          }
+        }
+      }
+    }
+  }
+
+  test("DML with DVs preserves variant stats when collectVariantDataSkippingStats is enabled") {
+    // This test reads from golden files containing the variant logical type annotation
+    assume(VariantShreddingTestShims.variantInferShreddingSchemaSupported,
+      "parse_json requires Spark 4.1+")
+
+    // This test verifies that when:
+    // 1. A table has variant stats
+    // 2. collectVariantDataSkippingStats is enabled
+    // 3. Deletion vectors are enabled
+    // 4. A DML operation (UPDATE/DELETE/MERGE) is performed
+    // The variant stats are preserved because updateStatsToWideBounds now properly
+    // encodes variant values as Z85 before re-serializing to JSON.
+    Seq("UPDATE", "DELETE", "MERGE").foreach { dmlOp =>
+      withClue(s"DML operation: $dmlOp") {
+        withSQLConf(
+          DeltaSQLConf.COLLECT_VARIANT_DATA_SKIPPING_STATS.key -> "true",
+          DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key -> "true",
+          DeltaSQLConf.UPDATE_USE_PERSISTENT_DELETION_VECTORS.key -> "true",
+          DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key -> "true") {
+          withTempDir { tempDir =>
+            // Load golden table with variant stats (no checkpoint)
+            val source = new File("src/test/resources/delta/variant-stats-no-checkpoint")
+            val target = new File(tempDir, "variant-stats-table")
+            FileUtils.copyDirectory(source, target)
+
+            val tablePath = target.getAbsolutePath
+
+            // Enable deletion vectors on the table
+            spark.sql(s"ALTER TABLE delta.`$tablePath` SET TBLPROPERTIES " +
+              s"('${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}' = 'true')")
+
+            val deltaLog = DeltaLog.forTable(spark, tablePath)
+
+            // Verify variant stats are present initially (Z85-encoded)
+            val initialSnapshot = deltaLog.update()
+            val initialAddFiles = initialSnapshot.allFiles.collect()
+            val initialStatsWithVariant = initialAddFiles.filter { addFile =>
+              addFile.stats != null && addFile.stats.contains("\"v\":")
+            }
+            assert(
+              initialStatsWithVariant.nonEmpty,
+              "Expected variant stats to be present initially")
+
+            // Perform DML operation that uses DVs
+            dmlOp match {
+              case "UPDATE" =>
+                spark.sql(s"""UPDATE delta.`$tablePath` SET v = parse_json('{"updated":true}') """ +
+                  """WHERE i = 100""")
+              case "DELETE" =>
+                spark.sql(s"""DELETE FROM delta.`$tablePath` WHERE i = 100""")
+              case "MERGE" =>
+                spark.sql(
+                  s"""MERGE INTO delta.`$tablePath` AS target
+                     |USING (SELECT 100 AS i, parse_json('{"merged":true}') AS v) AS source
+                     |ON target.i = source.i
+                     |WHEN MATCHED THEN UPDATE SET target.v = source.v
+                     |""".stripMargin)
+            }
+
+            // After DML with DVs, verify that variant stats are PRESERVED
+            val afterSnapshot = deltaLog.update()
+            val filesWithDVs = afterSnapshot.allFiles.collect().filter(_.deletionVector != null)
+
+            assert(filesWithDVs.nonEmpty, s"Expected files with DVs after $dmlOp")
+
+            // Files that went through updateStatsToWideBounds should preserve variant stats
+            // because the fix properly encodes variant values as Z85 before serializing to JSON.
+            filesWithDVs.foreach { addFile =>
+              val stats = addFile.stats
+              assert(stats != null, "Stats should not be null")
+
+              // Parse the stats JSON to check minValues and maxValues
+              val statsJson = JsonUtils.fromJson[Map[String, Any]](stats)
+              val minValues = statsJson.get("minValues").map(_.asInstanceOf[Map[String, Any]])
+              val maxValues = statsJson.get("maxValues").map(_.asInstanceOf[Map[String, Any]])
+
+              // Check that variant column 'v' IS in minValues/maxValues
+              // (preserved as Z85-encoded strings)
+              val minValuesHasVariant = minValues.exists(_.contains("v"))
+              val maxValuesHasVariant = maxValues.exists(_.contains("v"))
+
+              assert(
+                minValuesHasVariant && maxValuesHasVariant,
+                s"Expected variant stats to be preserved in minValues/maxValues after $dmlOp " +
+                  s"with DVs, but found: $stats")
+
+              // Verify the variant stats are valid Z85-encoded strings by decoding them
+              def decodeZ85ToVariantJson(z85String: String): String = {
+                val decoded = Codec.Base85Codec.decodeBytes(z85String, z85String.length)
+                val metadataSize = VariantStatsShims.metadataSize(decoded)
+                val value = decoded.slice(metadataSize, decoded.length)
+                val variant = new Variant(value, decoded)
+                variant.toJson(java.time.ZoneId.of("UTC"))
+              }
+
+              val minV = minValues.flatMap(_.get("v")).map(_.toString)
+              val maxV = maxValues.flatMap(_.get("v")).map(_.toString)
+
+              // Decode Z85 and verify they produce valid variant JSON
+              val minVJson = minV.map(decodeZ85ToVariantJson)
+              val maxVJson = maxV.map(decodeZ85ToVariantJson)
+
+              assert(
+                minVJson.exists(_.nonEmpty),
+                s"Expected minValues.v to be valid Z85-encoded variant, but found: $minV")
+              assert(
+                maxVJson.exists(_.nonEmpty),
+                s"Expected maxValues.v to be valid Z85-encoded variant, but found: $maxV")
+            }
+          }
+        }
+      }
+    }
+  }
+
+  test("DML with DVs preserves nested variant stats " +
+      "when collectVariantDataSkippingStats is enabled") {
+    // This test reads from golden files containing the variant logical type annotation
+    assume(VariantShreddingTestShims.variantInferShreddingSchemaSupported,
+      "parse_json requires Spark 4.1+")
+
+    // This test verifies that variant stats for a variant column nested inside a struct
+    // (schema: i int, s struct<v variant>) are preserved after DML operations with DVs.
+    Seq("UPDATE", "DELETE", "MERGE").foreach { dmlOp =>
+      withClue(s"DML operation: $dmlOp") {
+        withSQLConf(
+          DeltaSQLConf.COLLECT_VARIANT_DATA_SKIPPING_STATS.key -> "true",
+          DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key -> "true",
+          DeltaSQLConf.UPDATE_USE_PERSISTENT_DELETION_VECTORS.key -> "true",
+          DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key -> "true") {
+          withTempDir { tempDir =>
+            // Load golden table with nested variant stats (no checkpoint)
+            // Schema: i int, s struct<v variant>
+            val source = new File(
+              "src/test/resources/delta/variant-stats-nested-no-checkpoint")
+            val target = new File(tempDir, "variant-stats-table")
+            FileUtils.copyDirectory(source, target)
+
+            val tablePath = target.getAbsolutePath
+
+            // Enable deletion vectors on the table
+            spark.sql(s"ALTER TABLE delta.`$tablePath` SET TBLPROPERTIES " +
+              s"('${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}' = 'true')")
+
+            val deltaLog = DeltaLog.forTable(spark, tablePath)
+
+            // Verify nested variant stats are present initially (Z85-encoded)
+            val initialSnapshot = deltaLog.update()
+            val initialAddFiles = initialSnapshot.allFiles.collect()
+            val initialStatsWithVariant = initialAddFiles.filter { addFile =>
+              addFile.stats != null && addFile.stats.contains("\"s\":")
+            }
+            assert(
+              initialStatsWithVariant.nonEmpty,
+              "Expected nested variant stats to be present initially")
+
+            // Perform DML operation that uses DVs
+            dmlOp match {
+              case "UPDATE" =>
+                spark.sql(
+                  s"""UPDATE delta.`$tablePath`
+                     |SET s = named_struct('v', parse_json('{"updated":true}'))
+                     |WHERE i = 100""".stripMargin)
+              case "DELETE" =>
+                spark.sql(s"""DELETE FROM delta.`$tablePath` WHERE i = 100""")
+              case "MERGE" =>
+                spark.sql(
+                  s"""MERGE INTO delta.`$tablePath` AS target
+                     |USING (SELECT 100 AS i,
+                     |  named_struct('v', parse_json('{"merged":true}')) AS s) AS source
+                     |ON target.i = source.i
+                     |WHEN MATCHED THEN UPDATE SET target.s = source.s
+                     |""".stripMargin)
+            }
+
+            // After DML with DVs, verify that nested variant stats are PRESERVED
+            val afterSnapshot = deltaLog.update()
+            val filesWithDVs = afterSnapshot.allFiles.collect().filter(_.deletionVector != null)
+
+            assert(filesWithDVs.nonEmpty, s"Expected files with DVs after $dmlOp")
+
+            filesWithDVs.foreach { addFile =>
+              val stats = addFile.stats
+              assert(stats != null, "Stats should not be null")
+
+              // Parse the stats JSON to check minValues and maxValues
+              val statsJson = JsonUtils.fromJson[Map[String, Any]](stats)
+              val minValues = statsJson.get("minValues").map(_.asInstanceOf[Map[String, Any]])
+              val maxValues = statsJson.get("maxValues").map(_.asInstanceOf[Map[String, Any]])
+
+              // Check that nested variant column 's.v' IS in minValues/maxValues
+              val minValuesHasNestedVariant = minValues.exists { mv =>
+                mv.get("s").exists(_.asInstanceOf[Map[String, Any]].contains("v"))
+              }
+              val maxValuesHasNestedVariant = maxValues.exists { mv =>
+                mv.get("s").exists(_.asInstanceOf[Map[String, Any]].contains("v"))
+              }
+
+              assert(
+                minValuesHasNestedVariant && maxValuesHasNestedVariant,
+                s"Expected nested variant stats (s.v) to be preserved in " +
+                  s"minValues/maxValues after $dmlOp with DVs, but found: $stats")
+
+              // Verify the nested variant stats are valid Z85-encoded strings
+              def decodeZ85ToVariantJson(z85String: String): String = {
+                val decoded = Codec.Base85Codec.decodeBytes(z85String, z85String.length)
+                val metadataSize = VariantStatsShims.metadataSize(decoded)
+                val value = decoded.slice(metadataSize, decoded.length)
+                val variant = new Variant(value, decoded)
+                variant.toJson(java.time.ZoneId.of("UTC"))
+              }
+
+              val minSV = minValues
+                .flatMap(_.get("s"))
+                .map(_.asInstanceOf[Map[String, Any]])
+                .flatMap(_.get("v"))
+                .map(_.toString)
+              val maxSV = maxValues
+                .flatMap(_.get("s"))
+                .map(_.asInstanceOf[Map[String, Any]])
+                .flatMap(_.get("v"))
+                .map(_.toString)
+
+              val minSVJson = minSV.map(decodeZ85ToVariantJson)
+              val maxSVJson = maxSV.map(decodeZ85ToVariantJson)
+
+              assert(
+                minSVJson.exists(_.nonEmpty),
+                s"Expected minValues.s.v to be valid Z85-encoded variant, but found: $minSV")
+              assert(
+                maxSVJson.exists(_.nonEmpty),
+                s"Expected maxValues.s.v to be valid Z85-encoded variant, but found: $maxSV")
+            }
+          }
+        }
+      }
+    }
+  }
+
+  test("DML with DVs preserves variant and struct stats " +
+      "when collectVariantDataSkippingStats is enabled") {
+    // This test reads from golden files containing the variant logical type annotation
+    assume(VariantShreddingTestShims.variantInferShreddingSchemaSupported,
+      "parse_json requires Spark 4.1+")
+
+    // This test verifies that for a table with both variant and struct columns
+    // (schema: v variant, s struct<i int, j string>), stats are preserved for ALL columns
+    // after DML operations with DVs.
+    Seq("UPDATE", "DELETE", "MERGE").foreach { dmlOp =>
+      withClue(s"DML operation: $dmlOp") {
+        withSQLConf(
+          DeltaSQLConf.COLLECT_VARIANT_DATA_SKIPPING_STATS.key -> "true",
+          DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key -> "true",
+          DeltaSQLConf.UPDATE_USE_PERSISTENT_DELETION_VECTORS.key -> "true",
+          DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key -> "true") {
+          withTempDir { tempDir =>
+            // Load golden table with variant + struct stats (no checkpoint)
+            // Schema: v variant, s struct<i int, j string>
+            val source = new File(
+              "src/test/resources/delta/variant-stats-with-struct-no-checkpoint")
+            val target = new File(tempDir, "variant-stats-table")
+            FileUtils.copyDirectory(source, target)
+
+            val tablePath = target.getAbsolutePath
+
+            // Enable deletion vectors on the table
+            spark.sql(s"ALTER TABLE delta.`$tablePath` SET TBLPROPERTIES " +
+              s"('${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}' = 'true')")
+
+            val deltaLog = DeltaLog.forTable(spark, tablePath)
+
+            // Verify both variant and struct stats are present initially
+            val initialSnapshot = deltaLog.update()
+            val initialAddFiles = initialSnapshot.allFiles.collect()
+            val initialStatsWithVariant = initialAddFiles.filter { addFile =>
+              addFile.stats != null &&
+                addFile.stats.contains("\"v\":") &&
+                addFile.stats.contains("\"s\":")
+            }
+            assert(
+              initialStatsWithVariant.nonEmpty,
+              "Expected both variant and struct stats to be present initially")
+
+            // Perform DML operation that uses DVs
+            // Use s.i for the WHERE condition since it's a regular int column
+            dmlOp match {
+              case "UPDATE" =>
+                spark.sql(
+                  s"""UPDATE delta.`$tablePath`
+                     |SET v = parse_json('{"updated":true}')
+                     |WHERE s.i = 200""".stripMargin)
+              case "DELETE" =>
+                spark.sql(s"""DELETE FROM delta.`$tablePath` WHERE s.i = 200""")
+              case "MERGE" =>
+                spark.sql(
+                  s"""MERGE INTO delta.`$tablePath` AS target
+                     |USING (SELECT parse_json('{"merged":true}') AS v,
+                     |  named_struct('i', 200, 'j', 'str_200') AS s) AS source
+                     |ON target.s.i = source.s.i
+                     |WHEN MATCHED THEN UPDATE SET target.v = source.v
+                     |""".stripMargin)
+            }
+
+            // After DML with DVs, verify that ALL stats are PRESERVED
+            val afterSnapshot = deltaLog.update()
+            val filesWithDVs = afterSnapshot.allFiles.collect().filter(_.deletionVector != null)
+
+            assert(filesWithDVs.nonEmpty, s"Expected files with DVs after $dmlOp")
+
+            filesWithDVs.foreach { addFile =>
+              val stats = addFile.stats
+              assert(stats != null, "Stats should not be null")
+
+              // Parse the stats JSON to check minValues and maxValues
+              val statsJson = JsonUtils.fromJson[Map[String, Any]](stats)
+              val minValues = statsJson.get("minValues").map(_.asInstanceOf[Map[String, Any]])
+              val maxValues = statsJson.get("maxValues").map(_.asInstanceOf[Map[String, Any]])
+
+              // Check that variant column 'v' IS in minValues/maxValues
+              val minValuesHasVariant = minValues.exists(_.contains("v"))
+              val maxValuesHasVariant = maxValues.exists(_.contains("v"))
+
+              assert(
+                minValuesHasVariant && maxValuesHasVariant,
+                s"Expected variant stats (v) to be preserved after $dmlOp " +
+                  s"with DVs, but found: $stats")
+
+              // Check that struct column 's' stats (s.i and s.j) are also preserved
+              val minValuesHasStruct = minValues.exists { mv =>
+                mv.get("s").exists { s =>
+                  val structMap = s.asInstanceOf[Map[String, Any]]
+                  structMap.contains("i") && structMap.contains("j")
+                }
+              }
+              val maxValuesHasStruct = maxValues.exists { mv =>
+                mv.get("s").exists { s =>
+                  val structMap = s.asInstanceOf[Map[String, Any]]
+                  structMap.contains("i") && structMap.contains("j")
+                }
+              }
+
+              assert(
+                minValuesHasStruct && maxValuesHasStruct,
+                s"Expected struct stats (s.i, s.j) to be preserved after $dmlOp " +
+                  s"with DVs, but found: $stats")
+
+              // Verify the variant stats are valid Z85-encoded strings
+              def decodeZ85ToVariantJson(z85String: String): String = {
+                val decoded = Codec.Base85Codec.decodeBytes(z85String, z85String.length)
+                val metadataSize = VariantStatsShims.metadataSize(decoded)
+                val value = decoded.slice(metadataSize, decoded.length)
+                val variant = new Variant(value, decoded)
+                variant.toJson(java.time.ZoneId.of("UTC"))
+              }
+
+              val minV = minValues.flatMap(_.get("v")).map(_.toString)
+              val maxV = maxValues.flatMap(_.get("v")).map(_.toString)
+
+              val minVJson = minV.map(decodeZ85ToVariantJson)
+              val maxVJson = maxV.map(decodeZ85ToVariantJson)
+
+              assert(
+                minVJson.exists(_.nonEmpty),
+                s"Expected minValues.v to be valid Z85-encoded variant, but found: $minV")
+              assert(
+                maxVJson.exists(_.nonEmpty),
+                s"Expected maxValues.v to be valid Z85-encoded variant, but found: $maxV")
+            }
+          }
+        }
+      }
     }
   }
 }

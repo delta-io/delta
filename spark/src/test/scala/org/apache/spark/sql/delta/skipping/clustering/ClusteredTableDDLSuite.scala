@@ -233,7 +233,9 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
             // ensure that datatype validation behaves consistently between the two.
             if (clause == "REPLACE") {
               sql("DROP TABLE IF EXISTS dstTbl")
-              sql(s"CREATE TABLE dstTbl LIKE srcTbl LOCATION '${tmpDir.getAbsolutePath}'")
+              sql(
+                s"CREATE TABLE dstTbl LIKE srcTbl USING DELTA " +
+                  s"LOCATION '${tmpDir.getAbsolutePath}'")
             }
 
             Seq(
@@ -708,9 +710,8 @@ trait ClusteredTableDDLSuiteBase
       val e2 = intercept[DeltaAnalysisException] {
         sql(s"ALTER TABLE $testTable CLUSTER BY (id, id)")
       }
-      assert(e2.getErrorClass == "DELTA_DUPLICATE_COLUMNS_FOUND")
-      assert(e2.getSqlState == "42711")
-      assert(e2.getMessageParametersArray === Array("in CLUSTER BY", "`id`"))
+      checkError(e2, "DELTA_DUPLICATE_COLUMNS_FOUND.CLUSTER_BY", "42711",
+        Map("duplicateCols" -> "`id`"))
     }
   }
 
@@ -725,6 +726,8 @@ trait ClusteredTableDDLSuiteBase
   }
 
   test("optimize clustered table and trigger regular compaction") {
+    assume(!catalogOwnedDefaultCreationEnabledInTests,
+      "OPTIMIZE is blocked on catalog-managed tables")
     withClusteredTable(testTable, "a INT, b STRING", "a, b") {
       val tableIdentifier = TableIdentifier(testTable)
       verifyClusteringColumns(tableIdentifier, Seq("a", "b"))
@@ -768,6 +771,8 @@ trait ClusteredTableDDLSuiteBase
   }
 
   test("optimize clustered table - error scenarios") {
+    assume(!catalogOwnedDefaultCreationEnabledInTests,
+      "OPTIMIZE is blocked on catalog-managed tables")
     withClusteredTable(testTable, "a INT, b STRING", "a") {
       // Specify partition predicate.
       val e = intercept[DeltaUnsupportedOperationException] {
@@ -875,6 +880,8 @@ trait ClusteredTableDDLSuiteBase
 
 
   test("validate CLONE on clustered table") {
+    assume(!catalogOwnedDefaultCreationEnabledInTests,
+      "OPTIMIZE is blocked on catalog-managed tables")
     import testImplicits._
     val srcTable = "SrcTbl"
     val dstTable1 = "DestTbl1"

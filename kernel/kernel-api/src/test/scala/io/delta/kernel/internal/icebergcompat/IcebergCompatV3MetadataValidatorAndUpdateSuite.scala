@@ -36,7 +36,8 @@ trait IcebergCompatV3MetadataValidatorAndUpdaterSuiteBase
 
   override def icebergCompatVersion: String = "V3"
 
-  override def supportedDataColumnTypes: Set[DataType] = ALL_TYPES + VariantType.VARIANT
+  override def supportedDataColumnTypes: Set[DataType] =
+    ALL_TYPES + VariantType.VARIANT + GeometryType.ofDefault() + GeographyType.ofDefault()
 
   override def unsupportedDataColumnTypes: Set[DataType] = Set.empty
 
@@ -80,7 +81,7 @@ class IcebergCompatV3MetadataValidatorAndUpdaterSuite
       isNewTable: Boolean,
       metadata: Metadata,
       protocol: Protocol): Optional[Metadata] = {
-    validateAndUpdateIcebergCompatV3Metadata(isNewTable, metadata, protocol)
+    validateAndUpdateIcebergCompatV3Metadata(isNewTable, metadata, protocol, Optional.empty())
   }
 
   Seq(true, false).foreach { isNewTable =>
@@ -90,7 +91,7 @@ class IcebergCompatV3MetadataValidatorAndUpdaterSuite
       val protocol =
         new Protocol(3, 7, Set.empty.asJava, Set("icebergCompatV3", "rowTracking").asJava)
       val e = intercept[KernelException] {
-        validateAndUpdateIcebergCompatV3Metadata(isNewTable, metadata, protocol)
+        validateAndUpdateIcebergCompatV3Metadata(isNewTable, metadata, protocol, Optional.empty())
       }
       assert(e.getMessage.contains(
         "icebergCompatV3: requires the feature 'columnMapping' to be enabled."))
@@ -126,13 +127,13 @@ class IcebergCompatV3MetadataValidatorAndUpdaterSuite
 
       if (isNewTable) {
         val updatedMetadata =
-          validateAndUpdateIcebergCompatV3Metadata(isNewTable, metadata, protocol)
+          validateAndUpdateIcebergCompatV3Metadata(isNewTable, metadata, protocol, Optional.empty())
         assert(updatedMetadata.isPresent)
         assert(updatedMetadata.get().getConfiguration.get("delta.columnMapping.mode") == "name")
         assert(TableConfig.ROW_TRACKING_ENABLED.fromMetadata(updatedMetadata.get()))
       } else {
         val e = intercept[KernelException] {
-          validateAndUpdateIcebergCompatV3Metadata(isNewTable, metadata, protocol)
+          validateAndUpdateIcebergCompatV3Metadata(isNewTable, metadata, protocol, Optional.empty())
         }
         assert(e.getMessage.contains(
           "The value 'none' for the property 'delta.columnMapping.mode' is" +

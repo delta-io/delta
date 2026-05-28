@@ -62,23 +62,32 @@ def delete_if_exists(path):
         print("Deleted %s " % path)
 
 
-def prepare(root_dir, spark_version):
+def prepare(root_dir, spark_version, kernel_version=None):
     print("##### Preparing python tests & building packages #####")
+    print(f"[python/run-tests.py] prepare: spark_version={spark_version!r}, "
+          f"kernel_version={kernel_version!r}")
     # Build package with python files in it
     sbt_path = path.join(root_dir, path.join("build", "sbt"))
-    ivy_caches_to_clear = [
-        filepath for filepath in os.listdir(os.path.expanduser("~"))
-        if filepath.startswith(".ivy")
-    ]
-    print(f"Clearing Ivy caches in: {ivy_caches_to_clear}")
-    for filepath in ivy_caches_to_clear:
-        delete_if_exists(os.path.expanduser(f"~/{filepath}/cache/io.delta"))
-    delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/"))
+    # When kernel_version is set we are consuming the kernel from Maven; wiping
+    # the io.delta caches would delete the very artifact we just resolved (or
+    # locally published as a snapshot), forcing an unnecessary re-resolve and
+    # potentially failing if the artifact is only available locally.
+    if kernel_version:
+        print(f"Skipping io.delta cache wipe because kernel_version={kernel_version!r}")
+    else:
+        ivy_caches_to_clear = [
+            filepath for filepath in os.listdir(os.path.expanduser("~"))
+            if filepath.startswith(".ivy")
+        ]
+        print(f"Clearing Ivy caches in: {ivy_caches_to_clear}")
+        for filepath in ivy_caches_to_clear:
+            delete_if_exists(os.path.expanduser(f"~/{filepath}/cache/io.delta"))
+        delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/"))
     sbt_command = [sbt_path]
-    packages = ["spark/publishM2", "storage/publishM2"]
     sbt_command = sbt_command + [f"-DsparkVersion={spark_version}"]
-    packages = packages + ["connectCommon/publishM2", "connectServer/publishM2"]
-    run_cmd(sbt_command + ["clean"] + packages, stream_output=True)
+    if kernel_version:
+        sbt_command = sbt_command + [f"-DkernelVersion={kernel_version}"]
+    run_cmd(sbt_command + ["clean", "publishM2"], stream_output=True)
 
 
 def get_local_package(package_name, spark_version, root_dir):
@@ -226,7 +235,8 @@ if __name__ == "__main__":
     print("##### Running python tests #####")
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     spark_version = os.getenv("SPARK_VERSION") or "default"
-    prepare(root_dir, spark_version)
+    kernel_version = os.getenv("KERNEL_VERSION")
+    prepare(root_dir, spark_version, kernel_version)
     delta_spark_package = get_local_package("delta-spark", spark_version, root_dir)
 
     run_python_style_checks(root_dir)
@@ -240,18 +250,14 @@ if __name__ == "__main__":
     # packages locally instead of downloading from Maven.
     # Get the full Spark version for spark-connect artifact
     script_path = os.path.join(root_dir, "project", "scripts", "get_spark_version_info.py")
-    try:
-        result = subprocess.run(
-            ["python3", script_path, "--get-field", spark_version, "fullVersion"],
-            cwd=root_dir,
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        spark_full_version = json.loads(result.stdout.strip())
-    except Exception as e:
-        print(f"Warning: Could not determine full Spark version: {e}")
-        spark_full_version = "4.0.0"
+    result = subprocess.run(
+        ["python3", script_path, "--get-field", spark_version, "fullVersion"],
+        cwd=root_dir,
+        capture_output=True,
+        text=True,
+        check=True
+    )
+    spark_full_version = json.loads(result.stdout.strip())
 
     delta_connect_packages = ["com.google.protobuf:protobuf-java:3.25.1",
                               f"org.apache.spark:spark-connect_2.13:{spark_full_version}",

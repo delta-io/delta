@@ -16,8 +16,6 @@
 
 package org.apache.spark.sql.delta
 
-import scala.reflect.runtime.universe._
-
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -210,26 +208,7 @@ class CommitInfoSerializerSuite extends QueryTest with SharedSparkSession {
   )
 
   test("all operations should be tested in this suite") {
-    val mirror = runtimeMirror(getClass.getClassLoader)
-    val moduleSymbol =
-      mirror.staticModule("org.apache.spark.sql.delta.DeltaOperations")
-    val moduleMirror = mirror.reflectModule(moduleSymbol)
-    val instance = moduleMirror.instance
-
-    val instanceMirror = mirror.reflect(instance)
-    val symbol = instanceMirror.symbol
-    val traitOperation =
-      typeOf[org.apache.spark.sql.delta.DeltaOperations.Operation].typeSymbol
-
-    val allOperations = symbol.typeSignature.members.flatMap {
-      case cls: ClassSymbol
-          if cls.isCaseClass && cls.isPublic && cls.toType.baseClasses.contains(traitOperation) =>
-        Some(cls.name.toString)
-      case obj: ModuleSymbol
-          if obj.isPublic && obj.moduleClass.asType.toType.baseClasses.contains(traitOperation) =>
-        Some(obj.name.toString)
-      case _ => None
-    }.toSet
+    val allOperations = DeltaTestUtils.getAllDeltaOperations
     assert(
       (allOperations -- ignoredOperationClasses) == trackedOperationClasses.keySet,
       s"if you add a new operation, please add a new test case in this suite " +

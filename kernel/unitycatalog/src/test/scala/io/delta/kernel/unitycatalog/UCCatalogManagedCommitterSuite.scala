@@ -29,7 +29,9 @@ import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.util.{Tuple2 => KernelTuple2}
 import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils, TestFixtures, VectorTestUtils}
-import io.delta.kernel.utils.{CloseableIterator, FileStatus}
+import io.delta.kernel.unitycatalog.adapters.UniformAdapter
+import io.delta.kernel.utils.{CloseableIterable, CloseableIterator, FileStatus}
+import io.delta.storage.commit.{CommitFailedException => StorageCFE}
 import io.delta.storage.commit.Commit
 import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
 
@@ -182,7 +184,12 @@ class UCCatalogManagedCommitterSuite
     withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
       // ===== GIVEN =====
       val ucClient = new InMemoryUCClient("ucMetastoreId")
-      val committer = new UCCatalogManagedCommitter(ucClient, testUcTableId, tablePath)
+      val ucTableIdentifier = new UCTableIdentifier("cat", "sch", "tbl")
+      val committer = new UCCatalogManagedCommitter(
+        ucClient,
+        testUcTableId,
+        tablePath,
+        ucTableIdentifier)
       val testValue = "TEST_FILE_STATUS_DATA"
       val actionsIterator = getSingleElementRowIter(testValue)
 
@@ -237,6 +244,99 @@ class UCCatalogManagedCommitterSuite
       assert(latestProtocol.getReaderFeatures === protocolUpgrade.getReaderFeatures)
       assert(latestProtocol.getWriterFeatures === protocolUpgrade.getWriterFeatures)
       assert(latestMetadata.getConfiguration === metadataUpgrade.getConfiguration)
+    }
+  }
+
+  test("CATALOG_WRITE: Iceberg metadata is extracted and passed to UC client") {
+    withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
+      // ===== GIVEN =====
+      val ucClient = new InMemoryUCClient("ucMetastoreId")
+      ucClient.insertTableDataAfterCreate(testUcTableId)
+      val committer = new UCCatalogManagedCommitter(ucClient, testUcTableId, tablePath)
+
+      // ===== WHEN =====
+      val icebergProperties = Map(
+        UniformAdapter.ICEBERG_METADATA_LOCATION_KEY -> "s3://bucket/table/metadata/v1.json",
+        UniformAdapter.ICEBERG_CONVERTED_DELTA_VERSION_KEY -> "1",
+        UniformAdapter.ICEBERG_CONVERTED_DELTA_TIMESTAMP_KEY -> "2025-01-04T03:13:11.423").asJava
+
+      val commitMetadata = createCommitMetadata(
+        version = 1,
+        logPath = logPath,
+        committerProperties = () => icebergProperties,
+        readPandMOpt = Optional.of(
+          new KernelTuple2[Protocol, Metadata](
+            protocolWithCatalogManagedSupport,
+            basicPartitionedMetadata)))
+      committer.commit(defaultEngine, emptyActionsIterator, commitMetadata)
+
+      // ===== THEN =====
+      val updatedTableData = ucClient.getTablesCopy.get(testUcTableId).get
+      val icebergOpt = updatedTableData.getCurrentIcebergOpt
+      assert(icebergOpt.isDefined)
+      val iceberg = icebergOpt.get
+      assert(iceberg.getMetadataLocation === "s3://bucket/table/metadata/v1.json")
+      assert(iceberg.getConvertedDeltaVersion === 1L)
+      assert(iceberg.getConvertedDeltaTimestamp === "2025-01-04T03:13:11.423")
+    }
+  }
+
+  test("CATALOG_WRITE: empty committer properties result in no Iceberg metadata") {
+    withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
+      // ===== GIVEN =====
+      val ucClient = new InMemoryUCClient("ucMetastoreId")
+      ucClient.insertTableDataAfterCreate(testUcTableId)
+      val committer = new UCCatalogManagedCommitter(ucClient, testUcTableId, tablePath)
+
+      // ===== WHEN =====
+      val emptyProperties = Map.empty[String, String].asJava
+      val commitMetadata = createCommitMetadata(
+        version = 1,
+        logPath = logPath,
+        committerProperties = () => emptyProperties,
+        readPandMOpt = Optional.of(
+          new KernelTuple2[Protocol, Metadata](
+            protocolWithCatalogManagedSupport,
+            basicPartitionedMetadata)))
+      committer.commit(defaultEngine, emptyActionsIterator, commitMetadata)
+
+      // ===== THEN =====
+      val updatedTableData = ucClient.getTablesCopy.get(testUcTableId).get
+      val icebergOpt = updatedTableData.getCurrentIcebergOpt
+      assert(icebergOpt.isEmpty)
+    }
+  }
+
+  test("CATALOG_WRITE: throws exception when convertedDeltaVersion " +
+    "does not match commit version") {
+    withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
+      // ===== GIVEN =====
+      val ucClient = new InMemoryUCClient("ucMetastoreId")
+      ucClient.insertTableDataAfterCreate(testUcTableId)
+      val committer = new UCCatalogManagedCommitter(ucClient, testUcTableId, tablePath)
+
+      // ===== WHEN =====
+      // Commit version is 1, but convertedDeltaVersion is 2 (mismatch)
+      val icebergProperties = Map(
+        UniformAdapter.ICEBERG_METADATA_LOCATION_KEY -> "s3://bucket/table/metadata/v2.json",
+        UniformAdapter.ICEBERG_CONVERTED_DELTA_VERSION_KEY -> "2",
+        UniformAdapter.ICEBERG_CONVERTED_DELTA_TIMESTAMP_KEY -> "2025-01-04T03:13:11.423").asJava
+
+      val commitMetadata = createCommitMetadata(
+        version = 1,
+        logPath = logPath,
+        committerProperties = () => icebergProperties,
+        readPandMOpt = Optional.of(
+          new KernelTuple2[Protocol, Metadata](
+            protocolWithCatalogManagedSupport,
+            basicPartitionedMetadata)))
+
+      // ===== THEN =====
+      val exception = intercept[IllegalStateException] {
+        committer.commit(defaultEngine, emptyActionsIterator, commitMetadata)
+      }
+      assert(exception.getMessage.contains(
+        "Uniform convertedDeltaVersion (2) must match commit version (1)"))
     }
   }
 
@@ -399,7 +499,12 @@ class UCCatalogManagedCommitterSuite
       val ucClient = new InMemoryUCClient("ucMetastoreId")
       val testValue = "CREATE_TABLE_DATA_12345"
       val actionsIterator = getSingleElementRowIter(testValue)
-      val committer = new UCCatalogManagedCommitter(ucClient, testUcTableId, tablePath)
+      val ucTableIdentifier = new UCTableIdentifier("cat", "sch", "tbl")
+      val committer = new UCCatalogManagedCommitter(
+        ucClient,
+        testUcTableId,
+        tablePath,
+        ucTableIdentifier)
 
       val commitMetadata = createCommitMetadata(
         version = 0,
@@ -424,10 +529,146 @@ class UCCatalogManagedCommitterSuite
       // Read the file content and verify our test value was written
       val fileContent = scala.io.Source.fromFile(file).getLines().mkString("\n")
       assert(fileContent.contains(testValue))
+    }
+  }
 
-      // Validate that UC was not updated for v0
-      // TODO: [delta-io/delta#5118] If UC changes CREATE semantics, update logic here.
-      assert(!ucClient.getTablesCopy.contains(testUcTableId))
+  test("CATALOG_CREATE: finalizes table in UC when UCTableIdentifier is provided") {
+    withTempDirAndEngine { case (tablePathUnresolved, engine) =>
+      // ===== GIVEN =====
+      val ucClient = new InMemoryUCClient("ucMetastoreId")
+      val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
+      val tablePath = engine.getFileSystemClient.resolvePath(tablePathUnresolved)
+      val ucTableIdentifier = new UCTableIdentifier(
+        "cat",
+        "sch",
+        "tbl")
+
+      // ===== WHEN =====
+      val result = ucCatalogManagedClient
+        .buildCreateTableTransaction(
+          testUcTableId,
+          tablePath,
+          testSchema,
+          "test-engine",
+          ucTableIdentifier)
+        .build(engine)
+        .commit(engine, CloseableIterable.emptyIterable())
+
+      // ===== THEN =====
+      // createImpl should have called finalizeCreate, registering the table
+      assert(ucClient.getTablesCopy.contains("cat.sch.tbl"))
+
+      // Verify the properties and columns sent to finalizeCreate
+      val record = ucClient.getLastFinalizeCreateRecord.get
+      assert(record.catalogName == "cat")
+      assert(record.schemaName == "sch")
+      assert(record.tableName == "tbl")
+      assert(record.storageLocation.nonEmpty)
+
+      // Verify Class B properties were computed from CommitMetadata
+      val props = record.properties.asScala
+      assert(props("delta.lastUpdateVersion") == "0")
+      assert(props.contains("delta.lastCommitTimestamp"))
+      assert(props("delta.minReaderVersion") == "3")
+      assert(props("delta.minWriterVersion") == "7")
+      assert(props("delta.feature.catalogManaged") == "supported")
+
+      // Verify columns were derived from the schema
+      val colNames = record.columns.asScala.map(_.getName)
+      assert(colNames == testSchema.fieldNames().asScala)
+    }
+  }
+
+  test("CATALOG_CREATE: skips finalization when UCTableIdentifier is absent") {
+    withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
+      // ===== GIVEN =====
+      val ucClient = new InMemoryUCClient("ucMetastoreId")
+      // 3-arg constructor: no UCTableIdentifier
+      val committer = new UCCatalogManagedCommitter(ucClient, testUcTableId, tablePath)
+
+      val commitMetadata = createCommitMetadata(
+        version = 0,
+        logPath = logPath,
+        newProtocolOpt = Optional.of(protocolWithCatalogManagedSupport),
+        newMetadataOpt = Optional.of(basicPartitionedMetadata))
+
+      // ===== WHEN =====
+      // Should succeed without throwing - finalization is skipped
+      val response = committer.commit(defaultEngine, emptyActionsIterator, commitMetadata)
+
+      // ===== THEN =====
+      // Delta file was written successfully
+      assert(response != null)
+      // No finalizeCreate was called
+      assert(ucClient.getLastFinalizeCreateRecord.isEmpty)
+    }
+  }
+
+  test("CATALOG_CREATE: CFE from finalizeCreate propagates as kernel CFE(retryable=true)") {
+    withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
+      // ===== GIVEN =====
+      // Test the committer directly (not through TransactionImpl) to verify the exception type
+      // before TransactionImpl's retry logic wraps it in MaxCommitRetryLimitReachedException.
+      val ucClient = new InMemoryUCClient("ucMetastoreId") {
+        override def forceThrowInFinalizeCreateMethod(): Unit =
+          throw new StorageCFE(true, false, "UC server unreachable", null)
+      }
+      val ucTableIdentifier = new UCTableIdentifier("cat", "sch", "tbl")
+      val committer = new UCCatalogManagedCommitter(
+        ucClient,
+        testUcTableId,
+        tablePath,
+        ucTableIdentifier)
+
+      val commitMetadata = createCommitMetadata(
+        version = 0,
+        logPath = logPath,
+        newProtocolOpt = Optional.of(protocolWithCatalogManagedSupport),
+        newMetadataOpt = Optional.of(basicPartitionedMetadata))
+
+      // ===== WHEN =====
+      val ex = intercept[CommitFailedException] {
+        committer.commit(defaultEngine, emptyActionsIterator, commitMetadata)
+      }
+
+      // ===== THEN =====
+      assert(ex.isRetryable && !ex.isConflict)
+      assert(ex.getMessage.contains("UC server unreachable"))
+    }
+  }
+
+  test("CATALOG_WRITE: does not finalize even when UCTableIdentifier is present") {
+    withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
+      // ===== GIVEN =====
+      // A committer that has UCTableIdentifier AND would blow up if finalizeCreate were called.
+      val ucClient = new InMemoryUCClient("ucMetastoreId") {
+        // scalastyle:off throwerror
+        override def forceThrowInFinalizeCreateMethod(): Unit =
+          throw new AssertionError("finalizeCreate should not be called for CATALOG_WRITE")
+        // scalastyle:on throwerror
+      }
+      ucClient.insertTableDataAfterCreate(testUcTableId)
+      val ucTableIdentifier = new UCTableIdentifier("cat", "sch", "tbl")
+      val committer = new UCCatalogManagedCommitter(
+        ucClient,
+        testUcTableId,
+        tablePath,
+        ucTableIdentifier)
+
+      // CATALOG_WRITE at version 1 -- commit type routing sends this to writeImpl,
+      // NOT createImpl, so finalization should never happen.
+      val commitMetadata = catalogManagedWriteCommitMetadata(version = 1, logPath = logPath)
+
+      // ===== WHEN =====
+      // If finalizeCreate were called, the forceThrowInFinalizeCreateMethod override would
+      // throw an AssertionError, causing this test to fail.
+      committer.commit(defaultEngine, emptyActionsIterator, commitMetadata)
+
+      // ===== THEN =====
+      // The table was committed to UC (version 1 staged commit), but no finalization happened.
+      val updatedTable = ucClient.getTablesCopy.get(testUcTableId).get
+      assert(updatedTable.getMaxRatifiedVersion == 1)
+      assert(!ucClient.getTablesCopy.contains("cat.sch.tbl"))
     }
   }
 
@@ -442,7 +683,12 @@ class UCCatalogManagedCommitterSuite
             overwrite: Boolean): Unit =
           throw new IOException("Network hiccup")
       })
-      val committer = new UCCatalogManagedCommitter(ucClient, testUcTableId, tablePath)
+      val ucTableIdentifier = new UCTableIdentifier("cat", "sch", "tbl")
+      val committer = new UCCatalogManagedCommitter(
+        ucClient,
+        testUcTableId,
+        tablePath,
+        ucTableIdentifier)
 
       val commitMetadata = createCommitMetadata(
         version = 0,

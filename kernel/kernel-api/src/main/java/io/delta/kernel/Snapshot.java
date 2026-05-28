@@ -17,9 +17,11 @@
 package io.delta.kernel;
 
 import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.clustering.ClusteringColumnInfo;
 import io.delta.kernel.commit.PublishFailedException;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
+import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.statistics.SnapshotStatistics;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
@@ -118,6 +120,37 @@ public interface Snapshot {
   /** @return statistics about this snapshot */
   SnapshotStatistics getStatistics();
 
+  /**
+   * Get per-clustering-column descriptors with the physical column reference (as stored in the
+   * {@code delta.clustering} domain), the logical column reference (resolved against {@link
+   * #getSchema()}), and the column's data type. Returned in the order the columns appear in the
+   * domain.
+   *
+   * <ul>
+   *   <li>{@code Optional.empty()} -- snapshot has no {@code delta.clustering} domain
+   *   <li>{@code Optional.of(List.of())} -- clustered with no columns
+   *   <li>{@code Optional.of([info1, info2])} -- clustered with the listed columns
+   * </ul>
+   *
+   * <p>Implementations must override this method; the default body throws {@link
+   * UnsupportedOperationException}. A turnkey implementation can compose {@link
+   * #getDomainMetadata(String)} (with {@link ClusteringColumnInfo#CLUSTERING_DOMAIN_NAME}) and
+   * {@link ClusteringColumnInfo#resolveAllFromDomainJson(StructType, String)}; overrides are
+   * encouraged to cache the result so repeated callers (e.g. plan rules invoking it per file group)
+   * don't re-deserialize the JSON and re-walk the schema.
+   *
+   * @throws UnsupportedOperationException if the {@link Snapshot} implementation does not override
+   *     this method.
+   * @throws KernelException if the {@code delta.clustering} domain JSON is not a valid clustering
+   *     domain configuration, or if a physical clustering column cannot be resolved against the
+   *     snapshot's schema.
+   * @since 4.3.0
+   */
+  default Optional<List<ClusteringColumnInfo>> getClusteringColumnInfos() {
+    throw new UnsupportedOperationException(
+        "getClusteringColumnInfos() is not implemented for this Snapshot");
+  }
+
   /** @return a scan builder to construct a {@link Scan} to read data from this snapshot */
   ScanBuilder getScanBuilder();
 
@@ -139,9 +172,9 @@ public interface Snapshot {
    * @param engine the engine to use for publishing commits
    * @see io.delta.kernel.commit.CatalogCommitter#publish
    * @throws PublishFailedException if the publish operation fails
+   * @return a new Snapshot reflecting the published state
    */
-  // TODO: Return a new Snapshot reflecting the published state
-  void publish(Engine engine) throws PublishFailedException;
+  Snapshot publish(Engine engine) throws PublishFailedException;
 
   /**
    * Writes a checksum file for this snapshot using the specified mode:

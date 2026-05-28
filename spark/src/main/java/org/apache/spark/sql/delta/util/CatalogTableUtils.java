@@ -80,6 +80,27 @@ public final class CatalogTableUtils {
   }
 
   /**
+   * Checks whether the table is Unity Catalog managed based on storage properties map.
+   *
+   * <p>This method checks the properties map (typically from table.storage.properties) for
+   * UC markers, allowing UC table detection without requiring a full CatalogTable object.
+   * This is useful when only the properties map is available, such as in DataSource APIs.
+   *
+   * @param properties Storage properties map (e.g., from CatalogTable.storage.properties or
+   *                   DataSource parameters map)
+   * @return {@code true} when the table is catalog managed and contains the UC identifier
+   */
+  public static boolean isUnityCatalogManagedTableFromProperties(Map<String, String> properties) {
+    if (properties == null || properties.isEmpty()) {
+      return false;
+    }
+    boolean isUCBacked = properties.containsKey(UCCommitCoordinatorClient.UC_TABLE_ID_KEY);
+    boolean isCatalogManaged = isCatalogManagedFeatureEnabled(properties, FEATURE_CATALOG_MANAGED)
+        || isCatalogManagedFeatureEnabled(properties, FEATURE_CATALOG_OWNED_PREVIEW);
+    return isUCBacked && isCatalogManaged;
+  }
+
+  /**
    * Checks whether the given feature key is enabled in the table properties.
    *
    * @param tableProperties The table properties

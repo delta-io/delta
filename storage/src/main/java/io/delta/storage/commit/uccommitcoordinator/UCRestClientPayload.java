@@ -20,6 +20,7 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
+import io.delta.storage.commit.uniform.UniformMetadata;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.Path;
 
@@ -200,6 +201,42 @@ class UCRestClientPayload {
   }
 
   // ==============================
+  // IcebergMetadata Class
+  // ==============================
+  static class IcebergMetadata {
+    String metadataLocation;
+    Long convertedDeltaVersion;
+    String convertedDeltaTimestamp;
+
+    static IcebergMetadata fromIcebergMetadata(io.delta.storage.commit.uniform.IcebergMetadata icebergMetadata) {
+      if (icebergMetadata == null) {
+        throw new IllegalArgumentException("icebergMetadata cannot be null");
+      }
+
+      IcebergMetadata iceberg = new IcebergMetadata();
+      iceberg.metadataLocation = icebergMetadata.getMetadataLocation();
+      iceberg.convertedDeltaVersion = icebergMetadata.getConvertedDeltaVersion();
+      iceberg.convertedDeltaTimestamp = icebergMetadata.getConvertedDeltaTimestamp();
+      return iceberg;
+    }
+  }
+
+  // ==============================
+  // Uniform Class
+  // ==============================
+  static class Uniform {
+    @JsonInclude(JsonInclude.Include.NON_EMPTY)
+    IcebergMetadata iceberg;
+
+    static Uniform fromUniformMetadata(UniformMetadata uniformMetadata) {
+      Uniform uniform = new Uniform();
+      uniformMetadata.getIcebergMetadata().ifPresent(
+          icebergMeta -> uniform.iceberg = IcebergMetadata.fromIcebergMetadata(icebergMeta));
+      return uniform;
+    }
+  }
+
+  // ==============================
   // CommitRequest Class
   // ==============================
   static class CommitRequest {
@@ -209,6 +246,8 @@ class UCRestClientPayload {
     Long latestBackfilledVersion;
     Metadata metadata;
     Protocol protocol;
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    Uniform uniform;
   }
 
   // ==============================

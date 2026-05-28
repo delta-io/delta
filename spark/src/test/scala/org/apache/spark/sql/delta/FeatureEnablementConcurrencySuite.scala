@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
-import org.apache.spark.sql.delta.actions.{AddFile, Format, Metadata}
+import org.apache.spark.sql.delta.actions.{AddFile, Format, Metadata, Protocol}
 import org.apache.spark.sql.delta.fuzzer.{OptimisticTransactionPhases, PhaseLockingTransactionExecutionObserver => TransactionObserver}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -261,6 +261,33 @@ class FeatureEnablementConcurrencySuite
       added = Map("prop2" -> "newValue2"))
     assert(result4 === expected4)
 
+    // Tests 5-6: V2Checkpoint per-key validator.
+    // In the real conflict resolution flow, checkProtocolCompatibility() runs first and updates
+    // currentTransactionInfo.protocol to the winning protocol (which includes V2Checkpoint).
+    // We simulate that here by constructing a conflict checker with the upgraded protocol.
+    val v2CkptProtocol = Protocol.forTableFeature(V2CheckpointTableFeature)
+    val conflictCheckerWithV2Ckpt = new ConflictChecker(
+      spark,
+      initialCurrentTransactionInfo = dummyTransactionInfo.copy(protocol = v2CkptProtocol),
+      winningCommitSummary = dummySummary,
+      isolationLevel = WriteSerializable)
+
+    // Test 5: delta.checkpointPolicy=v2 is valid when the protocol supports V2Checkpoint.
+    val result5 = conflictCheckerWithV2Ckpt.checkConfigurationChangesForConflicts(
+      currentMetadata = Metadata(configuration = Map.empty),
+      winningMetadata = Metadata(configuration =
+        Map(DeltaConfigs.CHECKPOINT_POLICY.key -> CheckpointPolicy.V2.name)),
+      allowList = Set(DeltaConfigs.CHECKPOINT_POLICY.key))
+    assert(result5.areValid)
+
+    // Test 6: An unknown checkpointPolicy value is rejected by the per-key validator.
+    val result6 = conflictCheckerWithV2Ckpt.checkConfigurationChangesForConflicts(
+      currentMetadata = Metadata(configuration = Map.empty),
+      winningMetadata = Metadata(configuration =
+        Map(DeltaConfigs.CHECKPOINT_POLICY.key -> "unknown-policy")),
+      allowList = Set(DeltaConfigs.CHECKPOINT_POLICY.key))
+    assert(!result6.areValid)
+
   }
 
   def testFeatureDisablement(property: String, withUnset: Boolean): Unit = {
@@ -412,6 +439,121 @@ class FeatureEnablementConcurrencySuite
       val footer = getParquetFooter(deltaLog, addFile)
       validateFooter(footer, expected = false)
     }
+  }
+
+  private def assertCheckpointFormat(
+      deltaLog: DeltaLog, version: Long, isV2: Boolean): Unit = {
+    val files = deltaLog.listFrom(version)
+      .filter(FileNames.isCheckpointFile)
+      .filter(f => CheckpointInstance(f.getPath).version == version)
+      .toList
+    assert(files.nonEmpty)
+    if (isV2) {
+      assert(files.forall(f =>
+        CheckpointInstance(f.getPath).format == CheckpointInstance.Format.V2))
+    } else {
+      assert(files.forall { f =>
+        val fmt = CheckpointInstance(f.getPath).format
+        fmt == CheckpointInstance.Format.SINGLE || fmt == CheckpointInstance.Format.WITH_PARTS
+      })
+    }
+  }
+
+  ///////////////////////////////////////////////////////////////////
+  // V2CheckpointTableFeature enablement: conflict resolution tests.//
+  ///////////////////////////////////////////////////////////////////
+  test("V2CheckpointTableFeature allows concurrent txns at upgrade") {
+    assert(!V2CheckpointTableFeature.failConcurrentTransactionsAtUpgrade)
+  }
+
+  test("v2Checkpoint enablement win: concurrent DML rebases successfully " +
+       "and writes V2 checkpoint") {
+    val (deltaLog, _) = createTestTable(
+      properties = Seq(s"'${DeltaConfigs.CHECKPOINT_INTERVAL.key}' = '1'"))
+    val ctx = new TestContext(deltaLog)
+    val v2CkptEnablementTxn = AlterTableProperty(
+      property = DeltaConfigs.CHECKPOINT_POLICY.key, value = CheckpointPolicy.V2.name)
+    val businessTxn = Delete(rows = Seq(90L))
+    businessTxn.interleave(ctx) { v2CkptEnablementTxn.execute(ctx) }
+
+    val snapshot = deltaLog.update()
+    assert(snapshot.version === 3)
+    checkAnswer(
+      spark.table(testTableName).select("idCol"),
+      (0L until 100L).filter(_ != 90L).map(Row(_)))
+    assert(DeltaConfigs.CHECKPOINT_POLICY.fromMetaData(snapshot.metadata).needsV2CheckpointSupport)
+    assertCheckpointFormat(deltaLog, snapshot.version, isV2 = true)
+  }
+
+  test("Checkpoint format invariant (a): all paths write V1 before v2Checkpoint enablement") {
+    val (deltaLog, _) = createTestTable(
+      properties = Seq(s"'${DeltaConfigs.CHECKPOINT_INTERVAL.key}' = '1'"))
+    sql(s"DELETE FROM $testTableName WHERE idCol = 90")
+    val preEnablementVersion = deltaLog.update().version
+    assert(preEnablementVersion === 2)
+    checkAnswer(
+      spark.table(testTableName).select("idCol"),
+      (0L until 100L).filter(_ != 90L).map(Row(_)))
+    deltaLog.createCheckpointAtVersion(preEnablementVersion)
+    deltaLog.checkpoint(deltaLog.update())
+    assertCheckpointFormat(deltaLog, preEnablementVersion, isV2 = false)
+  }
+
+  test("Checkpoint format invariant (b): all paths write V2 at v2Checkpoint enablement version") {
+    val (deltaLog, _) = createTestTable(
+      properties = Seq(s"'${DeltaConfigs.CHECKPOINT_INTERVAL.key}' = '1'"))
+    sql(s"ALTER TABLE $testTableName SET TBLPROPERTIES " +
+      s"('${DeltaConfigs.CHECKPOINT_POLICY.key}' = '${CheckpointPolicy.V2.name}')")
+    val enablementVersion = deltaLog.update().version
+    assert(enablementVersion === 2)
+    deltaLog.createCheckpointAtVersion(enablementVersion)
+    deltaLog.checkpoint(deltaLog.update())
+    assertCheckpointFormat(deltaLog, enablementVersion, isV2 = true)
+  }
+
+  test("Checkpoint format invariant (c): all paths write V2 after v2Checkpoint enablement " +
+      "(including rebased concurrent DML)") {
+    val (deltaLog, _) = createTestTable(
+      properties = Seq(s"'${DeltaConfigs.CHECKPOINT_INTERVAL.key}' = '1'"))
+    val ctx = new TestContext(deltaLog)
+    val v2CkptEnablementTxn = AlterTableProperty(
+      property = DeltaConfigs.CHECKPOINT_POLICY.key, value = CheckpointPolicy.V2.name)
+    val businessTxn = Delete(rows = Seq(90L))
+    // v2Checkpoint enablement commits first; DML rebases and commits at enablementVersion+1.
+    businessTxn.interleave(ctx) { v2CkptEnablementTxn.execute(ctx) }
+    val dmlVersion = deltaLog.update().version
+    assert(dmlVersion === 3)
+    checkAnswer(
+      spark.table(testTableName).select("idCol"),
+      (0L until 100L).filter(_ != 90L).map(Row(_)))
+    deltaLog.createCheckpointAtVersion(dmlVersion)
+    deltaLog.checkpoint(deltaLog.update())
+    assertCheckpointFormat(deltaLog, dmlVersion, isV2 = true)
+  }
+
+  for (withUnset <- BOOLEAN_DOMAIN)
+  test(s"Disable v2Checkpoint feature - withUnset: $withUnset") {
+    val (deltaLog, _) = createTestTable()
+    val ctx = new TestContext(deltaLog)
+    AlterTableProperty(
+      property = DeltaConfigs.CHECKPOINT_POLICY.key,
+      value = CheckpointPolicy.V2.name).execute(ctx)
+
+    val businessTxn = Delete(rows = Seq(90L))
+    val disableTxn = if (withUnset) {
+      UnsetTableProperty(DeltaConfigs.CHECKPOINT_POLICY.key)
+    } else {
+      AlterTableProperty(
+        property = DeltaConfigs.CHECKPOINT_POLICY.key,
+        value = CheckpointPolicy.Classic.name)
+    }
+
+    businessTxn.start(ctx)
+    disableTxn.execute(ctx)
+    val e = intercept[org.apache.spark.SparkException] {
+      businessTxn.commit(ctx)
+    }
+    assert(e.getCause.asInstanceOf[DeltaThrowable].getErrorClass() === "DELTA_METADATA_CHANGED")
   }
 
   for (startMode <- Seq(NameMapping, IdMapping, NoMapping))

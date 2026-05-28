@@ -22,6 +22,7 @@ import static io.delta.kernel.internal.util.Utils.resolvePath;
 
 import io.delta.kernel.CommitRangeBuilder;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.files.LogDataUtils;
@@ -57,6 +58,24 @@ class CommitRangeFactory {
     List<ParsedCatalogCommitData> ratifiedCommits = getFileBasedRatifiedCommits();
     long startVersion = resolveStartVersion(engine, ratifiedCommits);
     Optional<Long> endVersionOpt = resolveEndVersionIfSpecified(engine, ratifiedCommits);
+
+    // Apply maxCatalogVersion constraint
+    if (ctx.maxCatalogVersion.isPresent()) {
+      if (!endVersionOpt.isPresent()) {
+        // When maxCatalogVersion is specified and no end boundary is provided,
+        // the end version should be maxCatalogVersion
+        endVersionOpt = ctx.maxCatalogVersion;
+        logger.info(
+            "{}: Using maxCatalogVersion {} as end version", tablePath, endVersionOpt.get());
+      } else {
+        // Check that endVersion is <= maxCatalogVersion
+        if (endVersionOpt.get() > ctx.maxCatalogVersion.get()) {
+          throw DeltaErrors.resolvedEndVersionAfterMaxCatalogVersion(
+              tablePath.toString(), endVersionOpt.get(), ctx.maxCatalogVersion.get());
+        }
+      }
+    }
+
     validateVersionRange(startVersion, endVersionOpt);
     logResolvedVersions(startVersion, endVersionOpt);
     List<ParsedDeltaData> deltas =

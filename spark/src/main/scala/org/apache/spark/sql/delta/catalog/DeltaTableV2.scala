@@ -29,10 +29,11 @@ import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
-import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider}
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.ENABLE_TABLE_REDIRECT_FEATURE
+import com.databricks.spark.util.TagDefinition
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{DataFrame, Dataset, SaveMode, SparkSession}
@@ -70,7 +71,8 @@ class DeltaTableV2 private(
   extends Table
   with SupportsWrite
   with V2TableWithV1Fallback
-  with DeltaLogging {
+  with DeltaLogging
+  with DeltaLoggingProvider {
 
   case class PathInfo(
       rootPath: Path,
@@ -129,6 +131,9 @@ class DeltaTableV2 private(
         catalogTable)
     }
   }
+
+  override def getCommonTags: Map[TagDefinition, String] = deltaLog.getCommonTags
+
 
   /**
    * Updates the delta log for this table and returns a new snapshot
@@ -194,7 +199,7 @@ class DeltaTableV2 private(
       deltaLog.getSnapshotAt(
         version,
         catalogTableOpt = catalogTable,
-        enforceTimeTravelWithinDeletedFileRetention = true)
+        enforceTimeTravelWithinDeletedFileRetention = spec.enforceRetention)
     }.getOrElse(
       deltaLog.update(
         stalenessAcceptable = true,
@@ -242,7 +247,9 @@ class DeltaTableV2 private(
         base.put(TableCatalog.PROP_OWNER, table.owner)
       }
       v1Table.storage.properties.foreach { case (key, value) =>
-        base.put(TableCatalog.OPTION_PREFIX + key, value)
+        if (!DeltaTableV2.HIDDEN_STORAGE_PROPERTY_PREFIXES.exists(key.startsWith)) {
+          base.put(TableCatalog.OPTION_PREFIX + key, value)
+        }
       }
       if (v1Table.tableType == CatalogTableType.EXTERNAL) {
         base.put(TableCatalog.PROP_EXTERNAL, "true")
@@ -429,11 +436,33 @@ class DeltaTableV2 private(
     deltaTableV2
   }
 
-  override def toString: String =
-    s"DeltaTableV2($spark,$path,$catalogTable,$tableIdentifier,$timeTravelOpt,$options)"
+  // Filter fs.* keys from CatalogTable storage properties and from options before stringifying,
+  // to prevent catalog-injected or user-supplied credentials from leaking into exception messages,
+  // EXPLAIN output, and logs.
+  override def toString: String = {
+    val safeCatalogTable = catalogTable.map { ct =>
+      ct.copy(storage = ct.storage.copy(properties =
+        ct.storage.properties.filterNot { case (k, _) =>
+          DeltaTableV2.HIDDEN_STORAGE_PROPERTY_PREFIXES.exists(k.startsWith)
+        }))
+    }
+    val safeOptions = options.filterNot { case (k, _) =>
+      DeltaTableV2.HIDDEN_STORAGE_PROPERTY_PREFIXES.exists(k.startsWith)
+    }
+    s"DeltaTableV2($spark,$path,$safeCatalogTable,$tableIdentifier,$timeTravelOpt,$safeOptions)"
+  }
 }
 
 object DeltaTableV2 {
+
+  /**
+   * Storage property key prefixes that should be excluded from the user-visible V2 table
+   * properties returned by [[DeltaTableV2.properties()]]. These are Hadoop filesystem
+   * configuration options that may contain sensitive credentials (access keys, session
+   * tokens, etc.) injected by catalogs at table-load time.
+   */
+  private[delta] val HIDDEN_STORAGE_PROPERTY_PREFIXES: Seq[String] = Seq("fs.")
+
   def unapply(deltaTable: DeltaTableV2): Option[(
       SparkSession,
       Path,
@@ -583,6 +612,10 @@ private class WriteIntoDeltaBuilder(
   private val options =
     mutable.HashMap[String, String](writeOptions.asCaseSensitiveMap().asScala.toSeq: _*)
 
+  private def isReplaceOnOrUsingDefined: Boolean =
+    writeOptions.containsKey(DeltaOptions.REPLACE_ON_OPTION) ||
+      writeOptions.containsKey(DeltaOptions.REPLACE_USING_OPTION)
+
   override def truncate(): WriteIntoDeltaBuilder = {
     forceOverwrite = true
     this
@@ -592,12 +625,18 @@ private class WriteIntoDeltaBuilder(
     if (writeOptions.containsKey("replaceWhere")) {
       throw DeltaErrors.replaceWhereUsedInOverwrite()
     }
+    if (isReplaceOnOrUsingDefined) {
+      throw DeltaErrors.overwriteByFilterIncompatibleReplaceOnOrUsingError()
+    }
     options.put("replaceWhere", DeltaSourceUtils.translateFilters(filters).sql)
     forceOverwrite = true
     this
   }
 
   override def overwriteDynamicPartitions(): WriteBuilder = {
+    if (isReplaceOnOrUsingDefined) {
+      throw DeltaErrors.dynamicPartitionOverwriteIncompatibleReplaceOnOrUsingError()
+    }
     options.put(
       DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION,
       DeltaOptions.PARTITION_OVERWRITE_MODE_DYNAMIC)
@@ -620,10 +659,20 @@ private class WriteIntoDeltaBuilder(
             )
           }
           // TODO: Get the config from WriteIntoDelta's txn.
+          val deltaOptions = new DeltaOptions(options.toMap, session.sessionState.conf)
+          if (deltaOptions.isReplaceOnOrUsingDefined) {
+            if (deltaOptions.replaceOn.isDefined && !session.sessionState.conf.getConf(
+                DeltaSQLConf.REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED)) {
+              throw DeltaErrors.operationNotSupportedException("replaceOn")
+            } else if (deltaOptions.replaceUsing.isDefined && !session.sessionState.conf.getConf(
+                DeltaSQLConf.REPLACE_USING_OPTION_IN_DATAFRAME_WRITER_ENABLED)) {
+              throw DeltaErrors.operationNotSupportedException("replaceUsing")
+            }
+          }
           WriteIntoDelta(
             table.deltaLog,
             if (forceOverwrite) SaveMode.Overwrite else SaveMode.Append,
-            new DeltaOptions(options.toMap, session.sessionState.conf),
+            deltaOptions,
             Nil,
             table.deltaLog.unsafeVolatileSnapshot.metadata.configuration,
             data,

@@ -192,7 +192,8 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
   def processUnmodifiedData(
       spark: SparkSession,
       touchedFiles: Seq[TouchedFileWithDV],
-      snapshot: Snapshot): (Seq[FileAction], Map[String, Long]) = {
+      snapshot: Snapshot,
+      stringTruncateLength: Int): (Seq[FileAction], Map[String, Long]) = {
     val numModifiedRows = touchedFiles.map(_.numberOfModifiedRows).sum.toLong
     val numRemovedFiles = touchedFiles.count(_.isFullyReplaced()).toLong
 
@@ -207,7 +208,7 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
         updateStats = false
       )}
     val (dvAddFiles, dvRemoveFiles) = dvUpdates.unzip
-    val dvAddFilesWithStats = getActionsWithStats(spark, dvAddFiles, snapshot)
+    val dvAddFilesWithStats = getActionsWithStats(spark, dvAddFiles, snapshot, stringTruncateLength)
 
     var (numDeletionVectorsAdded, numDeletionVectorsRemoved, numDeletionVectorsUpdated) =
       dvUpdates.foldLeft((0L, 0L, 0L)) { case ((added, removed, updated), (addFile, removeFile)) =>
@@ -232,7 +233,8 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
   private def getActionsWithStats(
       spark: SparkSession,
       addFilesWithNewDvs: Seq[AddFile],
-      snapshot: Snapshot): Seq[AddFile] = {
+      snapshot: Snapshot,
+      stringTruncateLength: Int): Seq[AddFile] = {
     import org.apache.spark.sql.delta.implicits._
 
     if (addFilesWithNewDvs.isEmpty) return Seq.empty
@@ -277,6 +279,7 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
           snapshot = snapshot,
           addFiles = filesWithNoStats.toDS(spark),
           numFilesOpt = Some(filesWithNoStats.size),
+          stringTruncateLength = stringTruncateLength,
           setBoundsToWide = true)
           .collect()
           .toSeq
@@ -305,6 +308,7 @@ object DeletionVectorBitmapGenerator {
   final val DELETED_ROW_INDEX_BITMAP = "deletedRowIndexSet"
   final val DELETED_ROW_INDEX_COUNT = "deletedRowIndexCount"
   final val MAX_ROW_INDEX_COL = "maxRowIndexCol"
+  final val FILE_PATH_COL = "dvFilePath"
 
   private class DeletionVectorSet(
     spark: SparkSession,
@@ -424,14 +428,15 @@ object DeletionVectorBitmapGenerator {
           serializedDV)
       }
       val filePathToDVDf = sparkSession.createDataset(filePathToDV)
+        .withColumnRenamed("path", FILE_PATH_COL)
 
-      val joinExpr = filePathToDVDf("path") === matchedRowsDf(FILE_NAME_COL)
+      val joinExpr = filePathToDVDf(FILE_PATH_COL) === matchedRowsDf(FILE_NAME_COL)
       // Perform leftOuter join to make sure we do not eliminate any rows because of path
       // encoding issues. If there is such an issue we will detect it during the aggregation
       // of the bitmaps.
       val joinedDf = matchedRowsDf.join(filePathToDVDf, joinExpr, "leftOuter")
         .drop(FILE_NAME_COL)
-        .withColumnRenamed("path", FILE_NAME_COL)
+        .withColumnRenamed(FILE_PATH_COL, FILE_NAME_COL)
       joinedDf
     } else {
       // When the table has no DVs, just add a column to indicate that the existing dv is null

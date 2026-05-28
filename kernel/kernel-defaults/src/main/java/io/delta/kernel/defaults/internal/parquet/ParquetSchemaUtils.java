@@ -38,6 +38,7 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiFunction;
 import java.util.stream.Collectors;
+import org.apache.parquet.column.schema.EdgeInterpolationAlgorithm;
 import org.apache.parquet.schema.*;
 import org.apache.parquet.schema.LogicalTypeAnnotation.DecimalLogicalTypeAnnotation;
 import org.apache.parquet.schema.Type.Repetition;
@@ -342,6 +343,20 @@ class ParquetSchemaUtils {
       type = primitive(BINARY, repetition).as(LogicalTypeAnnotation.stringType()).named(name);
     } else if (dataType instanceof BinaryType) {
       type = primitive(BINARY, repetition).named(name);
+    } else if (dataType instanceof GeometryType) {
+      GeometryType geomType = (GeometryType) dataType;
+      type =
+          primitive(BINARY, repetition)
+              .as(LogicalTypeAnnotation.geometryType(geomType.getSRID()))
+              .named(name);
+    } else if (dataType instanceof GeographyType) {
+      GeographyType geogType = (GeographyType) dataType;
+      type =
+          primitive(BINARY, repetition)
+              .as(
+                  LogicalTypeAnnotation.geographyType(
+                      geogType.getSRID(), toEdgeInterpolationAlgorithm(geogType.getAlgorithm())))
+              .named(name);
     } else if (dataType instanceof DateType) {
       type = primitive(INT32, repetition).as(LogicalTypeAnnotation.dateType()).named(name);
     } else if (dataType instanceof TimestampType) {
@@ -568,5 +583,22 @@ class ParquetSchemaUtils {
       }
       return fieldIdOpt;
     };
+  }
+
+  private static EdgeInterpolationAlgorithm toEdgeInterpolationAlgorithm(String algorithm) {
+    switch (algorithm.toLowerCase(java.util.Locale.ROOT)) {
+      case "spherical":
+        return EdgeInterpolationAlgorithm.SPHERICAL;
+      case "vincenty":
+        return EdgeInterpolationAlgorithm.VINCENTY;
+      case "thomas":
+        return EdgeInterpolationAlgorithm.THOMAS;
+      case "andoyer":
+        return EdgeInterpolationAlgorithm.ANDOYER;
+      case "karney":
+        return EdgeInterpolationAlgorithm.KARNEY;
+      default:
+        throw new IllegalArgumentException("Unknown edge interpolation algorithm: " + algorithm);
+    }
   }
 }
