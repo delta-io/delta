@@ -119,6 +119,72 @@ public class DeltaV2Mode {
   }
 
   /**
+   * Determines if batch reads against {@code DeltaTableV2} should be planned through the new
+   * {@code FileScan} path (DSv2 logical plan kept; lowered to {@code FileSourceScanExec} by
+   * {@code DeltaFileScanStrategy} at planning time) instead of the legacy analysis-time
+   * V2-to-V1 fallback (which rewrites {@code DataSourceV2Relation} into
+   * {@code LogicalRelation(HadoopFsRelation)}).
+   *
+   * <p>Mirrors the predicate used for V2 streaming reads: initially only enables file planning
+   * for Unity Catalog managed tables. Will widen as the new path matures.
+   *
+   * @param catalogTable Optional catalog table metadata
+   * @return true if batch reads should use file planning under AUTO mode
+   */
+  public boolean isFilePlanningEnabledForBatchReads(Optional<CatalogTable> catalogTable) {
+    switch (mode()) {
+      case STRICT:
+        return true;
+      case AUTO:
+        return catalogTable.map(CatalogTableUtils::isUnityCatalogManagedTable).orElse(false);
+      default:
+        return false;
+    }
+  }
+
+  /**
+   * Determines if batch writes against {@code DeltaTableV2} should flow through the new
+   * V2 write exec nodes (e.g. {@code AppendFilesExec}) instead of the legacy V1 fallback
+   * (which routes through {@code WriteIntoDelta} via {@code WriteIntoDeltaBuilder}).
+   *
+   * <p>Mirrors {@link #isFilePlanningEnabledForBatchReads}; initially gated on UC-managed
+   * tables.
+   *
+   * @param catalogTable Optional catalog table metadata
+   * @return true if batch writes should use file planning under AUTO mode
+   */
+  public boolean isFilePlanningEnabledForBatchWrites(Optional<CatalogTable> catalogTable) {
+    switch (mode()) {
+      case STRICT:
+        return true;
+      case AUTO:
+        return catalogTable.map(CatalogTableUtils::isUnityCatalogManagedTable).orElse(false);
+      default:
+        return false;
+    }
+  }
+
+  /**
+   * Determines if streaming writes should flow through the new V2 streaming write exec nodes
+   * (e.g. {@code AppendStreamingFilesExec}) instead of {@code DeltaSink}.
+   *
+   * <p>Same gating predicate as batch.
+   *
+   * @param catalogTable Optional catalog table metadata
+   * @return true if streaming writes should use file planning under AUTO mode
+   */
+  public boolean isFilePlanningEnabledForStreamingWrites(Optional<CatalogTable> catalogTable) {
+    switch (mode()) {
+      case STRICT:
+        return true;
+      case AUTO:
+        return catalogTable.map(CatalogTableUtils::isUnityCatalogManagedTable).orElse(false);
+      default:
+        return false;
+    }
+  }
+
+  /**
    * Gets the current mode string (for logging/debugging).
    */
   public String getMode() {

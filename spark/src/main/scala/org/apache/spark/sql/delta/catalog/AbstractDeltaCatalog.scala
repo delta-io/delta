@@ -417,14 +417,22 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
    *
    * @param ident The identifier of the table in the catalog.
    * @param catalogTable The catalog table metadata containing table properties and location.
-   * @return A DeltaTableV2 instance with catalog metadata attached.
+   * @return A DeltaTableV2 instance with catalog metadata attached, or a DeltaTableV3 when
+   *         `spark.databricks.delta.v3.enabled` is on.
    */
   protected def loadCatalogTable(ident: Identifier, catalogTable: CatalogTable): Table = {
-    DeltaTableV2(
-      spark,
-      new Path(catalogTable.location),
-      catalogTable = Some(catalogTable),
-      tableIdentifier = Some(ident.toString))
+    if (spark.sessionState.conf.getConf(DeltaSQLConf.V3_ENABLED)) {
+      org.apache.spark.sql.delta.v3.DeltaTableV3(
+        spark,
+        new Path(catalogTable.location),
+        catalogTable = Some(catalogTable))
+    } else {
+      DeltaTableV2(
+        spark,
+        new Path(catalogTable.location),
+        catalogTable = Some(catalogTable),
+        tableIdentifier = Some(ident.toString))
+    }
   }
 
   /**
@@ -432,10 +440,18 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
    * This is used for path-based table access where the identifier name is the table path.
    *
    * @param ident The identifier whose name contains the path to the Delta table.
-   * @return A DeltaTableV2 instance loaded from the specified path.
+   * @return A DeltaTableV2 instance loaded from the specified path, or a DeltaTableV3 when
+   *         `spark.databricks.delta.v3.enabled` is on.
    */
   protected def loadPathTable(ident: Identifier): Table = {
-    DeltaTableV2(spark, new Path(ident.name()))
+    if (spark.sessionState.conf.getConf(DeltaSQLConf.V3_ENABLED)) {
+      org.apache.spark.sql.delta.v3.DeltaTableV3(
+        spark,
+        new Path(ident.name()),
+        catalogTable = None)
+    } else {
+      DeltaTableV2(spark, new Path(ident.name()))
+    }
   }
 
   private def getProvider(properties: util.Map[String, String]): String = {

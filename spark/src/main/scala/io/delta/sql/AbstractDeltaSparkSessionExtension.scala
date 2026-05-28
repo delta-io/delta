@@ -115,8 +115,20 @@ class AbstractDeltaSparkSessionExtension extends (SparkSessionExtensions => Unit
     // Spark 3.5 as later versions apply constant folding after pre-CBO rules.
     extensions.injectPreCBORule { _ => ConstantFolding }
 
+    // AUTO-mode planner strategy that lowers DataSourceV2ScanRelation(FileScan) to a
+    // FileSourceScanExec subtree. Must run BEFORE PreprocessTableWithDVsStrategy so it
+    // consumes V2 file scans first; the DV strategy still wins for plain
+    // LogicalRelation(HadoopFsRelation) plans (NONE mode + internal tools).
+    extensions.injectPlannerStrategy(
+      org.apache.spark.sql.delta.v3.DeltaFileScanStrategy.apply)
+
     // Add skip row column and filter.
     extensions.injectPlannerStrategy(PreprocessTableWithDVsStrategy)
+
+    // AUTO-mode write strategy that lowers V2 write commands over a DeltaTableV2 with a
+    // FileWrite into *FilesExec nodes. No-op when the gate is off.
+    extensions.injectPlannerStrategy(
+      org.apache.spark.sql.delta.v3.DeltaFileWriteStrategy.apply)
 
     // Tries to load PrepareDeltaSharingScan class with class reflection, when delta-sharing-spark
     // 3.1+ package is installed, this will be loaded and delta sharing batch queries with
