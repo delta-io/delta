@@ -197,7 +197,7 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
       override def listFrom(
           path: Path,
           hadoopConf: Configuration): java.util.Iterator[FileStatus] = {
-        Collections.emptyIterator[FileStatus]()
+        java.util.Collections.emptyIterator[FileStatus]()
       }
     }
   }
@@ -208,12 +208,13 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
     new JCommit(version, fileStatus, version)
   }
 
-  private def clientReturningCommits(response: JGetCommitsResponse): UCCommitCoordinatorClient = {
+  private def clientReturningCommits(
+      response: io.delta.storage.commit.GetCommitsResponse): UCCommitCoordinatorClient = {
     new UCCommitCoordinatorClient(Map.empty[String, String].asJava, null) {
       override def getCommits(
           tableDesc: TableDescriptor,
           startVersion: JLong,
-          endVersion: JLong): JGetCommitsResponse = response
+          endVersion: JLong): io.delta.storage.commit.GetCommitsResponse = response
     }
   }
 
@@ -227,7 +228,9 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
         Optional.empty(),
         Map(UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> tableUUID.toString).asJava)
       val ucCommitCoordinatorClient = clientReturningCommits(
-        new JGetCommitsResponse(Seq(commitRecord(logPath, 1L)).asJava, 1L))
+        new io.delta.storage.commit.GetCommitsResponse(
+          Seq(commitRecord(logPath, 1L)).asJava,
+          1L))
 
       writeCommitZero(logPath)
 
@@ -249,7 +252,9 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
         Optional.empty(),
         Map(UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> tableUUID.toString).asJava)
       val ucCommitCoordinatorClient = clientReturningCommits(
-        new JGetCommitsResponse(Seq(commitRecord(logPath, 1L)).asJava, 1L))
+        new io.delta.storage.commit.GetCommitsResponse(
+          Seq(commitRecord(logPath, 1L)).asJava,
+          1L))
 
       val e = intercept[IllegalStateException] {
         ucCommitCoordinatorClient.getLastKnownBackfilledVersion(
@@ -272,7 +277,9 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
         Optional.empty(),
         Map(UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> tableUUID.toString).asJava)
       val ucCommitCoordinatorClient = clientReturningCommits(
-        new JGetCommitsResponse(Seq(commitRecord(logPath, 2L)).asJava, 2L))
+        new io.delta.storage.commit.GetCommitsResponse(
+          Seq(commitRecord(logPath, 2L)).asJava,
+          2L))
 
       writeCommitZero(logPath)
 
