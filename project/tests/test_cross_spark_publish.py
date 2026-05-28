@@ -368,7 +368,15 @@ class SparkVersionsScriptTest:
                 return False
 
             # Validate each entry has required fields
-            required_fields = ["fullVersion", "shortVersion", "isMaster", "isDefault", "targetJvm", "packageSuffix"]
+            required_fields = [
+                "fullVersion",
+                "shortVersion",
+                "isMaster",
+                "isDefault",
+                "targetJvm",
+                "packageSuffix",
+                "requiresSparkCommit",
+            ]
             for idx, entry in enumerate(data):
                 for field in required_fields:
                     if field not in entry:
@@ -378,7 +386,8 @@ class SparkVersionsScriptTest:
                 # Validate field types
                 if not isinstance(entry["fullVersion"], str) or not isinstance(entry["shortVersion"], str) or \
                    not isinstance(entry["isMaster"], bool) or not isinstance(entry["isDefault"], bool) or \
-                   not isinstance(entry["targetJvm"], str) or not isinstance(entry["packageSuffix"], str):
+                   not isinstance(entry["targetJvm"], str) or not isinstance(entry["packageSuffix"], str) or \
+                   not isinstance(entry["requiresSparkCommit"], bool):
                     print(f"  ✗ Entry {idx}: Invalid field types")
                     return False
 
@@ -422,8 +431,14 @@ class SparkVersionsScriptTest:
             with open(self.json_path, 'r') as f:
                 data = json.load(f)
 
-            if len(matrix_versions) != len(data):
-                print(f"  ✗ Matrix has {len(matrix_versions)} versions, JSON has {len(data)}")
+            expected_versions = [
+                entry for entry in data if not entry.get("requiresSparkCommit", False)
+            ]
+            if len(matrix_versions) != len(expected_versions):
+                print(
+                    f"  ✗ Matrix has {len(matrix_versions)} versions, "
+                    f"expected {len(expected_versions)} non-source-built versions"
+                )
                 return False
 
             print(f"  ✓ --all-spark-versions: {matrix_versions}")
@@ -462,7 +477,12 @@ class SparkVersionsScriptTest:
             with open(self.json_path, 'r') as f:
                 data = json.load(f)
 
-            expected_count = sum(1 for entry in data if "-SNAPSHOT" not in entry["fullVersion"])
+            expected_count = sum(
+                1
+                for entry in data
+                if "-SNAPSHOT" not in entry["fullVersion"]
+                and not entry.get("requiresSparkCommit", False)
+            )
             if len(released_versions) != expected_count:
                 print(f"  ✗ Expected {expected_count} released versions, got {len(released_versions)}")
                 return False
