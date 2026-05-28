@@ -56,6 +56,7 @@ object IcebergCompatV1 extends IcebergCompatBase(
     CheckNoPartitionEvolution,
     CheckNoListMapNullType,
     CheckDeletionVectorDisabled,
+    CheckGeoSpatialTableFeatureDisabled,
     CheckTypeWideningSupported
   )
 )
@@ -74,6 +75,7 @@ object IcebergCompatV2 extends IcebergCompatBase(
     CheckPartitionDataTypeInV2AllowList,
     CheckNoPartitionEvolution,
     CheckDeletionVectorDisabled,
+    CheckGeoSpatialTableFeatureDisabled,
     CheckTypeWideningSupported
   )
 )
@@ -583,6 +585,24 @@ object CheckNoListMapNullType extends IcebergCompatCheck {
           context.version, unsupportedType, context.newestMetadata.schema)
       case _ =>
     }
+  }
+}
+
+/**
+ * check if the table has any column with geospatial type, which are
+ * not supported yet.
+ */
+object CheckGeoSpatialTableFeatureDisabled extends IcebergCompatCheck {
+  override def apply(context: IcebergCompatContext): Unit = {
+    SchemaUtils
+      .findAnyTypeRecursively(context.newestMetadata.schema)(
+        t => DeltaGeoSpatial.isGeoSpatialType(t))
+      match {
+        case Some(unsupportedType) =>
+          throw DeltaErrors.icebergCompatUnsupportedDataTypeException(
+            context.version, unsupportedType, context.newestMetadata.schema)
+        case _ =>
+      }
   }
 }
 
