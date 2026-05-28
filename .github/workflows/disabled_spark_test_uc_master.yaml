@@ -38,7 +38,7 @@ jobs:
       - name: install java
         uses: actions/setup-java@17f84c3641ba7b8f6deff6309fc4c864478f5d62 # v3
         with:
-          distribution: "zulu"
+          distribution: "temurin"
           java-version: "17"
       - name: Cache Scala, SBT, Maven local
         uses: actions/cache@6f8efc29b200d32929f49075959781ed54ec270c # v3
