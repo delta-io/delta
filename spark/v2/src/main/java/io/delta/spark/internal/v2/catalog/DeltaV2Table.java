@@ -61,11 +61,7 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
 /** DataSource V2 Table implementation for Delta Lake using the Delta Kernel API. */
 public class DeltaV2Table
-    implements Table,
-        SupportsRead,
-        SupportsWrite,
-        SupportsMetadataColumns,
-        DeltaV2TableMarker {
+    implements Table, SupportsRead, SupportsWrite, SupportsMetadataColumns, DeltaV2TableMarker {
   private static final String METADATA_COLUMN_NAME = FileFormat$.MODULE$.METADATA_NAME();
   private static final String ROW_ID_METADATA_FIELD_NAME = RowId$.MODULE$.ROW_ID();
   private static final String ROW_COMMIT_VERSION_METADATA_FIELD_NAME =
