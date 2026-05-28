@@ -211,8 +211,8 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       listAndGetLastKnownBackfilledVersion(listFromVersion, logStore, hadoopConf, logPath);
     if (!lastKnownBackfilledVersion.isPresent()) {
       // If the recent listing has no physical backfilled delta file, ask UC for the boundary.
-      // The commit before UC's first retained commit must exist as an exact Delta file, including
-      // version 0, because reporting a missing file as backfilled would hide a real log gap.
+      // Version 0 is written to the log before UC registers the table.
+      // Versions above 0 still need an exact file check because missing N.json is a log gap.
       recordDeltaEvent(
         UCCoordinatedCommitsUsageLogs.UC_LAST_KNOWN_BACKFILLED_VERSION_NOT_FOUND,
         new HashMap<String, Object>() {{
@@ -236,7 +236,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
           throw new IllegalStateException("Couldn't find any backfilled commit for table at " +
             logPath + " at version " + commitVersion);
         }
-        lastKnownBackfilledVersion = getBackfilledVersionIfFileExists(
+        lastKnownBackfilledVersion = getTrustedOrPhysicalBackfilledVersion(
           inferredLastKnownBackfilledVersion, hadoopConf, logPath);
         if (!lastKnownBackfilledVersion.isPresent()) {
           throw new IllegalStateException("Couldn't find any backfilled commit for table at " +
@@ -245,7 +245,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       } else {
         long latestTableVersion = commitsResponse.getLatestTableVersion();
         if (latestTableVersion >= 0 && latestTableVersion < commitVersion) {
-          lastKnownBackfilledVersion = getBackfilledVersionIfFileExists(
+          lastKnownBackfilledVersion = getTrustedOrPhysicalBackfilledVersion(
             latestTableVersion, hadoopConf, logPath);
           if (!lastKnownBackfilledVersion.isPresent()) {
             throw new IllegalStateException("Couldn't find any backfilled commit for table at " +
@@ -258,6 +258,18 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       }
     }
     return lastKnownBackfilledVersion.get();
+  }
+
+  private Optional<Long> getTrustedOrPhysicalBackfilledVersion(
+      long version,
+      Configuration hadoopConf,
+      Path logPath) {
+    // CREATE writes 0.json before registering the table in UC.
+    // A UC response for the table therefore implies 0.json is present.
+    if (version == 0) {
+      return Optional.of(version);
+    }
+    return getBackfilledVersionIfFileExists(version, hadoopConf, logPath);
   }
 
   private Optional<Long> getBackfilledVersionIfFileExists(

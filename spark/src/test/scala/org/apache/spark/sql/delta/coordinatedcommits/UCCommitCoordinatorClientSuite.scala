@@ -218,7 +218,7 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
     }
   }
 
-  test("getLastKnownBackfilledVersion verifies physical zero when UC boundary is zero") {
+  test("getLastKnownBackfilledVersion trusts zero when UC boundary starts at one") {
     withTempTableDir { tempDir =>
       val log = DeltaLog.forTable(spark, tempDir.toString)
       val logPath = log.logPath
@@ -231,8 +231,6 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
         new io.delta.storage.commit.GetCommitsResponse(
           Seq(commitRecord(logPath, 1L)).asJava,
           1L))
-
-      writeCommitZero(logPath)
 
       assert(ucCommitCoordinatorClient.getLastKnownBackfilledVersion(
         2,
@@ -242,7 +240,7 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
     }
   }
 
-  test("getLastKnownBackfilledVersion rejects missing physical zero") {
+  test("getLastKnownBackfilledVersion trusts latest table version zero") {
     withTempTableDir { tempDir =>
       val log = DeltaLog.forTable(spark, tempDir.toString)
       val logPath = log.logPath
@@ -253,17 +251,14 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
         Map(UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> tableUUID.toString).asJava)
       val ucCommitCoordinatorClient = clientReturningCommits(
         new io.delta.storage.commit.GetCommitsResponse(
-          Seq(commitRecord(logPath, 1L)).asJava,
-          1L))
+          Seq.empty[JCommit].asJava,
+          0L))
 
-      val e = intercept[IllegalStateException] {
-        ucCommitCoordinatorClient.getLastKnownBackfilledVersion(
-          2,
-          hadoopConf,
-          emptyListingLogStore(log, hadoopConf),
-          tableDesc)
-      }
-      assert(e.getMessage.contains("Couldn't find any backfilled commit"))
+      assert(ucCommitCoordinatorClient.getLastKnownBackfilledVersion(
+        1,
+        hadoopConf,
+        emptyListingLogStore(log, hadoopConf),
+        tableDesc) == 0L)
     }
   }
 
