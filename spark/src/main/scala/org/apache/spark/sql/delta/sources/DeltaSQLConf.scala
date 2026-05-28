@@ -3407,9 +3407,9 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         "When true, DeltaCatalog returns DeltaTableV3 (the v3 connector: DSv2 logical plan " +
           "kept through analysis, lowered to FileSourceScanExec / *FilesExec at planning time) " +
           "instead of DeltaTableV2 (the v1 connector with analysis-time V2->V1 fallback). " +
-          "Off by default; the v1 connector is unchanged.")
+          "Default true; set to false to fall back to the unchanged v1 connector.")
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val DELTA_DF_WRITE_ALLOW_IMPLICIT_CASTS =
     buildConf("dml.insert.dfByName.allowImplicitCasts")
