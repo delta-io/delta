@@ -248,6 +248,7 @@ public class IcebergRESTServletWithPlanSupport extends RESTCatalogServlet {
    * Follows Iceberg REST catalog spec structure for credentials:
    * {
    *   "storage-credentials": [{
+   *     "prefix": "s3://...",
    *     "config": {
    *       "s3.access-key-id": "...",
    *       ...
@@ -262,10 +263,10 @@ public class IcebergRESTServletWithPlanSupport extends RESTCatalogServlet {
     // Parse original JSON
     Map<String, Object> responseMap = mapper.readValue(originalJson, Map.class);
     
-    // Build storage-credentials structure
-    Map<String, Object> credConfig = new HashMap<>(credentials);
+    // Build storage-credentials structure (Iceberg 1.11.0 requires "prefix" field)
     Map<String, Object> credWrapper = new HashMap<>();
-    credWrapper.put("config", credConfig);
+    credWrapper.put("prefix", "*");
+    credWrapper.put("config", new HashMap<>(credentials));
     
     // Add as array (spec requires array even with single element)
     responseMap.put("storage-credentials", Collections.singletonList(credWrapper));

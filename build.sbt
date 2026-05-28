@@ -1063,8 +1063,8 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     ),
     assembly / assemblyMergeStrategy := {
       // Discard `module-info.class` to fix the `different file contents found` error.
-      // TODO Upgrade SBT to 1.5 which will do this automatically
       case "module-info.class" => MergeStrategy.discard
+      case PathList("META-INF", "versions", _*) => MergeStrategy.discard
       case PathList("META-INF", "services", xs @ _*) => MergeStrategy.discard
       case x =>
         val oldStrategy = (assembly / assemblyMergeStrategy).value
@@ -1446,7 +1446,7 @@ lazy val iceberg = (project in file("iceberg"))
   )
 // scalastyle:on println
 
-val icebergShadedVersion = "1.10.1"
+val icebergShadedVersion = "1.11.0"
 lazy val icebergShaded = (project in file("icebergShaded"))
   .dependsOn(spark % "provided")
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
