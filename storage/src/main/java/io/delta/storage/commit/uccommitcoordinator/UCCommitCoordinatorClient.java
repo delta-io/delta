@@ -210,9 +210,15 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
     Optional<Long> lastKnownBackfilledVersion =
       listAndGetLastKnownBackfilledVersion(listFromVersion, logStore, hadoopConf, logPath);
     if (!lastKnownBackfilledVersion.isPresent()) {
-      // If the recent listing has no physical backfilled delta file, ask UC for the boundary.
-      // Version 0 is written to the log before UC registers the table.
-      // Versions above 0 still need an exact file check because missing N.json is a log gap.
+      // An empty listing here does not prove nothing is backfilled: this optimized listing
+      // can transiently observe no backfilled delta file even when one exists on storage.
+      // Fall back to UC for the boundary. The earliest commit UC still tracks implies its
+      // predecessor was backfilled, and if UC tracks no commits, everything up to the latest
+      // table version was backfilled. Confirm that inferred boundary with a direct
+      // getFileStatus check, which observes the specific file even when the listing did not,
+      // for version 0 too. We never trust UC alone: CREATE writes a physical 0.json before
+      // registering the table, so it must be observable, and a missing N.json is a real log
+      // gap that must fail the commit.
       recordDeltaEvent(
         UCCoordinatedCommitsUsageLogs.UC_LAST_KNOWN_BACKFILLED_VERSION_NOT_FOUND,
         new HashMap<String, Object>() {{
@@ -236,7 +242,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
           throw new IllegalStateException("Couldn't find any backfilled commit for table at " +
             logPath + " at version " + commitVersion);
         }
-        lastKnownBackfilledVersion = getTrustedOrPhysicalBackfilledVersion(
+        lastKnownBackfilledVersion = getBackfilledVersionIfFileExists(
           inferredLastKnownBackfilledVersion, hadoopConf, logPath);
         if (!lastKnownBackfilledVersion.isPresent()) {
           throw new IllegalStateException("Couldn't find any backfilled commit for table at " +
@@ -245,7 +251,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       } else {
         long latestTableVersion = commitsResponse.getLatestTableVersion();
         if (latestTableVersion >= 0 && latestTableVersion < commitVersion) {
-          lastKnownBackfilledVersion = getTrustedOrPhysicalBackfilledVersion(
+          lastKnownBackfilledVersion = getBackfilledVersionIfFileExists(
             latestTableVersion, hadoopConf, logPath);
           if (!lastKnownBackfilledVersion.isPresent()) {
             throw new IllegalStateException("Couldn't find any backfilled commit for table at " +
@@ -260,18 +266,14 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
     return lastKnownBackfilledVersion.get();
   }
 
-  private Optional<Long> getTrustedOrPhysicalBackfilledVersion(
-      long version,
-      Configuration hadoopConf,
-      Path logPath) {
-    // CREATE writes 0.json before registering the table in UC.
-    // A UC response for the table therefore implies 0.json is present.
-    if (version == 0) {
-      return Optional.of(version);
-    }
-    return getBackfilledVersionIfFileExists(version, hadoopConf, logPath);
-  }
-
+  /**
+   * Confirms a candidate backfilled version by checking that its delta file physically
+   * exists via a direct getFileStatus call. This is the correctness anchor for the UC
+   * fallback: getFileStatus observes a backfilled file (including 0.json) even when the
+   * directory listing transiently did not. Returns empty if the file is absent so the
+   * caller fails the commit instead of reporting a non-existent backfilled version to UC,
+   * which would risk a Delta log gap.
+   */
   private Optional<Long> getBackfilledVersionIfFileExists(
       long version,
       Configuration hadoopConf,

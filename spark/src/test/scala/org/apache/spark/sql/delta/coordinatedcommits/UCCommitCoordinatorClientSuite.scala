@@ -218,7 +218,8 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
     }
   }
 
-  test("getLastKnownBackfilledVersion trusts zero when UC boundary starts at one") {
+  test("getLastKnownBackfilledVersion recovers backfilled 0 via file check " +
+      "when listing is empty and UC tracks commit 1") {
     withTempTableDir { tempDir =>
       val log = DeltaLog.forTable(spark, tempDir.toString)
       val logPath = log.logPath
@@ -232,6 +233,11 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
           Seq(commitRecord(logPath, 1L)).asJava,
           1L))
 
+      // The physical 0.json exists on storage; only the optimized listing comes back empty.
+      // UC's earliest tracked commit is 1, so the inferred boundary is 0. The fallback must
+      // observe 0.json via getFileStatus rather than trust UC's boundary blindly.
+      writeCommitZero(logPath)
+
       assert(ucCommitCoordinatorClient.getLastKnownBackfilledVersion(
         2,
         hadoopConf,
@@ -240,7 +246,8 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
     }
   }
 
-  test("getLastKnownBackfilledVersion trusts latest table version zero") {
+  test("getLastKnownBackfilledVersion recovers backfilled 0 via file check " +
+      "when listing is empty and UC tracks no commits") {
     withTempTableDir { tempDir =>
       val log = DeltaLog.forTable(spark, tempDir.toString)
       val logPath = log.logPath
@@ -254,11 +261,44 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
           Seq.empty[JCommit].asJava,
           0L))
 
+      // UC tracks no unbackfilled commits, so the latest table version (0) is the boundary.
+      // It is still confirmed against the physical 0.json, not trusted from UC alone.
+      writeCommitZero(logPath)
+
       assert(ucCommitCoordinatorClient.getLastKnownBackfilledVersion(
         1,
         hadoopConf,
         emptyListingLogStore(log, hadoopConf),
         tableDesc) == 0L)
+    }
+  }
+
+  test("getLastKnownBackfilledVersion fails instead of trusting UC when 0.json is absent") {
+    withTempTableDir { tempDir =>
+      val log = DeltaLog.forTable(spark, tempDir.toString)
+      val logPath = log.logPath
+      val hadoopConf = log.newDeltaHadoopConf()
+      val tableDesc = new TableDescriptor(
+        logPath,
+        Optional.empty(),
+        Map(UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> tableUUID.toString).asJava)
+      val ucCommitCoordinatorClient = clientReturningCommits(
+        new io.delta.storage.commit.GetCommitsResponse(
+          Seq(commitRecord(logPath, 1L)).asJava,
+          1L))
+
+      // UC's boundary infers backfilled version 0, but 0.json is not on storage (writeCommitZero
+      // is intentionally not called). The fallback must fail the commit rather than report a
+      // non-existent backfill to UC, which would risk a Delta log gap. This is the behavior the
+      // earlier "trust UC zero" approach got wrong: it returned 0 here without observing the file.
+      val e = intercept[IllegalStateException] {
+        ucCommitCoordinatorClient.getLastKnownBackfilledVersion(
+          2,
+          hadoopConf,
+          emptyListingLogStore(log, hadoopConf),
+          tableDesc)
+      }
+      assert(e.getMessage.contains("Couldn't find any backfilled commit"))
     }
   }
 
