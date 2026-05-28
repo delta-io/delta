@@ -25,14 +25,22 @@ import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
+import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
+import io.delta.spark.internal.v2.read.CDCDataFile;
 import java.time.ZoneId;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
+import org.apache.spark.sql.delta.DeltaParquetFileFormat;
+import org.apache.spark.sql.delta.RowIndexFilterType;
+import org.apache.spark.sql.delta.commands.cdc.CDCReader;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
@@ -42,10 +50,35 @@ import org.apache.spark.sql.types.StructType;
 import org.apache.spark.unsafe.types.UTF8String;
 import org.junit.jupiter.api.Test;
 import scala.collection.immutable.Map$;
+import scala.jdk.javaapi.CollectionConverters;
 
 public class PartitionUtilsTest extends DeltaV2TestBase {
 
   private static final long MB = 1024 * 1024;
+
+  private static final DeletionVectorDescriptor TEST_DV =
+      new DeletionVectorDescriptor("u", "ab^-rstxgiarsd", Optional.of(4), 40, 3L);
+
+  private static AddFile createAddFileForCDC(
+      String path, long size, long modificationTime, Optional<DeletionVectorDescriptor> dv) {
+    return new AddFile(
+        AddFile.createAddFileRow(
+            new io.delta.kernel.types.StructType(),
+            path,
+            VectorUtils.stringStringMapValue(Collections.emptyMap()),
+            size,
+            modificationTime,
+            /* dataChange= */ true,
+            dv,
+            /* tags= */ Optional.empty(),
+            /* baseRowId= */ Optional.empty(),
+            /* defaultRowCommitVersion= */ Optional.empty(),
+            /* stats= */ Optional.empty()));
+  }
+
+  private static java.util.Map<String, Object> getFileMetadata(PartitionedFile pf) {
+    return CollectionConverters.asJava(pf.otherConstantMetadataColumnValues());
+  }
 
   @Test
   public void testGetPartitionRow_FieldOrdering() {
@@ -542,5 +575,72 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
   private String getTempTablePath(String tableName) {
     return java.nio.file.Paths.get(System.getProperty("java.io.tmpdir"), "delta-test-" + tableName)
         .toString();
+  }
+
+  @Test
+  public void testBuildCDCPartitionedFile_dvDiff_setsOverrideDvAndIfNotContained() {
+    AddFile addFile = createAddFileForCDC("data.parquet", 1024, 100L, Optional.of(TEST_DV));
+    CDCDataFile cdcFile =
+        CDCDataFile.fromDVDiff(
+            addFile,
+            CDCReader.CDC_TYPE_DELETE_STRING(),
+            /* commitTimestamp= */ 1000L,
+            "override==");
+
+    PartitionedFile pf =
+        PartitionUtils.buildCDCPartitionedFile(
+            cdcFile,
+            /* commitVersion= */ 1L,
+            new StructType(),
+            "file:/tmp/table",
+            ZoneId.of("UTC"));
+
+    java.util.Map<String, Object> metadata = getFileMetadata(pf);
+    assertEquals(
+        "override==", metadata.get(DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_ID_ENCODED()));
+    assertEquals(
+        RowIndexFilterType.IF_NOT_CONTAINED,
+        metadata.get(DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_TYPE()));
+  }
+
+  @Test
+  public void testBuildCDCPartitionedFile_regularAddFileWithDv_setsIfContained() {
+    AddFile addFile = createAddFileForCDC("data.parquet", 2048, 200L, Optional.of(TEST_DV));
+    CDCDataFile cdcFile = CDCDataFile.fromAddFile(addFile, /* commitTimestamp= */ 2000L);
+
+    PartitionedFile pf =
+        PartitionUtils.buildCDCPartitionedFile(
+            cdcFile,
+            /* commitVersion= */ 2L,
+            new StructType(),
+            "file:/tmp/table",
+            ZoneId.of("UTC"));
+
+    java.util.Map<String, Object> metadata = getFileMetadata(pf);
+    assertEquals(
+        TEST_DV.serializeToBase64(),
+        metadata.get(DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_ID_ENCODED()));
+    assertEquals(
+        RowIndexFilterType.IF_CONTAINED,
+        metadata.get(DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_TYPE()));
+  }
+
+  @Test
+  public void testBuildCDCPartitionedFile_noDv_noFilterMetadata() {
+    AddFile addFile = createAddFileForCDC("data.parquet", 512, 300L, Optional.empty());
+    CDCDataFile cdcFile = CDCDataFile.fromAddFile(addFile, /* commitTimestamp= */ 3000L);
+
+    PartitionedFile pf =
+        PartitionUtils.buildCDCPartitionedFile(
+            cdcFile,
+            /* commitVersion= */ 3L,
+            new StructType(),
+            "file:/tmp/table",
+            ZoneId.of("UTC"));
+
+    java.util.Map<String, Object> metadata = getFileMetadata(pf);
+    assertFalse(
+        metadata.containsKey(DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_ID_ENCODED()),
+        "No filter metadata expected when AddFile has no DV");
   }
 }

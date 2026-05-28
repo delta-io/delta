@@ -912,8 +912,9 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
       // Lombok for generating boilerplate code
       "org.projectlombok" % "lombok" % "1.18.34" % "test",
 
-      // Unity Catalog dependencies - exclude Jackson to use Spark's Jackson 2.15.x
-      "io.unitycatalog" %% "unitycatalog-spark" % unityCatalogVersion % "test" excludeAll(
+      // Unity Catalog dependencies - per-Spark-version artifact (unitycatalog-spark_4.X_2.13).
+      // Exclude Jackson to use Spark's Jackson 2.15.x
+      "io.unitycatalog" %% s"unitycatalog-spark_${CrossSparkVersions.getSparkVersionSpec().shortVersion}" % unityCatalogVersion % "test" excludeAll(
         ExclusionRule(organization = "com.fasterxml.jackson.core"),
         ExclusionRule(organization = "com.fasterxml.jackson.module"),
         ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
@@ -948,6 +949,15 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
       }
     },
 
+    // Add delta-iceberg compiled classes so that UniForm Iceberg conversion works in integration
+    // tests.
+    Test / unmanagedJars ++= {
+      if (supportIceberg) Seq(
+        Attributed.blank((iceberg / Compile / packageBin).value)
+      ) else Seq.empty
+    },
+
+    Test / javaOptions += s"-DsupportIceberg=${supportIceberg}",
     Test / testOptions += Tests.Argument("-oDF"),
     Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
   )
@@ -1354,7 +1364,7 @@ lazy val iceberg = (project in file("iceberg"))
           "org.xerial" % "sqlite-jdbc" % "3.45.0.0" % "test",
           "org.apache.httpcomponents.core5" % "httpcore5" % "5.2.4" % "test",
           "org.apache.httpcomponents.client5" % "httpclient5" % "5.3.1" % "test",
-          "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.10.0" % "provided",
+          "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.11.0" % "provided",
           // For FixedGcsAccessTokenProvider (GCS server-side planning credentials)
           "com.google.cloud.bigdataoss" % "util-hadoop" % "hadoop3-2.2.26" % "provided"
         )

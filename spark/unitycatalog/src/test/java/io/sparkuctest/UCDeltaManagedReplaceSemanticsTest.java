@@ -42,9 +42,6 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
           + "'delta.feature.catalogManaged'='supported', "
           + "'delta.enableChangeDataFeed'='true')";
 
-  private static final String METADATA_CHANGE_ERROR =
-      "Metadata changes on Unity Catalog managed tables";
-
   private enum ReplaceOperation {
     REPLACE("REPLACE TABLE", false),
     REPLACE_AS_SELECT("REPLACE TABLE", true),
@@ -124,11 +121,10 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
     }
   }
 
-  // The table was created with CDF + type widening enabled. The REPLACE statement omits all
-  // TBLPROPERTIES, so those non-default features are not restated. Replace semantics rejects this
-  // as a potential unintended feature downgrade.
+  // The table was created with CDF + type widening enabled. A REPLACE statement that omits all
+  // TBLPROPERTIES still succeeds through UC updateTable.
   @Test
-  public void testMissingNonDefaultFeatureRestatementIsRejectedForManagedReplaceOperations()
+  public void testMissingNonDefaultFeatureRestatementIsAllowedForManagedReplaceOperations()
       throws Exception {
     for (ReplaceOperation operation : ReplaceOperation.values()) {
       String tableName = uniqueTableName("missing_feature_match", operation);
@@ -141,20 +137,18 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
           fullTableName -> {
             sql("INSERT INTO %s VALUES (1, 'old')", fullTableName);
 
-            assertRejectedReplacePreservesTable(
+            assertSuccessfulReplace(
                 operation,
                 fullTableName,
                 buildStatement(
-                    operation, fullTableName, "i INT, s STRING", "", null, "2 AS i, 'new' AS s"),
-                METADATA_CHANGE_ERROR);
+                    operation, fullTableName, "i INT, s STRING", "", null, "2 AS i, 'new' AS s"));
           });
     }
   }
 
-  // Same as above, but only CDF is restated — type widening is omitted. Partial restatement is
-  // still rejected because the replaced table would lose the type widening feature.
+  // Same as above, but only CDF is restated and type widening is omitted.
   @Test
-  public void testPartialNonDefaultFeatureRestatementIsRejectedForManagedReplaceOperations()
+  public void testPartialNonDefaultFeatureRestatementIsAllowedForManagedReplaceOperations()
       throws Exception {
     for (ReplaceOperation operation : ReplaceOperation.values()) {
       String tableName = uniqueTableName("partial_feature_match", operation);
@@ -167,7 +161,7 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
           fullTableName -> {
             sql("INSERT INTO %s VALUES (1, 'old')", fullTableName);
 
-            assertRejectedReplacePreservesTable(
+            assertSuccessfulReplace(
                 operation,
                 fullTableName,
                 buildStatement(
@@ -176,14 +170,13 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
                     "i INT, s STRING",
                     PARTIAL_NON_DEFAULT_RESTATEMENT,
                     null,
-                    "2 AS i, 'new' AS s"),
-                METADATA_CHANGE_ERROR);
+                    "2 AS i, 'new' AS s"));
           });
     }
   }
 
   @Test
-  public void testCommentChangeIsRejectedForManagedReplaceOperations() throws Exception {
+  public void testCommentChangeIsAllowedForManagedReplaceOperations() throws Exception {
     for (ReplaceOperation operation : ReplaceOperation.values()) {
       String tableName = uniqueTableName("comment_change", operation);
       withNewTable(
@@ -193,7 +186,7 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
           fullTableName -> {
             sql("INSERT INTO %s VALUES (1, 'old')", fullTableName);
 
-            assertRejectedReplacePreservesTable(
+            assertSuccessfulReplace(
                 operation,
                 fullTableName,
                 buildStatement(
@@ -202,14 +195,15 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
                     "i INT, s STRING",
                     DEFAULT_FEATURES_RESTATEMENT,
                     "new description",
-                    "2 AS i, 'new' AS s"),
-                METADATA_CHANGE_ERROR);
+                    "2 AS i, 'new' AS s"));
+            assertThat(describeExtendedValue(fullTableName, "Comment"))
+                .isEqualTo("new description");
           });
     }
   }
 
   @Test
-  public void testUserPropertyChangeIsRejectedForManagedReplaceOperations() throws Exception {
+  public void testUserPropertyChangeIsAllowedForManagedReplaceOperations() throws Exception {
     for (ReplaceOperation operation : ReplaceOperation.values()) {
       String tableName = uniqueTableName("property_change", operation);
       withNewTable(
@@ -219,7 +213,7 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
           fullTableName -> {
             sql("INSERT INTO %s VALUES (1, 'old')", fullTableName);
 
-            assertRejectedReplacePreservesTable(
+            assertSuccessfulReplace(
                 operation,
                 fullTableName,
                 buildStatement(
@@ -232,16 +226,15 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
                         + "'delta.feature.inCommitTimestamp'='supported', "
                         + "'myapp.version'='2')",
                     null,
-                    "2 AS i, 'new' AS s"),
-                METADATA_CHANGE_ERROR);
+                    "2 AS i, 'new' AS s"));
+            assertThat(tableProperty(fullTableName, "myapp.version")).isEqualTo("2");
           });
     }
   }
 
-  // Schema change (adding a column) during REPLACE is rejected because the replaced table would
-  // have a different schema than the original, which is a metadata change.
+  // Schema change (adding a column) during REPLACE succeeds through UC updateTable.
   @Test
-  public void testSchemaChangeIsRejectedForManagedReplaceOperations() throws Exception {
+  public void testSchemaChangeIsAllowedForManagedReplaceOperations() throws Exception {
     for (ReplaceOperation operation : ReplaceOperation.values()) {
       String tableName = uniqueTableName("schema_change", operation);
       withNewTable(
@@ -251,7 +244,7 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
           fullTableName -> {
             sql("INSERT INTO %s VALUES (1, 'old')", fullTableName);
 
-            assertRejectedReplacePreservesTable(
+            assertSuccessfulReplace(
                 operation,
                 fullTableName,
                 buildStatement(
@@ -260,8 +253,13 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
                     "i INT, s STRING, extra INT",
                     DEFAULT_FEATURES_RESTATEMENT,
                     null,
-                    "2 AS i, 'new' AS s, 3 AS extra"),
-                METADATA_CHANGE_ERROR);
+                    "2 AS i, 'new' AS s, 3 AS extra"));
+            if (operation.isAsSelect()) {
+              assertThat(sql("SELECT extra FROM %s", fullTableName)).containsExactly(row("3"));
+            } else {
+              sql("INSERT INTO %s VALUES (2, 'new', 3)", fullTableName);
+              assertThat(sql("SELECT extra FROM %s", fullTableName)).containsExactly(row("3"));
+            }
           });
     }
   }
@@ -307,25 +305,6 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
         .containsExactly(row(operation.isAsSelect() ? "1" : "0"));
   }
 
-  private void assertRejectedReplacePreservesTable(
-      ReplaceOperation operation, String tableName, String statement, String expectedError)
-      throws Exception {
-    String ucTableIdBeforeReplace = currentUcTableId(tableName);
-    long versionBeforeReplace = currentVersion(tableName);
-
-    assertThrowsWithCauseContaining(expectedError, () -> sql(statement));
-
-    assertThat(currentUcTableId(tableName))
-        .as("ucTableId after rejected %s on %s", operation, tableName)
-        .isEqualTo(ucTableIdBeforeReplace);
-    assertThat(currentVersion(tableName))
-        .as("version after rejected %s on %s", operation, tableName)
-        .isEqualTo(versionBeforeReplace);
-    assertThat(sql("SELECT COUNT(*) FROM %s", tableName))
-        .as("row count after rejected %s on %s", operation, tableName)
-        .containsExactly(row("1"));
-  }
-
   private String uniqueTableName(String prefix, ReplaceOperation operation) {
     return prefix
         + "_"
@@ -358,5 +337,21 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
       parts.add("AS SELECT " + query);
     }
     return String.join(" ", parts);
+  }
+
+  private String tableProperty(String tableName, String key) {
+    return sql("SHOW TBLPROPERTIES %s", tableName).stream()
+        .filter(r -> r.size() >= 2 && key.equals(r.get(0)))
+        .map(r -> r.get(1))
+        .findFirst()
+        .orElse(null);
+  }
+
+  private String describeExtendedValue(String tableName, String key) {
+    return sql("DESCRIBE EXTENDED %s", tableName).stream()
+        .filter(r -> r.size() >= 2 && key.equalsIgnoreCase(r.get(0).trim()))
+        .map(r -> r.get(1).trim())
+        .findFirst()
+        .orElse(null);
   }
 }

@@ -49,7 +49,7 @@ import org.apache.spark.sql.delta.DeltaTableUtils;
 import org.apache.spark.sql.delta.RowCommitVersion$;
 import org.apache.spark.sql.delta.RowId$;
 import org.apache.spark.sql.delta.SparkTableShims$;
-import org.apache.spark.sql.delta.catalog.SparkTableMarker;
+import org.apache.spark.sql.delta.catalog.DeltaV2TableMarker;
 import org.apache.spark.sql.delta.commands.cdc.CDCReader;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
@@ -60,8 +60,12 @@ import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
 /** DataSource V2 Table implementation for Delta Lake using the Delta Kernel API. */
-public class SparkTable
-    implements Table, SupportsRead, SupportsWrite, SupportsMetadataColumns, SparkTableMarker {
+public class DeltaV2Table
+    implements Table,
+        SupportsRead,
+        SupportsWrite,
+        SupportsMetadataColumns
+        DeltaV2TableMarker {
   private static final String METADATA_COLUMN_NAME = FileFormat$.MODULE$.METADATA_NAME();
   private static final String ROW_ID_METADATA_FIELD_NAME = RowId$.MODULE$.ROW_ID();
   private static final String ROW_COMMIT_VERSION_METADATA_FIELD_NAME =
@@ -98,25 +102,25 @@ public class SparkTable
   private final boolean isCDCRead;
 
   /**
-   * Creates a SparkTable from a filesystem path without a catalog table.
+   * Creates a DeltaV2Table from a filesystem path without a catalog table.
    *
    * @param identifier logical table identifier used by Spark's catalog
    * @param tablePath filesystem path to the Delta table root
    * @throws NullPointerException if identifier or tablePath is null
    */
-  public SparkTable(Identifier identifier, String tablePath) {
+  public DeltaV2Table(Identifier identifier, String tablePath) {
     this(identifier, tablePath, Collections.emptyMap(), Optional.empty());
   }
 
   /**
-   * Creates a SparkTable from a filesystem path with options.
+   * Creates a DeltaV2Table from a filesystem path with options.
    *
    * @param identifier logical table identifier used by Spark's catalog
    * @param tablePath filesystem path to the Delta table root
    * @param options table options used to configure the Hadoop conf, table reads and writes
    * @throws NullPointerException if identifier or tablePath is null
    */
-  public SparkTable(Identifier identifier, String tablePath, Map<String, String> options) {
+  public DeltaV2Table(Identifier identifier, String tablePath, Map<String, String> options) {
     this(identifier, tablePath, options, Optional.empty());
   }
 
@@ -129,7 +133,8 @@ public class SparkTable
    * @param catalogTable the Spark CatalogTable containing table metadata including location
    * @param options user-provided options to override catalog properties
    */
-  public SparkTable(Identifier identifier, CatalogTable catalogTable, Map<String, String> options) {
+  public DeltaV2Table(
+      Identifier identifier, CatalogTable catalogTable, Map<String, String> options) {
     this(
         identifier,
         getDecodedPath(requireNonNull(catalogTable, "catalogTable is null").location()),
@@ -138,7 +143,7 @@ public class SparkTable
   }
 
   /**
-   * Creates a SparkTable backed by a Delta Kernel snapshot manager and initializes Spark-facing
+   * Creates a DeltaV2Table backed by a Delta Kernel snapshot manager and initializes Spark-facing
    * metadata (schemas, partitioning, capabilities).
    *
    * <p>Side effects: - Initializes a SnapshotManager for the given tablePath. - Loads the latest
@@ -149,7 +154,7 @@ public class SparkTable
    * after data columns in the public Spark schema, per Spark conventions. - Read-time scan options
    * are later merged with these options.
    */
-  private SparkTable(
+  private DeltaV2Table(
       Identifier identifier,
       String tablePath,
       Map<String, String> userOptions,
@@ -226,7 +231,7 @@ public class SparkTable
   }
 
   /**
-   * Returns the CatalogTable if this SparkTable was created from a catalog table.
+   * Returns the CatalogTable if this DeltaV2Table was created from a catalog table.
    *
    * @return Optional containing the CatalogTable, or empty if this table was created from a path
    */
@@ -388,7 +393,7 @@ public class SparkTable
 
   @Override
   public String toString() {
-    return "SparkTable{identifier=" + identifier + '}';
+    return "DeltaV2Table{identifier=" + identifier + '}';
   }
 
   @Override
@@ -399,7 +404,7 @@ public class SparkTable
     if (o == null || getClass() != o.getClass()) {
       return false;
     }
-    SparkTable that = (SparkTable) o;
+    DeltaV2Table that = (DeltaV2Table) o;
     return Objects.equals(identifier, that.identifier)
         && Objects.equals(tablePath, that.tablePath)
         && Objects.equals(options, that.options)

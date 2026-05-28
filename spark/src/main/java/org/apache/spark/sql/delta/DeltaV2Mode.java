@@ -73,7 +73,7 @@ public class DeltaV2Mode {
   }
 
   /**
-   * Determines if catalog should return sparkV2 (SparkTable) or sparkV1 (DeltaTableV2) tables.
+   * Determines if catalog should return sparkV2 (DeltaV2Table) or sparkV1 (DeltaTableV2) tables.
    *
    * @return true if catalog should return sparkV2 tables
    */

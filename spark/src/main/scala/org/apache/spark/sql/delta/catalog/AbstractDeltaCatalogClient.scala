@@ -16,8 +16,12 @@
 
 package org.apache.spark.sql.delta.catalog
 
+import java.util
+
 import org.apache.spark.internal.Logging
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.connector.catalog.{Identifier, Table}
+import org.apache.spark.sql.delta.actions.{DomainMetadata, Metadata, Protocol}
 import org.apache.spark.sql.delta.coordinatedcommits.UCTokenBasedRestClientFactory
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
@@ -39,6 +43,38 @@ private[catalog] trait AbstractDeltaCatalogClient {
    *   no record of this identifier
    */
   def loadTable(ident: Identifier): Table
+
+  /**
+   * Called by `AbstractDeltaCatalog.maybeStageManagedDeltaCreate` for a fresh managed-Delta
+   * CREATE / staged CREATE. Stages the table with the catalog (e.g. UC Delta API staging
+   * endpoint) and returns `properties` augmented with the catalog-supplied LOCATION, table
+   * id, and credentials.
+   *
+   * The caller is expected to route only fresh managed-Delta CREATE / CTAS requests here
+   * (external / REPLACE-existing / path-based requests are filtered out upstream).
+   * Implementations should re-verify that contract on entry rather than trusting the
+   * caller blindly.
+   */
+  def createStagingTable(
+      ident: Identifier,
+      properties: util.Map[String, String]): util.Map[String, String]
+
+  /**
+   * Called by [[AbstractDeltaCatalog]] after Delta has written the initial commit, in place
+   * of the legacy `super.createTable` call. Implementations register the table with the
+   * catalog (e.g. via UC Delta API `createTable` endpoint).
+   *
+   * @param lastCommitTimestampMs wall-clock timestamp of the latest commit that produced
+   *   `metadata` / `protocol`, used by the catalog as the authoritative "last updated"
+   *   timestamp on the registered entry.
+   */
+  def createTable(
+      ident: Identifier,
+      table: CatalogTable,
+      metadata: Metadata,
+      domainMetadata: Seq[DomainMetadata],
+      protocol: Protocol,
+      lastCommitTimestampMs: Long): Unit
 }
 
 /** Builds a [[AbstractDeltaCatalogClient]] from catalog options. */

@@ -380,6 +380,19 @@ trait DeltaErrorsBase
     )
   }
 
+  def cannotDropGeospatialFeature(cols: Seq[StructField]): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CANNOT_DROP_GEOSPATIAL_FEATURE",
+      messageParameters = Array(cols.map(_.name).mkString(", ")))
+  }
+
+  def geoSpatialNotSupportedException(): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_GEOSPATIAL_NOT_SUPPORTED",
+      messageParameters = Array.empty
+    )
+  }
+
   def checkConstraintReferToWrongColumns(colName: String): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_INVALID_CHECK_CONSTRAINT_REFERENCES",
@@ -526,6 +539,20 @@ trait DeltaErrorsBase
       messageParameters = Array(colName))
   }
 
+  def operationNotSupportedForDataTypes(
+      operation: String,
+      unsupportedDataType: UnsupportedDataTypeInfo,
+      moreUnsupportedDataTypes: UnsupportedDataTypeInfo*): Throwable = {
+    val prettyMessage = (unsupportedDataType +: moreUnsupportedDataTypes)
+      .map(dt => s"${dt.column}: ${dt.dataType}")
+      .mkString("[", ", ", "]")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_OPERATION_NOT_SUPPORTED_FOR_DATATYPES",
+      messageParameters = Array(operation, prettyMessage)
+    )
+  }
+
+
   /**
    * Throwable used when CDC options contain no 'start'.
    */
@@ -625,7 +652,7 @@ trait DeltaErrorsBase
 
   /**
    * Auto-CDF batch read rejected because the table resolved by the catalog is not a V2
-   * [[io.delta.spark.internal.v2.catalog.SparkTable]]. The V2 connector is the only path that
+   * [[io.delta.spark.internal.v2.catalog.DeltaV2Table]]. The V2 connector is the only path that
    * implements the catalog-driven CHANGES surface. V1 Delta tables (`DeltaTableV2`) continue to
    * use the legacy CDF path that does not go through `TableCatalog.loadChangelog`.
    *
@@ -663,6 +690,16 @@ trait DeltaErrorsBase
     new IllegalArgumentException(
       s"Two SetTransaction actions within the same transaction have the same appId ${appId} but " +
         s"different versions ${version1} and ${version2}.")
+  }
+
+  def duplicateActionCheckFailed(
+      actionType: String,
+      path: String,
+      conflictingPath: String): Throwable = {
+    new DeltaRuntimeException(
+      errorClass = "DELTA_DUPLICATE_ACTIONS_FOUND",
+      messageParameters = Array(actionType, path, conflictingPath)
+    )
   }
 
   def unexpectedChangeFilesFound(changeFiles: String): Throwable = {

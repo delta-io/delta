@@ -17,13 +17,14 @@
 package org.apache.spark.sql.delta.uniform
 
 import com.databricks.spark.util.Log4jUsageLogger
+import shadedForDelta.org.apache.iceberg.BaseTable
 import shadedForDelta.org.apache.iceberg.hadoop.HadoopTables
 
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeltaLog, DeltaOperations, DeltaTableReadPredicate, IcebergConstants, Snapshot}
+import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeltaConfigs, DeltaLog, DeltaOperations, DeltaTableReadPredicate, IcebergConstants, Snapshot}
 import org.apache.spark.sql.delta.DeltaTestUtils.filterUsageRecords
 import org.apache.spark.sql.delta.NonSparkReadIceberg
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, DomainMetadata, Metadata}
@@ -93,15 +94,18 @@ class UniFormConverterSuite extends
     )
   }
 
+  /** Simulates the UC REST catalog path: Iceberg props in storage.properties. */
   def catalogTableWithDeltaUniformIceberg(
       catalogTable: CatalogTable,
       metadataPath: String,
       convertedDeltaVersion: Long): CatalogTable =
     catalogTable.copy(
-      properties = catalogTable.properties +
-        (IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP -> metadataPath) +
-        (IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP ->
-          convertedDeltaVersion.toString)
+      storage = catalogTable.storage.copy(
+        properties = catalogTable.storage.properties +
+          (IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP -> metadataPath) +
+          (IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP ->
+            convertedDeltaVersion.toString)
+      )
     )
 
   def assertDeltaCommitRangeEvent(
@@ -322,6 +326,95 @@ class UniFormConverterSuite extends
       val numFilesInIceberg = icebergTable.currentSnapshot().summary().get("total-data-files").toInt
       assert(numFilesInIceberg === currSnapshot.numOfFiles + 2)
       assert(lastConvertedVersion.isEmpty)
+    }
+  }
+
+  private def latestIcebergTable(tableName: String): shadedForDelta.org.apache.iceberg.Table = {
+    val tableId = TableIdentifier(tableName)
+    val deltaLog = DeltaLog.forTable(spark, tableId)
+    val snapshot = deltaLog.update()
+    val catalogTable = spark.sessionState.catalog.getTableMetadata(tableId)
+    val metadataPath = new IcebergConverterForTest()
+      .convertSnapshotAndReturnMetadataPath(snapshot, catalogTable)
+    new HadoopTables(deltaLog.newDeltaHadoopConf()).load(metadataPath)
+  }
+
+  test("overwriteSchema=true with DataFrame should preserve nested field IDs " +
+      "and not bump Iceberg metadata") {
+    val tableName = "test_overwrite_nested_ids"
+    withTable(tableName) {
+      spark.sql(
+        s"""CREATE TABLE $tableName (id INT, tags MAP<STRING, STRING>, vals ARRAY<INT>)
+           |USING DELTA TBLPROPERTIES (
+           |  'delta.columnMapping.mode' = 'name',
+           |  'delta.enableIcebergCompatV2' = 'true',
+           |  'delta.universalFormat.enabledFormats' = 'iceberg'
+           |)""".stripMargin)
+      spark.sql(s"INSERT INTO $tableName VALUES (1, map('k', 'v'), array(10))")
+
+      val tableId = TableIdentifier(tableName)
+      val deltaLogBefore = DeltaLog.forTable(spark, tableId).update()
+      val maxIdBefore = DeltaConfigs.COLUMN_MAPPING_MAX_ID.fromMetaData(deltaLogBefore.metadata)
+      val metaBefore = latestIcebergTable(tableName).asInstanceOf[BaseTable].operations().current()
+      val schemaIdBefore = metaBefore.currentSchemaId()
+      val lastColIdBefore = metaBefore.lastColumnId()
+
+      spark.table(tableName)
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .option("overwriteSchema", "true")
+        .saveAsTable(tableName)
+
+      val deltaLogAfter = DeltaLog.forTable(spark, tableId).update()
+      val maxIdAfter = DeltaConfigs.COLUMN_MAPPING_MAX_ID.fromMetaData(deltaLogAfter.metadata)
+      assert(maxIdAfter === maxIdBefore,
+        s"Delta columnMappingMaxId should not change (before=$maxIdBefore, after=$maxIdAfter)")
+
+      val metaAfter = latestIcebergTable(tableName).asInstanceOf[BaseTable].operations().current()
+      assert(metaAfter.currentSchemaId() === schemaIdBefore,
+        "Iceberg current-schema-id should not change on overwrite with same schema")
+      assert(metaAfter.lastColumnId() === lastColIdBefore,
+        "Iceberg last-column-id should not change on overwrite with same schema")
+    }
+  }
+
+  test("overwriteSchema=false (default) with DataFrame should preserve nested field IDs " +
+      "and not bump Iceberg metadata") {
+    val tableName = "test_overwrite_default_nested_ids"
+    withTable(tableName) {
+      spark.sql(
+        s"""CREATE TABLE $tableName (id INT, tags MAP<STRING, STRING>, vals ARRAY<INT>)
+           |USING DELTA TBLPROPERTIES (
+           |  'delta.columnMapping.mode' = 'name',
+           |  'delta.enableIcebergCompatV2' = 'true',
+           |  'delta.universalFormat.enabledFormats' = 'iceberg'
+           |)""".stripMargin)
+      spark.sql(s"INSERT INTO $tableName VALUES (1, map('k', 'v'), array(10))")
+
+      val tableId = TableIdentifier(tableName)
+      val deltaLogBefore = DeltaLog.forTable(spark, tableId).update()
+      val maxIdBefore = DeltaConfigs.COLUMN_MAPPING_MAX_ID.fromMetaData(deltaLogBefore.metadata)
+      val metaBefore = latestIcebergTable(tableName).asInstanceOf[BaseTable].operations().current()
+      val schemaIdBefore = metaBefore.currentSchemaId()
+      val lastColIdBefore = metaBefore.lastColumnId()
+
+      spark.table(tableName)
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .saveAsTable(tableName)
+
+      val deltaLogAfter = DeltaLog.forTable(spark, tableId).update()
+      val maxIdAfter = DeltaConfigs.COLUMN_MAPPING_MAX_ID.fromMetaData(deltaLogAfter.metadata)
+      assert(maxIdAfter === maxIdBefore,
+        s"Delta columnMappingMaxId should not change (before=$maxIdBefore, after=$maxIdAfter)")
+
+      val metaAfter = latestIcebergTable(tableName).asInstanceOf[BaseTable].operations().current()
+      assert(metaAfter.currentSchemaId() === schemaIdBefore,
+        "Iceberg current-schema-id should not change on overwrite with same schema")
+      assert(metaAfter.lastColumnId() === lastColIdBefore,
+        "Iceberg last-column-id should not change on overwrite with same schema")
     }
   }
 
