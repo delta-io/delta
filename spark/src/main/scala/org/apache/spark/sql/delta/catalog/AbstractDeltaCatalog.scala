@@ -839,18 +839,22 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
    * where the V1 SessionCatalog lookup does not surface the existing table entry.
    *
    * [[getExistingTableIfExists]] first checks the V1 catalog using a [[TableIdentifier]]. For
-   * Unity Catalog, some staged create/replace paths need a delegated V2 catalog lookup on the
-   * original [[Identifier]] to recover the existing table metadata.
+   * Unity Catalog, some staged create/replace paths need a delegated catalog lookup on the
+   * original [[Identifier]] to recover the existing table metadata. The lookup prefers the
+   * `deltaCatalogClient` (Delta API) when wired, and falls back to the V2 delegate plugin
+   * otherwise.
    *
-   * Even though this goes through the delegated V2 catalog plugin, Spark can still surface the
-   * result as a [[V1Table]] wrapper when the delegated catalog is exposing V1-backed table
-   * metadata. In that case we unwrap the embedded [[CatalogTable]] and continue on the V1 Delta
-   * path.
+   * Spark surfaces the result as a [[V1Table]] wrapper when the catalog is exposing V1-backed
+   * table metadata. In that case we unwrap the embedded [[CatalogTable]] and continue on the
+   * V1 Delta path.
    */
   private def getExistingTableFromDelegatedCatalog(ident: Identifier): Option[CatalogTable] = {
     if (isUnityCatalog) {
       try {
-        super.loadTable(ident) match {
+        val table = deltaCatalogClient
+          .map(_.loadTable(ident))
+          .getOrElse(super.loadTable(ident))
+        table match {
           case v1: V1Table if DeltaTableUtils.isDeltaTable(v1.catalogTable) =>
             Some(v1.catalogTable)
           case _ =>
