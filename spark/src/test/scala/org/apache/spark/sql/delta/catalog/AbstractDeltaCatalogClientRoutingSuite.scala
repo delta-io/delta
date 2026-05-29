@@ -26,7 +26,7 @@ import io.delta.storage.commit.{Commit, GetCommitsResponse, TableIdentifier => S
 import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCDeltaClient, UCDeltaModels}
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.{DeltaProtocol, StagingTableInfo, TableInfo, TableType => UcTableType}
-import io.delta.storage.commit.uccommitcoordinator.exceptions.CredentialFetchFailedException
+import io.delta.storage.commit.uccommitcoordinator.exceptions.{CredentialFetchFailedException, NoSuchTableException => StorageNoSuchTableException}
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 
 import org.apache.spark.sql.QueryTest
@@ -384,6 +384,143 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
       client.createStagingTable(ident, stageProps("delta.catalogManaged" -> "supported")))
     assert(ex.getMessage.contains("path-based"))
     assert(stub.stagedRequests.isEmpty)
+  }
+
+  // -------------------------------------------------------------------------
+  // loadTableAndBuildReplaceProps: validation + augmentation for REPLACE / RTAS /
+  // CREATE OR REPLACE on an existing catalog-managed Delta table.
+  // -------------------------------------------------------------------------
+
+  /**
+   * Builds a TableInfo that, by default, satisfies all catalog-managed-Delta preconditions
+   * (tableType=MANAGED, provider=delta, `delta.feature.catalogManaged=supported`). Tests
+   * override individual fields to exercise the rejection branches.
+   */
+  private def existingDeltaTableInfo(
+      tableType: UCDeltaModels.TableType = UCDeltaModels.TableType.MANAGED,
+      provider: String = "DELTA",
+      catalogManaged: Boolean = true,
+      storageProperties: util.Map[String, String] =
+        util.Map.of("fs.s3a.access.key", "existing-key")): TableInfo = {
+    val config = new util.HashMap[String, String]()
+    if (catalogManaged) config.put("delta.feature.catalogManaged", "supported")
+    val metadata = new TestMetadata(provider = provider, configuration = config)
+    new TableInfo(
+      UUID.fromString("00000000-0000-0000-0000-000000000002"),
+      tableType,
+      "s3://bucket/existing/tbl",
+      metadata,
+      storageProperties,
+      Optional.empty())
+  }
+
+  private def replaceClient(loadResult: => TableInfo): UCDeltaCatalogClientImpl =
+    new UCDeltaCatalogClientImpl(catalogName = "main", ucClient = new StubUCDeltaClient(loadResult))
+
+  test(
+      "loadTableAndBuildReplaceProps: happy path augments props with provider + " +
+        "is_managed_location + credentials, and does NOT set PROP_LOCATION") {
+    val client = replaceClient(existingDeltaTableInfo())
+    val out = client.loadTableAndBuildReplaceProps(
+      Identifier.of(Array("sch"), "tbl"),
+      stageProps("delta.feature.catalogManaged" -> "supported"))
+    assert(out.get(TableCatalog.PROP_PROVIDER) === "delta",
+      "existing provider must be re-emitted")
+    assert(out.get(TableCatalog.PROP_IS_MANAGED_LOCATION) === "true")
+    assert(!out.containsKey(TableCatalog.PROP_LOCATION),
+      "PROP_LOCATION must NOT be set; downstream resolves location from existing snapshot")
+    assert(out.get("fs.s3a.access.key") === "existing-key",
+      "fs.* storage credentials must be mirrored bare")
+    assert(out.get(TableCatalog.OPTION_PREFIX + "fs.s3a.access.key") === "existing-key",
+      "fs.* storage credentials must also be mirrored under the option.-prefixed key")
+  }
+
+  test("loadTableAndBuildReplaceProps: caller-supplied UC_TABLE_ID_KEY throws") {
+    val client = replaceClient(existingDeltaTableInfo())
+    val e = intercept[IllegalArgumentException] {
+      client.loadTableAndBuildReplaceProps(
+        Identifier.of(Array("sch"), "tbl"),
+        stageProps(
+          "delta.feature.catalogManaged" -> "supported",
+          "io.unitycatalog.tableId" -> "user-supplied"))
+    }
+    assert(e.getMessage.contains("io.unitycatalog.tableId"))
+  }
+
+  test("loadTableAndBuildReplaceProps: caller-supplied catalogManaged != supported throws") {
+    val client = replaceClient(existingDeltaTableInfo())
+    val e = intercept[IllegalArgumentException] {
+      client.loadTableAndBuildReplaceProps(
+        Identifier.of(Array("sch"), "tbl"),
+        stageProps("delta.feature.catalogManaged" -> "disabled"))
+    }
+    assert(e.getMessage.contains("catalogManaged"))
+    assert(e.getMessage.contains("disabled"))
+  }
+
+  test("loadTableAndBuildReplaceProps: caller-supplied PROP_LOCATION throws") {
+    val client = replaceClient(existingDeltaTableInfo())
+    val e = intercept[UnsupportedOperationException] {
+      client.loadTableAndBuildReplaceProps(
+        Identifier.of(Array("sch"), "tbl"),
+        stageProps(
+          "delta.feature.catalogManaged" -> "supported",
+          TableCatalog.PROP_LOCATION -> "s3://other/location"))
+    }
+    assert(e.getMessage.contains(TableCatalog.PROP_LOCATION))
+  }
+
+  test("loadTableAndBuildReplaceProps: existing EXTERNAL table is rejected") {
+    val client = replaceClient(
+      existingDeltaTableInfo(tableType = UCDeltaModels.TableType.EXTERNAL))
+    val e = intercept[UnsupportedOperationException] {
+      client.loadTableAndBuildReplaceProps(
+        Identifier.of(Array("sch"), "tbl"),
+        stageProps("delta.feature.catalogManaged" -> "supported"))
+    }
+    assert(e.getMessage.contains("catalog-managed"))
+  }
+
+  test("loadTableAndBuildReplaceProps: existing non-Delta provider throws notADeltaTableException") {
+    val client = replaceClient(
+      existingDeltaTableInfo(provider = "PARQUET", catalogManaged = false))
+    val e = intercept[org.apache.spark.sql.delta.DeltaAnalysisException] {
+      client.loadTableAndBuildReplaceProps(
+        Identifier.of(Array("sch"), "tbl"),
+        stageProps("delta.feature.catalogManaged" -> "supported"))
+    }
+    assert(e.getMessage.contains("not a Delta table"))
+  }
+
+  test("loadTableAndBuildReplaceProps: existing table missing catalogManaged config is rejected") {
+    val client = replaceClient(existingDeltaTableInfo(catalogManaged = false))
+    val e = intercept[UnsupportedOperationException] {
+      client.loadTableAndBuildReplaceProps(
+        Identifier.of(Array("sch"), "tbl"),
+        stageProps("delta.feature.catalogManaged" -> "supported"))
+    }
+    assert(e.getMessage.contains("catalog-managed"))
+  }
+
+  test("loadTableAndBuildReplaceProps: caller PROP_PROVIDER different from existing throws cannotChangeProvider") {
+    val client = replaceClient(existingDeltaTableInfo())
+    val e = intercept[org.apache.spark.sql.delta.DeltaAnalysisException] {
+      client.loadTableAndBuildReplaceProps(
+        Identifier.of(Array("sch"), "tbl"),
+        stageProps(
+          "delta.feature.catalogManaged" -> "supported",
+          TableCatalog.PROP_PROVIDER -> "parquet"))
+    }
+    assert(e.getMessage.contains("provider"))
+  }
+
+  test("loadTableAndBuildReplaceProps: StorageNoSuchTableException is wrapped as NoSuchTableException") {
+    val client = replaceClient(throw new StorageNoSuchTableException("no such table"))
+    intercept[org.apache.spark.sql.catalyst.analysis.NoSuchTableException] {
+      client.loadTableAndBuildReplaceProps(
+        Identifier.of(Array("sch"), "tbl"),
+        stageProps("delta.feature.catalogManaged" -> "supported"))
+    }
   }
 
   test("loadTable converts TableInfo to V1Table with catalog-supplied fields") {

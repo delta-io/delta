@@ -190,6 +190,10 @@ private[catalog] class UCDeltaCatalogClientImpl(
             "Delta protocol feature list.")
       }
     }
+    // Intentionally do NOT emit `delta.minReaderVersion` / `delta.minWriterVersion`: Delta
+    // derives those from the feature list, and pinning them here would put Delta into
+    // explicit table-features mode, suppressing implicit legacy writer features
+    // (appendOnly, invariants) in the resulting protocol.
   }
 
   /**
@@ -296,7 +300,7 @@ private[catalog] class UCDeltaCatalogClientImpl(
       properties: util.Map[String, String], qualifiedName: String): Unit = {
     val key = TableFeatureProtocolUtils.propertyKey(CatalogOwnedTableFeature)
     val value = properties.get(key)
-    if (value != FEATURE_PROP_SUPPORTED) {
+    if (value != null && value != FEATURE_PROP_SUPPORTED) {
       throw new IllegalArgumentException(
         s"REPLACE TABLE on $qualifiedName cannot override '$key'='$value'; expected " +
           s"'$FEATURE_PROP_SUPPORTED'.")
