@@ -15,23 +15,42 @@
  */
 package io.delta.spark.internal.v2.read;
 
+import io.delta.kernel.CommitActions;
+import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.checksum.CRCInfo;
+import io.delta.kernel.internal.commitrange.CommitRangeImpl;
+import io.delta.kernel.internal.lang.Lazy;
+import io.delta.kernel.internal.metrics.SnapshotQueryContext;
+import io.delta.kernel.internal.replay.LogReplay;
+import io.delta.kernel.internal.snapshot.LogSegment;
+import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.internal.util.Utils;
+import io.delta.kernel.internal.util.VectorUtils;
+import io.delta.kernel.types.StringType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.CloseableIterator.BreakableFilterResult;
 import io.delta.spark.internal.v2.adapters.KernelMetadataAdapter;
 import io.delta.spark.internal.v2.adapters.KernelProtocolAdapter;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
+import io.delta.spark.internal.v2.utils.ScalaUtils;
+import io.delta.spark.internal.v2.utils.SchemaUtils;
 import io.delta.spark.internal.v2.utils.StreamingHelper;
+import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import javax.annotation.Nullable;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.delta.DeltaColumnMapping$;
@@ -39,6 +58,8 @@ import org.apache.spark.sql.delta.DeltaErrors;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.delta.TypeWideningMode;
 import org.apache.spark.sql.delta.schema.SchemaUtils$;
+import org.apache.spark.sql.delta.sources.DeltaDataSource$;
+import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataEvolutionSupport$;
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
@@ -46,6 +67,7 @@ import org.apache.spark.sql.delta.sources.DeltaStreamUtils;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
 import org.apache.spark.sql.delta.v2.interop.AbstractMetadata;
 import org.apache.spark.sql.delta.v2.interop.AbstractProtocol;
+import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import scala.Option;
@@ -181,7 +203,7 @@ public class MetadataEvolutionHandler {
    * DeltaSourceMetadataEvolutionSupport.getMetadataOrProtocolChangeIndexedFileIterator}.
    */
   public CloseableIterator<IndexedFile> getMetadataOrProtocolChangeIndexedFileIterator(
-      Metadata metadata, Protocol protocol, long version) {
+      @Nullable Metadata metadata, @Nullable Protocol protocol, long version) {
     if (shouldTrackMetadataChange()
         && hasMetadataOrProtocolChangeComparedToStreamMetadata(metadata, protocol, version)) {
       return Utils.toCloseableIterator(
@@ -349,7 +371,7 @@ public class MetadataEvolutionHandler {
 
   /** Delegates to the shared static method in {@code DeltaSourceMetadataEvolutionSupport}. */
   private boolean hasMetadataOrProtocolChangeComparedToStreamMetadata(
-      Metadata newMetadata, Protocol newProtocol, long newSchemaVersion) {
+      @Nullable Metadata newMetadata, @Nullable Protocol newProtocol, long newSchemaVersion) {
     Option<AbstractMetadata> metadataOpt =
         newMetadata != null
             ? Option.apply((AbstractMetadata) new KernelMetadataAdapter(newMetadata))
@@ -397,7 +419,10 @@ public class MetadataEvolutionHandler {
   }
 
   /**
-   * V2 port of V1's {@code
+   * Picks the most recent metadata and most supportive protocol in {@code [startVersion,
+   * endVersion]} to seed the tracking log; throws if any earlier change is incompatible.
+   *
+   * <p>V2 port of V1's {@code
    * DeltaSourceMetadataEvolutionSupport.validateAndResolveMetadataForLogInitialization}.
    */
   private ValidatedMetadataAndProtocol validateAndResolveMetadataForLogInitialization(
@@ -469,5 +494,343 @@ public class MetadataEvolutionHandler {
       this.metadata = metadata;
       this.protocol = protocol;
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Static utilities
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Returns the persisted metadata from the schema-tracking log if configured, else empty.
+   *
+   * <p>The persisted metadata is the source of truth for the analyzed schema. With {@code
+   * mergeConsecutiveSchemaChanges=true}, the merger folds consecutive metadata-only commits and
+   * writes the merged entry back to the durable schema log; the execution-time {@link
+   * SparkMicroBatchStream} then re-reads the same merged entry via {@link
+   * DeltaSourceMetadataTrackingLog#getCurrentTrackedMetadata}.
+   */
+  public static Optional<PersistedMetadata> getPersistedMetadataForMicroBatchStream(
+      SparkSession spark,
+      SnapshotImpl snapshot,
+      Map<String, String> options,
+      DeltaSnapshotManager snapshotManager,
+      Engine engine) {
+    boolean mergeConsecutiveSchemaChanges =
+        (boolean)
+            spark
+                .sessionState()
+                .conf()
+                .getConf(
+                    DeltaSQLConf
+                        .DELTA_STREAMING_ENABLE_SCHEMA_TRACKING_MERGE_CONSECUTIVE_CHANGES());
+    Option<DeltaSourceMetadataTrackingLog> trackingLog =
+        getMetadataTrackingLogForMicroBatchStream(
+            spark,
+            snapshot,
+            options,
+            snapshotManager,
+            engine,
+            /* sourceMetadataPathOpt= */ Option.empty(),
+            mergeConsecutiveSchemaChanges);
+    if (trackingLog.isEmpty()) {
+      return Optional.empty();
+    }
+    Option<PersistedMetadata> persisted = trackingLog.get().getCurrentTrackedMetadata();
+    return persisted.isDefined() ? Optional.of(persisted.get()) : Optional.empty();
+  }
+
+  /**
+   * Returns true when the read options carry a schema-tracking location but the table's own options
+   * do not — i.e. the {@code DeltaV2Table} was built before the user-supplied {@code
+   * schemaTrackingLocation}/{@code schemaLocation} option was observed, so callers must rebuild the
+   * table with the option folded in for its schema to be driven by the tracking log.
+   */
+  public static boolean shouldPropagateSchemaTrackingToTable(
+      CaseInsensitiveStringMap readOptions, Map<String, String> tableOptions) {
+    CaseInsensitiveStringMap tableOptionsCI = new CaseInsensitiveStringMap(tableOptions);
+    boolean inReadOptions =
+        readOptions.containsKey(DeltaOptions.SCHEMA_TRACKING_LOCATION())
+            || readOptions.containsKey(DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS());
+    boolean inTableOptions =
+        tableOptionsCI.containsKey(DeltaOptions.SCHEMA_TRACKING_LOCATION())
+            || tableOptionsCI.containsKey(DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS());
+    return inReadOptions && !inTableOptions;
+  }
+
+  /**
+   * Builds the effective read snapshot by overlaying {@code customMetadata} from the
+   * schema-tracking log onto {@code snapshotAtSourceInit}: it reports the persisted schema,
+   * configuration, protocol, and commit version so downstream reads see the evolved state.
+   *
+   * <p>The returned snapshot is intentionally <em>not</em> consistent for log-replay-driven APIs.
+   * Its reported {@code version} is the persisted commit version (often older than {@code
+   * snapshotAtSourceInit.getVersion()}), but there is no aligned log segment available without an
+   * extra log read. To prevent silent reads against the wrong version, the {@code lazyLogSegment}
+   * and {@code lazyCrcInfo} fields throw on access. Callers must only read {@code metadata}, {@code
+   * protocol}, {@code schema}, {@code version}, and {@code dataPath} from the returned snapshot;
+   * anything that triggers log replay (e.g. {@code getCurrentCrcInfo}, {@code getScanBuilder}) must
+   * call {@link DeltaSnapshotManager#loadSnapshotAt} instead.
+   */
+  public static SnapshotImpl buildReadSnapshotFromPersistedMetadata(
+      SnapshotImpl snapshotAtSourceInit, Engine engine, PersistedMetadata customMetadata) {
+    Metadata sourceMetadata = snapshotAtSourceInit.getMetadata();
+
+    Map<String, String> readConfigurations;
+    if (customMetadata.tableConfigurations().isDefined()) {
+      readConfigurations = ScalaUtils.toJavaMap(customMetadata.tableConfigurations().get());
+    } else {
+      readConfigurations = sourceMetadata.getConfiguration();
+      logger.warn("Using snapshot's table configuration: {}", readConfigurations);
+    }
+
+    Metadata readMetadata =
+        new Metadata(
+            sourceMetadata.getId(),
+            sourceMetadata.getName(),
+            sourceMetadata.getDescription(),
+            sourceMetadata.getFormat(),
+            customMetadata.dataSchemaJson(),
+            SchemaUtils.convertSparkSchemaToKernelSchema(customMetadata.dataSchema()),
+            VectorUtils.buildArrayValue(
+                Arrays.asList(customMetadata.partitionSchema().fieldNames()), StringType.STRING),
+            sourceMetadata.getCreatedTime(),
+            VectorUtils.stringStringMapValue(readConfigurations));
+
+    Protocol readProtocol;
+    if (customMetadata.protocol().isDefined()) {
+      readProtocol = toKernelProtocol(customMetadata.protocol().get());
+    } else {
+      readProtocol = snapshotAtSourceInit.getProtocol();
+      logger.warn("Using snapshot's protocol: {}", readProtocol);
+    }
+
+    // Trap log segment / crc: the synthetic snapshot's version does not match the source-init
+    // snapshot's log segment, so resolving either would read against the wrong version. Today no
+    // caller exercises log replay on this snapshot; trapping makes any future regression fail
+    // loudly instead of silently corrupting reads.
+    Lazy<LogSegment> trapLazyLogSegment =
+        new Lazy<>(
+            () -> {
+              throw new IllegalStateException(
+                  "log segment is not available on the synthetic read snapshot built from "
+                      + "PersistedMetadata");
+            });
+    Lazy<Optional<CRCInfo>> trapLazyCrcInfo =
+        new Lazy<>(
+            () -> {
+              throw new IllegalStateException(
+                  "CRC info is not available on the synthetic read snapshot built from "
+                      + "PersistedMetadata");
+            });
+    LogReplay logReplay =
+        new LogReplay(
+            engine, snapshotAtSourceInit.getDataPath(), trapLazyLogSegment, trapLazyCrcInfo);
+
+    return new SnapshotImpl(
+        snapshotAtSourceInit.getDataPath(),
+        customMetadata.deltaCommitVersion(),
+        trapLazyLogSegment,
+        logReplay,
+        readProtocol,
+        readMetadata,
+        snapshotAtSourceInit.getCommitter(),
+        SnapshotQueryContext.forVersionSnapshot(
+            snapshotAtSourceInit.getDataPath().toString(), customMetadata.deltaCommitVersion()),
+        Optional.empty() /* inCommitTimestampOpt */);
+  }
+
+  private static Protocol toKernelProtocol(
+      org.apache.spark.sql.delta.actions.Protocol sparkProtocol) {
+    Set<String> readerFeatures =
+        sparkProtocol.getReaderFeatures() == null
+            ? Collections.emptySet()
+            : new HashSet<>(sparkProtocol.getReaderFeatures());
+    Set<String> writerFeatures =
+        sparkProtocol.getWriterFeatures() == null
+            ? Collections.emptySet()
+            : new HashSet<>(sparkProtocol.getWriterFeatures());
+    return new Protocol(
+        sparkProtocol.getMinReaderVersion(),
+        sparkProtocol.getMinWriterVersion(),
+        readerFeatures,
+        writerFeatures);
+  }
+
+  /**
+   * Builds the tracking log from streaming options: empty when {@code schemaTrackingLocation} is
+   * unset; throws when it is set but schema tracking is disabled in config.
+   *
+   * <p>V2 port of V1's {@code DeltaDataSource.getMetadataTrackingLogForDeltaSource}.
+   */
+  public static Option<DeltaSourceMetadataTrackingLog> getMetadataTrackingLogForMicroBatchStream(
+      SparkSession spark,
+      SnapshotImpl snapshot,
+      Map<String, String> options,
+      DeltaSnapshotManager snapshotManager,
+      Engine engine,
+      Option<String> sourceMetadataPathOpt,
+      boolean mergeConsecutiveSchemaChanges) {
+    Option<String> locationOpt =
+        DeltaDataSource$.MODULE$.extractSchemaTrackingLocationConfig(
+            spark, ScalaUtils.toScalaMap(options));
+    if (locationOpt.isEmpty()) {
+      return Option.empty();
+    }
+    String location = locationOpt.get();
+    if (!(boolean)
+        spark
+            .sessionState()
+            .conf()
+            .getConf(DeltaSQLConf.DELTA_STREAMING_ENABLE_SCHEMA_TRACKING())) {
+      throw new UnsupportedOperationException(
+          "Schema tracking location is not supported for Delta streaming source");
+    }
+
+    String tablePath = snapshot.getPath();
+    return Option.apply(
+        DeltaSourceMetadataTrackingLog.create(
+            spark,
+            location,
+            snapshot.getMetadata().getId(),
+            tablePath,
+            ScalaUtils.toScalaMap(options),
+            sourceMetadataPathOpt,
+            /* mergeConsecutiveSchemaChanges= */ mergeConsecutiveSchemaChanges,
+            /* consecutiveSchemaChangesMerger= */ Option.apply(
+                currentMetadata ->
+                    getMergedConsecutiveMetadataChanges(
+                        currentMetadata, snapshotManager, engine, tablePath)),
+            /* initMetadataLogEagerly= */ true));
+  }
+
+  /** V2 port of {@code DeltaSourceMetadataEvolutionSupport.getMergedConsecutiveMetadataChanges}. */
+  public static Option<PersistedMetadata> getMergedConsecutiveMetadataChanges(
+      PersistedMetadata currentMetadata,
+      DeltaSnapshotManager snapshotManager,
+      Engine engine,
+      String tablePath) {
+    final long currentMetadataVersion = currentMetadata.deltaCommitVersion();
+    // We start from the currentSchemaVersion so that we can stop early in case the current
+    // version still has file actions that potentially needs to be processed.
+    long mergedVersion = currentMetadataVersion;
+    Metadata mergedMetadata = null;
+    Protocol mergedProtocol = null;
+
+    CommitRangeImpl commitRange =
+        (CommitRangeImpl)
+            snapshotManager.getTableChanges(engine, currentMetadataVersion, Optional.empty());
+
+    try (CloseableIterator<CommitActions> commitsIter =
+        // Always include CDC: the merger must stop on any file action
+        StreamingHelper.getCommitActionsFromRangeUnsafe(
+            engine, commitRange, tablePath, SparkMicroBatchStream.CDC_ACTION_SET)) {
+      while (commitsIter.hasNext()) {
+        try (CommitActions commit = commitsIter.next()) {
+          long version = commit.getVersion();
+          Metadata metadataAction = null;
+          Protocol protocolAction = null;
+          boolean hasFileAction = false;
+
+          try (CloseableIterator<ColumnarBatch> actionsIter = commit.getActions()) {
+            outer:
+            while (actionsIter.hasNext()) {
+              ColumnarBatch batch = actionsIter.next();
+              int numRows = batch.getSize();
+              int addIdx = batch.getSchema().indexOf(DeltaLogActionUtils.DeltaAction.ADD.colName);
+              int removeIdx =
+                  batch.getSchema().indexOf(DeltaLogActionUtils.DeltaAction.REMOVE.colName);
+              int cdcIdx = batch.getSchema().indexOf(DeltaLogActionUtils.DeltaAction.CDC.colName);
+              ColumnVector addVec = addIdx >= 0 ? batch.getColumnVector(addIdx) : null;
+              ColumnVector removeVec = removeIdx >= 0 ? batch.getColumnVector(removeIdx) : null;
+              ColumnVector cdcVec = cdcIdx >= 0 ? batch.getColumnVector(cdcIdx) : null;
+
+              for (int rowId = 0; rowId < numRows; rowId++) {
+                Optional<Metadata> m = StreamingHelper.getMetadata(batch, rowId);
+                if (m.isPresent()) {
+                  Preconditions.checkArgument(
+                      metadataAction == null,
+                      "Should not encounter two metadata actions in the same commit of version %d",
+                      version);
+                  metadataAction = m.get();
+                }
+                Optional<Protocol> p = StreamingHelper.getProtocol(batch, rowId);
+                if (p.isPresent()) {
+                  Preconditions.checkArgument(
+                      protocolAction == null,
+                      "Should not encounter two protocol actions in the same commit of version %d",
+                      version);
+                  protocolAction = p.get();
+                }
+                if ((addVec != null && !addVec.isNullAt(rowId))
+                    || (removeVec != null && !removeVec.isNullAt(rowId))
+                    || (cdcVec != null && !cdcVec.isNullAt(rowId))) {
+                  hasFileAction = true;
+                  break outer;
+                }
+              }
+            }
+          } catch (IOException e) {
+            throw new RuntimeException("Failed to process commit at version " + version, e);
+          }
+
+          // Mirror v1's takeWhile predicate:
+          //   continue while !hasFileAction && (metadata.isDefined || protocol.isDefined)
+          if (hasFileAction) break;
+          if (metadataAction == null && protocolAction == null) break;
+
+          mergedVersion = version;
+          if (metadataAction != null) mergedMetadata = metadataAction;
+          if (protocolAction != null) mergedProtocol = protocolAction;
+        }
+      }
+    } catch (RuntimeException e) {
+      throw e; // Rethrow runtime exceptions directly
+    } catch (Exception e) {
+      // CommitActions.close() throws Exception
+      throw new RuntimeException("Failed to merge consecutive metadata changes", e);
+    }
+
+    if (mergedVersion == currentMetadataVersion) {
+      return Option.empty();
+    }
+
+    logger.info(
+        "Looked ahead from version {} and will use metadata at version {} to read Delta stream.",
+        currentMetadataVersion,
+        mergedVersion);
+
+    return Option.apply(
+        buildMergedPersistedMetadata(
+            currentMetadata, mergedVersion, mergedMetadata, mergedProtocol));
+  }
+
+  private static PersistedMetadata buildMergedPersistedMetadata(
+      PersistedMetadata current, long newVersion, Metadata newMetadata, Protocol newProtocol) {
+    String dataSchemaJson = current.dataSchemaJson();
+    String partitionSchemaJson = current.partitionSchemaJson();
+    Option<scala.collection.immutable.Map<String, String>> tableConfigurations =
+        current.tableConfigurations();
+    Option<String> protocolJson = current.protocolJson();
+
+    if (newMetadata != null) {
+      KernelMetadataAdapter mAdapter = new KernelMetadataAdapter(newMetadata);
+      dataSchemaJson = mAdapter.schema().json();
+      partitionSchemaJson = mAdapter.partitionSchema().json();
+      tableConfigurations = Option.apply(mAdapter.configuration());
+    }
+    if (newProtocol != null) {
+      protocolJson =
+          Option.apply(PersistedMetadata.toProtocolJson(new KernelProtocolAdapter(newProtocol)));
+    }
+
+    return new PersistedMetadata(
+        current.tableId(),
+        newVersion,
+        dataSchemaJson,
+        partitionSchemaJson,
+        current.sourceMetadataPath(),
+        tableConfigurations,
+        protocolJson,
+        current.previousMetadataSeqNum());
   }
 }

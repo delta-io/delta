@@ -48,6 +48,7 @@ import org.apache.spark.sql.connector.read.*;
 import org.apache.spark.sql.connector.read.colstats.ColumnStatistics;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
 import org.apache.spark.sql.delta.DeltaOptions;
+import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.execution.datasources.*;
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils;
 import org.apache.spark.sql.internal.SQLConf;
@@ -56,6 +57,7 @@ import org.apache.spark.sql.types.StringType;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
+import scala.Option;
 
 /** Spark DSV2 Scan implementation backed by Delta Kernel. */
 public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Filtering {
@@ -75,20 +77,20 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
               DeltaOptions.EXCLUDE_REGEX_OPTION(),
               DeltaOptions.FAIL_ON_DATA_LOSS_OPTION(),
               DeltaOptions.CDC_READ_OPTION(),
-              DeltaOptions.CDC_READ_OPTION_LEGACY()));
+              DeltaOptions.CDC_READ_OPTION_LEGACY(),
+              DeltaOptions.SCHEMA_TRACKING_LOCATION(),
+              DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS(),
+              DeltaOptions.STREAMING_SOURCE_TRACKING_ID(),
+              DeltaOptions.ALLOW_SOURCE_COLUMN_DROP(),
+              DeltaOptions.ALLOW_SOURCE_COLUMN_RENAME(),
+              DeltaOptions.ALLOW_SOURCE_COLUMN_TYPE_CHANGE()));
 
   private static final Set<String> UNSUPPORTED_STREAMING_OPTIONS =
       Collections.unmodifiableSet(
           new HashSet<>(
               Arrays.asList(
                   DeltaOptions.CDC_END_VERSION().toLowerCase(),
-                  DeltaOptions.CDC_END_TIMESTAMP().toLowerCase(),
-                  DeltaOptions.SCHEMA_TRACKING_LOCATION().toLowerCase(),
-                  DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS().toLowerCase(),
-                  DeltaOptions.STREAMING_SOURCE_TRACKING_ID().toLowerCase(),
-                  DeltaOptions.ALLOW_SOURCE_COLUMN_DROP().toLowerCase(),
-                  DeltaOptions.ALLOW_SOURCE_COLUMN_RENAME().toLowerCase(),
-                  DeltaOptions.ALLOW_SOURCE_COLUMN_TYPE_CHANGE().toLowerCase())));
+                  DeltaOptions.CDC_END_TIMESTAMP().toLowerCase())));
 
   private final DeltaSnapshotManager snapshotManager;
   private final Snapshot initialSnapshot;
@@ -245,15 +247,32 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   @Override
   public MicroBatchStream toMicroBatchStream(String checkpointLocation) {
     validateStreamingOptions(deltaOptions);
+
+    // Loads a fresh snapshot as the baseline for schema change detection and table identity
+    // checks. SparkScan's initialSnapshot is from analysis time and may be stale by stream
+    // start/restart.
+    // Matches V1's DeltaDataSource.createSource() behavior.
+    Snapshot latestSnapshot = snapshotManager.loadLatestSnapshot();
+    SparkSession spark = SparkSession.active();
+
+    // Create metadata tracking log for non-additive schema evolution support.
+    // Mirrors V1's DeltaDataSource.getMetadataTrackingLogForDeltaSource(). At execution time the
+    // merger is gated off (mergeConsecutiveSchemaChanges=false) — that fold only runs at analysis.
+    Option<DeltaSourceMetadataTrackingLog> metadataTrackingLog =
+        MetadataEvolutionHandler.getMetadataTrackingLogForMicroBatchStream(
+            spark,
+            (io.delta.kernel.internal.SnapshotImpl) latestSnapshot,
+            options,
+            snapshotManager,
+            DefaultEngine.create(hadoopConf),
+            Option.apply(checkpointLocation),
+            /* mergeConsecutiveSchemaChanges= */ false);
+
     return new SparkMicroBatchStream(
         snapshotManager,
-        // Loads a fresh snapshot as the baseline for schema change detection and table identity
-        // checks. SparkScan's initialSnapshot is from analysis time and may be stale by stream
-        // start/restart.
-        // Matches V1's DeltaDataSource.createSource() behavior.
-        snapshotManager.loadLatestSnapshot(),
+        latestSnapshot,
         hadoopConf,
-        SparkSession.active(),
+        spark,
         deltaOptions,
         getTablePath(),
         dataSchema,
@@ -261,7 +280,9 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         readDataSchema,
         ddlOrderedReadOutputSchema,
         dataFilters != null ? dataFilters : new Filter[0],
-        scalaOptions != null ? scalaOptions : scala.collection.immutable.Map$.MODULE$.empty());
+        scalaOptions != null ? scalaOptions : scala.collection.immutable.Map$.MODULE$.empty(),
+        metadataTrackingLog,
+        checkpointLocation);
   }
 
   @Override

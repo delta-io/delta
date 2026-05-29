@@ -2375,6 +2375,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_CHANGELOG_V2_ENABLED =
+    buildConf("changelogV2.enabled")
+      .internal()
+      .doc(
+        """When enabled, the V2 connector's hybrid DeltaCatalog answers
+          |CHANGES FROM ... batch queries (TableCatalog.loadChangelog) using the
+          |kernel-based Auto-CDF reader stack. When disabled, the catalog falls back to the
+          |default behavior (UNSUPPORTED_FEATURE.CHANGE_DATA_CAPTURE).""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP = {
     buildConf("changeDataFeed.timestampOutOfRange.enabled")
       .doc(
@@ -3157,6 +3168,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  //////////////////
+  // GeoSpatial
+  //////////////////
+
+  val DELTA_GEO_PREVIEW_ENABLED =
+    buildConf("geo.preview.enabled")
+      .internal()
+      .doc("Enable GeoSpatial features that are part of the preview scope.")
+      .booleanConf
+      .createWithDefault(true)
+
   ///////////
   // VARIANT
   ///////////////////
@@ -3354,15 +3376,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
    *
    * Valid values:
    * - NONE: sparkV2 connector is disabled, always use sparkV1 connector (DeltaTableV2) - default
-   * - AUTO: Automatically use sparkV2 connector (SparkTable) for Unity Catalog managed tables
+   * - AUTO: Automatically use sparkV2 connector (DeltaV2Table) for Unity Catalog managed tables
    *         in streaming queries and sparkV1 connector (DeltaTableV2) for all other tables
-   * - STRICT: sparkV2 connector is strictly enforced, always use sparkV2 connector (SparkTable).
+   * - STRICT: sparkV2 connector is strictly enforced, always use sparkV2 connector (DeltaV2Table).
    *           Intended for testing sparkV2 connector capabilities
    *
    * sparkV1 vs sparkV2 Connectors:
    * - sparkV1 Connector (DeltaTableV2): Legacy Delta connector with full read/write support,
    *   uses DeltaLog for metadata management
-   * - sparkV2 Connector (SparkTable): New kernel-based connector with read-only support,
+   * - sparkV2 Connector (DeltaV2Table): New kernel-based connector with read-only support,
    *   uses Kernel's Table API for metadata management
    *
    * See [[org.apache.spark.sql.delta.DeltaV2Mode]] for the centralized logic that interprets
@@ -3398,6 +3420,19 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .doc("Maximum number of files allowed in initial snapshot for V2 streaming.")
       .intConf
       .createWithDefault(100000)
+
+  val DELTA_STREAMING_USE_DISTRIBUTED_INITIAL_SNAPSHOT =
+    buildConf("streaming.distributedInitialSnapshot")
+      .internal()
+      .doc(
+        "When enabled, the V2 streaming connector uses a distributed approach for " +
+        "initial snapshot loading. This avoids driver OOM for large tables by running " +
+        "Kernel log replay on an executor and sorting files via Spark's distributed sort. " +
+        "The persistence level is controlled by " +
+        "spark.databricks.delta.snapshotCache.storageLevel."
+      )
+      .booleanConf
+      .createWithDefault(false)
 
   val TABLE_PARQUET_V2_DEFAULT_TIMESTAMP_ENCODING =
     buildConf("table.parquetV2.timestampOutputType")

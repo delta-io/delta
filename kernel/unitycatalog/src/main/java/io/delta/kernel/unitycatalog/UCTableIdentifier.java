@@ -18,7 +18,7 @@ package io.delta.kernel.unitycatalog;
 
 import static java.util.Objects.requireNonNull;
 
-/** Logical Unity Catalog table identifier used for create-time finalization. */
+/** Logical Unity Catalog table identifier used for table lifecycle and read operations. */
 public final class UCTableIdentifier {
   private final String catalogName;
   private final String schemaName;

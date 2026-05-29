@@ -228,7 +228,11 @@ class UCTokenBasedRestClientSuite
     commitsHandler = exchange => sendJson(exchange, HttpStatus.SC_OK, responseJson)
     withClient { client =>
       val response = client.getCommits(
-        testTableId, testTableUri, Optional.empty(), Optional.empty())
+        testTableId,
+        testTableUri,
+        /* tableIdentifier = */ null,
+        Optional.empty(),
+        Optional.empty())
       assert(response.getCommits.size() === 1)
       assert(response.getCommits.get(0).getVersion === 1L)
       assert(response.getLatestTableVersion === 1L)
@@ -238,10 +242,20 @@ class UCTokenBasedRestClientSuite
   test("getCommits validates required parameters") {
     withClient { client =>
       intercept[NullPointerException] {
-        client.getCommits(null, testTableUri, Optional.empty(), Optional.empty())
+        client.getCommits(
+          null,
+          testTableUri,
+          /* tableIdentifier = */ null,
+          Optional.empty(),
+          Optional.empty())
       }
       intercept[NullPointerException] {
-        client.getCommits(testTableId, null, Optional.empty(), Optional.empty())
+        client.getCommits(
+          testTableId,
+          null,
+          /* tableIdentifier = */ null,
+          Optional.empty(),
+          Optional.empty())
       }
     }
   }
@@ -250,7 +264,12 @@ class UCTokenBasedRestClientSuite
     commitsHandler = exchange => sendJson(exchange, HttpStatus.SC_NOT_FOUND, "{}")
     withClient { client =>
       intercept[InvalidTargetTableException] {
-        client.getCommits(testTableId, testTableUri, Optional.empty(), Optional.empty())
+        client.getCommits(
+          testTableId,
+          testTableUri,
+          /* tableIdentifier = */ null,
+          Optional.empty(),
+          Optional.empty())
       }
     }
   }

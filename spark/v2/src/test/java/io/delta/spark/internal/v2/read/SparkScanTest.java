@@ -3,7 +3,7 @@ package io.delta.spark.internal.v2.read;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.delta.spark.internal.v2.DeltaV2TestBase;
-import io.delta.spark.internal.v2.catalog.SparkTable;
+import io.delta.spark.internal.v2.catalog.DeltaV2Table;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
 import java.io.File;
 import java.lang.reflect.Field;
@@ -52,8 +52,8 @@ public class SparkScanTest extends DeltaV2TestBase {
   private final CaseInsensitiveStringMap options =
       new CaseInsensitiveStringMap(new java.util.HashMap<>());
 
-  private final SparkTable table =
-      new SparkTable(
+  private final DeltaV2Table table =
+      new DeltaV2Table(
           Identifier.of(new String[] {"spark_catalog", "default"}, tableName), tablePath, options);
 
   protected static final Predicate cityPredicate =
@@ -156,8 +156,8 @@ public class SparkScanTest extends DeltaV2TestBase {
               "spark.sql.parquet.enableNestedColumnVectorizedReader",
               "false",
               () -> {
-                SparkTable mapTable =
-                    new SparkTable(
+                DeltaV2Table mapTable =
+                    new DeltaV2Table(
                         Identifier.of(new String[] {"spark_catalog", "default"}, mapTableName),
                         path,
                         options);
@@ -230,8 +230,8 @@ public class SparkScanTest extends DeltaV2TestBase {
                   dvTableName, dvPath));
           spark.sql(String.format("INSERT INTO %s VALUES (1, 'a'), (2, 'b')", dvTableName));
 
-          SparkTable dvTable =
-              new SparkTable(
+          DeltaV2Table dvTable =
+              new DeltaV2Table(
                   Identifier.of(new String[] {"spark_catalog", "default"}, dvTableName),
                   dvPath,
                   options);
@@ -487,7 +487,7 @@ public class SparkScanTest extends DeltaV2TestBase {
   }
 
   protected static void checkSupportsRuntimeFilters(
-      SparkTable table,
+      DeltaV2Table table,
       CaseInsensitiveStringMap scanOptions,
       org.apache.spark.sql.connector.expressions.filter.Predicate[] runtimeFilters,
       List<String> remainingPartitionValueAfterDpp)
@@ -678,8 +678,8 @@ public class SparkScanTest extends DeltaV2TestBase {
       spark.sql("INSERT INTO " + tblName + " VALUES (2, 'sh')");
 
       // Table now has two AddFile entries: one with stats (first insert), one without (second).
-      SparkTable mixedStatsTable =
-          new SparkTable(
+      DeltaV2Table mixedStatsTable =
+          new DeltaV2Table(
               Identifier.of(new String[] {"spark_catalog", "default"}, tblName), path, options);
 
       withSQLConf(
@@ -733,7 +733,7 @@ public class SparkScanTest extends DeltaV2TestBase {
     // Test with blocked DeltaOptions, supported options, and custom user options
     Map<String, String> javaOptions = new HashMap<>();
     javaOptions.put("startingVersion", "0");
-    javaOptions.put("schemaTrackingLocation", "/tmp/schema-tracking");
+    javaOptions.put("endingTimestamp", "2024-01-01");
     javaOptions.put("myCustomOption", "value");
     scala.collection.immutable.Map<String, String> mixedOptions =
         ScalaUtils.toScalaMap(javaOptions);
@@ -747,10 +747,12 @@ public class SparkScanTest extends DeltaV2TestBase {
     // Verify exact error message - only the blocked option should appear
     // Note: DeltaOptions uses CaseInsensitiveMap which lowercases keys during iteration
     assertEquals(
-        "The following streaming options are not supported: [schematrackinglocation]. "
+        "The following streaming options are not supported: [endingtimestamp]. "
             + "Supported options are: [startingVersion, startingTimestamp, maxFilesPerTrigger, "
             + "maxBytesPerTrigger, ignoreFileDeletion, ignoreChanges, ignoreDeletes, "
-            + "skipChangeCommits, excludeRegex, failOnDataLoss, readChangeFeed, readChangeData].",
+            + "skipChangeCommits, excludeRegex, failOnDataLoss, readChangeFeed, readChangeData, "
+            + "schemaTrackingLocation, schemaLocation, streamingSourceTrackingId, "
+            + "allowSourceColumnDrop, allowSourceColumnRename, allowSourceColumnTypeChange].",
         exception.getMessage());
   }
 
@@ -1367,7 +1369,7 @@ public class SparkScanTest extends DeltaV2TestBase {
         "true",
         () -> {
           Identifier id = Identifier.of(new String[] {"default"}, tblName);
-          SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
+          DeltaV2Table sparkTable = new DeltaV2Table(id, catalogTable, Collections.emptyMap());
 
           SparkScanBuilder builder =
               (SparkScanBuilder)
@@ -1425,7 +1427,7 @@ public class SparkScanTest extends DeltaV2TestBase {
         "true",
         () -> {
           Identifier id = Identifier.of(new String[] {"default"}, tblName);
-          SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
+          DeltaV2Table sparkTable = new DeltaV2Table(id, catalogTable, Collections.emptyMap());
           SparkScanBuilder builder =
               (SparkScanBuilder)
                   sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
@@ -1471,7 +1473,7 @@ public class SparkScanTest extends DeltaV2TestBase {
           "true",
           () -> {
             Identifier id = Identifier.of(new String[] {"default"}, tblName);
-            SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
+            DeltaV2Table sparkTable = new DeltaV2Table(id, catalogTable, Collections.emptyMap());
             SparkScanBuilder builder =
                 (SparkScanBuilder)
                     sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
@@ -1520,7 +1522,7 @@ public class SparkScanTest extends DeltaV2TestBase {
         "false",
         () -> {
           Identifier id = Identifier.of(new String[] {"default"}, tblName);
-          SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
+          DeltaV2Table sparkTable = new DeltaV2Table(id, catalogTable, Collections.emptyMap());
 
           SparkScanBuilder builder =
               (SparkScanBuilder)
@@ -1566,7 +1568,8 @@ public class SparkScanTest extends DeltaV2TestBase {
               "true",
               () -> {
                 Identifier id = Identifier.of(new String[] {"default"}, tblName);
-                SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
+                DeltaV2Table sparkTable =
+                    new DeltaV2Table(id, catalogTable, Collections.emptyMap());
 
                 SparkScanBuilder builder =
                     (SparkScanBuilder)
@@ -1602,7 +1605,7 @@ public class SparkScanTest extends DeltaV2TestBase {
         () -> {
           // Path-based table — no catalog table, no ANALYZE TABLE stats
           Identifier id = Identifier.of(new String[] {"default"}, tblName);
-          SparkTable sparkTable = new SparkTable(id, path);
+          DeltaV2Table sparkTable = new DeltaV2Table(id, path);
 
           SparkScanBuilder builder =
               (SparkScanBuilder)
@@ -1670,7 +1673,7 @@ public class SparkScanTest extends DeltaV2TestBase {
         "true",
         () -> {
           Identifier id = Identifier.of(new String[] {"default"}, tblName);
-          SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
+          DeltaV2Table sparkTable = new DeltaV2Table(id, catalogTable, Collections.emptyMap());
 
           SparkScanBuilder builder =
               (SparkScanBuilder)
@@ -1736,7 +1739,8 @@ public class SparkScanTest extends DeltaV2TestBase {
               "false",
               () -> {
                 Identifier id = Identifier.of(new String[] {"default"}, tblName);
-                SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
+                DeltaV2Table sparkTable =
+                    new DeltaV2Table(id, catalogTable, Collections.emptyMap());
 
                 SparkScanBuilder builder =
                     (SparkScanBuilder)
@@ -1796,7 +1800,7 @@ public class SparkScanTest extends DeltaV2TestBase {
           CatalogTable catalogTable =
               spark.sessionState().catalog().getTableMetadata(new TableIdentifier(tblName));
           Identifier id = Identifier.of(new String[] {"default"}, tblName);
-          SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
+          DeltaV2Table sparkTable = new DeltaV2Table(id, catalogTable, Collections.emptyMap());
 
           SparkScanBuilder builder =
               (SparkScanBuilder)
@@ -1841,7 +1845,7 @@ public class SparkScanTest extends DeltaV2TestBase {
         "true",
         () -> {
           Identifier id = Identifier.of(new String[] {"default"}, tblName);
-          SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
+          DeltaV2Table sparkTable = new DeltaV2Table(id, catalogTable, Collections.emptyMap());
 
           SparkScanBuilder builder =
               (SparkScanBuilder)

@@ -19,9 +19,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 import io.delta.spark.internal.v2.DeltaV2TestBase;
-import io.delta.spark.internal.v2.catalog.SparkTable;
+import io.delta.spark.internal.v2.catalog.DeltaV2Table;
 import java.io.File;
+import java.util.List;
 import java.util.stream.Stream;
+import org.apache.spark.sql.Row;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.read.Batch;
 import org.apache.spark.sql.sources.EqualTo;
@@ -49,8 +51,8 @@ public class SparkBatchTest extends DeltaV2TestBase {
   private final CaseInsensitiveStringMap options =
       new CaseInsensitiveStringMap(new java.util.HashMap<>());
 
-  private final SparkTable table =
-      new SparkTable(
+  private final DeltaV2Table table =
+      new DeltaV2Table(
           Identifier.of(new String[] {"spark_catalog", "default"}, tableName), tablePath, options);
 
   // Cases where two batches built from the same table must be equal. city/date are partition
@@ -105,5 +107,35 @@ public class SparkBatchTest extends DeltaV2TestBase {
 
     assertNotEquals(batch1, batch2);
     assertNotEquals(batch1.hashCode(), batch2.hashCode());
+  }
+
+  @Test
+  public void testBatchReadPreservesPercentLiteralStringPartitionValue(@TempDir File tempDir) {
+    String path = tempDir.getAbsolutePath();
+    spark.sql(
+        String.format(
+            "CREATE TABLE delta.`%s` (id LONG, p STRING) USING delta PARTITIONED BY (p)", path));
+    // Each value is chosen so an erroneous second unescape would produce a result that's
+    // pairwise distinct from the input AND from the other cases' bug results, so a regression
+    // cannot coincidentally agree with the expected value:
+    //   "%20"   -> bug result " "   (canonical space-collapse)
+    //   "%25"   -> bug result "%"   (self-encoding of `%`)
+    //   "a%2Fb" -> bug result "a/b" (embedded percent escape mid-string)
+    spark.sql(
+        String.format(
+            "INSERT INTO delta.`%s` VALUES (1, '%%20'), (2, '%%25'), (3, 'a%%2Fb')", path));
+
+    List<Row> rows =
+        spark
+            .sql(String.format("SELECT id, p FROM dsv2.delta.`%s` ORDER BY id", path))
+            .collectAsList();
+
+    assertEquals(3, rows.size());
+    assertEquals(1L, rows.get(0).getLong(0));
+    assertEquals("%20", rows.get(0).getString(1));
+    assertEquals(2L, rows.get(1).getLong(0));
+    assertEquals("%25", rows.get(1).getString(1));
+    assertEquals(3L, rows.get(2).getLong(0));
+    assertEquals("a%2Fb", rows.get(2).getString(1));
   }
 }
