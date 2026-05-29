@@ -234,7 +234,10 @@ trait DeltaSourceRowTrackingSuiteBase extends StreamTest
         s"TBLPROPERTIES ('${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'name', " +
         s"'delta.enableChangeDataFeed' = 'true', " +
         s"'${DeltaConfigs.ROW_TRACKING_ENABLED.key}' = 'true')")
-      sql(s"INSERT INTO delta.`$path` VALUES (1, 'Alice'), (2, 'Bob')")
+      // Use format("delta") (V1 write path): the V2 kernel writer rejects writes to
+      // row-tracking tables without 'numRecords' statistics (KernelException).
+      Seq((1L, "Alice"), (2L, "Bob")).toDF("id", "user_name")
+        .write.format("delta").mode("append").save(path)
 
       val ex = intercept[Exception] {
         val df = loadStreamWithOptions(

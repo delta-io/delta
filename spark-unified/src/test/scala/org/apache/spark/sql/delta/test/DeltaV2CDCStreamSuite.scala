@@ -75,10 +75,10 @@ class DeltaV2CDCStreamSuite extends DeltaCDCStreamSuite with V2ForceTest {
   )
 
   override protected lazy val shouldFailTests = Set(
-    // TODO: DSv2 CDC streaming on column-mapped tables returns null values for all columns.
-    // SparkMicroBatchStream does not apply Delta column-mapping physical->logical name
-    // translation when reading CDC data files, so logical column names fail to match the
-    // physical names in Parquet and all values come back null.
+    // TODO: DeltaV2BatchWrite (V2 write path) does not apply logical->physical column name
+    // translation for column-mapped tables, writing Parquet with logical names. The read path
+    // correctly requests physical names and gets null for every value. The base test now uses
+    // df.write (V1 path) as a workaround; move to shouldPassTests once verified by CI.
     "CDC stream on column-mapped table passes through correctly",
 
     // === Error message format differs in V2 (missing [DELTA_VERSION_NOT_FOUND] prefix) ===

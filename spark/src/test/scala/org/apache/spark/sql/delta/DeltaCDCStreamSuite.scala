@@ -1190,7 +1190,11 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
       // CDC is also set (CM setup is treated as a rename). Use DDL + INSERT instead.
       sql(s"CREATE TABLE delta.`$path` (id LONG, user_name STRING) USING delta " +
         s"TBLPROPERTIES ('delta.columnMapping.mode' = 'name', 'delta.enableChangeDataFeed' = 'true')")
-      sql(s"INSERT INTO delta.`$path` VALUES (1, 'Alice'), (2, 'Bob')")
+      // Use format("delta") (V1 write path) so Parquet files are written with physical column
+      // names. sql("INSERT INTO") under V2ForceTest STRICT mode uses the V2 kernel writer which
+      // omits the logical->physical name translation, causing CDC reads to return null values.
+      Seq((1L, "Alice"), (2L, "Bob")).toDF("id", "user_name")
+        .write.format("delta").mode("append").save(path)
 
       val df = loadCDCStream(path, Map(DeltaOptions.STARTING_VERSION_OPTION -> "0"))
         .select("id", "user_name")

@@ -48,9 +48,10 @@ class DeltaV2SourceRowTrackingSuite
     // "Table does not support deletes". Rewrite to create DVs via executeInV1Mode.
     "_metadata.row_id preserved through deletion vector filtering",
 
-    // TODO: V2 kernel rejects INSERT to a row-tracking table without 'numRecords'
-    // statistics (KernelException). The CREATE TABLE + INSERT setup fails before the
-    // streaming assertion is reached. Fix by wrapping the INSERT in executeInV1Mode.
+    // TODO: The base test now uses df.write (V1 path) to avoid the V2 kernel rejecting
+    // writes to row-tracking tables without 'numRecords' statistics. Verify whether the
+    // CDC _metadata.row_id rejection assertion actually fires under V2ForceTest before
+    // moving to shouldPassTests.
     "CDC stream on row-tracking column-mapped table rejects _metadata.row_id"
   )
 }
