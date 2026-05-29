@@ -21,7 +21,6 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLog, SerializableFileStatus, Snapshot => DeltaSnapshot}
 import org.apache.spark.sql.delta.DeltaErrors.cloneFromIcebergSourceWithPartitionEvolution
-import org.apache.spark.sql.delta.commands.convert.IcebergTable.ERR_MULTIPLE_PARTITION_SPECS
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
