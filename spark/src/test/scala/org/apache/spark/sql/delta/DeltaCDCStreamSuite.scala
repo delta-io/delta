@@ -1152,8 +1152,7 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
         testStream(df)(ProcessAllAvailable())
       }
       assert(
-        ex.getMessage.toLowerCase(Locale.ROOT).contains("row_id") ||
-          ex.getMessage.toLowerCase(Locale.ROOT).contains("cannot be resolved"),
+        ex.getMessage.toLowerCase(Locale.ROOT).contains("row_id"),
         s"Expected error mentioning row_id under CDC, got: ${ex.getMessage}"
       )
     }
@@ -1188,8 +1187,11 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
       val path = inputDir.getCanonicalPath
       // Enabling CM via df.write triggers DELTA_BLOCK_COLUMN_MAPPING_AND_CDC_OPERATION when
       // CDC is also set (CM setup is treated as a rename). Use DDL + INSERT instead.
+      // Use the suite's CM mode so id-mode and name-mode subclasses each test their own mode.
+      val cmMode = if (columnMappingMode == "none") "name" else columnMappingMode
       sql(s"CREATE TABLE delta.`$path` (id LONG, user_name STRING) USING delta " +
-        s"TBLPROPERTIES ('delta.columnMapping.mode' = 'name', 'delta.enableChangeDataFeed' = 'true')")
+        s"TBLPROPERTIES ('delta.columnMapping.mode' = '$cmMode', " +
+        "'delta.enableChangeDataFeed' = 'true')")
       // Use format("delta") (V1 write path) so Parquet files are written with physical column
       // names. sql("INSERT INTO") under V2ForceTest STRICT mode uses the V2 kernel writer which
       // omits the logical->physical name translation, causing CDC reads to return null values.

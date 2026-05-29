@@ -71,16 +71,11 @@ class DeltaV2CDCStreamSuite extends DeltaCDCStreamSuite with V2ForceTest {
     "CDC stream rejects reading row tracking metadata fields",
 
     // ========== CDC combination coverage ==========
-    "CDC stream on partitioned table strips partition and CDC columns correctly"
+    "CDC stream on partitioned table strips partition and CDC columns correctly",
+    "CDC stream on column-mapped table passes through correctly"
   )
 
   override protected lazy val shouldFailTests = Set(
-    // TODO: DeltaV2BatchWrite (V2 write path) does not apply logical->physical column name
-    // translation for column-mapped tables, writing Parquet with logical names. The read path
-    // correctly requests physical names and gets null for every value. The base test now uses
-    // df.write (V1 path) as a workaround; move to shouldPassTests once verified by CI.
-    "CDC stream on column-mapped table passes through correctly",
-
     // === Error message format differs in V2 (missing [DELTA_VERSION_NOT_FOUND] prefix) ===
     "starting[Version/Timestamp] > latest version",
     // === sql("DELETE FROM delta.`...`") not supported under STRICT V2 mode ===
