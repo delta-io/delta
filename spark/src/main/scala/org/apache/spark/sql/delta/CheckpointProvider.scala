@@ -564,13 +564,15 @@ object V2CheckpointProvider {
       sidecarFiles: Seq[SidecarFile],
       deltaLog: DeltaLog): V2CheckpointProvider = {
     def getSidecarSchemaFetcher: () => Option[StructType] = {
+      val sidecarSchemaFromMetadata = checkpointMetadata.sidecarFileSchema
       val nonFateSharingSidecarSchemaFuture: NonFateSharingFuture[Option[StructType]] = {
         checkpointV2ThreadPool.submitNonFateSharing { spark: SparkSession =>
           sidecarFiles.headOption.map { sidecarFile =>
             val sidecarFileStatus =
               sidecarFile.toFileStatus(uninitializedV2LikeCheckpointProvider.logPath)
             CheckpointProvider.getParquetSchema(
-              spark, deltaLog, sidecarFileStatus, schemaFromLastCheckpoint = None)
+              spark, deltaLog, sidecarFileStatus,
+              schemaFromLastCheckpoint = sidecarSchemaFromMetadata)
           }
         }
       }

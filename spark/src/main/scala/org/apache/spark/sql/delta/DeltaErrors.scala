@@ -1198,6 +1198,16 @@ trait DeltaErrorsBase
     )
   }
 
+  def tagCouldNotBeParsedException(
+      tagName: String,
+      tags: Map[String, String],
+      cause: Throwable): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_NON_PARSABLE_TAG",
+      messageParameters = Array(tagName, tags.mkString("[", ",", "]")),
+      cause = Some(cause))
+  }
+
   def nonPartitionColumnAbsentException(colsDropped: Boolean): Throwable = {
     val msg = if (colsDropped) {
       " Columns which are of NullType have been dropped."
