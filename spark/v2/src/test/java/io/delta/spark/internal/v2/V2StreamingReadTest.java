@@ -42,7 +42,13 @@ import org.junit.jupiter.api.io.TempDir;
 import scala.Option;
 import scala.collection.JavaConverters;
 
-/** Tests for V2 streaming read operations. */
+/**
+ * Tests for V2 streaming read operations.
+ *
+ * <p>These tests run with {@code DeltaSparkSessionExtensionV1}, which omits spark-unified rules
+ * such as {@code ApplyV2ReadOptions}. Features that require those rules (e.g. CDC streaming
+ * schema) are tested in {@code DeltaV2CDCStreamSuite} in the spark-unified module.
+ */
 public class V2StreamingReadTest extends V2TestBase {
 
   @Test
@@ -635,52 +641,5 @@ public class V2StreamingReadTest extends V2TestBase {
     } finally {
       spark.conf().unset(dfFlagKey);
     }
-  }
-
-  @Test
-  public void testCDCStreamingExposesChangeTypeColumn(@TempDir File deltaTablePath)
-      throws Exception {
-    String tablePath = deltaTablePath.getAbsolutePath();
-    spark.sql(
-        str(
-            "CREATE TABLE delta.`%s` (id LONG, name STRING) USING delta "
-                + "TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')",
-            tablePath));
-    spark.sql(str("INSERT INTO delta.`%s` VALUES (1, 'Alice'), (2, 'Bob')", tablePath));
-    spark.sql(str("UPDATE delta.`%s` SET name = 'Bobby' WHERE id = 2", tablePath));
-
-    Dataset<Row> streamingDF =
-        spark
-            .readStream()
-            .option("readChangeFeed", "true")
-            .option("startingVersion", "0")
-            .table(str("dsv2.delta.`%s`", tablePath));
-
-    // CDC columns must appear in the streaming schema.
-    List<String> fieldNames = java.util.Arrays.asList(streamingDF.schema().fieldNames());
-    assertTrue(fieldNames.contains("_change_type"), "schema missing _change_type: " + fieldNames);
-    assertTrue(
-        fieldNames.contains("_commit_version"), "schema missing _commit_version: " + fieldNames);
-
-    Dataset<Row> projected =
-        streamingDF.select(
-            org.apache.spark.sql.functions.col("id"),
-            org.apache.spark.sql.functions.col("_change_type"));
-
-    List<Row> rows = processStreamingQuery(projected, "test_cdc_change_type");
-
-    // INSERT produced 2 "insert" rows; UPDATE on id=2 produced 1 "update_preimage" + 1
-    // "update_postimage" row - 4 CDC rows total.
-    assertEquals(4, rows.size(), "expected 4 CDC rows: " + rows);
-    List<String> changeTypes =
-        rows.stream()
-            .map(r -> r.getString(1))
-            .sorted()
-            .collect(java.util.stream.Collectors.toList());
-    assertTrue(changeTypes.contains("insert"), "expected 'insert' in: " + changeTypes);
-    assertTrue(
-        changeTypes.contains("update_preimage"), "expected 'update_preimage' in: " + changeTypes);
-    assertTrue(
-        changeTypes.contains("update_postimage"), "expected 'update_postimage' in: " + changeTypes);
   }
 }
