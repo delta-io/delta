@@ -49,6 +49,10 @@ trait DeltaSourceRowTrackingSuiteBase extends StreamTest
    */
   protected def shouldFailInV1: Set[String] = Set.empty
 
+  // Hook for running DML that V2ForceTest STRICT mode cannot execute directly.
+  // Override in V2 subclasses to route through executeInV1Mode.
+  protected def execSql(sqlText: String): Unit = sql(sqlText)
+
   // Intercept test registration so V1 subclasses can skip known-failing tests without
   // duplicating the test bodies.
   abstract override protected def test(
@@ -118,7 +122,7 @@ trait DeltaSourceRowTrackingSuiteBase extends StreamTest
         .option(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key, "true")
         .save(path)
       // Low-selectivity predicate -> DV path instead of file rewrite.
-      sql(s"DELETE FROM delta.`$path` WHERE id % 2 = 0")
+      execSql(s"DELETE FROM delta.`$path` WHERE id % 2 = 0")
 
       val df = loadStreamWithOptions(path, Map.empty)
         .selectExpr("id", "_metadata.row_id as row_id")
@@ -258,11 +262,8 @@ class DeltaSourceRowTrackingSuite
   extends DeltaSourceRowTrackingSuiteBase
   with DeltaSQLCommandTest {
 
-  // TODO: V1 streaming (DeltaSource / FileStreamSource path) does not expose
-  // _metadata.row_id or _metadata.row_commit_version as selectable columns.
-  // The DeltaAnalysis rule that injects hidden row-tracking columns does not
-  // fire in the V1 streaming scan path. Enable once DeltaSource surfaces
-  // row-tracking fields via metadataSchemaFields or an equivalent mechanism.
+  // V1 streaming (DeltaSource) does not expose _metadata.row_id or
+  // _metadata.row_commit_version; the StreamingRelation only surfaces user data columns.
   override protected def shouldFailInV1: Set[String] = Set(
     "_metadata.row_id projection in streaming matches batch",
     "_metadata.row_commit_version projection in streaming matches batch",

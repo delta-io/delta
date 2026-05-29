@@ -28,8 +28,12 @@ class DeltaV2SourceRowTrackingSuite
 
   override protected def useDsv2: Boolean = true
 
+  // DELETE is not supported in V2ForceTest STRICT mode; run it through the V1 connector.
+  override protected def execSql(sqlText: String): Unit = executeInV1Mode(sqlText)
+
   override protected lazy val shouldPassTests: Set[String] = Set(
-    "CDC stream on row-tracking table works when _metadata not selected"
+    "CDC stream on row-tracking table works when _metadata not selected",
+    "CDC stream on row-tracking column-mapped table rejects _metadata.row_id"
   )
 
   override protected lazy val shouldFailTests: Set[String] = Set(
@@ -42,16 +46,6 @@ class DeltaV2SourceRowTrackingSuite
     "_metadata.row_id with partition column in middle of DDL schema",
     "_metadata.row_id with column mapping name mode",
     "_metadata.row_id with partition and column mapping",
-
-    // TODO: V2ForceTest STRICT mode routes DELETE through the DSv2 write path which
-    // does not support deletes. The DELETE needed to create deletion vectors fails with
-    // "Table does not support deletes". Rewrite to create DVs via executeInV1Mode.
-    "_metadata.row_id preserved through deletion vector filtering",
-
-    // TODO: The base test now uses df.write (V1 path) to avoid the V2 kernel rejecting
-    // writes to row-tracking tables without 'numRecords' statistics. Verify whether the
-    // CDC _metadata.row_id rejection assertion actually fires under V2ForceTest before
-    // moving to shouldPassTests.
-    "CDC stream on row-tracking column-mapped table rejects _metadata.row_id"
+    "_metadata.row_id preserved through deletion vector filtering"
   )
 }
