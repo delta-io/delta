@@ -276,7 +276,7 @@ object SparkVersionSpec {
   )
 
   private val spark41 = SparkVersionSpec(
-    fullVersion = "4.1.0",
+    fullVersion = "4.1.2",
     targetJvm = "17",
     additionalSourceDir = Some("scala-shims/spark-4.1"),
     supportIceberg = true,
