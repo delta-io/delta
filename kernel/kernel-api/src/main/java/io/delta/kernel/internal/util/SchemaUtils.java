@@ -834,6 +834,110 @@ public class SchemaUtils {
   }
 
   /**
+   * Validates that schemas don't contain unenforceable NOT NULL constraints on nested types within
+   * ArrayType and MapType. Delta cannot enforce NOT NULL constraints on elements of arrays or
+   * keys/values of maps, so schemas containing such constraints are rejected.
+   *
+   * <p>This mirrors Spark's {@code SchemaUtils.removeUnenforceableNotNullConstraints()} default
+   * behavior, which throws an error when nested types would need to be coerced to nullable. Spark
+   * applies {@code typeAsNullable()} to each array element type and map key/value type; if the
+   * result differs from the original, the constraint is unenforceable.
+   *
+   * <p>Note: We use custom recursion rather than {@link SchemaIterable} because we need to check
+   * the element/key/value types at array/map boundaries, not just iterate over struct fields.
+   *
+   * @param schema the struct type to validate
+   * @param parentPath the path of parent fields for error messages
+   */
+  protected static void validateNoUnenforceableNotNullConstraints(
+      StructType schema, List<String> parentPath) {
+    for (StructField field : schema.fields()) {
+      List<String> fieldPath = new ArrayList<>(parentPath);
+      fieldPath.add(field.getName());
+      String pathStr = String.join(".", fieldPath);
+      DataType type = field.getDataType();
+
+      if (type instanceof ArrayType) {
+        DataType elementType = ((ArrayType) type).getElementType();
+        if (hasUnenforceableNotNulls(elementType)) {
+          throw DeltaErrors.nestedNotNullConstraint(pathStr, elementType, "element");
+        }
+      } else if (type instanceof MapType) {
+        MapType mapType = (MapType) type;
+        DataType keyType = mapType.getKeyType();
+        DataType valueType = mapType.getValueType();
+        if (hasUnenforceableNotNulls(keyType)) {
+          throw DeltaErrors.nestedNotNullConstraint(pathStr, keyType, "key");
+        }
+        if (hasUnenforceableNotNulls(valueType)) {
+          throw DeltaErrors.nestedNotNullConstraint(pathStr, valueType, "value");
+        }
+      } else if (type instanceof StructType) {
+        // Recurse into nested structs to find array/map fields deeper in the schema tree
+        validateNoUnenforceableNotNullConstraints((StructType) type, fieldPath);
+      }
+    }
+  }
+
+  /**
+   * Returns true if the given type contains non-nullable nested constraints that cannot be enforced
+   * by the Delta/Parquet format. Equivalent to checking whether Spark's {@code typeAsNullable()}
+   * would produce a different type — i.e., some part of the type tree needs to be coerced.
+   *
+   * <p>Specifically checks for:
+   *
+   * <ul>
+   *   <li>StructType with any non-nullable fields (recursively via {@code StructType.asNullable()})
+   *   <li>ArrayType with containsNull=false
+   *   <li>MapType with valueContainsNull=false when key or value is a StructType
+   *   <li>MapType with struct key/value types that themselves have non-nullable fields
+   * </ul>
+   */
+  private static boolean hasUnenforceableNotNulls(DataType type) {
+    if (type instanceof StructType) {
+      StructType structType = (StructType) type;
+      for (StructField field : structType.fields()) {
+        if (!field.isNullable()) {
+          return true;
+        }
+        if (hasUnenforceableNotNulls(field.getDataType())) {
+          return true;
+        }
+      }
+      return false;
+    } else if (type instanceof ArrayType) {
+      ArrayType arrayType = (ArrayType) type;
+      if (!arrayType.containsNull()) {
+        return true;
+      }
+      if (arrayType.getElementType() instanceof StructType) {
+        return hasUnenforceableNotNulls(arrayType.getElementType());
+      }
+      return false;
+    } else if (type instanceof MapType) {
+      MapType mapType = (MapType) type;
+      boolean keyIsStruct = mapType.getKeyType() instanceof StructType;
+      boolean valueIsStruct = mapType.getValueType() instanceof StructType;
+      if (!keyIsStruct && !valueIsStruct) {
+        // Spark's typeAsNullable returns unchanged for non-struct key/value maps
+        return false;
+      }
+      if (!mapType.isValueContainsNull()) {
+        return true;
+      }
+      if (keyIsStruct && hasUnenforceableNotNulls(mapType.getKeyType())) {
+        return true;
+      }
+      if (valueIsStruct && hasUnenforceableNotNulls(mapType.getValueType())) {
+        return true;
+      }
+      return false;
+    }
+    // Primitive types have no nested fields
+    return false;
+  }
+
+  /**
    * Validate the supported data types. Once we start supporting additional types, take input the
    * protocol features and validate the schema.
    *
