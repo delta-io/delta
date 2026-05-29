@@ -45,7 +45,7 @@ import org.apache.spark.sql.catalyst.catalog.{
   CatalogTableType
 }
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, Table, TableCatalog, V1Table}
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, TableFeature}
+import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, DeltaErrors, TableFeature}
 import org.apache.spark.sql.delta.actions.{DomainMetadata, Metadata, Protocol}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED
 import org.apache.spark.sql.delta.coordinatedcommits.UCTokenBasedRestClientFactory
@@ -80,8 +80,8 @@ private[catalog] class UCDeltaCatalogClientImpl(
       catch {
         case _: StorageNoSuchTableException => throw new NoSuchTableException(ident)
         case e: UnsupportedTableFormatException =>
-          logInfo(log"Table ${MDC(DeltaLogKeys.TABLE_NAME, ident)} is not in Delta format; " +
-            log"falling back to the legacy catalog path. Cause: " +
+          logInfo(log"Table ${MDC(DeltaLogKeys.TABLE_NAME, ident)} is not supported by " +
+            log"UCDeltaClient; falling back to the legacy catalog path. Cause: " +
             log"${MDC(DeltaLogKeys.EXCEPTION, e.getMessage)}")
           return fallbackLoadTableFunc(ident)
         case e: CredentialFetchFailedException if serverSidePlanningEnabled =>
@@ -133,29 +133,27 @@ private[catalog] class UCDeltaCatalogClientImpl(
     augmented
   }
 
-  /**
-   * Applies UC's suggested properties via `putIfAbsent` (caller value wins). `null` values
-   * are engine-generated-at-commit sentinels (e.g. row-tracking materialized column names) --
-   * Delta rejects them as unknown configs at stage time, so skip them here and let the
-   * engine substitute them on the finalize step.
-   */
+  /** Applies UC's suggested properties to `augmented`. Caller-supplied values win. */
   private def applySuggestedProperties(
       augmented: util.Map[String, String],
       suggested: util.Map[String, String]): Unit = {
     if (suggested == null) return
+    // `null` values are engine-generated-at-commit sentinels (e.g. row-tracking materialized
+    // column names); Delta rejects them as unknown configs at stage time, so skip and let
+    // the engine substitute them on finalize.
     suggested.asScala.foreach { case (k, v) => if (v != null) augmented.putIfAbsent(k, v) }
   }
 
   /**
-   * Applies UC's required properties. A caller-supplied value that conflicts with a required
-   * key throws (see [[putRequiredOrThrow]]); `null` values are skipped (engine-generated
-   * sentinels, see [[applySuggestedProperties]]).
+   * Applies UC's required properties to `augmented`. Caller-supplied values that conflict
+   * with a required key throw.
    */
   private def applyRequiredProperties(
       augmented: util.Map[String, String],
       required: util.Map[String, String],
       ident: Identifier): Unit = {
     if (required == null) return
+    // `null` values are engine-generated-at-commit sentinels (see [[applySuggestedProperties]]).
     required.asScala.foreach { case (k, v) =>
       if (v != null) putRequiredOrThrow(augmented, k, v, ident)
     }
@@ -165,18 +163,6 @@ private[catalog] class UCDeltaCatalogClientImpl(
    * Encodes a UC protocol as `delta.feature.<name>=supported` keys so the standard
    * `CreateDeltaTableCommand` protocol-upgrade flow picks them up. A feature unknown to
    * this Delta version throws when `required`, is silently skipped when suggested.
-   *
-   * Treat the "unknown feature" branch as a hard compatibility gap, not a bug: the
-   * catalog server enforces the Delta protocol features it requires, and this client only
-   * supports the subset that its bundled Delta version understands. If the catalog
-   * requires a newer feature, upgrade Delta on the client side (or, if appropriate,
-   * relax the requirement on the server). See the Delta protocol spec for the full
-   * feature list: https://github.com/delta-io/delta/blob/master/PROTOCOL.md
-   *
-   * We intentionally do NOT emit `delta.minReaderVersion`/`delta.minWriterVersion`: Delta
-   * derives those from the feature list, and pinning them here would put Delta into
-   * explicit table-features mode, suppressing implicit legacy writer features
-   * (appendOnly, invariants) in the resulting protocol.
    */
   private def applyProtocolFeatures(
       augmented: util.Map[String, String],
@@ -193,6 +179,8 @@ private[catalog] class UCDeltaCatalogClientImpl(
         if (required) putRequiredFeatureOrThrow(augmented, key, ident)
         else augmented.putIfAbsent(key, FEATURE_PROP_SUPPORTED)
       } else if (required) {
+        // Compatibility gap: the catalog requires a Delta protocol feature this client's
+        // bundled Delta version does not understand. Throw with guidance.
         val qualifiedName = fullQualifiedTableName(ident)
         throw new IllegalArgumentException(
           s"Cannot create table $qualifiedName: catalog requires Delta protocol feature " +
@@ -205,10 +193,8 @@ private[catalog] class UCDeltaCatalogClientImpl(
   }
 
   /**
-   * Puts a UC-required key/value, but if the caller already supplied a different value for
-   * the same key (i.e. it's in `augmented` and didn't come from us), surfaces the conflict
-   * as an `IllegalArgumentException`. UC's `required` properties are policy-level
-   * enforcement and overriding them silently would defeat that purpose.
+   * Puts a UC-required key/value into `augmented`, throwing if the caller already supplied
+   * a different value for the same key.
    */
   private def putRequiredOrThrow(
       augmented: util.Map[String, String],
@@ -217,6 +203,8 @@ private[catalog] class UCDeltaCatalogClientImpl(
       ident: Identifier): Unit = {
     val existing = augmented.get(key)
     if (existing != null && existing != requiredValue) {
+      // UC's required properties are policy-level enforcement; overriding silently would
+      // defeat the policy.
       val qualifiedName = fullQualifiedTableName(ident)
       throw new IllegalArgumentException(
         s"Cannot create table $qualifiedName: catalog requires table property '$key'=" +
@@ -226,19 +214,16 @@ private[catalog] class UCDeltaCatalogClientImpl(
     augmented.put(key, requiredValue)
   }
 
-  /**
-   * Specialized variant of [[putRequiredOrThrow]] for `delta.feature.<name>=supported` keys.
-   * The error message phrases the conflict in terms of "table feature" rather than "table
-   * property" because `delta.feature.<name>` is a feature flag that only accepts the value
-   * `supported`; any other value reaching here is a user-side mistake, not a property
-   * override.
-   */
+  /** Variant of [[putRequiredOrThrow]] for `delta.feature.<name>` feature flags. */
   private def putRequiredFeatureOrThrow(
       augmented: util.Map[String, String],
       featureKey: String,
       ident: Identifier): Unit = {
     val existing = augmented.get(featureKey)
     if (existing != null && existing != FEATURE_PROP_SUPPORTED) {
+      // `delta.feature.<name>` only accepts the value `supported`; any other value reaching
+      // here is a user-side mistake. Phrase the error as "table feature" rather than "table
+      // property" so the user knows it's a feature-flag conflict.
       val qualifiedName = fullQualifiedTableName(ident)
       throw new IllegalArgumentException(
         s"Cannot create table $qualifiedName: catalog requires Delta table feature " +
@@ -249,37 +234,16 @@ private[catalog] class UCDeltaCatalogClientImpl(
   }
 
   // -------------------------------------------------------------------------
-  // DeltaCatalogClient: buildReplaceProps
+  // DeltaCatalogClient: loadTableAndBuildReplaceProps
   // -------------------------------------------------------------------------
 
-  /**
-   * Loads the existing table from UC and builds the REPLACE-augmented property map.
-   * Mirrors master `UCSingleCatalog.loadExistingManagedTablePropsForReplace`. Caller
-   * validations:
-   *   - reject caller-supplied `UC_TABLE_ID_KEY` (UC owns the table identity);
-   *   - reject `delta.feature.catalogManaged` override (must equal `supported`);
-   *   - reject `PROP_LOCATION` (cannot relocate an existing managed table);
-   *   - reject `PROP_PROVIDER` that differs from the existing table's provider
-   *     (cannot change table format via REPLACE).
-   *
-   * `PROP_IS_MANAGED_LOCATION` is not rejected here -- Spark V2's REPLACE / CREATE OR REPLACE
-   * paths inject it for existing managed tables, and `buildReplaceProps` overrides it to
-   * `true` regardless.
-   *
-   * Existing-table preconditions:
-   *   - tableType MANAGED + provider DELTA + `delta.feature.catalogManaged=supported`
-   *     (catalog-managed Delta table).
-   *
-   * Augments:
-   *   - `PROP_PROVIDER` = existing provider (defense if caller omitted USING);
-   *   - `PROP_IS_MANAGED_LOCATION` = `true`;
-   *   - storage credentials from `info.getStorageProperties`, filtered through the
-   *     `fs.*` Hadoop credential namespace, mirrored bare + `option.`-prefixed.
-   */
-  override def buildReplaceProps(
+  /** Loads the existing UC table and builds the REPLACE-augmented property map. */
+  override def loadTableAndBuildReplaceProps(
       ident: Identifier,
       properties: util.Map[String, String]): util.Map[String, String] = {
     val qualifiedName = fullQualifiedTableName(ident)
+    // Reject caller-supplied UC-system keys, `delta.feature.catalogManaged` overrides, and
+    // `PROP_LOCATION` (the existing managed table cannot be relocated via REPLACE).
     rejectSystemManagedProperties(properties, qualifiedName)
     rejectCatalogManagedOverride(properties, qualifiedName)
     if (properties.containsKey(TableCatalog.PROP_LOCATION)) {
@@ -295,12 +259,14 @@ private[catalog] class UCDeltaCatalogClientImpl(
       Option(info.getMetadata.getProvider)
         .map(_.toLowerCase(java.util.Locale.ROOT))
         .getOrElse("delta")
+    // REPLACE cannot change the table's storage format.
     Option(properties.get(TableCatalog.PROP_PROVIDER))
       .filterNot(_.equalsIgnoreCase(existingProvider))
-      .foreach(p => throw new UnsupportedOperationException(
-        s"REPLACE TABLE on $qualifiedName cannot change table format from " +
-          s"'$existingProvider' to '${p.toLowerCase(java.util.Locale.ROOT)}'."))
+      .foreach(_ => throw DeltaErrors.cannotChangeProvider())
     val augmented = new util.HashMap[String, String](properties)
+    // Re-emit the existing provider so downstream sees USING <provider> even if the caller
+    // omitted it. Mark the location as system-managed; `PROP_LOCATION` is intentionally not
+    // set so downstream Delta resolves the location from the existing table snapshot.
     augmented.put(TableCatalog.PROP_PROVIDER, existingProvider)
     augmented.put(TableCatalog.PROP_IS_MANAGED_LOCATION, "true")
     // Mirror credentials into the `option.`-prefixed namespace so
@@ -338,8 +304,7 @@ private[catalog] class UCDeltaCatalogClientImpl(
 
   /**
    * Existing table must be tableType=MANAGED, provider=delta, and carry the
-   * `delta.feature.catalogManaged=supported` configuration. Mirrors
-   * `UCSingleCatalog.isCatalogManagedDeltaTable`.
+   * `delta.feature.catalogManaged=supported` configuration.
    */
   private def requireCatalogManagedDeltaTable(info: TableInfo, qualified: String): Unit = {
     if (info.getTableType != UCDeltaModels.TableType.MANAGED) {
@@ -349,9 +314,7 @@ private[catalog] class UCDeltaCatalogClientImpl(
     }
     val provider = Option(info.getMetadata.getProvider).map(_.toLowerCase(java.util.Locale.ROOT))
     if (!provider.contains("delta")) {
-      throw new UnsupportedOperationException(
-        s"REPLACE TABLE is only supported for UC Delta tables; $qualified is " +
-          s"${provider.getOrElse("<unknown>")}.")
+      throw DeltaErrors.notADeltaTableException("REPLACE TABLE", qualified)
     }
     val catalogManagedKey = s"delta.feature.${CatalogOwnedTableFeature.name}"
     val isCatalogManaged = Option(info.getMetadata.getConfiguration)
@@ -377,7 +340,7 @@ private[catalog] class UCDeltaCatalogClientImpl(
       lastCommitTimestampMs: Long): Unit = {
     if (table.tableType != CatalogTableType.MANAGED) {
       throw new IllegalArgumentException(
-        s"UC Delta API createTable only supports MANAGED tables; " +
+        s"UCDeltaClient createTable only supports MANAGED tables; " +
           s"got ${table.tableType} for ${fullQualifiedTableName(ident)}.")
     }
     val locationUri = table.storage.locationUri.getOrElse(throw new IllegalArgumentException(
@@ -406,17 +369,19 @@ private[catalog] class UCDeltaCatalogClientImpl(
   // -------------------------------------------------------------------------
 
   /**
-   * Defense-in-depth invariant: `AbstractDeltaCatalog.maybeStageManagedDeltaCreate` is the
-   * primary filter for non-managed-create requests (external / REPLACE-existing / path-based).
-   * If any of those markers reach this client anyway, a call site bypassed the boundary --
-   * fail loud rather than re-stage an already-prepared or mislabeled request.
+   * Asserts that `properties` is the raw, caller-supplied form expected on the fresh-create
+   * entrypoint -- no LOCATION / IS_MANAGED_LOCATION / EXTERNAL markers set, and the
+   * identifier is not path-based.
    */
   private def requireUnpreparedManagedDeltaCreate(
       ident: Identifier,
       properties: util.Map[String, String]): Unit = {
+    // Defense in depth: upstream routing is supposed to filter external / REPLACE-existing /
+    // path-based requests before reaching this client. If those markers appear here, fail
+    // loud rather than re-stage an already-prepared or mislabeled request.
     val qualifiedName = fullQualifiedTableName(ident)
     def bail(reason: String): Nothing = throw new IllegalStateException(
-      s"Managed Delta create for $qualifiedName reached the UC Delta API path in an " +
+      s"Managed Delta create for $qualifiedName reached the UCDeltaClient path in an " +
         s"unexpected state: $reason. The upstream catalog must only route fresh managed " +
         "Delta CREATE / CTAS here with raw caller-supplied properties.")
     if (properties.containsKey(TableCatalog.PROP_LOCATION)) {
@@ -489,7 +454,7 @@ private[catalog] class UCDeltaCatalogClientImpl(
             iceberg.getConvertedDeltaTimestamp
         )
       }.getOrElse(Map.empty[String, String])
-    // Match master UC's V1Table shape: pack tableConfig + credentials + UniForm into
+    // Match UCSingleCatalog's V1Table shape: pack tableConfig + credentials + UniForm into
     // `storage.properties`, leave `catalogTable.properties` empty. Required for
     // downstream streaming/routing compatibility.
     val storage = CatalogStorageFormat.empty.copy(
@@ -531,20 +496,20 @@ object UCDeltaCatalogClientImpl extends AbstractDeltaCatalogClientFactory with L
   private val loadTableInvocationsCounter: AtomicLong = new AtomicLong(0L)
 
   /**
-   * Bumped only when `loadTable` returned a Delta table via the UC Delta API (no fallback,
+   * Bumped only when `loadTable` returned a Delta table via the UCDeltaClient (no fallback,
    * no rethrow). Read via the *ForTesting API.
    */
   private val successfulDeltaRestApiLoadsCounter: AtomicLong = new AtomicLong(0L)
 
   /**
    * Test-only read accessor for the `loadTable` invocation counter. Used by integration
-   * tests to verify the UC Delta API code path ran. Not part of any public API; production
+   * tests to verify the UCDeltaClient code path ran. Not part of any public API; production
    * code must not depend on it.
    */
   def loadTableInvocationsForTesting: Long = loadTableInvocationsCounter.get()
 
   /**
-   * Test-only read accessor for the count of `loadTable` calls served by the UC Delta API
+   * Test-only read accessor for the count of `loadTable` calls served by the UCDeltaClient
    * (no fallback, no rethrow). Not part of any public API.
    */
   def successfulDeltaRestApiLoadsForTesting: Long = successfulDeltaRestApiLoadsCounter.get()
@@ -560,7 +525,7 @@ object UCDeltaCatalogClientImpl extends AbstractDeltaCatalogClientFactory with L
 
   private[catalog] val defaultFallbackLoadTableFunc: Identifier => Table = ident =>
     throw new IllegalStateException(
-      s"Non-Delta table $ident cannot be served via the UC Delta API path and no " +
+      s"Non-Delta table $ident cannot be served via the UCDeltaClient path and no " +
         "fallback catalog was configured.")
 
   /**

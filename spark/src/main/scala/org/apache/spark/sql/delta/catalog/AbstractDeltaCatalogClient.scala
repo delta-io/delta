@@ -39,50 +39,71 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
 private[catalog] trait AbstractDeltaCatalogClient {
 
   /**
+   * Loads the table identified by `ident` from the catalog.
+   *
+   * @param ident identifier of the table to load.
+   * @return the resolved [[Table]].
    * @throws org.apache.spark.sql.catalyst.analysis.NoSuchTableException if the catalog has
-   *   no record of this identifier
+   *   no record of this identifier.
    */
   def loadTable(ident: Identifier): Table
 
   /**
-   * Called by `AbstractDeltaCatalog.maybeStageManagedDeltaCreate` for a fresh managed-Delta
-   * CREATE / staged CREATE. Stages the table with the catalog (e.g. UC Delta API staging
-   * endpoint) and returns `properties` augmented with the catalog-supplied LOCATION, table
-   * id, and credentials.
+   * Reserves a fresh staging entry with the catalog for a new Delta table and returns
+   * `properties` augmented with the catalog-supplied LOCATION, the catalog-assigned table
+   * id, and the storage credentials Delta needs to write the initial commit.
    *
-   * The caller is expected to route only fresh managed-Delta CREATE / CTAS requests here
-   * (external / REPLACE-existing / path-based requests are filtered out upstream).
-   * Implementations should re-verify that contract on entry rather than trusting the
-   * caller blindly.
+   * This entry point is meant for fresh CREATE / CTAS only -- external, REPLACE-existing,
+   * and path-based requests are filtered out upstream. Implementations should re-verify
+   * that contract on entry rather than trusting the caller blindly.
+   *
+   * @param ident      identifier of the table being created.
+   * @param properties user-supplied properties from the CREATE statement.
+   * @return augmented properties carrying the staged LOCATION, the catalog-assigned table
+   *         id, and the storage credentials Delta needs to write the initial commit.
    */
   def createStagingTable(
       ident: Identifier,
       properties: util.Map[String, String]): util.Map[String, String]
 
   /**
-   * Called by `AbstractDeltaCatalog.maybeLoadForManagedDeltaReplace` and
-   * `AbstractDeltaCatalog.maybeStageManagedDeltaCreateOrReplace` (existing-branch) for
-   * REPLACE / RTAS / CREATE OR REPLACE on an existing managed-Delta table. Loads the
-   * existing table from the catalog and returns `properties` augmented with
-   * `PROP_IS_MANAGED_LOCATION=true` plus storage credentials.
+   * Loads the existing table from the catalog and returns `properties` augmented with
+   * `PROP_IS_MANAGED_LOCATION=true` and the storage credentials Delta needs to write the
+   * REPLACE commit at the existing location. Used for REPLACE / RTAS / CREATE OR REPLACE
+   * on an existing catalog-managed Delta table.
    *
+   * @param ident      identifier of the table being replaced.
+   * @param properties user-supplied properties from the REPLACE / RTAS / CREATE OR REPLACE
+   *                   statement.
+   * @return augmented properties carrying `PROP_IS_MANAGED_LOCATION=true` and the storage
+   *         credentials Delta needs to write at the existing location. `PROP_LOCATION` is
+   *         intentionally not set; downstream Delta resolves it from the existing table.
    * @throws org.apache.spark.sql.catalyst.analysis.NoSuchTableException
    *   if the catalog has no record of this identifier.
    * @throws UnsupportedOperationException
    *   if the existing table is not MANAGED.
    */
-  def buildReplaceProps(
+  def loadTableAndBuildReplaceProps(
       ident: Identifier,
       properties: util.Map[String, String]): util.Map[String, String]
 
   /**
-   * Called by [[AbstractDeltaCatalog]] after Delta has written the initial commit, in place
-   * of the legacy `super.createTable` call. Implementations register the table with the
-   * catalog (e.g. via UC Delta API `createTable` endpoint).
+   * Registers a newly-written Delta table with the catalog, taking the place of the legacy
+   * `super.createTable` call once Delta has produced the initial commit.
    *
+   * @param ident                 identifier of the table to register.
+   * @param table                 Spark V1 [[CatalogTable]] describing the table (identifier,
+   *                              storage, schema, partitioning, properties, comment).
+   * @param metadata              Delta [[Metadata]] action produced by the initial commit
+   *                              (schema, partition columns, configuration).
+   * @param domainMetadata        Delta [[DomainMetadata]] actions produced by the initial
+   *                              commit, if any.
+   * @param protocol              Delta [[Protocol]] action produced by the initial commit
+   *                              (reader / writer versions and table features).
    * @param lastCommitTimestampMs wall-clock timestamp of the latest commit that produced
-   *   `metadata` / `protocol`, used by the catalog as the authoritative "last updated"
-   *   timestamp on the registered entry.
+   *                              `metadata` / `protocol`, used by the catalog as the
+   *                              authoritative "last updated" timestamp on the registered
+   *                              entry.
    */
   def createTable(
       ident: Identifier,

@@ -113,12 +113,11 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
     _ => throw new UnsupportedOperationException("fallback not expected in this test")
 
   /**
-   * createStagingTable contract tests. The contract: only fresh managed Delta CREATE / CTAS
-   * requests with raw caller-supplied properties may reach this client. The routing boundary
-   * (`AbstractDeltaCatalog.maybeStageManagedDeltaCreate`) is responsible for that separation;
-   * if any "already-prepared" marker (LOCATION / IS_MANAGED_LOCATION / EXTERNAL / path-based
-   * ident) is seen here, it means some call site bypassed the boundary -- the impl fails
-   * loudly as defense-in-depth.
+   * createStagingTable contract tests. The contract: only fresh Delta CREATE / CTAS requests
+   * with raw caller-supplied properties may reach this client; upstream routing filters out
+   * external / REPLACE-existing / path-based requests. If any "already-prepared" marker
+   * (LOCATION / IS_MANAGED_LOCATION / EXTERNAL / path-based ident) is seen here, the impl
+   * fails loudly as defense-in-depth.
    */
   private def newRecordingClient(
       requiredProtocol: UCDeltaModels.DeltaProtocol = null,
