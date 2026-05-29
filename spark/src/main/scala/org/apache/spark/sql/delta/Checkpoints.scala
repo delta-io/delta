@@ -728,8 +728,8 @@ object Checkpoints
           .orElse(if (v2CheckpointEnabled) Some(50000L) else None)
 
     val numParts = checkpointPartSize.map { partSize =>
-      math.ceil((snapshot.numOfFiles + snapshot.numOfRemoves).toDouble / partSize).toLong
-    }.getOrElse(1L).toInt.max(1)
+      math.ceil((snapshot.numOfFiles + snapshot.numOfRemoves).toDouble / partSize).toLong.max(1L)
+    }.getOrElse(1L).toInt
     val legacyMultiPartCheckpoint = !v2CheckpointEnabled && numParts > 1
 
     val base = {

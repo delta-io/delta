@@ -416,6 +416,23 @@ class CheckpointsSuite
     }
   }
 
+  testDifferentV2Checkpoints(
+      "v2 checkpoint uses default part size when not explicitly configured") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      withSQLConf(
+        DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name,
+        DeltaConfigs.CHECKPOINT_INTERVAL.defaultTablePropertyKey -> "1") {
+
+        // Write 12 files without setting DELTA_CHECKPOINT_PART_SIZE explicitly.
+        // The default for V2 is 50,000 so 12 actions < 50,000 => 1 sidecar.
+        spark.range(12).repartition(12).write.format("delta").save(path)
+        val deltaLog = DeltaLog.forTable(spark, path)
+        assert(getV2CheckpointProvider(deltaLog).sidecarFileStatuses.size == 1)
+      }
+    }
+  }
+
   test("checkpoint does not contain CDC field") {
     withSQLConf(
         DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true"
