@@ -16,16 +16,35 @@
 
 package org.apache.spark.sql.delta.catalog
 
+import java.util
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 
 import scala.jdk.CollectionConverters._
 
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, Table, TableChange}
+import org.apache.spark.sql.catalyst.util.QuotingUtils
+import org.apache.spark.sql.connector.catalog.{
+  CatalogV2Util,
+  Identifier,
+  StagedTable,
+  SupportsWrite,
+  Table,
+  TableCapability,
+  TableChange}
 import org.apache.spark.sql.connector.expressions.Transform
+import org.apache.spark.sql.connector.metric.CustomTaskMetric
+import org.apache.spark.sql.connector.write.{
+  LogicalWriteInfo,
+  SupportsTruncate,
+  V1Write,
+  WriteBuilder}
+import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.sources.InsertableRelation
+import org.apache.spark.sql.types.StructType
 
 /**
  * Test-only catalog that extends [[DeltaCatalog]] and overrides [[loadCatalogTable]]
@@ -40,6 +59,73 @@ class InMemoryDeltaCatalog extends DeltaCatalog {
 
   override def loadCatalogTable(ident: Identifier, catalogTable: CatalogTable): Table =
     InMemoryDeltaCatalog.getOrCreateTable(ident, catalogTable, spark)
+
+  override def stageCreate(
+      ident: Identifier,
+      schema: StructType,
+      partitions: Array[Transform],
+      properties: util.Map[String, String]): StagedTable = {
+    new InMemoryStagedTable(ident, super.stageCreate(ident, schema, partitions, properties))
+  }
+
+  override def stageReplace(
+      ident: Identifier,
+      schema: StructType,
+      partitions: Array[Transform],
+      properties: util.Map[String, String]): StagedTable = {
+    new InMemoryStagedTable(ident, super.stageReplace(ident, schema, partitions, properties))
+  }
+
+  override def stageCreateOrReplace(
+      ident: Identifier,
+      schema: StructType,
+      partitions: Array[Transform],
+      properties: util.Map[String, String]): StagedTable = {
+    new InMemoryStagedTable(
+      ident,
+      super.stageCreateOrReplace(ident, schema, partitions, properties))
+  }
+
+  private class InMemoryStagedTable(ident: Identifier, stagedTable: StagedTable)
+      extends StagedTable with SupportsWrite {
+    private var asSelectQuery: Option[DataFrame] = None
+
+    override def name(): String = stagedTable.name()
+
+    override def schema(): StructType = stagedTable.schema()
+
+    override def partitioning(): Array[Transform] = stagedTable.partitioning()
+
+    override def properties(): util.Map[String, String] = stagedTable.properties()
+
+    override def capabilities(): util.Set[TableCapability] = stagedTable.capabilities()
+
+    override def commitStagedChanges(): Unit = {
+      stagedTable.commitStagedChanges()
+      asSelectQuery.foreach(_.writeTo(QuotingUtils.fullyQuoted(ident)).append())
+    }
+
+    override def abortStagedChanges(): Unit = stagedTable.abortStagedChanges()
+
+    override def reportDriverMetrics(): Array[CustomTaskMetric] = stagedTable.reportDriverMetrics()
+
+    override def newWriteBuilder(info: LogicalWriteInfo): WriteBuilder = {
+      stagedTable.asInstanceOf[SupportsWrite].newWriteBuilder(info)
+      new WriteBuilder with SupportsTruncate {
+        override def truncate(): WriteBuilder = this
+
+        override def build(): V1Write = new V1Write {
+          override def toInsertableRelation(): InsertableRelation = {
+            new InsertableRelation {
+              override def insert(data: DataFrame, overwrite: Boolean): Unit = {
+                asSelectQuery = Option(data)
+              }
+            }
+          }
+        }
+      }
+    }
+  }
 
   override def alterTable(ident: Identifier, changes: TableChange*): Table = {
     loadTable(ident) match {
@@ -62,6 +148,17 @@ object InMemoryDeltaCatalog {
   private val tables = new ConcurrentHashMap[String, InMemorySparkTable]()
 
   /**
+   * Normalize the table [[ident]] using the same case-sensitivity rules as the session catalog.
+   */
+  private def normalize(ident: Identifier): String = {
+    normalize(ident.name())
+  }
+
+  private def normalize(name: String): String = {
+    if (SQLConf.get.caseSensitiveAnalysis) name else name.toLowerCase(Locale.ROOT)
+  }
+
+  /**
    * Get or create a table defined by [[ident]].
    * [[catalogTable]] and [[spark]] are used to discover the table schema.
    *
@@ -71,7 +168,7 @@ object InMemoryDeltaCatalog {
       ident: Identifier,
       catalogTable: CatalogTable,
       spark: SparkSession): InMemorySparkTable = {
-    val tableName = ident.name()
+    val tableName = normalize(ident)
     tables.computeIfAbsent(tableName, _ => {
       val deltaTable = DeltaTableV2(
         spark, new Path(catalogTable.location), catalogTable = Some(catalogTable))
@@ -102,7 +199,7 @@ object InMemoryDeltaCatalog {
       case _ => throw new IllegalArgumentException(
         s"Expected InMemorySparkTable but got ${table.getClass.getName}")
     }
-    tables.put(ident.name(), newTable)
+    tables.put(normalize(ident), newTable)
     newTable
   }
 
@@ -111,12 +208,12 @@ object InMemoryDeltaCatalog {
    * Returns true if there was a table and it was removed, false otherwise.
    */
   def dropTable(ident: Identifier): Boolean =
-    tables.remove(ident.name()) != null
+    tables.remove(normalize(ident)) != null
 
   /**
    * Check whether table [[name]] exists here.
    */
-  def contains(name: String): Boolean = tables.containsKey(name)
+  def contains(name: String): Boolean = tables.containsKey(normalize(name))
 
   /**
    * Reset the catalog, removing all created tables from the storage.

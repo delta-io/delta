@@ -149,10 +149,9 @@ public class ColumnVectorWithFilter extends ColumnVector {
    */
   @Override
   public ColumnVector getChild(int ordinal) {
-    // Non-struct types (VARIANT, ARRAY, MAP) don't have named struct children —
-    // pass through to the delegate directly instead of attempting a StructType cast.
+    // For non-struct types like VARIANT, getVariant(rowId) calls getChild(0).getBinary(rowId).
     if (!(dataType() instanceof StructType)) {
-      return delegate.getChild(ordinal);
+      return new ColumnVectorWithFilter(delegate.getChild(ordinal), rowIdMapping);
     }
     if (children == null) {
       synchronized (this) {

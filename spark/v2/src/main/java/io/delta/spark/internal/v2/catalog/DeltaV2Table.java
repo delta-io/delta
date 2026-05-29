@@ -25,6 +25,7 @@ import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.rowtracking.RowTracking;
+import io.delta.spark.internal.v2.read.MetadataEvolutionHandler;
 import io.delta.spark.internal.v2.read.SparkScanBuilder;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
@@ -49,6 +50,7 @@ import org.apache.spark.sql.delta.RowCommitVersion$;
 import org.apache.spark.sql.delta.RowId$;
 import org.apache.spark.sql.delta.SparkTableShims$;
 import org.apache.spark.sql.delta.commands.cdc.CDCReader;
+import org.apache.spark.sql.delta.sources.PersistedMetadata;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.DataTypes;
@@ -57,7 +59,7 @@ import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
 /** DataSource V2 Table implementation for Delta Lake using the Delta Kernel API. */
-public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsMetadataColumns {
+public class DeltaV2Table implements Table, SupportsRead, SupportsWrite, SupportsMetadataColumns {
   private static final String METADATA_COLUMN_NAME = FileFormat$.MODULE$.METADATA_NAME();
   private static final String ROW_ID_METADATA_FIELD_NAME = RowId$.MODULE$.ROW_ID();
   private static final String ROW_COMMIT_VERSION_METADATA_FIELD_NAME =
@@ -94,25 +96,25 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsM
   private final boolean isCDCRead;
 
   /**
-   * Creates a SparkTable from a filesystem path without a catalog table.
+   * Creates a DeltaV2Table from a filesystem path without a catalog table.
    *
    * @param identifier logical table identifier used by Spark's catalog
    * @param tablePath filesystem path to the Delta table root
    * @throws NullPointerException if identifier or tablePath is null
    */
-  public SparkTable(Identifier identifier, String tablePath) {
+  public DeltaV2Table(Identifier identifier, String tablePath) {
     this(identifier, tablePath, Collections.emptyMap(), Optional.empty());
   }
 
   /**
-   * Creates a SparkTable from a filesystem path with options.
+   * Creates a DeltaV2Table from a filesystem path with options.
    *
    * @param identifier logical table identifier used by Spark's catalog
    * @param tablePath filesystem path to the Delta table root
    * @param options table options used to configure the Hadoop conf, table reads and writes
    * @throws NullPointerException if identifier or tablePath is null
    */
-  public SparkTable(Identifier identifier, String tablePath, Map<String, String> options) {
+  public DeltaV2Table(Identifier identifier, String tablePath, Map<String, String> options) {
     this(identifier, tablePath, options, Optional.empty());
   }
 
@@ -125,7 +127,8 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsM
    * @param catalogTable the Spark CatalogTable containing table metadata including location
    * @param options user-provided options to override catalog properties
    */
-  public SparkTable(Identifier identifier, CatalogTable catalogTable, Map<String, String> options) {
+  public DeltaV2Table(
+      Identifier identifier, CatalogTable catalogTable, Map<String, String> options) {
     this(
         identifier,
         getDecodedPath(requireNonNull(catalogTable, "catalogTable is null").location()),
@@ -134,7 +137,7 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsM
   }
 
   /**
-   * Creates a SparkTable backed by a Delta Kernel snapshot manager and initializes Spark-facing
+   * Creates a DeltaV2Table backed by a Delta Kernel snapshot manager and initializes Spark-facing
    * metadata (schemas, partitioning, capabilities).
    *
    * <p>Side effects: - Initializes a SnapshotManager for the given tablePath. - Loads the latest
@@ -145,7 +148,7 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsM
    * after data columns in the public Spark schema, per Spark conventions. - Read-time scan options
    * are later merged with these options.
    */
-  private SparkTable(
+  private DeltaV2Table(
       Identifier identifier,
       String tablePath,
       Map<String, String> userOptions,
@@ -178,9 +181,29 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsM
     // Load the initial snapshot through the manager
     this.initialSnapshot = snapshotManager.loadLatestSnapshot();
 
-    // Schema-related metadata is lazily computed on first access within SchemaProvider
-    this.schemaProvider = new SchemaProvider(SparkSession.active(), initialSnapshot);
     this.isCDCRead = CDCReader.isCDCRead(new CaseInsensitiveStringMap(this.options));
+
+    Optional<PersistedMetadata> persistedMetadata =
+        MetadataEvolutionHandler.getPersistedMetadataForMicroBatchStream(
+            SparkSession.active(),
+            (SnapshotImpl) initialSnapshot,
+            options,
+            snapshotManager,
+            kernelEngine);
+
+    StructType rawSchema;
+    List<String> partitionColumnNames;
+    if (persistedMetadata.isPresent()) {
+      PersistedMetadata persisted = persistedMetadata.get();
+      rawSchema = persisted.dataSchema();
+      partitionColumnNames = Arrays.asList(persisted.partitionSchema().fieldNames());
+    } else {
+      rawSchema = SchemaUtils.convertKernelSchemaToSparkSchema(initialSnapshot.getSchema());
+      partitionColumnNames = new ArrayList<>(initialSnapshot.getPartitionColumnNames());
+    }
+    // Schema-related metadata is lazily computed on first access within SchemaProvider
+    this.schemaProvider =
+        new SchemaProvider(SparkSession.active(), rawSchema, partitionColumnNames);
   }
 
   /**
@@ -202,7 +225,7 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsM
   }
 
   /**
-   * Returns the CatalogTable if this SparkTable was created from a catalog table.
+   * Returns the CatalogTable if this DeltaV2Table was created from a catalog table.
    *
    * @return Optional containing the CatalogTable, or empty if this table was created from a path
    */
@@ -217,6 +240,33 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsM
    */
   public Path getTablePath() {
     return new Path(tablePath);
+  }
+
+  /**
+   * Returns the V2 identifier this table was constructed with.
+   *
+   * @return Identifier provided at construction
+   */
+  public Identifier getIdentifier() {
+    return identifier;
+  }
+
+  /**
+   * Returns the merged options (catalog storage + user options) this table was constructed with.
+   *
+   * @return Map of merged catalog storage and user options
+   */
+  public Map<String, String> getOptions() {
+    return options;
+  }
+
+  /**
+   * Returns the snapshot manager backing this table. Catalog-driven features such as Auto-CDF
+   * (TableCatalog.loadChangelog) use this to resolve versions, timestamps, and snapshots without
+   * having to build their own snapshot manager.
+   */
+  public DeltaSnapshotManager getSnapshotManager() {
+    return snapshotManager;
   }
 
   /**
@@ -337,7 +387,7 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsM
 
   @Override
   public String toString() {
-    return "SparkTable{identifier=" + identifier + '}';
+    return "DeltaV2Table{identifier=" + identifier + '}';
   }
 
   @Override
@@ -348,7 +398,7 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsM
     if (o == null || getClass() != o.getClass()) {
       return false;
     }
-    SparkTable that = (SparkTable) o;
+    DeltaV2Table that = (DeltaV2Table) o;
     return Objects.equals(identifier, that.identifier)
         && Objects.equals(tablePath, that.tablePath)
         && Objects.equals(options, that.options)
@@ -384,20 +434,20 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsM
    */
   private static class SchemaProvider {
     private final SparkSession sparkSession;
-    private final Snapshot snapshot;
+    private final StructType rawSchema;
+    private final List<String> partColNames;
 
     // Lazily computed fields
     private boolean initialized = false;
-    private StructType rawSchema;
     private StructType publicSchema;
-    private List<String> partColNames;
     private StructType dataSchema;
     private StructType partitionSchema;
     private Transform[] partitionTransforms;
 
-    SchemaProvider(SparkSession sparkSession, Snapshot snapshot) {
+    SchemaProvider(SparkSession sparkSession, StructType rawSchema, List<String> partColNames) {
       this.sparkSession = sparkSession;
-      this.snapshot = snapshot;
+      this.rawSchema = rawSchema;
+      this.partColNames = Collections.unmodifiableList(new ArrayList<>(partColNames));
     }
 
     private synchronized void ensureInitialized() {
@@ -405,16 +455,10 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsM
         return;
       }
 
-      // Convert Kernel schema to Spark schema - keep all metadata for internal use
-      this.rawSchema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
-
       // Create public schema by removing internal metadata (for schema() method)
       this.publicSchema =
           DeltaTableUtils.removeInternalDeltaMetadata(
               sparkSession, DeltaTableUtils.removeInternalWriterMetadata(sparkSession, rawSchema));
-
-      this.partColNames =
-          Collections.unmodifiableList(new ArrayList<>(snapshot.getPartitionColumnNames()));
 
       final List<StructField> dataFields = new ArrayList<>();
       final List<StructField> partitionFields = new ArrayList<>();

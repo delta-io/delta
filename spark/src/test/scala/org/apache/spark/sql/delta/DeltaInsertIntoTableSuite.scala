@@ -1055,9 +1055,9 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
       QueryTest.checkAnswer(
         descriptionDf.filter(
           "!(col_name in ('Catalog', 'Created Time', 'Created By', 'Database', " +
-            "'index', 'Is_managed_location', 'Location', 'Name', 'Owner', 'Partition Provider'," +
-            "'Provider', 'Table', 'Table Properties',  'Type', '_partition', 'Last Access', " +
-            "'Statistics', ''))"),
+            "'index', 'Is_managed_location', 'Location', 'Name', 'Namespace', 'Owner', " +
+            "'Partition Provider', 'Provider', 'Table', 'Table Properties', 'Type', " +
+            "'_partition', 'Last Access', 'Statistics', ''))"),
         Seq(
           Row("# Column Default Values", "", ""),
           Row("# Detailed Table Information", "", ""),
@@ -1078,13 +1078,19 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
            |$tblPropertiesAllowDefaults
         """.stripMargin)
       val currentCatalog = spark.sessionState.catalogManager.currentCatalog.name()
+      val stringTypeSql =
+        if (org.apache.spark.SPARK_VERSION.startsWith("4.2")) {
+          "STRING COLLATE UTF8_BINARY"
+        } else {
+          "STRING"
+        }
       QueryTest.checkAnswer(sql("SHOW CREATE TABLE T"),
         Seq(
           Row(
             s"""CREATE TABLE ${currentCatalog}.default.T (
                |  a BIGINT,
                |  b BIGINT DEFAULT 42,
-               |  c STRING DEFAULT 'abc, "def"' COMMENT 'comment')
+               |  c $stringTypeSql DEFAULT 'abc, "def"' COMMENT 'comment')
                |USING parquet
                |COMMENT 'This is a comment'
                |TBLPROPERTIES (

@@ -56,8 +56,9 @@ import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.plans.logical.CloneTableStatement
 import org.apache.spark.sql.catalyst.plans.logical.RestoreTableStatement
 import org.apache.spark.sql.catalyst.rules.Rule
-import org.apache.spark.sql.catalyst.streaming.WriteToStream
+import org.apache.spark.sql.catalyst.streaming.{StreamingRelationV2, WriteToStream}
 import org.apache.spark.sql.catalyst.trees.TreeNodeTag
+import org.apache.spark.sql.delta.shims.StreamingRelationV2Shim
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttribute
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
@@ -704,8 +705,10 @@ class DeltaAnalysis(protected val session: SparkSession)
 
     case origStreamWrite: WriteToStream =>
       // The command could have Delta as source and/or sink. We need to look at both.
-      val streamWrite = origStreamWrite match {
-        case WriteToStream(_, _, sink @ DeltaSink(_, _, _, _, _, None), _, _, _, _, Some(ct)) =>
+      // Use field access rather than positional destructuring because WriteToStream's
+      // constructor signature differs across Spark versions.
+      val streamWrite = (origStreamWrite.sink, origStreamWrite.catalogTable) match {
+        case (sink @ DeltaSink(_, _, _, _, _, None), Some(ct)) =>
           // The command has a catalog table, but the DeltaSink does not. This happens because
           // DeltaDataSource.createSink (Spark API) didn't have access to the catalog table when it
           // created the DeltaSink. Fortunately we can fix it up here.
@@ -992,9 +995,9 @@ class DeltaAnalysis(protected val session: SparkSession)
   private def verifyDeltaSourceSchemaLocation(
       inputQuery: LogicalPlan,
       checkpointLocation: String): Unit = {
-    // Maps StreamingRelation to schema location, similar to how MicroBatchExecution converts
-    // StreamingRelation to StreamingExecutionRelation.
-    val schemaLocationMap = mutable.Map[StreamingRelation, String]()
+    // Maps each Delta streaming source (V1 or V2) to its schema tracking location, similar to how
+    // MicroBatchExecution converts StreamingRelation to StreamingExecutionRelation.
+    val schemaLocationMap = mutable.Map[LogicalPlan, String]()
     val allowSchemaLocationOutsideOfCheckpoint = session.sessionState.conf.getConf(
       DeltaSQLConf.DELTA_STREAMING_ALLOW_SCHEMA_LOCATION_OUTSIDE_CHECKPOINT_LOCATION)
     inputQuery.foreach {
@@ -1020,6 +1023,25 @@ class DeltaAnalysis(protected val session: SparkSession)
             // Save schema location for this streaming relation
             schemaLocationMap.put(streamingRelation, schemaTrackingLocation.stripSuffix("/"))
           }
+      case streamingRelationV2 @ StreamingRelationV2Shim(_, _, table, extraOptions, _, _, _, _) =>
+        val opts = extraOptions.asCaseSensitiveMap.asScala.toMap
+        DeltaDataSource.extractSchemaTrackingLocationConfig(session, opts)
+          .foreach { rootSchemaTrackingLocation =>
+            // TODO(#5319): use table path instead of name so path vs catalog access of the same
+            //  table conflicts at analysis time (matches V1). Needs a DeltaV2Table-side accessor.
+            val tableId = table.name.replace(":", "").replace("/", "_")
+            val sourceIdOpt = opts.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID)
+            val schemaTrackingLocation =
+              DeltaSourceMetadataTrackingLog.fullMetadataTrackingLocation(
+                rootSchemaTrackingLocation, tableId, sourceIdOpt)
+            if (!allowSchemaLocationOutsideOfCheckpoint) {
+              assertSchemaTrackingLocationUnderCheckpoint(
+                checkpointLocation,
+                schemaTrackingLocation
+              )
+            }
+            schemaLocationMap.put(streamingRelationV2, schemaTrackingLocation.stripSuffix("/"))
+          }
       case _ =>
     }
 
@@ -1029,14 +1051,21 @@ class DeltaAnalysis(protected val session: SparkSession)
       .groupBy { rel => schemaLocationMap(rel) }
       .find(_._2.size > 1)
     conflictSchemaOpt.foreach { case (schemaLocation, relations) =>
-      val ds = relations.head.dataSource
       // Pick one source that has conflict to make it more actionable for the user
-      val oneTableWithConflict = ds.catalogTable
-        .map(_.identifier.toString)
-        .getOrElse {
-          // `path` must exist
-          CaseInsensitiveMap(ds.options).get("path").get
-        }
+      val oneTableWithConflict = relations.head match {
+        case streamingRelation: StreamingRelation =>
+          val ds = streamingRelation.dataSource
+          ds.catalogTable
+            .map(_.identifier.toString)
+            .getOrElse {
+              // `path` must exist
+              CaseInsensitiveMap(ds.options).get("path").get
+            }
+        case streamingRelationV2: StreamingRelationV2 =>
+          streamingRelationV2.identifier
+            .map(_.toString)
+            .getOrElse(streamingRelationV2.table.name)
+      }
       throw DeltaErrors.sourcesWithConflictingSchemaTrackingLocation(
         schemaLocation, oneTableWithConflict)
     }

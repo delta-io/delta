@@ -19,11 +19,9 @@ Here is the history of all the RFCs propose/accepted/rejected since Feb 6, 2024,
 | Date proposed | RFC file                                                                                                                         | Github issue                                  | RFC title                              |
 |:--------------|:---------------------------------------------------------------------------------------------------------------------------------|:----------------------------------------------|:---------------------------------------|
 | 2023-02-26    | [column-mapping-usage.tracking.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/column-mapping-usage-tracking.md) | https://github.com/delta-io/delta/issues/2682 | Column Mapping Usage Tracking          |
-| 2023-04-24    | [variant-type.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/variant-type.md)                                   | https://github.com/delta-io/delta/issues/2864 | Variant Data Type                      |
 | 2024-04-30    | [collated-string-type.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/collated-string-type.md)                   | https://github.com/delta-io/delta/issues/2894 | Collated String Type                   |
 | 2025-03-13    | [checkpoint-protection.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/checkpoint-protection.md)                 | https://github.com/delta-io/delta/issues/4152 | Checkpoint Protection                  |
 | 2025-03-18    | [iceberg-writer-compat-v1.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/iceberg-writer-compat-v1.md)           | https://github.com/delta-io/delta/issues/4284 | IcebergWriterCompatV1                  |
-| 2025-05-06    | [variant-shredding.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/variant-shredding.md)                         | https://github.com/delta-io/delta/issues/4032 | Variant Shredding                      |
 | 2025-11-20    | [materialize-partition-columns.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/materialize-partition-columns.md)                         | https://github.com/delta-io/delta/issues/5555 | Materialize Partition Columns                      |
 
 ### Accepted RFCs
@@ -34,6 +32,8 @@ Here is the history of all the RFCs propose/accepted/rejected since Feb 6, 2024,
 | 2023-02-28    | 2023-03-26    |[vacuum-protocol-check.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/accepted/vacuum-protocol-check.md)| https://github.com/delta-io/delta/issues/2630 | Enforce Vacuum Protocol Check  |
 | 2023-02-02    | 2023-07-24    |[in-commit-timestamps.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/accepted/in-commit-timestamps.md)  | https://github.com/delta-io/delta/issues/2532 | In-Commit Timestamps           |
 | 2023-02-09    | 2025-01-28    |[type-widening.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/accepted/type-widening.md)                | https://github.com/delta-io/delta/issues/2623 | Type Widening                  |
+| 2023-04-24    | 2025-02-14    |[variant-type.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/accepted/variant-type.md)                  | https://github.com/delta-io/delta/issues/2864 | Variant Data Type              |
+| 2025-05-06    | 2026-05-01    |[variant-shredding.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/accepted/variant-shredding.md)        | https://github.com/delta-io/delta/issues/4032 | Variant Shredding              |
 
 ### Rejected RFCs
 

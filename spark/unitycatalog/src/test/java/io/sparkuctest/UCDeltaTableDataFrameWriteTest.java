@@ -28,7 +28,6 @@ import org.apache.spark.sql.Row;
 import org.apache.spark.sql.RowFactory;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -411,34 +410,6 @@ public class UCDeltaTableDataFrameWriteTest extends UCDeltaTableIntegrationBaseT
 
   @TestAllTableTypes
   public void testMergeSchema(TableType tableType) throws Exception {
-    Assumptions.assumeFalse(
-        isUCRemoteConfigured(), "mergeSchema not yet supported for UC managed tables remotely");
-    if (tableType == TableType.MANAGED) {
-      // mergeSchema triggers updateMetadata() with a new schema, which the kill switch blocks
-      // on CatalogOwned tables. Assert the failure rather than skipping.
-      withNewTable(
-          "merge_schema_blocked_test",
-          "id INT",
-          tableType,
-          tableName -> {
-            sql("INSERT INTO %s VALUES (1), (2)", tableName);
-            assertThrowsWithCauseContaining(
-                "Metadata changes on Unity Catalog",
-                () ->
-                    spark()
-                        .createDataFrame(
-                            List.of(RowFactory.create(3, "extra")),
-                            new StructType()
-                                .add("id", DataTypes.IntegerType)
-                                .add("name", DataTypes.StringType))
-                        .write()
-                        .format("delta")
-                        .mode("append")
-                        .option("mergeSchema", "true")
-                        .saveAsTable(tableName));
-          });
-      return;
-    }
     withNewTable(
         "merge_schema_test",
         "id INT",

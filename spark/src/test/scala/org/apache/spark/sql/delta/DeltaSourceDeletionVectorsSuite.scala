@@ -38,7 +38,7 @@ trait DeltaSourceDeletionVectorTests extends StreamTest
   /**
    * Executes a DML SQL statement (DELETE, INSERT, etc.).
    * Overridable so that V2 suites can route DML through the V1 connector,
-   * since SparkTable (V2) is read-only and does not support writes.
+   * since DeltaV2Table (V2) is read-only and does not support writes.
    */
   protected def executeDml(sqlText: String): Unit = sql(sqlText)
 
@@ -465,6 +465,52 @@ trait DeltaSourceDeletionVectorTests extends StreamTest
             s"Expected no exception, but got: ${q.exception.map(_.toString).orNull}")
           true
         })
+    }
+  }
+
+  test("variant column and deletion vectors preserve payload identity") {
+    withTempDir { inputDir =>
+      val path = inputDir.getAbsolutePath
+      sql(s"CREATE TABLE delta.`$path` (id INT, v VARIANT) USING delta")
+      // Coalesce into one file so DELETE creates a DV rather than a file rewrite.
+      spark.range(10)
+        .selectExpr("cast(id as int) as id", "parse_json(concat('{\"row\":', id, '}')) as v")
+        .coalesce(1)
+        .write.format("delta").mode("append").save(path)
+      executeDml(s"DELETE FROM delta.`$path` WHERE id % 2 = 0")
+
+      val df = loadStreamWithOptions(path, Map.empty)
+        .selectExpr("id", "variant_get(v, '$.row', 'long') as row_in_payload")
+      testStream(df)(
+        AssertOnQuery { q =>
+          q.processAllAvailable()
+          true
+        },
+        CheckAnswer((1, 1L), (3, 3L), (5, 5L), (7, 7L), (9, 9L)))
+    }
+  }
+
+  test("array column and deletion vectors preserve element identity") {
+    withTempDir { inputDir =>
+      val path = inputDir.getAbsolutePath
+      sql(s"CREATE TABLE delta.`$path` (id INT, arr ARRAY<INT>) USING delta")
+      // Coalesce into one file so DELETE creates a DV rather than a file rewrite.
+      spark.range(10)
+        .selectExpr(
+          "cast(id as int) as id",
+          "array(cast(id*10 as int), cast(id*10+1 as int)) as arr")
+        .coalesce(1)
+        .write.format("delta").mode("append").save(path)
+      executeDml(s"DELETE FROM delta.`$path` WHERE id % 2 = 0")
+
+      val df = loadStreamWithOptions(path, Map.empty)
+        .selectExpr("id", "arr[0] as a0", "arr[1] as a1")
+      testStream(df)(
+        AssertOnQuery { q =>
+          q.processAllAvailable()
+          true
+        },
+        CheckAnswer((1, 10, 11), (3, 30, 31), (5, 50, 51), (7, 70, 71), (9, 90, 91)))
     }
   }
 

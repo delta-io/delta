@@ -32,6 +32,7 @@ import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorSchemaContex
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.utils.PartitionUtils;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
+import io.delta.spark.internal.v2.utils.SchemaUtils;
 import java.io.IOException;
 import java.time.ZoneId;
 import java.util.*;
@@ -47,6 +48,7 @@ import org.apache.spark.sql.connector.read.*;
 import org.apache.spark.sql.connector.read.colstats.ColumnStatistics;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
 import org.apache.spark.sql.delta.DeltaOptions;
+import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.execution.datasources.*;
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils;
 import org.apache.spark.sql.internal.SQLConf;
@@ -55,6 +57,7 @@ import org.apache.spark.sql.types.StringType;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
+import scala.Option;
 
 /** Spark DSV2 Scan implementation backed by Delta Kernel. */
 public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Filtering {
@@ -72,34 +75,29 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
               DeltaOptions.IGNORE_DELETES_OPTION(),
               DeltaOptions.SKIP_CHANGE_COMMITS_OPTION(),
               DeltaOptions.EXCLUDE_REGEX_OPTION(),
-              DeltaOptions.FAIL_ON_DATA_LOSS_OPTION()));
+              DeltaOptions.FAIL_ON_DATA_LOSS_OPTION(),
+              DeltaOptions.CDC_READ_OPTION(),
+              DeltaOptions.CDC_READ_OPTION_LEGACY(),
+              DeltaOptions.SCHEMA_TRACKING_LOCATION(),
+              DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS(),
+              DeltaOptions.STREAMING_SOURCE_TRACKING_ID(),
+              DeltaOptions.ALLOW_SOURCE_COLUMN_DROP(),
+              DeltaOptions.ALLOW_SOURCE_COLUMN_RENAME(),
+              DeltaOptions.ALLOW_SOURCE_COLUMN_TYPE_CHANGE()));
 
-  /**
-   * Block list of DeltaOptions that are not supported for streaming in V2 connector. Only
-   * startingVersion, startingTimestamp, maxFilesPerTrigger, maxBytesPerTrigger, ignoreFileDeletion,
-   * ignoreChanges, ignoreDeletes, skipChangeCommits, excludeRegex, and failOnDataLoss are
-   * supported. User-defined custom options (not in DeltaOptions) are allowed to pass through.
-   */
   private static final Set<String> UNSUPPORTED_STREAMING_OPTIONS =
       Collections.unmodifiableSet(
           new HashSet<>(
               Arrays.asList(
-                  DeltaOptions.CDC_READ_OPTION().toLowerCase(),
-                  DeltaOptions.CDC_READ_OPTION_LEGACY().toLowerCase(),
                   DeltaOptions.CDC_END_VERSION().toLowerCase(),
-                  DeltaOptions.CDC_END_TIMESTAMP().toLowerCase(),
-                  DeltaOptions.SCHEMA_TRACKING_LOCATION().toLowerCase(),
-                  DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS().toLowerCase(),
-                  DeltaOptions.STREAMING_SOURCE_TRACKING_ID().toLowerCase(),
-                  DeltaOptions.ALLOW_SOURCE_COLUMN_DROP().toLowerCase(),
-                  DeltaOptions.ALLOW_SOURCE_COLUMN_RENAME().toLowerCase(),
-                  DeltaOptions.ALLOW_SOURCE_COLUMN_TYPE_CHANGE().toLowerCase())));
+                  DeltaOptions.CDC_END_TIMESTAMP().toLowerCase())));
 
   private final DeltaSnapshotManager snapshotManager;
   private final Snapshot initialSnapshot;
   private final StructType readDataSchema;
   private final StructType dataSchema;
   private final StructType partitionSchema;
+  private final StructType ddlOrderedReadOutputSchema;
   private final Predicate[] pushedToKernelFilters;
   private final Filter[] dataFilters;
   // Derived Sets used only for equals/hashCode: filters are AND-ed at evaluation time,
@@ -136,9 +134,11 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   private final Set<org.apache.spark.sql.connector.expressions.filter.Predicate>
       appliedRuntimePredicates = new HashSet<>();
 
+  // TODO(#6743): bundle scan-level schemas into a single ScanSchemaContext.
   public SparkScan(
       DeltaSnapshotManager snapshotManager,
       Snapshot initialSnapshot,
+      StructType tableSchema,
       StructType dataSchema,
       StructType partitionSchema,
       StructType readDataSchema,
@@ -167,20 +167,16 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     this.deltaOptions = new DeltaOptions(scalaOptions, sqlConf);
     this.isCDCRead = deltaOptions.readChangeFeed();
     this.zoneId = ZoneId.of(sqlConf.sessionLocalTimeZone());
+    StructType ddlOrdered =
+        SchemaUtils.ddlOrderedOutputSchema(tableSchema, readDataSchema, partitionSchema);
+    this.ddlOrderedReadOutputSchema =
+        isCDCRead ? CDCSchemaContext.appendCDCColumns(ddlOrdered) : ddlOrdered;
   }
 
-  /**
-   * Read schema for the scan: data columns followed by partition columns, with CDC columns appended
-   * for CDC reads.
-   */
+  /** Read schema for the scan, in the table's DDL column order. */
   @Override
   public StructType readSchema() {
-    final List<StructField> fields =
-        new ArrayList<>(readDataSchema.fields().length + partitionSchema.fields().length);
-    Collections.addAll(fields, readDataSchema.fields());
-    Collections.addAll(fields, partitionSchema.fields());
-    StructType schema = new StructType(fields.toArray(new StructField[0]));
-    return isCDCRead ? CDCSchemaContext.appendCDCColumns(schema) : schema;
+    return ddlOrderedReadOutputSchema;
   }
 
   /**
@@ -239,6 +235,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         dataSchema,
         partitionSchema,
         readDataSchema,
+        ddlOrderedReadOutputSchema,
         partitionedFiles,
         pushedToKernelFilters,
         dataFilters,
@@ -250,22 +247,42 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   @Override
   public MicroBatchStream toMicroBatchStream(String checkpointLocation) {
     validateStreamingOptions(deltaOptions);
+
+    // Loads a fresh snapshot as the baseline for schema change detection and table identity
+    // checks. SparkScan's initialSnapshot is from analysis time and may be stale by stream
+    // start/restart.
+    // Matches V1's DeltaDataSource.createSource() behavior.
+    Snapshot latestSnapshot = snapshotManager.loadLatestSnapshot();
+    SparkSession spark = SparkSession.active();
+
+    // Create metadata tracking log for non-additive schema evolution support.
+    // Mirrors V1's DeltaDataSource.getMetadataTrackingLogForDeltaSource(). At execution time the
+    // merger is gated off (mergeConsecutiveSchemaChanges=false) — that fold only runs at analysis.
+    Option<DeltaSourceMetadataTrackingLog> metadataTrackingLog =
+        MetadataEvolutionHandler.getMetadataTrackingLogForMicroBatchStream(
+            spark,
+            (io.delta.kernel.internal.SnapshotImpl) latestSnapshot,
+            options,
+            snapshotManager,
+            DefaultEngine.create(hadoopConf),
+            Option.apply(checkpointLocation),
+            /* mergeConsecutiveSchemaChanges= */ false);
+
     return new SparkMicroBatchStream(
         snapshotManager,
-        // Loads a fresh snapshot as the baseline for schema change detection and table identity
-        // checks. SparkScan's initialSnapshot is from analysis time and may be stale by stream
-        // start/restart.
-        // Matches V1's DeltaDataSource.createSource() behavior.
-        snapshotManager.loadLatestSnapshot(),
+        latestSnapshot,
         hadoopConf,
-        SparkSession.active(),
+        spark,
         deltaOptions,
         getTablePath(),
         dataSchema,
         partitionSchema,
         readDataSchema,
+        ddlOrderedReadOutputSchema,
         dataFilters != null ? dataFilters : new Filter[0],
-        scalaOptions != null ? scalaOptions : scala.collection.immutable.Map$.MODULE$.empty());
+        scalaOptions != null ? scalaOptions : scala.collection.immutable.Map$.MODULE$.empty(),
+        metadataTrackingLog,
+        checkpointLocation);
   }
 
   @Override
