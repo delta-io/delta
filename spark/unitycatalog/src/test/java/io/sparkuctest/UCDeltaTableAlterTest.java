@@ -18,6 +18,7 @@ package io.sparkuctest;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 import io.unitycatalog.client.delta.api.TablesApi;
 import io.unitycatalog.client.delta.model.LoadTableResponse;
@@ -25,6 +26,7 @@ import io.unitycatalog.client.delta.model.StructField;
 import io.unitycatalog.client.delta.model.StructType;
 import io.unitycatalog.client.model.TableInfo;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 import org.apache.hadoop.fs.Path;
 import org.junit.jupiter.api.Test;
@@ -36,9 +38,9 @@ public class UCDeltaTableAlterTest extends UCDeltaTableIntegrationBaseTest {
   private static final String CHAR_VARCHAR_TYPE_METADATA_KEY = "__CHAR_VARCHAR_TYPE_STRING";
 
   @Test
-  public void testSimpleAlterTableOperationsUpdateUcMetadata() throws Exception {
+  public void testAlterTableCustomPropertiesUpdateUcDeltaMetadata() throws Exception {
     withNewTable(
-        "alter_simple_operations_test",
+        "alter_custom_props_test",
         "id INT, name STRING",
         TableType.MANAGED,
         tableName -> {
@@ -51,13 +53,101 @@ public class UCDeltaTableAlterTest extends UCDeltaTableIntegrationBaseTest {
 
           response = loadTableViaDeltaRest(tableName);
           assertFalse(response.getMetadata().getProperties().containsKey("custom.key"));
+        });
+  }
 
-          sql("ALTER TABLE %s ADD COLUMNS (extra STRING)", tableName);
+  @Test
+  public void testAlterTableDeltaPropertiesUpdateUcDeltaMetadata() throws Exception {
+    withNewTable(
+        "alter_delta_props_test",
+        "id INT, name STRING",
+        TableType.MANAGED,
+        tableName -> {
+          sql(
+              "ALTER TABLE %s SET TBLPROPERTIES ("
+                  + "'delta.autoOptimize.optimizeWrite' = 'true', "
+                  + "'delta.autoOptimize.autoCompact' = 'true')",
+              tableName);
+
+          assertEquals("true", tableProperty(tableName, "delta.autoOptimize.optimizeWrite"));
+          assertEquals("true", tableProperty(tableName, "delta.autoOptimize.autoCompact"));
+
+          LoadTableResponse response = loadTableViaDeltaRest(tableName);
+          Map<String, String> properties = response.getMetadata().getProperties();
+          assertEquals("true", properties.get("delta.autoOptimize.optimizeWrite"));
+          assertEquals("true", properties.get("delta.autoOptimize.autoCompact"));
+
+          sql(
+              "ALTER TABLE %s UNSET TBLPROPERTIES ("
+                  + "'delta.autoOptimize.optimizeWrite', "
+                  + "'delta.autoOptimize.autoCompact')",
+              tableName);
+
+          assertNull(tableProperty(tableName, "delta.autoOptimize.optimizeWrite"));
+          assertNull(tableProperty(tableName, "delta.autoOptimize.autoCompact"));
 
           response = loadTableViaDeltaRest(tableName);
-          assertEquals(3, response.getMetadata().getColumns().getFields().size());
-          assertEquals("extra", response.getMetadata().getColumns().getFields().get(2).getName());
+          properties = response.getMetadata().getProperties();
+          assertFalse(properties.containsKey("delta.autoOptimize.optimizeWrite"));
+          assertFalse(properties.containsKey("delta.autoOptimize.autoCompact"));
+        });
+  }
 
+  @Test
+  public void testAlterTableProtocolDerivedPropertiesNoOpButCommit() throws Exception {
+    withNewTable(
+        "alter_protocol_props_test",
+        "id INT, name STRING",
+        TableType.MANAGED,
+        tableName -> {
+          assertEquals("supported", tableProperty(tableName, "delta.feature.catalogManaged"));
+          long versionBeforeUnset = currentVersion(tableName);
+
+          sql("ALTER TABLE %s UNSET TBLPROPERTIES ('delta.feature.catalogManaged')", tableName);
+
+          assertEquals(versionBeforeUnset + 1, currentVersion(tableName));
+          assertLatestHistoryOperation(tableName, versionBeforeUnset + 1, "UNSET TBLPROPERTIES");
+          assertEquals("supported", tableProperty(tableName, "delta.feature.catalogManaged"));
+
+          assertEquals("3", tableProperty(tableName, "delta.minReaderVersion"));
+          long versionBeforeSet = currentVersion(tableName);
+
+          sql("ALTER TABLE %s SET TBLPROPERTIES ('delta.minReaderVersion' = '2')", tableName);
+
+          assertEquals(versionBeforeSet + 1, currentVersion(tableName));
+          assertLatestHistoryOperation(tableName, versionBeforeSet + 1, "SET TBLPROPERTIES");
+          assertEquals("3", tableProperty(tableName, "delta.minReaderVersion"));
+        });
+  }
+
+  @Test
+  public void testAlterTableAddColumnsWithDifferentTypesUpdatesUcDeltaMetadata() throws Exception {
+    withNewTable(
+        "alter_add_columns_types_test",
+        "id INT, name STRING",
+        TableType.MANAGED,
+        tableName -> {
+          sql(
+              "ALTER TABLE %s ADD COLUMNS ("
+                  + "price DECIMAL(10, 2), "
+                  + "active BOOLEAN, "
+                  + "created_at TIMESTAMP)",
+              tableName);
+
+          LoadTableResponse response = loadTableViaDeltaRest(tableName);
+          assertEquals(
+              List.of("id", "name", "price", "active", "created_at"),
+              fieldNames(response.getMetadata().getColumns()));
+        });
+  }
+
+  @Test
+  public void testAlterTableColumnCommentUpdatesUcDeltaMetadata() throws Exception {
+    withNewTable(
+        "alter_column_comment_test",
+        "id INT, name STRING",
+        TableType.MANAGED,
+        tableName -> {
           sql("ALTER TABLE %s CHANGE COLUMN name COMMENT 'display name'", tableName);
 
           StructField name =
@@ -68,25 +158,58 @@ public class UCDeltaTableAlterTest extends UCDeltaTableIntegrationBaseTest {
 
           name = field(loadTableViaDeltaRest(tableName).getMetadata().getColumns(), "name");
           assertEquals("", name.getMetadata().get("comment"));
+        });
+  }
 
-          sql(
-              "ALTER TABLE %s SET TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')",
-              tableName);
-
-          response = loadTableViaDeltaRest(tableName);
-          assertEquals(
-              "true", response.getMetadata().getProperties().get("delta.enableChangeDataFeed"));
-
-          sql("ALTER TABLE %s CLUSTER BY (id)", tableName);
-
-          response = loadTableViaDeltaRest(tableName);
-          assertEquals(
-              "supported", response.getMetadata().getProperties().get("delta.feature.clustering"));
-
+  @Test
+  public void testCommentOnTableUpdatesUcMetadata() throws Exception {
+    withNewTable(
+        "alter_table_comment_test",
+        "id INT, name STRING",
+        TableType.MANAGED,
+        tableName -> {
           sql("COMMENT ON TABLE %s IS 'table comment'", tableName);
 
           TableInfo tableInfo = loadTableInfoViaUc(tableName);
           assertEquals("table comment", tableInfo.getComment());
+
+          sql("COMMENT ON TABLE %s IS NULL", tableName);
+
+          tableInfo = loadTableInfoViaUc(tableName);
+          assertEquals("", tableInfo.getComment());
+        });
+  }
+
+  @Test
+  public void testAlterTableFeatureBackedPropertiesUpdateUcDeltaMetadata() throws Exception {
+    withNewTable(
+        "alter_feature_backed_props_test",
+        "id INT, name STRING",
+        TableType.MANAGED,
+        tableName -> {
+          sql(
+              "ALTER TABLE %s SET TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')",
+              tableName);
+
+          LoadTableResponse response = loadTableViaDeltaRest(tableName);
+          assertEquals(
+              "true", response.getMetadata().getProperties().get("delta.enableChangeDataFeed"));
+        });
+  }
+
+  @Test
+  public void testAlterTableClusterKeysUpdateUcDeltaMetadata() throws Exception {
+    withNewTable(
+        "alter_cluster_keys_test",
+        "id INT, name STRING",
+        TableType.MANAGED,
+        tableName -> {
+          sql("ALTER TABLE %s CLUSTER BY (id)", tableName);
+
+          LoadTableResponse response = loadTableViaDeltaRest(tableName);
+          Map<String, String> properties = response.getMetadata().getProperties();
+          assertEquals("supported", properties.get("delta.feature.clustering"));
+          assertEquals("[[\"id\"]]", tableProperty(tableName, "clusteringColumns"));
         });
   }
 
@@ -372,6 +495,21 @@ public class UCDeltaTableAlterTest extends UCDeltaTableIntegrationBaseTest {
   private TableInfo loadTableInfoViaUc(String tableName) throws Exception {
     return new io.unitycatalog.client.api.TablesApi(unityCatalogInfo().createApiClient())
         .getTable(tableName, false, false);
+  }
+
+  private String tableProperty(String tableName, String key) {
+    return sql("SHOW TBLPROPERTIES %s", tableName).stream()
+        .filter(row -> row.size() >= 2 && key.equals(row.get(0)))
+        .map(row -> row.get(1))
+        .findFirst()
+        .orElse(null);
+  }
+
+  private void assertLatestHistoryOperation(
+      String tableName, long expectedVersion, String expectedOperation) {
+    List<List<String>> history = sql("DESCRIBE HISTORY %s LIMIT 1", tableName);
+    assertEquals(String.valueOf(expectedVersion), history.get(0).get(0));
+    assertEquals(expectedOperation, history.get(0).get(4));
   }
 
   private static List<String> fieldNames(StructType structType) {
