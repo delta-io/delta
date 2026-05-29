@@ -725,10 +725,11 @@ object Checkpoints
     val sessionConf = spark.sessionState.conf
     val checkpointPartSize =
         sessionConf.getConf(DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE)
+          .orElse(if (v2CheckpointEnabled) Some(50000L) else None)
 
     val numParts = checkpointPartSize.map { partSize =>
       math.ceil((snapshot.numOfFiles + snapshot.numOfRemoves).toDouble / partSize).toLong
-    }.getOrElse(1L).toInt
+    }.getOrElse(1L).toInt.max(1)
     val legacyMultiPartCheckpoint = !v2CheckpointEnabled && numParts > 1
 
     val base = {
