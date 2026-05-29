@@ -549,9 +549,8 @@ lazy val spark = (project in file("spark-unified"))
       val sparkDir = (sparkV1 / baseDirectory).value
       val unifiedDir = baseDirectory.value
       // Every supported Spark version sets additionalSourceDir, see SparkVersionSpec.ALL_SPECS.
-      val shimDir = unifiedDir / "src" / "test" / SparkVersionSpec.ALL_SPECS
-        .find(_.fullVersion == sparkVersion.value)
-        .flatMap(_.additionalSourceDir)
+      val shimDir = unifiedDir / "src" / "test" / CrossSparkVersions.getSparkVersionSpec()
+        .additionalSourceDir
         .get
       Seq(
         sparkDir / "src" / "test" / "scala",
