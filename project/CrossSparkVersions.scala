@@ -56,6 +56,9 @@ import Unidoc._
  *   build/sbt -DsparkVersion=4.1                 # Uses Spark 4.1.x whatever it is defined in ALL_SPECS
  *   build/sbt -DsparkVersion=default             # Uses default version
  *   build/sbt -DsparkVersion=master              # Uses master version (if defined)
+ *   build/sbt -DsparkVersion=4.2 -DsparkCommit=<sha>
+ *                                                # Uses Spark 4.2 compatibility settings
+ *                                                # with locally built Spark artifacts
  *
  * ========================================================
  * Cross-Building for Development and Testing
@@ -65,6 +68,7 @@ import Unidoc._
  *   build/sbt -DsparkVersion=<version> compile
  *   build/sbt -DsparkVersion=<version> test
  *   build/sbt -DsparkVersion=master compile test
+ *   build/sbt -DsparkVersion=4.2 -DsparkCommit=<sha> compile test
  *
  * To publish to local Maven for testing:
  *   # Publish all modules for default Spark version
@@ -367,6 +371,44 @@ object CrossSparkVersions extends AutoPlugin {
    */
   def getSparkVersion(): String = getSparkVersionSpec().fullVersion
 
+  private def getSparkCommit(): Option[String] = {
+    sys.props.get("sparkCommit").orElse(sys.env.get("SPARK_COMMIT")).filter(_.nonEmpty)
+  }
+
+  private def getSparkArtifactVersionOverride(): Option[String] = {
+    sys.props.get("sparkArtifactVersion")
+      .orElse(sys.env.get("SPARK_ARTIFACT_VERSION"))
+      .filter(_.nonEmpty)
+  }
+
+  private def shortCommit(commit: String): String = {
+    val trimmed = commit.trim.toLowerCase
+    if (!trimmed.matches("[0-9a-f]{7,40}")) {
+      throw new IllegalArgumentException(
+        s"Invalid sparkCommit '$commit'. Expected a 7 to 40 character git SHA.")
+    }
+    trimmed.take(12)
+  }
+
+  def sparkArtifactVersionForCommit(spec: SparkVersionSpec, commit: String): String = {
+    s"${spec.artifactBaseVersion}-${shortCommit(commit)}-SNAPSHOT"
+  }
+
+  /**
+   * Returns the Maven artifact version used for org.apache.spark dependencies.
+   *
+   * `sparkVersion` selects the compatibility profile (shims, suffixes, JVM options,
+   * Jackson overrides). `sparkCommit` is an opt-in overlay for resolving locally built
+   * Spark artifacts from project/scripts/build_spark_from_source.sh.
+   */
+  def getSparkArtifactVersion(): String = {
+    val spec = getSparkVersionSpec()
+    getSparkArtifactVersionOverride().getOrElse {
+      getSparkCommit().map(commit => sparkArtifactVersionForCommit(spec, commit))
+        .getOrElse(spec.fullVersion)
+    }
+  }
+
   /**
    * Returns module name with Spark version suffix.
    * 
@@ -376,10 +418,7 @@ object CrossSparkVersions extends AutoPlugin {
    * During release, the `skipSparkSuffix=true` property is used to also publish
    * backward-compatible artifacts without the suffix (e.g., delta-spark_2.13).
    */
-  private def moduleName(baseName: String, sparkVer: String): String = {
-    val spec = SparkVersionSpec.ALL_SPECS.find(_.fullVersion == sparkVer)
-      .getOrElse(throw new IllegalArgumentException(s"Unknown Spark version: $sparkVer"))
-
+  private def moduleName(baseName: String, spec: SparkVersionSpec): String = {
     // skipSparkSuffix removes the suffix (used during release for backward compatibility)
     val skipSparkSuffix = sys.props.getOrElse("skipSparkSuffix", "false").toBoolean
 
@@ -428,10 +467,7 @@ object CrossSparkVersions extends AutoPlugin {
     // Jackson dependency overrides to match Spark version and avoid conflicts
     val jacksonOverrides = Seq(
       dependencyOverrides ++= {
-        val sparkVer = sparkVersionKey.value
-        val jacksonVer = SparkVersionSpec.ALL_SPECS.find(_.fullVersion == sparkVer)
-          .getOrElse(throw new IllegalArgumentException(s"Unknown Spark version: $sparkVer"))
-          .jacksonVersion
+        val jacksonVer = spec.jacksonVersion
         Seq(
           "com.fasterxml.jackson.core" % "jackson-databind" % jacksonVer,
           "com.fasterxml.jackson.core" % "jackson-core" % jacksonVer,
@@ -453,9 +489,9 @@ object CrossSparkVersions extends AutoPlugin {
    */
   def sparkDependentModuleName(sparkVersionKey: SettingKey[String]): Seq[Setting[_]] = {
     Seq(
-      sparkVersionKey := getSparkVersion(),
+      sparkVersionKey := getSparkArtifactVersion(),
       // Dynamically modify moduleName to add Spark version suffix
-      Keys.moduleName := moduleName(Keys.name.value, sparkVersionKey.value)
+      Keys.moduleName := moduleName(Keys.name.value, getSparkVersionSpec())
     )
   }
 
