@@ -296,7 +296,11 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       //       Before this bug is fixed, we should only call the catalog plugin API to create tables
       //       if UC is enabled to replace `V2SessionCatalog`.
       createTableFunc = Option.when(isUnityCatalog) {
-        (v1Table: CatalogTable, snapshot: Snapshot) => {
+        (
+          v1Table: CatalogTable,
+          snapshot: Snapshot,
+          additionalMeta: CreateTableAdditionalMetadata
+        ) =>
           // Route to the Delta API endpoint only for MANAGED Delta creates when this client is
           // wired in. EXTERNAL Delta and the no-client case stay on the legacy `super.createTable`
           // path so existing behavior is preserved.
@@ -308,12 +312,12 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
                 snapshot.metadata,
                 snapshot.domainMetadata,
                 snapshot.protocol,
-                snapshot.timestamp)
+                snapshot.timestamp,
+                additionalMeta.uniformMetadata)
             case _ =>
               val t = V1Table(v1Table)
               super.createTable(ident, t.columns(), t.partitioning, t.properties)
           }
-        }
       }).run(spark)
 
     loadTable(ident)

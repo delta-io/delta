@@ -483,7 +483,8 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       AbstractMetadata metadata,
       AbstractProtocol protocol,
       List<AbstractDomainMetadata> domainMetadata,
-      long lastCommitTimestampMs) throws IOException {
+      long lastCommitTimestampMs,
+      Optional<io.delta.storage.commit.uniform.UniformMetadata> uniformMetadata) throws IOException {
     ensureOpen();
     Objects.requireNonNull(tableUri, "tableUri must not be null");
     Objects.requireNonNull(tableType, "tableType must not be null");
@@ -518,6 +519,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       if (updates != null) {
         sdkRequest.domainMetadata(updates);
       }
+      uniformMetadata.ifPresent(u -> sdkRequest.uniform(toSDKUniformMetadata(u)));
 
       return toTableInfo(
           deltaTablesApi.createTable(name.catalog, name.schema, sdkRequest),
