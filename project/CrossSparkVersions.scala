@@ -409,6 +409,14 @@ object CrossSparkVersions extends AutoPlugin {
     }
   }
 
+  private def sourceBuiltSparkResolvers: Seq[Resolver] = {
+    if (getSparkCommit().isDefined || getSparkArtifactVersionOverride().isDefined) {
+      Seq(Resolver.mavenLocal)
+    } else {
+      Seq.empty
+    }
+  }
+
   /**
    * Returns module name with Spark version suffix.
    * 
@@ -442,7 +450,7 @@ object CrossSparkVersions extends AutoPlugin {
     val baseSettings = Seq(
       scalaVersion := scala213,
       crossScalaVersions := Seq(scala213),
-      resolvers ++= spec.additionalResolvers,
+      resolvers ++= spec.additionalResolvers ++ sourceBuiltSparkResolvers,
       Antlr4 / antlr4Version := spec.antlr4Version,
       Test / javaOptions ++= (Seq(s"-Dlog4j.configurationFile=${spec.log4jConfig}") ++ spec.additionalJavaOptions)
     )
