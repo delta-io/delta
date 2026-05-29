@@ -559,8 +559,9 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     if (!isUnityCatalog || deltaCatalogClient.isEmpty) return false
     if (properties.containsKey(TableCatalog.PROP_LOCATION) ||
         properties.containsKey(TableCatalog.PROP_EXTERNAL)) {
+      val qualifiedName = s"${name()}.${ident.namespace().mkString(".")}.${ident.name()}"
       throw new UnsupportedOperationException(
-        s"REPLACE TABLE on $ident cannot specify '${TableCatalog.PROP_LOCATION}' or " +
+        s"REPLACE TABLE on $qualifiedName cannot specify '${TableCatalog.PROP_LOCATION}' or " +
           s"'${TableCatalog.PROP_EXTERNAL}': only catalog-managed Delta tables can " +
           "be replaced on this path.")
     }

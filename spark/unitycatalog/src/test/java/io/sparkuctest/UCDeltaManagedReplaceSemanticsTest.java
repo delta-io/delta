@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import org.apache.hadoop.fs.Path;
+import org.apache.spark.sql.catalyst.analysis.CannotReplaceMissingTableException;
 import org.junit.jupiter.api.Test;
 
 public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationBaseTest {
@@ -379,6 +380,7 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
   // `delta.feature.clustering` properties. The REPLACE does not propagate the cluster
   // removal to UC's domain metadata. Pinned so we notice if the behavior changes; when
   // fixed, update the assertion to reflect the cleared state.
+  // TODO: fix this issue https://github.com/delta-io/delta/issues/6915
   @Test
   public void testReplaceClusteredManagedTableWithNoneRetainsStaleUcClustering() throws Exception {
     String tableName = "cluster_to_none_" + UUID.randomUUID().toString().replace("-", "");
@@ -430,6 +432,28 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
     } finally {
       sql("DROP TABLE IF EXISTS %s", fullTableName);
     }
+  }
+
+  // Path-based identifiers (e.g. `delta.`/tmp/foo``) are not valid UC table references --
+  // UC has no entry for them. `shouldRouteReplaceThroughDeltaCatalogClient` skips routing on
+  // those, so the request falls through to the standard Spark V2 REPLACE flow, which surfaces
+  // `CannotReplaceMissingTableException` for the unresolved identifier. Pinned so that any
+  // future change to the routing gate's path-based predicate (or the fall-through behavior)
+  // is caught here instead of silently regressing.
+  @Test
+  public void testReplaceOnPathBasedIdentifierIsRejected() throws Exception {
+    withTempDir(
+        (Path location) -> {
+          assertThatThrownBy(
+                  () ->
+                      sql(
+                          "REPLACE TABLE delta.`%s` (i INT, s STRING) USING DELTA "
+                              + "TBLPROPERTIES ('delta.feature.catalogManaged'='supported')",
+                          location.toString()))
+              .isInstanceOf(CannotReplaceMissingTableException.class)
+              .hasMessageContaining("TABLE_OR_VIEW_NOT_FOUND")
+              .hasMessageContaining(location.toString());
+        });
   }
 
   // CREATE OR REPLACE on a non-existent identifier must take the fresh-CREATE fallback in

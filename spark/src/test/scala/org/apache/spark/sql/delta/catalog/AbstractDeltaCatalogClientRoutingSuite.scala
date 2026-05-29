@@ -481,7 +481,9 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
     assert(e.getMessage.contains("catalog-managed"))
   }
 
-  test("loadTableAndBuildReplaceProps: existing non-Delta provider throws notADeltaTableException") {
+  test(
+      "loadTableAndBuildReplaceProps: existing non-Delta provider throws " +
+        "notADeltaTableException") {
     val client = replaceClient(
       existingDeltaTableInfo(provider = "PARQUET", catalogManaged = false))
     val e = intercept[org.apache.spark.sql.delta.DeltaAnalysisException] {
@@ -502,7 +504,9 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
     assert(e.getMessage.contains("catalog-managed"))
   }
 
-  test("loadTableAndBuildReplaceProps: caller PROP_PROVIDER different from existing throws cannotChangeProvider") {
+  test(
+      "loadTableAndBuildReplaceProps: caller PROP_PROVIDER different from existing throws " +
+        "cannotChangeProvider") {
     val client = replaceClient(existingDeltaTableInfo())
     val e = intercept[org.apache.spark.sql.delta.DeltaAnalysisException] {
       client.loadTableAndBuildReplaceProps(
@@ -514,7 +518,9 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
     assert(e.getMessage.contains("provider"))
   }
 
-  test("loadTableAndBuildReplaceProps: StorageNoSuchTableException is wrapped as NoSuchTableException") {
+  test(
+      "loadTableAndBuildReplaceProps: StorageNoSuchTableException is wrapped as " +
+        "NoSuchTableException") {
     val client = replaceClient(throw new StorageNoSuchTableException("no such table"))
     intercept[org.apache.spark.sql.catalyst.analysis.NoSuchTableException] {
       client.loadTableAndBuildReplaceProps(
