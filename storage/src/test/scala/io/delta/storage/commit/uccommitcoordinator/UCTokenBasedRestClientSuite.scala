@@ -153,8 +153,9 @@ class UCTokenBasedRestClientSuite
   // commit tests
   test("commit succeeds with valid parameters") {
     withClient { client =>
-      client.commit(testTableId, testTableUri, Optional.of(createCommit(1L)),
-        Optional.empty(), false, Optional.empty(), Optional.empty(), Optional.empty())
+      client.commit(testTableId, testTableUri, null,
+        Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
+        Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty())
     }
   }
 
@@ -163,10 +164,12 @@ class UCTokenBasedRestClientSuite
       client.commit(
         testTableId,
         testTableUri,
+        null,
         Optional.of(createCommit(1L)),
         Optional.of(java.lang.Long.valueOf(0L)),
-        true,
+        Optional.empty(),
         Optional.of(createMetadata()),
+        Optional.empty(),
         Optional.empty(),
         Optional.empty())
     }
@@ -175,12 +178,14 @@ class UCTokenBasedRestClientSuite
   test("commit validates required parameters") {
     withClient { client =>
       intercept[NullPointerException] {
-        client.commit(null, testTableUri, Optional.empty(), Optional.empty(),
-          false, Optional.empty(), Optional.empty(), Optional.empty())
+        client.commit(null, testTableUri, null, Optional.empty(),
+          Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
+          Optional.empty(), Optional.empty())
       }
       intercept[NullPointerException] {
-        client.commit(testTableId, null, Optional.empty(), Optional.empty(),
-          false, Optional.empty(), Optional.empty(), Optional.empty())
+        client.commit(testTableId, null, null, Optional.empty(),
+          Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
+          Optional.empty(), Optional.empty())
       }
     }
   }
@@ -189,8 +194,9 @@ class UCTokenBasedRestClientSuite
     def commitWith(status: Int): Unit = {
       commitsHandler = exchange => sendJson(exchange, status, s"""{"error":"$status"}""")
       withClient { client =>
-        client.commit(testTableId, testTableUri, Optional.of(createCommit(1L)),
-          Optional.empty(), false, Optional.empty(), Optional.empty(), Optional.empty())
+        client.commit(testTableId, testTableUri, null,
+          Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
+          Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty())
       }
     }
 
@@ -222,7 +228,11 @@ class UCTokenBasedRestClientSuite
     commitsHandler = exchange => sendJson(exchange, HttpStatus.SC_OK, responseJson)
     withClient { client =>
       val response = client.getCommits(
-        testTableId, testTableUri, Optional.empty(), Optional.empty())
+        testTableId,
+        testTableUri,
+        /* tableIdentifier = */ null,
+        Optional.empty(),
+        Optional.empty())
       assert(response.getCommits.size() === 1)
       assert(response.getCommits.get(0).getVersion === 1L)
       assert(response.getLatestTableVersion === 1L)
@@ -232,10 +242,20 @@ class UCTokenBasedRestClientSuite
   test("getCommits validates required parameters") {
     withClient { client =>
       intercept[NullPointerException] {
-        client.getCommits(null, testTableUri, Optional.empty(), Optional.empty())
+        client.getCommits(
+          null,
+          testTableUri,
+          /* tableIdentifier = */ null,
+          Optional.empty(),
+          Optional.empty())
       }
       intercept[NullPointerException] {
-        client.getCommits(testTableId, null, Optional.empty(), Optional.empty())
+        client.getCommits(
+          testTableId,
+          null,
+          /* tableIdentifier = */ null,
+          Optional.empty(),
+          Optional.empty())
       }
     }
   }
@@ -244,7 +264,12 @@ class UCTokenBasedRestClientSuite
     commitsHandler = exchange => sendJson(exchange, HttpStatus.SC_NOT_FOUND, "{}")
     withClient { client =>
       intercept[InvalidTargetTableException] {
-        client.getCommits(testTableId, testTableUri, Optional.empty(), Optional.empty())
+        client.getCommits(
+          testTableId,
+          testTableUri,
+          /* tableIdentifier = */ null,
+          Optional.empty(),
+          Optional.empty())
       }
     }
   }
@@ -273,8 +298,9 @@ class UCTokenBasedRestClientSuite
       }
 
       withClient { client =>
-        client.commit(testTableId, testTableUri, Optional.of(createCommit(1L)),
-          Optional.empty(), false, Optional.empty(), Optional.empty(),
+        client.commit(testTableId, testTableUri, null,
+          Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
+          Optional.empty(), Optional.empty(), Optional.empty(),
           Optional.of(new UniformMetadata(icebergMeta)))
       }
 
@@ -306,8 +332,9 @@ class UCTokenBasedRestClientSuite
     }
 
     withClient { client =>
-      client.commit(testTableId, testTableUri, Optional.of(createCommit(1L)),
-        Optional.empty(), false, Optional.empty(), Optional.empty(), Optional.empty())
+      client.commit(testTableId, testTableUri, null,
+        Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
+        Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty())
     }
 
     val json = objectMapper.readTree(capturedBody)
@@ -322,8 +349,9 @@ class UCTokenBasedRestClientSuite
     }
 
     withClient { client =>
-      client.commit(testTableId, testTableUri, Optional.of(createCommit(1L)),
-        Optional.empty(), false, Optional.empty(), Optional.empty(),
+      client.commit(testTableId, testTableUri, null,
+        Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
+        Optional.empty(), Optional.empty(), Optional.empty(),
         Optional.of(new UniformMetadata(null)))
     }
 

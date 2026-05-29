@@ -38,6 +38,7 @@ public class SparkBatch implements Batch {
   private final StructType readDataSchema;
   private final StructType dataSchema;
   private final StructType partitionSchema;
+  private final StructType ddlOrderedReadOutputSchema;
   private final Predicate[] pushedToKernelFilters;
   private final Filter[] dataFilters;
   // Derived Sets used only for equals/hashCode: filters are AND-ed at eval time,
@@ -55,6 +56,7 @@ public class SparkBatch implements Batch {
       StructType dataSchema,
       StructType partitionSchema,
       StructType readDataSchema,
+      StructType ddlOrderedReadOutputSchema,
       List<PartitionedFile> partitionedFiles,
       Predicate[] pushedToKernelFilters,
       Filter[] dataFilters,
@@ -66,6 +68,8 @@ public class SparkBatch implements Batch {
     this.dataSchema = Objects.requireNonNull(dataSchema, "dataSchema is null");
     this.partitionSchema = Objects.requireNonNull(partitionSchema, "partitionSchema is null");
     this.readDataSchema = Objects.requireNonNull(readDataSchema, "readDataSchema is null");
+    this.ddlOrderedReadOutputSchema =
+        Objects.requireNonNull(ddlOrderedReadOutputSchema, "ddlOrderedReadOutputSchema is null");
     this.partitionedFiles =
         java.util.Collections.unmodifiableList(
             new ArrayList<>(Objects.requireNonNull(partitionedFiles, "partitionedFiles is null")));
@@ -88,17 +92,18 @@ public class SparkBatch implements Batch {
 
   @Override
   public PartitionReaderFactory createReaderFactory() {
-    // TODO: support write-time CDF on batch reads.
+    // Non-CDC plain table scan. Write-time CDF streaming reads route through
+    // SparkMicroBatchStream; read-time Auto-CDF batch reads route through DeltaChangelogBatch.
     return PartitionUtils.createDeltaParquetReaderFactory(
         snapshot,
         dataSchema,
         partitionSchema,
         readDataSchema,
+        ddlOrderedReadOutputSchema,
         dataFilters,
         scalaOptions,
         hadoopConf,
-        sqlConf,
-        /* isCDCRead */ false);
+        sqlConf);
   }
 
   @Override

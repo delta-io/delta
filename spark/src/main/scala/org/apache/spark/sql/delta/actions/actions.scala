@@ -31,7 +31,7 @@ import com.databricks.spark.util.TagDefinition
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
-import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, JsonUtils, Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.FileNames
@@ -44,6 +44,7 @@ import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize
 import com.fasterxml.jackson.databind.node.ObjectNode
 import io.delta.storage.commit.actions.{
   AbstractCommitInfo => StorageAbstractCommitInfo,
+  AbstractDomainMetadata => StorageAbstractDomainMetadata,
   AbstractMetadata => StorageAbstractMetadata,
   AbstractProtocol => StorageAbstractProtocol
 }
@@ -76,12 +77,12 @@ object Action extends DeltaLogging {
   // We can't extend the [[Action]] class itself since it affects serialization.
   // Instead, we add a wrapper here as a helper method for logging.
   override def recordDeltaEvent(
-      deltaLog: DeltaLog,
+      provider: DeltaLoggingProvider,
       opType: String,
       tags: Map[TagDefinition, String] = Map.empty,
       data: AnyRef = null,
       path: Option[Path] = None): Unit = {
-    super.recordDeltaEvent(deltaLog, opType, tags, data, path)
+    super.recordDeltaEvent(provider, opType, tags, data, path)
   }
 
   /**
@@ -668,8 +669,11 @@ case class SetTransaction(
 case class DomainMetadata(
     domain: String,
     configuration: String,
-    removed: Boolean) extends Action {
+    removed: Boolean) extends Action with StorageAbstractDomainMetadata {
   override def wrap: SingleAction = SingleAction(domainMetadata = this)
+  override def getDomain: String = domain
+  override def getConfiguration: String = configuration
+  override def isRemoved: Boolean = removed
 }
 
 /** Actions pertaining to the addition and removal of files. */

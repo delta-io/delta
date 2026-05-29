@@ -28,6 +28,7 @@ import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.commitrange.CommitRangeImpl;
 import io.delta.kernel.internal.data.StructRow;
@@ -149,6 +150,15 @@ public class StreamingHelper {
     return Optional.ofNullable(metadata);
   }
 
+  /** Get Protocol action from a batch at the specified row, if present. */
+  public static Optional<Protocol> getProtocol(ColumnarBatch batch, int rowId) {
+    int protocolIdx = getFieldIndex(batch, DeltaLogActionUtils.DeltaAction.PROTOCOL.colName);
+    ColumnVector protocolVector = batch.getColumnVector(protocolIdx);
+    Protocol protocol = Protocol.fromColumnVector(protocolVector, rowId);
+
+    return Optional.ofNullable(protocol);
+  }
+
   /** Get CommitInfo action from a batch at the specified row, if present. */
   public static Optional<CommitInfo> getCommitInfo(ColumnarBatch columnarBatch, int rowId) {
     int commitInfoIdx =
@@ -186,20 +196,24 @@ public class StreamingHelper {
   }
 
   /**
-   * Collects metadata actions from a commit range, mapping each version to its metadata.
+   * Collects {@link Metadata} actions from commits in {@code [startVersion, endVersionOpt]}
+   * (inclusive on both ends).
    *
-   * <p>This method is "unsafe" because it uses {@code getActionsFromRangeUnsafe()} which bypasses
-   * the standard snapshot requirement for protocol validation.
+   * <p><b>Returns:</b> a {@link LinkedHashMap} from commit version to its metadata action,
+   * preserving ascending version order. Versions with no metadata action are omitted.
    *
-   * <p>Returns a map preserving version order (via LinkedHashMap) where each version maps to its
-   * metadata action. Throws an exception if multiple metadata actions are found in the same commit.
+   * <p><b>Throws:</b> {@link IllegalArgumentException} if a single commit contains more than one
+   * metadata action; {@link RuntimeException} on underlying I/O errors.
    *
-   * @param startVersion the starting version (inclusive) of the commit range
-   * @param endVersionOpt optional ending version (exclusive) of the commit range
-   * @param snapshotManager the Delta snapshot manager
-   * @param engine the Delta engine
-   * @param tablePath the path to the Delta table
-   * @return a map from version number to metadata action, in version order
+   * <p><b>Unsafe:</b> bypasses the snapshot-based protocol validation that {@link
+   * io.delta.kernel.CommitRange#getCommitActions} would normally perform. Callers are responsible
+   * for ensuring protocol compatibility.
+   *
+   * @param startVersion inclusive starting version of the commit range
+   * @param endVersionOpt inclusive ending version, or empty to read through the latest
+   * @param snapshotManager snapshot manager backing the table
+   * @param engine Delta kernel engine
+   * @param tablePath path to the Delta table
    */
   public static Map<Long, Metadata> collectMetadataActionsFromRangeUnsafe(
       long startVersion,
@@ -207,28 +221,93 @@ public class StreamingHelper {
       DeltaSnapshotManager snapshotManager,
       Engine engine,
       String tablePath) {
+    return collectActionsFromRangeUnsafe(
+        startVersion,
+        endVersionOpt,
+        snapshotManager,
+        engine,
+        tablePath,
+        DeltaLogActionUtils.DeltaAction.METADATA,
+        StreamingHelper::getMetadata);
+  }
+
+  /**
+   * Collects {@link Protocol} actions from commits in {@code [startVersion, endVersionOpt]}
+   * (inclusive on both ends).
+   *
+   * <p><b>Returns:</b> a {@link LinkedHashMap} from commit version to its protocol action,
+   * preserving ascending version order. Versions with no protocol action are omitted.
+   *
+   * <p><b>Throws:</b> {@link IllegalArgumentException} if a single commit contains more than one
+   * protocol action; {@link RuntimeException} on underlying I/O errors.
+   *
+   * <p><b>Unsafe:</b> bypasses the snapshot-based protocol validation that {@link
+   * io.delta.kernel.CommitRange#getCommitActions} would normally perform. Callers are responsible
+   * for ensuring protocol compatibility.
+   *
+   * @param startVersion inclusive starting version of the commit range
+   * @param endVersionOpt inclusive ending version, or empty to read through the latest
+   * @param snapshotManager snapshot manager backing the table
+   * @param engine Delta kernel engine
+   * @param tablePath path to the Delta table
+   */
+  public static Map<Long, Protocol> collectProtocolActionsFromRangeUnsafe(
+      long startVersion,
+      Optional<Long> endVersionOpt,
+      DeltaSnapshotManager snapshotManager,
+      Engine engine,
+      String tablePath) {
+    return collectActionsFromRangeUnsafe(
+        startVersion,
+        endVersionOpt,
+        snapshotManager,
+        engine,
+        tablePath,
+        DeltaLogActionUtils.DeltaAction.PROTOCOL,
+        StreamingHelper::getProtocol);
+  }
+
+  /** Extracts an action of type {@code T} from a single row of a {@link ColumnarBatch}. */
+  @FunctionalInterface
+  private interface RowExtractor<T> {
+    Optional<T> extract(ColumnarBatch batch, int rowId);
+  }
+
+  /**
+   * Shared implementation for {@link #collectMetadataActionsFromRangeUnsafe} and {@link
+   * #collectProtocolActionsFromRangeUnsafe}: walks the commit range filtered to {@code actionType},
+   * applies {@code extractor} per row, and rejects commits with more than one matching action.
+   */
+  private static <T> Map<Long, T> collectActionsFromRangeUnsafe(
+      long startVersion,
+      Optional<Long> endVersionOpt,
+      DeltaSnapshotManager snapshotManager,
+      Engine engine,
+      String tablePath,
+      DeltaLogActionUtils.DeltaAction actionType,
+      RowExtractor<T> extractor) {
     CommitRangeImpl commitRange =
         (CommitRangeImpl) snapshotManager.getTableChanges(engine, startVersion, endVersionOpt);
     // LinkedHashMap to preserve insertion order
-    Map<Long, Metadata> versionToMetadata = new LinkedHashMap<>();
+    Map<Long, T> versionToAction = new LinkedHashMap<>();
 
     try (CloseableIterator<CommitActions> commitsIter =
-        getCommitActionsFromRangeUnsafe(
-            engine, commitRange, tablePath, Set.of(DeltaLogActionUtils.DeltaAction.METADATA))) {
+        getCommitActionsFromRangeUnsafe(engine, commitRange, tablePath, Set.of(actionType))) {
       while (commitsIter.hasNext()) {
         try (CommitActions commit = commitsIter.next()) {
           long version = commit.getVersion();
           try (CloseableIterator<ColumnarBatch> actionsIter = commit.getActions()) {
             while (actionsIter.hasNext()) {
-              ColumnarBatch columnarBatch = actionsIter.next();
-              int numRows = columnarBatch.getSize();
+              ColumnarBatch batch = actionsIter.next();
+              int numRows = batch.getSize();
               for (int rowId = 0; rowId < numRows; rowId++) {
-                Optional<Metadata> metadataOpt = StreamingHelper.getMetadata(columnarBatch, rowId);
-                if (metadataOpt.isPresent()) {
-                  Metadata existing = versionToMetadata.putIfAbsent(version, metadataOpt.get());
+                Optional<T> actionOpt = extractor.extract(batch, rowId);
+                if (actionOpt.isPresent()) {
+                  T existing = versionToAction.putIfAbsent(version, actionOpt.get());
                   Preconditions.checkArgument(
                       existing == null,
-                      "Should not encounter two metadata actions in the same commit of version %d",
+                      "Should not encounter two %s actions in the same commit of version %d",
+                      actionType.colName,
                       version);
                 }
               }
@@ -244,8 +323,7 @@ public class StreamingHelper {
       // CommitActions.close() throws Exception
       throw new RuntimeException("Failed to process commits", e);
     }
-
-    return versionToMetadata;
+    return versionToAction;
   }
 
   /** Get explicit CDC file (AddCDCFile) from a batch at the specified row, if present. */

@@ -16,14 +16,11 @@
 
 package org.apache.spark.sql.delta
 
-import java.io.File
 import java.lang.{Integer => JInt}
-import java.net.URI
 
 import scala.language.implicitConversions
 
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
-import org.apache.spark.sql.delta.catalog.InMemoryDeltaCatalog
 import org.apache.spark.sql.delta.commands.MergeIntoCommand
 import org.apache.spark.sql.delta.commands.merge.MergeStats
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -32,9 +29,9 @@ import org.apache.spark.sql.delta.test.ScanReportHelper
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.QueryContext
+import org.apache.spark.{QueryContext, SparkThrowable}
 import org.apache.spark.sql.{functions, AnalysisException, DataFrame, QueryTest, Row}
-import org.apache.spark.sql.catalyst.{InternalRow, TableIdentifier}
+import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{GenericInternalRow, UnsafeArrayData}
 import org.apache.spark.sql.catalyst.plans.logical.{SubqueryAlias, View}
 import org.apache.spark.sql.execution.adaptive.DisableAdaptiveExecution
@@ -2014,18 +2011,19 @@ trait MergeIntoExtendedSyntaxTests extends MergeIntoSuiteBaseMixin {
 
   private def testMergeErrorOnMultipleMatches(
       name: String,
-      confs: Seq[(String, String)] = Seq.empty)(
+      confs: Seq[(String, String)] = Seq.empty,
+      testTags: Seq[org.scalatest.Tag] = Seq.empty)(
       source: Seq[(Int, Int)],
       target: Seq[(Int, Int)],
       mergeOn: String,
       mergeClauses: MergeClause*): Unit = {
-    test(s"extended syntax - $name") {
+    test(s"extended syntax - $name", testTags: _*) {
       withSQLConf(confs: _*) {
         withKeyValueData(source, target) { case (sourceName, targetName) =>
           val docURL = "/delta-update.html#upsert-into-a-table-using-merge"
 
           checkError(
-            exception = intercept[DeltaUnsupportedOperationException] {
+            exception = intercept[SparkThrowable] {
               executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)
             },
             "DELTA_MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW_IN_MERGE",
@@ -2379,7 +2377,10 @@ trait MergeIntoExtendedSyntaxTests extends MergeIntoSuiteBaseMixin {
 
   testMergeErrorOnMultipleMatches(
     "unconditional insert only merge - multiple matches when feature flag off",
-    confs = Seq(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "false"))(
+    confs = Seq(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "false"),
+    testTags = Seq(DSv2Incompatible(
+      "This covers legacy behavior where Delta was too strict. Existing and V2 behavior both " +
+        "are able to detect that the multiple matches aren't problematic and succeed")))(
     source = (1, 10) :: (1, 100) :: (2, 20) :: Nil,
     target = (1, 1) :: Nil,
     mergeOn = "s.key = t.key",
@@ -2387,7 +2388,10 @@ trait MergeIntoExtendedSyntaxTests extends MergeIntoSuiteBaseMixin {
 
   testMergeErrorOnMultipleMatches(
     "conditional insert only merge - multiple matches when feature flag off",
-    confs = Seq(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "false"))(
+    confs = Seq(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "false"),
+    testTags = Seq(DSv2Incompatible(
+      "V2 in-memory MERGE does not raise cardinality violations for insert-only MERGE " +
+        "even when MERGE_INSERT_ONLY_ENABLED=false")))(
     source = (1, 10) :: (1, 100) :: (2, 20) :: (2, 200) :: Nil,
     target = (1, 1) :: Nil,
     mergeOn = "s.key = t.key",
@@ -3465,51 +3469,6 @@ trait MergeIntoSuiteBaseMiscTests extends MergeIntoSuiteBaseMixin {
           Row(-1, part3) :: Row(-1, part3) :: Row(-1, part3) ::
           Row(0, part4) ::
           Nil)
-    }
-  }
-}
-
-/**
- * Merge-specific V2-DML mixin.
- * Remaps known error conditions between V1 and V2.
- */
-trait MergeIntoSuiteInMemoryTestTableMixin
-    extends DeltaDMLInMemoryTestUtils {
-
-  /**
-   * Override that checks for known-different [[condition]]s between V1 and V2.
-   * When a matching [[condition]] is found, the [[exception]] is only asserted to match the mapped
-   * condition.
-   */
-  override def checkError(
-      exception: org.apache.spark.SparkThrowable,
-      condition: String,
-      sqlState: Option[String] = None,
-      parameters: Map[String, String] = Map.empty,
-      matchPVals: Boolean = false,
-      queryContext: Array[ExpectedContext] = Array.empty): Unit = {
-    def assertV2(v2Condition: String): Unit = {
-      assert(exception.getCondition == v2Condition,
-        s"Expected V2 condition '$v2Condition' (mapped from '$condition'), " +
-        s"got '${exception.getCondition}'")
-    }
-    condition match {
-      case "DELTA_AGGREGATION_NOT_SUPPORTED" =>
-        assertV2("UNSUPPORTED_MERGE_CONDITION.AGGREGATE")
-      case "DELTA_NON_DETERMINISTIC_FUNCTION_NOT_SUPPORTED" =>
-        assertV2("UNSUPPORTED_MERGE_CONDITION.NON_DETERMINISTIC")
-      case "DELTA_MERGE_UNRESOLVED_EXPRESSION" =>
-        assertV2("UNRESOLVED_COLUMN.WITH_SUGGESTION")
-      case "DELTA_SUBQUERY_NOT_SUPPORTED" =>
-        assertV2("UNSUPPORTED_MERGE_CONDITION.SUBQUERY")
-      case _ =>
-        super.checkError(
-          exception = exception,
-          condition = condition,
-          sqlState = sqlState,
-          parameters = parameters,
-          matchPVals = matchPVals,
-          queryContext = queryContext)
     }
   }
 }

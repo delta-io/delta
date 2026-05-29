@@ -112,6 +112,33 @@ private[delta] case class CurrentTransactionInfo(
   def isConflict(winningTxn: SetTransaction): Boolean = readAppIds.contains(winningTxn.appId)
 }
 
+object CurrentTransactionInfo {
+  // A helper method to construct dummy txnInfo that only
+  // fills in fields needed for Iceberg conversion
+  def forIcebergConversion(
+      metadata: Metadata,
+      protocol: Protocol,
+      readSnapshot: Snapshot,
+      actions: Seq[Action],
+      commitInfo: Option[CommitInfo]): CurrentTransactionInfo =
+    CurrentTransactionInfo(
+      txnId = "",
+      readPredicates = Vector.empty,
+      readFiles = Set.empty,
+      readWholeTable = false,
+      readAppIds = Set.empty,
+      metadata = metadata,
+      protocol = protocol,
+      actions = actions,
+      readSnapshot = readSnapshot,
+      commitInfo = commitInfo,
+      readRowIdHighWatermark = 0L,
+      catalogTable = None,
+      domainMetadata = Seq.empty,
+      op = DeltaOperations.ManualUpdate
+    )
+}
+
 /**
  * Summary of the Winning commit against which we want to check the conflict
  * @param actions - delta log actions committed by the winning commit
@@ -206,9 +233,36 @@ private[delta] class ConflictChecker(
   /**
    * This function checks conflict of the `initialCurrentTransactionInfo` against the
    * `winningCommitVersion` and returns an updated [[CurrentTransactionInfo]] that represents
+   * the transaction as if it had started while reading the `winningCommitVersion`. It also
+   * validates the actions.
+   */
+  def checkConflictsAndValidateActions(): CurrentTransactionInfo = {
+    val updatedInfo = checkConflicts()
+
+    // In case the actions of the current transaction changed, we need to validate
+    // again that there are no duplicate actions.
+    checkNoDuplicateActionsIfApplicable(updatedInfo)
+    updatedInfo
+  }
+
+  /**
+   * Validates that `updatedInfo` does not contain duplicate actions, but only when conflict
+   * resolution actually changed the actions of the current transaction.
+   */
+  protected def checkNoDuplicateActionsIfApplicable(
+      updatedInfo: CurrentTransactionInfo): Unit = {
+    if ((updatedInfo.actions ne initialCurrentTransactionInfo.actions) &&
+        spark.conf.get(DeltaSQLConf.DELTA_DUPLICATE_ACTION_CHECK_ENABLED)) {
+      ConflictChecker.checkNoDuplicateActions(updatedInfo.actions.iterator).foreach(_ => ())
+    }
+  }
+
+  /**
+   * This function checks conflict of the `initialCurrentTransactionInfo` against the
+   * `winningCommitVersion` and returns an updated [[CurrentTransactionInfo]] that represents
    * the transaction as if it had started while reading the `winningCommitVersion`.
    */
-  def checkConflicts(): CurrentTransactionInfo = {
+  protected def checkConflicts(): CurrentTransactionInfo = {
     // Add time to read commit in the metrics.
     recordTime("initialize-old-commit", winningCommitSummary.readTimeMs)
 
@@ -333,7 +387,7 @@ private[delta] class ConflictChecker(
           // Sanity check.
           case m: Metadata if m != currentTransactionInfo.metadata =>
             recordDeltaEvent(
-              deltaLog = currentTransactionInfo.readSnapshot.deltaLog,
+              currentTransactionInfo.readSnapshot,
               opType = "dropFeature.conflictCheck.metadataMismatch",
               data = Map(
                 "transactionInfoMetadata" -> currentTransactionInfo.metadata,
@@ -698,7 +752,11 @@ private[delta] class ConflictChecker(
     val dvsAllowList =
         Set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key)
 
+    val v2CheckpointAllowList =
+        Set(DeltaConfigs.CHECKPOINT_POLICY.key)
+
     rowTrackingAllowList ++ columnMappingAllowList ++ dvsAllowList
+      .++(v2CheckpointAllowList)
   }
 
   /**
@@ -763,6 +821,9 @@ private[delta] class ConflictChecker(
         case DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key =>
           currentTransactionInfo.protocol.isFeatureSupported(DeletionVectorsTableFeature) &&
             value.toBoolean
+        case DeltaConfigs.CHECKPOINT_POLICY.key =>
+          currentTransactionInfo.protocol.isFeatureSupported(V2CheckpointTableFeature) &&
+            value == CheckpointPolicy.V2.name
         case _ => true
       }
     }
@@ -1388,5 +1449,57 @@ private[delta] class ConflictChecker(
     log"[tableId=${MDC(DeltaLogKeys.TABLE_ID,
       truncate(initialCurrentTransactionInfo.readSnapshot.metadata.id))}," +
     log"txnId=${MDC(DeltaLogKeys.TXN_ID, truncate(initialCurrentTransactionInfo.txnId))}] "
+  }
+}
+
+private[delta] object ConflictChecker {
+  /**
+   * Returns an iterator that validates no duplicate file actions exist as it
+   * streams. Checks: duplicate adds, duplicate removes, and same path+DV both
+   * added and removed. Single pass, no materialization.
+   */
+  def checkNoDuplicateActions(actions: Iterator[Action]): Iterator[Action] = {
+    val addPaths = mutable.Map.empty[String, Option[String]]
+    val removePaths = mutable.Map.empty[String, Option[String]]
+    def pathAndDVString(path: String, dvIdOpt: Option[String]): String = {
+      dvIdOpt.map(dvId => s"$path DV $dvId").getOrElse(path)
+    }
+    def failDuplicate(
+      actionType: String, path: String,
+      addingDVId: Option[String],
+      existingDVId: Option[String]): Unit = {
+      throw DeltaErrors.duplicateActionCheckFailed(
+        actionType,
+        pathAndDVString(path, addingDVId),
+        pathAndDVString(path, existingDVId))
+    }
+    actions.map { action =>
+      action match {
+        case add: AddFile =>
+          val dvId = add.getDeletionVectorUniqueId
+          addPaths.put(add.path, dvId).foreach { existingDVId =>
+            failDuplicate("add", add.path, dvId, existingDVId)
+          }
+          // Check add/remove overlap inline.
+          removePaths.get(add.path).foreach { removeDVId =>
+            if (dvId == removeDVId) {
+              failDuplicate("add/remove", add.path, dvId, removeDVId)
+            }
+          }
+        case remove: RemoveFile =>
+          val dvId = remove.getDeletionVectorUniqueId
+          removePaths.put(remove.path, dvId).foreach { existingDVId =>
+            failDuplicate("remove", remove.path, dvId, existingDVId)
+          }
+          // Check add/remove overlap inline.
+          addPaths.get(remove.path).foreach { addDVId =>
+            if (dvId == addDVId) {
+              failDuplicate("add/remove", remove.path, addDVId, dvId)
+            }
+          }
+        case _ =>
+      }
+      action
+    }
   }
 }

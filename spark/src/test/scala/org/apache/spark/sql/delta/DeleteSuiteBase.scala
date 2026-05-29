@@ -380,7 +380,8 @@ trait DeleteBaseTests extends DeleteBaseMixin {
       Row("c", "v") :: Row("d", "vv") :: Nil)
   }
 
-  test("do not support non-EXISTS subquery test") {
+  test("do not support non-EXISTS subquery test",
+      DSv2Incompatible("asserts classic Delta DELETE subquery policy")) {
     append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"))
     Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("c", "d").createOrReplaceTempView("source")
 
@@ -445,7 +446,8 @@ trait DeleteBaseTests extends DeleteBaseMixin {
       Row(2, 2) :: Row(1, 4) :: Row(1, 1) :: Nil)
   }
 
-  test("EXISTS subquery kill switch") {
+  test("EXISTS subquery kill switch",
+      DSv2Incompatible("asserts classic Delta DELETE subquery policy")) {
     append(Seq((2, 2), (1, 4)).toDF("key", "value"))
     Seq((2, 2)).toDF("c", "d").createOrReplaceTempView("source")
 
@@ -464,7 +466,8 @@ trait DeleteBaseTests extends DeleteBaseMixin {
     }
   }
 
-  test("schema pruning on data condition") {
+  test("schema pruning on data condition",
+      ChecksPhysicalDeltaPlan("checks Delta file-scan schema pruning")) {
     val input = Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value")
     append(input, Nil)
     // Start from a cached snapshot state
@@ -486,7 +489,8 @@ trait DeleteBaseTests extends DeleteBaseMixin {
   }
 
 
-  test("nested schema pruning on data condition") {
+  test("nested schema pruning on data condition",
+      ChecksPhysicalDeltaPlan("checks Delta file-scan schema pruning")) {
     val input = Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value")
       .select(struct("key", "value").alias("nested"))
     append(input, Nil)
@@ -526,9 +530,20 @@ trait DeleteBaseTests extends DeleteBaseMixin {
 
         val expectedErrorRegex = "(?s).*(?i)unsupported.*(?i).*Invalid expressions.*"
 
-        var catchException = true
+        val isInMemoryV2 = this.isInstanceOf[DeltaSQLInMemoryTestUtils]
+        val inMemoryV2ErrorRegex = functionType match {
+          // Each Spark version emits a different error class for unsupported
+          // expressions in DELETE WHERE (named, legacy, or via the "operator"
+          // fallback), so match on the stable human-readable keywords instead.
+          case "Window" => "(?is).*window function.*"
+          case "Aggregate" => "(?is).*aggregate function.*"
+          case "Generate" => "(?is).*more than one row.*"
+        }
+        var catchException = if (isInMemoryV2) expectException else true
 
-        var errorRegex = if (functionType.equals("Generate")) {
+        var errorRegex = if (isInMemoryV2) {
+          inMemoryV2ErrorRegex
+        } else if (functionType.equals("Generate")) {
           ".*Subqueries are not supported in the DELETE.*"
         } else customErrorRegex.getOrElse(expectedErrorRegex)
 
@@ -541,7 +556,8 @@ trait DeleteBaseTests extends DeleteBaseMixin {
           val message = if (e.getCause != null) {
             e.getCause.getMessage
           } else e.getMessage
-          assert(message.matches(errorRegex))
+          assert(message.matches(errorRegex),
+            s"unexpected error in $functionType case: ${e.getClass.getName}: $message")
           checkAnswer(spark.read.format("delta").table("deltaTable"), dataBeforeException)
         } else {
           executeDelete(target = "deltaTable", where = where)

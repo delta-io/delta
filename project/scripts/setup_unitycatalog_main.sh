@@ -57,7 +57,7 @@ set -euo pipefail
 # The pin. Bump both lines together if UC's version.sbt changed at the new SHA. build.sbt's
 # `unityCatalogVersion` is obtained by running this script with `--print-version`, so these two
 # values are the single source of truth.
-UC_PIN_SHA=e3ab24e815b16a7614ff32044cf51067ef7ad16b
+UC_PIN_SHA=2c22cf18be7d966003f3ebcd1816ba6499b5a2a2
 UC_BASE_VERSION=0.5.0-SNAPSHOT
 # ---------------------------------------------------------------------------------------------
 
@@ -95,13 +95,17 @@ fi
 IVY_LOCAL="$HOME/.ivy2/local/io.unitycatalog"
 IVY_CANARY_CLIENT="$IVY_LOCAL/unitycatalog-client/$UC_VERSION/ivys/ivy.xml"
 IVY_CANARY_SERVER="$IVY_LOCAL/unitycatalog-server/$UC_VERSION/ivys/ivy.xml"
-IVY_CANARY_SPARK="$IVY_LOCAL/unitycatalog-spark_2.13/$UC_VERSION/ivys/ivy.xml"
+SPARK_MAJOR_MINOR="${SPARK_MAJOR_MINOR:-$(echo "${SPARK_VERSION:-4.1}" | cut -d. -f1,2)}"
+UC_SPARK_ARTIFACT="unitycatalog-spark_${SPARK_MAJOR_MINOR}_2.13"
+IVY_CANARY_SPARK="$IVY_LOCAL/$UC_SPARK_ARTIFACT/$UC_VERSION/ivys/ivy.xml"
+IVY_CANARY_HADOOP="$IVY_LOCAL/unitycatalog-hadoop/$UC_VERSION/ivys/ivy.xml"
 M2_LOCAL="$HOME/.m2/repository/io/unitycatalog"
 M2_CANARY_CLIENT="$M2_LOCAL/unitycatalog-client/$UC_VERSION/unitycatalog-client-$UC_VERSION.pom"
 M2_CANARY_SERVER="$M2_LOCAL/unitycatalog-server/$UC_VERSION/unitycatalog-server-$UC_VERSION.pom"
-M2_CANARY_SPARK="$M2_LOCAL/unitycatalog-spark_2.13/$UC_VERSION/unitycatalog-spark_2.13-$UC_VERSION.pom"
-ALL_CANARIES=("$IVY_CANARY_CLIENT" "$IVY_CANARY_SERVER" "$IVY_CANARY_SPARK"
-              "$M2_CANARY_CLIENT" "$M2_CANARY_SERVER" "$M2_CANARY_SPARK")
+M2_CANARY_SPARK="$M2_LOCAL/$UC_SPARK_ARTIFACT/$UC_VERSION/$UC_SPARK_ARTIFACT-$UC_VERSION.pom"
+M2_CANARY_HADOOP="$M2_LOCAL/unitycatalog-hadoop/$UC_VERSION/unitycatalog-hadoop-$UC_VERSION.pom"
+ALL_CANARIES=("$IVY_CANARY_CLIENT" "$IVY_CANARY_SERVER" "$IVY_CANARY_SPARK" "$IVY_CANARY_HADOOP"
+              "$M2_CANARY_CLIENT" "$M2_CANARY_SERVER" "$M2_CANARY_SPARK" "$M2_CANARY_HADOOP")
 
 all_canaries_present() {
   for c in "${ALL_CANARIES[@]}"; do
@@ -116,13 +120,12 @@ if [[ "$UC_FORCE" != "1" ]] && all_canaries_present; then
   exit 0
 fi
 
-echo ">>> Fetching Unity Catalog main from $UC_REPO"
+echo ">>> Fetching Unity Catalog from $UC_REPO (ref: $UC_REF)"
 rm -rf "$UC_DIR"
 mkdir -p "$UC_DIR"
-# Fetch main's full history so we can run `git merge-base --is-ancestor` below to verify the
-# pinned SHA is actually on main. UC's repo is small; full fetch of one branch is cheap.
 git -C "$UC_DIR" init --quiet
 git -C "$UC_DIR" remote add origin "$UC_REPO"
+# Full fetch (not --depth=1) so merge-base --is-ancestor can verify the pin.
 git -C "$UC_DIR" fetch --quiet origin main
 
 cd "$UC_DIR"
@@ -160,6 +163,9 @@ fi
 SET_VERSION_CMD="set ThisBuild / version := \"$UC_VERSION\""
 
 echo ">>> Building and publishing UC client + server to local Maven repo"
+# Clear stale UC artifacts — GHA cache may restore jars from a prior run at the same coordinate,
+# and SBT's publishM2 refuses to overwrite (ThisBuild / publishM2Configuration is ignored).
+rm -rf "$HOME/.ivy2/local/io.unitycatalog" "$HOME/.m2/repository/io/unitycatalog"
 ./build/sbt \
   "$SET_VERSION_CMD" \
   "set client / Compile / packageDoc / publishArtifact := false" \
@@ -168,31 +174,36 @@ echo ">>> Building and publishing UC client + server to local Maven repo"
   client/publishLocal \
   client/publishM2 \
   server/publishLocal \
-  server/publishM2
+  server/publishM2 \
+  hadoop/publishLocal \
+  hadoop/publishM2
 
-# spark/publishM2 can hit a transient coursier lock race - retry up to 3 times.
-echo ">>> Building and publishing UC spark module to local Maven repo"
+# Publish the Spark connector for the caller's Spark version. Each CI matrix cell passes its own
+# SPARK_MAJOR_MINOR; when auto-triggered by ensurePinnedUnityCatalog (no env), defaults above.
+echo ">>> Publishing UC spark connector for Spark $SPARK_MAJOR_MINOR"
 for attempt in 1 2 3; do
   if ./build/sbt \
+    -DsparkVersion="$SPARK_MAJOR_MINOR" \
+    -DskipDeltaSpark=true \
     "$SET_VERSION_CMD" \
     "set client / Compile / packageDoc / publishArtifact := false" \
     spark/publishLocal \
     spark/publishM2; then
-    for c in "${ALL_CANARIES[@]}"; do
-      if [[ ! -f "$c" ]]; then
-        echo "ERROR: publish succeeded but $c is missing - the publish target layout may have changed." >&2
-        exit 1
-      fi
-    done
-    echo ">>> UC build complete. Published coordinate: $UC_VERSION"
-    exit 0
+    break
   fi
-
   if [[ "$attempt" -eq 3 ]]; then
-    echo ">>> spark/publishM2 failed after 3 attempts"
+    echo ">>> spark/publishM2 (Spark $SPARK_MAJOR_MINOR) failed after 3 attempts"
     exit 1
   fi
-
-  echo ">>> spark/publishM2 failed on attempt $attempt; retrying..."
+  echo ">>> spark/publishM2 (Spark $SPARK_MAJOR_MINOR) failed on attempt $attempt; retrying..."
   sleep 5
 done
+
+echo ">>> Verifying published artifacts"
+for c in "${ALL_CANARIES[@]}"; do
+  if [[ ! -f "$c" ]]; then
+    echo "ERROR: publish succeeded but $c is missing - the publish target layout may have changed." >&2
+    exit 1
+  fi
+done
+echo ">>> UC build complete. Published coordinate: $UC_VERSION"

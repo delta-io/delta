@@ -27,6 +27,7 @@ import scala.collection.mutable
 import scala.util.Try
 import scala.util.control.NonFatal
 
+import com.databricks.spark.util.TagDefinition
 import com.databricks.spark.util.TagDefinitions._
 import org.apache.spark.sql.delta.v2.interop.DeltaV2TableManager
 import org.apache.spark.sql.delta.DataFrameUtils
@@ -35,7 +36,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeLogFileIndex}
-import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider}
 import org.apache.spark.sql.delta.redirect.RedirectFeature
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources._
@@ -90,10 +91,34 @@ class DeltaLog private(
   with DeltaFileFormat
   with ProvidesUniFormConverters
   with ReadChecksum
+  with DeltaLoggingProvider
   with DeltaV2TableManager {
 
   import org.apache.spark.sql.delta.files.TahoeFileIndex
   import org.apache.spark.sql.delta.util.FileNames._
+
+  /**
+   * Recording tags for this `DeltaLog`. Uses the latest volatile snapshot's metadata id, which may
+   * lag behind the snapshot a caller is operating on. Callers that hold a specific
+   * [[Snapshot]]/[[SnapshotDescriptor]] should prefer logging against that instead, so the tags
+   * reflect the exact snapshot version being observed.
+   */
+  override def getCommonTags: Map[TagDefinition, String] =
+    getCommonTags(Try(unsafeVolatileSnapshot.metadata.id).getOrElse(null))
+
+  /**
+   * Variant of [[getCommonTags]] where the caller supplies the tahoe id explicitly (typically a
+   * specific snapshot's `metadata.id`). Used by [[DeltaLoggingProvider]] implementations that
+   * refer to a specific snapshot version (e.g. [[Snapshot]], [[OptimisticTransaction]]).
+   */
+  def getCommonTags(tahoeId: String): Map[TagDefinition, String] = {
+    (
+      Map(
+        TAG_TAHOE_ID -> tahoeId,
+        TAG_TAHOE_PATH -> Try(dataPath.toString).getOrElse(null)
+      )
+    )
+  }
 
   /**
    * Path to sidecar directory.

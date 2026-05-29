@@ -33,7 +33,12 @@ import org.apache.spark.sql.internal.SQLConf
  * Spark 4.1 supports shredded writes, and by extension the collection of variant stats.
  */
 object VariantShreddingShims {
-  def getVariantInferShreddingSchemaOptions(enableVariantShredding: Boolean): Map[String, String] = {
+  /**
+   * Returns a Map containing variant shredding related configs for file writing.
+   * In Spark 4.2, this returns the VARIANT_INFER_SHREDDING_SCHEMA config.
+   */
+  def getVariantInferShreddingSchemaOptions(enableVariantShredding: Boolean)
+    : Map[String, String] = {
     Map(SQLConf.VARIANT_INFER_SHREDDING_SCHEMA.key -> enableVariantShredding.toString)
   }
 

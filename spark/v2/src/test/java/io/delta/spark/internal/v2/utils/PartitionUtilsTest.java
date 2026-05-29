@@ -25,26 +25,60 @@ import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
+import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
+import io.delta.spark.internal.v2.read.CDCDataFile;
 import java.time.ZoneId;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
+import org.apache.spark.sql.delta.DeltaParquetFileFormat;
+import org.apache.spark.sql.delta.RowIndexFilterType;
+import org.apache.spark.sql.delta.commands.cdc.CDCReader;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
+import org.apache.spark.unsafe.types.UTF8String;
 import org.junit.jupiter.api.Test;
 import scala.collection.immutable.Map$;
+import scala.jdk.javaapi.CollectionConverters;
 
 public class PartitionUtilsTest extends DeltaV2TestBase {
 
   private static final long MB = 1024 * 1024;
+
+  private static final DeletionVectorDescriptor TEST_DV =
+      new DeletionVectorDescriptor("u", "ab^-rstxgiarsd", Optional.of(4), 40, 3L);
+
+  private static AddFile createAddFileForCDC(
+      String path, long size, long modificationTime, Optional<DeletionVectorDescriptor> dv) {
+    return new AddFile(
+        AddFile.createAddFileRow(
+            new io.delta.kernel.types.StructType(),
+            path,
+            VectorUtils.stringStringMapValue(Collections.emptyMap()),
+            size,
+            modificationTime,
+            /* dataChange= */ true,
+            dv,
+            /* tags= */ Optional.empty(),
+            /* baseRowId= */ Optional.empty(),
+            /* defaultRowCommitVersion= */ Optional.empty(),
+            /* stats= */ Optional.empty()));
+  }
+
+  private static java.util.Map<String, Object> getFileMetadata(PartitionedFile pf) {
+    return CollectionConverters.asJava(pf.otherConstantMetadataColumnValues());
+  }
 
   @Test
   public void testGetPartitionRow_FieldOrdering() {
@@ -70,6 +104,37 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
     assertEquals(2024, row.getInt(0));
     assertEquals(11, row.getInt(1));
     assertEquals(25, row.getInt(2));
+  }
+
+  @Test
+  public void testGetPartitionRow_StringValueIsNotDoubleUrlDecoded() {
+    // Kernel's MapValue already holds the logical (decoded) string. Spark's
+    // castPartValueToDesiredType would unescapePathName again; each case below picks an input
+    // whose second-decode result is distinct from the input AND from the other cases' results,
+    // so a regression cannot coincidentally agree with the expected value.
+    //   "%20"   -> bug result " "   (canonical space-collapse)
+    //   "%25"   -> bug result "%"   (self-encoding of `%`)
+    //   "a%2Fb" -> bug result "a/b" (embedded percent escape mid-string)
+    StructType partitionSchema =
+        new StructType(
+            new StructField[] {
+              DataTypes.createStructField("p_space", DataTypes.StringType, true),
+              DataTypes.createStructField("p_percent", DataTypes.StringType, true),
+              DataTypes.createStructField("p_embedded", DataTypes.StringType, true)
+            });
+
+    Map<String, String> partitionValues = new HashMap<>();
+    partitionValues.put("p_space", "%20");
+    partitionValues.put("p_percent", "%25");
+    partitionValues.put("p_embedded", "a%2Fb");
+
+    InternalRow row =
+        PartitionUtils.getPartitionRow(
+            stringStringMapValue(partitionValues), partitionSchema, ZoneId.of("UTC"));
+
+    assertEquals(UTF8String.fromString("%20"), row.getUTF8String(0));
+    assertEquals(UTF8String.fromString("%25"), row.getUTF8String(1));
+    assertEquals(UTF8String.fromString("a%2Fb"), row.getUTF8String(2));
   }
 
   @Test
@@ -131,6 +196,11 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
         new StructType(
             new StructField[] {DataTypes.createStructField("part", DataTypes.StringType, true)});
     StructType readDataSchema = dataSchema;
+    StructType ddlOrderedReadOutputSchema =
+        SchemaUtils.ddlOrderedOutputSchema(
+            SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema()),
+            readDataSchema,
+            partitionSchema);
     Filter[] filters = new Filter[0];
     scala.collection.immutable.Map<String, String> options = Map$.MODULE$.empty();
     Configuration hadoopConf = new Configuration();
@@ -142,11 +212,12 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
             dataSchema,
             partitionSchema,
             readDataSchema,
+            ddlOrderedReadOutputSchema,
             filters,
             options,
             hadoopConf,
             sqlConf,
-            /* isCDCRead= */ false);
+            /* isWriteTimeCDCRead */ false);
 
     assertNotNull(factory, "PartitionReaderFactory should not be null");
   }
@@ -167,6 +238,11 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
         new StructType(
             new StructField[] {DataTypes.createStructField("part", DataTypes.StringType, true)});
     StructType readDataSchema = dataSchema;
+    StructType ddlOrderedReadOutputSchema =
+        SchemaUtils.ddlOrderedOutputSchema(
+            SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema()),
+            readDataSchema,
+            partitionSchema);
     Filter[] filters = new Filter[0];
     scala.collection.immutable.Map<String, String> options = Map$.MODULE$.empty();
     Configuration hadoopConf = new Configuration();
@@ -178,13 +254,64 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
             dataSchema,
             partitionSchema,
             readDataSchema,
+            ddlOrderedReadOutputSchema,
             filters,
             options,
             hadoopConf,
             sqlConf,
-            /* isCDCRead= */ true);
+            /* isWriteTimeCDCRead */ true);
 
     assertNotNull(factory, "CDC PartitionReaderFactory should not be null");
+  }
+
+  /**
+   * Read-time Auto-CDF calls into PartitionUtils with {@code isWriteTimeCDCRead=false}. The factory
+   * is then a plain Parquet reader factory: PartitionUtils does not augment {@code readDataSchema}
+   * with CDC tail columns and does not wrap the reader with {@code CDCReadFunction}. The tail
+   * columns are added by {@code DeltaChangelogBatch.CDCPartitionReaderFactory} as per-partition
+   * constants instead.
+   */
+  @Test
+  public void testCreateDeltaParquetReaderFactory_NotWriteTimeCDCRead() {
+    String tablePath =
+        createTestTable("test_delta_reader_factory_batch_changelog_" + System.nanoTime(), true);
+
+    Table table = Table.forPath(defaultEngine, tablePath);
+    Snapshot snapshot = table.getLatestSnapshot(defaultEngine);
+
+    StructType dataSchema =
+        new StructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.LongType, true),
+            });
+    StructType partitionSchema =
+        new StructType(
+            new StructField[] {DataTypes.createStructField("part", DataTypes.StringType, true)});
+    StructType readDataSchema = dataSchema;
+    StructType ddlOrderedReadOutputSchema =
+        SchemaUtils.ddlOrderedOutputSchema(
+            SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema()),
+            readDataSchema,
+            partitionSchema);
+    Filter[] filters = new Filter[0];
+    scala.collection.immutable.Map<String, String> options = Map$.MODULE$.empty();
+    Configuration hadoopConf = new Configuration();
+    SQLConf sqlConf = SQLConf.get();
+
+    PartitionReaderFactory factory =
+        PartitionUtils.createDeltaParquetReaderFactory(
+            snapshot,
+            dataSchema,
+            partitionSchema,
+            readDataSchema,
+            ddlOrderedReadOutputSchema,
+            filters,
+            options,
+            hadoopConf,
+            sqlConf,
+            /* isWriteTimeCDCRead */ false);
+
+    assertNotNull(factory, "isWriteTimeCDCRead=false PartitionReaderFactory should not be null");
   }
 
   @Test
@@ -277,6 +404,157 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
     assertEquals(1, partitionedFile.partitionValues().numFields());
   }
 
+  @Test
+  public void testDdlOrderedOutputSchema_PartitionInMiddleInterleavedAtDdlPosition() {
+    String tablePath = getTempTablePath("ddl_order_middle_" + System.nanoTime());
+    spark.sql(
+        String.format(
+            "CREATE TABLE delta.`%s` (id LONG, part LONG, col3 INT) USING delta "
+                + "PARTITIONED BY (part)",
+            tablePath));
+    Snapshot snapshot = Table.forPath(defaultEngine, tablePath).getLatestSnapshot(defaultEngine);
+
+    StructType readDataSchema =
+        new StructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.LongType, true),
+              DataTypes.createStructField("col3", DataTypes.IntegerType, true)
+            });
+    StructType partitionSchema =
+        new StructType(
+            new StructField[] {DataTypes.createStructField("part", DataTypes.LongType, true)});
+
+    StructType result =
+        SchemaUtils.ddlOrderedOutputSchema(
+            SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema()),
+            readDataSchema,
+            partitionSchema);
+    assertArrayEquals(new String[] {"id", "part", "col3"}, result.fieldNames());
+  }
+
+  @Test
+  public void testDdlOrderedOutputSchema_PartitionAtEndIsIdentity() {
+    String tablePath = getTempTablePath("ddl_order_end_" + System.nanoTime());
+    spark.sql(
+        String.format(
+            "CREATE TABLE delta.`%s` (id LONG, col3 INT, part LONG) USING delta "
+                + "PARTITIONED BY (part)",
+            tablePath));
+    Snapshot snapshot = Table.forPath(defaultEngine, tablePath).getLatestSnapshot(defaultEngine);
+
+    StructType readDataSchema =
+        new StructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.LongType, true),
+              DataTypes.createStructField("col3", DataTypes.IntegerType, true)
+            });
+    StructType partitionSchema =
+        new StructType(
+            new StructField[] {DataTypes.createStructField("part", DataTypes.LongType, true)});
+
+    StructType result =
+        SchemaUtils.ddlOrderedOutputSchema(
+            SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema()),
+            readDataSchema,
+            partitionSchema);
+    assertArrayEquals(new String[] {"id", "col3", "part"}, result.fieldNames());
+  }
+
+  @Test
+  public void testDdlOrderedOutputSchema_NoPartitionsShortCircuits() {
+    String tablePath = getTempTablePath("ddl_order_no_part_" + System.nanoTime());
+    spark.sql(String.format("CREATE TABLE delta.`%s` (id LONG, col3 INT) USING delta", tablePath));
+    Snapshot snapshot = Table.forPath(defaultEngine, tablePath).getLatestSnapshot(defaultEngine);
+
+    StructType readDataSchema =
+        new StructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.LongType, true),
+              DataTypes.createStructField("col3", DataTypes.IntegerType, true)
+            });
+    StructType emptyPartitions = new StructType(new StructField[0]);
+
+    StructType result =
+        SchemaUtils.ddlOrderedOutputSchema(
+            SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema()),
+            readDataSchema,
+            emptyPartitions);
+    // Returns the readDataSchema instance unchanged (short-circuit).
+    assertSame(readDataSchema, result);
+  }
+
+  @Test
+  public void testDdlOrderedOutputSchema_MetadataLeftoverAppendedAtEnd() {
+    String tablePath = getTempTablePath("ddl_order_meta_" + System.nanoTime());
+    spark.sql(
+        String.format(
+            "CREATE TABLE delta.`%s` (id LONG, part LONG, col3 INT) USING delta "
+                + "PARTITIONED BY (part)",
+            tablePath));
+    Snapshot snapshot = Table.forPath(defaultEngine, tablePath).getLatestSnapshot(defaultEngine);
+
+    // _metadata is a synthetic Spark column not in the persisted schema; verify it lands at the
+    // tail in insertion order rather than being interleaved.
+    StructField metadataField =
+        DataTypes.createStructField(
+            "_metadata",
+            new StructType(
+                new StructField[] {
+                  DataTypes.createStructField("file_path", DataTypes.StringType, true)
+                }),
+            true);
+    StructType readDataSchema =
+        new StructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.LongType, true),
+              DataTypes.createStructField("col3", DataTypes.IntegerType, true),
+              metadataField
+            });
+    StructType partitionSchema =
+        new StructType(
+            new StructField[] {DataTypes.createStructField("part", DataTypes.LongType, true)});
+
+    StructType result =
+        SchemaUtils.ddlOrderedOutputSchema(
+            SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema()),
+            readDataSchema,
+            partitionSchema);
+    assertArrayEquals(new String[] {"id", "part", "col3", "_metadata"}, result.fieldNames());
+  }
+
+  @Test
+  public void testDdlOrderedOutputSchema_MultiplePartitionsInterleaved() {
+    String tablePath = getTempTablePath("ddl_order_multi_" + System.nanoTime());
+    // PARTITIONED BY order intentionally differs from DDL order to exercise both axes.
+    spark.sql(
+        String.format(
+            "CREATE TABLE delta.`%s` (a LONG, p1 STRING, b INT, p2 STRING, c DOUBLE) USING delta "
+                + "PARTITIONED BY (p2, p1)",
+            tablePath));
+    Snapshot snapshot = Table.forPath(defaultEngine, tablePath).getLatestSnapshot(defaultEngine);
+
+    StructType readDataSchema =
+        new StructType(
+            new StructField[] {
+              DataTypes.createStructField("a", DataTypes.LongType, true),
+              DataTypes.createStructField("b", DataTypes.IntegerType, true),
+              DataTypes.createStructField("c", DataTypes.DoubleType, true)
+            });
+    StructType partitionSchema =
+        new StructType(
+            new StructField[] {
+              DataTypes.createStructField("p2", DataTypes.StringType, true),
+              DataTypes.createStructField("p1", DataTypes.StringType, true)
+            });
+
+    StructType result =
+        SchemaUtils.ddlOrderedOutputSchema(
+            SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema()),
+            readDataSchema,
+            partitionSchema);
+    assertArrayEquals(new String[] {"a", "p1", "b", "p2", "c"}, result.fieldNames());
+  }
+
   /** Helper to create a test Delta table. */
   private String createTestTable(String tableName, boolean partitioned) {
     String tablePath = getTempTablePath(tableName);
@@ -297,5 +575,72 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
   private String getTempTablePath(String tableName) {
     return java.nio.file.Paths.get(System.getProperty("java.io.tmpdir"), "delta-test-" + tableName)
         .toString();
+  }
+
+  @Test
+  public void testBuildCDCPartitionedFile_dvDiff_setsOverrideDvAndIfNotContained() {
+    AddFile addFile = createAddFileForCDC("data.parquet", 1024, 100L, Optional.of(TEST_DV));
+    CDCDataFile cdcFile =
+        CDCDataFile.fromDVDiff(
+            addFile,
+            CDCReader.CDC_TYPE_DELETE_STRING(),
+            /* commitTimestamp= */ 1000L,
+            "override==");
+
+    PartitionedFile pf =
+        PartitionUtils.buildCDCPartitionedFile(
+            cdcFile,
+            /* commitVersion= */ 1L,
+            new StructType(),
+            "file:/tmp/table",
+            ZoneId.of("UTC"));
+
+    java.util.Map<String, Object> metadata = getFileMetadata(pf);
+    assertEquals(
+        "override==", metadata.get(DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_ID_ENCODED()));
+    assertEquals(
+        RowIndexFilterType.IF_NOT_CONTAINED,
+        metadata.get(DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_TYPE()));
+  }
+
+  @Test
+  public void testBuildCDCPartitionedFile_regularAddFileWithDv_setsIfContained() {
+    AddFile addFile = createAddFileForCDC("data.parquet", 2048, 200L, Optional.of(TEST_DV));
+    CDCDataFile cdcFile = CDCDataFile.fromAddFile(addFile, /* commitTimestamp= */ 2000L);
+
+    PartitionedFile pf =
+        PartitionUtils.buildCDCPartitionedFile(
+            cdcFile,
+            /* commitVersion= */ 2L,
+            new StructType(),
+            "file:/tmp/table",
+            ZoneId.of("UTC"));
+
+    java.util.Map<String, Object> metadata = getFileMetadata(pf);
+    assertEquals(
+        TEST_DV.serializeToBase64(),
+        metadata.get(DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_ID_ENCODED()));
+    assertEquals(
+        RowIndexFilterType.IF_CONTAINED,
+        metadata.get(DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_TYPE()));
+  }
+
+  @Test
+  public void testBuildCDCPartitionedFile_noDv_noFilterMetadata() {
+    AddFile addFile = createAddFileForCDC("data.parquet", 512, 300L, Optional.empty());
+    CDCDataFile cdcFile = CDCDataFile.fromAddFile(addFile, /* commitTimestamp= */ 3000L);
+
+    PartitionedFile pf =
+        PartitionUtils.buildCDCPartitionedFile(
+            cdcFile,
+            /* commitVersion= */ 3L,
+            new StructType(),
+            "file:/tmp/table",
+            ZoneId.of("UTC"));
+
+    java.util.Map<String, Object> metadata = getFileMetadata(pf);
+    assertFalse(
+        metadata.containsKey(DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_ID_ENCODED()),
+        "No filter metadata expected when AddFile has no DV");
   }
 }

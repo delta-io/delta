@@ -278,7 +278,7 @@ trait SnapshotManagement { self: DeltaLog =>
           unbackfilledCommitsResponse.getCommits.asScala.map(commit => commit.getVersion),
         "latestCommitVersion" -> unbackfilledCommitsResponse.getLatestTableVersion)
       recordDeltaEvent(
-        deltaLog = this,
+        provider = this,
         opType = CoordinatedCommitsUsageLogs.FS_COMMIT_COORDINATOR_LISTING_UNEXPECTED_GAPS,
         data = eventData)
       if (DeltaUtils.isTesting) {
@@ -666,7 +666,7 @@ trait SnapshotManagement { self: DeltaLog =>
       "missingCommits" -> missingCommits
     )
     recordDeltaEvent(
-      deltaLog = this,
+      provider = this,
       opType = "delta.getLogSegmentForVersion.compactedDeltaValidationFailed",
       data = eventData)
     if (DeltaUtils.isTesting) {
@@ -1663,7 +1663,7 @@ object SnapshotManagement extends DeltaLogging {
         // in some cases, which needs to be explicitly filtered out.
         val snapshot = cachedSnapshot.filter(_ != null)
         recordDeltaEvent(
-          deltaLog = null,
+          provider = null,
           opType = "delta.exceptions.deltaVersionsNotContiguous",
           data = Map(
             // Remove the first element of the stack trace since this represents
