@@ -68,10 +68,19 @@ class DeltaV2CDCStreamSuite extends DeltaCDCStreamSuite with V2ForceTest {
 
     // ========== Option B refactor + RT-rejection coverage ==========
     "CDC stream supports column pruning of data columns",
-    "CDC stream rejects reading row tracking metadata fields"
+    "CDC stream rejects reading row tracking metadata fields",
+
+    // ========== CDC combination coverage ==========
+    "CDC stream on partitioned table strips partition and CDC columns correctly"
   )
 
   override protected lazy val shouldFailTests = Set(
+    // TODO: DSv2 CDC streaming on column-mapped tables returns null values for all columns.
+    // SparkMicroBatchStream does not apply Delta column-mapping physical->logical name
+    // translation when reading CDC data files, so logical column names fail to match the
+    // physical names in Parquet and all values come back null.
+    "CDC stream on column-mapped table passes through correctly",
+
     // === Error message format differs in V2 (missing [DELTA_VERSION_NOT_FOUND] prefix) ===
     "starting[Version/Timestamp] > latest version",
     // === sql("DELETE FROM delta.`...`") not supported under STRICT V2 mode ===
