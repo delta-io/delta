@@ -25,6 +25,7 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.duration._
+import scala.jdk.OptionConverters._
 import scala.util.control.NonFatal
 
 // scalastyle:off import.ordering.noEmptyLine
@@ -39,7 +40,8 @@ import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.spark.sql.delta.util.threads.DeltaThreadPool
 import com.fasterxml.jackson.annotation.JsonIgnore
-import io.delta.storage.commit.{Commit, GetCommitsResponse}
+import io.delta.storage.commit.{Commit, GetCommitsFromLoadTableResponse, GetCommitsResponse}
+import io.delta.storage.commit.uniform.{UniformMetadata => StorageUniformMetadata}
 import org.apache.hadoop.fs.{BlockLocation, FileStatus, LocatedFileStatus, Path}
 
 import org.apache.spark.{SparkContext, SparkException}
@@ -162,16 +164,18 @@ trait SnapshotManagement { self: DeltaLog =>
    * @param catalogTableOpt the optional catalog table to pass to the commit coordinator client.
    * @param versionToLoad the optional parameter to set the max version we should return. Inclusive.
    * @param includeMinorCompactions Whether to include minor compaction files in the result
-   * @return A tuple where the first element is an array of log files (possibly empty, if no
-   *         usable log files are found), and the second element is the latest checksum file found
-   *         which has a version less than or equal to `versionToLoad`.
+   * @return A tuple of: (1) an array of log files (possibly empty if no usable log files are
+   *         found), (2) the latest checksum file found with version <= `versionToLoad`, and
+   *         (3) [[ListingExtras]] which may contain additional metadata fetched during listing
+   *         using delta-rest loadTable API, including UniformMetadata.
    */
   protected def listDeltaCompactedDeltaCheckpointFilesAndLatestChecksumFile(
       startVersion: Long,
       tableCommitCoordinatorClientOpt: Option[TableCommitCoordinatorClient],
       catalogTableOpt: Option[CatalogTable],
       versionToLoad: Option[Long],
-      includeMinorCompactions: Boolean): (Option[Array[FileStatus]], Option[FileStatus]) = {
+      includeMinorCompactions: Boolean)
+  : (Option[Array[FileStatus]], Option[FileStatus], ListingExtras) = {
     val tableCommitCoordinatorClient = tableCommitCoordinatorClientOpt.getOrElse {
       val (filesOpt, checksumOpt) =
         listFromFileSystemInternal(
@@ -179,7 +183,7 @@ trait SnapshotManagement { self: DeltaLog =>
           versionToLoad,
           includeMinorCompactions
         )
-      return (filesOpt.map(_.map(_._1)), checksumOpt)
+      return (filesOpt.map(_.map(_._1)), checksumOpt, ListingExtras(None))
     }
 
     // Submit a potential async call to get commits from commit coordinator if available
@@ -316,7 +320,11 @@ trait SnapshotManagement { self: DeltaLog =>
       logTuplesFromFsListing.map(_._1) ++ unbackfilledCommitsFiltered
     }
     val latestChecksumOpt = additionalChecksumOpt.orElse(initialChecksumOpt)
-    (logTuplesToReturn, latestChecksumOpt)
+    val uniformMetadataOpt = unbackfilledCommitsResponse match {
+      case r: GetCommitsFromLoadTableResponse => Option(r.getUniformMetadata).flatMap(_.toScala)
+      case _ => None
+    }
+    (logTuplesToReturn, latestChecksumOpt, ListingExtras(uniformMetadataOpt))
   }
 
   /**
@@ -334,17 +342,20 @@ trait SnapshotManagement { self: DeltaLog =>
    * @param catalogTableOpt the optional catalog table to pass to the commit coordinator client.
    * @param versionToLoad the optional parameter to set the max version we should return. Inclusive.
    * @param includeMinorCompactions Whether to include minor compaction files in the result
-   * @return Some array of files found (possibly empty, if no usable commit files are present), or
-   *         None if the listing returned no files at all.
+   * @return A tuple of: (1) Some array of files found (possibly empty if no usable commit files
+   *         are present), or None if the listing returned no files at all; and
+   *         (2) [[ListingExtras]] which may contain additional metadata fetched during listing
+   *         using delta-rest loadTable API, like UniformMetadata.
    */
   protected final def listDeltaCompactedDeltaAndCheckpointFiles(
       startVersion: Long,
       tableCommitCoordinatorClientOpt: Option[TableCommitCoordinatorClient],
       catalogTableOpt: Option[CatalogTable],
       versionToLoad: Option[Long],
-      includeMinorCompactions: Boolean): Option[Array[FileStatus]] = {
+      includeMinorCompactions: Boolean)
+  : (Option[Array[FileStatus]], ListingExtras) = {
     recordDeltaOperation(self, "delta.deltaLog.listDeltaAndCheckpointFiles") {
-      val (logTuplesOpt, latestChecksumOpt) =
+      val (logTuplesOpt, latestChecksumOpt, listingExtras) =
         listDeltaCompactedDeltaCheckpointFilesAndLatestChecksumFile(
           startVersion,
           tableCommitCoordinatorClientOpt,
@@ -352,7 +363,7 @@ trait SnapshotManagement { self: DeltaLog =>
           versionToLoad,
           includeMinorCompactions)
       lastSeenChecksumFileStatusOpt = latestChecksumOpt
-      logTuplesOpt
+      (logTuplesOpt, listingExtras)
     }
   }
 
@@ -393,7 +404,7 @@ trait SnapshotManagement { self: DeltaLog =>
       tableCommitCoordinatorClientOpt,
       catalogTableOpt,
       versionToLoad,
-      includeMinorCompactions)
+      includeMinorCompactions)._1
     getLogSegmentForVersion(
       versionToLoad,
       newFiles,
@@ -788,7 +799,7 @@ trait SnapshotManagement { self: DeltaLog =>
           catalogTableOpt = catalogTableOpt,
           versionToLoad = Some(snapshotVersion),
           includeMinorCompactions = false
-        ).getOrElse(Array.empty)
+        )._1.getOrElse(Array.empty)
         val (checkpoints, deltas) = filesSinceCheckpointVersion.partition(isCheckpointFile)
         if (deltas.isEmpty) {
           // We cannot find any delta files. Returns None as we cannot construct a `LogSegment` only
@@ -837,7 +848,7 @@ trait SnapshotManagement { self: DeltaLog =>
             versionToLoad = Some(snapshotVersion),
             includeMinorCompactions = false)
         val (deltas, deltaVersions) =
-          listFromResult
+          listFromResult._1
             .getOrElse(Array.empty)
             .flatMap(DeltaFile.unapply(_))
             .unzip
@@ -983,9 +994,9 @@ trait SnapshotManagement { self: DeltaLog =>
       oldLogSegment: LogSegment,
       tableCommitCoordinatorClientOpt: Option[TableCommitCoordinatorClient],
       catalogTableOpt: Option[CatalogTable]
-  ): (LogSegment, Seq[FileStatus]) = {
+  ): (LogSegment, ConflictingContext) = {
     val includeCompactions = spark.conf.get(DeltaSQLConf.DELTALOG_MINOR_COMPACTION_USE_FOR_READS)
-    val newFilesOpt = listDeltaCompactedDeltaAndCheckpointFiles(
+    val (newFilesOpt, listingExtras) = listDeltaCompactedDeltaAndCheckpointFiles(
         startVersion = oldLogSegment.version + 1,
         tableCommitCoordinatorClientOpt = tableCommitCoordinatorClientOpt,
         catalogTableOpt = catalogTableOpt,
@@ -999,7 +1010,7 @@ trait SnapshotManagement { self: DeltaLog =>
     val newFiles = newFilesOpt.filter(_.nonEmpty).getOrElse {
       // An empty listing likely implies a list-after-write inconsistency or that somebody clobbered
       // the Delta log.
-      return (oldLogSegment, Nil)
+      return (oldLogSegment, ConflictingContext(Nil, listingExtras.uniformMetadata))
     }
     val allFiles = (
       oldLogSegment.checkpointProvider.topLevelFiles ++
@@ -1019,7 +1030,9 @@ trait SnapshotManagement { self: DeltaLog =>
     val fileStatusesOfConflictingCommits = newFiles.collect {
       case DeltaFile(f, v) if v <= newLogSegment.version => f
     }
-    (newLogSegment, fileStatusesOfConflictingCommits)
+    (newLogSegment, ConflictingContext(
+      fileStatusesOfConflictingCommits, listingExtras.uniformMetadata)
+    )
   }
 
   /**
@@ -1622,6 +1635,22 @@ trait SnapshotManagement { self: DeltaLog =>
   // Visible for testing
   private[delta] def getCapturedSnapshot(): CapturedSnapshot = currentSnapshot
 }
+
+// Additional metadata fetched during listing
+// 1. uniformMetadata:
+//  the latest uniformMetadata that is fetched while getCommits is implemented
+//  using delta-rest loadTable API
+case class ListingExtras(uniformMetadata: Option[StorageUniformMetadata])
+
+// The conflict context during conflict resolution
+// 1. conflictingCommitFiles
+//   a seq of all conflicting commit files
+// 2. uniformMetadata:
+//   the latest uniformMetadata that is fetched while getCommits is implemented
+//   using delta-rest loadTable API
+case class ConflictingContext(
+    conflictingCommitFiles: Seq[FileStatus],
+    uniformMetadata: Option[StorageUniformMetadata])
 
 object SnapshotManagement extends DeltaLogging {
   // A thread pool for reading checkpoint files and collecting checkpoint v2 actions like
