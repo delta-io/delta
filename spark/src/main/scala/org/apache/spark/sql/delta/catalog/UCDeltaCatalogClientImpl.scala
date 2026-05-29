@@ -46,7 +46,7 @@ import org.apache.spark.sql.catalyst.catalog.{
 }
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, Table, TableCatalog, V1Table}
 import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, DeltaErrors, TableFeature}
-import org.apache.spark.sql.delta.actions.{DomainMetadata, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{DomainMetadata, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED
 import org.apache.spark.sql.delta.coordinatedcommits.UCTokenBasedRestClientFactory
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -175,7 +175,7 @@ private[catalog] class UCDeltaCatalogClientImpl(
         Option(protocol.getWriterFeatures).map(_.asScala).getOrElse(Iterable.empty)).toSet
     features.foreach { feature =>
       if (TableFeature.featureNameToFeature(feature).isDefined) {
-        val key = s"delta.feature.$feature"
+        val key = TableFeatureProtocolUtils.propertyKey(feature)
         if (required) putRequiredFeatureOrThrow(augmented, key, ident)
         else augmented.putIfAbsent(key, FEATURE_PROP_SUPPORTED)
       } else if (required) {
@@ -258,7 +258,7 @@ private[catalog] class UCDeltaCatalogClientImpl(
     val existingProvider =
       Option(info.getMetadata.getProvider)
         .map(_.toLowerCase(java.util.Locale.ROOT))
-        .getOrElse("delta")
+        .get
     // REPLACE cannot change the table's storage format.
     Option(properties.get(TableCatalog.PROP_PROVIDER))
       .filterNot(_.equalsIgnoreCase(existingProvider))
@@ -294,12 +294,13 @@ private[catalog] class UCDeltaCatalogClientImpl(
   /** Reject `delta.feature.catalogManaged` override to anything other than `supported`. */
   private def rejectCatalogManagedOverride(
       properties: util.Map[String, String], qualifiedName: String): Unit = {
-    val key = s"delta.feature.${CatalogOwnedTableFeature.name}"
-    Option(properties.get(key))
-      .filter(_ != FEATURE_PROP_SUPPORTED)
-      .foreach(v => throw new IllegalArgumentException(
-        s"REPLACE TABLE on $qualifiedName cannot override '$key'='$v'; expected " +
-          s"'$FEATURE_PROP_SUPPORTED'."))
+    val key = TableFeatureProtocolUtils.propertyKey(CatalogOwnedTableFeature)
+    val value = properties.get(key)
+    if (value != FEATURE_PROP_SUPPORTED) {
+      throw new IllegalArgumentException(
+        s"REPLACE TABLE on $qualifiedName cannot override '$key'='$value'; expected " +
+          s"'$FEATURE_PROP_SUPPORTED'.")
+    }
   }
 
   /**
@@ -316,7 +317,7 @@ private[catalog] class UCDeltaCatalogClientImpl(
     if (!provider.contains("delta")) {
       throw DeltaErrors.notADeltaTableException("REPLACE TABLE", qualified)
     }
-    val catalogManagedKey = s"delta.feature.${CatalogOwnedTableFeature.name}"
+    val catalogManagedKey = TableFeatureProtocolUtils.propertyKey(CatalogOwnedTableFeature)
     val isCatalogManaged = Option(info.getMetadata.getConfiguration)
       .map(_.asScala.toMap)
       .exists(_.get(catalogManagedKey).contains(FEATURE_PROP_SUPPORTED))

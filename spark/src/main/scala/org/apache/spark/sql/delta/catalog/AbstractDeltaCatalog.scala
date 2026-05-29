@@ -503,23 +503,22 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     }
 
   /**
-   * Decides whether a CREATE / REPLACE / CREATE OR REPLACE request is eligible to go
-   * through `deltaCatalogClient` (the catalog-aware path) instead of the default delegate.
+   * Decides whether a CREATE / CTAS request is eligible to go through
+   * `deltaCatalogClient` (the catalog-aware path) instead of the default delegate.
    * A request is eligible when all of the following hold:
    *
    *   - the underlying catalog is Unity Catalog;
-   *   - a `deltaCatalogClient` is wired in (i.e. `deltaRestApi.enabled=true`);
-   *   - the caller does not appear to be creating or replacing an external table -- that
-   *     is, neither `PROP_LOCATION` nor `PROP_EXTERNAL` is set in `properties`, and the
-   *     identifier is not path-based (e.g. `delta`.`/tmp/foo`).
+   *   - a `deltaCatalogClient` is wired in;
+   *   - the caller does not appear to be creating an external table -- that is, neither
+   *     `PROP_LOCATION` nor `PROP_EXTERNAL` is set in `properties`, and the identifier
+   *     is not path-based (e.g. `delta`.`/tmp/foo`).
    *
    * Any other request returns `false` and falls back to the default delegate flow.
    *
    * @param ident      identifier of the target table.
-   * @param properties user-supplied properties from the CREATE / REPLACE / CREATE OR REPLACE
-   *                   statement.
+   * @param properties user-supplied properties from the CREATE / CTAS statement.
    */
-  private def shouldRouteThroughDeltaCatalogClient(
+  private def shouldRouteCreateThroughDeltaCatalogClient(
       ident: Identifier,
       properties: util.Map[String, String]): Boolean = {
     if (!isUnityCatalog ||
@@ -533,14 +532,51 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
   }
 
   /**
+   * Decides whether a REPLACE / RTAS / CREATE OR REPLACE request is eligible to go
+   * through `deltaCatalogClient`. A request is eligible when all of the following hold:
+   *
+   *   - the underlying catalog is Unity Catalog;
+   *   - a `deltaCatalogClient` is wired in;
+   *   - the identifier is not path-based (e.g. `delta`.`/tmp/foo`).
+   *
+   * Any other request returns `false` and falls back to the default delegate flow.
+   *
+   * Unlike the CREATE variant, this throws an `UnsupportedOperationException` when
+   * `PROP_LOCATION` or `PROP_EXTERNAL` is set on a UC catalog with `deltaCatalogClient`
+   * wired in. Only catalog-managed Delta tables (no user-supplied LOCATION) can be
+   * replaced on this path; rejecting up front guarantees non-managed REPLACEs never
+   * reach the staged-table flow, which would otherwise write a Delta commit before
+   * Delta's post-commit catalog-update hook discovered the inconsistency (leaving the
+   * Delta log and UC's metastore out of sync).
+   *
+   * @param ident      identifier of the target table.
+   * @param properties user-supplied properties from the REPLACE / RTAS / CREATE OR REPLACE
+   *                   statement.
+   */
+  private def shouldRouteReplaceThroughDeltaCatalogClient(
+      ident: Identifier,
+      properties: util.Map[String, String]): Boolean = {
+    if (!isUnityCatalog || deltaCatalogClient.isEmpty) return false
+    if (properties.containsKey(TableCatalog.PROP_LOCATION) ||
+        properties.containsKey(TableCatalog.PROP_EXTERNAL)) {
+      throw new UnsupportedOperationException(
+        s"REPLACE TABLE on $ident cannot specify '${TableCatalog.PROP_LOCATION}' or " +
+          s"'${TableCatalog.PROP_EXTERNAL}': only catalog-managed Delta tables can " +
+          "be replaced on this path.")
+    }
+    val ns = ident.namespace()
+    !(ns.length == 1 && new Path(ident.name()).isAbsolute)
+  }
+
+  /**
    * Reserves a catalog-side staging entry for a fresh Delta table and returns the property
    * map that downstream code will use to write the initial commit. The returned map is the
    * caller's `properties` augmented with the catalog-assigned table id, the staged storage
    * location, and the storage credentials Delta needs to write to that location.
    *
    * When the request is not eligible for this path (see
-   * [[shouldRouteThroughDeltaCatalogClient]]), the input `properties` is returned unchanged
-   * and the caller falls back to the legacy catalog flow.
+   * [[shouldRouteCreateThroughDeltaCatalogClient]]), the input `properties` is returned
+   * unchanged and the caller falls back to the legacy catalog flow.
    *
    * @param ident      identifier of the table being created.
    * @param properties user-supplied properties from the CREATE statement.
@@ -550,7 +586,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
   private def maybeStageDeltaCreate(
       ident: Identifier,
       properties: util.Map[String, String]): util.Map[String, String] = {
-    if (!shouldRouteThroughDeltaCatalogClient(ident, properties)) return properties
+    if (!shouldRouteCreateThroughDeltaCatalogClient(ident, properties)) return properties
     deltaCatalogClient.get.createStagingTable(ident, properties)
   }
 
@@ -563,9 +599,10 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
    * downstream Delta resolves the write location from the existing table snapshot.
    *
    * When the request is not eligible for this path (see
-   * [[shouldRouteThroughDeltaCatalogClient]]), the input `properties` is returned unchanged
-   * and the caller falls back to the legacy catalog flow. Throws via the catalog client if
-   * the table does not exist or is not a catalog-managed Delta table.
+   * [[shouldRouteReplaceThroughDeltaCatalogClient]]), the input `properties` is returned
+   * unchanged and the caller falls back to the legacy catalog flow. Throws via the
+   * catalog client if the table does not exist or is not a catalog-managed Delta table
+   * (`PROP_LOCATION` / `PROP_EXTERNAL` are rejected earlier at the routing gate).
    *
    * @param ident      identifier of the table being replaced.
    * @param properties user-supplied properties from the REPLACE statement.
@@ -575,7 +612,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
   private def maybeLoadForDeltaReplace(
       ident: Identifier,
       properties: util.Map[String, String]): util.Map[String, String] = {
-    if (!shouldRouteThroughDeltaCatalogClient(ident, properties)) return properties
+    if (!shouldRouteReplaceThroughDeltaCatalogClient(ident, properties)) return properties
     deltaCatalogClient.get.loadTableAndBuildReplaceProps(ident, properties)
   }
 
@@ -597,8 +634,8 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
    *     throws via the catalog client.
    *
    * When the request is not eligible for this path (see
-   * [[shouldRouteThroughDeltaCatalogClient]]), the input `properties` is returned unchanged
-   * and the caller falls back to the legacy catalog flow.
+   * [[shouldRouteReplaceThroughDeltaCatalogClient]]), the input `properties` is returned
+   * unchanged and the caller falls back to the legacy catalog flow.
    *
    * @param ident      identifier of the target table.
    * @param properties user-supplied properties from the CREATE OR REPLACE statement.
@@ -608,7 +645,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
   private def maybeStageDeltaCreateOrReplace(
       ident: Identifier,
       properties: util.Map[String, String]): util.Map[String, String] = {
-    if (!shouldRouteThroughDeltaCatalogClient(ident, properties)) return properties
+    if (!shouldRouteReplaceThroughDeltaCatalogClient(ident, properties)) return properties
     try deltaCatalogClient.get.loadTableAndBuildReplaceProps(ident, properties)
     catch {
       case _: NoSuchTableException =>
