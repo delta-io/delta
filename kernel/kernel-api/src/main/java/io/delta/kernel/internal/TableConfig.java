@@ -111,6 +111,20 @@ public class TableConfig<T> {
           true);
 
   /**
+   * Indicates whether Row Tracking is suspended on the table. When suspended, writers must NOT
+   * assign baseRowId or defaultRowCommitVersion to AddFile actions. This property must not be
+   * enabled together with delta.enableRowTracking.
+   */
+  public static final TableConfig<Boolean> ROW_TRACKING_SUSPENDED =
+      new TableConfig<>(
+          "delta.rowTrackingSuspended",
+          "false",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
+
+  /**
    * The shortest duration we have to keep logically deleted data files around before deleting them
    * physically.
    *
@@ -438,6 +452,7 @@ public class TableConfig<T> {
               addConfig(this, DELETION_VECTORS_CREATION_ENABLED);
               addConfig(this, TYPE_WIDENING_ENABLED);
               addConfig(this, ROW_TRACKING_ENABLED);
+              addConfig(this, ROW_TRACKING_SUSPENDED);
               addConfig(this, LOG_RETENTION);
               addConfig(this, EXPIRED_LOG_CLEANUP_ENABLED);
               addConfig(this, TOMBSTONE_RETENTION);
