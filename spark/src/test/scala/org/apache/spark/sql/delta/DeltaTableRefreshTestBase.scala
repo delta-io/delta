@@ -36,7 +36,6 @@ import org.apache.spark.util.Utils
  *   - [[DeltaTempViewRefreshTests]] (Section [1])
  *   - [[DeltaRepeatedAccessRefreshTests]] (Section [2])
  *   - [[DeltaJoinRefreshTests]] (Section [3])
- *   - [[DeltaDatasetPinningTests]] (Section [4])
  *   - [[DeltaCacheTableRefreshTests]] (Section [5])
  */
 trait DeltaTableRefreshTestBase extends DeltaTableRefreshSharedBase {
