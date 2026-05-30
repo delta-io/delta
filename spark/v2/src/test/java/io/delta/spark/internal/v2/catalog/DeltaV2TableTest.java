@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -723,6 +724,89 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
         DeltaOptions.SCHEMA_TRACKING_LOCATION(),
         "path_based_constructor",
         /* usePathBasedConstructor= */ true);
+  }
+
+  @Test
+  public void testColumnsHaveNullIdWithoutColumnMapping(@TempDir File tempDir) throws Exception {
+    String path = tempDir.getAbsolutePath();
+    String tableName = "cm_no_mapping_" + UUID.randomUUID().toString().replace('-', '_');
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, data STRING) USING delta LOCATION '%s'", tableName, path));
+    DeltaV2Table table = new DeltaV2Table(Identifier.of(new String[] {"default"}, tableName), path);
+    for (Column column : table.columns()) {
+      assertNull(column.id(), "Expected null column id without column mapping: " + column.name());
+    }
+  }
+
+  @Test
+  public void testColumnsExposeIdsForNameMappingTable(@TempDir File tempDir) throws Exception {
+    String path = tempDir.getAbsolutePath();
+    String tableName = "cm_name_" + UUID.randomUUID().toString().replace('-', '_');
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, name STRING, value DOUBLE) USING delta "
+                + "TBLPROPERTIES ('delta.columnMapping.mode'='name') LOCATION '%s'",
+            tableName, path));
+    spark.sql(String.format("INSERT INTO %s VALUES (1, 'test', 100.0)", tableName));
+    DeltaV2Table table = new DeltaV2Table(Identifier.of(new String[] {"default"}, tableName), path);
+    for (Column column : table.columns()) {
+      assertNotNull(
+          column.id(),
+          "Expected non-null column id for name-mapping table column: " + column.name());
+      assertTrue(
+          column.id().matches("\\d+"),
+          "Column id should be a numeric string, got: " + column.id());
+    }
+  }
+
+  @Test
+  public void testColumnsExposeIdsForIdMappingTable(@TempDir File tempDir) throws Exception {
+    String path = tempDir.getAbsolutePath();
+    String tableName = "cm_id_" + UUID.randomUUID().toString().replace('-', '_');
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, name STRING, value DOUBLE) USING delta "
+                + "TBLPROPERTIES ('delta.columnMapping.mode'='id') LOCATION '%s'",
+            tableName, path));
+    spark.sql(String.format("INSERT INTO %s VALUES (1, 'test', 100.0)", tableName));
+    DeltaV2Table table = new DeltaV2Table(Identifier.of(new String[] {"default"}, tableName), path);
+    for (Column column : table.columns()) {
+      assertNotNull(
+          column.id(),
+          "Expected non-null column id for id-mapping table column: " + column.name());
+    }
+  }
+
+  @Test
+  public void testColumnIdStableAfterRename(@TempDir File tempDir) throws Exception {
+    String path = tempDir.getAbsolutePath();
+    String tableName = "cm_rename_" + UUID.randomUUID().toString().replace('-', '_');
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, old_name STRING) USING delta "
+                + "TBLPROPERTIES ('delta.columnMapping.mode'='name') LOCATION '%s'",
+            tableName, path));
+    DeltaV2Table beforeRename =
+        new DeltaV2Table(Identifier.of(new String[] {"default"}, tableName), path);
+    String oldNameColumnId =
+        Arrays.stream(beforeRename.columns())
+            .filter(c -> c.name().equals("old_name"))
+            .findFirst()
+            .orElseThrow()
+            .id();
+
+    spark.sql(String.format("ALTER TABLE %s RENAME COLUMN old_name TO new_name", tableName));
+
+    DeltaV2Table afterRename =
+        new DeltaV2Table(Identifier.of(new String[] {"default"}, tableName), path);
+    String newNameColumnId =
+        Arrays.stream(afterRename.columns())
+            .filter(c -> c.name().equals("new_name"))
+            .findFirst()
+            .orElseThrow()
+            .id();
+    assertEquals(oldNameColumnId, newNameColumnId);
   }
 
   /** Setting the option while the feature flag is off throws at construction. */
