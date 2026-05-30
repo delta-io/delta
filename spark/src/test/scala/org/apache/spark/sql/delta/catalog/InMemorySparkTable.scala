@@ -22,7 +22,7 @@ import org.apache.spark.sql.delta.SparkTableShims
 
 import org.apache.spark.sql.connector.catalog.{InMemoryRowLevelOperationTable, TableCapability}
 import org.apache.spark.sql.connector.expressions.Transform
-import org.apache.spark.sql.sources.Filter
+import org.apache.spark.sql.sources.{AlwaysTrue, Filter}
 import org.apache.spark.sql.types.StructType
 
 /**
@@ -45,8 +45,6 @@ class InMemorySparkTable(
     caps
   }
 
-  // Force DELETE to go through the SupportsRowLevelOperations path instead of
-  // the SupportsDeleteV2.deleteWhere path inherited from InMemoryTable, which
-  // only supports filtering by partition columns.
-  override def canDeleteWhere(filters: Array[Filter]): Boolean = false
+  // Keep conditional DELETE on the row-level path, but allow metadata-only unconditional DELETE.
+  override def canDeleteWhere(filters: Array[Filter]): Boolean = filters.forall(_ == AlwaysTrue)
 }

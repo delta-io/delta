@@ -330,7 +330,7 @@ trait DeltaErrorsBase
 
   def invalidConstraintName(name: String): AnalysisException = {
     new DeltaAnalysisException(
-      errorClass = "_LEGACY_ERROR_TEMP_DELTA_0001",
+      errorClass = "DELTA_INVALID_CONSTRAINT_NAME",
       messageParameters = Array(name)
     )
   }
@@ -679,6 +679,16 @@ trait DeltaErrorsBase
     new IllegalArgumentException(
       s"Two SetTransaction actions within the same transaction have the same appId ${appId} but " +
         s"different versions ${version1} and ${version2}.")
+  }
+
+  def duplicateActionCheckFailed(
+      actionType: String,
+      path: String,
+      conflictingPath: String): Throwable = {
+    new DeltaRuntimeException(
+      errorClass = "DELTA_DUPLICATE_ACTIONS_FOUND",
+      messageParameters = Array(actionType, path, conflictingPath)
+    )
   }
 
   def unexpectedChangeFilesFound(changeFiles: String): Throwable = {
@@ -1440,7 +1450,7 @@ trait DeltaErrorsBase
 
   def bloomFilterInvalidParameterValueException(message: String): Throwable = {
     new DeltaAnalysisException(
-      errorClass = "_LEGACY_ERROR_TEMP_DELTA_0002",
+      errorClass = "DELTA_BLOOM_FILTER_INVALID_PARAMETER_VALUE",
       messageParameters = Array(message)
     )
   }
@@ -1572,7 +1582,7 @@ trait DeltaErrorsBase
       m.map(e => s"${e._1}=${e._2}").mkString("[", ", ", "]")
     }
     new DeltaAnalysisException(
-      errorClass = "_LEGACY_ERROR_TEMP_DELTA_0003",
+      errorClass = "DELTA_CONVERT_METASTORE_METADATA_MISMATCH",
       messageParameters = Array(
         prettyMap(tableProperties),
         prettyMap(deltaConfiguration),
@@ -2911,7 +2921,7 @@ trait DeltaErrorsBase
       hasStep: Boolean,
       hasInsert: Boolean): Throwable = {
     new DeltaAnalysisException(
-      errorClass = "_LEGACY_ERROR_TEMP_DELTA_0006",
+      errorClass = "DELTA_IDENTITY_COLUMN_INCONSISTENT_METADATA",
       messageParameters = Array(colName, s"$hasStart", s"$hasStep", s"$hasInsert")
     )
   }
@@ -4010,7 +4020,7 @@ trait DeltaErrorsBase
   def errorFindingColumnPosition(
       columnPath: Seq[String], schema: DataType, extraErrMsg: String): Throwable = {
     new DeltaAnalysisException(
-      errorClass = "_LEGACY_ERROR_TEMP_DELTA_0008",
+      errorClass = "DELTA_ERROR_FINDING_COLUMN_POSITION",
       messageParameters = Array(
         UnresolvedAttribute(columnPath).name, dataTypeToString(schema), extraErrMsg))
   }

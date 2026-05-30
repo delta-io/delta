@@ -22,6 +22,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.CommitFailedException;
 import io.delta.storage.commit.CoordinatedCommitsUtils;
+import io.delta.storage.commit.UCDeltaGetCommitsResponse;
 import io.delta.storage.commit.GetCommitsResponse;
 import io.delta.storage.commit.TableIdentifier;
 import io.delta.storage.commit.actions.AbstractDomainMetadata;
@@ -95,6 +96,7 @@ import org.apache.hadoop.fs.Path;
  */
 public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
 
+  private static final int HTTP_BAD_REQUEST = 400;
   private static final int HTTP_CONFLICT = 409;
   private static final int HTTP_NOT_FOUND = 404;
 
@@ -215,9 +217,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   private Map<String, String> fetchStagingCredentials(String location, String tableId)
       throws ApiException {
     try {
-      // TODO: move to the new staging table only endpoint once it's ready
-      return newCredBuilder(schemeOf(location))
-          .buildForTable(tableId, TableOperation.READ_WRITE);
+      return newCredBuilder(schemeOf(location)).buildForStagingTable(tableId, location);
     } catch (IllegalArgumentException | NullPointerException missingCred) {
       // The legacy buildForTable(tableId, op) path consumes AwsCredentials fields without
       // validating; missing creds in the response surface as NPE rather than the typed error
@@ -367,7 +367,9 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
 
     long latestTableVersion = response.getLatestTableVersion() != null
         ? response.getLatestTableVersion() : -1L;
-    return new GetCommitsResponse(commits, latestTableVersion);
+    Optional<io.delta.storage.commit.uniform.UniformMetadata> storageUniform =
+        toStorageUniformMetadata(response.getUniform());
+    return new UCDeltaGetCommitsResponse(commits, latestTableVersion, storageUniform);
   }
 
   /** Converts a UC SDK {@link DeltaCommit} to a Delta {@link Commit}. */
@@ -872,6 +874,13 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     String responseBody = e.getResponseBody();
 
     switch (statusCode) {
+      case HTTP_BAD_REQUEST:
+        throw new CommitFailedException(
+            false /* retryable */,
+            false /* conflict */,
+            String.format("Invalid updateTable request for %s.%s.%s: %s",
+                catalog, schema, table, responseBody),
+            e);
       case HTTP_CONFLICT:
         throw new CommitFailedException(
             true /* retryable */,

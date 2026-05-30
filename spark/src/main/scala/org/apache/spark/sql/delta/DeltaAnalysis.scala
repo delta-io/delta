@@ -705,6 +705,8 @@ class DeltaAnalysis(protected val session: SparkSession)
 
     case origStreamWrite: WriteToStream =>
       // The command could have Delta as source and/or sink. We need to look at both.
+      // Use field access rather than positional destructuring because WriteToStream's
+      // constructor signature differs across Spark versions.
       val streamWrite = (origStreamWrite.sink, origStreamWrite.catalogTable) match {
         case (sink @ DeltaSink(_, _, _, _, _, None), Some(ct)) =>
           // The command has a catalog table, but the DeltaSink does not. This happens because

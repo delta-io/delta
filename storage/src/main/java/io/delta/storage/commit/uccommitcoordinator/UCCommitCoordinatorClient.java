@@ -73,12 +73,6 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
   /** Key used to identify the write version in protocol communications with the UC server. */
   private static final String WRITE_VERSION_KEY = "writeVersion";
 
-  /**
-   * Temporary kill switch for sending metadata updates through UC from the Spark path.
-   * TODO(issue #6296): remove once metadata updates are supported end-to-end.
-   */
-  private static final boolean SHOULD_PASS_METADATA_TO_UC = false;
-
   // Unity Catalog Identifiers
   /**
    * Key for identifying Unity Catalog table ID in `delta.coordinatedCommits.tableConf{-preview}`.
@@ -446,24 +440,18 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       "timeSpentInGettingLastKnownBackfilledVersion",
       timeSpentInGettingLastKnownBackfilledVersion);
 
-    // SHOULD_PASS_METADATA_TO_UC gates metadata and protocol
-    // (same UC server-side rollout).
     boolean metadataChanged =
         updatedActions.getNewMetadata() != updatedActions.getOldMetadata();
     boolean protocolChanged =
         updatedActions.getNewProtocol() != updatedActions.getOldProtocol();
     Optional<AbstractMetadata> oldMetadata =
-        optionalIf(SHOULD_PASS_METADATA_TO_UC && metadataChanged,
-            updatedActions.getOldMetadata());
+        optionalIf(metadataChanged, updatedActions.getOldMetadata());
     Optional<AbstractMetadata> newMetadata =
-        optionalIf(SHOULD_PASS_METADATA_TO_UC && metadataChanged,
-            updatedActions.getNewMetadata());
+        optionalIf(metadataChanged, updatedActions.getNewMetadata());
     Optional<AbstractProtocol> oldProtocol =
-        optionalIf(SHOULD_PASS_METADATA_TO_UC && protocolChanged,
-            updatedActions.getOldProtocol());
+        optionalIf(protocolChanged, updatedActions.getOldProtocol());
     Optional<AbstractProtocol> newProtocol =
-        optionalIf(SHOULD_PASS_METADATA_TO_UC && protocolChanged,
-            updatedActions.getNewProtocol());
+        optionalIf(protocolChanged, updatedActions.getNewProtocol());
 
     int transientErrorRetryCount = 0;
     while (transientErrorRetryCount <= MAX_RETRIES_ON_TRANSIENT_ERROR) {
@@ -836,13 +824,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       Optional.ofNullable(startVersion),
       Optional.ofNullable(endVersion));
     // Sort by version just in case commits in the response from UC aren't sorted.
-    List<Commit> sortedCommits =
-      resp
-        .getCommits()
-        .stream()
-        .sorted(Comparator.comparingLong(Commit::getVersion))
-        .collect(Collectors.toList());
-    return new GetCommitsResponse(sortedCommits, resp.getLatestTableVersion());
+    return resp.sortCommitsByVersion();
   }
 
   protected GetCommitsResponse getCommitsFromUCImpl(
