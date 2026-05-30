@@ -269,8 +269,13 @@ trait DeltaTableRefreshTestBase extends DeltaTableRefreshSharedBase {
       f: => Unit): Unit = {
     // strictConnect is never true for classic; provided for symmetry.
     val exception = intercept[Exception] { f }
-    assert(exception.asInstanceOf[org.apache.spark.SparkThrowable].getCondition == condition)
-    assert(exception.getMessage.contains(messageContains))
+    assert(exception.isInstanceOf[org.apache.spark.SparkThrowable],
+      s"Expected a SparkThrowable but got ${exception.getClass.getName}: ${exception.getMessage}")
+    val throwable = exception.asInstanceOf[org.apache.spark.SparkThrowable]
+    assert(throwable.getCondition == condition,
+      s"Expected error condition '$condition' but got '${throwable.getCondition}': ${exception.getMessage}")
+    assert(exception.getMessage.contains(messageContains),
+      s"Expected message to contain '$messageContains' but was: ${exception.getMessage}")
   }
 
   override protected def assertExternalStrictConflict(f: => Unit): Unit = {

@@ -260,6 +260,8 @@ trait DeltaTableRefreshConnectTestBase extends DeltaTableRefreshSharedBase {
   override protected def assertError(condition: String, messageContains: String)(
       f: => Unit): Unit = {
     val exception = intercept[Exception] { f }
+    assert(exception.isInstanceOf[SparkThrowable],
+      s"Expected a SparkThrowable but got ${exception.getClass.getName}: ${exception.getMessage}")
     val throwable = exception.asInstanceOf[SparkThrowable]
     assert(throwable.getCondition == condition,
       s"Expected error class '$condition' but got '${throwable.getCondition}': ${exception.getMessage}")
@@ -268,8 +270,10 @@ trait DeltaTableRefreshConnectTestBase extends DeltaTableRefreshSharedBase {
   }
 
   override protected def assertExternalStrictConflict(f: => Unit): Unit = {
-    // Only invoked from classic branches; Connect never reaches this path.
-    try f catch { case _: Throwable => () }
+    // Only invoked from classic STRICT branches; Connect never reaches this path because the
+    // shared traits gate the call behind !isConnect. Fail loudly if the wiring ever changes
+    // rather than silently swallowing the outcome.
+    fail("assertExternalStrictConflict should never be invoked on Connect")
   }
 
   override protected def withRefreshTable(body: String => Unit): Unit = {

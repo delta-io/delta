@@ -232,7 +232,7 @@ lazy val connectClient = (project in file("spark-connect/client"))
       if (!distributionDir.exists()) {
         IO.createDirectory(jarsDir)
         // Create symlinks for all dependencies (filter to only JAR files)
-        (serverClassPath.map(_.data).distinct.filter(_.isFile) ++ kernelJars).foreach { jarFile =>
+        (serverClassPath.map(_.data).filter(_.isFile) ++ kernelJars).distinct.foreach { jarFile =>
           val linkedJarFile = jarsDir / jarFile.getName
           if (!java.nio.file.Files.exists(linkedJarFile.toPath)) {
             Files.createSymbolicLink(linkedJarFile.toPath, jarFile.toPath)

@@ -133,7 +133,7 @@ class DeltaTableRefreshAndPinningStrictModeSuite
       try {
         testFun
       } catch {
-        case e: Throwable =>
+        case scala.util.control.NonFatal(e) =>
           cancel(s"STRICT mode V2 catalog limitation: ${e.getMessage}")
       }
     }(pos)
@@ -168,7 +168,7 @@ class DeltaTableRefreshAndPinningStrictModeExternalSessionSuite
       try {
         testFun
       } catch {
-        case e: Throwable =>
+        case scala.util.control.NonFatal(e) =>
           cancel(s"STRICT + external session V2 catalog limitation: ${e.getMessage}")
       }
     }(pos)
