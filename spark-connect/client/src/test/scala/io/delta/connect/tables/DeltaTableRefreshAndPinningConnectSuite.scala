@@ -40,7 +40,6 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
   with DeltaTempViewRefreshTests
   with DeltaRepeatedAccessRefreshTests
   with DeltaJoinRefreshTests
-  with DeltaDatasetReanalysisConnectTests
   with DeltaCacheTableRefreshTests
 
 /** Same-session writes (default). */

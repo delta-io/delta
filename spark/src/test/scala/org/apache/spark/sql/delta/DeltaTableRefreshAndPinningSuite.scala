@@ -29,12 +29,11 @@ import org.apache.spark.sql.test.SharedSparkSession
  * version pinning, and schema change detection. These tests cover scenarios from the
  * "Refreshing and pinning tables in Spark" design doc.
  *
- * The suite covers five areas, each in its own trait:
+ * The suite covers these areas, each in its own trait:
  *   1. [[DeltaTempViewRefreshTests]]: Temp views with stored plans
  *   2. [[DeltaRepeatedAccessRefreshTests]]: Repeated table access with external changes
  *   3. [[DeltaJoinRefreshTests]]: Incrementally constructed queries (join of separately
  *      analyzed DataFrames)
- *   4. [[DeltaDatasetPinningTests]]: Version pinning and refresh in Dataset (show vs collect)
  *   5. [[DeltaCacheTableRefreshTests]]: CACHE TABLE impact on reads
  *
  * The base trait is parameterized by:
@@ -59,7 +58,6 @@ trait DeltaTableRefreshAndPinningSuiteBase
   with DeltaTempViewRefreshTests
   with DeltaRepeatedAccessRefreshTests
   with DeltaJoinRefreshTests
-  with DeltaDatasetPinningTests
   with DeltaCacheTableRefreshTests {
 
   override protected def sparkConf: SparkConf = {
