@@ -264,7 +264,8 @@ trait DeltaTableRefreshConnectTestBase extends DeltaTableRefreshSharedBase {
       s"Expected a SparkThrowable but got ${exception.getClass.getName}: ${exception.getMessage}")
     val throwable = exception.asInstanceOf[SparkThrowable]
     assert(throwable.getCondition == condition,
-      s"Expected error class '$condition' but got '${throwable.getCondition}': ${exception.getMessage}")
+      s"Expected error class '$condition' but got '${throwable.getCondition}': " +
+        s"${exception.getMessage}")
     assert(exception.getMessage.contains(messageContains),
       s"Expected message to contain '$messageContains' but was: ${exception.getMessage}")
   }
