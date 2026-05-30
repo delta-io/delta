@@ -16,7 +16,9 @@
 
 package io.delta.tables
 
-import org.apache.spark.{SparkException, SparkThrowable}
+import io.delta.tables.shared.{DeltaCacheTableRefreshTests, DeltaJoinRefreshTests, DeltaRepeatedAccessRefreshTests, DeltaTempViewRefreshTests}
+
+import org.apache.spark.SparkException
 import org.apache.spark.sql.test.DeltaQueryTest
 
 /**
@@ -35,11 +37,11 @@ import org.apache.spark.sql.test.DeltaQueryTest
 trait DeltaTableRefreshAndPinningConnectSuiteBase
   extends DeltaQueryTest with RemoteSparkSession
   with DeltaTableRefreshConnectTestBase
-  with DeltaTempViewRefreshConnectTests
-  with DeltaRepeatedAccessRefreshConnectTests
-  with DeltaJoinRefreshConnectTests
+  with DeltaTempViewRefreshTests
+  with DeltaRepeatedAccessRefreshTests
+  with DeltaJoinRefreshTests
   with DeltaDatasetReanalysisConnectTests
-  with DeltaCacheTableRefreshConnectTests
+  with DeltaCacheTableRefreshTests
 
 /** Same-session writes (default). */
 class DeltaTableRefreshAndPinningConnectSuite

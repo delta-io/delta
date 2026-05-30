@@ -16,14 +16,15 @@
 
 package org.apache.spark.sql.delta
 
+import io.delta.tables.shared.DeltaTableRefreshSharedBase
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata => DeltaMetadata}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 
-import org.apache.spark.sql.{DataFrame, QueryTest}
+import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.{DataType, IntegerType, MetadataBuilder, StringType, StructField, StructType}
+import org.apache.spark.sql.types.{DataType, IntegerType, LongType, MetadataBuilder, StringType, StructField, StructType}
 import org.apache.spark.util.Utils
 
 /**
@@ -38,13 +39,15 @@ import org.apache.spark.util.Utils
  *   - [[DeltaDatasetPinningTests]] (Section [4])
  *   - [[DeltaCacheTableRefreshTests]] (Section [5])
  */
-trait DeltaTableRefreshTestBase {
+trait DeltaTableRefreshTestBase extends DeltaTableRefreshSharedBase {
   self: QueryTest with SharedSparkSession with DeltaSQLCommandTest =>
 
   import testImplicits._
 
+  override def isConnect: Boolean = false
+
   /** Override in subclasses to set the V2 enable mode. */
-  protected def v2EnableMode: String = "NONE"
+  override protected def v2EnableMode: String = "NONE"
 
   /**
    * Override in subclasses to use spark.newSession() for writes. Note that in a single JVM,
@@ -63,21 +66,21 @@ trait DeltaTableRefreshTestBase {
   }
 
   /** Execute SQL using the writer session. */
-  protected def writerSql(sqlText: String): Unit = {
+  override protected def writerSql(sqlText: String): Unit = {
     writerSession.sql(sqlText)
   }
 
-  protected def createSimpleTable(tableName: String): Unit = {
+  override protected def createSimpleTable(tableName: String): Unit = {
     sql(s"CREATE TABLE $tableName (id INT, salary INT) USING delta")
   }
 
-  protected def createColumnMappingTable(tableName: String): Unit = {
+  override protected def createColumnMappingTable(tableName: String): Unit = {
     sql(
       s"""CREATE TABLE $tableName (id INT, salary INT) USING delta
          |TBLPROPERTIES ('delta.columnMapping.mode' = 'name')""".stripMargin)
   }
 
-  protected def insertInitialData(tableName: String): Unit = {
+  override protected def insertInitialData(tableName: String): Unit = {
     sql(s"INSERT INTO $tableName VALUES (1, 100)")
   }
 
@@ -221,5 +224,99 @@ trait DeltaTableRefreshTestBase {
         s"col-ext-${java.util.UUID.randomUUID().toString.take(8)}")
       .build()
     StructField(name, dataType, nullable, meta)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Shared base hook implementations (classic). Error assertions use Spark's
+  // checkError; external writes use the LogStore based helpers above.
+  // ---------------------------------------------------------------------------
+
+  override protected def assertSchemaChangeError(f: => Unit): Unit = {
+    checkError(
+      exception = intercept[DeltaAnalysisException] { f },
+      condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
+      parameters = Map("schemaDiff" -> "(?s).*", "legacyFlagMessage" -> ""),
+      matchPVals = true)
+  }
+
+  override protected def assertAmbiguousColumnError(f: => Unit): Unit = {
+    // Only invoked from connect branches; classic never reaches this path.
+    checkError(
+      exception = intercept[AnalysisException] { f },
+      condition = "AMBIGUOUS_COLUMN_OR_FIELD",
+      parameters = Map("name" -> ".*", "n" -> ".*"),
+      matchPVals = true)
+  }
+
+  override protected def assertArityMismatchError(f: => Unit): Unit = {
+    checkError(
+      exception = intercept[AnalysisException] { f },
+      condition = "INSERT_COLUMN_ARITY_MISMATCH.TOO_MANY_DATA_COLUMNS",
+      parameters = Map("tableName" -> ".*", "tableColumns" -> ".*",
+        "dataColumns" -> ".*", "reason" -> ".*"),
+      matchPVals = true)
+  }
+
+  override protected def assertExternalStrictConflict(f: => Unit): Unit = {
+    val exception = intercept[java.nio.file.FileAlreadyExistsException] { f }
+    assert(exception.getMessage != null)
+  }
+
+  override protected def withRefreshTable(body: String => Unit): Unit = {
+    withTable("t") { body("t") }
+  }
+
+  override protected def externalDataWrite(tableRef: String, rows: Seq[(Int, Int)]): Unit = {
+    writeExternalCommit(tableRef, rows.toDF("id", "salary"))
+  }
+
+  override protected def externalDataWriteWide(
+      tableRef: String, rows: Seq[(Int, Int, Int)]): Unit = {
+    writeExternalCommit(tableRef, rows.toDF("id", "salary", "new_column"))
+  }
+
+  override protected def externalAddColumnAndWrite(
+      tableRef: String, rows: Seq[(Int, Int, Int)]): Unit = {
+    val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableRef))
+    val newSchema = deltaLog.snapshot.metadata.schema
+      .add("new_column", IntegerType, nullable = true)
+    val newMetadata = deltaLog.snapshot.metadata.copy(schemaString = newSchema.json)
+    writeExternalCommit(
+      tableRef, rows.toDF("id", "salary", "new_column"), newMetadata = Some(newMetadata))
+  }
+
+  override protected def externalDropColumn(tableRef: String, column: String): Unit = {
+    val currentMetadata = DeltaLog.forTable(spark, TableIdentifier(tableRef)).snapshot.metadata
+    val newSchema = StructType(currentMetadata.schema.fields.filterNot(_.name == column))
+    writeExternalMetadataOnlyCommit(tableRef, currentMetadata.copy(schemaString = newSchema.json))
+  }
+
+  override protected def externalDropAndRecreate(
+      tableRef: String, columnMapping: Boolean): Unit = {
+    writeExternalDropAndRecreateCommit(tableRef, columnMapping = columnMapping)
+  }
+
+  override protected def externalReplaceColumn(
+      tableRef: String, column: String, newType: Option[String]): Unit = {
+    val resolvedType: DataType = newType.map(_.toLowerCase(java.util.Locale.ROOT)) match {
+      case Some("string") => StringType
+      case Some("long") | Some("bigint") => LongType
+      case _ => IntegerType
+    }
+    val currentMetadata = DeltaLog.forTable(spark, TableIdentifier(tableRef)).snapshot.metadata
+    val newColumnId = currentMetadata.columnMappingMaxId + 1
+    val newFields = currentMetadata.schema.fields.map { field =>
+      if (field.name == column) {
+        buildColumnMappingField(
+          name = column, dataType = resolvedType, nullable = true, columnId = newColumnId)
+      } else {
+        field
+      }
+    }
+    val newMetadata = currentMetadata.copy(
+      schemaString = StructType(newFields).json,
+      configuration = currentMetadata.configuration +
+        (DeltaConfigs.COLUMN_MAPPING_MAX_ID.key -> newColumnId.toString))
+    writeExternalMetadataOnlyCommit(tableRef, newMetadata)
   }
 }

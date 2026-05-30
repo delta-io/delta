@@ -20,10 +20,10 @@ import java.io.File
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Paths}
 
+import io.delta.tables.shared.DeltaTableRefreshSharedBase
+
 import org.apache.spark.{SparkException, SparkThrowable}
 import org.apache.spark.sql.AnalysisException
-import org.apache.spark.sql.Row
-import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.test.DeltaQueryTest
 
 /**
@@ -39,7 +39,10 @@ import org.apache.spark.sql.test.DeltaQueryTest
  * These tests document the "OSS Delta (connect)" column from the
  * "Refreshing and pinning tables in Spark" design doc.
  */
-trait DeltaTableRefreshConnectTestBase { self: DeltaQueryTest with RemoteSparkSession =>
+trait DeltaTableRefreshConnectTestBase extends DeltaTableRefreshSharedBase {
+  self: DeltaQueryTest with RemoteSparkSession =>
+
+  override def isConnect: Boolean = true
 
   /**
    * Override in subclasses to use spark.newSession() for writes. In Connect, newSession()
@@ -64,7 +67,7 @@ trait DeltaTableRefreshConnectTestBase { self: DeltaQueryTest with RemoteSparkSe
   }
 
   /** Spark 4.2+ fixes AMBIGUOUS_COLUMN_OR_FIELD for self-joins without aliases. */
-  protected lazy val ambiguousColumnFixed: Boolean = spark.version >= "4.2"
+  override protected lazy val ambiguousColumnFixed: Boolean = spark.version >= "4.2"
 
   protected def useExternalSession: Boolean = false
 
@@ -74,21 +77,21 @@ trait DeltaTableRefreshConnectTestBase { self: DeltaQueryTest with RemoteSparkSe
   }
 
   /** Execute SQL using the writer session. */
-  protected def writerSql(sqlText: String): Unit = {
+  override protected def writerSql(sqlText: String): Unit = {
     writerSession.sql(sqlText)
   }
 
-  protected def createSimpleTable(tableName: String): Unit = {
+  override protected def createSimpleTable(tableName: String): Unit = {
     spark.sql(s"CREATE TABLE $tableName (id INT, salary INT) USING delta")
   }
 
-  protected def createColumnMappingTable(tableName: String): Unit = {
+  override protected def createColumnMappingTable(tableName: String): Unit = {
     spark.sql(
       s"""CREATE TABLE $tableName (id INT, salary INT) USING delta
          |TBLPROPERTIES ('delta.columnMapping.mode' = 'name')""".stripMargin)
   }
 
-  protected def insertInitialData(tableName: String): Unit = {
+  override protected def insertInitialData(tableName: String): Unit = {
     spark.sql(s"INSERT INTO $tableName VALUES (1, 100)")
   }
 
@@ -411,5 +414,74 @@ trait DeltaTableRefreshConnectTestBase { self: DeltaQueryTest with RemoteSparkSe
 
     val commitFile = new File(deltaLogDir, f"${currentVersion + 1}%020d.json")
     Files.write(commitFile.toPath, newMetadataLine.getBytes(StandardCharsets.UTF_8))
+  }
+
+  // ---------------------------------------------------------------------------
+  // Shared base hook implementations (connect). Error assertions delegate to the
+  // substring tolerant checkError above; external writes use the filesystem helpers.
+  // ---------------------------------------------------------------------------
+
+  /** Extracts the filesystem path from a delta path table reference (delta.`<path>`). */
+  private def pathOf(tableRef: String): String =
+    tableRef.stripPrefix("delta.`").stripSuffix("`")
+
+  override protected def assertSchemaChangeError(f: => Unit): Unit = {
+    checkError(
+      exception = intercept[SparkException] { f },
+      condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS")
+  }
+
+  override protected def assertAmbiguousColumnError(f: => Unit): Unit = {
+    checkError(
+      exception = intercept[AnalysisException] { f },
+      condition = "AMBIGUOUS_COLUMN_OR_FIELD")
+  }
+
+  override protected def assertArityMismatchError(f: => Unit): Unit = {
+    // Not reached in Connect (STRICT is handled at the suite level), provided for symmetry.
+    checkError(
+      exception = intercept[AnalysisException] { f },
+      condition = "INSERT_COLUMN_ARITY_MISMATCH")
+  }
+
+  override protected def assertExternalStrictConflict(f: => Unit): Unit = {
+    // Only invoked from classic branches; Connect never reaches this path.
+    try f catch { case _: Throwable => () }
+  }
+
+  override protected def withRefreshTable(body: String => Unit): Unit = {
+    withTempPath { dir => body(s"delta.`${dir.getAbsolutePath}`") }
+  }
+
+  override protected def externalDataWrite(tableRef: String, rows: Seq[(Int, Int)]): Unit = {
+    writeExternalCommitViaFilesystem(pathOf(tableRef), rows)
+  }
+
+  override protected def externalDataWriteWide(
+      tableRef: String, rows: Seq[(Int, Int, Int)]): Unit = {
+    writeExternalSchemaChangeCommitViaFilesystem(pathOf(tableRef), rows)
+  }
+
+  override protected def externalAddColumnAndWrite(
+      tableRef: String, rows: Seq[(Int, Int, Int)]): Unit = {
+    writeExternalSchemaChangeCommitViaFilesystem(pathOf(tableRef), rows)
+  }
+
+  override protected def externalDropColumn(tableRef: String, column: String): Unit = {
+    writeExternalDropColumnViaFilesystem(pathOf(tableRef), column)
+  }
+
+  override protected def externalDropAndRecreate(
+      tableRef: String, columnMapping: Boolean): Unit = {
+    if (columnMapping) {
+      writeExternalDropAndRecreateColumnMappingViaFilesystem(pathOf(tableRef))
+    } else {
+      writeExternalDropAndRecreateViaFilesystem(pathOf(tableRef))
+    }
+  }
+
+  override protected def externalReplaceColumn(
+      tableRef: String, column: String, newType: Option[String]): Unit = {
+    writeExternalReplaceColumnViaFilesystem(pathOf(tableRef), column, newType = newType)
   }
 }
