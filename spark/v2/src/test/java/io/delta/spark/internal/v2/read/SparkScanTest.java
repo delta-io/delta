@@ -197,7 +197,7 @@ public class SparkScanTest extends DeltaV2TestBase {
     StructType prunedSchema =
         new StructType()
             .add("name", DataTypes.StringType)
-            .add("_metadata", new StructType())
+            .add("_metadata", new StructType().add("file_path", DataTypes.StringType))
             .add("date", DataTypes.StringType)
             .add("city", DataTypes.StringType)
             .add("part", DataTypes.IntegerType);

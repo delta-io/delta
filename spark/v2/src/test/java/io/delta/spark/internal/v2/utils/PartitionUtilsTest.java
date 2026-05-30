@@ -30,17 +30,26 @@ import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.read.CDCDataFile;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
+import org.apache.spark.paths.SparkPath;
 import org.apache.spark.sql.catalyst.InternalRow;
+import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.delta.DeltaParquetFileFormat;
 import org.apache.spark.sql.delta.RowIndexFilterType;
 import org.apache.spark.sql.delta.commands.cdc.CDCReader;
+import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
@@ -404,6 +413,106 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
     assertEquals(1, partitionedFile.partitionValues().numFields());
   }
 
+  /**
+   * Verifies that Spark {@code _metadata} base fields for a Kernel-built {@link PartitionedFile}
+   * align with Delta {@link AddFile} plus table root: path/name via the same {@code Path} + {@link
+   * SparkPath#fromUrlString} rule as {@link PartitionUtils#buildPartitionedFile}, and size/block
+   * bounds/mtime from the AddFile when using whole-file splits (start=0, length=size).
+   */
+  @Test
+  public void testBuildPartitionedFile_OneShotMetadataBaseFieldsFromAddFile() throws Exception {
+    String tablePath = createTestTable("test_one_shot_metadata_" + System.nanoTime(), true);
+    Table table = Table.forPath(defaultEngine, tablePath);
+    Scan scan = table.getLatestSnapshot(defaultEngine).getScanBuilder().build();
+    FilteredColumnarBatch batch = scan.getScanFiles(defaultEngine).next();
+    CloseableIterator<Row> rows = batch.getRows();
+    AddFile addFile = new AddFile(rows.next().getStruct(0));
+    rows.close();
+
+    StructType partitionSchema =
+        new StructType(
+            new StructField[] {DataTypes.createStructField("part", DataTypes.StringType, true)});
+    String normalizedTablePath = tablePath.endsWith("/") ? tablePath : tablePath + "/";
+    PartitionedFile pf =
+        PartitionUtils.buildPartitionedFile(
+            addFile, partitionSchema, normalizedTablePath, ZoneId.of("UTC"));
+
+    SparkPath reconstructed =
+        SparkPath.fromUrlString(new Path(normalizedTablePath, addFile.getPath()).toString());
+
+    PartitionedFile referenceFile =
+        new PartitionedFile(
+            pf.partitionValues(),
+            reconstructed,
+            pf.start(),
+            pf.length(),
+            pf.locations(),
+            pf.modificationTime(),
+            pf.fileSize(),
+            pf.otherConstantMetadataColumnValues());
+    assertEquals(
+        FileFormat$.MODULE$
+            .BASE_METADATA_EXTRACTORS()
+            .apply(FileFormat$.MODULE$.FILE_PATH())
+            .apply(referenceFile),
+        FileFormat$.MODULE$
+            .BASE_METADATA_EXTRACTORS()
+            .apply(FileFormat$.MODULE$.FILE_PATH())
+            .apply(pf),
+        "_metadata.file_path: AddFile.path + tablePath (same as buildPartitionedFile) must match");
+    assertEquals(
+        FileFormat$.MODULE$
+            .BASE_METADATA_EXTRACTORS()
+            .apply(FileFormat$.MODULE$.FILE_NAME())
+            .apply(referenceFile),
+        FileFormat$.MODULE$
+            .BASE_METADATA_EXTRACTORS()
+            .apply(FileFormat$.MODULE$.FILE_NAME())
+            .apply(pf),
+        "_metadata.file_name: must match name derived from the same combined path");
+
+    assertEquals(0L, pf.start());
+    assertEquals(addFile.getSize(), pf.length());
+    assertEquals(addFile.getSize(), pf.fileSize());
+    assertEquals(addFile.getModificationTime(), pf.modificationTime());
+  }
+
+  /**
+   * Table root containing spaces: {@link PartitionUtils#buildPartitionedFile} still builds a {@link
+   * SparkPath} string from {@code Path(table, addFile.path)}. The url-encoded form must match a
+   * direct {@code Path(table, addFile.path)} reconstruction.
+   */
+  @Test
+  public void testBuildPartitionedFile_SpaceInTableDirectory_PathStringMatchesReconstruction()
+      throws Exception {
+    String unique = "meta_space_" + System.nanoTime();
+    java.nio.file.Path parent =
+        Paths.get(System.getProperty("java.io.tmpdir"), "delta test dir " + unique);
+    Files.createDirectories(parent);
+    String tablePath = parent.resolve("tbl").toString();
+    spark.range(5).write().format("delta").save(tablePath);
+
+    Table table = Table.forPath(defaultEngine, tablePath);
+    Scan scan = table.getLatestSnapshot(defaultEngine).getScanBuilder().build();
+    FilteredColumnarBatch batch = scan.getScanFiles(defaultEngine).next();
+    CloseableIterator<Row> rows = batch.getRows();
+    AddFile addFile = new AddFile(rows.next().getStruct(0));
+    rows.close();
+
+    StructType partitionSchema = new StructType(new StructField[0]);
+    String normalizedTablePath = tablePath.endsWith("/") ? tablePath : tablePath + "/";
+    PartitionedFile pf =
+        PartitionUtils.buildPartitionedFile(
+            addFile, partitionSchema, normalizedTablePath, ZoneId.of("UTC"));
+
+    SparkPath reconstructed =
+        SparkPath.fromUrlString(new Path(normalizedTablePath, addFile.getPath()).toString());
+    assertEquals(
+        reconstructed.urlEncoded(),
+        pf.filePath().urlEncoded(),
+        "One-shot path string from AddFile + table root matches PartitionedFile.filePath");
+  }
+
   @Test
   public void testDdlOrderedOutputSchema_PartitionInMiddleInterleavedAtDdlPosition() {
     String tablePath = getTempTablePath("ddl_order_middle_" + System.nanoTime());
@@ -642,5 +751,42 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
     assertFalse(
         metadata.containsKey(DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_ID_ENCODED()),
         "No filter metadata expected when AddFile has no DV");
+  }
+
+  @Test
+  public void testPlanInputPartitions_EmptyFiles() {
+    // An empty file list must return an empty array without throwing.
+    List<PartitionedFile> files = new ArrayList<>();
+    Configuration hadoopConf = new Configuration();
+    SQLConf sqlConf = SQLConf.get();
+    InputPartition[] partitions =
+        PartitionUtils.planInputPartitions(spark, files, 0L, hadoopConf, sqlConf);
+    assertNotNull(partitions, "Result must not be null for empty input");
+    assertEquals(0, partitions.length, "Result must be empty for empty file list");
+  }
+
+  /** Returns all PartitionedFiles for the files in the given Delta table path. */
+  private List<PartitionedFile> getAllPartitionedFiles(String tablePath) throws IOException {
+    Table table = Table.forPath(defaultEngine, tablePath);
+    Snapshot snapshot = table.getLatestSnapshot(defaultEngine);
+    Scan scan = snapshot.getScanBuilder().build();
+    StructType emptyPartitionSchema = new StructType(new StructField[0]);
+    String normalizedPath = tablePath.endsWith("/") ? tablePath : tablePath + "/";
+
+    List<PartitionedFile> files = new ArrayList<>();
+    try (CloseableIterator<FilteredColumnarBatch> scanFiles = scan.getScanFiles(defaultEngine)) {
+      while (scanFiles.hasNext()) {
+        FilteredColumnarBatch batch = scanFiles.next();
+        try (CloseableIterator<io.delta.kernel.data.Row> rows = batch.getRows()) {
+          while (rows.hasNext()) {
+            AddFile addFile = new AddFile(rows.next().getStruct(0));
+            files.add(
+                PartitionUtils.buildPartitionedFile(
+                    addFile, emptyPartitionSchema, normalizedPath, ZoneId.of("UTC")));
+          }
+        }
+      }
+    }
+    return files;
   }
 }
