@@ -35,6 +35,7 @@ export default defineConfig({
     "/delta-spark-connect.html": "/delta-spark-connect",
     "/delta-storage.html": "/delta-storage",
     "/delta-type-widening.html": "/delta-type-widening",
+    "/delta-data-types.html": "/delta-data-types",
     "/delta-uniform.html": "/delta-uniform",
     "/delta-sharing.html": "/delta-sharing",
     "/concurrency-control.html": "/concurrency-control",
@@ -138,6 +139,9 @@ export default defineConfig({
             },
             {
               slug: "delta-type-widening",
+            },
+            {
+              slug: "delta-data-types",
             },
             {
               slug: "delta-uniform",
