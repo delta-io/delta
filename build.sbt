@@ -220,17 +220,22 @@ lazy val connectClient = (project in file("spark-connect/client"))
     (Test / javaOptions) += {
       // Create a (mini) Spark Distribution based on the server classpath.
       val serverClassPath = (connectServer / Compile / fullClasspath).value
+      // The Delta Kernel modules surface on the server classpath as class directories (not jars),
+      // so the jars/* server classpath does not pick them up. They are required for V2/STRICT mode
+      // (io.delta.kernel.defaults.engine.DefaultEngine), so add their packaged jars explicitly.
+      val kernelJars = Seq(
+        (kernelApi / Compile / packageBin).value,
+        (kernelDefaults / Compile / packageBin).value)
       val distributionDir = crossTarget.value / "test-dist"
       val jarsDir = distributionDir / "jars"
 
       if (!distributionDir.exists()) {
         IO.createDirectory(jarsDir)
         // Create symlinks for all dependencies (filter to only JAR files)
-        serverClassPath.distinct.filter(_.data.isFile).foreach { entry =>
-          val jarFile = entry.data.toPath
-          val linkedJarFile = jarsDir / entry.data.getName
+        (serverClassPath.map(_.data).distinct.filter(_.isFile) ++ kernelJars).foreach { jarFile =>
+          val linkedJarFile = jarsDir / jarFile.getName
           if (!java.nio.file.Files.exists(linkedJarFile.toPath)) {
-            Files.createSymbolicLink(linkedJarFile.toPath, jarFile)
+            Files.createSymbolicLink(linkedJarFile.toPath, jarFile.toPath)
           }
         }
         // Create a symlink for the log4j properties

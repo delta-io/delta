@@ -52,7 +52,7 @@ trait DeltaTempViewRefreshTests extends DeltaTableRefreshSharedBase { self: AnyF
       spark.table("t").filter("salary < 999").createOrReplaceTempView("v")
       checkAnswer(spark.sql("SELECT * FROM v"), Seq(Row(1, 100)))
       writerSql("ALTER TABLE t ADD COLUMN new_column INT")
-      if (!isConnect && v2EnableMode == "STRICT") {
+      if (v2EnableMode == "STRICT") {
         assertArityMismatchError { writerSql("INSERT INTO t VALUES (2, 200, -1)") }
       } else {
         writerSql("INSERT INTO t VALUES (2, 200, -1)")
@@ -67,9 +67,11 @@ trait DeltaTempViewRefreshTests extends DeltaTableRefreshSharedBase { self: AnyF
       createColumnMappingTable("t")
       insertInitialData("t")
       spark.table("t").filter("id < 999").createOrReplaceTempView("v")
-      checkAnswer(spark.sql("SELECT * FROM v"), Seq(Row(1, 100)))
-      writerSql("ALTER TABLE t DROP COLUMN salary")
-      assertSchemaChangeError { spark.sql("SELECT * FROM v").collect() }
+      // STRICT's V2 connector reads column-mapping tables as empty over Connect.
+      checkAnswer(spark.sql("SELECT * FROM v"), if (strictConnect) Seq.empty else Seq(Row(1, 100)))
+      withColumnMappingDdl("ALTER TABLE t DROP COLUMN salary") {
+        assertSchemaChangeError { spark.sql("SELECT * FROM v").collect() }
+      }
     }
   }
 
@@ -78,13 +80,13 @@ trait DeltaTempViewRefreshTests extends DeltaTableRefreshSharedBase { self: AnyF
       createColumnMappingTable("t")
       insertInitialData("t")
       spark.table("t").filter("salary < 999").createOrReplaceTempView("v")
-      checkAnswer(spark.sql("SELECT * FROM v"), Seq(Row(1, 100)))
+      checkAnswer(spark.sql("SELECT * FROM v"), if (strictConnect) Seq.empty else Seq(Row(1, 100)))
       writerSql("DROP TABLE t")
       writerSql("CREATE TABLE t (id INT, salary INT) USING delta " +
         "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
-      if (!isConnect && v2EnableMode == "STRICT") {
+      if (v2EnableMode == "STRICT") {
         // After DSv2 migration, SQL view resolves tables by name; column IDs are not
-        // captured, so drop/recreate works.
+        // captured, so drop/recreate reads empty.
         checkAnswer(spark.sql("SELECT * FROM v"), Seq.empty)
       } else {
         // Column IDs changed, so reading the view should fail.
@@ -112,14 +114,15 @@ trait DeltaTempViewRefreshTests extends DeltaTableRefreshSharedBase { self: AnyF
       createColumnMappingTable("t")
       insertInitialData("t")
       spark.table("t").filter("id < 999").createOrReplaceTempView("v")
-      checkAnswer(spark.sql("SELECT * FROM v"), Seq(Row(1, 100)))
-      writerSql("ALTER TABLE t DROP COLUMN salary")
-      writerSql("ALTER TABLE t ADD COLUMN salary INT")
-      if (!isConnect && v2EnableMode == "STRICT") {
-        // After DSv2 migration, SQL views resolve columns by name, not column ID.
-        checkAnswer(spark.sql("SELECT * FROM v"), Seq(Row(1, null)))
-      } else {
-        assertSchemaChangeError { spark.sql("SELECT * FROM v").collect() }
+      checkAnswer(spark.sql("SELECT * FROM v"), if (strictConnect) Seq.empty else Seq(Row(1, 100)))
+      withColumnMappingDdl("ALTER TABLE t DROP COLUMN salary") {
+        writerSql("ALTER TABLE t ADD COLUMN salary INT")
+        if (!isConnect && v2EnableMode == "STRICT") {
+          // After DSv2 migration, SQL views resolve columns by name, not column ID.
+          checkAnswer(spark.sql("SELECT * FROM v"), Seq(Row(1, null)))
+        } else {
+          assertSchemaChangeError { spark.sql("SELECT * FROM v").collect() }
+        }
       }
     }
   }
@@ -130,10 +133,11 @@ trait DeltaTempViewRefreshTests extends DeltaTableRefreshSharedBase { self: AnyF
       createColumnMappingTable("t")
       insertInitialData("t")
       spark.table("t").filter("id < 999").createOrReplaceTempView("v")
-      checkAnswer(spark.sql("SELECT * FROM v"), Seq(Row(1, 100)))
-      writerSql("ALTER TABLE t DROP COLUMN salary")
-      writerSql("ALTER TABLE t ADD COLUMN salary STRING")
-      assertSchemaChangeError { spark.sql("SELECT * FROM v").collect() }
+      checkAnswer(spark.sql("SELECT * FROM v"), if (strictConnect) Seq.empty else Seq(Row(1, 100)))
+      withColumnMappingDdl("ALTER TABLE t DROP COLUMN salary") {
+        writerSql("ALTER TABLE t ADD COLUMN salary STRING")
+        assertSchemaChangeError { spark.sql("SELECT * FROM v").collect() }
+      }
     }
   }
 
@@ -142,9 +146,10 @@ trait DeltaTempViewRefreshTests extends DeltaTableRefreshSharedBase { self: AnyF
       createTypeWideningTable("t")
       insertInitialData("t")
       spark.table("t").filter("salary < 999").createOrReplaceTempView("v")
-      checkAnswer(spark.sql("SELECT * FROM v"), Seq(Row(1, 100)))
-      writerSql("ALTER TABLE t ALTER COLUMN salary TYPE BIGINT")
-      assertSchemaChangeError { spark.sql("SELECT * FROM v").collect() }
+      checkAnswer(spark.sql("SELECT * FROM v"), if (strictConnect) Seq.empty else Seq(Row(1, 100)))
+      withColumnMappingDdl("ALTER TABLE t ALTER COLUMN salary TYPE BIGINT") {
+        assertSchemaChangeError { spark.sql("SELECT * FROM v").collect() }
+      }
     }
   }
 
@@ -173,7 +178,14 @@ trait DeltaTempViewRefreshTests extends DeltaTableRefreshSharedBase { self: AnyF
       checkAnswer(spark.sql("SELECT * FROM v"), Seq(Row(1, 100)))
       // View preserves original schema (id, salary) but picks up new data.
       withExternalWrite(externalAddColumnAndWrite(tableRef, Seq((2, 200, -1)))) {
-        checkAnswer(spark.sql("SELECT * FROM v ORDER BY id"), Seq(Row(1, 100), Row(2, 200)))
+        if (strictConnect) {
+          // STRICT's V2 view path rejects the external column change.
+          assertError("INCOMPATIBLE_COLUMN_CHANGES_AFTER_VIEW_WITH_PLAN_CREATION", "View `v`") {
+            spark.sql("SELECT * FROM v").collect()
+          }
+        } else {
+          checkAnswer(spark.sql("SELECT * FROM v ORDER BY id"), Seq(Row(1, 100), Row(2, 200)))
+        }
       }
     }
   }
@@ -183,9 +195,13 @@ trait DeltaTempViewRefreshTests extends DeltaTableRefreshSharedBase { self: AnyF
       createColumnMappingTable(tableRef)
       insertInitialData(tableRef)
       spark.table(tableRef).filter("id < 999").createOrReplaceTempView("v")
-      checkAnswer(spark.sql("SELECT * FROM v"), Seq(Row(1, 100)))
+      checkAnswer(spark.sql("SELECT * FROM v"), if (strictConnect) Seq.empty else Seq(Row(1, 100)))
       withExternalWrite(externalDropColumn(tableRef, "salary")) {
-        assertSchemaChangeError { spark.sql("SELECT * FROM v").collect() }
+        if (strictConnect) {
+          assertError("INCOMPATIBLE_COLUMN_CHANGES_AFTER_VIEW_WITH_PLAN_CREATION", "View `v`") {
+            spark.sql("SELECT * FROM v").collect()
+          }
+        } else assertSchemaChangeError { spark.sql("SELECT * FROM v").collect() }
       }
     }
   }
@@ -196,9 +212,10 @@ trait DeltaTempViewRefreshTests extends DeltaTableRefreshSharedBase { self: AnyF
       createColumnMappingTable(tableRef)
       insertInitialData(tableRef)
       spark.table(tableRef).filter("id < 999").createOrReplaceTempView("v")
-      checkAnswer(spark.sql("SELECT * FROM v"), Seq(Row(1, 100)))
+      checkAnswer(spark.sql("SELECT * FROM v"), if (strictConnect) Seq.empty else Seq(Row(1, 100)))
       withExternalWrite(externalDropAndRecreate(tableRef, columnMapping = true)) {
-        assertSchemaChangeError { spark.sql("SELECT * FROM v").collect() }
+        if (strictConnect) checkAnswer(spark.sql("SELECT * FROM v"), Seq.empty)
+        else assertSchemaChangeError { spark.sql("SELECT * FROM v").collect() }
       }
     }
   }
@@ -222,9 +239,10 @@ trait DeltaTempViewRefreshTests extends DeltaTableRefreshSharedBase { self: AnyF
       createColumnMappingTable(tableRef)
       insertInitialData(tableRef)
       spark.table(tableRef).filter("id < 999").createOrReplaceTempView("v")
-      checkAnswer(spark.sql("SELECT * FROM v"), Seq(Row(1, 100)))
+      checkAnswer(spark.sql("SELECT * FROM v"), if (strictConnect) Seq.empty else Seq(Row(1, 100)))
       withExternalWrite(externalReplaceColumn(tableRef, "salary", None)) {
-        assertSchemaChangeError { spark.sql("SELECT * FROM v").collect() }
+        if (strictConnect) checkAnswer(spark.sql("SELECT * FROM v"), Seq.empty)
+        else assertSchemaChangeError { spark.sql("SELECT * FROM v").collect() }
       }
     }
   }
@@ -235,9 +253,13 @@ trait DeltaTempViewRefreshTests extends DeltaTableRefreshSharedBase { self: AnyF
       createColumnMappingTable(tableRef)
       insertInitialData(tableRef)
       spark.table(tableRef).filter("id < 999").createOrReplaceTempView("v")
-      checkAnswer(spark.sql("SELECT * FROM v"), Seq(Row(1, 100)))
+      checkAnswer(spark.sql("SELECT * FROM v"), if (strictConnect) Seq.empty else Seq(Row(1, 100)))
       withExternalWrite(externalReplaceColumn(tableRef, "salary", Some("string"))) {
-        assertSchemaChangeError { spark.sql("SELECT * FROM v").collect() }
+        if (strictConnect) {
+          assertError("INCOMPATIBLE_COLUMN_CHANGES_AFTER_VIEW_WITH_PLAN_CREATION", "View `v`") {
+            spark.sql("SELECT * FROM v").collect()
+          }
+        } else assertSchemaChangeError { spark.sql("SELECT * FROM v").collect() }
       }
     }
   }

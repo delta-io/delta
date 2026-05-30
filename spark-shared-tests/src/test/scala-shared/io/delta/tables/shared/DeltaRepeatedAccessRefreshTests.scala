@@ -50,7 +50,7 @@ trait DeltaRepeatedAccessRefreshTests
       insertInitialData("t")
       checkAnswer(spark.sql("SELECT * FROM t"), Seq(Row(1, 100)))
       writerSql("ALTER TABLE t ADD COLUMN new_column INT")
-      if (!isConnect && v2EnableMode == "STRICT") {
+      if (v2EnableMode == "STRICT") {
         assertArityMismatchError { writerSql("INSERT INTO t VALUES (2, 200, -1)") }
       } else {
         writerSql("INSERT INTO t VALUES (2, 200, -1)")

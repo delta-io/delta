@@ -252,10 +252,19 @@ trait DeltaTableRefreshConnectTestBase extends DeltaTableRefreshSharedBase {
   }
 
   override protected def assertArityMismatchError(f: => Unit): Unit = {
-    // Not reached in Connect (STRICT is handled at the suite level), provided for symmetry.
     checkError(
       exception = intercept[AnalysisException] { f },
       condition = "INSERT_COLUMN_ARITY_MISMATCH")
+  }
+
+  override protected def assertError(condition: String, messageContains: String)(
+      f: => Unit): Unit = {
+    val exception = intercept[Exception] { f }
+    val throwable = exception.asInstanceOf[SparkThrowable]
+    assert(throwable.getCondition == condition,
+      s"Expected error class '$condition' but got '${throwable.getCondition}': ${exception.getMessage}")
+    assert(exception.getMessage.contains(messageContains),
+      s"Expected message to contain '$messageContains' but was: ${exception.getMessage}")
   }
 
   override protected def assertExternalStrictConflict(f: => Unit): Unit = {

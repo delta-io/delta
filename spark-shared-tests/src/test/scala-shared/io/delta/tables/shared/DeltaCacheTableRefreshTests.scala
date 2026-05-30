@@ -90,7 +90,12 @@ trait DeltaCacheTableRefreshTests extends DeltaTableRefreshSharedBase { self: An
       insertInitialData("t")
       spark.sql("CACHE TABLE t")
       checkAnswer(spark.sql("SELECT * FROM t"), Seq(Row(1, 100)))
-      if (isConnect) {
+      if (isConnect && v2EnableMode == "STRICT") {
+        // STRICT V2 catalog caches the schema, so the 3 column INSERT fails arity.
+        writerSql("ALTER TABLE t ADD COLUMN new_column INT")
+        assertArityMismatchError { writerSql("INSERT INTO t VALUES (2, 200, -1)") }
+        spark.sql("UNCACHE TABLE t")
+      } else if (isConnect) {
         writerSql("ALTER TABLE t ADD COLUMN new_column INT")
         writerSql("INSERT INTO t VALUES (2, 200, -1)")
         checkAnswer(
@@ -117,7 +122,11 @@ trait DeltaCacheTableRefreshTests extends DeltaTableRefreshSharedBase { self: An
       spark.sql("CACHE TABLE t")
       checkAnswer(spark.sql("SELECT * FROM t"), Seq(Row(1, 100)))
       spark.sql("ALTER TABLE t ADD COLUMN new_column INT")
-      if (isConnect) {
+      if (isConnect && v2EnableMode == "STRICT") {
+        // STRICT V2 catalog caches the schema, so the 3 column INSERT fails arity.
+        assertArityMismatchError { writerSql("INSERT INTO t VALUES (2, 200, -1)") }
+        spark.sql("UNCACHE TABLE t")
+      } else if (isConnect) {
         writerSql("INSERT INTO t VALUES (2, 200, -1)")
         checkAnswer(
           spark.sql("SELECT * FROM t ORDER BY id"),
@@ -169,6 +178,16 @@ trait DeltaCacheTableRefreshTests extends DeltaTableRefreshSharedBase { self: An
       if (!isConnect && v2EnableMode == "STRICT") {
         assertExternalStrictConflict { externalDataWrite(tableRef, Seq((2, 200))) }
         spark.sql(s"UNCACHE TABLE IF EXISTS $cacheName")
+      } else if (strictConnect) {
+        // STRICT's V2 cache does not pin against the external write over Connect.
+        externalDataWrite(tableRef, Seq((2, 200)))
+        checkAnswer(
+          spark.sql(s"SELECT * FROM $cacheName ORDER BY id"),
+          Seq(Row(1, 100), Row(2, 200)))
+        spark.sql(s"UNCACHE TABLE IF EXISTS $cacheName")
+        checkAnswer(
+          spark.sql(s"SELECT * FROM $tableRef ORDER BY id"),
+          Seq(Row(1, 100), Row(2, 200)))
       } else {
         externalDataWrite(tableRef, Seq((2, 200)))
         // CACHE pins data against the external write.
@@ -197,6 +216,16 @@ trait DeltaCacheTableRefreshTests extends DeltaTableRefreshSharedBase { self: An
       if (!isConnect && v2EnableMode == "STRICT") {
         assertExternalStrictConflict { externalDataWrite(tableRef, Seq((3, 300))) }
         spark.sql(s"UNCACHE TABLE IF EXISTS $cacheName")
+      } else if (strictConnect) {
+        // STRICT's V2 cache does not pin, so the external write is also visible.
+        externalDataWrite(tableRef, Seq((3, 300)))
+        checkAnswer(
+          spark.sql(s"SELECT * FROM $cacheName ORDER BY id"),
+          Seq(Row(1, 100), Row(2, 200), Row(3, 300)))
+        spark.sql(s"UNCACHE TABLE IF EXISTS $cacheName")
+        checkAnswer(
+          spark.sql(s"SELECT * FROM $tableRef ORDER BY id"),
+          Seq(Row(1, 100), Row(2, 200), Row(3, 300)))
       } else {
         externalDataWrite(tableRef, Seq((3, 300)))
         // Session write visible, external not.

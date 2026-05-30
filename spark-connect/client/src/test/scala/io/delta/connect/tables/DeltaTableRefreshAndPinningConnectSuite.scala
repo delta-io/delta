@@ -18,7 +18,6 @@ package io.delta.tables
 
 import io.delta.tables.shared.{DeltaCacheTableRefreshTests, DeltaJoinRefreshTests, DeltaRepeatedAccessRefreshTests, DeltaTempViewRefreshTests}
 
-import org.apache.spark.SparkException
 import org.apache.spark.sql.test.DeltaQueryTest
 
 /**
@@ -58,34 +57,20 @@ class DeltaTableRefreshAndPinningConnectExternalSessionSuite
 }
 
 /**
- * V2_ENABLE_MODE = STRICT with Connect. STRICT engages the Delta Kernel V2 connector, which
- * needs delta-kernel-defaults (DefaultEngine). The Connect test server classpath cannot load it,
- * so STRICT cannot run over Connect today. We still register the suites (setting STRICT via the
- * server's startup config) and cancel each test with a clear reason, so the gap stays visible and
- * the suites will light up if the harness gains kernel support. Real (non DefaultEngine) failures
- * still surface.
+ * V2_ENABLE_MODE = STRICT with Connect. STRICT engages the Delta Kernel V2 connector. The mode is
+ * set on the server at startup via [[serverConfig]] (the connect analog of overriding sparkConf).
+ * The shared traits branch on `v2EnableMode == "STRICT"` for the cases where STRICT changes
+ * behavior, so these run as ordinary suites with no test() override.
  */
 trait DeltaTableRefreshAndPinningConnectStrictModeBase
   extends DeltaTableRefreshAndPinningConnectSuiteBase {
 
+  // Set STRICT on the server (startup config) and mirror it in the field so the shared traits'
+  // `v2EnableMode == "STRICT"` branches apply on the connect side too.
+  override protected def v2EnableMode: String = "STRICT"
+
   override protected def serverConfig: Map[String, String] =
     super.serverConfig + ("spark.databricks.delta.v2.enableMode" -> "STRICT")
-
-  override def test(
-      testName: String,
-      testTags: org.scalatest.Tag*)(
-      testFun: => Any)(implicit
-      pos: org.scalactic.source.Position): Unit = {
-    super.test(testName, testTags: _*) {
-      try {
-        testFun
-      } catch {
-        case e: SparkException if e.getMessage.contains("DefaultEngine") =>
-          cancel("STRICT mode requires delta-kernel-defaults (DefaultEngine) on the Connect " +
-            "server classpath, which is not available in the test harness.")
-      }
-    }(pos)
-  }
 }
 
 /** V2_ENABLE_MODE = STRICT with Connect, same-session writes. */

@@ -265,6 +265,14 @@ trait DeltaTableRefreshTestBase extends DeltaTableRefreshSharedBase {
       matchPVals = true)
   }
 
+  override protected def assertError(condition: String, messageContains: String)(
+      f: => Unit): Unit = {
+    // strictConnect is never true for classic; provided for symmetry.
+    val exception = intercept[Exception] { f }
+    assert(exception.asInstanceOf[org.apache.spark.SparkThrowable].getCondition == condition)
+    assert(exception.getMessage.contains(messageContains))
+  }
+
   override protected def assertExternalStrictConflict(f: => Unit): Unit = {
     val exception = intercept[java.nio.file.FileAlreadyExistsException] { f }
     assert(exception.getMessage != null)

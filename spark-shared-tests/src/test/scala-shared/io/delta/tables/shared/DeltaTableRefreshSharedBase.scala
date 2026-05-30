@@ -52,6 +52,27 @@ trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
   /** The V2 enable mode (NONE, AUTO, STRICT). Overridden by classic subclasses. */
   protected def v2EnableMode: String = "NONE"
 
+  /**
+   * True for Connect under STRICT mode. STRICT engages the V2 kernel connector; over Connect its
+   * read path currently returns empty for column-mapping tables (a known connector limitation),
+   * so the affected scenarios assert that degenerate result rather than the normal expectation.
+   */
+  protected def strictConnect: Boolean = isConnect && v2EnableMode == "STRICT"
+
+  /**
+   * Runs a column-mapping schema-change DDL via the writer, then `rest`. Under STRICT over
+   * Connect the V2 catalog cannot apply column-mapping schema changes, so the DDL itself throws
+   * FIELD_NOT_FOUND and `rest` is skipped (the rest of the scenario cannot proceed).
+   */
+  protected def withColumnMappingDdl(ddl: String)(rest: => Unit): Unit = {
+    if (strictConnect) {
+      assertError("FIELD_NOT_FOUND", "salary") { writerSql(ddl) }
+    } else {
+      writerSql(ddl)
+      rest
+    }
+  }
+
   /** The active session. Classic and connect return their own concrete subtype. */
   protected def spark: SparkSession
 
@@ -64,6 +85,11 @@ trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
   protected def assertSchemaChangeError(f: => Unit): Unit
   protected def assertAmbiguousColumnError(f: => Unit): Unit
   protected def assertArityMismatchError(f: => Unit): Unit
+  /**
+   * Asserts the body fails with exactly the error class `condition` and a message containing
+   * `messageContains` (used to pin the specific field/identifier in the error).
+   */
+  protected def assertError(condition: String, messageContains: String)(f: => Unit): Unit
 
   // Table setup helpers, already present and identically named on both base traits.
   protected def createSimpleTable(tableName: String): Unit

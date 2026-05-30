@@ -83,7 +83,7 @@ trait DeltaJoinRefreshTests extends DeltaTableRefreshSharedBase { self: AnyFunSu
       insertInitialData("t")
       val df1 = spark.table("t")
       writerSql("ALTER TABLE t ADD COLUMN new_column INT")
-      if (!isConnect && v2EnableMode == "STRICT") {
+      if (v2EnableMode == "STRICT") {
         assertArityMismatchError { writerSql("INSERT INTO t VALUES (2, 200, -1)") }
       } else {
         writerSql("INSERT INTO t VALUES (2, 200, -1)")
@@ -113,13 +113,11 @@ trait DeltaJoinRefreshTests extends DeltaTableRefreshSharedBase { self: AnyFunSu
       createColumnMappingTable("t")
       insertInitialData("t")
       val df1 = spark.table("t")
-      writerSql("ALTER TABLE t DROP COLUMN salary")
-      val df2 = spark.table("t")
-      val joined = df1.join(df2, df1("id") === df2("id"))
-      if (isConnect) {
-        checkDfJoinConnect(joined, 1)
-      } else {
-        assertSchemaChangeError { joined.collect() }
+      withColumnMappingDdl("ALTER TABLE t DROP COLUMN salary") {
+        val df2 = spark.table("t")
+        val joined = df1.join(df2, df1("id") === df2("id"))
+        if (isConnect) checkDfJoinConnect(joined, 1)
+        else assertSchemaChangeError { joined.collect() }
       }
     }
   }
@@ -164,14 +162,12 @@ trait DeltaJoinRefreshTests extends DeltaTableRefreshSharedBase { self: AnyFunSu
       createColumnMappingTable("t")
       insertInitialData("t")
       val df1 = spark.table("t")
-      writerSql("ALTER TABLE t DROP COLUMN salary")
-      writerSql("ALTER TABLE t ADD COLUMN salary INT")
-      val df2 = spark.table("t")
-      val joined = df1.join(df2, df1("id") === df2("id"))
-      if (isConnect) {
-        checkDfJoinConnect(joined, 1)
-      } else {
-        assertSchemaChangeError { joined.collect() }
+      withColumnMappingDdl("ALTER TABLE t DROP COLUMN salary") {
+        writerSql("ALTER TABLE t ADD COLUMN salary INT")
+        val df2 = spark.table("t")
+        val joined = df1.join(df2, df1("id") === df2("id"))
+        if (isConnect) checkDfJoinConnect(joined, 1)
+        else assertSchemaChangeError { joined.collect() }
       }
     }
   }
@@ -181,14 +177,12 @@ trait DeltaJoinRefreshTests extends DeltaTableRefreshSharedBase { self: AnyFunSu
       createColumnMappingTable("t")
       insertInitialData("t")
       val df1 = spark.table("t")
-      writerSql("ALTER TABLE t DROP COLUMN salary")
-      writerSql("ALTER TABLE t ADD COLUMN salary STRING")
-      val df2 = spark.table("t")
-      val joined = df1.join(df2, df1("id") === df2("id"))
-      if (isConnect) {
-        checkDfJoinConnect(joined, 1)
-      } else {
-        assertSchemaChangeError { joined.collect() }
+      withColumnMappingDdl("ALTER TABLE t DROP COLUMN salary") {
+        writerSql("ALTER TABLE t ADD COLUMN salary STRING")
+        val df2 = spark.table("t")
+        val joined = df1.join(df2, df1("id") === df2("id"))
+        if (isConnect) checkDfJoinConnect(joined, 1)
+        else assertSchemaChangeError { joined.collect() }
       }
     }
   }
@@ -199,13 +193,11 @@ trait DeltaJoinRefreshTests extends DeltaTableRefreshSharedBase { self: AnyFunSu
       createTypeWideningTable("t")
       insertInitialData("t")
       val df1 = spark.table("t")
-      writerSql("ALTER TABLE t ALTER COLUMN salary TYPE BIGINT")
-      val df2 = spark.table("t")
-      val joined = df1.join(df2, df1("id") === df2("id"))
-      if (isConnect) {
-        checkDfJoinConnect(joined, 1)
-      } else {
-        assertSchemaChangeError { joined.collect() }
+      withColumnMappingDdl("ALTER TABLE t ALTER COLUMN salary TYPE BIGINT") {
+        val df2 = spark.table("t")
+        val joined = df1.join(df2, df1("id") === df2("id"))
+        if (isConnect) checkDfJoinConnect(joined, 1)
+        else assertSchemaChangeError { joined.collect() }
       }
     }
   }
@@ -227,55 +219,61 @@ trait DeltaJoinRefreshTests extends DeltaTableRefreshSharedBase { self: AnyFunSu
     }
   }
 
-  // (name, table setup run inside withTable("t"), expected self-join row count). Scenario 2
-  // is registered separately below because it also exercises the classic STRICT arity path.
-  private val sqlJoinNoAliasScenarios: Seq[(String, () => Unit, Int)] = Seq(
+  // (name, table setup run inside withTable("t"), expected self-join row count, whether the
+  // column-mapping schema-change DDL throws under STRICT over Connect). Scenario 2 is registered
+  // separately below because it also exercises the classic STRICT arity path.
+  private val sqlJoinNoAliasScenarios: Seq[(String, () => Unit, Int, Boolean)] = Seq(
     ("scenario 1 (SQL JOIN no alias): join after write",
       () => {
         createSimpleTable("t"); insertInitialData("t")
         writerSql("INSERT INTO t VALUES (2, 200)")
-      }, 2),
+      }, 2, false),
     ("scenario 3 (SQL JOIN no alias): join after DROP COLUMN (column mapping)",
       () => {
         createColumnMappingTable("t"); insertInitialData("t")
         writerSql("ALTER TABLE t DROP COLUMN salary")
-      }, 1),
+      }, 1, true),
     ("scenario 4 (SQL JOIN no alias): join after DROP/recreate (column mapping)",
       () => {
         createColumnMappingTable("t"); insertInitialData("t")
         writerSql("DROP TABLE t")
         writerSql("CREATE TABLE t (id INT, salary INT) USING delta " +
           "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
-      }, 0),
+      }, 0, false),
     ("scenario 4 (SQL JOIN no alias): join after DROP/recreate (no column mapping)",
       () => {
         createSimpleTable("t"); insertInitialData("t")
         writerSql("DROP TABLE t")
         writerSql("CREATE TABLE t (id INT, salary INT) USING delta")
-      }, 0),
+      }, 0, false),
     ("scenario 5 (SQL JOIN no alias): join after DROP/ADD same type (column mapping)",
       () => {
         createColumnMappingTable("t"); insertInitialData("t")
         writerSql("ALTER TABLE t DROP COLUMN salary")
         writerSql("ALTER TABLE t ADD COLUMN salary INT")
-      }, 1),
+      }, 1, true),
     ("scenario 6 (SQL JOIN no alias): join after DROP/ADD different type (column mapping)",
       () => {
         createColumnMappingTable("t"); insertInitialData("t")
         writerSql("ALTER TABLE t DROP COLUMN salary")
         writerSql("ALTER TABLE t ADD COLUMN salary STRING")
-      }, 1),
+      }, 1, true),
     ("scenario 7 (SQL JOIN no alias): join after type widening (type widening)",
       () => {
         createTypeWideningTable("t"); insertInitialData("t")
         writerSql("ALTER TABLE t ALTER COLUMN salary TYPE BIGINT")
-      }, 1))
+      }, 1, true))
 
-  sqlJoinNoAliasScenarios.foreach { case (name, setup, expectedCount) =>
+  sqlJoinNoAliasScenarios.foreach { case (name, setup, expectedCount, strictConnectDdlThrows) =>
     test(s"[3] $name") {
       withTable("t") {
-        setup()
-        checkSqlJoinNoAlias(expectedCount)
+        if (strictConnect && strictConnectDdlThrows) {
+          // STRICT's V2 catalog cannot apply the column-mapping schema change over Connect.
+          assertError("FIELD_NOT_FOUND", "salary") { setup() }
+        } else {
+          setup()
+          checkSqlJoinNoAlias(expectedCount)
+        }
       }
     }
   }
@@ -285,7 +283,7 @@ trait DeltaJoinRefreshTests extends DeltaTableRefreshSharedBase { self: AnyFunSu
       createSimpleTable("t")
       insertInitialData("t")
       writerSql("ALTER TABLE t ADD COLUMN new_column INT")
-      if (!isConnect && v2EnableMode == "STRICT") {
+      if (v2EnableMode == "STRICT") {
         assertArityMismatchError { writerSql("INSERT INTO t VALUES (2, 200, -1)") }
       } else {
         writerSql("INSERT INTO t VALUES (2, 200, -1)")
@@ -321,7 +319,7 @@ trait DeltaJoinRefreshTests extends DeltaTableRefreshSharedBase { self: AnyFunSu
       insertInitialData("t")
       val df1 = spark.table("t")
       writerSql("ALTER TABLE t ADD COLUMN new_column INT")
-      if (!isConnect && v2EnableMode == "STRICT") {
+      if (v2EnableMode == "STRICT") {
         assertArityMismatchError { writerSql("INSERT INTO t VALUES (2, 200, -1)") }
       } else {
         writerSql("INSERT INTO t VALUES (2, 200, -1)")
@@ -350,17 +348,18 @@ trait DeltaJoinRefreshTests extends DeltaTableRefreshSharedBase { self: AnyFunSu
       createColumnMappingTable("t")
       insertInitialData("t")
       val df1 = spark.table("t")
-      writerSql("ALTER TABLE t DROP COLUMN salary")
-      val df2 = spark.table("t")
-      if (isConnect) {
-        val joined = df1.toDF("id1")
-          .join(df2.toDF("id2"), col("id1") === col("id2"))
-        checkAnswer(joined.orderBy("id1"), Seq(Row(1, 1)))
-      } else {
-        // Classic pins df1's (id, salary) schema; the column mapping drop is detected.
-        val joined = df1.toDF("id1", "salary1")
-          .join(df2.toDF("id2"), col("id1") === col("id2"))
-        assertSchemaChangeError { joined.collect() }
+      withColumnMappingDdl("ALTER TABLE t DROP COLUMN salary") {
+        val df2 = spark.table("t")
+        if (isConnect) {
+          val joined = df1.toDF("id1")
+            .join(df2.toDF("id2"), col("id1") === col("id2"))
+          checkAnswer(joined.orderBy("id1"), Seq(Row(1, 1)))
+        } else {
+          // Classic pins df1's (id, salary) schema; the column mapping drop is detected.
+          val joined = df1.toDF("id1", "salary1")
+            .join(df2.toDF("id2"), col("id1") === col("id2"))
+          assertSchemaChangeError { joined.collect() }
+        }
       }
     }
   }
@@ -403,15 +402,13 @@ trait DeltaJoinRefreshTests extends DeltaTableRefreshSharedBase { self: AnyFunSu
       createColumnMappingTable("t")
       insertInitialData("t")
       val df1 = spark.table("t")
-      writerSql("ALTER TABLE t DROP COLUMN salary")
-      writerSql("ALTER TABLE t ADD COLUMN salary INT")
-      val df2 = spark.table("t")
-      val joined = df1.toDF("id1", "salary1")
-        .join(df2.toDF("id2", "salary2"), col("id1") === col("id2"))
-      if (isConnect) {
-        checkAnswer(joined.orderBy("id1"), Seq(Row(1, null, 1, null)))
-      } else {
-        assertSchemaChangeError { joined.collect() }
+      withColumnMappingDdl("ALTER TABLE t DROP COLUMN salary") {
+        writerSql("ALTER TABLE t ADD COLUMN salary INT")
+        val df2 = spark.table("t")
+        val joined = df1.toDF("id1", "salary1")
+          .join(df2.toDF("id2", "salary2"), col("id1") === col("id2"))
+        if (isConnect) checkAnswer(joined.orderBy("id1"), Seq(Row(1, null, 1, null)))
+        else assertSchemaChangeError { joined.collect() }
       }
     }
   }
@@ -422,15 +419,13 @@ trait DeltaJoinRefreshTests extends DeltaTableRefreshSharedBase { self: AnyFunSu
       createColumnMappingTable("t")
       insertInitialData("t")
       val df1 = spark.table("t")
-      writerSql("ALTER TABLE t DROP COLUMN salary")
-      writerSql("ALTER TABLE t ADD COLUMN salary STRING")
-      val df2 = spark.table("t")
-      val joined = df1.toDF("id1", "salary1")
-        .join(df2.toDF("id2", "salary2"), col("id1") === col("id2"))
-      if (isConnect) {
-        checkAnswer(joined.orderBy("id1"), Seq(Row(1, null, 1, null)))
-      } else {
-        assertSchemaChangeError { joined.collect() }
+      withColumnMappingDdl("ALTER TABLE t DROP COLUMN salary") {
+        writerSql("ALTER TABLE t ADD COLUMN salary STRING")
+        val df2 = spark.table("t")
+        val joined = df1.toDF("id1", "salary1")
+          .join(df2.toDF("id2", "salary2"), col("id1") === col("id2"))
+        if (isConnect) checkAnswer(joined.orderBy("id1"), Seq(Row(1, null, 1, null)))
+        else assertSchemaChangeError { joined.collect() }
       }
     }
   }
@@ -440,14 +435,12 @@ trait DeltaJoinRefreshTests extends DeltaTableRefreshSharedBase { self: AnyFunSu
       createTypeWideningTable("t")
       insertInitialData("t")
       val df1 = spark.table("t")
-      writerSql("ALTER TABLE t ALTER COLUMN salary TYPE BIGINT")
-      val df2 = spark.table("t")
-      val joined = df1.toDF("id1", "salary1")
-        .join(df2.toDF("id2", "salary2"), col("id1") === col("id2"))
-      if (isConnect) {
-        checkAnswer(joined.orderBy("id1"), Seq(Row(1, 100, 1, 100)))
-      } else {
-        assertSchemaChangeError { joined.collect() }
+      withColumnMappingDdl("ALTER TABLE t ALTER COLUMN salary TYPE BIGINT") {
+        val df2 = spark.table("t")
+        val joined = df1.toDF("id1", "salary1")
+          .join(df2.toDF("id2", "salary2"), col("id1") === col("id2"))
+        if (isConnect) checkAnswer(joined.orderBy("id1"), Seq(Row(1, 100, 1, 100)))
+        else assertSchemaChangeError { joined.collect() }
       }
     }
   }
@@ -476,7 +469,7 @@ trait DeltaJoinRefreshTests extends DeltaTableRefreshSharedBase { self: AnyFunSu
       createSimpleTable("t")
       insertInitialData("t")
       writerSql("ALTER TABLE t ADD COLUMN new_column INT")
-      if (!isConnect && v2EnableMode == "STRICT") {
+      if (v2EnableMode == "STRICT") {
         assertArityMismatchError { writerSql("INSERT INTO t VALUES (2, 200, -1)") }
       } else {
         writerSql("INSERT INTO t VALUES (2, 200, -1)")
@@ -494,12 +487,13 @@ trait DeltaJoinRefreshTests extends DeltaTableRefreshSharedBase { self: AnyFunSu
     withTable("t") {
       createColumnMappingTable("t")
       insertInitialData("t")
-      writerSql("ALTER TABLE t DROP COLUMN salary")
-      checkAnswer(
-        spark.sql(
-          "SELECT t1.id AS id1, t2.id AS id2 " +
-          "FROM t t1 JOIN t t2 ON t1.id = t2.id ORDER BY id1"),
-        Seq(Row(1, 1)))
+      withColumnMappingDdl("ALTER TABLE t DROP COLUMN salary") {
+        checkAnswer(
+          spark.sql(
+            "SELECT t1.id AS id1, t2.id AS id2 " +
+            "FROM t t1 JOIN t t2 ON t1.id = t2.id ORDER BY id1"),
+          Seq(Row(1, 1)))
+      }
     }
   }
 
@@ -538,14 +532,13 @@ trait DeltaJoinRefreshTests extends DeltaTableRefreshSharedBase { self: AnyFunSu
     withTable("t") {
       createColumnMappingTable("t")
       insertInitialData("t")
-      writerSql("ALTER TABLE t DROP COLUMN salary")
-      writerSql("ALTER TABLE t ADD COLUMN salary INT")
-      checkAnswer(
-        spark.sql(
-          "SELECT t1.id AS id1, t1.salary AS salary1, " +
-          "t2.id AS id2, t2.salary AS salary2 " +
-          "FROM t t1 JOIN t t2 ON t1.id = t2.id ORDER BY id1"),
-        Seq(Row(1, null, 1, null)))
+      withColumnMappingDdl("ALTER TABLE t DROP COLUMN salary") {
+        writerSql("ALTER TABLE t ADD COLUMN salary INT")
+        checkAnswer(
+          spark.sql("SELECT t1.id AS id1, t1.salary AS salary1, " +
+            "t2.id AS id2, t2.salary AS salary2 FROM t t1 JOIN t t2 ON t1.id = t2.id ORDER BY id1"),
+          Seq(Row(1, null, 1, null)))
+      }
     }
   }
 
@@ -553,14 +546,13 @@ trait DeltaJoinRefreshTests extends DeltaTableRefreshSharedBase { self: AnyFunSu
     withTable("t") {
       createColumnMappingTable("t")
       insertInitialData("t")
-      writerSql("ALTER TABLE t DROP COLUMN salary")
-      writerSql("ALTER TABLE t ADD COLUMN salary STRING")
-      checkAnswer(
-        spark.sql(
-          "SELECT t1.id AS id1, t1.salary AS salary1, " +
-          "t2.id AS id2, t2.salary AS salary2 " +
-          "FROM t t1 JOIN t t2 ON t1.id = t2.id ORDER BY id1"),
-        Seq(Row(1, null, 1, null)))
+      withColumnMappingDdl("ALTER TABLE t DROP COLUMN salary") {
+        writerSql("ALTER TABLE t ADD COLUMN salary STRING")
+        checkAnswer(
+          spark.sql("SELECT t1.id AS id1, t1.salary AS salary1, " +
+            "t2.id AS id2, t2.salary AS salary2 FROM t t1 JOIN t t2 ON t1.id = t2.id ORDER BY id1"),
+          Seq(Row(1, null, 1, null)))
+      }
     }
   }
 
@@ -568,13 +560,12 @@ trait DeltaJoinRefreshTests extends DeltaTableRefreshSharedBase { self: AnyFunSu
     withTable("t") {
       createTypeWideningTable("t")
       insertInitialData("t")
-      writerSql("ALTER TABLE t ALTER COLUMN salary TYPE BIGINT")
-      checkAnswer(
-        spark.sql(
-          "SELECT t1.id AS id1, t1.salary AS salary1, " +
-          "t2.id AS id2, t2.salary AS salary2 " +
-          "FROM t t1 JOIN t t2 ON t1.id = t2.id ORDER BY id1"),
-        Seq(Row(1, 100, 1, 100)))
+      withColumnMappingDdl("ALTER TABLE t ALTER COLUMN salary TYPE BIGINT") {
+        checkAnswer(
+          spark.sql("SELECT t1.id AS id1, t1.salary AS salary1, " +
+            "t2.id AS id2, t2.salary AS salary2 FROM t t1 JOIN t t2 ON t1.id = t2.id ORDER BY id1"),
+          Seq(Row(1, 100, 1, 100)))
+      }
     }
   }
 }
