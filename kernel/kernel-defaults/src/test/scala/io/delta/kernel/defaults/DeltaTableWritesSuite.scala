@@ -1279,6 +1279,32 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
     }
   }
 
+  test("insert into partitioned table - partition dirs are auto-created on local fs") {
+    withTempDirAndEngine { (tblPath, engine) =>
+      val partDir = new File(tblPath, "part1=1/part2=2")
+      assert(!partDir.exists(), "Partition directory should not exist before write")
+
+      val commitResult = appendData(
+        engine,
+        tblPath,
+        isNewTable = true,
+        testPartitionSchema,
+        testPartitionColumns,
+        Seq(Map("part1" -> ofInt(1), "part2" -> ofInt(2)) -> dataPartitionBatches1))
+
+      verifyCommitResult(commitResult, expVersion = 0, expIsReadyForCheckpoint = false)
+
+      assert(
+        partDir.exists() && partDir.isDirectory,
+        "Partition directory should be auto-created by Hadoop local fs")
+
+      verifyWrittenContent(
+        tblPath,
+        testPartitionSchema,
+        dataPartitionBatches1.flatMap(_.toTestRows))
+    }
+  }
+
   test("insert into partitioned table - already existing table") {
     withTempDirAndEngine { (tempTblPath, engine) =>
       val tblPath = tempTblPath + "/table+ with special chars"
