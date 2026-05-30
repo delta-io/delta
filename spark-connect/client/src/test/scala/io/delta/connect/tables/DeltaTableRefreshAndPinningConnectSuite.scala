@@ -58,58 +58,42 @@ class DeltaTableRefreshAndPinningConnectExternalSessionSuite
 }
 
 /**
- * V2_ENABLE_MODE = STRICT with Connect, same-session writes.
- *
- * Known failures: STRICT mode triggers the Delta Kernel V2 connector, which requires
- * DefaultEngine from delta-kernel-defaults. The Connect test server (RemoteSparkSession)
- * classpath does not include kernel jars, so all operations fail with ClassNotFoundException.
+ * V2_ENABLE_MODE = STRICT with Connect. STRICT engages the Delta Kernel V2 connector, which
+ * needs delta-kernel-defaults (DefaultEngine). The Connect test server classpath cannot load it,
+ * so STRICT cannot run over Connect today. We still register the suites (setting STRICT via the
+ * server's startup config) and cancel each test with a clear reason, so the gap stays visible and
+ * the suites will light up if the harness gains kernel support. Real (non DefaultEngine) failures
+ * still surface.
  */
-class DeltaTableRefreshAndPinningConnectStrictModeSuite
+trait DeltaTableRefreshAndPinningConnectStrictModeBase
   extends DeltaTableRefreshAndPinningConnectSuiteBase {
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-    spark.sql("SET spark.databricks.delta.v2.enableMode=STRICT")
-  }
 
-  // All tests fail because Connect server lacks delta-kernel-defaults jar.
-  // Wrap every test to assert the expected ClassNotFoundException.
+  override protected def serverConfig: Map[String, String] =
+    super.serverConfig + ("spark.databricks.delta.v2.enableMode" -> "STRICT")
+
   override def test(
       testName: String,
       testTags: org.scalatest.Tag*)(
       testFun: => Any)(implicit
       pos: org.scalactic.source.Position): Unit = {
     super.test(testName, testTags: _*) {
-      val exception = intercept[SparkException] { testFun }
-      assert(exception.getMessage.contains("DefaultEngine"),
-        s"Expected DefaultEngine error but got: ${exception.getMessage}")
+      try {
+        testFun
+      } catch {
+        case e: SparkException if e.getMessage.contains("DefaultEngine") =>
+          cancel("STRICT mode requires delta-kernel-defaults (DefaultEngine) on the Connect " +
+            "server classpath, which is not available in the test harness.")
+      }
     }(pos)
   }
 }
 
-/**
- * V2_ENABLE_MODE = STRICT with Connect, external session writes.
- *
- * Known failures: Same kernel jar classpath issue as
- * DeltaTableRefreshAndPinningConnectStrictModeSuite.
- */
-class DeltaTableRefreshAndPinningConnectStrictModeExternalSessionSuite
-  extends DeltaTableRefreshAndPinningConnectSuiteBase {
-  override protected def useExternalSession: Boolean = true
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-    spark.sql("SET spark.databricks.delta.v2.enableMode=STRICT")
-  }
+/** V2_ENABLE_MODE = STRICT with Connect, same-session writes. */
+class DeltaTableRefreshAndPinningConnectStrictModeSuite
+  extends DeltaTableRefreshAndPinningConnectStrictModeBase
 
-  // All tests fail because Connect server lacks delta-kernel-defaults jar.
-  override def test(
-      testName: String,
-      testTags: org.scalatest.Tag*)(
-      testFun: => Any)(implicit
-      pos: org.scalactic.source.Position): Unit = {
-    super.test(testName, testTags: _*) {
-      val exception = intercept[SparkException] { testFun }
-      assert(exception.getMessage.contains("DefaultEngine"),
-        s"Expected DefaultEngine error but got: ${exception.getMessage}")
-    }(pos)
-  }
+/** V2_ENABLE_MODE = STRICT with Connect, external session writes. */
+class DeltaTableRefreshAndPinningConnectStrictModeExternalSessionSuite
+  extends DeltaTableRefreshAndPinningConnectStrictModeBase {
+  override protected def useExternalSession: Boolean = true
 }

@@ -120,9 +120,10 @@ class DeltaTableRefreshAndPinningStrictModeSuite
   extends DeltaTableRefreshAndPinningSuiteBase {
   override protected def v2EnableMode: String = "STRICT"
 
-  // STRICT mode V2 catalog behavior is non-deterministic across CI shards.
-  // Some tests pass, others fail with stale schema or version conflicts.
-  // Tolerate both outcomes.
+  // STRICT mode V2 catalog behavior is non-deterministic across CI shards: some tests pass,
+  // others fail with stale schema or version conflicts (V2 catalog infrastructure limitations,
+  // not test-logic bugs). Cancel on failure so genuinely passing tests stay green and the rest
+  // report as cancelled rather than being silently swallowed as passed.
   override def test(
       testName: String,
       testTags: org.scalatest.Tag*)(
@@ -132,7 +133,8 @@ class DeltaTableRefreshAndPinningStrictModeSuite
       try {
         testFun
       } catch {
-        case _: Throwable => // expected in STRICT mode
+        case e: Throwable =>
+          cancel(s"STRICT mode V2 catalog limitation: ${e.getMessage}")
       }
     }(pos)
   }
@@ -154,9 +156,9 @@ class DeltaTableRefreshAndPinningStrictModeExternalSessionSuite
   override protected def v2EnableMode: String = "STRICT"
   override protected def useExternalSession: Boolean = true
 
-  // Most tests fail in STRICT + external session due to V2 catalog
-  // isolation between sessions. Some basic tests pass. Wrap every test
-  // to tolerate both outcomes: success or expected failure.
+  // Most tests fail in STRICT + external session due to V2 catalog isolation between sessions;
+  // some basic tests pass. Cancel on failure so passing tests stay green and the rest report as
+  // cancelled rather than being silently swallowed as passed.
   override def test(
       testName: String,
       testTags: org.scalatest.Tag*)(
@@ -166,7 +168,8 @@ class DeltaTableRefreshAndPinningStrictModeExternalSessionSuite
       try {
         testFun
       } catch {
-        case _: Throwable => // expected in STRICT + external session
+        case e: Throwable =>
+          cancel(s"STRICT + external session V2 catalog limitation: ${e.getMessage}")
       }
     }(pos)
   }
