@@ -854,7 +854,7 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         "for UC-managed tables. Metrics are sent asynchronously and " +
         "never block or fail commits.")
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val DELTA_UC_COMMIT_METRICS_THREAD_POOL_SIZE =
     buildStaticConf("commitMetrics.threadPoolSize")
