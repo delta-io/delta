@@ -37,9 +37,13 @@ trait DeltaSourceConnectorTrait {
 
   protected def useDsv2: Boolean = false
 
-  protected def loadStreamWithOptions(path: String, options: Map[String, String]): DataFrame = {
+  protected def loadStreamWithOptions(
+      path: String,
+      options: Map[String, String],
+      schema: Option[StructType] = None): DataFrame = {
     val reader = spark.readStream
     options.foreach { case (k, v) => reader.option(k, v) }
+    schema.foreach(reader.schema)
     if (useDsv2) {
       // This will route through DeltaCatalog which checks V2_ENABLE_MODE
       reader.table(s"delta.`$path`")
