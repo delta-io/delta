@@ -17,14 +17,16 @@
 package io.delta.tables
 
 import java.io.File
-import java.nio.charset.StandardCharsets
+import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.{Files, Paths}
+import java.util.{Locale, UUID}
 
 import io.delta.tables.shared.DeltaTableRefreshSharedBase
 
 import org.apache.spark.{SparkException, SparkThrowable}
-import org.apache.spark.sql.AnalysisException
+import org.apache.spark.sql.{AnalysisException, DataFrame}
 import org.apache.spark.sql.test.DeltaQueryTest
+import org.apache.spark.sql.types.{DataType, IntegerType, LongType, MetadataBuilder, StringType, StructField, StructType}
 
 /**
  * Spark Connect variant of the table refresh and version pinning tests.
@@ -44,14 +46,6 @@ trait DeltaTableRefreshConnectTestBase extends DeltaTableRefreshSharedBase {
 
   override def isConnect: Boolean = true
 
-  /**
-   * Override in subclasses to use spark.newSession() for writes. In Connect, newSession()
-   * creates a new client session that connects to the same server. The server-side DeltaLog
-   * is shared (singleton cache per JVM), so writes from either session update the same
-   * DeltaLog.currentSnapshot. This means newSession() is NOT a true external writer.
-   * We parameterize with it to verify behavior is identical, documenting that the refresh
-   * mechanism is driven by the shared DeltaLog, not by session-level state.
-   */
   /** Asserts that a SparkThrowable has the expected error condition. */
   protected def checkError(
       exception: SparkThrowable,
@@ -69,6 +63,14 @@ trait DeltaTableRefreshConnectTestBase extends DeltaTableRefreshSharedBase {
   /** Spark 4.2+ fixes AMBIGUOUS_COLUMN_OR_FIELD for self-joins without aliases. */
   override protected lazy val ambiguousColumnFixed: Boolean = spark.version >= "4.2"
 
+  /**
+   * Override in subclasses to use spark.newSession() for writes. In Connect, newSession()
+   * creates a new client session that connects to the same server. The server-side DeltaLog
+   * is shared (singleton cache per JVM), so writes from either session update the same
+   * DeltaLog.currentSnapshot. This means newSession() is NOT a true external writer.
+   * We parameterize with it to verify behavior is identical, documenting that the refresh
+   * mechanism is driven by the shared DeltaLog, not by session-level state.
+   */
   protected def useExternalSession: Boolean = false
 
   /** Returns a session for performing writes. */
@@ -91,339 +93,151 @@ trait DeltaTableRefreshConnectTestBase extends DeltaTableRefreshSharedBase {
          |TBLPROPERTIES ('delta.columnMapping.mode' = 'name')""".stripMargin)
   }
 
+  override protected def createTypeWideningTable(tableName: String): Unit = {
+    spark.sql(
+      s"""CREATE TABLE $tableName (id INT, salary INT) USING delta
+         |TBLPROPERTIES (
+         |  'delta.columnMapping.mode' = 'name',
+         |  'delta.enableTypeWidening' = 'true'
+         |)""".stripMargin)
+  }
+
   override protected def insertInitialData(tableName: String): Unit = {
     spark.sql(s"INSERT INTO $tableName VALUES (1, 100)")
   }
 
-  /**
-   * Simulates a true external write by writing commit files directly to the
-   * filesystem using Java NIO, bypassing the server's DeltaLog entirely.
-   *
-   * This is the Connect equivalent of the classic suite's writeExternalCommit.
-   * Since the Connect client shares the same local filesystem as the server,
-   * we can write parquet data files and Delta commit JSON files directly.
-   * The server's DeltaLog.currentSnapshot is NOT updated.
-   *
-   * @param tablePath The filesystem path to the Delta table
-   * @param data Tuples of (id, salary) to write
-   */
-  protected def writeExternalCommitViaFilesystem(
-      tablePath: String,
-      data: Seq[(Int, Int)]): Unit = {
-    val deltaLogDir = new File(tablePath, "_delta_log")
-    // Find current version by listing commit files
-    val commitFiles = deltaLogDir.listFiles().filter(_.getName.endsWith(".json"))
-    val currentVersion = commitFiles.map(f =>
-      f.getName.stripSuffix(".json").toLong).max
-
-    // Write a parquet file with the data
-    val tempDir = Files.createTempDirectory("ext-write").toFile
-    try {
-      val session = spark
-      import session.implicits._
-      data.toDF("id", "salary").coalesce(1)
-        .write.parquet(s"${tempDir.getAbsolutePath}/out")
-      val parquetFile = new File(tempDir, "out").listFiles()
-        .filter(_.getName.endsWith(".parquet")).head
-      val targetName = s"ext-commit-v${currentVersion + 1}.snappy.parquet"
-      Files.copy(
-        parquetFile.toPath,
-        Paths.get(tablePath).resolve(targetName))
-
-      // Write commit JSON directly to _delta_log
-      val addFileJson =
-        s"""{"add":{"path":"$targetName","partitionValues":{},"size":${parquetFile.length()},""" +
-        s""""modificationTime":${System.currentTimeMillis()},"dataChange":true}}"""
-      val commitFile = new File(deltaLogDir,
-        f"${currentVersion + 1}%020d.json")
-      Files.write(commitFile.toPath, addFileJson.getBytes(StandardCharsets.UTF_8))
-    } finally {
-      // Clean up temp dir
-      tempDir.listFiles().foreach(d =>
-        if (d.isDirectory) d.listFiles().foreach(_.delete()))
-      tempDir.listFiles().foreach(_.delete())
-      tempDir.delete()
-    }
-  }
-
-  /**
-   * Simulates a true external schema change + data write by writing both a
-   * Metadata action (with an added column) and an AddFile action directly to
-   * the filesystem, bypassing the server's DeltaLog entirely.
-   *
-   * This is the Connect equivalent of the classic suite's
-   * writeExternalCommit(..., newMetadata = Some(...)) for scenario 6d.
-   */
-  protected def writeExternalSchemaChangeCommitViaFilesystem(
-      tablePath: String,
-      data: Seq[(Int, Int, Int)]): Unit = {
-    val deltaLogDir = new File(tablePath, "_delta_log")
-    val commitFiles = deltaLogDir.listFiles().filter(_.getName.endsWith(".json"))
-    val currentVersion = commitFiles.map(f =>
-      f.getName.stripSuffix(".json").toLong).max
-
-    // Read existing metadata to extract the table id
-    val metadataLine = commitFiles.sortBy(_.getName).flatMap { f =>
-      new String(Files.readAllBytes(f.toPath), StandardCharsets.UTF_8)
-        .split("\n").filter(_.contains("\"metaData\""))
-    }.lastOption.getOrElse(
-      throw new RuntimeException("No metaData action found in commit files"))
-    val idRegex = """"id"\s*:\s*"([^"]+)"""".r
-    val tableId = idRegex.findFirstMatchIn(metadataLine).map(_.group(1)).getOrElse(
-      throw new RuntimeException("Could not extract table id from metadata"))
-
-    val tempDir = Files.createTempDirectory("ext-schema-write").toFile
-    try {
-      val session = spark
-      import session.implicits._
-      data.toDF("id", "salary", "new_column").coalesce(1)
-        .write.parquet(s"${tempDir.getAbsolutePath}/out")
-      val parquetFile = new File(tempDir, "out").listFiles()
-        .filter(_.getName.endsWith(".parquet")).head
-      val targetName = s"ext-schema-v${currentVersion + 1}.snappy.parquet"
-      Files.copy(
-        parquetFile.toPath,
-        Paths.get(tablePath).resolve(targetName))
-
-      // New schema with added new_column (escaped for embedding in JSON string)
-      val schemaJson =
-        """{"type":"struct","fields":[""" +
-        """{"name":"id","type":"integer","nullable":true,"metadata":{}},""" +
-        """{"name":"salary","type":"integer","nullable":true,"metadata":{}},""" +
-        """{"name":"new_column","type":"integer","nullable":true,"metadata":{}}]}"""
-      val escapedSchema = schemaJson.replace("\"", "\\\"")
-
-      val metadataActionJson =
-        s"""{"metaData":{"id":"$tableId","name":null,"description":null,""" +
-        s""""format":{"provider":"parquet","options":{}},""" +
-        s""""schemaString":"$escapedSchema",""" +
-        s""""partitionColumns":[],"configuration":{},"createdTime":${System.currentTimeMillis()}}}"""
-
-      val addFileJson =
-        s"""{"add":{"path":"$targetName","partitionValues":{},"size":${parquetFile.length()},""" +
-        s""""modificationTime":${System.currentTimeMillis()},"dataChange":true}}"""
-
-      val commitFile = new File(deltaLogDir,
-        f"${currentVersion + 1}%020d.json")
-      Files.write(
-        commitFile.toPath,
-        s"$metadataActionJson\n$addFileJson".getBytes(StandardCharsets.UTF_8))
-    } finally {
-      tempDir.listFiles().foreach(d =>
-        if (d.isDirectory) d.listFiles().foreach(_.delete()))
-      tempDir.listFiles().foreach(_.delete())
-      tempDir.delete()
-    }
-  }
-
-  /**
-   * Simulates an external DROP and recreate by writing RemoveFile actions for
-   * all existing data files and new Metadata with a fresh UUID, bypassing the
-   * server's DeltaLog entirely.
-   */
-  protected def writeExternalDropAndRecreateViaFilesystem(tablePath: String): Unit = {
-    val deltaLogDir = new File(tablePath, "_delta_log")
-    val commitFiles = deltaLogDir.listFiles().filter(_.getName.endsWith(".json"))
-    val currentVersion = commitFiles.map(f =>
-      f.getName.stripSuffix(".json").toLong).max
-
-    // Collect all AddFile paths from existing commits
-    val addPathRegex = """"add":\{[^}]*"path"\s*:\s*"([^"]+)"""".r
-    val removePathRegex = """"remove":\{[^}]*"path"\s*:\s*"([^"]+)"""".r
-    val addedPaths = scala.collection.mutable.Set[String]()
-    val removedPaths = scala.collection.mutable.Set[String]()
-    commitFiles.sortBy(_.getName).foreach { f =>
-      val content = new String(Files.readAllBytes(f.toPath), StandardCharsets.UTF_8)
-      addPathRegex.findAllMatchIn(content).foreach(m => addedPaths += m.group(1))
-      removePathRegex.findAllMatchIn(content).foreach(m => removedPaths += m.group(1))
-    }
-    val activeFiles = addedPaths -- removedPaths
-
-    // Read existing metadata to get the table structure
-    val metadataLine = commitFiles.sortBy(_.getName).flatMap { f =>
-      new String(Files.readAllBytes(f.toPath), StandardCharsets.UTF_8)
-        .split("\n").filter(_.contains("\"metaData\""))
-    }.lastOption.getOrElse(
-      throw new RuntimeException("No metaData action found in commit files"))
-
-    // Replace the table id with a fresh UUID to simulate a recreated table
-    val newId = java.util.UUID.randomUUID().toString
-    val newMetadataLine = metadataLine.replaceFirst(""""id"\s*:\s*"[^"]+"""", s""""id":"$newId"""")
-
-    // Build commit: RemoveFile for each active file + new Metadata
-    val removeActions = activeFiles.map { path =>
-      s"""{"remove":{"path":"$path","deletionTimestamp":${System.currentTimeMillis()},"dataChange":true}}"""
-    }
-    val commitContent = (removeActions.toSeq :+ newMetadataLine).mkString("\n")
-
-    val commitFile = new File(deltaLogDir, f"${currentVersion + 1}%020d.json")
-    Files.write(commitFile.toPath, commitContent.getBytes(StandardCharsets.UTF_8))
-  }
-
-  /**
-   * Simulates an external DROP COLUMN by writing a metadata-only commit that
-   * removes a column from the schema, bypassing the server's DeltaLog entirely.
-   * Works with column mapping tables where field metadata contains
-   * delta.columnMapping.id and delta.columnMapping.physicalName.
-   */
-  protected def writeExternalDropColumnViaFilesystem(
-      tablePath: String,
-      columnToDrop: String): Unit = {
-    val deltaLogDir = new File(tablePath, "_delta_log")
-    val commitFiles = deltaLogDir.listFiles().filter(_.getName.endsWith(".json"))
-    val currentVersion = commitFiles.map(f =>
-      f.getName.stripSuffix(".json").toLong).max
-
-    // Read existing metadata
-    val metadataLine = commitFiles.sortBy(_.getName).flatMap { f =>
-      new String(Files.readAllBytes(f.toPath), StandardCharsets.UTF_8)
-        .split("\n").filter(_.contains("\"metaData\""))
-    }.lastOption.getOrElse(
-      throw new RuntimeException("No metaData action found in commit files"))
-
-    // Extract and modify the schemaString to remove the column.
-    // The schemaString is JSON-escaped inside the metaData JSON.
-    // Parse the escaped schema, modify it, and re-escape.
-    val schemaStringRegex = """"schemaString"\s*:\s*"((?:[^"\\]|\\.)*)"""".r
-    val escapedSchema = schemaStringRegex.findFirstMatchIn(metadataLine).map(_.group(1)).getOrElse(
-      throw new RuntimeException("Could not extract schemaString from metadata"))
-    val schemaJson = escapedSchema.replace("\\\"", "\"")
-
-    // Remove the field from the schema JSON. Fields with column mapping have nested
-    // braces (metadata object inside the field object), so we match two levels of braces.
-    val fieldPattern = ("""\{"name":"""" + columnToDrop + """"[^}]*\{[^}]*\}\}""").r
-    val newSchemaJson = fieldPattern.replaceFirstIn(schemaJson, "").replace(",,", ",")
-      .replace("[,", "[").replace(",]", "]")
-    val newEscapedSchema = newSchemaJson.replace("\"", "\\\"")
-    val replacement = java.util.regex.Matcher.quoteReplacement(
-      s""""schemaString":"$newEscapedSchema"""")
-    val newMetadataLine = schemaStringRegex.replaceFirstIn(metadataLine, replacement)
-
-    val commitFile = new File(deltaLogDir, f"${currentVersion + 1}%020d.json")
-    Files.write(commitFile.toPath, newMetadataLine.getBytes(StandardCharsets.UTF_8))
-  }
-
-  /**
-   * Simulates an external DROP and recreate of a column mapping table by writing
-   * RemoveFile actions for all data + new Metadata with fresh column mapping IDs,
-   * bypassing the server's DeltaLog entirely.
-   */
-  protected def writeExternalDropAndRecreateColumnMappingViaFilesystem(
-      tablePath: String): Unit = {
-    val deltaLogDir = new File(tablePath, "_delta_log")
-    val commitFiles = deltaLogDir.listFiles().filter(_.getName.endsWith(".json"))
-    val currentVersion = commitFiles.map(f =>
-      f.getName.stripSuffix(".json").toLong).max
-
-    // Collect active AddFile paths
-    val addPathRegex = """"add":\{[^}]*"path"\s*:\s*"([^"]+)"""".r
-    val removePathRegex = """"remove":\{[^}]*"path"\s*:\s*"([^"]+)"""".r
-    val addedPaths = scala.collection.mutable.Set[String]()
-    val removedPaths = scala.collection.mutable.Set[String]()
-    commitFiles.sortBy(_.getName).foreach { f =>
-      val content = new String(Files.readAllBytes(f.toPath), StandardCharsets.UTF_8)
-      addPathRegex.findAllMatchIn(content).foreach(m => addedPaths += m.group(1))
-      removePathRegex.findAllMatchIn(content).foreach(m => removedPaths += m.group(1))
-    }
-    val activeFiles = addedPaths -- removedPaths
-
-    // Read existing metadata
-    val metadataLine = commitFiles.sortBy(_.getName).flatMap { f =>
-      new String(Files.readAllBytes(f.toPath), StandardCharsets.UTF_8)
-        .split("\n").filter(_.contains("\"metaData\""))
-    }.lastOption.getOrElse(
-      throw new RuntimeException("No metaData action found in commit files"))
-
-    // Replace table id and all column mapping IDs with new values
-    val newId = java.util.UUID.randomUUID().toString
-    var newMetadataLine = metadataLine.replaceFirst(
-      """"id"\s*:\s*"[^"]+"""", s""""id":"$newId"""")
-    // Replace all delta.columnMapping.id values with new IDs (100+)
-    val colIdRegex = """delta\.columnMapping\.id\\?"?\s*:\s*(\d+)""".r
-    var nextId = 100
-    newMetadataLine = colIdRegex.replaceAllIn(newMetadataLine, _ => {
-      val result = s"delta.columnMapping.id\\\\\":${nextId}"
-      nextId += 1
-      result
-    })
-    // Replace all delta.columnMapping.physicalName values
-    val colNameRegex = """delta\.columnMapping\.physicalName\\?"?\s*:\s*\\?"?([^"\\,}]+)""".r
-    newMetadataLine = colNameRegex.replaceAllIn(newMetadataLine, _ => {
-      val uuid = java.util.UUID.randomUUID().toString.take(8)
-      s"""delta.columnMapping.physicalName\\\\\":\\\\\"col-recreated-$uuid"""
-    })
-
-    val removeActions = activeFiles.map { path =>
-      s"""{"remove":{"path":"$path","deletionTimestamp":${System.currentTimeMillis()},"dataChange":true}}"""
-    }
-    val commitContent = (removeActions.toSeq :+ newMetadataLine).mkString("\n")
-
-    val commitFile = new File(deltaLogDir, f"${currentVersion + 1}%020d.json")
-    Files.write(commitFile.toPath, commitContent.getBytes(StandardCharsets.UTF_8))
-  }
-
-  /**
-   * Simulates an external DROP/ADD of a column by writing a metadata-only commit
-   * that replaces the column's column mapping ID and physical name (and optionally
-   * its type), bypassing the server's DeltaLog entirely. This triggers
-   * DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS because the column mapping ID changed.
-   */
-  protected def writeExternalReplaceColumnViaFilesystem(
-      tablePath: String,
-      columnName: String,
-      newType: Option[String] = None): Unit = {
-    val deltaLogDir = new File(tablePath, "_delta_log")
-    val commitFiles = deltaLogDir.listFiles().filter(_.getName.endsWith(".json"))
-    val currentVersion = commitFiles.map(f =>
-      f.getName.stripSuffix(".json").toLong).max
-
-    val metadataLine = commitFiles.sortBy(_.getName).flatMap { f =>
-      new String(Files.readAllBytes(f.toPath), StandardCharsets.UTF_8)
-        .split("\n").filter(_.contains("\"metaData\""))
-    }.lastOption.getOrElse(
-      throw new RuntimeException("No metaData action found in commit files"))
-
-    val schemaStringRegex = """"schemaString"\s*:\s*"((?:[^"\\]|\\.)*)"""".r
-    val escapedSchema = schemaStringRegex.findFirstMatchIn(metadataLine).map(_.group(1)).getOrElse(
-      throw new RuntimeException("Could not extract schemaString from metadata"))
-    val schemaJson = escapedSchema.replace("\\\"", "\"")
-
-    // Find the target field and replace its column mapping ID and physical name
-    val uuid = java.util.UUID.randomUUID().toString.take(8)
-    // Fields with column mapping have nested braces (metadata object), match two levels.
-    val fieldRegex = ("""\{"name":"""" + columnName + """"[^}]*\{[^}]*\}\}""").r
-    val fieldMatch = fieldRegex.findFirstIn(schemaJson).getOrElse(
-      throw new RuntimeException(s"Could not find field '$columnName' in schema"))
-    val typeStr = newType.getOrElse("integer")
-    val modifiedField = fieldMatch
-      .replaceFirst(""""delta\.columnMapping\.id"\s*:\s*\d+""",
-        """"delta.columnMapping.id":999""")
-      .replaceFirst(""""delta\.columnMapping\.physicalName"\s*:\s*"[^"]+"""",
-        s""""delta.columnMapping.physicalName":"col-replaced-$uuid"""")
-    val modifiedFieldWithType = if (newType.isDefined) {
-      modifiedField.replaceFirst(""""type"\s*:\s*"[^"]+"""", s""""type":"$typeStr"""")
-    } else {
-      modifiedField
-    }
-    val newSchemaJson = schemaJson.replace(fieldMatch, modifiedFieldWithType)
-
-    val newEscapedSchema = newSchemaJson.replace("\"", "\\\"")
-    val replacement = java.util.regex.Matcher.quoteReplacement(
-      s""""schemaString":"$newEscapedSchema"""")
-    val newMetadataLine = schemaStringRegex.replaceFirstIn(metadataLine, replacement)
-
-    val commitFile = new File(deltaLogDir, f"${currentVersion + 1}%020d.json")
-    Files.write(commitFile.toPath, newMetadataLine.getBytes(StandardCharsets.UTF_8))
-  }
-
   // ---------------------------------------------------------------------------
-  // Shared base hook implementations (connect). Error assertions delegate to the
-  // substring tolerant checkError above; external writes use the filesystem helpers.
+  // External write simulation. The Connect client shares the local filesystem with the
+  // server, so we write commit files directly into _delta_log, bypassing the server's
+  // DeltaLog (its currentSnapshot is NOT updated). This is the Connect equivalent of the
+  // classic suite's LogStore based helpers. Schemas are edited as real StructType values
+  // (recovered from the stored, column-mapping aware schemaString) rather than by regex.
   // ---------------------------------------------------------------------------
+
+  private val ColumnMappingId = "delta.columnMapping.id"
+  private val ColumnMappingPhysicalName = "delta.columnMapping.physicalName"
+  private val IdRegex = """"id"\s*:\s*"([^"]+)"""".r
+  private val SchemaStringRegex = """"schemaString"\s*:\s*"((?:[^"\\]|\\.)*)"""".r
 
   /** Extracts the filesystem path from a delta path table reference (delta.`<path>`). */
   private def pathOf(tableRef: String): String =
     tableRef.stripPrefix("delta.`").stripSuffix("`")
+
+  private def deltaLogDir(path: String): File = new File(path, "_delta_log")
+
+  private def commitJsonFiles(path: String): Array[File] =
+    deltaLogDir(path).listFiles().filter(_.getName.endsWith(".json"))
+
+  private def currentVersion(path: String): Long =
+    commitJsonFiles(path).map(_.getName.stripSuffix(".json").toLong).max
+
+  private def latestMetaDataLine(path: String): String =
+    commitJsonFiles(path).sortBy(_.getName).flatMap { f =>
+      new String(Files.readAllBytes(f.toPath), UTF_8).split("\n")
+    }.filter(_.contains("\"metaData\"")).lastOption.getOrElse(
+      throw new RuntimeException("No metaData action found in commit files"))
+
+  /** The table's current schema, recovered from the stored (column-mapping aware) schemaString. */
+  private def currentSchema(path: String): StructType = {
+    val escaped = SchemaStringRegex.findFirstMatchIn(latestMetaDataLine(path)).map(_.group(1))
+      .getOrElse(throw new RuntimeException("Could not extract schemaString from metadata"))
+    DataType.fromJson(escaped.replace("\\\"", "\"")).asInstanceOf[StructType]
+  }
+
+  /** Returns the metaData line with its schemaString replaced (id and configuration preserved). */
+  private def metaLineWithSchema(metaLine: String, schema: StructType): String = {
+    val escaped = schema.json.replace("\"", "\\\"")
+    SchemaStringRegex.replaceFirstIn(
+      metaLine, java.util.regex.Matcher.quoteReplacement(s""""schemaString":"$escaped""""))
+  }
+
+  /** Returns the metaData line with a fresh table id (simulating a recreated table). */
+  private def metaLineWithNewId(metaLine: String): String =
+    IdRegex.replaceFirstIn(
+      metaLine, java.util.regex.Matcher.quoteReplacement(s""""id":"${UUID.randomUUID()}""""))
+
+  private def addFileJson(name: String, size: Long): String =
+    s"""{"add":{"path":"$name","partitionValues":{},"size":$size,""" +
+    s""""modificationTime":${System.currentTimeMillis()},"dataChange":true}}"""
+
+  private def removeFileJson(name: String): String =
+    s"""{"remove":{"path":"$name","deletionTimestamp":${System.currentTimeMillis()},""" +
+    s""""dataChange":true}}"""
+
+  /** RemoveFile actions for every data file still active in the table. */
+  private def removeActiveFiles(path: String): Seq[String] = {
+    val addRegex = """"add":\{[^}]*"path"\s*:\s*"([^"]+)"""".r
+    val removeRegex = """"remove":\{[^}]*"path"\s*:\s*"([^"]+)"""".r
+    val added = scala.collection.mutable.Set[String]()
+    val removed = scala.collection.mutable.Set[String]()
+    commitJsonFiles(path).sortBy(_.getName).foreach { f =>
+      val content = new String(Files.readAllBytes(f.toPath), UTF_8)
+      addRegex.findAllMatchIn(content).foreach(m => added += m.group(1))
+      removeRegex.findAllMatchIn(content).foreach(m => removed += m.group(1))
+    }
+    (added -- removed).toSeq.map(removeFileJson)
+  }
+
+  /** Writes a parquet file with the given DataFrame into the table dir; returns its AddFile action. */
+  private def writeParquet(path: String, df: DataFrame): String = {
+    val tempDir = Files.createTempDirectory("ext-write").toFile
+    try {
+      df.coalesce(1).write.parquet(s"${tempDir.getAbsolutePath}/out")
+      val parquetFile = new File(tempDir, "out").listFiles()
+        .filter(_.getName.endsWith(".parquet")).head
+      val targetName = s"ext-commit-v${currentVersion(path) + 1}.snappy.parquet"
+      Files.copy(parquetFile.toPath, Paths.get(path).resolve(targetName))
+      addFileJson(targetName, parquetFile.length())
+    } finally {
+      deleteRecursively(tempDir)
+    }
+  }
+
+  private def deleteRecursively(file: File): Unit = {
+    Option(file.listFiles()).foreach(_.foreach(deleteRecursively))
+    file.delete()
+  }
+
+  /** Writes a new commit (version + 1) containing the given actions. */
+  private def writeCommit(path: String, actions: Seq[String]): Unit =
+    Files.write(
+      new File(deltaLogDir(path), f"${currentVersion(path) + 1}%020d.json").toPath,
+      actions.mkString("\n").getBytes(UTF_8))
+
+  /** Builds a column-mapping field with the given id and a fresh physical name. */
+  private def columnMappingField(
+      name: String, dataType: DataType, id: Long, physicalPrefix: String): StructField = {
+    val meta = new MetadataBuilder()
+      .putLong(ColumnMappingId, id)
+      .putString(
+        ColumnMappingPhysicalName, s"$physicalPrefix-${UUID.randomUUID().toString.take(8)}")
+      .build()
+    StructField(name, dataType, nullable = true, meta)
+  }
+
+  private def resolveType(newType: Option[String]): DataType =
+    newType.map(_.toLowerCase(Locale.ROOT)) match {
+      case Some("string") => StringType
+      case Some("long") | Some("bigint") => LongType
+      case _ => IntegerType
+    }
+
+  private def rows2Df(rows: Seq[(Int, Int)]): DataFrame = {
+    val session = spark
+    import session.implicits._
+    rows.toDF("id", "salary")
+  }
+
+  private def rows3Df(rows: Seq[(Int, Int, Int)]): DataFrame = {
+    val session = spark
+    import session.implicits._
+    rows.toDF("id", "salary", "new_column")
+  }
+
+  // ---------------------------------------------------------------------------
+  // Shared base hook implementations (connect). Error assertions delegate to the
+  // substring tolerant checkError above; external writes use the helpers above.
+  // ---------------------------------------------------------------------------
 
   override protected def assertSchemaChangeError(f: => Unit): Unit = {
     checkError(
@@ -454,34 +268,57 @@ trait DeltaTableRefreshConnectTestBase extends DeltaTableRefreshSharedBase {
   }
 
   override protected def externalDataWrite(tableRef: String, rows: Seq[(Int, Int)]): Unit = {
-    writeExternalCommitViaFilesystem(pathOf(tableRef), rows)
+    val path = pathOf(tableRef)
+    writeCommit(path, Seq(writeParquet(path, rows2Df(rows))))
   }
 
   override protected def externalDataWriteWide(
       tableRef: String, rows: Seq[(Int, Int, Int)]): Unit = {
-    writeExternalSchemaChangeCommitViaFilesystem(pathOf(tableRef), rows)
+    // The table already has the 3 column schema; append data only.
+    val path = pathOf(tableRef)
+    writeCommit(path, Seq(writeParquet(path, rows3Df(rows))))
   }
 
   override protected def externalAddColumnAndWrite(
       tableRef: String, rows: Seq[(Int, Int, Int)]): Unit = {
-    writeExternalSchemaChangeCommitViaFilesystem(pathOf(tableRef), rows)
+    val path = pathOf(tableRef)
+    val newSchema = currentSchema(path).add("new_column", IntegerType, nullable = true)
+    writeCommit(path, Seq(
+      metaLineWithSchema(latestMetaDataLine(path), newSchema),
+      writeParquet(path, rows3Df(rows))))
   }
 
   override protected def externalDropColumn(tableRef: String, column: String): Unit = {
-    writeExternalDropColumnViaFilesystem(pathOf(tableRef), column)
+    val path = pathOf(tableRef)
+    val newSchema = StructType(currentSchema(path).fields.filterNot(_.name == column))
+    writeCommit(path, Seq(metaLineWithSchema(latestMetaDataLine(path), newSchema)))
   }
 
   override protected def externalDropAndRecreate(
       tableRef: String, columnMapping: Boolean): Unit = {
-    if (columnMapping) {
-      writeExternalDropAndRecreateColumnMappingViaFilesystem(pathOf(tableRef))
+    val path = pathOf(tableRef)
+    val recreatedMeta = if (columnMapping) {
+      // Fresh column mapping ids + physical names so the schema change is detected.
+      val newSchema = StructType(currentSchema(path).fields.zipWithIndex.map { case (field, i) =>
+        columnMappingField(field.name, field.dataType, 100L + i, "col-recreated")
+      })
+      metaLineWithSchema(metaLineWithNewId(latestMetaDataLine(path)), newSchema)
     } else {
-      writeExternalDropAndRecreateViaFilesystem(pathOf(tableRef))
+      metaLineWithNewId(latestMetaDataLine(path))
     }
+    writeCommit(path, removeActiveFiles(path) :+ recreatedMeta)
   }
 
   override protected def externalReplaceColumn(
       tableRef: String, column: String, newType: Option[String]): Unit = {
-    writeExternalReplaceColumnViaFilesystem(pathOf(tableRef), column, newType = newType)
+    val path = pathOf(tableRef)
+    val newSchema = StructType(currentSchema(path).fields.map { field =>
+      if (field.name == column) {
+        columnMappingField(column, resolveType(newType), 999L, "col-replaced")
+      } else {
+        field
+      }
+    })
+    writeCommit(path, Seq(metaLineWithSchema(latestMetaDataLine(path), newSchema)))
   }
 }
