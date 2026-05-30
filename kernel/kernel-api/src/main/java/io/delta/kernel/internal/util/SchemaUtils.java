@@ -328,6 +328,78 @@ public class SchemaUtils {
   }
 
   /**
+   * Validates that {@code readSchema} is a valid subset of {@code tableSchema}. Each data field in
+   * readSchema must exist in tableSchema (case-insensitive name match) and have a compatible type.
+   * Nested structs are checked recursively. Metadata columns (where {@link
+   * StructField#isMetadataColumn()} is true) are exempt from this check.
+   *
+   * @param readSchema the schema requested by the connector
+   * @param tableSchema the actual table schema from snapshot
+   * @throws IllegalArgumentException if readSchema contains fields not in tableSchema or with
+   *     incompatible types
+   */
+  public static void validateReadSchemaIsSubset(StructType readSchema, StructType tableSchema) {
+    validateReadSchemaIsSubsetRecursive(readSchema, tableSchema, "");
+  }
+
+  /**
+   * Recursively validates that {@code readSchema} is a subset of {@code tableSchema}, tracking the
+   * parent path for nested error messages.
+   */
+  private static void validateReadSchemaIsSubsetRecursive(
+      StructType readSchema, StructType tableSchema, String parentPath) {
+    for (StructField readField : readSchema.fields()) {
+      if (readField.isMetadataColumn()) {
+        continue;
+      }
+      String fieldPath =
+          parentPath.isEmpty() ? readField.getName() : parentPath + "." + readField.getName();
+      int idx = findColIndex(tableSchema, readField.getName());
+      if (idx < 0) {
+        String msg =
+            parentPath.isEmpty()
+                ? format(
+                    "Field '%s' is not found in the table schema. Table schema: %s",
+                    readField.getName(), tableSchema.fieldNames())
+                : format(
+                    "Field '%s' is not found in '%s'. Schema at '%s': %s",
+                    readField.getName(), parentPath, parentPath, tableSchema.fieldNames());
+        throw new IllegalArgumentException(msg);
+      }
+      StructField tableField = tableSchema.at(idx);
+      validateDataTypeIsSubset(readField.getDataType(), tableField.getDataType(), fieldPath);
+    }
+  }
+
+  /**
+   * Validates that the read data type is compatible with the table data type. For struct types,
+   * this checks recursively that the read struct is a subset of the table struct. For array and map
+   * types, this recurses into element/key/value types.
+   */
+  private static void validateDataTypeIsSubset(
+      DataType readType, DataType tableType, String fieldPath) {
+    if (readType instanceof StructType && tableType instanceof StructType) {
+      validateReadSchemaIsSubsetRecursive((StructType) readType, (StructType) tableType, fieldPath);
+    } else if (readType instanceof ArrayType && tableType instanceof ArrayType) {
+      validateDataTypeIsSubset(
+          ((ArrayType) readType).getElementType(),
+          ((ArrayType) tableType).getElementType(),
+          fieldPath + ".element");
+    } else if (readType instanceof MapType && tableType instanceof MapType) {
+      MapType readMap = (MapType) readType;
+      MapType tableMap = (MapType) tableType;
+      validateDataTypeIsSubset(readMap.getKeyType(), tableMap.getKeyType(), fieldPath + ".key");
+      validateDataTypeIsSubset(
+          readMap.getValueType(), tableMap.getValueType(), fieldPath + ".value");
+    } else if (!readType.equivalent(tableType)) {
+      throw new IllegalArgumentException(
+          format(
+              "Field '%s' has type %s which is incompatible with the table type %s",
+              fieldPath, readType, tableType));
+    }
+  }
+
+  /**
    * Collects all leaf columns from the given schema (including flattened columns only for
    * StructTypes), up to maxColumns. NOTE: If maxColumns = -1, we collect ALL leaf columns in the
    * schema.
