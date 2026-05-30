@@ -37,9 +37,6 @@ import org.apache.spark.sql.{DataFrame, Row, SparkSession}
  *   - [[DeltaRepeatedAccessRefreshTests]] (Section [2])
  *   - [[DeltaJoinRefreshTests]] (Section [3])
  *   - [[DeltaCacheTableRefreshTests]] (Section [5])
- *
- * Section [4] (Dataset pinning vs reanalysis) is intentionally NOT shared because
- * classic and connect test fundamentally opposite behaviors there.
  */
 trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
 
