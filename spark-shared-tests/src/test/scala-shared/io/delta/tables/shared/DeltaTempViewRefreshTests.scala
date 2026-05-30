@@ -139,12 +139,7 @@ trait DeltaTempViewRefreshTests extends DeltaTableRefreshSharedBase { self: AnyF
 
   test("[1] scenario 7: temp view after ALTER COLUMN TYPE INT to BIGINT") {
     withTable("t") {
-      spark.sql(
-        """CREATE TABLE t (id INT, salary INT) USING delta
-          |TBLPROPERTIES (
-          |  'delta.columnMapping.mode' = 'name',
-          |  'delta.enableTypeWidening' = 'true'
-          |)""".stripMargin)
+      createTypeWideningTable("t")
       insertInitialData("t")
       spark.table("t").filter("salary < 999").createOrReplaceTempView("v")
       checkAnswer(spark.sql("SELECT * FROM v"), Seq(Row(1, 100)))
@@ -164,10 +159,7 @@ trait DeltaTempViewRefreshTests extends DeltaTableRefreshSharedBase { self: AnyF
       insertInitialData(tableRef)
       spark.table(tableRef).filter("salary < 999").createOrReplaceTempView("v")
       checkAnswer(spark.sql("SELECT * FROM v"), Seq(Row(1, 100)))
-      if (!isConnect && v2EnableMode == "STRICT") {
-        assertExternalStrictConflict { externalDataWrite(tableRef, Seq((2, 200))) }
-      } else {
-        externalDataWrite(tableRef, Seq((2, 200)))
+      withExternalWrite(externalDataWrite(tableRef, Seq((2, 200)))) {
         checkAnswer(spark.sql("SELECT * FROM v ORDER BY id"), Seq(Row(1, 100), Row(2, 200)))
       }
     }
@@ -179,11 +171,8 @@ trait DeltaTempViewRefreshTests extends DeltaTableRefreshSharedBase { self: AnyF
       insertInitialData(tableRef)
       spark.table(tableRef).filter("salary < 999").createOrReplaceTempView("v")
       checkAnswer(spark.sql("SELECT * FROM v"), Seq(Row(1, 100)))
-      if (!isConnect && v2EnableMode == "STRICT") {
-        assertExternalStrictConflict { externalAddColumnAndWrite(tableRef, Seq((2, 200, -1))) }
-      } else {
-        externalAddColumnAndWrite(tableRef, Seq((2, 200, -1)))
-        // View preserves original schema (id, salary) but picks up new data.
+      // View preserves original schema (id, salary) but picks up new data.
+      withExternalWrite(externalAddColumnAndWrite(tableRef, Seq((2, 200, -1)))) {
         checkAnswer(spark.sql("SELECT * FROM v ORDER BY id"), Seq(Row(1, 100), Row(2, 200)))
       }
     }
@@ -195,10 +184,7 @@ trait DeltaTempViewRefreshTests extends DeltaTableRefreshSharedBase { self: AnyF
       insertInitialData(tableRef)
       spark.table(tableRef).filter("id < 999").createOrReplaceTempView("v")
       checkAnswer(spark.sql("SELECT * FROM v"), Seq(Row(1, 100)))
-      if (!isConnect && v2EnableMode == "STRICT") {
-        assertExternalStrictConflict { externalDropColumn(tableRef, "salary") }
-      } else {
-        externalDropColumn(tableRef, "salary")
+      withExternalWrite(externalDropColumn(tableRef, "salary")) {
         assertSchemaChangeError { spark.sql("SELECT * FROM v").collect() }
       }
     }
@@ -211,10 +197,7 @@ trait DeltaTempViewRefreshTests extends DeltaTableRefreshSharedBase { self: AnyF
       insertInitialData(tableRef)
       spark.table(tableRef).filter("id < 999").createOrReplaceTempView("v")
       checkAnswer(spark.sql("SELECT * FROM v"), Seq(Row(1, 100)))
-      if (!isConnect && v2EnableMode == "STRICT") {
-        assertExternalStrictConflict { externalDropAndRecreate(tableRef, columnMapping = true) }
-      } else {
-        externalDropAndRecreate(tableRef, columnMapping = true)
+      withExternalWrite(externalDropAndRecreate(tableRef, columnMapping = true)) {
         assertSchemaChangeError { spark.sql("SELECT * FROM v").collect() }
       }
     }
@@ -227,10 +210,7 @@ trait DeltaTempViewRefreshTests extends DeltaTableRefreshSharedBase { self: AnyF
       insertInitialData(tableRef)
       spark.table(tableRef).filter("salary < 999").createOrReplaceTempView("v")
       checkAnswer(spark.sql("SELECT * FROM v"), Seq(Row(1, 100)))
-      if (!isConnect && v2EnableMode == "STRICT") {
-        assertExternalStrictConflict { externalDropAndRecreate(tableRef, columnMapping = false) }
-      } else {
-        externalDropAndRecreate(tableRef, columnMapping = false)
+      withExternalWrite(externalDropAndRecreate(tableRef, columnMapping = false)) {
         checkAnswer(spark.sql("SELECT * FROM v"), Seq.empty)
       }
     }
@@ -243,10 +223,7 @@ trait DeltaTempViewRefreshTests extends DeltaTableRefreshSharedBase { self: AnyF
       insertInitialData(tableRef)
       spark.table(tableRef).filter("id < 999").createOrReplaceTempView("v")
       checkAnswer(spark.sql("SELECT * FROM v"), Seq(Row(1, 100)))
-      if (!isConnect && v2EnableMode == "STRICT") {
-        assertExternalStrictConflict { externalReplaceColumn(tableRef, "salary", None) }
-      } else {
-        externalReplaceColumn(tableRef, "salary", None)
+      withExternalWrite(externalReplaceColumn(tableRef, "salary", None)) {
         assertSchemaChangeError { spark.sql("SELECT * FROM v").collect() }
       }
     }
@@ -259,12 +236,7 @@ trait DeltaTempViewRefreshTests extends DeltaTableRefreshSharedBase { self: AnyF
       insertInitialData(tableRef)
       spark.table(tableRef).filter("id < 999").createOrReplaceTempView("v")
       checkAnswer(spark.sql("SELECT * FROM v"), Seq(Row(1, 100)))
-      if (!isConnect && v2EnableMode == "STRICT") {
-        assertExternalStrictConflict {
-          externalReplaceColumn(tableRef, "salary", Some("string"))
-        }
-      } else {
-        externalReplaceColumn(tableRef, "salary", Some("string"))
+      withExternalWrite(externalReplaceColumn(tableRef, "salary", Some("string"))) {
         assertSchemaChangeError { spark.sql("SELECT * FROM v").collect() }
       }
     }
@@ -274,21 +246,11 @@ trait DeltaTempViewRefreshTests extends DeltaTableRefreshSharedBase { self: AnyF
   if (!isConnect) {
     test("[1] scenario 7 external: temp view after external type widening INT to BIGINT") {
       withRefreshTable { tableRef =>
-        spark.sql(
-          s"""CREATE TABLE $tableRef (id INT, salary INT) USING delta
-             |TBLPROPERTIES (
-             |  'delta.columnMapping.mode' = 'name',
-             |  'delta.enableTypeWidening' = 'true'
-             |)""".stripMargin)
+        createTypeWideningTable(tableRef)
         insertInitialData(tableRef)
         spark.table(tableRef).filter("salary < 999").createOrReplaceTempView("v")
         checkAnswer(spark.sql("SELECT * FROM v"), Seq(Row(1, 100)))
-        if (v2EnableMode == "STRICT") {
-          assertExternalStrictConflict {
-            externalReplaceColumn(tableRef, "salary", Some("long"))
-          }
-        } else {
-          externalReplaceColumn(tableRef, "salary", Some("long"))
+        withExternalWrite(externalReplaceColumn(tableRef, "salary", Some("long"))) {
           assertSchemaChangeError { spark.sql("SELECT * FROM v").collect() }
         }
       }

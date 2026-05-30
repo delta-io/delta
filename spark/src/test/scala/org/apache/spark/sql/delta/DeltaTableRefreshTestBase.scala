@@ -79,6 +79,15 @@ trait DeltaTableRefreshTestBase extends DeltaTableRefreshSharedBase {
          |TBLPROPERTIES ('delta.columnMapping.mode' = 'name')""".stripMargin)
   }
 
+  override protected def createTypeWideningTable(tableName: String): Unit = {
+    sql(
+      s"""CREATE TABLE $tableName (id INT, salary INT) USING delta
+         |TBLPROPERTIES (
+         |  'delta.columnMapping.mode' = 'name',
+         |  'delta.enableTypeWidening' = 'true'
+         |)""".stripMargin)
+  }
+
   override protected def insertInitialData(tableName: String): Unit = {
     sql(s"INSERT INTO $tableName VALUES (1, 100)")
   }

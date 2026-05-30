@@ -66,7 +66,6 @@ trait DeltaCacheTableRefreshTests extends DeltaTableRefreshSharedBase { self: An
       insertInitialData("t")
       spark.sql("CACHE TABLE t")
       checkAnswer(spark.sql("SELECT * FROM t"), Seq(Row(1, 100)))
-      // Session write invalidates the cache.
       spark.sql("INSERT INTO t VALUES (2, 200)")
       if (isConnect) {
         writerSql("INSERT INTO t VALUES (3, 300)")
@@ -117,7 +116,6 @@ trait DeltaCacheTableRefreshTests extends DeltaTableRefreshSharedBase { self: An
       insertInitialData("t")
       spark.sql("CACHE TABLE t")
       checkAnswer(spark.sql("SELECT * FROM t"), Seq(Row(1, 100)))
-      // Session schema change invalidates the cache.
       spark.sql("ALTER TABLE t ADD COLUMN new_column INT")
       if (isConnect) {
         writerSql("INSERT INTO t VALUES (2, 200, -1)")
@@ -195,7 +193,6 @@ trait DeltaCacheTableRefreshTests extends DeltaTableRefreshSharedBase { self: An
         spark.sql(s"CACHE TABLE $cacheName")
       }
       checkAnswer(spark.sql(s"SELECT * FROM $cacheName"), Seq(Row(1, 100)))
-      // Session write invalidates the cache.
       spark.sql(s"INSERT INTO $tableRef VALUES (2, 200)")
       if (!isConnect && v2EnableMode == "STRICT") {
         assertExternalStrictConflict { externalDataWrite(tableRef, Seq((3, 300))) }

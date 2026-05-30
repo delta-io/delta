@@ -18,7 +18,7 @@ package io.delta.tables.shared
 
 import org.scalatest.funsuite.AnyFunSuite
 
-import org.apache.spark.sql.Row
+import org.apache.spark.sql.{DataFrame, Row}
 import org.apache.spark.sql.functions.col
 
 /**
@@ -42,6 +42,18 @@ import org.apache.spark.sql.functions.col
  */
 trait DeltaJoinRefreshTests extends DeltaTableRefreshSharedBase { self: AnyFunSuite =>
 
+  /**
+   * Connect expectation for a no-alias self-join: AMBIGUOUS_COLUMN_OR_FIELD before Spark 4.2
+   * (Delta's V1 fallback loses PLAN_ID_TAG), else the join succeeds with `expectedCount` rows.
+   */
+  private def checkDfJoinConnect(joined: DataFrame, expectedCount: Int): Unit = {
+    if (!ambiguousColumnFixed) {
+      assertAmbiguousColumnError { joined.collect() }
+    } else {
+      assert(joined.collect().length == expectedCount)
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Section [3]: no-alias DataFrame join
   // ---------------------------------------------------------------------------
@@ -55,11 +67,7 @@ trait DeltaJoinRefreshTests extends DeltaTableRefreshSharedBase { self: AnyFunSu
       val df2 = spark.table("t")
       val joined = df1.join(df2, df1("id") === df2("id"))
       if (isConnect) {
-        if (!ambiguousColumnFixed) {
-          assertAmbiguousColumnError { joined.collect() }
-        } else {
-          assert(joined.collect().length == 2)
-        }
+        checkDfJoinConnect(joined, 2)
       } else {
         checkAnswer(
           joined.select(df1("id"), df1("salary"), df2("id"), df2("salary"))
@@ -109,11 +117,7 @@ trait DeltaJoinRefreshTests extends DeltaTableRefreshSharedBase { self: AnyFunSu
       val df2 = spark.table("t")
       val joined = df1.join(df2, df1("id") === df2("id"))
       if (isConnect) {
-        if (!ambiguousColumnFixed) {
-          assertAmbiguousColumnError { joined.collect() }
-        } else {
-          assert(joined.collect().length == 1)
-        }
+        checkDfJoinConnect(joined, 1)
       } else {
         assertSchemaChangeError { joined.collect() }
       }
@@ -131,11 +135,7 @@ trait DeltaJoinRefreshTests extends DeltaTableRefreshSharedBase { self: AnyFunSu
       val df2 = spark.table("t")
       val joined = df1.join(df2, df1("id") === df2("id"))
       if (isConnect) {
-        if (!ambiguousColumnFixed) {
-          assertAmbiguousColumnError { joined.collect() }
-        } else {
-          assert(joined.collect().length == 0)
-        }
+        checkDfJoinConnect(joined, 0)
       } else {
         assertSchemaChangeError { joined.collect() }
       }
@@ -152,11 +152,7 @@ trait DeltaJoinRefreshTests extends DeltaTableRefreshSharedBase { self: AnyFunSu
       val df2 = spark.table("t")
       val joined = df1.join(df2, df1("id") === df2("id"))
       if (isConnect) {
-        if (!ambiguousColumnFixed) {
-          assertAmbiguousColumnError { joined.collect() }
-        } else {
-          assert(joined.collect().length == 0)
-        }
+        checkDfJoinConnect(joined, 0)
       } else {
         checkAnswer(joined, Seq.empty)
       }
@@ -173,11 +169,7 @@ trait DeltaJoinRefreshTests extends DeltaTableRefreshSharedBase { self: AnyFunSu
       val df2 = spark.table("t")
       val joined = df1.join(df2, df1("id") === df2("id"))
       if (isConnect) {
-        if (!ambiguousColumnFixed) {
-          assertAmbiguousColumnError { joined.collect() }
-        } else {
-          assert(joined.collect().length == 1)
-        }
+        checkDfJoinConnect(joined, 1)
       } else {
         assertSchemaChangeError { joined.collect() }
       }
@@ -194,11 +186,7 @@ trait DeltaJoinRefreshTests extends DeltaTableRefreshSharedBase { self: AnyFunSu
       val df2 = spark.table("t")
       val joined = df1.join(df2, df1("id") === df2("id"))
       if (isConnect) {
-        if (!ambiguousColumnFixed) {
-          assertAmbiguousColumnError { joined.collect() }
-        } else {
-          assert(joined.collect().length == 1)
-        }
+        checkDfJoinConnect(joined, 1)
       } else {
         assertSchemaChangeError { joined.collect() }
       }
@@ -208,23 +196,14 @@ trait DeltaJoinRefreshTests extends DeltaTableRefreshSharedBase { self: AnyFunSu
   test("[3] scenario 7 (no alias): join after ALTER COLUMN TYPE INT to BIGINT " +
       "(type widening)") {
     withTable("t") {
-      spark.sql(
-        """CREATE TABLE t (id INT, salary INT) USING delta
-          |TBLPROPERTIES (
-          |  'delta.columnMapping.mode' = 'name',
-          |  'delta.enableTypeWidening' = 'true'
-          |)""".stripMargin)
+      createTypeWideningTable("t")
       insertInitialData("t")
       val df1 = spark.table("t")
       writerSql("ALTER TABLE t ALTER COLUMN salary TYPE BIGINT")
       val df2 = spark.table("t")
       val joined = df1.join(df2, df1("id") === df2("id"))
       if (isConnect) {
-        if (!ambiguousColumnFixed) {
-          assertAmbiguousColumnError { joined.collect() }
-        } else {
-          assert(joined.collect().length == 1)
-        }
+        checkDfJoinConnect(joined, 1)
       } else {
         assertSchemaChangeError { joined.collect() }
       }
@@ -248,12 +227,56 @@ trait DeltaJoinRefreshTests extends DeltaTableRefreshSharedBase { self: AnyFunSu
     }
   }
 
-  test("[3] scenario 1 (SQL JOIN no alias): join after write") {
-    withTable("t") {
-      createSimpleTable("t")
-      insertInitialData("t")
-      writerSql("INSERT INTO t VALUES (2, 200)")
-      checkSqlJoinNoAlias(2)
+  // (name, table setup run inside withTable("t"), expected self-join row count). Scenario 2
+  // is registered separately below because it also exercises the classic STRICT arity path.
+  private val sqlJoinNoAliasScenarios: Seq[(String, () => Unit, Int)] = Seq(
+    ("scenario 1 (SQL JOIN no alias): join after write",
+      () => {
+        createSimpleTable("t"); insertInitialData("t")
+        writerSql("INSERT INTO t VALUES (2, 200)")
+      }, 2),
+    ("scenario 3 (SQL JOIN no alias): join after DROP COLUMN (column mapping)",
+      () => {
+        createColumnMappingTable("t"); insertInitialData("t")
+        writerSql("ALTER TABLE t DROP COLUMN salary")
+      }, 1),
+    ("scenario 4 (SQL JOIN no alias): join after DROP/recreate (column mapping)",
+      () => {
+        createColumnMappingTable("t"); insertInitialData("t")
+        writerSql("DROP TABLE t")
+        writerSql("CREATE TABLE t (id INT, salary INT) USING delta " +
+          "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+      }, 0),
+    ("scenario 4 (SQL JOIN no alias): join after DROP/recreate (no column mapping)",
+      () => {
+        createSimpleTable("t"); insertInitialData("t")
+        writerSql("DROP TABLE t")
+        writerSql("CREATE TABLE t (id INT, salary INT) USING delta")
+      }, 0),
+    ("scenario 5 (SQL JOIN no alias): join after DROP/ADD same type (column mapping)",
+      () => {
+        createColumnMappingTable("t"); insertInitialData("t")
+        writerSql("ALTER TABLE t DROP COLUMN salary")
+        writerSql("ALTER TABLE t ADD COLUMN salary INT")
+      }, 1),
+    ("scenario 6 (SQL JOIN no alias): join after DROP/ADD different type (column mapping)",
+      () => {
+        createColumnMappingTable("t"); insertInitialData("t")
+        writerSql("ALTER TABLE t DROP COLUMN salary")
+        writerSql("ALTER TABLE t ADD COLUMN salary STRING")
+      }, 1),
+    ("scenario 7 (SQL JOIN no alias): join after type widening (type widening)",
+      () => {
+        createTypeWideningTable("t"); insertInitialData("t")
+        writerSql("ALTER TABLE t ALTER COLUMN salary TYPE BIGINT")
+      }, 1))
+
+  sqlJoinNoAliasScenarios.foreach { case (name, setup, expectedCount) =>
+    test(s"[3] $name") {
+      withTable("t") {
+        setup()
+        checkSqlJoinNoAlias(expectedCount)
+      }
     }
   }
 
@@ -268,71 +291,6 @@ trait DeltaJoinRefreshTests extends DeltaTableRefreshSharedBase { self: AnyFunSu
         writerSql("INSERT INTO t VALUES (2, 200, -1)")
         checkSqlJoinNoAlias(2)
       }
-    }
-  }
-
-  test("[3] scenario 3 (SQL JOIN no alias): join after DROP COLUMN (column mapping)") {
-    withTable("t") {
-      createColumnMappingTable("t")
-      insertInitialData("t")
-      writerSql("ALTER TABLE t DROP COLUMN salary")
-      checkSqlJoinNoAlias(1)
-    }
-  }
-
-  test("[3] scenario 4 (SQL JOIN no alias): join after DROP/recreate (column mapping)") {
-    withTable("t") {
-      createColumnMappingTable("t")
-      insertInitialData("t")
-      writerSql("DROP TABLE t")
-      writerSql("CREATE TABLE t (id INT, salary INT) USING delta " +
-        "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
-      checkSqlJoinNoAlias(0)
-    }
-  }
-
-  test("[3] scenario 4 (SQL JOIN no alias): join after DROP/recreate (no column mapping)") {
-    withTable("t") {
-      createSimpleTable("t")
-      insertInitialData("t")
-      writerSql("DROP TABLE t")
-      writerSql("CREATE TABLE t (id INT, salary INT) USING delta")
-      checkSqlJoinNoAlias(0)
-    }
-  }
-
-  test("[3] scenario 5 (SQL JOIN no alias): join after DROP/ADD same type (column mapping)") {
-    withTable("t") {
-      createColumnMappingTable("t")
-      insertInitialData("t")
-      writerSql("ALTER TABLE t DROP COLUMN salary")
-      writerSql("ALTER TABLE t ADD COLUMN salary INT")
-      checkSqlJoinNoAlias(1)
-    }
-  }
-
-  test("[3] scenario 6 (SQL JOIN no alias): join after DROP/ADD different type " +
-      "(column mapping)") {
-    withTable("t") {
-      createColumnMappingTable("t")
-      insertInitialData("t")
-      writerSql("ALTER TABLE t DROP COLUMN salary")
-      writerSql("ALTER TABLE t ADD COLUMN salary STRING")
-      checkSqlJoinNoAlias(1)
-    }
-  }
-
-  test("[3] scenario 7 (SQL JOIN no alias): join after type widening (type widening)") {
-    withTable("t") {
-      spark.sql(
-        """CREATE TABLE t (id INT, salary INT) USING delta
-          |TBLPROPERTIES (
-          |  'delta.columnMapping.mode' = 'name',
-          |  'delta.enableTypeWidening' = 'true'
-          |)""".stripMargin)
-      insertInitialData("t")
-      writerSql("ALTER TABLE t ALTER COLUMN salary TYPE BIGINT")
-      checkSqlJoinNoAlias(1)
     }
   }
 
@@ -479,12 +437,7 @@ trait DeltaJoinRefreshTests extends DeltaTableRefreshSharedBase { self: AnyFunSu
 
   test("[3] scenario 7 (renamed cols): join after type widening (type widening)") {
     withTable("t") {
-      spark.sql(
-        """CREATE TABLE t (id INT, salary INT) USING delta
-          |TBLPROPERTIES (
-          |  'delta.columnMapping.mode' = 'name',
-          |  'delta.enableTypeWidening' = 'true'
-          |)""".stripMargin)
+      createTypeWideningTable("t")
       insertInitialData("t")
       val df1 = spark.table("t")
       writerSql("ALTER TABLE t ALTER COLUMN salary TYPE BIGINT")
@@ -613,12 +566,7 @@ trait DeltaJoinRefreshTests extends DeltaTableRefreshSharedBase { self: AnyFunSu
 
   test("[3] scenario 7 (SQL JOIN): join after type widening (type widening)") {
     withTable("t") {
-      spark.sql(
-        """CREATE TABLE t (id INT, salary INT) USING delta
-          |TBLPROPERTIES (
-          |  'delta.columnMapping.mode' = 'name',
-          |  'delta.enableTypeWidening' = 'true'
-          |)""".stripMargin)
+      createTypeWideningTable("t")
       insertInitialData("t")
       writerSql("ALTER TABLE t ALTER COLUMN salary TYPE BIGINT")
       checkAnswer(

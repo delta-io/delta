@@ -68,8 +68,24 @@ trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
   // Table setup helpers, already present and identically named on both base traits.
   protected def createSimpleTable(tableName: String): Unit
   protected def createColumnMappingTable(tableName: String): Unit
+  /** Creates a column-mapping table with type widening enabled (scenario 7). */
+  protected def createTypeWideningTable(tableName: String): Unit
   protected def insertInitialData(tableName: String): Unit
   protected def writerSql(sqlText: String): Unit
+
+  /**
+   * Runs an external write and verifies the result. In classic STRICT mode the write is
+   * expected to fail with a version conflict and `verify` is skipped; otherwise the write
+   * runs and `verify` asserts the post write state. Connect always takes the write+verify path.
+   */
+  protected def withExternalWrite(write: => Unit)(verify: => Unit): Unit = {
+    if (!isConnect && v2EnableMode == "STRICT") {
+      assertExternalStrictConflict(write)
+    } else {
+      write
+      verify
+    }
+  }
 
   // External modification abstraction. Classic writes commits directly via LogStore
   // using DeltaLog and catalyst Metadata; connect writes commit JSON to the filesystem.

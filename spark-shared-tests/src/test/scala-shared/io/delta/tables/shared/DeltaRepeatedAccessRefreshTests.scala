@@ -81,10 +81,7 @@ trait DeltaRepeatedAccessRefreshTests
       createSimpleTable(tableRef)
       insertInitialData(tableRef)
       checkAnswer(spark.sql(s"SELECT * FROM $tableRef"), Seq(Row(1, 100)))
-      if (!isConnect && v2EnableMode == "STRICT") {
-        assertExternalStrictConflict { externalDataWrite(tableRef, Seq((2, 200))) }
-      } else {
-        externalDataWrite(tableRef, Seq((2, 200)))
+      withExternalWrite(externalDataWrite(tableRef, Seq((2, 200)))) {
         checkAnswer(
           spark.sql(s"SELECT * FROM $tableRef ORDER BY id"),
           Seq(Row(1, 100), Row(2, 200)))
@@ -97,10 +94,7 @@ trait DeltaRepeatedAccessRefreshTests
       createSimpleTable(tableRef)
       insertInitialData(tableRef)
       checkAnswer(spark.sql(s"SELECT * FROM $tableRef"), Seq(Row(1, 100)))
-      if (!isConnect && v2EnableMode == "STRICT") {
-        assertExternalStrictConflict { externalAddColumnAndWrite(tableRef, Seq((2, 200, -1))) }
-      } else {
-        externalAddColumnAndWrite(tableRef, Seq((2, 200, -1)))
+      withExternalWrite(externalAddColumnAndWrite(tableRef, Seq((2, 200, -1)))) {
         checkAnswer(
           spark.sql(s"SELECT * FROM $tableRef ORDER BY id"),
           Seq(Row(1, 100, null), Row(2, 200, -1)))
@@ -113,10 +107,7 @@ trait DeltaRepeatedAccessRefreshTests
       createSimpleTable(tableRef)
       insertInitialData(tableRef)
       checkAnswer(spark.sql(s"SELECT * FROM $tableRef"), Seq(Row(1, 100)))
-      if (!isConnect && v2EnableMode == "STRICT") {
-        assertExternalStrictConflict { externalDropAndRecreate(tableRef, columnMapping = false) }
-      } else {
-        externalDropAndRecreate(tableRef, columnMapping = false)
+      withExternalWrite(externalDropAndRecreate(tableRef, columnMapping = false)) {
         checkAnswer(spark.sql(s"SELECT * FROM $tableRef"), Seq.empty)
       }
     }
