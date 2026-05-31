@@ -32,13 +32,13 @@ import org.apache.spark.sql.types.{DataType, IntegerType, StructType}
  * [[Test / unmanagedSourceDirectories]] in build.sbt), so it self-types only to [[AnyFunSuite]]
  * and uses only the unified [[org.apache.spark.sql]] API.
  *
- * The external-write simulation is implemented ONCE, here. Like Spark's DSv2ExternalMutationTestBase
+ * The external-write simulation is implemented ONCE. Like Spark's DSv2ExternalMutationTestBase
  * (which shares its external mutation via the unified catalog API), we write commit files directly
  * into the table's `_delta_log` on the local filesystem (which the Connect client and server share)
- * using only java.io plus `DataFrame.write`. This bypasses the in-process DeltaLog/snapshot cache in
+ * using only java.io plus `DataFrame.write`. This bypasses in-process DeltaLog/snapshot cache in
  * BOTH modes, so a fresh `sql()` re-resolves and sees the change. Only the genuinely mode-specific
  * bits stay abstract and are provided by each module's test mixin / per-module base:
- *   - [[spark]], [[checkAnswer]], [[withTable]], [[withTempPath]] (from QueryTest / DeltaQueryTest),
+ *   - [[spark]], [[checkAnswer]], [[withTable]], [[withTempPath]] (from QueryTest/DeltaQueryTest),
  *   - [[assertArityMismatchError]] (classic uses Spark's checkError with parameters; connect uses a
  *     substring tolerant variant because Connect wraps the error).
  */
@@ -72,7 +72,7 @@ trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
   protected def insertInitialData(tableRef: String): Unit =
     spark.sql(s"INSERT INTO $tableRef VALUES (1, 100)")
 
-  /** Yields an isolated delta path table reference (delta.`<path>`) for external-write scenarios. */
+  /** Yields an isolated delta path table reference (delta.`<path>`) for external writes. */
   protected def withRefreshTable(body: String => Unit): Unit =
     withTempPath { dir => body(s"delta.`${dir.getAbsolutePath}`") }
 
@@ -144,7 +144,7 @@ trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
     (added -- removed).toSeq.map(removeFileJson)
   }
 
-  /** Writes a parquet file with the given DataFrame into the table dir; returns its AddFile action. */
+  /** Writes a parquet file from a DataFrame into the table dir; returns its AddFile action. */
   private def writeParquet(path: String, df: DataFrame): String = {
     val tempDir = Files.createTempDirectory("ext-write").toFile
     try {
