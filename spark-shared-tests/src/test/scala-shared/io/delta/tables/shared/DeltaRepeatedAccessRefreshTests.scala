@@ -98,6 +98,9 @@ trait DeltaRepeatedAccessRefreshTests
   test("[2] scenario 2 external: repeated access reflects external schema change") {
     withRefreshTable { tableRef =>
       withSeededTable(tableRef) {
+        // Unlike the in-session scenario 2, the external ADD COLUMN lands in its own commit
+        // before the fresh sql() runs, so re-resolution sees the new schema in every mode
+        // (including STRICT). Hence this asserts success unconditionally, with no STRICT branch.
         externalAddColumnAndWrite(tableRef, Seq((2, 200, -1)))
         assertFinalTableState(tableRef, Seq(Row(1, 100, null), Row(2, 200, -1)))
       }
