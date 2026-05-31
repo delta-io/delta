@@ -40,8 +40,6 @@ trait DeltaTableRefreshTestBase extends DeltaTableRefreshSharedBase {
 
   import testImplicits._
 
-  override def isConnect: Boolean = false
-
   /** Override in subclasses to set the V2 enable mode. */
   override protected def v2EnableMode: String = "NONE"
 
@@ -157,7 +155,7 @@ trait DeltaTableRefreshTestBase extends DeltaTableRefreshSharedBase {
   }
 
   // ---------------------------------------------------------------------------
-  // Shared base hook implementations (classic). Error assertions use Spark's
+  // Shared base hook implementations (classic). The arity assertion uses Spark's
   // checkError; external writes use the LogStore based helpers above.
   // ---------------------------------------------------------------------------
 
@@ -165,14 +163,9 @@ trait DeltaTableRefreshTestBase extends DeltaTableRefreshSharedBase {
     checkError(
       exception = intercept[AnalysisException] { f },
       condition = "INSERT_COLUMN_ARITY_MISMATCH.TOO_MANY_DATA_COLUMNS",
-      parameters = Map("tableName" -> ".*", "tableColumns" -> ".*",
-        "dataColumns" -> ".*", "reason" -> ".*"),
+      parameters = Map(
+        "tableName" -> ".*", "tableColumns" -> ".*", "dataColumns" -> ".*"),
       matchPVals = true)
-  }
-
-  override protected def assertExternalStrictConflict(f: => Unit): Unit = {
-    val exception = intercept[java.nio.file.FileAlreadyExistsException] { f }
-    assert(exception.getMessage != null)
   }
 
   override protected def withRefreshTable(body: String => Unit): Unit = {

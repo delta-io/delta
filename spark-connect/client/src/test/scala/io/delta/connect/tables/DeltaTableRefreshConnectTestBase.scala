@@ -41,8 +41,6 @@ import org.apache.spark.sql.types.{DataType, IntegerType, StructType}
 trait DeltaTableRefreshConnectTestBase extends DeltaTableRefreshSharedBase {
   self: DeltaQueryTest with RemoteSparkSession =>
 
-  override def isConnect: Boolean = true
-
   /** Asserts that a SparkThrowable has the expected error condition. */
   protected def checkError(
       exception: SparkThrowable,
@@ -194,7 +192,7 @@ trait DeltaTableRefreshConnectTestBase extends DeltaTableRefreshSharedBase {
   }
 
   // ---------------------------------------------------------------------------
-  // Shared base hook implementations (connect). Error assertions delegate to the
+  // Shared base hook implementations (connect). The arity assertion delegates to the
   // substring tolerant checkError above; external writes use the helpers above.
   // ---------------------------------------------------------------------------
 
@@ -202,13 +200,6 @@ trait DeltaTableRefreshConnectTestBase extends DeltaTableRefreshSharedBase {
     checkError(
       exception = intercept[AnalysisException] { f },
       condition = "INSERT_COLUMN_ARITY_MISMATCH")
-  }
-
-  override protected def assertExternalStrictConflict(f: => Unit): Unit = {
-    // Only invoked from classic STRICT branches; Connect never reaches this path because the
-    // shared traits gate the call behind !isConnect. Fail loudly if the wiring ever changes
-    // rather than silently swallowing the outcome.
-    fail("assertExternalStrictConflict should never be invoked on Connect")
   }
 
   override protected def withRefreshTable(body: String => Unit): Unit = {

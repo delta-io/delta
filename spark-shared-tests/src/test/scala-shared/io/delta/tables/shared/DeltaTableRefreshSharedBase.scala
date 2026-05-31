@@ -35,9 +35,6 @@ import org.apache.spark.sql.{DataFrame, Row, SparkSession}
  */
 trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
 
-  /** True in the Connect implementation, false in classic. Branches expectations. */
-  def isConnect: Boolean
-
   /** The V2 enable mode (NONE, AUTO, STRICT). Overridden by classic subclasses. */
   protected def v2EnableMode: String = "NONE"
 
@@ -48,28 +45,14 @@ trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
   protected def checkAnswer(df: => DataFrame, expectedAnswer: Seq[Row]): Unit
   protected def withTable(tableNames: String*)(f: => Unit): Unit
 
-  // Error assertion. Classic implements with Spark checkError(parameters, matchPVals) and
-  // an AnalysisException; connect implements with its 2 arg substring checkError.
+  // Asserts the body fails with INSERT_COLUMN_ARITY_MISMATCH. Classic implements with Spark's
+  // checkError; connect with its substring tolerant variant.
   protected def assertArityMismatchError(f: => Unit): Unit
 
   // Table setup helpers, already present and identically named on both base traits.
   protected def createSimpleTable(tableName: String): Unit
   protected def insertInitialData(tableName: String): Unit
   protected def writerSql(sqlText: String): Unit
-
-  /**
-   * Runs an external write and verifies the result. In classic STRICT mode the write is
-   * expected to fail with a version conflict and `verify` is skipped; otherwise the write
-   * runs and `verify` asserts the post write state. Connect always takes the write+verify path.
-   */
-  protected def withExternalWrite(write: => Unit)(verify: => Unit): Unit = {
-    if (!isConnect && v2EnableMode == "STRICT") {
-      assertExternalStrictConflict(write)
-    } else {
-      write
-      verify
-    }
-  }
 
   // External modification abstraction. Classic writes commits directly via LogStore
   // using DeltaLog and catalyst Metadata; connect writes commit JSON to the filesystem.
@@ -80,11 +63,4 @@ trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
   protected def externalDataWrite(tableRef: String, rows: Seq[(Int, Int)]): Unit
   protected def externalAddColumnAndWrite(tableRef: String, rows: Seq[(Int, Int, Int)]): Unit
   protected def externalDropAndRecreate(tableRef: String): Unit
-
-  /**
-   * Asserts the body fails the way classic STRICT mode does for external writes
-   * (a version conflict surfaced as [[java.nio.file.FileAlreadyExistsException]]).
-   * Only invoked from classic STRICT branches.
-   */
-  protected def assertExternalStrictConflict(f: => Unit): Unit
 }

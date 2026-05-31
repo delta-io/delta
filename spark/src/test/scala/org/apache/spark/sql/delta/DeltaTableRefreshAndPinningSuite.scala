@@ -98,72 +98,27 @@ class DeltaTableRefreshAndPinningAutoModeExternalSessionSuite
 }
 
 /**
- * V2_ENABLE_MODE = STRICT, same-session writes.
+ * V2_ENABLE_MODE = STRICT, same-session writes. STRICT engages the V2 Kernel connector path.
  *
- * Known failures: In STRICT mode, all table operations go through the DSv2 catalog path.
- * The V2 catalog (DeltaCatalog) caches the table schema at lookup time. When ALTER TABLE
- * ADD/DROP COLUMN modifies the schema, subsequent INSERT in the same session still resolves
- * the table against the cached (stale) schema, causing INSERT_COLUMN_ARITY_MISMATCH errors.
- * The external write tests also fail because the V2 path commits through a different codepath
- * that may not update the shared DeltaLog snapshot, causing writeExternalCommit to compute
- * the wrong next version (FileAlreadyExistsException).
- * These are V2 catalog infrastructure limitations, not bugs in the test logic.
+ * TODO: full V2 connector support is still in progress. For repeated `sql()` access the current
+ * behavior matches NONE/AUTO (the table is re-resolved on each access and reflects the latest
+ * snapshot), so this suite asserts the same refresh behavior. Revisit if STRICT diverges.
  */
 class DeltaTableRefreshAndPinningStrictModeSuite
   extends DeltaTableRefreshAndPinningSuiteBase {
   override protected def v2EnableMode: String = "STRICT"
-
-  // STRICT mode V2 catalog behavior is non-deterministic across CI shards: some tests pass,
-  // others fail with stale schema or version conflicts (V2 catalog infrastructure limitations,
-  // not test-logic bugs). Cancel on failure so genuinely passing tests stay green and the rest
-  // report as cancelled rather than being silently swallowed as passed.
-  override def test(
-      testName: String,
-      testTags: org.scalatest.Tag*)(
-      testFun: => Any)(implicit
-      pos: org.scalactic.source.Position): Unit = {
-    super.test(testName, testTags: _*) {
-      try {
-        testFun
-      } catch {
-        case scala.util.control.NonFatal(e) =>
-          cancel(s"STRICT mode V2 catalog limitation: ${e.getMessage}")
-      }
-    }(pos)
-  }
 }
 
 /**
- * V2_ENABLE_MODE = STRICT with external session writes.
+ * V2_ENABLE_MODE = STRICT with external session writes. Combines the STRICT V2 connector path
+ * with spark.newSession() writes.
  *
- * Known failures: Combining STRICT mode with external session writes
- * (spark.newSession()) causes all tests to fail. In STRICT mode, each
- * session creates its own V2 catalog instance. Writes through the
- * external session's V2 catalog are not visible to the main session's
- * V2 catalog, so reads return stale data or fail with schema errors.
- * The same-session STRICT suite (DeltaTableRefreshAndPinningStrictModeSuite)
- * passes because both reads and writes share the same V2 catalog.
+ * TODO: full V2 connector support is still in progress. The current behavior matches the other
+ * modes (repeated `sql()` access reflects the latest snapshot regardless of the writing session),
+ * so this suite asserts the same refresh behavior. Revisit if STRICT diverges.
  */
 class DeltaTableRefreshAndPinningStrictModeExternalSessionSuite
   extends DeltaTableRefreshAndPinningSuiteBase {
   override protected def v2EnableMode: String = "STRICT"
   override protected def useExternalSession: Boolean = true
-
-  // Most tests fail in STRICT + external session due to V2 catalog isolation between sessions;
-  // some basic tests pass. Cancel on failure so passing tests stay green and the rest report as
-  // cancelled rather than being silently swallowed as passed.
-  override def test(
-      testName: String,
-      testTags: org.scalatest.Tag*)(
-      testFun: => Any)(implicit
-      pos: org.scalactic.source.Position): Unit = {
-    super.test(testName, testTags: _*) {
-      try {
-        testFun
-      } catch {
-        case scala.util.control.NonFatal(e) =>
-          cancel(s"STRICT + external session V2 catalog limitation: ${e.getMessage}")
-      }
-    }(pos)
-  }
 }

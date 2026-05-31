@@ -24,8 +24,9 @@ import org.apache.spark.sql.Row
  * Section [2]: Repeated table access with external changes.
  *
  * Shared across classic and Connect. Repeated `sql()` calls reflect both session and
- * external mutations (data writes, schema changes, drop/recreate). [[isConnect]]
- * differentiates the classic STRICT-mode branches.
+ * external mutations (data writes, schema changes, drop/recreate). These assertions document
+ * the current behavior; the full V2 Kernel connector support is still in progress, so the one
+ * place STRICT diverges today (scenario 2 session write) is asserted explicitly with a TODO.
  */
 trait DeltaRepeatedAccessRefreshTests
   extends DeltaTableRefreshSharedBase { self: AnyFunSuite =>
@@ -50,6 +51,10 @@ trait DeltaRepeatedAccessRefreshTests
       insertInitialData("t")
       checkAnswer(spark.sql("SELECT * FROM t"), Seq(Row(1, 100)))
       writerSql("ALTER TABLE t ADD COLUMN new_column INT")
+      // TODO: Under STRICT the V2 connector resolves the INSERT against the schema cached at
+      // table lookup, so the just-added column is not yet visible and the 3 value INSERT fails
+      // with an arity mismatch. Once the connector refreshes its cached schema this should match
+      // the NONE/AUTO branch, where the additive INSERT succeeds and the new column reads back.
       if (v2EnableMode == "STRICT") {
         assertArityMismatchError { writerSql("INSERT INTO t VALUES (2, 200, -1)") }
       } else {
@@ -81,11 +86,10 @@ trait DeltaRepeatedAccessRefreshTests
       createSimpleTable(tableRef)
       insertInitialData(tableRef)
       checkAnswer(spark.sql(s"SELECT * FROM $tableRef"), Seq(Row(1, 100)))
-      withExternalWrite(externalDataWrite(tableRef, Seq((2, 200)))) {
-        checkAnswer(
-          spark.sql(s"SELECT * FROM $tableRef ORDER BY id"),
-          Seq(Row(1, 100), Row(2, 200)))
-      }
+      externalDataWrite(tableRef, Seq((2, 200)))
+      checkAnswer(
+        spark.sql(s"SELECT * FROM $tableRef ORDER BY id"),
+        Seq(Row(1, 100), Row(2, 200)))
     }
   }
 
@@ -94,11 +98,10 @@ trait DeltaRepeatedAccessRefreshTests
       createSimpleTable(tableRef)
       insertInitialData(tableRef)
       checkAnswer(spark.sql(s"SELECT * FROM $tableRef"), Seq(Row(1, 100)))
-      withExternalWrite(externalAddColumnAndWrite(tableRef, Seq((2, 200, -1)))) {
-        checkAnswer(
-          spark.sql(s"SELECT * FROM $tableRef ORDER BY id"),
-          Seq(Row(1, 100, null), Row(2, 200, -1)))
-      }
+      externalAddColumnAndWrite(tableRef, Seq((2, 200, -1)))
+      checkAnswer(
+        spark.sql(s"SELECT * FROM $tableRef ORDER BY id"),
+        Seq(Row(1, 100, null), Row(2, 200, -1)))
     }
   }
 
@@ -107,9 +110,8 @@ trait DeltaRepeatedAccessRefreshTests
       createSimpleTable(tableRef)
       insertInitialData(tableRef)
       checkAnswer(spark.sql(s"SELECT * FROM $tableRef"), Seq(Row(1, 100)))
-      withExternalWrite(externalDropAndRecreate(tableRef)) {
-        checkAnswer(spark.sql(s"SELECT * FROM $tableRef"), Seq.empty)
-      }
+      externalDropAndRecreate(tableRef)
+      checkAnswer(spark.sql(s"SELECT * FROM $tableRef"), Seq.empty)
     }
   }
 }

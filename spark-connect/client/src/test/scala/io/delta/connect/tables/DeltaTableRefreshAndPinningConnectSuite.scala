@@ -51,16 +51,19 @@ class DeltaTableRefreshAndPinningConnectExternalSessionSuite
 }
 
 /**
- * V2_ENABLE_MODE = STRICT with Connect. STRICT engages the Delta Kernel V2 connector. The mode is
- * set on the server at startup via [[serverConfig]] (the connect analog of overriding sparkConf).
- * The shared traits branch on `v2EnableMode == "STRICT"` for the cases where STRICT changes
- * behavior, so these run as ordinary suites with no test() override.
+ * V2_ENABLE_MODE = STRICT with Connect. STRICT engages the Delta Kernel V2 connector, set on the
+ * server at startup via [[serverConfig]] (the connect analog of overriding sparkConf, since the
+ * server runs in a separate JVM).
+ *
+ * TODO: full V2 connector support is still in progress. The current behavior matches the default
+ * modes (repeated `sql()` access reflects the latest snapshot), so these suites assert the same
+ * refresh behavior. Revisit if STRICT diverges.
  */
 trait DeltaTableRefreshAndPinningConnectStrictModeBase
   extends DeltaTableRefreshAndPinningConnectSuiteBase {
 
-  // Set STRICT on the server (startup config) and mirror it in the field so the shared traits'
-  // `v2EnableMode == "STRICT"` branches apply on the connect side too.
+  // Set STRICT on the server (startup config) and mirror it in the client-side field so the
+  // shared trait's `v2EnableMode == "STRICT"` branch applies on the connect side too.
   override protected def v2EnableMode: String = "STRICT"
 
   override protected def serverConfig: Map[String, String] =
