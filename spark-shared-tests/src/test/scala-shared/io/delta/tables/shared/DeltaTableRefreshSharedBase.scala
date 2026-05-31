@@ -1,0 +1,90 @@
+/*
+ * Copyright (2021) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package io.delta.tables.shared
+
+import org.scalatest.funsuite.AnyFunSuite
+
+import org.apache.spark.sql.{DataFrame, Row, SparkSession}
+
+/**
+ * Shared base for the repeated table access refresh test trait. This single source file is
+ * compiled into BOTH the classic `spark` module and the `spark-connect/client` module (wired via
+ * [[Test / unmanagedSourceDirectories]] in build.sbt). To type-check under both classic Spark and
+ * Spark Connect, it self-types only to [[AnyFunSuite]] and uses only the unified
+ * [[org.apache.spark.sql]] API. Everything that differs between the two execution modes is declared
+ * here as an abstract hook and implemented by the per-module base traits:
+ *   - classic: [[org.apache.spark.sql.delta.DeltaTableRefreshTestBase]]
+ *   - connect: [[io.delta.tables.DeltaTableRefreshConnectTestBase]]
+ *
+ * The shared category trait mixed on top of this base is:
+ *   - [[DeltaRepeatedAccessRefreshTests]] (Section [2])
+ */
+trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
+
+  /** True in the Connect implementation, false in classic. Branches expectations. */
+  def isConnect: Boolean
+
+  /** The V2 enable mode (NONE, AUTO, STRICT). Overridden by classic subclasses. */
+  protected def v2EnableMode: String = "NONE"
+
+  /** The active session. Classic and connect return their own concrete subtype. */
+  protected def spark: SparkSession
+
+  // Verification helpers, satisfied by QueryTest (classic) / DeltaQueryTest (connect).
+  protected def checkAnswer(df: => DataFrame, expectedAnswer: Seq[Row]): Unit
+  protected def withTable(tableNames: String*)(f: => Unit): Unit
+
+  // Error assertion. Classic implements with Spark checkError(parameters, matchPVals) and
+  // an AnalysisException; connect implements with its 2 arg substring checkError.
+  protected def assertArityMismatchError(f: => Unit): Unit
+
+  // Table setup helpers, already present and identically named on both base traits.
+  protected def createSimpleTable(tableName: String): Unit
+  protected def insertInitialData(tableName: String): Unit
+  protected def writerSql(sqlText: String): Unit
+
+  /**
+   * Runs an external write and verifies the result. In classic STRICT mode the write is
+   * expected to fail with a version conflict and `verify` is skipped; otherwise the write
+   * runs and `verify` asserts the post write state. Connect always takes the write+verify path.
+   */
+  protected def withExternalWrite(write: => Unit)(verify: => Unit): Unit = {
+    if (!isConnect && v2EnableMode == "STRICT") {
+      assertExternalStrictConflict(write)
+    } else {
+      write
+      verify
+    }
+  }
+
+  // External modification abstraction. Classic writes commits directly via LogStore
+  // using DeltaLog and catalyst Metadata; connect writes commit JSON to the filesystem.
+  // [[withRefreshTable]] sets up an isolated table and yields the SQL table reference to
+  // use ("t" classic, a delta path identifier in connect) so the body can run CREATE,
+  // INSERT, SELECT, and the external write hooks can locate the table.
+  protected def withRefreshTable(body: String => Unit): Unit
+  protected def externalDataWrite(tableRef: String, rows: Seq[(Int, Int)]): Unit
+  protected def externalAddColumnAndWrite(tableRef: String, rows: Seq[(Int, Int, Int)]): Unit
+  protected def externalDropAndRecreate(tableRef: String): Unit
+
+  /**
+   * Asserts the body fails the way classic STRICT mode does for external writes
+   * (a version conflict surfaced as [[java.nio.file.FileAlreadyExistsException]]).
+   * Only invoked from classic STRICT branches.
+   */
+  protected def assertExternalStrictConflict(f: => Unit): Unit
+}
