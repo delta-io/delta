@@ -428,6 +428,7 @@ class CheckpointsSuite
         // The default for V2 is 50,000 so 12 actions < 50,000 => 1 sidecar.
         spark.range(12).repartition(12).write.format("delta").save(path)
         val deltaLog = DeltaLog.forTable(spark, path)
+        deltaLog.checkpoint()
         assert(getV2CheckpointProvider(deltaLog).sidecarFileStatuses.size == 1)
       }
     }
