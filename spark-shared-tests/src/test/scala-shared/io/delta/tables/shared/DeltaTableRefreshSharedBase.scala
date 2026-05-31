@@ -60,6 +60,15 @@ trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
   protected def strictConnect: Boolean = isConnect && v2EnableMode == "STRICT"
 
   /**
+   * True for Connect under STRICT before Spark 4.1, where the V2 connector pins the snapshot
+   * captured at view/Dataset creation and never refreshes: later writes and schema changes are
+   * invisible (reads return the pinned rows, or empty for column-mapping tables), and a
+   * drop/recreate that deletes the pinned commit surfaces a missing file error. Spark 4.1+
+   * refreshes instead, so these scenarios assert the pinned outcome only on the older runtime.
+   */
+  protected def strictConnectPinned: Boolean = strictConnect && spark.version < "4.1"
+
+  /**
    * Runs a column-mapping schema-change DDL via the writer, then `rest`. Under STRICT over
    * Connect the V2 catalog cannot apply column-mapping schema changes, so the DDL itself throws
    * FIELD_NOT_FOUND and `rest` is skipped (the rest of the scenario cannot proceed).
@@ -90,6 +99,13 @@ trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
    * `messageContains` (used to pin the specific field/identifier in the error).
    */
   protected def assertError(condition: String, messageContains: String)(f: => Unit): Unit
+
+  /**
+   * Asserts the body fails because the pinned snapshot's commit was deleted by a drop/recreate
+   * (surfaced as a missing file error). Only invoked from [[strictConnectPinned]] branches, so
+   * the classic implementation fails loudly if the wiring ever changes.
+   */
+  protected def assertPinnedSnapshotMissingError(f: => Unit): Unit
 
   // Table setup helpers, already present and identically named on both base traits.
   protected def createSimpleTable(tableName: String): Unit

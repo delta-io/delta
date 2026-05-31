@@ -284,6 +284,11 @@ trait DeltaTableRefreshTestBase extends DeltaTableRefreshSharedBase {
     assert(exception.getMessage != null)
   }
 
+  override protected def assertPinnedSnapshotMissingError(f: => Unit): Unit = {
+    // Only invoked from Connect's strictConnectPinned branches; classic never reaches it.
+    fail("assertPinnedSnapshotMissingError should never be invoked on classic")
+  }
+
   override protected def withRefreshTable(body: String => Unit): Unit = {
     withTable("t") { body("t") }
   }

@@ -41,7 +41,12 @@ trait DeltaTempViewRefreshTests extends DeltaTableRefreshSharedBase { self: AnyF
       spark.table("t").filter("salary < 999").createOrReplaceTempView("v")
       checkAnswer(spark.sql("SELECT * FROM v"), Seq(Row(1, 100)))
       writerSql("INSERT INTO t VALUES (2, 200)")
-      checkAnswer(spark.sql("SELECT * FROM v ORDER BY id"), Seq(Row(1, 100), Row(2, 200)))
+      if (strictConnectPinned) {
+        // The pinned snapshot does not see the new write.
+        checkAnswer(spark.sql("SELECT * FROM v"), Seq(Row(1, 100)))
+      } else {
+        checkAnswer(spark.sql("SELECT * FROM v ORDER BY id"), Seq(Row(1, 100), Row(2, 200)))
+      }
     }
   }
 
@@ -84,7 +89,10 @@ trait DeltaTempViewRefreshTests extends DeltaTableRefreshSharedBase { self: AnyF
       writerSql("DROP TABLE t")
       writerSql("CREATE TABLE t (id INT, salary INT) USING delta " +
         "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
-      if (v2EnableMode == "STRICT") {
+      if (strictConnectPinned) {
+        // The pinned snapshot still references the dropped table's commit, now deleted.
+        assertPinnedSnapshotMissingError { spark.sql("SELECT * FROM v").collect() }
+      } else if (v2EnableMode == "STRICT") {
         // After DSv2 migration, SQL view resolves tables by name; column IDs are not
         // captured, so drop/recreate reads empty.
         checkAnswer(spark.sql("SELECT * FROM v"), Seq.empty)
@@ -103,8 +111,13 @@ trait DeltaTempViewRefreshTests extends DeltaTableRefreshSharedBase { self: AnyF
       checkAnswer(spark.sql("SELECT * FROM v"), Seq(Row(1, 100)))
       writerSql("DROP TABLE t")
       writerSql("CREATE TABLE t (id INT, salary INT) USING delta")
-      // Without column mapping, no column ID check. New table is empty.
-      checkAnswer(spark.sql("SELECT * FROM v"), Seq.empty)
+      if (strictConnectPinned) {
+        // The pinned snapshot still references the dropped table's commit, now deleted.
+        assertPinnedSnapshotMissingError { spark.sql("SELECT * FROM v").collect() }
+      } else {
+        // Without column mapping, no column ID check. New table is empty.
+        checkAnswer(spark.sql("SELECT * FROM v"), Seq.empty)
+      }
     }
   }
 
@@ -165,7 +178,12 @@ trait DeltaTempViewRefreshTests extends DeltaTableRefreshSharedBase { self: AnyF
       spark.table(tableRef).filter("salary < 999").createOrReplaceTempView("v")
       checkAnswer(spark.sql("SELECT * FROM v"), Seq(Row(1, 100)))
       withExternalWrite(externalDataWrite(tableRef, Seq((2, 200)))) {
-        checkAnswer(spark.sql("SELECT * FROM v ORDER BY id"), Seq(Row(1, 100), Row(2, 200)))
+        if (strictConnectPinned) {
+          // The pinned snapshot does not see the external write.
+          checkAnswer(spark.sql("SELECT * FROM v"), Seq(Row(1, 100)))
+        } else {
+          checkAnswer(spark.sql("SELECT * FROM v ORDER BY id"), Seq(Row(1, 100), Row(2, 200)))
+        }
       }
     }
   }
@@ -176,14 +194,17 @@ trait DeltaTempViewRefreshTests extends DeltaTableRefreshSharedBase { self: AnyF
       insertInitialData(tableRef)
       spark.table(tableRef).filter("salary < 999").createOrReplaceTempView("v")
       checkAnswer(spark.sql("SELECT * FROM v"), Seq(Row(1, 100)))
-      // View preserves original schema (id, salary) but picks up new data.
       withExternalWrite(externalAddColumnAndWrite(tableRef, Seq((2, 200, -1)))) {
-        if (strictConnect) {
-          // STRICT's V2 view path rejects the external column change.
+        if (strictConnectPinned) {
+          // The pinned snapshot does not see the external column change.
+          checkAnswer(spark.sql("SELECT * FROM v"), Seq(Row(1, 100)))
+        } else if (strictConnect && !ambiguousColumnFixed) {
+          // STRICT's V2 view path rejects the external column change before Spark 4.2.
           assertError("INCOMPATIBLE_COLUMN_CHANGES_AFTER_VIEW_WITH_PLAN_CREATION", "View `v`") {
             spark.sql("SELECT * FROM v").collect()
           }
         } else {
+          // View preserves original schema (id, salary) but picks up new data.
           checkAnswer(spark.sql("SELECT * FROM v ORDER BY id"), Seq(Row(1, 100), Row(2, 200)))
         }
       }
@@ -197,7 +218,10 @@ trait DeltaTempViewRefreshTests extends DeltaTableRefreshSharedBase { self: AnyF
       spark.table(tableRef).filter("id < 999").createOrReplaceTempView("v")
       checkAnswer(spark.sql("SELECT * FROM v"), if (strictConnect) Seq.empty else Seq(Row(1, 100)))
       withExternalWrite(externalDropColumn(tableRef, "salary")) {
-        if (strictConnect) {
+        if (strictConnectPinned) {
+          // The pinned snapshot does not see the external column change.
+          checkAnswer(spark.sql("SELECT * FROM v"), Seq.empty)
+        } else if (strictConnect) {
           assertError("INCOMPATIBLE_COLUMN_CHANGES_AFTER_VIEW_WITH_PLAN_CREATION", "View `v`") {
             spark.sql("SELECT * FROM v").collect()
           }
@@ -228,7 +252,13 @@ trait DeltaTempViewRefreshTests extends DeltaTableRefreshSharedBase { self: AnyF
       spark.table(tableRef).filter("salary < 999").createOrReplaceTempView("v")
       checkAnswer(spark.sql("SELECT * FROM v"), Seq(Row(1, 100)))
       withExternalWrite(externalDropAndRecreate(tableRef, columnMapping = false)) {
-        checkAnswer(spark.sql("SELECT * FROM v"), Seq.empty)
+        if (strictConnectPinned) {
+          // The external recreate appends a new commit; the pinned snapshot still reads
+          // the original rows.
+          checkAnswer(spark.sql("SELECT * FROM v"), Seq(Row(1, 100)))
+        } else {
+          checkAnswer(spark.sql("SELECT * FROM v"), Seq.empty)
+        }
       }
     }
   }
@@ -255,7 +285,10 @@ trait DeltaTempViewRefreshTests extends DeltaTableRefreshSharedBase { self: AnyF
       spark.table(tableRef).filter("id < 999").createOrReplaceTempView("v")
       checkAnswer(spark.sql("SELECT * FROM v"), if (strictConnect) Seq.empty else Seq(Row(1, 100)))
       withExternalWrite(externalReplaceColumn(tableRef, "salary", Some("string"))) {
-        if (strictConnect) {
+        if (strictConnectPinned) {
+          // The pinned snapshot does not see the external column change.
+          checkAnswer(spark.sql("SELECT * FROM v"), Seq.empty)
+        } else if (strictConnect) {
           assertError("INCOMPATIBLE_COLUMN_CHANGES_AFTER_VIEW_WITH_PLAN_CREATION", "View `v`") {
             spark.sql("SELECT * FROM v").collect()
           }

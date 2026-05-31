@@ -270,6 +270,12 @@ trait DeltaTableRefreshConnectTestBase extends DeltaTableRefreshSharedBase {
       s"Expected message to contain '$messageContains' but was: ${exception.getMessage}")
   }
 
+  override protected def assertPinnedSnapshotMissingError(f: => Unit): Unit = {
+    val exception = intercept[SparkException] { f }
+    assert(exception.getMessage.contains("does not exist"),
+      s"Expected a missing-file error but got: ${exception.getMessage}")
+  }
+
   override protected def assertExternalStrictConflict(f: => Unit): Unit = {
     // Only invoked from classic STRICT branches; Connect never reaches this path because the
     // shared traits gate the call behind !isConnect. Fail loudly if the wiring ever changes
