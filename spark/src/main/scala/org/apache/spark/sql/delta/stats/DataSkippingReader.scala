@@ -763,7 +763,8 @@ trait DataSkippingReaderBase
       //    rough heuristic, require the table to no longer be considered a "small delta table."
       // 3. At least 1 data filter was not already used for data skipping.
       val shouldRewriteDataFiltersAsPartitionLike =
-        spark.conf.get(DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ENABLED) &&
+        useStats &&
+          spark.conf.get(DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ENABLED) &&
           ClusteredTableUtils.isSupported(snapshotToScan.protocol) &&
           snapshotToScan.numOfFilesIfKnown.exists(_ >=
             spark.conf.get(DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_THRESHOLD)) &&

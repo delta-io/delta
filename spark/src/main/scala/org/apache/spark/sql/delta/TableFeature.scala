@@ -386,7 +386,10 @@ object TableFeature {
       TypeWideningTableFeature,
       IcebergCompatV1TableFeature,
       IcebergCompatV2TableFeature,
+      IcebergCompatV3TableFeature,
       DeletionVectorsTableFeature,
+      GeoSpatialPreviewTableFeature,
+      GeoSpatialTableFeature,
       VacuumProtocolCheckTableFeature,
       V2CheckpointTableFeature,
       RowTrackingFeature,
@@ -648,6 +651,55 @@ object IdentityColumnsTableFeature
       spark: SparkSession): Boolean = {
     ColumnWithDefaultExprUtils.hasIdentityColumn(metadata.schema)
   }
+}
+
+
+/** Common base shared by the preview and geospatial table features. */
+abstract class GeoSpatialTableFeatureBase(name: String)
+  extends ReaderWriterFeature(name)
+  with RemovableFeature {
+
+  override def validateDropInvariants(table: DeltaTableV2, snapshot: Snapshot): Boolean =
+    !DeltaGeoSpatial.containsGeoColumns(snapshot.metadata.schema)
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    GeospatialPreDowngradeCommand(table)
+
+  override def actionUsesFeature(action: Action): Boolean = false
+}
+
+/**
+ * Feature used for the private preview phase of geospatial support. Tables that have this
+ * feature are still supported even after the preview.
+ */
+object GeoSpatialPreviewTableFeature
+  extends GeoSpatialTableFeatureBase(name = "geospatial-dev")
+
+/**
+ * Stable feature for geospatial support.
+ *
+ * Table feature that adds support for GeoSpatial types (Geometry and Geography).
+ * Feature is automatically added whenever schema contains any of these two types.
+ * Additionally, feature is gated behind a delta.geo.preview.enabled config.
+ */
+object GeoSpatialTableFeature
+  extends GeoSpatialTableFeatureBase(name = "geospatial")
+  with FeatureAutomaticallyEnabledByMetadata {
+  override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol, metadata: Metadata, spark: SparkSession): Boolean = {
+    val hasGeoColumns = DeltaGeoSpatial.containsGeoColumns(metadata.schema)
+
+    if (hasGeoColumns && !DeltaGeoSpatial.isPreviewEnabled(spark)) {
+      throw DeltaErrors.geoSpatialNotSupportedException()
+    }
+
+    hasGeoColumns &&
+    // Don't automatically enable the stable feature if the preview feature is already supported, to
+    // avoid possibly breaking old clients that only support the preview feature.
+    !protocol.isFeatureSupported(GeoSpatialPreviewTableFeature)
+  }
+
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
 }
 
 object TimestampNTZTableFeature extends ReaderWriterFeature(name = "timestampNtz")
@@ -1021,6 +1073,23 @@ object IcebergCompatV2TableFeature extends WriterFeature(name = "icebergCompatV2
   override def requiredFeatures: Set[TableFeature] = Set(ColumnMappingTableFeature)
 }
 
+object IcebergCompatV3TableFeature extends WriterFeature(name = "icebergCompatV3")
+  with FeatureAutomaticallyEnabledByMetadata {
+
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
+
+  override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol,
+      metadata: Metadata,
+      spark: SparkSession): Boolean = IcebergCompatV3.isEnabled(metadata)
+
+  override def requiredFeatures: Set[TableFeature] =
+    Set(ColumnMappingTableFeature, RowTrackingFeature)
+}
+
+
 /**
  * Clustering table feature is enabled when a table is created with CLUSTER BY clause.
  */
@@ -1115,6 +1184,8 @@ object V2CheckpointTableFeature
   with FeatureAutomaticallyEnabledByMetadata {
 
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
 
   private def isV2CheckpointSupportNeededByMetadata(metadata: Metadata): Boolean =
     DeltaConfigs.CHECKPOINT_POLICY.fromMetaData(metadata).needsV2CheckpointSupport

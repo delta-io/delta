@@ -96,6 +96,41 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
   }
 
   compatVersions.foreach { compatVersion =>
+    test(s"CREATE OR REPLACE with CLONE - compatV$compatVersion") {
+      withTable(testTableName, "source") {
+        write("CREATE TABLE source (col1 INT) USING DELTA TBLPROPERTIES (" +
+          "'delta.columnMapping.mode' = 'name')")
+        write("INSERT INTO source VALUES (1), (2), (3)")
+        write(
+          s"""CREATE TABLE `$testTableName`
+             |SHALLOW CLONE source
+             |TBLPROPERTIES (
+             |  'delta.enableIcebergCompatV$compatVersion' = 'true',
+             |  'delta.universalFormat.enabledFormats' = 'iceberg'
+             |  ${extraTableProperties(compatVersion)}
+             |)""".stripMargin)
+        // Do NOT verify here: Iceberg metadata not generated for the initial create commit.
+        write("INSERT INTO source VALUES (4)")
+        // triggering atomic Iceberg metadata generation via commitLarge.
+        write(s"DELETE FROM `$testTableName`")
+        write(
+          s"""CREATE OR REPLACE TABLE `$testTableName`
+             |SHALLOW CLONE source
+             |TBLPROPERTIES (
+             |  'delta.enableIcebergCompatV$compatVersion' = 'true',
+             |  'delta.universalFormat.enabledFormats' = 'iceberg',
+             |  'delta.enableDeletionVectors' = 'false'
+             |)""".stripMargin)
+        readAndVerify(testTableName, "col1", "col1", Seq(Row(1), Row(2), Row(3), Row(4)))
+        write(s"UPDATE `$testTableName` SET col1 = 100 WHERE col1 = 1")
+        readAndVerify(testTableName, "col1", "col1", Seq(Row(2), Row(3), Row(4), Row(100)))
+        write(s"DELETE FROM `$testTableName` WHERE col1 = 3")
+        readAndVerify(testTableName, "col1", "col1", Seq(Row(2), Row(4), Row(100)))
+      }
+    }
+  }
+
+  compatVersions.foreach { compatVersion =>
     test(s"Table with partition - compatV$compatVersion") {
       withTable(testTableName) {
         write(

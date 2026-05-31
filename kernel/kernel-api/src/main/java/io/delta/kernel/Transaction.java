@@ -266,7 +266,10 @@ public interface Transaction {
    */
   static DataWriteContext getWriteContext(
       Engine engine, Row transactionState, Map<String, Literal> partitionValues) {
-    blockIfColumnMappingEnabled(transactionState);
+    // Column mapping check removed from getWriteContext: connectors that handle column
+    // name translation themselves (e.g. using Spark's Parquet writer instead of Kernel's)
+    // only need the target directory and partition metadata from this method. The column
+    // mapping block remains in transformLogicalData() for Kernel's own Parquet path.
     StructType tableSchema = getLogicalSchema(transactionState);
     List<String> partitionColNames = getPartitionColumnsList(transactionState);
 

@@ -73,6 +73,13 @@ public class CDCSchemaContext implements Serializable {
    * @param partitionSchema the partition schema
    */
   public CDCSchemaContext(StructType readDataSchema, StructType partitionSchema) {
+    // check that pruneColumns has pruned any existing CDC columns
+    for (StructField field : readDataSchema.fields()) {
+      if (isCDCColumn(field.name())) {
+        throw new IllegalArgumentException(
+            "readDataSchema already contains the CDC column: " + field.name());
+      }
+    }
     this.readDataSchemaWithCDC = appendCDCColumns(readDataSchema);
     int dataColCount = readDataSchema.fields().length;
     int partColCount = partitionSchema.fields().length;

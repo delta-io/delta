@@ -71,9 +71,12 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
     super.afterAll()
   }
 
-  protected val testTable: String = "test_ddl_table"
-  protected val sourceTable: String = "test_ddl_source"
-  protected val targetTable: String = "test_ddl_target"
+  // Use a per-suite-instance random suffix to prevent table name collisions across test shards.
+  protected val tableSuffix: String =
+    java.util.UUID.randomUUID().toString.replace("-", "").take(8)
+  protected val testTable: String = s"test_ddl_table_$tableSuffix"
+  protected val sourceTable: String = s"test_ddl_source_$tableSuffix"
+  protected val targetTable: String = s"test_ddl_target_$tableSuffix"
 
   protected def isPathBased: Boolean = false
 
@@ -186,7 +189,9 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
 
   protected def testColTypeValidation(clause: String): Unit = {
     test(s"validate column datatype checking on $clause table") {
-      withTable("srcTbl", "dstTbl") {
+      val srcTbl = s"srcTbl_$tableSuffix"
+      val dstTbl = s"dstTbl_$tableSuffix"
+      withTable(srcTbl, dstTbl) {
         // Create reference table for CTAS/RTAS.
         val columnMappingMode =
           sparkConf
@@ -206,7 +211,7 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
             |,e MAP<INT, INT>
             |$commaColSql
             |""".stripMargin
-        sql(s"CREATE table srcTbl ($schemaStr) USING delta")
+        sql(s"CREATE table $srcTbl ($schemaStr) USING delta")
 
         val data = (0 to 1000)
           .map(i => Row(Row(i + 1, i * 10), i % 2 == 0, Map(i -> i), i % 2 == 1))
@@ -218,9 +223,9 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
             )
           ))))
         spark.createDataFrame(spark.sparkContext.parallelize(data), StructType(schema))
-          .write.mode("append").format("delta").saveAsTable("srcTbl")
+          .write.mode("append").format("delta").saveAsTable(srcTbl)
 
-        val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, new TableIdentifier("srcTbl"))
+        val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, new TableIdentifier(srcTbl))
         // Test multiple data types.
         // Columns "a", "d" and "e" are all unsupported data skipping types.
         // Columns "a.b" and "`f@q`" are eligible data skipping types.
@@ -232,8 +237,8 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
             // Since validation happens both on create and replace, validate for both cases to
             // ensure that datatype validation behaves consistently between the two.
             if (clause == "REPLACE") {
-              sql("DROP TABLE IF EXISTS dstTbl")
-              sql(s"CREATE TABLE dstTbl LIKE srcTbl LOCATION '${tmpDir.getAbsolutePath}'")
+              sql(s"DROP TABLE IF EXISTS $dstTbl")
+              sql(s"CREATE TABLE $dstTbl LIKE $srcTbl LOCATION '${tmpDir.getAbsolutePath}'")
             }
 
             Seq(
@@ -241,19 +246,19 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
               () => {
                 val schema = s"a STRUCT<b INT, c INT>, d BOOLEAN, e MAP<INT, INT>, `f,q` INT"
                 createOrReplaceClusteredTable(
-                  clause, "dstTbl", schemaStr, colName, location = Some(tmpDir.getAbsolutePath))
+                  clause, dstTbl, schemaStr, colName, location = Some(tmpDir.getAbsolutePath))
               },
               // Scenario 2: CTAS/RTAS.
               () =>
                 createOrReplaceAsSelectClusteredTable(
-                clause, "dstTbl", "srcTbl", colName, location = Some(tmpDir.getAbsolutePath)))
+                clause, dstTbl, srcTbl, colName, location = Some(tmpDir.getAbsolutePath)))
               .foreach { f =>
                 if (colName == "a.b" || colName == specialColName) {
                   if (clause == "CREATE") {
                     // Drop the table and delete the _delta_log directory to allow
                     // external delta table creation.
-                    deleteTableFromCommitCoordinatorIfNeeded("dstTbl")
-                    sql("DROP TABLE IF EXISTS dstTbl")
+                    deleteTableFromCommitCoordinatorIfNeeded(dstTbl)
+                    sql(s"DROP TABLE IF EXISTS $dstTbl")
                     Utils.deleteRecursively(new File(tmpDir, "_delta_log"))
                   }
                   // Qualified data types and no exception is expected.
@@ -263,7 +268,7 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
                     f()
                   }
                   val tableSchema =
-                    DeltaLog.forTable(spark, TableIdentifier("srcTbl")).update().metadata.schema
+                    DeltaLog.forTable(spark, TableIdentifier(srcTbl)).update().metadata.schema
                   val dataTypeOpt = tableSchema
                     .findNestedField(FieldReference(colName).fieldNames())
                     .map(_._2.dataType)
@@ -283,7 +288,7 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
   }
 
   test("cluster by with more than 4 columns - create table") {
-    val testTable = "test_table"
+    val testTable = s"test_table_$tableSuffix"
     withTable(testTable) {
       val e = intercept[DeltaAnalysisException] {
         createOrReplaceClusteredTable(
@@ -298,7 +303,7 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
   }
 
   test("cluster by with more than 4 columns - ctas") {
-    val testTable = "test_table"
+    val testTable = s"test_table_$tableSuffix"
     val schema = "a INT, b INT, c INT, d INT, e INT"
     withTempDirIfNecessary { location =>
       withTable(sourceTable, testTable) {
@@ -654,7 +659,7 @@ trait ClusteredTableDDLSuiteBase
   import testImplicits._
 
   test("cluster by with more than 4 columns - alter table") {
-    val testTable = "test_table"
+    val testTable = s"test_table_$tableSuffix"
     withClusteredTable(testTable, "a INT, b INT, c INT, d INT, e INT", "a") {
       val e = intercept[DeltaAnalysisException] {
         sql(s"ALTER TABLE $testTable CLUSTER BY (a, b, c, d, e)")
@@ -881,10 +886,10 @@ trait ClusteredTableDDLSuiteBase
     assume(!catalogOwnedDefaultCreationEnabledInTests,
       "OPTIMIZE is blocked on catalog-managed tables")
     import testImplicits._
-    val srcTable = "SrcTbl"
-    val dstTable1 = "DestTbl1"
-    val dstTable2 = "DestTbl2"
-    val dstTable3 = "DestTbl3"
+    val srcTable = s"SrcTbl_$tableSuffix"
+    val dstTable1 = s"DestTbl1_$tableSuffix"
+    val dstTable2 = s"DestTbl2_$tableSuffix"
+    val dstTable3 = s"DestTbl3_$tableSuffix"
 
     withTable(srcTable, dstTable1, dstTable2, dstTable3) {
       // Create the source table.
@@ -1212,24 +1217,26 @@ trait ClusteredTableDDLDataSourceV2SuiteBase
     with ClusteredTableDDLSuite {
   test("Create clustered table from external location, " +
     "location has clustered table, schema not specified, cluster by not specified") {
+    val clusteredTable = s"clustered_table_$tableSuffix"
     withTempDir { dir =>
       // 1. Create a clustered table
       sql(s"create table delta.`${dir.getAbsolutePath}` (col1 int, col2 string) using delta " +
         "cluster by (col1)")
 
       // 2. Create a clustered table from the external location.
-      withTable("clustered_table") {
+      withTable(clusteredTable) {
         // When schema is not specified, the schema of the table is inferred from the external
         // table.
-        sql(s"CREATE EXTERNAL TABLE clustered_table USING delta LOCATION '${dir.getAbsolutePath}'")
-        verifyClusteringColumns(TableIdentifier("clustered_table"), Seq("col1"))
+        sql(s"CREATE EXTERNAL TABLE $clusteredTable USING delta " +
+          s"LOCATION '${dir.getAbsolutePath}'")
+        verifyClusteringColumns(TableIdentifier(clusteredTable), Seq("col1"))
       }
     }
   }
 
   test("create external non-clustered table: location has clustered table, schema specified, " +
     "cluster by not specified") {
-    val tableName = "clustered_table"
+    val tableName = s"clustered_table_$tableSuffix"
     withTempDir { dir =>
       // 1. Create a clustered table in the external location.
       sql(s"create table delta.`${dir.getAbsolutePath}` (col1 int, col2 string) using delta " +
@@ -1255,7 +1262,7 @@ trait ClusteredTableDDLDataSourceV2SuiteBase
 
   test("create external clustered table: location has clustered table, schema specified, " +
     "cluster by specified with different clustering column") {
-    val tableName = "clustered_table"
+    val tableName = s"clustered_table_$tableSuffix"
     withTempDir { dir =>
       // 1. Create a clustered table in the external location.
       sql(s"create table delta.`${dir.getAbsolutePath}` (col1 int, col2 string) using delta " +
@@ -1283,7 +1290,7 @@ trait ClusteredTableDDLDataSourceV2SuiteBase
     if (catalogOwnedDefaultCreationEnabledInTests) {
       cancel("CatalogOwned does not support external table creation.")
     }
-    val tableName = "clustered_table"
+    val tableName = s"clustered_table_$tableSuffix"
     withTempDir { dir =>
       // 1. Create a clustered table in the external location.
       sql(s"create table delta.`${dir.getAbsolutePath}` (col1 int, col2 string) using delta " +
@@ -1303,7 +1310,7 @@ trait ClusteredTableDDLDataSourceV2SuiteBase
     if (catalogOwnedDefaultCreationEnabledInTests) {
       cancel("CatalogOwned does not support external table creation.")
     }
-    val tableName = "clustered_table"
+    val tableName = s"clustered_table_$tableSuffix"
     withTempDir { dir =>
       // 1. Create a non-clustered table in the external location.
       sql(s"create table delta.`${dir.getAbsolutePath}` (col1 int, col2 string) using delta")

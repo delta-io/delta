@@ -226,7 +226,7 @@ class IcebergConverter
 
 
   /**
-   * Reads the last converted Iceberg state from the catalogTable properties.
+   * Reads the last converted Iceberg state from the catalogTable storage properties.
    * The catalogTable does not have a deltaUniformIceberg field; instead the metadata location
    * and last converted delta version are stored as plain table properties as a workaround
    */
@@ -235,10 +235,12 @@ class IcebergConverter
       deltaLog: DeltaLog,
       enablingUniForm: Boolean): LastConvertedIcebergInfo = {
     val baseMetadataLocation =
-      catalogTable.properties.get(IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP)
+      catalogTable.storage.properties
+        .get(IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP)
     val lastDeltaVersionConverted =
-      catalogTable.properties.get(
-        IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP).map(_.toLong)
+      catalogTable.storage.properties
+        .get(IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP)
+        .map(_.toLong)
     val lastConvertedIcebergTable =
       baseMetadataLocation.map(new HadoopTables(deltaLog.newDeltaHadoopConf()).load(_))
     val lastConvertedIcebergSnapshotId =
@@ -646,7 +648,7 @@ class IcebergConverter
             icebergTxn.getNullHelper
           case _ =>
             recordDeltaEvent(
-              targetSnapshot.deltaLog,
+              targetSnapshot,
               "delta.iceberg.conversion.unsupportedActions",
               data = Map(
                 "version" -> targetSnapshot.version,
@@ -670,7 +672,7 @@ class IcebergConverter
         }
     }
     recordDeltaEvent(
-      targetSnapshot.deltaLog,
+      targetSnapshot,
       "delta.iceberg.conversion.convertActions",
       data = Map(
         "version" -> targetSnapshot.version,
