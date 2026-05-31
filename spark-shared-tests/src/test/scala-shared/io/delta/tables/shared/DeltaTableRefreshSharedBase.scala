@@ -16,51 +16,188 @@
 
 package io.delta.tables.shared
 
+import java.io.File
+import java.nio.charset.StandardCharsets.UTF_8
+import java.nio.file.{Files, Paths}
+import java.util.UUID
+
 import org.scalatest.funsuite.AnyFunSuite
 
 import org.apache.spark.sql.{DataFrame, Row, SparkSession}
+import org.apache.spark.sql.types.{DataType, IntegerType, StructType}
 
 /**
- * Shared base for the repeated table access refresh test trait. This single source file is
- * compiled into BOTH the classic `spark` module and the `spark-connect/client` module (wired via
- * [[Test / unmanagedSourceDirectories]] in build.sbt). To type-check under both classic Spark and
- * Spark Connect, it self-types only to [[AnyFunSuite]] and uses only the unified
- * [[org.apache.spark.sql]] API. Everything that differs between the two execution modes is declared
- * here as an abstract hook and implemented by the per-module base traits:
- *   - classic: [[org.apache.spark.sql.delta.DeltaTableRefreshTestBase]]
- *   - connect: [[io.delta.tables.DeltaTableRefreshConnectTestBase]]
+ * Shared base for the repeated table access refresh tests. This single source file is compiled
+ * into BOTH the classic `spark` module and the `spark-connect/client` module (wired via
+ * [[Test / unmanagedSourceDirectories]] in build.sbt), so it self-types only to [[AnyFunSuite]]
+ * and uses only the unified [[org.apache.spark.sql]] API.
  *
- * The shared category trait mixed on top of this base is:
- *   - [[DeltaRepeatedAccessRefreshTests]] (Section [2])
+ * The external-write simulation is implemented ONCE, here. Like Spark's DSv2ExternalMutationTestBase
+ * (which shares its external mutation via the unified catalog API), we write commit files directly
+ * into the table's `_delta_log` on the local filesystem (which the Connect client and server share)
+ * using only java.io plus `DataFrame.write`. This bypasses the in-process DeltaLog/snapshot cache in
+ * BOTH modes, so a fresh `sql()` re-resolves and sees the change. Only the genuinely mode-specific
+ * bits stay abstract and are provided by each module's test mixin / per-module base:
+ *   - [[spark]], [[checkAnswer]], [[withTable]], [[withTempPath]] (from QueryTest / DeltaQueryTest),
+ *   - [[assertArityMismatchError]] (classic uses Spark's checkError with parameters; connect uses a
+ *     substring tolerant variant because Connect wraps the error).
  */
 trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
 
-  /** The V2 enable mode (NONE, AUTO, STRICT). Overridden by classic subclasses. */
-  protected def v2EnableMode: String = "NONE"
+  // ---------------------------------------------------------------------------
+  // Mode-specific hooks, satisfied by the per-module base traits / test mixins.
+  // ---------------------------------------------------------------------------
 
-  /** The active session. Classic and connect return their own concrete subtype. */
   protected def spark: SparkSession
 
-  // Verification helpers, satisfied by QueryTest (classic) / DeltaQueryTest (connect).
+  /** The V2 enable mode (NONE, AUTO, STRICT). Overridden by the concrete suites. */
+  protected def v2EnableMode: String = "NONE"
+
   protected def checkAnswer(df: => DataFrame, expectedAnswer: Seq[Row]): Unit
   protected def withTable(tableNames: String*)(f: => Unit): Unit
+  protected def withTempPath(f: File => Unit): Unit
 
-  // Asserts the body fails with INSERT_COLUMN_ARITY_MISMATCH. Classic implements with Spark's
-  // checkError; connect with its substring tolerant variant.
+  /** Asserts the body fails with INSERT_COLUMN_ARITY_MISMATCH (error surfacing differs by mode). */
   protected def assertArityMismatchError(f: => Unit): Unit
 
-  // Table setup helpers, already present and identically named on both base traits.
-  protected def createSimpleTable(tableName: String): Unit
-  protected def insertInitialData(tableName: String): Unit
-  protected def writerSql(sqlText: String): Unit
+  // ---------------------------------------------------------------------------
+  // Shared session helpers (unified API).
+  // ---------------------------------------------------------------------------
 
-  // External modification abstraction. Classic writes commits directly via LogStore
-  // using DeltaLog and catalyst Metadata; connect writes commit JSON to the filesystem.
-  // [[withRefreshTable]] sets up an isolated table and yields the SQL table reference to
-  // use ("t" classic, a delta path identifier in connect) so the body can run CREATE,
-  // INSERT, SELECT, and the external write hooks can locate the table.
-  protected def withRefreshTable(body: String => Unit): Unit
-  protected def externalDataWrite(tableRef: String, rows: Seq[(Int, Int)]): Unit
-  protected def externalAddColumnAndWrite(tableRef: String, rows: Seq[(Int, Int, Int)]): Unit
-  protected def externalDropAndRecreate(tableRef: String): Unit
+  protected def writerSql(sqlText: String): Unit = spark.sql(sqlText)
+
+  protected def createSimpleTable(tableRef: String): Unit =
+    spark.sql(s"CREATE TABLE $tableRef (id INT, salary INT) USING delta")
+
+  protected def insertInitialData(tableRef: String): Unit =
+    spark.sql(s"INSERT INTO $tableRef VALUES (1, 100)")
+
+  /** Yields an isolated delta path table reference (delta.`<path>`) for external-write scenarios. */
+  protected def withRefreshTable(body: String => Unit): Unit =
+    withTempPath { dir => body(s"delta.`${dir.getAbsolutePath}`") }
+
+  // ---------------------------------------------------------------------------
+  // Shared external-write simulation: write commit files directly into _delta_log, bypassing the
+  // in-process DeltaLog. Schemas are edited as real StructType values recovered from the stored
+  // schemaString. Uses only java.io and the unified DataFrame API, so it compiles in both modules.
+  // ---------------------------------------------------------------------------
+
+  private val IdRegex = """"id"\s*:\s*"([^"]+)"""".r
+  private val SchemaStringRegex = """"schemaString"\s*:\s*"((?:[^"\\]|\\.)*)"""".r
+
+  /** Extracts the filesystem path from a delta path table reference (delta.`<path>`). */
+  private def pathOf(tableRef: String): String =
+    tableRef.stripPrefix("delta.`").stripSuffix("`")
+
+  private def deltaLogDir(path: String): File = new File(path, "_delta_log")
+
+  private def commitJsonFiles(path: String): Array[File] =
+    deltaLogDir(path).listFiles().filter(_.getName.endsWith(".json"))
+
+  private def currentVersion(path: String): Long =
+    commitJsonFiles(path).map(_.getName.stripSuffix(".json").toLong).max
+
+  private def latestMetaDataLine(path: String): String =
+    commitJsonFiles(path).sortBy(_.getName).flatMap { f =>
+      new String(Files.readAllBytes(f.toPath), UTF_8).split("\n")
+    }.filter(_.contains("\"metaData\"")).lastOption.getOrElse(
+      throw new RuntimeException("No metaData action found in commit files"))
+
+  /** The table's current schema, recovered from the stored schemaString. */
+  private def currentSchema(path: String): StructType = {
+    val escaped = SchemaStringRegex.findFirstMatchIn(latestMetaDataLine(path)).map(_.group(1))
+      .getOrElse(throw new RuntimeException("Could not extract schemaString from metadata"))
+    DataType.fromJson(escaped.replace("\\\"", "\"")).asInstanceOf[StructType]
+  }
+
+  /** Returns the metaData line with its schemaString replaced (id and configuration preserved). */
+  private def metaLineWithSchema(metaLine: String, schema: StructType): String = {
+    val escaped = schema.json.replace("\"", "\\\"")
+    SchemaStringRegex.replaceFirstIn(
+      metaLine, java.util.regex.Matcher.quoteReplacement(s""""schemaString":"$escaped""""))
+  }
+
+  /** Returns the metaData line with a fresh table id (simulating a recreated table). */
+  private def metaLineWithNewId(metaLine: String): String =
+    IdRegex.replaceFirstIn(
+      metaLine, java.util.regex.Matcher.quoteReplacement(s""""id":"${UUID.randomUUID()}""""))
+
+  private def addFileJson(name: String, size: Long): String =
+    s"""{"add":{"path":"$name","partitionValues":{},"size":$size,""" +
+    s""""modificationTime":${System.currentTimeMillis()},"dataChange":true}}"""
+
+  private def removeFileJson(name: String): String =
+    s"""{"remove":{"path":"$name","deletionTimestamp":${System.currentTimeMillis()},""" +
+    s""""dataChange":true}}"""
+
+  /** RemoveFile actions for every data file still active in the table. */
+  private def removeActiveFiles(path: String): Seq[String] = {
+    val addRegex = """"add":\{[^}]*"path"\s*:\s*"([^"]+)"""".r
+    val removeRegex = """"remove":\{[^}]*"path"\s*:\s*"([^"]+)"""".r
+    val added = scala.collection.mutable.Set[String]()
+    val removed = scala.collection.mutable.Set[String]()
+    commitJsonFiles(path).sortBy(_.getName).foreach { f =>
+      val content = new String(Files.readAllBytes(f.toPath), UTF_8)
+      addRegex.findAllMatchIn(content).foreach(m => added += m.group(1))
+      removeRegex.findAllMatchIn(content).foreach(m => removed += m.group(1))
+    }
+    (added -- removed).toSeq.map(removeFileJson)
+  }
+
+  /** Writes a parquet file with the given DataFrame into the table dir; returns its AddFile action. */
+  private def writeParquet(path: String, df: DataFrame): String = {
+    val tempDir = Files.createTempDirectory("ext-write").toFile
+    try {
+      df.coalesce(1).write.parquet(s"${tempDir.getAbsolutePath}/out")
+      val parquetFile = new File(tempDir, "out").listFiles()
+        .filter(_.getName.endsWith(".parquet")).head
+      val targetName = s"ext-commit-v${currentVersion(path) + 1}.snappy.parquet"
+      Files.copy(parquetFile.toPath, Paths.get(path).resolve(targetName))
+      addFileJson(targetName, parquetFile.length())
+    } finally {
+      deleteRecursively(tempDir)
+    }
+  }
+
+  private def deleteRecursively(file: File): Unit = {
+    Option(file.listFiles()).foreach(_.foreach(deleteRecursively))
+    file.delete()
+  }
+
+  /** Writes a new commit (version + 1) containing the given actions. */
+  private def writeCommit(path: String, actions: Seq[String]): Unit =
+    Files.write(
+      new File(deltaLogDir(path), f"${currentVersion(path) + 1}%020d.json").toPath,
+      actions.mkString("\n").getBytes(UTF_8))
+
+  private def rows2Df(rows: Seq[(Int, Int)]): DataFrame = {
+    val session = spark
+    import session.implicits._
+    rows.toDF("id", "salary")
+  }
+
+  private def rows3Df(rows: Seq[(Int, Int, Int)]): DataFrame = {
+    val session = spark
+    import session.implicits._
+    rows.toDF("id", "salary", "new_column")
+  }
+
+  protected def externalDataWrite(tableRef: String, rows: Seq[(Int, Int)]): Unit = {
+    val path = pathOf(tableRef)
+    writeCommit(path, Seq(writeParquet(path, rows2Df(rows))))
+  }
+
+  protected def externalAddColumnAndWrite(tableRef: String, rows: Seq[(Int, Int, Int)]): Unit = {
+    val path = pathOf(tableRef)
+    val newSchema = currentSchema(path).add("new_column", IntegerType, nullable = true)
+    writeCommit(path, Seq(
+      metaLineWithSchema(latestMetaDataLine(path), newSchema),
+      writeParquet(path, rows3Df(rows))))
+  }
+
+  protected def externalDropAndRecreate(tableRef: String): Unit = {
+    val path = pathOf(tableRef)
+    val recreatedMeta = metaLineWithNewId(latestMetaDataLine(path))
+    writeCommit(path, removeActiveFiles(path) :+ recreatedMeta)
+  }
 }
