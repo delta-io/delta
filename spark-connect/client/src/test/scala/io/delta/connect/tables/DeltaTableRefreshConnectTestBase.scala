@@ -29,24 +29,19 @@ import org.apache.spark.sql.test.DeltaQueryTest
 import org.apache.spark.sql.types.{DataType, IntegerType, StructType}
 
 /**
- * Spark Connect variant of the repeated table access refresh tests.
- *
- * Key behavioral differences from classic (local) mode:
- *   - In Connect, Dataset is re-analyzed on each execution, so repeated reads always see the
- *     latest data and schema.
- *
- * These tests document the "OSS Delta (connect)" column from the
- * "Refreshing and pinning tables in Spark" design doc.
+ * Spark Connect base for the repeated table access refresh tests. In Connect the Dataset is
+ * re-analyzed on each execution, so repeated reads always see the latest data and schema.
  */
 trait DeltaTableRefreshConnectTestBase extends DeltaTableRefreshSharedBase {
   self: DeltaQueryTest with RemoteSparkSession =>
 
-  /** Asserts that a SparkThrowable has the expected error condition. */
+  /**
+   * Asserts a SparkThrowable carries the expected error condition, tolerating Connect wrapping
+   * the condition into the message (e.g. as INTERNAL_ERROR).
+   */
   protected def checkError(
       exception: SparkThrowable,
       condition: String): Unit = {
-    // In Connect, some errors arrive wrapped as INTERNAL_ERROR. Fall back to checking
-    // getMessage if getCondition doesn't match.
     val cond = exception.getCondition
     if (cond != condition) {
       assert(exception.asInstanceOf[Exception].getMessage.contains(condition),
@@ -55,24 +50,8 @@ trait DeltaTableRefreshConnectTestBase extends DeltaTableRefreshSharedBase {
     }
   }
 
-  /**
-   * Override in subclasses to use spark.newSession() for writes. In Connect, newSession()
-   * creates a new client session that connects to the same server. The server-side DeltaLog
-   * is shared (singleton cache per JVM), so writes from either session update the same
-   * DeltaLog.currentSnapshot. This means newSession() is NOT a true external writer.
-   * We parameterize with it to verify behavior is identical, documenting that the refresh
-   * mechanism is driven by the shared DeltaLog, not by session-level state.
-   */
-  protected def useExternalSession: Boolean = false
-
-  /** Returns a session for performing writes. */
-  protected def writerSession: org.apache.spark.sql.SparkSession = {
-    if (useExternalSession) spark.newSession() else spark
-  }
-
-  /** Execute SQL using the writer session. */
   override protected def writerSql(sqlText: String): Unit = {
-    writerSession.sql(sqlText)
+    spark.sql(sqlText)
   }
 
   override protected def createSimpleTable(tableName: String): Unit = {

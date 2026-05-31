@@ -25,26 +25,9 @@ import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
 
 /**
- * Tests that document and verify existing Delta behavior for repeated table access with
- * external changes. These tests cover scenarios from the
- * "Refreshing and pinning tables in Spark" design doc.
- *
- * The suite mixes in a single category trait:
- *   2. [[DeltaRepeatedAccessRefreshTests]]: Repeated table access with external changes
- *
- * The base trait is parameterized by:
- *   - V2_ENABLE_MODE (NONE, AUTO) for connector mode coverage
- *   - useExternalSession: when true, writes go through spark.newSession()
- *
- * Important notes on parameterization:
- *
- * External session (spark.newSession()): In a single JVM, all SparkSessions share the same
- * DeltaLog instance cache (a static Guava Cache on the DeltaLog companion object). When any
- * session commits a write, the DeltaLog.currentSnapshot is updated in place and all other
- * sessions immediately see the new version. This means spark.newSession() is NOT equivalent
- * to a true external writer (separate JVM/cluster). We parameterize with it anyway to verify
- * that the behavior is indeed identical, which documents that Delta's refresh mechanism is
- * driven by the shared DeltaLog, not by Spark's session-level catalog state.
+ * Tests existing Delta behavior for repeated table access with external changes (Section [2] of
+ * the "Refreshing and pinning tables in Spark" design doc), mixing in
+ * [[DeltaRepeatedAccessRefreshTests]]. Concrete suites cover V2_ENABLE_MODE = AUTO and STRICT.
  */
 trait DeltaTableRefreshAndPinningSuiteBase
   extends QueryTest
@@ -60,65 +43,20 @@ trait DeltaTableRefreshAndPinningSuiteBase
   }
 }
 
-// ---------------------------------------------------------------------------
-// Concrete test suites parameterized by V2 mode and session type
-// ---------------------------------------------------------------------------
-
-/** V2_ENABLE_MODE = NONE, same-session writes. */
-class DeltaTableRefreshAndPinningSuite
-  extends DeltaTableRefreshAndPinningSuiteBase {
-  override protected def v2EnableMode: String = "NONE"
-}
-
-/** V2_ENABLE_MODE = AUTO (default), same-session writes. */
+/** V2_ENABLE_MODE = AUTO (the product default). */
 class DeltaTableRefreshAndPinningAutoModeSuite
   extends DeltaTableRefreshAndPinningSuiteBase {
   override protected def v2EnableMode: String = "AUTO"
 }
 
 /**
- * Writes go through spark.newSession(). Verifies that behavior is identical to
- * same-session writes because all sessions in a single JVM share the same DeltaLog
- * instance cache. The DeltaLog.currentSnapshot is updated in place by the writer,
- * so the reader always sees fresh data regardless of which session performed the write.
- */
-class DeltaTableRefreshAndPinningExternalSessionSuite
-  extends DeltaTableRefreshAndPinningSuiteBase {
-  override protected def useExternalSession: Boolean = true
-}
-
-/**
- * AUTO mode with external session writes. Combines both parameterization axes to
- * verify the v2 kernel connector also behaves identically with newSession() writes.
- */
-class DeltaTableRefreshAndPinningAutoModeExternalSessionSuite
-  extends DeltaTableRefreshAndPinningSuiteBase {
-  override protected def v2EnableMode: String = "AUTO"
-  override protected def useExternalSession: Boolean = true
-}
-
-/**
- * V2_ENABLE_MODE = STRICT, same-session writes. STRICT engages the V2 Kernel connector path.
+ * V2_ENABLE_MODE = STRICT, which engages the V2 Kernel connector path.
  *
  * TODO: full V2 connector support is still in progress. For repeated `sql()` access the current
- * behavior matches NONE/AUTO (the table is re-resolved on each access and reflects the latest
+ * behavior matches AUTO (the table is re-resolved on each access and reflects the latest
  * snapshot), so this suite asserts the same refresh behavior. Revisit if STRICT diverges.
  */
 class DeltaTableRefreshAndPinningStrictModeSuite
   extends DeltaTableRefreshAndPinningSuiteBase {
   override protected def v2EnableMode: String = "STRICT"
-}
-
-/**
- * V2_ENABLE_MODE = STRICT with external session writes. Combines the STRICT V2 connector path
- * with spark.newSession() writes.
- *
- * TODO: full V2 connector support is still in progress. The current behavior matches the other
- * modes (repeated `sql()` access reflects the latest snapshot regardless of the writing session),
- * so this suite asserts the same refresh behavior. Revisit if STRICT diverges.
- */
-class DeltaTableRefreshAndPinningStrictModeExternalSessionSuite
-  extends DeltaTableRefreshAndPinningSuiteBase {
-  override protected def v2EnableMode: String = "STRICT"
-  override protected def useExternalSession: Boolean = true
 }

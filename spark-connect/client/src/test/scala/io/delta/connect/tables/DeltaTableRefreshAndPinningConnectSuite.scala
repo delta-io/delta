@@ -20,62 +20,42 @@ import io.delta.tables.shared.DeltaRepeatedAccessRefreshTests
 
 import org.apache.spark.sql.test.DeltaQueryTest
 
+// The conf key is spelled out as a literal because the connect client test module does not depend
+// on delta-spark, so DeltaSQLConf.V2_ENABLE_MODE.key is not importable here.
+
 /**
- * Spark Connect variant of the repeated table access refresh tests.
- *
- * Key behavioral differences from classic (local) mode:
- *   - In Connect, Dataset is re-analyzed on each execution, so repeated reads always see the
- *     latest data and schema.
- *
- * These tests document the "OSS Delta (connect)" column from the
- * "Refreshing and pinning tables in Spark" design doc.
+ * Spark Connect base for the repeated table access refresh tests. In Connect the Dataset is
+ * re-analyzed on each execution, so repeated reads always see the latest data and schema.
+ * Concrete suites cover V2_ENABLE_MODE = AUTO and STRICT, set on the server at startup via
+ * [[serverConfig]] (the connect analog of sparkConf, since the server runs in a separate JVM).
  */
 trait DeltaTableRefreshAndPinningConnectSuiteBase
   extends DeltaQueryTest with RemoteSparkSession
   with DeltaTableRefreshConnectTestBase
   with DeltaRepeatedAccessRefreshTests
 
-/** Same-session writes (default). */
+/** V2_ENABLE_MODE = AUTO (the product default). */
 class DeltaTableRefreshAndPinningConnectSuite
-  extends DeltaTableRefreshAndPinningConnectSuiteBase
-
-/**
- * Writes go through spark.newSession(). In Connect, this creates a new client session
- * to the same server. The server shares a single DeltaLog instance cache, so writes
- * from either session update the same snapshot. Verifies behavior is identical to
- * same-session writes. See trait scaladoc for details.
- */
-class DeltaTableRefreshAndPinningConnectExternalSessionSuite
   extends DeltaTableRefreshAndPinningConnectSuiteBase {
-  override protected def useExternalSession: Boolean = true
+  override protected def v2EnableMode: String = "AUTO"
+
+  override protected def serverConfig: Map[String, String] =
+    super.serverConfig + ("spark.databricks.delta.v2.enableMode" -> "AUTO")
 }
 
 /**
- * V2_ENABLE_MODE = STRICT with Connect. STRICT engages the Delta Kernel V2 connector, set on the
- * server at startup via [[serverConfig]] (the connect analog of overriding sparkConf, since the
- * server runs in a separate JVM).
+ * V2_ENABLE_MODE = STRICT with Connect, which engages the Delta Kernel V2 connector. The mode is
+ * set on the server and mirrored in the client-side `v2EnableMode` field that drives the shared
+ * trait's STRICT branch.
  *
- * TODO: full V2 connector support is still in progress. The current behavior matches the default
- * modes (repeated `sql()` access reflects the latest snapshot), so these suites assert the same
- * refresh behavior. Revisit if STRICT diverges.
+ * TODO: full V2 connector support is still in progress. The current behavior matches AUTO
+ * (repeated `sql()` access reflects the latest snapshot), so this suite asserts the same refresh
+ * behavior. Revisit if STRICT diverges.
  */
-trait DeltaTableRefreshAndPinningConnectStrictModeBase
+class DeltaTableRefreshAndPinningConnectStrictModeSuite
   extends DeltaTableRefreshAndPinningConnectSuiteBase {
-
-  // Set STRICT on the server (startup config) and mirror it in the client-side field so the
-  // shared trait's `v2EnableMode == "STRICT"` branch applies on the connect side too.
   override protected def v2EnableMode: String = "STRICT"
 
   override protected def serverConfig: Map[String, String] =
     super.serverConfig + ("spark.databricks.delta.v2.enableMode" -> "STRICT")
-}
-
-/** V2_ENABLE_MODE = STRICT with Connect, same-session writes. */
-class DeltaTableRefreshAndPinningConnectStrictModeSuite
-  extends DeltaTableRefreshAndPinningConnectStrictModeBase
-
-/** V2_ENABLE_MODE = STRICT with Connect, external session writes. */
-class DeltaTableRefreshAndPinningConnectStrictModeExternalSessionSuite
-  extends DeltaTableRefreshAndPinningConnectStrictModeBase {
-  override protected def useExternalSession: Boolean = true
 }

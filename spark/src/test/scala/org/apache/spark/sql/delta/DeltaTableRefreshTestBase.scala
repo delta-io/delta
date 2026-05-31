@@ -28,12 +28,8 @@ import org.apache.spark.sql.types.IntegerType
 import org.apache.spark.util.Utils
 
 /**
- * Base trait with shared test helpers for the repeated table access refresh test suite.
- * Provides table setup helpers, writer session management, and external commit simulation
- * via LogStore.
- *
- * Mixed into the category test trait via self-type:
- *   - [[DeltaRepeatedAccessRefreshTests]] (Section [2])
+ * Classic base for the repeated table access refresh tests: table setup helpers and external
+ * commit simulation via LogStore. Mixed into [[DeltaRepeatedAccessRefreshTests]] (Section [2]).
  */
 trait DeltaTableRefreshTestBase extends DeltaTableRefreshSharedBase {
   self: QueryTest with SharedSparkSession with DeltaSQLCommandTest =>
@@ -43,25 +39,8 @@ trait DeltaTableRefreshTestBase extends DeltaTableRefreshSharedBase {
   /** Override in subclasses to set the V2 enable mode. */
   override protected def v2EnableMode: String = "NONE"
 
-  /**
-   * Override in subclasses to use spark.newSession() for writes. Note that in a single JVM,
-   * newSession() shares the same DeltaLog instance cache, so the DeltaLog.currentSnapshot
-   * is updated immediately by the writer. This does NOT simulate a true external writer
-   * (separate JVM). See suite scaladoc for details.
-   */
-  protected def useExternalSession: Boolean = false
-
-  /**
-   * Returns a session for performing writes. When [[useExternalSession]] is true,
-   * returns a new session to simulate external writers.
-   */
-  protected def writerSession: org.apache.spark.sql.SparkSession = {
-    if (useExternalSession) spark.newSession() else spark
-  }
-
-  /** Execute SQL using the writer session. */
   override protected def writerSql(sqlText: String): Unit = {
-    writerSession.sql(sqlText)
+    spark.sql(sqlText)
   }
 
   override protected def createSimpleTable(tableName: String): Unit = {
@@ -73,18 +52,8 @@ trait DeltaTableRefreshTestBase extends DeltaTableRefreshSharedBase {
   }
 
   /**
-   * Simulates an external write to a named table by writing commit files
-   * directly via LogStore, bypassing the DeltaLog commit path entirely.
-   *
-   * This is the Delta equivalent of Spark's
-   * catalog("testcat").loadTable(ident).truncateTable() pattern
-   * from DataSourceV2DataFrameSuite (SPARK-54022). It modifies the table
-   * at the storage layer without notifying the CacheManager.
-   *
-   * The session catalog's DeltaTableV2 and its lazy val snapshot are NOT
-   * updated. The DeltaLog.currentSnapshot is NOT updated (the commit
-   * bypasses DeltaLog.commit()). This means:
-   * - CacheManager plan matching still uses the old snapshot -> cache hit
+   * Simulates an external write to a named table by writing commit files directly via LogStore,
+   * bypassing the DeltaLog commit path (and thus the DeltaLog.currentSnapshot / CacheManager).
    */
   protected def writeExternalCommit(
       tableName: String,

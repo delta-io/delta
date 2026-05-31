@@ -69,9 +69,8 @@ trait RemoteSparkSession extends BeforeAndAfterAll { self: Suite =>
   var spark: SparkSession = _
 
   /**
-   * Extra Spark configs to pass to the server process as `--conf key=value` at startup.
-   * Override in subclasses to configure the server session (the Connect analog of overriding
-   * `sparkConf` in a classic suite), since the server runs in a separate JVM.
+   * Extra Spark configs passed to the server process as `--conf key=value` at startup (the
+   * Connect analog of overriding `sparkConf`, since the server runs in a separate JVM).
    */
   protected def serverConfig: Map[String, String] = Map.empty
 
