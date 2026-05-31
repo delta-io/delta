@@ -49,8 +49,9 @@ class DeltaTableRefreshConnectAutoModeSuite
  * trait's STRICT branch.
  *
  * TODO: full V2 connector support is still in progress. The current behavior matches AUTO
- * (repeated `sql()` access reflects the latest snapshot), so this suite asserts the same refresh
- * behavior. Revisit if STRICT diverges.
+ * (repeated `sql()` access reflects the latest snapshot), except that an INSERT right after an
+ * in-session ADD COLUMN still resolves against the schema cached at table lookup (see the STRICT
+ * branch in [[DeltaRepeatedAccessRefreshTests]] scenario 2). Revisit if STRICT diverges further.
  */
 class DeltaTableRefreshConnectStrictModeSuite
   extends DeltaTableRefreshConnectSuiteBase {
