@@ -37,6 +37,10 @@ trait DeltaRepeatedAccessRefreshTests
     body
   }
 
+  /** Asserts the full table contents (ordered by id) match `expectedRows`. */
+  private def assertFinalTableState(tableRef: String, expectedRows: Seq[Row]): Unit =
+    checkAnswer(spark.sql(s"SELECT * FROM $tableRef ORDER BY id"), expectedRows)
+
   // ---------------------------------------------------------------------------
   // Section [2]: Repeated table access (session writes)
   // ---------------------------------------------------------------------------
@@ -45,7 +49,7 @@ trait DeltaRepeatedAccessRefreshTests
     withTable("t") {
       withSeededTable("t") {
         writerSql("INSERT INTO t VALUES (2, 200)")
-        checkAnswer(spark.sql("SELECT * FROM t ORDER BY id"), Seq(Row(1, 100), Row(2, 200)))
+        assertFinalTableState("t", Seq(Row(1, 100), Row(2, 200)))
       }
     }
   }
@@ -62,9 +66,7 @@ trait DeltaRepeatedAccessRefreshTests
           assertArityMismatchError { writerSql("INSERT INTO t VALUES (2, 200, -1)") }
         } else {
           writerSql("INSERT INTO t VALUES (2, 200, -1)")
-          checkAnswer(
-            spark.sql("SELECT * FROM t ORDER BY id"),
-            Seq(Row(1, 100, null), Row(2, 200, -1)))
+          assertFinalTableState("t", Seq(Row(1, 100, null), Row(2, 200, -1)))
         }
       }
     }
@@ -75,7 +77,7 @@ trait DeltaRepeatedAccessRefreshTests
       withSeededTable("t") {
         writerSql("DROP TABLE t")
         writerSql("CREATE TABLE t (id INT, salary INT) USING delta")
-        checkAnswer(spark.sql("SELECT * FROM t"), Seq.empty)
+        assertFinalTableState("t", Seq.empty)
       }
     }
   }
@@ -88,9 +90,7 @@ trait DeltaRepeatedAccessRefreshTests
     withRefreshTable { tableRef =>
       withSeededTable(tableRef) {
         externalDataWrite(tableRef, Seq((2, 200)))
-        checkAnswer(
-          spark.sql(s"SELECT * FROM $tableRef ORDER BY id"),
-          Seq(Row(1, 100), Row(2, 200)))
+        assertFinalTableState(tableRef, Seq(Row(1, 100), Row(2, 200)))
       }
     }
   }
@@ -99,9 +99,7 @@ trait DeltaRepeatedAccessRefreshTests
     withRefreshTable { tableRef =>
       withSeededTable(tableRef) {
         externalAddColumnAndWrite(tableRef, Seq((2, 200, -1)))
-        checkAnswer(
-          spark.sql(s"SELECT * FROM $tableRef ORDER BY id"),
-          Seq(Row(1, 100, null), Row(2, 200, -1)))
+        assertFinalTableState(tableRef, Seq(Row(1, 100, null), Row(2, 200, -1)))
       }
     }
   }
@@ -110,7 +108,7 @@ trait DeltaRepeatedAccessRefreshTests
     withRefreshTable { tableRef =>
       withSeededTable(tableRef) {
         externalDropAndRecreate(tableRef)
-        checkAnswer(spark.sql(s"SELECT * FROM $tableRef"), Seq.empty)
+        assertFinalTableState(tableRef, Seq.empty)
       }
     }
   }

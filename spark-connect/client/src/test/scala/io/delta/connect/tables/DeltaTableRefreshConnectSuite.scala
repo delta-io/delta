@@ -29,14 +29,14 @@ import org.apache.spark.sql.test.DeltaQueryTest
  * Concrete suites cover V2_ENABLE_MODE = AUTO and STRICT, set on the server at startup via
  * [[serverConfig]] (the connect analog of sparkConf, since the server runs in a separate JVM).
  */
-trait DeltaTableRefreshAndPinningConnectSuiteBase
+trait DeltaTableRefreshConnectSuiteBase
   extends DeltaQueryTest with RemoteSparkSession
   with DeltaTableRefreshConnectTestBase
   with DeltaRepeatedAccessRefreshTests
 
 /** V2_ENABLE_MODE = AUTO (the product default). */
-class DeltaTableRefreshAndPinningConnectSuite
-  extends DeltaTableRefreshAndPinningConnectSuiteBase {
+class DeltaTableRefreshConnectAutoModeSuite
+  extends DeltaTableRefreshConnectSuiteBase {
   override protected def v2EnableMode: String = "AUTO"
 
   override protected def serverConfig: Map[String, String] =
@@ -52,8 +52,8 @@ class DeltaTableRefreshAndPinningConnectSuite
  * (repeated `sql()` access reflects the latest snapshot), so this suite asserts the same refresh
  * behavior. Revisit if STRICT diverges.
  */
-class DeltaTableRefreshAndPinningConnectStrictModeSuite
-  extends DeltaTableRefreshAndPinningConnectSuiteBase {
+class DeltaTableRefreshConnectStrictModeSuite
+  extends DeltaTableRefreshConnectSuiteBase {
   override protected def v2EnableMode: String = "STRICT"
 
   override protected def serverConfig: Map[String, String] =

@@ -29,7 +29,7 @@ import org.apache.spark.sql.test.SharedSparkSession
  * the "Refreshing and pinning tables in Spark" design doc), mixing in
  * [[DeltaRepeatedAccessRefreshTests]]. Concrete suites cover V2_ENABLE_MODE = AUTO and STRICT.
  */
-trait DeltaTableRefreshAndPinningSuiteBase
+trait DeltaTableRefreshSuiteBase
   extends QueryTest
   with SharedSparkSession
   with DeltaSQLCommandTest
@@ -44,8 +44,8 @@ trait DeltaTableRefreshAndPinningSuiteBase
 }
 
 /** V2_ENABLE_MODE = AUTO (the product default). */
-class DeltaTableRefreshAndPinningAutoModeSuite
-  extends DeltaTableRefreshAndPinningSuiteBase {
+class DeltaTableRefreshAutoModeSuite
+  extends DeltaTableRefreshSuiteBase {
   override protected def v2EnableMode: String = "AUTO"
 }
 
@@ -56,7 +56,7 @@ class DeltaTableRefreshAndPinningAutoModeSuite
  * behavior matches AUTO (the table is re-resolved on each access and reflects the latest
  * snapshot), so this suite asserts the same refresh behavior. Revisit if STRICT diverges.
  */
-class DeltaTableRefreshAndPinningStrictModeSuite
-  extends DeltaTableRefreshAndPinningSuiteBase {
+class DeltaTableRefreshStrictModeSuite
+  extends DeltaTableRefreshSuiteBase {
   override protected def v2EnableMode: String = "STRICT"
 }
