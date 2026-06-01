@@ -1419,7 +1419,7 @@ private[delta] class ConflictChecker(
     if (tableName != null) {
       tableName
     } else {
-      s"delta.`${currentTransactionInfo.readSnapshot.deltaLog.dataPath}`"
+      s"delta.`${currentTransactionInfo.readSnapshot.dataPath}`"
     }
   }
 
