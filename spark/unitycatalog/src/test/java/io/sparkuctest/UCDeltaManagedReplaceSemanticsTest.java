@@ -21,6 +21,7 @@ import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
 
 import io.unitycatalog.client.api.TablesApi;
 import io.unitycatalog.client.model.TableInfo;
+import java.nio.file.AccessDeniedException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -435,11 +436,17 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
   }
 
   // Path-based identifiers (e.g. `delta.`/tmp/foo``) are not valid UC table references --
-  // UC has no entry for them. `shouldRouteReplaceThroughDeltaCatalogClient` skips routing on
-  // those, so the request falls through to the standard Spark V2 REPLACE flow, which surfaces
-  // `CannotReplaceMissingTableException` for the unresolved identifier. Pinned so that any
-  // future change to the routing gate's path-based predicate (or the fall-through behavior)
-  // is caught here instead of silently regressing.
+  // UC has no entry for them. Spark V2's `AtomicReplaceTableExec` calls
+  // `catalog.tableExists(ident)` before `stageReplace`, and `AbstractDeltaCatalog.tableExists`
+  // probes the filesystem (`fs.exists(path)`) for path-based identifiers. The end-user-visible
+  // exception therefore depends on whether the underlying filesystem is reachable:
+  //   - filesystem reachable, path missing -> `tableExists` returns false ->
+  //     Spark V2 throws `CannotReplaceMissingTableException` (errorClass TABLE_OR_VIEW_NOT_FOUND).
+  //   - filesystem unreachable (e.g. S3 403 when the UC server's federated credentials are
+  //     not loaded into the Spark session) -> `fs.exists` throws `AccessDeniedException`,
+  //     which bubbles up out of `AtomicReplaceTableExec.run`.
+  // Either outcome is an acceptable rejection of path-based REPLACE on a UC catalog; this
+  // test pins both as the only outcomes (no silent success, no surprise new exception class).
   @Test
   public void testReplaceOnPathBasedIdentifierIsRejected() throws Exception {
     withTempDir(
@@ -450,9 +457,13 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
                           "REPLACE TABLE delta.`%s` (i INT, s STRING) USING DELTA "
                               + "TBLPROPERTIES ('delta.feature.catalogManaged'='supported')",
                           location.toString()))
-              .isInstanceOf(CannotReplaceMissingTableException.class)
-              .hasMessageContaining("TABLE_OR_VIEW_NOT_FOUND")
-              .hasMessageContaining(location.toString());
+              .satisfiesAnyOf(
+                  t ->
+                      assertThat(t)
+                          .isInstanceOf(CannotReplaceMissingTableException.class)
+                          .hasMessageContaining("TABLE_OR_VIEW_NOT_FOUND")
+                          .hasMessageContaining(location.toString()),
+                  t -> assertThat(t).isInstanceOf(AccessDeniedException.class));
         });
   }
 
