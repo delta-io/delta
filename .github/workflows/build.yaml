@@ -35,13 +35,23 @@ jobs:
             ~/.sbt
             ~/.ivy2
             ~/.cache/coursier
-          key: delta-sbt-cache-cross-spark
+          key: delta-sbt-cache-cross-spark-${{ hashFiles('project/scripts/setup_unitycatalog_main.sh') }}
 
       # publishM2 compiles every aggregated project, including storage, which has
-      # unitycatalog-client as a compile-scope dependency. Publish the pinned UC build locally
-      # first so Delta compiles against the UC APIs it actually targets.
-      - name: Set up pinned Unity Catalog
+      # unitycatalog-client as a compile-scope dependency. test_cross_spark_publish.py also
+      # iterates over released Spark versions (sbt -DsparkVersion=<X.Y>), so we need UC's
+      # spark connector published for each variant Delta will resolve. Invoke the setup action
+      # once per Spark variant; the action's cache key partitions by SPARK_VERSION so each
+      # variant warms its own cache entry. Keep this list in sync with the released versions
+      # in project/spark-versions.json (snapshot versions are skipped by the cross-Spark test).
+      - name: Set up pinned Unity Catalog (Spark 4.0)
         uses: ./.github/actions/setup-unitycatalog
+        env:
+          SPARK_VERSION: "4.0"
+      - name: Set up pinned Unity Catalog (Spark 4.1)
+        uses: ./.github/actions/setup-unitycatalog
+        env:
+          SPARK_VERSION: "4.1"
 
       - name: Run cross-Spark build test
         run: python project/tests/test_cross_spark_publish.py
@@ -54,4 +64,4 @@ jobs:
             ~/.sbt
             ~/.ivy2
             ~/.cache/coursier
-          key: delta-sbt-cache-cross-spark
+          key: delta-sbt-cache-cross-spark-${{ hashFiles('project/scripts/setup_unitycatalog_main.sh') }}
