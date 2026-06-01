@@ -1068,7 +1068,8 @@ class DummySnapshot(
     protocolOpt.getOrElse(Protocol.forNewTable(spark, Some(metadata)))
 
   override def domainMetadata: Seq[DomainMetadata] = domainMetadataOpt.getOrElse(Seq.empty)
-  override protected lazy val computedState: SnapshotState = initialState(metadata, protocol)
+  override private[delta] lazy val computedState: SnapshotState = initialState(metadata, protocol)
+  override lazy val numOfRemoves: Long = 0L
   override protected[delta] lazy val getInCommitTimestampOpt: Option[Long] = None
   /* A dummy snapshot never has a manifest commit. */
   override lazy val lastManifestCommitOpt: Option[LastManifestCommit] = None
