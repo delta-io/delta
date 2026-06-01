@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta
 
 import java.io.File
-import java.util.TimeZone
+import java.util.{Locale, TimeZone}
 
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaTestUtils._
@@ -360,6 +360,229 @@ class ChecksumSuite
               .startTransaction()
           }
         }
+      }
+    }
+  }
+
+  test("SnapshotState fast path from CRC: produces same state as state reconstruction") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true",
+      DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true",
+      DeltaSQLConf.DELTA_WRITE_SET_TRANSACTIONS_IN_CRC.key -> "true"
+    ) {
+      withTempTable(createTable = false) { tableName =>
+        spark.range(10).withColumn("id2", col("id") % 2)
+          .write.format("delta").partitionBy("id").saveAsTable(tableName)
+        sql(s"INSERT INTO $tableName SELECT *, 1 FROM range(10, 20)")
+
+        // First, capture the state reconstruction result by loading with the fast path off.
+        DeltaLog.clearCache()
+        val baselineState = withSQLConf(
+          DeltaSQLConf.USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED.key -> "false") {
+          val log = DeltaLog.forTable(spark, TableIdentifier(tableName))
+          val s = log.update()
+          assert(s.checksumOpt.isDefined, "test setup should have produced a CRC file")
+          val state = s.computedStateFromStateReconstruction
+          assert(s.stateReconstructionTriggered)
+          state
+        }
+
+        // Now reload with the fast path on and confirm equivalence.
+        DeltaLog.clearCache()
+        withSQLConf(
+          DeltaSQLConf.USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED.key -> "true") {
+          val log = DeltaLog.forTable(spark, TableIdentifier(tableName))
+          val s = log.update()
+          assert(s.checksumOpt.isDefined)
+          assert(!s.stateReconstructionTriggered,
+            "state reconstruction should not have run before computedState is accessed")
+
+          val fastState = s.computeStateFromChecksum
+          assert(fastState.isDefined, "fast path should succeed when CRC has all required fields")
+          assert(!s.stateReconstructionTriggered,
+            "computeStateFromChecksum must not trigger state reconstruction")
+
+          val fast = fastState.get
+          assert(fast.sizeInBytes == baselineState.sizeInBytes)
+          assert(fast.numOfFiles == baselineState.numOfFiles)
+          assert(fast.numOfMetadata == baselineState.numOfMetadata)
+          assert(fast.numOfProtocol == baselineState.numOfProtocol)
+          assert(fast.numOfSetTransactions == baselineState.numOfSetTransactions)
+          assert(fast.setTransactions.toSet == baselineState.setTransactions.toSet)
+          assert(fast.domainMetadata.toSet == baselineState.domainMetadata.toSet)
+          assert(fast.metadata == baselineState.metadata)
+          assert(fast.protocol == baselineState.protocol)
+
+          // computedState should use the fast path (verified by no state reconstruction).
+          val computed = s.computedState
+          assert(!s.stateReconstructionTriggered)
+          assert(computed.numOfFiles == baselineState.numOfFiles)
+
+          // The numOfRemoves lazy val resolves from `stateDS` on first access. For this
+          // table (no deletes) it is zero and matches state-reconstruction's value.
+          assert(s.numOfRemoves == 0L)
+        }
+      }
+    }
+  }
+
+  test("SnapshotState fast path from CRC: numOfRemoves is lazily and exactly computed " +
+       "when tombstones exist") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true",
+      DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true",
+      DeltaSQLConf.DELTA_WRITE_SET_TRANSACTIONS_IN_CRC.key -> "true"
+    ) {
+      withTempTable(createTable = false) { tableName =>
+        // Build a table with tombstones by overwriting an initial dataset, so the active
+        // state contains real RemoveFile actions whose count is > 0.
+        spark.range(20).withColumn("g", col("id") % 4)
+          .write.format("delta").partitionBy("g").saveAsTable(tableName)
+        spark.range(10, 30).withColumn("g", col("id") % 4)
+          .write.format("delta").mode("overwrite").partitionBy("g").saveAsTable(tableName)
+        sql(s"DELETE FROM $tableName WHERE id >= 25")
+
+        // Baseline: capture the exact numOfRemoves via state reconstruction.
+        DeltaLog.clearCache()
+        val baselineRemoves = withSQLConf(
+          DeltaSQLConf.USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED.key -> "false") {
+          val log = DeltaLog.forTable(spark, TableIdentifier(tableName))
+          val s = log.update()
+          val n = s.numOfRemoves
+          assert(s.stateReconstructionTriggered)
+          assert(n > 0L, s"test setup should produce tombstones, got $n")
+          n
+        }
+
+        // Fast path: accessing computedState must not trigger state reconstruction. Reading
+        // numOfRemoves triggers it exactly once and returns the exact baseline value.
+        DeltaLog.clearCache()
+        withSQLConf(
+          DeltaSQLConf.USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED.key -> "true") {
+          val log = DeltaLog.forTable(spark, TableIdentifier(tableName))
+          val s = log.update()
+          assert(s.checksumOpt.isDefined)
+
+          // Touching computedState via the fast path must not trigger state reconstruction.
+          val _ = s.computedState
+          assert(!s.stateReconstructionTriggered,
+            "fast path must not trigger state reconstruction")
+
+          // The lazy val triggers exactly one computation that materializes the state
+          // reconstruction DataFrame and returns the precise count.
+          val resolved = s.numOfRemoves
+          assert(s.stateReconstructionTriggered,
+            "accessing numOfRemoves should have triggered state reconstruction")
+          assert(resolved == baselineRemoves,
+            s"lazy numOfRemoves $resolved should equal baseline $baselineRemoves")
+
+          // Subsequent accesses are cached.
+          assert(s.numOfRemoves == baselineRemoves)
+        }
+      }
+    }
+  }
+
+  test("SnapshotState fast path from CRC: falls back when conf is disabled") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true",
+      DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true",
+      DeltaSQLConf.USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED.key -> "false"
+    ) {
+      withTempTable(createTable = false) { tableName =>
+        spark.range(5).write.format("delta").saveAsTable(tableName)
+        DeltaLog.clearCache()
+        val log = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        val s = log.update()
+        assert(s.checksumOpt.isDefined)
+        assert(s.computeStateFromChecksum.isEmpty,
+          "fast path should not be taken when conf is disabled")
+      }
+    }
+  }
+
+  test("SnapshotState fast path from CRC: falls back when CRC lacks setTransactions") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true",
+      DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true",
+      DeltaSQLConf.DELTA_WRITE_SET_TRANSACTIONS_IN_CRC.key -> "false",
+      DeltaSQLConf.USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED.key -> "true"
+    ) {
+      withTempTable(createTable = false) { tableName =>
+        spark.range(5).write.format("delta").saveAsTable(tableName)
+        DeltaLog.clearCache()
+        val log = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        val s = log.update()
+        assert(s.checksumOpt.isDefined)
+        assert(s.checksumOpt.get.setTransactions.isEmpty,
+          "test setup should produce a CRC without setTransactions")
+        assert(s.computeStateFromChecksum.isEmpty,
+          "fast path must fall back when CRC is missing setTransactions")
+      }
+    }
+  }
+
+  for ((label, mutateChecksum, expectedAction) <- Seq(
+    ("protocol",
+      (cs: VersionChecksum) =>
+        cs.copy(protocol =
+          cs.protocol.copy(minReaderVersion = cs.protocol.minReaderVersion + 1)),
+      "protocol"),
+    ("metadata",
+      (cs: VersionChecksum) =>
+        cs.copy(metadata = cs.metadata.copy(description = "deliberately-corrupted")),
+      "metadata"))) {
+    test(s"SnapshotState fast path from CRC: throws when CRC $label disagrees with " +
+         s"snapshot's resolved $label") {
+      // Resolve the snapshot's protocol/metadata via state reconstruction (not CRC) so the
+      // validation in computeStateFromChecksum has independent values to compare against.
+      withSQLConf(
+        DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true",
+        DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true",
+        DeltaSQLConf.DELTA_WRITE_SET_TRANSACTIONS_IN_CRC.key -> "true",
+        DeltaSQLConf.USE_PROTOCOL_AND_METADATA_FROM_CHECKSUM_ENABLED.key -> "false",
+        DeltaSQLConf.USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED.key -> "true"
+      ) {
+        withTempTable(createTable = false) { tableName =>
+          spark.range(5).write.format("delta").saveAsTable(tableName)
+          val log = DeltaLog.forTable(spark, TableIdentifier(tableName))
+          val version = log.update().version
+          val originalChecksum = log.readChecksum(version).get
+          val corruptedChecksum = mutateChecksum(originalChecksum)
+          log.store.write(
+            FileNames.checksumFile(log.logPath, version),
+            Iterator(JsonUtils.toJson(corruptedChecksum)),
+            overwrite = true)
+          DeltaLog.clearCache()
+          val freshLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+          val s = freshLog.update()
+          assert(s.checksumOpt.isDefined)
+          val ex = intercept[DeltaIllegalStateException] {
+            s.computeStateFromChecksum
+          }
+          assert(ex.getMessage.toLowerCase(Locale.ROOT).contains(expectedAction),
+            s"expected exception message to mention '$expectedAction', got: ${ex.getMessage}")
+        }
+      }
+    }
+  }
+
+  test("Checkpoint partition count is clamped to at least 1") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true",
+      DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true",
+      DeltaSQLConf.DELTA_WRITE_SET_TRANSACTIONS_IN_CRC.key -> "true",
+      DeltaSQLConf.USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED.key -> "true",
+      DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "10"
+    ) {
+      withTempTable(createTable = false) { tableName =>
+        // Create an empty table - numOfFiles == 0 and numOfRemoves == 0 (exact),
+        // so the unclamped formula would yield numParts == 0.
+        sql(s"CREATE TABLE $tableName (id LONG) USING DELTA")
+        DeltaLog.clearCache()
+        val log = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        // Triggering a checkpoint on a snapshot with zero files+removes must not crash.
+        log.checkpoint(log.update())
       }
     }
   }
