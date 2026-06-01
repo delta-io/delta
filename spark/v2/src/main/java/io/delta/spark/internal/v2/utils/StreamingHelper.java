@@ -186,6 +186,8 @@ public class StreamingHelper {
    * @param actionSet the set of actions to read (e.g., ADD, REMOVE)
    * @return an iterator over {@link CommitActions}, one per commit version
    */
+  // TODO: callers can switch to CommitRange.getCommitActions(engine, actionSet) — the
+  // no-Snapshot overload added alongside this comment makes this helper obsolete.
   public static CloseableIterator<CommitActions> getCommitActionsFromRangeUnsafe(
       Engine engine,
       CommitRangeImpl commitRange,
