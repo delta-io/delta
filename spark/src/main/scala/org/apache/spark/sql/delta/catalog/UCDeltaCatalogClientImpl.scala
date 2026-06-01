@@ -45,7 +45,7 @@ import org.apache.spark.sql.catalyst.catalog.{
   CatalogTableType
 }
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, Table, TableCatalog, V1Table}
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, DeltaErrors, TableFeature}
+import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, ClusteringTableFeature, DeltaConfigs, DeltaErrors, TableFeature}
 import org.apache.spark.sql.delta.actions.{DomainMetadata, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED
 import org.apache.spark.sql.delta.coordinatedcommits.UCTokenBasedRestClientFactory
@@ -67,6 +67,22 @@ private[catalog] class UCDeltaCatalogClientImpl(
     fallbackLoadTableFunc: Identifier => Table
     = UCDeltaCatalogClientImpl.defaultFallbackLoadTableFunc)
   extends AbstractDeltaCatalogClient with Logging {
+
+  // -------------------------------------------------------------------------
+  // DeltaCatalogClient: tableExists
+  // -------------------------------------------------------------------------
+
+  override def tableExists(ident: Identifier): Boolean = {
+    try {
+      ucClient.loadTable(toStorageTableIdent(ident))
+      true
+    } catch {
+      case _: StorageNoSuchTableException => false
+      // UC acknowledged the table; we just couldn't process it further (non-Delta format or
+      // credential fetch failed). The table still exists in the catalog.
+      case _: UnsupportedTableFormatException | _: CredentialFetchFailedException => true
+    }
+  }
 
   // -------------------------------------------------------------------------
   // DeltaCatalogClient: loadTable
@@ -140,8 +156,55 @@ private[catalog] class UCDeltaCatalogClientImpl(
     if (suggested == null) return
     // `null` values are engine-generated-at-commit sentinels (e.g. row-tracking materialized
     // column names); Delta rejects them as unknown configs at stage time, so skip and let
-    // the engine substitute them on finalize.
-    suggested.asScala.foreach { case (k, v) => if (v != null) augmented.putIfAbsent(k, v) }
+    // the engine substitute them on finalize. Entries that wouldn't survive Delta config
+    // validation (unknown key, non-editable key, or value that doesn't parse) are also
+    // dropped to keep CREATE from failing later in the staging flow.
+    suggested.asScala.foreach { case (k, v) =>
+      if (v != null && passesDeltaConfigValidation(k, v)) augmented.putIfAbsent(k, v)
+    }
+  }
+
+  /** `delta.feature.clustering`, cached. */
+  private val clusteringFeatureKey =
+    TableFeatureProtocolUtils.propertyKey(ClusteringTableFeature)
+
+  /**
+   * Returns whether `(key, value)` from an existing table's config should be carried forward
+   * when building the REPLACE-augmented property map.
+   */
+  private def isSafeToCarryForwardOnReplace(key: String, value: String): Boolean = {
+    val lKey = key.toLowerCase(java.util.Locale.ROOT)
+    // Only `delta.*` keys are carried; non-`delta.*` user properties (e.g. `Foo=Bar`)
+    // follow normal REPLACE semantics -- the user's new TBLPROPERTIES is authoritative.
+    if (!lKey.startsWith("delta.")) return false
+    // Clustering has DDL-only enablement (`CLUSTER BY`); carrying it as a property would
+    // both throw on REPLACE (`DELTA_CREATE_TABLE_SET_CLUSTERING_TABLE_FEATURE_NOT_ALLOWED`)
+    // and block legitimate transitions away from a clustered table.
+    if (lKey == clusteringFeatureKey) return false
+    // Defer remaining acceptance to Delta's own per-entry validator -- single source of truth
+    // for "would this survive the next commit". This filters out Delta-internal metadata
+    // like `delta.lastCommitTimestamp` (unregistered) and `delta.columnMapping.maxColumnId`
+    // (non-editable) that `validateConfigurations` would otherwise reject.
+    passesDeltaConfigValidation(key, value)
+  }
+
+  /**
+   * True iff [[DeltaConfigs.validateConfiguration]] would accept `(key, value)` as a Delta
+   * table property. Wraps the validator to convert its throw-on-bad behavior into a
+   * boolean predicate.
+   */
+  private def passesDeltaConfigValidation(key: String, value: String): Boolean = {
+    try {
+      DeltaConfigs.validateConfiguration(
+        key, value, allowArbitraryProperties = false, allConfigurations = Map.empty)
+      true
+    } catch {
+      // Delta's structured-error exceptions for bad keys (DELTA_UNKNOWN_CONFIGURATION,
+      // DELTA_CANNOT_MODIFY_TABLE_PROPERTY, etc.), and the raw IllegalArgumentException
+      // raised by `require(...)` in the value parser.
+      case _: org.apache.spark.sql.delta.DeltaThrowable => false
+      case _: IllegalArgumentException => false
+    }
   }
 
   /**
@@ -268,6 +331,16 @@ private[catalog] class UCDeltaCatalogClientImpl(
       .filterNot(_.equalsIgnoreCase(existingProvider))
       .foreach(_ => throw DeltaErrors.cannotChangeProvider())
     val augmented = new util.HashMap[String, String](properties)
+    // Carry forward the existing table's `delta.*` properties (feature flags, checkpoint
+    // policy, column-mapping mode, row-tracking state, etc.) so REPLACE doesn't silently
+    // strip critical configs that downstream (Table Service / commit validation) would
+    // reject as unsupported changes. Caller-supplied TBLPROPERTIES on the REPLACE win via
+    // `putIfAbsent`. See [[isSafeToCarryForwardOnReplace]] for the carry-forward criteria.
+    Option(info.getMetadata.getConfiguration).foreach { existingConfig =>
+      existingConfig.asScala.foreach { case (k, v) =>
+        if (v != null && isSafeToCarryForwardOnReplace(k, v)) augmented.putIfAbsent(k, v)
+      }
+    }
     // Re-emit the existing provider so downstream sees USING <provider> even if the caller
     // omitted it. Mark the location as system-managed; `PROP_LOCATION` is intentionally not
     // set so downstream Delta resolves the location from the existing table snapshot.

@@ -606,8 +606,9 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     } else {
       check(fullTableName, List.of(List.of("3", "c")));
     }
-    // Identical metadata: UC's view of `lastUpdateVersion` and `clusteringColumns` is
-    // unchanged from the first COR.
+    // 1st COR leaves UC at v0; INSERTs don't bump `lastUpdateVersion`; the 2nd COR
+    // commits identical metadata, which the new UC contract treats as a no-op (no bump).
+    // Final: v0.
     assertUCTableInfo(
         TableType.MANAGED,
         fullTableName,
@@ -854,38 +855,47 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       Map<String, String> tablePropertiesFromServer = tableInfo.getProperties();
       tablePropertiesFromServer.remove("table_type", "MANAGED"); // New property by Spark 4.1
 
-      // CLUSTER BY has two extra properties, except managed REPLACE does not send clustering
-      // domain metadata to UC yet.
+      // CLUSTER BY adds `delta.feature.clustering=supported`. The companion
+      // `clusteringColumns` UC property is verified separately below as a variable-value
+      // property because column mapping rewrites the column reference to its physical name
+      // (e.g. `col-<UUID>`), so the exact serialized value isn't predictable from the
+      // logical column name supplied via CLUSTER BY.
       final Map<String, String> expectedClusteringProperties =
-          withCluster
-              ? ImmutableMap.<String, String>builder()
-                  .put("delta.feature.clustering", SUPPORTED)
-                  .putAll(
-                      expectClusteringColumnsProperty
-                          ? Map.of("clusteringColumns", "[[\"" + clusterColumn.get() + "\"]]")
-                          : Map.of())
-                  .build()
-              : ImmutableMap.of();
+          withCluster ? Map.of("delta.feature.clustering", SUPPORTED) : Map.of();
       final Map<String, String> expectedOtherProperties =
           ImmutableMap.<String, String>builder()
               .put("delta.checkpointPolicy", "v2")
+              .put("delta.checkpoint.writeStatsAsJson", "true")
+              .put("delta.checkpoint.writeStatsAsStruct", "true")
+              .put("delta.columnMapping.mode", "name")
               .put("delta.enableDeletionVectors", "true")
               .put("delta.enableInCommitTimestamps", "true")
               .put("delta.enableRowTracking", "true")
               .put("delta.lastUpdateVersion", expectedLastUpdateVersion)
               .put("delta.minReaderVersion", "3")
               .put("delta.minWriterVersion", "7")
+              .put("delta.randomizeFilePrefixes", "true")
               .put(UC_TABLE_ID_KEY, tableInfo.getTableId())
               // User specified custom table property is also sent.
               .putAll(customizedProps)
               .putAll(expectedClusteringProperties)
               .build();
-      // The value of these properties aren't predictable. But at least we confirm their existence.
+      // The value of these properties aren't predictable. But at least we confirm their
+      // existence. Column-mapping rewrites the logical CLUSTER BY column to a physical
+      // `col-<UUID>` reference, so `clusteringColumns` is verified by existence only when
+      // present.
       final Set<String> expectedPropertiesWithVariableValue =
-          Set.of(
-              "delta.lastCommitTimestamp",
-              "delta.rowTracking.materializedRowCommitVersionColumnName",
-              "delta.rowTracking.materializedRowIdColumnName");
+          Stream.concat(
+                  Stream.of(
+                      "delta.lastCommitTimestamp",
+                      // Schema-dependent; value is the largest column id assigned by Delta.
+                      "delta.columnMapping.maxColumnId",
+                      "delta.rowTracking.materializedRowCommitVersionColumnName",
+                      "delta.rowTracking.materializedRowIdColumnName"),
+                  withCluster && expectClusteringColumnsProperty
+                      ? Stream.of("clusteringColumns")
+                      : Stream.empty())
+              .collect(Collectors.toUnmodifiableSet());
 
       // `delta.rowTracking.rowIdHighWaterMark` is emitted when using UC Delta API only.
       // Difference servers may or may not persist it as a table property.

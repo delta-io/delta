@@ -1333,7 +1333,9 @@ trait SupportsPathIdentifier extends TableCatalog { self: AbstractDeltaCatalog =
       // scalastyle:on deltahadoopconfiguration
       fs.exists(path) && fs.listStatus(path).nonEmpty
     } else {
-      super.tableExists(ident)
+      deltaCatalogClient
+        .map(_.tableExists(ident))
+        .getOrElse(super.tableExists(ident))
     }
   }
 }
