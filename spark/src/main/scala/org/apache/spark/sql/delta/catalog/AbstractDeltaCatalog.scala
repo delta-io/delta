@@ -527,8 +527,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         properties.containsKey(TableCatalog.PROP_EXTERNAL)) {
       return false
     }
-    val ns = ident.namespace()
-    !(ns.length == 1 && new Path(ident.name()).isAbsolute)
+    !isPathIdentifier(ident)
   }
 
   /**
@@ -565,8 +564,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
           s"'${TableCatalog.PROP_EXTERNAL}': only catalog-managed Delta tables can " +
           "be replaced on this path.")
     }
-    val ns = ident.namespace()
-    !(ns.length == 1 && new Path(ident.name()).isAbsolute)
+    !isPathIdentifier(ident)
   }
 
   /**
