@@ -24,6 +24,7 @@ import io.delta.sharing.spark.DeltaSharingUtils._
 
 import org.apache.spark.{SharedSparkContext, SparkEnv, SparkFunSuite}
 import org.apache.spark.delta.sharing.TableRefreshResult
+import org.apache.spark.sql.delta.GeoSpatialTableFeature
 import org.apache.spark.storage.BlockId
 
 class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
@@ -275,6 +276,21 @@ class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
     assert(idToUrls.get("dv_file_id") == Some("fakeurl"))
     assert(idToUrls.contains("cdc_file_id"))
     assert(idToUrls.get("cdc_file_id") == Some("_change_data/cdc.c000.snappy.parquet"))
+  }
+
+  test("GeoSpatial stable feature is advertised in both reader-features lists") {
+    assert(STREAMING_SUPPORTED_READER_FEATURES.contains(GeoSpatialTableFeature.name))
+    assert(SUPPORTED_READER_FEATURES.contains(GeoSpatialTableFeature.name))
+    assert(GeoSpatialTableFeature.name == "geospatial")
+  }
+
+  test("readerFeatures header string contains the geospatial feature name") {
+    val streamingHeader = STREAMING_SUPPORTED_READER_FEATURES.mkString(",")
+    val batchHeader = SUPPORTED_READER_FEATURES.mkString(",")
+    assert(streamingHeader.split(",").contains("geospatial"),
+      s"streaming readerFeatures header missing 'geospatial': $streamingHeader")
+    assert(batchHeader.split(",").contains("geospatial"),
+      s"batch readerFeatures header missing 'geospatial': $batchHeader")
   }
 
   test("getRefresherForGetFiles respects useRefreshToken parameter") {
