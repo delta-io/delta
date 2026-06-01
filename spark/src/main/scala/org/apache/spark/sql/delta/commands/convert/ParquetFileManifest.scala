@@ -57,10 +57,11 @@ class ManualListingFileManifest(
       }.toMap
       val footerSeq = DeltaFileOperations.readParquetFootersInParallel(
         conf.value.value, fileStatuses.map(_.toFileStatus), fetchConfig.ignoreCorruptFiles)
-      val schemaConverter = new ParquetToSparkSchemaConverter(
-        assumeBinaryIsString = fetchConfig.assumeBinaryIsString,
-        assumeInt96IsTimestamp = fetchConfig.assumeInt96IsTimestamp
-      )
+      // Use the stable SQLConf-based ctor to avoid NoSuchMethodError when Spark patch
+      // releases add new parameters to the ParquetToSparkSchemaConverter primary ctor
+      // (e.g. Spark 4.0.1 added useFieldId; Spark 4.1.2 added respectUnknownTypeAnnotation).
+      val schemaConverter =
+        new ParquetToSparkSchemaConverter(SparkSession.active.sessionState.conf)
       footerSeq.map { footer =>
         val fileStatus = pathToStatusMapping(footer.getFile.toString)
         val schema = ParquetFileFormat.readSchemaFromFooter(footer, schemaConverter)
@@ -138,10 +139,9 @@ class CatalogFileManifest(
           conf.value.value,
           fileStatuses.map(_.toFileStatus),
           fetchConfig.ignoreCorruptFiles)
-        val schemaConverter = new ParquetToSparkSchemaConverter(
-          assumeBinaryIsString = fetchConfig.assumeBinaryIsString,
-          assumeInt96IsTimestamp = fetchConfig.assumeInt96IsTimestamp
-        )
+        // See note above on stable SQLConf-based ctor usage.
+        val schemaConverter =
+          new ParquetToSparkSchemaConverter(SparkSession.active.sessionState.conf)
         footerSeq.map { footer =>
           val schema = ParquetFileFormat.readSchemaFromFooter(footer, schemaConverter)
           val fileStatus = pathToFile(footer.getFile.toString)
@@ -211,10 +211,9 @@ class MetadataLogFileManifest(
       }.toMap
       val footerSeq = DeltaFileOperations.readParquetFootersInParallel(
         conf.value.value, fileStatuses.map(_.toFileStatus), fetchConfig.ignoreCorruptFiles)
-      val schemaConverter = new ParquetToSparkSchemaConverter(
-        assumeBinaryIsString = fetchConfig.assumeBinaryIsString,
-        assumeInt96IsTimestamp = fetchConfig.assumeInt96IsTimestamp
-      )
+      // See note above on stable SQLConf-based ctor usage.
+      val schemaConverter =
+        new ParquetToSparkSchemaConverter(SparkSession.active.sessionState.conf)
       footerSeq.map { footer =>
         val fileStatus = pathToStatusMapping(footer.getFile.toString)
         val schema = ParquetFileFormat.readSchemaFromFooter(footer, schemaConverter)

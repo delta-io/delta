@@ -899,10 +899,11 @@ object Snapshot extends DeltaLogging {
       spark: SparkSession,
       deltaLog: DeltaLog,
       file: FileStatus): (StructType, Long) = {
-    // Converter used to convert Parquet `MessageType` to Spark SQL `StructType`
-    val converter = new ParquetToSparkSchemaConverter(
-      assumeBinaryIsString = spark.sessionState.conf.isParquetBinaryAsString,
-      assumeInt96IsTimestamp = spark.sessionState.conf.isParquetINT96AsTimestamp)
+    // Converter used to convert Parquet `MessageType` to Spark SQL `StructType`.
+    // Use the stable SQLConf-based ctor to avoid binary incompatibility across Spark
+    // patch releases that add new parameters to the primary ctor (e.g. Spark 4.0.1
+    // and 4.1.2 each added a boolean param), which manifests as NoSuchMethodError.
+    val converter = new ParquetToSparkSchemaConverter(spark.sessionState.conf)
 
     val conf = deltaLog.newDeltaHadoopConf()
 
