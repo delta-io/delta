@@ -1160,6 +1160,50 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
       )
     }
   }
+
+  test("CDC stream on partitioned table strips partition and CDC columns correctly") {
+    // pruneColumns in CDC mode must strip both CDC tail columns (injected by CDCReadFunction)
+    // and the partition column (not in data files) while keeping data columns intact.
+    withTempDir { inputDir =>
+      val path = inputDir.getCanonicalPath
+      // DDL order: id, part (partition), name. Part sits in the middle.
+      Seq((1L, "a", "Alice"), (2L, "b", "Bob")).toDF("id", "part", "name")
+        .write.format("delta")
+        .option("delta.enableChangeDataFeed", "true")
+        .partitionBy("part")
+        .save(path)
+
+      val df = loadCDCStream(path, Map(DeltaOptions.STARTING_VERSION_OPTION -> "0"))
+        .select("id", "part", "name")
+
+      testStream(df)(
+        ProcessAllAvailable(),
+        CheckAnswer((1L, "a", "Alice"), (2L, "b", "Bob"))
+      )
+    }
+  }
+
+  test("CDC stream on column-mapped table passes through correctly") {
+    // pruneColumns in CDC mode must handle column-mapped fields (logical->physical name
+    // translation) while stripping CDC tail columns.
+    withTempDir { inputDir =>
+      val path = inputDir.getCanonicalPath
+      Seq((1L, "Alice"), (2L, "Bob")).toDF("id", "user_name")
+        .write.format("delta")
+        .option(DeltaConfigs.COLUMN_MAPPING_MODE.key, "name")
+        .option("delta.enableChangeDataFeed", "true")
+        .save(path)
+
+      val df = loadCDCStream(path, Map(DeltaOptions.STARTING_VERSION_OPTION -> "0"))
+        .select("id", "user_name")
+
+      testStream(df)(
+        ProcessAllAvailable(),
+        CheckAnswer((1L, "Alice"), (2L, "Bob"))
+      )
+    }
+  }
+
 }
 
 /**
@@ -1354,7 +1398,10 @@ abstract class DeltaCDCStreamColumnMappingSuiteBase extends DeltaCDCStreamSuite
     "column mapping + streaming - allowed workflows - column addition",
     "column mapping + streaming - allowed workflows - upgrade to name mode",
     "column mapping + streaming: blocking workflow - drop column",
-    "column mapping + streaming: blocking workflow - rename column"
+    "column mapping + streaming: blocking workflow - rename column",
+
+    // CDC + column mapping combination
+    "CDC stream on column-mapped table passes through correctly"
   )
 
 }
