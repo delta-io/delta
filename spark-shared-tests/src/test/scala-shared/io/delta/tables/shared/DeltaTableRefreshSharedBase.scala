@@ -27,20 +27,19 @@ import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 import org.apache.spark.sql.types.{DataType, IntegerType, StructType}
 
 /**
- * Shared base for the repeated table access refresh tests. This single source file is compiled
- * into BOTH the classic `spark` module and the `spark-connect/client` module (wired via
- * [[Test / unmanagedSourceDirectories]] in build.sbt), so it self-types only to [[AnyFunSuite]]
- * and uses only the unified [[org.apache.spark.sql]] API.
+ * Shared base for the repeated table access refresh tests, compiled into BOTH the classic `spark`
+ * and the `spark-connect/client` modules (wired via [[Test / unmanagedSourceDirectories]] in
+ * build.sbt). It self-types only to [[AnyFunSuite]] and uses only the unified
+ * [[org.apache.spark.sql]] API.
  *
- * The external-write simulation is implemented ONCE. Like Spark's DSv2ExternalMutationTestBase
- * (which shares its external mutation via the unified catalog API), we write commit files directly
- * into the table's `_delta_log` on the local filesystem (which the Connect client and server share)
- * using only java.io plus `DataFrame.write`. This bypasses in-process DeltaLog/snapshot cache in
- * BOTH modes, so a fresh `sql()` re-resolves and sees the change. Only the genuinely mode-specific
- * bits stay abstract and are provided by each module's test mixin / per-module base:
+ * The external-write simulation is implemented ONCE: like Spark's DSv2ExternalMutationTestBase, we
+ * write commit files directly into the table's `_delta_log` on the local filesystem (shared by the
+ * Connect client and server) using only java.io plus `DataFrame.write`. This bypasses the
+ * in-process DeltaLog/snapshot cache in BOTH modes, so a fresh `sql()` re-resolves and sees the
+ * change. Only the mode-specific bits stay abstract, supplied by each module's test mixin:
  *   - [[spark]], [[checkAnswer]], [[withTable]], [[withTempPath]] (from QueryTest/DeltaQueryTest),
- *   - [[assertArityMismatchError]] (classic uses Spark's checkError with parameters; connect uses a
- *     substring tolerant variant because Connect wraps the error).
+ *   - [[assertArityMismatchError]] (classic uses checkError with parameters; Connect tolerates a
+ *     wrapped error).
  */
 trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
 
@@ -77,9 +76,8 @@ trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
     withTempPath { dir => body(s"delta.`${dir.getAbsolutePath}`") }
 
   // ---------------------------------------------------------------------------
-  // Shared external-write simulation: write commit files directly into _delta_log, bypassing the
-  // in-process DeltaLog. Schemas are edited as real StructType values recovered from the stored
-  // schemaString. Uses only java.io and the unified DataFrame API, so it compiles in both modules.
+  // Shared external-write simulation (see class scaladoc): write commit files directly into
+  // _delta_log, editing schemas as StructType values recovered from the stored schemaString.
   // ---------------------------------------------------------------------------
 
   private val IdRegex = """"id"\s*:\s*"([^"]+)"""".r

@@ -20,8 +20,8 @@ import io.delta.tables.shared.DeltaRepeatedAccessRefreshTests
 
 import org.apache.spark.sql.test.DeltaQueryTest
 
-// The conf key is spelled out as a literal because the connect client test module does not depend
-// on delta-spark, so DeltaSQLConf.V2_ENABLE_MODE.key is not importable here.
+// The conf key is a literal because the connect client test module does not depend on delta-spark,
+// so DeltaSQLConf.V2_ENABLE_MODE.key is not importable here.
 
 /**
  * Spark Connect base for the repeated table access refresh tests. In Connect the Dataset is
@@ -48,10 +48,10 @@ class DeltaTableRefreshConnectAutoModeSuite
  * set on the server and mirrored in the client-side `v2EnableMode` field that drives the shared
  * trait's STRICT branch.
  *
- * TODO: full V2 connector support is still in progress. The current behavior matches AUTO
- * (repeated `sql()` access reflects the latest snapshot), except that an INSERT right after an
- * in-session ADD COLUMN still resolves against the schema cached at table lookup (see the STRICT
- * branch in [[DeltaRepeatedAccessRefreshTests]] scenario 2). Revisit if STRICT diverges further.
+ * TODO: full V2 connector support is in progress. The behavior currently matches AUTO, except that
+ * an INSERT right after an in-session ADD COLUMN resolves against the schema cached at table lookup
+ * (see scenario 2's STRICT branch in [[DeltaRepeatedAccessRefreshTests]]). Revisit if STRICT
+ * diverges further.
  */
 class DeltaTableRefreshConnectStrictModeSuite
   extends DeltaTableRefreshConnectSuiteBase {

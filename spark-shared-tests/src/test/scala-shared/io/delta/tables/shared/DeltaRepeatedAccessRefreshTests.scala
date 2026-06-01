@@ -59,9 +59,9 @@ trait DeltaRepeatedAccessRefreshTests
       withSeededTable("t") {
         writerSql("ALTER TABLE t ADD COLUMN new_column INT")
         // TODO: Under STRICT the V2 connector resolves the INSERT against the schema cached at
-        // table lookup, so the just-added column is not yet visible and the 3 value INSERT fails
-        // with an arity mismatch. Once the connector refreshes its cached schema this should match
-        // the non-STRICT branch, where the additive INSERT succeeds and the new column reads back.
+        // table lookup, so the new column is not yet visible and the 3 value INSERT fails with an
+        // arity mismatch. Once the connector refreshes its schema this should match the non-STRICT
+        // branch, where the additive INSERT succeeds.
         if (v2EnableMode == "STRICT") {
           assertArityMismatchError { writerSql("INSERT INTO t VALUES (2, 200, -1)") }
         } else {
@@ -98,9 +98,9 @@ trait DeltaRepeatedAccessRefreshTests
   test("[2] scenario 2 external: repeated access reflects external schema change") {
     withRefreshTable { tableRef =>
       withSeededTable(tableRef) {
-        // Unlike the in-session scenario 2, the external ADD COLUMN lands in its own commit
-        // before the fresh sql() runs, so re-resolution sees the new schema in every mode
-        // (including STRICT). Hence this asserts success unconditionally, with no STRICT branch.
+        // Unlike in-session scenario 2, the external ADD COLUMN lands in its own commit before the
+        // fresh sql() runs, so re-resolution sees the new schema in every mode (including STRICT).
+        // Hence success is asserted unconditionally, with no STRICT branch.
         externalAddColumnAndWrite(tableRef, Seq((2, 200, -1)))
         assertFinalTableState(tableRef, Seq(Row(1, 100, null), Row(2, 200, -1)))
       }

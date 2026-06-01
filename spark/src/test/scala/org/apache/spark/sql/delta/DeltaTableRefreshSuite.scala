@@ -52,11 +52,10 @@ class DeltaTableRefreshAutoModeSuite
 /**
  * V2_ENABLE_MODE = STRICT, which engages the V2 Kernel connector path.
  *
- * TODO: full V2 connector support is still in progress. For repeated `sql()` access the current
- * behavior matches AUTO (the table is re-resolved on each access and reflects the latest
- * snapshot), except that an INSERT right after an in-session ADD COLUMN still resolves against
- * the schema cached at table lookup (see the STRICT branch in
- * [[DeltaRepeatedAccessRefreshTests]] scenario 2). Revisit if STRICT diverges further.
+ * TODO: full V2 connector support is in progress. For repeated `sql()` access the behavior
+ * currently matches AUTO, except that an INSERT right after an in-session ADD COLUMN resolves
+ * against the schema cached at table lookup (see scenario 2's STRICT branch in
+ * [[DeltaRepeatedAccessRefreshTests]]). Revisit if STRICT diverges further.
  */
 class DeltaTableRefreshStrictModeSuite
   extends DeltaTableRefreshSuiteBase {

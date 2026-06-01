@@ -23,12 +23,12 @@ import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.test.DeltaQueryTest
 
 /**
- * Connect wiring for [[DeltaRepeatedAccessRefreshTests]]. The shared base
- * [[DeltaTableRefreshSharedBase]] implements the table setup and external-write simulation (the
- * Connect client shares the local filesystem with the server, so the same `_delta_log` commit
- * writing works). The only connect specific piece is the arity-mismatch assertion: Connect can
- * wrap the error, so the condition may appear in the message rather than as the error condition.
- * `spark`, `checkAnswer`, `withTable`, and `withTempPath` come from the self-type.
+ * Connect wiring for [[DeltaRepeatedAccessRefreshTests]]. Setup and external-write simulation come
+ * from [[DeltaTableRefreshSharedBase]] (the Connect client shares the local filesystem with the
+ * server, so the same `_delta_log` commit writing works). The only Connect-specific piece is the
+ * arity-mismatch assertion: Connect can wrap the error, so the condition may appear in the message
+ * rather than as the error condition. `spark` / `checkAnswer` / `withTable` / `withTempPath` come
+ * from the self-type.
  */
 trait DeltaTableRefreshConnectTestBase extends DeltaTableRefreshSharedBase {
   self: DeltaQueryTest with RemoteSparkSession =>

@@ -23,10 +23,10 @@ import org.apache.spark.sql.{AnalysisException, QueryTest}
 import org.apache.spark.sql.test.SharedSparkSession
 
 /**
- * Classic wiring for [[DeltaRepeatedAccessRefreshTests]]. The shared base
- * [[DeltaTableRefreshSharedBase]] implements the table setup and external-write simulation; the
- * only classic specific piece is the arity-mismatch assertion (Spark's checkError with parameter
- * matching). `spark`, `checkAnswer`, `withTable`, and `withTempPath` come from the self-type.
+ * Classic wiring for [[DeltaRepeatedAccessRefreshTests]]. The only classic-specific piece is the
+ * arity-mismatch assertion (Spark's checkError with parameter matching); setup and external-write
+ * simulation come from [[DeltaTableRefreshSharedBase]], and `spark` / `checkAnswer` / `withTable` /
+ * `withTempPath` from the self-type.
  */
 trait DeltaTableRefreshTestBase extends DeltaTableRefreshSharedBase {
   self: QueryTest with SharedSparkSession with DeltaSQLCommandTest =>
