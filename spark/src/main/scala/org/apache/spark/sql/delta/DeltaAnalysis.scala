@@ -27,8 +27,8 @@ import org.apache.spark.sql.delta.Relocated._
 import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.DeltaErrors.{TemporallyUnstableInputException, TimestampEarlierThanCommitRetentionException}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
+import org.apache.spark.sql.delta.catalog.{DeltaTableV2, DeltaV2TableMarker}
 import org.apache.spark.sql.delta.catalog.DeltaCatalogV1
-import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.catalog.IcebergTablePlaceHolder
 import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -391,8 +391,10 @@ class DeltaAnalysis(protected val session: SparkSession)
     case stmt: CDCStatementBase if stmt.functionArgs.forall(_.resolved) =>
       stmt.toTableChanges(session)
 
-    case tc: TableChanges if tc.child.resolved => tc.toReadQuery
-
+    case tc: TableChanges if tc.child.resolved &&
+        // Skip CDF over DSv2 table, this will be resolved in [[ResolveTableChangesV2]].
+        !tc.child.exists(DeltaV2TableMarker.isDeltaV2TableRelation) =>
+      tc.toReadQuery
 
     // Here we take advantage of CreateDeltaTableCommand which takes a LogicalPlan for CTAS in order
     // to perform CLONE. We do this by passing the CloneTableCommand as the query in

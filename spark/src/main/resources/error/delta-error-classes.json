@@ -436,6 +436,13 @@
     ],
     "sqlState" : "0AKDE"
   },
+  "DELTA_CHANGELOG_UNSUPPORTED_OPTION" : {
+    "message" : [
+      "The `<option>` option is not supported by the read-time CDC reader.",
+      "Please remove it from your query."
+    ],
+    "sqlState" : "0AKDE"
+  },
   "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA" : {
     "message" : [
       "Retrieving table changes between version <start> and <end> failed because of an incompatible data schema.",
