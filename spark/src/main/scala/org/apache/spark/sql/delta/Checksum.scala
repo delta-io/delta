@@ -806,9 +806,15 @@ trait ValidateChecksum extends DeltaLogging { self: Snapshot =>
   def validateChecksum(contextInfo: Map[String, String] = Map.empty): Boolean = {
     val contextSuffix = contextInfo.get("context").map(c => s".context-$c").getOrElse("")
     val computedStateAccessor = s"ValidateChecksum.checkMismatch$contextSuffix"
-    val computedStateToCompareAgainst = computedState
+    // Always compare against state-reconstruction-derived state so this check stays meaningful
+    // even when `computedState` may have been served from the checksum file via the
+    // [[DeltaSQLConf.USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED]] fast path. Comparing the
+    // checksum against itself would otherwise make this validation tautological.
+    // Note: only compute the reconstructed state when a checksum is actually present, so we
+    // do not trigger an expensive state reconstruction when there's nothing to validate
+    // against (e.g. for snapshots that have no .crc file, including [[InitialSnapshot]]).
     val (mismatchErrorMap, detailedErrorMapForUsageLogs) = checksumOpt
-        .map(checkMismatch(_, computedStateToCompareAgainst))
+        .map(checkMismatch(_, computedStateFromStateReconstruction))
         .getOrElse((Map.empty[String, String], Map.empty[String, String]))
     logAndThrowValidationFailure(mismatchErrorMap, detailedErrorMapForUsageLogs, contextInfo)
   }
@@ -1018,10 +1024,12 @@ trait ValidateChecksum extends DeltaLogging { self: Snapshot =>
     }
     // Deletion vectors metrics.
     if (DeletionVectorUtils.deletionVectorsReadable(self)) {
-      (checksum.numDeletedRecordsOpt zip computedState.numDeletedRecordsOpt).foreach {
+      (checksum.numDeletedRecordsOpt zip computedStateToCheckAgainst.numDeletedRecordsOpt)
+          .foreach {
         case (a, b) => compare(a, b, "Number of deleted records", "numDeletedRecordsOpt")
       }
-      (checksum.numDeletionVectorsOpt zip computedState.numDeletionVectorsOpt).foreach {
+      (checksum.numDeletionVectorsOpt zip computedStateToCheckAgainst.numDeletionVectorsOpt)
+          .foreach {
         case (a, b) => compare(a, b, "Number of deleted vectors", "numDeletionVectorsOpt")
       }
     }
