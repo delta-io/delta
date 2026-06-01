@@ -229,6 +229,80 @@ class CheckpointsSuite
     }
   }
 
+  testDifferentV2Checkpoints("V2 Checkpoint - CheckpointMetadata tags contain" +
+      " sidecar stats and schema") {
+    withTempDir { tempDir =>
+      val path = tempDir.getAbsolutePath
+      spark.range(10).write.format("delta").save(path)
+      val deltaLog = DeltaLog.forTable(spark, path)
+      deltaLog.checkpoint()
+
+      val checkpointFiles = deltaLog.listFrom(0).filter(FileNames.isCheckpointFile).toList
+      assert(checkpointFiles.length == 1)
+      val checkpoint = checkpointFiles.head
+
+      def getCheckpointFileActions(checkpoint: FileStatus): Seq[Action] = {
+        if (checkpoint.getPath.toString.endsWith("json")) {
+          deltaLog.store.read(checkpoint.getPath).map(Action.fromJson)
+        } else {
+          val fileIndex =
+            DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, Seq(checkpoint)).get
+          deltaLog.loadIndex(fileIndex, Action.logSchema)
+            .as[SingleAction].collect().map(_.unwrap).toSeq
+        }
+      }
+      val actions = getCheckpointFileActions(checkpoint)
+      val cmActions = actions.collect { case cm: CheckpointMetadata => cm }
+      assert(cmActions.length == 1)
+      val cm = cmActions.head
+
+      assert(cm.tags != null, "CheckpointMetadata.tags should not be null")
+      val expectedKeys = Set(
+        "sidecarNumActions",
+        "sidecarSizeInBytes",
+        "numOfAddFiles",
+        "sidecarFileSchema"
+      )
+      assert(expectedKeys.subsetOf(cm.tags.keySet),
+        s"tags keys ${cm.tags.keySet} should contain all of $expectedKeys")
+
+      val numActions = cm.tags("sidecarNumActions").toLong
+      assert(numActions > 0, s"sidecarNumActions should be > 0, got $numActions")
+      val sizeInBytes = cm.tags("sidecarSizeInBytes").toLong
+      assert(sizeInBytes > 0, s"sidecarSizeInBytes should be > 0, got $sizeInBytes")
+      val numOfAddFiles = cm.tags("numOfAddFiles").toLong
+      assert(numOfAddFiles > 0, s"numOfAddFiles should be > 0, got $numOfAddFiles")
+
+      val schemaJson = cm.tags("sidecarFileSchema")
+      assert(schemaJson != null && schemaJson.nonEmpty,
+        "sidecarFileSchema should be a non-empty JSON string")
+      val schema = cm.sidecarFileSchema
+      assert(schema.isDefined, "sidecarFileSchema should deserialize to Some(StructType)")
+      val sidecarSchema = schema.get
+      assert(sidecarSchema.fieldNames.contains("add"),
+        s"sidecar schema should contain 'add' field, got: ${sidecarSchema.fieldNames.toSeq}")
+      assert(sidecarSchema.fieldNames.contains("remove"),
+        s"sidecar schema should contain 'remove' field, got: ${sidecarSchema.fieldNames.toSeq}")
+
+      val v2Provider = getV2CheckpointProvider(deltaLog, update = true)
+      val resolvedSchema = v2Provider.allActionsFileIndexesAndSchemas(spark, deltaLog)
+        .filter(_._1.files.exists(f => f.getPath.toString.contains("_sidecars")))
+        .map(_._2)
+      assert(resolvedSchema.nonEmpty, "Should have at least one sidecar file index")
+      assert(resolvedSchema.head == sidecarSchema,
+        s"Schema from tags should match resolved sidecar schema.\n" +
+        s"From tags: ${sidecarSchema.treeString}\n" +
+        s"Resolved: ${resolvedSchema.head.treeString}")
+
+      val roundTripped = JsonUtils.fromJson[SingleAction](cm.json).unwrap
+        .asInstanceOf[CheckpointMetadata]
+      assert(roundTripped.tags == cm.tags,
+        "Tags should survive JSON round-trip serialization")
+      assert(roundTripped.sidecarFileSchema == cm.sidecarFileSchema,
+        "sidecarFileSchema should survive JSON round-trip")
+    }
+  }
+
   test("SC-86940: isGCSPath") {
     val conf = new Configuration()
     assert(Checkpoints.isGCSPath(conf, new Path("gs://foo/bar")))
