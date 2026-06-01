@@ -41,7 +41,6 @@ import org.apache.spark.util.Utils
  * @param sizeInBytes The total size of the table (of active files, not including tombstones).
  * @param numOfSetTransactions Number of streams writing to this table.
  * @param numOfFiles The number of files in this table.
- * @param numOfRemoves The number of tombstones in the state.
  * @param numDeletedRecordsOpt The total number of records deleted with Deletion Vectors.
  * @param numDeletionVectorsOpt The number of Deletion Vectors present in the table.
  * @param numOfMetadata The number of metadata actions in the state. Should be 1.
@@ -58,7 +57,6 @@ case class SnapshotState(
   sizeInBytes: Long,
   numOfSetTransactions: Long,
   numOfFiles: Long,
-  numOfRemoves: Long,
   numDeletedRecordsOpt: Option[Long],
   numDeletionVectorsOpt: Option[Long],
   numOfMetadata: Long,
@@ -94,58 +92,216 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
    * Compute the SnapshotState of a table. Uses the stateDF from the Snapshot to extract
    * the necessary stats.
    */
-  protected lazy val computedState: SnapshotState = {
+  private[delta] lazy val computedState: SnapshotState = {
     withStatusCode("DELTA", s"Compute snapshot for version: $version") {
       recordFrameProfile("Delta", "snapshot.computedState") {
-        val startTime = System.nanoTime()
-        val _computedState = extractComputedState(stateDF)
-        if (_computedState.protocol == null) {
-          recordDeltaEvent(
-            deltaLog,
-            opType = "delta.assertions.missingAction",
-            data = Map(
-              "version" -> version.toString, "action" -> "Protocol", "source" -> "Snapshot"))
-          throw DeltaErrors.actionNotFoundException("protocol", version)
-        } else if (_computedState.protocol != protocol) {
-          recordDeltaEvent(
-            deltaLog,
-            opType = "delta.assertions.mismatchedAction",
-            data = Map(
-              "version" -> version.toString, "action" -> "Protocol", "source" -> "Snapshot",
-              "computedState.protocol" -> _computedState.protocol,
-              "extracted.protocol" -> protocol))
-          throw DeltaErrors.actionNotFoundException("protocol", version)
+        // Fast path: try to construct the SnapshotState directly from the checksum (CRC) file.
+        // When the CRC has all the required fields, this avoids the expensive Spark aggregation
+        // over the state reconstruction DataFrame.
+        computeStateFromChecksum match {
+          case Some(stateFromCrc) =>
+            recordDeltaEvent(
+              deltaLog,
+              opType = "delta.snapshot.computedStateFromChecksum",
+              data = Map("version" -> version.toString))
+            _computedStateTriggered = true
+            stateFromCrc
+          case None =>
+            val state = computedStateFromStateReconstruction
+            _computedStateTriggered = true
+            state
         }
-
-        if (_computedState.metadata == null) {
-          recordDeltaEvent(
-            deltaLog,
-            opType = "delta.assertions.missingAction",
-            data = Map(
-              "version" -> version.toString, "action" -> "Metadata", "source" -> "Metadata"))
-          throw DeltaErrors.actionNotFoundException("metadata", version)
-        } else if (_computedState.metadata != metadata) {
-          recordDeltaEvent(
-            deltaLog,
-            opType = "delta.assertions.mismatchedAction",
-            data = Map(
-              "version" -> version.toString, "action" -> "Metadata", "source" -> "Snapshot",
-              "computedState.metadata" -> _computedState.metadata,
-              "extracted.metadata" -> metadata))
-          throw DeltaErrors.actionNotFoundException("metadata", version)
-        }
-
-        _computedStateTriggered = true
-        _computedState
       }
     }
+  }
+
+  /**
+   * Attempt to construct a [[SnapshotState]] from the checksum file without running a Spark
+   * aggregation over the state reconstruction. Returns [[Some]] only when the checksum file is
+   * present and contains all the fields needed to produce a complete and correct SnapshotState
+   * equivalent to what [[extractComputedState]] would have produced.
+   *
+   * Notes:
+   *  - `numOfRemoves` (the tombstone count) is not part of the [[SnapshotState]] case class.
+   *    It is exposed as a separate lazy val on [[SnapshotStateManager]] and is computed on
+   *    demand from `stateDS` only if a caller actually reads it. This keeps the case class
+   *    free of partial / sentinel values and preserves the fast path benefit when callers
+   *    never need the tombstone count.
+   *  - The checksum's `protocol` and `metadata` are validated against the snapshot's resolved
+   *    [[protocol]] and [[metadata]], mirroring the assertion in
+   *    [[computedStateFromStateReconstruction]]. This is most meaningful when
+   *    [[DeltaSQLConf.USE_PROTOCOL_AND_METADATA_FROM_CHECKSUM_ENABLED]] is false: in that
+   *    case the snapshot resolved its protocol/metadata via an independent state
+   *    reconstruction pass, so a mismatch here indicates CRC drift that would also
+   *    invalidate the CRC's aggregate fields (`sizeInBytes`, `numFiles`, ...). When the flag
+   *    is true the snapshot resolved protocol/metadata from this same CRC and the check is
+   *    trivially satisfied. After validation we copy the snapshot's resolved
+   *    `protocol`/`metadata` into the returned [[SnapshotState]] so the fast path remains
+   *    consistent regardless of which source the snapshot used.
+   */
+  private[delta] def computeStateFromChecksum: Option[SnapshotState] = {
+    if (!spark.sessionState.conf.getConf(
+        DeltaSQLConf.USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED)) {
+      return None
+    }
+    val checksum = checksumOpt.getOrElse { return None }
+
+    // Required fields. The checksum is allowed to carry nulls for protocol/metadata for
+    // backward compatibility with older checksum files, so guard against that explicitly.
+    if (checksum.metadata == null || checksum.protocol == null) return None
+
+    // Validate the checksum's protocol/metadata against the snapshot's resolved
+    // protocol/metadata. See class-level doc above for why this is meaningful.
+    if (checksum.protocol != protocol) {
+      recordDeltaEvent(
+        deltaLog,
+        opType = "delta.assertions.mismatchedAction",
+        data = Map(
+          "version" -> version.toString,
+          "action" -> "Protocol",
+          "source" -> "Checksum",
+          "checksum.protocol" -> checksum.protocol,
+          "snapshot.protocol" -> protocol))
+      throw DeltaErrors.actionNotFoundException("protocol", version)
+    }
+    if (checksum.metadata != metadata) {
+      recordDeltaEvent(
+        deltaLog,
+        opType = "delta.assertions.mismatchedAction",
+        data = Map(
+          "version" -> version.toString,
+          "action" -> "Metadata",
+          "source" -> "Checksum",
+          "checksum.metadata" -> checksum.metadata,
+          "snapshot.metadata" -> metadata))
+      recordDeltaEvent(
+        deltaLog,
+        opType = "delta.assertions.mismatchedAction",
+        data = Map(
+          "version" -> version.toString,
+          "action" -> "Metadata",
+          "source" -> "Checksum",
+          "checksum.metadata" -> checksum.metadata,
+          "snapshot.metadata" -> metadata))
+      throw DeltaErrors.actionNotFoundException("metadata", version)
+    }
+
+    // The aggregation always collects setTransactions and domainMetadata, so the fast path
+    // can only run when the CRC carries both. (CRCs written by older versions or by writers
+    // that don't persist these fields will gracefully fall back.)
+    val setTransactionsFromCrc = checksum.setTransactions.getOrElse { return None }
+    val domainMetadataFromCrc = checksum.domainMetadata.getOrElse { return None }
+
+    // Match the predicate used by `aggregationsToComputeState` so the fast path returns the
+    // same shape of optional fields the aggregation would have produced.
+    val checksumDVMetricsEnabled =
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CHECKSUM_DV_METRICS_ENABLED)
+    val deletedRecordCountsHistogramEnabled =
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_DELETED_RECORD_COUNTS_HISTOGRAM_ENABLED)
+    val persistentDVsOnTableSupported = DeletionVectorUtils.deletionVectorsWritable(this)
+    val computeChecksumDVMetrics = checksumDVMetricsEnabled && persistentDVsOnTableSupported
+
+    val (numDeletedRecordsOptResolved, numDeletionVectorsOptResolved) =
+      if (computeChecksumDVMetrics) {
+        (checksum.numDeletedRecordsOpt, checksum.numDeletionVectorsOpt) match {
+          case (Some(_), Some(_)) =>
+            (checksum.numDeletedRecordsOpt, checksum.numDeletionVectorsOpt)
+          case _ => return None
+        }
+      } else {
+        (None, None)
+      }
+
+    val deletedRecordCountsHistogramResolved =
+      if (computeChecksumDVMetrics && deletedRecordCountsHistogramEnabled) {
+        checksum.deletedRecordCountsHistogramOpt match {
+          case Some(_) => checksum.deletedRecordCountsHistogramOpt
+          case None => return None
+        }
+      } else {
+        None
+      }
+
+    val fileSizeHistogramResolved =
+      if (fileSizeHistogramEnabled) {
+        checksum.histogramOpt match {
+          case Some(_) => checksum.histogramOpt
+          case None => return None
+        }
+      } else {
+        None
+      }
+
+    Some(SnapshotState(
+      sizeInBytes = checksum.tableSizeBytes,
+      numOfSetTransactions = setTransactionsFromCrc.length,
+      numOfFiles = checksum.numFiles,
+      numDeletedRecordsOpt = numDeletedRecordsOptResolved,
+      numDeletionVectorsOpt = numDeletionVectorsOptResolved,
+      numOfMetadata = checksum.numMetadata,
+      numOfProtocol = checksum.numProtocol,
+      setTransactions = setTransactionsFromCrc,
+      domainMetadata = domainMetadataFromCrc,
+      metadata = metadata,
+      protocol = protocol,
+      fileSizeHistogram = fileSizeHistogramResolved,
+      deletedRecordCountsHistogramOpt = deletedRecordCountsHistogramResolved
+    ))
+  }
+
+  /**
+   * Compute the [[SnapshotState]] by running an aggregation over the state reconstruction
+   * DataFrame, bypassing the CRC fast path. Also performs the protocol/metadata sanity checks
+   * against the snapshot's resolved protocol/metadata. Used by both [[computedState]]'s slow
+   * path and by checksum validation so the latter compares the persisted checksum against an
+   * independently-computed state instead of one potentially derived from the same checksum.
+   */
+  private[delta] def computedStateFromStateReconstruction: SnapshotState = {
+    val _computedState = extractComputedState(stateDF)
+    if (_computedState.protocol == null) {
+      recordDeltaEvent(
+        deltaLog,
+        opType = "delta.assertions.missingAction",
+        data = Map(
+          "version" -> version.toString, "action" -> "Protocol", "source" -> "Snapshot"))
+      throw DeltaErrors.actionNotFoundException("protocol", version)
+    } else if (_computedState.protocol != protocol) {
+      recordDeltaEvent(
+        deltaLog,
+        opType = "delta.assertions.mismatchedAction",
+        data = Map(
+          "version" -> version.toString, "action" -> "Protocol", "source" -> "Snapshot",
+          "computedState.protocol" -> _computedState.protocol,
+          "extracted.protocol" -> protocol))
+      throw DeltaErrors.actionNotFoundException("protocol", version)
+    }
+
+    if (_computedState.metadata == null) {
+      recordDeltaEvent(
+        deltaLog,
+        opType = "delta.assertions.missingAction",
+        data = Map(
+          "version" -> version.toString, "action" -> "Metadata", "source" -> "Metadata"))
+      throw DeltaErrors.actionNotFoundException("metadata", version)
+    } else if (_computedState.metadata != metadata) {
+      recordDeltaEvent(
+        deltaLog,
+        opType = "delta.assertions.mismatchedAction",
+        data = Map(
+          "version" -> version.toString, "action" -> "Metadata", "source" -> "Snapshot",
+          "computedState.metadata" -> _computedState.metadata,
+          "extracted.metadata" -> metadata))
+      throw DeltaErrors.actionNotFoundException("metadata", version)
+    }
+
+    _computedState
   }
 
   /**
    * Extract the SnapshotState from the provided dataframe of actions. Requires that the dataframe
    * has already been deduplicated (either through logReplay or some other method).
    */
-  protected def extractComputedState(stateDF: DataFrame): SnapshotState = {
+  private[delta] def extractComputedState(stateDF: DataFrame): SnapshotState = {
     recordFrameProfile("Delta", "snapshot.computedState.aggregations") {
       val aggregations =
         aggregationsToComputeState.map { case (alias, agg) => agg.as(alias) }.toSeq
@@ -195,7 +351,6 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
       "sizeInBytes" -> coalesce(sum(col("add.size")), lit(0L)),
       "numOfSetTransactions" -> count(col("txn")),
       "numOfFiles" -> count(col("add")),
-      "numOfRemoves" -> count(col("remove")),
       "numOfMetadata" -> count(col("metaData")),
       "numOfProtocol" -> count(col("protocol")),
       "setTransactions" -> collect_set(col("txn")),
@@ -207,12 +362,31 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
   }
 
   /**
+   * The number of tombstones (RemoveFile actions) in this snapshot's state.
+   *
+   * This is intentionally NOT part of the [[SnapshotState]] case class so that the CRC fast
+   * path ([[computeStateFromChecksum]]), which does not have access to a tombstone count,
+   * can return a complete and valid [[SnapshotState]] without forcing eager state
+   * reconstruction. The value is computed lazily from `stateDS` on first access. Callers that
+   * never read `numOfRemoves` pay nothing extra.
+   *
+   * When the slow path is in use, `stateDS` is already cached by the time `computedState`
+   * returns, so this `count` aggregation runs against the in-memory cached DataFrame and is
+   * cheap relative to the original (now-eliminated) `count(remove)` aggregation that ran as
+   * part of the main `aggregationsToComputeState` job.
+   */
+  lazy val numOfRemoves: Long = {
+    recordFrameProfile("Delta", "snapshot.numOfRemoves") {
+      stateDS.where(col("remove").isNotNull).count()
+    }
+  }
+
+  /**
    * The following is a list of convenience methods for accessing the computedState.
    */
   def sizeInBytes: Long = computedState.sizeInBytes
   def numOfSetTransactions: Long = computedState.numOfSetTransactions
   def numOfFiles: Long = computedState.numOfFiles
-  def numOfRemoves: Long = computedState.numOfRemoves
   def numOfMetadata: Long = computedState.numOfMetadata
   def numOfProtocol: Long = computedState.numOfProtocol
   def setTransactions: Seq[SetTransaction] = computedState.setTransactions
@@ -251,7 +425,6 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
       sizeInBytes = 0L,
       numOfSetTransactions = 0L,
       numOfFiles = 0L,
-      numOfRemoves = 0L,
       // DV metrics are initialized to Some(0) to allow incremental computation. For tables where
       // DVs are disabled, there are turned to None by the incremental computation.
       numDeletedRecordsOpt = Some(0),

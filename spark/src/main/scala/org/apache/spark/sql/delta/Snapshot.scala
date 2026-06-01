@@ -969,7 +969,8 @@ class DummySnapshot(
   override def protocol: Protocol =
     protocolOpt.getOrElse(Protocol.forNewTable(spark, Some(metadata)))
 
-  override protected lazy val computedState: SnapshotState = initialState(metadata, protocol)
+  override private[delta] lazy val computedState: SnapshotState = initialState(metadata, protocol)
+  override lazy val numOfRemoves: Long = 0L
   override protected lazy val getInCommitTimestampOpt: Option[Long] = None
   _computedStateTriggered = true
 
