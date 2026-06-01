@@ -401,8 +401,12 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
 
       TablesApi tablesApi = new TablesApi(unityCatalogInfo().createApiClient());
       TableInfo info = tablesApi.getTable(fullTableName, false, false);
+      // The seed table is column-mapping enabled, so UC stores the physical column name
+      // (e.g. `col-<UUID>`) in `clusteringColumns`, not the logical `col1`. Match the
+      // physical-name shape rather than the logical name.
       assertThat(info.getProperties())
-          .containsEntry("clusteringColumns", "[[\"col1\"]]")
+          .hasEntrySatisfying(
+              "clusteringColumns", v -> assertThat(v).matches("\\[\\[\"col-[0-9a-f-]+\"\\]\\]"))
           .containsEntry("delta.feature.clustering", "supported");
     } finally {
       sql("DROP TABLE IF EXISTS %s", fullTableName);
