@@ -64,26 +64,27 @@ trait DeltaRepeatedAccessRefreshTests
     }
   }
 
-  test("scenario 1 external: repeated access picks up external data") {
-    withRefreshTable { tableRef =>
-      externalDataWrite(tableRef, Seq((2, 200)))
-      assertFinalTableState(tableRef, Seq(Row(1, 100), Row(2, 200)))
+  test("scenario 1 external: REFRESH TABLE picks up external data") {
+    withExternalTable { path =>
+      externalDataWrite(path, Seq((2, 200)))
+      writerSql("REFRESH TABLE t")
+      assertFinalTableState("t", Seq(Row(1, 100), Row(2, 200)))
     }
   }
 
-  test("scenario 2 external: repeated access reflects external schema change") {
-    withRefreshTable { tableRef =>
-      // Unlike in-session scenario 2, the external ADD COLUMN lands in its own commit before the
-      // fresh sql() runs, so re-resolution sees the new schema in every mode (including STRICT).
-      externalAddColumnAndWrite(tableRef, Seq((2, 200, -1)))
-      assertFinalTableState(tableRef, Seq(Row(1, 100, null), Row(2, 200, -1)))
+  test("scenario 2 external: REFRESH TABLE reflects external schema change") {
+    withExternalTable { path =>
+      externalAddColumnAndWrite(path, Seq((2, 200, -1)))
+      writerSql("REFRESH TABLE t")
+      assertFinalTableState("t", Seq(Row(1, 100, null), Row(2, 200, -1)))
     }
   }
 
-  test("scenario 3 external: repeated access after external DROP and recreate") {
-    withRefreshTable { tableRef =>
-      externalDropAndRecreate(tableRef)
-      assertFinalTableState(tableRef, Seq.empty)
+  test("scenario 3 external: REFRESH TABLE reflects external DROP and recreate") {
+    withExternalTable { path =>
+      externalDropAndRecreate(path)
+      writerSql("REFRESH TABLE t")
+      assertFinalTableState("t", Seq.empty)
     }
   }
 }

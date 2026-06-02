@@ -36,7 +36,7 @@ import org.apache.spark.sql.types.{DataType, IntegerType, StructType}
  * External writes are simulated by writing commit files directly into the table's `_delta_log` on
  * the local filesystem, which the Connect client and server share.
  *
- * Concrete suites supply [[spark]], [[checkAnswer]], [[withTable]], and [[withTempPath]].
+ * Concrete suites supply [[spark]], [[checkAnswer]], and [[withTable]].
  */
 trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
 
@@ -46,7 +46,6 @@ trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
 
   protected def checkAnswer(df: => DataFrame, expectedAnswer: Seq[Row]): Unit
   protected def withTable(tableNames: String*)(f: => Unit): Unit
-  protected def withTempPath(f: File => Unit): Unit
 
   /**
    * Asserts `exception` carries `condition`, tolerating a Connect-wrapped error (the condition may
@@ -69,37 +68,43 @@ trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
   protected def insertInitialData(tableRef: String): Unit =
     spark.sql(s"INSERT INTO $tableRef VALUES (1, 100)")
 
-  /** Creates the 2 column `tableRef`, inserts `(1, 100)`, and asserts the first read. */
-  protected def initTable(tableRef: String): Unit = {
-    createSimpleTable(tableRef)
+  /** Inserts the initial `(1, 100)` row into `tableRef` and asserts the first read. */
+  private def seedInitialRow(tableRef: String): Unit = {
     insertInitialData(tableRef)
     checkAnswer(spark.sql(s"SELECT * FROM $tableRef"), Seq(Row(1, 100)))
   }
 
-  /** Runs `body` against a fresh catalog table `t` already holding `(1, 100)`. */
+  /** Runs `body` against a fresh managed catalog table `t` already holding `(1, 100)`. */
   protected def withInitialTable(body: String => Unit): Unit =
     withTable("t") {
-      initTable("t")
+      createSimpleTable("t")
+      seedInitialRow("t")
       body("t")
     }
 
-  /** Runs `body` against an isolated delta path table already holding `(1, 100)`. */
-  protected def withRefreshTable(body: String => Unit): Unit =
-    withTempPath { dir =>
-      val tableRef = s"delta.`${dir.getAbsolutePath}`"
-      initTable(tableRef)
-      body(tableRef)
+  /**
+   * Runs `body` against a fresh external catalog table `t` already holding `(1, 100)`, passing the
+   * table's storage path so the body can stage external commits there before REFRESH TABLE.
+   */
+  protected def withExternalTable(body: String => Unit): Unit = {
+    val dir = Files.createTempDirectory("refresh-ext").toFile
+    try {
+      withTable("t") {
+        spark.sql(
+          s"CREATE TABLE t (id INT, salary INT) USING delta LOCATION '${dir.getAbsolutePath}'")
+        seedInitialRow("t")
+        body(dir.getAbsolutePath)
+      }
+    } finally {
+      deleteRecursively(dir)
     }
+  }
 
   // External-write simulation: write commit files directly into _delta_log, editing schemas as
   // StructType values recovered from the stored schemaString.
 
   private val IdRegex = """"id"\s*:\s*"([^"]+)"""".r
   private val SchemaStringRegex = """"schemaString"\s*:\s*"((?:[^"\\]|\\.)*)"""".r
-
-  /** Extracts the filesystem path from a delta path table reference (delta.`<path>`). */
-  private def pathOf(tableRef: String): String =
-    tableRef.stripPrefix("delta.`").stripSuffix("`")
 
   private def deltaLogDir(path: String): File = new File(path, "_delta_log")
 
@@ -194,21 +199,17 @@ trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
     rows.toDF("id", "salary", "new_column")
   }
 
-  protected def externalDataWrite(tableRef: String, rows: Seq[(Int, Int)]): Unit = {
-    val path = pathOf(tableRef)
+  protected def externalDataWrite(path: String, rows: Seq[(Int, Int)]): Unit =
     writeCommit(path, Seq(writeParquet(path, rows2Df(rows))))
-  }
 
-  protected def externalAddColumnAndWrite(tableRef: String, rows: Seq[(Int, Int, Int)]): Unit = {
-    val path = pathOf(tableRef)
+  protected def externalAddColumnAndWrite(path: String, rows: Seq[(Int, Int, Int)]): Unit = {
     val newSchema = currentSchema(path).add("new_column", IntegerType, nullable = true)
     writeCommit(path, Seq(
       metaLineWithSchema(latestMetaDataLine(path), newSchema),
       writeParquet(path, rows3Df(rows))))
   }
 
-  protected def externalDropAndRecreate(tableRef: String): Unit = {
-    val path = pathOf(tableRef)
+  protected def externalDropAndRecreate(path: String): Unit = {
     val recreatedMeta = metaLineWithNewId(latestMetaDataLine(path))
     writeCommit(path, removeActiveFiles(path) :+ recreatedMeta)
   }
