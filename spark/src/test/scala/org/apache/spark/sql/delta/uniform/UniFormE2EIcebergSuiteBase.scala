@@ -32,6 +32,9 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
   def isAtomicConversionEnabled: Boolean =
     true
 
+  protected def supportsReorgFromV1ToV2: Boolean =
+    true
+
   val testTableName = "delta_table"
 
   var compatVersions: Seq[Int] = Seq(1, 2)
@@ -195,27 +198,29 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
     }
   }
 
-  test("reorg from v1 to v2") {
-    withTable(testTableName) {
-      write(
-        s"""CREATE TABLE $testTableName (col1 INT) USING DELTA
-           |TBLPROPERTIES (
-           |  'delta.columnMapping.mode' = 'name',
-           |  'delta.enableIcebergCompatV1' = 'true',
-           |  'delta.universalFormat.enabledFormats' = 'iceberg'
-           |  ${extraTableProperties(1)}
-           |)""".stripMargin)
-      write(s"INSERT INTO $testTableName VALUES (1)")
-      readAndVerify(testTableName, "col1", "col1", Seq(Row(1)))
+  if (supportsReorgFromV1ToV2) {
+    test("reorg from v1 to v2") {
+      withTable(testTableName) {
+        write(
+          s"""CREATE TABLE $testTableName (col1 INT) USING DELTA
+             |TBLPROPERTIES (
+             |  'delta.columnMapping.mode' = 'name',
+             |  'delta.enableIcebergCompatV1' = 'true',
+             |  'delta.universalFormat.enabledFormats' = 'iceberg'
+             |  ${extraTableProperties(1)}
+             |)""".stripMargin)
+        write(s"INSERT INTO $testTableName VALUES (1)")
+        readAndVerify(testTableName, "col1", "col1", Seq(Row(1)))
 
-      write(s"ALTER TABLE `$testTableName` UNSET TBLPROPERTIES " +
-        s"('delta.universalFormat.enabledFormats')")
-      write(s"""
-               | REORG TABLE $testTableName APPLY
-               | (UPGRADE UNIFORM (ICEBERG_COMPAT_VERSION = 2))
-               |""".stripMargin)
-      write(s"INSERT INTO $testTableName VALUES (2)")
-      readAndVerify(testTableName, "col1", "col1", Seq(Row(1), Row(2)))
+        write(s"ALTER TABLE `$testTableName` UNSET TBLPROPERTIES " +
+          s"('delta.universalFormat.enabledFormats')")
+        write(s"""
+                 | REORG TABLE $testTableName APPLY
+                 | (UPGRADE UNIFORM (ICEBERG_COMPAT_VERSION = 2))
+                 |""".stripMargin)
+        write(s"INSERT INTO $testTableName VALUES (2)")
+        readAndVerify(testTableName, "col1", "col1", Seq(Row(1), Row(2)))
+      }
     }
   }
 
