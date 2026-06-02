@@ -306,7 +306,17 @@ case class DeleteCommand(
               numDeletionVectorsRemoved = metricMap("numDeletionVectorsRemoved")
               numDeletionVectorsUpdated = metricMap("numDeletionVectorsUpdated")
               numRemovedFiles = metricMap("numRemovedFiles")
-              actions
+
+              val cdcActions =
+                if (DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(txn.metadata)) {
+                  generateCdcActionsForDeletedRowsWithDVs(
+                    sparkSession, txn, touchedFiles, cond, nameToAddFileMap)
+                } else {
+                  Nil
+                }
+              numAddedChangeFiles = cdcActions.size
+              changeFileBytes = cdcActions.collect { case f: AddCDCFile => f.size }.sum
+              actions ++ cdcActions
             } else {
               Nil // Nothing to update
             }
@@ -488,6 +498,29 @@ case class DeleteCommand(
 
       txn.writeFiles(dfToWrite)
     }
+  }
+
+  /**
+   * When DELETE uses Deletion Vectors, the DV path does not generate AddCDCFile actions.
+   * This method reads the rows that were deleted (identified by the deletion condition)
+   * and writes them as explicit CDF files with _change_type = "delete".
+   */
+  private def generateCdcActionsForDeletedRowsWithDVs(
+      spark: SparkSession,
+      txn: OptimisticTransaction,
+      touchedFiles: Seq[TouchedFileWithDV],
+      deleteCond: Expression,
+      nameToAddFileMap: Map[String, AddFile]): Seq[FileAction] = {
+    import org.apache.spark.sql.delta.commands.cdc.CDCReader._
+    val deltaLog = txn.deltaLog
+    val touchedAddFiles = touchedFiles.map(_.fileLogEntry)
+    val readFileIndex = new TahoeBatchFileIndex(
+      spark, "delete", touchedAddFiles, deltaLog, deltaLog.dataPath, txn.snapshot)
+    val newTarget = DeltaTableUtils.replaceFileIndex(target, readFileIndex)
+    val deletedRowsDf = DataFrameUtils.ofRows(spark, newTarget)
+      .filter(Column(deleteCond))
+      .withColumn(CDC_TYPE_COLUMN_NAME, Column(CDC_TYPE_DELETE))
+    txn.writeFiles(deletedRowsDf).collect { case f: AddCDCFile => f }
   }
 
   def shouldWritePersistentDeletionVectors(
