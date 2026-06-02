@@ -43,13 +43,8 @@ import org.apache.spark.sql.types.{DataType, IntegerType, StructType}
  */
 trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
 
-  // ---------------------------------------------------------------------------
-  // Mode-specific hooks, satisfied by the per-module base traits / test mixins.
-  // ---------------------------------------------------------------------------
-
   protected def spark: SparkSession
 
-  /** The V2 enable mode (NONE, AUTO, STRICT). Overridden by the concrete suites. */
   protected def v2EnableMode: String = "NONE"
 
   protected def checkAnswer(df: => DataFrame, expectedAnswer: Seq[Row]): Unit
