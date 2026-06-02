@@ -66,7 +66,19 @@ realpath () {
 )
 }
 
-# If MAVEN_PROXY_URL is set, use it (and local) as the sole repository for all dependencies.
+USE_MAVEN_LOCAL_FOR_SOURCE_SPARK=false
+if [[ -n "${SPARK_COMMIT:-}" || -n "${SPARK_ARTIFACT_VERSION:-}" ]]; then
+  USE_MAVEN_LOCAL_FOR_SOURCE_SPARK=true
+fi
+for arg in "$@"; do
+  case "$arg" in
+    -DsparkCommit=*|-DsparkArtifactVersion=*)
+      USE_MAVEN_LOCAL_FOR_SOURCE_SPARK=true
+      ;;
+  esac
+done
+
+# If MAVEN_PROXY_URL is set, use it (and Ivy local) as the sole repository for dependencies.
 if [[ -n "$MAVEN_PROXY_URL" ]]; then
   SBT_REPOSITORIES_CONFIG=$(mktemp)
   cat > "$SBT_REPOSITORIES_CONFIG" <<EOF
@@ -78,7 +90,7 @@ EOF
 else
   SBT_REPOSITORIES_CONFIG="$(dirname "$(realpath "$0")")/sbt-config/repositories"
 fi
-if [[ "${SBT_INCLUDE_MAVEN_LOCAL:-false}" == "true" ]]; then
+if [[ "$USE_MAVEN_LOCAL_FOR_SOURCE_SPARK" == "true" ]]; then
   SBT_REPOSITORIES_WITH_MAVEN_LOCAL=$(mktemp)
   cp "$SBT_REPOSITORIES_CONFIG" "$SBT_REPOSITORIES_WITH_MAVEN_LOCAL"
   cat >> "$SBT_REPOSITORIES_WITH_MAVEN_LOCAL" <<EOF
