@@ -69,7 +69,103 @@ jobs:
         with:
           distribution: "zulu"
           java-version: ${{ steps.spark-details.outputs.jvm_version }}
+      - name: Get Spark source build settings
+        if: matrix.spark_version == '4.2'
+        id: spark-source-settings
+        run: |
+          SPARK_SOURCE_REF="$(python3 project/scripts/get_spark_version_info.py --get-field "${{ matrix.spark_version }}" sourceBuildDefaultRef | jq -r)"
+          if [[ -z "$SPARK_SOURCE_REF" || "$SPARK_SOURCE_REF" == "null" ]]; then
+            echo "::error::No default Spark source ref is configured for Spark ${{ matrix.spark_version }} in CrossSparkVersions.scala."
+            exit 1
+          fi
+
+          ARTIFACT_BASE_VERSION="$(python3 project/scripts/get_spark_version_info.py --get-field "${{ matrix.spark_version }}" sourceBuildArtifactBaseVersion | jq -r)"
+          if [[ "$ARTIFACT_BASE_VERSION" == "null" ]]; then
+            ARTIFACT_BASE_VERSION=""
+          fi
+
+          echo "source_ref=$SPARK_SOURCE_REF" >> "$GITHUB_OUTPUT"
+          echo "artifact_base_version=$ARTIFACT_BASE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Using Spark source ref from CrossSparkVersions.scala: $SPARK_SOURCE_REF"
+      - name: Resolve Spark source ref
+        if: matrix.spark_version == '4.2'
+        id: spark-source
+        env:
+          SPARK_SOURCE_REF: ${{ steps.spark-source-settings.outputs.source_ref }}
+          SPARK_BASE_VERSION: ${{ steps.spark-source-settings.outputs.artifact_base_version }}
+        run: |
+          git init /tmp/spark
+          git -C /tmp/spark remote add origin https://github.com/apache/spark.git
+          git -C /tmp/spark fetch --depth 1 origin "$SPARK_SOURCE_REF"
+          git -C /tmp/spark checkout --detach FETCH_HEAD
+          SPARK_SHA="$(git -C /tmp/spark rev-parse HEAD)"
+          SPARK_SHORT_SHA="${SPARK_SHA:0:12}"
+          if [[ -n "$SPARK_BASE_VERSION" ]]; then
+            :
+          elif SPARK_BASE_VERSION="$(python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          version_file = Path("/tmp/spark/version.sbt")
+          if not version_file.exists():
+              raise SystemExit(1)
+
+          match = re.search(r'\bversion\s*:?=\s*"([^"]+)"', version_file.read_text())
+          if not match:
+              raise SystemExit(1)
+
+          print(match.group(1).removesuffix("-SNAPSHOT"))
+          PY
+          )"; then
+            :
+          elif [[ "$SPARK_VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
+            SPARK_BASE_VERSION="${SPARK_VERSION}.0"
+          else
+            SPARK_BASE_VERSION="${SPARK_VERSION%-SNAPSHOT}"
+          fi
+          SPARK_ARTIFACT_VERSION="${SPARK_BASE_VERSION}-${SPARK_SHORT_SHA}-SNAPSHOT"
+          echo "spark_sha=$SPARK_SHA" >> "$GITHUB_OUTPUT"
+          echo "spark_artifact_version=$SPARK_ARTIFACT_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Resolved Spark source ref $SPARK_SOURCE_REF to $SPARK_SHA"
+      - name: Restore Spark Maven cache
+        if: matrix.spark_version == '4.2'
+        id: spark-source-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.m2/repository/org/apache/spark
+          key: spark-m2-ubuntu-24.04-scala-2.13-${{ matrix.spark_version }}-${{ steps.spark-source.outputs.spark_sha }}-${{ hashFiles('project/scripts/build_spark.sh') }}
+      - name: Fail on Spark source cache miss
+        if: matrix.spark_version == '4.2' && matrix.shard == 0 && steps.spark-source-cache.outputs.cache-hit != 'true'
+        env:
+          SPARK_SOURCE_REF: ${{ steps.spark-source-settings.outputs.source_ref }}
+        run: |
+          echo "::error::Spark Maven artifacts were not found in the GitHub Actions cache. Run the Spark Source Artifact Cache workflow for $SPARK_SOURCE_REF first."
+          exit 1
+      - name: Skip Spark 4.2 shard until source cache is warm
+        if: matrix.spark_version == '4.2' && matrix.shard != 0 && steps.spark-source-cache.outputs.cache-hit != 'true'
+        run: |
+          echo "Skipping Spark 4.2 shard ${{ matrix.shard }} because the source-built Spark cache is not available yet."
+          echo "Shard 0 reports the cache miss as the non-blocking signal."
+      - name: Verify restored Spark Maven artifacts
+        if: matrix.spark_version == '4.2' && steps.spark-source-cache.outputs.cache-hit == 'true'
+        env:
+          SPARK_SOURCE_REF: ${{ steps.spark-source-settings.outputs.source_ref }}
+          SPARK_ARTIFACT_VERSION: ${{ steps.spark-source.outputs.spark_artifact_version }}
+        run: |
+          missing=0
+          for module in spark-sql_2.13 spark-core_2.13 spark-catalyst_2.13 spark-hive_2.13; do
+            pom="$HOME/.m2/repository/org/apache/spark/$module/$SPARK_ARTIFACT_VERSION/$module-$SPARK_ARTIFACT_VERSION.pom"
+            if [[ ! -f "$pom" ]]; then
+              echo "::error::Missing restored Spark Maven artifact: $pom"
+              missing=1
+            fi
+          done
+          if [[ "$missing" != "0" ]]; then
+            echo "The Spark cache was restored, but it does not contain the expected Maven artifacts. Re-run the Spark Source Artifact Cache workflow for $SPARK_SOURCE_REF."
+            exit 1
+          fi
       - name: Restore SBT cache
+        if: matrix.spark_version != '4.2' || steps.spark-source-cache.outputs.cache-hit == 'true'
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
@@ -80,13 +176,19 @@ jobs:
       # Delta's sparkUnityCatalog module (part of sparkGroup) depends on APIs that are only in
       # unreleased UC. Publish the pinned UC build locally before sbt tries to resolve it.
       - name: Set up pinned Unity Catalog
+        if: matrix.spark_version != '4.2' || steps.spark-source-cache.outputs.cache-hit == 'true'
         uses: ./.github/actions/setup-unitycatalog
       - name: Scala structured logging style check
+        if: matrix.spark_version != '4.2' || steps.spark-source-cache.outputs.cache-hit == 'true'
         run: |
           if [ -f ./dev/spark_structured_logging_style.py ]; then
               python3 ./dev/spark_structured_logging_style.py
           fi
       - name: Run Scala/Java tests
+        if: matrix.spark_version != '4.2' || steps.spark-source-cache.outputs.cache-hit == 'true'
+        env:
+          SPARK_COMMIT: ${{ steps.spark-source.outputs.spark_sha }}
+          SPARK_ARTIFACT_VERSION: ${{ steps.spark-source.outputs.spark_artifact_version }}
         run: |
           TEST_PARALLELISM_COUNT=4 python3 run-tests.py --group spark --shard ${{ matrix.shard }} --spark-version ${{ matrix.spark_version }}
       - name: Upload test reports
