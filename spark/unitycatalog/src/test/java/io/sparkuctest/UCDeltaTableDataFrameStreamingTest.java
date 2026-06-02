@@ -243,7 +243,8 @@ public class UCDeltaTableDataFrameStreamingTest extends UCDeltaTableIntegrationB
    * CDF streaming reads work for EXTERNAL tables but fail for MANAGED tables.
    *
    * <p>For EXTERNAL: verifies that inserts and a delete produce the expected typed change events.
-   * For MANAGED: verifies the stream fails with an error containing "not supported" and "CDC".
+   * For MANAGED: verifies the stream fails with an error that names the user-facing option and
+   * table type.
    */
   @TestAllTableTypes
   public void testStreamingCDFRead(TableType tableType) throws Exception {
@@ -286,7 +287,8 @@ public class UCDeltaTableDataFrameStreamingTest extends UCDeltaTableIntegrationB
                 tableName,
                 r -> r.option("readChangeFeed", "true").option("startingVersion", insertVersion),
                 "not supported",
-                "CDC");
+                "readChangeFeed",
+                "Unity Catalog managed");
           }
         });
   }
