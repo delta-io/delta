@@ -162,7 +162,7 @@ trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
   }
 
   /** Writes a parquet file from a DataFrame into the table dir; returns its AddFile action. */
-  private def writeParquet(path: String, df: DataFrame): String = {
+  private def writeParquetAndGetAddFileAction(path: String, df: DataFrame): String = {
     val tempDir = Files.createTempDirectory("ext-write").toFile
     try {
       df.coalesce(1).write.parquet(s"${tempDir.getAbsolutePath}/out")
@@ -187,26 +187,26 @@ trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
       new File(deltaLogDir(path), f"${currentVersion(path) + 1}%020d.json").toPath,
       actions.mkString("\n").getBytes(UTF_8))
 
-  private def rows2Df(rows: Seq[(Int, Int)]): DataFrame = {
+  private def idSalaryRowsToDf(rows: Seq[(Int, Int)]): DataFrame = {
     val session = spark
     import session.implicits._
     rows.toDF("id", "salary")
   }
 
-  private def rows3Df(rows: Seq[(Int, Int, Int)]): DataFrame = {
+  private def idSalaryNewColumnRowsToDf(rows: Seq[(Int, Int, Int)]): DataFrame = {
     val session = spark
     import session.implicits._
     rows.toDF("id", "salary", "new_column")
   }
 
   protected def externalDataWrite(path: String, rows: Seq[(Int, Int)]): Unit =
-    writeCommit(path, Seq(writeParquet(path, rows2Df(rows))))
+    writeCommit(path, Seq(writeParquetAndGetAddFileAction(path, idSalaryRowsToDf(rows))))
 
   protected def externalAddColumnAndWrite(path: String, rows: Seq[(Int, Int, Int)]): Unit = {
     val newSchema = currentSchema(path).add("new_column", IntegerType, nullable = true)
     writeCommit(path, Seq(
       metaLineWithSchema(latestMetaDataLine(path), newSchema),
-      writeParquet(path, rows3Df(rows))))
+      writeParquetAndGetAddFileAction(path, idSalaryNewColumnRowsToDf(rows))))
   }
 
   protected def externalDropAndRecreate(path: String): Unit = {
