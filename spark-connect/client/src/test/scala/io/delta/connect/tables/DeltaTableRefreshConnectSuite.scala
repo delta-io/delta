@@ -23,8 +23,6 @@ import org.apache.spark.sql.test.DeltaQueryTest
 /**
  * Spark Connect base for the repeated table access refresh tests. In Connect the Dataset is
  * re-analyzed on each execution, so repeated reads always see the latest data and schema.
- * Concrete suites cover V2_ENABLE_MODE = AUTO and STRICT, set on the server at startup via
- * [[serverConfig]] (the connect analog of sparkConf, since the server runs in a separate JVM).
  */
 trait DeltaTableRefreshConnectSuiteBase
   extends DeltaQueryTest with RemoteSparkSession
