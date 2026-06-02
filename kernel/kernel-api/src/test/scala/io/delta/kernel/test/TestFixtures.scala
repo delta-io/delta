@@ -69,7 +69,8 @@ trait TestFixtures extends ActionUtils {
       readPandMOpt: Optional[Tuple2[Protocol, Metadata]] = Optional.empty(),
       newProtocolOpt: Optional[Protocol] = Optional.empty(),
       newMetadataOpt: Optional[Metadata] = Optional.empty(),
-      maxKnownPublishedDeltaVersion: Optional[JLong] = Optional.empty()): CommitMetadata = {
+      maxKnownPublishedDeltaVersion: Optional[JLong] = Optional.empty(),
+      readDomainMetadatas: Option[Set[DomainMetadata]] = None): CommitMetadata = {
     new CommitMetadata(
       version,
       logPath,
@@ -79,7 +80,10 @@ trait TestFixtures extends ActionUtils {
       readPandMOpt,
       newProtocolOpt,
       newMetadataOpt,
-      maxKnownPublishedDeltaVersion)
+      maxKnownPublishedDeltaVersion,
+      readDomainMetadatas
+        .map(dm => Optional.of(dm.asJava))
+        .getOrElse(Optional.empty()))
   }
 
   def createStagedCatalogCommit(

@@ -67,8 +67,9 @@ private[delta] case class CurrentTransactionInfo(
     val readRowIdHighWatermark: Long,
     val catalogTable: Option[CatalogTable],
     val domainMetadata: Seq[DomainMetadata],
-    val op: DeltaOperations.Operation
-    , val convertedIcebergMetadata: Option[UniformMetadata] = None
+    val op: DeltaOperations.Operation,
+    val convertedIcebergMetadata: Option[UniformMetadata] = None,
+    val readDomainMetadataOpt: Option[Seq[DomainMetadata]] = None
  ) {
 
   /**
@@ -85,6 +86,30 @@ private[delta] case class CurrentTransactionInfo(
     case m: Metadata => newMetadata = Some(m)
     case _ => // do nothing
   }
+
+  /**
+   * Domain metadata that should be sent with the commit. This is derived from the final action
+   * list instead of the side-channel `domainMetadata`, because conflict resolution may rewrite
+   * `actions` after `domainMetadata` was computed.
+   */
+  private[delta] lazy val domainMetadataToCommit: Seq[DomainMetadata] =
+    DomainMetadataUtils.validateDomainMetadataSupportedAndNoDuplicate(actions, protocol)
+
+  lazy val readDomainMetadata: Seq[DomainMetadata] =
+    readDomainMetadataOpt.getOrElse {
+      if (domainMetadataToCommit.isEmpty &&
+          !DomainMetadataUtils.domainMetadataSupported(protocol)) {
+        Seq.empty
+      } else {
+        readSnapshot.domainMetadata
+      }
+    }
+
+  private[delta] lazy val latestDomainMetadata: Seq[DomainMetadata] =
+    DomainMetadataUtils
+      .mergeDomainMetadata(readDomainMetadata, domainMetadataToCommit)
+      .filterNot(_.removed)
+
   def getUpdatedActions(
       oldMetadata: Metadata,
       oldProtocol: Protocol): UpdatedActions = {

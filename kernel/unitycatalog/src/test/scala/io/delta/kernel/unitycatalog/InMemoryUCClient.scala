@@ -18,14 +18,14 @@ package io.delta.kernel.unitycatalog
 
 import java.lang.{Long => JLong}
 import java.net.URI
-import java.util.Optional
+import java.util.{Collections, List => JList, Optional}
 import java.util.concurrent.ConcurrentHashMap
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
 import io.delta.storage.commit.{Commit, CommitFailedException, GetCommitsResponse, TableIdentifier}
-import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
+import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.{InvalidTargetTableException, UCClient}
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 
@@ -145,8 +145,14 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
 
   /** Map from UC_TABLE_ID to TABLE_DATA */
   private val tables = new ConcurrentHashMap[String, TableData]()
+  private var lastCommitOldDomainMetadata: JList[AbstractDomainMetadata] = Collections.emptyList()
+  private var lastCommitNewDomainMetadata: JList[AbstractDomainMetadata] = Collections.emptyList()
 
   override def getMetastoreId: String = ucMetastoreId
+
+  def getLastCommitOldDomainMetadata: JList[AbstractDomainMetadata] = lastCommitOldDomainMetadata
+
+  def getLastCommitNewDomainMetadata: JList[AbstractDomainMetadata] = lastCommitNewDomainMetadata
 
   /** Convenience method for tests to commit with default parameters. */
   def commitWithDefaults(
@@ -166,10 +172,13 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       newMetadata,
       Optional.empty(), // oldProtocol
       newProtocol,
+      Collections.emptyList(), // oldDomainMetadata
+      Collections.emptyList(), // newDomainMetadata
       Optional.empty() // uniform
     )
   }
 
+  // scalastyle:off argcount
   override def commit(
       tableId: String,
       tableUri: URI,
@@ -180,9 +189,13 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       newMetadata: Optional[AbstractMetadata],
       oldProtocol: Optional[AbstractProtocol],
       newProtocol: Optional[AbstractProtocol],
+      oldDomainMetadata: JList[AbstractDomainMetadata],
+      newDomainMetadata: JList[AbstractDomainMetadata],
       uniform: Optional[UniformMetadata]): Unit = {
     forceThrowInCommitMethod()
 
+    lastCommitOldDomainMetadata = oldDomainMetadata
+    lastCommitNewDomainMetadata = newDomainMetadata
     val tableData = getOrCreateTableIfNotExists(tableId)
 
     tableData.synchronized {
@@ -202,6 +215,7 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       }
     }
   }
+  // scalastyle:on argcount
 
   override def getCommits(
       tableId: String,

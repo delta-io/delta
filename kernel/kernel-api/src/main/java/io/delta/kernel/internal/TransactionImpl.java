@@ -595,7 +595,8 @@ public class TransactionImpl implements Transaction {
               shouldUpdateMetadata ? Optional.of(metadata) : Optional.empty(),
               readSnapshotOpt
                   .map(x -> x.getLogSegment().getMaxPublishedDeltaVersion())
-                  .orElse(Optional.of(-1L)));
+                  .orElse(Optional.of(-1L)),
+              readSnapshotOpt.map(x -> new HashSet<>(x.getActiveDomainMetadataMap().values())));
 
       DirectoryCreationUtils.createAllDeltaDirectoriesAsNeeded(
           engine, logPath, commitAsVersion, commitMetadata.getReadProtocolOpt(), protocol);

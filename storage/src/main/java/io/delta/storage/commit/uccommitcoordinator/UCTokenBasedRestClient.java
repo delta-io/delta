@@ -21,6 +21,7 @@ import io.delta.storage.commit.CommitFailedException;
 import io.delta.storage.commit.CoordinatedCommitsUtils;
 import io.delta.storage.commit.GetCommitsResponse;
 import io.delta.storage.commit.TableIdentifier;
+import io.delta.storage.commit.actions.AbstractDomainMetadata;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
 import io.delta.storage.commit.uniform.IcebergMetadata;
@@ -179,6 +180,8 @@ public class UCTokenBasedRestClient implements UCClient {
       Optional<AbstractMetadata> newMetadata,
       Optional<AbstractProtocol> oldProtocol,
       Optional<AbstractProtocol> newProtocol,
+      List<AbstractDomainMetadata> oldDomainMetadata,
+      List<AbstractDomainMetadata> newDomainMetadata,
       Optional<UniformMetadata> uniform
   ) throws IOException, CommitFailedException, UCCommitCoordinatorException {
     ensureOpen();
@@ -203,8 +206,9 @@ public class UCTokenBasedRestClient implements UCClient {
     uniform.flatMap(u -> u.getIcebergMetadata().map(this::toDeltaUniformIceberg))
         .ifPresent(iceberg -> deltaCommit.uniform(new DeltaUniform().iceberg(iceberg)));
 
-    // Note: tableIdentifier, oldMetadata, oldProtocol, and newProtocol are not part of the
-    // DeltaCommit schema in the Unity Catalog OpenAPI spec. They are intentionally not sent.
+    // Note: tableIdentifier, oldMetadata, oldProtocol, newProtocol, and domain metadata are not
+    // part of the legacy DeltaCommit schema in the Unity Catalog OpenAPI spec. They are
+    // intentionally not sent.
 
     try {
       deltaCommitsApi.commit(deltaCommit);

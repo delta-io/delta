@@ -30,7 +30,7 @@ import org.apache.spark.sql.delta.{DeltaConfigs, DeltaIllegalArgumentException, 
 import org.apache.spark.sql.delta.CommitCoordinatorGetCommitsFailedException
 import org.apache.spark.sql.delta.DeltaConfigs.{COORDINATED_COMMITS_COORDINATOR_CONF, COORDINATED_COMMITS_COORDINATOR_NAME, COORDINATED_COMMITS_TABLE_CONF}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
-import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{CommitInfo, DomainMetadata, Metadata, Protocol}
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogTrackedInfo
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -46,6 +46,11 @@ import io.delta.storage.commit.{
   TableDescriptor,
   TableIdentifier => JTableIdentifier,
   UpdatedActions
+}
+import io.delta.storage.commit.actions.{
+  AbstractDomainMetadata,
+  AbstractMetadata,
+  AbstractProtocol
 }
 import io.delta.storage.commit.uccommitcoordinator.{
   UCCommitCoordinatorClient,
@@ -95,7 +100,9 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
     withTempTableDir { tempDir =>
       val log = DeltaLog.forTable(spark, tempDir.toString)
       var capturedTableIdentifier: JTableIdentifier = null
+      // scalastyle:off argcount
       val capturingUCClient = new InMemoryUCClient(metastoreId.toString, ucCommitCoordinator) {
+        // scalastyle:off argcount
         override def getCommits(
             tableId: String,
             tableUri: java.net.URI,
@@ -105,7 +112,9 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
           capturedTableIdentifier = tableIdentifier
           new JGetCommitsResponse(Collections.emptyList(), -1L)
         }
+        // scalastyle:on argcount
       }
+      // scalastyle:on argcount
       val tableCommitCoordinatorClient = TableCommitCoordinatorClient(
         new UCCommitCoordinatorClient(Map.empty[String, String].asJava, capturingUCClient),
         log,
@@ -118,6 +127,69 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
       assert(capturedTableIdentifier != null)
       assert(capturedTableIdentifier.getNamespace.toSeq == Seq("main", "default"))
       assert(capturedTableIdentifier.getName == "tbl")
+    }
+  }
+
+  test("direct UC commit forwards latest domain metadata from CatalogTrackedInfo") {
+    withTempTableDir { tempDir =>
+      val log = DeltaLog.forTable(spark, tempDir.toString)
+      val logPath = log.logPath
+      var capturedOldDomainMetadata: JList[AbstractDomainMetadata] = null
+      var capturedNewDomainMetadata: JList[AbstractDomainMetadata] = null
+      val capturingUCClient = new InMemoryUCClient(metastoreId.toString, ucCommitCoordinator) {
+        // scalastyle:off argcount
+        override def commit(
+            tableId: String,
+            tableUri: java.net.URI,
+            tableIdentifier: JTableIdentifier,
+            commit: Optional[JCommit],
+            lastKnownBackfilledVersion: Optional[JLong],
+            oldMetadata: Optional[AbstractMetadata],
+            newMetadata: Optional[AbstractMetadata],
+            oldProtocol: Optional[AbstractProtocol],
+            newProtocol: Optional[AbstractProtocol],
+            oldDomainMetadata: JList[AbstractDomainMetadata],
+            newDomainMetadata: JList[AbstractDomainMetadata],
+            uniform: Optional[UniformMetadata]): Unit = {
+          capturedOldDomainMetadata = oldDomainMetadata
+          capturedNewDomainMetadata = newDomainMetadata
+        }
+        // scalastyle:on argcount
+      }
+      val commitCoordinatorClient =
+        new UCCommitCoordinatorClient(Map.empty[String, String].asJava, capturingUCClient)
+      commitCoordinatorClient.registerTable(
+        logPath, Optional.empty(), -1L, initMetadata(), Protocol(1, 1))
+      writeCommitZero(logPath)
+      val tableDesc = new TableDescriptor(
+        logPath,
+        Optional.empty(),
+        Map(UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> tableUUID.toString).asJava)
+      val commitInfo = CommitInfo.empty(version = Some(1)).withTimestamp(1)
+        .copy(inCommitTimestamp = Some(1))
+      val updatedActions = getUpdatedActionsForNonZerothCommit(commitInfo)
+      val domainMetadata = DomainMetadata(
+        "delta.clustering",
+        """{"clusteringColumns":[["id"]]}""",
+        removed = false)
+      val oldDomainMetadata = DomainMetadata("old", "1", removed = false)
+      val catalogTrackedInfo =
+        new CatalogTrackedInfo(
+          Optional.empty(),
+          Collections.singletonList(oldDomainMetadata: AbstractDomainMetadata),
+          Collections.singletonList(domainMetadata: AbstractDomainMetadata))
+
+      commitCoordinatorClient.commit(
+        LogStoreInverseAdaptor(log.store, log.newDeltaHadoopConf()),
+        log.newDeltaHadoopConf(),
+        tableDesc,
+        1L,
+        Iterator(commitInfo.json).asJava,
+        catalogTrackedInfo,
+        updatedActions)
+
+      assert(capturedOldDomainMetadata.asScala.map(_.getDomain) === Seq("old"))
+      assert(capturedNewDomainMetadata.asScala.map(_.getDomain) === Seq("delta.clustering"))
     }
   }
 
