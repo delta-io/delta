@@ -20,9 +20,6 @@ import io.delta.tables.shared.DeltaRepeatedAccessRefreshTests
 
 import org.apache.spark.sql.test.DeltaQueryTest
 
-// The conf key is a literal because the connect client test module does not depend on delta-spark,
-// so DeltaSQLConf.V2_ENABLE_MODE.key is not importable here.
-
 /**
  * Spark Connect base for the repeated table access refresh tests. In Connect the Dataset is
  * re-analyzed on each execution, so repeated reads always see the latest data and schema.
@@ -32,15 +29,18 @@ import org.apache.spark.sql.test.DeltaQueryTest
 trait DeltaTableRefreshConnectSuiteBase
   extends DeltaQueryTest with RemoteSparkSession
   with DeltaTableRefreshConnectTestBase
-  with DeltaRepeatedAccessRefreshTests
+  with DeltaRepeatedAccessRefreshTests {
+
+  // The conf key is a literal because the connect client test module does not depend on
+  // delta-spark, so DeltaSQLConf.V2_ENABLE_MODE.key is not importable here.
+  override protected def serverConfig: Map[String, String] =
+    super.serverConfig + ("spark.databricks.delta.v2.enableMode" -> v2EnableMode)
+}
 
 /** V2_ENABLE_MODE = AUTO (the product default). */
 class DeltaTableRefreshConnectAutoModeSuite
   extends DeltaTableRefreshConnectSuiteBase {
   override protected def v2EnableMode: String = "AUTO"
-
-  override protected def serverConfig: Map[String, String] =
-    super.serverConfig + ("spark.databricks.delta.v2.enableMode" -> "AUTO")
 }
 
 /**
@@ -48,15 +48,13 @@ class DeltaTableRefreshConnectAutoModeSuite
  * set on the server and mirrored in the client-side `v2EnableMode` field that drives the shared
  * trait's STRICT branch.
  *
- * TODO: full V2 connector support is in progress. The behavior currently matches AUTO, except that
- * an INSERT right after an in-session ADD COLUMN resolves against the schema cached at table lookup
- * (see scenario 2's STRICT branch in [[DeltaRepeatedAccessRefreshTests]]). Revisit if STRICT
- * diverges further.
+ * TODO: full V2 connector support is in progress. The behavior matches AUTO, with one exception:
+ * ADD COLUMN is not supported in V2 yet, so an INSERT issued right after an in-session ALTER TABLE
+ * ADD COLUMN still resolves against the schema cached at table lookup and fails with an arity
+ * mismatch (see scenario 2's STRICT branch in [[DeltaRepeatedAccessRefreshTests]]). Revisit once
+ * the connector refreshes its cached schema.
  */
 class DeltaTableRefreshConnectStrictModeSuite
   extends DeltaTableRefreshConnectSuiteBase {
   override protected def v2EnableMode: String = "STRICT"
-
-  override protected def serverConfig: Map[String, String] =
-    super.serverConfig + ("spark.databricks.delta.v2.enableMode" -> "STRICT")
 }
