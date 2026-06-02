@@ -39,8 +39,6 @@ trait DeltaRepeatedAccessRefreshTests
   private def assertFinalTableState(tableRef: String, expectedRows: Seq[Row]): Unit =
     checkAnswer(spark.sql(s"SELECT * FROM $tableRef ORDER BY id"), expectedRows)
 
-  // Section [2]: Repeated table access (session writes).
-
   test("[2] scenario 1: repeated access picks up new data") {
     withTable("t") {
       withSeededTable("t") {
