@@ -201,10 +201,8 @@ lazy val connectClient = (project in file("spark-connect/client"))
     commonSettings,
     releaseSettings,
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
-    // Shared refresh/pinning test traits compiled into both this module and the
-    // `spark` module. The single source file is written against the unified
-    // org.apache.spark.sql API with abstract hooks, so it type-checks under both
-    // classic Spark and Spark Connect. See io.delta.tables.shared.
+    // Shared refresh test traits compiled into both this module and the `spark`
+    // module. See io.delta.tables.shared.
     Test / unmanagedSourceDirectories += {
       (LocalRootProject / baseDirectory).value /
         "spark-shared-tests" / "src" / "test" / "scala-shared"
