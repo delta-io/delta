@@ -24,15 +24,11 @@ import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
 
-/**
- * Tests existing Delta behavior for repeated table access with external changes, mixing in
- * [[DeltaRepeatedAccessRefreshTests]]. Concrete suites cover V2_ENABLE_MODE = AUTO and STRICT.
- */
+/** Tests repeated table access with external changes. */
 trait DeltaTableRefreshSuiteBase
   extends QueryTest
   with SharedSparkSession
   with DeltaSQLCommandTest
-  with DeltaTableRefreshTestBase
   with DeltaRepeatedAccessRefreshTests {
 
   override protected def sparkConf: SparkConf = {

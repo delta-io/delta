@@ -28,7 +28,6 @@ import org.apache.spark.sql.test.DeltaQueryTest
 trait DeltaTableRefreshConnectSuiteBase
   extends DeltaQueryTest
   with RemoteSparkSession
-  with DeltaTableRefreshConnectTestBase
   with DeltaRepeatedAccessRefreshTests {
 
   // The conf key is a literal because the Spark Connect thin client does not depend on Spark

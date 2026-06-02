@@ -23,23 +23,20 @@ import java.util.UUID
 
 import org.scalatest.funsuite.AnyFunSuite
 
+import org.apache.spark.SparkThrowable
 import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 import org.apache.spark.sql.types.{DataType, IntegerType, StructType}
 
 /**
- * Shared base for the repeated table access refresh tests, compiled into BOTH the classic `spark`
+ * Shared base for the repeated table access refresh tests, compiled into both the classic `spark`
  * and the `spark-connect/client` modules (wired via [[Test / unmanagedSourceDirectories]] in
  * build.sbt). It self-types only to [[AnyFunSuite]] and uses only the unified
  * [[org.apache.spark.sql]] API.
  *
- * The external-write simulation is implemented ONCE: like Spark's DSv2ExternalMutationTestBase, we
- * write commit files directly into the table's `_delta_log` on the local filesystem (shared by the
- * Connect client and server) using only java.io plus `DataFrame.write`. This bypasses the
- * in-process DeltaLog/snapshot cache in BOTH modes, so a fresh `sql()` re-resolves and sees the
- * change. Only the mode-specific bits stay abstract, supplied by each module's test mixin:
- *   - [[spark]], [[checkAnswer]], [[withTable]], [[withTempPath]] (from QueryTest/DeltaQueryTest),
- *   - [[assertArityMismatchError]] (classic uses checkError with parameters; Connect tolerates a
- *     wrapped error).
+ * External writes are simulated by writing commit files directly into the table's `_delta_log` on
+ * the local filesystem, which the Connect client and server share.
+ *
+ * Concrete suites supply [[spark]], [[checkAnswer]], [[withTable]], and [[withTempPath]].
  */
 trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
 
@@ -51,12 +48,18 @@ trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
   protected def withTable(tableNames: String*)(f: => Unit): Unit
   protected def withTempPath(f: File => Unit): Unit
 
-  /** Asserts the body fails with INSERT_COLUMN_ARITY_MISMATCH (error surfacing differs by mode). */
-  protected def assertArityMismatchError(f: => Unit): Unit
-
-  // ---------------------------------------------------------------------------
-  // Shared session helpers (unified API).
-  // ---------------------------------------------------------------------------
+  /**
+   * Asserts `exception` carries `condition`, tolerating a Connect-wrapped error (the condition may
+   * appear in the message rather than as the error condition) and classic error subclasses.
+   */
+  protected def checkError(exception: SparkThrowable, condition: String): Unit = {
+    val cond = exception.getCondition
+    if (cond != condition) {
+      assert(exception.asInstanceOf[Exception].getMessage.contains(condition),
+        s"Expected error condition '$condition' but got '$cond' " +
+        s"and message does not contain it either")
+    }
+  }
 
   protected def writerSql(sqlText: String): Unit = spark.sql(sqlText)
 
@@ -66,14 +69,30 @@ trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
   protected def insertInitialData(tableRef: String): Unit =
     spark.sql(s"INSERT INTO $tableRef VALUES (1, 100)")
 
-  /** Yields an isolated delta path table reference (delta.`<path>`) for external writes. */
-  protected def withRefreshTable(body: String => Unit): Unit =
-    withTempPath { dir => body(s"delta.`${dir.getAbsolutePath}`") }
+  /** Creates the 2 column `tableRef`, inserts `(1, 100)`, and asserts the first read. */
+  protected def initTable(tableRef: String): Unit = {
+    createSimpleTable(tableRef)
+    insertInitialData(tableRef)
+    checkAnswer(spark.sql(s"SELECT * FROM $tableRef"), Seq(Row(1, 100)))
+  }
 
-  // ---------------------------------------------------------------------------
-  // Shared external-write simulation (see class scaladoc): write commit files directly into
-  // _delta_log, editing schemas as StructType values recovered from the stored schemaString.
-  // ---------------------------------------------------------------------------
+  /** Runs `body` against a fresh catalog table `t` already holding `(1, 100)`. */
+  protected def withInitialTable(body: String => Unit): Unit =
+    withTable("t") {
+      initTable("t")
+      body("t")
+    }
+
+  /** Runs `body` against an isolated delta path table already holding `(1, 100)`. */
+  protected def withRefreshTable(body: String => Unit): Unit =
+    withTempPath { dir =>
+      val tableRef = s"delta.`${dir.getAbsolutePath}`"
+      initTable(tableRef)
+      body(tableRef)
+    }
+
+  // External-write simulation: write commit files directly into _delta_log, editing schemas as
+  // StructType values recovered from the stored schemaString.
 
   private val IdRegex = """"id"\s*:\s*"([^"]+)"""".r
   private val SchemaStringRegex = """"schemaString"\s*:\s*"((?:[^"\\]|\\.)*)"""".r
