@@ -35,7 +35,6 @@ trait DeltaTableRefreshConnectSuiteBase
     super.serverConfig + ("spark.databricks.delta.v2.enableMode" -> v2EnableMode)
 }
 
-/** V2_ENABLE_MODE = AUTO (the product default). */
 class DeltaTableRefreshConnectAutoModeSuite
   extends DeltaTableRefreshConnectSuiteBase {
   override protected def v2EnableMode: String = "AUTO"
