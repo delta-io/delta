@@ -412,7 +412,13 @@ public class SchemaUtils {
       }
 
       if (addedFieldIds.contains(id.getId())) {
-        // Skip early if this is a descendant of an added field.
+        // Skip early if this element's field ID was already recorded as added.
+        // This works for array/map synthetic children (key, value, element) because
+        // getSchemaElementId resolves their column ID to the nearest struct field
+        // ancestor's ID — so they share the parent's field ID in addedFieldIds.
+        // It does NOT work for struct children, which have their own unique column
+        // mapping IDs. Struct children of newly added fields are handled separately
+        // in validateUpdatedSchemaCompatibility via the descendantFieldIds set.
         continue;
       }
 
@@ -524,6 +530,34 @@ public class SchemaUtils {
     return new SchemaElementId(element.getPathFromNearestStructFieldAncestor(""), columnId);
   }
 
+  /**
+   * Recursively collects the column mapping field IDs of all StructField descendants reachable
+   * through the given DataType. Traverses into StructType (collects each field's ID and recurses),
+   * ArrayType (recurses into element type), and MapType (recurses into key and value types).
+   *
+   * <p>This is used to build a set of field IDs that are descendants of newly added fields. During
+   * schema evolution validation, these descendants should not be independently checked for
+   * nullability because they are part of an entirely new container — no existing data could violate
+   * their constraints.
+   *
+   * @param type the DataType to walk
+   * @param fieldIds the set to collect descendant field IDs into
+   */
+  private static void collectDescendantFieldIds(DataType type, Set<Integer> fieldIds) {
+    if (type instanceof StructType) {
+      for (StructField field : ((StructType) type).fields()) {
+        fieldIds.add(getColumnId(field));
+        collectDescendantFieldIds(field.getDataType(), fieldIds);
+      }
+    } else if (type instanceof ArrayType) {
+      collectDescendantFieldIds(((ArrayType) type).getElementType(), fieldIds);
+    } else if (type instanceof MapType) {
+      collectDescendantFieldIds(((MapType) type).getKeyType(), fieldIds);
+      collectDescendantFieldIds(((MapType) type).getValueType(), fieldIds);
+    }
+    // Primitive types: no descendants, nothing to collect.
+  }
+
   private static SchemaElementId getSchemaElementId(
       SchemaIterable.ParentStructFieldInfo parentInfo) {
     int columnId = getColumnId(parentInfo.getParentField());
@@ -616,8 +650,15 @@ public class SchemaUtils {
   }
 
   /**
-   * Verifies that no non-nullable fields are added, no existing field nullability is tightened and
-   * no invalid type changes are performed
+   * Verifies that no non-nullable fields are added (unless they are descendants of other newly
+   * added fields), no existing field nullability is tightened, and no invalid type changes are
+   * performed.
+   *
+   * <p>When a new nullable container (struct, array, or map) is added, its internal fields may be
+   * non-nullable. This is valid because no existing data contains the container, so the inner field
+   * nullability only constrains future writes. To handle this, we build a set of field IDs that are
+   * descendants of other added fields (the "descendantFieldIds" set) and skip the nullability check
+   * for those fields. The fieldId constraint is still enforced for all fields.
    *
    * <p>ToDo: Prevent moving fields outside of their containing struct
    */
@@ -627,12 +668,25 @@ public class SchemaUtils {
       boolean allowNewRequiredFields,
       boolean icebergWriterCompatV1Enabled,
       boolean typeWideningEnabled) {
+    // Build a set of field IDs whose ancestor is also a newly added field.
+    // These are descendants of entirely new containers — their nullability
+    // should not be independently validated because no existing data has them.
+    Set<Integer> descendantFieldIds = new HashSet<>();
     for (StructField addedField : schemaChanges.addedFields()) {
-      if (!allowNewRequiredFields && !addedField.isNullable()) {
+      collectDescendantFieldIds(addedField.getDataType(), descendantFieldIds);
+    }
+
+    for (StructField addedField : schemaChanges.addedFields()) {
+      int colId = getColumnId(addedField);
+      // Skip the nullability check for fields that are descendants of other added fields.
+      // Their nullability is a constraint on future data only (writer's responsibility),
+      // not a compatibility issue with existing data.
+      if (!allowNewRequiredFields
+          && !addedField.isNullable()
+          && !descendantFieldIds.contains(colId)) {
         throw new KernelException(
             String.format("Cannot add non-nullable field %s", addedField.getName()));
       }
-      int colId = getColumnId(addedField);
       if (colId <= oldMaxFieldId) {
         throw new IllegalArgumentException(
             String.format(
