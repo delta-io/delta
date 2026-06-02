@@ -39,6 +39,14 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
 private[catalog] trait AbstractDeltaCatalogClient {
 
   /**
+   * Returns whether a table with `ident` exists in the catalog.
+   *
+   * @param ident identifier of the table to check.
+   * @return `true` if the table exists in the catalog; `false` otherwise.
+   */
+  def tableExists(ident: Identifier): Boolean
+
+  /**
    * Loads the table identified by `ident` from the catalog.
    *
    * @param ident identifier of the table to load.

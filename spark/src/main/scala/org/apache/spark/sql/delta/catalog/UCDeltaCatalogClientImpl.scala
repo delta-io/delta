@@ -69,6 +69,22 @@ private[catalog] class UCDeltaCatalogClientImpl(
   extends AbstractDeltaCatalogClient with Logging {
 
   // -------------------------------------------------------------------------
+  // DeltaCatalogClient: tableExists
+  // -------------------------------------------------------------------------
+
+  override def tableExists(ident: Identifier): Boolean = {
+    try {
+      ucClient.loadTable(toStorageTableIdent(ident))
+      true
+    } catch {
+      case _: StorageNoSuchTableException => false
+      // UC acknowledged the table; we just couldn't process it further (non-Delta format or
+      // credential fetch failed). The table still exists in the catalog.
+      case _: UnsupportedTableFormatException | _: CredentialFetchFailedException => true
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // DeltaCatalogClient: loadTable
   // -------------------------------------------------------------------------
 
