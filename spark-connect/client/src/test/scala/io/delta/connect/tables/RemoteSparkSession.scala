@@ -68,6 +68,12 @@ trait RemoteSparkSession extends BeforeAndAfterAll { self: Suite =>
   private val serverPort = 15003
   var spark: SparkSession = _
 
+  /**
+   * Extra Spark configs passed to the server process as `--conf key=value` at startup (the
+   * Connect analog of overriding `sparkConf`, since the server runs in a separate JVM).
+   */
+  protected def serverConfig: Map[String, String] = Map.empty
+
   private val javaHome = System.getProperty("java.home")
 
   private val sparkHome = System.getProperty("delta.spark.home")
@@ -110,6 +116,7 @@ trait RemoteSparkSession extends BeforeAndAfterAll { self: Suite =>
       "org.apache.spark.sql.connect.delta.DeltaRelationPlugin"
     command += "--conf" += "spark.connect.extensions.command.classes=" +
       "org.apache.spark.sql.connect.delta.DeltaCommandPlugin"
+    serverConfig.foreach { case (key, value) => command += "--conf" += s"$key=$value" }
     // Spark submit requires a jar. We pick one we know exists.
     command += s"$sparkHome/jars/unused-1.0.0.jar"
 
