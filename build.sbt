@@ -218,16 +218,16 @@ lazy val connectClient = (project in file("spark-connect/client"))
     (Test / javaOptions) += {
       // Create a (mini) Spark Distribution based on the server classpath.
       val serverClassPath = (connectServer / Compile / fullClasspath).value
-      // V2/STRICT mode requires the Delta Kernel engine at runtime
-      // (io.delta.kernel.defaults.engine.DefaultEngine), so add the packaged kernel jars.
-      val kernelJars = Seq(
-        (kernelApi / Compile / packageBin).value,
-        (kernelDefaults / Compile / packageBin).value)
       val distributionDir = crossTarget.value / "test-dist"
       val jarsDir = distributionDir / "jars"
 
       if (!distributionDir.exists()) {
         IO.createDirectory(jarsDir)
+        // V2/STRICT mode requires the Delta Kernel engine at runtime
+        // (io.delta.kernel.defaults.engine.DefaultEngine), so add the packaged kernel jars.
+        val kernelJars = Seq(
+          (kernelApi / Compile / packageBin).value,
+          (kernelDefaults / Compile / packageBin).value)
         // Create symlinks for all dependencies (filter to only JAR files)
         (serverClassPath.map(_.data).filter(_.isFile) ++ kernelJars).distinct.foreach { jarFile =>
           val linkedJarFile = jarsDir / jarFile.getName
