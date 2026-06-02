@@ -24,7 +24,7 @@ import org.apache.spark.sql.test.DeltaQueryTest
  * Runs the shared [[DeltaRepeatedAccessRefreshTests]] over a remote Spark Connect session. It mixes
  * in the Connect test harness ([[DeltaQueryTest]] plus [[RemoteSparkSession]]), the Connect-specific
  * wiring ([[DeltaTableRefreshConnectTestBase]]), and the shared scenarios, then pushes the chosen
- * V2_ENABLE_MODE to the server via [[serverConfig]]. Concrete suites pick the mode (AUTO or STRICT).
+ * V2_ENABLE_MODE to the server via [[serverConfigs]]. Concrete suites pick the mode (AUTO or STRICT).
  * In Connect the Dataset is re-analyzed on each execution, so repeated reads always see the latest
  * data and schema.
  */
@@ -37,8 +37,8 @@ trait DeltaTableRefreshConnectSuiteBase
   // The conf key is a literal because the Spark Connect thin client does not depend on Spark
   // Classic, which is where the Delta SQL configs live, so DeltaSQLConf.V2_ENABLE_MODE.key is
   // not importable here.
-  override protected def serverConfig: Map[String, String] =
-    super.serverConfig + ("spark.databricks.delta.v2.enableMode" -> v2EnableMode)
+  override protected def serverConfigs: Map[String, String] =
+    super.serverConfigs + ("spark.databricks.delta.v2.enableMode" -> v2EnableMode)
 }
 
 /**

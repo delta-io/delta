@@ -73,7 +73,7 @@ trait RemoteSparkSession extends BeforeAndAfterAll { self: Suite =>
    * Connect analog of overriding Spark Classic's `sparkConf`, since the server runs in a separate
    * JVM).
    */
-  protected def serverConfig: Map[String, String] = Map.empty
+  protected def serverConfigs: Map[String, String] = Map.empty
 
   private val javaHome = System.getProperty("java.home")
 
@@ -117,7 +117,7 @@ trait RemoteSparkSession extends BeforeAndAfterAll { self: Suite =>
       "org.apache.spark.sql.connect.delta.DeltaRelationPlugin"
     command += "--conf" += "spark.connect.extensions.command.classes=" +
       "org.apache.spark.sql.connect.delta.DeltaCommandPlugin"
-    serverConfig.foreach { case (key, value) => command += "--conf" += s"$key=$value" }
+    serverConfigs.foreach { case (key, value) => command += "--conf" += s"$key=$value" }
     // Spark submit requires a jar. We pick one we know exists.
     command += s"$sparkHome/jars/unused-1.0.0.jar"
 
