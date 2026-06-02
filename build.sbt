@@ -218,9 +218,8 @@ lazy val connectClient = (project in file("spark-connect/client"))
     (Test / javaOptions) += {
       // Create a (mini) Spark Distribution based on the server classpath.
       val serverClassPath = (connectServer / Compile / fullClasspath).value
-      // The Delta Kernel modules surface on the server classpath as class directories (not jars),
-      // so the jars/* server classpath does not pick them up. They are required for V2/STRICT mode
-      // (io.delta.kernel.defaults.engine.DefaultEngine), so add their packaged jars explicitly.
+      // V2/STRICT mode requires the Delta Kernel engine at runtime
+      // (io.delta.kernel.defaults.engine.DefaultEngine), so add the packaged kernel jars.
       val kernelJars = Seq(
         (kernelApi / Compile / packageBin).value,
         (kernelDefaults / Compile / packageBin).value)
