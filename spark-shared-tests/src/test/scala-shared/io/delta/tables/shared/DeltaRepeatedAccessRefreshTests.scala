@@ -21,10 +21,8 @@ import org.scalatest.funsuite.AnyFunSuite
 import org.apache.spark.sql.Row
 
 /**
- * Section [2]: Repeated table access with external changes. Shared across classic and Connect:
- * repeated `sql()` calls reflect both session and external mutations (data writes, schema
- * changes, drop/recreate). The one place STRICT diverges today (scenario 2 session write) is
- * asserted explicitly with a TODO.
+ * Section [2]: repeated `sql()` calls reflect both session and external mutations (data writes,
+ * schema changes, drop/recreate). Shared across classic and Connect.
  */
 trait DeltaRepeatedAccessRefreshTests
   extends DeltaTableRefreshSharedBase { self: AnyFunSuite =>
