@@ -38,9 +38,12 @@ import org.apache.spark.sql.delta.deletionvectors.{
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import com.google.common.hash.Hashing
 import io.delta.sharing.client.model.{
+  AddCDCFile => ClientAddCDCFile,
   AddFile => ClientAddFile,
+  AddFileForCDF => ClientAddFileForCDF,
   Metadata => ClientMetadata,
-  Protocol => ClientProtocol
+  Protocol => ClientProtocol,
+  RemoveFile => ClientRemoveFile
 }
 import io.delta.sharing.spark.model.{
   DeltaSharingFileAction,
@@ -183,17 +186,20 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
   private[spark] def prepareMockedClientMetadata(
       deltaTable: String,
       sharedTable: String,
-      versionAsOf: Option[Long] = None): Unit = {
+      versionAsOf: Option[Long] = None,
+      timestampAsOf: Option[String] = None): Unit = {
     val snapshotToUse = getSnapshotToUse(deltaTable, versionAsOf)
     val dsProtocol: DeltaSharingProtocol = DeltaSharingProtocol(snapshotToUse.protocol)
     val dsMetadata: DeltaSharingMetadata = DeltaSharingMetadata(
       deltaMetadata = snapshotToUse.metadata
     )
 
-    // Put the metadata in blockManager for DeltaSharingClient to return for getMetadata.
+    // Put the metadata in blockManager for DeltaSharingClient to return for getMetadata. The block
+    // is keyed by versionAsOf/timestampAsOf so callers can mock the getMetadata pinned to a
+    // specific boundary (e.g. the end of a CDF range).
     DeltaSharingUtils.overrideIteratorBlock[String](
       blockId = TestClientForDeltaFormatSharing.getBlockId(
-        sharedTable, "getMetadata", versionAsOf = versionAsOf),
+        sharedTable, "getMetadata", versionAsOf = versionAsOf, timestampAsOf = timestampAsOf),
       values = Seq(dsProtocol.json, dsMetadata.json).toIterator
     )
   }
@@ -548,13 +554,34 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
     )
   }
 
+  // Convert a delta Metadata to the parquet-wire client Metadata used in parquet-format responses.
+  private def getClientMetadataForParquet(
+      deltaMetadata: Metadata,
+      size: java.lang.Long = null): ClientMetadata = {
+    ClientMetadata(
+      id = deltaMetadata.id,
+      name = deltaMetadata.name,
+      description = deltaMetadata.description,
+      schemaString = deltaMetadata.schemaString,
+      configuration = deltaMetadata.configuration,
+      partitionColumns = deltaMetadata.partitionColumns,
+      size = size
+    )
+  }
+
   private[spark] def prepareMockedClientAndFileSystemResultForCdf(
       deltaTable: String,
       sharedTable: String,
       startingVersion: Long,
       startingTimestamp: Option[String] = None,
       inlineDvFormat: Option[RoaringBitmapArrayFormat.Value] = None,
-      assertMultipleDvsInOneFile: Boolean = false): Unit = {
+      assertMultipleDvsInOneFile: Boolean = false,
+      endingVersion: Option[Long] = None,
+      responseFormat: String = DeltaSharingOptions.RESPONSE_FORMAT_DELTA): Unit = {
+    val parquetFormat = responseFormat == DeltaSharingOptions.RESPONSE_FORMAT_PARQUET
+    // File action lines (plus any mid-range metadata changes), in commit order. The protocol and
+    // metadata header is prepended after the walk because the parquet metadata carries the
+    // accumulated table size, which is only known once all file actions are seen.
     val actionLines = Seq.newBuilder[String]
 
     var maxVersion = -1L
@@ -562,11 +589,6 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
 
     val deltaLog = DeltaLog.forTable(spark, new TableIdentifier(deltaTable))
     val startingSnapshot = deltaLog.getSnapshotAt(startingVersion)
-    actionLines += DeltaSharingProtocol(deltaProtocol = startingSnapshot.protocol).json
-    actionLines += DeltaSharingMetadata(
-      deltaMetadata = startingSnapshot.metadata,
-      version = startingVersion
-    ).json
 
     val dvPathToCount = scala.collection.mutable.Map[String, Int]()
     val files =
@@ -574,19 +596,32 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
     files.foreach { f =>
       if (FileNames.isDeltaFile(new Path(f.getName))) {
         val version = FileNames.getFileVersion(new Path(f.getName))
-        if (version >= startingVersion) {
+        if (version >= startingVersion && endingVersion.forall(version <= _)) {
           // protocol/metadata are processed from startingSnapshot, only process versions greater
-          // than startingVersion for real actions and possible metadata changes.
+          // than startingVersion for real actions and possible metadata changes. When endingVersion
+          // is set, skip versions past it so the mocked response is bounded like a server that
+          // honors the endingVersion/endingTimestamp request bound.
           maxVersion = maxVersion.max(version)
           val timestamp = f.lastModified
-          FileUtils.readLines(f).asScala.foreach { l =>
-            val action = Action.fromJson(l)
+          val versionActions = FileUtils.readLines(f).asScala.toSeq.map(Action.fromJson)
+          // A commit that produced CDC files (_change_data) is authoritative for CDF via those
+          // files; delta's CDF reader then ignores the data-rewrite add/remove of that commit (e.g.
+          // a partition-changing UPDATE rewrites files AND writes update_pre/postimage CDC). The
+          // delta-format response carries everything and lets the delta reader sort it out, but the
+          // parquet CDF reader has no such logic, so for parquet we skip those add/remove files to
+          // avoid double-counting them as insert/delete.
+          val versionHasCdc = versionActions.exists(_.isInstanceOf[AddCDCFile])
+          versionActions.foreach { action =>
             action match {
               case m: Metadata =>
-                actionLines += DeltaSharingMetadata(
-                  deltaMetadata = m,
-                  version = version
-                ).json
+                if (parquetFormat) {
+                  actionLines += JsonUtils.toJson(getClientMetadataForParquet(m).wrap)
+                } else {
+                  actionLines += DeltaSharingMetadata(
+                    deltaMetadata = m,
+                    version = version
+                  ).json
+                }
               case addFile: AddFile if addFile.dataChange =>
                 if (assertMultipleDvsInOneFile) {
                   updateDvPathToCount(addFile, dvPathToCount)
@@ -597,37 +632,84 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
                 } else {
                   addFile
                 }
-                val dsAddFile =
-                  getDeltaSharingFileActionForAddFile(updatedAdd, sharedTable, version, timestamp)
                 totalSize = totalSize + updatedAdd.size
-                actionLines += dsAddFile.json
+                if (parquetFormat) {
+                  // Skip data-rewrite adds when the commit's change is captured by CDC files.
+                  if (!versionHasCdc) {
+                    val parquetFile = removePartitionPrefix(updatedAdd.path)
+                    actionLines += JsonUtils.toJson(
+                      ClientAddFileForCDF(
+                        url = TestDeltaSharingFileSystem.encode(sharedTable, parquetFile),
+                        id = Hashing.md5().hashString(parquetFile, UTF_8).toString,
+                        partitionValues = updatedAdd.partitionValues,
+                        size = updatedAdd.size,
+                        version = version,
+                        timestamp = timestamp
+                      ).wrap
+                    )
+                  }
+                } else {
+                  val dsAddFile =
+                    getDeltaSharingFileActionForAddFile(updatedAdd, sharedTable, version, timestamp)
+                  actionLines += dsAddFile.json
+                }
               case removeFile: RemoveFile if removeFile.dataChange =>
                 // scalastyle:off removeFile
-                val dsRemoveFile = getDeltaSharingFileActionForRemoveFile(
-                  removeFile,
-                  sharedTable,
-                  version,
-                  timestamp
-                )
-                // scalastyle:on removeFile
                 totalSize = totalSize + removeFile.size.getOrElse(0L)
-                actionLines += dsRemoveFile.json
+                if (parquetFormat) {
+                  // Skip data-rewrite removes when the commit's change is captured by CDC files.
+                  if (!versionHasCdc) {
+                    val parquetFile = removePartitionPrefix(removeFile.path)
+                    actionLines += JsonUtils.toJson(
+                      ClientRemoveFile(
+                        url = TestDeltaSharingFileSystem.encode(sharedTable, parquetFile),
+                        id = Hashing.md5().hashString(parquetFile, UTF_8).toString,
+                        partitionValues =
+                          Option(removeFile.partitionValues).getOrElse(Map.empty[String, String]),
+                        size = removeFile.size.getOrElse(0L),
+                        version = version,
+                        timestamp = timestamp
+                      ).wrap
+                    )
+                  }
+                } else {
+                  val dsRemoveFile = getDeltaSharingFileActionForRemoveFile(
+                    removeFile,
+                    sharedTable,
+                    version,
+                    timestamp
+                  )
+                  actionLines += dsRemoveFile.json
+                }
+                // scalastyle:on removeFile
               case cdcFile: AddCDCFile =>
                 val parquetFile = removePartitionPrefix(cdcFile.path)
-
-                // Convert from delta AddCDCFile to DeltaSharingFileAction to serialize to json.
-                val dsCDCFile = DeltaSharingFileAction(
-                  id = Hashing.sha256().hashString(parquetFile, UTF_8).toString,
-                  version = version,
-                  timestamp = timestamp,
-                  deltaSingleAction = cdcFile
-                    .copy(
-                      path = TestDeltaSharingFileSystem.encode(sharedTable, parquetFile)
-                    )
-                    .wrap
-                )
                 totalSize = totalSize + cdcFile.size
-                actionLines += dsCDCFile.json
+                if (parquetFormat) {
+                  actionLines += JsonUtils.toJson(
+                    ClientAddCDCFile(
+                      url = TestDeltaSharingFileSystem.encode(sharedTable, parquetFile),
+                      id = Hashing.md5().hashString(parquetFile, UTF_8).toString,
+                      partitionValues = cdcFile.partitionValues,
+                      size = cdcFile.size,
+                      version = version,
+                      timestamp = timestamp
+                    ).wrap
+                  )
+                } else {
+                  // Convert from delta AddCDCFile to DeltaSharingFileAction to serialize to json.
+                  val dsCDCFile = DeltaSharingFileAction(
+                    id = Hashing.sha256().hashString(parquetFile, UTF_8).toString,
+                    version = version,
+                    timestamp = timestamp,
+                    deltaSingleAction = cdcFile
+                      .copy(
+                        path = TestDeltaSharingFileSystem.encode(sharedTable, parquetFile)
+                      )
+                      .wrap
+                  )
+                  actionLines += dsCDCFile.json
+                }
               case _ => // ignore other lines
             }
           }
@@ -651,10 +733,28 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
       assert(dvPathToCount.max._2 > 1)
     }
 
+    // Prepend the protocol/metadata header. For parquet the metadata carries the table size, which
+    // is only known after walking the file actions above; for delta it mirrors the prior behavior.
+    val headerLines = if (parquetFormat) {
+      Seq(
+        JsonUtils.toJson(ClientProtocol(minReaderVersion = 1).wrap),
+        JsonUtils.toJson(getClientMetadataForParquet(startingSnapshot.metadata, totalSize).wrap)
+      )
+    } else {
+      Seq(
+        DeltaSharingProtocol(deltaProtocol = startingSnapshot.protocol).json,
+        DeltaSharingMetadata(
+          deltaMetadata = startingSnapshot.metadata,
+          version = startingVersion
+        ).json
+      )
+    }
+    val resultLines = headerLines ++ actionLines.result()
+
     DeltaSharingUtils.overrideIteratorBlock[String](
       blockId =
         TestClientForDeltaFormatSharing.getBlockId(sharedTable, s"getCDFFiles_$startingVersion"),
-      values = actionLines.result().toIterator
+      values = resultLines.toIterator
     )
     if (startingTimestamp.isDefined) {
       DeltaSharingUtils.overrideIteratorBlock[String](
@@ -662,7 +762,7 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
           sharedTable,
           s"getCDFFiles_${startingTimestamp.get}"
         ),
-        values = actionLines.result().toIterator
+        values = resultLines.toIterator
       )
     }
   }
