@@ -70,7 +70,8 @@ trait RemoteSparkSession extends BeforeAndAfterAll { self: Suite =>
 
   /**
    * Extra Spark configs passed to the server process as `--conf key=value` at startup (the
-   * Connect analog of overriding `sparkConf`, since the server runs in a separate JVM).
+   * Connect analog of overriding Spark Classic's `sparkConf`, since the server runs in a separate
+   * JVM).
    */
   protected def serverConfig: Map[String, String] = Map.empty
 
