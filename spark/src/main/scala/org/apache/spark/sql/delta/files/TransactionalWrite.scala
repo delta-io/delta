@@ -36,7 +36,7 @@ import org.apache.spark.sql.delta.stats.{
   StatisticsCollection,
   StatsCollectionUtils
 }
-import org.apache.spark.sql.delta.util.TableParquetVersionOption
+import org.apache.spark.sql.delta.util.{TableParquetCompressionCodecOption, TableParquetVersionOption}
 import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.Path
 
@@ -494,6 +494,9 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
           DeltaConfigs.ENABLE_VARIANT_SHREDDING.fromMetaData(metadata)) ++
         TableParquetVersionOption.getWriterOptions(
           spark = spark,
+          writerOptions = filteredOptions,
+          tableProperties = metadata.configuration) ++
+        TableParquetCompressionCodecOption.getWriterOptions(
           writerOptions = filteredOptions,
           tableProperties = metadata.configuration)
 
