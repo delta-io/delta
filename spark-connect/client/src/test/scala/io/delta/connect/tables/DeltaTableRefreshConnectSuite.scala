@@ -29,8 +29,9 @@ trait DeltaTableRefreshConnectSuiteBase
   with DeltaTableRefreshConnectTestBase
   with DeltaRepeatedAccessRefreshTests {
 
-  // The conf key is a literal because the connect client test module does not depend on
-  // delta-spark, so DeltaSQLConf.V2_ENABLE_MODE.key is not importable here.
+  // The conf key is a literal because the Spark Connect thin client does not depend on Spark
+  // Classic, which is where the Delta SQL configs live, so DeltaSQLConf.V2_ENABLE_MODE.key is
+  // not importable here.
   override protected def serverConfig: Map[String, String] =
     super.serverConfig + ("spark.databricks.delta.v2.enableMode" -> v2EnableMode)
 }
