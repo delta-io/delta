@@ -41,15 +41,9 @@ class DeltaTableRefreshConnectAutoModeSuite
 }
 
 /**
- * V2_ENABLE_MODE = STRICT with Connect, which engages the Delta Kernel V2 connector. The mode is
- * set on the server and mirrored in the client-side `v2EnableMode` field that drives the shared
- * trait's STRICT branch.
+ * V2_ENABLE_MODE = STRICT with Connect, which engages the Delta Kernel V2 connector.
  *
- * TODO: full V2 connector support is in progress. The behavior matches AUTO, with one exception:
- * ADD COLUMN is not supported in V2 yet, so an INSERT issued right after an in-session ALTER TABLE
- * ADD COLUMN still resolves against the schema cached at table lookup and fails with an arity
- * mismatch (see scenario 2's STRICT branch in [[DeltaRepeatedAccessRefreshTests]]). Revisit once
- * the connector refreshes its cached schema.
+ * TODO: full V2 connector support is in progress; ADD COLUMN is not supported in V2 yet.
  */
 class DeltaTableRefreshConnectStrictModeSuite
   extends DeltaTableRefreshConnectSuiteBase {
