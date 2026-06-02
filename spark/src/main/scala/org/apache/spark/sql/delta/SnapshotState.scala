@@ -84,6 +84,16 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
   /** Whether computedState is already computed or not */
   @volatile protected var _computedStateTriggered: Boolean = false
 
+  /**
+   * Memoized result of [[computedStateFromStateReconstruction]]. When populated,
+   * [[computedState]] reuses this value instead of triggering the CRC fast path or running
+   * another reconstruction. This preserves the original behavior where forcing the
+   * reconstructed state via [[validateChecksum]] also primes [[computedState]] so subsequent
+   * reads are free, and prevents repeated [[validateChecksum]] calls from re-running the
+   * aggregation.
+   */
+  @volatile private var _reconstructedState: Option[SnapshotState] = None
+
 
   /** A map to look up transaction version by appId. */
   lazy val transactions: Map[String, Long] = setTransactions.map(t => t.appId -> t.version).toMap
@@ -93,26 +103,32 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
    * the necessary stats.
    */
   private[delta] lazy val computedState: SnapshotState = {
-    withStatusCode("DELTA", s"Compute snapshot for version: $version") {
-      recordFrameProfile("Delta", "snapshot.computedState") {
-        // Fast path: try to construct the SnapshotState directly from the checksum (CRC) file.
-        // When the CRC has all the required fields, this avoids the expensive Spark aggregation
-        // over the state reconstruction DataFrame.
-        computeStateFromChecksum match {
-          case Some(stateFromCrc) =>
-            recordDeltaEvent(
-              deltaLog,
-              opType = "delta.snapshot.computedStateFromChecksum",
-              data = Map("version" -> version.toString))
-            _computedStateTriggered = true
-            stateFromCrc
-          case None =>
-            val state = computedStateFromStateReconstruction
-            _computedStateTriggered = true
-            state
+    val state = _reconstructedState match {
+      case Some(reconstructed) =>
+        // State reconstruction has already been performed (e.g. via validateChecksum). Reuse
+        // its result rather than running the fast path or another reconstruction.
+        reconstructed
+      case None =>
+        withStatusCode("DELTA", s"Compute snapshot for version: $version") {
+          recordFrameProfile("Delta", "snapshot.computedState") {
+            // Fast path: try to construct the SnapshotState directly from the checksum (CRC)
+            // file. When the CRC has all the required fields, this avoids the expensive Spark
+            // aggregation over the state reconstruction DataFrame.
+            computeStateFromChecksum match {
+              case Some(stateFromCrc) =>
+                recordDeltaEvent(
+                  deltaLog,
+                  opType = "delta.snapshot.computedStateFromChecksum",
+                  data = Map("version" -> version.toString))
+                stateFromCrc
+              case None =>
+                computedStateFromStateReconstruction
+            }
+          }
         }
-      }
     }
+    _computedStateTriggered = true
+    state
   }
 
   /**
@@ -255,46 +271,60 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
    * against the snapshot's resolved protocol/metadata. Used by both [[computedState]]'s slow
    * path and by checksum validation so the latter compares the persisted checksum against an
    * independently-computed state instead of one potentially derived from the same checksum.
+   *
+   * The result is memoized in [[_reconstructedState]] so that repeated calls (e.g. multiple
+   * [[validateChecksum]] invocations) do not re-run the aggregation, and so that a subsequent
+   * read of [[computedState]] reuses this value without triggering the CRC fast path or
+   * another reconstruction.
    */
-  private[delta] def computedStateFromStateReconstruction: SnapshotState = {
-    val _computedState = extractComputedState(stateDF)
-    if (_computedState.protocol == null) {
-      recordDeltaEvent(
-        deltaLog,
-        opType = "delta.assertions.missingAction",
-        data = Map(
-          "version" -> version.toString, "action" -> "Protocol", "source" -> "Snapshot"))
-      throw DeltaErrors.actionNotFoundException("protocol", version)
-    } else if (_computedState.protocol != protocol) {
-      recordDeltaEvent(
-        deltaLog,
-        opType = "delta.assertions.mismatchedAction",
-        data = Map(
-          "version" -> version.toString, "action" -> "Protocol", "source" -> "Snapshot",
-          "computedState.protocol" -> _computedState.protocol,
-          "extracted.protocol" -> protocol))
-      throw DeltaErrors.actionNotFoundException("protocol", version)
-    }
+  private[delta] def computedStateFromStateReconstruction: SnapshotState = synchronized {
+    _reconstructedState.getOrElse {
+      val _computedState = extractComputedState(stateDF)
+      if (_computedState.protocol == null) {
+        recordDeltaEvent(
+          deltaLog,
+          opType = "delta.assertions.missingAction",
+          data = Map(
+            "version" -> version.toString, "action" -> "Protocol", "source" -> "Snapshot"))
+        throw DeltaErrors.actionNotFoundException("protocol", version)
+      } else if (_computedState.protocol != protocol) {
+        recordDeltaEvent(
+          deltaLog,
+          opType = "delta.assertions.mismatchedAction",
+          data = Map(
+            "version" -> version.toString, "action" -> "Protocol", "source" -> "Snapshot",
+            "computedState.protocol" -> _computedState.protocol,
+            "extracted.protocol" -> protocol))
+        throw DeltaErrors.actionNotFoundException("protocol", version)
+      }
 
-    if (_computedState.metadata == null) {
-      recordDeltaEvent(
-        deltaLog,
-        opType = "delta.assertions.missingAction",
-        data = Map(
-          "version" -> version.toString, "action" -> "Metadata", "source" -> "Metadata"))
-      throw DeltaErrors.actionNotFoundException("metadata", version)
-    } else if (_computedState.metadata != metadata) {
-      recordDeltaEvent(
-        deltaLog,
-        opType = "delta.assertions.mismatchedAction",
-        data = Map(
-          "version" -> version.toString, "action" -> "Metadata", "source" -> "Snapshot",
-          "computedState.metadata" -> _computedState.metadata,
-          "extracted.metadata" -> metadata))
-      throw DeltaErrors.actionNotFoundException("metadata", version)
-    }
+      if (_computedState.metadata == null) {
+        recordDeltaEvent(
+          deltaLog,
+          opType = "delta.assertions.missingAction",
+          data = Map(
+            "version" -> version.toString, "action" -> "Metadata", "source" -> "Metadata"))
+        throw DeltaErrors.actionNotFoundException("metadata", version)
+      } else if (_computedState.metadata != metadata) {
+        recordDeltaEvent(
+          deltaLog,
+          opType = "delta.assertions.mismatchedAction",
+          data = Map(
+            "version" -> version.toString, "action" -> "Metadata", "source" -> "Snapshot",
+            "computedState.metadata" -> _computedState.metadata,
+            "extracted.metadata" -> metadata))
+        throw DeltaErrors.actionNotFoundException("metadata", version)
+      }
 
-    _computedState
+      // Running state reconstruction means the snapshot now has access to fields that may
+      // need to be propagated into the next CRC (e.g. setTransactions, domainMetadata). Flip
+      // the trigger flag so callers like `validateChecksum` that invoke this method directly
+      // -- bypassing the [[computedState]] lazy val -- still preserve the original semantics:
+      // any path that materializes the reconstructed state marks it as triggered.
+      _computedStateTriggered = true
+      _reconstructedState = Some(_computedState)
+      _computedState
+    }
   }
 
   /**
