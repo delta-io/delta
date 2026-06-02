@@ -21,11 +21,16 @@ import io.delta.tables.shared.DeltaRepeatedAccessRefreshTests
 import org.apache.spark.sql.test.DeltaQueryTest
 
 /**
- * Spark Connect base trait for the repeated table access refresh tests. In Connect the Dataset is
- * re-analyzed on each execution, so repeated reads always see the latest data and schema.
+ * Runs the shared [[DeltaRepeatedAccessRefreshTests]] over a remote Spark Connect session. It mixes
+ * in the Connect test harness ([[DeltaQueryTest]] plus [[RemoteSparkSession]]), the Connect-specific
+ * wiring ([[DeltaTableRefreshConnectTestBase]]), and the shared scenarios, then pushes the chosen
+ * V2_ENABLE_MODE to the server via [[serverConfig]]. Concrete suites pick the mode (AUTO or STRICT).
+ * In Connect the Dataset is re-analyzed on each execution, so repeated reads always see the latest
+ * data and schema.
  */
 trait DeltaTableRefreshConnectSuiteBase
-  extends DeltaQueryTest with RemoteSparkSession
+  extends DeltaQueryTest
+  with RemoteSparkSession
   with DeltaTableRefreshConnectTestBase
   with DeltaRepeatedAccessRefreshTests {
 
