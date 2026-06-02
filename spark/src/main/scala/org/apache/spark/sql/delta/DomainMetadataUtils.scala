@@ -77,6 +77,21 @@ trait DomainMetadataUtilsBase extends DeltaLogging {
   }
 
   /**
+   * Generates a new sequence of DomainMetadata by combining the provided
+   * new and old domain metadatas. Any duplicate domains will be removed
+   * from the old domain metadatas and replaced with the new domain metadatas.
+   * The returned list will be duplicate free.
+   */
+  def mergeDomainMetadata(
+      existingDomainMetadatas: Seq[DomainMetadata],
+      newDomainMetadatas: Seq[DomainMetadata]): Seq[DomainMetadata] = {
+    val newDomainNames: Set[String] = newDomainMetadatas.map(_.domain).toSet
+    existingDomainMetadatas
+      // Only use existing domain metadata if it is not present in the new domain metadata.
+      .filter(m => !newDomainNames.contains(m.domain)) ++ newDomainMetadatas
+  }
+
+  /**
    * Generates a new sequence of DomainMetadata to commits for REPLACE TABLE.
    *  - By default, existing metadata domains survive as long as they don't appear in the
    *    new metadata domains, in which case new metadata domains overwrite the existing ones.

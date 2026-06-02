@@ -24,11 +24,13 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.commit.*;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.internal.files.ParsedPublishedDeltaData;
 import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.unitycatalog.adapters.DomainMetadataAdapter;
 import io.delta.kernel.unitycatalog.adapters.MetadataAdapter;
 import io.delta.kernel.unitycatalog.adapters.ProtocolAdapter;
 import io.delta.kernel.unitycatalog.adapters.UniformAdapter;
@@ -38,14 +40,18 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.TableIdentifier;
+import io.delta.storage.commit.actions.AbstractDomainMetadata;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorException;
 import io.delta.storage.commit.uniform.UniformMetadata;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import org.apache.hadoop.fs.Path;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -450,6 +456,13 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
               });
 
           try {
+            List<DomainMetadata> oldDomainMetadata =
+                commitMetadata
+                    .getReadDomainMetadatas()
+                    .map(ArrayList::new)
+                    .orElseGet(ArrayList::new);
+            List<DomainMetadata> newDomainMetadata =
+                mergeDomainMetadata(oldDomainMetadata, commitMetadata.getCommitDomainMetadatas());
             ucClient.commit(
                 ucTableId,
                 tablePath.toUri(),
@@ -462,6 +475,8 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
                 generateMetadataPayloadOpt(commitMetadata).map(MetadataAdapter::new),
                 Optional.empty() /* oldProtocol */,
                 commitMetadata.getNewProtocolOpt().map(ProtocolAdapter::new),
+                toStorageDomainMetadata(oldDomainMetadata),
+                toStorageDomainMetadata(newDomainMetadata),
                 uniformMetadataOpt);
             return null;
           } catch (io.delta.storage.commit.CommitFailedException cfe) {
@@ -479,6 +494,28 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
                 false /* retryable */, false /* conflict */, ucce.getMessage(), ucce);
           }
         });
+  }
+
+  private List<DomainMetadata> mergeDomainMetadata(
+      List<DomainMetadata> oldDomainMetadata, List<DomainMetadata> commitDomainMetadata) {
+    Map<String, DomainMetadata> mergedDomainMetadata = new HashMap<>();
+    oldDomainMetadata.forEach(dm -> mergedDomainMetadata.put(dm.getDomain(), dm));
+    commitDomainMetadata.forEach(
+        dm -> {
+          if (dm.isRemoved()) {
+            mergedDomainMetadata.remove(dm.getDomain());
+          } else {
+            mergedDomainMetadata.put(dm.getDomain(), dm);
+          }
+        });
+    return new ArrayList<>(mergedDomainMetadata.values());
+  }
+
+  private List<AbstractDomainMetadata> toStorageDomainMetadata(
+      List<DomainMetadata> domainMetadata) {
+    return domainMetadata.stream()
+        .<AbstractDomainMetadata>map(DomainMetadataAdapter::new)
+        .collect(Collectors.toList());
   }
 
   private Commit getUcCommitPayload(

@@ -47,8 +47,10 @@ import io.unitycatalog.client.delta.model.DomainMetadataUpdates;
 import io.unitycatalog.client.delta.model.DeltaCommit;
 import io.unitycatalog.client.delta.model.DeltaProtocol;
 import io.unitycatalog.client.delta.model.LoadTableResponse;
+import io.unitycatalog.client.delta.model.RemoveDomainMetadataUpdate;
 import io.unitycatalog.client.delta.model.RemovePropertiesUpdate;
 import io.unitycatalog.client.delta.model.RowTrackingDomainMetadata;
+import io.unitycatalog.client.delta.model.SetDomainMetadataUpdate;
 import io.unitycatalog.client.delta.model.SetLatestBackfilledVersionUpdate;
 import io.unitycatalog.client.delta.model.SetPartitionColumnsUpdate;
 import io.unitycatalog.client.delta.model.SetPropertiesUpdate;
@@ -73,6 +75,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -260,10 +263,14 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       Optional<AbstractMetadata> newMetadata,
       Optional<AbstractProtocol> oldProtocol,
       Optional<AbstractProtocol> newProtocol,
+      List<AbstractDomainMetadata> oldDomainMetadata,
+      List<AbstractDomainMetadata> newDomainMetadata,
       Optional<io.delta.storage.commit.uniform.UniformMetadata> uniform)
       throws IOException, CommitFailedException, UCCommitCoordinatorException {
     ensureOpen();
     Objects.requireNonNull(tableId, "tableId must not be null");
+    Objects.requireNonNull(oldDomainMetadata, "oldDomainMetadata must not be null");
+    Objects.requireNonNull(newDomainMetadata, "newDomainMetadata must not be null");
     ResolvedTableName name = requireThreePartName(tableIdentifier);
 
     UpdateTableRequest request = new UpdateTableRequest();
@@ -296,12 +303,72 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
           .action("set-protocol")
           .protocol(toSDKDeltaProtocol(newProtocol.get())));
     }
+    Map<String, AbstractDomainMetadata> oldActiveDomainMetadata =
+        toActiveDomainMetadataMap(oldDomainMetadata, "oldDomainMetadata");
+    Map<String, AbstractDomainMetadata> newActiveDomainMetadata =
+        toActiveDomainMetadataMap(newDomainMetadata, "newDomainMetadata");
+    List<AbstractDomainMetadata> domainMetadataToSet =
+        changedDomainMetadata(oldActiveDomainMetadata, newActiveDomainMetadata);
+    List<String> domainMetadataToRemove =
+        removedDomainMetadata(oldActiveDomainMetadata, newActiveDomainMetadata);
+    DomainMetadataUpdates domainMetadataUpdates = toSDKDomainMetadataUpdates(domainMetadataToSet);
+    if (domainMetadataUpdates != null) {
+      request.addUpdatesItem(new SetDomainMetadataUpdate()
+          .action("set-domain-metadata")
+          .updates(domainMetadataUpdates));
+    }
+    if (!domainMetadataToRemove.isEmpty()) {
+      request.addUpdatesItem(new RemoveDomainMetadataUpdate()
+          .action("remove-domain-metadata")
+          .domains(domainMetadataToRemove));
+    }
 
     try {
       deltaTablesApi.updateTable(name.catalog, name.schema, name.table, request);
     } catch (ApiException e) {
       handleUpdateTableException(e, name.catalog, name.schema, name.table);
     }
+  }
+
+  private static Map<String, AbstractDomainMetadata> toActiveDomainMetadataMap(
+      List<AbstractDomainMetadata> domainMetadata,
+      String argumentName) {
+    Map<String, AbstractDomainMetadata> activeDomainMetadata = new HashMap<>();
+    for (AbstractDomainMetadata dm : domainMetadata) {
+      Objects.requireNonNull(dm, argumentName + " entry must not be null");
+      if (dm.isRemoved()) {
+        activeDomainMetadata.remove(dm.getDomain());
+      } else {
+        activeDomainMetadata.put(dm.getDomain(), dm);
+      }
+    }
+    return activeDomainMetadata;
+  }
+
+  private static List<AbstractDomainMetadata> changedDomainMetadata(
+      Map<String, AbstractDomainMetadata> oldDomainMetadata,
+      Map<String, AbstractDomainMetadata> newDomainMetadata) {
+    List<AbstractDomainMetadata> changedDomainMetadata = new ArrayList<>();
+    for (Map.Entry<String, AbstractDomainMetadata> entry : newDomainMetadata.entrySet()) {
+      AbstractDomainMetadata old = oldDomainMetadata.get(entry.getKey());
+      AbstractDomainMetadata latest = entry.getValue();
+      if (old == null || !Objects.equals(old.getConfiguration(), latest.getConfiguration())) {
+        changedDomainMetadata.add(latest);
+      }
+    }
+    return changedDomainMetadata;
+  }
+
+  private static List<String> removedDomainMetadata(
+      Map<String, AbstractDomainMetadata> oldDomainMetadata,
+      Map<String, AbstractDomainMetadata> newDomainMetadata) {
+    List<String> removedDomainMetadata = new ArrayList<>();
+    for (String domain : oldDomainMetadata.keySet()) {
+      if (!newDomainMetadata.containsKey(domain)) {
+        removedDomainMetadata.add(domain);
+      }
+    }
+    return removedDomainMetadata;
   }
 
   @Override
@@ -690,8 +757,8 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   /**
    * Maps Delta {@link AbstractDomainMetadata} entries onto the UC SDK's typed {@link
    * DomainMetadataUpdates}. UC models only {@code delta.clustering} and {@code
-   * delta.rowTracking}; entries for unknown domains are dropped silently. Returns {@code null}
-   * when no known-domain entries were produced.
+   * delta.rowTracking}; entries for unknown domains fail loudly to avoid silently dropping Delta
+   * log state. Returns {@code null} when no known-domain entries were produced.
    *
    * <p>Each {@code configuration} JSON is parsed into a typed DTO so a shape mismatch fails at
    * parse time with a Jackson error rather than at first use after an unchecked cast.
@@ -703,7 +770,6 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     DomainMetadataUpdates updates = new DomainMetadataUpdates();
     boolean any = false;
     for (AbstractDomainMetadata dm : entries) {
-      // This function is for createTable only for now.
       if (dm.isRemoved()) {
         continue;
       }

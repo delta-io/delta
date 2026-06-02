@@ -306,7 +306,8 @@ class UCDeltaTokenBasedRestClientSuite
     withClient { c =>
       c.commit(testTableId.toString, new URI("s3://bucket/table"), testIdentifier,
         Optional.of(createCommit(5L)), Optional.of(java.lang.Long.valueOf(3L)),
-        Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty())
+        Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
+        Collections.emptyList(), Collections.emptyList(), Optional.empty())
     }
 
     val json = objectMapper.readTree(captured)
@@ -348,7 +349,8 @@ class UCDeltaTokenBasedRestClientSuite
       c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
         Optional.of(createCommit(1L)), Optional.empty(),
         Optional.of(oldMeta), Optional.of(newMeta),
-        Optional.empty(), Optional.empty(), Optional.empty())
+        Optional.empty(), Optional.empty(), Collections.emptyList(),
+        Collections.emptyList(), Optional.empty())
     }
 
     val actions = {
@@ -377,7 +379,8 @@ class UCDeltaTokenBasedRestClientSuite
       c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
         Optional.of(createCommit(1L)), Optional.empty(),
         Optional.empty(), Optional.empty(),
-        Optional.of(oldProto), Optional.of(newProto), Optional.empty())
+        Optional.of(oldProto), Optional.of(newProto), Collections.emptyList(),
+        Collections.emptyList(), Optional.empty())
     }
 
     val updates = objectMapper.readTree(captured).get("updates")
@@ -385,6 +388,72 @@ class UCDeltaTokenBasedRestClientSuite
       .find(_.get("action").asText() == "set-protocol").get.get("protocol")
     assert(proto.get("min-reader-version").asInt() === 3)
     assert(proto.get("min-writer-version").asInt() === 7)
+  }
+
+  test("commit sends changed and removed domain metadata updates") {
+    var captured: String = null
+    deltaHandler = (exchange, body) => {
+      if (exchange.getRequestMethod == "POST") {
+        captured = body
+      }
+      sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+    }
+
+    withClient { c =>
+      c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
+        Optional.of(createCommit(1L)), Optional.empty(),
+        Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
+        java.util.List.of(
+          dm("delta.rowTracking", """{"rowIdHighWaterMark":0}""")),
+        java.util.List.of(
+          dm("delta.clustering", """{"clusteringColumns":[["id"]]}""")),
+        Optional.empty())
+    }
+
+    val updates = objectMapper.readTree(captured).get("updates")
+    val setDomainMetadata = (0 until updates.size()).map(updates.get)
+      .find(_.get("action").asText() == "set-domain-metadata").get
+    val clusteringColumns = setDomainMetadata
+      .get("updates")
+      .get("delta.clustering")
+      .get("clusteringColumns")
+    assert(clusteringColumns.get(0).get(0).asText() === "id")
+
+    val removeDomainMetadata = (0 until updates.size()).map(updates.get)
+      .find(_.get("action").asText() == "remove-domain-metadata").get
+    assert(removeDomainMetadata.get("domains").get(0).asText() === "delta.rowTracking")
+  }
+
+  test("commit skips unchanged domains in domain metadata updates") {
+    var captured: String = null
+    deltaHandler = (exchange, body) => {
+      if (exchange.getRequestMethod == "POST") {
+        captured = body
+      }
+      sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+    }
+
+    val oldDomainMetadata = java.util.List.of(
+      dm("delta.clustering", """{"clusteringColumns":[["id"]]}"""),
+      dm("delta.rowTracking", """{"rowIdHighWaterMark":1}"""))
+    val newDomainMetadata = java.util.List.of(
+      dm("delta.clustering", """{"clusteringColumns":[["id"]]}"""),
+      dm("delta.rowTracking", """{"rowIdHighWaterMark":2}"""))
+
+    withClient { c =>
+      c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
+        Optional.of(createCommit(1L)), Optional.empty(),
+        Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
+        oldDomainMetadata, newDomainMetadata, Optional.empty())
+    }
+
+    val updates = objectMapper.readTree(captured).get("updates")
+    val setDomainMetadata = (0 until updates.size()).map(updates.get)
+      .find(_.get("action").asText() == "set-domain-metadata").get
+    assert(setDomainMetadata.get("updates").has("delta.rowTracking"))
+    assert(!setDomainMetadata.get("updates").has("delta.clustering"))
+    val actions = (0 until updates.size()).map(i => updates.get(i).get("action").asText()).toSet
+    assert(!actions.contains("remove-domain-metadata"))
   }
 
   test("commit skips metadata updates when old and new are equal") {
@@ -404,7 +473,8 @@ class UCDeltaTokenBasedRestClientSuite
       c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
         Optional.of(createCommit(1L)), Optional.empty(),
         Optional.of(m1), Optional.of(m2),
-        Optional.empty(), Optional.empty(), Optional.empty())
+        Optional.empty(), Optional.empty(), Collections.emptyList(),
+        Collections.emptyList(), Optional.empty())
     }
 
     val updates = objectMapper.readTree(captured).get("updates")
@@ -430,7 +500,8 @@ class UCDeltaTokenBasedRestClientSuite
       c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
         Optional.of(createCommit(1L)), Optional.empty(),
         Optional.empty(), Optional.empty(),
-        Optional.of(p1), Optional.of(p2), Optional.empty())
+        Optional.of(p1), Optional.of(p2), Collections.emptyList(),
+        Collections.emptyList(), Optional.empty())
     }
 
     val updates = objectMapper.readTree(captured).get("updates")
@@ -454,7 +525,7 @@ class UCDeltaTokenBasedRestClientSuite
       c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
         Optional.of(createCommit(1L)), Optional.empty(),
         Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
-        Optional.of(uniform))
+        Collections.emptyList(), Collections.emptyList(), Optional.of(uniform))
     }
 
     val addCommit = {
@@ -484,7 +555,7 @@ class UCDeltaTokenBasedRestClientSuite
       c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
         Optional.of(createCommit(1L)), Optional.empty(),
         Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
-        Optional.of(uniform))
+        Collections.emptyList(), Collections.emptyList(), Optional.of(uniform))
     }
 
     val addCommit = {
@@ -511,7 +582,8 @@ class UCDeltaTokenBasedRestClientSuite
       val e = intercept[CommitFailedException] {
         c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
           Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
-          Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty())
+          Optional.empty(), Optional.empty(), Optional.empty(), Collections.emptyList(),
+          Collections.emptyList(), Optional.empty())
       }
       assert(e.getRetryable && e.getConflict)
     }
@@ -530,7 +602,8 @@ class UCDeltaTokenBasedRestClientSuite
       val e = intercept[CommitFailedException] {
         c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
           Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
-          Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty())
+          Optional.empty(), Optional.empty(), Optional.empty(),
+          Collections.emptyList(), Collections.emptyList(), Optional.empty())
       }
       assert(!e.getRetryable && !e.getConflict)
       assert(e.getMessage.contains("Invalid updateTable request"))
@@ -550,7 +623,8 @@ class UCDeltaTokenBasedRestClientSuite
       intercept[InvalidTargetTableException] {
         c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
           Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
-          Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty())
+          Optional.empty(), Optional.empty(), Optional.empty(), Collections.emptyList(),
+          Collections.emptyList(), Optional.empty())
       }
     }
   }

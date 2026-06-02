@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.util.concurrent.TimeUnit
 
+import scala.collection.JavaConverters._
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.DeltaOperations.{OP_SET_TBLPROPERTIES, ROW_TRACKING_BACKFILL_OPERATION_NAME, ROW_TRACKING_UNBACKFILL_OPERATION_NAME}
@@ -32,6 +33,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils.CheckDeterministicOptions
 import org.apache.spark.sql.delta.util.FileNames
 import io.delta.storage.commit.UpdatedActions
+import io.delta.storage.commit.actions.{AbstractDomainMetadata => StorageAbstractDomainMetadata}
 import io.delta.storage.commit.uniform.UniformMetadata
 import org.apache.hadoop.fs.FileStatus
 
@@ -67,9 +69,9 @@ private[delta] case class CurrentTransactionInfo(
     val readRowIdHighWatermark: Long,
     val catalogTable: Option[CatalogTable],
     val domainMetadata: Seq[DomainMetadata],
-    val op: DeltaOperations.Operation
-    , val convertedIcebergMetadata: Option[UniformMetadata] = None
- ) {
+    val op: DeltaOperations.Operation,
+    val convertedIcebergMetadata: Option[UniformMetadata] = None,
+    val readDomainMetadataOpt: Option[Seq[DomainMetadata]] = None) {
 
   /**
    * Final actions to commit - including the [[CommitInfo]] which should always come first so we can
@@ -85,10 +87,40 @@ private[delta] case class CurrentTransactionInfo(
     case m: Metadata => newMetadata = Some(m)
     case _ => // do nothing
   }
+
+  /**
+   * Domain metadata that should be sent with the commit. This is derived from the final action
+   * list instead of the side-channel `domainMetadata`, because conflict resolution may rewrite
+   * `actions` after `domainMetadata` was computed.
+   */
+  private[delta] lazy val domainMetadataToCommit: Seq[DomainMetadata] =
+    DomainMetadataUtils.validateDomainMetadataSupportedAndNoDuplicate(actions, protocol)
+
+  lazy val readDomainMetadata: Seq[DomainMetadata] =
+    readDomainMetadataOpt.getOrElse {
+      if (domainMetadataToCommit.isEmpty &&
+          !DomainMetadataUtils.domainMetadataSupported(protocol)) {
+        Seq.empty
+      } else {
+        readSnapshot.domainMetadata
+      }
+    }
+
   def getUpdatedActions(
       oldMetadata: Metadata,
       oldProtocol: Protocol): UpdatedActions = {
-    new UpdatedActions(commitInfo.get, metadata, protocol, oldMetadata, oldProtocol)
+    val newDomainMetadata =
+      DomainMetadataUtils
+        .mergeDomainMetadata(readDomainMetadata, domainMetadataToCommit)
+        .filterNot(_.removed)
+    new UpdatedActions(
+      commitInfo.get,
+      metadata,
+      protocol,
+      oldMetadata,
+      oldProtocol,
+      readDomainMetadata.map(dm => dm: StorageAbstractDomainMetadata).asJava,
+      newDomainMetadata.map(dm => dm: StorageAbstractDomainMetadata).asJava)
   }
 
   /** Whether this transaction wants to make any [[Metadata]] update */

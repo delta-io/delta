@@ -375,14 +375,10 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
   }
 
   // Replacing a clustered managed Delta table with a non-clustered, non-partitioned one
-  // succeeds at the data plane (the table is queryable with the new schema, INSERTs land
-  // correctly), but UC's metastore retains the seed's `clusteringColumns` and
-  // `delta.feature.clustering` properties. The REPLACE does not propagate the cluster
-  // removal to UC's domain metadata. Pinned so we notice if the behavior changes; when
-  // fixed, update the assertion to reflect the cleared state.
-  // TODO: fix this issue https://github.com/delta-io/delta/issues/6915
+  // succeeds at the data plane and propagates the cleared clustering domain metadata to UC.
+  // The clustering table feature remains supported, but the active clustering columns are empty.
   @Test
-  public void testReplaceClusteredManagedTableWithNoneRetainsStaleUcClustering() throws Exception {
+  public void testReplaceClusteredManagedTableWithNoneClearsUcClustering() throws Exception {
     String tableName = "cluster_to_none_" + UUID.randomUUID().toString().replace("-", "");
     String fullTableName = fullTableName(tableName);
     try {
@@ -402,7 +398,7 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
       TablesApi tablesApi = new TablesApi(unityCatalogInfo().createApiClient());
       TableInfo info = tablesApi.getTable(fullTableName, false, false);
       assertThat(info.getProperties())
-          .containsEntry("clusteringColumns", "[[\"col1\"]]")
+          .containsEntry("clusteringColumns", "[]")
           .containsEntry("delta.feature.clustering", "supported");
     } finally {
       sql("DROP TABLE IF EXISTS %s", fullTableName);

@@ -18,6 +18,7 @@ package io.sparkuctest;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.unitycatalog.client.delta.api.TablesApi;
 import io.unitycatalog.client.delta.model.LoadTableResponse;
@@ -25,6 +26,7 @@ import io.unitycatalog.client.delta.model.StructField;
 import io.unitycatalog.client.delta.model.StructType;
 import io.unitycatalog.client.model.TableInfo;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 import org.apache.hadoop.fs.Path;
 import org.junit.jupiter.api.Test;
@@ -82,10 +84,29 @@ public class UCDeltaTableAlterTest extends UCDeltaTableIntegrationBaseTest {
           response = loadTableViaDeltaRest(tableName);
           assertEquals(
               "supported", response.getMetadata().getProperties().get("delta.feature.clustering"));
+          assertEquals(
+              "[[\"id\"]]", response.getMetadata().getProperties().get("clusteringColumns"));
+          TableInfo tableInfo = loadTableInfoViaUc(tableName);
+          assertEquals("[[\"id\"]]", tableInfo.getProperties().get("clusteringColumns"));
+
+          sql("ALTER TABLE %s CLUSTER BY (name)", tableName);
+
+          response = loadTableViaDeltaRest(tableName);
+          assertEquals(
+              "[[\"name\"]]", response.getMetadata().getProperties().get("clusteringColumns"));
+          tableInfo = loadTableInfoViaUc(tableName);
+          assertEquals("[[\"name\"]]", tableInfo.getProperties().get("clusteringColumns"));
+
+          sql("ALTER TABLE %s CLUSTER BY NONE", tableName);
+
+          response = loadTableViaDeltaRest(tableName);
+          assertNoClusteringColumns(response.getMetadata().getProperties());
+          tableInfo = loadTableInfoViaUc(tableName);
+          assertNoClusteringColumns(tableInfo.getProperties());
 
           sql("COMMENT ON TABLE %s IS 'table comment'", tableName);
 
-          TableInfo tableInfo = loadTableInfoViaUc(tableName);
+          tableInfo = loadTableInfoViaUc(tableName);
           assertEquals("table comment", tableInfo.getComment());
         });
   }
@@ -372,6 +393,12 @@ public class UCDeltaTableAlterTest extends UCDeltaTableIntegrationBaseTest {
   private TableInfo loadTableInfoViaUc(String tableName) throws Exception {
     return new io.unitycatalog.client.api.TablesApi(unityCatalogInfo().createApiClient())
         .getTable(tableName, false, false);
+  }
+
+  private static void assertNoClusteringColumns(Map<String, String> properties) {
+    assertTrue(
+        !properties.containsKey("clusteringColumns")
+            || "[]".equals(properties.get("clusteringColumns")));
   }
 
   private static List<String> fieldNames(StructType structType) {

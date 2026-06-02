@@ -33,6 +33,7 @@ import org.apache.spark.sql.delta.coordinatedcommits.CatalogTrackedInfo;
 import io.delta.storage.CloseableIterator;
 import io.delta.storage.LogStore;
 import io.delta.storage.commit.*;
+import io.delta.storage.commit.actions.AbstractDomainMetadata;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
 import io.delta.storage.commit.uniform.UniformMetadata;
@@ -467,7 +468,9 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
           oldMetadata,
           newMetadata,
           oldProtocol,
-          newProtocol
+          newProtocol,
+          updatedActions.getOldDomainMetadata(),
+          updatedActions.getNewDomainMetadata()
         );
         break;
       } catch (CommitFailedException cfe) {
@@ -674,7 +677,9 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       Optional.empty() /* oldMetadata */,
       Optional.empty() /* newMetadata */,
       Optional.empty() /* oldProtocol */,
-      Optional.empty() /* newProtocol */
+      Optional.empty() /* newProtocol */,
+      Collections.emptyList() /* oldDomainMetadata */,
+      Collections.emptyList() /* newDomainMetadata */
     );
     long commitDuration = System.currentTimeMillis() - commitStartTime;
 
@@ -705,7 +710,9 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       Optional<AbstractMetadata> oldMetadata,
       Optional<AbstractMetadata> newMetadata,
       Optional<AbstractProtocol> oldProtocol,
-      Optional<AbstractProtocol> newProtocol
+      Optional<AbstractProtocol> newProtocol,
+      List<AbstractDomainMetadata> oldDomainMetadata,
+      List<AbstractDomainMetadata> newDomainMetadata
   ) throws IOException, CommitFailedException, UCCommitCoordinatorException
   {
     Optional<Commit> commit = commitFile.map(f -> new Commit(
@@ -725,6 +732,8 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       newMetadata,
       oldProtocol,
       newProtocol,
+      oldDomainMetadata,
+      newDomainMetadata,
       catalogTrackedInfo.deltaUniformIceberg()
     );
   }

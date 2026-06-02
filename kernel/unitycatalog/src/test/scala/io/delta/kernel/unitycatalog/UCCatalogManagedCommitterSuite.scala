@@ -22,10 +22,10 @@ import java.util.Optional
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
-import io.delta.kernel.commit.{CommitFailedException, CommitMetadata}
+import io.delta.kernel.commit.CommitFailedException
 import io.delta.kernel.commit.CommitMetadata.CommitType
 import io.delta.kernel.data.Row
-import io.delta.kernel.internal.actions.{Metadata, Protocol}
+import io.delta.kernel.internal.actions.{DomainMetadata, Metadata, Protocol}
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.util.{Tuple2 => KernelTuple2}
 import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils, TestFixtures, VectorTestUtils}
@@ -244,6 +244,52 @@ class UCCatalogManagedCommitterSuite
       assert(latestProtocol.getReaderFeatures === protocolUpgrade.getReaderFeatures)
       assert(latestProtocol.getWriterFeatures === protocolUpgrade.getWriterFeatures)
       assert(latestMetadata.getConfiguration === metadataUpgrade.getConfiguration)
+    }
+  }
+
+  test("CATALOG_WRITE: domain metadata is passed to UC client") {
+    withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
+      // ===== GIVEN =====
+      val ucClient = new InMemoryUCClient("ucMetastoreId")
+      ucClient.insertTableDataAfterCreate(testUcTableId)
+      val committer = new UCCatalogManagedCommitter(ucClient, testUcTableId, tablePath)
+
+      // ===== WHEN =====
+      val domainMetadata = new DomainMetadata(
+        "delta.rowTracking",
+        """{"rowIdHighWaterMark":10}""",
+        false /* removed */ )
+      val removedDomainMetadata = new DomainMetadata(
+        "delta.clustering",
+        """{"clusteringColumns":[["s"]]}""",
+        true /* removed */ )
+      val oldClusteringDomainMetadata = new DomainMetadata(
+        "delta.clustering",
+        """{"clusteringColumns":[["s"]]}""",
+        false /* removed */ )
+      val commitMetadata = createCommitMetadata(
+        version = 1,
+        logPath = logPath,
+        commitDomainMetadatas = List(domainMetadata, removedDomainMetadata),
+        readDomainMetadatas = Some(Set(oldClusteringDomainMetadata)),
+        readPandMOpt = Optional.of(
+          new KernelTuple2[Protocol, Metadata](
+            protocolWithCatalogManagedSupport,
+            basicPartitionedMetadata)))
+      committer.commit(defaultEngine, emptyActionsIterator, commitMetadata)
+
+      // ===== THEN =====
+      val passedOldDomainMetadata = ucClient.getLastCommitOldDomainMetadata.asScala
+      assert(passedOldDomainMetadata.map(_.getDomain) === Seq("delta.clustering"))
+      val passedNewDomainMetadata = ucClient.getLastCommitNewDomainMetadata.asScala
+      assert(passedNewDomainMetadata.size === 1)
+      val passedDomainMetadataByDomain =
+        passedNewDomainMetadata.map(dm => dm.getDomain -> dm).toMap
+      assert(
+        passedDomainMetadataByDomain("delta.rowTracking").getConfiguration ===
+          """{"rowIdHighWaterMark":10}""")
+      assert(!passedDomainMetadataByDomain("delta.rowTracking").isRemoved)
+      assert(!passedDomainMetadataByDomain.contains("delta.clustering"))
     }
   }
 

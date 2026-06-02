@@ -17,11 +17,15 @@
 package io.delta.storage.commit;
 
 import io.delta.storage.commit.actions.AbstractCommitInfo;
+import io.delta.storage.commit.actions.AbstractDomainMetadata;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
+import java.util.Collections;
+import java.util.List;
 
 /**
- * A container class to inform the CommitCoordinatorClient about any changes in Protocol/Metadata
+ * A container class to inform the CommitCoordinatorClient about changes to commit actions that
+ * Unity Catalog may need to apply atomically with the commit.
  */
 public class UpdatedActions {
 
@@ -35,17 +39,43 @@ public class UpdatedActions {
 
   private AbstractProtocol oldProtocol;
 
+  private List<AbstractDomainMetadata> oldDomainMetadata;
+
+  private List<AbstractDomainMetadata> newDomainMetadata;
+
   public UpdatedActions(
       AbstractCommitInfo commitInfo,
       AbstractMetadata newMetadata,
       AbstractProtocol newProtocol,
       AbstractMetadata oldMetadata,
       AbstractProtocol oldProtocol) {
+    this(
+        commitInfo,
+        newMetadata,
+        newProtocol,
+        oldMetadata,
+        oldProtocol,
+        Collections.emptyList(),
+        Collections.emptyList());
+  }
+
+  public UpdatedActions(
+      AbstractCommitInfo commitInfo,
+      AbstractMetadata newMetadata,
+      AbstractProtocol newProtocol,
+      AbstractMetadata oldMetadata,
+      AbstractProtocol oldProtocol,
+      List<AbstractDomainMetadata> oldDomainMetadata,
+      List<AbstractDomainMetadata> newDomainMetadata) {
     this.commitInfo = commitInfo;
     this.newMetadata = newMetadata;
     this.newProtocol = newProtocol;
     this.oldMetadata = oldMetadata;
     this.oldProtocol = oldProtocol;
+    this.oldDomainMetadata =
+        oldDomainMetadata == null ? Collections.emptyList() : oldDomainMetadata;
+    this.newDomainMetadata =
+        newDomainMetadata == null ? Collections.emptyList() : newDomainMetadata;
   }
 
   public AbstractCommitInfo getCommitInfo() {
@@ -66,5 +96,13 @@ public class UpdatedActions {
 
   public AbstractProtocol getOldProtocol() {
     return oldProtocol;
+  }
+
+  public List<AbstractDomainMetadata> getOldDomainMetadata() {
+    return oldDomainMetadata;
+  }
+
+  public List<AbstractDomainMetadata> getNewDomainMetadata() {
+    return newDomainMetadata;
   }
 }
