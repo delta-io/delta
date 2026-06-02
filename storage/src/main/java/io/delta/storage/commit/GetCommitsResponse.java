@@ -16,9 +16,9 @@
 
 package io.delta.storage.commit;
 
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.stream.Collectors;
 /**
  * Response container for
  * {@link CommitCoordinatorClient#getCommits(TableDescriptor, Long, Long)}.
@@ -44,8 +44,10 @@ public class GetCommitsResponse {
 
   /** Returns a new response with commits sorted by version. */
   public GetCommitsResponse sortCommitsByVersion() {
-    List<Commit> sorted = new ArrayList<>(commits);
-    sorted.sort(Comparator.comparingLong(Commit::getVersion));
+    List<Commit> sorted = commits
+        .stream()
+        .sorted(Comparator.comparingLong(Commit::getVersion))
+        .collect(Collectors.toList());
     return new GetCommitsResponse(sorted, latestTableVersion);
   }
 }
