@@ -39,7 +39,7 @@ trait DeltaRepeatedAccessRefreshTests
   private def assertFinalTableState(tableRef: String, expectedRows: Seq[Row]): Unit =
     checkAnswer(spark.sql(s"SELECT * FROM $tableRef ORDER BY id"), expectedRows)
 
-  test("[2] scenario 1: repeated access picks up new data") {
+  test("scenario 1: repeated access picks up new data") {
     withTable("t") {
       withSeededTable("t") {
         writerSql("INSERT INTO t VALUES (2, 200)")
@@ -48,7 +48,7 @@ trait DeltaRepeatedAccessRefreshTests
     }
   }
 
-  test("[2] scenario 2: repeated access reflects schema changes") {
+  test("scenario 2: repeated access reflects schema changes") {
     withTable("t") {
       withSeededTable("t") {
         writerSql("ALTER TABLE t ADD COLUMN new_column INT")
@@ -66,7 +66,7 @@ trait DeltaRepeatedAccessRefreshTests
     }
   }
 
-  test("[2] scenario 3: repeated access after drop and recreate") {
+  test("scenario 3: repeated access after drop and recreate") {
     withTable("t") {
       withSeededTable("t") {
         writerSql("DROP TABLE t")
@@ -76,7 +76,7 @@ trait DeltaRepeatedAccessRefreshTests
     }
   }
 
-  test("[2] scenario 1 external: repeated access picks up external data") {
+  test("scenario 1 external: repeated access picks up external data") {
     withRefreshTable { tableRef =>
       withSeededTable(tableRef) {
         externalDataWrite(tableRef, Seq((2, 200)))
@@ -85,7 +85,7 @@ trait DeltaRepeatedAccessRefreshTests
     }
   }
 
-  test("[2] scenario 2 external: repeated access reflects external schema change") {
+  test("scenario 2 external: repeated access reflects external schema change") {
     withRefreshTable { tableRef =>
       withSeededTable(tableRef) {
         // Unlike in-session scenario 2, the external ADD COLUMN lands in its own commit before the
@@ -97,7 +97,7 @@ trait DeltaRepeatedAccessRefreshTests
     }
   }
 
-  test("[2] scenario 3 external: repeated access after external DROP and recreate") {
+  test("scenario 3 external: repeated access after external DROP and recreate") {
     withRefreshTable { tableRef =>
       withSeededTable(tableRef) {
         externalDropAndRecreate(tableRef)
