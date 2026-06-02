@@ -42,20 +42,20 @@ trait DeltaTableRefreshSuiteBase
   }
 }
 
-/** V2_ENABLE_MODE = AUTO (the product default). */
+/**
+ * V2_ENABLE_MODE = AUTO, the product default: the Delta Kernel V2 connector is used only where it
+ * is supported and falls back to the legacy V1 path otherwise.
+ */
 class DeltaTableRefreshAutoModeSuite
   extends DeltaTableRefreshSuiteBase {
   override protected def v2EnableMode: String = "AUTO"
 }
 
 /**
- * V2_ENABLE_MODE = STRICT, which engages the V2 Kernel connector path.
+ * V2_ENABLE_MODE = STRICT: always engages the Delta Kernel V2 connector with no V1 fallback. Unlike
+ * AUTO, this surfaces gaps in the V2 connector instead of silently routing around them.
  *
- * TODO: full V2 connector support is in progress. Repeated `sql()` access behaves the same as AUTO,
- * with one exception: ADD COLUMN is not supported in V2 yet, so an INSERT issued right after an
- * in-session ALTER TABLE ADD COLUMN still resolves against the schema cached at table lookup and
- * fails with an arity mismatch (see scenario 2's STRICT branch in
- * [[DeltaRepeatedAccessRefreshTests]]). Revisit once the connector refreshes its cached schema.
+ * TODO: full V2 connector support is in progress; ADD COLUMN is not supported in V2 yet.
  */
 class DeltaTableRefreshStrictModeSuite
   extends DeltaTableRefreshSuiteBase {
