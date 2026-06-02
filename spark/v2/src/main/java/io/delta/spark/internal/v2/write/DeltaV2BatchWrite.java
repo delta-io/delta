@@ -91,23 +91,6 @@ class DeltaV2BatchWrite implements Write, BatchWrite {
     Row txnState = transaction.getTransactionState(this.engine);
     this.serializedTxnState = new SerializableKernelRowWrapper(txnState);
 
-    // Reject writes to column-mapped tables: the V2 write path writes Parquet with logical
-    // column names, but column-mapped tables store data under physical UUID-based names.
-    // The mismatch causes reads to return null for every value. Fail fast here rather than
-    // silently producing corrupt data.
-    String cmMode =
-        ((io.delta.kernel.internal.SnapshotImpl) initialSnapshot)
-            .getMetadata()
-            .getConfiguration()
-            .getOrDefault("delta.columnMapping.mode", "none");
-    if (!"none".equalsIgnoreCase(cmMode)) {
-      throw new UnsupportedOperationException(
-          "DeltaV2BatchWrite does not support column-mapped Delta tables "
-              + "(delta.columnMapping.mode = "
-              + cmMode
-              + "). Use the V1 write path (format(\"delta\").write()) instead.");
-    }
-
     this.targetDirectory =
         Transaction.getWriteContext(this.engine, txnState, Collections.emptyMap())
             .getTargetDirectory();

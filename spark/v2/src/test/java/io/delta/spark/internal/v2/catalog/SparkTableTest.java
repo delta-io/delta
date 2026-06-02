@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.spark.internal.v2.DeltaV2TestBase;
@@ -516,6 +517,44 @@ public class SparkTableTest extends DeltaV2TestBase {
         };
 
     assertNotNull(table.newWriteBuilder(writeInfo), "newWriteBuilder should return non-null");
+  }
+
+  @Test
+  public void testWriteBuilderRejectsColumnMappedTable(@TempDir File tempDir) {
+    String path = tempDir.getAbsolutePath();
+    spark.sql(
+        String.format(
+            "CREATE TABLE test_cm_write (id INT, name STRING) USING delta "
+                + "TBLPROPERTIES ('delta.columnMapping.mode'='name') "
+                + "LOCATION '%s'",
+            path));
+
+    SparkTable table =
+        new SparkTable(Identifier.of(new String[] {"default"}, "test_cm_write"), path);
+    LogicalWriteInfo writeInfo =
+        new LogicalWriteInfo() {
+          @Override
+          public String queryId() {
+            return "test-query-id";
+          }
+
+          @Override
+          public StructType schema() {
+            return new StructType()
+                .add("id", DataTypes.IntegerType)
+                .add("name", DataTypes.StringType);
+          }
+
+          @Override
+          public CaseInsensitiveStringMap options() {
+            return new CaseInsensitiveStringMap(Collections.emptyMap());
+          }
+        };
+
+    assertThrows(
+        UnsupportedOperationException.class,
+        () -> table.newWriteBuilder(writeInfo).build(),
+        "build() must reject writes to column-mapped tables");
   }
 
   @Test
