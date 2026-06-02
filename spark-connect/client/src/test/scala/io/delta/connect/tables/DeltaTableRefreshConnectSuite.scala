@@ -35,13 +35,18 @@ trait DeltaTableRefreshConnectSuiteBase
     super.serverConfig + ("spark.databricks.delta.v2.enableMode" -> v2EnableMode)
 }
 
+/**
+ * V2_ENABLE_MODE = AUTO, the product default: the Delta Kernel V2 connector is used only where it
+ * is supported and falls back to the legacy V1 path otherwise.
+ */
 class DeltaTableRefreshConnectAutoModeSuite
   extends DeltaTableRefreshConnectSuiteBase {
   override protected def v2EnableMode: String = "AUTO"
 }
 
 /**
- * V2_ENABLE_MODE = STRICT with Connect, which engages the Delta Kernel V2 connector.
+ * V2_ENABLE_MODE = STRICT: always engages the Delta Kernel V2 connector with no V1 fallback. Unlike
+ * AUTO, this surfaces gaps in the V2 connector instead of silently routing around them.
  *
  * TODO: full V2 connector support is in progress; ADD COLUMN is not supported in V2 yet.
  */
