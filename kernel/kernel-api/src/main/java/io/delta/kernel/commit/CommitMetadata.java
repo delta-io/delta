@@ -28,9 +28,11 @@ import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Tuple2;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Supplier;
 
 /**
@@ -68,6 +70,7 @@ public class CommitMetadata {
   private final Optional<Protocol> newProtocolOpt;
   private final Optional<Metadata> newMetadataOpt;
   private final Optional<Long> maxKnownPublishedDeltaVersion;
+  private final Optional<Set<DomainMetadata>> readDomainMetadatas;
 
   public CommitMetadata(
       long version,
@@ -79,6 +82,30 @@ public class CommitMetadata {
       Optional<Protocol> newProtocolOpt,
       Optional<Metadata> newMetadataOpt,
       Optional<Long> maxKnownPublishedDeltaVersion) {
+    this(
+        version,
+        logPath,
+        commitInfo,
+        commitDomainMetadatas,
+        committerProperties,
+        readPandMOpt,
+        newProtocolOpt,
+        newMetadataOpt,
+        maxKnownPublishedDeltaVersion,
+        Optional.empty());
+  }
+
+  public CommitMetadata(
+      long version,
+      String logPath,
+      CommitInfo commitInfo,
+      List<DomainMetadata> commitDomainMetadatas,
+      Supplier<Map<String, String>> committerProperties,
+      Optional<Tuple2<Protocol, Metadata>> readPandMOpt,
+      Optional<Protocol> newProtocolOpt,
+      Optional<Metadata> newMetadataOpt,
+      Optional<Long> maxKnownPublishedDeltaVersion,
+      Optional<Set<DomainMetadata>> readDomainMetadatas) {
     checkArgument(version >= 0, "version must be non-negative: %d", version);
     this.version = version;
     this.logPath = requireNonNull(logPath, "logPath is null");
@@ -92,6 +119,9 @@ public class CommitMetadata {
     this.newMetadataOpt = requireNonNull(newMetadataOpt, "newMetadataOpt is null");
     this.maxKnownPublishedDeltaVersion =
         requireNonNull(maxKnownPublishedDeltaVersion, "maxKnownPublishedDeltaVersion is null");
+    this.readDomainMetadatas =
+        requireNonNull(readDomainMetadatas, "readDomainMetadatas is null")
+            .map(dm -> Collections.unmodifiableSet(new HashSet<>(dm)));
 
     checkArgument(
         readPandMOpt.isPresent() || newProtocolOpt.isPresent(),
@@ -128,6 +158,11 @@ public class CommitMetadata {
    */
   public List<DomainMetadata> getCommitDomainMetadatas() {
     return commitDomainMetadatas;
+  }
+
+  /** The active domain metadata in the transaction's read snapshot. Empty for version-0 commits. */
+  public Optional<Set<DomainMetadata>> getReadDomainMetadatas() {
+    return readDomainMetadatas;
   }
 
   /**

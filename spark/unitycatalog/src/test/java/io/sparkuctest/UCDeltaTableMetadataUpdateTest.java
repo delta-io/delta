@@ -16,14 +16,25 @@
 
 package io.sparkuctest;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import io.unitycatalog.client.delta.api.TablesApi;
+import io.unitycatalog.client.delta.model.LoadTableResponse;
+import io.unitycatalog.client.model.TableInfo;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /** Tests metadata-changing operations on Unity Catalog managed (CatalogOwned) tables. */
 public class UCDeltaTableMetadataUpdateTest extends UCDeltaTableIntegrationBaseTest {
 
+  private static final String MANAGED_PROPS =
+      "TBLPROPERTIES ('delta.feature.catalogManaged'='supported')";
   private static final String CLUSTERING_KILL_SWITCH_ERROR =
       "Clustering column changes on Unity Catalog managed tables";
+  private static final String CLUSTERING_COLUMNS = "clusteringColumns";
+  private static final String ROW_ID_HIGH_WATERMARK = "delta.rowTracking.rowIdHighWaterMark";
 
   // ---------------------------------------------------------------------------
   // Metadata updates supported through UC updateTable
@@ -102,6 +113,40 @@ public class UCDeltaTableMetadataUpdateTest extends UCDeltaTableIntegrationBaseT
         });
   }
 
+  @Test
+  public void testReplaceTableWithoutClusterByRemovesClusteringDomainMetadata() throws Exception {
+    String tableName = fullTableName("replace_remove_clustering_test");
+    try {
+      sql(
+          "CREATE TABLE %s (id INT, name STRING) USING DELTA CLUSTER BY (id) %s",
+          tableName, MANAGED_PROPS);
+      assertClusteringColumnsEverywhere(tableName, "[[\"id\"]]");
+
+      sql("REPLACE TABLE %s (id INT, name STRING) USING DELTA %s", tableName, MANAGED_PROPS);
+
+      assertNoClusteringColumnsEverywhere(tableName);
+    } finally {
+      sql("DROP TABLE IF EXISTS %s", tableName);
+    }
+  }
+
+  @Test
+  public void testReplaceTableWithClusterByAddsClusteringDomainMetadata() throws Exception {
+    String tableName = fullTableName("replace_add_clustering_test");
+    try {
+      sql("CREATE TABLE %s (id INT, name STRING) USING DELTA %s", tableName, MANAGED_PROPS);
+      assertNoClusteringColumnsEverywhere(tableName);
+
+      sql(
+          "REPLACE TABLE %s (id INT, name STRING) USING DELTA CLUSTER BY (id) %s",
+          tableName, MANAGED_PROPS);
+
+      assertClusteringColumnsEverywhere(tableName, "[[\"id\"]]");
+    } finally {
+      sql("DROP TABLE IF EXISTS %s", tableName);
+    }
+  }
+
   /**
    * RESTORE TABLE to a version with unchanged clustering must succeed. The clustering kill switch
    * only fires when clustering actually changes.
@@ -125,11 +170,11 @@ public class UCDeltaTableMetadataUpdateTest extends UCDeltaTableIntegrationBaseT
   }
 
   /**
-   * RESTORE TABLE to a version whose clustering differs from the current version must be blocked
-   * until UC updateTable supports domain metadata updates.
+   * RESTORE TABLE to a version whose clustering differs from the current version is still blocked.
+   * A failed restore must not partially update UC clustering domain metadata.
    */
   @Test
-  public void testRestoreTableWithClusteringChangeIsBlocked() throws Exception {
+  public void testRestoreTableWithClusteringChangeIsBlockedWithoutUcDrift() throws Exception {
     String tableName = fullTableName("restore_clustering_change_test");
     try {
       sql(
@@ -139,6 +184,7 @@ public class UCDeltaTableMetadataUpdateTest extends UCDeltaTableIntegrationBaseT
       sql("INSERT INTO %s VALUES (1, 'a'), (2, 'b')", tableName);
       long versionBeforeClusteringChange = currentVersion(tableName);
       sql("ALTER TABLE %s CLUSTER BY (name)", tableName);
+      assertClusteringColumnsEverywhere(tableName, "[[\"name\"]]");
 
       assertThrowsWithCauseContaining(
           CLUSTERING_KILL_SWITCH_ERROR,
@@ -146,9 +192,76 @@ public class UCDeltaTableMetadataUpdateTest extends UCDeltaTableIntegrationBaseT
               sql(
                   "RESTORE TABLE %s TO VERSION AS OF %d",
                   tableName, versionBeforeClusteringChange));
+
+      assertClusteringColumnsEverywhere(tableName, "[[\"name\"]]");
+      check(tableName, List.of(row("1", "a"), row("2", "b")));
     } finally {
       sql("DROP TABLE IF EXISTS %s", tableName);
     }
+  }
+
+  /**
+   * RESTORE from an unclustered current table to a clustered previous version is also a clustering
+   * change, so it must be blocked and leave UC clustering domain metadata unchanged.
+   */
+  @Test
+  public void testRestoreTableFromUnclusteredCurrentToClusteredVersionIsBlockedWithoutUcDrift()
+      throws Exception {
+    String tableName = fullTableName("restore_to_clustered_version_test");
+    try {
+      sql(
+          "CREATE TABLE %s (id INT, name STRING) USING DELTA CLUSTER BY (id)"
+              + " TBLPROPERTIES ('delta.feature.catalogManaged'='supported')",
+          tableName);
+      sql("INSERT INTO %s VALUES (1, 'a'), (2, 'b')", tableName);
+      long clusteredVersion = currentVersion(tableName);
+      assertClusteringColumnsEverywhere(tableName, "[[\"id\"]]");
+
+      sql("ALTER TABLE %s CLUSTER BY NONE", tableName);
+      assertNoClusteringColumnsEverywhere(tableName);
+
+      assertThrowsWithCauseContaining(
+          CLUSTERING_KILL_SWITCH_ERROR,
+          () -> sql("RESTORE TABLE %s TO VERSION AS OF %d", tableName, clusteredVersion));
+
+      assertNoClusteringColumnsEverywhere(tableName);
+      check(tableName, List.of(row("1", "a"), row("2", "b")));
+    } finally {
+      sql("DROP TABLE IF EXISTS %s", tableName);
+    }
+  }
+
+  @Test
+  public void testRowTrackingHighWatermarkDomainMetadataAdvancesInUc() throws Exception {
+    withNewTable(
+        "row_tracking_domain_metadata_test",
+        "id INT, name STRING",
+        TableType.MANAGED,
+        tableName -> {
+          sql("INSERT INTO %s VALUES (1, 'a'), (2, 'b')", tableName);
+          long firstHighWatermark = rowTrackingHighWatermark(tableName);
+
+          sql("INSERT INTO %s VALUES (3, 'c')", tableName);
+          long secondHighWatermark = rowTrackingHighWatermark(tableName);
+
+          assertTrue(secondHighWatermark > firstHighWatermark);
+        });
+  }
+
+  @Test
+  public void testRowTrackingBackfillHighWatermarkDomainMetadataSyncsToUc() throws Exception {
+    withNewTable(
+        "row_tracking_backfill_domain_metadata_test",
+        "id INT, name STRING",
+        TableType.MANAGED,
+        tableName -> {
+          sql("INSERT INTO %s VALUES (1, 'a'), (2, 'b')", tableName);
+
+          sql("ALTER TABLE %s SET TBLPROPERTIES ('delta.enableRowTracking' = 'true')", tableName);
+
+          long highWatermarkAfterBackfill = rowTrackingHighWatermark(tableName);
+          assertTrue(highWatermarkAfterBackfill >= 1);
+        });
   }
 
   @Test
@@ -274,5 +387,42 @@ public class UCDeltaTableMetadataUpdateTest extends UCDeltaTableIntegrationBaseT
                 }
               });
         });
+  }
+
+  private LoadTableResponse loadTableViaDeltaRest(String tableName) throws Exception {
+    String[] parts = tableName.split("\\.", 3);
+    return new TablesApi(unityCatalogInfo().createApiClient())
+        .loadTable(parts[0], parts[1], parts[2]);
+  }
+
+  private TableInfo loadTableInfoViaUc(String tableName) throws Exception {
+    return new io.unitycatalog.client.api.TablesApi(unityCatalogInfo().createApiClient())
+        .getTable(tableName, false, false);
+  }
+
+  private void assertClusteringColumnsEverywhere(String tableName, String expected)
+      throws Exception {
+    assertEquals(
+        expected,
+        loadTableViaDeltaRest(tableName).getMetadata().getProperties().get(CLUSTERING_COLUMNS));
+    assertEquals(expected, loadTableInfoViaUc(tableName).getProperties().get(CLUSTERING_COLUMNS));
+  }
+
+  private void assertNoClusteringColumnsEverywhere(String tableName) throws Exception {
+    assertNoClusteringColumns(loadTableViaDeltaRest(tableName).getMetadata().getProperties());
+    assertNoClusteringColumns(loadTableInfoViaUc(tableName).getProperties());
+  }
+
+  private static void assertNoClusteringColumns(Map<String, String> properties) {
+    assertTrue(
+        !properties.containsKey(CLUSTERING_COLUMNS)
+            || "[]".equals(properties.get(CLUSTERING_COLUMNS)));
+  }
+
+  private long rowTrackingHighWatermark(String tableName) throws Exception {
+    Map<String, String> properties = loadTableViaDeltaRest(tableName).getMetadata().getProperties();
+    String highWatermark = properties.get(ROW_ID_HIGH_WATERMARK);
+    assertTrue(highWatermark != null, "UC Delta loadTable is missing row-tracking high watermark");
+    return Long.parseLong(highWatermark);
   }
 }

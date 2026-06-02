@@ -16,18 +16,22 @@
 
 package org.apache.spark.sql.delta.rowtracking
 
+import scala.collection.JavaConverters._
+
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Truncate}
 import org.apache.spark.sql.delta.actions.{Action, AddFile}
-import org.apache.spark.sql.delta.actions.{Metadata, Protocol, RemoveFile}
+import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol, RemoveFile}
 import org.apache.spark.sql.delta.commands.backfill.{BackfillCommandStats, RowTrackingBackfillExecutor}
 import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.rowid.RowIdTestUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import io.delta.exceptions.MetadataChangedException
 
 import org.apache.spark.SparkConf
+import org.apache.hadoop.fs.FileStatus
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.dsl.expressions._
@@ -150,6 +154,79 @@ class RowTrackingConflictResolutionSuite extends QueryTest
       assert(committedAddFile.head.baseRowId === Some(numInitialRecords + numConcurrentRecords))
       val currentHighWaterMark = RowId.extractHighWatermark(latestSnapshot).get
       assert(currentHighWaterMark === numInitialRecords + numConcurrentRecords)
+    }
+  }
+
+  test("updated actions include row tracking domain metadata after conflict resolution") {
+    withTestTable {
+      val filePath = "file_path"
+      val numInitialRecords = 7
+      val numConcurrentRecords = 11
+
+      activateRowTracking()
+      commitRecords(numInitialRecords)
+      val readSnapshot = latestSnapshot
+      val readHighWaterMark = RowId.extractHighWatermark(readSnapshot).get
+      val initialActions = RowId.assignFreshRowIds(
+        spark,
+        readSnapshot.protocol,
+        readSnapshot,
+        Iterator(addFile(filePath)),
+        DeltaOperations.ManualUpdate).toSeq
+      val initialDomainMetadata = DomainMetadataUtils
+        .validateDomainMetadataSupportedAndNoDuplicate(initialActions, readSnapshot.protocol)
+
+      val winningCommitVersion = readSnapshot.version + 1
+      val winningCommitSummary = new WinningCommitSummary(
+        actions = Seq(
+          CommitInfo.empty(version = Some(winningCommitVersion)),
+          RowId.RowTrackingMetadataDomain(readHighWaterMark + numConcurrentRecords)
+            .toDomainMetadata),
+        fileStatus = new FileStatus(
+          1L,
+          false,
+          1,
+          1L,
+          1L,
+          FileNames.unsafeDeltaFile(deltaLog.logPath, winningCommitVersion)),
+        readTimeMs = 0L)
+
+      val currentTransactionInfo = CurrentTransactionInfo(
+        txnId = "txn",
+        readPredicates = Vector.empty,
+        readFiles = Set.empty,
+        readWholeTable = false,
+        readAppIds = Set.empty,
+        metadata = readSnapshot.metadata,
+        protocol = readSnapshot.protocol,
+        actions = initialActions,
+        readSnapshot = readSnapshot,
+        commitInfo = Some(CommitInfo.empty(version = Some(winningCommitVersion + 1))),
+        readRowIdHighWatermark = readHighWaterMark,
+        catalogTable = None,
+        domainMetadata = initialDomainMetadata,
+        op = DeltaOperations.ManualUpdate)
+
+      val updatedInfo = new ConflictChecker(
+        spark,
+        currentTransactionInfo,
+        winningCommitSummary,
+        WriteSerializable).checkConflictsAndValidateActions()
+
+      val finalHighWaterMark = updatedInfo.actions.collectFirst {
+        case RowId.RowTrackingMetadataDomain(domain) => domain.rowIdHighWaterMark
+      }.get
+      val updatedActionsHighWaterMark = updatedInfo
+        .getUpdatedActions(readSnapshot.metadata, readSnapshot.protocol)
+        .getNewDomainMetadata
+        .asScala
+        .collectFirst {
+          case dm if dm.getDomain == "delta.rowTracking" =>
+            JsonUtils.mapper.readTree(dm.getConfiguration).get("rowIdHighWaterMark").asLong()
+        }
+        .get
+
+      assert(updatedActionsHighWaterMark === finalHighWaterMark)
     }
   }
 

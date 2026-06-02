@@ -440,7 +440,6 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     }
 
     // Verify that table information maintained at the uc server side are expected.
-    boolean isManagedReplace = isReplace && tableType == TableType.MANAGED;
     assertUCTableInfo(
         tableType,
         fullTableName,
@@ -451,9 +450,8 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
         withCluster,
         options.getClusterColumn(),
         options.getPartitionColumn(),
-        // For MANAGED+REPLACE: seed CREATE=v0, seed INSERT=v1, REPLACE=v2.
-        isManagedReplace ? "2" : "0",
-        !isManagedReplace);
+        expectedLastUpdateVersion(tableType, fullTableName),
+        withCluster);
   }
 
   @Test
@@ -588,7 +586,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
         withCluster,
         options.getClusterColumn(),
         options.getPartitionColumn(),
-        "0",
+        expectedLastUpdateVersion(TableType.MANAGED, fullTableName),
         true);
 
     // Second CREATE OR REPLACE: identical metadata; goes through
@@ -606,8 +604,8 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     } else {
       check(fullTableName, List.of(List.of("3", "c")));
     }
-    // Identical metadata: UC's view of `lastUpdateVersion` and `clusteringColumns` is
-    // unchanged from the first COR.
+    // Identical table metadata: clusteringColumns is unchanged. Row-tracking domain metadata
+    // still advances on the post-replace INSERT, so lastUpdateVersion tracks the current version.
     assertUCTableInfo(
         TableType.MANAGED,
         fullTableName,
@@ -618,7 +616,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
         withCluster,
         options.getClusterColumn(),
         options.getPartitionColumn(),
-        "0",
+        expectedLastUpdateVersion(TableType.MANAGED, fullTableName),
         true);
   }
 
@@ -798,8 +796,12 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
         false,
         Optional.empty(),
         Optional.empty(),
-        "0",
+        expectedLastUpdateVersion(tableType, fullTableName),
         true);
+  }
+
+  private String expectedLastUpdateVersion(TableType tableType, String fullTableName) {
+    return tableType == TableType.MANAGED ? Long.toString(currentVersion(fullTableName)) : "0";
   }
 
   private void assertUCTableInfo(

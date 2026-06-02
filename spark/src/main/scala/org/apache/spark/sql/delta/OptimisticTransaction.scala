@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.nio.file.FileAlreadyExistsException
 import java.time.Instant
-import java.util.{ConcurrentModificationException, Optional, UUID}
+import java.util.{ArrayList, ConcurrentModificationException, Optional, UUID}
 import java.util.concurrent.TimeUnit.{MINUTES, NANOSECONDS}
 
 import scala.collection.JavaConverters._
@@ -58,7 +58,7 @@ import org.apache.spark.sql.delta.stats.FileSizeHistogramUtils
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils, PartitionUtils, TransactionHelper}
 import org.apache.spark.sql.util.ScalaExtensions._
 import io.delta.storage.commit._
-import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
+import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 import org.apache.commons.lang3.NotImplementedException
@@ -1808,7 +1808,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       // Check for duplicated [[MetadataAction]] with the same domain names and validate the table
       // feature is enabled if [[MetadataAction]] is submitted.
       val domainMetadata =
-        DomainMetadataUtils.validateDomainMetadataSupportedAndNoDuplicate(finalActions, protocol)
+        DomainMetadataUtils.validateDomainMetadataSupportedAndNoDuplicate(preparedActions, protocol)
 
       isBlindAppend = {
         val dependsOnFiles = !readPredicates.isEmpty || readFiles.nonEmpty
@@ -2110,7 +2110,28 @@ trait OptimisticTransactionImpl extends TransactionHelper
         deltaLog.createLogDirectoriesIfNotExists()
       }
       val fsWriteStartNano = System.nanoTime()
-      val jsonActions = allActions.map(_.json)
+      val oldDomainMetadata = snapshot.domainMetadata.map(dm => dm: AbstractDomainMetadata).asJava
+      val newDomainMetadata = new ArrayList[AbstractDomainMetadata](oldDomainMetadata)
+      def applyDomainMetadataAction(domainMetadata: DomainMetadata): Unit = {
+        val iterator = newDomainMetadata.iterator()
+        while (iterator.hasNext) {
+          if (iterator.next().getDomain == domainMetadata.domain) {
+            iterator.remove()
+          }
+        }
+        if (!domainMetadata.removed) {
+          newDomainMetadata.add(domainMetadata)
+        }
+      }
+      val jsonActions = allActions.map { action =>
+        action match {
+          // commitLarge streams actions, so keep the active post-commit domain metadata state
+          // in a mutable list that is populated as jsonActions is consumed by the commit path.
+          case dm: DomainMetadata => applyDomainMetadataAction(dm)
+          case _ =>
+        }
+        action.json
+      }
       var commitSizeBytes = 0L
       jsonActions.map { action =>
           commitSizeBytes += action.size
@@ -2124,7 +2145,13 @@ trait OptimisticTransactionImpl extends TransactionHelper
           )
         }
       val updatedActions = new UpdatedActions(
-        commitInfo, metadata, protocol, snapshot.metadata, snapshot.protocol)
+        commitInfo,
+        metadata,
+        protocol,
+        snapshot.metadata,
+        snapshot.protocol,
+        oldDomainMetadata,
+        newDomainMetadata)
       val commitResponse = TransactionExecutionObserver.withObserver(executionObserver) {
         effectiveTableCommitCoordinatorClient.commit(
           attemptVersion,
@@ -3074,7 +3101,23 @@ trait OptimisticTransactionImpl extends TransactionHelper
           winningCommitSummary,
           commitIsolationLevel)
 
-        updatedCurrentTransactionInfo = conflictChecker.checkConflictsAndValidateActions()
+        val rebasedCurrentTransactionInfo = conflictChecker.checkConflictsAndValidateActions()
+        // Conflict resolution already rebases this transaction's actions. Rebase the old active
+        // domain metadata baseline too, so UpdatedActions.oldDomainMetadata reflects the table
+        // state immediately before this rebased commit.
+        val winningDomainMetadata = winningCommitSummary.actions.collect {
+          case dm: DomainMetadata => dm
+        }
+        updatedCurrentTransactionInfo = if (winningDomainMetadata.nonEmpty) {
+          rebasedCurrentTransactionInfo.copy(
+            readDomainMetadataOpt = Some(DomainMetadataUtils
+              .mergeDomainMetadata(
+                updatedCurrentTransactionInfo.readDomainMetadata,
+                winningDomainMetadata)
+              .filterNot(_.removed)))
+        } else {
+          rebasedCurrentTransactionInfo
+        }
 
         logInfo(logPrefix +
           log"No conflicts in version ${MDC(DeltaLogKeys.VERSION, otherCommitVersion)}, " +
