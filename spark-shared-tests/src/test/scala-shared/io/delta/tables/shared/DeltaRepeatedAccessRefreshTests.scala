@@ -21,13 +21,13 @@ import org.scalatest.funsuite.AnyFunSuite
 import org.apache.spark.sql.Row
 
 /**
- * Section [2]: repeated `sql()` calls reflect both session and external mutations (data writes,
- * schema changes, drop/recreate). Shared across classic and Connect.
+ * Repeated `sql()` calls reflect both session and external mutations (data writes, schema changes,
+ * drop/recreate). Shared across classic and Connect.
  */
 trait DeltaRepeatedAccessRefreshTests
   extends DeltaTableRefreshSharedBase { self: AnyFunSuite =>
 
-  /** Creates the standard 2 column table, seeds it with `(1, 100)`, and asserts that first read. */
+  /** Creates the standard 2 column table, inserts `(1, 100)`, and asserts that first read. */
   private def withSeededTable(tableRef: String)(body: => Unit): Unit = {
     createSimpleTable(tableRef)
     insertInitialData(tableRef)
@@ -75,8 +75,6 @@ trait DeltaRepeatedAccessRefreshTests
       }
     }
   }
-
-  // Section [2] external: Repeated table access with external modifications.
 
   test("[2] scenario 1 external: repeated access picks up external data") {
     withRefreshTable { tableRef =>
