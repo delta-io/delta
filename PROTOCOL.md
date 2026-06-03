@@ -948,7 +948,10 @@ A feature being supported does not imply that it is active. For example, a table
 A feature is active on a table when it is supported *and* its metadata requirements are satisfied. Each feature defines its own metadata requirements, as stated in the corresponding sections of this document. For example, the Append-only feature is active when the `appendOnly` feature name is present in a `protocol`'s `writerFeatures` *and* a table property `delta.appendOnly` set to `true`.
 
 # Column Mapping
-Delta can use column mapping to avoid any column naming restrictions, and to support the renaming and dropping of columns without having to rewrite all the data. There are two modes of column mapping, by `name` and by `id`. In both modes, every column - nested or leaf - is assigned a unique _physical_ name, and a unique 32-bit integer as an id. The physical name is stored as part of the column metadata with the key `delta.columnMapping.physicalName`. The column id is stored within the metadata with the key `delta.columnMapping.id`.
+Delta can use column mapping to avoid any column naming restrictions, and to support the renaming and dropping of columns without having to rewrite all the data. There are two modes of column mapping, by `name` and by `id`. In both modes, every column - nested or leaf - is assigned a _physical_ name, and a unique 32-bit integer as an id. The physical name is stored as part of the column metadata with the key `delta.columnMapping.physicalName`. The column id is stored within the metadata with the key `delta.columnMapping.id`.
+
+## Field Path
+A _field path_ is the path from the schema root to a [struct field](#struct-field), formed by the ordered sequence of field names along that path. When the path traverses an [Array Type](#array-type) element, or a [Map Type](#map-type) key or value, the path component is `element`, `key`, or `value`, respectively. A _physical field path_ exists only when Column Mapping mode is `id` or `name`; it is formed by replacing each struct field name in a field path with that struct field's physical name. In these modes, the physical field path of each column must be unique within the schema.
 
 The column mapping is governed by the table property `delta.columnMapping.mode` being one of `none`, `id`, and `name`. The table property should only be honored if the table's protocol has reader and writer versions and/or table features that support the `columnMapping` table feature. For readers this is Reader Version 2, or Reader Version 3 with the `columnMapping` table feature listed as supported. For writers this is Writer Version 5 or 6, or Writer Version 7 with the `columnMapping` table feature supported.
 
@@ -979,6 +982,7 @@ The following is an example for the column definition of a table that leverages 
     }
   }
 ```
+In this example, the field path of column `d` is `["e", "element", "d"]`, and its physical field path is `["col-5f422f40-de70-45b2-88ab-1d5c90e94db1", "element", "col-a7f4159c-53be-4cb0-b81a-f7e5240cfc49"]`.
 
 ## Writer Requirements for Column Mapping
 In order to support column mapping, writers must:
@@ -990,7 +994,7 @@ In order to support column mapping, writers must:
  - Write data files by using the _physical name_ that is chosen for each column. The physical name of the column is static and can be different than the _display name_ of the column, which is changeable.
  - Write the 32 bit integer column identifier as part of the `field_id` field of the `SchemaElement` struct in the [Parquet Thrift specification](https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift).
  - Track partition values, column level statistics, and [clustering column](#clustered-table) names with the physical name of the column in the transaction log.
- - Assign a globally unique identifier as the physical name for each new column that is added to the schema. This is especially important for supporting cheap column deletions in `name` mode. In addition, column identifiers need to be assigned to each column. The maximum id that is assigned to a column is tracked as the table property `delta.columnMapping.maxColumnId`. This is an internal table property that cannot be configured by users. This value must increase monotonically as new columns are introduced and committed to the table alongside the introduction of the new columns to the schema.
+ - Assign a physical name for each new column that is added to the schema, and ensure the physical field path of each column is unique within the schema. This is especially important for supporting cheap column deletions in `name` mode. In addition, column identifiers need to be assigned to each column. The maximum id that is assigned to a column is tracked as the table property `delta.columnMapping.maxColumnId`. This is an internal table property that cannot be configured by users. This value must increase monotonically as new columns are introduced and committed to the table alongside the introduction of the new columns to the schema.
 
 ## Reader Requirements for Column Mapping
 If the table is on Reader Version 2, or if the table is on Reader Version 3 and the feature `columnMapping` is present in `readerFeatures`, readers and writers must read the table property `delta.columnMapping.mode` and do one of the following.
