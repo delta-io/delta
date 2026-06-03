@@ -424,7 +424,7 @@ case class IcebergCompatVersionBase(knownVersions: Set[IcebergCompatBase]) {
 }
 
 object IcebergCompat extends IcebergCompatVersionBase(
-    Set(IcebergCompatV1, IcebergCompatV2, IcebergCompatV3)
+    Set(IcebergCompatV1, IcebergCompatV2)
   ) with DeltaLogging
 
 

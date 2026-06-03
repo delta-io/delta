@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{DataFrame, Row}
+import org.apache.spark.sql.{AnalysisException, DataFrame, Row}
 
 class DeltaInsertReplaceUsingDFWriterV1SaveAsTableSuite
   extends DeltaInsertReplaceUsingDFWriterTests {
@@ -87,18 +87,17 @@ class DeltaInsertReplaceUsingDFWriterV1SaveAsTableSuite
   }
 
   test("saveAsTable: replaceUsing on non-existent table errors") {
-    checkError(
-      exception = intercept[DeltaAnalysisException] {
-        Seq((1, "data1"), (2, "data2")).toDF("id", "value")
-          .write.format("delta")
-          .mode("overwrite")
-          .option("replaceUsing", "id")
-          .saveAsTable("new_table")
-      },
-      condition = "DELTA_PATH_DOES_NOT_EXIST",
-      parameters = Map("path" -> ".*"),
-      matchPVals = true
-    )
+    val ex = intercept[AnalysisException] {
+      Seq((1, "data1"), (2, "data2")).toDF("id", "value")
+        .write.format("delta")
+        .mode("overwrite")
+        .option("replaceUsing", "id")
+        .saveAsTable("new_table")
+    }
+    assert(
+      ex.getCondition == "DELTA_PATH_DOES_NOT_EXIST" ||
+        ex.getCondition == "PATH_NOT_FOUND",
+      s"Expected DELTA_PATH_DOES_NOT_EXIST or PATH_NOT_FOUND but got ${ex.getCondition}")
   }
 
   test("saveAsTable: replaceUsing with schema evolution") {

@@ -416,6 +416,66 @@ class CheckpointsSuite
     }
   }
 
+  testDifferentV2Checkpoints(
+      "v2 checkpoint uses default part size when not explicitly configured") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      withSQLConf(
+        DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name,
+        DeltaConfigs.CHECKPOINT_INTERVAL.defaultTablePropertyKey -> "1") {
+
+        // Write 12 files without setting DELTA_CHECKPOINT_PART_SIZE explicitly.
+        // The default for V2 is 50,000 so 12 actions < 50,000 => 1 sidecar.
+        spark.range(12).repartition(12).write.format("delta").save(path)
+        val deltaLog = DeltaLog.forTable(spark, path)
+        deltaLog.checkpoint()
+        assert(getV2CheckpointProvider(deltaLog).sidecarFileStatuses.size == 1)
+      }
+    }
+  }
+
+  testDifferentV2Checkpoints(
+      "v2 checkpoint default part size with 55K actions produces 2 sidecars") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      withSQLConf(
+        DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name) {
+
+        spark.range(0).write.format("delta").save(path)
+        val deltaLog = DeltaLog.forTable(spark, path)
+        val fakeFiles = (1 to 55000).map { i =>
+          createTestAddFile(encodedPath = s"file-$i")
+        }
+        deltaLog.startTransaction().commit(fakeFiles, DeltaOperations.ManualUpdate)
+
+        deltaLog.checkpoint()
+        // 55000 / 50000 = 1.1 => ceil = 2 sidecars
+        assert(getV2CheckpointProvider(deltaLog).sidecarFileStatuses.size == 2)
+      }
+    }
+  }
+
+  testDifferentV2Checkpoints(
+      "v2 checkpoint default part size with 45K actions produces 1 sidecar") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      withSQLConf(
+        DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name) {
+
+        spark.range(0).write.format("delta").save(path)
+        val deltaLog = DeltaLog.forTable(spark, path)
+        val fakeFiles = (1 to 45000).map { i =>
+          createTestAddFile(encodedPath = s"file-$i")
+        }
+        deltaLog.startTransaction().commit(fakeFiles, DeltaOperations.ManualUpdate)
+
+        deltaLog.checkpoint()
+        // 45000 / 50000 = 0.9 => ceil = 1 sidecar
+        assert(getV2CheckpointProvider(deltaLog).sidecarFileStatuses.size == 1)
+      }
+    }
+  }
+
   test("checkpoint does not contain CDC field") {
     withSQLConf(
         DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true"
