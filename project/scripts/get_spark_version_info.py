@@ -16,6 +16,10 @@ Usage:
     python project/scripts/get_spark_version_info.py --released-spark-versions
     # Output: ["4.0", "4.1"] (excludes versions with -SNAPSHOT)
 
+    # Get Spark versions with configured source-build defaults
+    python project/scripts/get_spark_version_info.py --source-build-spark-versions
+    # Output: ["4.2"]
+
     # Get a specific field for a Spark version (using short version or "master")
     python project/scripts/get_spark_version_info.py --get-field 4.0 targetJvm
     python project/scripts/get_spark_version_info.py --get-field master targetJvm
@@ -84,6 +88,11 @@ def main():
         help="Output only released Spark versions (excluding snapshots) as JSON array"
     )
     parser.add_argument(
+        "--source-build-spark-versions",
+        action="store_true",
+        help="Output Spark versions with configured source-build default refs as JSON array"
+    )
+    parser.add_argument(
         "--get-field",
         nargs=2,
         metavar=("SPARK_VERSION", "FIELD"),
@@ -118,6 +127,13 @@ def main():
             for v in versions:
                 if not any(m in v["fullVersion"] for m in pre_release_markers):
                     matrix_versions.append(v["shortVersion"])
+            print(json.dumps(matrix_versions))
+
+        elif args.source_build_spark_versions:
+            matrix_versions = []
+            for v in versions:
+                if v.get("sourceBuildDefaultRef"):
+                    matrix_versions.append("master" if v.get("isMaster", False) else v["shortVersion"])
             print(json.dumps(matrix_versions))
 
         elif args.get_field:
