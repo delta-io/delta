@@ -736,6 +736,7 @@ private abstract class ThrowingUCDeltaClient extends UCDeltaClient {
       newMetadata: Optional[AbstractMetadata],
       oldProtocol: Optional[AbstractProtocol],
       newProtocol: Optional[AbstractProtocol],
+      domainMetadataToCommit: util.List[AbstractDomainMetadata],
       uniform: Optional[UniformMetadata]): Unit =
     throw new UnsupportedOperationException
   override def getCommits(

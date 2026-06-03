@@ -32,6 +32,7 @@ import io.delta.storage.commit.{
   CoordinatedCommitsUtils => JCoordinatedCommitsUtils,
   GetCommitsResponse => JGetCommitsResponse
 }
+import io.delta.storage.commit.actions.AbstractDomainMetadata
 import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCommitCoordinatorClient}
 import org.apache.hadoop.fs.Path
 import org.mockito.ArgumentMatchers.any
@@ -126,6 +127,7 @@ trait UCCommitCoordinatorClientSuiteBase extends CommitCoordinatorClientImplSuit
       Optional.empty(), // newMetadata
       Optional.empty(), // oldProtocol
       Optional.empty(), // newProtocol
+      java.util.Collections.emptyList[AbstractDomainMetadata](), // domainMetadataToCommit
       Optional.empty() /* uniform */)
   }
 

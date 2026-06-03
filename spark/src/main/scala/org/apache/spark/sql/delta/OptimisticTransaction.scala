@@ -58,7 +58,7 @@ import org.apache.spark.sql.delta.stats.FileSizeHistogramUtils
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils, PartitionUtils, TransactionHelper}
 import org.apache.spark.sql.util.ScalaExtensions._
 import io.delta.storage.commit._
-import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
+import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 import org.apache.commons.lang3.NotImplementedException
@@ -2925,13 +2925,19 @@ trait OptimisticTransactionImpl extends TransactionHelper
   ): Commit = {
     val updatedActions =
       currentTransactionInfo.getUpdatedActions(snapshot.metadata, snapshot.protocol)
+    val domainMetadataToCommit =
+      DomainMetadataUtils.validateDomainMetadataSupportedAndNoDuplicate(
+        currentTransactionInfo.actions,
+        currentTransactionInfo.protocol)
     val commitResponse = TransactionExecutionObserver.withObserver(executionObserver) {
       tableCommitCoordinatorClient.commit(
         attemptVersion,
         jsonActions,
         updatedActions,
         catalogTable.map(_.identifier),
-        new CatalogTrackedInfo(currentTransactionInfo.convertedIcebergMetadata.toJava)
+        new CatalogTrackedInfo(
+          currentTransactionInfo.convertedIcebergMetadata.toJava,
+          domainMetadataToCommit.map(dm => dm: AbstractDomainMetadata).asJava)
       )
     }
     if (attemptVersion == 0L) {
