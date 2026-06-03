@@ -92,6 +92,19 @@ class CheckpointsSuite
     }
   }
 
+  def getCheckpointFileActions(
+      deltaLog: DeltaLog,
+      checkpoint: FileStatus): Seq[Action] = {
+    if (checkpoint.getPath.toString.endsWith("json")) {
+      deltaLog.store.read(checkpoint.getPath).map(Action.fromJson)
+    } else {
+      val fileIndex =
+        DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, Seq(checkpoint)).get
+      deltaLog.loadIndex(fileIndex, Action.logSchema)
+        .as[SingleAction].collect().map(_.unwrap).toSeq
+    }
+  }
+
   protected override def sparkConf = {
     // Set the gs LogStore impl to `LocalLogStore` so that it will work with
     // `FakeGCSFileSystemValidatingCheckpoint`.
@@ -193,17 +206,7 @@ class CheckpointsSuite
           assert(checkpointLiteral == "checkpoint")
       }
 
-      def getCheckpointFileActions(checkpoint: FileStatus) : Seq[Action] = {
-        if (checkpoint.getPath.toString.endsWith("json")) {
-          deltaLog.store.read(checkpoint.getPath).map(Action.fromJson)
-        } else {
-          val fileIndex =
-            DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, Seq(checkpoint)).get
-          deltaLog.loadIndex(fileIndex, Action.logSchema)
-            .as[SingleAction].collect().map(_.unwrap).toSeq
-        }
-      }
-      val actions = getCheckpointFileActions(checkpoint)
+      val actions = getCheckpointFileActions(deltaLog, checkpoint)
       // V2 Checkpoints should contain exactly one action each of types
       // Metadata, CheckpointMetadata, and Protocol
       // In this particular case, we should only have one sidecar file
@@ -241,17 +244,7 @@ class CheckpointsSuite
       assert(checkpointFiles.length == 1)
       val checkpoint = checkpointFiles.head
 
-      def getCheckpointFileActions(checkpoint: FileStatus): Seq[Action] = {
-        if (checkpoint.getPath.toString.endsWith("json")) {
-          deltaLog.store.read(checkpoint.getPath).map(Action.fromJson)
-        } else {
-          val fileIndex =
-            DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, Seq(checkpoint)).get
-          deltaLog.loadIndex(fileIndex, Action.logSchema)
-            .as[SingleAction].collect().map(_.unwrap).toSeq
-        }
-      }
-      val actions = getCheckpointFileActions(checkpoint)
+      val actions = getCheckpointFileActions(deltaLog, checkpoint)
       val cmActions = actions.collect { case cm: CheckpointMetadata => cm }
       assert(cmActions.length == 1)
       val cm = cmActions.head
@@ -284,15 +277,15 @@ class CheckpointsSuite
       assert(sidecarSchema.fieldNames.contains("remove"),
         s"sidecar schema should contain 'remove' field, got: ${sidecarSchema.fieldNames.toSeq}")
 
-      val v2Provider = getV2CheckpointProvider(deltaLog, update = true)
-      val resolvedSchema = v2Provider.allActionsFileIndexesAndSchemas(spark, deltaLog)
-        .filter(_._1.files.exists(f => f.getPath.toString.contains("_sidecars")))
-        .map(_._2)
-      assert(resolvedSchema.nonEmpty, "Should have at least one sidecar file index")
-      assert(resolvedSchema.head == sidecarSchema,
-        s"Schema from tags should match resolved sidecar schema.\n" +
+      val sidecarActions = actions.collect { case s: SidecarFile => s }
+      assert(sidecarActions.nonEmpty, "Should have at least one sidecar file")
+      val sidecarFileStatus = sidecarActions.head.toFileStatus(deltaLog.logPath)
+      val footerSchema = Snapshot.getParquetFileSchemaAndRowCount(
+        spark, deltaLog, sidecarFileStatus)._1
+      assert(footerSchema == sidecarSchema,
+        s"Schema from tags should match schema read from sidecar Parquet footer.\n" +
         s"From tags: ${sidecarSchema.treeString}\n" +
-        s"Resolved: ${resolvedSchema.head.treeString}")
+        s"From footer: ${footerSchema.treeString}")
 
       val roundTripped = JsonUtils.fromJson[SingleAction](cm.json).unwrap
         .asInstanceOf[CheckpointMetadata]

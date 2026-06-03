@@ -571,7 +571,9 @@ object V2CheckpointProvider {
             val sidecarFileStatus =
               sidecarFile.toFileStatus(uninitializedV2LikeCheckpointProvider.logPath)
             CheckpointProvider.getParquetSchema(
-              spark, deltaLog, sidecarFileStatus,
+              spark,
+              deltaLog,
+              sidecarFileStatus,
               schemaFromLastCheckpoint = sidecarSchemaFromMetadata)
           }
         }
