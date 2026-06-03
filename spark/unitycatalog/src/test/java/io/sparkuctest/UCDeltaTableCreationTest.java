@@ -452,8 +452,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
         options.getClusterColumn(),
         options.getPartitionColumn(),
         // For MANAGED+REPLACE: seed CREATE=v0, seed INSERT=v1, REPLACE=v2.
-        isManagedReplace ? "2" : "0",
-        !isManagedReplace);
+        isManagedReplace ? "2" : "0");
   }
 
   @Test
@@ -588,8 +587,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
         withCluster,
         options.getClusterColumn(),
         options.getPartitionColumn(),
-        "0",
-        true);
+        "0");
 
     // Second CREATE OR REPLACE: identical metadata; goes through
     // `loadTableAndBuildReplaceProps`. Identity must survive and the post-create INSERT
@@ -618,8 +616,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
         withCluster,
         options.getClusterColumn(),
         options.getPartitionColumn(),
-        withCluster ? "2" : "0",
-        true);
+        withCluster ? "2" : "0");
   }
 
   /**
@@ -798,8 +795,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
         false,
         Optional.empty(),
         Optional.empty(),
-        "0",
-        true);
+        "0");
   }
 
   private void assertUCTableInfo(
@@ -812,8 +808,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       boolean withCluster,
       Optional<String> clusterColumn,
       Optional<String> partitionColumn,
-      String expectedLastUpdateVersion,
-      boolean expectClusteringColumnsProperty)
+      String expectedLastUpdateVersion)
       throws ApiException {
     UnityCatalogInfo uc = unityCatalogInfo();
     String catalogName = uc.catalogName();
@@ -859,10 +854,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
           withCluster
               ? ImmutableMap.<String, String>builder()
                   .put("delta.feature.clustering", SUPPORTED)
-                  .putAll(
-                      expectClusteringColumnsProperty
-                          ? Map.of("clusteringColumns", "[[\"" + clusterColumn.get() + "\"]]")
-                          : Map.of())
+                  .put("clusteringColumns", "[[\"" + clusterColumn.get() + "\"]]")
                   .build()
               : ImmutableMap.of();
       final Map<String, String> expectedOtherProperties =
