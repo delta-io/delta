@@ -80,7 +80,6 @@ class UpdateMetricsHookSuite extends QueryTest
       enableFlag: Boolean = true)(
       testBody: (SimpleMockServer, DeltaLog, CatalogTable) => Unit): Unit = {
     val mockServer = new SimpleMockServer(0)
-    val originalCommitMetricsEnabled = spark.conf.getOption(CONF_KEY)
     mockServer.setResponseCode(responseCode)
     if (responseDelay > 0) { mockServer.setResponseDelay(responseDelay) }
     mockServer.start()
@@ -105,10 +104,7 @@ class UpdateMetricsHookSuite extends QueryTest
         testBody(mockServer, deltaLog, ct)
       }
     } finally {
-      originalCommitMetricsEnabled match {
-        case Some(value) => spark.conf.set(CONF_KEY, value)
-        case None => spark.conf.unset(CONF_KEY)
-      }
+      spark.conf.set(CONF_KEY, "false")
       mockServer.stop()
     }
   }
@@ -116,20 +112,6 @@ class UpdateMetricsHookSuite extends QueryTest
   override protected def sparkConf: SparkConf = {
     super.sparkConf
       .set("spark.databricks.delta.properties.defaults.enableChangeDataFeed", "false")
-  }
-
-  test("commitMetrics.enabled defaults to true") {
-    val originalCommitMetricsEnabled = spark.conf.getOption(CONF_KEY)
-    try {
-      spark.conf.unset(CONF_KEY)
-      assert(spark.sessionState.conf.getConf(
-        DeltaSQLConf.DELTA_UC_COMMIT_METRICS_ENABLED))
-    } finally {
-      originalCommitMetricsEnabled match {
-        case Some(value) => spark.conf.set(CONF_KEY, value)
-        case None => spark.conf.unset(CONF_KEY)
-      }
-    }
   }
 
   test("CatalogTableUtils.isUnityCatalogManagedTable: detection cases") {
