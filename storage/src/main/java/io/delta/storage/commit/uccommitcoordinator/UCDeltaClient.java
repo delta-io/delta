@@ -20,6 +20,7 @@ import io.delta.storage.commit.TableIdentifier;
 import io.delta.storage.commit.actions.AbstractDomainMetadata;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
+import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.CommitReport;
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.StagingTableInfo;
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.TableInfo;
 import java.io.IOException;
@@ -83,4 +84,18 @@ public interface UCDeltaClient extends UCClient {
       AbstractProtocol protocol,
       List<AbstractDomainMetadata> domainMetadata,
       long lastCommitTimestampMs) throws IOException;
+
+  /**
+   * Reports post-commit telemetry for a table (file/row counts, byte counts, file-size
+   * histogram) to the catalog.
+   *
+   * @param tableId         catalog-side table id (UC's `table_uuid`)
+   * @param tableIdentifier catalog + schema namespace and table name
+   * @param report          per-commit metrics payload
+   * @throws IOException on network or API errors
+   */
+  void reportMetrics(
+      String tableId,
+      TableIdentifier tableIdentifier,
+      CommitReport report) throws IOException;
 }
