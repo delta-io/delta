@@ -183,6 +183,7 @@ import Unidoc._
  *   - isDefault: Whether this is the default Spark version
  *   - targetJvm: Target JVM version (e.g., "17")
  *   - packageSuffix: Maven artifact suffix for this version (e.g., "_4.0", "_4.1")
+ *   - sourceBuildDefaultRef: Default Spark source ref to build for source-built lanes, if any
  *
  *   Example:
  *     build/sbt exportSparkVersionsJson
@@ -210,6 +211,8 @@ import Unidoc._
  * @param additionalSourceDir Optional version-specific source directory suffix (e.g., "scala-spark-3.5")
  * @param antlr4Version ANTLR version to use (e.g., "4.9.3", "4.13.1")
  * @param additionalJavaOptions Additional JVM options for tests (e.g., Java 17 --add-opens flags)
+ * @param sourceBuildArtifactBaseVersion Base Spark artifact version for source-built refs, if different from fullVersion
+ * @param sourceBuildDefaultRef Default Spark source ref for source-built CI/cache workflows
  */
 case class SparkVersionSpec(
   fullVersion: String,
@@ -220,7 +223,9 @@ case class SparkVersionSpec(
   antlr4Version: String,
   additionalJavaOptions: Seq[String] = Seq.empty,
   jacksonVersion: String = "2.15.2",
-  additionalResolvers: Seq[Resolver] = Seq.empty
+  additionalResolvers: Seq[Resolver] = Seq.empty,
+  sourceBuildArtifactBaseVersion: Option[String] = None,
+  sourceBuildDefaultRef: Option[String] = None
 ) {
   /** Returns the Spark short version (e.g., "3.5", "4.0") */
   def shortVersion: String = {
@@ -246,6 +251,10 @@ case class SparkVersionSpec(
 
   /** Whether to generate Javadoc/Scaladoc for this version */
   def generateDocs: Boolean = isDefault
+
+  /** Base version used when deriving a local artifact version for a source-built Spark ref. */
+  def artifactBaseVersion: String = sourceBuildArtifactBaseVersion.getOrElse(
+    fullVersion.stripSuffix("-SNAPSHOT"))
 }
 
 object SparkVersionSpec {
@@ -294,7 +303,9 @@ object SparkVersionSpec {
     supportHudi = false,
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,
-    jacksonVersion = "2.18.2"
+    jacksonVersion = "2.18.2",
+    sourceBuildArtifactBaseVersion = Some("4.2.0"),
+    sourceBuildDefaultRef = Some("b6bd005ac7549411ec4e7dc944d7a0e19fd56561")
   )
 
   /** Default Spark version */
@@ -585,6 +596,12 @@ object CrossSparkVersions extends AutoPlugin {
 
       val outputFile = new File("target/spark-versions.json")
       outputFile.getParentFile.mkdirs()
+
+      def jsonString(value: Option[String]): String = {
+        value.map { raw =>
+          "\"" + raw.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+        }.getOrElse("null")
+      }
       
       val writer = new PrintWriter(outputFile)
       // scalastyle:off
@@ -603,6 +620,8 @@ object CrossSparkVersions extends AutoPlugin {
           writer.println(s"""    "isDefault": $isDefault,""")
           writer.println(s"""    "targetJvm": "${spec.targetJvm}",""")
           writer.println(s"""    "packageSuffix": "$packageSuffix",""")
+          writer.println(s"""    "sourceBuildArtifactBaseVersion": ${jsonString(spec.sourceBuildArtifactBaseVersion)},""")
+          writer.println(s"""    "sourceBuildDefaultRef": ${jsonString(spec.sourceBuildDefaultRef)},""")
           writer.println(s"""    "supportIceberg": "${spec.supportIceberg}",""")
           writer.println(s"""    "supportHudi": "${spec.supportHudi}"""")
           writer.println(s"""  }$comma""")

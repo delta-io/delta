@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
 #
-# Build a specific Apache Spark source ref and publish it to local Maven for Delta tests.
-#
-# Required:
-#   SPARK_SOURCE_REF=<git-ref-or-sha>
+# Build an Apache Spark source ref and publish it to local Maven for Delta tests.
 #
 # Optional:
+#   SPARK_SOURCE_REF=<git-ref-or-sha, default: master>
 #   SPARK_COMMIT=<git-sha> compatibility alias for SPARK_SOURCE_REF
 #   SPARK_VERSION=<compatibility line, default: 4.2>
 #   SPARK_BASE_VERSION=<artifact base version; default read from Spark version.sbt>
@@ -18,8 +16,7 @@
 #
 set -euo pipefail
 
-SPARK_SOURCE_REF="${SPARK_SOURCE_REF:-${SPARK_COMMIT:-}}"
-SPARK_SOURCE_REF="${SPARK_SOURCE_REF:?SPARK_SOURCE_REF is required}"
+SPARK_SOURCE_REF="${SPARK_SOURCE_REF:-${SPARK_COMMIT:-master}}"
 SPARK_REPO="${SPARK_REPO:-https://github.com/apache/spark.git}"
 SPARK_DIR="${SPARK_DIR:-/tmp/spark}"
 SPARK_VERSION="${SPARK_VERSION:-4.2}"
