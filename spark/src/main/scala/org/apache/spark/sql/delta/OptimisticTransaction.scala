@@ -3230,9 +3230,19 @@ trait OptimisticTransactionImpl extends TransactionHelper
   protected def updateCatalogTableWithUniformMetadata(
       txnInfo: CurrentTransactionInfo,
       uniformMetadataOpt: Option[UniformMetadata]): CurrentTransactionInfo = {
+    val isUniformEnabled = UniversalFormat.icebergEnabled(txnInfo.metadata)
     uniformMetadataOpt.flatMap(_.getIcebergMetadata.toScala) match {
-      case None => txnInfo
+      case None if !isUniformEnabled =>
+        logInfo(log"Skipping uniform metadata update: UniForm is not enabled.")
+        txnInfo
+      case None if isUniformEnabled =>
+        logWarning(log"UniForm is enabled but no uniform metadata was found " +
+          log"during conflict resolution listing.")
+        txnInfo
       case Some(iceberg) =>
+        logInfo(log"Updating catalogTable with uniform metadata, " +
+          log"whose convertedDeltaVersion=" +
+          log"${MDC(DeltaLogKeys.VERSION, iceberg.getConvertedDeltaVersion)}.")
         txnInfo.catalogTable.map { ct =>
           val newUniFormPropes = Map(
             IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP ->
