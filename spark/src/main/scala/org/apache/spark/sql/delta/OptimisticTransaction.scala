@@ -2925,10 +2925,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
   ): Commit = {
     val updatedActions =
       currentTransactionInfo.getUpdatedActions(snapshot.metadata, snapshot.protocol)
-    val domainMetadataActions = currentTransactionInfo.actions
     val domainMetadataToCommit =
       DomainMetadataUtils.validateDomainMetadataSupportedAndNoDuplicate(
-        domainMetadataActions,
+        currentTransactionInfo.actions,
         currentTransactionInfo.protocol)
     val commitResponse = TransactionExecutionObserver.withObserver(executionObserver) {
       tableCommitCoordinatorClient.commit(
