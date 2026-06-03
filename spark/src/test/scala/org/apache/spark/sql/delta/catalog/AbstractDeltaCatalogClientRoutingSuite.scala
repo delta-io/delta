@@ -552,7 +552,8 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
   // post-REPLACE commits for stripping required features.
   // -------------------------------------------------------------------------
 
-  test("loadTableAndBuildReplaceProps: carries forward existing delta.feature.* + editable configs") {
+  test(
+    "loadTableAndBuildReplaceProps: carries forward existing delta.feature.* + editable configs") {
     val client = replaceClient(existingDeltaTableInfo(additionalConfig = Map(
       "delta.feature.deletionVectors" -> "supported",
       "delta.enableDeletionVectors" -> "true",

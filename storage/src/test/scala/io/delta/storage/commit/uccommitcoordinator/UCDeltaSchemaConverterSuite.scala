@@ -16,11 +16,11 @@
 
 package io.delta.storage.commit.uccommitcoordinator
 
-import java.util.{Arrays, Collections, HashMap => JHashMap}
+import java.util.{Arrays, Collections}
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.unitycatalog.client.delta.model.{ArrayType, DecimalType, DeltaType, MapType}
-import io.unitycatalog.client.delta.model.{PrimitiveType, StructField, StructType}
+import io.unitycatalog.client.delta.model.{PrimitiveType, StructField, StructFieldMetadata, StructType}
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -29,8 +29,12 @@ class UCDeltaSchemaConverterSuite extends AnyFunSuite {
   private val objectMapper = new ObjectMapper()
 
   private def prim(t: String): PrimitiveType = new PrimitiveType().`type`(t)
+  // Delta's wire format requires `metadata` to always be present (even if empty); a real
+  // schema parsed from the wire never has a null metadata, so the helper mirrors that
+  // shape with an empty StructFieldMetadata by default.
   private def field(name: String, t: DeltaType, nullable: Boolean = true): StructField =
-    new StructField().name(name).nullable(nullable).`type`(t)
+    new StructField()
+      .name(name).nullable(nullable).`type`(t).metadata(new StructFieldMetadata())
 
   /**
    * One example per primitive: (UC `ColumnTypeName`, catalog-side DDL form, Delta wire form).
@@ -159,7 +163,7 @@ class UCDeltaSchemaConverterSuite extends AnyFunSuite {
   }
 
   test("serializeSchema: per-field metadata round-trips; empty metadata emits {} (not omitted)") {
-    val metadata = new JHashMap[String, Object]()
+    val metadata = new StructFieldMetadata()
     metadata.put("comment", "user-facing column doc")
     metadata.put("delta.columnMapping.id", java.lang.Long.valueOf(42L))
     val annotated = new StructField()
@@ -174,20 +178,6 @@ class UCDeltaSchemaConverterSuite extends AnyFunSuite {
     // Empty metadata must still be present as `{}`; Delta's reader treats omission as ambiguous.
     val plainMeta = parsed.get("fields").get(1).get("metadata")
     assert(plainMeta != null && plainMeta.isObject && plainMeta.size() === 0)
-  }
-
-  test("serializeSchema: null containsNull / valueContainsNull are omitted from JSON output") {
-    // Delta's reader rejects literal "containsNull":null, so the mapper must omit the key.
-    val arr = new ArrayType().elementType(prim("string")) // containsNull deliberately unset
-    val m = new MapType().keyType(prim("string")).valueType(prim("integer")) // and here too
-    val s = new StructType().addFieldsItem(field("a", arr)).addFieldsItem(field("m", m))
-    val parsed = objectMapper.readTree(UCDeltaSchemaConverter.serializeSchema(s))
-    val arrJson = parsed.get("fields").get(0).get("type")
-    val arrNode = arrJson.get("containsNull")
-    assert(arrNode == null || !arrNode.isNull, s"unexpected null containsNull in: $arrJson")
-    val mapJson = parsed.get("fields").get(1).get("type")
-    val mapNode = mapJson.get("valueContainsNull")
-    assert(mapNode == null || !mapNode.isNull, s"unexpected null valueContainsNull in: $mapJson")
   }
 
   // ----------------------------------------

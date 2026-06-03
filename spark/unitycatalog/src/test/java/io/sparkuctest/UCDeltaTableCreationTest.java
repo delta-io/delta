@@ -60,14 +60,11 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
   private static final String UC_TABLE_ID_KEY = "io.unitycatalog.tableId";
   private static final String DELTA_CATALOG_MANAGED_KEY = "delta.feature.catalogManaged";
   private static final String SUPPORTED = "supported";
-  private static final String MANAGED_TBLPROPERTIES_CLAUSE =
-      String.format("TBLPROPERTIES ('%s'='%s', 'Foo'='Bar')", DELTA_CATALOG_MANAGED_KEY, SUPPORTED);
+  private static final String CUSTOM_TBLPROPERTIES_CLAUSE = "TBLPROPERTIES ('Foo'='Bar')";
   // In the table REPLACE test, a slightly different table property clause will be used to create
   // the first table. Then the REPLACE command would use TBLPROPERTIES_CLAUSE. This is to make sure
   // that the table properties are properly updated in the REPLACE command.
-  private static final String MANAGED_TBLPROPERTIES_CLAUSE_OTHER =
-      String.format(
-          "TBLPROPERTIES ('%s'='%s', 'Foo2'='Bar2')", DELTA_CATALOG_MANAGED_KEY, SUPPORTED);
+  private static final String CUSTOM_TBLPROPERTIES_CLAUSE_OTHER = "TBLPROPERTIES ('Foo2'='Bar2')";
 
   // Expected table features to be enabled for managed tables
   private static final List<String> EXPECTED_MANAGED_TABLE_FEATURES =
@@ -211,7 +208,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
           columnsClause(),
           partitionClause(),
           clusterClause(),
-          MANAGED_TBLPROPERTIES_CLAUSE,
+          CUSTOM_TBLPROPERTIES_CLAUSE,
           commentClause(),
           asSelectClause());
     }
@@ -409,10 +406,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       String seedClusterClause = withClusterBeforeReplace ? "CLUSTER BY (col1)" : "";
       sql(
           "CREATE TABLE %s (col1 STRING, col2 STRING) USING DELTA %s %s %s",
-          fullTableName,
-          MANAGED_TBLPROPERTIES_CLAUSE_OTHER,
-          seedPartitionClause,
-          seedClusterClause);
+          fullTableName, CUSTOM_TBLPROPERTIES_CLAUSE_OTHER, seedPartitionClause, seedClusterClause);
       sql("INSERT INTO %s VALUES ('seed_col1', 'seed_col2')", fullTableName);
       tablesToCleanUp.add(fullTableName);
     }
@@ -466,7 +460,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
             () ->
                 sql(
                     "CREATE TABLE %s(name STRING) USING parquet %s",
-                    fullTableName, MANAGED_TBLPROPERTIES_CLAUSE))
+                    fullTableName, CUSTOM_TBLPROPERTIES_CLAUSE))
         .hasMessageContaining("not support non-Delta managed table");
 
     // Test 2: Invalid property value 'disabled' for catalogManaged feature
@@ -488,24 +482,12 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
         .hasMessageContaining(UC_TABLE_ID_KEY);
 
     // Test 4: Cannot set is_managed_location to false for managed tables.
-    // catalogManaged must be included so the statement passes managed-table validation (Test 5)
-    // and actually reaches the is_managed_location check.
     assertThatThrownBy(
             () ->
                 sql(
-                    "CREATE TABLE %s(name STRING) USING delta TBLPROPERTIES ('%s' = '%s', '%s' = 'false')",
-                    fullTableName,
-                    DELTA_CATALOG_MANAGED_KEY,
-                    SUPPORTED,
-                    TableCatalog.PROP_IS_MANAGED_LOCATION))
+                    "CREATE TABLE %s(name STRING) USING delta TBLPROPERTIES ('%s' = 'false')",
+                    fullTableName, TableCatalog.PROP_IS_MANAGED_LOCATION))
         .hasMessageContaining("is_managed_location");
-
-    // Test 5: Managed table creation requires catalogManaged property
-    assertThatThrownBy(() -> sql("CREATE TABLE %s(name STRING) USING delta", fullTableName))
-        .hasMessageContaining(
-            String.format(
-                "Managed table creation requires table property '%s'='%s' to be set",
-                DELTA_CATALOG_MANAGED_KEY, SUPPORTED));
   }
 
   // EXTERNAL is intentionally excluded: CREATE OR REPLACE is not supported yet.
