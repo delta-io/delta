@@ -12,7 +12,7 @@ public class CatalogTrackedInfo {
         new CatalogTrackedInfo(Optional.empty(), Collections.emptyList());
 
     private final Optional<UniformMetadata> deltaUniformIceberg;
-    private final List<AbstractDomainMetadata> domainMetadataToCommit;
+    private final List<AbstractDomainMetadata> transactionDomainMetadata;
 
     public CatalogTrackedInfo(Optional<UniformMetadata> deltaUniformIceberg) {
         this(deltaUniformIceberg, Collections.emptyList());
@@ -20,16 +20,16 @@ public class CatalogTrackedInfo {
 
     public CatalogTrackedInfo(
             Optional<UniformMetadata> deltaUniformIceberg,
-            List<AbstractDomainMetadata> domainMetadataToCommit) {
+            List<AbstractDomainMetadata> transactionDomainMetadata) {
         this.deltaUniformIceberg = deltaUniformIceberg;
-        this.domainMetadataToCommit = domainMetadataToCommit;
+        this.transactionDomainMetadata = transactionDomainMetadata;
     }
 
     public Optional<UniformMetadata> deltaUniformIceberg() {
         return deltaUniformIceberg;
     }
 
-    public List<AbstractDomainMetadata> domainMetadataToCommit() {
-        return domainMetadataToCommit;
+    public List<AbstractDomainMetadata> transactionDomainMetadata() {
+        return transactionDomainMetadata;
     }
 }

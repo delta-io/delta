@@ -69,7 +69,7 @@ class InMemoryUCClient(
       newMetadata: Optional[AbstractMetadata],
       oldProtocol: Optional[AbstractProtocol],
       newProtocol: Optional[AbstractProtocol],
-      domainMetadataToCommit: JList[AbstractDomainMetadata],
+      transactionDomainMetadata: JList[AbstractDomainMetadata],
       uniform: Optional[UniformMetadata] = Optional.empty()): Unit = {
     ucCommitCoordinator.commitToCoordinator(
       tableId,

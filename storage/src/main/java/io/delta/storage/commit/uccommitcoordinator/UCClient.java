@@ -84,9 +84,9 @@ public interface UCClient extends AutoCloseable {
    *                    If present, UC can validate the current protocol state.
    * @param newProtocol An Optional containing a new protocol version to be applied to the table.
    *                    If present, the table's protocol will be updated atomically with the commit.
-   * @param domainMetadataToCommit The raw domain metadata actions in this commit.
-   *                               A non-removed action sets domain metadata, and a removed action
-   *                               removes the domain metadata.
+   * @param transactionDomainMetadata The raw domain metadata actions from this transaction.
+   *                                  A non-removed action sets domain metadata, and a removed action
+   *                                  removes the domain metadata.
    * @param uniform An Optional containing UniForm metadata for Delta Universal Format support.
    *                If present, this metadata will be used by UC to manage format conversions
    *                (e.g., Iceberg, Hudi).
@@ -105,7 +105,7 @@ public interface UCClient extends AutoCloseable {
       Optional<AbstractMetadata> newMetadata,
       Optional<AbstractProtocol> oldProtocol,
       Optional<AbstractProtocol> newProtocol,
-      List<AbstractDomainMetadata> domainMetadataToCommit,
+      List<AbstractDomainMetadata> transactionDomainMetadata,
       Optional<UniformMetadata> uniform
   ) throws IOException, CommitFailedException, UCCommitCoordinatorException;
 

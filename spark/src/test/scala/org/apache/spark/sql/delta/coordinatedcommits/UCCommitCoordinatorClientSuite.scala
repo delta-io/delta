@@ -139,9 +139,9 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
             newMetadata: Optional[AbstractMetadata],
             oldProtocol: Optional[AbstractProtocol],
             newProtocol: Optional[AbstractProtocol],
-            domainMetadataToCommit: JList[AbstractDomainMetadata],
+            transactionDomainMetadata: JList[AbstractDomainMetadata],
             uniform: Optional[UniformMetadata]): Unit = {
-          capturedDomainMetadata = domainMetadataToCommit
+          capturedDomainMetadata = transactionDomainMetadata
         }
         // scalastyle:on argcount
       }

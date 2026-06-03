@@ -166,7 +166,7 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       newMetadata,
       Optional.empty(), // oldProtocol
       newProtocol,
-      Collections.emptyList[AbstractDomainMetadata](), // domainMetadataToCommit
+      Collections.emptyList[AbstractDomainMetadata](), // transactionDomainMetadata
       Optional.empty() // uniform
     )
   }
@@ -182,7 +182,7 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       newMetadata: Optional[AbstractMetadata],
       oldProtocol: Optional[AbstractProtocol],
       newProtocol: Optional[AbstractProtocol],
-      domainMetadataToCommit: JList[AbstractDomainMetadata],
+      transactionDomainMetadata: JList[AbstractDomainMetadata],
       uniform: Optional[UniformMetadata]): Unit = {
     forceThrowInCommitMethod()
 

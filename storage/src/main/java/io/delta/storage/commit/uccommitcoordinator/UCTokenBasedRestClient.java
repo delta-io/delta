@@ -180,7 +180,7 @@ public class UCTokenBasedRestClient implements UCClient {
       Optional<AbstractMetadata> newMetadata,
       Optional<AbstractProtocol> oldProtocol,
       Optional<AbstractProtocol> newProtocol,
-      List<AbstractDomainMetadata> domainMetadataToCommit,
+      List<AbstractDomainMetadata> transactionDomainMetadata,
       Optional<UniformMetadata> uniform
   ) throws IOException, CommitFailedException, UCCommitCoordinatorException {
     ensureOpen();

@@ -127,7 +127,7 @@ trait UCCommitCoordinatorClientSuiteBase extends CommitCoordinatorClientImplSuit
       Optional.empty(), // newMetadata
       Optional.empty(), // oldProtocol
       Optional.empty(), // newProtocol
-      java.util.Collections.emptyList[AbstractDomainMetadata](), // domainMetadataToCommit
+      java.util.Collections.emptyList[AbstractDomainMetadata](), // transactionDomainMetadata
       Optional.empty() /* uniform */)
   }
 

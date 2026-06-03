@@ -262,12 +262,12 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       Optional<AbstractMetadata> newMetadata,
       Optional<AbstractProtocol> oldProtocol,
       Optional<AbstractProtocol> newProtocol,
-      List<AbstractDomainMetadata> domainMetadataToCommit,
+      List<AbstractDomainMetadata> transactionDomainMetadata,
       Optional<io.delta.storage.commit.uniform.UniformMetadata> uniform)
       throws IOException, CommitFailedException, UCCommitCoordinatorException {
     ensureOpen();
     Objects.requireNonNull(tableId, "tableId must not be null");
-    Objects.requireNonNull(domainMetadataToCommit, "domainMetadataToCommit must not be null");
+    Objects.requireNonNull(transactionDomainMetadata, "transactionDomainMetadata must not be null");
     ResolvedTableName name = requireThreePartName(tableIdentifier);
 
     UpdateTableRequest request = new UpdateTableRequest();
@@ -300,7 +300,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
           .action("set-protocol")
           .protocol(toSDKDeltaProtocol(newProtocol.get())));
     }
-    addDomainMetadataUpdateActions(request, domainMetadataToCommit);
+    addDomainMetadataUpdateActions(request, transactionDomainMetadata);
 
     try {
       deltaTablesApi.updateTable(name.catalog, name.schema, name.table, request);
@@ -694,10 +694,10 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
 
   private static void addDomainMetadataUpdateActions(
       UpdateTableRequest request,
-      List<AbstractDomainMetadata> domainMetadataToCommit) throws IOException {
+      List<AbstractDomainMetadata> transactionDomainMetadata) throws IOException {
     List<AbstractDomainMetadata> setDomainMetadata = new ArrayList<>();
     List<String> removeDomains = new ArrayList<>();
-    for (AbstractDomainMetadata domainMetadata : domainMetadataToCommit) {
+    for (AbstractDomainMetadata domainMetadata : transactionDomainMetadata) {
       if (domainMetadata.isRemoved()) {
         removeDomains.add(domainMetadata.getDomain());
       } else {
