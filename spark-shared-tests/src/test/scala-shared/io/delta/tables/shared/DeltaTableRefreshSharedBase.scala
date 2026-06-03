@@ -28,15 +28,10 @@ import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 import org.apache.spark.sql.types.{DataType, IntegerType, StructType}
 
 /**
- * Shared base for the repeated table access refresh tests, compiled into both the classic `spark`
- * and the `spark-connect/client` modules (wired via [[Test / unmanagedSourceDirectories]] in
- * build.sbt). It self-types only to [[AnyFunSuite]] and uses only the unified
- * [[org.apache.spark.sql]] API.
+ * Shared base for the repeated table access refresh tests.
  *
  * External writes are simulated by writing commit files directly into the table's `_delta_log` on
  * the local filesystem, which the Connect client and server share.
- *
- * Concrete suites supply [[spark]], [[checkAnswer]], and [[withTable]].
  */
 trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
 
@@ -114,7 +109,7 @@ trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
   private def currentVersion(path: String): Long =
     commitJsonFiles(path).map(_.getName.stripSuffix(".json").toLong).max
 
-  private def latestMetaDataLine(path: String): String =
+  private def latestMetadataLine(path: String): String =
     commitJsonFiles(path).sortBy(_.getName).flatMap { f =>
       new String(Files.readAllBytes(f.toPath), UTF_8).split("\n")
     }.filter(_.contains("\"metaData\"")).lastOption.getOrElse(
@@ -122,22 +117,22 @@ trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
 
   /** The table's current schema, recovered from the stored schemaString. */
   private def currentSchema(path: String): StructType = {
-    val escaped = SchemaStringRegex.findFirstMatchIn(latestMetaDataLine(path)).map(_.group(1))
+    val escaped = SchemaStringRegex.findFirstMatchIn(latestMetadataLine(path)).map(_.group(1))
       .getOrElse(throw new RuntimeException("Could not extract schemaString from metadata"))
     DataType.fromJson(escaped.replace("\\\"", "\"")).asInstanceOf[StructType]
   }
 
-  /** Returns the metaData line with its schemaString replaced (id and configuration preserved). */
-  private def metaLineWithSchema(metaLine: String, schema: StructType): String = {
+  /** Returns the metadata line with its schemaString replaced (id and configuration preserved). */
+  private def metadataLineWithSchema(metadataLine: String, schema: StructType): String = {
     val escaped = schema.json.replace("\"", "\\\"")
     SchemaStringRegex.replaceFirstIn(
-      metaLine, java.util.regex.Matcher.quoteReplacement(s""""schemaString":"$escaped""""))
+      metadataLine, java.util.regex.Matcher.quoteReplacement(s""""schemaString":"$escaped""""))
   }
 
-  /** Returns the metaData line with a fresh table id (simulating a recreated table). */
-  private def metaLineWithNewId(metaLine: String): String =
+  /** Returns the metadata line with a fresh table id (simulating a recreated table). */
+  private def metadataLineWithNewId(metadataLine: String): String =
     IdRegex.replaceFirstIn(
-      metaLine, java.util.regex.Matcher.quoteReplacement(s""""id":"${UUID.randomUUID()}""""))
+      metadataLine, java.util.regex.Matcher.quoteReplacement(s""""id":"${UUID.randomUUID()}""""))
 
   private def addFileJson(name: String, size: Long): String =
     s"""{"add":{"path":"$name","partitionValues":{},"size":$size,""" +
@@ -205,12 +200,12 @@ trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
   protected def externalAddColumnAndWrite(path: String, rows: Seq[(Int, Int, Int)]): Unit = {
     val newSchema = currentSchema(path).add("new_column", IntegerType, nullable = true)
     writeCommit(path, Seq(
-      metaLineWithSchema(latestMetaDataLine(path), newSchema),
+      metadataLineWithSchema(latestMetadataLine(path), newSchema),
       writeParquetAndGetAddFileAction(path, idSalaryNewColumnRowsToDf(rows))))
   }
 
   protected def externalDropAndRecreate(path: String): Unit = {
-    val recreatedMeta = metaLineWithNewId(latestMetaDataLine(path))
+    val recreatedMeta = metadataLineWithNewId(latestMetadataLine(path))
     writeCommit(path, removeActiveFiles(path) :+ recreatedMeta)
   }
 }
