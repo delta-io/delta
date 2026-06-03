@@ -2925,10 +2925,6 @@ trait OptimisticTransactionImpl extends TransactionHelper
   ): Commit = {
     val updatedActions =
       currentTransactionInfo.getUpdatedActions(snapshot.metadata, snapshot.protocol)
-    val domainMetadataToCommit =
-      DomainMetadataUtils.validateDomainMetadataSupportedAndNoDuplicate(
-        currentTransactionInfo.actions,
-        currentTransactionInfo.protocol)
     val commitResponse = TransactionExecutionObserver.withObserver(executionObserver) {
       tableCommitCoordinatorClient.commit(
         attemptVersion,
@@ -2937,7 +2933,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
         catalogTable.map(_.identifier),
         new CatalogTrackedInfo(
           currentTransactionInfo.convertedIcebergMetadata.toJava,
-          domainMetadataToCommit.map(dm => dm: AbstractDomainMetadata).asJava)
+          currentTransactionInfo.domainMetadata.map(dm => dm: AbstractDomainMetadata).asJava)
       )
     }
     if (attemptVersion == 0L) {
