@@ -726,6 +726,7 @@ private abstract class ThrowingUCDeltaClient extends UCDeltaClient {
       domainMetadata: util.List[AbstractDomainMetadata],
       lastCommitTimestampMs: Long): TableInfo =
     throw new UnsupportedOperationException
+  // scalastyle:off argcount
   override def commit(
       tableId: String,
       tableUri: URI,
@@ -739,6 +740,7 @@ private abstract class ThrowingUCDeltaClient extends UCDeltaClient {
       domainMetadataToCommit: util.List[AbstractDomainMetadata],
       uniform: Optional[UniformMetadata]): Unit =
     throw new UnsupportedOperationException
+  // scalastyle:on argcount
   override def getCommits(
       tableId: String,
       tableUri: URI,

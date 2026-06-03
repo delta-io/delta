@@ -323,7 +323,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     // Matrix 3: MANAGED REPLACE — partition / cluster shape transitions on existing
     // tables. Only the transitions exercised through the standard runner live here:
     //   - partition->cluster, partition->none
-    // The other two (`cluster->none` pins a known UC-side stale-metadata issue; and
+    // The other two (`cluster->none` has its own UC clearing assertion; and
     // `cluster->partition` is unconditionally rejected by Delta) are in
     // UCDeltaManagedReplaceSemanticsTest because they don't use this runner.
     counter++;
@@ -606,8 +606,8 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     } else {
       check(fullTableName, List.of(List.of("3", "c")));
     }
-    // Identical metadata: UC's view of `lastUpdateVersion` and `clusteringColumns` is
-    // unchanged from the first COR.
+    // Identical clustered metadata still sends clustering domain metadata intent to UC, so UC's
+    // lastUpdateVersion advances to the replacement commit version.
     assertUCTableInfo(
         TableType.MANAGED,
         fullTableName,
@@ -618,7 +618,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
         withCluster,
         options.getClusterColumn(),
         options.getPartitionColumn(),
-        "0",
+        withCluster ? "2" : "0",
         true);
   }
 
@@ -854,8 +854,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       Map<String, String> tablePropertiesFromServer = tableInfo.getProperties();
       tablePropertiesFromServer.remove("table_type", "MANAGED"); // New property by Spark 4.1
 
-      // CLUSTER BY has two extra properties, except managed REPLACE does not send clustering
-      // domain metadata to UC yet.
+      // CLUSTER BY has two extra properties.
       final Map<String, String> expectedClusteringProperties =
           withCluster
               ? ImmutableMap.<String, String>builder()
