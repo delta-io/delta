@@ -403,7 +403,10 @@ class SparkVersionsScriptTest:
                 return False
 
             # Validate each entry has required fields
-            required_fields = ["fullVersion", "shortVersion", "isMaster", "isDefault", "targetJvm", "packageSuffix"]
+            required_fields = [
+                "fullVersion", "shortVersion", "isMaster", "isDefault", "targetJvm",
+                "packageSuffix", "sourceBuildArtifactBaseVersion", "sourceBuildDefaultRef"
+            ]
             for idx, entry in enumerate(data):
                 for field in required_fields:
                     if field not in entry:
@@ -413,7 +416,11 @@ class SparkVersionsScriptTest:
                 # Validate field types
                 if not isinstance(entry["fullVersion"], str) or not isinstance(entry["shortVersion"], str) or \
                    not isinstance(entry["isMaster"], bool) or not isinstance(entry["isDefault"], bool) or \
-                   not isinstance(entry["targetJvm"], str) or not isinstance(entry["packageSuffix"], str):
+                   not isinstance(entry["targetJvm"], str) or not isinstance(entry["packageSuffix"], str) or \
+                   not (entry["sourceBuildArtifactBaseVersion"] is None or
+                        isinstance(entry["sourceBuildArtifactBaseVersion"], str)) or \
+                   not (entry["sourceBuildDefaultRef"] is None or
+                        isinstance(entry["sourceBuildDefaultRef"], str)):
                     print(f"  ✗ Entry {idx}: Invalid field types")
                     return False
 
@@ -523,6 +530,58 @@ class SparkVersionsScriptTest:
             print(f"  ✗ Failed: {e}")
             return False
 
+    def test_source_build_spark_versions(self) -> bool:
+        """Test that --source-build-spark-versions only includes source-build defaults."""
+        if not self.ensure_json_exists():
+            return False
+
+        try:
+            result = subprocess.run(
+                ["python3", str(self.script_path), "--source-build-spark-versions"],
+                cwd=self.delta_root,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+
+            source_build_versions = json.loads(result.stdout.strip())
+            if not isinstance(source_build_versions, list):
+                print("  ✗ Must output a JSON array")
+                return False
+
+            if not all(isinstance(v, str) for v in source_build_versions):
+                print("  ✗ All entries must be strings")
+                return False
+
+            with open(self.json_path, 'r') as f:
+                data = json.load(f)
+
+            expected = [
+                "master" if entry["isMaster"] else entry["shortVersion"]
+                for entry in data
+                if entry.get("sourceBuildDefaultRef")
+            ]
+            if source_build_versions != expected:
+                print(f"  ✗ Expected {expected}, got {source_build_versions}")
+                return False
+
+            if "4.2" in source_build_versions:
+                by_short = {entry["shortVersion"]: entry for entry in data}
+                spark42 = by_short["4.2"]
+                if spark42["sourceBuildDefaultRef"] != "b6bd005ac7549411ec4e7dc944d7a0e19fd56561":
+                    print("  ✗ Spark 4.2 sourceBuildDefaultRef is not the expected pinned SHA")
+                    return False
+                if spark42["sourceBuildArtifactBaseVersion"] != "4.2.0":
+                    print("  ✗ Spark 4.2 sourceBuildArtifactBaseVersion is not 4.2.0")
+                    return False
+
+            print(f"  ✓ --source-build-spark-versions: {source_build_versions}")
+            return True
+
+        except (subprocess.CalledProcessError, json.JSONDecodeError) as e:
+            print(f"  ✗ Failed: {e}")
+            return False
+
     def test_get_field(self) -> bool:
         """Test that --get-field works for various version formats."""
         if not self.ensure_json_exists():
@@ -538,6 +597,16 @@ class SparkVersionsScriptTest:
                 # Test short version and full version
                 test_cases.append((entry["shortVersion"], "targetJvm", entry["targetJvm"]))
                 test_cases.append((entry["fullVersion"], "fullVersion", entry["fullVersion"]))
+                test_cases.append((
+                    entry["shortVersion"],
+                    "sourceBuildArtifactBaseVersion",
+                    entry["sourceBuildArtifactBaseVersion"]
+                ))
+                test_cases.append((
+                    entry["shortVersion"],
+                    "sourceBuildDefaultRef",
+                    entry["sourceBuildDefaultRef"]
+                ))
                 
                 # Test "master" if applicable
                 if entry["isMaster"]:
@@ -588,7 +657,8 @@ def main():
         script_test1_passed = script_test.test_json_format()
         script_test2_passed = script_test.test_all_spark_versions()
         script_test3_passed = script_test.test_released_spark_versions()
-        script_test4_passed = script_test.test_get_field()
+        script_test4_passed = script_test.test_source_build_spark_versions()
+        script_test5_passed = script_test.test_get_field()
 
         # Test cross-Spark build workflow
         print("\n" + "="*70)
@@ -610,7 +680,8 @@ def main():
         print(f"  JSON Format:                            {'✓ PASSED' if script_test1_passed else '✗ FAILED'}")
         print(f"  All Spark Versions Output:              {'✓ PASSED' if script_test2_passed else '✗ FAILED'}")
         print(f"  Released Spark Versions Output:         {'✓ PASSED' if script_test3_passed else '✗ FAILED'}")
-        print(f"  Get Field Functionality:                {'✓ PASSED' if script_test4_passed else '✗ FAILED'}")
+        print(f"  Source-Build Spark Versions Output:     {'✓ PASSED' if script_test4_passed else '✗ FAILED'}")
+        print(f"  Get Field Functionality:                {'✓ PASSED' if script_test5_passed else '✗ FAILED'}")
         print("\nPart 2: Cross-Spark Build Tests")
         print(f"  Default publishM2 (with suffix):        {'✓ PASSED' if build_test1_passed else '✗ FAILED'}")
         print(f"  skipSparkSuffix (backward compat):      {'✓ PASSED' if build_test2_passed else '✗ FAILED'}")
@@ -619,6 +690,7 @@ def main():
 
         all_tests_passed = (
             script_test1_passed and script_test2_passed and script_test3_passed and script_test4_passed and
+            script_test5_passed and
             build_test1_passed and build_test2_passed and build_test3_passed
         )
 
