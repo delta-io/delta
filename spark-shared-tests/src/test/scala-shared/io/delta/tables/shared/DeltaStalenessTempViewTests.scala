@@ -18,6 +18,7 @@ package io.delta.tables.shared
 
 import org.scalatest.funsuite.AnyFunSuite
 
+import org.apache.spark.SparkThrowable
 import org.apache.spark.sql.Row
 
 /**
@@ -30,9 +31,12 @@ import org.apache.spark.sql.Row
  * instead shrinking the window to "0s" forces the next access to refresh synchronously. The V2
  * Kernel connector (STRICT) ignores the window and reads fresh.
  *
- * Only the data-only scenario is covered here: it is identical across classic (which freezes the
- * captured plan) and Connect (which re-analyzes it) because no schema change is involved. The
- * schema-change and drop/recreate scenarios diverge between the two and are left as follow-up.
+ * Covered: external add-row (1.2), add-column (2.2), and drop/recreate (4.2). The add-column case
+ * is mode-aware: V1 (AUTO) serves the stale snapshot and keeps the captured two-column projection
+ * after REFRESH, while V2 (STRICT) re-resolves the captured plan and rejects the added column with
+ * INCOMPATIBLE_COLUMN_CHANGES_AFTER_VIEW_WITH_PLAN_CREATION. The external column-drop and
+ * type-widening scenarios (3.2/5.2/6.2/7) need a column-mapping-aware external-drop helper and are
+ * left as follow-up.
  */
 trait DeltaStalenessTempViewTests
   extends DeltaTableRefreshSharedBase { self: AnyFunSuite =>
@@ -40,7 +44,7 @@ trait DeltaStalenessTempViewTests
   /** STRICT forces the V2 connector, which ignores the staleness window and reads fresh. */
   private def v2IgnoresStaleness: Boolean = v2EnableMode == "STRICT"
 
-  test("scenario 1 external staleness: stored-plan view stays stale until window closes") {
+  test("scenario 1 external staleness: stored-plan view stale read picks up data after REFRESH") {
     withExternalTable { path =>
       createStoredPlanView("tmp", "t", "salary < 999")
       // Baseline: the view sees the seeded row.
@@ -54,9 +58,51 @@ trait DeltaStalenessTempViewTests
         // The view's scan serves the cached snapshot, so the external row is not yet visible.
         assertFinalTableState("tmp", Seq(Row(1, 100)))
       }
-      // Shrinking the window forces a synchronous fresh read on the next access.
-      setStalenessLimit("0s")
+      writerSql("REFRESH TABLE t")
       assertFinalTableState("tmp", Seq(Row(1, 100), Row(2, 200)))
+    }
+  }
+
+  test("scenario 2 external staleness: stored-plan view and an external add column") {
+    withExternalTable { path =>
+      createStoredPlanView("tmp", "t", "salary < 999")
+      assertFinalTableState("tmp", Seq(Row(1, 100)))
+      externalAddColumnAndWrite(path, Seq((2, 200, -1)))
+      setStalenessLimit("1h")
+      if (v2IgnoresStaleness) {
+        // STRICT re-resolves the captured plan against the live table on each access and rejects
+        // the externally added column instead of serving it.
+        checkError(
+          exception = intercept[SparkThrowable] {
+            spark.sql("SELECT * FROM tmp").collect()
+          },
+          condition = "INCOMPATIBLE_COLUMN_CHANGES_AFTER_VIEW_WITH_PLAN_CREATION")
+      } else {
+        // The cached snapshot still carries the old two-column schema and lacks the new row.
+        assertFinalTableState("tmp", Seq(Row(1, 100)))
+        writerSql("REFRESH TABLE t")
+        // The captured plan keeps its two-column projection, so new_column is not surfaced.
+        assertFinalTableState("tmp", Seq(Row(1, 100), Row(2, 200)))
+      }
+    }
+  }
+
+  test("scenario 4 external staleness: stored-plan view and external drop/recreate") {
+    withExternalTable { path =>
+      createStoredPlanView("tmp", "t", "salary < 999")
+      assertFinalTableState("tmp", Seq(Row(1, 100)))
+      externalDropAndRecreate(path)
+      setStalenessLimit("1h")
+      // The recreate keeps the same columns, so no column-change validation trips; the table is
+      // just empty. STRICT reads that fresh immediately; the V1 stale read still serves the cached
+      // row until REFRESH.
+      if (v2IgnoresStaleness) {
+        assertFinalTableState("tmp", Seq.empty)
+      } else {
+        assertFinalTableState("tmp", Seq(Row(1, 100)))
+        writerSql("REFRESH TABLE t")
+        assertFinalTableState("tmp", Seq.empty)
+      }
     }
   }
 }
