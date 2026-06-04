@@ -164,9 +164,13 @@ private[catalog] class UCDeltaCatalogClientImpl(
     }
   }
 
-  /** `delta.feature.clustering`, cached. */
-  private val clusteringFeatureKey =
-    TableFeatureProtocolUtils.propertyKey(ClusteringTableFeature)
+  private val propertiesToSkipCarryForwardOnReplace = Set(
+    // Clustering has DDL-only enablement (`CLUSTER BY`); carrying it as a property would
+    // both throw on REPLACE (`DELTA_CREATE_TABLE_SET_CLUSTERING_TABLE_FEATURE_NOT_ALLOWED`)
+    // and block legitimate transitions away from a clustered table.
+    TableFeatureProtocolUtils.propertyKey(ClusteringTableFeature),
+    // delta.columnMapping.maxColumnId changes as table schema changes. Not worth carrying forward.
+    DeltaConfigs.COLUMN_MAPPING_MAX_ID.key)
 
   /**
    * Returns whether `(key, value)` from an existing table's config should be carried forward
@@ -177,14 +181,12 @@ private[catalog] class UCDeltaCatalogClientImpl(
     // Only `delta.*` keys are carried; non-`delta.*` user properties (e.g. `Foo=Bar`)
     // follow normal REPLACE semantics -- the user's new TBLPROPERTIES is authoritative.
     if (!lKey.startsWith("delta.")) return false
-    // Clustering has DDL-only enablement (`CLUSTER BY`); carrying it as a property would
-    // both throw on REPLACE (`DELTA_CREATE_TABLE_SET_CLUSTERING_TABLE_FEATURE_NOT_ALLOWED`)
-    // and block legitimate transitions away from a clustered table.
-    if (lKey == clusteringFeatureKey) return false
+    if (propertiesToSkipCarryForwardOnReplace.contains(key)) return false
     // Defer remaining acceptance to Delta's own per-entry validator -- single source of truth
-    // for "would this survive the next commit". This filters out Delta-internal metadata
+    // for "would this survive the next commit". This would also filter out Delta-internal metadata
     // like `delta.lastCommitTimestamp` (unregistered) and `delta.columnMapping.maxColumnId`
-    // (non-editable) that `validateConfigurations` would otherwise reject.
+    // (non-editable) that `validateConfigurations` would otherwise reject, if they weren't
+    // filtered out by propertiesToSkipCarryForwardOnReplace already.
     passesDeltaConfigValidation(key, value)
   }
 
