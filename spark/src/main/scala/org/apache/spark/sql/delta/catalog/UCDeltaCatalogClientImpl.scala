@@ -164,24 +164,30 @@ private[catalog] class UCDeltaCatalogClientImpl(
     }
   }
 
+  private def lower(key: String) = key.toLowerCase(java.util.Locale.ROOT)
+
+  /**
+   * Lower case keys of all table properties that should be skipped instead of carrying forward to
+   * the REPLACE-ed table.
+   */
   private val propertiesToSkipCarryForwardOnReplace = Set(
     // Clustering has DDL-only enablement (`CLUSTER BY`); carrying it as a property would
     // both throw on REPLACE (`DELTA_CREATE_TABLE_SET_CLUSTERING_TABLE_FEATURE_NOT_ALLOWED`)
     // and block legitimate transitions away from a clustered table.
-    TableFeatureProtocolUtils.propertyKey(ClusteringTableFeature),
+    lower(TableFeatureProtocolUtils.propertyKey(ClusteringTableFeature)),
     // delta.columnMapping.maxColumnId changes as table schema changes. Not worth carrying forward.
-    DeltaConfigs.COLUMN_MAPPING_MAX_ID.key)
+    lower(DeltaConfigs.COLUMN_MAPPING_MAX_ID.key))
 
   /**
    * Returns whether `(key, value)` from an existing table's config should be carried forward
    * when building the REPLACE-augmented property map.
    */
   private def isSafeToCarryForwardOnReplace(key: String, value: String): Boolean = {
-    val lKey = key.toLowerCase(java.util.Locale.ROOT)
+    val lKey = lower(key)
     // Only `delta.*` keys are carried; non-`delta.*` user properties (e.g. `Foo=Bar`)
     // follow normal REPLACE semantics -- the user's new TBLPROPERTIES is authoritative.
     if (!lKey.startsWith("delta.")) return false
-    if (propertiesToSkipCarryForwardOnReplace.contains(key)) return false
+    if (propertiesToSkipCarryForwardOnReplace.contains(lKey)) return false
     // Defer remaining acceptance to Delta's own per-entry validator -- single source of truth
     // for "would this survive the next commit". This would also filter out Delta-internal metadata
     // like `delta.lastCommitTimestamp` (unregistered) and `delta.columnMapping.maxColumnId`
@@ -328,7 +334,7 @@ private[catalog] class UCDeltaCatalogClientImpl(
     requireCatalogManagedDeltaTable(info, qualifiedName)
     val existingProvider =
       Option(info.getMetadata.getProvider)
-        .map(_.toLowerCase(java.util.Locale.ROOT))
+        .map(lower)
         .get
     // REPLACE cannot change the table's storage format.
     Option(properties.get(TableCatalog.PROP_PROVIDER))
@@ -394,7 +400,7 @@ private[catalog] class UCDeltaCatalogClientImpl(
         s"REPLACE TABLE is only supported for catalog-managed UC Delta tables; " +
           s"$qualified is ${info.getTableType}.")
     }
-    val provider = Option(info.getMetadata.getProvider).map(_.toLowerCase(java.util.Locale.ROOT))
+    val provider = Option(info.getMetadata.getProvider).map(lower)
     if (!provider.contains("delta")) {
       throw DeltaErrors.notADeltaTableException("REPLACE TABLE", qualified)
     }
@@ -547,7 +553,7 @@ private[catalog] class UCDeltaCatalogClientImpl(
       tableType = fromUcTableType(info.getTableType),
       storage = storage,
       schema = schema,
-      provider = Option(m.getProvider).map(_.toLowerCase(java.util.Locale.ROOT)),
+      provider = Option(m.getProvider).map(lower),
       partitionColumnNames = partitionColumns,
       comment = Option(m.getDescription),
       createTime = if (m.getCreatedTime != null) m.getCreatedTime else 0L,

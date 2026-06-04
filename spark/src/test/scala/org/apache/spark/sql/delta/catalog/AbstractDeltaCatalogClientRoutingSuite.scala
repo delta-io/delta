@@ -252,7 +252,7 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
 
   test("createStagingTable: suggested property is applied when caller hasn't set it") {
     // `delta.checkpointInterval` is a real, editable Delta config so it survives the
-    // `isAllowedSuggestedProperty` filter.
+    // `passesDeltaConfigValidation` filter.
     val (client, _) = newRecordingClient(
       suggestedProperties = javaMap("delta.checkpointInterval" -> "20"))
     val out = client.createStagingTable(
