@@ -113,19 +113,19 @@ public class UCDeltaTableMetadataUpdateTest extends UCDeltaTableIntegrationBaseT
         "id INT, name STRING",
         TableType.MANAGED,
         tableName -> {
-          assertThat(loadTableViaDeltaRest(tableName).getMetadata().getProperties())
+          assertThat(loadTable(tableName).getMetadata().getProperties())
               .doesNotContainKey("clusteringColumns");
 
           sql("ALTER TABLE %s CLUSTER BY (id)", tableName);
 
-          LoadTableResponse response = loadTableViaDeltaRest(tableName);
+          LoadTableResponse response = loadTable(tableName);
           assertThat(response.getMetadata().getProperties())
               .containsEntry("delta.feature.clustering", "supported")
               .containsEntry("clusteringColumns", "[[\"id\"]]");
 
           sql("ALTER TABLE %s CLUSTER BY NONE", tableName);
 
-          response = loadTableViaDeltaRest(tableName);
+          response = loadTable(tableName);
           assertThat(response.getMetadata().getProperties())
               .containsEntry("delta.feature.clustering", "supported")
               .containsEntry("clusteringColumns", "[]");
@@ -251,7 +251,7 @@ public class UCDeltaTableMetadataUpdateTest extends UCDeltaTableIntegrationBaseT
         });
   }
 
-  private LoadTableResponse loadTableViaDeltaRest(String tableName) throws Exception {
+  private LoadTableResponse loadTableRest(String tableName) throws Exception {
     String[] parts = tableName.split("\\.", 3);
     return new TablesApi(unityCatalogInfo().createApiClient())
         .loadTable(parts[0], parts[1], parts[2]);
