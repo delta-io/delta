@@ -147,8 +147,6 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
       }
       val commitCoordinatorClient =
         new UCCommitCoordinatorClient(Map.empty[String, String].asJava, capturingUCClient)
-      commitCoordinatorClient.registerTable(
-        logPath, Optional.empty(), -1L, initMetadata(), Protocol(1, 1))
       writeCommitZero(logPath)
       val tableDesc = new TableDescriptor(
         logPath,
