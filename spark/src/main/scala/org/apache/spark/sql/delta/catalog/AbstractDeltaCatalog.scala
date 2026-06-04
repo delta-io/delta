@@ -86,6 +86,12 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
 
   val spark = SparkSession.active
 
+  // Captured from `initialize` so `deltaCatalogClient` can be built lazily (see its docs). Using
+  // the `initialize` name directly rather than `name()`, which delegates to the (possibly unset)
+  // delegate catalog.
+  private var catalogName: String = _
+  private var catalogOptions: CaseInsensitiveStringMap = _
+
   /**
    * When defined, table operations are routed through this client instead of through the
    * [[org.apache.spark.sql.connector.catalog.DelegatingCatalogExtension]] delegate that
@@ -93,13 +99,25 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
    * interactions (e.g. talking to a REST endpoint, catalog-specific property handling,
    * storage-credential vending) rather than going through the Spark
    * [[org.apache.spark.sql.connector.catalog.TableCatalog]] API.
+   *
+   * Evaluated lazily rather than in `initialize` because the decision depends on
+   * [[isUnityCatalog]], which reads the [[DelegatingCatalogExtension]] delegate. Spark's
+   * `CatalogManager` calls `initialize` *before* `setDelegateCatalog` for the session catalog,
+   * so the delegate isn't available yet during `initialize`; it is by the time any table
+   * operation (the only reader of this client) runs.
    */
-  private[catalog] var deltaCatalogClient: Option[AbstractDeltaCatalogClient] = None
+  private[catalog] lazy val deltaCatalogClient: Option[AbstractDeltaCatalogClient] =
+    if (isUnityCatalog) {
+      AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled(
+        catalogName, catalogOptions, super.loadTable)
+    } else {
+      None
+    }
 
   override def initialize(name: String, options: CaseInsensitiveStringMap): Unit = {
     super.initialize(name, options)
-    deltaCatalogClient =
-      AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled(name, options, super.loadTable)
+    catalogName = name
+    catalogOptions = options
   }
 
   private lazy val isUnityCatalog: Boolean = {

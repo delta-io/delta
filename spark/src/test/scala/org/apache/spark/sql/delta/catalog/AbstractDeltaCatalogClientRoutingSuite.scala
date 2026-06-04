@@ -52,9 +52,17 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
 
   test("deltaRestApi.enabled=false leaves deltaCatalogClient empty") {
     val catalog = new AbstractDeltaCatalog
-    catalog.initialize("test_cat", options())
+    catalog.initialize("test_cat", options("deltaRestApi.enabled" -> "false"))
     assert(catalog.deltaCatalogClient.isEmpty,
       "UC Delta API client should not be constructed when the catalog opts out")
+  }
+
+  test("deltaRestApi.enabled defaults to true: requires uri when flag absent") {
+    val catalog = new AbstractDeltaCatalog
+    val e = intercept[IllegalArgumentException] {
+      catalog.initialize("test_cat", options())
+    }
+    assert(e.getMessage.contains("'uri' is required"))
   }
 
   test("deltaRestApi.enabled=true requires uri") {
@@ -97,7 +105,7 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
 
   test("AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled returns None when flag is off") {
     val result = AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled(
-      "test_cat", options(), noFallback)
+      "test_cat", options("deltaRestApi.enabled" -> "false"), noFallback)
     assert(result.isEmpty)
   }
 
@@ -107,6 +115,16 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
       options("deltaRestApi.enabled" -> "true", "uri" -> "http://uc", "token" -> "tok"),
       noFallback)
     assert(result.isDefined)
+  }
+
+  test("AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled returns Some when flag absent " +
+      "(default is on)") {
+    val result = AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled(
+      "test_cat",
+      options("uri" -> "http://uc", "token" -> "tok"),
+      noFallback)
+    assert(result.isDefined,
+      "absent deltaRestApi.enabled should default to true and construct the client")
   }
 
   private val noFallback: Identifier => Table =
