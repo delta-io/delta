@@ -298,7 +298,7 @@ trait OptimisticTransactionSuiteBase
     withTempPath { tempPath =>
       val path = tempPath.getPath
       val deltaLog = DeltaLog.forTable(spark, path)
-      val firstFile = writeDuplicateActionsData(path).head
+      val firstFile = writeDuplicateActionsData(path).head.copy(dataChange = true)
       enableDeletionVectorsInTable(deltaLog)
       val (addFileWithDV, _) = addDVToFileInTable(path, firstFile)
       testDuplicateActions(Seq(firstFile, addFileWithDV), deltaLog)
@@ -322,7 +322,7 @@ trait OptimisticTransactionSuiteBase
     withTempPath { tempPath =>
       val path = tempPath.getPath
       val deltaLog = DeltaLog.forTable(spark, path)
-      val addFile = writeDuplicateActionsData(path).head
+      val addFile = writeDuplicateActionsData(path).head.copy(dataChange = true)
       testDuplicateActions(Seq(addFile, addFile.remove), deltaLog)
     }
   }
