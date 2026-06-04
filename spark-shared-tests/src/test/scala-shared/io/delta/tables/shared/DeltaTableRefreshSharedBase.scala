@@ -85,6 +85,9 @@ trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
     val dir = Files.createTempDirectory("refresh-ext").toFile
     try {
       withTable("t") {
+        // Start from the default (synchronous) staleness window so the seed read below never
+        // schedules an async refresh that a staleness test could otherwise race against.
+        setStalenessLimit("0s")
         spark.sql(
           s"CREATE TABLE t (id INT, salary INT) USING delta LOCATION '${dir.getAbsolutePath}'")
         seedInitialRow("t")
@@ -94,6 +97,28 @@ trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
       deleteRecursively(dir)
     }
   }
+
+  /** Asserts the full contents of `ref` (a table or view name), ordered by id, match `expected`. */
+  protected def assertFinalTableState(ref: String, expected: Seq[Row]): Unit =
+    checkAnswer(spark.sql(s"SELECT * FROM $ref ORDER BY id"), expected)
+
+  /**
+   * Sets the Delta snapshot staleness window for the current session. A large value lets reads
+   * serve the cached snapshot and refresh asynchronously; "0s" forces synchronous fresh reads.
+   *
+   * The key is a literal because the Connect thin client cannot import [[DeltaSQLConf]]; the value
+   * propagates to the Connect server session, which is where the read path consults it.
+   */
+  protected def setStalenessLimit(value: String): Unit =
+    spark.conf.set("spark.databricks.delta.stalenessLimit", value)
+
+  /**
+   * Creates a temp view from a fully resolved Dataset plan (no SQL text attached), the construct
+   * exercised by design-doc section [[1]]. Classic captures and freezes this plan, while Connect
+   * re-analyzes it on every execution.
+   */
+  protected def createStoredPlanView(viewName: String, tableRef: String, filter: String): Unit =
+    spark.table(tableRef).filter(filter).createOrReplaceTempView(viewName)
 
   // External-write simulation: write commit files directly into _delta_log, editing schemas as
   // StructType values recovered from the stored schemaString.
