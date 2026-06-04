@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   build-cache:
-    name: "Cache Spark ${{ inputs.spark-version }} ${{ inputs.spark-source-ref || 'default ref' }}"
+    name: "Cache Spark ${{ inputs['spark-version'] }} ${{ inputs['spark-source-ref'] || 'default ref' }}"
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
@@ -30,45 +30,17 @@ jobs:
           distribution: "zulu"
           java-version: "17"
 
-      - name: Get Spark source build settings
-        id: spark-source-settings
+      - name: Resolve Spark source build
+        id: spark-source
         env:
-          SPARK_VERSION: ${{ inputs.spark-version }}
-          SPARK_SOURCE_REF_OVERRIDE: ${{ inputs.spark-source-ref }}
+          SPARK_VERSION: ${{ inputs['spark-version'] }}
+          SPARK_SOURCE_REF: ${{ inputs['spark-source-ref'] }}
         run: |
-          DEFAULT_SOURCE_REF="$(python3 project/scripts/get_spark_version_info.py --get-field "$SPARK_VERSION" sourceBuildDefaultRef | jq -r)"
-          if [[ -n "${SPARK_SOURCE_REF_OVERRIDE// }" ]]; then
-            SPARK_SOURCE_REF="$SPARK_SOURCE_REF_OVERRIDE"
-            echo "Using manual Spark source ref override: $SPARK_SOURCE_REF"
-          elif [[ -n "$DEFAULT_SOURCE_REF" && "$DEFAULT_SOURCE_REF" != "null" ]]; then
-            SPARK_SOURCE_REF="$DEFAULT_SOURCE_REF"
-            echo "Using default Spark source ref from CrossSparkVersions.scala: $SPARK_SOURCE_REF"
-          else
-            echo "::error::No default Spark source ref is configured for Spark $SPARK_VERSION. Provide spark-source-ref or add sourceBuildDefaultRef to CrossSparkVersions.scala."
-            exit 1
-          fi
-
-          ARTIFACT_BASE_VERSION="$(python3 project/scripts/get_spark_version_info.py --get-field "$SPARK_VERSION" sourceBuildArtifactBaseVersion | jq -r)"
-          if [[ "$ARTIFACT_BASE_VERSION" == "null" ]]; then
-            ARTIFACT_BASE_VERSION=""
-          fi
-
-          echo "source_ref=$SPARK_SOURCE_REF" >> "$GITHUB_OUTPUT"
-          echo "artifact_base_version=$ARTIFACT_BASE_VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Resolve Spark source ref
-        id: spark-ref
-        env:
-          SPARK_SOURCE_REF: ${{ steps.spark-source-settings.outputs.source_ref }}
-        run: |
-          # Resolve branch names, tags, and short SHAs to a full immutable SHA before
-          # cache lookup so producer and consumer workflows use the same cache key.
-          git init /tmp/spark
-          git -C /tmp/spark remote add origin https://github.com/apache/spark.git
-          git -C /tmp/spark fetch --depth 1 origin "$SPARK_SOURCE_REF"
-          SPARK_SHA="$(git -C /tmp/spark rev-parse FETCH_HEAD)"
-          echo "spark_sha=$SPARK_SHA" >> "$GITHUB_OUTPUT"
-          echo "Resolved Spark source ref $SPARK_SOURCE_REF to $SPARK_SHA"
+          # Resolves the Spark compatibility line, optional manual source-ref override,
+          # full immutable Spark SHA, and commit-qualified local Maven artifact version.
+          python3 project/scripts/resolve_spark_source_build.py \
+            --spark-version "$SPARK_VERSION" \
+            --spark-source-ref "$SPARK_SOURCE_REF"
 
       - name: Restore Spark Maven cache
         id: spark-cache
@@ -76,17 +48,19 @@ jobs:
         with:
           path: ~/.m2/repository/org/apache/spark
           # This key intentionally matches the source-built Spark consumer lane in
-          # spark_test.yaml. A cache hit skips the build below; a miss builds once
-          # and saves the artifacts under the resolved Spark SHA.
-          key: spark-m2-ubuntu-24.04-scala-2.13-${{ inputs.spark-version }}-${{ steps.spark-ref.outputs.spark_sha }}-${{ hashFiles('project/scripts/build_spark.sh') }}
+          # spark_test.yaml. The key is exact and has no restore-keys: restoring a
+          # different Spark SHA or artifact base version would silently test the
+          # wrong Spark artifacts.
+          key: spark-m2-ubuntu-24.04-scala-2.13-${{ steps.spark-source.outputs.spark_version }}-${{ steps.spark-source.outputs.artifact_base_version }}-${{ steps.spark-source.outputs.spark_sha }}-${{ hashFiles('project/scripts/build_spark.sh') }}
 
       - name: Build Spark source ref locally
         if: steps.spark-cache.outputs.cache-hit != 'true'
         id: spark-build
         env:
-          SPARK_SOURCE_REF: ${{ steps.spark-source-settings.outputs.source_ref }}
-          SPARK_VERSION: ${{ inputs.spark-version }}
-          SPARK_BASE_VERSION: ${{ steps.spark-source-settings.outputs.artifact_base_version }}
+          SPARK_SOURCE_REF: ${{ steps.spark-source.outputs.source_ref }}
+          SPARK_VERSION: ${{ steps.spark-source.outputs.spark_version }}
+          SPARK_BASE_VERSION: ${{ steps.spark-source.outputs.artifact_base_version }}
+          SPARK_ARTIFACT_VERSION: ${{ steps.spark-source.outputs.spark_artifact_version }}
         run: bash project/scripts/build_spark.sh
 
       - name: Save Spark Maven cache
@@ -94,4 +68,4 @@ jobs:
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.m2/repository/org/apache/spark
-          key: spark-m2-ubuntu-24.04-scala-2.13-${{ inputs.spark-version }}-${{ steps.spark-ref.outputs.spark_sha }}-${{ hashFiles('project/scripts/build_spark.sh') }}
+          key: spark-m2-ubuntu-24.04-scala-2.13-${{ steps.spark-source.outputs.spark_version }}-${{ steps.spark-source.outputs.artifact_base_version }}-${{ steps.spark-source.outputs.spark_sha }}-${{ hashFiles('project/scripts/build_spark.sh') }}
