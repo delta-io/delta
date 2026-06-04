@@ -531,6 +531,86 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
   }
 
   @Test
+  public void testWriteBuilderRejectsColumnMappedTable(@TempDir File tempDir) {
+    String path = tempDir.getAbsolutePath();
+    spark.sql(
+        String.format(
+            "CREATE TABLE test_cm_write (id INT, name STRING) USING delta "
+                + "TBLPROPERTIES ('delta.columnMapping.mode'='name') "
+                + "LOCATION '%s'",
+            path));
+
+    DeltaV2Table table =
+        new DeltaV2Table(Identifier.of(new String[] {"default"}, "test_cm_write"), path);
+    LogicalWriteInfo writeInfo =
+        new LogicalWriteInfo() {
+          @Override
+          public String queryId() {
+            return "test-query-id";
+          }
+
+          @Override
+          public StructType schema() {
+            return new StructType()
+                .add("id", DataTypes.IntegerType)
+                .add("name", DataTypes.StringType);
+          }
+
+          @Override
+          public CaseInsensitiveStringMap options() {
+            return new CaseInsensitiveStringMap(Collections.emptyMap());
+          }
+        };
+
+    UnsupportedOperationException e =
+        assertThrows(
+            UnsupportedOperationException.class, () -> table.newWriteBuilder(writeInfo).build());
+    assertTrue(
+        e.getMessage().contains("not supported on column-mapped"),
+        "exception message should mention column-mapped; was: " + e.getMessage());
+  }
+
+  @Test
+  public void testWriteBuilderRejectsIdMappedTable(@TempDir File tempDir) {
+    String path = tempDir.getAbsolutePath();
+    spark.sql(
+        String.format(
+            "CREATE TABLE test_id_write (id INT, name STRING) USING delta "
+                + "TBLPROPERTIES ('delta.columnMapping.mode'='id') "
+                + "LOCATION '%s'",
+            path));
+
+    DeltaV2Table table =
+        new DeltaV2Table(Identifier.of(new String[] {"default"}, "test_id_write"), path);
+    LogicalWriteInfo writeInfo =
+        new LogicalWriteInfo() {
+          @Override
+          public String queryId() {
+            return "test-query-id";
+          }
+
+          @Override
+          public StructType schema() {
+            return new StructType()
+                .add("id", DataTypes.IntegerType)
+                .add("name", DataTypes.StringType);
+          }
+
+          @Override
+          public CaseInsensitiveStringMap options() {
+            return new CaseInsensitiveStringMap(Collections.emptyMap());
+          }
+        };
+
+    UnsupportedOperationException e =
+        assertThrows(
+            UnsupportedOperationException.class, () -> table.newWriteBuilder(writeInfo).build());
+    assertTrue(
+        e.getMessage().contains("not supported on column-mapped"),
+        "exception message should mention column-mapped; was: " + e.getMessage());
+  }
+
+  @Test
   public void testSchemaWithReadChangeFeedIncludesCDCColumns(@TempDir File tempDir) {
     String path = tempDir.getAbsolutePath();
     spark.sql(String.format("CREATE TABLE test_cdc_on (id INT) USING delta LOCATION '%s'", path));
