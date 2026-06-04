@@ -251,7 +251,7 @@ public class UCDeltaTableMetadataUpdateTest extends UCDeltaTableIntegrationBaseT
         });
   }
 
-  private LoadTableResponse loadTableRest(String tableName) throws Exception {
+  private LoadTableResponse loadTable(String tableName) throws Exception {
     String[] parts = tableName.split("\\.", 3);
     return new TablesApi(unityCatalogInfo().createApiClient())
         .loadTable(parts[0], parts[1], parts[2]);
