@@ -360,6 +360,41 @@ class UCDeltaTokenBasedRestClientSuite
     assert(actions.contains("remove-properties"))
   }
 
+  test("commit rejects rename column metadata updates") {
+    var postedUpdate = false
+    deltaHandler = (exchange, body) => {
+      if (exchange.getRequestMethod == "POST") {
+        postedUpdate = true
+      }
+      sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+    }
+
+    val oldSchema =
+      """{"type":"struct","fields":[""" +
+      """{"name":"id","type":"integer","nullable":true,"metadata":{}},""" +
+      """{"name":"old_name","type":"string","nullable":true,""" +
+      """"metadata":{"delta.columnMapping.id":2,""" +
+      """"delta.columnMapping.physicalName":"col-old"}}]}"""
+    val renamedSchema =
+      """{"type":"struct","fields":[""" +
+      """{"name":"id","type":"integer","nullable":true,"metadata":{}},""" +
+      """{"name":"new_name","type":"string","nullable":true,""" +
+      """"metadata":{"delta.columnMapping.id":2,""" +
+      """"delta.columnMapping.physicalName":"col-old"}}]}"""
+
+    val e = intercept[UnsupportedOperationException] {
+      withClient { c =>
+        c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
+          Optional.of(createCommit(1L)), Optional.empty(),
+          Optional.of(metadata(schema = oldSchema)), Optional.of(metadata(schema = renamedSchema)),
+          Optional.empty(), Optional.empty(), Optional.empty())
+      }
+    }
+
+    assert(e.getMessage.contains("RENAME COLUMN is not supported for UC Delta tables"))
+    assert(!postedUpdate)
+  }
+
   test("commit sends SET_PROTOCOL when protocol changes") {
     var captured: String = null
     deltaHandler = (exchange, body) => {

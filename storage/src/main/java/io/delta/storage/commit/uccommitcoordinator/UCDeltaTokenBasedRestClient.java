@@ -39,6 +39,7 @@ import io.unitycatalog.client.api.MetastoresApi;
 import io.unitycatalog.client.auth.TokenProvider;
 import io.unitycatalog.client.delta.api.TablesApi;
 import io.unitycatalog.client.delta.model.AddCommitUpdate;
+import io.unitycatalog.client.delta.model.ArrayType;
 import io.unitycatalog.client.delta.model.AssertTableUUID;
 import io.unitycatalog.client.delta.model.ClusteringDomainMetadata;
 import io.unitycatalog.client.delta.model.CreateStagingTableRequest;
@@ -46,7 +47,9 @@ import io.unitycatalog.client.delta.model.CreateTableRequest;
 import io.unitycatalog.client.delta.model.DomainMetadataUpdates;
 import io.unitycatalog.client.delta.model.DeltaCommit;
 import io.unitycatalog.client.delta.model.DeltaProtocol;
+import io.unitycatalog.client.delta.model.DeltaType;
 import io.unitycatalog.client.delta.model.LoadTableResponse;
+import io.unitycatalog.client.delta.model.MapType;
 import io.unitycatalog.client.delta.model.RemovePropertiesUpdate;
 import io.unitycatalog.client.delta.model.RowTrackingDomainMetadata;
 import io.unitycatalog.client.delta.model.SetLatestBackfilledVersionUpdate;
@@ -58,6 +61,8 @@ import io.unitycatalog.client.delta.model.SetTableCommentUpdate;
 import io.unitycatalog.client.delta.model.StagingTableResponse;
 import io.unitycatalog.client.delta.model.StagingTableResponseRequiredProtocol;
 import io.unitycatalog.client.delta.model.StagingTableResponseSuggestedProtocol;
+import io.unitycatalog.client.delta.model.StructField;
+import io.unitycatalog.client.delta.model.StructType;
 import io.unitycatalog.client.delta.model.TableMetadata;
 import io.delta.storage.commit.uniform.IcebergMetadata;
 import io.unitycatalog.client.delta.model.UniformMetadata;
@@ -99,6 +104,9 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   private static final int HTTP_BAD_REQUEST = 400;
   private static final int HTTP_CONFLICT = 409;
   private static final int HTTP_NOT_FOUND = 404;
+  private static final String COLUMN_MAPPING_ID_KEY = "delta.columnMapping.id";
+  private static final String COLUMN_MAPPING_PHYSICAL_NAME_KEY =
+      "delta.columnMapping.physicalName";
 
   private TablesApi deltaTablesApi;
   private MetastoresApi metastoresApi;
@@ -797,6 +805,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       AbstractMetadata oldMetadata,
       AbstractMetadata newMetadata) {
     if (!Objects.equals(oldMetadata.getSchemaString(), newMetadata.getSchemaString())) {
+      rejectRenameColumnMetadataUpdate(oldMetadata.getSchemaString(), newMetadata.getSchemaString());
       request.addUpdatesItem(new SetSchemaUpdate()
           .action("set-columns")
           .columns(UCDeltaSchemaConverter.parseSchemaString(newMetadata.getSchemaString())));
@@ -842,6 +851,81 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
             .removals(toRemove));
       }
     }
+  }
+
+  /**
+   * Rejects schema updates that represent ALTER TABLE RENAME COLUMN.
+   *
+   * <p>The UC Delta API receives old/new Delta metadata, not the original SQL operation, so this
+   * detects a rename by finding the same Delta column-mapping identity at a different logical
+   * field path.
+   */
+  private static void rejectRenameColumnMetadataUpdate(
+      String oldSchemaString, String newSchemaString) {
+    Map<String, String> oldNamesByColumnId = columnNameByMappingId(oldSchemaString);
+    Map<String, String> newNamesByColumnId = columnNameByMappingId(newSchemaString);
+    for (Map.Entry<String, String> newColumn : newNamesByColumnId.entrySet()) {
+      String oldName = oldNamesByColumnId.get(newColumn.getKey());
+      if (oldName != null && !oldName.equals(newColumn.getValue())) {
+        throw new UnsupportedOperationException(
+            String.format(
+                "RENAME COLUMN is not supported for UC Delta tables: %s -> %s",
+                oldName, newColumn.getValue()));
+      }
+    }
+  }
+
+  /** Returns mapped columns keyed by stable Delta column-mapping identity. */
+  private static Map<String, String> columnNameByMappingId(String schemaString) {
+    Map<String, String> namesById = new LinkedHashMap<>();
+    collectColumnNameByMappingId(
+        UCDeltaSchemaConverter.parseSchemaString(schemaString), "", namesById);
+    return namesById;
+  }
+
+  /** Walks nested fields because RENAME COLUMN can target nested columns. */
+  private static void collectColumnNameByMappingId(
+      DeltaType dataType, String parentPath, Map<String, String> namesById) {
+    if (dataType instanceof StructType) {
+      List<StructField> fields = ((StructType) dataType).getFields();
+      if (fields == null) {
+        return;
+      }
+      for (StructField field : fields) {
+        String fieldPath = parentPath.isEmpty()
+            ? field.getName()
+            : parentPath + "." + field.getName();
+        String identity = columnMappingIdentity(field);
+        if (identity != null) {
+          namesById.put(identity, fieldPath);
+        }
+        collectColumnNameByMappingId(field.getType(), fieldPath, namesById);
+      }
+      return;
+    }
+
+    if (dataType instanceof ArrayType) {
+      collectColumnNameByMappingId(
+          ((ArrayType) dataType).getElementType(), parentPath + ".element", namesById);
+    } else if (dataType instanceof MapType) {
+      MapType mapType = (MapType) dataType;
+      collectColumnNameByMappingId(mapType.getKeyType(), parentPath + ".key", namesById);
+      collectColumnNameByMappingId(mapType.getValueType(), parentPath + ".value", namesById);
+    }
+  }
+
+  /** Returns the stable Delta column-mapping identity encoded in field metadata, if present. */
+  private static String columnMappingIdentity(StructField field) {
+    Map<String, Object> metadata = field.getMetadata();
+    if (metadata == null) {
+      return null;
+    }
+    Object id = metadata.get(COLUMN_MAPPING_ID_KEY);
+    if (id != null) {
+      return "id:" + id;
+    }
+    Object physicalName = metadata.get(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
+    return physicalName == null ? null : "physicalName:" + physicalName;
   }
 
   // ===========================

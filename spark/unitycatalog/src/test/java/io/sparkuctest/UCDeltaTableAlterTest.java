@@ -111,7 +111,7 @@ public class UCDeltaTableAlterTest extends UCDeltaTableIntegrationBaseTest {
   }
 
   @Test
-  public void testAlterTableRenameColumnUpdatesUcDeltaMetadata() throws Exception {
+  public void testAlterTableRenameColumnRemainsUnsupportedForUcDeltaCatalog() throws Exception {
     withNewTable(
         "alter_rename_column_test",
         "id INT, old_name STRING",
@@ -120,12 +120,17 @@ public class UCDeltaTableAlterTest extends UCDeltaTableIntegrationBaseTest {
         COLUMN_MAPPING_PROPERTIES,
         tableName -> {
           sql("INSERT INTO %s VALUES (1, 'before_rename')", tableName);
-          sql("ALTER TABLE %s RENAME COLUMN old_name TO new_name", tableName);
+          long versionBefore = currentVersion(tableName);
 
+          assertThrowsWithCauseContaining(
+              "RENAME COLUMN is not supported for UC Delta tables",
+              () -> sql("ALTER TABLE %s RENAME COLUMN old_name TO new_name", tableName));
+
+          assertEquals(versionBefore, currentVersion(tableName));
           LoadTableResponse response = loadTableViaDeltaRest(tableName);
-          assertEquals(List.of("id", "new_name"), fieldNames(response.getMetadata().getColumns()));
+          assertEquals(List.of("id", "old_name"), fieldNames(response.getMetadata().getColumns()));
           check(
-              sql("SELECT id, new_name FROM %s ORDER BY id", tableName),
+              sql("SELECT id, old_name FROM %s ORDER BY id", tableName),
               List.of(row("1", "before_rename")));
         });
   }
@@ -149,7 +154,7 @@ public class UCDeltaTableAlterTest extends UCDeltaTableIntegrationBaseTest {
   }
 
   @Test
-  public void testAlterTableNestedColumnUpdatesUcDeltaMetadata() throws Exception {
+  public void testAlterTableNestedAddColumnUpdatesUcDeltaMetadata() throws Exception {
     withNewTable(
         "alter_nested_column_test",
         "id INT, info STRUCT<first: STRING, last: STRING>",
@@ -157,12 +162,11 @@ public class UCDeltaTableAlterTest extends UCDeltaTableIntegrationBaseTest {
         TableType.MANAGED,
         COLUMN_MAPPING_PROPERTIES,
         tableName -> {
-          sql("ALTER TABLE %s RENAME COLUMN info.first TO given", tableName);
-          sql("ALTER TABLE %s ADD COLUMNS (info.age INT AFTER given)", tableName);
+          sql("ALTER TABLE %s ADD COLUMNS (info.age INT AFTER first)", tableName);
 
           LoadTableResponse response = loadTableViaDeltaRest(tableName);
           StructType info = structField(response.getMetadata().getColumns(), "info");
-          assertEquals(List.of("given", "age", "last"), fieldNames(info));
+          assertEquals(List.of("first", "age", "last"), fieldNames(info));
         });
   }
 
