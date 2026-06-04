@@ -16,6 +16,10 @@
 
 package io.sparkuctest;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
+import io.unitycatalog.client.delta.api.TablesApi;
+import io.unitycatalog.client.delta.model.LoadTableResponse;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -99,6 +103,32 @@ public class UCDeltaTableMetadataUpdateTest extends UCDeltaTableIntegrationBaseT
           check(
               sql("SELECT id, name, extra FROM %s ORDER BY id", tableName),
               List.of(row("1", "initial", "null"), row("2", "new", "extra_value")));
+        });
+  }
+
+  @Test
+  public void testAlterTableClusterByUpdatesUcDomainMetadata() throws Exception {
+    withNewTable(
+        "alter_cluster_by_domain_metadata_test",
+        "id INT, name STRING",
+        TableType.MANAGED,
+        tableName -> {
+          assertThat(loadTable(tableName).getMetadata().getProperties())
+              .doesNotContainKey("clusteringColumns");
+
+          sql("ALTER TABLE %s CLUSTER BY (id)", tableName);
+
+          LoadTableResponse response = loadTable(tableName);
+          assertThat(response.getMetadata().getProperties())
+              .containsEntry("delta.feature.clustering", "supported")
+              .containsEntry("clusteringColumns", "[[\"id\"]]");
+
+          sql("ALTER TABLE %s CLUSTER BY NONE", tableName);
+
+          response = loadTable(tableName);
+          assertThat(response.getMetadata().getProperties())
+              .containsEntry("delta.feature.clustering", "supported")
+              .containsEntry("clusteringColumns", "[]");
         });
   }
 
@@ -219,6 +249,12 @@ public class UCDeltaTableMetadataUpdateTest extends UCDeltaTableIntegrationBaseT
           sql("INSERT INTO %s VALUES (1, 'foo'), (2, 'bar')", tableName);
           check(tableName, List.of(List.of("1", "foo"), List.of("2", "bar")));
         });
+  }
+
+  private LoadTableResponse loadTable(String tableName) throws Exception {
+    String[] parts = tableName.split("\\.", 3);
+    return new TablesApi(unityCatalogInfo().createApiClient())
+        .loadTable(parts[0], parts[1], parts[2]);
   }
 
   /**
