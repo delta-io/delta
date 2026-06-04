@@ -831,12 +831,13 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       Map<String, String> tablePropertiesFromServer = tableInfo.getProperties();
       tablePropertiesFromServer.remove("table_type", "MANAGED"); // New property by Spark 4.1
 
-      // CLUSTER BY has two extra properties.
+      // CLUSTER BY adds `delta.feature.clustering`. The accompanying `clusteringColumns` property
+      // holds the physical (column-mapped) column reference, whose value isn't predictable, so it
+      // is verified by existence only via `expectedPropertiesWithVariableValue` below.
       final Map<String, String> expectedClusteringProperties =
           withCluster
               ? ImmutableMap.<String, String>builder()
                   .put("delta.feature.clustering", SUPPORTED)
-                  .put("clusteringColumns", "[[\"" + clusterColumn.get() + "\"]]")
                   .build()
               : ImmutableMap.of();
       final Map<String, String> expectedOtherProperties =
@@ -857,10 +858,11 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
               .putAll(customizedProps)
               .putAll(expectedClusteringProperties)
               .build();
-      // The value of these properties aren't predictable. But at least we confirm their
-      // existence. Column-mapping rewrites the logical CLUSTER BY column to a physical
-      // `col-<UUID>` reference, so `clusteringColumns` is verified by existence only when
-      // present.
+      // The value of these properties aren't predictable, so they are listed here to keep the
+      // unexpected-property check below from flagging them; their values are asserted separately.
+      // Column-mapping rewrites the logical CLUSTER BY column to a physical `col-<UUID>` reference,
+      // so `clusteringColumns` can't be matched against the logical name -- its shape is validated
+      // explicitly below instead.
       final Set<String> expectedPropertiesWithVariableValue =
           Stream.concat(
                   Stream.of(
@@ -869,9 +871,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
                       "delta.columnMapping.maxColumnId",
                       "delta.rowTracking.materializedRowCommitVersionColumnName",
                       "delta.rowTracking.materializedRowIdColumnName"),
-                  withCluster && expectClusteringColumnsProperty
-                      ? Stream.of("clusteringColumns")
-                      : Stream.empty())
+                  withCluster ? Stream.of("clusteringColumns") : Stream.empty())
               .collect(Collectors.toUnmodifiableSet());
 
       // `delta.rowTracking.rowIdHighWaterMark` is emitted when using UC Delta API only.
@@ -891,6 +891,14 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
           (key, value) -> assertThat(tablePropertiesFromServer).containsEntry(key, value));
       expectedPropertiesWithVariableValue.forEach(
           key -> assertThat(tablePropertiesFromServer).containsKey(key));
+
+      // CLUSTER BY (col) persists the column as a column-mapped physical `col-<UUID>` reference.
+      // The UUID is unpredictable, so validate the shape: exactly one column-mapped clustering
+      // column.
+      if (withCluster) {
+        assertThat(tablePropertiesFromServer.get("clusteringColumns"))
+            .matches("\\[\\[\"col-[0-9a-f-]+\"\\]\\]");
+      }
 
       // Server doesn't have any unexpected table properties. If anyone introduces a new table
       // property and this fails, update the list of expected properties.

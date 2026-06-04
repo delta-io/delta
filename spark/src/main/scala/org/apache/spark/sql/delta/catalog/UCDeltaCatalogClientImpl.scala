@@ -45,7 +45,7 @@ import org.apache.spark.sql.catalyst.catalog.{
   CatalogTableType
 }
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, Table, TableCatalog, V1Table}
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, ClusteringTableFeature, DeltaConfigs, DeltaErrors, TableFeature}
+import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, ClusteringTableFeature, DeltaConfigs, DeltaErrors, DeltaThrowable, TableFeature}
 import org.apache.spark.sql.delta.actions.{DomainMetadata, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED
 import org.apache.spark.sql.delta.coordinatedcommits.UCTokenBasedRestClientFactory
@@ -204,8 +204,10 @@ private[catalog] class UCDeltaCatalogClientImpl(
       // Delta's structured-error exceptions for bad keys (DELTA_UNKNOWN_CONFIGURATION,
       // DELTA_CANNOT_MODIFY_TABLE_PROPERTY, etc.), and the raw IllegalArgumentException
       // raised by `require(...)` in the value parser.
-      case _: org.apache.spark.sql.delta.DeltaThrowable => false
-      case _: IllegalArgumentException => false
+      case _: DeltaThrowable | _: IllegalArgumentException =>
+        logDebug(log"Skipping invalid Delta config " +
+          log"'${MDC(DeltaLogKeys.CONFIG_KEY, key)}'='${MDC(DeltaLogKeys.CONFIG, value)}'.")
+        false
     }
   }
 
