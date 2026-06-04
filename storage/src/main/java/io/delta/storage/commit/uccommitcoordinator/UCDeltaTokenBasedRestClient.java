@@ -951,7 +951,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
 
     @Override
     public String getProvider() {
-      return m.getDataSourceFormat() != null ? m.getDataSourceFormat().getValue() : null;
+      return m.getDataSourceFormat() != null ? m.getDataSourceFormat().getValue() : "DELTA";
     }
 
     @Override
