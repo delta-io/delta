@@ -1167,6 +1167,10 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
               newColumn = spec.newColumn.copy(nullable = nullability.nullable()))
 
           case rename: RenameColumn =>
+            if (deltaCatalogClient.nonEmpty) {
+              throw new UnsupportedOperationException(
+                "RENAME COLUMN is not supported for UC Delta tables")
+            }
             val field = rename.fieldNames()
             val spec = getColumn(field)
             columnUpdates(field) = spec.copy(
