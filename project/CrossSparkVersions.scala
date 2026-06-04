@@ -183,6 +183,7 @@ import Unidoc._
  *   - isDefault: Whether this is the default Spark version
  *   - targetJvm: Target JVM version (e.g., "17")
  *   - packageSuffix: Maven artifact suffix for this version (e.g., "_4.0", "_4.1")
+ *   - sourceBuildArtifactBaseVersion: Base Maven artifact version for source-built Spark refs, if any
  *   - sourceBuildDefaultRef: Default Spark source ref to build for source-built lanes, if any
  *
  *   Example:
@@ -211,8 +212,10 @@ import Unidoc._
  * @param additionalSourceDir Optional version-specific source directory suffix (e.g., "scala-spark-3.5")
  * @param antlr4Version ANTLR version to use (e.g., "4.9.3", "4.13.1")
  * @param additionalJavaOptions Additional JVM options for tests (e.g., Java 17 --add-opens flags)
- * @param sourceBuildArtifactBaseVersion Base Spark artifact version for source-built refs, if different from fullVersion
- * @param sourceBuildDefaultRef Default Spark source ref for source-built CI/cache workflows
+ * @param sourceBuildArtifactBaseVersion Base Spark artifact version for source-built refs, if different from fullVersion.
+ *   This is an overlay on the compatibility line, not a separate published Spark version.
+ * @param sourceBuildDefaultRef Default Spark source ref for source-built CI/cache workflows.
+ *   Workflows may override the ref manually, but the default lives here with the rest of the Spark policy.
  */
 case class SparkVersionSpec(
   fullVersion: String,
@@ -252,7 +255,7 @@ case class SparkVersionSpec(
   /** Whether to generate Javadoc/Scaladoc for this version */
   def generateDocs: Boolean = isDefault
 
-  /** Base version used when deriving a local artifact version for a source-built Spark ref. */
+  /** Base version used when deriving a local, commit-qualified artifact version for source-built Spark. */
   def artifactBaseVersion: String = sourceBuildArtifactBaseVersion.getOrElse(
     fullVersion.stripSuffix("-SNAPSHOT"))
 }
@@ -295,6 +298,9 @@ object SparkVersionSpec {
     jacksonVersion = "2.18.2"
   )
 
+  // Spark 4.2 source-build jobs use this compatibility line (shims, JVM flags,
+  // dependency overrides) while resolving Spark artifacts from the configured
+  // source ref instead of from a published Spark preview or release.
   private val spark42Preview = SparkVersionSpec(
     fullVersion = "4.2.0-preview5",
     targetJvm = "17",
