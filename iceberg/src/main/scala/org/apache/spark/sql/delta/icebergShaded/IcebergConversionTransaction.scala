@@ -239,7 +239,7 @@ class IcebergConversionTransaction(
   // Member variables //
   //////////////////////
 
-  protected val tablePath = postCommitSnapshot.deltaLog.dataPath
+  protected val tablePath = postCommitSnapshot.dataPath
 
   protected val convert = new DeltaToIcebergConverter(postCommitSnapshot, catalogTable)
 
@@ -505,7 +505,7 @@ class IcebergConversionTransaction(
     val tableExists = ucTable.tableExists(icebergIdentifier)
 
     def tableBuilder = {
-      val tableLocation = postCommitSnapshot.deltaLog.dataPath.toString
+      val tableLocation = postCommitSnapshot.dataPath.toString
       ucTable
         .buildTable(icebergIdentifier, icebergSchema)
         .withPartitionSpec(partitionSpec)

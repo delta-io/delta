@@ -369,7 +369,7 @@ class OptimizeExecutor(
 
       optimizeStrategy.updateOptimizeStats(optimizeStats, removedFiles, jobs)
 
-      return Seq(Row(snapshot.deltaLog.dataPath.toString, optimizeStats.toOptimizeMetrics))
+      return Seq(Row(snapshot.dataPath.toString, optimizeStats.toOptimizeMetrics))
     }
   }
 

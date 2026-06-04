@@ -684,6 +684,13 @@ class DeltaAnalysis(protected val session: SparkSession)
     case DeltaReorgTable(ResolvedTable(_, _, t, _), _) =>
       throw DeltaErrors.notADeltaTable(t.name())
 
+    case TruncateTable(child @ ResolvedTable(_, _, _: DeltaTableV2, _)) =>
+      TruncateDeltaTableCommand(child)
+
+    case TruncatePartition(ResolvedTable(_, _, delta: DeltaTableV2, _), _) =>
+      recordDeltaEvent(delta.deltaLog, "delta.unsupported.truncateTablePartition")
+      throw DeltaErrors.truncateTablePartitionNotSupportedException
+
     case cmd @ ShowColumns(child @ ResolvedTable(_, _, table: DeltaTableV2, _), namespace, _) =>
       // Adapted from the rule in spark ResolveSessionCatalog.scala, which V2 tables don't trigger.
       // NOTE: It's probably a spark bug to check head instead of tail, for 3-part identifiers.
