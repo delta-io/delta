@@ -725,6 +725,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       newMetadata,
       oldProtocol,
       newProtocol,
+      catalogTrackedInfo.transactionDomainMetadata(),
       catalogTrackedInfo.deltaUniformIceberg()
     );
   }

@@ -26,7 +26,7 @@ import io.delta.storage.commit.{Commit, GetCommitsResponse, TableIdentifier => S
 import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCDeltaClient, UCDeltaModels}
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.{DeltaProtocol, StagingTableInfo, TableInfo, TableType => UcTableType}
-import io.delta.storage.commit.uccommitcoordinator.exceptions.{CredentialFetchFailedException, NoSuchTableException => StorageNoSuchTableException}
+import io.delta.storage.commit.uccommitcoordinator.exceptions.{CredentialFetchFailedException, UnsupportedTableFormatException, NoSuchTableException => StorageNoSuchTableException}
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 
 import org.apache.spark.sql.QueryTest
@@ -677,6 +677,48 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
     }
     assert(thrown eq ex)
   }
+
+  // -------------------------------------------------------------------------
+  // tableExists: maps `StorageNoSuchTableException` to `false`; treats UC-side
+  // "exists but not Delta-readable" / "exists but creds failed" responses as `true`
+  // since the table still exists in the catalog. Other failures propagate.
+  // -------------------------------------------------------------------------
+
+  private def tableExistsClient(loadResult: => TableInfo): UCDeltaCatalogClientImpl =
+    new UCDeltaCatalogClientImpl(catalogName = "main", ucClient = new StubUCDeltaClient(loadResult))
+
+  test("tableExists: returns true when UC returns table info") {
+    val client = tableExistsClient(existingDeltaTableInfo())
+    assert(client.tableExists(Identifier.of(Array("sch"), "tbl")))
+  }
+
+  test("tableExists: returns false on StorageNoSuchTableException") {
+    val client = tableExistsClient(throw new StorageNoSuchTableException("no such table"))
+    assert(!client.tableExists(Identifier.of(Array("sch"), "tbl")))
+  }
+
+  test("tableExists: returns true on UnsupportedTableFormatException (table exists, " +
+      "just not Delta-readable)") {
+    val client = tableExistsClient(throw new UnsupportedTableFormatException(
+      "not delta", new RuntimeException("simulated")))
+    assert(client.tableExists(Identifier.of(Array("sch"), "tbl")))
+  }
+
+  test("tableExists: returns true on CredentialFetchFailedException (table exists, " +
+      "credentials unavailable)") {
+    val client = tableExistsClient(throw new CredentialFetchFailedException(
+      "creds exhausted", new RuntimeException("simulated"), null))
+    assert(client.tableExists(Identifier.of(Array("sch"), "tbl")))
+  }
+
+  test("tableExists: propagates unrelated IOExceptions instead of masking as not-exists") {
+    val ioe = new java.io.IOException("network blip")
+    val client = tableExistsClient(throw ioe)
+    val thrown = intercept[java.io.IOException] {
+      client.tableExists(Identifier.of(Array("sch"), "tbl"))
+    }
+    assert(thrown eq ioe)
+  }
 }
 
 /**
@@ -726,6 +768,7 @@ private abstract class ThrowingUCDeltaClient extends UCDeltaClient {
       domainMetadata: util.List[AbstractDomainMetadata],
       lastCommitTimestampMs: Long): TableInfo =
     throw new UnsupportedOperationException
+  // scalastyle:off argcount
   override def commit(
       tableId: String,
       tableUri: URI,
@@ -736,8 +779,10 @@ private abstract class ThrowingUCDeltaClient extends UCDeltaClient {
       newMetadata: Optional[AbstractMetadata],
       oldProtocol: Optional[AbstractProtocol],
       newProtocol: Optional[AbstractProtocol],
+      transactionDomainMetadata: util.List[AbstractDomainMetadata],
       uniform: Optional[UniformMetadata]): Unit =
     throw new UnsupportedOperationException
+  // scalastyle:on argcount
   override def getCommits(
       tableId: String,
       tableUri: URI,

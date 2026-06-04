@@ -48,7 +48,19 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     )
   }
 
-  override protected def shouldPassTests: Set[String] = Set(
+  override protected def shouldPassTests: Set[String] = DeltaV2SourceSuite.PassingTests
+
+  override protected def shouldFailTests: Set[String] = DeltaV2SourceSuite.FailingTests
+}
+
+/**
+ * Shared V2-connector test classifications for `DeltaSourceSuite`. Other V2 suites that inherit
+ * from `DeltaSourceSuite` (e.g. the V2 column-mapping suites) can compose these sets with
+ * their own additions or overrides.
+ */
+object DeltaV2SourceSuite {
+
+  val PassingTests: Set[String] = Set(
     // ========== Core streaming tests ==========
     "basic",
     "initial snapshot ends at base index of next version",
@@ -147,7 +159,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "initial snapshot: checkpoint resume after new commits produces all rows"
   )
 
-  override protected def shouldFailTests: Set[String] = Set(
+  val FailingTests: Set[String] = Set(
     // === Null Type Column Handling ===
     "streaming delta source should not drop null columns",
     "streaming delta source should drop null columns without feature flag",

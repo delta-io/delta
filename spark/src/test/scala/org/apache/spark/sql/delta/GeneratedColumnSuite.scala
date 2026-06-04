@@ -603,6 +603,19 @@ trait GeneratedColumnSuiteBase
     }
   }
 
+  test("validateGeneratedColumns: column named as SQL keyword") {
+    // `current_date` in a generation expression is parsed as an UnresolvedAttribute (column
+    // reference), not the CurrentDate() function. So a column literally named `current_date`
+    // can be referenced in a generated column.
+    withTableName("keyword_col_gen") { table =>
+      createTable(
+        table, None, "`current_date` INT, bar INT",
+        Map("bar" -> "`current_date` + 1"), Nil)
+      sql(s"INSERT INTO $table (`current_date`) VALUES (10)")
+      checkAnswer(spark.table(table), Row(10, 11) :: Nil)
+    }
+  }
+
   protected def testTypeMismatch(
       generatedColumnType: DataType,
       generatedColumnNullable: Boolean,
