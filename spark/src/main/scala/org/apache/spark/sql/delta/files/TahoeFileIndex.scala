@@ -58,6 +58,7 @@ abstract class TahoeFileIndex(
   with SupportsRowIndexFilters
   with SnapshotDescriptor {
 
+
   override def rootPaths: Seq[Path] = path :: Nil
 
   /**
@@ -211,6 +212,7 @@ abstract class TahoeFileIndexWithSnapshotDescriptor(
   override def version: Long = snapshot.version
   override def metadata: Metadata = snapshot.metadata
   override def protocol: Protocol = snapshot.protocol
+  override def dataPath: Path = snapshot.dataPath
 
 
   protected[delta] def numOfFilesIfKnown: Option[Long] = snapshot.numOfFilesIfKnown
@@ -229,6 +231,7 @@ class ShallowSnapshotDescriptor(
   override val version: Long = snapshot.version
   override val metadata: Metadata = snapshot.metadata
   override val protocol: Protocol = snapshot.protocol
+  override val dataPath: Path = snapshot.dataPath
   // Avoid eager state reconstruction
   override protected[delta] def numOfFilesIfKnown: Option[Long] =
     deltaLog.getSnapshotAt(version, catalogTableOpt = catalogTableOpt).numOfFilesIfKnown
@@ -282,6 +285,7 @@ case class TahoeLogFileIndex(
   // from the one returned by [[getSnapshot]] that we will eventually scan.
   override def metadata: Metadata = snapshotAtAnalysis.metadata
   override def protocol: Protocol = snapshotAtAnalysis.protocol
+  override def dataPath: Path = deltaLog.dataPath
 
   private def checkSchemaOnRead: Boolean = {
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SCHEMA_ON_READ_CHECK_ENABLED)

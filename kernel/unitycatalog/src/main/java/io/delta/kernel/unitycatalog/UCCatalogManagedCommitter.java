@@ -38,6 +38,7 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.TableIdentifier;
+import io.delta.storage.commit.actions.AbstractDomainMetadata;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorException;
 import io.delta.storage.commit.uniform.UniformMetadata;
@@ -462,6 +463,7 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
                 generateMetadataPayloadOpt(commitMetadata).map(MetadataAdapter::new),
                 Optional.empty() /* oldProtocol */,
                 commitMetadata.getNewProtocolOpt().map(ProtocolAdapter::new),
+                Collections.<AbstractDomainMetadata>emptyList(),
                 uniformMetadataOpt);
             return null;
           } catch (io.delta.storage.commit.CommitFailedException cfe) {

@@ -42,7 +42,13 @@ import org.junit.jupiter.api.io.TempDir;
 import scala.Option;
 import scala.collection.JavaConverters;
 
-/** Tests for V2 streaming read operations. */
+/**
+ * Tests for V2 streaming read operations.
+ *
+ * <p>These tests run with {@code DeltaSparkSessionExtensionV1}, which omits spark-unified rules
+ * such as {@code ApplyV2ReadOptions}. Features that require those rules (e.g. CDC streaming schema)
+ * are tested in {@code DeltaV2CDCStreamSuite} in the spark-unified module.
+ */
 public class V2StreamingReadTest extends V2TestBase {
 
   @Test
