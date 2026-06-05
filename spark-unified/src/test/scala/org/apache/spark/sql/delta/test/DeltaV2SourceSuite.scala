@@ -99,6 +99,7 @@ object DeltaV2SourceSuite {
     "incremental: commit file gap between versions, fails",
     "incremental: first commit file missing, failOnDataLoss=false succeeds",
     "initial snapshot: commit file missing but checkpoint intact, succeeds",
+    "initial snapshot: checkpoint missing but all commit files intact, succeeds",
     "initial snapshot: both checkpoint and commit file missing, fails",
     "initial snapshot: log retention deletes old checkpoint and commit files mid-stream," +
       " restart fails",
@@ -168,9 +169,9 @@ object DeltaV2SourceSuite {
     "streaming delta source should drop null columns without feature flag",
 
     // === Schema Evolution ===
-    // TODO(#6232): enable the two tests after spark streaming engine supports leaf node projection
-    //  for datasource v2 such that we can adopt the two schema changes without refreshing the
-    //  dataframe
+    // TODO(#6232): DSv2 pins the table schema when the DataFrame is loaded, so restarting from a
+    //  stale DataFrame can't adopt the schema change. Enable once the V2 relation refreshes its
+    //  schema without rebuilding the DataFrame.
     "relax nullability: restarting with stale DataFrame should recover",
     "type widening: restarting with stale DataFrame should recover",
 
@@ -178,9 +179,6 @@ object DeltaV2SourceSuite {
     // V2 only tolerates missing start versions with failOnDataLoss=false; mid-log gaps still
     // throw InvalidTableException because non-contiguous versions are not a log-retention scenario.
     "incremental: commit file gap between versions, failOnDataLoss=false succeeds",
-    // Kernel cannot reconstruct snapshot without checkpoint file (_last_checkpoint still
-    // points to deleted checkpoint). V1 falls back to delta files; Kernel does not.
-    "initial snapshot: checkpoint missing but all commit files intact, succeeds",
 
     // === Misc ===
     // TODO(#5900): fix exception mismatch
