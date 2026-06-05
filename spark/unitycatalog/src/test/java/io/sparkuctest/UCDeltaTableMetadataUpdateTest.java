@@ -18,8 +18,8 @@ package io.sparkuctest;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import io.unitycatalog.client.delta.api.TablesApi;
-import io.unitycatalog.client.delta.model.LoadTableResponse;
+import io.unitycatalog.client.delta.api.DeltaTablesApi;
+import io.unitycatalog.client.delta.model.DeltaLoadTableResponse;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -118,7 +118,7 @@ public class UCDeltaTableMetadataUpdateTest extends UCDeltaTableIntegrationBaseT
 
           sql("ALTER TABLE %s CLUSTER BY (id)", tableName);
 
-          LoadTableResponse response = loadTable(tableName);
+          DeltaLoadTableResponse response = loadTable(tableName);
           assertThat(response.getMetadata().getProperties())
               .containsEntry("delta.feature.clustering", "supported");
           // Column mapping rewrites the logical `id` to a physical `col-<UUID>` reference. The UC
@@ -256,9 +256,9 @@ public class UCDeltaTableMetadataUpdateTest extends UCDeltaTableIntegrationBaseT
         });
   }
 
-  private LoadTableResponse loadTable(String tableName) throws Exception {
+  private DeltaLoadTableResponse loadTable(String tableName) throws Exception {
     String[] parts = tableName.split("\\.", 3);
-    return new TablesApi(unityCatalogInfo().createApiClient())
+    return new DeltaTablesApi(unityCatalogInfo().createApiClient())
         .loadTable(parts[0], parts[1], parts[2]);
   }
 
