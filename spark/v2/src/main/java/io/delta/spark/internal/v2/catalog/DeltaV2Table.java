@@ -302,6 +302,28 @@ public class DeltaV2Table implements Table, SupportsRead, SupportsWrite, Support
         .orElse("delta.`" + tablePath + "`");
   }
 
+  /**
+   * Reporting a non-null version opts this table into Spark's table-version refresh
+   * ([[org.apache.spark.sql.execution.QueryExecution]]): a DataFrame analyzed at one version is
+   * re-resolved to the latest committed version at execution, matching DSv1 refresh semantics
+   * instead of staying pinned to the snapshot captured when this table was loaded.
+   *
+   * <p>No {@code @Override}: {@code Table.version()} only exists in Spark 4.1+ (SPARK-54157); on
+   * Spark 4.0 this stays an inert extra method so the connector still cross-compiles.
+   */
+  public String version() {
+    return Long.toString(initialSnapshot.getVersion());
+  }
+
+  /**
+   * A stable table identity so Spark's refresh can detect a drop and recreate (a recreated table
+   * gets a different id) rather than silently reading a different table at the same name. Omits
+   * {@code @Override} for the same cross-Spark reason as {@link #version()}.
+   */
+  public String id() {
+    return ((SnapshotImpl) initialSnapshot).getMetadata().getId();
+  }
+
   @Override
   public StructType schema() {
     StructType base = schemaProvider.getPublicSchema();
