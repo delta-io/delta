@@ -102,6 +102,7 @@ class CDCReaderSuite
 
   def createCDFDF(start: Long, end: Long, commitVersion: Long, changeType: String): DataFrame = {
     spark.range(start, end)
+      .withColumn("v", lit(null))
       .withColumn(CDC_TYPE_COLUMN_NAME, lit(changeType))
       .withColumn(CDC_COMMIT_VERSION, lit(commitVersion))
   }
@@ -426,6 +427,7 @@ class CDCReaderSuite
 
         // commit 0: 2 inserts
         spark.range(start = 0, end = 2, step = 1, numPartitions = 1)
+          .withColumn("v", lit(null))
           .write.format("delta").save(dir.getAbsolutePath)
         var df = CDCReader.changesToBatchDF(
           log, 0, 1, spark, catalogTableOpt = None, useCoarseGrainedCDC = true)

@@ -34,6 +34,7 @@ import org.apache.spark.sql.types.{
   DateType,
   IntegerType,
   LongType,
+  NullType,
   StringType,
   StructType,
   TimestampNTZType,
@@ -131,70 +132,77 @@ trait DeltaSharingDataSourceDeltaSuiteBase
    * snapshot queries
    */
   test("DeltaSharingDataSource able to read simple data") {
-    withTempDir { tempDir =>
-      val deltaTableName = "delta_table_simple"
-      withTable(deltaTableName) {
-        createTable(deltaTableName)
-        sql(
-          s"INSERT INTO $deltaTableName" +
-          """ VALUES (1, "one", "2023-01-01", "2023-01-01 00:00:00"),
-              |(2, "two", "2023-02-02", "2023-02-02 00:00:00")""".stripMargin
-        )
+    withSQLConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false") {
+      withTempDir { tempDir =>
+        val deltaTableName = "delta_table_simple"
+        withTable(deltaTableName) {
+          sql(s"""CREATE TABLE $deltaTableName
+                 |(c1 INT, c2 STRING, c3 date, c4 timestamp, c5 VOID, c6 STRUCT<a: INT, b: VOID>)
+                 |USING DELTA PARTITIONED BY (c2)
+                 |""".stripMargin)
+          sql(s"""INSERT INTO $deltaTableName
+                |VALUES (1, "one", "2023-01-01", "2023-01-01 00:00:00", null, (1, null)),
+                |(2, "two", "2023-02-02", "2023-02-02 00:00:00", null, (2, null))""".stripMargin)
 
-        val sharedTableName = "shared_table_simple"
-        prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
-        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+          val sharedTableName = "shared_table_simple"
+          prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
+          prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
 
-        val expectedSchema: StructType = new StructType()
-          .add("c1", IntegerType)
-          .add("c2", StringType)
-          .add("c3", DateType)
-          .add("c4", TimestampType)
-        val expected = Seq(
-          Row(1, "one", sqlDate("2023-01-01"), sqlTimestamp("2023-01-01 00:00:00")),
-          Row(2, "two", sqlDate("2023-02-02"), sqlTimestamp("2023-02-02 00:00:00"))
-        )
+          val expectedSchema: StructType = new StructType()
+            .add("c1", IntegerType)
+            .add("c2", StringType)
+            .add("c3", DateType)
+            .add("c4", TimestampType)
+            .add("c5", NullType)
+            .add("c6", new StructType()
+              .add("a", IntegerType)
+              .add("b", NullType))
+          val expected = Seq(
+            Row(1, "one", sqlDate("2023-01-01"), sqlTimestamp("2023-01-01 00:00:00"), null, Row(1, null)),
+            Row(2, "two", sqlDate("2023-02-02"), sqlTimestamp("2023-02-02 00:00:00"), null, Row(2, null))
+          )
 
-        Seq(true, false).foreach { skippingEnabled =>
-          Seq(true, false).foreach { sharingConfig =>
-            Seq(true, false).foreach { deltaConfig =>
-              val sharedTableName = s"shared_table_simple_" +
-                s"${skippingEnabled}_${sharingConfig}_$deltaConfig"
-              prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
-              prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName, limitHint = Some(1))
-              prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+          Seq(true, false).foreach { skippingEnabled =>
+            Seq(true, false).foreach { sharingConfig =>
+              Seq(true, false).foreach { deltaConfig =>
+                val sharedTableName = s"shared_table_simple_" +
+                  s"${skippingEnabled}_${sharingConfig}_$deltaConfig"
+                prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
+                prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName, limitHint = Some(1))
+                prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
 
-              def test(tablePath: String, tableName: String): Unit = {
-                assert(
-                  expectedSchema == spark.read
+                def test(tablePath: String, tableName: String): Unit = {
+                  assert(
+                    expectedSchema == spark.read
+                      .format("deltaSharing")
+                      .option("responseFormat", "delta")
+                      .load(tablePath)
+                      .schema
+                  )
+                  val df =
+                    spark.read.format("deltaSharing").option("responseFormat", "delta").load(tablePath)
+                    checkAnswer(df, expected)
+                  assert(df.count() > 0)
+                  assertLimit(tableName, Seq.empty[Long])
+                  val limitDf = spark.read
                     .format("deltaSharing")
                     .option("responseFormat", "delta")
                     .load(tablePath)
-                    .schema
-                )
-                val df =
-                  spark.read.format("deltaSharing").option("responseFormat", "delta").load(tablePath)
-                  checkAnswer(df, expected)
-                assert(df.count() > 0)
-                assertLimit(tableName, Seq.empty[Long])
-                val limitDf = spark.read
-                  .format("deltaSharing")
-                  .option("responseFormat", "delta")
-                  .load(tablePath)
-                  .limit(1)
-                assert(limitDf.collect().size == 1)
-                assertLimit(tableName, Some(1L).filter(_ => skippingEnabled && sharingConfig && deltaConfig).toSeq)
-              }
+                    .limit(1)
+                  assert(limitDf.collect().size == 1)
+                  assertLimit(tableName, Some(1L).filter(_ => skippingEnabled && sharingConfig && deltaConfig).toSeq)
+                }
 
-              val limitPushdownConfigs = Map(
-                "spark.delta.sharing.limitPushdown.enabled" -> sharingConfig.toString,
-                DeltaSQLConf.DELTA_LIMIT_PUSHDOWN_ENABLED.key -> deltaConfig.toString,
-                DeltaSQLConf.DELTA_STATS_SKIPPING.key -> skippingEnabled.toString
-              )
-              withSQLConf((limitPushdownConfigs ++ getDeltaSharingClassesSQLConf).toSeq: _*) {
-                val profileFile = prepareProfileFile(tempDir)
-                val tableName = s"share1.default.$sharedTableName"
-                test(s"${profileFile.getCanonicalPath}#$tableName", tableName)
+                val limitPushdownConfigs = Map(
+                  "spark.delta.sharing.limitPushdown.enabled" -> sharingConfig.toString,
+                  DeltaSQLConf.DELTA_LIMIT_PUSHDOWN_ENABLED.key -> deltaConfig.toString,
+                  DeltaSQLConf.DELTA_STATS_SKIPPING.key -> skippingEnabled.toString
+                )
+                withSQLConf((limitPushdownConfigs ++ getDeltaSharingClassesSQLConf).toSeq: _*) {
+                  val profileFile = prepareProfileFile(tempDir)
+                  val tableName = s"share1.default.$sharedTableName"
+                  test(s"${profileFile.getCanonicalPath}#$tableName", tableName)
+                }
               }
             }
           }
