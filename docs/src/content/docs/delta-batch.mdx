@@ -1809,12 +1809,35 @@ Delta Lake can automatically update the schema of a table as part of a DML trans
 
 #### Add columns
 
-Columns that are present in the DataFrame but missing from the table are automatically added as part of a write transaction when:
+Columns that are present in the source data but missing from the table are automatically added as part of a write transaction when schema evolution is enabled. Enable schema evolution using one of the following methods:
 
-- `write` or `writeStream` have `.option("mergeSchema", "true")`
-- `spark.databricks.delta.schema.autoMerge.enabled` is `true`
+- **Use `INSERT WITH SCHEMA EVOLUTION` syntax**: Works with SQL `INSERT` statements. Include `WITH SCHEMA EVOLUTION` in the SQL syntax.
+- **Use `MERGE WITH SCHEMA EVOLUTION` syntax**: Works with `MERGE` statements. Include `WITH SCHEMA EVOLUTION` in the SQL syntax or use `.withSchemaEvolution()` in the Delta Lake API.
+- **Set the `mergeSchema` option**: Works with batch writes or streaming writes. Set `.option("mergeSchema", "true")` on individual `write` or `writeStream` operations.
+- **Set the Spark configuration (legacy)**: Sets `spark.databricks.delta.schema.autoMerge.enabled` to `true` for the entire `SparkSession`. Not recommended for production use, because session-wide configuration can lead to unintended schema changes across multiple operations.
 
-When both options are specified, the option from the `DataFrameWriter` takes precedence. The added columns are appended to the end of the struct they are present in. Case is preserved when appending a new column.
+When both the `mergeSchema` option and the Spark configuration are specified, the option from the `DataFrameWriter` takes precedence. The added columns are appended to the end of the struct they are present in. Case is preserved when appending a new column.
+
+#### Schema evolution syntax for INSERT
+
+Include `WITH SCHEMA EVOLUTION` in an `INSERT` statement to enable automatic schema evolution for that operation. When enabled, the schema of the target Delta Lake table is automatically updated to accommodate additional columns or widened types of the source query. For example:
+
+<Tabs syncKey="code-examples">
+  <TabItem label="SQL" active>
+
+    ```sql
+    INSERT WITH SCHEMA EVOLUTION INTO target_table
+    SELECT * FROM source_table
+    ```
+
+  </TabItem>
+</Tabs>
+
+If the query on `source_table` returns columns that don't exist in the target table, those columns are automatically added to the `target_table` schema. Existing rows receive `NULL` values for the new columns. The clause is supported for `INSERT INTO`, `INSERT OVERWRITE`, and `INSERT INTO ... REPLACE` statements.
+
+<Aside type="note">
+  `WITH SCHEMA EVOLUTION` is available in Delta Lake 4.3 and above.
+</Aside>
 
 #### `NullType` columns
 
