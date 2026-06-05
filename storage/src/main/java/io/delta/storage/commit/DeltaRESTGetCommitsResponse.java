@@ -16,10 +16,10 @@
 
 package io.delta.storage.commit;
 
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 import io.delta.storage.commit.uniform.UniformMetadata;
 
@@ -29,11 +29,11 @@ import io.delta.storage.commit.uniform.UniformMetadata;
  * Currently, it carries additional {@link UniformMetadata} returned
  * by the loadTable response alongside the standard commits and latest table version.
  */
-public class UCDeltaGetCommitsResponse extends GetCommitsResponse {
+public class DeltaRESTGetCommitsResponse extends GetCommitsResponse {
 
   private final Optional<UniformMetadata> uniformMetadata;
 
-  public UCDeltaGetCommitsResponse(
+  public DeltaRESTGetCommitsResponse(
       List<Commit> commits,
       long latestTableVersion,
       Optional<UniformMetadata> uniformMetadata) {
@@ -46,9 +46,11 @@ public class UCDeltaGetCommitsResponse extends GetCommitsResponse {
   }
 
   @Override
-  public UCDeltaGetCommitsResponse sortCommitsByVersion() {
-    List<Commit> sorted = new ArrayList<>(getCommits());
-    sorted.sort(Comparator.comparingLong(Commit::getVersion));
-    return new UCDeltaGetCommitsResponse(sorted, getLatestTableVersion(), uniformMetadata);
+  public DeltaRESTGetCommitsResponse sortCommitsByVersion() {
+    List<Commit> sorted = getCommits()
+        .stream()
+        .sorted(Comparator.comparingLong(Commit::getVersion))
+        .collect(Collectors.toList());
+    return new DeltaRESTGetCommitsResponse(sorted, getLatestTableVersion(), uniformMetadata);
   }
 }

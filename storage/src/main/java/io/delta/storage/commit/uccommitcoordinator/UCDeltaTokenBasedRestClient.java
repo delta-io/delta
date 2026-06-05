@@ -22,7 +22,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.CommitFailedException;
 import io.delta.storage.commit.CoordinatedCommitsUtils;
-import io.delta.storage.commit.UCDeltaGetCommitsResponse;
+import io.delta.storage.commit.DeltaRESTGetCommitsResponse;
 import io.delta.storage.commit.GetCommitsResponse;
 import io.delta.storage.commit.TableIdentifier;
 import io.delta.storage.commit.actions.AbstractDomainMetadata;
@@ -374,7 +374,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
         ? response.getLatestTableVersion() : -1L;
     Optional<io.delta.storage.commit.uniform.UniformMetadata> storageUniform =
         toStorageUniformMetadata(response.getUniform());
-    return new UCDeltaGetCommitsResponse(commits, latestTableVersion, storageUniform);
+    return new DeltaRESTGetCommitsResponse(commits, latestTableVersion, storageUniform);
   }
 
   /** Converts a UC SDK {@link DeltaCommit} to a Delta {@link Commit}. */
