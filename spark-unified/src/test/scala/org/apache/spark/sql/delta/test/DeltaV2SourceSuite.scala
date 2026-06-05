@@ -104,6 +104,9 @@ object DeltaV2SourceSuite {
       " restart fails",
     "streaming processes 100 sequential single-value commits and contains all values 0 to 99",
 
+    // ========== Passthrough options ==========
+    "batch-only options are ignored in streaming",
+
     // ========== startingVersion option tests ==========
     "startingVersion",
     "startingVersion latest",

@@ -2094,6 +2094,40 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValues(GeneratedColumnValidateOnWriteMode.values.map(_.toString))
       .createWithDefault(GeneratedColumnValidateOnWriteMode.LOG_ONLY.toString)
 
+  sealed abstract class ConsistentDataChangeValidationMode(val name: String) {
+    override def toString: String = name
+  }
+  object ConsistentDataChangeValidationMode {
+    /** Skip the validation entirely. */
+    case object OFF extends ConsistentDataChangeValidationMode("off")
+    /** Record a Delta event on violation but do not throw. */
+    case object LOG extends ConsistentDataChangeValidationMode("log")
+    /** Throw an exception on violation. */
+    case object FATAL extends ConsistentDataChangeValidationMode("fatal")
+
+    val values: Seq[ConsistentDataChangeValidationMode] = Seq(OFF, LOG, FATAL)
+    private val byName: Map[String, ConsistentDataChangeValidationMode] =
+      values.map(m => m.name -> m).toMap
+
+    def fromConf(conf: SQLConf): ConsistentDataChangeValidationMode =
+      byName(conf.getConf(DELTA_COMMIT_VALIDATE_CONSISTENT_DATA_CHANGE_MODE))
+  }
+
+  val DELTA_COMMIT_VALIDATE_CONSISTENT_DATA_CHANGE_MODE =
+    buildConf("commitValidation.consistentDataChange.mode")
+      .internal()
+      .doc("""
+             |Controls validation that all FileActions in a single commit share a consistent
+             |dataChange value (either all true or all false).
+             | - off:   Skip the validation entirely.
+             | - log:   Record a Delta event on violation but do not throw.
+             | - fatal: Throw an exception on violation.
+             |""".stripMargin)
+      .stringConf
+      .transform(_.toLowerCase(Locale.ROOT))
+      .checkValues(ConsistentDataChangeValidationMode.values.map(_.name).toSet)
+      .createWithDefault(ConsistentDataChangeValidationMode.LOG.name)
+
   object ValidateCheckConstraintsMode extends Enumeration {
     val OFF, LOG_ONLY, ASSERT = Value
 
