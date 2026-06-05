@@ -251,24 +251,39 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
   }
 
   test("createStagingTable: suggested property is applied when caller hasn't set it") {
+    // `delta.checkpointInterval` is a real, editable Delta config so it survives the
+    // `passesDeltaConfigValidation` filter.
     val (client, _) = newRecordingClient(
-      suggestedProperties = javaMap("delta.someSuggested" -> "ucs-val"))
+      suggestedProperties = javaMap("delta.checkpointInterval" -> "20"))
     val out = client.createStagingTable(
       Identifier.of(Array("sch"), "tbl"),
       stageProps("delta.catalogManaged" -> "supported"))
-    assert(out.get("delta.someSuggested") === "ucs-val")
+    assert(out.get("delta.checkpointInterval") === "20")
   }
 
   test("createStagingTable: suggested property defers to caller when both set") {
     val (client, _) = newRecordingClient(
-      suggestedProperties = javaMap("delta.someSuggested" -> "ucs-val"))
+      suggestedProperties = javaMap("delta.checkpointInterval" -> "20"))
     val out = client.createStagingTable(
       Identifier.of(Array("sch"), "tbl"),
       stageProps(
         "delta.catalogManaged" -> "supported",
-        "delta.someSuggested" -> "caller-val"))
-    assert(out.get("delta.someSuggested") === "caller-val",
+        "delta.checkpointInterval" -> "50"))
+    assert(out.get("delta.checkpointInterval") === "50",
       "user TBLPROPERTIES must win over a suggested value")
+  }
+
+  test("createStagingTable: suggested property unknown to Delta Spark is silently dropped") {
+    // UC may suggest Kernel-only properties (e.g. `delta.parquet.compression.codec`) that
+    // this Delta Spark build doesn't recognize. The suggested-properties path drops them
+    // instead of letting `DeltaConfigs.validateConfigurations` throw downstream.
+    val (client, _) = newRecordingClient(
+      suggestedProperties = javaMap("delta.parquet.compression.codec" -> "snappy"))
+    val out = client.createStagingTable(
+      Identifier.of(Array("sch"), "tbl"),
+      stageProps("delta.catalogManaged" -> "supported"))
+    assert(!out.containsKey("delta.parquet.compression.codec"),
+      "unknown delta.* suggested keys must not flow through")
   }
 
   test("createStagingTable: required protocol features are encoded as delta.feature.*") {
@@ -401,9 +416,11 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
       provider: String = "DELTA",
       catalogManaged: Boolean = true,
       storageProperties: util.Map[String, String] =
-        util.Map.of("fs.s3a.access.key", "existing-key")): TableInfo = {
+        util.Map.of("fs.s3a.access.key", "existing-key"),
+      additionalConfig: Map[String, String] = Map.empty): TableInfo = {
     val config = new util.HashMap[String, String]()
     if (catalogManaged) config.put("delta.feature.catalogManaged", "supported")
+    additionalConfig.foreach { case (k, v) => config.put(k, v) }
     val metadata = new TestMetadata(provider = provider, configuration = config)
     new TableInfo(
       UUID.fromString("00000000-0000-0000-0000-000000000002"),
@@ -527,6 +544,72 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
         Identifier.of(Array("sch"), "tbl"),
         stageProps("delta.feature.catalogManaged" -> "supported"))
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // loadTableAndBuildReplaceProps: existing-table `delta.*` carry-forward.
+  // Pin which keys survive REPLACE so Table Service / commit validation doesn't reject
+  // post-REPLACE commits for stripping required features.
+  // -------------------------------------------------------------------------
+
+  test(
+    "loadTableAndBuildReplaceProps: carries forward existing delta.feature.* + editable configs") {
+    val client = replaceClient(existingDeltaTableInfo(additionalConfig = Map(
+      "delta.feature.deletionVectors" -> "supported",
+      "delta.enableDeletionVectors" -> "true",
+      "delta.checkpointInterval" -> "20")))
+    val out = client.loadTableAndBuildReplaceProps(
+      Identifier.of(Array("sch"), "tbl"),
+      stageProps("delta.feature.catalogManaged" -> "supported"))
+    assert(out.get("delta.feature.deletionVectors") === "supported")
+    assert(out.get("delta.enableDeletionVectors") === "true")
+    assert(out.get("delta.checkpointInterval") === "20")
+  }
+
+  test("loadTableAndBuildReplaceProps: does NOT carry delta.feature.clustering") {
+    val client = replaceClient(existingDeltaTableInfo(additionalConfig = Map(
+      "delta.feature.clustering" -> "supported")))
+    val out = client.loadTableAndBuildReplaceProps(
+      Identifier.of(Array("sch"), "tbl"),
+      stageProps("delta.feature.catalogManaged" -> "supported"))
+    assert(!out.containsKey("delta.feature.clustering"),
+      "clustering must NOT carry forward; only CLUSTER BY DDL can enable it, and " +
+        "carrying it would also block REPLACE transitions away from a clustered table")
+  }
+
+  test("loadTableAndBuildReplaceProps: does NOT carry Delta-internal / non-editable keys") {
+    val client = replaceClient(existingDeltaTableInfo(additionalConfig = Map(
+      // Delta-internal metadata that's not in DeltaConfigs.entries.
+      "delta.lastCommitTimestamp" -> "1234567890",
+      // Registered but non-editable; rejected by `DELTA_CANNOT_MODIFY_TABLE_PROPERTY`.
+      "delta.columnMapping.maxColumnId" -> "5")))
+    val out = client.loadTableAndBuildReplaceProps(
+      Identifier.of(Array("sch"), "tbl"),
+      stageProps("delta.feature.catalogManaged" -> "supported"))
+    assert(!out.containsKey("delta.lastCommitTimestamp"))
+    assert(!out.containsKey("delta.columnMapping.maxColumnId"))
+  }
+
+  test("loadTableAndBuildReplaceProps: caller TBLPROPERTIES wins over carried-forward value") {
+    val client = replaceClient(existingDeltaTableInfo(additionalConfig = Map(
+      "delta.checkpointInterval" -> "10")))
+    val out = client.loadTableAndBuildReplaceProps(
+      Identifier.of(Array("sch"), "tbl"),
+      stageProps(
+        "delta.feature.catalogManaged" -> "supported",
+        "delta.checkpointInterval" -> "50"))
+    assert(out.get("delta.checkpointInterval") === "50",
+      "caller-supplied TBLPROPERTIES on the REPLACE must override the existing value")
+  }
+
+  test("loadTableAndBuildReplaceProps: does NOT carry non-delta.* user properties") {
+    val client = replaceClient(existingDeltaTableInfo(additionalConfig = Map(
+      "Foo" -> "Bar")))
+    val out = client.loadTableAndBuildReplaceProps(
+      Identifier.of(Array("sch"), "tbl"),
+      stageProps("delta.feature.catalogManaged" -> "supported"))
+    assert(!out.containsKey("Foo"),
+      "non-delta.* user keys follow normal REPLACE semantics: dropped unless re-supplied")
   }
 
   test("loadTable converts TableInfo to V1Table with catalog-supplied fields") {

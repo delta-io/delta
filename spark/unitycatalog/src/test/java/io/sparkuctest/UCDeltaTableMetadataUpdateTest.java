@@ -120,8 +120,13 @@ public class UCDeltaTableMetadataUpdateTest extends UCDeltaTableIntegrationBaseT
 
           LoadTableResponse response = loadTable(tableName);
           assertThat(response.getMetadata().getProperties())
-              .containsEntry("delta.feature.clustering", "supported")
-              .containsEntry("clusteringColumns", "[[\"id\"]]");
+              .containsEntry("delta.feature.clustering", "supported");
+          // Column mapping rewrites the logical `id` to a physical `col-<UUID>` reference. The UC
+          // API exposes only the logical schema, so the exact physical name can't be resolved to
+          // assert here; validate instead that the persisted clustering set is exactly one
+          // column-mapped physical reference (one column, in `col-<UUID>` form).
+          assertThat(response.getMetadata().getProperties().get("clusteringColumns"))
+              .matches("\\[\\[\"col-[0-9a-f-]+\"\\]\\]");
 
           sql("ALTER TABLE %s CLUSTER BY NONE", tableName);
 
