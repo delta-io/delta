@@ -276,7 +276,11 @@ object SparkVersionSpec {
   )
 
   private val spark41 = SparkVersionSpec(
-    fullVersion = "4.1.0",
+    // Build the 4.1 line against the latest 4.1 patch. SPARK-54812 was backported to
+    // 4.1.2, which removed the `IgnoreCachedData` trait that 4.1.0/4.1.1 still ship.
+    // Compiling against 4.1.0 produced a `delta-spark_4.1` jar that threw
+    // NoClassDefFoundError on 4.1.2 (see the spark-4.1 IgnoreCachedDataShim).
+    fullVersion = "4.1.2",
     targetJvm = "17",
     additionalSourceDir = Some("scala-shims/spark-4.1"),
     supportIceberg = true,

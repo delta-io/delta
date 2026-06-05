@@ -107,13 +107,13 @@ class SparkVersionSpec:
 # These should mirror CrossSparkVersions.scala
 SPARK_VERSIONS: Dict[str, SparkVersionSpec] = {
     "4.0.1": SparkVersionSpec(suffix="_4.0", support_iceberg=True, support_hudi=True),
-    "4.1.0": SparkVersionSpec(suffix="_4.1", support_iceberg=True, support_hudi=False),
+    "4.1.2": SparkVersionSpec(suffix="_4.1", support_iceberg=True, support_hudi=False),
     "4.2.0-preview5": SparkVersionSpec(suffix="_4.2", support_iceberg=False, support_hudi=False)
 }
 
 # The default Spark version
 # This is intentionally hardcoded here to explicitly test the default version.
-DEFAULT_SPARK = "4.1.0"
+DEFAULT_SPARK = "4.1.2"
 
 
 def substitute_xversion(jar_templates: List[str], delta_version: str) -> Set[str]:
