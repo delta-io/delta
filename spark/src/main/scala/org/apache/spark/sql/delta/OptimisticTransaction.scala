@@ -1514,7 +1514,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
   /** Ensure that actions do not contain duplicates for the same path. */
   protected def checkNoDuplicateActions(actions: Seq[Action]): Unit = {
-    ConflictChecker.checkNoDuplicateActions(spark, actions.iterator).foreach(_ => ())
+    ConflictChecker.checkNoDuplicateActions(actions.iterator).foreach(_ => ())
   }
 
   /**
@@ -1798,10 +1798,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
       validateActionsAddFileInvariants(preparedActions, metadata)
 
-      checkNoDuplicateActions(preparedActions)
-      ConflictChecker.trackConsistentDataChange(
-        spark, preparedActions.iterator, deltaLog, op, callerContext = "commit")
-        .foreach(_ => ())
+      if (spark.conf.get(DeltaSQLConf.DELTA_DUPLICATE_ACTION_CHECK_ENABLED)) {
+        checkNoDuplicateActions(preparedActions)
+      }
 
       // Find the isolation level to use for this commit
       val isolationLevelToUse = getIsolationLevelToUse(preparedActions, op)
@@ -2094,8 +2093,6 @@ trait OptimisticTransactionImpl extends TransactionHelper
         }
         action
       }
-      allActions = ConflictChecker.trackConsistentDataChange(
-        spark, allActions, deltaLog, op, callerContext = "commitLarge")
       val (allActions2, acStatsCollector) = collectAutoOptimizeStats(allActions)
       allActions = allActions2
 
