@@ -27,7 +27,7 @@ import io.unitycatalog.client.delta.model.DeltaMapType;
 import io.unitycatalog.client.delta.model.DeltaPrimitiveType;
 import io.unitycatalog.client.delta.model.DeltaStructField;
 import io.unitycatalog.client.delta.model.DeltaStructType;
-import io.unitycatalog.client.delta.serde.DeltaTypeModule;
+import io.unitycatalog.client.delta.serde.DeltaDataTypeModule;
 
 import java.util.List;
 import java.util.Objects;
@@ -40,7 +40,7 @@ import java.util.Objects;
  * Delta's wire format on its own:
  * <ul>
  *   <li>{@link DeltaPrimitiveType} serializes as {@code {"type":"integer"}} by default, but Delta
- *       expects a bare string ({@code "integer"}). {@link DeltaTypeModule} provides custom
+ *       expects a bare string ({@code "integer"}). {@link DeltaDataTypeModule} provides custom
  *       serializers/deserializers that flatten primitives (and decimal) to bare strings.</li>
  *   <li>The SDK uses kebab-case JSON keys for nested types ({@code element-type},
  *       {@code contains-null}, {@code key-type}, etc.). Delta's wire format uses camelCase
@@ -146,8 +146,8 @@ final class UCDeltaSchemaConverter {
     // Copy the SDK's default mapper so we inherit its base config (visibility, naming, etc.)
     // without mutating the shared instance.
     ObjectMapper m = JSON.getDefault().getMapper().copy();
-    // DeltaTypeModule flattens DeltaPrimitiveType/DeltaDecimalType into bare type-name strings.
-    m.registerModule(new DeltaTypeModule());
+    // DeltaDataTypeModule flattens DeltaPrimitiveType/DeltaDecimalType into bare type-name strings.
+    m.registerModule(new DeltaDataTypeModule());
     // The SDK ships DeltaArrayType/DeltaMapType with kebab-case JSON keys; Delta's wire format uses
     // camelCase. Mixins rewrite the property names without modifying the generated SDK
     // classes themselves.
