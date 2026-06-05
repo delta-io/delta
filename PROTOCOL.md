@@ -123,6 +123,7 @@
   - [Partition Value Serialization](#partition-value-serialization)
   - [Schema Serialization Format](#schema-serialization-format)
     - [Primitive Types](#primitive-types)
+      - [Void Type](#void-type)
     - [Struct Type](#struct-type)
     - [Struct Field](#struct-field)
     - [Array Type](#array-type)
@@ -2006,6 +2007,8 @@ The supported type changes are:
   - `Byte`, `Short` or `Int` -> `Decimal(10 + k1, k2)` where `k1 >= k2 >= 0`.
   - `Long` -> `Decimal(20 + k1, k2)` where `k1 >= k2 >= 0`.
 
+Note: changing a `void` column to another type does not require the Type Widening feature; see [Void Type](#void-type).
+
 To support this feature:
 - The table must be on Reader version 3 and Writer Version 7.
 - The feature `typeWidening` must exist in the table `protocol`'s `readerFeatures` and `writerFeatures`, either during its creation or at a later stage.
@@ -2729,14 +2732,14 @@ See Parquet [timestamp type](https://github.com/apache/parquet-format/blob/maste
 
 #### Void Type
 
-On write, `void` columns are stripped from the physical Parquet schema; on read, they are reconstructed as all-`null` columns, following the [rule](#consistency-between-table-metadata-and-data-files) that columns present in the table schema but missing from a data file are read as `null`.
+On write, `void` columns are omitted from data files: they do not appear in the data file's schema. On read, they are reconstructed as all-`null` columns, following the [rule](#consistency-between-table-metadata-and-data-files) that columns present in the table schema but missing from a data file are read as `null`.
 
-Because `void` is never written to data files, writers must reject any attempt to **write data** in the following cases:
-- a `void` type nested anywhere inside an `array` or `map`;
-- a `struct` all of whose fields are of `void` type (a struct that would have no physical columns); or
-- a table all of whose columns are of `void` type (a table that would have no physical columns).
+Because `void` is never written to data files, writers must reject **writing data** to a table whose schema contains any of the following shapes:
+- a `void` type inside an `array` or `map` at any nesting level;
+- a `struct` (at any nesting level) whose fields are all `void`; or
+- a table whose columns are all `void`.
 
-These restrictions apply only to writing data; reads and metadata-only operations on such tables remain allowed. For example, a table consisting only of `void` columns can be created and read from, and then made writable by adding a non-`void` column or by changing a `void` column to another type.
+These restrictions are stated in terms of the **table schema**, not the schema of any individual data file. A table with such a schema can still be created, altered through metadata-only operations, and read. In particular, a table covered by these restrictions can be made writable by evolving its schema - for example, by changing a `void` column to another type.
 
 A `void` column may be changed to any other data type through supported schema-evolution operations; this does not require the [Type Widening](#type-widening) table feature.
 
