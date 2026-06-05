@@ -20,7 +20,10 @@ organizationName := "example"
 
 val scala213 = "2.13.17"
 val icebergVersion = "1.4.1"
-val unityCatalogVersion = "0.4.1"
+val unityCatalogVersion: String = sys.props.getOrElse("unityCatalogVersion", {
+  import scala.sys.process._
+  Process(Seq("bash", "../../project/scripts/setup_unitycatalog_main.sh", "--print-version")).!!.trim
+})
 val jacksonVersion = "2.15.4"
 
 val defaultDeltaVersion = {
@@ -213,7 +216,7 @@ lazy val root = (project in file("."))
       scalaBinaryVersion.value,
       getSupportIceberg.value),
     libraryDependencies ++= Seq(
-      "io.unitycatalog" %% "unitycatalog-spark" % unityCatalogVersion excludeAll(
+      "io.unitycatalog" %% s"unitycatalog-spark${getSparkPackageSuffix.value}" % unityCatalogVersion excludeAll(
         ExclusionRule(organization = "com.fasterxml.jackson.core"),
         ExclusionRule(organization = "com.fasterxml.jackson.module"),
         ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
