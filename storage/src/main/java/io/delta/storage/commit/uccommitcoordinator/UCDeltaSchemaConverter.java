@@ -21,26 +21,26 @@ import com.fasterxml.jackson.annotation.JsonSetter;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.unitycatalog.client.JSON;
-import io.unitycatalog.client.delta.model.ArrayType;
-import io.unitycatalog.client.delta.model.DeltaType;
-import io.unitycatalog.client.delta.model.MapType;
-import io.unitycatalog.client.delta.model.PrimitiveType;
-import io.unitycatalog.client.delta.model.StructField;
-import io.unitycatalog.client.delta.model.StructType;
-import io.unitycatalog.client.delta.serde.DeltaTypeModule;
+import io.unitycatalog.client.delta.model.DeltaArrayType;
+import io.unitycatalog.client.delta.model.DeltaDataType;
+import io.unitycatalog.client.delta.model.DeltaMapType;
+import io.unitycatalog.client.delta.model.DeltaPrimitiveType;
+import io.unitycatalog.client.delta.model.DeltaStructField;
+import io.unitycatalog.client.delta.model.DeltaStructType;
+import io.unitycatalog.client.delta.serde.DeltaDataTypeModule;
 
 import java.util.List;
 import java.util.Objects;
 
 /**
- * Bidirectional conversion between the UC SDK's Delta schema model ({@link StructType},
- * {@link DeltaType}, {@link PrimitiveType}) and Delta's JSON schema wire format.
+ * Bidirectional conversion between the UC SDK's Delta schema model ({@link DeltaStructType},
+ * {@link DeltaDataType}, {@link DeltaPrimitiveType}) and Delta's JSON schema wire format.
  *
  * <p>The SDK's default {@link ObjectMapper} (from {@link JSON#getDefault()}) does not emit
  * Delta's wire format on its own:
  * <ul>
- *   <li>{@link PrimitiveType} serializes as {@code {"type":"integer"}} by default, but Delta
- *       expects a bare string ({@code "integer"}). {@link DeltaTypeModule} provides custom
+ *   <li>{@link DeltaPrimitiveType} serializes as {@code {"type":"integer"}} by default, but Delta
+ *       expects a bare string ({@code "integer"}). {@link DeltaDataTypeModule} provides custom
  *       serializers/deserializers that flatten primitives (and decimal) to bare strings.</li>
  *   <li>The SDK uses kebab-case JSON keys for nested types ({@code element-type},
  *       {@code contains-null}, {@code key-type}, etc.). Delta's wire format uses camelCase
@@ -61,13 +61,13 @@ final class UCDeltaSchemaConverter {
   private UCDeltaSchemaConverter() {}
 
   /**
-   * Serializes the SDK's {@link StructType} to Delta's JSON schema wire format. The resulting
+   * Serializes the SDK's {@link DeltaStructType} to Delta's JSON schema wire format. The resulting
    * string is parseable by Delta's schema readers (e.g. {@code DataType.fromJson}).
    *
    * @return JSON string, or {@code null} if {@code columns} is {@code null}.
    * @throws IllegalStateException if Jackson fails to serialize.
    */
-  static String serializeSchema(StructType columns) {
+  static String serializeSchema(DeltaStructType columns) {
     if (columns == null) {
       return null;
     }
@@ -80,17 +80,17 @@ final class UCDeltaSchemaConverter {
 
   /**
    * Parses a Delta JSON schema string (e.g. {@code AbstractMetadata#getSchemaString()}) into
-   * the UC SDK's {@link StructType}. Complex types (struct/array/map) and bare-string
+   * the UC SDK's {@link DeltaStructType}. Complex types (struct/array/map) and bare-string
    * primitives are dispatched by the SDK's {@code DeltaTypeDeserializer} +
-   * {@code @JsonSubTypes} on {@link DeltaType}.
+   * {@code @JsonSubTypes} on {@link DeltaDataType}.
    *
    * @throws NullPointerException if {@code schemaString} is {@code null}.
    * @throws IllegalStateException if the string is not a valid Delta JSON schema.
    */
-  static StructType parseSchemaString(String schemaString) {
+  static DeltaStructType parseSchemaString(String schemaString) {
     Objects.requireNonNull(schemaString, "schemaString must not be null");
     try {
-      return DELTA_SCHEMA_MAPPER.readValue(schemaString, StructType.class);
+      return DELTA_SCHEMA_MAPPER.readValue(schemaString, DeltaStructType.class);
     } catch (JsonProcessingException e) {
       throw new IllegalStateException(
           "Failed to parse Delta JSON schema string: " + schemaString, e);
@@ -98,8 +98,8 @@ final class UCDeltaSchemaConverter {
   }
 
   /**
-   * Converts a {@link UCClient.ColumnDef} list into the UC SDK's {@link StructType}. Each
-   * column's {@code typeJson} is parsed as a full {@link StructField}, preserving
+   * Converts a {@link UCClient.ColumnDef} list into the UC SDK's {@link DeltaStructType}. Each
+   * column's {@code typeJson} is parsed as a full {@link DeltaStructField}, preserving
    * name/nullable/type/metadata. {@code typeText} / {@code typeName} are not consulted
    * because they carry the catalog's engine-side DDL textual form (e.g. {@code "int"}),
    * which diverges from the Delta wire form (e.g. {@code "integer"}) that {@code typeJson}
@@ -110,25 +110,25 @@ final class UCDeltaSchemaConverter {
    * @throws IllegalStateException if a column's {@code typeJson} fails to parse or is missing
    *         the {@code "type"} field.
    */
-  static StructType toUCStructType(List<UCClient.ColumnDef> columns) {
+  static DeltaStructType toUCStructType(List<UCClient.ColumnDef> columns) {
     Objects.requireNonNull(columns, "columns must not be null");
-    StructType structType = new StructType();
+    DeltaStructType structType = new DeltaStructType();
     for (UCClient.ColumnDef col : columns) {
       structType.addFieldsItem(toUCStructField(col));
     }
     return structType;
   }
 
-  private static StructField toUCStructField(UCClient.ColumnDef col) {
+  private static DeltaStructField toUCStructField(UCClient.ColumnDef col) {
     String typeJson = col.getTypeJson();
     if (typeJson == null || typeJson.isEmpty()) {
       throw new IllegalArgumentException(
           "Cannot resolve type for column '" + col.getName() +
               "': typeJson is empty (typeName='" + col.getTypeName() + "').");
     }
-    StructField sdkField;
+    DeltaStructField sdkField;
     try {
-      sdkField = DELTA_SCHEMA_MAPPER.readValue(typeJson, StructField.class);
+      sdkField = DELTA_SCHEMA_MAPPER.readValue(typeJson, DeltaStructField.class);
     } catch (JsonProcessingException e) {
       throw new IllegalStateException(
           "Failed to parse typeJson for column '" + col.getName() +
@@ -146,18 +146,18 @@ final class UCDeltaSchemaConverter {
     // Copy the SDK's default mapper so we inherit its base config (visibility, naming, etc.)
     // without mutating the shared instance.
     ObjectMapper m = JSON.getDefault().getMapper().copy();
-    // DeltaTypeModule flattens PrimitiveType/DecimalType into bare type-name strings.
-    m.registerModule(new DeltaTypeModule());
-    // The SDK ships ArrayType/MapType with kebab-case JSON keys; Delta's wire format uses
+    // DeltaDataTypeModule flattens DeltaPrimitiveType/DecimalType into bare type-name strings.
+    m.registerModule(new DeltaDataTypeModule());
+    // The SDK ships DeltaArrayType/DeltaMapType with kebab-case JSON keys; Delta's wire format uses
     // camelCase. Mixins rewrite the property names without modifying the generated SDK
     // classes themselves.
-    m.addMixIn(ArrayType.class, CamelCaseArrayMixin.class);
-    m.addMixIn(MapType.class, CamelCaseMapMixin.class);
+    m.addMixIn(DeltaArrayType.class, CamelCaseArrayMixin.class);
+    m.addMixIn(DeltaMapType.class, CamelCaseMapMixin.class);
     return m;
   }
 
   /**
-   * Jackson mixin that renames {@link ArrayType}'s JSON keys from kebab-case to camelCase
+   * Jackson mixin that renames {@link DeltaArrayType}'s JSON keys from kebab-case to camelCase
    * (matching Delta's wire format).
    *
    * <p>The class is {@code abstract} and the methods abstract because Jackson never
@@ -167,9 +167,9 @@ final class UCDeltaSchemaConverter {
    */
   private abstract static class CamelCaseArrayMixin {
     @JsonProperty("elementType")
-    abstract DeltaType getElementType();
+    abstract DeltaDataType getElementType();
     @JsonSetter("elementType")
-    abstract void setElementType(DeltaType v);
+    abstract void setElementType(DeltaDataType v);
     @JsonProperty("containsNull")
     abstract Boolean getContainsNull();
     @JsonSetter("containsNull")
@@ -177,18 +177,18 @@ final class UCDeltaSchemaConverter {
   }
 
   /**
-   * Jackson mixin that renames {@link MapType}'s JSON keys from kebab-case to camelCase
+   * Jackson mixin that renames {@link DeltaMapType}'s JSON keys from kebab-case to camelCase
    * (matching Delta's wire format). See {@link CamelCaseArrayMixin} for the mixin pattern.
    */
   private abstract static class CamelCaseMapMixin {
     @JsonProperty("keyType")
-    abstract DeltaType getKeyType();
+    abstract DeltaDataType getKeyType();
     @JsonSetter("keyType")
-    abstract void setKeyType(DeltaType v);
+    abstract void setKeyType(DeltaDataType v);
     @JsonProperty("valueType")
-    abstract DeltaType getValueType();
+    abstract DeltaDataType getValueType();
     @JsonSetter("valueType")
-    abstract void setValueType(DeltaType v);
+    abstract void setValueType(DeltaDataType v);
     @JsonProperty("valueContainsNull")
     abstract Boolean getValueContainsNull();
     @JsonSetter("valueContainsNull")
