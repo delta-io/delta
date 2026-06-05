@@ -92,8 +92,12 @@ jobs:
           else
             uv pip install --python .venv/bin/python --require-hashes -r .github/ci-requirements/spark-python/spark4.1.lock
           fi
-          # pyspark installed with --no-deps: its only transitive dep (py4j) is in the lock file
-          uv pip install --python .venv/bin/python --no-deps pyspark==${{ steps.spark-details.outputs.spark_full_version }}
+          # pyspark is installed with --no-deps: its only transitive dep (py4j) is in the lock file.
+          # Spark 4.1.2 was published after the global package cutoff, so relax the cutoff only
+          # for this single no-deps install.
+          UV_EXCLUDE_NEWER=2026-05-22T00:00:00Z \
+            uv pip install --python .venv/bin/python --no-deps \
+            pyspark==${{ steps.spark-details.outputs.spark_full_version }}
       - name: Run Python tests
         # when changing TEST_PARALLELISM_COUNT make sure to also change it in spark_test.yaml
         run: |
