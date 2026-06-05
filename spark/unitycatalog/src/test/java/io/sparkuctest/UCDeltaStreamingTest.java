@@ -20,8 +20,8 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.unitycatalog.client.ApiClient;
 import io.unitycatalog.client.ApiException;
-import io.unitycatalog.client.delta.api.DeltaTablesApi;
-import io.unitycatalog.client.delta.model.DeltaLoadTableResponse;
+import io.unitycatalog.client.delta.api.TablesApi;
+import io.unitycatalog.client.delta.model.LoadTableResponse;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
@@ -197,9 +197,9 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
     // followed by DeltaCommitsApi.getCommits).
     String[] parts = fullTableName.split("\\.");
     assertEquals(3, parts.length, "Full table name must be catalog.schema.table");
-    DeltaTablesApi deltaTablesApi = new DeltaTablesApi(client);
-    DeltaLoadTableResponse resp = deltaTablesApi.loadTable(parts[0], parts[1], parts[2]);
-    assertNotNull(resp, "DeltaLoadTableResponse should not be null");
+    TablesApi deltaTablesApi = new TablesApi(client);
+    LoadTableResponse resp = deltaTablesApi.loadTable(parts[0], parts[1], parts[2]);
+    assertNotNull(resp, "LoadTableResponse should not be null");
     assertNotNull(resp.getLatestTableVersion(), "Latest table version should not be null");
     assertEquals(expectedVersion, resp.getLatestTableVersion());
   }

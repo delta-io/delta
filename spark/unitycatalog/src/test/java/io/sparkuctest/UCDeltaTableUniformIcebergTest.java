@@ -16,8 +16,8 @@
 
 package io.sparkuctest;
 
-import io.unitycatalog.client.delta.api.DeltaTablesApi;
-import io.unitycatalog.client.delta.model.DeltaLoadTableResponse;
+import io.unitycatalog.client.delta.api.TablesApi;
+import io.unitycatalog.client.delta.model.LoadTableResponse;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
@@ -52,13 +52,13 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
   /**
    * Asserts that none of the in-memory-only {@code deltaUniformIceberg.*} keys are present in the
    * table's server-side properties. These keys are populated transiently in {@code
-   * catalogTable.storage.properties} from the {@code DeltaLoadTableResponse.uniform} field and must
+   * catalogTable.storage.properties} from the {@code LoadTableResponse.uniform} field and must
    * never be written back to the UC catalog.
    */
   private void assertNoUniformPropsOnServer(String fullTableName) throws Exception {
     String[] parts = fullTableName.split("\\.");
-    DeltaTablesApi deltaApi = new DeltaTablesApi(unityCatalogInfo().createApiClient());
-    DeltaLoadTableResponse resp = deltaApi.loadTable(parts[0], parts[1], parts[2]);
+    TablesApi deltaApi = new TablesApi(unityCatalogInfo().createApiClient());
+    LoadTableResponse resp = deltaApi.loadTable(parts[0], parts[1], parts[2]);
     for (String key : resp.getMetadata().getProperties().keySet()) {
       Assertions.assertFalse(
           key.startsWith("deltaUniformIceberg."),
@@ -75,8 +75,8 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
   private String verifyUCMetadataAndFetchIcebergPath(
       String fullTableName, long expectedConvertedDeltaVersion) throws Exception {
     String[] parts = fullTableName.split("\\.");
-    DeltaTablesApi deltaApi = new DeltaTablesApi(unityCatalogInfo().createApiClient());
-    DeltaLoadTableResponse resp = deltaApi.loadTable(parts[0], parts[1], parts[2]);
+    TablesApi deltaApi = new TablesApi(unityCatalogInfo().createApiClient());
+    LoadTableResponse resp = deltaApi.loadTable(parts[0], parts[1], parts[2]);
     if (resp.getUniform() == null || resp.getUniform().getIceberg() == null) {
       throw new IllegalStateException("No Iceberg metadata found for table: " + fullTableName);
     }
