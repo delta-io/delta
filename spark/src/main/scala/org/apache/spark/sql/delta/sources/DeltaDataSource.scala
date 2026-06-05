@@ -124,8 +124,11 @@ class DeltaDataSource
     val deltaV2Mode = new DeltaV2Mode(sqlContext.sparkSession.sessionState.conf)
     if (schema.isDefined &&
         deltaV2Mode.shouldBypassSchemaValidationForStreaming(parameters.asJava)) {
-      require(!CDCReader.isCDCRead(options), "CDC read is not supported for schema bypass.")
-      return (shortName(), schema.get)
+      // For a CDF read, surface the change-data columns so this relation is a valid CDF
+      // source on its own, independent of the later ApplyV2Streaming rewrite to V2.
+      val schemaToUse =
+        if (CDCReader.isCDCRead(options)) CDCReader.cdcReadSchema(schema.get) else schema.get
+      return (shortName(), schemaToUse)
     }
     val path = parameters.getOrElse("path", {
       throw DeltaErrors.pathNotSpecifiedException

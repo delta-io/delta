@@ -1692,6 +1692,45 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
+  test("batch-only options are ignored in streaming") {
+    // endingVersion and endingTimestamp are batch CDC options that DeltaSource does not enforce.
+    // Each is accepted without error and the stream continues past the specified bound.
+    // Note: versionAsOf and timestampAsOf are NOT passthrough - they throw
+    // DELTA_UNSUPPORTED_TIME_TRAVEL_VIEWS at analysis time and are intentionally excluded here.
+    val fmt = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+    val ts2000 = fmt.format(new java.util.Date(2000))
+
+    val passthroughOptions = Seq(
+      "endingVersion" -> "1",
+      "endingTimestamp" -> ts2000
+    )
+
+    passthroughOptions.foreach { case (optKey, optVal) =>
+      withTempDir { inputDir =>
+        val deltaLog = DeltaLog.forTable(spark, inputDir.getAbsolutePath)
+        // version 0
+        Seq(1, 2, 3).toDF("id").write.format("delta").save(inputDir.toString)
+        modifyCommitTimestamp(deltaLog, 0, 1000)
+        // version 1
+        Seq(4, 5).toDF("id").write.mode("append").format("delta").save(inputDir.toString)
+        modifyCommitTimestamp(deltaLog, 1, 2000)
+
+        val df = loadStreamWithOptions(inputDir.toString, Map(
+          "startingVersion" -> "0",
+          optKey -> optVal
+        ))
+
+        testStream(df)(
+          ProcessAllAvailable(),
+          CheckAnswer(1, 2, 3, 4, 5),
+          AddToReservoir(inputDir, Seq(6).toDF("id")), // version 2 - past any ending bound
+          ProcessAllAvailable(),
+          CheckAnswer(1, 2, 3, 4, 5, 6)
+        )
+      }
+    }
+  }
+
   test("startingVersion: user defined start works with mergeSchema") {
     withTempDir { inputDir =>
       withTempView("startingVersionTest") {
