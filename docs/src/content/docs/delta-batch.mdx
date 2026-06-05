@@ -976,6 +976,17 @@ To atomically replace all the data in a table, use `overwrite` mode:
   </TabItem>
 </Tabs>
 
+Delta Lake provides several options to selectively overwrite only part of a table. The following table summarizes them. For most use cases, we recommend using `replaceUsing` or `replaceWhere`. Use `replaceOn` only when your use case requires complex or null-safe matching conditions. `partitionOverwriteMode` is a legacy option and is not recommended.
+
+| Option | Use case | Available since |
+| --- | --- | --- |
+| `replaceWhere` | Atomically overwrite rows that match a predicate, for example `colA = 5`. | Delta Lake 1.1.0 (DataFrames); 2.4.0 (SQL) |
+| `replaceUsing` | Dynamic data overwrite by column equality. | Delta Lake 4.3.0 |
+| `replaceOn` | Dynamic data overwrite by Boolean expression, including null-safe conditions. | Delta Lake 4.3.0 |
+| `partitionOverwriteMode` | Legacy dynamic partition overwrite (not recommended). | Delta Lake 2.0 |
+
+#### Overwrite rows matching a predicate with `replaceWhere`
+
 You can selectively overwrite only the data that matches an arbitrary expression. This feature is available with DataFrames in Delta Lake 1.1.0 and above and supported in SQL in Delta Lake 2.4.0 and above.
 
 The following command atomically replaces events in January in the target table, which is partitioned by `start_date`, with the data in `replace_data`:
@@ -1090,7 +1101,87 @@ In Delta Lake 1.1.0 and above, if you want to fall back to the old behavior, you
   </TabItem>
 </Tabs>
 
-#### Dynamic Partition Overwrites
+#### Dynamically overwrite data with `replaceUsing` and `replaceOn`
+
+The `replaceUsing` and `replaceOn` options selectively replace the rows that match the incoming DataFrame while leaving all other rows unchanged. They work on partitioned tables, unpartitioned tables, and clustered tables, and are available with DataFrames in Delta Lake 4.3.0 and above.
+
+##### replaceUsing
+
+`replaceUsing` replaces rows when the specified columns compare equal under equality. Provide a comma-separated list of columns. Each column must exist in both the table and the DataFrame, at the same ordinal position. The following command replaces rows whose `event_id` and `start_date` match between the DataFrame and the target table:
+
+<Tabs syncKey="code-examples">
+  <TabItem label="Python" active>
+
+    ```python
+    source_data.write \
+      .format("delta") \
+      .mode("overwrite") \
+      .option("replaceUsing", "event_id, start_date") \
+      .saveAsTable("events")
+    ```
+
+  </TabItem>
+  <TabItem label="Scala">
+
+    ```scala
+    source_data.write
+      .format("delta")
+      .mode("overwrite")
+      .option("replaceUsing", "event_id, start_date")
+      .saveAsTable("events")
+    ```
+
+  </TabItem>
+</Tabs>
+
+If the source query is empty, no data is deleted. For matching logic that equality cannot express, use `replaceOn` instead.
+
+##### replaceOn
+
+`replaceOn` replaces rows when they match a user-defined condition, including null-safe comparisons using the `<=>` operator. Use the `targetAlias` option to reference the target table, and alias the DataFrame to reference the source, in the condition. The following command replaces rows whose `event_id` and `start_date` match between the DataFrame and the target table:
+
+<Tabs syncKey="code-examples">
+  <TabItem label="Python" active>
+
+    ```python
+    source_data.alias("s").write \
+      .format("delta") \
+      .mode("overwrite") \
+      .option("targetAlias", "t") \
+      .option("replaceOn", "s.event_id <=> t.event_id AND s.start_date <=> t.start_date") \
+      .saveAsTable("events")
+    ```
+
+  </TabItem>
+  <TabItem label="Scala">
+
+    ```scala
+    source_data.as("s").write
+      .format("delta")
+      .mode("overwrite")
+      .option("targetAlias", "t")
+      .option("replaceOn", "s.event_id <=> t.event_id AND s.start_date <=> t.start_date")
+      .saveAsTable("events")
+    ```
+
+  </TabItem>
+</Tabs>
+
+If the source query is empty, no data is deleted.
+
+<Aside type="note">
+
+The `replaceOn` and `replaceUsing` options can't be combined with `replaceWhere` or dynamic partition overwrite (`partitionOverwriteMode`) in the same write.
+
+</Aside>
+
+#### Dynamic Partition Overwrites with `partitionOverwriteMode` (legacy)
+
+<Aside type="caution" title="Legacy">
+
+Dynamic partition overwrite mode (the `partitionOverwriteMode` option) is a legacy approach. When possible, use [`replaceUsing` and `replaceOn`](#dynamically-overwrite-data-with-replaceusing-and-replaceon) or `replaceWhere` instead. These options let you specify exactly which rows to replace and avoid accidentally overwriting entire partitions.
+
+</Aside>
 
 Delta Lake 2.0 and above supports _dynamic_ partition overwrite mode for partitioned tables.
 
@@ -1145,7 +1236,7 @@ Dynamic partition overwrite conflicts with the option `replaceWhere` for partiti
 
 <Aside type="caution" title="Important">
 
-Validate that the data written with dynamic partition overwrite touches only the expected partitions. A single row in the incorrect partition can lead to unintentionally overwriting an entire partition. We recommend using `replaceWhere` to specify which data to overwrite.
+Validate that the data written with dynamic partition overwrite touches only the expected partitions. A single row in the incorrect partition can lead to unintentionally overwriting an entire partition. We recommend using `replaceOn`, `replaceUsing`, or `replaceWhere` to specify which data to overwrite.
 
 If a partition has been accidentally overwritten, you can use [Restore a Delta table to an earlier state](/delta-utility/#restore-a-delta-table-to-an-earlier-state) to undo the change.
 
