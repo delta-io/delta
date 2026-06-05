@@ -239,31 +239,22 @@ private[delta] class ConflictChecker(
   def checkConflictsAndValidateActions(): CurrentTransactionInfo = {
     val updatedInfo = checkConflicts()
 
-    // In case the actions of the current transaction changed, re-run the invariant
-    // checks against the rebased action set.
-    checkInvariants(updatedInfo)
+    // In case the actions of the current transaction changed, we need to validate
+    // again that there are no duplicate actions.
+    checkNoDuplicateActionsIfApplicable(updatedInfo)
     updatedInfo
   }
 
   /**
-   * Returns true when conflict resolution produced a different action set than the one the
-   * transaction started with.
+   * Validates that `updatedInfo` does not contain duplicate actions, but only when conflict
+   * resolution actually changed the actions of the current transaction.
    */
-  protected def hasActionsChanged(updatedInfo: CurrentTransactionInfo): Boolean = {
-    updatedInfo.actions ne initialCurrentTransactionInfo.actions
-  }
-
-  /** Run invariants on new set of actions in case they changed. */
-  private def checkInvariants(updatedInfo: CurrentTransactionInfo): Unit = {
-    if (!hasActionsChanged(updatedInfo)) return
-    ConflictChecker.checkNoDuplicateActions(spark, updatedInfo.actions.iterator)
-      .foreach(_ => ())
-    ConflictChecker.trackConsistentDataChange(
-      spark,
-      updatedInfo.actions.iterator,
-      deltaLog,
-      updatedInfo.op,
-      callerContext = "checkConflictsAndValidateActions").foreach(_ => ())
+  protected def checkNoDuplicateActionsIfApplicable(
+      updatedInfo: CurrentTransactionInfo): Unit = {
+    if ((updatedInfo.actions ne initialCurrentTransactionInfo.actions) &&
+        spark.conf.get(DeltaSQLConf.DELTA_DUPLICATE_ACTION_CHECK_ENABLED)) {
+      ConflictChecker.checkNoDuplicateActions(updatedInfo.actions.iterator).foreach(_ => ())
+    }
   }
 
   /**
@@ -1522,75 +1513,13 @@ private[delta] class ConflictChecker(
   }
 }
 
-private[delta] object ConflictChecker extends DeltaLogging {
-  /**
-   * Returns an iterator that validates all [[AddFile]] and [[RemoveFile]] actions in
-   * `actions` share a consistent `dataChange` value. [[AddCDCFile]] is excluded because
-   * change-data-feed files are always emitted with `dataChange = false`.
-   *
-   * Behavior is controlled by
-   * [[DeltaSQLConf.DELTA_COMMIT_VALIDATE_CONSISTENT_DATA_CHANGE_MODE]]:
-   *  - `off`:   skip the check entirely.
-   *  - `log`:   record a Delta event on violation but do not throw.
-   *  - `fatal`: record a Delta event and then throw an [[IllegalStateException]].
-   *
-   * Single pass, no materialization; the throw fires on the first detected inconsistency.
-   */
-  def trackConsistentDataChange(
-      spark: SparkSession,
-      actions: Iterator[Action],
-      deltaLog: DeltaLog,
-      op: DeltaOperations.Operation,
-      callerContext: String): Iterator[Action] = {
-    val mode =
-      DeltaSQLConf.ConsistentDataChangeValidationMode.fromConf(spark.sessionState.conf)
-    if (mode == DeltaSQLConf.ConsistentDataChangeValidationMode.OFF) return actions
-    var firstDataChangeAction: Option[FileAction] = None
-    var firstNoDataChangeAction: Option[FileAction] = None
-    var violationReported = false
-    actions.map { action =>
-      action match {
-        case f: FileAction if !f.isInstanceOf[AddCDCFile] =>
-          if (f.dataChange) {
-            if (firstDataChangeAction.isEmpty) firstDataChangeAction = Some(f)
-          } else {
-            if (firstNoDataChangeAction.isEmpty) firstNoDataChangeAction = Some(f)
-          }
-          if (!violationReported &&
-              firstDataChangeAction.isDefined && firstNoDataChangeAction.isDefined) {
-            violationReported = true
-            val message = "All FileActions in a single commit must share a consistent " +
-              "dataChange value, but this commit mixes dataChange = true and " +
-              "dataChange = false actions."
-            recordDeltaEvent(
-              deltaLog,
-              "delta.commit.inconsistentDataChange",
-              data = Map(
-                "callerContext" -> callerContext,
-                "operation" -> op.name,
-                "operationParameters" -> op.jsonEncodedValues,
-                "firstDataChangeAction" -> firstDataChangeAction,
-                "firstNoDataChangeAction" -> firstNoDataChangeAction))
-            if (mode == DeltaSQLConf.ConsistentDataChangeValidationMode.FATAL) {
-              throw new IllegalStateException(message)
-            }
-          }
-        case _ =>
-      }
-      action
-    }
-  }
-
+private[delta] object ConflictChecker {
   /**
    * Returns an iterator that validates no duplicate file actions exist as it
    * streams. Checks: duplicate adds, duplicate removes, and same path+DV both
-   * added and removed. Single pass, no materialization. Returns `actions`
-   * unchanged when [[DeltaSQLConf.DELTA_DUPLICATE_ACTION_CHECK_ENABLED]] is off.
+   * added and removed. Single pass, no materialization.
    */
-  def checkNoDuplicateActions(
-      spark: SparkSession,
-      actions: Iterator[Action]): Iterator[Action] = {
-    if (!spark.conf.get(DeltaSQLConf.DELTA_DUPLICATE_ACTION_CHECK_ENABLED)) return actions
+  def checkNoDuplicateActions(actions: Iterator[Action]): Iterator[Action] = {
     val addPaths = mutable.Map.empty[String, Option[String]]
     val removePaths = mutable.Map.empty[String, Option[String]]
     def pathAndDVString(path: String, dvIdOpt: Option[String]): String = {

@@ -124,7 +124,7 @@ class ConflictCheckerRowIdSuite extends QueryTest
       // in the table before.
       def txnA(): Array[Row] = {
         val file1 = createTestAddFile()
-        val oldFile = filesBefore.last.copy(dataChange = true)
+        val oldFile = filesBefore.last
         log.startTransaction().commit(Seq(oldFile, file1), ManualUpdate)
         Array.empty
       }

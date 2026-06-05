@@ -20,10 +20,10 @@ package org.apache.spark.sql.delta
 import java.io.File
 import java.nio.file.FileAlreadyExistsException
 
-import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
+import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Truncate}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
-import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, Metadata, Protocol, RemoveFile, SetTransaction}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, Metadata, Protocol, RemoveFile, SetTransaction}
 import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorBuilder, CommitCoordinatorProvider, InMemoryCommitCoordinator, InMemoryCommitCoordinatorBuilder, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -1655,133 +1655,4 @@ class OptimisticTransactionSuite
       assertPartitionColumns(new TableIdentifier(pathOrTable), expected)
     }
   }
-
-  /* ************************
-   * Consistent dataChange validation
-   * ************************ */
-
-  /**
-   * Commits a mixed batch (one dataChange=true AddFile and one dataChange=false AddFile)
-   * against a fresh table under `mode` using either `commit` or `commitLarge`. Returns the
-   * captured `delta.commit.inconsistentDataChange` records along with the thrown exception
-   * (if any).
-   */
-  private def commitMixedDataChangeBatch(
-      tempDir: File,
-      mode: DeltaSQLConf.ConsistentDataChangeValidationMode,
-      useCommitLarge: Boolean)
-      : (Seq[UsageRecord], Option[Throwable]) = {
-    withSQLConf(
-      DeltaSQLConf.DELTA_COMMIT_VALIDATE_CONSISTENT_DATA_CHANGE_MODE.key -> mode.toString) {
-      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
-      val seedTxn = log.startTransaction()
-      seedTxn.updateMetadataForNewTable(Metadata())
-      seedTxn.commit(Seq.empty, ManualUpdate)
-
-      val mixedActions = Seq(
-        createTestAddFile(encodedPath = "data-change", dataChange = true),
-        createTestAddFile(encodedPath = "no-data-change", dataChange = false))
-      var thrown: Option[Throwable] = None
-      val allRecords = Log4jUsageLogger.track {
-        try {
-          if (useCommitLarge) {
-            log.startTransaction().commitLarge(
-              spark,
-              nonProtocolMetadataActions = mixedActions.iterator,
-              newProtocolOpt = None,
-              op = DeltaOperations.ManualUpdate,
-              context = Map.empty,
-              metrics = Map.empty)
-          } else {
-            log.startTransaction().commit(mixedActions, ManualUpdate)
-          }
-        } catch {
-          case t: Throwable => thrown = Some(t)
-        }
-      }
-      val records = filterUsageRecords(allRecords, "delta.commit.inconsistentDataChange")
-      (records, thrown)
-    }
-  }
-
-  for (useCommitLarge <- BOOLEAN_DOMAIN) {
-    val callerContext = if (useCommitLarge) "commitLarge" else "commit"
-
-    test(s"consistent dataChange validation: FATAL mode throws and logs payload" +
-        s" ($callerContext)") {
-      withTempDir { tempDir =>
-        val (records, thrown) = commitMixedDataChangeBatch(
-          tempDir, DeltaSQLConf.ConsistentDataChangeValidationMode.FATAL, useCommitLarge)
-        assert(thrown.exists(_.isInstanceOf[IllegalStateException]))
-        assert(records.size == 1)
-        val payload = JsonUtils.fromJson[Map[String, Any]](records.head.blob)
-        assert(payload("callerContext") == callerContext)
-        assert(payload("operation") == ManualUpdate.name)
-        assert(payload.contains("operationParameters"))
-        val firstDataChange = payload("firstDataChangeAction").asInstanceOf[Map[String, Any]]
-        val firstNoDataChange = payload("firstNoDataChangeAction").asInstanceOf[Map[String, Any]]
-        assert(firstDataChange("path") == "data-change")
-        assert(firstNoDataChange("path") == "no-data-change")
-      }
-    }
-
-    test(s"consistent dataChange validation: LOG mode logs but does not throw" +
-        s" ($callerContext)") {
-      withTempDir { tempDir =>
-        val (records, thrown) = commitMixedDataChangeBatch(
-          tempDir, DeltaSQLConf.ConsistentDataChangeValidationMode.LOG, useCommitLarge)
-        assert(thrown.isEmpty)
-        assert(records.size == 1)
-      }
-    }
-
-    test(s"consistent dataChange validation: OFF mode neither logs nor throws" +
-        s" ($callerContext)") {
-      withTempDir { tempDir =>
-        val (records, thrown) = commitMixedDataChangeBatch(
-          tempDir, DeltaSQLConf.ConsistentDataChangeValidationMode.OFF, useCommitLarge)
-        assert(thrown.isEmpty)
-        assert(records.isEmpty)
-      }
-    }
-  }
-
-  test("consistent dataChange validation: uniform commit passes in FATAL mode") {
-    withTempDir { tempDir =>
-      withSQLConf(DeltaSQLConf.DELTA_COMMIT_VALIDATE_CONSISTENT_DATA_CHANGE_MODE.key ->
-          DeltaSQLConf.ConsistentDataChangeValidationMode.FATAL.toString) {
-        val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
-        val seedTxn = log.startTransaction()
-        seedTxn.updateMetadataForNewTable(Metadata())
-        seedTxn.commit(Seq.empty, ManualUpdate)
-        // All true.
-        log.startTransaction().commit(
-          Seq(createTestAddFile(encodedPath = "a", dataChange = true)), ManualUpdate)
-        // All false.
-        log.startTransaction().commit(
-          Seq(createTestAddFile(encodedPath = "b", dataChange = false)), ManualUpdate)
-      }
-    }
-  }
-
-  test("consistent dataChange validation: AddCDCFile is excluded from the check") {
-    withTempDir { tempDir =>
-      withSQLConf(DeltaSQLConf.DELTA_COMMIT_VALIDATE_CONSISTENT_DATA_CHANGE_MODE.key ->
-          DeltaSQLConf.ConsistentDataChangeValidationMode.FATAL.toString) {
-        val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
-        val seedTxn = log.startTransaction()
-        seedTxn.updateMetadataForNewTable(Metadata())
-        seedTxn.commit(Seq.empty, ManualUpdate)
-        // AddCDCFile has dataChange = false hardcoded; co-committing it with a
-        // dataChange = true AddFile is the normal CDF write shape and must not trip
-        // the validation.
-        log.startTransaction().commit(
-          Seq(
-            createTestAddFile(encodedPath = "data", dataChange = true),
-            AddCDCFile(path = "_change_data/cdc-file", partitionValues = Map.empty, size = 1)),
-          ManualUpdate)
-      }
-    }
-  }
-
 }
