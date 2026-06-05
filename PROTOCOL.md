@@ -2723,10 +2723,22 @@ binary| A sequence of binary data.
 date| A calendar date, represented as a year-month-day triple without a timezone.
 timestamp| Microsecond precision timestamp elapsed since the Unix epoch, 1970-01-01 00:00:00 UTC. When this is stored in a parquet file, its `isAdjustedToUTC` must be set to `true`.
 timestamp without time zone | Microsecond precision timestamp in a local timezone elapsed since the Unix epoch, 1970-01-01 00:00:00. It doesn't have the timezone information, and a value of this type can map to multiple physical time instants. It should always be displayed in the same way, regardless of the local time zone in effect. When this is stored in a parquet file, its `isAdjustedToUTC` must be set to `false`. To use this type, a table must support a feature `timestampNtz`. See section [Timestamp without timezone (TimestampNtz)](#timestamp-without-timezone-timestampNtz) for more information.
+void| A column that contains only `null` values and is never materialized in data files. See section [Void Type](#void-type) for more information.
 
 See Parquet [timestamp type](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#timestamp) for more details about timestamp and `isAdjustedToUTC`.
 
-Note: Existing tables may have `void` data type columns. Behavior is undefined for `void` data type columns but it is recommended to drop any `void` data type columns on reads (as is implemented by the Spark connector).
+#### Void Type
+
+On write, `void` columns are stripped from the physical Parquet schema; on read, they are reconstructed as all-`null` columns, following the [rule](#consistency-between-table-metadata-and-data-files) that columns present in the table schema but missing from a data file are read as `null`.
+
+Because `void` is never written to data files, writers must reject any attempt to **write data** in the following cases:
+- a `void` type nested anywhere inside an `array` or `map`;
+- a `struct` all of whose fields are of `void` type (a struct that would have no physical columns); or
+- a table all of whose columns are of `void` type (a table that would have no physical columns).
+
+These restrictions apply only to writing data; reads and metadata-only operations on such tables remain allowed. For example, a table consisting only of `void` columns can be created and read from, and then made writable by adding a non-`void` column or by changing a `void` column to another type.
+
+A `void` column may be changed to any other data type through supported schema-evolution operations; this does not require the [Type Widening](#type-widening) table feature.
 
 ### Struct Type
 
@@ -3088,3 +3100,5 @@ binary| `binary` |
 array| either as `2-level` or `3-level` representation. Refer to [Parquet documentation](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#lists) for further details | `LIST`
 map| either as `2-level` or `3-level` representation. Refer to [Parquet documentation](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#maps) for further details | `MAP`
 struct| `group` |
+
+Note that `void` columns are not stored in Parquet files. See section [Void Type](#void-type).
