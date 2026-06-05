@@ -19,6 +19,8 @@ package io.sparkuctest;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.unitycatalog.client.delta.api.DeltaTablesApi;
 import io.unitycatalog.client.delta.model.DeltaLoadTableResponse;
@@ -72,7 +74,7 @@ public class UCDeltaTableAlterTest extends UCDeltaTableIntegrationBaseTest {
           assertEquals("true", tableProperty(tableName, "delta.autoOptimize.optimizeWrite"));
           assertEquals("true", tableProperty(tableName, "delta.autoOptimize.autoCompact"));
 
-          LoadTableResponse response = loadTableViaDeltaRest(tableName);
+          DeltaLoadTableResponse response = loadTableViaDeltaRest(tableName);
           Map<String, String> properties = response.getMetadata().getProperties();
           assertEquals("true", properties.get("delta.autoOptimize.optimizeWrite"));
           assertEquals("true", properties.get("delta.autoOptimize.autoCompact"));
@@ -134,7 +136,7 @@ public class UCDeltaTableAlterTest extends UCDeltaTableIntegrationBaseTest {
                   + "created_at TIMESTAMP)",
               tableName);
 
-          LoadTableResponse response = loadTableViaDeltaRest(tableName);
+          DeltaLoadTableResponse response = loadTableViaDeltaRest(tableName);
           assertEquals(
               List.of("id", "name", "price", "active", "created_at"),
               fieldNames(response.getMetadata().getColumns()));
@@ -191,7 +193,7 @@ public class UCDeltaTableAlterTest extends UCDeltaTableIntegrationBaseTest {
               "ALTER TABLE %s SET TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')",
               tableName);
 
-          LoadTableResponse response = loadTableViaDeltaRest(tableName);
+          DeltaLoadTableResponse response = loadTableViaDeltaRest(tableName);
           assertEquals(
               "true", response.getMetadata().getProperties().get("delta.enableChangeDataFeed"));
         });
@@ -206,7 +208,7 @@ public class UCDeltaTableAlterTest extends UCDeltaTableIntegrationBaseTest {
         tableName -> {
           sql("ALTER TABLE %s CLUSTER BY (id)", tableName);
 
-          LoadTableResponse response = loadTableViaDeltaRest(tableName);
+          DeltaLoadTableResponse response = loadTableViaDeltaRest(tableName);
           Map<String, String> properties = response.getMetadata().getProperties();
           assertEquals("supported", properties.get("delta.feature.clustering"));
           assertEquals("[[\"id\"]]", tableProperty(tableName, "clusteringColumns"));
@@ -234,7 +236,9 @@ public class UCDeltaTableAlterTest extends UCDeltaTableIntegrationBaseTest {
   }
 
   @Test
-  public void testAlterTableRenameColumnUpdatesUcDeltaMetadata() throws Exception {
+  public void testAlterTableRenameColumnIsRejectedForUcManagedTable() throws Exception {
+    // UCSingleCatalog rejects ALTER TABLE RENAME COLUMN ahead of any Delta routing. Pin
+    // this contract so we notice if UC ever re-enables it.
     withNewTable(
         "alter_rename_column_test",
         "id INT, old_name STRING",
@@ -243,13 +247,13 @@ public class UCDeltaTableAlterTest extends UCDeltaTableIntegrationBaseTest {
         COLUMN_MAPPING_PROPERTIES,
         tableName -> {
           sql("INSERT INTO %s VALUES (1, 'before_rename')", tableName);
-          sql("ALTER TABLE %s RENAME COLUMN old_name TO new_name", tableName);
-
-          DeltaLoadTableResponse response = loadTableViaDeltaRest(tableName);
-          assertEquals(List.of("id", "new_name"), fieldNames(response.getMetadata().getColumns()));
-          check(
-              sql("SELECT id, new_name FROM %s ORDER BY id", tableName),
-              List.of(row("1", "before_rename")));
+          UnsupportedOperationException ex =
+              assertThrows(
+                  UnsupportedOperationException.class,
+                  () -> sql("ALTER TABLE %s RENAME COLUMN old_name TO new_name", tableName));
+          assertTrue(
+              ex.getMessage().contains("RENAME COLUMN is not supported for Unity Catalog"),
+              "Unexpected error message: " + ex.getMessage());
         });
   }
 
@@ -273,6 +277,9 @@ public class UCDeltaTableAlterTest extends UCDeltaTableIntegrationBaseTest {
 
   @Test
   public void testAlterTableNestedColumnUpdatesUcDeltaMetadata() throws Exception {
+    // RENAME COLUMN is rejected upstream by UCSingleCatalog (see
+    // testAlterTableRenameColumnIsRejectedForUcManagedTable); this test covers nested-column
+    // ADD COLUMNS, the other nested-schema mutation that still propagates to UC.
     withNewTable(
         "alter_nested_column_test",
         "id INT, info STRUCT<first: STRING, last: STRING>",
@@ -280,12 +287,11 @@ public class UCDeltaTableAlterTest extends UCDeltaTableIntegrationBaseTest {
         TableType.MANAGED,
         COLUMN_MAPPING_PROPERTIES,
         tableName -> {
-          sql("ALTER TABLE %s RENAME COLUMN info.first TO given", tableName);
-          sql("ALTER TABLE %s ADD COLUMNS (info.age INT AFTER given)", tableName);
+          sql("ALTER TABLE %s ADD COLUMNS (info.age INT AFTER first)", tableName);
 
           DeltaLoadTableResponse response = loadTableViaDeltaRest(tableName);
           DeltaStructType info = structField(response.getMetadata().getColumns(), "info");
-          assertEquals(List.of("given", "age", "last"), fieldNames(info));
+          assertEquals(List.of("first", "age", "last"), fieldNames(info));
         });
   }
 
