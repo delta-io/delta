@@ -173,10 +173,10 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
       // Default is true. Tests can opt out.
       conf =
           conf.set(
-                "spark.sql.catalog."
-                    + catalogName
-                    + "."
-                    + UCTokenBasedRestClientFactory.DELTA_REST_API_ENABLED_KEY(),
+              "spark.sql.catalog."
+                  + catalogName
+                  + "."
+                  + UCTokenBasedRestClientFactory.DELTA_REST_API_ENABLED_KEY(),
               "false");
     }
     return conf;
