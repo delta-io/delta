@@ -67,6 +67,12 @@ trait SnapshotDescriptor extends DeltaLoggingProvider {
 
   def schema: StructType = metadata.schema
 
+  def numDeltaFiles: Long =
+    throw new UnsupportedOperationException("numDeltaFiles is not implemented for this descriptor")
+  def totalDeltaFilesByteSize: Long =
+    throw new UnsupportedOperationException(
+      "totalDeltaFilesByteSize is not implemented for this descriptor")
+
   def dataPath: Path
 
   protected[delta] def numOfFilesIfKnown: Option[Long]
@@ -124,6 +130,8 @@ class Snapshot(
   import org.apache.spark.sql.delta.implicits._
 
   override def dataPath: Path = deltaLog.dataPath
+  override def numDeltaFiles: Long = logSegment.numDeltaFiles
+  override def totalDeltaFilesByteSize: Long = logSegment.totalDeltaFilesByteSize
 
   protected def spark = SparkSession.active
 
