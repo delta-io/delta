@@ -34,6 +34,16 @@ import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.spark.sql.test.SharedSparkSession
 
 class IcebergConverterForTest extends IcebergConverter {
+  /**
+   * Disable catalogTable refresh for this test as this test is not using
+   * UC so UniForm metadata won't be stored in catalogTable. This test
+   * needs to manually inject UniForm metadata into catalogTable
+   */
+  override protected def refreshCatalogTableIfNeeded(
+      txnInfo: CurrentTransactionInfo,
+      deltaAttemptVersion: Long,
+      catalogTable: CatalogTable): CatalogTable = catalogTable
+
   def convertSnapshotAndReturnMetadataPath(
       snapshotToConvert: Snapshot,
       catalogTable: CatalogTable): String = {

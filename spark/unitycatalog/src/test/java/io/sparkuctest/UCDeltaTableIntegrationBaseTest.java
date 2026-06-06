@@ -168,16 +168,18 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     conf =
         conf.set("spark.sql.catalog." + catalogName, "io.unitycatalog.spark.UCSingleCatalog")
             .set("spark.sql.catalog." + catalogName + ".uri", uc.serverUri())
-            .set("spark.sql.catalog." + catalogName + ".token", uc.serverToken());
-    if (useDeltaRestApiForTests()) {
-      conf =
-          conf.set(
-              "spark.sql.catalog."
-                  + catalogName
-                  + "."
-                  + UCTokenBasedRestClientFactory.DELTA_REST_API_ENABLED_KEY(),
-              "true");
-    }
+            .set("spark.sql.catalog." + catalogName + ".token", uc.serverToken())
+            // Both Delta's AbstractDeltaCatalog and UC's UCSingleCatalog read this same option
+            // key to decide whether to take the UC Delta API path. UC pinned at the current SHA
+            // defaults this to true, so a test that wants the legacy staging path must opt out
+            // explicitly -- otherwise UC skips `createStagingTable` and the later
+            // `tablesApi.createTable` call 404s for lack of a staging entry.
+            .set(
+                "spark.sql.catalog."
+                    + catalogName
+                    + "."
+                    + UCTokenBasedRestClientFactory.DELTA_REST_API_ENABLED_KEY(),
+                Boolean.toString(useDeltaRestApiForTests()));
     return conf;
   }
 
