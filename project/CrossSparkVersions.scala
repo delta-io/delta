@@ -208,6 +208,9 @@ import Unidoc._
  * @param fullVersion The full Spark version (e.g., "3.5.7", "4.0.2-SNAPSHOT")
  * @param targetJvm Target JVM version (e.g., "11", "17")
  * @param additionalSourceDir Optional version-specific source directory suffix (e.g., "scala-spark-3.5")
+ * @param artifactSuffix Optional artifact suffix override. By default, artifacts use the Spark
+ *                       major/minor suffix (e.g., "_4.1"). Patch-level splits can override this
+ *                       (e.g., "_4.1.2") to avoid publishing collisions.
  * @param antlr4Version ANTLR version to use (e.g., "4.9.3", "4.13.1")
  * @param additionalJavaOptions Additional JVM options for tests (e.g., Java 17 --add-opens flags)
  */
@@ -215,6 +218,7 @@ case class SparkVersionSpec(
   fullVersion: String,
   targetJvm: String,
   additionalSourceDir: Option[String] = None,
+  artifactSuffix: Option[String] = None,
   supportIceberg: Boolean,
   supportHudi: Boolean = true,
   antlr4Version: String,
@@ -246,6 +250,9 @@ case class SparkVersionSpec(
 
   /** Whether to generate Javadoc/Scaladoc for this version */
   def generateDocs: Boolean = isDefault
+
+  /** Maven artifact suffix for Spark-dependent modules (e.g., "_4.1" or "_4.1.2"). */
+  def packageSuffix: String = artifactSuffix.getOrElse(s"_$shortVersion")
 }
 
 object SparkVersionSpec {
@@ -286,6 +293,18 @@ object SparkVersionSpec {
     jacksonVersion = "2.18.2"
   )
 
+  private val spark412 = SparkVersionSpec(
+    fullVersion = "4.1.2",
+    targetJvm = "17",
+    additionalSourceDir = Some("scala-shims/spark-4.1.2"),
+    artifactSuffix = Some("_4.1.2"),
+    supportIceberg = true,
+    supportHudi = false,
+    antlr4Version = "4.13.1",
+    additionalJavaOptions = java17TestSettings,
+    jacksonVersion = "2.18.2"
+  )
+
   private val spark42Preview = SparkVersionSpec(
     fullVersion = "4.2.0-preview5",
     targetJvm = "17",
@@ -304,7 +323,7 @@ object SparkVersionSpec {
   val MASTER: Option[SparkVersionSpec] = None
 
   /** All supported Spark versions - internal use only */
-  val ALL_SPECS = Seq(spark40, spark41, spark42Preview)
+  val ALL_SPECS = Seq(spark40, spark41, spark412, spark42Preview)
 }
 
 /** See docs on top of this file */
@@ -331,13 +350,16 @@ object CrossSparkVersions extends AutoPlugin {
       case other => other
     }
 
-    // Find spec by full version or short version
+    // Find spec by full version, short version, or package suffix without the leading underscore.
+    // When multiple specs share a short version, the older patch remains the short-version default.
     SparkVersionSpec.ALL_SPECS.find { spec =>
-      spec.fullVersion == resolvedInput || spec.shortVersion == resolvedInput
+      spec.fullVersion == resolvedInput ||
+        spec.shortVersion == resolvedInput ||
+        spec.packageSuffix.stripPrefix("_") == resolvedInput
     }.getOrElse {
       val aliases = Seq("default") ++ SparkVersionSpec.MASTER.map(_ => "master").toSeq
       val validInputs = SparkVersionSpec.ALL_SPECS.flatMap { spec =>
-        Seq(spec.fullVersion, spec.shortVersion)
+        Seq(spec.fullVersion, spec.shortVersion, spec.packageSuffix.stripPrefix("_"))
       } ++ aliases
       throw new IllegalArgumentException(
         s"Invalid sparkVersion: $input. Valid values: ${validInputs.mkString(", ")}"
@@ -369,7 +391,7 @@ object CrossSparkVersions extends AutoPlugin {
     if (skipSparkSuffix) {
       baseName
     } else {
-      s"${baseName}_${spec.shortVersion}"
+      s"$baseName${spec.packageSuffix}"
     }
   }
 
@@ -594,8 +616,8 @@ object CrossSparkVersions extends AutoPlugin {
           val comma = if (idx < SparkVersionSpec.ALL_SPECS.size - 1) "," else ""
           val isMaster = SparkVersionSpec.MASTER.contains(spec)
           val isDefault = spec == SparkVersionSpec.DEFAULT
-          // Package suffix always includes Spark version (e.g., "_4.0", "_4.1")
-          val packageSuffix = s"_${spec.shortVersion}"
+          // Package suffix always includes Spark version (e.g., "_4.0", "_4.1", "_4.1.2")
+          val packageSuffix = spec.packageSuffix
           writer.println(s"""  {""")
           writer.println(s"""    "fullVersion": "${spec.fullVersion}",""")
           writer.println(s"""    "shortVersion": "${spec.shortVersion}",""")

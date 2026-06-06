@@ -10,11 +10,11 @@ The script automatically generates the JSON file if it doesn't exist.
 Usage:
     # Get all Spark versions as JSON array
     python project/scripts/get_spark_version_info.py --all-spark-versions
-    # Output: ["4.0", "4.1"] or ["master", "4.0"] if master is present
+    # Output: ["4.0", "4.1", "4.1.2"] or ["master", "4.0"] if master is present
 
     # Get only released Spark versions (no snapshots)
     python project/scripts/get_spark_version_info.py --released-spark-versions
-    # Output: ["4.0", "4.1"] (excludes versions with -SNAPSHOT)
+    # Output: ["4.0", "4.1", "4.1.2"] (excludes versions with -SNAPSHOT)
 
     # Get a specific field for a Spark version (using short version or "master")
     python project/scripts/get_spark_version_info.py --get-field 4.0 targetJvm
@@ -69,6 +69,17 @@ def load_spark_versions(json_path: Path, repo_root: Path):
         return json.load(f)
 
 
+def matrix_version(version_entry):
+    """Return the CI matrix key for a Spark version entry."""
+    if version_entry.get("isMaster", False):
+        return "master"
+
+    package_suffix = version_entry.get("packageSuffix", "")
+    if package_suffix.startswith("_"):
+        return package_suffix[1:]
+    return version_entry["shortVersion"]
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Generate Spark version information from CrossSparkVersions.scala"
@@ -101,14 +112,7 @@ def main():
         versions = load_spark_versions(json_path, repo_root)
 
         if args.all_spark_versions:
-            # For master version, use "master"; for others, use short version
-            matrix_versions = []
-            for v in versions:
-                if v.get("isMaster", False):
-                    matrix_versions.append("master")
-                else:
-                    matrix_versions.append(v["shortVersion"])
-            print(json.dumps(matrix_versions))
+            print(json.dumps([matrix_version(v) for v in versions]))
 
         elif args.released_spark_versions:
             # Only include released versions; explicitly exclude pre-release markers
@@ -117,7 +121,7 @@ def main():
             matrix_versions = []
             for v in versions:
                 if not any(m in v["fullVersion"] for m in pre_release_markers):
-                    matrix_versions.append(v["shortVersion"])
+                    matrix_versions.append(matrix_version(v))
             print(json.dumps(matrix_versions))
 
         elif args.get_field:
@@ -126,6 +130,7 @@ def main():
             # Find the version entry by matching:
             # - "default" matches isDefault=true
             # - "master" matches isMaster=true
+            # - matrix version like "4.1.2" matches packageSuffix without the leading underscore
             # - short version like "4.0" matches shortVersion
             # - full version like "4.0.1" matches fullVersion
             version_entry = None
@@ -134,6 +139,9 @@ def main():
                     version_entry = v
                     break
                 elif spark_version == "master" and v.get("isMaster", False):
+                    version_entry = v
+                    break
+                elif spark_version == matrix_version(v):
                     version_entry = v
                     break
                 elif spark_version == v["shortVersion"] or spark_version == v["fullVersion"]:

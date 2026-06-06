@@ -108,6 +108,7 @@ class SparkVersionSpec:
 SPARK_VERSIONS: Dict[str, SparkVersionSpec] = {
     "4.0.1": SparkVersionSpec(suffix="_4.0", support_iceberg=True, support_hudi=True),
     "4.1.0": SparkVersionSpec(suffix="_4.1", support_iceberg=True, support_hudi=False),
+    "4.1.2": SparkVersionSpec(suffix="_4.1.2", support_iceberg=True, support_hudi=False),
     "4.2.0-preview5": SparkVersionSpec(suffix="_4.2", support_iceberg=False, support_hudi=False)
 }
 
@@ -121,6 +122,17 @@ def substitute_xversion(jar_templates: List[str], delta_version: str) -> Set[str
     Substitutes {version} placeholder in JAR templates with actual Delta version.
     """
     return {jar.format(version=delta_version) for jar in jar_templates}
+
+
+def matrix_version(entry: Dict[str, object]) -> str:
+    """Return the CI matrix key for a Spark version JSON entry."""
+    if entry.get("isMaster"):
+        return "master"
+
+    package_suffix = entry["packageSuffix"]
+    if isinstance(package_suffix, str) and package_suffix.startswith("_"):
+        return package_suffix[1:]
+    return str(entry["shortVersion"])
 
 
 class CrossSparkPublishTest:
@@ -417,7 +429,7 @@ class SparkVersionsScriptTest:
                     print(f"  ✗ Entry {idx}: Invalid field types")
                     return False
 
-            versions_str = ", ".join([entry.get("isMaster") and "master" or entry["shortVersion"] for entry in data])
+            versions_str = ", ".join([matrix_version(entry) for entry in data])
             print(f"  ✓ JSON format valid: {len(data)} version(s) [{versions_str}]")
             return True
 
@@ -459,6 +471,11 @@ class SparkVersionsScriptTest:
 
             if len(matrix_versions) != len(data):
                 print(f"  ✗ Matrix has {len(matrix_versions)} versions, JSON has {len(data)}")
+                return False
+
+            expected_versions = [matrix_version(entry) for entry in data]
+            if matrix_versions != expected_versions:
+                print(f"  ✗ Expected matrix versions {expected_versions}, got {matrix_versions}")
                 return False
 
             print(f"  ✓ --all-spark-versions: {matrix_versions}")
@@ -508,10 +525,17 @@ class SparkVersionsScriptTest:
                 print(f"  ✗ Expected {expected_count} released versions, got {len(released_versions)}")
                 return False
 
-            # Verify no pre-release versions included (rough check via shortVersion lookup)
-            full_versions_by_short = {entry["shortVersion"]: entry["fullVersion"] for entry in data}
+            expected_versions = [
+                matrix_version(entry) for entry in data if not is_pre_release(entry["fullVersion"])
+            ]
+            if released_versions != expected_versions:
+                print(f"  ✗ Expected released versions {expected_versions}, got {released_versions}")
+                return False
+
+            # Verify no pre-release versions included.
+            full_versions_by_matrix_version = {matrix_version(entry): entry["fullVersion"] for entry in data}
             for version in released_versions:
-                full = full_versions_by_short.get(version, "")
+                full = full_versions_by_matrix_version.get(version, "")
                 if is_pre_release(full):
                     print(f"  ✗ Released versions should not include pre-releases: {version} ({full})")
                     return False
@@ -535,8 +559,9 @@ class SparkVersionsScriptTest:
 
             test_cases = []
             for entry in data:
-                # Test short version and full version
-                test_cases.append((entry["shortVersion"], "targetJvm", entry["targetJvm"]))
+                # Test matrix version and full version. Do not use shortVersion as a unique key:
+                # Spark 4.1.0 and 4.1.2 intentionally share shortVersion "4.1".
+                test_cases.append((matrix_version(entry), "targetJvm", entry["targetJvm"]))
                 test_cases.append((entry["fullVersion"], "fullVersion", entry["fullVersion"]))
                 
                 # Test "master" if applicable
