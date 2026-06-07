@@ -136,17 +136,19 @@ private[catalog] object AbstractDeltaCatalogClient extends Logging {
     "org.apache.spark.sql.delta.catalog.UCDeltaCatalogClientImpl"
 
   /**
-   * Returns a [[AbstractDeltaCatalogClient]] wrapped in [[Some]] when the catalog opted in via
-   * `deltaRestApi.enabled`, else [[None]]. The concrete impl is loaded reflectively so
-   * [[AbstractDeltaCatalog]] doesn't compile-depend on it. If opt-in is explicit but reflective
-   * loading fails, throws [[IllegalStateException]] rather than silently degrading.
+   * Returns a [[AbstractDeltaCatalogClient]] wrapped in [[Some]] unless the catalog has
+   * opted out via `deltaRestApi.enabled=false`, in which case returns [[None]]. The flag
+   * defaults to `true` when absent, so any UC catalog goes through the UC Delta API path
+   * unless the operator explicitly disables it. The concrete impl is loaded reflectively so
+   * [[AbstractDeltaCatalog]] doesn't compile-depend on it; if loading fails, throws
+   * [[IllegalStateException]] rather than silently degrading.
    */
   def fromCatalogOptionsIfEnabled(
       catalogName: String,
       options: CaseInsensitiveStringMap,
       fallbackLoadTableFunc: Identifier => Table): Option[AbstractDeltaCatalogClient] = {
     val key = UCTokenBasedRestClientFactory.DELTA_REST_API_ENABLED_KEY
-    if (!options.getBoolean(key, false)) {
+    if (!options.getBoolean(key, true)) {
       return None
     }
     val factory = try {
