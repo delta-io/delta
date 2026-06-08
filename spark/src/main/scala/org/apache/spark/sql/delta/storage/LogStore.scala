@@ -281,7 +281,7 @@ object LogStore extends LogStoreProvider
   }
 
   // Mapping from deprecated Scala LogStore class names to Java LogStore class names
-  private val deprecatedLogStoreClassNames: Map[String, String] = Map(
+  private[delta] val deprecatedLogStoreClassNames: Map[String, String] = Map(
     "org.apache.spark.sql.delta.storage.S3SingleDriverLogStore" ->
       classOf[io.delta.storage.S3SingleDriverLogStore].getName,
     "org.apache.spark.sql.delta.storage.AzureLogStore" ->
