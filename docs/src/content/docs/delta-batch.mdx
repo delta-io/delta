@@ -1109,7 +1109,7 @@ Dynamic partition overwrites (the legacy [`partitionOverwriteMode`](#dynamic-par
 
 ##### replaceUsing
 
-`replaceUsing` atomically deletes the rows in the target table that match a row in the incoming DataFrame on the specified columns, then inserts the incoming DataFrame rows. Matching is based on equality comparison of the specified column values. Provide a comma-separated list of columns. Each column must exist in both the table and the DataFrame, at the same ordinal position. The following command replaces rows whose `event_id` and `start_date` match between the DataFrame and the target table:
+`replaceUsing` atomically deletes the rows in the target table that match a row in the incoming DataFrame on the specified columns, then inserts the incoming DataFrame rows. Matching is based on equality comparison of the specified column values. Provide a comma-separated list of columns. Each column must exist in both the table and the incoming DataFrame, at the same ordinal position. The following command replaces rows whose `event_id` and `start_date` match between the incoming DataFrame and the target table:
 
 <Tabs syncKey="code-examples">
   <TabItem label="Python" active>
@@ -1195,11 +1195,15 @@ After the write, `students` contains:
 | Adam | `NULL` |
 | Eva | `NULL` |
 
-Doug is removed because `UK` matches a row in the DataFrame. Adam keeps his row because his `NULL` country never matches, and Eva's `NULL` row is appended for the same reason.
+Doug is removed because `UK` matches a row in the incoming DataFrame. Adam keeps his row because his `NULL` country never matches, and Eva's `NULL` row is appended for the same reason.
 
 ##### replaceOn
 
-`replaceOn` atomically deletes the rows in the target table that match the DataFrame rows under a user-defined condition, then inserts the DataFrame rows. Unlike `replaceWhere`, whose predicate references only the target table, the `replaceOn` condition can reference columns from both the target table and the DataFrame, and it supports null-safe comparisons using the `<=>` operator. Use the `targetAlias` option to reference the target table, and alias the DataFrame to reference the source, in the condition. The following command replaces rows whose `event_id` and `start_date` match between the DataFrame and the target table:
+`replaceOn` replaces rows when they match a user-defined condition, unlike `replaceUsing`, which replaces rows when the specified columns compare equal under equality. Use `replaceOn` when you need matching logic that `replaceUsing` does not support, such as treating `NULL` values as equal with the `<=>` operator.
+
+Optionally, use the `targetAlias` option to specify an alias for the target table and the `.as()` or `.alias()` APIs to specify an alias for the source data.
+
+The following command replaces rows whose `event_id` and `start_date` match between the incoming DataFrame and the target table:
 
 <Tabs syncKey="code-examples">
   <TabItem label="Python" active>
@@ -1284,7 +1288,7 @@ After the write, `students` contains:
 | Bob | table |
 | Delta | query |
 
-Because `<=>` is null-safe, the `NULL` row matches and is replaced. Bob has no match in the DataFrame, so his row is kept, and Delta is appended.
+Because `<=>` is null-safe, the `NULL` row matches and is replaced. Bob has no match in the incoming DataFrame, so his row is kept, and Delta is appended.
 
 <Aside type="note">
 
