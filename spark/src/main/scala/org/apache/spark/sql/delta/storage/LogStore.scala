@@ -298,7 +298,14 @@ object LogStore extends LogStoreProvider
       sparkConf: SparkConf,
       hadoopConf: Configuration): LogStore = {
     // Redirect deprecated Scala LogStore class names to Java implementations
-    val resolvedClassName = deprecatedLogStoreClassNames.getOrElse(className, className)
+    val resolvedClassName = deprecatedLogStoreClassNames.get(className) match {
+      case Some(newClassName) =>
+        logWarning(s"The LogStore class '$className' is deprecated and has been removed. " +
+          s"Requests are being redirected to '$newClassName'. Please update your " +
+          s"configuration to use the new class name directly.")
+        newClassName
+      case None => className
+    }
     if (resolvedClassName == classOf[DelegatingLogStore].getName) {
       new DelegatingLogStore(hadoopConf)
     } else {
