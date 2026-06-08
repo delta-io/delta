@@ -1140,7 +1140,7 @@ If the source query is empty, no data is deleted.
 
 Like a `JOIN USING`, `replaceUsing` matches rows with regular equality, where `NULL` is not equal to anything. Rows with `NULL` values in the specified columns don't match and aren't removed from the target table. For null-safe matching, or other logic that equality cannot express, use `replaceOn` instead.
 
-For example, suppose the `students` table is partitioned by `country`:
+For example, suppose the `students` table is clustered by `country`:
 
 | name | country |
 | --- | --- |
