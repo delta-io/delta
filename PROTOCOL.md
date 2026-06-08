@@ -883,12 +883,28 @@ Field Name | Data Type | Description | optional/required
 version|`Long`|The checkpoint version.| required
 tags|`Map[String, String]`|Map containing any additional metadata about the v2 spec checkpoint.| optional
 
+##### Well-Known Checkpoint Metadata Tags
+
+The following tag keys are well-known and may be present in the `tags` map. All are optional.
+
+Tag Key | Value Type | Description
+-|-|-
+sidecarNumActions|`String` (parseable as `Long`)|The total number of actions stored across all [sidecar files](#sidecar-files) in this checkpoint.
+sidecarSizeInBytes|`String` (parseable as `Long`)|The total size in bytes across all [sidecar files](#sidecar-files) in this checkpoint.
+numOfAddFiles|`String` (parseable as `Long`)|The number of `add` file actions in this checkpoint.
+sidecarFileSchema|`String` (JSON-encoded `StructType`)|The schema of the [sidecar files](#sidecar-files) in this checkpoint. The value is the JSON serialization of the sidecar file's Parquet schema. Readers can use this to avoid reading the Parquet footer of sidecar files to determine their schema.
+
 E.g.
 ```json
 {
   "checkpointMetadata":{
     "version":1,
-    "tags":{}
+    "tags":{
+      "sidecarNumActions":"1234",
+      "sidecarSizeInBytes":"5678",
+      "numOfAddFiles":"42",
+      "sidecarFileSchema":"{\"type\":\"struct\",\"fields\":[{\"name\":\"add\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"path\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{}},{\"name\":\"remove\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"path\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{}}]}"
+    }
   }
 }
 ```
