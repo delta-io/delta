@@ -46,12 +46,13 @@ import org.apache.spark.sql.catalyst.catalog.{
 }
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, Table, TableCatalog, V1Table}
 import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, ClusteringTableFeature, DeltaConfigs, DeltaErrors, DeltaThrowable, TableFeature}
-import org.apache.spark.sql.delta.actions.{DomainMetadata, Metadata, Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, DomainMetadata, Metadata, Protocol, RemoveFile, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED
 import org.apache.spark.sql.delta.coordinatedcommits.UCTokenBasedRestClientFactory
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.IcebergConstants
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.types.{DataType, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
@@ -453,6 +454,25 @@ private[catalog] class UCDeltaCatalogClientImpl(
   }
 
   // -------------------------------------------------------------------------
+  // DeltaCatalogClient: reportMetrics
+  // -------------------------------------------------------------------------
+
+  override def reportMetrics(
+      ct: CatalogTable,
+      committedActions: Seq[Action],
+      committedVersion: Long,
+      snapshotHistogram: Option[FileSizeHistogram]): Unit = {
+    val tableId = ct.storage.properties(UC_TABLE_ID_KEY)
+    val ident = identifierFromCatalogTable(ct)
+    val report = UCDeltaCatalogClientImpl.buildCommitReport(
+      committedActions, committedVersion, snapshotHistogram)
+    ucClient.reportMetrics(tableId, toStorageTableIdent(ident), report)
+  }
+
+  private def identifierFromCatalogTable(ct: CatalogTable): Identifier =
+    Identifier.of(ct.identifier.database.toArray, ct.identifier.table)
+
+  // -------------------------------------------------------------------------
   // Internal helpers
   // -------------------------------------------------------------------------
 
@@ -669,4 +689,83 @@ object UCDeltaCatalogClientImpl extends AbstractDeltaCatalogClientFactory with L
           s"$AuthPrefix* keys) or the legacy '$LegacyTokenKey' option.")
     }
   }
+
+  // -------------------------------------------------------------------------
+  // reportMetrics helpers (UC payload shaping)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Builds the UC Delta API commit-report payload. Visible for targeted unit testing;
+   * production callers should go through the instance `reportMetrics` method.
+   */
+  private[catalog] def buildCommitReport(
+      committedActions: Seq[Action],
+      committedVersion: Long,
+      snapshotHistogram: Option[FileSizeHistogram]
+      ): UCDeltaModels.CommitReport = {
+    val commitInfo =
+      committedActions.collectFirst { case ci: CommitInfo => ci }
+    val opMetrics =
+      commitInfo.flatMap(_.operationMetrics).getOrElse(Map.empty)
+    val addFiles = committedActions.collect { case a: AddFile => a }
+    val removeFiles = committedActions.collect { case r: RemoveFile => r }
+
+    val histogramPayload = snapshotHistogram.map { h =>
+      new UCDeltaModels.FileSizeHistogram(
+        h.sortedBinBoundaries.map(Long.box).asJava,
+        h.fileCounts.toSeq.map(Long.box).asJava,
+        h.totalBytes.toSeq.map(Long.box).asJava,
+        committedVersion)
+    }.toJava
+
+    new UCDeltaModels.CommitReport(
+      addFiles.size.toLong,
+      removeFiles.size.toLong,
+      addFiles.map(_.size).sum,
+      removeFiles.flatMap(_.size).sum,
+      extractRowsInserted(opMetrics, addFiles).map(Long.box).toJava,
+      extractRowsRemoved(opMetrics, removeFiles).map(Long.box).toJava,
+      extractRowsUpdated(opMetrics).map(Long.box).toJava,
+      histogramPayload)
+  }
+
+  // operationMetrics keys vary by operation: MERGE writes numTargetRowsInserted, WRITE
+  // writes numOutputRows. Falls back to per-file numLogicalRecords stats when no
+  // operationMetrics are present.
+  private def extractRowsInserted(
+      opMetrics: Map[String, String],
+      addFiles: Seq[AddFile]): Option[Long] = {
+    opMetrics.get("numTargetRowsInserted")
+      .orElse(opMetrics.get("numOutputRows"))
+      .flatMap(toLong)
+      .orElse {
+        val fromStats = addFiles.flatMap(_.numLogicalRecords)
+        if (fromStats.nonEmpty) Some(fromStats.sum) else None
+      }
+  }
+
+  // MERGE writes numTargetRowsDeleted, DELETE writes numDeletedRows.
+  private def extractRowsRemoved(
+      opMetrics: Map[String, String],
+      removeFiles: Seq[RemoveFile]): Option[Long] = {
+    opMetrics.get("numTargetRowsDeleted")
+      .orElse(opMetrics.get("numDeletedRows"))
+      .flatMap(toLong)
+      .orElse {
+        val fromStats = removeFiles.flatMap(_.numLogicalRecords)
+        if (fromStats.nonEmpty) Some(fromStats.sum) else None
+      }
+  }
+
+  // MERGE writes numTargetRowsUpdated, UPDATE writes numUpdatedRows. No file-stats
+  // fallback: per-file stats can't distinguish updated rows from inserted/removed rows.
+  private def extractRowsUpdated(opMetrics: Map[String, String]): Option[Long] = {
+    opMetrics.get("numTargetRowsUpdated")
+      .orElse(opMetrics.get("numUpdatedRows"))
+      .flatMap(toLong)
+  }
+
+  private def toLong(s: String): Option[Long] =
+    try Some(s.toLong)
+    catch { case _: NumberFormatException => None }
 }
