@@ -80,6 +80,18 @@ trait DeltaTestUtilsBase {
   // Re-define here to avoid the need to import it before using
   final def BOOLEAN_DOMAIN: Seq[Boolean] = DeltaTestUtilsBase.BOOLEAN_DOMAIN
 
+  /** Spark version bucket ("4.0", "4.1", "4.2+") that version-dependent behavior keys off. */
+  def sparkVersionBucket(spark: SparkSession): String = {
+    // Parse major and minor numerically so the bucket stays correct once Spark reaches 4.10,
+    // where a lexicographic string compare would wrongly rank "4.10" below "4.2".
+    val versionParts = spark.version.split('.')
+    val major = versionParts(0).toInt
+    val minor = versionParts(1).toInt
+    if (major > 4 || (major == 4 && minor >= 2)) "4.2+"
+    else if (major == 4 && minor >= 1) "4.1"
+    else "4.0"
+  }
+
   class PlanCapturingListener() extends QueryExecutionListener {
 
     private[this] var capturedPlans = List.empty[Plans]
