@@ -270,6 +270,32 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
     }
   }
 
+  @Test
+  public void testReplaceTableWithColumnDefaultIsAllowedAndDefaultIsApplied() throws Exception {
+    String tableName = "replace_column_default_" + UUID.randomUUID().toString().replace("-", "");
+    withNewTable(
+        tableName,
+        "i INT, s STRING",
+        TableType.MANAGED,
+        fullTableName -> {
+          sql("INSERT INTO %s VALUES (1, 'old')", fullTableName);
+
+          assertSuccessfulReplace(
+              ReplaceOperation.REPLACE,
+              fullTableName,
+              "REPLACE TABLE "
+                  + fullTableName
+                  + " (i INT, s STRING DEFAULT 'new-default') USING DELTA "
+                  + "TBLPROPERTIES ("
+                  + "'delta.feature.catalogManaged'='supported', "
+                  + "'delta.feature.allowColumnDefaults'='supported')");
+
+          sql("INSERT INTO %s (i) VALUES (2)", fullTableName);
+          assertThat(sql("SELECT i, s FROM %s", fullTableName))
+              .containsExactly(row("2", "new-default"));
+        });
+  }
+
   // Most common user case: REPLACE without specifying any TBLPROPERTIES clause. Delta auto-restates
   // default features for managed tables, so the replace should succeed.
   @Test
