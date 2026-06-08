@@ -16,7 +16,10 @@
 
 package org.apache.spark.sql.delta.stats
 
+// scalastyle:off import.ordering.noEmptyLine
+// scalastyle:off import.ordering.wrongOrderInGroup
 import org.apache.spark.sql.delta.{DataFrameUtils, DeltaColumnMapping, NoMapping}
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.expressions.EncodeNestedVariantAsZ85String
 
@@ -24,7 +27,6 @@ import org.apache.spark.sql.{Column, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
-import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.functions.to_json
 import org.apache.spark.sql.types.StructType
 
