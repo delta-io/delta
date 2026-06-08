@@ -62,7 +62,7 @@ trait S3SingleDriverLogStoreSuiteBase extends LogStoreSuiteBase {
 
       // magically create a different version of file 2 in the FileSystem only
       val hackyStore = new HDFSLogStore(sessionHadoopConf)
-      hackyStore.write(deltas(2), Iterator("foo").asJava, true, sessionHadoopConf)
+      hackyStore.write(deltas(2), Iterator("foo").asJava, /* overwrite = */ true, sessionHadoopConf)
 
       // we should see "foo" (FileSystem value) instead of "two" (cache value)
       assert(store.read(deltas(2), sessionHadoopConf).head == "foo")
