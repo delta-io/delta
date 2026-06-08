@@ -1109,7 +1109,7 @@ Dynamic partition overwrites (the legacy [`partitionOverwriteMode`](#dynamic-par
 
 ##### replaceUsing
 
-`replaceUsing` atomically deletes the rows in the target table that match a row in the DataFrame on the specified columns, then inserts the DataFrame rows. Matching is based on equality comparison of the specified column values. Provide a comma-separated list of columns. Each column must exist in both the table and the DataFrame, at the same ordinal position. The following command replaces rows whose `event_id` and `start_date` match between the DataFrame and the target table:
+`replaceUsing` atomically deletes the rows in the target table that match a row in the incoming DataFrame on the specified columns, then inserts the incoming DataFrame rows. Matching is based on equality comparison of the specified column values. Provide a comma-separated list of columns. Each column must exist in both the table and the DataFrame, at the same ordinal position. The following command replaces rows whose `event_id` and `start_date` match between the DataFrame and the target table:
 
 <Tabs syncKey="code-examples">
   <TabItem label="Python" active>
