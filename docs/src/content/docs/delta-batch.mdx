@@ -983,7 +983,7 @@ Delta Lake provides several options to selectively overwrite only part of a tabl
 | `replaceWhere` | Atomically overwrite rows that match a predicate. Use for replacements with a fixed matching condition, such as `colA = 5` or `int_col IN (1, 2, 3)`. | Delta Lake 1.1.0 (DataFrames); 2.4.0 (SQL) |
 | `replaceUsing` | Dynamic data overwrite by column equality. Replaces all rows that match the specified columns, based on equality comparison of the column values, in the provided data set. | Delta Lake 4.3.0 |
 | `replaceOn` | Dynamic data overwrite by Boolean expression. Use for replacements with a complex or null-safe matching condition, such as `s.colA <=> t.colA AND s.colB <=> t.colB`. | Delta Lake 4.3.0 |
-| `partitionOverwriteMode` | Legacy dynamic partition overwrite, which overwrites all the existing data in each partition for which the write will commit new data. Not recommended for new workloads. | Delta Lake 2.0 |
+| `partitionOverwriteMode` | Dynamic partition overwrite, which overwrites all the existing data in each partition for which the write will commit new data. Legacy since Delta Lake 4.3.0; not recommended for new workloads. | Delta Lake 2.0 |
 
 #### Overwrite rows matching a predicate with `replaceWhere`
 
