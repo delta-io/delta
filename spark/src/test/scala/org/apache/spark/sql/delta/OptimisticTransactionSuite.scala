@@ -1710,9 +1710,9 @@ class OptimisticTransactionSuite
 
       // Stress the mutator path that filesForScan ultimately uses (trackFilesRead) with a
       // large, evenly partitioned write load timed so all threads start simultaneously.
-      // With a non-thread-safe collection (e.g. mutable.HashSet) this deterministically
-      // loses entries or corrupts the table on the box this test ran on; with a
-      // ConcurrentHashMap-backed set every entry is observed.
+      // Without a thread-safe collection (e.g. mutable.HashSet) the concurrent updates
+      // race and lose entries or corrupt the table; with a ConcurrentHashMap-backed set
+      // every entry is observed.
       val stressThreads = 32
       val perThread = 1000
       val totalExpected = stressThreads * perThread
