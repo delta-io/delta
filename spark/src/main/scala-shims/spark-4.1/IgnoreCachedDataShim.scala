@@ -16,10 +16,10 @@
 package org.apache.spark.sql.catalyst.plans.logical
 
 /**
- * Shim for Spark's `IgnoreCachedData` trait. On Spark 4.1 this aliases the real
- * trait so `CacheManager` continues to skip these plans during cache replacement.
- * On Spark 4.2 (SPARK-54812) the trait was removed because `CacheManager` now
- * automatically skips any `Command`-derived plan, so the 4.2 variant of this
- * shim is an empty marker.
+ * Shim for Spark's `IgnoreCachedData` trait. Spark 4.1.2 (SPARK-54812) removed the trait and
+ * changed `CacheManager` to automatically skip any `Command`-derived plan during cache
+ * replacement, the same change that shipped in Spark 4.2. This is an empty marker so the
+ * compiled jar carries no reference to the removed trait and loads on Spark 4.1.2. It still
+ * works on 4.1.0/4.1.1, where the marker was a no-op for these (Command-derived) Delta commands.
  */
-trait IgnoreCachedDataShim extends IgnoreCachedData
+trait IgnoreCachedDataShim
