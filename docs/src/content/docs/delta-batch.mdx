@@ -1105,7 +1105,7 @@ In Delta Lake 1.1.0 and above, if you want to fall back to the old behavior, you
 
 Dynamic data overwrites selectively replace the data that matches the specified key columns or Boolean expression, leaving all other data unchanged. The `replaceUsing` option matches on key columns, while `replaceOn` matches on a Boolean expression. Partitioned tables, unpartitioned tables, and tables with liquid clustering are all supported. Both options are available with DataFrames in Delta Lake 4.3.0 and above.
 
-Dynamic partition overwrites (the legacy [`partitionOverwriteMode`](#dynamic-partition-overwrites-with-partitionoverwritemode-legacy) option) are a subset of dynamic data overwrite behavior. Dynamic partition overwrites replace all the existing data in each partition for which the write will commit new data, and leave all other partitions unchanged. Only partitioned tables are supported in dynamic partition overwrite mode.
+Dynamic partition overwrites (the legacy [`partitionOverwriteMode`](#dynamic-partition-overwrites-with-partitionoverwritemode-legacy-since-delta-lake-430) option) are a subset of dynamic data overwrite behavior. Dynamic partition overwrites replace all the existing data in each partition for which the write will commit new data, and leave all other partitions unchanged. Only partitioned tables are supported in dynamic partition overwrite mode.
 
 ##### replaceUsing
 
@@ -1296,7 +1296,7 @@ The `replaceOn` and `replaceUsing` options can't be combined with `replaceWhere`
 
 </Aside>
 
-#### Dynamic Partition Overwrites with `partitionOverwriteMode` (legacy)
+#### Dynamic Partition Overwrites with `partitionOverwriteMode` (legacy since Delta Lake 4.3.0)
 
 Delta Lake 2.0 and above supports _dynamic_ partition overwrite mode for partitioned tables.
 
