@@ -36,7 +36,11 @@ class DeltaTaskStatisticsTrackerSuite
 
   import testImplicits._
 
-  test("DeltaTaskStatisticsTracker computes stats outside V1 write tracker") {
+  statsTestSparkMasterOnly(
+      "DeltaTaskStatisticsTracker computes stats outside V1 write tracker") {
+    assume(
+      spark.conf.getOption(DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey)
+        .forall(_ == NoMapping.name))
     withTempDir { dir =>
       val deltaLog = DeltaLog.forTable(spark, dir.getAbsolutePath)
 
@@ -69,14 +73,12 @@ class DeltaTaskStatisticsTrackerSuite
       val (statsColExpr, resolvedStatsDataSchema) =
         DeltaWriteStatsUtils.getStatsColExpr(
           spark, dataRenamed.queryExecution.analyzed.output, statsCollection)
-      val rootPath = new Path(dir.getAbsolutePath)
-      val jobTracker = new DeltaJobStatisticsTracker(
-        deltaLog.newDeltaHadoopConf(),
-        rootPath,
+      val filePath = new Path(dir.getAbsolutePath, "part-00000-test.parquet").toString
+      val tracker = new DeltaTaskStatisticsTracker(
         resolvedStatsDataSchema,
-        statsColExpr)
-      val tracker = jobTracker.newTaskInstance().asInstanceOf[DeltaTaskStatisticsTracker]
-      val filePath = new Path(rootPath, "part-00000-test.parquet").toString
+        statsColExpr,
+        new Path(dir.getAbsolutePath),
+        deltaLog.newDeltaHadoopConf())
 
       tracker.newFile(filePath)
       dataRenamed.queryExecution.toRdd.collect().foreach { row =>

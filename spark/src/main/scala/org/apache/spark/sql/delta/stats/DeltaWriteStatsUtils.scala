@@ -32,8 +32,7 @@ import org.apache.spark.sql.types.StructType
 
 /**
  * Shared helpers for preparing Delta write statistics. These helpers intentionally stop before
- * Spark's FileFormatWriter orchestration so alternative writer paths can reuse the same stats
- * expression setup.
+ * Spark's FileFormatWriter orchestration so DSv2 writers can reuse the same stats expression setup.
  */
 object DeltaWriteStatsUtils {
 
@@ -68,6 +67,7 @@ object DeltaWriteStatsUtils {
 
     (outputStatsCollectionSchema, tableStatsCollectionSchema)
   }
+
 
   /**
    * Returns a resolved `statsCollection.statsCollector` expression with `statsDataSchema`
