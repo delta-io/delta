@@ -1161,6 +1161,7 @@ and the `new_students` DataFrame holds the replacement rows:
   <TabItem label="Python" active>
 
     ```python
+    # Replace rows in students whose country matches a row in new_students.
     new_students.write \
       .format("delta") \
       .mode("overwrite") \
@@ -1172,6 +1173,7 @@ and the `new_students` DataFrame holds the replacement rows:
   <TabItem label="Scala">
 
     ```scala
+    // Replace rows in students whose country matches a row in new_students.
     new_students.write
       .format("delta")
       .mode("overwrite")
@@ -1248,6 +1250,7 @@ and the `people` DataFrame holds the replacement rows:
   <TabItem label="Python" active>
 
     ```python
+    # Replace rows in students whose name matches a row in people, using a null-safe comparison.
     people.alias("s").write \
       .format("delta") \
       .mode("overwrite") \
@@ -1260,6 +1263,7 @@ and the `people` DataFrame holds the replacement rows:
   <TabItem label="Scala">
 
     ```scala
+    // Replace rows in students whose name matches a row in people, using a null-safe comparison.
     people.as("s").write
       .format("delta")
       .mode("overwrite")
