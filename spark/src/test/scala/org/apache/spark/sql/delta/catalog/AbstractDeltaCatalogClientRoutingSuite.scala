@@ -50,54 +50,62 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
     new CaseInsensitiveStringMap(m)
   }
 
-  test("deltaRestApi.enabled=false leaves deltaCatalogClient empty") {
-    val catalog = new AbstractDeltaCatalog
-    catalog.initialize("test_cat", options())
-    assert(catalog.deltaCatalogClient.isEmpty,
-      "UC Delta API client should not be constructed when the catalog opts out")
+  // Catalog-wiring behavior (opt-out / opt-in / validation) is exercised through the
+  // factory below; `AbstractDeltaCatalog.deltaCatalogClient` gates lazily on `isUnityCatalog`,
+  // which reads the delegate field, and unit tests never wire a delegate.
+
+  test("deltaRestApi.enabled defaults to true: requires uri when flag absent") {
+    val e = intercept[IllegalArgumentException] {
+      AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled("test_cat", options(), noFallback)
+    }
+    assert(e.getMessage.contains("'uri' is required"))
   }
 
   test("deltaRestApi.enabled=true requires uri") {
-    val catalog = new AbstractDeltaCatalog
     val e = intercept[IllegalArgumentException] {
-      catalog.initialize("test_cat", options("deltaRestApi.enabled" -> "true"))
+      AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled(
+        "test_cat", options("deltaRestApi.enabled" -> "true"), noFallback)
     }
     assert(e.getMessage.contains("'uri' is required"))
   }
 
   test("deltaRestApi.enabled=true requires an auth configuration") {
-    val catalog = new AbstractDeltaCatalog
     val e = intercept[IllegalArgumentException] {
-      catalog.initialize("test_cat",
-        options("deltaRestApi.enabled" -> "true", "uri" -> "http://uc"))
+      AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled(
+        "test_cat",
+        options("deltaRestApi.enabled" -> "true", "uri" -> "http://uc"),
+        noFallback)
     }
     assert(e.getMessage.contains("auth configuration is required"))
   }
 
   test("auth.* options are passed through to TokenProvider (new format)") {
-    val catalog = new AbstractDeltaCatalog
-    catalog.initialize("test_cat",
+    // Exercised at the factory level since `AbstractDeltaCatalog.deltaCatalogClient` gates the
+    // candidate on `isUnityCatalog`, which requires a delegate that unit tests don't wire in.
+    val result = AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled(
+      "test_cat",
       options(
         "deltaRestApi.enabled" -> "true",
         "uri" -> "http://uc",
         "auth.type" -> "static",
-        "auth.token" -> "tok"))
-    assert(catalog.deltaCatalogClient.isDefined)
+        "auth.token" -> "tok"),
+      noFallback)
+    assert(result.isDefined)
   }
 
   test("deltaRestApi.enabled=true with uri+token constructs the UC Delta API client") {
-    val catalog = new AbstractDeltaCatalog
-    catalog.initialize("test_cat",
-      options("deltaRestApi.enabled" -> "true", "uri" -> "http://uc", "token" -> "tok"))
-    val client = catalog.deltaCatalogClient.getOrElse(
-      fail("UC Delta API client should be constructed when the catalog opts in"))
+    val client = AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled(
+      "test_cat",
+      options("deltaRestApi.enabled" -> "true", "uri" -> "http://uc", "token" -> "tok"),
+      noFallback).getOrElse(
+        fail("UC Delta API client should be constructed when the catalog opts in"))
     assert(client.isInstanceOf[UCDeltaCatalogClientImpl],
       s"UC Delta API client should be UCDeltaCatalogClientImpl, was ${client.getClass}")
   }
 
   test("AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled returns None when flag is off") {
     val result = AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled(
-      "test_cat", options(), noFallback)
+      "test_cat", options("deltaRestApi.enabled" -> "false"), noFallback)
     assert(result.isEmpty)
   }
 
@@ -107,6 +115,16 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
       options("deltaRestApi.enabled" -> "true", "uri" -> "http://uc", "token" -> "tok"),
       noFallback)
     assert(result.isDefined)
+  }
+
+  test("AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled returns Some when flag absent " +
+      "(default is on)") {
+    val result = AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled(
+      "test_cat",
+      options("uri" -> "http://uc", "token" -> "tok"),
+      noFallback)
+    assert(result.isDefined,
+      "absent deltaRestApi.enabled should default to true and construct the client")
   }
 
   private val noFallback: Identifier => Table =
@@ -880,6 +898,11 @@ private abstract class ThrowingUCDeltaClient extends UCDeltaClient {
       storageLocation: String,
       columns: util.List[UCClient.ColumnDef],
       properties: util.Map[String, String]): Unit =
+    throw new UnsupportedOperationException
+  override def reportMetrics(
+      tableId: String,
+      tableIdentifier: StorageTableIdentifier,
+      report: UCDeltaModels.CommitReport): Unit =
     throw new UnsupportedOperationException
   override def close(): Unit = ()
 }
