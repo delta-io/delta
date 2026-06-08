@@ -1832,7 +1832,7 @@ Include `WITH SCHEMA EVOLUTION` in an `INSERT` statement to enable automatic sch
   </TabItem>
 </Tabs>
 
-If the query on `source_table` returns columns that don't exist in the target table, those columns are automatically added to the `target_table` schema. Existing rows receive `NULL` values for the new columns. The clause is supported for `INSERT INTO` and `INSERT OVERWRITE` statements.
+If the query on `source_table` returns columns that don't exist in the target table, those columns are automatically added to the `target_table` schema. Existing rows receive `NULL` values for the new columns.
 
 <Aside type="note">
   `WITH SCHEMA EVOLUTION` is available in Delta Lake 4.3 and above.
