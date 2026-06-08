@@ -1838,6 +1838,38 @@ If the query on `source_table` returns columns that don't exist in the target ta
   `WITH SCHEMA EVOLUTION` is available in Delta Lake 4.3 and above.
 </Aside>
 
+#### INSERT with schema evolution using DataFrame API
+
+The following example demonstrates using the `mergeSchema` option with a batch write operation:
+
+<Tabs syncKey="code-examples">
+  <TabItem label="Python" active>
+
+    ```python
+    (spark.read
+      .table("source_table")
+      .write
+      .option("mergeSchema", "true")
+      .mode("append")
+      .saveAsTable("target_table")
+    )
+    ```
+
+  </TabItem>
+  <TabItem label="Scala">
+
+    ```scala
+    spark.read
+      .table("source_table")
+      .write
+      .option("mergeSchema", "true")
+      .mode("append")
+      .saveAsTable("target_table")
+    ```
+
+  </TabItem>
+</Tabs>
+
 #### `NullType` columns
 
 Because Parquet doesn't support `NullType`, `NullType` columns are dropped from the DataFrame when writing into Delta tables, but are still stored in the schema. When a different data type is received for that column, Delta Lake merges the schema to the new data type. If Delta Lake receives a `NullType` for an existing column, the old schema is retained and the new column is dropped during the write.
