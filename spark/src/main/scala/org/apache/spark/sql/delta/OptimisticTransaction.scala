@@ -19,13 +19,13 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.nio.file.FileAlreadyExistsException
 import java.time.Instant
-import java.util.{ConcurrentModificationException, Optional, UUID}
+import java.util.{ConcurrentModificationException, Optional, Set => JSet, UUID}
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit.{MINUTES, NANOSECONDS}
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
-import scala.collection.mutable.{ArrayBuffer, HashSet}
+import scala.collection.mutable.ArrayBuffer
 import scala.jdk.OptionConverters._
 import scala.util.Try
 import scala.util.control.NonFatal
@@ -348,7 +348,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     new java.util.concurrent.ConcurrentLinkedQueue[DeltaTableReadPredicate]
 
   /** Tracks specific files that have been seen by this transaction. */
-  protected val readFiles: java.util.Set[AddFile] = ConcurrentHashMap.newKeySet[AddFile]()
+  protected val readFiles: JSet[AddFile] = ConcurrentHashMap.newKeySet[AddFile]()
 
   /** Whether the whole table was read during the transaction. */
   @volatile protected var readTheWholeTable = false
