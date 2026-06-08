@@ -338,3 +338,41 @@ class PublicGCSLogStoreSuite extends PublicLogStoreSuite with GCSLogStoreSuiteBa
   override protected val publicLogStoreClassName: String =
     classOf[io.delta.storage.GCSLogStore].getName
 }
+
+/////////////////////////////////////////////////////////////////////////////
+// Deprecated Scala LogStore class names redirected to Java implementations //
+/////////////////////////////////////////////////////////////////////////////
+
+/**
+ * Verifies that setting a deprecated Scala LogStore class name on the class-level conf
+ * `spark.delta.logStore.class` is redirected to the corresponding Java implementation
+ * by `LogStore.createLogStoreWithClassName`. This path bypasses `DelegatingLogStore`,
+ * which is exercised separately in `DelegatingLogStoreSuite`.
+ */
+class DeprecatedLogStoreClassNameRedirectSuite extends SparkFunSuite {
+
+  private def constructSparkConf(deprecatedClassName: String): SparkConf = {
+    new SparkConf(loadDefaults = false).setMaster("local")
+      .set(LogStore.logStoreClassConfKey, deprecatedClassName)
+  }
+
+  test("deprecated Scala LogStore class names set via spark.delta.logStore.class " +
+    "resolve to the Java implementation") {
+    // Iterate the production map so this test stays in sync as entries are added/removed.
+    for ((deprecatedScalaName, expectedJavaName) <- LogStore.deprecatedLogStoreClassNames) {
+      withSparkSession(
+        SparkSession.builder.config(constructSparkConf(deprecatedScalaName)).getOrCreate()) {
+          spark =>
+            val store = LogStore(spark)
+            assert(store.isInstanceOf[LogStoreAdaptor],
+              s"Expected a LogStoreAdaptor but got ${store.getClass.getName} " +
+                s"for deprecated class $deprecatedScalaName")
+            val actualImplName =
+              store.asInstanceOf[LogStoreAdaptor].logStoreImpl.getClass.getName
+            assert(actualImplName == expectedJavaName,
+              s"Expected $deprecatedScalaName to be redirected to $expectedJavaName " +
+                s"but got $actualImplName")
+      }
+    }
+  }
+}
