@@ -75,16 +75,9 @@ class DelegatingLogStoreSuite
   /** Test LogStore resolution with a customized scheme conf */
   private def testCustomSchemeResolution(scheme: String, className: String): Unit = {
 
-    // Deprecated Scala class names are redirected to Java implementations
-    val expectedClassName = className match {
-      case "org.apache.spark.sql.delta.storage.S3SingleDriverLogStore" =>
-        "io.delta.storage.S3SingleDriverLogStore"
-      case "org.apache.spark.sql.delta.storage.AzureLogStore" =>
-        "io.delta.storage.AzureLogStore"
-      case "org.apache.spark.sql.delta.storage.HDFSLogStore" =>
-        "io.delta.storage.HDFSLogStore"
-      case other => other
-    }
+    // Deprecated Scala class names are redirected to Java implementations.
+    val expectedClassName =
+      LogStore.deprecatedLogStoreClassNames.getOrElse(className, className)
 
     val sparkPrefixKey = LogStore.logStoreSchemeConfKey(scheme)
     val nonSparkPrefixKey = sparkPrefixKey.stripPrefix("spark.")
