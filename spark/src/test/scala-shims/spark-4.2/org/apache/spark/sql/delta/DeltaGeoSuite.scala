@@ -24,7 +24,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
-import org.apache.spark.SparkThrowable
+import org.apache.spark.{SparkConf, SparkThrowable}
 import org.apache.spark.sql.{AnalysisException, QueryTest}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.st.{
@@ -48,6 +48,9 @@ class DeltaGeoSuite extends QueryTest
   with DeltaSQLCommandTest
   with DeltaSQLTestUtils {
 
+  override protected def sparkConf: SparkConf =
+    super.sparkConf.set(DeltaSQLConf.DELTA_GEO_PREVIEW_ENABLED.key, "true")
+
   // Default SRID used in Parquet/Iceberg/Delta specs (OGC:CRS84).
   private val DefaultSrid = 4326
 
@@ -68,6 +71,11 @@ class DeltaGeoSuite extends QueryTest
 
   private def metadataWithSchema(schema: StructType): Metadata = {
     Metadata(schemaString = schema.json)
+  }
+
+  test("geo preview is disabled by default") {
+    assert(DeltaSQLConf.DELTA_GEO_PREVIEW_ENABLED.defaultValue.contains(false),
+      "DELTA_GEO_PREVIEW_ENABLED must default to false while geospatial is in private preview")
   }
 
   test("containsGeoColumns detects top-level geometry and geography columns") {

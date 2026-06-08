@@ -3187,7 +3187,7 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .internal()
       .doc("Enable GeoSpatial features that are part of the preview scope.")
       .booleanConf
-      .createWithDefault(true)
+      .createWithDefault(false)
 
   ///////////
   // VARIANT
