@@ -30,7 +30,9 @@ public abstract class DeltaV2TestBase {
   public static void setUpSparkAndEngine() {
     spark =
         SparkSession.builder()
-            .master("local[*]")
+            // local[2] caps task parallelism so concurrent test tasks fit within the
+            // off-heap test buffer pool; local[*] OOMs on high-core CI hosts.
+            .master("local[2]")
             .appName("SparkKernelDsv2Tests")
             .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtensionV1")
             .config(
