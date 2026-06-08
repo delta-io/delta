@@ -26,7 +26,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.plans.logical.{IgnoreCachedDataShim, LogicalPlan, UnaryNode}
+import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, UnaryNode}
 import org.apache.spark.sql.classic.ClassicConversions.castToImpl
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.metric.SQLMetric
@@ -36,7 +36,6 @@ import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 case class TruncateDeltaTableCommand(child: LogicalPlan)
     extends RunnableCommand
     with UnaryNode
-    with IgnoreCachedDataShim
     with DeltaCommand
 {
 
