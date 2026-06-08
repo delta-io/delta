@@ -1870,6 +1870,45 @@ The following example demonstrates using the `mergeSchema` option with a batch w
   </TabItem>
 </Tabs>
 
+#### Enable schema evolution with Spark configuration (legacy)
+
+You can set the Spark configuration `spark.databricks.delta.schema.autoMerge.enabled` to `true` to enable schema evolution for all write operations in the current `SparkSession`:
+
+<Tabs syncKey="code-examples">
+  <TabItem label="Python" active>
+
+    ```python
+    spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", True)
+    ```
+
+  </TabItem>
+  <TabItem label="Scala">
+
+    ```scala
+    spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", true)
+    ```
+
+  </TabItem>
+  <TabItem label="SQL">
+
+    ```sql
+    SET spark.databricks.delta.schema.autoMerge.enabled=true
+    ```
+
+  </TabItem>
+</Tabs>
+
+<Aside type="caution" title="Important">
+  This approach is not recommended for production use. Instead, enable schema evolution for each write operation:
+
+  - For `INSERT` and batch/streaming writes, use `.option("mergeSchema", "true")` or `INSERT WITH SCHEMA EVOLUTION`
+  - For `MERGE` statements, use `MERGE WITH SCHEMA EVOLUTION`
+
+  Setting a session-wide configuration can lead to unintended schema changes across multiple operations and makes it harder to reason about which operations evolve the schema.
+</Aside>
+
+When you use options or syntax to enable schema evolution in a write operation, this takes precedence over the Spark configuration.
+
 #### `NullType` columns
 
 Because Parquet doesn't support `NullType`, `NullType` columns are dropped from the DataFrame when writing into Delta tables, but are still stored in the schema. When a different data type is received for that column, Delta Lake merges the schema to the new data type. If Delta Lake receives a `NullType` for an existing column, the old schema is retained and the new column is dropped during the write.
