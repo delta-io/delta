@@ -1351,7 +1351,7 @@ Dynamic partition overwrite conflicts with the option `replaceWhere` for partiti
 
 <Aside type="caution" title="Important">
 
-Validate that the data written with dynamic partition overwrite touches only the expected partitions. A single row in the incorrect partition can lead to unintentionally overwriting an entire partition. Partition overwrite may also use stale data when the partitioning changes. We recommend using `replaceOn`, `replaceUsing`, or `replaceWhere` to specify which data to overwrite.
+Validate that the data written with dynamic partition overwrite touches only the expected partitions. A single row in the incorrect partition can lead to unintentionally overwriting an entire partition.
 
 If a partition has been accidentally overwritten, you can use [Restore a Delta table to an earlier state](/delta-utility/#restore-a-delta-table-to-an-earlier-state) to undo the change.
 
