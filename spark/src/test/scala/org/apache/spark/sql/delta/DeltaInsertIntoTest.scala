@@ -86,7 +86,7 @@ trait DeltaInsertIntoTest
      *                    in right after the leading `INSERT` keyword.
      */
     def runInsertSql(withSchemaEvolution: Boolean)(buildInsert: String => String): Unit = {
-      if (spark.version >= "4.2") {
+      if (sparkVersionBucket(spark) == "4.2+") {
         val clause = if (withSchemaEvolution) "WITH SCHEMA EVOLUTION " else ""
         sql(buildInsert(clause))
       } else {
