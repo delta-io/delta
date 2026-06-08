@@ -1813,7 +1813,7 @@ Columns that are present in the source data but missing from the table are autom
 
 - **Use `INSERT WITH SCHEMA EVOLUTION` syntax**: Works with SQL `INSERT` statements. Include `WITH SCHEMA EVOLUTION` in the SQL syntax.
 - **Set the `mergeSchema` option**: Works with batch writes or streaming writes. Set `.option("mergeSchema", "true")` on individual `write` or `writeStream` operations.
-- **Set the Spark configuration (legacy)**: Sets `spark.databricks.delta.schema.autoMerge.enabled` to `true` for the entire `SparkSession`. Not recommended for production use, because session-wide configuration can lead to unintended schema changes across multiple operations.
+- **Set the Spark configuration (legacy)**: Sets `spark.databricks.delta.schema.autoMerge.enabled` to `true` for the entire `SparkSession`. Not recommended, because session-wide configuration can lead to unintended schema changes across multiple operations.
 
 When both the `mergeSchema` option and the Spark configuration are specified, the option from the `DataFrameWriter` takes precedence. The added columns are appended to the end of the struct they are present in. Case is preserved when appending a new column.
 
@@ -1899,7 +1899,7 @@ You can set the Spark configuration `spark.databricks.delta.schema.autoMerge.ena
 </Tabs>
 
 <Aside type="caution" title="Important">
-  This approach is not recommended for production use. Instead, enable schema evolution for each write operation:
+  This approach is not recommended. Instead, enable schema evolution for each write operation:
 
   - For `INSERT` and batch/streaming writes, use `.option("mergeSchema", "true")` or `INSERT WITH SCHEMA EVOLUTION`
   - For `MERGE` statements, use `MERGE WITH SCHEMA EVOLUTION`
