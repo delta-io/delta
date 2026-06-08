@@ -1819,7 +1819,7 @@ When both the `mergeSchema` option and the Spark configuration are specified, th
 
 #### Schema evolution syntax for INSERT
 
-Include `WITH SCHEMA EVOLUTION` in an `INSERT` statement to enable automatic schema evolution for that operation. When enabled, the schema of the target Delta Lake table is automatically updated to accommodate additional columns or widened types of the source query. For example:
+Include `WITH SCHEMA EVOLUTION` in an `INSERT` statement to enable automatic schema evolution for that operation. When enabled, the schema of the target Delta Lake table is automatically updated to accommodate additional columns or widened types of the source query. For a list of the supported type changes, see [Supported type changes](https://docs.delta.io/delta-type-widening/). For example:
 
 <Tabs syncKey="code-examples">
   <TabItem label="SQL" active>
