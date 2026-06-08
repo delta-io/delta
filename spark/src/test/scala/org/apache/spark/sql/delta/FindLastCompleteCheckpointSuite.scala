@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import scala.collection.JavaConverters._
+
 import com.databricks.spark.util.Log4jUsageLogger
 import io.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.CheckpointInstance.Format
@@ -360,8 +362,6 @@ class FindLastCompleteCheckpointSuite
  */
 class CustomListingLogStore(
   hadoopConf: Configuration) extends LocalLogStore(hadoopConf) {
-
-  import scala.collection.JavaConverters._
 
   var listFromCount = 0
   var elementsConsumedFromListFromIter = 0

@@ -20,6 +20,7 @@ import java.io.{File, RandomAccessFile}
 import java.util.concurrent.CountDownLatch
 
 import scala.collection.mutable
+import scala.collection.JavaConverters._
 
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME
@@ -705,7 +706,6 @@ class SnapshotManagementWithCatalogManagedBatch100Suite extends SnapshotManageme
 class CountDownLatchLogStore(hadoopConf: Configuration)
     extends LocalLogStore(hadoopConf) {
   override def listFrom(path: Path, hadoopConf: Configuration): java.util.Iterator[FileStatus] = {
-    import scala.collection.JavaConverters._
     val files = super.listFrom(path, hadoopConf).asScala.toSeq
     if (ConcurrentBackfillCommitCoordinatorClient.beginConcurrentBackfills) {
       CountDownLatchLogStore.listFromCalled.countDown()
