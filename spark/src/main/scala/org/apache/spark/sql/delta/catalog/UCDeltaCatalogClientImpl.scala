@@ -637,7 +637,6 @@ object UCDeltaCatalogClientImpl extends AbstractDeltaCatalogClientFactory with L
     // case-insensitive so defaults don't create duplicate keys.
     val merged = new java.util.HashMap[String, String](options.asCaseSensitiveMap())
     Seq(
-      UCTokenBasedRestClientFactory.DELTA_REST_API_ENABLED_KEY -> "true",
       UCTokenBasedRestClientFactory.RENEW_CREDENTIAL_ENABLED_KEY -> "true",
       UCTokenBasedRestClientFactory.CRED_SCOPED_FS_ENABLED_KEY -> "false"
     ).foreach { case (k, v) => if (!options.containsKey(k)) merged.put(k, v) }
@@ -665,8 +664,8 @@ object UCDeltaCatalogClientImpl extends AbstractDeltaCatalogClientFactory with L
     val hasLegacyToken = options.get(LegacyTokenKey) != null
     if (!hasAuthPrefix && !hasLegacyToken) {
       throw new IllegalArgumentException(
-        s"auth configuration is required when 'deltaRestApi.enabled' is true " +
-          s"(catalog '$catalogName'). Set either '${AuthPrefix}type' (with the corresponding " +
+        s"auth configuration is required (catalog '$catalogName'). " +
+          s"Set either '${AuthPrefix}type' (with the corresponding " +
           s"$AuthPrefix* keys) or the legacy '$LegacyTokenKey' option.")
     }
   }
