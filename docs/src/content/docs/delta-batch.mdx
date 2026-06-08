@@ -1195,7 +1195,7 @@ After the write, `students` contains:
 | Adam | `NULL` |
 | Eva | `NULL` |
 
-Doug is removed because `UK` matches a row in the incoming DataFrame. Adam keeps his row because his `NULL` country never matches, and Eva's `NULL` row is appended for the same reason.
+`Doug` is removed because `UK` matches a row in the incoming DataFrame. `Adam` keeps his row because his `NULL` country never matches, and `Eva`'s `NULL` row is appended for the same reason.
 
 ##### replaceOn
 
@@ -1288,7 +1288,7 @@ After the write, `students` contains:
 | Bob | table |
 | Delta | query |
 
-Because `<=>` is null-safe, the `NULL` row matches and is replaced. Bob has no match in the incoming DataFrame, so his row is kept, and Delta is appended.
+Because `<=>` is null-safe, the `NULL` row matches and is replaced. `Bob` has no match in the incoming DataFrame, so his row is kept, and `Delta` is appended.
 
 <Aside type="note">
 
