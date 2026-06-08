@@ -1626,7 +1626,7 @@ case class CheckpointMetadata(
   def numOfAddFiles: Option[Long] =
     Action.getDeserializedValueForTag[Long](tags, Tags.NUM_OF_ADD_FILES.name)
 
-  /** Number of add file actions in the underlying checkpoint */
+  /** Schema of the [[SidecarFile]]s stored in the checkpoint */
   @JsonIgnore
   def sidecarFileSchema: Option[StructType] = {
     Option(tags)
