@@ -725,6 +725,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       newMetadata,
       oldProtocol,
       newProtocol,
+      catalogTrackedInfo.transactionDomainMetadata(),
       catalogTrackedInfo.deltaUniformIceberg()
     );
   }
@@ -824,13 +825,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       Optional.ofNullable(startVersion),
       Optional.ofNullable(endVersion));
     // Sort by version just in case commits in the response from UC aren't sorted.
-    List<Commit> sortedCommits =
-      resp
-        .getCommits()
-        .stream()
-        .sorted(Comparator.comparingLong(Commit::getVersion))
-        .collect(Collectors.toList());
-    return new GetCommitsResponse(sortedCommits, resp.getLatestTableVersion());
+    return resp.sortCommitsByVersion();
   }
 
   protected GetCommitsResponse getCommitsFromUCImpl(

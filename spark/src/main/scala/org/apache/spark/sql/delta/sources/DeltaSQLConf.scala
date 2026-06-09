@@ -854,7 +854,7 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         "for UC-managed tables. Metrics are sent asynchronously and " +
         "never block or fail commits.")
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val DELTA_UC_COMMIT_METRICS_THREAD_POOL_SIZE =
     buildStaticConf("commitMetrics.threadPoolSize")
@@ -2094,6 +2094,40 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValues(GeneratedColumnValidateOnWriteMode.values.map(_.toString))
       .createWithDefault(GeneratedColumnValidateOnWriteMode.LOG_ONLY.toString)
 
+  sealed abstract class ConsistentDataChangeValidationMode(val name: String) {
+    override def toString: String = name
+  }
+  object ConsistentDataChangeValidationMode {
+    /** Skip the validation entirely. */
+    case object OFF extends ConsistentDataChangeValidationMode("off")
+    /** Record a Delta event on violation but do not throw. */
+    case object LOG extends ConsistentDataChangeValidationMode("log")
+    /** Throw an exception on violation. */
+    case object FATAL extends ConsistentDataChangeValidationMode("fatal")
+
+    val values: Seq[ConsistentDataChangeValidationMode] = Seq(OFF, LOG, FATAL)
+    private val byName: Map[String, ConsistentDataChangeValidationMode] =
+      values.map(m => m.name -> m).toMap
+
+    def fromConf(conf: SQLConf): ConsistentDataChangeValidationMode =
+      byName(conf.getConf(DELTA_COMMIT_VALIDATE_CONSISTENT_DATA_CHANGE_MODE))
+  }
+
+  val DELTA_COMMIT_VALIDATE_CONSISTENT_DATA_CHANGE_MODE =
+    buildConf("commitValidation.consistentDataChange.mode")
+      .internal()
+      .doc("""
+             |Controls validation that all FileActions in a single commit share a consistent
+             |dataChange value (either all true or all false).
+             | - off:   Skip the validation entirely.
+             | - log:   Record a Delta event on violation but do not throw.
+             | - fatal: Throw an exception on violation.
+             |""".stripMargin)
+      .stringConf
+      .transform(_.toLowerCase(Locale.ROOT))
+      .checkValues(ConsistentDataChangeValidationMode.values.map(_.name).toSet)
+      .createWithDefault(ConsistentDataChangeValidationMode.LOG.name)
+
   object ValidateCheckConstraintsMode extends Enumeration {
     val OFF, LOG_ONLY, ASSERT = Value
 
@@ -3136,6 +3170,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .doc("When true, auto-resolve Delta Sharing streaming source format by calling getMetadata " +
         "on the table and using the server's responded format (parquet or delta). When false, " +
         "use the responseFormat option from the user.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_SHARING_ENABLE_AUTO_RESOLVE_FOR_CDF =
+    buildConf("spark.sql.delta.sharing.enableAutoResolveForCdf")
+      .doc("When true, Delta Sharing CDF queries without an explicit responseFormat will " +
+        "call getMetadata on the sharing server and pick the parquet or delta CDF code path " +
+        "based on the server's responded format. When false, CDF queries without a response " +
+        "format fall back to the legacy parquet path.")
       .internal()
       .booleanConf
       .createWithDefault(false)

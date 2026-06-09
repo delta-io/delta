@@ -135,6 +135,11 @@ public abstract class UnityCatalogSupport {
     return ucRemote != null && ucRemote.equalsIgnoreCase("true");
   }
 
+  /** Subclasses can override to false for A/B comparison with the legacy path. */
+  protected boolean useDeltaRestApiForTests() {
+    return true;
+  }
+
   /** The Unity Catalog info instance for subclasses access */
   private UnityCatalogInfo ucInfo = null;
 
@@ -250,6 +255,9 @@ public abstract class UnityCatalogSupport {
     serverProps.setProperty("server.managed-table.enabled", "true");
     serverProps.setProperty(
         "storage-root.tables", new File(ucServerDir, "ucroot").getAbsolutePath());
+    if (useDeltaRestApiForTests()) {
+      serverProps.setProperty("server.managed-table.use-delta-api-only", "true");
+    }
 
     // Configure S3 credentials for the fake bucket (mirrors UC OSS BaseSparkIntegrationTest).
     serverProps.setProperty("s3.bucketPath.0", "s3://" + FAKE_S3_BUCKET);

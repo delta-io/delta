@@ -785,6 +785,14 @@ sealed trait FileAction extends Action {
   def toPath: Path = sparkPath.toPath
 
   /** Returns the absolute [[Path]] for this file action (not URL-encoded). */
+  def absolutePath(snapshot: SnapshotDescriptor): Path = {
+    // dataPath is not URL-encoded.
+    val dataPath: Path = snapshot.dataPath
+    // this.path is a URL-encoded String, that is either the relative or absolute path.
+    DeltaFileOperations.absolutePath(dataPath.toString, path)
+  }
+
+  /** Returns the absolute [[Path]] for this file action (not URL-encoded). */
   def absolutePath(deltaLog: DeltaLog): Path = {
     // dataPath is not URL-encoded.
     val dataPath: Path = deltaLog.dataPath

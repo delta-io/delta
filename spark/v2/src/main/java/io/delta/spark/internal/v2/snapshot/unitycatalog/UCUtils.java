@@ -20,6 +20,7 @@ import static scala.jdk.javaapi.CollectionConverters.asJava;
 
 import io.delta.kernel.unitycatalog.UCTableIdentifier;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import org.apache.spark.sql.SparkSession;
@@ -94,7 +95,31 @@ public final class UCUtils {
             tablePath,
             extractTableIdentifier(catalogTable),
             ucUri,
-            asJava(config.authConfig())));
+            asJava(config.authConfig()),
+            extractOptInFlags(asJava(config.ucConfig()))));
+  }
+
+  /**
+   * Selects the per-catalog opt-in flag keys recognized by {@code
+   * UCTokenBasedRestClientFactory.createUCClient} (e.g. {@code deltaRestApi.enabled}) so they
+   * propagate through {@link UCTableInfo#toUcConfig()} into the V2 connector's UC client
+   * construction. Without this, the factory falls back to the legacy client even when the catalog
+   * has opted into the new Delta API path.
+   */
+  private static Map<String, String> extractOptInFlags(Map<String, String> ucConfig) {
+    Map<String, String> flags = new HashMap<>();
+    for (String key :
+        new String[] {
+          UCTableInfo.DELTA_REST_API_ENABLED_KEY,
+          UCTableInfo.RENEW_CREDENTIAL_ENABLED_KEY,
+          UCTableInfo.CRED_SCOPED_FS_ENABLED_KEY
+        }) {
+      String value = ucConfig.get(key);
+      if (value != null) {
+        flags.put(key, value);
+      }
+    }
+    return flags;
   }
 
   private static String extractUCTableId(CatalogTable catalogTable) {

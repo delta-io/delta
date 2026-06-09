@@ -19,12 +19,13 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.nio.file.FileAlreadyExistsException
 import java.time.Instant
-import java.util.{ConcurrentModificationException, Optional, UUID}
+import java.util.{ConcurrentModificationException, Optional, Set => JSet, UUID}
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit.{MINUTES, NANOSECONDS}
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
-import scala.collection.mutable.{ArrayBuffer, HashSet}
+import scala.collection.mutable.ArrayBuffer
 import scala.jdk.OptionConverters._
 import scala.util.Try
 import scala.util.control.NonFatal
@@ -58,7 +59,7 @@ import org.apache.spark.sql.delta.stats.FileSizeHistogramUtils
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils, PartitionUtils, TransactionHelper}
 import org.apache.spark.sql.util.ScalaExtensions._
 import io.delta.storage.commit._
-import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
+import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 import org.apache.commons.lang3.NotImplementedException
@@ -347,10 +348,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
     new java.util.concurrent.ConcurrentLinkedQueue[DeltaTableReadPredicate]
 
   /** Tracks specific files that have been seen by this transaction. */
-  protected val readFiles = new HashSet[AddFile]
+  protected val readFiles: JSet[AddFile] = ConcurrentHashMap.newKeySet[AddFile]()
 
   /** Whether the whole table was read during the transaction. */
-  protected var readTheWholeTable = false
+  @volatile protected var readTheWholeTable = false
 
   /** Tracks if this transaction has already committed. */
   protected var committed: Option[CommittedTransaction] = None
@@ -1298,7 +1299,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
   /** Mark the given files as read within this transaction. */
   def trackFilesRead(files: Seq[AddFile]): Unit = {
-    readFiles ++= files
+    readFiles.addAll(files.asJava)
   }
 
   /** Mark the predicates that have been queried by this transaction. */
@@ -1514,7 +1515,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
   /** Ensure that actions do not contain duplicates for the same path. */
   protected def checkNoDuplicateActions(actions: Seq[Action]): Unit = {
-    ConflictChecker.checkNoDuplicateActions(actions.iterator).foreach(_ => ())
+    ConflictChecker.checkNoDuplicateActions(spark, actions.iterator).foreach(_ => ())
   }
 
   /**
@@ -1695,7 +1696,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     // If this transaction commits to the redirect destination location, then there is no
     // need to validate the subsequent no-redirect rules.
     val configuration = deltaLog.newDeltaHadoopConf()
-    val dataPath = snapshot.deltaLog.dataPath.toUri.getPath
+    val dataPath = snapshot.dataPath.toUri.getPath
     val catalog = spark.sessionState.catalog
     val isRedirectDest = redirectConfig.spec.isRedirectDest(catalog, configuration, dataPath)
     if (isRedirectDest) return
@@ -1798,9 +1799,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
       validateActionsAddFileInvariants(preparedActions, metadata)
 
-      if (spark.conf.get(DeltaSQLConf.DELTA_DUPLICATE_ACTION_CHECK_ENABLED)) {
-        checkNoDuplicateActions(preparedActions)
-      }
+      checkNoDuplicateActions(preparedActions)
+      ConflictChecker.trackConsistentDataChange(
+        spark, preparedActions.iterator, deltaLog, op, callerContext = "commit")
+        .foreach(_ => ())
 
       // Find the isolation level to use for this commit
       val isolationLevelToUse = getIsolationLevelToUse(preparedActions, op)
@@ -1811,7 +1813,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
         DomainMetadataUtils.validateDomainMetadataSupportedAndNoDuplicate(finalActions, protocol)
 
       isBlindAppend = {
-        val dependsOnFiles = !readPredicates.isEmpty || readFiles.nonEmpty
+        val dependsOnFiles = !readPredicates.isEmpty || !readFiles.isEmpty
         val onlyAddFiles =
           preparedActions.collect { case f: FileAction => f }.forall(_.isInstanceOf[AddFile])
         onlyAddFiles && !dependsOnFiles
@@ -1854,7 +1856,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       val currentTransactionInfo = CurrentTransactionInfo(
         txnId = txnId,
         readPredicates = readPredicates.asScala.toVector,
-        readFiles = readFiles.toSet,
+        readFiles = readFiles.asScala.toSet,
         readWholeTable = readTheWholeTable,
         readAppIds = readTxn.toSet,
         metadata = metadata,
@@ -1923,7 +1925,12 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val metadataWithIctInfo = commitInfo.inCommitTimestamp
       .flatMap { inCommitTimestamp =>
         InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo(
-          spark, inCommitTimestamp, snapshot, metadata, firstAttemptVersion)
+          spark = spark,
+          inCommitTimestamp = inCommitTimestamp,
+          currentMetadataWithVersion =
+            InCommitTimestampUtils.MetadataWithVersion(firstAttemptVersion, metadata),
+          priorMetadataWithVersion =
+            InCommitTimestampUtils.MetadataWithVersion(snapshot.version, snapshot.metadata))
       }.getOrElse { return false }
     newMetadata = Some(metadataWithIctInfo)
     true
@@ -2088,6 +2095,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
         }
         action
       }
+      allActions = ConflictChecker.trackConsistentDataChange(
+        spark, allActions, deltaLog, op, callerContext = "commitLarge")
       val (allActions2, acStatsCollector) = collectAutoOptimizeStats(allActions)
       allActions = allActions2
 
@@ -2273,7 +2282,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val t = new OptimisticTransaction(deltaLog, catalogTable, snapshot)
     t.executionObserver = executionObserver.createChild()
     t.readPredicates.addAll(readPredicates)
-    t.readFiles ++= readFilesSubset
+    t.readFiles.addAll(readFilesSubset.asJava)
     t.readTxn ++= readTxn
     t
   }
@@ -2926,7 +2935,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
         jsonActions,
         updatedActions,
         catalogTable.map(_.identifier),
-        new CatalogTrackedInfo(currentTransactionInfo.convertedIcebergMetadata.toJava)
+        new CatalogTrackedInfo(
+          currentTransactionInfo.convertedIcebergMetadata.toJava,
+          currentTransactionInfo.domainMetadata.map(dm => dm: AbstractDomainMetadata).asJava)
       )
     }
     if (attemptVersion == 0L) {

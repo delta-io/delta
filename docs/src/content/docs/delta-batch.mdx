@@ -976,7 +976,18 @@ To atomically replace all the data in a table, use `overwrite` mode:
   </TabItem>
 </Tabs>
 
-You can selectively overwrite only the data that matches an arbitrary expression. This feature is available with DataFrames in Delta Lake 1.1.0 and above and supported in SQL in Delta Lake 2.4.0 and above.
+Delta Lake provides several options to selectively overwrite only part of a table. The following table summarizes them. For most use cases, we recommend using `replaceUsing` or `replaceWhere`. Use `replaceOn` only when your use case requires complex or null-safe matching conditions.
+
+| Option | Use case | Available since |
+| --- | --- | --- |
+| `replaceWhere` | Atomically overwrite rows that match a predicate. Use for replacements with a fixed matching condition, such as `colA = 5` or `int_col IN (1, 2, 3)`. | Delta Lake 1.1.0 (DataFrames); 2.4.0 (SQL) |
+| `replaceUsing` | Dynamic data overwrite by column equality. Replaces all rows that match the specified columns, based on equality comparison of the column values, in the provided data set. | Delta Lake 4.3.0 |
+| `replaceOn` | Dynamic data overwrite by Boolean expression. Use for replacements with a complex or null-safe matching condition, such as `s.colA <=> t.colA AND s.colB <=> t.colB`. | Delta Lake 4.3.0 |
+| `partitionOverwriteMode` | Dynamic partition overwrite, which overwrites all the existing data in each partition for which the write will commit new data. Legacy since Delta Lake 4.3.0; not recommended for new workloads. | Delta Lake 2.0 |
+
+#### Overwrite rows matching a predicate with `replaceWhere`
+
+`replaceWhere` atomically overwrites the rows that match a predicate, leaving all other rows unchanged. Use it for replacements with a fixed matching condition, such as `colA = 5` or `int_col IN (1, 2, 3)`. This feature is available with DataFrames in Delta Lake 1.1.0 and above and supported in SQL in Delta Lake 2.4.0 and above.
 
 The following command atomically replaces events in January in the target table, which is partitioned by `start_date`, with the data in `replace_data`:
 
@@ -1090,7 +1101,202 @@ In Delta Lake 1.1.0 and above, if you want to fall back to the old behavior, you
   </TabItem>
 </Tabs>
 
-#### Dynamic Partition Overwrites
+#### Dynamically overwrite data with `replaceUsing` and `replaceOn`
+
+Dynamic data overwrites selectively replace the data that matches the specified key columns or Boolean expression, leaving all other data unchanged. The `replaceUsing` option matches on key columns, while `replaceOn` matches on a Boolean expression. Partitioned tables, unpartitioned tables, and tables with liquid clustering are all supported. Both options are available with DataFrames in Delta Lake 4.3.0 and above.
+
+Dynamic partition overwrites (the legacy [`partitionOverwriteMode`](#dynamic-partition-overwrites-with-partitionoverwritemode-legacy-since-delta-lake-430) option) are a subset of dynamic data overwrite behavior. Dynamic partition overwrites replace all the existing data in each partition for which the write will commit new data, and leave all other partitions unchanged. Only partitioned tables are supported in dynamic partition overwrite mode.
+
+##### replaceUsing
+
+`replaceUsing` atomically deletes the rows in the target table that match a row in the incoming DataFrame on the specified columns, then inserts the incoming DataFrame rows. Matching is based on equality comparison of the specified column values. Provide a comma-separated list of columns. Each column must exist in both the table and the incoming DataFrame, at the same ordinal position. The following command replaces rows whose `event_id` and `start_date` match between the incoming DataFrame and the target table:
+
+<Tabs syncKey="code-examples">
+  <TabItem label="Python" active>
+
+    ```python
+    source_data.write \
+      .format("delta") \
+      .mode("overwrite") \
+      .option("replaceUsing", "event_id, start_date") \
+      .saveAsTable("events")
+    ```
+
+  </TabItem>
+  <TabItem label="Scala">
+
+    ```scala
+    source_data.write
+      .format("delta")
+      .mode("overwrite")
+      .option("replaceUsing", "event_id, start_date")
+      .saveAsTable("events")
+    ```
+
+  </TabItem>
+</Tabs>
+
+If the source query is empty, no data is deleted.
+
+Like a `JOIN USING`, `replaceUsing` matches rows with regular equality, where `NULL` is not equal to anything. Rows with `NULL` values in the specified columns don't match and aren't removed from the target table. For null-safe matching, or other logic that equality cannot express, use `replaceOn` instead.
+
+For example, suppose the `students` table is clustered by `country`:
+
+| name | country |
+| --- | --- |
+| Dylan | US |
+| Doug | UK |
+| Julia | IT |
+| Adam | `NULL` |
+
+and the `new_students` DataFrame holds the replacement rows:
+
+| name | country |
+| --- | --- |
+| Peter | FR |
+| Jennie | UK |
+| Eva | `NULL` |
+
+<Tabs syncKey="code-examples">
+  <TabItem label="Python" active>
+
+    ```python
+    # Replace rows in students whose country matches a row in new_students.
+    new_students.write \
+      .format("delta") \
+      .mode("overwrite") \
+      .option("replaceUsing", "country") \
+      .saveAsTable("students")
+    ```
+
+  </TabItem>
+  <TabItem label="Scala">
+
+    ```scala
+    // Replace rows in students whose country matches a row in new_students.
+    new_students.write
+      .format("delta")
+      .mode("overwrite")
+      .option("replaceUsing", "country")
+      .saveAsTable("students")
+    ```
+
+  </TabItem>
+</Tabs>
+
+After the write, `students` contains:
+
+| name | country |
+| --- | --- |
+| Dylan | US |
+| Julia | IT |
+| Jennie | UK |
+| Peter | FR |
+| Adam | `NULL` |
+| Eva | `NULL` |
+
+`Doug` is removed because `UK` matches a row in the incoming DataFrame. `Adam` keeps his row because his `NULL` country never matches, and `Eva`'s `NULL` row is appended for the same reason.
+
+##### replaceOn
+
+`replaceOn` replaces rows when they match a user-defined condition, unlike `replaceUsing`, which replaces rows when the specified columns compare equal under equality. Use `replaceOn` when you need matching logic that `replaceUsing` does not support, such as treating `NULL` values as equal with the `<=>` operator.
+
+Optionally, use the `targetAlias` option to specify an alias for the target table and the `.as()` or `.alias()` APIs to specify an alias for the source data.
+
+The following command replaces rows whose `event_id` and `start_date` match between the incoming DataFrame and the target table:
+
+<Tabs syncKey="code-examples">
+  <TabItem label="Python" active>
+
+    ```python
+    source_data.alias("s").write \
+      .format("delta") \
+      .mode("overwrite") \
+      .option("targetAlias", "t") \
+      .option("replaceOn", "s.event_id <=> t.event_id AND s.start_date <=> t.start_date") \
+      .saveAsTable("events")
+    ```
+
+  </TabItem>
+  <TabItem label="Scala">
+
+    ```scala
+    source_data.as("s").write
+      .format("delta")
+      .mode("overwrite")
+      .option("targetAlias", "t")
+      .option("replaceOn", "s.event_id <=> t.event_id AND s.start_date <=> t.start_date")
+      .saveAsTable("events")
+    ```
+
+  </TabItem>
+</Tabs>
+
+If the source query is empty, no data is deleted.
+
+For example, suppose the `students` table contains:
+
+| name | row_origin |
+| --- | --- |
+| Alice | table |
+| `NULL` | table |
+| Bob | table |
+
+and the `people` DataFrame holds the replacement rows:
+
+| name | row_origin |
+| --- | --- |
+| Alice | query |
+| `NULL` | query |
+| Delta | query |
+
+<Tabs syncKey="code-examples">
+  <TabItem label="Python" active>
+
+    ```python
+    # Replace rows in students whose name matches a row in people, using a null-safe comparison.
+    people.alias("s").write \
+      .format("delta") \
+      .mode("overwrite") \
+      .option("targetAlias", "t") \
+      .option("replaceOn", "t.name <=> s.name") \
+      .saveAsTable("students")
+    ```
+
+  </TabItem>
+  <TabItem label="Scala">
+
+    ```scala
+    // Replace rows in students whose name matches a row in people, using a null-safe comparison.
+    people.as("s").write
+      .format("delta")
+      .mode("overwrite")
+      .option("targetAlias", "t")
+      .option("replaceOn", "t.name <=> s.name")
+      .saveAsTable("students")
+    ```
+
+  </TabItem>
+</Tabs>
+
+After the write, `students` contains:
+
+| name | row_origin |
+| --- | --- |
+| Alice | query |
+| `NULL` | query |
+| Bob | table |
+| Delta | query |
+
+Because `<=>` is null-safe, the `NULL` row matches and is replaced. `Bob` has no match in the incoming DataFrame, so his row is kept, and `Delta` is appended.
+
+<Aside type="note">
+
+The `replaceOn` and `replaceUsing` options can't be combined with `replaceWhere` or dynamic partition overwrite (`partitionOverwriteMode`) in the same write.
+
+</Aside>
+
+#### Dynamic Partition Overwrites with `partitionOverwriteMode` (legacy since Delta Lake 4.3.0)
 
 Delta Lake 2.0 and above supports _dynamic_ partition overwrite mode for partitioned tables.
 
@@ -1145,7 +1351,7 @@ Dynamic partition overwrite conflicts with the option `replaceWhere` for partiti
 
 <Aside type="caution" title="Important">
 
-Validate that the data written with dynamic partition overwrite touches only the expected partitions. A single row in the incorrect partition can lead to unintentionally overwriting an entire partition. We recommend using `replaceWhere` to specify which data to overwrite.
+Validate that the data written with dynamic partition overwrite touches only the expected partitions. A single row in the incorrect partition can lead to unintentionally overwriting an entire partition.
 
 If a partition has been accidentally overwritten, you can use [Restore a Delta table to an earlier state](/delta-utility/#restore-a-delta-table-to-an-earlier-state) to undo the change.
 

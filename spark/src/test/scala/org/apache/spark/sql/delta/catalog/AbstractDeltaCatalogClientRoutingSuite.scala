@@ -26,7 +26,7 @@ import io.delta.storage.commit.{Commit, GetCommitsResponse, TableIdentifier => S
 import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCDeltaClient, UCDeltaModels}
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.{DeltaProtocol, StagingTableInfo, TableInfo, TableType => UcTableType}
-import io.delta.storage.commit.uccommitcoordinator.exceptions.CredentialFetchFailedException
+import io.delta.storage.commit.uccommitcoordinator.exceptions.{CredentialFetchFailedException, UnsupportedTableFormatException, NoSuchTableException => StorageNoSuchTableException}
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 
 import org.apache.spark.sql.QueryTest
@@ -50,54 +50,62 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
     new CaseInsensitiveStringMap(m)
   }
 
-  test("deltaRestApi.enabled=false leaves deltaCatalogClient empty") {
-    val catalog = new AbstractDeltaCatalog
-    catalog.initialize("test_cat", options())
-    assert(catalog.deltaCatalogClient.isEmpty,
-      "UC Delta API client should not be constructed when the catalog opts out")
+  // Catalog-wiring behavior (opt-out / opt-in / validation) is exercised through the
+  // factory below; `AbstractDeltaCatalog.deltaCatalogClient` gates lazily on `isUnityCatalog`,
+  // which reads the delegate field, and unit tests never wire a delegate.
+
+  test("deltaRestApi.enabled defaults to true: requires uri when flag absent") {
+    val e = intercept[IllegalArgumentException] {
+      AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled("test_cat", options(), noFallback)
+    }
+    assert(e.getMessage.contains("'uri' is required"))
   }
 
   test("deltaRestApi.enabled=true requires uri") {
-    val catalog = new AbstractDeltaCatalog
     val e = intercept[IllegalArgumentException] {
-      catalog.initialize("test_cat", options("deltaRestApi.enabled" -> "true"))
+      AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled(
+        "test_cat", options("deltaRestApi.enabled" -> "true"), noFallback)
     }
     assert(e.getMessage.contains("'uri' is required"))
   }
 
   test("deltaRestApi.enabled=true requires an auth configuration") {
-    val catalog = new AbstractDeltaCatalog
     val e = intercept[IllegalArgumentException] {
-      catalog.initialize("test_cat",
-        options("deltaRestApi.enabled" -> "true", "uri" -> "http://uc"))
+      AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled(
+        "test_cat",
+        options("deltaRestApi.enabled" -> "true", "uri" -> "http://uc"),
+        noFallback)
     }
     assert(e.getMessage.contains("auth configuration is required"))
   }
 
   test("auth.* options are passed through to TokenProvider (new format)") {
-    val catalog = new AbstractDeltaCatalog
-    catalog.initialize("test_cat",
+    // Exercised at the factory level since `AbstractDeltaCatalog.deltaCatalogClient` gates the
+    // candidate on `isUnityCatalog`, which requires a delegate that unit tests don't wire in.
+    val result = AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled(
+      "test_cat",
       options(
         "deltaRestApi.enabled" -> "true",
         "uri" -> "http://uc",
         "auth.type" -> "static",
-        "auth.token" -> "tok"))
-    assert(catalog.deltaCatalogClient.isDefined)
+        "auth.token" -> "tok"),
+      noFallback)
+    assert(result.isDefined)
   }
 
   test("deltaRestApi.enabled=true with uri+token constructs the UC Delta API client") {
-    val catalog = new AbstractDeltaCatalog
-    catalog.initialize("test_cat",
-      options("deltaRestApi.enabled" -> "true", "uri" -> "http://uc", "token" -> "tok"))
-    val client = catalog.deltaCatalogClient.getOrElse(
-      fail("UC Delta API client should be constructed when the catalog opts in"))
+    val client = AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled(
+      "test_cat",
+      options("deltaRestApi.enabled" -> "true", "uri" -> "http://uc", "token" -> "tok"),
+      noFallback).getOrElse(
+        fail("UC Delta API client should be constructed when the catalog opts in"))
     assert(client.isInstanceOf[UCDeltaCatalogClientImpl],
       s"UC Delta API client should be UCDeltaCatalogClientImpl, was ${client.getClass}")
   }
 
   test("AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled returns None when flag is off") {
     val result = AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled(
-      "test_cat", options(), noFallback)
+      "test_cat", options("deltaRestApi.enabled" -> "false"), noFallback)
     assert(result.isEmpty)
   }
 
@@ -109,16 +117,25 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
     assert(result.isDefined)
   }
 
+  test("AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled returns Some when flag absent " +
+      "(default is on)") {
+    val result = AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled(
+      "test_cat",
+      options("uri" -> "http://uc", "token" -> "tok"),
+      noFallback)
+    assert(result.isDefined,
+      "absent deltaRestApi.enabled should default to true and construct the client")
+  }
+
   private val noFallback: Identifier => Table =
     _ => throw new UnsupportedOperationException("fallback not expected in this test")
 
   /**
-   * createStagingTable contract tests. The contract: only fresh managed Delta CREATE / CTAS
-   * requests with raw caller-supplied properties may reach this client. The routing boundary
-   * (`AbstractDeltaCatalog.maybeStageManagedDeltaCreate`) is responsible for that separation;
-   * if any "already-prepared" marker (LOCATION / IS_MANAGED_LOCATION / EXTERNAL / path-based
-   * ident) is seen here, it means some call site bypassed the boundary -- the impl fails
-   * loudly as defense-in-depth.
+   * createStagingTable contract tests. The contract: only fresh Delta CREATE / CTAS requests
+   * with raw caller-supplied properties may reach this client; upstream routing filters out
+   * external / REPLACE-existing / path-based requests. If any "already-prepared" marker
+   * (LOCATION / IS_MANAGED_LOCATION / EXTERNAL / path-based ident) is seen here, the impl
+   * fails loudly as defense-in-depth.
    */
   private def newRecordingClient(
       requiredProtocol: UCDeltaModels.DeltaProtocol = null,
@@ -252,24 +269,39 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
   }
 
   test("createStagingTable: suggested property is applied when caller hasn't set it") {
+    // `delta.checkpointInterval` is a real, editable Delta config so it survives the
+    // `passesDeltaConfigValidation` filter.
     val (client, _) = newRecordingClient(
-      suggestedProperties = javaMap("delta.someSuggested" -> "ucs-val"))
+      suggestedProperties = javaMap("delta.checkpointInterval" -> "20"))
     val out = client.createStagingTable(
       Identifier.of(Array("sch"), "tbl"),
       stageProps("delta.catalogManaged" -> "supported"))
-    assert(out.get("delta.someSuggested") === "ucs-val")
+    assert(out.get("delta.checkpointInterval") === "20")
   }
 
   test("createStagingTable: suggested property defers to caller when both set") {
     val (client, _) = newRecordingClient(
-      suggestedProperties = javaMap("delta.someSuggested" -> "ucs-val"))
+      suggestedProperties = javaMap("delta.checkpointInterval" -> "20"))
     val out = client.createStagingTable(
       Identifier.of(Array("sch"), "tbl"),
       stageProps(
         "delta.catalogManaged" -> "supported",
-        "delta.someSuggested" -> "caller-val"))
-    assert(out.get("delta.someSuggested") === "caller-val",
+        "delta.checkpointInterval" -> "50"))
+    assert(out.get("delta.checkpointInterval") === "50",
       "user TBLPROPERTIES must win over a suggested value")
+  }
+
+  test("createStagingTable: suggested property unknown to Delta Spark is silently dropped") {
+    // UC may suggest Kernel-only properties (e.g. `delta.parquet.compression.codec`) that
+    // this Delta Spark build doesn't recognize. The suggested-properties path drops them
+    // instead of letting `DeltaConfigs.validateConfigurations` throw downstream.
+    val (client, _) = newRecordingClient(
+      suggestedProperties = javaMap("delta.parquet.compression.codec" -> "snappy"))
+    val out = client.createStagingTable(
+      Identifier.of(Array("sch"), "tbl"),
+      stageProps("delta.catalogManaged" -> "supported"))
+    assert(!out.containsKey("delta.parquet.compression.codec"),
+      "unknown delta.* suggested keys must not flow through")
   }
 
   test("createStagingTable: required protocol features are encoded as delta.feature.*") {
@@ -385,6 +417,217 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
       client.createStagingTable(ident, stageProps("delta.catalogManaged" -> "supported")))
     assert(ex.getMessage.contains("path-based"))
     assert(stub.stagedRequests.isEmpty)
+  }
+
+  // -------------------------------------------------------------------------
+  // loadTableAndBuildReplaceProps: validation + augmentation for REPLACE / RTAS /
+  // CREATE OR REPLACE on an existing catalog-managed Delta table.
+  // -------------------------------------------------------------------------
+
+  /**
+   * Builds a TableInfo that, by default, satisfies all catalog-managed-Delta preconditions
+   * (tableType=MANAGED, provider=delta, `delta.feature.catalogManaged=supported`). Tests
+   * override individual fields to exercise the rejection branches.
+   */
+  private def existingDeltaTableInfo(
+      tableType: UCDeltaModels.TableType = UCDeltaModels.TableType.MANAGED,
+      provider: String = "DELTA",
+      catalogManaged: Boolean = true,
+      storageProperties: util.Map[String, String] =
+        util.Map.of("fs.s3a.access.key", "existing-key"),
+      additionalConfig: Map[String, String] = Map.empty): TableInfo = {
+    val config = new util.HashMap[String, String]()
+    if (catalogManaged) config.put("delta.feature.catalogManaged", "supported")
+    additionalConfig.foreach { case (k, v) => config.put(k, v) }
+    val metadata = new TestMetadata(provider = provider, configuration = config)
+    new TableInfo(
+      UUID.fromString("00000000-0000-0000-0000-000000000002"),
+      tableType,
+      "s3://bucket/existing/tbl",
+      metadata,
+      storageProperties,
+      Optional.empty())
+  }
+
+  private def replaceClient(loadResult: => TableInfo): UCDeltaCatalogClientImpl =
+    new UCDeltaCatalogClientImpl(catalogName = "main", ucClient = new StubUCDeltaClient(loadResult))
+
+  test(
+      "loadTableAndBuildReplaceProps: happy path augments props with provider + " +
+        "is_managed_location + credentials, and does NOT set PROP_LOCATION") {
+    val client = replaceClient(existingDeltaTableInfo())
+    val out = client.loadTableAndBuildReplaceProps(
+      Identifier.of(Array("sch"), "tbl"),
+      stageProps("delta.feature.catalogManaged" -> "supported"))
+    assert(out.get(TableCatalog.PROP_PROVIDER) === "delta",
+      "existing provider must be re-emitted")
+    assert(out.get(TableCatalog.PROP_IS_MANAGED_LOCATION) === "true")
+    assert(!out.containsKey(TableCatalog.PROP_LOCATION),
+      "PROP_LOCATION must NOT be set; downstream resolves location from existing snapshot")
+    assert(out.get("fs.s3a.access.key") === "existing-key",
+      "fs.* storage credentials must be mirrored bare")
+    assert(out.get(TableCatalog.OPTION_PREFIX + "fs.s3a.access.key") === "existing-key",
+      "fs.* storage credentials must also be mirrored under the option.-prefixed key")
+  }
+
+  test("loadTableAndBuildReplaceProps: caller-supplied UC_TABLE_ID_KEY throws") {
+    val client = replaceClient(existingDeltaTableInfo())
+    val e = intercept[IllegalArgumentException] {
+      client.loadTableAndBuildReplaceProps(
+        Identifier.of(Array("sch"), "tbl"),
+        stageProps(
+          "delta.feature.catalogManaged" -> "supported",
+          "io.unitycatalog.tableId" -> "user-supplied"))
+    }
+    assert(e.getMessage.contains("io.unitycatalog.tableId"))
+  }
+
+  test("loadTableAndBuildReplaceProps: caller-supplied catalogManaged != supported throws") {
+    val client = replaceClient(existingDeltaTableInfo())
+    val e = intercept[IllegalArgumentException] {
+      client.loadTableAndBuildReplaceProps(
+        Identifier.of(Array("sch"), "tbl"),
+        stageProps("delta.feature.catalogManaged" -> "disabled"))
+    }
+    assert(e.getMessage.contains("catalogManaged"))
+    assert(e.getMessage.contains("disabled"))
+  }
+
+  test("loadTableAndBuildReplaceProps: caller-supplied PROP_LOCATION throws") {
+    val client = replaceClient(existingDeltaTableInfo())
+    val e = intercept[UnsupportedOperationException] {
+      client.loadTableAndBuildReplaceProps(
+        Identifier.of(Array("sch"), "tbl"),
+        stageProps(
+          "delta.feature.catalogManaged" -> "supported",
+          TableCatalog.PROP_LOCATION -> "s3://other/location"))
+    }
+    assert(e.getMessage.contains(TableCatalog.PROP_LOCATION))
+  }
+
+  test("loadTableAndBuildReplaceProps: existing EXTERNAL table is rejected") {
+    val client = replaceClient(
+      existingDeltaTableInfo(tableType = UCDeltaModels.TableType.EXTERNAL))
+    val e = intercept[UnsupportedOperationException] {
+      client.loadTableAndBuildReplaceProps(
+        Identifier.of(Array("sch"), "tbl"),
+        stageProps("delta.feature.catalogManaged" -> "supported"))
+    }
+    assert(e.getMessage.contains("catalog-managed"))
+  }
+
+  test(
+      "loadTableAndBuildReplaceProps: existing non-Delta provider throws " +
+        "notADeltaTableException") {
+    val client = replaceClient(
+      existingDeltaTableInfo(provider = "PARQUET", catalogManaged = false))
+    val e = intercept[org.apache.spark.sql.delta.DeltaAnalysisException] {
+      client.loadTableAndBuildReplaceProps(
+        Identifier.of(Array("sch"), "tbl"),
+        stageProps("delta.feature.catalogManaged" -> "supported"))
+    }
+    assert(e.getMessage.contains("not a Delta table"))
+  }
+
+  test("loadTableAndBuildReplaceProps: existing table missing catalogManaged config is rejected") {
+    val client = replaceClient(existingDeltaTableInfo(catalogManaged = false))
+    val e = intercept[UnsupportedOperationException] {
+      client.loadTableAndBuildReplaceProps(
+        Identifier.of(Array("sch"), "tbl"),
+        stageProps("delta.feature.catalogManaged" -> "supported"))
+    }
+    assert(e.getMessage.contains("catalog-managed"))
+  }
+
+  test(
+      "loadTableAndBuildReplaceProps: caller PROP_PROVIDER different from existing throws " +
+        "cannotChangeProvider") {
+    val client = replaceClient(existingDeltaTableInfo())
+    val e = intercept[org.apache.spark.sql.delta.DeltaAnalysisException] {
+      client.loadTableAndBuildReplaceProps(
+        Identifier.of(Array("sch"), "tbl"),
+        stageProps(
+          "delta.feature.catalogManaged" -> "supported",
+          TableCatalog.PROP_PROVIDER -> "parquet"))
+    }
+    assert(e.getMessage.contains("provider"))
+  }
+
+  test(
+      "loadTableAndBuildReplaceProps: StorageNoSuchTableException is wrapped as " +
+        "NoSuchTableException") {
+    val client = replaceClient(throw new StorageNoSuchTableException("no such table"))
+    intercept[org.apache.spark.sql.catalyst.analysis.NoSuchTableException] {
+      client.loadTableAndBuildReplaceProps(
+        Identifier.of(Array("sch"), "tbl"),
+        stageProps("delta.feature.catalogManaged" -> "supported"))
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // loadTableAndBuildReplaceProps: existing-table `delta.*` carry-forward.
+  // Pin which keys survive REPLACE so Table Service / commit validation doesn't reject
+  // post-REPLACE commits for stripping required features.
+  // -------------------------------------------------------------------------
+
+  test(
+    "loadTableAndBuildReplaceProps: carries forward existing delta.feature.* + editable configs") {
+    val client = replaceClient(existingDeltaTableInfo(additionalConfig = Map(
+      "delta.feature.deletionVectors" -> "supported",
+      "delta.enableDeletionVectors" -> "true",
+      "delta.checkpointInterval" -> "20")))
+    val out = client.loadTableAndBuildReplaceProps(
+      Identifier.of(Array("sch"), "tbl"),
+      stageProps("delta.feature.catalogManaged" -> "supported"))
+    assert(out.get("delta.feature.deletionVectors") === "supported")
+    assert(out.get("delta.enableDeletionVectors") === "true")
+    assert(out.get("delta.checkpointInterval") === "20")
+  }
+
+  test("loadTableAndBuildReplaceProps: does NOT carry delta.feature.clustering") {
+    val client = replaceClient(existingDeltaTableInfo(additionalConfig = Map(
+      "delta.feature.clustering" -> "supported")))
+    val out = client.loadTableAndBuildReplaceProps(
+      Identifier.of(Array("sch"), "tbl"),
+      stageProps("delta.feature.catalogManaged" -> "supported"))
+    assert(!out.containsKey("delta.feature.clustering"),
+      "clustering must NOT carry forward; only CLUSTER BY DDL can enable it, and " +
+        "carrying it would also block REPLACE transitions away from a clustered table")
+  }
+
+  test("loadTableAndBuildReplaceProps: does NOT carry Delta-internal / non-editable keys") {
+    val client = replaceClient(existingDeltaTableInfo(additionalConfig = Map(
+      // Delta-internal metadata that's not in DeltaConfigs.entries.
+      "delta.lastCommitTimestamp" -> "1234567890",
+      // Registered but non-editable; rejected by `DELTA_CANNOT_MODIFY_TABLE_PROPERTY`.
+      "delta.columnMapping.maxColumnId" -> "5")))
+    val out = client.loadTableAndBuildReplaceProps(
+      Identifier.of(Array("sch"), "tbl"),
+      stageProps("delta.feature.catalogManaged" -> "supported"))
+    assert(!out.containsKey("delta.lastCommitTimestamp"))
+    assert(!out.containsKey("delta.columnMapping.maxColumnId"))
+  }
+
+  test("loadTableAndBuildReplaceProps: caller TBLPROPERTIES wins over carried-forward value") {
+    val client = replaceClient(existingDeltaTableInfo(additionalConfig = Map(
+      "delta.checkpointInterval" -> "10")))
+    val out = client.loadTableAndBuildReplaceProps(
+      Identifier.of(Array("sch"), "tbl"),
+      stageProps(
+        "delta.feature.catalogManaged" -> "supported",
+        "delta.checkpointInterval" -> "50"))
+    assert(out.get("delta.checkpointInterval") === "50",
+      "caller-supplied TBLPROPERTIES on the REPLACE must override the existing value")
+  }
+
+  test("loadTableAndBuildReplaceProps: does NOT carry non-delta.* user properties") {
+    val client = replaceClient(existingDeltaTableInfo(additionalConfig = Map(
+      "Foo" -> "Bar")))
+    val out = client.loadTableAndBuildReplaceProps(
+      Identifier.of(Array("sch"), "tbl"),
+      stageProps("delta.feature.catalogManaged" -> "supported"))
+    assert(!out.containsKey("Foo"),
+      "non-delta.* user keys follow normal REPLACE semantics: dropped unless re-supplied")
   }
 
   test("loadTable converts TableInfo to V1Table with catalog-supplied fields") {
@@ -535,6 +778,48 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
     }
     assert(thrown eq ex)
   }
+
+  // -------------------------------------------------------------------------
+  // tableExists: maps `StorageNoSuchTableException` to `false`; treats UC-side
+  // "exists but not Delta-readable" / "exists but creds failed" responses as `true`
+  // since the table still exists in the catalog. Other failures propagate.
+  // -------------------------------------------------------------------------
+
+  private def tableExistsClient(loadResult: => TableInfo): UCDeltaCatalogClientImpl =
+    new UCDeltaCatalogClientImpl(catalogName = "main", ucClient = new StubUCDeltaClient(loadResult))
+
+  test("tableExists: returns true when UC returns table info") {
+    val client = tableExistsClient(existingDeltaTableInfo())
+    assert(client.tableExists(Identifier.of(Array("sch"), "tbl")))
+  }
+
+  test("tableExists: returns false on StorageNoSuchTableException") {
+    val client = tableExistsClient(throw new StorageNoSuchTableException("no such table"))
+    assert(!client.tableExists(Identifier.of(Array("sch"), "tbl")))
+  }
+
+  test("tableExists: returns true on UnsupportedTableFormatException (table exists, " +
+      "just not Delta-readable)") {
+    val client = tableExistsClient(throw new UnsupportedTableFormatException(
+      "not delta", new RuntimeException("simulated")))
+    assert(client.tableExists(Identifier.of(Array("sch"), "tbl")))
+  }
+
+  test("tableExists: returns true on CredentialFetchFailedException (table exists, " +
+      "credentials unavailable)") {
+    val client = tableExistsClient(throw new CredentialFetchFailedException(
+      "creds exhausted", new RuntimeException("simulated"), null))
+    assert(client.tableExists(Identifier.of(Array("sch"), "tbl")))
+  }
+
+  test("tableExists: propagates unrelated IOExceptions instead of masking as not-exists") {
+    val ioe = new java.io.IOException("network blip")
+    val client = tableExistsClient(throw ioe)
+    val thrown = intercept[java.io.IOException] {
+      client.tableExists(Identifier.of(Array("sch"), "tbl"))
+    }
+    assert(thrown eq ioe)
+  }
 }
 
 /**
@@ -584,6 +869,7 @@ private abstract class ThrowingUCDeltaClient extends UCDeltaClient {
       domainMetadata: util.List[AbstractDomainMetadata],
       lastCommitTimestampMs: Long): TableInfo =
     throw new UnsupportedOperationException
+  // scalastyle:off argcount
   override def commit(
       tableId: String,
       tableUri: URI,
@@ -594,8 +880,10 @@ private abstract class ThrowingUCDeltaClient extends UCDeltaClient {
       newMetadata: Optional[AbstractMetadata],
       oldProtocol: Optional[AbstractProtocol],
       newProtocol: Optional[AbstractProtocol],
+      transactionDomainMetadata: util.List[AbstractDomainMetadata],
       uniform: Optional[UniformMetadata]): Unit =
     throw new UnsupportedOperationException
+  // scalastyle:on argcount
   override def getCommits(
       tableId: String,
       tableUri: URI,
@@ -610,6 +898,11 @@ private abstract class ThrowingUCDeltaClient extends UCDeltaClient {
       storageLocation: String,
       columns: util.List[UCClient.ColumnDef],
       properties: util.Map[String, String]): Unit =
+    throw new UnsupportedOperationException
+  override def reportMetrics(
+      tableId: String,
+      tableIdentifier: StorageTableIdentifier,
+      report: UCDeltaModels.CommitReport): Unit =
     throw new UnsupportedOperationException
   override def close(): Unit = ()
 }

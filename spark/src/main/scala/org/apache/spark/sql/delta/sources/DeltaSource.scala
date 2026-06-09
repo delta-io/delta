@@ -34,7 +34,7 @@ import org.apache.spark.sql.delta.storage.{ClosableIterator, SupportsRewinding}
 import org.apache.spark.sql.delta.storage.ClosableIterator._
 import org.apache.spark.sql.delta.util.{DateTimeUtils, TimestampFormatter}
 import org.apache.spark.sql.util.ScalaExtensions._
-import org.apache.hadoop.fs.FileStatus
+import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{DataFrame, SparkSession}
@@ -153,6 +153,7 @@ trait DeltaSourceBase extends Source
       // Construct a snapshot descriptor with custom schema inline
       new SnapshotDescriptor {
         val deltaLog: DeltaLog = snapshotAtSourceInit.deltaLog
+        val dataPath: Path = snapshotAtSourceInit.dataPath
         val metadata: Metadata =
           snapshotAtSourceInit.metadata.copy(
             schemaString = customMetadata.dataSchemaJson,

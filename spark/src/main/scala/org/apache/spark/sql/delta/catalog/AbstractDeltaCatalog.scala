@@ -55,7 +55,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchNamespaceException, NoSuchTableException, UnresolvedAttribute, UnresolvedFieldName, UnresolvedFieldPosition}
 import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable, CatalogTableType, CatalogUtils, SessionCatalog}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, QualifiedColType, QualifiedColTypeShims, SyncIdentity}
-import org.apache.spark.sql.connector.catalog.{DelegatingCatalogExtension, Identifier, StagedTable, StagingTableCatalog, SupportsWrite, Table, TableCapability, TableCatalog, TableChange, V1Table}
+import org.apache.spark.sql.connector.catalog.{DelegatingCatalogExtension, Identifier, StagedTable, StagingTableCatalog, SupportsWrite, Table, TableCapability, TableCatalog, TableCatalogCapability, TableChange, V1Table}
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.catalog.TableChange._
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform, Literal, NamedReference, Transform}
@@ -86,6 +86,12 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
 
   val spark = SparkSession.active
 
+  // Captured from `initialize` so `deltaCatalogClient` can be built lazily (see its docs). Using
+  // the `initialize` name directly rather than `name()`, which delegates to the (possibly unset)
+  // delegate catalog.
+  private var catalogName: String = _
+  private var catalogOptions: CaseInsensitiveStringMap = _
+
   /**
    * When defined, table operations are routed through this client instead of through the
    * [[org.apache.spark.sql.connector.catalog.DelegatingCatalogExtension]] delegate that
@@ -93,13 +99,31 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
    * interactions (e.g. talking to a REST endpoint, catalog-specific property handling,
    * storage-credential vending) rather than going through the Spark
    * [[org.apache.spark.sql.connector.catalog.TableCatalog]] API.
+   *
+   * Evaluated lazily rather than in `initialize` because the decision depends on
+   * [[isUnityCatalog]], which reads the [[DelegatingCatalogExtension]] delegate. Spark's
+   * `CatalogManager` calls `initialize` *before* `setDelegateCatalog` for the session catalog,
+   * so the delegate isn't available yet during `initialize`; it is by the time any table
+   * operation (the only reader of this client) runs.
    */
-  private[catalog] var deltaCatalogClient: Option[AbstractDeltaCatalogClient] = None
+  private[catalog] lazy val deltaCatalogClient: Option[AbstractDeltaCatalogClient] =
+    if (isUnityCatalog) {
+      AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled(
+        catalogName, catalogOptions, super.loadTable)
+    } else {
+      None
+    }
 
   override def initialize(name: String, options: CaseInsensitiveStringMap): Unit = {
     super.initialize(name, options)
-    deltaCatalogClient =
-      AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled(name, options, super.loadTable)
+    catalogName = name
+    catalogOptions = options
+  }
+
+  override def capabilities(): util.Set[TableCatalogCapability] = {
+    val capabilities = new util.HashSet[TableCatalogCapability](super.capabilities())
+    capabilities.add(TableCatalogCapability.SUPPORT_COLUMN_DEFAULT_VALUE)
+    capabilities
   }
 
   private lazy val isUnityCatalog: Boolean = {
@@ -297,7 +321,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       //       if UC is enabled to replace `V2SessionCatalog`.
       createTableFunc = Option.when(isUnityCatalog) {
         (v1Table: CatalogTable, snapshot: Snapshot) => {
-          // Route to the Delta API endpoint only for MANAGED Delta creates when this client is
+          // Route to the deltaCatalogClient only for MANAGED Delta creates when this client is
           // wired in. EXTERNAL Delta and the no-client case stay on the legacy `super.createTable`
           // path so existing behavior is preserved.
           deltaCatalogClient match {
@@ -477,7 +501,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         val isUC = isUnityCatalog || properties.containsKey("test.simulateUC")
         setVariantBlockingConfigIfUC()
         val (props, writeOptions) = if (isUC) {
-          val effectiveProperties = maybeStageManagedDeltaCreate(ident, properties)
+          val effectiveProperties = maybeStageDeltaCreate(ident, properties)
           val (props, writeOptions) = getTablePropsAndWriteOptions(effectiveProperties)
           expandTableProps(props, writeOptions, spark.sessionState.conf)
           props.remove("test.simulateUC")
@@ -503,33 +527,153 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     }
 
   /**
-   * Routing boundary for the UC Delta API path. Stages via
-   * [[AbstractDeltaCatalogClient.createStagingTable]] for a fresh managed-Delta CREATE;
-   * otherwise returns `properties` unchanged so the regular delegate flow handles it. Only
-   * the fresh-create call sites ([[createTable]] / [[stageCreate]]) invoke this.
+   * Decides whether a CREATE / CTAS request is eligible to go through
+   * `deltaCatalogClient` (the catalog-aware path) instead of the default delegate.
+   * A request is eligible when all of the following hold:
    *
-   * Pass-through cases:
-   *   - delegate isn't Unity Catalog;
-   *   - no Delta API client is wired in (`deltaRestApi.enabled=false`);
-   *   - `PROP_LOCATION` or `PROP_EXTERNAL` is set (external create);
-   *   - the identifier is path-based (e.g. `delta`.`/tmp/foo`).
+   *   - the underlying catalog is Unity Catalog;
+   *   - a `deltaCatalogClient` is wired in;
+   *   - the caller does not appear to be creating an external table -- that is, neither
+   *     `PROP_LOCATION` nor `PROP_EXTERNAL` is set in `properties`, and the identifier
+   *     is not path-based (e.g. `delta`.`/tmp/foo`).
+   *
+   * Any other request returns `false` and falls back to the default delegate flow.
+   *
+   * @param ident      identifier of the target table.
+   * @param properties user-supplied properties from the CREATE / CTAS statement.
    */
-  private def maybeStageManagedDeltaCreate(
+  private def shouldRouteCreateThroughDeltaCatalogClient(
       ident: Identifier,
-      properties: util.Map[String, String]): util.Map[String, String] = {
+      properties: util.Map[String, String]): Boolean = {
     if (!isUnityCatalog ||
         deltaCatalogClient.isEmpty ||
         properties.containsKey(TableCatalog.PROP_LOCATION) ||
-        properties.containsKey(TableCatalog.PROP_EXTERNAL) ||
-        // CREATE-OR-REPLACE on an existing managed table -- UCSingleCatalog sets this without
-        // setting PROP_LOCATION (location comes from the existing table's snapshot). Skip the
-        // new path so we don't allocate a fresh staging location for an existing table.
-        properties.containsKey(TableCatalog.PROP_IS_MANAGED_LOCATION)) {
-      return properties
+        properties.containsKey(TableCatalog.PROP_EXTERNAL)) {
+      return false
     }
-    val ns = ident.namespace()
-    if (ns.length == 1 && new Path(ident.name()).isAbsolute) return properties
+    !isPathIdentifier(ident)
+  }
+
+  /**
+   * Decides whether a REPLACE / RTAS / CREATE OR REPLACE request is eligible to go
+   * through `deltaCatalogClient`. A request is eligible when all of the following hold:
+   *
+   *   - the underlying catalog is Unity Catalog;
+   *   - a `deltaCatalogClient` is wired in;
+   *   - the identifier is not path-based (e.g. `delta`.`/tmp/foo`).
+   *
+   * Any other request returns `false` and falls back to the default delegate flow.
+   *
+   * Unlike the CREATE variant, this throws an `UnsupportedOperationException` when
+   * `PROP_LOCATION` or `PROP_EXTERNAL` is set on a UC catalog with `deltaCatalogClient`
+   * wired in. Only catalog-managed Delta tables (no user-supplied LOCATION) can be
+   * replaced on this path; rejecting up front guarantees non-managed REPLACEs never
+   * reach the staged-table flow, which would otherwise write a Delta commit before
+   * Delta's post-commit catalog-update hook discovered the inconsistency (leaving the
+   * Delta log and UC's metastore out of sync).
+   *
+   * @param ident      identifier of the target table.
+   * @param properties user-supplied properties from the REPLACE / RTAS / CREATE OR REPLACE
+   *                   statement.
+   */
+  private def shouldRouteReplaceThroughDeltaCatalogClient(
+      ident: Identifier,
+      properties: util.Map[String, String]): Boolean = {
+    if (!isUnityCatalog || deltaCatalogClient.isEmpty) return false
+    if (properties.containsKey(TableCatalog.PROP_LOCATION) ||
+        properties.containsKey(TableCatalog.PROP_EXTERNAL)) {
+      val qualifiedName = s"${name()}.${ident.namespace().mkString(".")}.${ident.name()}"
+      throw new UnsupportedOperationException(
+        s"REPLACE TABLE on $qualifiedName cannot specify '${TableCatalog.PROP_LOCATION}' or " +
+          s"'${TableCatalog.PROP_EXTERNAL}': only catalog-managed Delta tables can " +
+          "be replaced on this path.")
+    }
+    !isPathIdentifier(ident)
+  }
+
+  /**
+   * Reserves a catalog-side staging entry for a fresh Delta table and returns the property
+   * map that downstream code will use to write the initial commit. The returned map is the
+   * caller's `properties` augmented with the catalog-assigned table id, the staged storage
+   * location, and the storage credentials Delta needs to write to that location.
+   *
+   * When the request is not eligible for this path (see
+   * [[shouldRouteCreateThroughDeltaCatalogClient]]), the input `properties` is returned
+   * unchanged and the caller falls back to the legacy catalog flow.
+   *
+   * @param ident      identifier of the table being created.
+   * @param properties user-supplied properties from the CREATE statement.
+   * @return augmented properties (eligible) or the input `properties` reference unchanged
+   *         (not eligible).
+   */
+  private def maybeStageDeltaCreate(
+      ident: Identifier,
+      properties: util.Map[String, String]): util.Map[String, String] = {
+    if (!shouldRouteCreateThroughDeltaCatalogClient(ident, properties)) return properties
     deltaCatalogClient.get.createStagingTable(ident, properties)
+  }
+
+  /**
+   * Loads the existing catalog entry for a Delta REPLACE / RTAS and returns the property
+   * map that downstream code will use to write the REPLACE commit. The returned map is the
+   * caller's `properties` augmented with `PROP_IS_MANAGED_LOCATION=true` (signaling that
+   * the table's location is system-managed) and the storage credentials Delta needs to
+   * write at that location. The map intentionally does not carry `PROP_LOCATION`, so
+   * downstream Delta resolves the write location from the existing table snapshot.
+   *
+   * When the request is not eligible for this path (see
+   * [[shouldRouteReplaceThroughDeltaCatalogClient]]), the input `properties` is returned
+   * unchanged and the caller falls back to the legacy catalog flow. Throws via the
+   * catalog client if the table does not exist or is not a catalog-managed Delta table
+   * (`PROP_LOCATION` / `PROP_EXTERNAL` are rejected earlier at the routing gate).
+   *
+   * @param ident      identifier of the table being replaced.
+   * @param properties user-supplied properties from the REPLACE statement.
+   * @return augmented properties (eligible) or the input `properties` reference unchanged
+   *         (not eligible).
+   */
+  private def maybeLoadForDeltaReplace(
+      ident: Identifier,
+      properties: util.Map[String, String]): util.Map[String, String] = {
+    if (!shouldRouteReplaceThroughDeltaCatalogClient(ident, properties)) return properties
+    deltaCatalogClient.get.loadTableAndBuildReplaceProps(ident, properties)
+  }
+
+  /**
+   * Resolves a Delta CREATE OR REPLACE against the catalog and returns the property map
+   * that downstream code will use to write the next commit. The behavior depends on what
+   * the catalog reports for the target identifier:
+   *
+   *   - No table at that identifier: reserves a fresh staging entry with the catalog and
+   *     returns the caller's `properties` augmented with its assigned LOCATION, table id,
+   *     and storage credentials so Delta can write the initial commit (the CREATE branch).
+   *   - Exists as a catalog-managed Delta table: returns the caller's `properties`
+   *     augmented with `PROP_IS_MANAGED_LOCATION=true` and the storage credentials Delta
+   *     needs to write at the existing location; `PROP_LOCATION` is intentionally not set,
+   *     so downstream Delta resolves the write location from the existing table snapshot
+   *     (the REPLACE branch).
+   *   - Exists but fails any of the catalog-managed-Delta preconditions (tableType is not
+   *     MANAGED, provider is not Delta, or the catalog-managed feature flag is absent):
+   *     throws via the catalog client.
+   *
+   * When the request is not eligible for this path (see
+   * [[shouldRouteReplaceThroughDeltaCatalogClient]]), the input `properties` is returned
+   * unchanged and the caller falls back to the legacy catalog flow.
+   *
+   * @param ident      identifier of the target table.
+   * @param properties user-supplied properties from the CREATE OR REPLACE statement.
+   * @return augmented properties (eligible) or the input `properties` reference unchanged
+   *         (not eligible).
+   */
+  private def maybeStageDeltaCreateOrReplace(
+      ident: Identifier,
+      properties: util.Map[String, String]): util.Map[String, String] = {
+    if (!shouldRouteReplaceThroughDeltaCatalogClient(ident, properties)) return properties
+    try deltaCatalogClient.get.loadTableAndBuildReplaceProps(ident, properties)
+    catch {
+      case _: NoSuchTableException =>
+        deltaCatalogClient.get.createStagingTable(ident, properties)
+    }
   }
 
   override def stageReplace(
@@ -543,7 +687,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
           ident,
           schema,
           partitions,
-          properties,
+          maybeLoadForDeltaReplace(ident, properties),
           TableCreationModes.Replace
         )
       } else {
@@ -561,14 +705,11 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       properties: util.Map[String, String]): StagedTable =
     recordFrameProfile("DeltaCatalog", "stageCreateOrReplace") {
       if (DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))) {
-        // Fresh CREATE-OR-REPLACE (no existing PROP_LOCATION) routes through the same
-        // staging boundary as `createTable` / `stageCreate`; REPLACE-existing (PROP_LOCATION
-        // set by the upstream catalog) is filtered out inside the boundary.
         new StagedDeltaTableV2(
           ident,
           schema,
           partitions,
-          maybeStageManagedDeltaCreate(ident, properties),
+          maybeStageDeltaCreateOrReplace(ident, properties),
           TableCreationModes.CreateOrReplace
         )
       } else {
@@ -594,7 +735,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
           ident,
           schema,
           partitions,
-          maybeStageManagedDeltaCreate(ident, properties),
+          maybeStageDeltaCreate(ident, properties),
           TableCreationModes.Create
         )
       } else {
@@ -721,18 +862,22 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
    * where the V1 SessionCatalog lookup does not surface the existing table entry.
    *
    * [[getExistingTableIfExists]] first checks the V1 catalog using a [[TableIdentifier]]. For
-   * Unity Catalog, some staged create/replace paths need a delegated V2 catalog lookup on the
-   * original [[Identifier]] to recover the existing table metadata.
+   * Unity Catalog, some staged create/replace paths need a delegated catalog lookup on the
+   * original [[Identifier]] to recover the existing table metadata. The lookup prefers the
+   * `deltaCatalogClient` (Delta API) when wired, and falls back to the V2 delegate plugin
+   * otherwise.
    *
-   * Even though this goes through the delegated V2 catalog plugin, Spark can still surface the
-   * result as a [[V1Table]] wrapper when the delegated catalog is exposing V1-backed table
-   * metadata. In that case we unwrap the embedded [[CatalogTable]] and continue on the V1 Delta
-   * path.
+   * Spark surfaces the result as a [[V1Table]] wrapper when the catalog is exposing V1-backed
+   * table metadata. In that case we unwrap the embedded [[CatalogTable]] and continue on the
+   * V1 Delta path.
    */
   private def getExistingTableFromDelegatedCatalog(ident: Identifier): Option[CatalogTable] = {
     if (isUnityCatalog) {
       try {
-        super.loadTable(ident) match {
+        val table = deltaCatalogClient
+          .map(_.loadTable(ident))
+          .getOrElse(super.loadTable(ident))
+        table match {
           case v1: V1Table if DeltaTableUtils.isDeltaTable(v1.catalogTable) =>
             Some(v1.catalogTable)
           case _ =>
@@ -1210,7 +1355,9 @@ trait SupportsPathIdentifier extends TableCatalog { self: AbstractDeltaCatalog =
       // scalastyle:on deltahadoopconfiguration
       fs.exists(path) && fs.listStatus(path).nonEmpty
     } else {
-      super.tableExists(ident)
+      deltaCatalogClient
+        .map(_.tableExists(ident))
+        .getOrElse(super.tableExists(ident))
     }
   }
 }

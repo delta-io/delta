@@ -22,6 +22,7 @@ import io.delta.storage.commit.uniform.UniformMetadata;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -220,5 +221,71 @@ public final class UCDeltaModels {
     public Map<String, String> getStorageProperties() {
       return storageProperties == null ? Collections.emptyMap() : storageProperties;
     }
+  }
+
+  /** Per-commit metrics payload reported to Unity Catalog. */
+  public static final class CommitReport {
+
+    private final long numFilesAdded;
+    private final long numFilesRemoved;
+    private final long numBytesAdded;
+    private final long numBytesRemoved;
+    private final Optional<Long> numRowsInserted;
+    private final Optional<Long> numRowsRemoved;
+    private final Optional<Long> numRowsUpdated;
+    private final Optional<FileSizeHistogram> fileSizeHistogram;
+
+    public CommitReport(
+        long numFilesAdded,
+        long numFilesRemoved,
+        long numBytesAdded,
+        long numBytesRemoved,
+        Optional<Long> numRowsInserted,
+        Optional<Long> numRowsRemoved,
+        Optional<Long> numRowsUpdated,
+        Optional<FileSizeHistogram> fileSizeHistogram) {
+      this.numFilesAdded = numFilesAdded;
+      this.numFilesRemoved = numFilesRemoved;
+      this.numBytesAdded = numBytesAdded;
+      this.numBytesRemoved = numBytesRemoved;
+      this.numRowsInserted = numRowsInserted;
+      this.numRowsRemoved = numRowsRemoved;
+      this.numRowsUpdated = numRowsUpdated;
+      this.fileSizeHistogram = fileSizeHistogram;
+    }
+
+    public long getNumFilesAdded() { return numFilesAdded; }
+    public long getNumFilesRemoved() { return numFilesRemoved; }
+    public long getNumBytesAdded() { return numBytesAdded; }
+    public long getNumBytesRemoved() { return numBytesRemoved; }
+    public Optional<Long> getNumRowsInserted() { return numRowsInserted; }
+    public Optional<Long> getNumRowsRemoved() { return numRowsRemoved; }
+    public Optional<Long> getNumRowsUpdated() { return numRowsUpdated; }
+    public Optional<FileSizeHistogram> getFileSizeHistogram() { return fileSizeHistogram; }
+  }
+
+  /** Post-commit file-size distribution snapshot, reported alongside the commit report. */
+  public static final class FileSizeHistogram {
+
+    private final List<Long> sortedBinBoundaries;
+    private final List<Long> fileCounts;
+    private final List<Long> totalBytes;
+    private final long commitVersion;
+
+    public FileSizeHistogram(
+        List<Long> sortedBinBoundaries,
+        List<Long> fileCounts,
+        List<Long> totalBytes,
+        long commitVersion) {
+      this.sortedBinBoundaries = sortedBinBoundaries;
+      this.fileCounts = fileCounts;
+      this.totalBytes = totalBytes;
+      this.commitVersion = commitVersion;
+    }
+
+    public List<Long> getSortedBinBoundaries() { return sortedBinBoundaries; }
+    public List<Long> getFileCounts() { return fileCounts; }
+    public List<Long> getTotalBytes() { return totalBytes; }
+    public long getCommitVersion() { return commitVersion; }
   }
 }

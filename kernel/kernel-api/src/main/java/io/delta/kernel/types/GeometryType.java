@@ -19,55 +19,55 @@ import io.delta.kernel.annotation.Evolving;
 import java.util.Objects;
 
 /**
- * The data type representing geometry values. A Geometry must have a fixed Spatial Reference System
- * Identifier (SRID) that defines the coordinate system.
+ * The data type representing geometry values. A Geometry must have a fixed Coordinate Reference
+ * System (CRS) that defines the coordinate system.
  *
- * <p>The SRID is specified as a string The engine is responsible for validating and interpreting
- * the SRID value.
+ * <p>The CRS is specified as a string The engine is responsible for validating and interpreting the
+ * CRS value.
  *
  * @since 3.0.0
  */
 @Evolving
 public final class GeometryType extends DataType {
 
-  public static final String DEFAULT_SRID = "OGC:CRS84";
+  public static final String DEFAULT_CRS = "OGC:CRS84";
 
-  private final String srid;
+  private final String crs;
 
-  /** Returns a GeometryType with the default SRID. */
+  /** Returns a GeometryType with the default CRS. */
   public static GeometryType ofDefault() {
-    return new GeometryType(DEFAULT_SRID);
+    return new GeometryType(DEFAULT_CRS);
   }
 
   /**
-   * Returns a GeometryType with the specified SRID.
+   * Returns a GeometryType with the specified CRS.
    *
-   * @param srid the Spatial Reference System Identifier (any non-null, non-empty string)
+   * @param crs the Coordinate Reference System (any non-null, non-empty string)
    */
-  public static GeometryType ofSRID(String srid) {
-    return new GeometryType(srid);
+  public static GeometryType ofCRS(String crs) {
+    return new GeometryType(crs);
   }
 
   /**
-   * Create a GeometryType with the specified SRID.
+   * Create a GeometryType with the specified CRS.
    *
-   * @param srid the Spatial Reference System Identifier (any non-null, non-empty string)
-   * @throws IllegalArgumentException if the SRID is null or empty
+   * @param crs the Coordinate Reference System (any non-null, non-empty string)
+   * @throws IllegalArgumentException if the CRS is null or empty
    */
-  public GeometryType(String srid) {
-    if (srid == null || srid.isEmpty()) {
-      throw new IllegalArgumentException("SRID cannot be null or empty");
+  public GeometryType(String crs) {
+    if (crs == null || crs.isEmpty()) {
+      throw new IllegalArgumentException("CRS cannot be null or empty");
     }
-    this.srid = srid;
+    this.crs = crs;
   }
 
   /**
-   * Get the Spatial Reference System Identifier.
+   * Get the Coordinate Reference System.
    *
-   * @return the SRID string
+   * @return the CRS string
    */
-  public String getSRID() {
-    return srid;
+  public String getCRS() {
+    return crs;
   }
 
   @Override
@@ -81,12 +81,12 @@ public final class GeometryType extends DataType {
    * @return the serialized string representation
    */
   public String simpleString() {
-    return String.format("geometry(%s)", srid);
+    return String.format("geometry(%s)", crs);
   }
 
   @Override
   public String toString() {
-    return String.format("Geometry(srid=%s)", srid);
+    return String.format("Geometry(crs=%s)", crs);
   }
 
   @Override
@@ -98,11 +98,11 @@ public final class GeometryType extends DataType {
       return false;
     }
     GeometryType that = (GeometryType) o;
-    return srid.equals(that.srid);
+    return crs.equals(that.crs);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(srid);
+    return Objects.hash(crs);
   }
 }
