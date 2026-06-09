@@ -10,6 +10,12 @@ on:
     paths-ignore:
       - '**.md'
       - '**.txt'
+# Every PR runs:
+# 1. generate-matrix: split Spark versions into published vs source-build lists.
+# 2. prepare_spark_source_cache: resolve metadata-owned Spark SHAs, restore exact Maven cache,
+#    and build/save Spark on cache miss.
+# 3. test: published Spark shards (4.0/4.1) without waiting on step 2.
+# 4. source_spark_test: source-built Spark shards (4.2 today) after step 2.
 jobs:
   # Generate Spark versions matrix from CrossSparkVersions.scala
   # This ensures the workflow always uses the versions defined in the build
@@ -41,6 +47,7 @@ jobs:
           echo "Generated source-build Spark versions: $SOURCE_BUILD_SPARK_VERSIONS"
           echo "Generated non-source-build Spark versions: $NON_SOURCE_BUILD_SPARK_VERSIONS"
 
+  # Warms ~/.m2/repository/org/apache/spark once per source-build Spark version in this PR.
   prepare_spark_source_cache:
     name: "Prepare Spark ${{ matrix.spark_version }} source cache"
     runs-on: ubuntu-24.04
@@ -74,6 +81,7 @@ jobs:
       - name: Compute Spark Maven cache key
         id: spark-cache-key
         run: |
+          # Key is exact and has no restore-keys: a different SHA or build script must not reuse this cache.
           echo "cache_key=spark-m2-ubuntu-24.04-scala-2.13-${{ steps.spark-source.outputs.spark_version }}-${{ steps.spark-source.outputs.artifact_base_version }}-${{ steps.spark-source.outputs.spark_sha }}-${{ hashFiles('project/scripts/build_spark.sh') }}" >> "$GITHUB_OUTPUT"
       - name: Restore Spark Maven cache
         id: spark-source-cache
@@ -99,6 +107,7 @@ jobs:
           path: ~/.m2/repository/org/apache/spark
           key: ${{ steps.spark-cache-key.outputs.cache_key }}
 
+  # Published Spark artifacts only. This job does not depend on prepare_spark_source_cache.
   test:
     name: "DS: Spark ${{ matrix.spark_version }}, Scala ${{ matrix.scala }}, Shard ${{ matrix.shard }}"
     runs-on: ubuntu-24.04
@@ -169,6 +178,7 @@ jobs:
             ~/.cache/coursier
           key: delta-sbt-cache-spark${{ matrix.spark_version }}-scala${{ matrix.scala }}
 
+  # Validates source-built Spark for every PR using the SHA in this branch's metadata.
   source_spark_test:
     name: "DS Source Spark ${{ matrix.spark_version }}, Scala ${{ matrix.scala }}, Shard ${{ matrix.shard }}"
     runs-on: ubuntu-24.04
@@ -216,6 +226,7 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.m2/repository/org/apache/spark
+          # Recompute the same exact key used by prepare_spark_source_cache for this Spark version.
           key: ${{ steps.spark-cache-key.outputs.cache_key }}
       - name: Verify restored Spark Maven artifacts
         env:
@@ -257,6 +268,7 @@ jobs:
           fi
       - name: Run Scala/Java tests
         env:
+          # run-tests.py / build/sbt use these to resolve the commit-qualified Spark artifacts.
           SPARK_COMMIT: ${{ steps.spark-source.outputs.spark_sha }}
           SPARK_ARTIFACT_VERSION: ${{ steps.spark-source.outputs.spark_artifact_version }}
         run: |
