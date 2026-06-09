@@ -36,14 +36,17 @@ import org.apache.spark.sql.types.StructType
  * Parameters passed to [[CreateDeltaTableLike.updateCatalog]]'s `createTableFunc`.
  *
  * @param v1Table the cleaned [[CatalogTable]] after the commit
- * @param snapshot the post-commit [[Snapshot]]
+ * @param snapshot the post-commit [[Snapshot]] The snapshot is included
+ *                 so callers that need committed protocol/metadata
+ *                (e.g. catalog-managed Delta) can avoid re-loading the table.
  * @param uniformMetadata UniForm Iceberg metadata generated atomically with the initial snapshot;
- *   [[None]] when UniForm is not enabled on the table.
+ *   [[None]] when UniForm is not required to generate atomically with create table
  */
 case class CreateTableFuncParams(
     v1Table: CatalogTable,
-    snapshot: Snapshot,
-    uniformMetadata: Option[UniformMetadata] = None)
+    snapshot: Snapshot
+    , uniformMetadata: Option[UniformMetadata] = None
+)
 
 /**
  * A common trait implementing utility functions (e.g. catalog operations) for all commands that
@@ -116,7 +119,10 @@ trait CreateDeltaTableLike extends SQLConfHelper {
       case TableCreationModes.Create =>
         if (createTableFunc.isDefined) {
           val params = CreateTableFuncParams(
-            cleaned, snapshot, uniformMetadata = getUniformMetadataForCreate(snapshot, cleaned))
+            cleaned,
+            snapshot
+            , uniformMetadata = getUniformMetadataForCreate(snapshot, cleaned)
+          )
           createTableFunc.get.apply(params)
         } else {
           spark.sessionState.catalog.createTable(

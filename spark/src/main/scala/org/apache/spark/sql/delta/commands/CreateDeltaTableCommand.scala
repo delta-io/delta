@@ -71,6 +71,8 @@ import org.apache.spark.util.Utils
  *                        carrying the cleaned [[CatalogTable]], the post-commit [[Snapshot]], and
  *                        any extra metadata such as UniForm Iceberg) to create the table, instead
  *                        of Spark `SessionCatalog#createTable` which is backed by Hive Metastore.
+ *                        The snapshot is included so callers that need committed protocol/metadata
+ *                        (e.g. catalog-managed Delta) can avoid re-loading the table.
  */
 case class CreateDeltaTableCommand(
     override val table: CatalogTable,

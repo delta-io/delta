@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.catalog
 
+import io.delta.storage.commit.uniform.UniformMetadata
+
 import java.util
 
 import io.delta.storage.commit.uniform.UniformMetadata
@@ -115,8 +117,9 @@ private[delta] trait AbstractDeltaCatalogClient {
    *                              `metadata` / `protocol`, used by the catalog as the
    *                              authoritative "last updated" timestamp on the registered
    *                              entry.
-   * @param uniformMetadata UniForm Iceberg metadata generated atomically with the initial
-   *   snapshot; [[None]] when the table was not created with UniForm enabled.
+   * @param uniformMetadata       UniForm Iceberg metadata generated atomically with the initial
+   *                              snapshot;
+   *                              [[None]] when the table was not created with UniForm enabled.
    */
   def createTable(
       ident: Identifier,
