@@ -160,9 +160,22 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       operation: TableCreationModes.CreationMode
     ): Table = recordFrameProfile(
         "DeltaCatalog", "createDeltaTable") {
+    // `delta.*` properties carried forward from a catalog-managed REPLACE that this Delta version
+    // does not recognize arrive tagged with [[AbstractDeltaCatalogClient.CARRY_FORWARD_PREFIX]].
+    // Collect them (prefix stripped) and exclude the tagged entries from `tableProperties` -- the
+    // map that becomes `tableDesc.properties` and is fed to `DeltaConfigs.validateConfigurations`.
+    // This keeps the literal prefixed key from being persisted and lets the real key skip the
+    // unknown-key check that would otherwise reject it. They are NOT dropped from the commit:
+    // re-merged into the solidified table below, they land in the committed metadata configuration
+    // like any other table property.
+    val carriedForwardProps = allTableProperties.asScala.collect {
+      case (k, v) if k.startsWith(AbstractDeltaCatalogClient.CARRY_FORWARD_PREFIX) =>
+        k.stripPrefix(AbstractDeltaCatalogClient.CARRY_FORWARD_PREFIX) -> v
+    }.toMap
     // These two keys are tableProperties in data source v2 but not in v1, so we have to filter
     // them out. Otherwise property consistency checks will fail.
     val tableProperties = allTableProperties.asScala.filterKeys {
+      case k if k.startsWith(AbstractDeltaCatalogClient.CARRY_FORWARD_PREFIX) => false
       case TableCatalog.PROP_LOCATION => false
       case TableCatalog.PROP_PROVIDER => false
       case TableCatalog.PROP_COMMENT => false
@@ -250,12 +263,19 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       comment = commentOpt
     )
 
-    val withDb =
-      verifyTableAndSolidify(
+    val withDb = {
+      val solidified = verifyTableAndSolidify(
         tableDesc,
         None,
         maybeClusterBySpec
       )
+      // Solidify validates `tableDesc.properties`; the carried-forward keys were held out above so
+      // validation can't reject them, then merged into the solidified table here. `withDb` is what
+      // `CreateDeltaTableCommand` commits, so these keys end up in the new metadata's
+      // configuration.
+      if (carriedForwardProps.isEmpty) solidified
+      else solidified.copy(properties = solidified.properties ++ carriedForwardProps)
+    }
 
     val writer = sourceQuery.map { df =>
       val catalogTbl = Some(tableDesc)
