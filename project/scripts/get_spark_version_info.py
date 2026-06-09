@@ -20,6 +20,10 @@ Usage:
     python project/scripts/get_spark_version_info.py --source-build-spark-versions
     # Output: ["4.2"]
 
+    # Get Spark versions that use published Spark artifacts in the normal test job
+    python project/scripts/get_spark_version_info.py --non-source-build-spark-versions
+    # Output: ["4.0", "4.1"]
+
     # Resolve a source-built Spark cache identity
     python project/scripts/get_spark_version_info.py --resolve-source-build --spark-version 4.2
     # Output: spark_version=4.2, spark_sha=..., spark_artifact_version=...
@@ -197,6 +201,11 @@ def main():
         help="Output Spark versions with configured source-build default refs as JSON array"
     )
     parser.add_argument(
+        "--non-source-build-spark-versions",
+        action="store_true",
+        help="Output Spark versions without source-build default refs as JSON array"
+    )
+    parser.add_argument(
         "--get-field",
         nargs=2,
         metavar=("SPARK_VERSION", "FIELD"),
@@ -261,6 +270,13 @@ def main():
             matrix_versions = []
             for v in versions:
                 if v.get("sourceBuildDefaultRef"):
+                    matrix_versions.append("master" if v.get("isMaster", False) else v["shortVersion"])
+            print(json.dumps(matrix_versions))
+
+        elif args.non_source_build_spark_versions:
+            matrix_versions = []
+            for v in versions:
+                if not v.get("sourceBuildDefaultRef"):
                     matrix_versions.append("master" if v.get("isMaster", False) else v["shortVersion"])
             print(json.dumps(matrix_versions))
 
