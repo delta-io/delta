@@ -1,5 +1,7 @@
 name: "Spark Source Artifact Cache"
 
+# Manual cache warmer for source-built Spark artifacts. The spark_test workflow
+# restores this exact cache and validates the artifacts in the Spark test lane.
 on:
   workflow_dispatch:
     inputs:
@@ -38,7 +40,8 @@ jobs:
         run: |
           # Resolves the Spark compatibility line, optional manual source-ref override,
           # full immutable Spark SHA, and commit-qualified local Maven artifact version.
-          python3 project/scripts/resolve_spark_source_build.py \
+          python3 project/scripts/get_spark_version_info.py \
+            --resolve-source-build \
             --spark-version "$SPARK_VERSION" \
             --spark-source-ref "$SPARK_SOURCE_REF"
 
