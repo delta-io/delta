@@ -52,7 +52,7 @@ class DeltaV2CDFSuite
     withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "STRICT")(body)
   }
 
-  test("table_changes routes to V2 read-time CDF when catalog returns SparkTable") {
+  test("table_changes routes to V2 read-time CDF when catalog returns DeltaV2Table") {
     val tbl = "rt_cdf_tbl"
     withTable(tbl) {
       createRowTrackingTable(tbl)
@@ -189,6 +189,24 @@ class DeltaV2CDFSuite
     }
   }
 
+  test("predicate filters drop non-matching change rows") {
+    val tbl = "rt_cdf_predicate"
+    withTable(tbl) {
+      createRowTrackingTable(tbl)           // v1-v3: insert id 1, 2, 3 (one file each)
+      sql(s"DELETE FROM $tbl WHERE id = 2") // v4: delete file 2
+      withStrictV2 {
+        checkAnswer(
+          sql(s"SELECT id, name, _change_type FROM table_changes('$tbl', 1, 4) WHERE id = 2"),
+          Row(2L, "Bob", "insert") ::
+          Row(2L, "Bob", "delete") :: Nil)
+        checkAnswer(
+          sql(s"SELECT id, _change_type FROM table_changes('$tbl', 1, 4) " +
+            "WHERE _change_type = 'delete'"),
+          Row(2L, "delete") :: Nil)
+      }
+    }
+  }
+
   // TODO: Re-enable when Spark 4.2 is out. 4.2.0-preview5 doesn't yet contain post-processing
   // for CDC in Spark that labels update pre/post images.
   ignore("MERGE: insert/update/delete in one commit each surface with the right change_type") {
@@ -215,6 +233,58 @@ class DeltaV2CDFSuite
           Row(2L, "Robert", "update_postimage") ::
           Row(3L, "Charlie", "delete") ::
           Row(4L, "Dave", "insert") :: Nil)
+      }
+    }
+  }
+
+  // TODO: Re-enable when Spark 4.2 is out. 4.2.0-preview5 doesn't yet contain post-processing
+  // for CDC in Spark that drops carry-over rows / labels update pre/post images, both of which
+  // a multi-row base file rewritten by repeated DMLs relies on.
+  ignore("repeated DMLs touching the same base file diff to per-row changes") {
+    val tbl = "rt_cdf_repeated_dml"
+    withTable(tbl) {
+      sql(
+        s"""CREATE TABLE $tbl (id BIGINT, name STRING) USING delta TBLPROPERTIES (
+           |  'delta.enableChangeDataFeed' = 'false',
+           |  'delta.enableRowTracking' = 'true',
+           |  'delta.enableDeletionVectors' = 'false'
+           |)""".stripMargin)
+
+      sql(s"INSERT INTO $tbl VALUES (1, 'A'), (2, 'B'), (3, 'C')") // v1 writes a single file
+      sql(s"UPDATE $tbl SET name = 'B2' WHERE id = 2")             // v2 rewrites the file
+      sql(s"UPDATE $tbl SET name = 'C2' WHERE id = 3")             // v3 rewrites the file from v2
+      withStrictV2 {
+        val res = sql(s"SELECT id, name, _change_type FROM table_changes('$tbl', 2, 3)")
+        checkAnswer(
+          res,
+          Row(2L, "B", "update_preimage") ::
+          Row(2L, "B2", "update_postimage") ::
+          Row(3L, "C", "update_preimage") ::
+          Row(3L, "C2", "update_postimage") :: Nil)
+      }
+    }
+  }
+
+  // TODO: Re-enable once the V2 read-time CDF path applies deletion vectors. Today
+  // DeltaChangelogBatch reads whole data files and ignores DVs, and DeltaChangelog always
+  // reports containsCarryoverRows=true, so a DV-based DELETE (which references the same file
+  // with a DV rather than rewriting it) cancels out as a carry-over and the deleted row is
+  // never surfaced. Labeling also depends on the post-processing missing from 4.2.0-preview5.
+  ignore("deletion vectors: a DV-based DELETE surfaces the deleted row") {
+    val tbl = "rt_cdf_dv_delete"
+    withTable(tbl) {
+      sql(
+        s"""CREATE TABLE $tbl (id BIGINT, name STRING) USING delta TBLPROPERTIES (
+           |  'delta.enableChangeDataFeed' = 'false',
+           |  'delta.enableRowTracking' = 'true',
+           |  'delta.enableDeletionVectors' = 'true'
+           |)""".stripMargin)
+      sql(s"INSERT INTO $tbl VALUES (1, 'A'), (2, 'B'), (3, 'C')") // v1: one file
+      sql(s"DELETE FROM $tbl WHERE id = 2")                        // v2: writes a DV, keeps file
+      withStrictV2 {
+        val res = sql(s"SELECT id, name, _change_type FROM table_changes('$tbl', 2, 2)")
+          .orderBy("id")
+        checkAnswer(res, Row(2L, "B", "delete") :: Nil)
       }
     }
   }
@@ -348,8 +418,8 @@ class DeltaV2CDFSuite
           intercept[DeltaAnalysisException] {
             sql(s"SELECT * FROM table_changes('$tbl', 1, 1)").collect()
           },
-          "DELTA_CHANGELOG_ROW_TRACKING_DISABLED_IN_RANGE",
-          parameters = Map("version" -> "1"))
+          "DELTA_CHANGELOG_REQUIRES_ROW_TRACKING",
+          parameters = Map("tableName" -> "spark_catalog.default.rt_cdf_no_row_tracking"))
       }
     }
   }
