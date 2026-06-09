@@ -260,9 +260,14 @@ public class V2RowTrackingReadTest extends DeltaV2TestBase {
             dvRtPath));
 
     // Insert enough rows to encourage DV-based deletes (instead of full-file rewrites).
+    // Use coalesce(1) so that all rows land in a single file, making the base row-id
+    // assignment deterministic (row_id == position in the file == id).  Without this,
+    // spark.range() creates N partitions (N = available cores) and the per-file base
+    // row-ids become non-deterministic and therefore make the test flaky.
     spark
         .range(1000)
         .selectExpr("id", "cast(id as string) as name")
+        .coalesce(1)
         .write()
         .format("delta")
         .mode("append")
