@@ -201,6 +201,12 @@ lazy val connectClient = (project in file("spark-connect/client"))
     commonSettings,
     releaseSettings,
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
+    // Shared refresh test traits compiled into both this module and the `spark`
+    // module. See io.delta.tables.shared.
+    Test / unmanagedSourceDirectories += {
+      (LocalRootProject / baseDirectory).value /
+        "spark-shared-tests" / "src" / "test" / "scala-shared"
+    },
     libraryDependencies ++= Seq(
       "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
       "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "provided",
@@ -217,12 +223,16 @@ lazy val connectClient = (project in file("spark-connect/client"))
 
       if (!distributionDir.exists()) {
         IO.createDirectory(jarsDir)
+        // V2/STRICT mode requires the Delta Kernel engine at runtime
+        // (io.delta.kernel.defaults.engine.DefaultEngine), so add the packaged kernel jars.
+        val kernelJars = Seq(
+          (kernelApi / Compile / packageBin).value,
+          (kernelDefaults / Compile / packageBin).value)
         // Create symlinks for all dependencies (filter to only JAR files)
-        serverClassPath.distinct.filter(_.data.isFile).foreach { entry =>
-          val jarFile = entry.data.toPath
-          val linkedJarFile = jarsDir / entry.data.getName
+        (serverClassPath.map(_.data).filter(_.isFile) ++ kernelJars).distinct.foreach { jarFile =>
+          val linkedJarFile = jarsDir / jarFile.getName
           if (!java.nio.file.Files.exists(linkedJarFile.toPath)) {
-            Files.createSymbolicLink(linkedJarFile.toPath, jarFile)
+            Files.createSymbolicLink(linkedJarFile.toPath, jarFile.toPath)
           }
         }
         // Create a symlink for the log4j properties
@@ -558,6 +568,7 @@ lazy val spark = (project in file("spark-unified"))
         sparkDir / "src" / "test" / "java",
         unifiedDir / "src" / "test" / "scala",
         unifiedDir / "src" / "test" / "java",
+        unifiedDir.getParentFile / "spark-shared-tests" / "src" / "test" / "scala-shared",
         shimDir
       )
     },
