@@ -304,9 +304,9 @@ object SparkVersionSpec {
 
   // Spark 4.2 source-build jobs use this compatibility line (shims, JVM flags,
   // dependency overrides) while resolving Spark artifacts from the configured
-  // source ref instead of from a published Spark preview or release.
-  private val spark42Preview = SparkVersionSpec(
-    fullVersion = "4.2.0-preview5",
+  // source ref for CI.
+  private val spark42Snapshot = SparkVersionSpec(
+    fullVersion = "4.2.0-SNAPSHOT",
     targetJvm = "17",
     additionalSourceDir = Some("scala-shims/spark-4.2"),
     supportIceberg = false,
@@ -325,7 +325,7 @@ object SparkVersionSpec {
   val MASTER: Option[SparkVersionSpec] = None
 
   /** All supported Spark versions - internal use only */
-  val ALL_SPECS = Seq(spark40, spark41, spark42Preview)
+  val ALL_SPECS = Seq(spark40, spark41, spark42Snapshot)
 }
 
 /** See docs on top of this file */
