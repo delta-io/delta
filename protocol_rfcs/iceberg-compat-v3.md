@@ -39,3 +39,11 @@ When this feature is supported and enabled, writers must:
 - Block replacing partitioned tables with a differently-named partition spec
   - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_b INT` must be blocked
   - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_a LONG` is allowed
+- Require that the table schema contains only data types in the following allow-list: [`byte`, `short`, `integer`, `long`, `float`, `double`, `decimal`, `string`, `binary`, `boolean`, `timestamp`, `timestampNTZ`, `date`, `array`, `map`, `struct`, `variant`, `geometry`, `geography`].
+- When the [Type Widening](#type-widening) table feature is supported, require that all type changes applied on the table are in the following allow-list:
+  - `byte` -> `short`, `integer`, or `long`
+  - `short` -> `integer` or `long`
+  - `integer` -> `long`
+  - `float` -> `double`
+  - `decimal(p, s)` -> `decimal(p', s)` where `p' > p`
+- Require that any column write default is a literal value.
