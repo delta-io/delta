@@ -886,43 +886,39 @@ class DeltaAnalysis(protected val session: SparkSession)
         val partitions: Array[Transform] = sourceTbl.metadata.partitionColumns.map { col =>
           new IdentityTransform(new FieldReference(Seq(col)))
         }.toArray
-        // HACK ALERT: since there is no DSV2 API for getting table path before creation,
-        //             here we create a table to get the path, then overwrite it with the
-        //             cloned table.
-        val sourceConfig = sourceTbl.metadata.configuration.asJava
-        val newTable = catalog.createTable(
+        val sourceUcTableId: Option[String] = sourceCatalogTable.flatMap { ct =>
+          ct.storage.properties.get("io.unitycatalog.tableId")
+            .orElse(ct.properties.get("io.unitycatalog.tableId"))
+        }
+        val sourceConfig =
+          (statement.tablePropertyOverrides + (TableCatalog.PROP_PROVIDER -> "delta") ++
+            sourceUcTableId.map("io.unitycatalog.shallowClone.baseTableId" -> _)).asJava
+        val cloneTargetIdent = ident.asTableIdentifier
+        CloneTableCommand.pendingCloneCommandFactory.set {
+          (targetPath: Path, catalogManagedConfig: Map[String, String]) =>
+            CloneTableCommand(
+              sourceTable = sourceTbl,
+              targetIdent = cloneTargetIdent,
+              tablePropertyOverrides = statement.tablePropertyOverrides ++ catalogManagedConfig,
+              targetPath = targetPath)
+        }
+        try {
+          catalog.createTable(
             ident,
             CatalogV2Util.structTypeToV2Columns(sourceTbl.schema),
             partitions,
-            sourceConfig
-          )
-        try {
-          newTable match {
-            case targetTable: DeltaTableV2 =>
-              val path = targetTable.path
-              val tblIdent = TableIdentifier(path.toString, Some("delta"))
-              val catalogTable = createCatalogTableForCloneCommand(path, byPath = true, tblIdent,
-                targetLocation, sourceCatalogTable, sourceTbl, statement.tablePropertyOverrides)
-              CreateDeltaTableCommand(
-                table = catalogTable,
-                existingTableOpt = None,
-                mode = SaveMode.Overwrite,
-                query = Some(
-                  CloneTableCommand(
-                    sourceTable = sourceTbl,
-                    targetIdent = tblIdent,
-                    tablePropertyOverrides = statement.tablePropertyOverrides,
-                    targetPath = path)),
-                tableByPath = true,
-                operation = TableCreationModes.Replace,
-                output = CloneTableCommand.output)
-            case _ =>
-              throw DeltaErrors.notADeltaSourceException("CREATE TABLE CLONE", Some(statement))
+            sourceConfig)
+          val cloneMetrics = Option(CloneTableCommand.pendingCloneCommandResult.get()).getOrElse {
+            throw DeltaErrors.notADeltaSourceException("CREATE TABLE CLONE", Some(statement))
           }
+          LocalRelation.fromExternalRows(CloneTableCommand.output, cloneMetrics)
         } catch {
           case NonFatal(e) =>
-            catalog.dropTable(ident)
+            try catalog.dropTable(ident) catch { case NonFatal(_) => () }
             throw e
+        } finally {
+          CloneTableCommand.pendingCloneCommandFactory.remove()
+          CloneTableCommand.pendingCloneCommandResult.remove()
         }
       // Delta metastore table already exists at target
       case DataSourceV2RelationShim(deltaTableV2: DeltaTableV2, _, _, _, _) =>
@@ -940,7 +936,11 @@ class DeltaAnalysis(protected val session: SparkSession)
           sourceCatalogTable,
           sourceTbl,
           statement.tablePropertyOverrides)
-
+        val allowCatalogManaged =
+          deltaTableV2.initialSnapshot.isCatalogOwned ||
+            TableFeatureProtocolUtils
+              .getSupportedFeaturesFromTableConfigs(statement.tablePropertyOverrides)
+              .contains(CatalogOwnedTableFeature)
         CreateDeltaTableCommand(
           catalogTable,
           existingTable,
@@ -952,7 +952,8 @@ class DeltaAnalysis(protected val session: SparkSession)
             path)),
           tableByPath = existingTable.isEmpty,
           operation = tableCreationMode,
-          output = CloneTableCommand.output)
+          output = CloneTableCommand.output,
+          allowCatalogManaged = allowCatalogManaged)
 
       // Non-delta metastore table already exists at target
       case LogicalRelationWithTable(_, existingCatalogTable @ Some(catalogTable)) =>

@@ -945,6 +945,13 @@ trait OptimisticTransactionImpl extends TransactionHelper
     updateMetadata(metadata)
   }
 
+  def updateMetadataForNewTable(
+      metadata: Metadata,
+      ignoreDefaultProperties: Boolean): Unit = {
+    isCreatingNewTable = true
+    updateMetadata(metadata, ignoreDefaultProperties)
+  }
+
   /**
    * Updates the metadata of the target table in an effective REPLACE command. Note that replacing
    * a table is similar to dropping a table and then recreating it. However, the backing catalog

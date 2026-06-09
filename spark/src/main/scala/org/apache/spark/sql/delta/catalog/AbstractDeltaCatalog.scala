@@ -281,11 +281,20 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       }
     }
 
-    CreateDeltaTableCommand(
+    val pendingCloneFactory = Option(CloneTableCommand.pendingCloneCommandFactory.get())
+    val query: Option[LogicalPlan] = pendingCloneFactory match {
+      case Some(buildCloneCommand) =>
+        val catalogManagedConfig = tableProperties.get(UC_TABLE_ID_KEY)
+          .map(UC_TABLE_ID_KEY -> _).toMap
+        Some(buildCloneCommand(new Path(loc), catalogManagedConfig))
+      case None => writer
+    }
+
+    val createResult = CreateDeltaTableCommand(
       withDb,
       existingTableOpt,
       operation.mode,
-      writer,
+      query,
       operation,
       tableByPath = isByPath,
       allowCatalogManaged = isUnityCatalog && tableType == CatalogTableType.MANAGED,
@@ -300,6 +309,11 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
           super.createTable(ident, t.columns(), t.partitioning, t.properties)
         }
       }).run(spark)
+
+    pendingCloneFactory.foreach { _ =>
+      CloneTableCommand.pendingCloneCommandFactory.remove()
+      CloneTableCommand.pendingCloneCommandResult.set(createResult)
+    }
 
     loadTable(ident)
   }

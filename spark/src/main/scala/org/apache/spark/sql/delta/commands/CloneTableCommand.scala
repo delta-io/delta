@@ -148,6 +148,10 @@ object CloneTableCommand {
     AttributeReference(COLUMN_REMOVED_FILES_SIZE, LongType)(),
     AttributeReference(COLUMN_COPIED_FILES_SIZE, LongType)()
   )
+
+  private[delta] val pendingCloneCommandFactory =
+    new ThreadLocal[(Path, Map[String, String]) => CloneTableCommand]()
+  private[delta] val pendingCloneCommandResult = new ThreadLocal[Seq[Row]]()
 }
 
 /** A delta table source to be cloned from */

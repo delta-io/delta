@@ -825,7 +825,13 @@ case class CreateDeltaTableCommand(
       deltaLog: DeltaLog,
       tableWithLocation: CatalogTable,
       snapshotOpt: Option[Snapshot] = None): OptimisticTransaction = {
-    val txn = deltaLog.startTransaction(existingTableOpt, snapshotOpt)
+    val txnCatalogTable = existingTableOpt.orElse {
+      query match {
+        case Some(_: CloneTableCommand) => Some(tableWithLocation)
+        case _ => None
+      }
+    }
+    val txn = deltaLog.startTransaction(txnCatalogTable, snapshotOpt)
     validatePrerequisitesForClusteredTable(txn.snapshot.protocol, txn.deltaLog)
 
     // During CREATE (not REPLACE/overwrites), we synchronously run conversion
