@@ -39,6 +39,18 @@ trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
 
   protected def v2EnableMode: String = "NONE"
 
+  /** Spark minor version bucket ("4.0", "4.1", "4.2+") that the asserted behavior keys off. */
+  protected def sparkVersionBucket: String = {
+    // Parse major and minor numerically so the bucket stays correct once Spark reaches 4.10,
+    // where a lexicographic string compare would wrongly rank "4.10" below "4.2".
+    val versionParts = spark.version.split('.')
+    val major = versionParts(0).toInt
+    val minor = versionParts(1).toInt
+    if (major > 4 || (major == 4 && minor >= 2)) "4.2+"
+    else if (major == 4 && minor >= 1) "4.1"
+    else "4.0"
+  }
+
   protected def checkAnswer(df: => DataFrame, expectedAnswer: Seq[Row]): Unit
   protected def withTable(tableNames: String*)(f: => Unit): Unit
 
@@ -67,6 +79,10 @@ trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
     insertInitialData(tableRef)
     checkAnswer(spark.sql(s"SELECT * FROM $tableRef"), Seq(Row(1, 100)))
   }
+
+  /** Asserts the full table contents (ordered by id) match `expectedRows`. */
+  protected def assertFinalTableState(tableRef: String, expectedRows: Seq[Row]): Unit =
+    checkAnswer(spark.sql(s"SELECT * FROM $tableRef ORDER BY id"), expectedRows)
 
   /** Runs `body` against a fresh managed catalog table `t` already holding `(1, 100)`. */
   protected def withInitialTable(body: String => Unit): Unit =
@@ -195,6 +211,10 @@ trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
 
   protected def externalDataWrite(path: String, rows: Seq[(Int, Int)]): Unit =
     writeCommit(path, Seq(writeParquetAndGetAddFileAction(path, idSalaryRowsToDf(rows))))
+
+  /** Appends three column rows externally without a schema change (table is already 3 columns). */
+  protected def externalThreeColumnDataWrite(path: String, rows: Seq[(Int, Int, Int)]): Unit =
+    writeCommit(path, Seq(writeParquetAndGetAddFileAction(path, idSalaryNewColumnRowsToDf(rows))))
 
   protected def externalAddColumnAndWrite(path: String, rows: Seq[(Int, Int, Int)]): Unit = {
     val newSchema = currentSchema(path).add("new_column", IntegerType, nullable = true)
