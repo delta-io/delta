@@ -45,5 +45,5 @@ When this feature is supported and enabled, writers must:
   - `short` -> `integer` or `long`
   - `integer` -> `long`
   - `float` -> `double`
-  - `decimal(p, s)` -> `decimal(p', s)` where `p' > p`
+  - `decimal(p, s)` -> `decimal(q, s)` where `q > p`
 - Require that any column write default is a literal value.
