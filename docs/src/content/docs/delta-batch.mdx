@@ -1809,11 +1809,11 @@ Delta Lake can automatically update the schema of a table as part of a DML trans
 
 #### Add columns
 
-Columns that are present in the source data but missing from the table are automatically added as part of a write transaction when schema evolution is enabled. The added columns are appended to the end of the struct they are present in. Case is preserved when appending a new column.
+Columns present in the source data but missing from the table are automatically added during a write transaction when schema evolution is enabled. The added columns are appended to the end of the struct they are present in. The case is preserved when a new column is appended.
 
 ##### Enable schema evolution (Delta Lake 4.3 and above)
 
-Use `WITH SCHEMA EVOLUTION` in a SQL `INSERT` statement or `.withSchemaEvolution()` in the DataFrame API to enable automatic schema evolution for a single operation. When enabled, the schema of the target Delta Lake table is automatically updated to accommodate additional columns or widened types of the source data. For a list of the supported type changes, see [Supported type changes](https://docs.delta.io/delta-type-widening/). For example:
+On Delta Lake 4.3 and above, use `WITH SCHEMA EVOLUTION` in a SQL `INSERT` statement or `.withSchemaEvolution()` in the DataFrame API to enable automatic schema evolution for a single operation. When enabled, the schema of the target Delta Lake table is automatically updated to accommodate additional columns or widened types of the source data. For a list of the supported type changes, see [Supported type changes](https://docs.delta.io/delta-type-widening/). For example:
 
 <Tabs syncKey="code-examples">
   <TabItem label="SQL" active>
@@ -1852,10 +1852,6 @@ Use `WITH SCHEMA EVOLUTION` in a SQL `INSERT` statement or `.withSchemaEvolution
 </Tabs>
 
 If the source data contains columns that don't exist in the target table, those columns are automatically added to the `target_table` schema. Existing rows receive `NULL` values for the new columns.
-
-<Aside type="note">
-  `WITH SCHEMA EVOLUTION` and `.withSchemaEvolution()` are available in Delta Lake 4.3 and above.
-</Aside>
 
 ##### Enable schema evolution in earlier versions
 
@@ -1918,7 +1914,7 @@ Alternatively, set the Spark configuration `spark.databricks.delta.schema.autoMe
 </Tabs>
 
 <Aside type="caution" title="Important">
-  Enabling schema evolution session-wide is not recommended, because it can lead to unintended schema changes across multiple operations and makes it harder to reason about which operations evolve the schema. Instead, enable schema evolution for each individual operation using `WITH SCHEMA EVOLUTION`, `.withSchemaEvolution()`, or the `mergeSchema` option.
+  Enabling schema evolution session-wide is not recommended because it can lead to unintended schema changes across multiple operations and makes it harder to reason about which operations evolve the schema. Instead, enable schema evolution for each individual operation using `WITH SCHEMA EVOLUTION`, `.withSchemaEvolution()`, or the `mergeSchema` option.
 </Aside>
 
 When both an operation-level setting (the `mergeSchema` option or `WITH SCHEMA EVOLUTION` / `.withSchemaEvolution()`) and the session-wide Spark configuration are specified, the operation-level setting takes precedence.
