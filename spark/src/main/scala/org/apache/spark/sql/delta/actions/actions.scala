@@ -44,6 +44,7 @@ import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize
 import com.fasterxml.jackson.databind.node.ObjectNode
 import io.delta.storage.commit.actions.{
   AbstractCommitInfo => StorageAbstractCommitInfo,
+  AbstractDomainMetadata => StorageAbstractDomainMetadata,
   AbstractMetadata => StorageAbstractMetadata,
   AbstractProtocol => StorageAbstractProtocol
 }
@@ -668,8 +669,11 @@ case class SetTransaction(
 case class DomainMetadata(
     domain: String,
     configuration: String,
-    removed: Boolean) extends Action {
+    removed: Boolean) extends Action with StorageAbstractDomainMetadata {
   override def wrap: SingleAction = SingleAction(domainMetadata = this)
+  override def getDomain: String = domain
+  override def getConfiguration: String = configuration
+  override def isRemoved: Boolean = removed
 }
 
 /** Actions pertaining to the addition and removal of files. */
@@ -779,6 +783,14 @@ sealed trait FileAction extends Action {
 
   /** Returns the [[Path]] for this file action (not URL-encoded). */
   def toPath: Path = sparkPath.toPath
+
+  /** Returns the absolute [[Path]] for this file action (not URL-encoded). */
+  def absolutePath(snapshot: SnapshotDescriptor): Path = {
+    // dataPath is not URL-encoded.
+    val dataPath: Path = snapshot.dataPath
+    // this.path is a URL-encoded String, that is either the relative or absolute path.
+    DeltaFileOperations.absolutePath(dataPath.toString, path)
+  }
 
   /** Returns the absolute [[Path]] for this file action (not URL-encoded). */
   def absolutePath(deltaLog: DeltaLog): Path = {

@@ -28,11 +28,13 @@ import org.apache.spark.sql.delta.{CommittedTransaction, CurrentTransactionInfo,
 import org.apache.spark.sql.delta.DeltaOperations.OPTIMIZE_OPERATION_NAME
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, DomainMetadata, FileAction, InMemoryLogReplay, Metadata, Protocol, RemoveFile}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.hooks.IcebergConverterHook
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.TransactionHelper
+import io.delta.storage.commit.{CommitFailedException => DeltaCommitFailedException}
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.Path
 import shadedForDelta.org.apache.iceberg.{Table => IcebergTable, TableProperties}
@@ -44,6 +46,7 @@ import shadedForDelta.org.apache.iceberg.util.LocationUtil
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, V1Table}
 
 object IcebergConverter {
 
@@ -217,13 +220,83 @@ class IcebergConverter
       (newMetadataPath, lastConvertedInfo.deltaVersionConverted)
     }
 
-  private def refreshCatalogTableIfNeeded(
+  protected def refreshCatalogTableIfNeeded(
       txnInfo: CurrentTransactionInfo,
       deltaAttemptVersion: Long,
       catalogTable: CatalogTable): CatalogTable = {
-    catalogTable
+    val lastDeltaVersionConvertedOpt =
+      catalogTable.storage.properties
+        .get(IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP)
+        .map(_.toLong)
+    val needsRefreshCatalogTable =
+      deltaAttemptVersion > txnInfo.readSnapshot.version + 1 &&
+        UniversalFormat.icebergEnabled(txnInfo.metadata) &&
+        lastDeltaVersionConvertedOpt.nonEmpty
+    if (!needsRefreshCatalogTable) {
+      return catalogTable
+    }
+    val refreshedTable = reloadCatalogTable(catalogTable)
+    if (refreshedTable.storage.locationUri != catalogTable.storage.locationUri) {
+      throw new DeltaCommitFailedException(
+        false, // retryable
+        true, // conflict
+        s"Table location changed when refreshing catalogTable. " +
+          s"catalogTable location: ${catalogTable.storage.locationUri} " +
+          s"refreshedTable location: ${refreshedTable.storage.locationUri}")
+    }
+    val refreshedLastDeltaVersionConvertedOpt =
+      refreshedTable.storage.properties
+        .get(IcebergConstants.CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP)
+        .map(_.toLong)
+    val oldBaseMetadataLocation =
+      catalogTable.storage.properties
+        .get(IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP)
+    val newBaseMetadataLocation =
+      refreshedTable.storage.properties
+        .get(IcebergConstants.CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP)
+    logInfo(s"refresh CatalogTable for UniForm for table ${catalogTable.identifier}: " +
+      s"oldLastDeltaVersionConvertedOpt=$lastDeltaVersionConvertedOpt " +
+      s"refreshedLastDeltaVersionConvertedOpt=$refreshedLastDeltaVersionConvertedOpt " +
+      s"oldBaseMetadataLocation=$oldBaseMetadataLocation " +
+      s"newBaseMetadataLocation=$newBaseMetadataLocation")
+    if (
+      refreshedLastDeltaVersionConvertedOpt.exists(_ >= deltaAttemptVersion)
+    ) {
+      throw new DeltaCommitFailedException(
+        true, // retryable
+        true, // conflict
+        s"Attempts to commit Delta version $deltaAttemptVersion while the last converted delta " +
+          s"version is already $refreshedLastDeltaVersionConvertedOpt")
+    }
+    refreshedTable
   }
 
+  /**
+   * Reloads a CatalogTable via the V2 catalog API
+   * The V1 SessionCatalog only reaches HMS and
+   * fails for UC tables whose schema doesn't exist there
+   */
+  protected def reloadCatalogTable(catalogTable: CatalogTable): CatalogTable = {
+    val catalog = catalogTable.identifier.catalog
+      .map(spark.sessionState.catalogManager.catalog)
+      .getOrElse(spark.sessionState.catalogManager.v2SessionCatalog)
+    val ident = Identifier.of(
+      catalogTable.identifier.database.toArray,
+      catalogTable.identifier.table)
+    CatalogV2Util.loadTable(catalog, ident)
+      .flatMap {
+        case dt: DeltaTableV2 => dt.catalogTable
+        case other => throw new DeltaCommitFailedException(
+          false, // retryable
+          false, // conflict
+          s"Expected DeltaTableV2 when reloading catalogTable for ${catalogTable.identifier}, " +
+            s"got ${other.getClass.getName}")
+      }
+      .getOrElse(throw new DeltaCommitFailedException(
+        false, // retryable
+        false, // conflict
+        s"Table ${catalogTable.identifier} not found when reloading catalogTable through $catalog"))
+  }
 
   /**
    * Reads the last converted Iceberg state from the catalogTable storage properties.

@@ -19,12 +19,13 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.nio.file.FileAlreadyExistsException
 import java.time.Instant
-import java.util.{ConcurrentModificationException, Optional, UUID}
+import java.util.{ConcurrentModificationException, Optional, Set => JSet, UUID}
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit.{MINUTES, NANOSECONDS}
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
-import scala.collection.mutable.{ArrayBuffer, HashSet}
+import scala.collection.mutable.ArrayBuffer
 import scala.jdk.OptionConverters._
 import scala.util.Try
 import scala.util.control.NonFatal
@@ -37,6 +38,7 @@ import org.apache.spark.sql.delta.DeltaOperations.{ChangeColumn, ChangeColumns, 
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.clustering.ClusteringMetadataDomain
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
@@ -50,14 +52,14 @@ import org.apache.spark.sql.delta.implicits.addFileEncoder
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider}
 import org.apache.spark.sql.delta.redirect.{RedirectFeature, TableRedirectConfiguration}
-import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
+import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils, UnsupportedDataTypeInfo}
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.stats._
 import org.apache.spark.sql.delta.stats.FileSizeHistogramUtils
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils, PartitionUtils, TransactionHelper}
 import org.apache.spark.sql.util.ScalaExtensions._
 import io.delta.storage.commit._
-import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
+import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 import org.apache.commons.lang3.NotImplementedException
@@ -72,9 +74,9 @@ import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical.UnsetTableProperties
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.catalyst.util.{CharVarcharUtils, ResolveDefaultColumns}
-import org.apache.spark.sql.delta.clustering.ClusteringMetadataDomain
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{StructField, StructType}
+import org.apache.spark.sql.types.DataType
 import org.apache.spark.util.{Clock, Utils}
 
 object CoordinatedCommitType extends Enumeration {
@@ -346,10 +348,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
     new java.util.concurrent.ConcurrentLinkedQueue[DeltaTableReadPredicate]
 
   /** Tracks specific files that have been seen by this transaction. */
-  protected val readFiles = new HashSet[AddFile]
+  protected val readFiles: JSet[AddFile] = ConcurrentHashMap.newKeySet[AddFile]()
 
   /** Whether the whole table was read during the transaction. */
-  protected var readTheWholeTable = false
+  @volatile protected var readTheWholeTable = false
 
   /** Tracks if this transaction has already committed. */
   protected var committed: Option[CommittedTransaction] = None
@@ -597,45 +599,6 @@ trait OptimisticTransactionImpl extends TransactionHelper
     assert(newMetadata.isEmpty,
       "Cannot change the metadata more than once in a transaction.")
     updateMetadataInternal(proposedNewMetadata, ignoreDefaultProperties)
-    // Temporary: block metadata changes on UC-managed CatalogOwned tables until Delta supports
-    // propagating metadata updates to UC. UC is identified by catalog implementation class (handles
-    // "spark_catalog" registration). New table creation is naturally excluded because
-    // isCatalogOwned is false until the first commit. REPLACE TABLE is currently also blocked
-    // here and will need to be explicitly allowed once UC supports metadata propagation.
-    // Intentionally conservative: configuration is compared as a whole map, which also
-    // catches Delta-internal additions (e.g. table-feature flags). This is acceptable for
-    // a temporary kill switch - once Delta supports propagating metadata updates to UC,
-    // this check will be removed entirely.
-    if (!isCreatingNewTable) {
-      throwIfUCManagedMetadataChanged(snapshot.metadata, context = "updateMetadata")
-    }
-  }
-
-  /**
-   * Returns true if the proposed metadata differs from the existing metadata for a UC-managed
-   * table.
-   */
-  private def hasUCManagedMetadataChange(
-      existingMetadata: Metadata,
-      proposedMetadata: Metadata): Boolean = {
-    proposedMetadata.schemaString != existingMetadata.schemaString ||
-      proposedMetadata.partitionColumns != existingMetadata.partitionColumns ||
-      proposedMetadata.description != existingMetadata.description ||
-      proposedMetadata.configuration != existingMetadata.configuration
-  }
-
-  private def throwIfUCManagedMetadataChanged(
-      existingMetadata: Metadata,
-      context: String): Unit = {
-    val proposedMetadata = newMetadata.getOrElse(existingMetadata)
-    if (isUCManagedTable && hasUCManagedMetadataChange(existingMetadata, proposedMetadata)) {
-      logWarning(log"Blocking UC-managed metadata update during " +
-        log"${MDC(DeltaLogKeys.OPERATION, context)} because metadata changed: " +
-        log"${MDC(DeltaLogKeys.METADATA_OLD, existingMetadata)} => " +
-        log"${MDC(DeltaLogKeys.METADATA_NEW, proposedMetadata)}")
-      throw DeltaErrors.operationNotSupportedException(
-        "Metadata changes on Unity Catalog managed tables")
-    }
   }
 
   /**
@@ -1011,9 +974,6 @@ trait OptimisticTransactionImpl extends TransactionHelper
       newConfs = newConfsWithoutICT ++ existingICTConfs
     }
     newMetadata = Some(newMetadata.get.copy(configuration = newConfs))
-    throwIfUCManagedMetadataChanged(
-      snapshot.metadata,
-      context = "updateMetadataForNewTableInReplace")
   }
 
   /**
@@ -1346,7 +1306,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
   /** Mark the given files as read within this transaction. */
   def trackFilesRead(files: Seq[AddFile]): Unit = {
-    readFiles ++= files
+    readFiles.addAll(files.asJava)
   }
 
   /** Mark the predicates that have been queried by this transaction. */
@@ -1560,6 +1520,11 @@ trait OptimisticTransactionImpl extends TransactionHelper
     }
   }
 
+  /** Ensure that actions do not contain duplicates for the same path. */
+  protected def checkNoDuplicateActions(actions: Seq[Action]): Unit = {
+    ConflictChecker.checkNoDuplicateActions(spark, actions.iterator).foreach(_ => ())
+  }
+
   /**
    * Checks if the passed-in actions have internal SetTransaction conflicts, will throw exceptions
    * in case of conflicts. This function will also remove duplicated [[SetTransaction]]s.
@@ -1738,7 +1703,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     // If this transaction commits to the redirect destination location, then there is no
     // need to validate the subsequent no-redirect rules.
     val configuration = deltaLog.newDeltaHadoopConf()
-    val dataPath = snapshot.deltaLog.dataPath.toUri.getPath
+    val dataPath = snapshot.dataPath.toUri.getPath
     val catalog = spark.sessionState.catalog
     val isRedirectDest = redirectConfig.spec.isRedirectDest(catalog, configuration, dataPath)
     if (isRedirectDest) return
@@ -1841,6 +1806,11 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
       validateActionsAddFileInvariants(preparedActions, metadata)
 
+      checkNoDuplicateActions(preparedActions)
+      ConflictChecker.trackConsistentDataChange(
+        spark, preparedActions.iterator, deltaLog, op, callerContext = "commit")
+        .foreach(_ => ())
+
       // Find the isolation level to use for this commit
       val isolationLevelToUse = getIsolationLevelToUse(preparedActions, op)
 
@@ -1850,7 +1820,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
         DomainMetadataUtils.validateDomainMetadataSupportedAndNoDuplicate(finalActions, protocol)
 
       isBlindAppend = {
-        val dependsOnFiles = !readPredicates.isEmpty || readFiles.nonEmpty
+        val dependsOnFiles = !readPredicates.isEmpty || !readFiles.isEmpty
         val onlyAddFiles =
           preparedActions.collect { case f: FileAction => f }.forall(_.isInstanceOf[AddFile])
         onlyAddFiles && !dependsOnFiles
@@ -1893,7 +1863,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       val currentTransactionInfo = CurrentTransactionInfo(
         txnId = txnId,
         readPredicates = readPredicates.asScala.toVector,
-        readFiles = readFiles.toSet,
+        readFiles = readFiles.asScala.toSet,
         readWholeTable = readTheWholeTable,
         readAppIds = readTxn.toSet,
         metadata = metadata,
@@ -1962,7 +1932,12 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val metadataWithIctInfo = commitInfo.inCommitTimestamp
       .flatMap { inCommitTimestamp =>
         InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo(
-          spark, inCommitTimestamp, snapshot, metadata, firstAttemptVersion)
+          spark = spark,
+          inCommitTimestamp = inCommitTimestamp,
+          currentMetadataWithVersion =
+            InCommitTimestampUtils.MetadataWithVersion(firstAttemptVersion, metadata),
+          priorMetadataWithVersion =
+            InCommitTimestampUtils.MetadataWithVersion(snapshot.version, snapshot.metadata))
       }.getOrElse { return false }
     newMetadata = Some(metadataWithIctInfo)
     true
@@ -2127,6 +2102,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
         }
         action
       }
+      allActions = ConflictChecker.trackConsistentDataChange(
+        spark, allActions, deltaLog, op, callerContext = "commitLarge")
       val (allActions2, acStatsCollector) = collectAutoOptimizeStats(allActions)
       allActions = allActions2
 
@@ -2312,7 +2289,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val t = new OptimisticTransaction(deltaLog, catalogTable, snapshot)
     t.executionObserver = executionObserver.createChild()
     t.readPredicates.addAll(readPredicates)
-    t.readFiles ++= readFilesSubset
+    t.readFiles.addAll(readFilesSubset.asJava)
     t.readTxn ++= readTxn
     t
   }
@@ -2616,6 +2593,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
     // feature is not enabled.
     if (!protocol.isFeatureSupported(AllowColumnDefaultsTableFeature)) {
       checkNoColumnDefaults(op)
+    } else {
+      checkColumnDefaults(op)
     }
 
     finalActions
@@ -2963,7 +2942,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
         jsonActions,
         updatedActions,
         catalogTable.map(_.identifier),
-        new CatalogTrackedInfo(currentTransactionInfo.convertedIcebergMetadata.toJava)
+        new CatalogTrackedInfo(
+          currentTransactionInfo.convertedIcebergMetadata.toJava,
+          currentTransactionInfo.domainMetadata.map(dm => dm: AbstractDomainMetadata).asJava)
       )
     }
     if (attemptVersion == 0L) {
@@ -3111,7 +3092,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
           winningCommitSummary,
           commitIsolationLevel)
 
-        updatedCurrentTransactionInfo = conflictChecker.checkConflicts()
+        updatedCurrentTransactionInfo = conflictChecker.checkConflictsAndValidateActions()
 
         logInfo(logPrefix +
           log"No conflicts in version ${MDC(DeltaLogKeys.VERSION, otherCommitVersion)}, " +
@@ -3281,6 +3262,55 @@ trait OptimisticTransactionImpl extends TransactionHelper
     } else {
       logInfo(log"No need to generate Iceberg metadata for the table pre-commit")
       (txnInfo, false)
+    }
+  }
+
+  /**
+   * If the operation assigns or modifies column default values, this method checks that the
+   * default values are only added on types that support them and throws an error if not.
+   */
+  protected def checkColumnDefaults(op: DeltaOperations.Operation): Unit = {
+    def isDefaultUsedOnUnsupportedColumn(column: StructField): Boolean = {
+      usesDefaults(column) && !typeAllowedForDefaults(column.dataType)
+    }
+
+    def typeAllowedForDefaults(dataType: DataType): Boolean = {
+      !SchemaUtils.typeExistsRecursively(dataType) {
+        case dt if DeltaGeoSpatial.isGeoSpatialType(dt) => true
+        case _ => false
+      }
+    }
+
+    def usesDefaults(column: StructField): Boolean = {
+      column.metadata.contains(ResolveDefaultColumns.CURRENT_DEFAULT_COLUMN_METADATA_KEY) ||
+        column.metadata.contains(ResolveDefaultColumns.EXISTS_DEFAULT_COLUMN_METADATA_KEY)
+    }
+
+    val unsupportedColumns: Seq[StructField] = op match {
+      case change: ChangeColumn if isDefaultUsedOnUnsupportedColumn(change.newColumn) =>
+        Seq(change.newColumn)
+      case changes: ChangeColumns =>
+        changes.columns.collect {
+          case c if isDefaultUsedOnUnsupportedColumn(c.newColumn) => c.newColumn
+        }
+      case create: CreateTable =>
+        create.metadata.schema.fields.filter(c => isDefaultUsedOnUnsupportedColumn(c))
+      case replace: ReplaceColumns =>
+        replace.columns.filter(c => isDefaultUsedOnUnsupportedColumn(c))
+      case replace: ReplaceTable =>
+        replace.metadata.schema.fields.filter(c => isDefaultUsedOnUnsupportedColumn(c))
+      case update: UpdateSchema =>
+        update.newSchema.fields.filter(c => isDefaultUsedOnUnsupportedColumn(c))
+      case _ =>
+        Seq.empty
+    }
+
+    if (unsupportedColumns.nonEmpty) {
+      val unsupportedColInfos = unsupportedColumns.map(
+        c => UnsupportedDataTypeInfo(c.name, c.dataType))
+      throw DeltaErrors.operationNotSupportedForDataTypes(
+        "COLUMN DEFAULT",
+        unsupportedColInfos.head, unsupportedColInfos.tail: _*)
     }
   }
 

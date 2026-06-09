@@ -280,8 +280,8 @@ trait UCClientFactory {
  * Recognised ucConfig keys:
  *  - `uri` (required) -- the UC server endpoint.
  *  - `auth.*` / `token` (legacy) -- authentication parameters for [[TokenProvider]].
- *  - `deltaRestApi.enabled` -- if `"true"`, uses [[UCDeltaTokenBasedRestClient]];
- *    otherwise uses [[UCTokenBasedRestClient]].
+ *  - `deltaRestApi.enabled` -- defaults to `"true"`; uses [[UCDeltaTokenBasedRestClient]]
+ *    unless explicitly set to `"false"`, in which case [[UCTokenBasedRestClient]] is used.
  *  - `appVersions.*` -- caller-supplied version entries merged with defaults; e.g.
  *    `appVersions.Kernel -> "0.7.0"` adds a `"Kernel"` entry to the version map.
  */
@@ -309,7 +309,7 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
     val tokenProvider = TokenProvider.create(authConfig.asJava)
 
     val className =
-      if (Option(ucConfig.get(DELTA_REST_API_ENABLED_KEY)).exists(_.equalsIgnoreCase("true"))) {
+      if (ucConfig.getOrDefault(DELTA_REST_API_ENABLED_KEY, "true").toBoolean) {
         DELTA_UC_CLIENT_CLASS
       } else {
         DEFAULT_UC_CLIENT_CLASS

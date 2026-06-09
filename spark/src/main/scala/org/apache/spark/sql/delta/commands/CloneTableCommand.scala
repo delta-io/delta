@@ -302,7 +302,10 @@ case class CloneIcebergSource(
   spark: SparkSession) extends CloneConvertedSource(spark) {
 
   override lazy val convertTargetTable: ConvertTargetTable =
-    ConvertUtils.getIcebergTable(spark, metadataLocation, deltaSnapshotOpt)
+    ConvertUtils.getIcebergTable(
+      spark,
+      metadataLocation,
+      deltaSnapshotOpt = deltaSnapshotOpt)
 
   override def format: String = CloneSourceFormat.ICEBERG
 

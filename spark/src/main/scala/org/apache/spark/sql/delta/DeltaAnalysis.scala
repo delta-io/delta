@@ -684,6 +684,13 @@ class DeltaAnalysis(protected val session: SparkSession)
     case DeltaReorgTable(ResolvedTable(_, _, t, _), _) =>
       throw DeltaErrors.notADeltaTable(t.name())
 
+    case TruncateTable(child @ ResolvedTable(_, _, _: DeltaTableV2, _)) =>
+      TruncateDeltaTableCommand(child)
+
+    case TruncatePartition(ResolvedTable(_, _, delta: DeltaTableV2, _), _) =>
+      recordDeltaEvent(delta.deltaLog, "delta.unsupported.truncateTablePartition")
+      throw DeltaErrors.truncateTablePartitionNotSupportedException
+
     case cmd @ ShowColumns(child @ ResolvedTable(_, _, table: DeltaTableV2, _), namespace, _) =>
       // Adapted from the rule in spark ResolveSessionCatalog.scala, which V2 tables don't trigger.
       // NOTE: It's probably a spark bug to check head instead of tail, for 3-part identifiers.
@@ -705,8 +712,10 @@ class DeltaAnalysis(protected val session: SparkSession)
 
     case origStreamWrite: WriteToStream =>
       // The command could have Delta as source and/or sink. We need to look at both.
-      val streamWrite = origStreamWrite match {
-        case WriteToStream(_, _, sink @ DeltaSink(_, _, _, _, _, None), _, _, _, _, Some(ct)) =>
+      // Use field access rather than positional destructuring because WriteToStream's
+      // constructor signature differs across Spark versions.
+      val streamWrite = (origStreamWrite.sink, origStreamWrite.catalogTable) match {
+        case (sink @ DeltaSink(_, _, _, _, _, None), Some(ct)) =>
           // The command has a catalog table, but the DeltaSink does not. This happens because
           // DeltaDataSource.createSink (Spark API) didn't have access to the catalog table when it
           // created the DeltaSink. Fortunately we can fix it up here.
@@ -1027,7 +1036,7 @@ class DeltaAnalysis(protected val session: SparkSession)
         DeltaDataSource.extractSchemaTrackingLocationConfig(session, opts)
           .foreach { rootSchemaTrackingLocation =>
             // TODO(#5319): use table path instead of name so path vs catalog access of the same
-            //  table conflicts at analysis time (matches V1). Needs a SparkTable-side accessor.
+            //  table conflicts at analysis time (matches V1). Needs a DeltaV2Table-side accessor.
             val tableId = table.name.replace(":", "").replace("/", "_")
             val sourceIdOpt = opts.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID)
             val schemaTrackingLocation =

@@ -25,7 +25,7 @@ import scala.jdk.CollectionConverters._
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import io.delta.storage.commit.{Commit, CommitFailedException, TableIdentifier}
-import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
+import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.exceptions.NoSuchTableException
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 import io.unitycatalog.client.auth.TokenProvider
@@ -306,7 +306,8 @@ class UCDeltaTokenBasedRestClientSuite
     withClient { c =>
       c.commit(testTableId.toString, new URI("s3://bucket/table"), testIdentifier,
         Optional.of(createCommit(5L)), Optional.of(java.lang.Long.valueOf(3L)),
-        Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty())
+        Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
+        Collections.emptyList[AbstractDomainMetadata](), Optional.empty())
     }
 
     val json = objectMapper.readTree(captured)
@@ -348,7 +349,8 @@ class UCDeltaTokenBasedRestClientSuite
       c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
         Optional.of(createCommit(1L)), Optional.empty(),
         Optional.of(oldMeta), Optional.of(newMeta),
-        Optional.empty(), Optional.empty(), Optional.empty())
+        Optional.empty(), Optional.empty(),
+        Collections.emptyList[AbstractDomainMetadata](), Optional.empty())
     }
 
     val actions = {
@@ -377,7 +379,8 @@ class UCDeltaTokenBasedRestClientSuite
       c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
         Optional.of(createCommit(1L)), Optional.empty(),
         Optional.empty(), Optional.empty(),
-        Optional.of(oldProto), Optional.of(newProto), Optional.empty())
+        Optional.of(oldProto), Optional.of(newProto),
+        Collections.emptyList[AbstractDomainMetadata](), Optional.empty())
     }
 
     val updates = objectMapper.readTree(captured).get("updates")
@@ -385,6 +388,37 @@ class UCDeltaTokenBasedRestClientSuite
       .find(_.get("action").asText() == "set-protocol").get.get("protocol")
     assert(proto.get("min-reader-version").asInt() === 3)
     assert(proto.get("min-writer-version").asInt() === 7)
+  }
+
+  test("commit sends domain metadata intent updates") {
+    var captured: String = null
+    deltaHandler = (exchange, body) => {
+      if (exchange.getRequestMethod == "POST") {
+        captured = body
+      }
+      sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+    }
+
+    withClient { c =>
+      c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
+        Optional.of(createCommit(1L)), Optional.empty(),
+        Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
+        java.util.List.of(
+          dm("delta.clustering", """{"clusteringColumns":[["c1"]]}"""),
+          dm("delta.rowTracking", "{}", removed = true)),
+        Optional.empty())
+    }
+
+    val updates = objectMapper.readTree(captured).get("updates")
+    val setDomainMetadata = (0 until updates.size()).map(updates.get)
+      .find(_.get("action").asText() == "set-domain-metadata").get
+    val removeDomainMetadata = (0 until updates.size()).map(updates.get)
+      .find(_.get("action").asText() == "remove-domain-metadata").get
+
+    val clusteringColumns =
+      setDomainMetadata.get("updates").get("delta.clustering").get("clusteringColumns")
+    assert(clusteringColumns.get(0).get(0).asText() === "c1")
+    assert(removeDomainMetadata.get("domains").get(0).asText() === "delta.rowTracking")
   }
 
   test("commit skips metadata updates when old and new are equal") {
@@ -404,7 +438,8 @@ class UCDeltaTokenBasedRestClientSuite
       c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
         Optional.of(createCommit(1L)), Optional.empty(),
         Optional.of(m1), Optional.of(m2),
-        Optional.empty(), Optional.empty(), Optional.empty())
+        Optional.empty(), Optional.empty(),
+        Collections.emptyList[AbstractDomainMetadata](), Optional.empty())
     }
 
     val updates = objectMapper.readTree(captured).get("updates")
@@ -430,7 +465,8 @@ class UCDeltaTokenBasedRestClientSuite
       c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
         Optional.of(createCommit(1L)), Optional.empty(),
         Optional.empty(), Optional.empty(),
-        Optional.of(p1), Optional.of(p2), Optional.empty())
+        Optional.of(p1), Optional.of(p2),
+        Collections.emptyList[AbstractDomainMetadata](), Optional.empty())
     }
 
     val updates = objectMapper.readTree(captured).get("updates")
@@ -454,6 +490,7 @@ class UCDeltaTokenBasedRestClientSuite
       c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
         Optional.of(createCommit(1L)), Optional.empty(),
         Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
+        Collections.emptyList[AbstractDomainMetadata](),
         Optional.of(uniform))
     }
 
@@ -484,6 +521,7 @@ class UCDeltaTokenBasedRestClientSuite
       c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
         Optional.of(createCommit(1L)), Optional.empty(),
         Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
+        Collections.emptyList[AbstractDomainMetadata](),
         Optional.of(uniform))
     }
 
@@ -511,9 +549,31 @@ class UCDeltaTokenBasedRestClientSuite
       val e = intercept[CommitFailedException] {
         c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
           Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
-          Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty())
+          Optional.empty(), Optional.empty(), Optional.empty(),
+          Collections.emptyList[AbstractDomainMetadata](), Optional.empty())
       }
       assert(e.getRetryable && e.getConflict)
+    }
+  }
+
+  test("commit throws non-retryable CommitFailedException on 400") {
+    deltaHandler = (exchange, _) => {
+      if (exchange.getRequestMethod == "POST") {
+        sendJson(exchange, HttpStatus.SC_BAD_REQUEST,
+          """{"error":"bad request"}""")
+      } else {
+        sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+      }
+    }
+    withClient { c =>
+      val e = intercept[CommitFailedException] {
+        c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
+          Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
+          Optional.empty(), Optional.empty(), Optional.empty(),
+          Collections.emptyList[AbstractDomainMetadata](), Optional.empty())
+      }
+      assert(!e.getRetryable && !e.getConflict)
+      assert(e.getMessage.contains("Invalid updateTable request"))
     }
   }
 
@@ -530,7 +590,8 @@ class UCDeltaTokenBasedRestClientSuite
       intercept[InvalidTargetTableException] {
         c.commit(testTableId.toString, new URI("s3://b/t"), testIdentifier,
           Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
-          Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty())
+          Optional.empty(), Optional.empty(), Optional.empty(),
+          Collections.emptyList[AbstractDomainMetadata](), Optional.empty())
       }
     }
   }
@@ -555,12 +616,14 @@ class UCDeltaTokenBasedRestClientSuite
          |}""".stripMargin
 
     deltaHandler = (exchange, body) => {
-      captured = body
+      // Capture only the first request (the createStagingTable POST). Subsequent requests
+      // come from the credential fetch in toStagingTableInfo and have a different body shape.
+      if (captured == null) captured = body
       sendJson(exchange, HttpStatus.SC_OK, stagingJson)
     }
 
     withClient { c =>
-      val info = c.createStagingTable(testCatalog, testSchema, testTable)
+      val info = c.createStagingTable(testIdentifier)
 
       // verify request body
       val req = objectMapper.readTree(captured)
@@ -591,10 +654,102 @@ class UCDeltaTokenBasedRestClientSuite
       sendJson(exchange, HttpStatus.SC_INTERNAL_SERVER_ERROR, """{"error":"fail"}""")
     withClient { c =>
       val e = intercept[java.io.IOException] {
-        c.createStagingTable(testCatalog, testSchema, testTable)
+        c.createStagingTable(testIdentifier)
       }
       assert(e.getMessage.contains("HTTP 500"))
     }
+  }
+
+  // --------------- toSDKDomainMetadataUpdates ---------------
+
+  /** Minimal AbstractDomainMetadata stub for the mapping tests. */
+  private def dm(domain: String, configuration: String, removed: Boolean = false)
+      : AbstractDomainMetadata = new AbstractDomainMetadata {
+    override def getDomain: String = domain
+    override def getConfiguration: String = configuration
+    override def isRemoved: Boolean = removed
+  }
+
+  test("toSDKDomainMetadataUpdates: empty list returns null") {
+    assert(
+      UCDeltaTokenBasedRestClient.toSDKDomainMetadataUpdates(Collections.emptyList()) === null)
+  }
+
+  test("toSDKDomainMetadataUpdates: clustering domain wires through clustering-columns") {
+    val out = UCDeltaTokenBasedRestClient.toSDKDomainMetadataUpdates(
+      java.util.List.of(dm("delta.clustering",
+        """{"clusteringColumns":[["c1"],["nested","c2"]]}""")))
+    assert(out !== null)
+    assert(out.getDeltaClustering.getClusteringColumns ===
+      java.util.List.of(java.util.List.of("c1"), java.util.List.of("nested", "c2")))
+    assert(out.getDeltaRowTracking === null)
+  }
+
+  test("toSDKDomainMetadataUpdates: rowTracking domain wires through rowIdHighWaterMark") {
+    val out = UCDeltaTokenBasedRestClient.toSDKDomainMetadataUpdates(
+      java.util.List.of(dm("delta.rowTracking", """{"rowIdHighWaterMark":42}""")))
+    assert(out !== null)
+    assert(out.getDeltaRowTracking.getRowIdHighWaterMark === 42L)
+    assert(out.getDeltaClustering === null)
+  }
+
+  test("toSDKDomainMetadataUpdates: both domains in one batch are merged") {
+    val out = UCDeltaTokenBasedRestClient.toSDKDomainMetadataUpdates(
+      java.util.List.of(
+        dm("delta.clustering", """{"clusteringColumns":[["c1"]]}"""),
+        dm("delta.rowTracking", """{"rowIdHighWaterMark":7}""")))
+    assert(out !== null)
+    assert(out.getDeltaClustering.getClusteringColumns ===
+      java.util.List.of(java.util.List.of("c1")))
+    assert(out.getDeltaRowTracking.getRowIdHighWaterMark === 7L)
+  }
+
+  test("toSDKDomainMetadataUpdates: unknown domains throw IOException") {
+    val ex = intercept[java.io.IOException] {
+      UCDeltaTokenBasedRestClient.toSDKDomainMetadataUpdates(
+        java.util.List.of(
+          dm("unknown.future", """{"someField":"x"}"""),
+          dm("delta.rowTracking", """{"rowIdHighWaterMark":1}""")))
+    }
+    assert(ex.getMessage.contains("unknown.future"))
+    assert(ex.getMessage.contains("UC SDK only models"))
+  }
+
+  test("toSDKDomainMetadataUpdates: tombstones (removed=true) are skipped") {
+    val out = UCDeltaTokenBasedRestClient.toSDKDomainMetadataUpdates(
+      java.util.List.of(
+        dm("delta.clustering", """{"clusteringColumns":[["c1"]]}""", removed = true),
+        dm("delta.rowTracking", """{"rowIdHighWaterMark":1}""")))
+    assert(out !== null)
+    assert(out.getDeltaClustering === null,
+      "tombstone for clustering should be skipped, leaving only rowTracking")
+    assert(out.getDeltaRowTracking.getRowIdHighWaterMark === 1L)
+  }
+
+  test("toSDKDomainMetadataUpdates: all-tombstones returns null") {
+    // Tombstones are skipped via `continue` before the switch, so they don't reach the
+    // unknown-domain throw. An all-tombstone batch produces no updates and yields null.
+    val out = UCDeltaTokenBasedRestClient.toSDKDomainMetadataUpdates(
+      java.util.List.of(
+        dm("delta.clustering", """{"clusteringColumns":[["c1"]]}""", removed = true),
+        dm("delta.rowTracking", """{"rowIdHighWaterMark":1}""", removed = true)))
+    assert(out === null)
+  }
+
+  test("toSDKDomainMetadataUpdates: missing field in known domain produces no setter call") {
+    // {} has no clusteringColumns; mapping leaves deltaClustering unset and returns null.
+    val out = UCDeltaTokenBasedRestClient.toSDKDomainMetadataUpdates(
+      java.util.List.of(dm("delta.clustering", "{}")))
+    assert(out === null)
+  }
+
+  test("toSDKDomainMetadataUpdates: unknown JSON field in known domain is ignored") {
+    // FAIL_ON_UNKNOWN_PROPERTIES=false on the mapper -- a future Delta addition mustn't break.
+    val out = UCDeltaTokenBasedRestClient.toSDKDomainMetadataUpdates(
+      java.util.List.of(dm("delta.rowTracking",
+        """{"rowIdHighWaterMark":3,"futureField":"ignored"}""")))
+    assert(out !== null)
+    assert(out.getDeltaRowTracking.getRowIdHighWaterMark === 3L)
   }
 
   // --------------- getCommits ---------------

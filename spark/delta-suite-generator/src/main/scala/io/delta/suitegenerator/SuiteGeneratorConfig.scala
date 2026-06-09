@@ -350,7 +350,7 @@ object SuiteGeneratorConfig {
           )
         ),
         TestConfig(
-          List("DeleteSubqueryExistsTests"),
+          List("DeleteSQLTests", "DeleteSubqueryExistsTests", "DeleteBaseTests"),
           List(
             List(Dims.DELETE_SQL, Dims.NAME_BASED, Dims.V2_IN_MEMORY_TABLE)
           )

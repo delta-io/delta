@@ -854,7 +854,7 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         "for UC-managed tables. Metrics are sent asynchronously and " +
         "never block or fail commits.")
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val DELTA_UC_COMMIT_METRICS_THREAD_POOL_SIZE =
     buildStaticConf("commitMetrics.threadPoolSize")
@@ -2094,6 +2094,40 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValues(GeneratedColumnValidateOnWriteMode.values.map(_.toString))
       .createWithDefault(GeneratedColumnValidateOnWriteMode.LOG_ONLY.toString)
 
+  sealed abstract class ConsistentDataChangeValidationMode(val name: String) {
+    override def toString: String = name
+  }
+  object ConsistentDataChangeValidationMode {
+    /** Skip the validation entirely. */
+    case object OFF extends ConsistentDataChangeValidationMode("off")
+    /** Record a Delta event on violation but do not throw. */
+    case object LOG extends ConsistentDataChangeValidationMode("log")
+    /** Throw an exception on violation. */
+    case object FATAL extends ConsistentDataChangeValidationMode("fatal")
+
+    val values: Seq[ConsistentDataChangeValidationMode] = Seq(OFF, LOG, FATAL)
+    private val byName: Map[String, ConsistentDataChangeValidationMode] =
+      values.map(m => m.name -> m).toMap
+
+    def fromConf(conf: SQLConf): ConsistentDataChangeValidationMode =
+      byName(conf.getConf(DELTA_COMMIT_VALIDATE_CONSISTENT_DATA_CHANGE_MODE))
+  }
+
+  val DELTA_COMMIT_VALIDATE_CONSISTENT_DATA_CHANGE_MODE =
+    buildConf("commitValidation.consistentDataChange.mode")
+      .internal()
+      .doc("""
+             |Controls validation that all FileActions in a single commit share a consistent
+             |dataChange value (either all true or all false).
+             | - off:   Skip the validation entirely.
+             | - log:   Record a Delta event on violation but do not throw.
+             | - fatal: Throw an exception on violation.
+             |""".stripMargin)
+      .stringConf
+      .transform(_.toLowerCase(Locale.ROOT))
+      .checkValues(ConsistentDataChangeValidationMode.values.map(_.name).toSet)
+      .createWithDefault(ConsistentDataChangeValidationMode.LOG.name)
+
   object ValidateCheckConstraintsMode extends Enumeration {
     val OFF, LOG_ONLY, ASSERT = Value
 
@@ -3140,6 +3174,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_SHARING_ENABLE_AUTO_RESOLVE_FOR_CDF =
+    buildConf("spark.sql.delta.sharing.enableAutoResolveForCdf")
+      .doc("When true, Delta Sharing CDF queries without an explicit responseFormat will " +
+        "call getMetadata on the sharing server and pick the parquet or delta CDF code path " +
+        "based on the server's responded format. When false, CDF queries without a response " +
+        "format fall back to the legacy parquet path.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
   ///////////////////
   // IDENTITY COLUMN
   ///////////////////
@@ -3376,15 +3420,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
    *
    * Valid values:
    * - NONE: sparkV2 connector is disabled, always use sparkV1 connector (DeltaTableV2) - default
-   * - AUTO: Automatically use sparkV2 connector (SparkTable) for Unity Catalog managed tables
+   * - AUTO: Automatically use sparkV2 connector (DeltaV2Table) for Unity Catalog managed tables
    *         in streaming queries and sparkV1 connector (DeltaTableV2) for all other tables
-   * - STRICT: sparkV2 connector is strictly enforced, always use sparkV2 connector (SparkTable).
+   * - STRICT: sparkV2 connector is strictly enforced, always use sparkV2 connector (DeltaV2Table).
    *           Intended for testing sparkV2 connector capabilities
    *
    * sparkV1 vs sparkV2 Connectors:
    * - sparkV1 Connector (DeltaTableV2): Legacy Delta connector with full read/write support,
    *   uses DeltaLog for metadata management
-   * - sparkV2 Connector (SparkTable): New kernel-based connector with read-only support,
+   * - sparkV2 Connector (DeltaV2Table): New kernel-based connector with read-only support,
    *   uses Kernel's Table API for metadata management
    *
    * See [[org.apache.spark.sql.delta.DeltaV2Mode]] for the centralized logic that interprets

@@ -432,7 +432,7 @@ trait TypeWideningTableFeatureAdvancedTests extends QueryTest
       .putMetadataArray("delta.typeChanges", Array(
         new MetadataBuilder()
           .putString("toType", "string")
-          .putString("fromType", "int")
+          .putString("fromType", "integer")
           .putLong("tableVersion", 2)
           .putString("fieldPath", "element")
           .build()

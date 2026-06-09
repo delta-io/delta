@@ -1538,7 +1538,7 @@ trait SnapshotManagement { self: DeltaLog =>
       case _ =>
         val lastCheckpointInfoForListing = lastCheckpointHint
             .filter(_.version <= version)
-            .orElse(findLastCompleteCheckpointBefore(version))
+            .orElse(findLastCompleteCheckpointBefore(version + 1))
             .map(manuallyLoadCheckpoint)
         lastCheckpointInfoForListing -> None
     }
