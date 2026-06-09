@@ -16,19 +16,20 @@
 
 package io.delta.tables
 
-import io.delta.tables.shared.DeltaRepeatedAccessRefreshTests
+import io.delta.tables.shared.{DeltaCacheTableTests, DeltaRepeatedAccessRefreshTests}
 
 import org.apache.spark.sql.test.DeltaQueryTest
 
 /**
- * Runs the shared [[DeltaRepeatedAccessRefreshTests]] over a remote Spark Connect session. In
- * Connect the Dataset is re-analyzed on each execution, so repeated reads always see the latest
- * data and schema.
+ * Runs the shared refresh and cache tests over a remote Spark Connect session. In Connect the
+ * Dataset is re-analyzed on each execution, so repeated reads always see the latest data and
+ * schema.
  */
 trait DeltaTableRefreshConnectSuiteBase
   extends DeltaQueryTest
   with RemoteSparkSession
-  with DeltaRepeatedAccessRefreshTests {
+  with DeltaRepeatedAccessRefreshTests
+  with DeltaCacheTableTests {
 
   // The conf key is a literal because the Spark Connect thin client does not depend on Spark
   // Classic, which is where the Delta SQL configs live, so DeltaSQLConf.V2_ENABLE_MODE.key is
