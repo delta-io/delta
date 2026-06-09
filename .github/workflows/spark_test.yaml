@@ -73,8 +73,10 @@ jobs:
         if: matrix.spark_version == '4.2'
         id: spark-source
         run: |
-          # Mirrors the producer workflow's cache identity calculation.
-          python3 project/scripts/resolve_spark_source_build.py \
+          # Mirrors the producer workflow's cache identity calculation so this
+          # lane restores the exact Spark Maven artifacts built by that workflow.
+          python3 project/scripts/get_spark_version_info.py \
+            --resolve-source-build \
             --spark-version "${{ matrix.spark_version }}"
       - name: Restore Spark Maven cache
         if: matrix.spark_version == '4.2'

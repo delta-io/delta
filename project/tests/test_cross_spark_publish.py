@@ -18,6 +18,9 @@ The script will:
 """
 
 import json
+import contextlib
+import importlib.util
+import io
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -582,6 +585,56 @@ class SparkVersionsScriptTest:
             print(f"  ✗ Failed: {e}")
             return False
 
+    def test_resolve_source_build(self) -> bool:
+        """Test source-build resolution without fetching Spark from Git."""
+        if not self.ensure_json_exists():
+            return False
+
+        fake_sha = "b6bd005ac7549411ec4e7dc944d7a0e19fd56561"
+        try:
+            spec = importlib.util.spec_from_file_location("get_spark_version_info", self.script_path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            module.resolve_spark_sha = lambda spark_repo, spark_ref, spark_dir: fake_sha
+
+            previous_argv = sys.argv
+            output = io.StringIO()
+            try:
+                sys.argv = [
+                    str(self.script_path),
+                    "--resolve-source-build",
+                    "--spark-version",
+                    "4.2",
+                ]
+                with contextlib.redirect_stdout(output):
+                    module.main()
+            finally:
+                sys.argv = previous_argv
+
+            values = {}
+            for line in output.getvalue().splitlines():
+                if "=" in line:
+                    key, value = line.split("=", 1)
+                    values[key] = value
+
+            expected = {
+                "spark_version": "4.2",
+                "spark_sha": fake_sha,
+                "artifact_base_version": "4.2.0",
+                "spark_artifact_version": "4.2.0-b6bd005ac754-SNAPSHOT",
+            }
+            for key, expected_value in expected.items():
+                if values.get(key) != expected_value:
+                    print(f"  ✗ {key}: expected {expected_value}, got {values.get(key)}")
+                    return False
+
+            print("  ✓ --resolve-source-build: emitted expected cache metadata")
+            return True
+
+        except Exception as e:
+            print(f"  ✗ Failed: {e}")
+            return False
+
     def test_get_field(self) -> bool:
         """Test that --get-field works for various version formats."""
         if not self.ensure_json_exists():
@@ -658,7 +711,8 @@ def main():
         script_test2_passed = script_test.test_all_spark_versions()
         script_test3_passed = script_test.test_released_spark_versions()
         script_test4_passed = script_test.test_source_build_spark_versions()
-        script_test5_passed = script_test.test_get_field()
+        script_test5_passed = script_test.test_resolve_source_build()
+        script_test6_passed = script_test.test_get_field()
 
         # Test cross-Spark build workflow
         print("\n" + "="*70)
@@ -681,7 +735,8 @@ def main():
         print(f"  All Spark Versions Output:              {'✓ PASSED' if script_test2_passed else '✗ FAILED'}")
         print(f"  Released Spark Versions Output:         {'✓ PASSED' if script_test3_passed else '✗ FAILED'}")
         print(f"  Source-Build Spark Versions Output:     {'✓ PASSED' if script_test4_passed else '✗ FAILED'}")
-        print(f"  Get Field Functionality:                {'✓ PASSED' if script_test5_passed else '✗ FAILED'}")
+        print(f"  Source-Build Resolve Output:            {'✓ PASSED' if script_test5_passed else '✗ FAILED'}")
+        print(f"  Get Field Functionality:                {'✓ PASSED' if script_test6_passed else '✗ FAILED'}")
         print("\nPart 2: Cross-Spark Build Tests")
         print(f"  Default publishM2 (with suffix):        {'✓ PASSED' if build_test1_passed else '✗ FAILED'}")
         print(f"  skipSparkSuffix (backward compat):      {'✓ PASSED' if build_test2_passed else '✗ FAILED'}")
@@ -690,7 +745,7 @@ def main():
 
         all_tests_passed = (
             script_test1_passed and script_test2_passed and script_test3_passed and script_test4_passed and
-            script_test5_passed and
+            script_test5_passed and script_test6_passed and
             build_test1_passed and build_test2_passed and build_test3_passed
         )
 
