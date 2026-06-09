@@ -1809,17 +1809,11 @@ Delta Lake can automatically update the schema of a table as part of a DML trans
 
 #### Add columns
 
-Columns that are present in the source data but missing from the table are automatically added as part of a write transaction when schema evolution is enabled. Enable schema evolution using one of the following methods:
+Columns that are present in the source data but missing from the table are automatically added as part of a write transaction when schema evolution is enabled. The added columns are appended to the end of the struct they are present in. Case is preserved when appending a new column.
 
-- **Use `INSERT WITH SCHEMA EVOLUTION` syntax**: Works with SQL `INSERT` statements. Include `WITH SCHEMA EVOLUTION` in the SQL syntax.
-- **Set the `mergeSchema` option**: Works with batch writes or streaming writes. Set `.option("mergeSchema", "true")` on individual `write` or `writeStream` operations.
-- **Set the Spark configuration (legacy)**: Sets `spark.databricks.delta.schema.autoMerge.enabled` to `true` for the entire `SparkSession`. Not recommended, because session-wide configuration can lead to unintended schema changes across multiple operations.
+##### Enable schema evolution (Delta Lake 4.3 and above)
 
-When both the `mergeSchema` option and the Spark configuration are specified, the option from the `DataFrameWriter` takes precedence. The added columns are appended to the end of the struct they are present in. Case is preserved when appending a new column.
-
-#### Schema evolution syntax for INSERT
-
-Include `WITH SCHEMA EVOLUTION` in an `INSERT` statement to enable automatic schema evolution for that operation. When enabled, the schema of the target Delta Lake table is automatically updated to accommodate additional columns or widened types of the source query. For a list of the supported type changes, see [Supported type changes](https://docs.delta.io/delta-type-widening/). For example:
+Use `WITH SCHEMA EVOLUTION` in a SQL `INSERT` statement or `.withSchemaEvolution()` in the DataFrame API to enable automatic schema evolution for a single operation. When enabled, the schema of the target Delta Lake table is automatically updated to accommodate additional columns or widened types of the source data. For a list of the supported type changes, see [Supported type changes](https://docs.delta.io/delta-type-widening/). For example:
 
 <Tabs syncKey="code-examples">
   <TabItem label="SQL" active>
@@ -1830,17 +1824,44 @@ Include `WITH SCHEMA EVOLUTION` in an `INSERT` statement to enable automatic sch
     ```
 
   </TabItem>
+  <TabItem label="Python">
+
+    ```python
+    (spark.read
+      .table("source_table")
+      .write
+      .mode("append")
+      .withSchemaEvolution()
+      .saveAsTable("target_table")
+    )
+    ```
+
+  </TabItem>
+  <TabItem label="Scala">
+
+    ```scala
+    spark.read
+      .table("source_table")
+      .write
+      .mode("append")
+      .withSchemaEvolution()
+      .saveAsTable("target_table")
+    ```
+
+  </TabItem>
 </Tabs>
 
-If the query on `source_table` returns columns that don't exist in the target table, those columns are automatically added to the `target_table` schema. Existing rows receive `NULL` values for the new columns.
+If the source data contains columns that don't exist in the target table, those columns are automatically added to the `target_table` schema. Existing rows receive `NULL` values for the new columns.
 
 <Aside type="note">
-  `WITH SCHEMA EVOLUTION` is available in Delta Lake 4.3 and above.
+  `WITH SCHEMA EVOLUTION` and `.withSchemaEvolution()` are available in Delta Lake 4.3 and above.
 </Aside>
 
-#### INSERT with schema evolution using DataFrame API
+##### Enable schema evolution in earlier versions
 
-The following example demonstrates using the `mergeSchema` option with a batch write operation:
+In Delta Lake versions earlier than 4.3, enable schema evolution using one of the following alternatives. Both are also available in Delta Lake 4.3 and above.
+
+Set the `mergeSchema` option on an individual `write` or `writeStream` operation:
 
 <Tabs syncKey="code-examples">
   <TabItem label="Python" active>
@@ -1870,9 +1891,7 @@ The following example demonstrates using the `mergeSchema` option with a batch w
   </TabItem>
 </Tabs>
 
-#### Enable schema evolution with Spark configuration (legacy)
-
-You can set the Spark configuration `spark.databricks.delta.schema.autoMerge.enabled` to `true` to enable schema evolution for all write operations in the current `SparkSession`:
+Alternatively, set the Spark configuration `spark.databricks.delta.schema.autoMerge.enabled` to `true` to enable schema evolution for all write operations in the current `SparkSession`:
 
 <Tabs syncKey="code-examples">
   <TabItem label="Python" active>
@@ -1899,15 +1918,10 @@ You can set the Spark configuration `spark.databricks.delta.schema.autoMerge.ena
 </Tabs>
 
 <Aside type="caution" title="Important">
-  This approach is not recommended. Instead, enable schema evolution for each write operation:
-
-  - For `INSERT` and batch/streaming writes, use `.option("mergeSchema", "true")` or `INSERT WITH SCHEMA EVOLUTION`
-  - For `MERGE` statements, use `MERGE WITH SCHEMA EVOLUTION`
-
-  Setting a session-wide configuration can lead to unintended schema changes across multiple operations and makes it harder to reason about which operations evolve the schema.
+  Enabling schema evolution session-wide is not recommended, because it can lead to unintended schema changes across multiple operations and makes it harder to reason about which operations evolve the schema. Instead, enable schema evolution for each individual operation using `WITH SCHEMA EVOLUTION`, `.withSchemaEvolution()`, or the `mergeSchema` option.
 </Aside>
 
-When you use options or syntax to enable schema evolution in a write operation, this takes precedence over the Spark configuration.
+When both an operation-level setting (the `mergeSchema` option or `WITH SCHEMA EVOLUTION` / `.withSchemaEvolution()`) and the session-wide Spark configuration are specified, the operation-level setting takes precedence.
 
 #### `NullType` columns
 
