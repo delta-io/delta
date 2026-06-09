@@ -25,7 +25,7 @@ import org.scalatest.funsuite.AnyFunSuite
 
 import org.apache.spark.SparkThrowable
 import org.apache.spark.sql.{DataFrame, Row, SparkSession}
-import org.apache.spark.sql.types.{DataType, IntegerType, StructType}
+import org.apache.spark.sql.types.{DataType, IntegerType, MetadataBuilder, StructField, StructType}
 
 /**
  * Shared base for the repeated table access refresh tests.
@@ -104,6 +104,85 @@ trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
           s"CREATE TABLE t (id INT, salary INT) USING delta LOCATION '${dir.getAbsolutePath}'")
         seedInitialRow("t")
         body(dir.getAbsolutePath)
+      }
+    } finally {
+      deleteRecursively(dir)
+    }
+  }
+
+  /**
+   * TBLPROPERTIES clause enabling the requested table features. Column mapping is required before a
+   * column can be dropped or re-added; type widening allows an ALTER COLUMN to a wider type.
+   */
+  private def tableProperties(columnMapping: Boolean, typeWidening: Boolean): String = {
+    val props =
+      (if (columnMapping) Seq("'delta.columnMapping.mode' = 'name'") else Nil) ++
+      (if (typeWidening) Seq("'delta.enableTypeWidening' = 'true'") else Nil)
+    if (props.isEmpty) "" else s" TBLPROPERTIES (${props.mkString(", ")})"
+  }
+
+  /**
+   * Seeds the initial `(1, 100)` row, returning true when the table was seeded. Under STRICT the
+   * DSv2 write path rejects writes to column-mapped tables (master's DeltaV2WriteBuilder guard), so
+   * such a table can never be seeded; in that case assert the rejection (an
+   * UnsupportedOperationException, or its SparkUnsupportedOperationException subclass over Connect)
+   * and return false so the caller skips the scenario body.
+   */
+  private def seedInitialRow(columnMapping: Boolean): Boolean = {
+    if (columnMapping && v2EnableMode == "STRICT") {
+      val expectedError = "DSv2 writes are not supported on column-mapped Delta tables"
+      val seedError =
+        try {
+          insertInitialData("t")
+          None
+        } catch {
+          case e: UnsupportedOperationException => Option(e.getMessage)
+        }
+      assert(
+        seedError.exists(_.contains(expectedError)),
+        s"expected '$expectedError', got: $seedError")
+      false
+    } else {
+      insertInitialData("t")
+      true
+    }
+  }
+
+  /**
+   * Runs `body` against a fresh managed catalog table `t` already holding `(1, 100)`, optionally
+   * enabling column mapping or type widening. Returns without running `body` when STRICT rejects
+   * the seed write to a column-mapped table.
+   */
+  protected def withInitialTable(
+      columnMapping: Boolean = false,
+      typeWidening: Boolean = false)(body: String => Unit): Unit =
+    withTable("t") {
+      spark.sql(
+        "CREATE TABLE t (id INT, salary INT) USING delta" +
+        tableProperties(columnMapping, typeWidening))
+      if (seedInitialRow(columnMapping)) {
+        body("t")
+      }
+    }
+
+  /**
+   * Runs `body` against a fresh external catalog table `t` already holding `(1, 100)`, optionally
+   * enabling column mapping or type widening, passing the table's storage path so the body can
+   * stage external commits there before re-reading. Returns without running `body` when STRICT
+   * rejects the seed write to a column-mapped table.
+   */
+  protected def withExternalTable(
+      columnMapping: Boolean = false,
+      typeWidening: Boolean = false)(body: String => Unit): Unit = {
+    val dir = Files.createTempDirectory("refresh-ext").toFile
+    try {
+      withTable("t") {
+        spark.sql(
+          s"CREATE TABLE t (id INT, salary INT) USING delta LOCATION '${dir.getAbsolutePath}'" +
+          tableProperties(columnMapping, typeWidening))
+        if (seedInitialRow(columnMapping)) {
+          body(dir.getAbsolutePath)
+        }
       }
     } finally {
       deleteRecursively(dir)
@@ -226,5 +305,48 @@ trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
   protected def externalDropAndRecreate(path: String): Unit = {
     val recreatedMeta = metadataLineWithNewId(latestMetadataLine(path))
     writeCommit(path, removeActiveFiles(path) :+ recreatedMeta)
+  }
+
+  private val MaxColumnIdRegex =
+    """"delta\.columnMapping\.maxColumnId"\s*:\s*"(\d+)"""".r
+
+  /** Drops a top level column by rewriting the metadata schema with the column removed. */
+  protected def externalDropColumn(path: String, col: String): Unit = {
+    val newSchema = StructType(currentSchema(path).filterNot(_.name == col))
+    writeCommit(path, Seq(metadataLineWithSchema(latestMetadataLine(path), newSchema)))
+  }
+
+  /** Changes a column's type by rewriting the metadata schema (e.g. INT widened to BIGINT). */
+  protected def externalChangeColumnType(path: String, col: String, newType: DataType): Unit = {
+    val newSchema = StructType(currentSchema(path).map { f =>
+      if (f.name == col) f.copy(dataType = newType) else f
+    })
+    writeCommit(path, Seq(metadataLineWithSchema(latestMetadataLine(path), newSchema)))
+  }
+
+  /**
+   * Drops `col` then re-adds it with the same name and `newType`. The re-added column gets a fresh
+   * column-mapping id and physical name (and bumps `maxColumnId`), mirroring what Delta does for a
+   * real DROP then ADD COLUMN on a column-mapping table.
+   */
+  protected def externalDropAndReAddColumn(path: String, col: String, newType: DataType): Unit = {
+    val meta = latestMetadataLine(path)
+    val maxId = MaxColumnIdRegex.findFirstMatchIn(meta).map(_.group(1).toInt).getOrElse(
+      throw new RuntimeException("Table is not column-mapping enabled"))
+    val newId = maxId + 1
+    val reAdded = new StructField(
+      col,
+      newType,
+      nullable = true,
+      new MetadataBuilder()
+        .putLong("delta.columnMapping.id", newId)
+        .putString("delta.columnMapping.physicalName", s"col-${UUID.randomUUID()}")
+        .build())
+    val newSchema = StructType(currentSchema(path).fields.filterNot(_.name == col) :+ reAdded)
+    val withSchema = metadataLineWithSchema(meta, newSchema)
+    val withBumpedMaxId = MaxColumnIdRegex.replaceFirstIn(
+      withSchema,
+      java.util.regex.Matcher.quoteReplacement(s""""delta.columnMapping.maxColumnId":"$newId""""))
+    writeCommit(path, Seq(withBumpedMaxId))
   }
 }

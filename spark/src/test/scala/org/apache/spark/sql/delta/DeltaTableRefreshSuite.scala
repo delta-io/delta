@@ -16,7 +16,8 @@
 
 package org.apache.spark.sql.delta
 
-import io.delta.tables.shared.{DeltaCacheTableTests, DeltaRepeatedAccessRefreshTests}
+import io.delta.tables.shared.{
+  DeltaCacheTableTests, DeltaRepeatedAccessRefreshTests, DeltaTempViewStoredPlanRefreshTests}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
@@ -30,7 +31,8 @@ trait DeltaTableRefreshSuiteBase
   with SharedSparkSession
   with DeltaSQLCommandTest
   with DeltaRepeatedAccessRefreshTests
-  with DeltaCacheTableTests {
+  with DeltaCacheTableTests
+  with DeltaTempViewStoredPlanRefreshTests {
 
   override protected def sparkConf: SparkConf = {
     super.sparkConf
