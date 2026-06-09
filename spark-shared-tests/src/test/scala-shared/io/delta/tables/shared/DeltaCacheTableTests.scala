@@ -145,9 +145,9 @@ trait DeltaCacheTableTests
       (sparkVersionBucket, v2EnableMode) match {
         case ("4.2+", "STRICT") | ("4.2+", "AUTO") | ("4.1", "STRICT") | ("4.1", "AUTO") =>
           // 4.1 and 4.2+: the cache is pinned so the drop and recreate is invisible until REFRESH
-          // TABLE. This mirrors SPARK-54022's caching-connector case, not the regular catalog where
-          // the drop and recreate yields a new table identity that makes the cache entry unreachable
-          // and reads empty immediately.
+          // TABLE. This mirrors SPARK-54022's caching-connector case, not the regular catalog
+          // where the drop and recreate yields a new table identity that makes the cache entry
+          // unreachable and reads empty immediately.
           // TODO: once [[DeltaV2Table]] implements [[Table.id]], the recreated table reports a new
           // identity, so Spark treats it as a different table and the cache entry becomes
           // unreachable. STRICT would then read the now empty table immediately ([[Seq.empty]]),
