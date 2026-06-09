@@ -339,9 +339,10 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       // TODO: Spark `V2SessionCatalog` mistakenly treat tables with location as EXTERNAL table.
       //       Before this bug is fixed, we should only call the catalog plugin API to create tables
       //       if UC is enabled to replace `V2SessionCatalog`.
-      createTableFunc = Option.when(isUnityCatalog) { (params: CreateTableFuncParams) =>
-        val v1Table = params.v1Table
-        val snapshot = params.snapshot
+      createTableFunc = Option.when(isUnityCatalog) {
+        (params: CreateTableFuncParams) => {
+          val v1Table = params.v1Table
+          val snapshot = params.snapshot
           // Route to the deltaCatalogClient only for MANAGED Delta creates when this client is
           // wired in. EXTERNAL Delta and the no-client case stay on the legacy `super.createTable`
           // path so existing behavior is preserved.
@@ -359,6 +360,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
               val t = V1Table(v1Table)
               super.createTable(ident, t.columns(), t.partitioning, t.properties)
           }
+        }
       }).run(spark)
 
     loadTable(ident)
