@@ -883,9 +883,9 @@ Field Name | Data Type | Description | optional/required
 version|`Long`|The checkpoint version.| required
 tags|`Map[String, String]`|Map containing any additional metadata about the v2 spec checkpoint.| optional
 
-##### Well-Known Checkpoint Metadata Tags
+##### Checkpoint Metadata Tags
 
-The following tag keys are well-known and may be present in the `tags` map. All are optional.
+The following tag keys may be present in the `tags` map. All are optional, so there is no requirement for writers to produce these and readers cannot assume their presence.
 
 Tag Key | Value Type | Description
 -|-|-
