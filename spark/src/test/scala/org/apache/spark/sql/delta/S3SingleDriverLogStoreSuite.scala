@@ -46,7 +46,7 @@ trait S3SingleDriverLogStoreSuiteBase extends LogStoreSuiteBase {
     "fs.fake.impl" -> classOf[FakeFileSystem].getName,
     "fs.fake.impl.disable.cache" -> "true")
 
-  test("file system has priority over cache") {
+  test("file system writes are visible without invalidateCache") {
     withTempDir { dir =>
       val store = createLogStore(spark)
       val deltas = Seq(0, 1, 2).map(i => FileNames.unsafeDeltaFile(new Path(dir.toURI), i))
