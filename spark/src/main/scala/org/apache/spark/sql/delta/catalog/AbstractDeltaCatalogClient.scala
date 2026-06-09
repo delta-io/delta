@@ -20,8 +20,6 @@ import io.delta.storage.commit.uniform.UniformMetadata
 
 import java.util
 
-import io.delta.storage.commit.uniform.UniformMetadata
-
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.connector.catalog.{Identifier, Table}
