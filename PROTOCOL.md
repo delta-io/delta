@@ -87,7 +87,7 @@
   - [Reader Requirements for Catalog-managed tables](#reader-requirements-for-catalog-managed-tables)
   - [Table Discovery](#table-discovery)
   - [Sample Catalog Client API](#sample-catalog-client-api)
-- [Requirements for Writers](#requirements-for-writers)
+- [Additional Requirements for Writers](#additional-requirements-for-writers)
   - [Creation of New Log Entries](#creation-of-new-log-entries)
   - [Consistency Between Table Metadata and Data Files](#consistency-between-table-metadata-and-data-files)
   - [Delta Log Entries](#delta-log-entries-1)
@@ -2124,14 +2124,14 @@ When Type Widening is supported (when the `readerFeatures` field of a table's `p
 - Readers must allow reading data files written before the table underwent any supported type change, and must convert such values to the current, wider type.
 - Readers must validate that they support all type changes in the `delta.typeChanges` field in the table schema for the table version they are reading and fail when finding any unsupported type change.
 
-# Requirements for Writers
+# Additional Requirements for Writers
 This section documents additional requirements that writers must follow in order to preserve some of the higher level guarantees that Delta provides.
 
 ## Creation of New Log Entries
  - Writers MUST never overwrite an existing log entry. When ever possible they should use atomic primitives of the underlying filesystem to ensure concurrent writers do not overwrite each other's entries.
 
 ## Consistency Between Table Metadata and Data Files
- - Any column that exists in a data file present in the table MUST also be present in the metadata of the table.
+ - Any data file column that exists in the table schema MUST have the same type (except as allowed by the [Type Widening](#type-widening) table feature, if enabled).
  - Values for all partition columns present in the schema MUST be present for all files in the table.
  - Columns present in the schema of the table MAY be missing from data files. Readers SHOULD fill these missing columns in with `null`.
 
