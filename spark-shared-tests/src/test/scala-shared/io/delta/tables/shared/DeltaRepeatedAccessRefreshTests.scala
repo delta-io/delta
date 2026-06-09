@@ -27,10 +27,6 @@ import org.apache.spark.sql.{AnalysisException, Row}
 trait DeltaRepeatedAccessRefreshTests
   extends DeltaTableRefreshSharedBase { self: AnyFunSuite =>
 
-  /** Asserts the full table contents (ordered by id) match `expectedRows`. */
-  private def assertFinalTableState(tableRef: String, expectedRows: Seq[Row]): Unit =
-    checkAnswer(spark.sql(s"SELECT * FROM $tableRef ORDER BY id"), expectedRows)
-
   // Scenario 1: data changes via writes
 
   test("scenario 1: repeated sql() reflects session write") {
