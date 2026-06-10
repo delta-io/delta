@@ -1,0 +1,111 @@
+name: "Integration Tests (Release Validation)"
+
+on:
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - '**.txt'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  SBT_OPTS: "-Dsbt.coursier.home-dir=/home/runner/.cache/coursier -Dsbt.ivy.home=/home/runner/.ivy2"
+
+jobs:
+  generate-spark-info:
+    name: "Generate Spark Version Info"
+    runs-on: ubuntu-24.04
+    outputs:
+      spark_full_version_list: ${{ steps.generate.outputs.spark_full_version_list }}
+      spark_version_cache_key: ${{ steps.generate.outputs.spark_version_cache_key }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: "zulu"
+          java-version: "17"
+      - name: Generate Spark version info
+        id: generate
+        run: |
+          RELEASED=$(python3 project/scripts/get_spark_version_info.py --released-spark-versions)
+          FULL_VERSION_LIST="[]"
+          for SHORT in $(echo "$RELEASED" | jq -r '.[]'); do
+            FULL=$(python3 project/scripts/get_spark_version_info.py --get-field "$SHORT" fullVersion | jq -r)
+            FULL_VERSION_LIST=$(echo "$FULL_VERSION_LIST" | jq -c --arg v "$FULL" '. + [$v]')
+          done
+          echo "spark_full_version_list=$FULL_VERSION_LIST" >> $GITHUB_OUTPUT
+          echo "Full version list: $FULL_VERSION_LIST"
+          CACHE_KEY=$(echo "$FULL_VERSION_LIST" | jq -r '[.[]] | join("-")')
+          echo "spark_version_cache_key=$CACHE_KEY" >> $GITHUB_OUTPUT
+
+  scala-python-integration:
+    name: "Scala + Python Integration"
+    needs: generate-spark-info
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: "zulu"
+          java-version: "17"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Cache SBT and dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2/cache
+            ~/.coursier/cache
+            ~/.cache/coursier
+          key: sbt-integration-scala-python-${{ runner.os }}
+      - name: Cache Spark distributions
+        uses: actions/cache@v4
+        with:
+          path: ~/spark-*-bin-hadoop3
+          key: spark-dist-${{ runner.os }}-${{ needs.generate-spark-info.outputs.spark_version_cache_key }}
+      - name: Download Spark distributions
+        run: |
+          for full_spark_version in $(echo '${{ needs.generate-spark-info.outputs.spark_full_version_list }}' | jq -r '.[]'); do
+            bash project/scripts/install-spark.sh "$full_spark_version"
+          done
+      - name: Run Scala + Python integration tests
+        run: python run-integration-tests.py --use-local --no-pip
+
+  iceberg-integration:
+    name: "Iceberg Integration"
+    needs: generate-spark-info
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: "zulu"
+          java-version: "17"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Cache SBT and dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2/cache
+            ~/.coursier/cache
+            ~/.cache/coursier
+          key: sbt-integration-iceberg-${{ runner.os }}
+      - name: Cache Spark distributions
+        uses: actions/cache@v4
+        with:
+          path: ~/spark-*-bin-hadoop3
+          key: spark-dist-${{ runner.os }}-${{ needs.generate-spark-info.outputs.spark_version_cache_key }}
+      - name: Download Spark distributions
+        run: |
+          for full_spark_version in $(echo '${{ needs.generate-spark-info.outputs.spark_full_version_list }}' | jq -r '.[]'); do
+            bash project/scripts/install-spark.sh "$full_spark_version"
+          done
+      - name: Run Iceberg integration tests
+        run: python run-integration-tests.py --use-local --run-iceberg-integration-tests --iceberg-lib-version 1.10.1
