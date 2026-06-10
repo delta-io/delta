@@ -54,9 +54,14 @@ class ParquetTable(
   }
 
   protected lazy val serializableConf: SerializableConfiguration = {
-    // scalastyle:off deltahadoopconfiguration
     val sqlConf = spark.sessionState.conf
+    // scalastyle:off deltahadoopconfiguration
     val hadoopConf = spark.sessionState.newHadoopConf()
+    // scalastyle:on deltahadoopconfiguration
+
+    // ParquetToSparkSchemaConverter(Configuration) requires these SQLConf values to be
+    // present in the Hadoop conf. newHadoopConf only includes SQL configs explicitly set
+    // by the user, so copy the required values here just like Spark's Parquet reader does.
     hadoopConf.setBoolean(SQLConf.PARQUET_BINARY_AS_STRING.key, sqlConf.isParquetBinaryAsString)
     hadoopConf.setBoolean(SQLConf.PARQUET_INT96_AS_TIMESTAMP.key, sqlConf.isParquetINT96AsTimestamp)
     hadoopConf.setBoolean(SQLConf.CASE_SENSITIVE.key, sqlConf.caseSensitiveAnalysis)
@@ -66,11 +71,7 @@ class ParquetTable(
     hadoopConf.setBoolean(
       SQLConf.LEGACY_PARQUET_NANOS_AS_LONG.key,
       sqlConf.legacyParquetNanosAsLong)
-    hadoopConf.setBoolean(
-      SQLConf.PARQUET_FIELD_ID_READ_ENABLED.key,
-      sqlConf.parquetFieldIdReadEnabled)
     new SerializableConfiguration(hadoopConf)
-    // scalastyle:on deltahadoopconfiguration
   }
 
   override val partitionSchema: StructType = {
