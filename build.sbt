@@ -1833,6 +1833,13 @@ lazy val releaseSettings = Seq(
   releasePublishArtifactsAction := PgpKeys.publishSigned.value,
   releaseCrossBuild := true,
   pgpPassphrase := sys.env.get("PGP_PASSPHRASE").map(_.toArray),
+  // Allow local Maven overwrites for release versions. The cross-Spark publish workflow
+  // publishes modules like delta-contribs (no Spark suffix) in both the backward-compat
+  // step and the per-version steps, producing identical artifacts. SBT 1.9+ blocks
+  // overwriting release artifacts by default; this restores the prior behavior for local
+  // publishing only (remote publish via publishSigned is unaffected).
+  publishLocalConfiguration := publishLocalConfiguration.value.withOverwrite(true),
+  publishM2Configuration := publishM2Configuration.value.withOverwrite(true),
 
   // TODO: This isn't working yet ...
   sonatypeProfileName := "io.delta", // sonatype account domain name prefix / group ID
