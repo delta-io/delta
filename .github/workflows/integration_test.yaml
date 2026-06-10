@@ -14,36 +14,22 @@ env:
   SBT_OPTS: "-Dsbt.coursier.home-dir=/home/runner/.cache/coursier -Dsbt.ivy.home=/home/runner/.ivy2"
 
 jobs:
-  generate-spark-info:
-    name: "Generate Spark Version Info"
-    runs-on: ubuntu-24.04
-    outputs:
-      spark_full_version_list: ${{ steps.generate.outputs.spark_full_version_list }}
-      spark_version_cache_key: ${{ steps.generate.outputs.spark_version_cache_key }}
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
-        with:
-          distribution: "zulu"
-          java-version: "17"
-      - name: Generate Spark version info
-        id: generate
-        run: |
-          RELEASED=$(python3 project/scripts/get_spark_version_info.py --released-spark-versions)
-          FULL_VERSION_LIST="[]"
-          for SHORT in $(echo "$RELEASED" | jq -r '.[]'); do
-            FULL=$(python3 project/scripts/get_spark_version_info.py --get-field "$SHORT" fullVersion | jq -r)
-            FULL_VERSION_LIST=$(echo "$FULL_VERSION_LIST" | jq -c --arg v "$FULL" '. + [$v]')
-          done
-          echo "spark_full_version_list=$FULL_VERSION_LIST" >> $GITHUB_OUTPUT
-          echo "Full version list: $FULL_VERSION_LIST"
-          CACHE_KEY=$(echo "$FULL_VERSION_LIST" | jq -r '[.[]] | join("-")')
-          echo "spark_version_cache_key=$CACHE_KEY" >> $GITHUB_OUTPUT
-
   scala-python-integration:
-    name: "Scala + Python Integration"
-    needs: generate-spark-info
+    name: "Scala + Python Integration / Spark ${{ matrix.spark_version }}"
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - spark_version: "4.0.1"
+            spark_major_minor: "4.0"
+          - spark_version: "4.1.0"
+            spark_major_minor: "4.1"
+          - spark_version: "4.1.2"
+            spark_major_minor: "4.1"
+    env:
+      SPARK_VERSION: ${{ matrix.spark_version }}
+      SPARK_MAJOR_MINOR: ${{ matrix.spark_major_minor }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
@@ -61,24 +47,25 @@ jobs:
             ~/.ivy2/cache
             ~/.coursier/cache
             ~/.cache/coursier
-          key: sbt-integration-scala-python-${{ runner.os }}
+          key: sbt-integration-scala-python-${{ runner.os }}-${{ matrix.spark_version }}
       - name: Cache Spark distributions
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/spark-*-bin-hadoop3
-          key: spark-dist-${{ runner.os }}-${{ needs.generate-spark-info.outputs.spark_version_cache_key }}
+          key: spark-dist-${{ runner.os }}-${{ matrix.spark_version }}
+      - name: Set up pinned Unity Catalog
+        uses: ./.github/actions/setup-unitycatalog
       - name: Download Spark distributions
-        run: |
-          for full_spark_version in $(echo '${{ needs.generate-spark-info.outputs.spark_full_version_list }}' | jq -r '.[]'); do
-            bash project/scripts/install-spark.sh "$full_spark_version"
-          done
+        run: bash project/scripts/install-spark.sh "${SPARK_VERSION}"
       - name: Run Scala + Python integration tests
-        run: python run-integration-tests.py --use-local --no-pip
+        run: python run-integration-tests.py --use-local --no-pip --spark-version "${SPARK_VERSION}"
 
   iceberg-integration:
-    name: "Iceberg Integration"
-    needs: generate-spark-info
+    name: "Iceberg Integration / Spark 4.0.1"
     runs-on: ubuntu-24.04
+    env:
+      SPARK_VERSION: "4.0.1"
+      SPARK_MAJOR_MINOR: "4.0"
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
@@ -96,22 +83,20 @@ jobs:
             ~/.ivy2/cache
             ~/.coursier/cache
             ~/.cache/coursier
-          key: sbt-integration-iceberg-${{ runner.os }}
+          key: sbt-integration-iceberg-${{ runner.os }}-4.0.1
       - name: Cache Spark distributions
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/spark-*-bin-hadoop3
-          key: spark-dist-${{ runner.os }}-${{ needs.generate-spark-info.outputs.spark_version_cache_key }}
+          key: spark-dist-${{ runner.os }}-4.0.1
+      - name: Set up pinned Unity Catalog
+        uses: ./.github/actions/setup-unitycatalog
       - name: Download Spark distributions
-        run: |
-          for full_spark_version in $(echo '${{ needs.generate-spark-info.outputs.spark_full_version_list }}' | jq -r '.[]'); do
-            bash project/scripts/install-spark.sh "$full_spark_version"
-          done
+        run: bash project/scripts/install-spark.sh "${SPARK_VERSION}"
       - name: Run Iceberg integration tests
-        run: |
-          build/sbt exportSparkVersionsJson
-          tmp_json=$(mktemp)
-          jq 'map(.supportIceberg = (if .shortVersion == "4.0" then "true" else "false" end))' \
-            target/spark-versions.json > "$tmp_json"
-          mv "$tmp_json" target/spark-versions.json
-          python run-integration-tests.py --use-local --run-iceberg-integration-tests --iceberg-lib-version 1.10.1
+        run: >
+          python run-integration-tests.py
+          --use-local
+          --run-iceberg-integration-tests
+          --spark-version "${SPARK_VERSION}"
+          --iceberg-lib-version 1.10.1

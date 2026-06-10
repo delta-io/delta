@@ -23,6 +23,9 @@ case "$full_spark_version" in
   4.1.0)
     TARBALL_SHA512="fff7f929d98779b096a2d2395b1b9db1ce277660f3852dd45e1457c373013f2669074315252181a3cea291d8f3a726c70f7f9b247e723edbf8080f40888edde1"
     ;;
+  4.1.2)
+    TARBALL_SHA512="490510e13e97da9493302bb33a802574bc417fcc107441419d1a0f87f2b372000db6e26f831a2bf92bc4b18bdf2c9023b1b6f2d021afdc7d6c19c8a11c03e685"
+    ;;
   *)
     echo "ERROR: No hardened SHA512 for Spark ${full_spark_version}." >&2
     echo "Add the checksum from: https://archive.apache.org/dist/spark/spark-${full_spark_version}/spark-${full_spark_version}-bin-hadoop3.tgz.sha512" >&2
