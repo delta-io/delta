@@ -22,6 +22,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 import scala.jdk.CollectionConverters._
 import scala.jdk.OptionConverters._
+import scala.util.control.NonFatal
 
 import io.delta.storage.commit.{TableIdentifier => StorageTableIdentifier}
 import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractProtocol}
@@ -45,7 +46,7 @@ import org.apache.spark.sql.catalyst.catalog.{
   CatalogTableType
 }
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, Table, TableCatalog, V1Table}
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, ClusteringTableFeature, DeltaConfigs, DeltaErrors, DeltaThrowable, TableFeature}
+import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, ClusteringTableFeature, DeltaConfigs, DeltaErrors, MaterializedRowCommitVersion, MaterializedRowId, TableFeature}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, DomainMetadata, Metadata, Protocol, RemoveFile, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED
 import org.apache.spark.sql.delta.coordinatedcommits.UCTokenBasedRestClientFactory
@@ -168,50 +169,91 @@ private[catalog] class UCDeltaCatalogClientImpl(
   private def lower(key: String) = key.toLowerCase(java.util.Locale.ROOT)
 
   /**
-   * Lower case keys of all table properties that should be skipped instead of carrying forward to
-   * the REPLACE-ed table.
+   * Lower case keys of `delta.*` properties to skip instead of carrying forward on REPLACE. Delta
+   * manages each of these itself on the commit, so a carried value would be stale, conflicting, or
+   * simply ignored -- whether recomputed from other state, derived from the feature set, or
+   * re-applied from the existing snapshot's metadata (see the per-entry reason). Properties that
+   * *define* the table's shape (table features, feature-enablement configs) are deliberately NOT
+   * here -- those must carry forward.
    */
   private val propertiesToSkipCarryForwardOnReplace = Set(
     // Clustering has DDL-only enablement (`CLUSTER BY`); carrying it as a property would
     // both throw on REPLACE (`DELTA_CREATE_TABLE_SET_CLUSTERING_TABLE_FEATURE_NOT_ALLOWED`)
     // and block legitimate transitions away from a clustered table.
     lower(TableFeatureProtocolUtils.propertyKey(ClusteringTableFeature)),
-    // delta.columnMapping.maxColumnId changes as table schema changes. Not worth carrying forward.
-    lower(DeltaConfigs.COLUMN_MAPPING_MAX_ID.key))
+    // delta.columnMapping.maxColumnId is derived from the table schema. Not worth carrying forward.
+    lower(DeltaConfigs.COLUMN_MAPPING_MAX_ID.key),
+    // Protocol versions are derived from the feature set; Delta recomputes them from the carried
+    // features, so a carried value would wrongly pin the protocol.
+    lower(DeltaConfigs.MIN_READER_VERSION.key),
+    lower(DeltaConfigs.MIN_WRITER_VERSION.key),
+    // Row-tracking materialized column names are not derived, but Delta re-applies them from the
+    // existing snapshot's metadata on commit (MaterializedRow*.updateMaterializedColumnName,
+    // overwriting any carried value), so carrying them is redundant.
+    lower(MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP),
+    lower(MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP),
+    // `delta.rowTracking.rowIdHighWaterMark` is a UC-side projection of Delta's
+    // `RowTrackingMetadataDomain` action (Delta itself stores the high water mark as domain
+    // metadata, not as a `delta.*` property -- "not recognized by this version of Delta" if
+    // injected as a property). Carrying it forward as an unknown property turns a no-op REPLACE
+    // into a real metadata update on the UC side and bumps `lastUpdateVersion`. Re-derived
+    // server-side from the post-replace snapshot's domain metadata; do not carry.
+    "delta.rowtracking.rowidhighwatermark",
+    // Metastore-only bookkeeping keys -- not real table config; re-derived by the UpdateCatalog
+    // hook from the new snapshot.
+    lower(DeltaConfigs.METASTORE_LAST_UPDATE_VERSION),
+    lower(DeltaConfigs.METASTORE_LAST_COMMIT_TIMESTAMP))
 
-  /**
-   * Returns whether `(key, value)` from an existing table's config should be carried forward
-   * when building the REPLACE-augmented property map.
-   */
-  private def isSafeToCarryForwardOnReplace(key: String, value: String): Boolean = {
+  /** Whether `key` from an existing table's config is eligible to carry forward on REPLACE. */
+  private def isSafeToCarryForwardOnReplace(key: String): Boolean = {
     val lKey = lower(key)
-    // Only `delta.*` keys are carried; non-`delta.*` user properties (e.g. `Foo=Bar`)
-    // follow normal REPLACE semantics -- the user's new TBLPROPERTIES is authoritative.
+    // Only `delta.*` keys are carried; non-`delta.*` user properties (e.g. `Foo=Bar`) follow
+    // normal REPLACE semantics where the caller's new TBLPROPERTIES is authoritative.
     if (!lKey.startsWith("delta.")) return false
     if (propertiesToSkipCarryForwardOnReplace.contains(lKey)) return false
-    // Defer remaining acceptance to Delta's own per-entry validator -- single source of truth
-    // for "would this survive the next commit". This would also filter out Delta-internal metadata
-    // like `delta.lastCommitTimestamp` (unregistered) and `delta.columnMapping.maxColumnId`
-    // (non-editable) that `validateConfigurations` would otherwise reject, if they weren't
-    // filtered out by propertiesToSkipCarryForwardOnReplace already.
-    passesDeltaConfigValidation(key, value)
+    true
+  }
+
+  /** Carries one eligible existing-table `(key, value)` into the REPLACE-augmented `augmented`. */
+  private def carryForwardExistingProperty(
+      augmented: util.Map[String, String], key: String, value: String): Unit = {
+    if (!isSafeToCarryForwardOnReplace(key)) return
+    if (passesDeltaConfigValidation(key, value)) {
+      // Recognized with a valid value: carry as-is. Caller value (if any) wins via `putIfAbsent`,
+      // and it is re-validated downstream like any other property.
+      augmented.putIfAbsent(key, value)
+    } else if (passesDeltaConfigValidation(key, value, allowArbitraryProperties = true) &&
+        !augmented.containsKey(key)) {
+      // Unknown to this Delta version (e.g. `delta.dummy_fake_key`): tag it so the create path
+      // re-injects it after `validateConfigurations`, which would otherwise reject the unknown key.
+      // Unknown keys are inert (Delta never reads them), so preserving them is safe -- but only
+      // when the caller didn't supply the key, keeping the "caller wins" precedence.
+      augmented.put(AbstractDeltaCatalogClient.CARRY_FORWARD_PREFIX + key, value)
+    }
+    // Else: a recognized key whose value this version can't parse (an organic config Delta
+    // generates/derives, e.g. `delta.columnMapping.mode` from a newer engine). Drop it and let
+    // Delta produce the value rather than injecting one it rejects. The allowArbitraryProperties
+    // check above separates this from an unknown key: it accepts unknown keys but still parses
+    // values of recognized ones.
   }
 
   /**
-   * True iff [[DeltaConfigs.validateConfiguration]] would accept `(key, value)` as a Delta
-   * table property. Wraps the validator to convert its throw-on-bad behavior into a
-   * boolean predicate.
+   * True iff [[DeltaConfigs.validateConfiguration]] accepts `(key, value)` as a Delta table
+   * property, converting its throw-on-bad behavior into a boolean.
    */
-  private def passesDeltaConfigValidation(key: String, value: String): Boolean = {
+  private def passesDeltaConfigValidation(
+      key: String, value: String, allowArbitraryProperties: Boolean = false): Boolean = {
     try {
       DeltaConfigs.validateConfiguration(
-        key, value, allowArbitraryProperties = false, allConfigurations = Map.empty)
+        key, value, allowArbitraryProperties, allConfigurations = Map.empty)
       true
     } catch {
-      // Delta's structured-error exceptions for bad keys (DELTA_UNKNOWN_CONFIGURATION,
-      // DELTA_CANNOT_MODIFY_TABLE_PROPERTY, etc.), and the raw IllegalArgumentException
-      // raised by `require(...)` in the value parser.
-      case _: DeltaThrowable | _: IllegalArgumentException =>
+      // `validateConfiguration` signals "not an acceptable Delta property" by throwing: an unknown
+      // key (DELTA_UNKNOWN_CONFIGURATION), a non-editable key, or any value-parser failure
+      // (IllegalArgumentException from `require(...)`, ColumnMappingUnsupportedException for an
+      // unknown column-mapping mode, etc.). Treat any non-fatal throw as "does not pass" rather
+      // than enumerating the parser's exception types, which has proven incomplete.
+      case NonFatal(_) =>
         logDebug(log"Skipping invalid Delta config " +
           log"'${MDC(DeltaLogKeys.CONFIG_KEY, key)}'='${MDC(DeltaLogKeys.CONFIG, value)}'.")
         false
@@ -345,11 +387,12 @@ private[catalog] class UCDeltaCatalogClientImpl(
     // Carry forward the existing table's `delta.*` properties (feature flags, checkpoint
     // policy, column-mapping mode, row-tracking state, etc.) so REPLACE doesn't silently
     // strip critical configs that downstream (Table Service / commit validation) would
-    // reject as unsupported changes. Caller-supplied TBLPROPERTIES on the REPLACE win via
-    // `putIfAbsent`. See [[isSafeToCarryForwardOnReplace]] for the carry-forward criteria.
+    // reject as unsupported changes. See [[carryForwardExistingProperty]] for how each entry
+    // is carried (recognized vs unrecognized) and the caller-wins precedence.
     Option(info.getMetadata.getConfiguration).foreach { existingConfig =>
       existingConfig.asScala.foreach { case (k, v) =>
-        if (v != null && isSafeToCarryForwardOnReplace(k, v)) augmented.putIfAbsent(k, v)
+        // `null` values are engine-generated-at-commit sentinels (see applySuggestedProperties).
+        if (v != null) carryForwardExistingProperty(augmented, k, v)
       }
     }
     // Re-emit the existing provider so downstream sees USING <provider> even if the caller

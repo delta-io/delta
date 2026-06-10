@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.UUID;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.catalyst.analysis.CannotReplaceMissingTableException;
+import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.junit.jupiter.api.Test;
 
 public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationBaseTest {
@@ -236,6 +237,75 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
             assertThat(tableProperty(fullTableName, "myapp.version")).isEqualTo("2");
           });
     }
+  }
+
+  // An existing managed table can carry `delta.*` properties this Delta build does not recognize
+  // (e.g. `delta.random`). Such keys can only be set with `allowArbitraryProperties` on, since
+  // normal validation rejects unknown `delta.*` keys.
+  // A later REPLACE that does NOT restate them -- with validation back on -- must carry them
+  // forward into the replaced table rather than dropping them or failing the REPLACE.
+  @Test
+  public void testCarryForwardOfArbitraryDeltaPropertyOnManagedReplace() throws Exception {
+    String tableName = "carry_fwd_arbitrary_" + UUID.randomUUID().toString().replace("-", "");
+    String fullTableName = fullTableName(tableName);
+    String arbitraryPropsConf = DeltaSQLConf.ALLOW_ARBITRARY_TABLE_PROPERTIES().key();
+    try {
+      // Seed the table with unknown delta.* keys -- only possible with arbitrary props allowed.
+      spark().conf().set(arbitraryPropsConf, "true");
+      sql(
+          "CREATE TABLE %s (i INT, s STRING) USING DELTA TBLPROPERTIES ("
+              + "'delta.feature.catalogManaged'='supported', "
+              + "'delta.dummy_fake_key'='dummyValue', "
+              + "'delta.random'='carried')",
+          fullTableName);
+      sql("INSERT INTO %s VALUES (1, 'old')", fullTableName);
+      long versionBefore = currentVersion(fullTableName);
+
+      // Validation back on: a bare REPLACE that doesn't restate the unknown keys must still carry
+      // them forward (they bypass validateConfigurations via the carry-forward tagging path).
+      spark().conf().set(arbitraryPropsConf, "false");
+      sql("REPLACE TABLE %s (i INT, s STRING) USING DELTA", fullTableName);
+
+      // The REPLACE actually committed and replaced the data (bare REPLACE leaves the table empty),
+      // so the property carry-forward below is asserted on the post-REPLACE table.
+      assertThat(currentVersion(fullTableName)).isEqualTo(versionBefore + 1);
+      assertThat(sql("SELECT COUNT(*) FROM %s", fullTableName)).containsExactly(row("0"));
+      // SHOW TBLPROPERTIES resolves from the Delta snapshot metadata, so this confirms the keys
+      // are persisted in the committed `Metadata.configuration`, not merely in the catalog.
+      assertThat(tableProperty(fullTableName, "delta.dummy_fake_key")).isEqualTo("dummyValue");
+      assertThat(tableProperty(fullTableName, "delta.random")).isEqualTo("carried");
+    } finally {
+      spark().conf().set(arbitraryPropsConf, "false");
+      sql("DROP TABLE IF EXISTS %s", fullTableName);
+    }
+  }
+
+  // The flip side of carry-forward: a caller that explicitly puts an unknown `delta.*` key in the
+  // REPLACE TBLPROPERTIES (with validation on) must be rejected -- only the existing table's
+  // already-committed value is grandfathered, never fresh caller input. The existing table must
+  // survive the rejected REPLACE intact.
+  @Test
+  public void testCallerSpecifiedUnknownDeltaPropertyIsRejectedOnManagedReplace() throws Exception {
+    withNewTable(
+        "reject_caller_unknown_delta",
+        "i INT, s STRING",
+        TableType.MANAGED,
+        fullTableName -> {
+          sql("INSERT INTO %s VALUES (1, 'old')", fullTableName);
+          long versionBefore = currentVersion(fullTableName);
+
+          assertThrowsWithCauseContaining(
+              "DELTA_UNKNOWN_CONFIGURATION",
+              () ->
+                  sql(
+                      "REPLACE TABLE %s (i INT, s STRING) USING DELTA TBLPROPERTIES ("
+                          + "'delta.feature.catalogManaged'='supported', 'delta.random'='x')",
+                      fullTableName));
+
+          // The rejected REPLACE must not have committed a new version.
+          assertThat(currentVersion(fullTableName)).isEqualTo(versionBefore);
+          assertThat(sql("SELECT * FROM %s", fullTableName)).containsExactly(row("1", "old"));
+        });
   }
 
   // Schema change (adding a column) during REPLACE succeeds through UC updateTable.
