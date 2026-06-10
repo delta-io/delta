@@ -903,15 +903,12 @@ object Snapshot extends DeltaLogging {
       spark: SparkSession,
       deltaLog: DeltaLog,
       file: FileStatus): (StructType, Long) = {
-    // Converter used to convert Parquet `MessageType` to Spark SQL `StructType`
-    val converter = new ParquetToSparkSchemaConverter(
-      assumeBinaryIsString = spark.sessionState.conf.isParquetBinaryAsString,
-      assumeInt96IsTimestamp = spark.sessionState.conf.isParquetINT96AsTimestamp)
-
     val conf = deltaLog.newDeltaHadoopConf()
+    // Converter used to convert Parquet `MessageType` to Spark SQL `StructType`
+    val converter = new ParquetToSparkSchemaConverter(spark.sessionState.conf)
 
     val parquetMetadata = {
-      ParquetFileReader.readFooter(deltaLog.newDeltaHadoopConf(), file.getPath)
+      ParquetFileReader.readFooter(conf, file.getPath)
     }
     val rowCount = parquetMetadata.getBlocks.asScala.map(_.getRowCount).sum
 
