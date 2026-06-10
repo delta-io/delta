@@ -32,9 +32,9 @@ import java.util.UUID;
 
 /**
  * Ported from {@code org.apache.spark.sql.delta.storage.dv.DeletionVectorStore}; layout {@code
- * [version][length BE][payload][crc32 BE]}. Supports a single DV per bin file: {@link #write}/{@link
- * #store} emit one DV at offset 1 and {@link #read} rejects any larger file rather than mis-reading
- * it.
+ * [version][length BE][payload][crc32 BE]}. Supports a single DV per bin file: {@link
+ * #write}/{@link #store} emit one DV at offset 1 and {@link #read} rejects any larger file rather
+ * than mis-reading it.
  *
  * <p>Multi-DV-per-file support (needed to modify DVs in place) is future work.
  */
@@ -91,10 +91,10 @@ public class BinDVAccess extends DVAccess {
   /**
    * Reads the single deletion vector from {@code filePath}, starting at the beginning of the file.
    *
-   * <p>Only single-DV files are supported: the file must consist of exactly {@code
-   * [version][length BE][payload][crc32 BE]} and nothing more. If the file is longer than one DV
-   * (e.g. a delta-spark bin-packed file holding multiple DVs), this throws rather than returning a
-   * truncated or wrong result. See the class Javadoc for the multi-DV limitation.
+   * <p>Only single-DV files are supported: the file must consist of exactly {@code [version][length
+   * BE][payload][crc32 BE]} and nothing more. If the file is longer than one DV (e.g. a delta-spark
+   * bin-packed file holding multiple DVs), this throws rather than returning a truncated or wrong
+   * result. See the class Javadoc for the multi-DV limitation.
    */
   @Override
   public RoaringBitmapArray read(Engine engine, String filePath) {
