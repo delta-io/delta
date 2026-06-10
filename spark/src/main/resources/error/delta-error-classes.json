@@ -438,8 +438,7 @@
   },
   "DELTA_CHANGELOG_UNSUPPORTED_OPTION" : {
     "message" : [
-      "The `<option>` option is not supported by the read-time CDC reader.",
-      "Please remove it from your query."
+      "The `<option>` option is not supported by the read-time CDC reader. Remove it from your query."
     ],
     "sqlState" : "0AKDE"
   },
