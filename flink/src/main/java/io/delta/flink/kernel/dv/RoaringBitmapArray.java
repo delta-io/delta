@@ -19,9 +19,9 @@ package io.delta.flink.kernel.dv;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.util.Collection;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import org.roaringbitmap.RoaringBitmap;
 
 /** Ported from {@code org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray}. */
