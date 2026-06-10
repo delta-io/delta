@@ -19,13 +19,16 @@ package io.delta.flink.kernel.dv;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.flink.TestHelper;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import java.io.File;
 import java.io.RandomAccessFile;
 import java.nio.file.NoSuchFileException;
+import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
 import org.junit.jupiter.api.Test;
 
@@ -159,6 +162,32 @@ class BinDVAccessTest extends TestHelper {
           RuntimeException ex =
               assertThrows(RuntimeException.class, () -> store.read(engine, filePath));
           assertContainsIgnoringWrappers(ex, "version");
+        });
+  }
+
+  @Test
+  void testStoreDescriptorContract() {
+    withTempDir(
+        dir -> {
+          BinDVAccess store = new BinDVAccess();
+          Engine engine = DefaultEngine.create(new Configuration());
+          String tableRootPath = dir.toURI().toString();
+
+          RoaringBitmapArray bitmap = RoaringBitmapArray.create(1L, 2L, 100L, (1L << 32) + 7L);
+          byte[] expectedPayload = bitmap.serializeAsByteArray();
+
+          DeletionVectorDescriptor desc = store.store(engine, tableRootPath, bitmap);
+
+          assertEquals(DeletionVectorDescriptor.PATH_DV_MARKER, desc.getStorageType());
+          assertTrue(desc.getPathOrInlineDv().contains("dv_flink_"));
+          assertTrue(desc.getPathOrInlineDv().endsWith(".bin"));
+          assertEquals(Optional.of(BinDVAccess.DV_PAYLOAD_OFFSET_IN_FILE), desc.getOffset());
+          assertEquals(expectedPayload.length, desc.getSizeInBytes());
+          assertEquals(bitmap.cardinality(), desc.getCardinality());
+
+          // File written by store() is readable via the descriptor's path.
+          RoaringBitmapArray restored = store.read(engine, desc.getPathOrInlineDv());
+          assertArrayEquals(bitmap.toArray(), restored.toArray());
         });
   }
 
