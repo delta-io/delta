@@ -108,4 +108,10 @@ jobs:
             bash project/scripts/install-spark.sh "$full_spark_version"
           done
       - name: Run Iceberg integration tests
-        run: python run-integration-tests.py --use-local --run-iceberg-integration-tests --iceberg-lib-version 1.10.1
+        run: |
+          build/sbt exportSparkVersionsJson
+          tmp_json=$(mktemp)
+          jq 'map(.supportIceberg = (if .shortVersion == "4.0" then "true" else "false" end))' \
+            target/spark-versions.json > "$tmp_json"
+          mv "$tmp_json" target/spark-versions.json
+          python run-integration-tests.py --use-local --run-iceberg-integration-tests --iceberg-lib-version 1.10.1
