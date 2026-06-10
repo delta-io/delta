@@ -37,7 +37,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-public class SparkScanTest extends DeltaV2TestBase {
+public class DeltaV2ScanTest extends DeltaV2TestBase {
 
   private static String tablePath;
   private static final String tableName = "deltatbl_partitioned";
@@ -109,8 +109,8 @@ public class SparkScanTest extends DeltaV2TestBase {
   @Test
   public void testColumnarSupportModeReturnsSupported() {
     // Table schema uses simple types (INT, STRING) which are batch-read-compatible
-    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
-    SparkScan scan = (SparkScan) builder.build();
+    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
     assertEquals(
         Scan.ColumnarSupportMode.SUPPORTED,
@@ -122,14 +122,14 @@ public class SparkScanTest extends DeltaV2TestBase {
   public void testColumnarSupportModeDoesNotTriggerPlanning() throws Exception {
     // Calling columnarSupportMode() must NOT trigger file planning (the whole point of the
     // override is to avoid the early planInputPartitions() call that PARTITION_DEFINED causes).
-    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
-    SparkScan scan = (SparkScan) builder.build();
+    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
     // Call columnarSupportMode before any planning
     scan.columnarSupportMode();
 
     // Verify the scan has not been planned yet
-    Field plannedField = SparkScan.class.getDeclaredField("planned");
+    Field plannedField = DeltaV2Scan.class.getDeclaredField("planned");
     plannedField.setAccessible(true);
     assertFalse(
         (boolean) plannedField.get(scan), "columnarSupportMode() should not trigger file planning");
@@ -160,8 +160,8 @@ public class SparkScanTest extends DeltaV2TestBase {
                         Identifier.of(new String[] {"spark_catalog", "default"}, mapTableName),
                         path,
                         options);
-                SparkScanBuilder builder = (SparkScanBuilder) mapTable.newScanBuilder(options);
-                SparkScan scan = (SparkScan) builder.build();
+                DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) mapTable.newScanBuilder(options);
+                DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
                 assertEquals(
                     Scan.ColumnarSupportMode.UNSUPPORTED,
@@ -180,8 +180,8 @@ public class SparkScanTest extends DeltaV2TestBase {
         "spark.sql.parquet.enableVectorizedReader",
         "false",
         () -> {
-          SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
-          SparkScan scan = (SparkScan) builder.build();
+          DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+          DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
           assertEquals(
               Scan.ColumnarSupportMode.UNSUPPORTED,
@@ -192,7 +192,7 @@ public class SparkScanTest extends DeltaV2TestBase {
 
   @Test
   public void testColumnarSupportModeWithMetadataColumnPruned() {
-    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
     StructType prunedSchema =
         new StructType()
             .add("name", DataTypes.StringType)
@@ -202,7 +202,7 @@ public class SparkScanTest extends DeltaV2TestBase {
             .add("part", DataTypes.IntegerType);
     builder.pruneColumns(prunedSchema);
 
-    SparkScan scan = (SparkScan) builder.build();
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
     assertEquals(
         Scan.ColumnarSupportMode.UNSUPPORTED,
@@ -234,8 +234,8 @@ public class SparkScanTest extends DeltaV2TestBase {
                   Identifier.of(new String[] {"spark_catalog", "default"}, dvTableName),
                   dvPath,
                   options);
-          SparkScanBuilder builder = (SparkScanBuilder) dvTable.newScanBuilder(options);
-          SparkScan scan = (SparkScan) builder.build();
+          DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) dvTable.newScanBuilder(options);
+          DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
           // DV-enabled table with simple types should still return SUPPORTED because the
           // DV column (ByteType) is batch-compatible
@@ -253,8 +253,8 @@ public class SparkScanTest extends DeltaV2TestBase {
 
   @Test
   public void testGetDataSchemaPartitionSchemaReadDataSchemaOptionsConfiguration() {
-    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
-    SparkScan scan = (SparkScan) builder.build();
+    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
     // Table schema: (part INT, date STRING, city STRING, name STRING, cnt INT)
     // Partition columns: (date STRING, city STRING, part INT)
@@ -304,8 +304,8 @@ public class SparkScanTest extends DeltaV2TestBase {
 
   @Test
   public void testGetTablePathReturnsTablePath() {
-    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
-    SparkScan scan = (SparkScan) builder.build();
+    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
     String retrievedPath = scan.getTablePath();
     assertNotNull(retrievedPath, "getTablePath should not return null");
@@ -326,8 +326,8 @@ public class SparkScanTest extends DeltaV2TestBase {
     optionsWithHadoop.put("dfs.replication", "2");
     CaseInsensitiveStringMap optionsWithHadoopMap = new CaseInsensitiveStringMap(optionsWithHadoop);
 
-    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(optionsWithHadoopMap);
-    SparkScan scan = (SparkScan) builder.build();
+    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(optionsWithHadoopMap);
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
     Configuration configuration = scan.getConfiguration();
 
     assertEquals(
@@ -342,7 +342,7 @@ public class SparkScanTest extends DeltaV2TestBase {
 
   @Test
   public void testGetReadDataSchemaWithColumnPruning() {
-    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
 
     StructType prunedSchema =
         new StructType()
@@ -352,7 +352,7 @@ public class SparkScanTest extends DeltaV2TestBase {
             .add("part", DataTypes.IntegerType);
     builder.pruneColumns(prunedSchema);
 
-    SparkScan scan = (SparkScan) builder.build();
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
     StructType dataSchema = scan.getDataSchema();
     StructType readDataSchema = scan.getReadDataSchema();
@@ -492,9 +492,9 @@ public class SparkScanTest extends DeltaV2TestBase {
       List<String> remainingPartitionValueAfterDpp)
       throws Exception {
     ScanBuilder newBuilder = table.newScanBuilder(scanOptions);
-    SparkScanBuilder builder = (SparkScanBuilder) newBuilder;
+    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) newBuilder;
     Scan scan = builder.build();
-    SparkScan sparkScan = (SparkScan) scan;
+    DeltaV2Scan sparkScan = (DeltaV2Scan) scan;
 
     List<PartitionedFile> beforeDppFiles = getPartitionedFiles(sparkScan);
     // make a copy for comparison after DPP
@@ -531,44 +531,44 @@ public class SparkScanTest extends DeltaV2TestBase {
     assertEquals(afterDppTotalBytes, afterDppEstimatedSize);
   }
 
-  private static List<PartitionedFile> getPartitionedFiles(SparkScan scan) throws Exception {
+  private static List<PartitionedFile> getPartitionedFiles(DeltaV2Scan scan) throws Exception {
     scan.estimateStatistics(); // ensurePlanned
-    Field field = SparkScan.class.getDeclaredField("partitionedFiles");
+    Field field = DeltaV2Scan.class.getDeclaredField("partitionedFiles");
     field.setAccessible(true);
     return (List<PartitionedFile>) field.get(scan);
   }
 
-  private static long getTotalBytes(SparkScan scan) throws Exception {
+  private static long getTotalBytes(DeltaV2Scan scan) throws Exception {
     scan.estimateStatistics(); // ensurePlanned
-    Field field = SparkScan.class.getDeclaredField("totalBytes");
+    Field field = DeltaV2Scan.class.getDeclaredField("totalBytes");
     field.setAccessible(true);
     return (long) field.get(scan);
   }
 
-  private static long getEstimatedSizeInBytes(SparkScan scan) throws Exception {
+  private static long getEstimatedSizeInBytes(DeltaV2Scan scan) throws Exception {
     scan.estimateStatistics(); // ensurePlanned
-    Field field = SparkScan.class.getDeclaredField("estimatedSizeInBytes");
+    Field field = DeltaV2Scan.class.getDeclaredField("estimatedSizeInBytes");
     field.setAccessible(true);
     return (long) field.get(scan);
   }
 
-  private static org.apache.spark.sql.sources.Filter[] getDataFilters(SparkScan scan)
+  private static org.apache.spark.sql.sources.Filter[] getDataFilters(DeltaV2Scan scan)
       throws Exception {
-    Field field = SparkScan.class.getDeclaredField("dataFilters");
+    Field field = DeltaV2Scan.class.getDeclaredField("dataFilters");
     field.setAccessible(true);
     return (org.apache.spark.sql.sources.Filter[]) field.get(scan);
   }
 
-  private static long getTotalRows(SparkScan scan) throws Exception {
+  private static long getTotalRows(DeltaV2Scan scan) throws Exception {
     scan.estimateStatistics(); // ensurePlanned
-    Field field = SparkScan.class.getDeclaredField("totalRows");
+    Field field = DeltaV2Scan.class.getDeclaredField("totalRows");
     field.setAccessible(true);
     return (long) field.get(scan);
   }
 
-  private static boolean isRowCountKnown(SparkScan scan) throws Exception {
+  private static boolean isRowCountKnown(DeltaV2Scan scan) throws Exception {
     scan.estimateStatistics(); // ensurePlanned
-    Field field = SparkScan.class.getDeclaredField("rowCountKnown");
+    Field field = DeltaV2Scan.class.getDeclaredField("rowCountKnown");
     field.setAccessible(true);
     return (boolean) field.get(scan);
   }
@@ -581,8 +581,8 @@ public class SparkScanTest extends DeltaV2TestBase {
   public void testNumRowsEmptyWhenStatsDisabled() throws Exception {
     // With CBO and planStats disabled (the default), numRows() should return empty even when all
     // files have stats, matching V1 behavior (LogicalRelation.computeStats()).
-    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
-    SparkScan scan = (SparkScan) builder.build();
+    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
     assertFalse(
         isRowCountKnown(scan), "rowCountKnown should be false when CBO and planStats are disabled");
@@ -598,8 +598,8 @@ public class SparkScanTest extends DeltaV2TestBase {
         "spark.sql.cbo.planStats.enabled",
         "true",
         () -> {
-          SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
-          SparkScan scan = (SparkScan) builder.build();
+          DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+          DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
           assertTrue(isRowCountKnown(scan), "Row count should be known when all files have stats");
           assertEquals(5L, getTotalRows(scan), "Total rows should match the 5 inserted rows");
@@ -617,8 +617,8 @@ public class SparkScanTest extends DeltaV2TestBase {
         "spark.sql.cbo.planStats.enabled",
         "true",
         () -> {
-          SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
-          SparkScan scan = (SparkScan) builder.build();
+          DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+          DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
           assertEquals(
               5L, scan.estimateStatistics().numRows().getAsLong(), "5 rows before filtering");
@@ -644,8 +644,8 @@ public class SparkScanTest extends DeltaV2TestBase {
         "spark.sql.cbo.planStats.enabled",
         "true",
         () -> {
-          SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
-          SparkScan scan = (SparkScan) builder.build();
+          DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+          DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
           scan.filter(new Predicate[] {negativeCityPredicate}); // city=zz doesn't exist
 
@@ -685,8 +685,8 @@ public class SparkScanTest extends DeltaV2TestBase {
           "spark.sql.cbo.planStats.enabled",
           "true",
           () -> {
-            SparkScanBuilder builder = (SparkScanBuilder) mixedStatsTable.newScanBuilder(options);
-            SparkScan scan = (SparkScan) builder.build();
+            DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) mixedStatsTable.newScanBuilder(options);
+            DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
             assertFalse(
                 isRowCountKnown(scan), "rowCountKnown should be false when some files lack stats");
@@ -709,8 +709,8 @@ public class SparkScanTest extends DeltaV2TestBase {
     cdcOptions.put("readChangeFeed", "true");
     CaseInsensitiveStringMap cdcOptionsMap = new CaseInsensitiveStringMap(cdcOptions);
 
-    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(cdcOptionsMap);
-    SparkScan scan = (SparkScan) builder.build();
+    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(cdcOptionsMap);
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
     StructType schema = scan.readSchema();
 
@@ -735,8 +735,8 @@ public class SparkScanTest extends DeltaV2TestBase {
   @Test
   public void testReadSchema_nonCdcRead_returnsDataAndPartitionSchema() {
     // Without readChangeFeed, readSchema() returns readDataSchema + partitionSchema.
-    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
-    SparkScan scan = (SparkScan) builder.build();
+    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
     StructType schema = scan.readSchema();
 
@@ -760,7 +760,7 @@ public class SparkScanTest extends DeltaV2TestBase {
     cdcOptions.put("readChangeFeed", "true");
     CaseInsensitiveStringMap cdcOptionsMap = new CaseInsensitiveStringMap(cdcOptions);
 
-    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(cdcOptionsMap);
+    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(cdcOptionsMap);
     StructType requiredSchema =
         new StructType()
             .add("name", DataTypes.StringType)
@@ -770,7 +770,7 @@ public class SparkScanTest extends DeltaV2TestBase {
             .add("date", DataTypes.StringType);
     builder.pruneColumns(requiredSchema);
 
-    SparkScan scan = (SparkScan) builder.build();
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
     // readDataSchema reflects pruning: only "name" remains (cnt dropped, partition + CDC filtered)
     StructType readDataSchema = scan.getReadDataSchema();
@@ -794,8 +794,8 @@ public class SparkScanTest extends DeltaV2TestBase {
     cdcOptions.put("readChangeFeed", "true");
     CaseInsensitiveStringMap cdcOptionsMap = new CaseInsensitiveStringMap(cdcOptions);
 
-    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(cdcOptionsMap);
-    SparkScan scan = (SparkScan) builder.build();
+    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(cdcOptionsMap);
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
     // Sanity: scan still advertises the CDC schema (this is needed for the streaming path).
     StructType advertised = scan.readSchema();
@@ -815,8 +815,8 @@ public class SparkScanTest extends DeltaV2TestBase {
     cdcOptions.put("readChangeData", "true");
     CaseInsensitiveStringMap cdcOptionsMap = new CaseInsensitiveStringMap(cdcOptions);
 
-    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(cdcOptionsMap);
-    SparkScan scan = (SparkScan) builder.build();
+    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(cdcOptionsMap);
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
     assertEquals(8, scan.readSchema().fields().length);
     UnsupportedOperationException e =
@@ -832,7 +832,7 @@ public class SparkScanTest extends DeltaV2TestBase {
 
     assertThrows(
         IllegalArgumentException.class,
-        () -> ((SparkScanBuilder) table.newScanBuilder(cdcOptionsMap)).build());
+        () -> ((DeltaV2ScanBuilder) table.newScanBuilder(cdcOptionsMap)).build());
   }
 
   @Test
@@ -841,8 +841,8 @@ public class SparkScanTest extends DeltaV2TestBase {
     nonCdcOptions.put("readChangeFeed", "false");
     CaseInsensitiveStringMap nonCdcOptionsMap = new CaseInsensitiveStringMap(nonCdcOptions);
 
-    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(nonCdcOptionsMap);
-    SparkScan scan = (SparkScan) builder.build();
+    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(nonCdcOptionsMap);
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
     StructType schema = scan.readSchema();
     assertThrows(IllegalArgumentException.class, () -> schema.fieldIndex("_change_type"));
@@ -856,11 +856,11 @@ public class SparkScanTest extends DeltaV2TestBase {
   @Test
   public void testEqualsAndHashCode() {
     // Create two scans from the same table with same options
-    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
-    SparkScan scan1 = (SparkScan) builder1.build();
+    DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
 
-    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
-    SparkScan scan2 = (SparkScan) builder2.build();
+    DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
 
     // Same table, same options should be equal
     assertEquals(scan1, scan2);
@@ -869,14 +869,14 @@ public class SparkScanTest extends DeltaV2TestBase {
 
   @Test
   public void testEqualsWithDifferentOptions() {
-    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
-    SparkScan scan1 = (SparkScan) builder1.build();
+    DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
 
     Map<String, String> differentOptions = new HashMap<>();
     differentOptions.put("customOption", "value");
     CaseInsensitiveStringMap optionsMap = new CaseInsensitiveStringMap(differentOptions);
-    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(optionsMap);
-    SparkScan scan2 = (SparkScan) builder2.build();
+    DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(optionsMap);
+    DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
 
     // Different options should not be equal and hashCodes should differ
     assertNotEquals(scan1, scan2);
@@ -886,19 +886,19 @@ public class SparkScanTest extends DeltaV2TestBase {
   @Test
   public void testEqualsWithSameFilters() {
     // Both scans with equivalent filters created separately (not same instance)
-    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
+    DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
     builder1.pushFilters(
         new org.apache.spark.sql.sources.Filter[] {
           new org.apache.spark.sql.sources.EqualTo("city", "hz")
         });
-    SparkScan scan1 = (SparkScan) builder1.build();
+    DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
 
-    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
     builder2.pushFilters(
         new org.apache.spark.sql.sources.Filter[] {
           new org.apache.spark.sql.sources.EqualTo("city", "hz")
         });
-    SparkScan scan2 = (SparkScan) builder2.build();
+    DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
 
     // Same options and equivalent filters should be equal
     assertEquals(scan1, scan2);
@@ -908,16 +908,16 @@ public class SparkScanTest extends DeltaV2TestBase {
   @Test
   public void testEqualsWithDifferentFilters() {
     // Scan without filters
-    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
-    SparkScan scan1 = (SparkScan) builder1.build();
+    DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
 
     // Scan with filters pushed
-    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
     builder2.pushFilters(
         new org.apache.spark.sql.sources.Filter[] {
           new org.apache.spark.sql.sources.EqualTo("city", "hz")
         });
-    SparkScan scan2 = (SparkScan) builder2.build();
+    DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
 
     // Same options but different filters should not be equal and hashCodes should differ
     assertNotEquals(scan1, scan2);
@@ -931,13 +931,13 @@ public class SparkScanTest extends DeltaV2TestBase {
     org.apache.spark.sql.sources.Filter dateEq =
         new org.apache.spark.sql.sources.EqualTo("date", "20180520");
 
-    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
+    DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
     builder1.pushFilters(new org.apache.spark.sql.sources.Filter[] {cityEq, dateEq});
-    SparkScan scan1 = (SparkScan) builder1.build();
+    DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
 
-    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
     builder2.pushFilters(new org.apache.spark.sql.sources.Filter[] {dateEq, cityEq});
-    SparkScan scan2 = (SparkScan) builder2.build();
+    DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
 
     assertEquals(scan1, scan2);
     assertEquals(scan1.hashCode(), scan2.hashCode());
@@ -948,19 +948,19 @@ public class SparkScanTest extends DeltaV2TestBase {
     // city/date are partition columns, so the test above only exercises pushedToKernelFiltersSet.
     // name and cnt are data columns (per the partitioned table schema), so per
     // ExpressionUtils.classifyFilter these filters have isDataFilter=true and flow into
-    // SparkScan.dataFilters, exercising the dataFiltersSet branch of equals/hashCode.
+    // DeltaV2Scan.dataFilters, exercising the dataFiltersSet branch of equals/hashCode.
     org.apache.spark.sql.sources.Filter nameEq =
         new org.apache.spark.sql.sources.EqualTo("name", "x");
     org.apache.spark.sql.sources.Filter cntGt =
         new org.apache.spark.sql.sources.GreaterThan("cnt", 10);
 
-    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
+    DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
     builder1.pushFilters(new org.apache.spark.sql.sources.Filter[] {nameEq, cntGt});
-    SparkScan scan1 = (SparkScan) builder1.build();
+    DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
 
-    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
     builder2.pushFilters(new org.apache.spark.sql.sources.Filter[] {cntGt, nameEq});
-    SparkScan scan2 = (SparkScan) builder2.build();
+    DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
 
     // Sanity check that dataFilters is actually populated, otherwise this test would trivially
     // pass without exercising the dataFiltersSet path it's intended to cover.
@@ -978,8 +978,8 @@ public class SparkScanTest extends DeltaV2TestBase {
   @Test
   public void testEstimatedSizeMatchesStatistics() throws Exception {
     // Test that estimateStatistics().sizeInBytes() returns the estimatedSizeInBytes field
-    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
-    SparkScan scan = (SparkScan) builder.build();
+    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
     long estimatedSizeFromStats = scan.estimateStatistics().sizeInBytes().getAsLong();
     long estimatedSizeFromField = getEstimatedSizeInBytes(scan);
@@ -1006,7 +1006,7 @@ public class SparkScanTest extends DeltaV2TestBase {
     //   readSchema().defaultSize() = 20 + 44 = 64
     //   outputRowSize = 8 + 64 = 72
     //   estimatedBytes = (totalBytes * 72) / 76
-    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
 
     // Prune columns to only include 'name' (a data column) and partition columns
     // This simulates: SELECT name, date, city, part FROM table
@@ -1018,7 +1018,7 @@ public class SparkScanTest extends DeltaV2TestBase {
             .add("part", DataTypes.IntegerType);
     builder.pruneColumns(prunedSchema);
 
-    SparkScan scan = (SparkScan) builder.build();
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
     long totalBytes = getTotalBytes(scan);
     long estimatedSize = getEstimatedSizeInBytes(scan);
@@ -1043,7 +1043,7 @@ public class SparkScanTest extends DeltaV2TestBase {
     // Test that column pruning and runtime filtering work together correctly
     // Using same formula as testEstimatedSizeWithColumnPruning:
     //   estimatedBytes = (totalBytes * 72) / 76
-    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
 
     // Prune columns to only include 'name' column
     StructType prunedSchema =
@@ -1054,7 +1054,7 @@ public class SparkScanTest extends DeltaV2TestBase {
             .add("part", DataTypes.IntegerType);
     builder.pruneColumns(prunedSchema);
 
-    SparkScan scan = (SparkScan) builder.build();
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
     // Get initial stats with column pruning
     long initialTotalBytes = getTotalBytes(scan);
@@ -1090,8 +1090,8 @@ public class SparkScanTest extends DeltaV2TestBase {
   @Test
   public void testEstimatedSizeZeroAfterFilteringOutAllFiles() throws Exception {
     // Test that filtering out all files results in zero for both sizes
-    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
-    SparkScan scan = (SparkScan) builder.build();
+    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
     // Apply filter that matches nothing
     scan.filter(new Predicate[] {negativeCityPredicate}); // city=zz doesn't exist
@@ -1115,10 +1115,10 @@ public class SparkScanTest extends DeltaV2TestBase {
   @Test
   public void testEqualsAndHashCodeWithSameRuntimeFilter() {
     // Same filter applied to both scans (same instance)
-    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
-    SparkScan scan1 = (SparkScan) builder1.build();
-    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
-    SparkScan scan2 = (SparkScan) builder2.build();
+    DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
+    DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
 
     scan1.filter(new Predicate[] {cityPredicate});
     scan2.filter(new Predicate[] {cityPredicate});
@@ -1130,10 +1130,10 @@ public class SparkScanTest extends DeltaV2TestBase {
   @Test
   public void testEqualsAndHashCodeWithEquivalentRuntimeFilters() {
     // Equivalent filters (different instances)
-    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
-    SparkScan scan1 = (SparkScan) builder1.build();
-    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
-    SparkScan scan2 = (SparkScan) builder2.build();
+    DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
+    DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
 
     scan1.filter(new Predicate[] {cityPredicate});
 
@@ -1152,10 +1152,10 @@ public class SparkScanTest extends DeltaV2TestBase {
   @Test
   public void testEqualsAndHashCodeWithMultipleRuntimeFiltersInSameOrder() {
     // Multiple filters in same order
-    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
-    SparkScan scan1 = (SparkScan) builder1.build();
-    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
-    SparkScan scan2 = (SparkScan) builder2.build();
+    DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
+    DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
 
     scan1.filter(new Predicate[] {cityPredicate, datePredicate});
     scan2.filter(new Predicate[] {cityPredicate, datePredicate});
@@ -1167,10 +1167,10 @@ public class SparkScanTest extends DeltaV2TestBase {
   @Test
   public void testEqualsAndHashCodeWithIdempotentRuntimeFilters() {
     // Filter idempotency - applying same filter once vs twice
-    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
-    SparkScan scan1 = (SparkScan) builder1.build();
-    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
-    SparkScan scan2 = (SparkScan) builder2.build();
+    DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
+    DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
 
     scan1.filter(new Predicate[] {cityPredicate});
     scan2.filter(new Predicate[] {cityPredicate});
@@ -1183,10 +1183,10 @@ public class SparkScanTest extends DeltaV2TestBase {
   @Test
   public void testEqualsAndHashCodeWithSeparateRuntimeFilterCalls() {
     // Multiple separate filter() calls vs single call with multiple filters
-    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
-    SparkScan scan1 = (SparkScan) builder1.build();
-    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
-    SparkScan scan2 = (SparkScan) builder2.build();
+    DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
+    DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
 
     scan1.filter(new Predicate[] {cityPredicate});
     scan1.filter(new Predicate[] {datePredicate});
@@ -1199,10 +1199,10 @@ public class SparkScanTest extends DeltaV2TestBase {
   @Test
   public void testEqualsAndHashCodeWithRuntimeFiltersInDifferentOrder() {
     // Same filters in different order (order-independent)
-    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
-    SparkScan scan1 = (SparkScan) builder1.build();
-    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
-    SparkScan scan2 = (SparkScan) builder2.build();
+    DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
+    DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
 
     scan1.filter(new Predicate[] {cityPredicate, datePredicate});
     scan2.filter(new Predicate[] {datePredicate, cityPredicate});
@@ -1215,10 +1215,10 @@ public class SparkScanTest extends DeltaV2TestBase {
   public void testEqualsAndHashCodeWithNonPartitionColumnRuntimeFilters() {
     // Non-partition column predicates should not affect equality
     // Only partition column predicates should be tracked
-    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
-    SparkScan scan1 = (SparkScan) builder1.build();
-    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
-    SparkScan scan2 = (SparkScan) builder2.build();
+    DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
+    DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
 
     // cityPredicate is on partition column, dataPredicate is on non-partition column (cnt)
     scan1.filter(new Predicate[] {cityPredicate});
@@ -1232,10 +1232,10 @@ public class SparkScanTest extends DeltaV2TestBase {
   @Test
   public void testNotEqualsWithDifferentRuntimeFilters() {
     // Different filters
-    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
-    SparkScan scan1 = (SparkScan) builder1.build();
-    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
-    SparkScan scan2 = (SparkScan) builder2.build();
+    DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
+    DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
 
     scan1.filter(new Predicate[] {cityPredicate});
     scan2.filter(new Predicate[] {datePredicate});
@@ -1247,10 +1247,10 @@ public class SparkScanTest extends DeltaV2TestBase {
   @Test
   public void testNotEqualsWithAndWithoutRuntimeFilter() {
     // One with filter, one without
-    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
-    SparkScan scan1 = (SparkScan) builder1.build();
-    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
-    SparkScan scan2 = (SparkScan) builder2.build();
+    DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan1 = (DeltaV2Scan) builder1.build();
+    DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan2 = (DeltaV2Scan) builder2.build();
 
     scan2.filter(new Predicate[] {cityPredicate});
 
@@ -1311,10 +1311,10 @@ public class SparkScanTest extends DeltaV2TestBase {
           Identifier id = Identifier.of(new String[] {"default"}, tblName);
           DeltaV2Table sparkTable = new DeltaV2Table(id, catalogTable, Collections.emptyMap());
 
-          SparkScanBuilder builder =
-              (SparkScanBuilder)
+          DeltaV2ScanBuilder builder =
+              (DeltaV2ScanBuilder)
                   sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
-          SparkScan scan = (SparkScan) builder.build();
+          DeltaV2Scan scan = (DeltaV2Scan) builder.build();
           Statistics stats = scan.estimateStatistics();
 
           // numRows comes from per-file (post-prune) stats
@@ -1368,10 +1368,10 @@ public class SparkScanTest extends DeltaV2TestBase {
         () -> {
           Identifier id = Identifier.of(new String[] {"default"}, tblName);
           DeltaV2Table sparkTable = new DeltaV2Table(id, catalogTable, Collections.emptyMap());
-          SparkScanBuilder builder =
-              (SparkScanBuilder)
+          DeltaV2ScanBuilder builder =
+              (DeltaV2ScanBuilder)
                   sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
-          SparkScan scan = (SparkScan) builder.build();
+          DeltaV2Scan scan = (DeltaV2Scan) builder.build();
           Statistics stats = scan.estimateStatistics();
 
           // Per-file numRows wins over catalog stats.
@@ -1414,10 +1414,10 @@ public class SparkScanTest extends DeltaV2TestBase {
           () -> {
             Identifier id = Identifier.of(new String[] {"default"}, tblName);
             DeltaV2Table sparkTable = new DeltaV2Table(id, catalogTable, Collections.emptyMap());
-            SparkScanBuilder builder =
-                (SparkScanBuilder)
+            DeltaV2ScanBuilder builder =
+                (DeltaV2ScanBuilder)
                     sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
-            SparkScan scan = (SparkScan) builder.build();
+            DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
             assertFalse(
                 isRowCountKnown(scan),
@@ -1464,10 +1464,10 @@ public class SparkScanTest extends DeltaV2TestBase {
           Identifier id = Identifier.of(new String[] {"default"}, tblName);
           DeltaV2Table sparkTable = new DeltaV2Table(id, catalogTable, Collections.emptyMap());
 
-          SparkScanBuilder builder =
-              (SparkScanBuilder)
+          DeltaV2ScanBuilder builder =
+              (DeltaV2ScanBuilder)
                   sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
-          SparkScan scan = (SparkScan) builder.build();
+          DeltaV2Scan scan = (DeltaV2Scan) builder.build();
           Statistics stats = scan.estimateStatistics();
 
           // With CBO disabled, numRows should be empty (matching V1 behavior)
@@ -1511,10 +1511,10 @@ public class SparkScanTest extends DeltaV2TestBase {
                 DeltaV2Table sparkTable =
                     new DeltaV2Table(id, catalogTable, Collections.emptyMap());
 
-                SparkScanBuilder builder =
-                    (SparkScanBuilder)
+                DeltaV2ScanBuilder builder =
+                    (DeltaV2ScanBuilder)
                         sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
-                SparkScan scan = (SparkScan) builder.build();
+                DeltaV2Scan scan = (DeltaV2Scan) builder.build();
                 Statistics stats = scan.estimateStatistics();
 
                 // With planStatsEnabled, numRows should be present (from per-file stats)
@@ -1547,10 +1547,10 @@ public class SparkScanTest extends DeltaV2TestBase {
           Identifier id = Identifier.of(new String[] {"default"}, tblName);
           DeltaV2Table sparkTable = new DeltaV2Table(id, path);
 
-          SparkScanBuilder builder =
-              (SparkScanBuilder)
+          DeltaV2ScanBuilder builder =
+              (DeltaV2ScanBuilder)
                   sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
-          SparkScan scan = (SparkScan) builder.build();
+          DeltaV2Scan scan = (DeltaV2Scan) builder.build();
           Statistics stats = scan.estimateStatistics();
 
           // Per-file Delta stats (numRecords in the transaction log) are available even without
@@ -1615,10 +1615,10 @@ public class SparkScanTest extends DeltaV2TestBase {
           Identifier id = Identifier.of(new String[] {"default"}, tblName);
           DeltaV2Table sparkTable = new DeltaV2Table(id, catalogTable, Collections.emptyMap());
 
-          SparkScanBuilder builder =
-              (SparkScanBuilder)
+          DeltaV2ScanBuilder builder =
+              (DeltaV2ScanBuilder)
                   sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
-          SparkScan scan = (SparkScan) builder.build();
+          DeltaV2Scan scan = (DeltaV2Scan) builder.build();
           Statistics stats = scan.estimateStatistics();
 
           assertTrue(stats.numRows().isPresent(), "numRows should be present");
@@ -1682,15 +1682,15 @@ public class SparkScanTest extends DeltaV2TestBase {
                 DeltaV2Table sparkTable =
                     new DeltaV2Table(id, catalogTable, Collections.emptyMap());
 
-                SparkScanBuilder builder =
-                    (SparkScanBuilder)
+                DeltaV2ScanBuilder builder =
+                    (DeltaV2ScanBuilder)
                         sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
 
                 // Prune to only 'name' column to trigger column projection estimation
                 StructType prunedSchema = new StructType().add("name", DataTypes.StringType);
                 builder.pruneColumns(prunedSchema);
 
-                SparkScan scan = (SparkScan) builder.build();
+                DeltaV2Scan scan = (DeltaV2Scan) builder.build();
 
                 long totalBytes = getTotalBytes(scan);
                 long estimatedSize = getEstimatedSizeInBytes(scan);
@@ -1742,10 +1742,10 @@ public class SparkScanTest extends DeltaV2TestBase {
           Identifier id = Identifier.of(new String[] {"default"}, tblName);
           DeltaV2Table sparkTable = new DeltaV2Table(id, catalogTable, Collections.emptyMap());
 
-          SparkScanBuilder builder =
-              (SparkScanBuilder)
+          DeltaV2ScanBuilder builder =
+              (DeltaV2ScanBuilder)
                   sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
-          SparkScan scan = (SparkScan) builder.build();
+          DeltaV2Scan scan = (DeltaV2Scan) builder.build();
           Statistics stats = scan.estimateStatistics();
 
           // Per-file Delta stats (numRecords in the transaction log) provide numRows even when
@@ -1787,10 +1787,10 @@ public class SparkScanTest extends DeltaV2TestBase {
           Identifier id = Identifier.of(new String[] {"default"}, tblName);
           DeltaV2Table sparkTable = new DeltaV2Table(id, catalogTable, Collections.emptyMap());
 
-          SparkScanBuilder builder =
-              (SparkScanBuilder)
+          DeltaV2ScanBuilder builder =
+              (DeltaV2ScanBuilder)
                   sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
-          SparkScan scan = (SparkScan) builder.build();
+          DeltaV2Scan scan = (DeltaV2Scan) builder.build();
           Statistics stats = scan.estimateStatistics();
 
           // Per-file stats provide numRows even when catalog stats lack it

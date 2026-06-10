@@ -109,10 +109,10 @@ import scala.runtime.AbstractFunction2;
 import scala.util.matching.Regex;
 
 // TODO(#5318): Use DeltaErrors error framework for consistent error handling.
-public class SparkMicroBatchStream
+public class DeltaV2MicroBatchStream
     implements MicroBatchStream, SupportsAdmissionControl, SupportsTriggerAvailableNow {
 
-  private static final Logger logger = LoggerFactory.getLogger(SparkMicroBatchStream.class);
+  private static final Logger logger = LoggerFactory.getLogger(DeltaV2MicroBatchStream.class);
 
   private static final String FILE_IDX_COL = "_file_idx";
 
@@ -225,7 +225,7 @@ public class SparkMicroBatchStream
   private final boolean useDistributedInitialSnapshot;
   private final StorageLevel snapshotCacheStorageLevel;
 
-  public SparkMicroBatchStream(
+  public DeltaV2MicroBatchStream(
       DeltaSnapshotManager snapshotManager,
       Snapshot snapshotAtSourceInit,
       Configuration hadoopConf,

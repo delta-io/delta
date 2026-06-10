@@ -37,7 +37,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-public class SparkBatchTest extends DeltaV2TestBase {
+public class DeltaV2BatchTest extends DeltaV2TestBase {
 
   private static String tablePath;
   private static final String tableName = "deltatbl_partitioned_batch";
@@ -58,7 +58,7 @@ public class SparkBatchTest extends DeltaV2TestBase {
   // Cases where two batches built from the same table must be equal. city/date are partition
   // columns (exercise pushedToKernelFiltersSet); name/cnt are data columns and per
   // ExpressionUtils.classifyFilter have isDataFilter=true, so they flow into
-  // SparkBatch.dataFilters and exercise the dataFiltersSet branch of equals/hashCode.
+  // DeltaV2Batch.dataFilters and exercise the dataFiltersSet branch of equals/hashCode.
   static Stream<Arguments> equalBatchCasesProvider() {
     Filter cityEq = new EqualTo("city", "hz");
     Filter dateEq = new EqualTo("date", "20180520");
@@ -80,17 +80,17 @@ public class SparkBatchTest extends DeltaV2TestBase {
   @ParameterizedTest(name = "{0}: batches should be equal")
   @MethodSource("equalBatchCasesProvider")
   public void testEqualsAndHashCode(String description, Filter[] filters1, Filter[] filters2) {
-    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
+    DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
     if (filters1.length > 0) {
       builder1.pushFilters(filters1);
     }
-    Batch batch1 = ((SparkScan) builder1.build()).toBatch();
+    Batch batch1 = ((DeltaV2Scan) builder1.build()).toBatch();
 
-    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
     if (filters2.length > 0) {
       builder2.pushFilters(filters2);
     }
-    Batch batch2 = ((SparkScan) builder2.build()).toBatch();
+    Batch batch2 = ((DeltaV2Scan) builder2.build()).toBatch();
 
     assertEquals(batch1, batch2);
     assertEquals(batch1.hashCode(), batch2.hashCode());
@@ -98,12 +98,12 @@ public class SparkBatchTest extends DeltaV2TestBase {
 
   @Test
   public void testEqualsWithDifferentPushedFilters() {
-    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
-    Batch batch1 = ((SparkScan) builder1.build()).toBatch();
+    DeltaV2ScanBuilder builder1 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    Batch batch1 = ((DeltaV2Scan) builder1.build()).toBatch();
 
-    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    DeltaV2ScanBuilder builder2 = (DeltaV2ScanBuilder) table.newScanBuilder(options);
     builder2.pushFilters(new Filter[] {new EqualTo("city", "hz")});
-    Batch batch2 = ((SparkScan) builder2.build()).toBatch();
+    Batch batch2 = ((DeltaV2Scan) builder2.build()).toBatch();
 
     assertNotEquals(batch1, batch2);
     assertNotEquals(batch1.hashCode(), batch2.hashCode());

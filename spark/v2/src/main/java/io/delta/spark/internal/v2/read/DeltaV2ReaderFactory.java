@@ -25,11 +25,11 @@ import org.apache.spark.sql.vectorized.ColumnarBatch;
 import scala.Function1;
 import scala.collection.Iterator;
 
-public class SparkReaderFactory implements PartitionReaderFactory {
+public class DeltaV2ReaderFactory implements PartitionReaderFactory {
   private Function1<PartitionedFile, Iterator<InternalRow>> readFunc;
   private boolean supportsColumnar;
 
-  public SparkReaderFactory(
+  public DeltaV2ReaderFactory(
       Function1<PartitionedFile, Iterator<InternalRow>> readFunc, boolean supportsColumnar) {
     this.readFunc = readFunc;
     this.supportsColumnar = supportsColumnar;
@@ -37,7 +37,7 @@ public class SparkReaderFactory implements PartitionReaderFactory {
 
   @Override
   public PartitionReader<ColumnarBatch> createColumnarReader(InputPartition partition) {
-    return new SparkPartitionReader<ColumnarBatch>(readFunc, (FilePartition) partition);
+    return new DeltaV2PartitionReader<ColumnarBatch>(readFunc, (FilePartition) partition);
   }
 
   @Override
@@ -47,6 +47,6 @@ public class SparkReaderFactory implements PartitionReaderFactory {
 
   @Override
   public PartitionReader<InternalRow> createReader(InputPartition partition) {
-    return new SparkPartitionReader<InternalRow>(readFunc, (FilePartition) partition);
+    return new DeltaV2PartitionReader<InternalRow>(readFunc, (FilePartition) partition);
   }
 }
