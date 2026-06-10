@@ -46,13 +46,12 @@
 #   UC_REPO       git remote URL                          (default: upstream unitycatalog)
 #   UC_REF        must be `main` or UC_PIN_SHA            (default: UC_PIN_SHA below)
 #   UC_FORCE      set to "1" to rebuild even when the Ivy artifact exists
-#   SPARK_VERSION Spark major.minor UC should build for   (default: 4.1)
+#   SPARK_VERSION Spark major.minor UC should build for
 #                 Forwarded as -DsparkVersion to UC's sbt; also determines the published artifact
 #                 name (unitycatalog-spark_${X.Y}_2.13). Delta's build.sbt sets this from
 #                 CrossSparkVersions when invoking the script; matrix CI workflows set it from
-#                 `matrix.spark_version`. Default matches UC's own default in
-#                 project/spark-versions.json - workflows that don't care which Spark variant UC
-#                 builds (kernel/flink/etc.) inherit it.
+#                 `matrix.spark_version`. Workflows that don't care which Spark variant UC builds
+#                 (kernel/flink/etc.) inherit the in-script fallback below.
 #
 # UC_REF is restricted to exactly two values by design: the pinned SHA (the normal case) or
 # `main` (for the floating-main canary flow). Any other value is rejected. CI should never set
@@ -101,7 +100,7 @@ fi
 # ~/.ivy2/local, mvn (kernel-examples integration tests) resolves from ~/.m2/repository. If any
 # is missing in either layout we must re-publish.
 # UC publishes its Spark connector under a per-Spark-version coordinate
-# (e.g. unitycatalog-spark_4.1_2.13). The suffix tracks SPARK_VERSION so the
+# (unitycatalog-spark_${SPARK_VERSION}_2.13). The suffix tracks SPARK_VERSION so the
 # canary check matches whatever variant we tell UC to build below.
 IVY_LOCAL="$HOME/.ivy2/local/io.unitycatalog"
 IVY_CANARY_CLIENT="$IVY_LOCAL/unitycatalog-client/$UC_VERSION/ivys/ivy.xml"
