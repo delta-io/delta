@@ -16,9 +16,11 @@
 
 package io.delta.flink.sink.mergestrategy;
 
+import io.delta.flink.table.DeltaTable;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.utils.CloseableIterator;
+import java.util.Set;
 import java.util.function.BiPredicate;
 
 /**
@@ -37,6 +39,11 @@ public class MoRUpsert extends Upsert {
   @Override
   protected CloseableIterator<Row> deleteRecords(
       Row addFile, BiPredicate<ColumnarBatch, Integer> filter) {
-    throw new UnsupportedOperationException("Not implemented");
+    throw new UnsupportedOperationException("MoRUpsert not implemented");
+  }
+
+  @Override
+  public Row markRemovesOnStaged(DeltaTable table, Row stagedAddFile, Set<Integer> positions) {
+    throw new UnsupportedOperationException("MoRUpsert not implemented");
   }
 }
