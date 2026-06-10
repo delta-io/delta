@@ -181,6 +181,29 @@ object Action extends DeltaLogging {
     }
     StructType(fields)
   }
+
+  /**
+   * Returns the tag value corresponding to a given `key`.
+   * This method throws [[DeltaErrors.tagCouldNotBeParsedException]] exception
+   * if the value is not a valid json or if it cannot be parsed to type `T`.
+   *
+   * @param key key for which we want the extra attribute value
+   * @tparam T value type
+   * @return None if the given key is not present, else returns the corresponding value of type `T`
+   *         from the stored json version of the value for the given key.
+   */
+  def getDeserializedValueForTag[T: Manifest](
+      tags: Map[String, String],
+      key: String): Option[T] = {
+    Option(tags).flatMap(_.get(key)).map { serializedValue =>
+      try {
+        JsonUtils.fromJson[T](serializedValue)
+      } catch {
+        case NonFatal(e) =>
+          throw DeltaErrors.tagCouldNotBeParsedException(key, tags, e)
+      }
+    }
+  }
 }
 
 /**
@@ -1593,8 +1616,61 @@ case class CheckpointMetadata(
   extends CheckpointOnlyAction {
 
   override def wrap: SingleAction = SingleAction(checkpointMetadata = this)
+
+  import CheckpointMetadata.Tags
+
+  /** Number of actions in the [[SidecarFile]]s */
+  @JsonIgnore
+  def sidecarNumActions: Option[Long] =
+    Action.getDeserializedValueForTag[Long](tags, Tags.SIDECAR_NUM_ACTIONS.name)
+
+  /** Size in bytes across all part files */
+  @JsonIgnore
+  def sidecarSizeInBytes: Option[Long] =
+    Action.getDeserializedValueForTag[Long](tags, Tags.SIDECAR_SIZE_IN_BYTES.name)
+
+  /** Number of add file actions in the underlying checkpoint */
+  @JsonIgnore
+  def numOfAddFiles: Option[Long] =
+    Action.getDeserializedValueForTag[Long](tags, Tags.NUM_OF_ADD_FILES.name)
+
+  /** Schema of the [[SidecarFile]]s stored in the checkpoint */
+  @JsonIgnore
+  def sidecarFileSchema: Option[StructType] = {
+    Option(tags)
+      .flatMap(_.get(Tags.SIDECAR_FILE_SCHEMA.name))
+      .map(DataType.fromJson(_).asInstanceOf[StructType])
+  }
 }
 
+object CheckpointMetadata {
+
+  def apply(
+      version: Long,
+      sidecarNumActions: Long,
+      sidecarSizeInBytes: Long,
+      numOfAddFiles: Long,
+      sidecarFileSchemaOpt: Option[StructType]): CheckpointMetadata = {
+    val tagMapWithSchema = sidecarFileSchemaOpt.map(Tags.SIDECAR_FILE_SCHEMA.name -> _.json)
+    CheckpointMetadata(
+      version = version,
+      tags = Map(
+        Tags.SIDECAR_NUM_ACTIONS.name -> sidecarNumActions.toString,
+        Tags.SIDECAR_SIZE_IN_BYTES.name -> sidecarSizeInBytes.toString,
+        Tags.NUM_OF_ADD_FILES.name -> numOfAddFiles.toString
+      ) ++ tagMapWithSchema
+    )
+  }
+
+  object Tags {
+    sealed abstract class KeyType(val name: String)
+
+    object SIDECAR_NUM_ACTIONS extends KeyType("sidecarNumActions")
+    object SIDECAR_SIZE_IN_BYTES extends KeyType("sidecarSizeInBytes")
+    object NUM_OF_ADD_FILES extends KeyType("numOfAddFiles")
+    object SIDECAR_FILE_SCHEMA extends KeyType("sidecarFileSchema")
+  }
+}
 
 /** A serialization helper to create a common action envelope. */
 case class SingleAction(
