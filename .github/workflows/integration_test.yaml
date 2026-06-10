@@ -55,6 +55,9 @@ jobs:
           key: spark-dist-${{ runner.os }}-${{ matrix.spark_version }}
       - name: Set up pinned Unity Catalog
         uses: ./.github/actions/setup-unitycatalog
+        env:
+          SPARK_VERSION: ${{ matrix.spark_major_minor }}
+          SPARK_MAJOR_MINOR: ${{ matrix.spark_major_minor }}
       - name: Download Spark distributions
         run: bash project/scripts/install-spark.sh "${SPARK_VERSION}"
       - name: Run Scala + Python integration tests
@@ -91,6 +94,9 @@ jobs:
           key: spark-dist-${{ runner.os }}-4.0.1
       - name: Set up pinned Unity Catalog
         uses: ./.github/actions/setup-unitycatalog
+        env:
+          SPARK_VERSION: "4.0"
+          SPARK_MAJOR_MINOR: "4.0"
       - name: Download Spark distributions
         run: bash project/scripts/install-spark.sh "${SPARK_VERSION}"
       - name: Run Iceberg integration tests
