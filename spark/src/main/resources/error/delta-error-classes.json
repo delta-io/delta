@@ -440,7 +440,7 @@
     "message" : [
       "The `<option>` option is not supported by the read-time CDC reader. Remove it from your query."
     ],
-    "sqlState" : "0AKDE"
+    "sqlState" : "0AKDC"
   },
   "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA" : {
     "message" : [

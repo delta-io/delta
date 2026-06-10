@@ -150,7 +150,7 @@ class DeltaV2CDFSuite
                 .collect()
             },
             "DELTA_CHANGELOG_UNSUPPORTED_OPTION",
-            sqlState = "0AKDE",
+            sqlState = "0AKDC",
             parameters = Map("option" -> key))
         }
       }
