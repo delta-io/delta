@@ -171,7 +171,12 @@ trait CreateDeltaTableLike extends SQLConfHelper {
   private def getUniformMetadataForCreate(
       snapshot: Snapshot,
       catalogTable: CatalogTable): Option[UniformMetadata] = {
-    if (!UniversalFormat.icebergEnabled(snapshot.metadata)) return None
+    if (!UniversalFormat.icebergEnabled(snapshot.metadata) ||
+      catalogTable.tableType != CatalogTableType.MANAGED) {
+      return None
+    }
+    // Here the post-commit snapshot is used for readSnapshot
+    // It is fine as readSnapshot is only used for incremental conversion
     val dummyTxnInfo = CurrentTransactionInfo.forIcebergConversion(
       metadata = snapshot.metadata,
       protocol = snapshot.protocol,
