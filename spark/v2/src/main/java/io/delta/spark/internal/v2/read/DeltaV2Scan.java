@@ -242,7 +242,7 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
             Option.apply(checkpointLocation),
             /* mergeConsecutiveSchemaChanges= */ false);
 
-    return new SparkMicroBatchStream(
+    return new DeltaV2MicroBatchStream(
         snapshotManager,
         latestSnapshot,
         hadoopConf,

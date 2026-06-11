@@ -200,8 +200,8 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
 
     assertNotNull(microBatchStream, "MicroBatchStream should not be null");
     assertTrue(
-        microBatchStream instanceof SparkMicroBatchStream,
-        "MicroBatchStream should be an instance of SparkMicroBatchStream");
+        microBatchStream instanceof DeltaV2MicroBatchStream,
+        "MicroBatchStream should be an instance of DeltaV2MicroBatchStream");
   }
 
   @Test
