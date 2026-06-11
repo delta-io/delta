@@ -123,7 +123,7 @@ abstract class MaterializedRowTrackingColumn {
     }
 
     val materializedColumnName = getMaterializedColumnNameOrThrow(
-      snapshot.protocol, snapshot.metadata, snapshot.deltaLog.unsafeVolatileTableId)
+      snapshot.protocol, snapshot.metadata, snapshot.unsafeVolatileTableId)
 
     val analyzedPlan = dataFrame.queryExecution.analyzed
     analyzedPlan.outputSet.view.find(attr => materializedColumnName == attr.name)
