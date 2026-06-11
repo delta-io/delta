@@ -17,7 +17,9 @@
 from typing import Any, Callable, TYPE_CHECKING
 import unittest
 
-import delta.exceptions.captured as exceptions
+# Import the documented module (not delta.exceptions.captured directly) so this test also
+# verifies that importing delta.exceptions installs the exception conversion patch.
+import delta.exceptions as exceptions
 
 from delta.testing.utils import DeltaTestCase
 from pyspark.sql.utils import AnalysisException, IllegalArgumentException
