@@ -70,6 +70,7 @@ object DeltaV2SourceSuite {
     "reading from partitioned table succeeds during restart",
 
     // === Schema Evolution ===
+    "disallow user specified schema",
     "add column: restarting with new DataFrame should recover",
     "add column: restarting with stale DataFrame should fail",
     "relax nullability: restarting with new DataFrame should recover",
@@ -189,7 +190,6 @@ object DeltaV2SourceSuite {
     "start from corrupt checkpoint",
 
     // === Tests that bypass V2 by not using loadStreamWithOptions ===
-    "disallow user specified schema", // Uses .schema() directly
     "make sure that the delta sources works fine", // Uses .delta() directly
     "self union a Delta table should pass the catalog table assert", // Uses .table() directly
     "handling nullability schema changes", // Uses .table() directly

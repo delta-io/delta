@@ -119,10 +119,10 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       withMetadata(deltaLog, StructType.fromDDL("value STRING"))
 
       val e = intercept[AnalysisException] {
-        spark.readStream
-          .schema(StructType.fromDDL("a INT, b STRING"))
-          .format("delta")
-          .load(inputDir.getCanonicalPath)
+        loadStreamWithOptions(
+          inputDir.getCanonicalPath,
+          Map.empty,
+          schema = Some(StructType.fromDDL("a INT, b STRING")))
       }
       for (
         msg <- Seq(
@@ -132,10 +132,10 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       }
 
       val e2 = intercept[Exception] {
-        spark.readStream
-          .schema(StructType.fromDDL("value STRING"))
-          .format("delta")
-          .load(inputDir.getCanonicalPath)
+        loadStreamWithOptions(
+          inputDir.getCanonicalPath,
+          Map.empty,
+          schema = Some(StructType.fromDDL("value STRING")))
       }
       assert(e2.getMessage.contains("does not support user-specified schema"))
     }
