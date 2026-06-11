@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.fuzzer.{OptimisticTransactionPhases, PhaseLock
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, FileNames}
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.hadoop.conf.Configuration
 import org.apache.parquet.hadoop.ParquetFileReader
 import org.apache.parquet.hadoop.metadata.ParquetMetadata
@@ -357,6 +358,47 @@ class FeatureEnablementConcurrencySuite
       allowList = ictAllowList)
     assert(!result13.areValid)
 
+    // Tests 14-16: UC_TABLE_ID_KEY per-key validator. Mirroring the rebase path,
+    // currentTransactionInfo.protocol reflects the winning commit's enabled
+    // CatalogOwnedTableFeature, so we construct a conflict checker with CO in protocol.
+    val coProtocol = Protocol.forTableFeature(CatalogOwnedTableFeature)
+    val conflictCheckerWithCO = new ConflictChecker(
+      spark,
+      initialCurrentTransactionInfo = dummyTransactionInfo.copy(protocol = coProtocol),
+      winningCommitSummary = dummySummary,
+      isolationLevel = WriteSerializable)
+
+    // Test 14: Adding UC_TABLE_ID_KEY is valid (the key injected during catalogManaged
+    // enablement).
+    val tableId = "f0cfe1ee-1b65-448c-9136-ebcbfd3b7593"
+    val result14 = conflictCheckerWithCO.checkConfigurationChangesForConflicts(
+      currentMetadata = Metadata(configuration = Map.empty),
+      winningMetadata = Metadata(configuration =
+        Map(UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> tableId)))
+    assert(result14.areValid)
+    assert(result14.added == Map(UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> tableId))
+
+    // Test 15: Changing UC_TABLE_ID_KEY is invalid (add-only per-key validator).
+    val result15 = conflictCheckerWithCO.checkConfigurationChangesForConflicts(
+      currentMetadata = Metadata(configuration =
+        Map(UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> "old-uuid")),
+      winningMetadata = Metadata(configuration =
+        Map(UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> "new-uuid")))
+    assert(!result15.areValid)
+
+    // Test 16: UC_TABLE_ID_KEY added alongside a non-allowlisted key is invalid.
+    // The allowlist only covers UC_TABLE_ID_KEY; the extra key must block resolution.
+    val result16 = conflictCheckerWithCO.checkConfigurationChangesForConflicts(
+      currentMetadata = Metadata(configuration = Map.empty),
+      winningMetadata = Metadata(configuration = Map(
+        UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> tableId,
+        DeltaConfigs.CHECKPOINT_INTERVAL.key -> "20")))
+    assert(!result16.areValid)
+  }
+
+  test("CatalogOwned and VacuumProtocolCheck features allow concurrent txns at upgrade") {
+    assert(!CatalogOwnedTableFeature.failConcurrentTransactionsAtUpgrade)
+    assert(!VacuumProtocolCheckTableFeature.failConcurrentTransactionsAtUpgrade)
   }
 
   def testFeatureDisablement(property: String, withUnset: Boolean): Unit = {
