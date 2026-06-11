@@ -17,7 +17,7 @@
 # Importing delta.exceptions.captured installs the conversion patch that makes the classic
 # (py4j) PySpark client raise the Delta-specific exceptions exported below. It cannot be
 # imported in Spark Connect-only environments, where pyspark ships without py4j; there the
-# equivalent patch is installed by delta.connect.exceptions.
+# equivalent conversion is registered by delta.connect.exceptions.
 try:
     import delta.exceptions.captured  # noqa: F401
 except ImportError:

@@ -14,12 +14,8 @@
 # limitations under the License.
 #
 
-import json
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
-
 import pyspark.errors.exceptions.connect
-import pyspark.sql.connect.client.core
-from pyspark.errors.exceptions.connect import SparkConnectException, SparkConnectGrpcException
+from pyspark.errors.exceptions.connect import SparkConnectGrpcException
 
 from delta.exceptions.base import (
     DeltaConcurrentModificationException as BaseDeltaConcurrentModificationException,
@@ -31,10 +27,6 @@ from delta.exceptions.base import (
     ConcurrentDeleteDeleteException as BaseConcurrentDeleteDeleteException,
     ConcurrentTransactionException as BaseConcurrentTransactionException,
 )
-
-if TYPE_CHECKING:
-    from google.rpc.error_details_pb2 import ErrorInfo
-    from pyspark.sql.connect.proto import FetchErrorDetailsResponse
 
 
 class DeltaConcurrentModificationException(
@@ -124,97 +116,41 @@ class ConcurrentTransactionException(SparkConnectGrpcException, BaseConcurrentTr
     """
 
 
-def _convert_delta_exception(classes: List[str], message: str, **kwargs: Any):
+_delta_exceptions_registered = False
+
+
+def _register_exception_class_mappings() -> None:
     """
-    Maps a server-side Delta concurrency exception to its Delta-specific Python class.
+    Register the Delta-specific exception classes in PySpark's Spark Connect error conversion
+    (EXCEPTION_CLASS_MAPPING maps server-side exception class names to Python exception
+    classes), so that Delta concurrent-modification exceptions raised by the server surface as
+    these classes instead of a generic SparkConnectGrpcException. The generic conversion
+    attaches the structured error metadata (error class, SQL state, server-side stacktrace,
+    message parameters, query contexts) to the registered classes the same way as to PySpark's
+    own exceptions. The conversion walks the server-sent class hierarchy from the most derived
+    class, so the most specific registered class wins.
 
-    kwargs carry the structured error metadata (errorClass, sql_state, server_stacktrace, ...)
-    accepted by SparkConnectGrpcException, so that the converted exception keeps the same
-    metadata as exceptions built through the generic conversion in
-    pyspark.errors.exceptions.connect.
+    This mirrors, for Spark Connect, the conversion patch that delta.exceptions.captured
+    installs for the classic (py4j) client.
     """
-    if "io.delta.exceptions.ConcurrentWriteException" in classes:
-        return ConcurrentWriteException(message, **kwargs)
-    if "io.delta.exceptions.MetadataChangedException" in classes:
-        return MetadataChangedException(message, **kwargs)
-    if "io.delta.exceptions.ProtocolChangedException" in classes:
-        return ProtocolChangedException(message, **kwargs)
-    if "io.delta.exceptions.ConcurrentAppendException" in classes:
-        return ConcurrentAppendException(message, **kwargs)
-    if "io.delta.exceptions.ConcurrentDeleteReadException" in classes:
-        return ConcurrentDeleteReadException(message, **kwargs)
-    if "io.delta.exceptions.ConcurrentDeleteDeleteException" in classes:
-        return ConcurrentDeleteDeleteException(message, **kwargs)
-    if "io.delta.exceptions.ConcurrentTransactionException" in classes:
-        return ConcurrentTransactionException(message, **kwargs)
-    if "io.delta.exceptions.DeltaConcurrentModificationException" in classes:
-        return DeltaConcurrentModificationException(message, **kwargs)
-    return None
-
-
-_delta_exception_patched = False
-
-
-def _patch_convert_exception() -> None:
-    """
-    Patch PySpark's Spark Connect error conversion so that Delta concurrent-modification
-    exceptions raised by the server surface as their Delta-specific Python classes instead of
-    a generic SparkConnectGrpcException, keeping the structured error metadata intact.
-
-    This mirrors the patching delta.exceptions.captured does for the classic (py4j) client.
-    """
-    original_convert_exception = pyspark.errors.exceptions.connect.convert_exception
-
-    def convert_delta_exception(
-        info: "ErrorInfo",
-        truncated_message: str,
-        resp: Optional["FetchErrorDetailsResponse"] = None,
-        *args: Any,
-        **kwargs: Any,
-    ) -> SparkConnectException:
-        converted = original_convert_exception(info, truncated_message, resp, *args, **kwargs)
-        if not isinstance(converted, SparkConnectGrpcException):
-            return converted
-
-        classes: List[str] = []
-        if "classes" in info.metadata:
-            classes = json.loads(info.metadata["classes"])
-
-        # The raw server-side message, mirroring pyspark's _convert_exception. The converted
-        # exception's message cannot be reused: the UnknownException branch of the generic
-        # conversion prefixes it with "(<reason>) ".
-        if resp is not None and resp.HasField("root_error_idx"):
-            message = resp.errors[resp.root_error_idx].message
-        else:
-            message = truncated_message
-
-        # Rebuild the structured error metadata that the generic conversion attached to the
-        # converted exception. _display_stacktrace and _sql_state have no public accessors
-        # returning the raw values (getSqlState falls back to an error-class lookup);
-        # getGrpcStatusCode and the matching constructor kwarg only exist on newer PySpark
-        # versions.
-        metadata_kwargs: Dict[str, Any] = {
-            "errorClass": converted.getCondition(),
-            "messageParameters": converted.getMessageParameters(),
-            "sql_state": converted._sql_state,
-            "server_stacktrace": converted.getStackTrace(),
-            "display_server_stacktrace": converted._display_stacktrace,
-            "contexts": converted.getQueryContext(),
+    pyspark.errors.exceptions.connect.EXCEPTION_CLASS_MAPPING.update(
+        {
+            "io.delta.exceptions.DeltaConcurrentModificationException":
+                DeltaConcurrentModificationException,
+            "io.delta.exceptions.ConcurrentWriteException": ConcurrentWriteException,
+            "io.delta.exceptions.MetadataChangedException": MetadataChangedException,
+            "io.delta.exceptions.ProtocolChangedException": ProtocolChangedException,
+            "io.delta.exceptions.ConcurrentAppendException": ConcurrentAppendException,
+            "io.delta.exceptions.ConcurrentDeleteReadException":
+                ConcurrentDeleteReadException,
+            "io.delta.exceptions.ConcurrentDeleteDeleteException":
+                ConcurrentDeleteDeleteException,
+            "io.delta.exceptions.ConcurrentTransactionException":
+                ConcurrentTransactionException,
         }
-        if hasattr(converted, "getGrpcStatusCode"):
-            metadata_kwargs["grpc_status_code"] = converted.getGrpcStatusCode()
-
-        delta_exception = _convert_delta_exception(classes, message, **metadata_kwargs)
-        if delta_exception is not None:
-            return delta_exception
-        return converted
-
-    pyspark.errors.exceptions.connect.convert_exception = convert_delta_exception
-    # SparkConnectClient binds convert_exception by name at import time, so the binding in
-    # pyspark.sql.connect.client.core must be replaced as well.
-    pyspark.sql.connect.client.core.convert_exception = convert_delta_exception
+    )
 
 
-if not _delta_exception_patched:
-    _patch_convert_exception()
-    _delta_exception_patched = True
+if not _delta_exceptions_registered:
+    _register_exception_class_mappings()
+    _delta_exceptions_registered = True

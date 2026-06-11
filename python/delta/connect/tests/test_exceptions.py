@@ -30,13 +30,13 @@ from pyspark.errors.exceptions.connect import AnalysisException
 
 class DeltaConnectExceptionConversionTests(unittest.TestCase):
     """
-    Tests for the Spark Connect error conversion patch installed by delta.connect.exceptions.
-    These tests exercise the conversion directly from constructed gRPC error payloads and do
-    not need a Spark Connect server.
+    Tests for the exception class mappings registered by delta.connect.exceptions in PySpark's
+    Spark Connect error conversion. These tests exercise the conversion directly from
+    constructed gRPC error payloads and do not need a Spark Connect server.
     """
 
     def _convert(self, info, truncated_message, resp=None):
-        # Conversion goes through the patched binding used by SparkConnectClient.
+        # Conversion goes through the binding used by SparkConnectClient.
         return pyspark.sql.connect.client.core.convert_exception(info, truncated_message, resp)
 
     def test_delta_exception_from_error_info(self):
