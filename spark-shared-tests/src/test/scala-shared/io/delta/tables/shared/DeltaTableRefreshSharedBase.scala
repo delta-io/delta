@@ -39,6 +39,9 @@ trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
 
   protected def v2EnableMode: String = "NONE"
 
+  /** True in the Connect implementation, false in classic. Branches expectations. */
+  def isConnect: Boolean
+
   /** Spark minor version bucket ("4.0", "4.1", "4.2+") that the asserted behavior keys off. */
   protected def sparkVersionBucket: String = {
     // Parse major and minor numerically so the bucket stays correct once Spark reaches 4.10,
