@@ -84,6 +84,19 @@ class DeltaAnalysis(protected val session: SparkSession)
   extends Rule[LogicalPlan] with AnalysisHelper with DeltaInsertCastSupport {
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperatorsDown {
+    // Intercept SHOW PARTITIONS for Delta tables
+    // Spark's ShowPartitions command requires SUPPORTS_PARTITION_MANAGEMENT capability,
+    // but Delta manages partitions through the transaction log, not the metastore.
+    // We intercept and replace with our custom command that reads from the Delta log.
+    case ShowPartitions(
+        r @ ResolvedTable(_, _, _: DeltaTableV2, _), partSpec, _) =>
+      // DeltaTableV2 does not implement SUPPORTS_PARTITION_MANAGEMENT, so the spec is still
+      // expected to be UnresolvedPartitionSpec here.
+      val partitionSpec = partSpec.collect {
+        case UnresolvedPartitionSpec(spec, _) => spec
+      }.getOrElse(Map.empty[String, String])
+      ShowDeltaPartitionsCommand(r, partitionSpec)
+
     // INSERT INTO by ordinal and df.insertInto()
     case a @ AppendDelta(r, d) if !a.isByName &&
         needsSchemaAdjustmentByOrdinal(d, a.query, r.schema, a.writeOptions) =>
