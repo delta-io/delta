@@ -163,6 +163,14 @@ private[delta] object AbstractDeltaCatalogClient extends Logging {
     "org.apache.spark.sql.delta.catalog.UCDeltaCatalogClientImpl"
 
   /**
+   * Marks a carried-forward `delta.*` property (from a catalog-managed REPLACE) that this Delta
+   * version doesn't recognize, so it can bypass validation and survive into the replaced table.
+   * Intentionally neither `delta.`- nor `option.`-prefixed so it rides untouched through the
+   * property plumbing until `AbstractDeltaCatalog.createDeltaTable` strips and re-injects it.
+   */
+  private[delta] val CARRY_FORWARD_PREFIX: String = "__replaceCarryForward."
+
+  /**
    * Returns a [[AbstractDeltaCatalogClient]] wrapped in [[Some]] unless the catalog has
    * opted out via `deltaRestApi.enabled=false`, in which case returns [[None]]. The flag
    * defaults to `true` when absent, so any UC catalog goes through the UC Delta API path
