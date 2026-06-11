@@ -3181,15 +3181,18 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
 
   val DELTA_OPTIMIZE_WRITE_USE_SHUFFLE_MANAGER =
     buildConf("optimizeWrite.useShuffleManager")
-      .doc("When true, uses ShuffleManager.getReader() API for reading shuffle data, " +
+      .doc("When true, uses the ShuffleManager.getReader() API for reading shuffle data, " +
         "which is compatible with remote shuffle services like Apache Celeborn and Uniffle. " +
-        "In this mode, shuffle partitions are never split across bins to avoid reading " +
-        "duplicate data - small partitions are bin-packed together, while large partitions " +
-        "(exceeding binSize) each get their own bin and may produce larger output files. " +
-        "When false (default), uses ShuffleBlockFetcherIterator for optimal performance with " +
-        "local shuffle, allowing individual blocks to be bin-packed for precise file sizes.")
+        "In this mode data is read at (shuffle partition, map-index range) granularity, the " +
+        "same API Spark AQE uses for skew splitting: small shuffle partitions are bin-packed " +
+        "together, while large ones are split into contiguous map-index ranges of up to " +
+        "binSize, keeping writes parallel and output files near the target size. " +
+        "When false, uses ShuffleBlockFetcherIterator, which can bin-pack individual " +
+        "shuffle blocks for precise file sizes but only works with local shuffle. " +
+        "When unset (default), this is detected automatically: the getReader() path is used " +
+        "whenever a non-default shuffle manager is configured.")
       .booleanConf
-      .createWithDefault(false)
+      .createOptional
 
   val DELTA_OPTIMIZE_CLUSTERING_MIN_CUBE_SIZE =
   buildConf("optimize.clustering.mergeStrategy.minCubeSize.threshold")

@@ -32,8 +32,9 @@ import org.apache.spark.internal.config.ConfigEntry
 import org.apache.spark.network.util.ByteUnit
 import org.apache.spark.rdd.RDD
 import org.apache.spark.shuffle._
+import org.apache.spark.shuffle.sort.SortShuffleManager
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.{Attribute, Literal, MonotonicallyIncreasingID, Pmod}
+import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.physical.HashPartitioning
 import org.apache.spark.sql.execution.{ShuffledRowRDD, SparkPlan, UnaryExecNode}
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
@@ -78,7 +79,13 @@ case class DeltaOptimizedWriterExec(
   }
 
   private lazy val useShuffleManager: Boolean =
-    getConf(DeltaSQLConf.DELTA_OPTIMIZE_WRITE_USE_SHUFFLE_MANAGER)
+    getConf(DeltaSQLConf.DELTA_OPTIMIZE_WRITE_USE_SHUFFLE_MANAGER).getOrElse {
+      // Auto-detect: a non-default ShuffleManager (e.g. a remote shuffle service like
+      // Celeborn or Uniffle) cannot serve direct block fetches through
+      // ShuffleBlockFetcherIterator. The check errs on the safe side: getReader() is always
+      // correct for any ShuffleManager, just less block-precise than the fetcher path.
+      !SparkEnv.get.shuffleManager.isInstanceOf[SortShuffleManager]
+    }
 
   @transient private var cachedShuffleRDD: ShuffledRowRDD = _
 
@@ -88,29 +95,10 @@ case class DeltaOptimizedWriterExec(
   private def getShuffleRDD: ShuffledRowRDD = {
     if (cachedShuffleRDD == null) {
       val resolver = org.apache.spark.sql.catalyst.analysis.caseInsensitiveResolution
-      val partitionExprs = partitionColumns.map { p =>
-        output.find(o => resolver(p, o.name)).getOrElse(
-          throw DeltaErrors.failedFindPartitionColumnInOutputPlan(p))
-      }
-
-      val hashExprs = if (useShuffleManager) {
-        // ShuffleManager.getReader() path: reducers are read atomically and cannot be split
-        // across output bins. With low-cardinality partition columns (or unpartitioned tables),
-        // all rows hash to one or very few reducers, collapsing bin-packing into a single output
-        // bin regardless of data volume. This path is designed to be compatible with remote
-        // shuffle services (e.g. Celeborn, Uniffle) whose implementations live outside Delta.
-        //
-        // We append a salt (Pmod(MonotonicallyIncreasingID(), numPartitions)) so that rows
-        // sharing the same partition value are spread across multiple reducers. Each reducer
-        // still contains rows from predominantly one Delta partition value (cross-partition
-        // hash collisions are rare with 2000 slots). Multiple files per Delta partition are
-        // valid, so correctness is preserved.
-        partitionExprs :+ Pmod(MonotonicallyIncreasingID(), Literal(numPartitions.toLong))
-      } else {
-        partitionExprs
-      }
-
-      val saltedPartitioning = HashPartitioning(hashExprs, numPartitions)
+      val saltedPartitioning = HashPartitioning(
+        partitionColumns.map(p => output.find(o => resolver(p, o.name)).getOrElse(
+          throw DeltaErrors.failedFindPartitionColumnInOutputPlan(p))),
+        numPartitions)
 
       val shuffledRDD =
         ShuffleExchangeExec(saltedPartitioning, child).execute().asInstanceOf[ShuffledRowRDD]
@@ -142,14 +130,27 @@ case class DeltaOptimizedWriterExec(
       }.toSeq
 
     val bins = if (useShuffleManager) {
-      // ShuffleManager.getReader() path: never split reducers across bins to avoid duplicate
-      // reads. getReader() reads entire partitions; splitting a reducer across bins would cause
-      // each bin to read the full partition, producing data duplication.
+      // ShuffleManager.getReader() path: data can only be fetched at (reducer, contiguous
+      // map-index range) granularity, never as arbitrary block subsets. Map-range reads are
+      // the same API Spark AQE uses to split skewed partitions, so remote shuffle services
+      // that support AQE (e.g. Celeborn, Uniffle) support them too.
       val (largeReducers, smallReducers) = reducerGroups.partition(_._3 >= maxBinSize)
 
-      // Large reducers: each gets its own bin (may exceed maxBinSize, but that's acceptable)
-      val largeBins = largeReducers.map { case (_, blocks, _) =>
-        blocks.map(_._1)
+      // Large reducers: split into contiguous map-index chunks of up to maxBinSize each.
+      // This keeps output files near the target size and the write parallel even when all
+      // rows hash to one reducer (a single partition value, or an unpartitioned table).
+      val largeBins = largeReducers.flatMap { case (_, blocks, _) =>
+        val chunks = ArrayBuffer(ArrayBuffer[(BlockId, Long, Int)]())
+        var chunkSize = 0L
+        blocks.sortBy(_._3).foreach { block =>
+          if (chunks.last.nonEmpty && chunkSize + block._2 > maxBinSize) {
+            chunks += ArrayBuffer[(BlockId, Long, Int)]()
+            chunkSize = 0L
+          }
+          chunks.last += block
+          chunkSize += block._2
+        }
+        chunks.map(_.map(_._1).toSeq)
       }
 
       // Small reducers: bin-pack together, keeping each reducer's blocks atomic
@@ -166,15 +167,24 @@ case class DeltaOptimizedWriterExec(
 
       val result = largeBins ++ smallBins
 
-      // Verify no reducer is split across multiple bins (would cause duplicate data)
-      val reducerToBinCount = result.zipWithIndex.flatMap { case (bin, binIdx) =>
-        bin.map(_.asInstanceOf[ShuffleBlockId].reduceId).distinct.map(_ -> binIdx)
-      }.groupBy(_._1).mapValues(_.map(_._2).distinct.size)
-
-      val duplicates = reducerToBinCount.filter(_._2 > 1)
-      assert(duplicates.isEmpty,
-        s"Reducer(s) split across multiple bins in remote shuffle mode, " +
-          s"which would cause data duplication: ${duplicates.keys.mkString(", ")}")
+      // The reader fetches [minMapIndex, maxMapIndex + 1) per (bin, reducer), so a reducer's
+      // map-index ranges must not overlap across bins or rows would be read twice. The
+      // contiguous chunking above guarantees this; verify it.
+      val rangesPerReducer = result.zipWithIndex.flatMap { case (bin, binIdx) =>
+        bin.groupBy(_.asInstanceOf[ShuffleBlockId].reduceId).map { case (reducerId, ids) =>
+          val mapIndexes = ids.map(blockInfo(_)._3)
+          (reducerId, mapIndexes.min, mapIndexes.max, binIdx)
+        }
+      }
+      rangesPerReducer.groupBy(_._1).foreach { case (reducerId, ranges) =>
+        ranges.sortBy(_._2).sliding(2).foreach {
+          case Seq((_, _, prevMax, prevBin), (_, curMin, _, curBin)) =>
+            assert(prevMax < curMin,
+              s"Overlapping map-index ranges for reducer $reducerId between bins $prevBin " +
+                s"and $curBin would duplicate data in remote shuffle mode")
+          case _ => // reducer is covered by a single bin
+        }
+      }
 
       result
     } else {
@@ -243,6 +253,15 @@ case class DeltaOptimizedWriterExec(
 
     val partitions = computeBins()
 
+    val readPath = if (useShuffleManager) {
+      "ShuffleManager.getReader() (non-default shuffle manager)"
+    } else {
+      "ShuffleBlockFetcherIterator (local shuffle blocks)"
+    }
+    logInfo(s"Optimized write: reading shuffle data via $readPath, planned " +
+      s"${partitions.length} bins from $numPartitions shuffle partitions " +
+      s"(${childNumPartitions} input partitions)")
+
     recordDeltaEvent(deltaLog,
       "delta.optimizeWrite.planned",
       data = Map(
@@ -252,7 +271,8 @@ case class DeltaOptimizedWriterExec(
         "numShuffleBlocks" -> getConf(DeltaSQLConf.DELTA_OPTIMIZE_WRITE_SHUFFLE_BLOCKS),
         "binSize" -> getConf(DeltaSQLConf.DELTA_OPTIMIZE_WRITE_BIN_SIZE),
         "maxShufflePartitions" ->
-          getConf(DeltaSQLConf.DELTA_OPTIMIZE_WRITE_MAX_SHUFFLE_PARTITIONS)
+          getConf(DeltaSQLConf.DELTA_OPTIMIZE_WRITE_MAX_SHUFFLE_PARTITIONS),
+        "useShuffleManager" -> useShuffleManager
       )
     )
 
@@ -301,46 +321,32 @@ private class DeltaOptimizedWriterRDD(
     val tempMetrics = context.taskMetrics().createTempShuffleReadMetrics()
     val sqlMetricsReporter = new SQLShuffleReadMetricsReporter(tempMetrics, metrics)
 
-    val blocks = if (context.stageAttemptNumber() > 0) {
-      // We lost shuffle blocks, so we need to now get new manager addresses.
+    val blocks = if (useShuffleManager) {
+      // ShuffleManager.getReader() path: the reader consumes only (reduceId, mapIndex) from
+      // the bin spec -- both stable across stage attempts -- and getReader() resolves the
+      // current block locations through the MapOutputTracker at read time. Stale
+      // BlockManagerId addresses are never used, so no refresh is needed after shuffle
+      // block loss.
+      split.asInstanceOf[ShuffleBlockRDDPartition].blocks.iterator
+    } else if (context.stageAttemptNumber() > 0) {
+      // We lost shuffle blocks, so we need to now get new manager addresses
       val executorTracker = SparkEnv.get.mapOutputTracker
       val oldBlockLocations = split.asInstanceOf[ShuffleBlockRDDPartition].blocks
 
-      // Refresh block locations. Keyed by (mapIndex, reduceId) in both branches so the
-      // lookup site below is uniform; for the local branch every block in the bin shares
-      // the same reduceId, so the extra tuple dimension is a no-op there.
-      val newLocations: Map[(Int, Int), (BlockManagerId, (BlockId, Long, Int))] =
-        if (useShuffleManager) {
-          // useShuffleManager=true bins small reducers together (lines 156-165), so one bin
-          // can contain blocks from multiple reducers. We must refresh every reducer's
-          // locations; using only the first reduceId would leave the rest stale.
-          // Keying by (mapIndex, reduceId) avoids collisions: the same map task produces
-          // one block per reduce partition, so mapIndex alone is not unique across reducers.
-          val reducerIds = oldBlockLocations.flatMap { case (_, blockList) =>
-            blockList.map(_._1.asInstanceOf[ShuffleBlockId].reduceId)
-          }.toSet
-          reducerIds.flatMap { rid =>
-            executorTracker.getMapSizesByExecutorId(dep.shuffleId, rid)
-              .flatMap { case (bmId, newBlocks) =>
-                newBlocks.map { blockInfo => (blockInfo._3, rid) -> (bmId, blockInfo) }
-              }
-          }.toMap
-        } else {
-          // Local mode: reducerGroups.flatMap { binPackBySize } processes each reducer
-          // independently, so every bin belongs to exactly one reducer.
-          val reducerId =
-            oldBlockLocations.head._2.head._1.asInstanceOf[ShuffleBlockId].reduceId
-          executorTracker.getMapSizesByExecutorId(dep.shuffleId, reducerId)
-            .flatMap { case (bmId, newBlocks) =>
-              newBlocks.map { blockInfo => (blockInfo._3, reducerId) -> (bmId, blockInfo) }
-            }.toMap
-        }
+      // assumes we bin-pack by reducerId: in local mode every bin holds exactly one reducer
+      val reducerId = oldBlockLocations.head._2.head._1.asInstanceOf[ShuffleBlockId].reduceId
+      // Get block addresses
+      val newLocations = executorTracker.getMapSizesByExecutorId(dep.shuffleId, reducerId)
+        .flatMap { case (bmId, newBlocks) =>
+          newBlocks.map { blockInfo =>
+            (blockInfo._3, (bmId, blockInfo))
+          }
+        }.toMap
 
       val blockLocations = new mutable.HashMap[BlockManagerId, ArrayBuffer[(BlockId, Long, Int)]]()
       oldBlockLocations.foreach { case (_, oldBlocks) =>
         oldBlocks.foreach { oldBlock =>
-          val reduceId = oldBlock._1.asInstanceOf[ShuffleBlockId].reduceId
-          val (bmId, blockInfo) = newLocations((oldBlock._3, reduceId))
+          val (bmId, blockInfo) = newLocations(oldBlock._3)
           val blocksAtBM = blockLocations.getOrElseUpdate(bmId,
             new ArrayBuffer[(BlockId, Long, Int)]())
           blocksAtBM.append(blockInfo)
@@ -384,31 +390,34 @@ private class OptimizedWriterShuffleReader(
   override def read(): Iterator[Product2[Int, InternalRow]] = {
 
     if (useShuffleManager) {
-      // ShuffleManager.getReader() path: reads entire reducer partitions rather than
-      // individual blocks. This avoids assuming direct block access, making it compatible
-      // with remote shuffle services (e.g. Celeborn, Uniffle) that live outside this repo.
+      // ShuffleManager.getReader() path: fetch this bin's slice of each reducer as a
+      // contiguous [startMapIndex, endMapIndex) range -- the same map-range API Spark AQE
+      // uses for skew splitting, so it avoids assuming direct block access and stays
+      // compatible with remote shuffle services (e.g. Celeborn, Uniffle) that live outside
+      // this repo. computeBins() guarantees each (bin, reducer) pair covers a map-index
+      // range that no other bin overlaps. Map outputs absent from the range are empty for
+      // this reducer, so nothing is missed.
+      val rangesByReducer = blocks.flatMap { case (_, blockList) =>
+        blockList.map(b => (b._1.asInstanceOf[ShuffleBlockId].reduceId, b._3))
+      }.toSeq.groupBy(_._1).toSeq.sortBy(_._1).map { case (reducerId, pairs) =>
+        val mapIndexes = pairs.map(_._2)
+        (reducerId, mapIndexes.min, mapIndexes.max + 1)
+      }
 
-      // Collect all reducer IDs (partition IDs) from our blocks
-      val reducerIds = blocks.flatMap { case (_, blockList) =>
-        blockList.map(_._1.asInstanceOf[ShuffleBlockId].reduceId)
-      }.toSet
-
-      // Read from all the partitions we need using ShuffleManager API
-      val iterators = reducerIds.toSeq.sorted.map { reducerId =>
-        val reader = SparkEnv.get.shuffleManager.getReader(
+      // flatMap keeps this lazy: only one underlying reader is open at a time.
+      val recordIter = rangesByReducer.iterator.flatMap { case (reducerId, startMap, endMap) =>
+        SparkEnv.get.shuffleManager.getReader(
           dep.shuffleHandle,
+          startMap,
+          endMap,
           reducerId,
           reducerId + 1,
           context,
           readMetrics)
-        reader.read().asInstanceOf[Iterator[Product2[Int, InternalRow]]]
+          .read().asInstanceOf[Iterator[Product2[Int, InternalRow]]]
       }
 
-      // Combine all iterators into one
-      val combinedIterator = iterators.foldLeft(
-        Iterator.empty: Iterator[Product2[Int, InternalRow]])(_ ++ _)
-
-      new InterruptibleIterator[Product2[Int, InternalRow]](context, combinedIterator)
+      new InterruptibleIterator[Product2[Int, InternalRow]](context, recordIter)
     } else {
       // Default mode: Use ShuffleBlockFetcherIterator for optimal performance
       // This reads only the specific blocks assigned to this bin.
