@@ -29,11 +29,11 @@ import io.delta.kernel.types.{StringType, StructType}
 import org.apache.spark.SparkFunSuite
 
 /**
- * Unit tests for [[KernelSnapshotConversionsUtils]], which bridges Kernel's actions to V1 Delta
+ * Unit tests for [[DeltaV2SnapshotConversionsUtils]], which bridges Kernel's actions to V1 Delta
  * actions. The tests build real Kernel [[KernelMetadata]] / [[KernelProtocol]] instances and assert
  * the converted V1 Metadata / Protocol preserves every field.
  */
-class KernelSnapshotConversionsUtilsSuite extends SparkFunSuite {
+class DeltaV2SnapshotConversionsUtilsSuite extends SparkFunSuite {
 
   private val emptySchemaString = """{"type":"struct","fields":[]}"""
 
@@ -49,7 +49,7 @@ class KernelSnapshotConversionsUtilsSuite extends SparkFunSuite {
       Optional.of(java.lang.Long.valueOf(12345L)),
       VectorUtils.stringStringMapValue(Map("delta.appendOnly" -> "true").asJava))
 
-    val metadata = KernelSnapshotConversionsUtils.metadataFromKernel(kernelMetadata)
+    val metadata = DeltaV2SnapshotConversionsUtils.metadataFromKernel(kernelMetadata)
 
     assert(metadata.id === "table-id")
     assert(metadata.name === "table-name")
@@ -75,7 +75,7 @@ class KernelSnapshotConversionsUtilsSuite extends SparkFunSuite {
       Optional.empty[java.lang.Long](),
       VectorUtils.stringStringMapValue(Map.empty[String, String].asJava))
 
-    val metadata = KernelSnapshotConversionsUtils.metadataFromKernel(kernelMetadata)
+    val metadata = DeltaV2SnapshotConversionsUtils.metadataFromKernel(kernelMetadata)
 
     assert(metadata.name === null)
     assert(metadata.description === null)
@@ -93,7 +93,7 @@ class KernelSnapshotConversionsUtilsSuite extends SparkFunSuite {
       Set("v2Checkpoint").asJava,
       Set("appendOnly", "invariants").asJava)
 
-    val protocol = KernelSnapshotConversionsUtils.protocolFromKernel(kernelProtocol)
+    val protocol = DeltaV2SnapshotConversionsUtils.protocolFromKernel(kernelProtocol)
 
     assert(protocol.minReaderVersion === 3)
     assert(protocol.minWriterVersion === 7)

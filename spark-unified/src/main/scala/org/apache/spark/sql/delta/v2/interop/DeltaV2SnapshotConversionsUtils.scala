@@ -28,7 +28,7 @@ import io.delta.kernel.internal.util.VectorUtils
  * ([[Metadata]] / [[Protocol]]). Used by `DeltaV2Snapshot` to expose Kernel snapshot
  * data through the V1 Snapshot contract.
  */
-private[delta] object KernelSnapshotConversionsUtils {
+private[delta] object DeltaV2SnapshotConversionsUtils {
 
   def metadataFromKernel(metadata: KernelMetadata): Metadata = {
     Metadata(
