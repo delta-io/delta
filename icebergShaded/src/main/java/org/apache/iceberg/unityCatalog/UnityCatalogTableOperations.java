@@ -32,7 +32,6 @@ import org.apache.iceberg.exceptions.CommitFailedException;
 import org.apache.iceberg.exceptions.NoSuchTableException;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import scala.Option;
@@ -53,6 +52,12 @@ public class UnityCatalogTableOperations extends BaseMetastoreTableOperations {
     public static final String DELTA_TIMESTAMP_PROPERTY = "delta-timestamp";
     public static final String BASE_DELTA_VERSION_PROPERTY = "base-delta-version";
     public static final String DELTA_HIGH_WATER_MARK_PROPERTY = "delta-high-water-mark";
+    // Always set during Iceberg conversion when at least one data commit produces a snapshot.
+    // Records the Delta version of that last data commit. When trailing non-data commits
+    // (e.g., ALTER TABLE) cause delta-version to advance beyond the Iceberg sequence number,
+    // doCommit validates against this property instead of delta-version.
+    // Not updated when all commits in a batch are non-data.
+    public static final String LAST_DATA_DELTA_VERSION_PROPERTY = "last-data-delta-version";
 
     public static final String DELTA_SQL_CONF_BYPASS_SEQUENCE_NUMBER_CHECK =
             "spark.databricks.delta.uniform.bypassSnapshotSequenceNumberCheck";
@@ -62,6 +67,15 @@ public class UnityCatalogTableOperations extends BaseMetastoreTableOperations {
     private final FileIO fileIO;
     private final TableIdentifier tableIdentifier;
     private final Optional<String> baseMetadataLocation;
+
+
+    // Pre-assigned snapshot ID to be used for the next snapshot creation.
+    // When set, this value will override the automatically generated snapshot ID
+    // during the next commit operation. This allows for deterministic snapshot ID
+    // generation for DBI based on delta version.
+    private Optional<Long> preAssignedNextSnapshotId;
+    private boolean preAssignedNextSnapshotIdConsumed;
+
     private List<MetadataUpdate> metadataUpdates;
     private Optional<Tuple2<String, TableMetadata>> lastWrittenTableMetadataWithLocation;
 
@@ -76,6 +90,8 @@ public class UnityCatalogTableOperations extends BaseMetastoreTableOperations {
         this.metadataUpdates = metadataUpdates;
         this.baseMetadataLocation = baseMetadataLocation;
         this.lastWrittenTableMetadataWithLocation = Optional.empty();
+        this.preAssignedNextSnapshotId = Optional.empty();
+        this.preAssignedNextSnapshotIdConsumed = false;
     }
 
     @Override
@@ -151,6 +167,28 @@ public class UnityCatalogTableOperations extends BaseMetastoreTableOperations {
             return;
         }
 
+        if (metadata.formatVersion() >= 3) {
+            long lastSequenceNumber = metadata.lastSequenceNumber();
+            if (lastSequenceNumber != deltaVersion) {
+                throw new CommitFailedException("Metadata conversion failed: " +
+                        "lastSequenceNumber " + lastSequenceNumber +
+                        " mismatch Delta Version " + deltaVersion);
+            }
+            // if this txn result in a new iceberg snapshot, check the snapshot
+            // sequence number to match delta version
+
+            Boolean hasNewIcebergSnapshot = metadata.currentSnapshot() != null && base != null &&
+                    (base.currentSnapshot() == null || metadata.currentSnapshot().snapshotId() !=
+                    base.currentSnapshot().snapshotId());
+
+            Long deltaHighWaterMark = Long.parseLong(deltaHighWaterMarkStr);
+            long icebergNextRowId = metadata.nextRowId();
+            if (icebergNextRowId != deltaHighWaterMark + 1) {
+                throw new CommitFailedException("Metadata conversion failed: " +
+                        "nextRowId " + icebergNextRowId +
+                        " mismatch Delta highWaterMark " + deltaHighWaterMark + " + 1");
+            }
+        }
         final int newVersion = currentVersion() + 1;
         String newMetadataLocation = writeNewMetadata(metadata, newVersion);
         lastWrittenTableMetadataWithLocation = Optional.of(Tuple2.apply(newMetadataLocation, metadata));
@@ -200,4 +238,18 @@ public class UnityCatalogTableOperations extends BaseMetastoreTableOperations {
             tableIdentifier.toString());
     }
 
+
+    public void setPreAssignedNextSnapshotId(long preAssignedNextSnapshotId) {
+        this.preAssignedNextSnapshotId = Optional.of(preAssignedNextSnapshotId);
+        this.preAssignedNextSnapshotIdConsumed = false;
+    }
+
+    @Override
+    public long newSnapshotId() {
+        if (preAssignedNextSnapshotId.isPresent()) {
+            this.preAssignedNextSnapshotIdConsumed = true;
+            return preAssignedNextSnapshotId.get();
+        }
+        return super.newSnapshotId();
+    }
 }
