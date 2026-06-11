@@ -982,7 +982,7 @@ The following is an example for the column definition of a table that leverages 
     }
   }
 ```
-In this example, the field path of column `d` is `["e", "element", "d"]`, and its physical field path is `["col-5f422f40-de70-45b2-88ab-1d5c90e94db1", "element", "col-a7f4159c-53be-4cb0-b81a-f7e5240cfc49"]`.
+In this example, the field path of the nested field `d` is `["e", "element", "d"]`, and its physical field path is `["col-5f422f40-de70-45b2-88ab-1d5c90e94db1", "element", "col-a7f4159c-53be-4cb0-b81a-f7e5240cfc49"]`.
 
 ## Writer Requirements for Column Mapping
 In order to support column mapping, writers must:
