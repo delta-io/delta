@@ -623,15 +623,27 @@ class IcebergConverter
    * +-------------------+---------------+---------------------+--------------------+
    * |  Create table     |  Any          |   AppendHelper      |  Note 1            |
    * +-------------------+---------------+---------------------+--------------------+
+   * |  Create with DV   |  Any          |   RowDeltaHelper    |                    |
+   * +-------------------+---------------+---------------------+--------------------+
    * |                   |  All          |   AppendHelper      |  INSERT            |
    * |  Add only         +---------------+---------------------+--------------------+
    * |                   |  None         |   needAutoRewrite   |  Note 2            |
+   * |                   |               |       RewriteHelper |  COMPUTE STATS     |
    * |                   |               |   else              |                    |
    * |                   |               |       NullHelper    |  Add Tag           |
    * |                   +---------------+---------------------+--------------------+
    * |                   |  Some         |   Unsupported       |  (unknown)         |
    * +-------------------+---------------+---------------------+--------------------+
+   * |  Add only         |  All          |   RowDeltaHelper    |  Smart Clone       |
+   * |  with DV          +---------------+---------------------+--------------------+
+   * |                   |  None         |   same as no dv     |  Note 2            |
+   * |                   +---------------+---------------------+--------------------+
+   * |                   |  Some         |   same as All       |  Note 3            |
+   * +-------------------+---------------+---------------------+--------------------+
    * |  Remove only      |  Any          |   RemoveHelper      |  DELETE            |
+   * +-------------------+---------------+---------------------+--------------------+
+   * |  Remove only      |  Any          |   RowDeltaHelper    |  DELETE            |
+   * |  with DV          |               |                     |                    |
    * +-------------------+---------------+---------------------+--------------------+
    * |                   |  All          |   OverwriteHelper   |  UPDATE            |
    * |  Add + Remove     +---------------+---------------------+--------------------+
@@ -639,9 +651,16 @@ class IcebergConverter
    * |                   +---------------+---------------------+--------------------+
    * |                   |  Some         |   Unsupported       |  (unknown)         |
    * +-------------------+---------------+---------------------+--------------------+
+   * |  Add + Remove     |  All          |   RowDeltaHelper    |  UPDATE            |
+   * |  with DV          +---------------+---------------------+--------------------+
+   * |                   |  None         |   RewriteHelper     |  OPTIMIZE          |
+   * |                   +---------------+---------------------+--------------------+
+   * |                   |  Some         |   same as All       |  Note 3            |
+   * +-------------------+---------------+---------------------+--------------------+
    * Note:
    * 1. We assume a Create/Replace table operation will only contain AddFiles.
    * 2. DV is allowed but ignored as known operations (ComputeStats) do not touch DV.
+   * 3. DataChange.Some (mixed dataChange flags) is handled the same as All.
    */
   private[delta] def runIcebergConversionForActions(
       icebergTxn: IcebergConversionTransaction,
@@ -663,7 +682,7 @@ class IcebergConverter
         if (addFiles.isEmpty) {
           icebergTxn.getNullHelper
         } else if (addFiles.exists(_.deletionVector != null)) {
-          throw new UnsupportedOperationException("Deletion Vector is not supported")
+          icebergTxn.getRowDeltaHelper
         } else {
           icebergTxn.getAppendOnlyHelper
         }
@@ -703,6 +722,10 @@ class IcebergConverter
         (addFiles.nonEmpty, removeFiles.nonEmpty, dataChange) match {
           case (true, false, DataChange.All) if !hasDv =>
             icebergTxn.getAppendOnlyHelper
+          case (true, false, DataChange.Some) if !hasDv =>
+            icebergTxn.getAppendOnlyHelper
+          case (true, false, DataChange.All | DataChange.Some) if hasDv =>
+            icebergTxn.getRowDeltaHelper
           case (true, false, DataChange.None) =>
             if (!needAutoRewrite) {
               icebergTxn.getNullHelper // Ignore
@@ -711,9 +734,17 @@ class IcebergConverter
               removeFiles = addBuffer.map(_.removeWithTimestamp(dataChange = false)).toSeq
               icebergTxn.getRewriteHelper
             }
+          case (false, true, _) if hasDv =>
+            icebergTxn.getRowDeltaHelper
           case (false, true, _) =>
             icebergTxn.getRemoveOnlyHelper
+          case (true, true, DataChange.All | DataChange.Some) if hasDv =>
+            icebergTxn.getRowDeltaHelper
+          case (true, true, DataChange.None) if hasDv =>
+            icebergTxn.getRewriteHelper
           case (true, true, DataChange.All) if !hasDv =>
+            icebergTxn.getOverwriteHelper
+          case (true, true, DataChange.Some) if !hasDv =>
             icebergTxn.getOverwriteHelper
           case (true, true, DataChange.None) if !hasDv =>
             icebergTxn.getRewriteHelper

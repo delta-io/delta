@@ -19,12 +19,13 @@ package org.apache.spark.sql.delta.icebergShaded
 import java.nio.ByteBuffer
 import java.time.Instant
 import java.time.format.DateTimeParseException
+import java.util.{Base64, List => JList, UUID}
 
 import scala.collection.JavaConverters._
 import scala.reflect.runtime.universe
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, Snapshot, SnapshotDescriptor}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, DeltaLog, Snapshot, SnapshotDescriptor}
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction, RemoveFile}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.PartitionUtils.{timestampPartitionPattern, utcFormatter}
@@ -36,6 +37,7 @@ import shadedForDelta.org.apache.iceberg.Metrics
 import shadedForDelta.org.apache.iceberg.StructLike
 import shadedForDelta.org.apache.iceberg.catalog.{Namespace, TableIdentifier => IcebergTableIdentifier}
 import shadedForDelta.org.apache.iceberg.hive.HiveCatalog
+import shadedForDelta.org.apache.iceberg.unityCatalog.{IcebergSnapshotIdGenerator, UnityCatalogTableOperations}
 import shadedForDelta.org.apache.iceberg.util.DateTimeUtil
 
 import org.apache.spark.sql.catalyst.{InternalRow, TableIdentifier => SparkTableIdentifier}
@@ -336,6 +338,64 @@ object IcebergTransactionUtils
             .asTerm
           instanceMirror.reflectField(specsField).set(newSpecs)
           instanceMirror.reflectField(specsByIdFiled).set(newSpecsById)
+        }
+    }
+
+    /**
+     * Pre-assigns a deterministic snapshot ID for a given Iceberg transaction.
+     *
+     * This method ensures that when committing through Unity Catalog, the next
+     * snapshot ID is deterministically assigned based on the Delta version
+     * and the table identifier.
+     */
+    def preAssignSnapshotIdForTxn(txn: IcebergTransaction, version: Long, tableId: String): Unit = {
+      txn match {
+        case baseTxn: BaseTransaction => baseTxn.underlyingOps() match {
+          case unityCatalogOps: UnityCatalogTableOperations =>
+            unityCatalogOps.setPreAssignedNextSnapshotId(
+              IcebergSnapshotIdGenerator.encode(
+                version,
+                UUID.fromString(tableId)))
+          case _ => throw new IllegalStateException(
+            "Expected tableOps to be UnityCatalogTableOperations")
+        }
+        case _ => throw new IllegalStateException("Expected txn to be BaseTransaction")
+      }
+    }
+
+    /**
+     * Use reflection to set lastSequenceNumber in TableMetadata
+     * @param txn
+     * @param sequenceNumber
+     */
+    def setIcebergTxnLastSequenceNumber(txn: IcebergTransaction, sequenceNumber: Long): Unit = {
+      Option(txn.asInstanceOf[BaseTransaction].currentMetadata())
+        .foreach { metadata =>
+          val mirror = universe.runtimeMirror(getClass.getClassLoader)
+          val instanceMirror = mirror.reflect(metadata)
+          val field = universe
+            .typeOf[TableMetadata]
+            .decl(universe.TermName("lastSequenceNumber"))
+            .asTerm
+          instanceMirror.reflectField(field).set(sequenceNumber)
+        }
+    }
+
+    /**
+     * Use reflection to set nextRowId in TableMetadata
+     * @param txn
+     * @param sequenceNumber
+     */
+    def setIcebergTxnNextRowId(txn: IcebergTransaction, nextRowId: Long): Unit = {
+      Option(txn.asInstanceOf[BaseTransaction].currentMetadata())
+        .foreach { metadata =>
+          val mirror = universe.runtimeMirror(getClass.getClassLoader)
+          val instanceMirror = mirror.reflect(metadata)
+          val field = universe
+            .typeOf[TableMetadata]
+            .decl(universe.TermName("nextRowId"))
+            .asTerm
+          instanceMirror.reflectField(field).set(nextRowId)
         }
     }
 }
