@@ -59,7 +59,7 @@ class DeltaToIcebergConverter(val snapshot: SnapshotDescriptor, val catalogTable
         snapshot.metadata
       }
     new DummySnapshot(
-      logPath = snapshot.deltaLog.logPath,
+      logPath = snapshot.logPath,
       deltaLog = snapshot.deltaLog,
       metadata = effectiveMetadata,
       protocolOpt = Some(snapshot.protocol))
