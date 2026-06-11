@@ -19,7 +19,8 @@ import unittest
 
 from google.rpc.error_details_pb2 import ErrorInfo
 
-import delta.connect.exceptions  # noqa: F401; installs the conversion patch under test
+# Imported for its side effect: registers the exception class mappings under test.
+import delta.connect.exceptions  # noqa: F401
 import delta.exceptions
 from delta.connect.exceptions import ConcurrentAppendException
 

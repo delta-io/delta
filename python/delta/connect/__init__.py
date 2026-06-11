@@ -14,7 +14,9 @@
 # limitations under the License.
 #
 
-import delta.connect.exceptions  # noqa: F401; registers the Spark Connect exception conversion
+# Imported for its side effect: registers the Delta exception classes in PySpark's
+# Spark Connect error conversion.
+import delta.connect.exceptions  # noqa: F401
 from delta.connect.tables import DeltaTable
 
 __all__ = ['DeltaTable']
