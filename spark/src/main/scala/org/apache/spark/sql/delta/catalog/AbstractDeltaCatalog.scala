@@ -55,7 +55,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchNamespaceException, NoSuchTableException, UnresolvedAttribute, UnresolvedFieldName, UnresolvedFieldPosition}
 import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable, CatalogTableType, CatalogUtils, SessionCatalog}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, QualifiedColType, QualifiedColTypeShims, SyncIdentity}
-import org.apache.spark.sql.connector.catalog.{DelegatingCatalogExtension, Identifier, StagedTable, StagingTableCatalog, SupportsWrite, Table, TableCapability, TableCatalog, TableChange, V1Table}
+import org.apache.spark.sql.connector.catalog.{DelegatingCatalogExtension, Identifier, StagedTable, StagingTableCatalog, SupportsWrite, Table, TableCapability, TableCatalog, TableCatalogCapability, TableChange, V1Table}
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.catalog.TableChange._
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform, Literal, NamedReference, Transform}
@@ -118,6 +118,12 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     super.initialize(name, options)
     catalogName = name
     catalogOptions = options
+  }
+
+  override def capabilities(): util.Set[TableCatalogCapability] = {
+    val capabilities = new util.HashSet[TableCatalogCapability](super.capabilities())
+    capabilities.add(TableCatalogCapability.SUPPORT_COLUMN_DEFAULT_VALUE)
+    capabilities
   }
 
   private lazy val isUnityCatalog: Boolean = {
@@ -545,8 +551,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         properties.containsKey(TableCatalog.PROP_EXTERNAL)) {
       return false
     }
-    val ns = ident.namespace()
-    !(ns.length == 1 && new Path(ident.name()).isAbsolute)
+    !isPathIdentifier(ident)
   }
 
   /**
@@ -583,8 +588,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
           s"'${TableCatalog.PROP_EXTERNAL}': only catalog-managed Delta tables can " +
           "be replaced on this path.")
     }
-    val ns = ident.namespace()
-    !(ns.length == 1 && new Path(ident.name()).isAbsolute)
+    !isPathIdentifier(ident)
   }
 
   /**

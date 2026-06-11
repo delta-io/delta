@@ -74,6 +74,29 @@ trait DeltaInsertIntoTest
     /** SQL keyword for this type of insert.  */
     def intoOrOverwrite: String = if (mode == SaveMode.Append) "INTO" else "OVERWRITE"
 
+    /**
+     * Runs a SQL INSERT, enabling Delta schema evolution when [[withSchemaEvolution]] is set.
+     *
+     * Spark 4.2 introduced the `INSERT WITH SCHEMA EVOLUTION` syntax. On 4.2+ the clause is
+     * spliced into the statement right after the leading `INSERT` keyword. Earlier versions
+     * cannot parse that syntax, so schema evolution is toggled through
+     * [[DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE]] instead.
+     *
+     * @param buildInsert builds the INSERT statement given the schema evolution clause to splice
+     *                    in right after the leading `INSERT` keyword.
+     */
+    def runInsertSql(withSchemaEvolution: Boolean)(buildInsert: String => String): Unit = {
+      if (sparkVersionBucket(spark) == "4.2+") {
+        val clause = if (withSchemaEvolution) "WITH SCHEMA EVOLUTION " else ""
+        sql(buildInsert(clause))
+      } else {
+        withSQLConf(
+            DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> withSchemaEvolution.toString) {
+          sql(buildInsert(""))
+        }
+      }
+    }
+
     /** The expected content of the table after the insert. */
     def expectedResult(initialDF: DataFrame, insertedDF: DataFrame): DataFrame = {
       // Always union with the initial data even if we're overwriting it to ensure the resulting
@@ -93,9 +116,8 @@ trait DeltaInsertIntoTest
         whereCol: String,
         whereValue: Int,
         withSchemaEvolution: Boolean): Unit = {
-      withSQLConf(DeltaSQLConf.
-          DELTA_SCHEMA_AUTO_MIGRATE.key -> withSchemaEvolution.toString) {
-        sql(s"INSERT $intoOrOverwrite target SELECT * FROM source")
+      runInsertSql(withSchemaEvolution) { clause =>
+        s"INSERT $clause$intoOrOverwrite target SELECT * FROM source"
       }
     }
   }
@@ -111,9 +133,8 @@ trait DeltaInsertIntoTest
         whereValue: Int,
         withSchemaEvolution: Boolean): Unit = {
       val colList = columns.mkString(", ")
-      withSQLConf(DeltaSQLConf.
-          DELTA_SCHEMA_AUTO_MIGRATE.key -> withSchemaEvolution.toString) {
-        sql(s"INSERT $intoOrOverwrite target ($colList) SELECT $colList FROM source")
+      runInsertSql(withSchemaEvolution) { clause =>
+        s"INSERT $clause$intoOrOverwrite target ($colList) SELECT $colList FROM source"
       }
     }
   }
@@ -128,10 +149,9 @@ trait DeltaInsertIntoTest
         whereCol: String,
         whereValue: Int,
         withSchemaEvolution: Boolean): Unit = {
-      withSQLConf(DeltaSQLConf.
-          DELTA_SCHEMA_AUTO_MIGRATE.key -> withSchemaEvolution.toString) {
-        sql(s"INSERT $intoOrOverwrite target BY NAME " +
-          s"SELECT ${columns.mkString(", ")} FROM source")
+      runInsertSql(withSchemaEvolution) { clause =>
+        s"INSERT $clause$intoOrOverwrite target BY NAME " +
+          s"SELECT ${columns.mkString(", ")} FROM source"
       }
     }
   }
@@ -147,10 +167,10 @@ trait DeltaInsertIntoTest
         whereCol: String,
         whereValue: Int,
         withSchemaEvolution: Boolean): Unit = {
-      withSQLConf(DeltaSQLConf.
-          DELTA_SCHEMA_AUTO_MIGRATE.key -> withSchemaEvolution.toString) {
-        sql(s"INSERT INTO target REPLACE WHERE $whereCol = $whereValue " +
-          s"SELECT ${columns.mkString(", ")} FROM source")
+      runInsertSql(withSchemaEvolution) { clause =>
+        s"INSERT ${clause}INTO target " +
+          s"REPLACE WHERE $whereCol = $whereValue " +
+          s"SELECT ${columns.mkString(", ")} FROM source"
       }
     }
   }
@@ -167,10 +187,10 @@ trait DeltaInsertIntoTest
         whereValue: Int,
         withSchemaEvolution: Boolean): Unit = {
       val assignments = columns.filterNot(_ == whereCol).mkString(", ")
-      withSQLConf(DeltaSQLConf.
-          DELTA_SCHEMA_AUTO_MIGRATE.key -> withSchemaEvolution.toString) {
-        sql(s"INSERT OVERWRITE target PARTITION ($whereCol = $whereValue) " +
-          s"SELECT $assignments FROM source")
+      runInsertSql(withSchemaEvolution) { clause =>
+        s"INSERT ${clause}OVERWRITE target " +
+          s"PARTITION ($whereCol = $whereValue) " +
+          s"SELECT $assignments FROM source"
       }
     }
   }
@@ -187,11 +207,10 @@ trait DeltaInsertIntoTest
         whereValue: Int,
         withSchemaEvolution: Boolean): Unit = {
       val assignments = columns.filterNot(_ == whereCol).mkString(", ")
-      withSQLConf(DeltaSQLConf.
-          DELTA_SCHEMA_AUTO_MIGRATE.key -> withSchemaEvolution.toString) {
-        sql(s"INSERT OVERWRITE target " +
+      runInsertSql(withSchemaEvolution) { clause =>
+        s"INSERT ${clause}OVERWRITE target " +
           s"PARTITION ($whereCol = $whereValue) ($assignments) " +
-          s"SELECT $assignments FROM source")
+          s"SELECT $assignments FROM source"
       }
     }
   }

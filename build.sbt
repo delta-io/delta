@@ -201,6 +201,12 @@ lazy val connectClient = (project in file("spark-connect/client"))
     commonSettings,
     releaseSettings,
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
+    // Shared refresh test traits compiled into both this module and the `spark`
+    // module. See io.delta.tables.shared.
+    Test / unmanagedSourceDirectories += {
+      (LocalRootProject / baseDirectory).value /
+        "spark-shared-tests" / "src" / "test" / "scala-shared"
+    },
     libraryDependencies ++= Seq(
       "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
       "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "provided",
@@ -217,12 +223,16 @@ lazy val connectClient = (project in file("spark-connect/client"))
 
       if (!distributionDir.exists()) {
         IO.createDirectory(jarsDir)
+        // V2/STRICT mode requires the Delta Kernel engine at runtime
+        // (io.delta.kernel.defaults.engine.DefaultEngine), so add the packaged kernel jars.
+        val kernelJars = Seq(
+          (kernelApi / Compile / packageBin).value,
+          (kernelDefaults / Compile / packageBin).value)
         // Create symlinks for all dependencies (filter to only JAR files)
-        serverClassPath.distinct.filter(_.data.isFile).foreach { entry =>
-          val jarFile = entry.data.toPath
-          val linkedJarFile = jarsDir / entry.data.getName
+        (serverClassPath.map(_.data).filter(_.isFile) ++ kernelJars).distinct.foreach { jarFile =>
+          val linkedJarFile = jarsDir / jarFile.getName
           if (!java.nio.file.Files.exists(linkedJarFile.toPath)) {
-            Files.createSymbolicLink(linkedJarFile.toPath, jarFile)
+            Files.createSymbolicLink(linkedJarFile.toPath, jarFile.toPath)
           }
         }
         // Create a symlink for the log4j properties
@@ -565,6 +575,12 @@ lazy val spark = (project in file("spark-unified"))
       (sparkV1 / baseDirectory).value / "src" / "test" / "resources",
       baseDirectory.value / "src" / "test" / "resources"
     ),
+    // Shared refresh test traits compiled into both this module and the
+    // `connectClient` module. See io.delta.tables.shared.
+    Test / unmanagedSourceDirectories += {
+      (LocalRootProject / baseDirectory).value /
+        "spark-shared-tests" / "src" / "test" / "scala-shared"
+    },
 
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
 
@@ -1817,6 +1833,13 @@ lazy val releaseSettings = Seq(
   releasePublishArtifactsAction := PgpKeys.publishSigned.value,
   releaseCrossBuild := true,
   pgpPassphrase := sys.env.get("PGP_PASSPHRASE").map(_.toArray),
+  // Allow local Maven overwrites for release versions. The cross-Spark publish workflow
+  // publishes modules like delta-contribs (no Spark suffix) in both the backward-compat
+  // step and the per-version steps, producing identical artifacts. SBT 1.9+ blocks
+  // overwriting release artifacts by default; this restores the prior behavior for local
+  // publishing only (remote publish via publishSigned is unaffected).
+  publishLocalConfiguration := publishLocalConfiguration.value.withOverwrite(true),
+  publishM2Configuration := publishM2Configuration.value.withOverwrite(true),
 
   // TODO: This isn't working yet ...
   sonatypeProfileName := "io.delta", // sonatype account domain name prefix / group ID
