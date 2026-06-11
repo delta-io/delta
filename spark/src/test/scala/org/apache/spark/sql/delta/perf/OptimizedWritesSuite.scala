@@ -62,6 +62,12 @@ abstract class OptimizedWritesSuiteBase extends QueryTest
 
   protected implicit def fileToPathString(dir: File): String = dir.getCanonicalPath
 
+  // Expected "outputPartitions" (number of bins) logged for the write in
+  // "do not create tons of shuffle partitions during optimized writes": one bin per reducer
+  // in the block-fetcher path; suites running under a non-default shuffle manager pack the
+  // small reducers into a single bin and override this.
+  protected def expectedLoggedOutputPartitions: Int = 5
+
   writeTest("non-partitioned write - table config") { dir =>
     val df = spark.range(0, 100, 1, 4).toDF()
     df.write.format("delta").save(dir)
@@ -339,7 +345,7 @@ abstract class OptimizedWritesSuiteBase extends QueryTest
 
       assert(logs1.length === 1)
       val blob = JsonUtils.fromJson[Map[String, Any]](logs1.head.blob)
-      assert(blob("outputPartitions") === 5)
+      assert(blob("outputPartitions") === expectedLoggedOutputPartitions)
       assert(blob("originalPartitions") === 2)
       assert(blob("numShuffleBlocks") === 50000000)
       assert(blob("shufflePartitions") ===
@@ -359,30 +365,30 @@ abstract class OptimizedWritesSuiteBase extends QueryTest
   // designed to be compatible with remote shuffle services (e.g. Celeborn, Uniffle),
   // whose implementations live in separate repositories; no RSS is present here.
   //
-  // The bug: HashPartitioning(partitionColumns, N) sends all rows with the same Delta partition
-  // value to ONE reducer. ShuffleManager.getReader() reads reducers atomically, so
-  // 1 reducer = 1 bin = 1 file regardless of data volume.
-  //
-  // The fix: append Pmod(MonotonicallyIncreasingID(), N) as a salt so that same-partition rows
-  // are spread across multiple reducers = multiple bins = multiple, correctly-sized output files.
+  // Data is fetched at (reducer, contiguous map-index range) granularity -- the same API
+  // AQE uses to split skewed partitions. computeBins() packs small reducers together as
+  // atomic units and splits large reducers into map-index chunks of up to binSize, so the
+  // write stays parallel and files stay near the target size even when all rows hash to a
+  // single reducer (one partition value, or an unpartitioned table).
   //
   // Note on bin-size choice in these tests: "1b" is parsed by bytesConf(MiB) as 0 MiB (integer
-  // division 1 / 1048576 = 0). maxBinSize = 0 means every non-empty reducer is classified as
-  // "large" and gets its own bin, regardless of actual data volume. This lets us verify the
-  // salt distributes data across reducers without needing a multi-GB test dataset.
+  // division 1 / 1048576 = 0). maxBinSize = 0 classifies every non-empty reducer as "large"
+  // and makes every map block its own chunk, forcing the splitting machinery to engage
+  // without needing a multi-GB test dataset.
   // maxShufflePartitions is capped at 20 to keep bin/file counts manageable.
 
-  writeTest("useShuffleManager=true - salt distributes single-partition-value rows across bins") {
+  writeTest("useShuffleManager=true - oversized partition value is split across multiple files") {
     dir =>
-      // 4 input partitions, ALL rows share the same Delta partition value "x".
-      // Without salt: HashPartitioning(["x"], 20) -- all rows to 1 reducer -- 1 bin -- 1 file.
-      // With salt:    HashPartitioning(["x", salt], 20) -- rows spread to multiple reducers.
+      // 4 input partitions, ALL rows share the same Delta partition value "x", so every row
+      // hashes to ONE reducer. With bin size forced to 0 that reducer must be split into one
+      // map-range chunk per map block -- multiple bins -- multiple files -- instead of a
+      // single task writing one giant file. checkResult calls checkAnswer, so this also
+      // verifies the split does not duplicate or drop rows.
       val df = spark.range(0, 200, 1, 4).withColumn("part", lit("x"))
 
       withSQLConf(
         DeltaSQLConf.DELTA_OPTIMIZE_WRITE_USE_SHUFFLE_MANAGER.key -> "true",
         DeltaSQLConf.DELTA_OPTIMIZE_WRITE_MAX_SHUFFLE_PARTITIONS.key -> "20",
-        // 0-byte effective bin: each non-empty reducer gets its own bin (data-size independent)
         DeltaSQLConf.DELTA_OPTIMIZE_WRITE_BIN_SIZE.key -> "1b") {
 
         df.write.partitionBy("part").format("delta").save(dir)
@@ -391,11 +397,12 @@ abstract class OptimizedWritesSuiteBase extends QueryTest
       checkResult(df, numFileCheck = _ > 1, dir)
   }
 
-  writeTest("useShuffleManager=true - salt fixes single-bucket problem for unpartitioned tables") {
+  writeTest("useShuffleManager=true - unpartitioned write does not collapse into one file") {
     dir =>
-      // Unpartitioned: partitionColumns = Seq() -- HashPartitioning(Seq(), N) = constant hash
-      // -- all rows to reducer 0 -- 1 bin -- 1 file, regardless of data size.
-      // With salt: rows spread across reducers -- multiple bins -- multiple files.
+      // Unpartitioned: partitionColumns = Seq() -- HashPartitioning(Seq(), N) is a constant
+      // -- all rows land in one reducer regardless of data size. Map-range splitting breaks
+      // that reducer into multiple bins -- multiple files; checkAnswer verifies no row
+      // duplication or loss.
       val df = spark.range(0, 200, 1, 4).toDF()
 
       withSQLConf(
@@ -409,9 +416,10 @@ abstract class OptimizedWritesSuiteBase extends QueryTest
       checkResult(df, numFileCheck = _ > 1, dir)
   }
 
-  writeTest("useShuffleManager=true - salt does not cause data loss or duplication") { dir =>
-    // Primary correctness requirement: the salt must not add or drop any rows.
-    // Uses default bin size so this tests a realistic code path, not the "0-bin" edge case.
+  writeTest("useShuffleManager=true - no data loss or duplication at default bin size") { dir =>
+    // Primary correctness requirement: bin packing and map-range splitting must not add or
+    // drop rows. Uses default bin size so this tests a realistic code path, not the "0-bin"
+    // edge case (here the small per-value reducers get packed together into shared bins).
     val df = spark.range(0, 1000, 1, 8).withColumn("part", 'id % 3)
 
     withSQLConf(
@@ -426,7 +434,7 @@ abstract class OptimizedWritesSuiteBase extends QueryTest
 
   writeTest("useShuffleManager=false still coalesces unpartitioned write to one file") { dir =>
     // Local-shuffle path unchanged: ShuffleBlockFetcherIterator can split individual blocks
-    // across bins, so 4 input partitions coalesce into 1 output file. No salt in this path.
+    // across bins, so 4 input partitions coalesce into 1 output file.
     val df = spark.range(0, 100, 1, 4).toDF()
 
     withSQLConf(
