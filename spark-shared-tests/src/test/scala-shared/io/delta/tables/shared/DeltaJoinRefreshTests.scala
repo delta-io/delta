@@ -36,8 +36,8 @@ import org.apache.spark.sql.types.{IntegerType, LongType, StringType}
  *   - AUTO: the V1 file index keeps df1's analysis-time schema but refreshes its data to the latest
  *     version; an incompatible schema change surfaces DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS.
  *   - STRICT: the V2 connector pins df1 to the snapshot captured when it was built, so the external
- *     change is invisible to df1. TODO: once the V2 connector implements the Table version()/id()
- *     API (SPARK-54157), STRICT 4.1+ should refresh df1 like AUTO instead of pinning.
+ *     change is invisible to df1. TODO: once [[DeltaV2Table]] implements [[Table.version]] and
+ *     [[Table.id]] (SPARK-54157), STRICT 4.1+ should refresh df1 like AUTO instead of pinning.
  */
 trait DeltaJoinRefreshTests
   extends DeltaTableRefreshSharedBase { self: AnyFunSuite =>
@@ -60,8 +60,40 @@ trait DeltaJoinRefreshTests
       } else {
         v2EnableMode match {
           case "STRICT" =>
-            // TODO: STRICT pins df1 to its analysis snapshot (no Table version()/id() API yet), so
-            // only the row present on both sides joins. Should refresh like AUTO once implemented.
+            // Today STRICT pins df1 to its analysis snapshot, so only the row present on both
+            // sides joins. TODO: once [[DeltaV2Table]] implements [[Table.version]], Spark
+            // refreshes both scans to the latest version (like AUTO) and both rows join.
+            checkAnswer(selfJoinDF, Seq(Row(1, 100, 1, 100)))
+          case "AUTO" =>
+            checkAnswer(selfJoinDF, Seq(Row(1, 100, 1, 100), Row(2, 200, 2, 200)))
+        }
+      }
+    }
+  }
+
+  // Same-session counterpart of scenario 1. df1 is pinned (STRICT) or refreshed (AUTO) just as for
+  // an external write, so the join result matches; routing the write through the session does not
+  // change the refresh story.
+  test("scenario 1 same-session: join after same-session write") {
+    withInitialTable() { _ =>
+      val df1 = spark.table("t")
+      writerSql("INSERT INTO t VALUES (2, 200)")
+      val df2 = spark.table("t")
+      val selfJoinDF = df1.join(df2, df1("id") === df2("id"))
+      if (isConnect) {
+        sparkVersionBucket match {
+          case "4.2+" => checkAnswer(selfJoinDF, Seq(Row(1, 100, 1, 100), Row(2, 200, 2, 200)))
+          case "4.1" | "4.0" =>
+            // Connect before 4.2: the self-join is ambiguous, fixed in 4.2.
+            checkError(
+              exception = intercept[SparkThrowable] { selfJoinDF.collect() },
+              condition = "AMBIGUOUS_COLUMN_OR_FIELD")
+        }
+      } else {
+        v2EnableMode match {
+          case "STRICT" =>
+            // STRICT pins df1 to its analysis snapshot, so only the row present on both sides
+            // joins, exactly as for an external write.
             checkAnswer(selfJoinDF, Seq(Row(1, 100, 1, 100)))
           case "AUTO" =>
             checkAnswer(selfJoinDF, Seq(Row(1, 100, 1, 100), Row(2, 200, 2, 200)))
@@ -91,8 +123,10 @@ trait DeltaJoinRefreshTests
       } else {
         v2EnableMode match {
           case "STRICT" =>
-            // TODO: STRICT pins df1 to its 2-column analysis snapshot (no version()/id() API yet),
-            // so only its original row joins. Should refresh like AUTO once implemented.
+            // Today STRICT pins df1 to its 2-column analysis snapshot, so only its original row
+            // joins. TODO: once [[DeltaV2Table]] implements [[Table.version]], Spark refreshes the
+            // data but keeps df1's original schema (like AUTO), so both rows join projected to
+            // df1's two columns; using df1 in a write command would instead fail.
             checkAnswer(selfJoinDF, Seq(Row(1, 100, 1, 100, null)))
           case "AUTO" =>
             checkAnswer(selfJoinDF, Seq(Row(1, 100, 1, 100, null), Row(2, 200, 2, 200, -1)))
@@ -125,8 +159,10 @@ trait DeltaJoinRefreshTests
       } else {
         v2EnableMode match {
           case "STRICT" =>
-            // TODO: column mapping is not fully supported in V2 STRICT yet, and df1 is pinned
-            // (no version()/id() API), so the join returns no rows.
+            // Column mapping is not fully supported in V2 STRICT yet, and df1 is pinned, so the
+            // join returns no rows. TODO: once [[DeltaV2Table]] implements [[Table.version]],
+            // Spark refreshes and raises an analysis exception on the incompatible column drop
+            // (like AUTO).
             checkAnswer(selfJoinDF, Seq.empty)
           case "AUTO" =>
             checkError(
@@ -148,8 +184,9 @@ trait DeltaJoinRefreshTests
         if (isConnect) {
           sparkVersionBucket match {
             case "4.2+" =>
-              // TODO: once the Table version()/id() API is implemented (table id + column id), df1
-              // will detect the drop/recreate as a different table and this assertion will fail.
+              // TODO: once [[DeltaV2Table]] implements [[Table.id]], the recreated table reports a
+              // new identity, so df1 detects the drop/recreate as a different table and this
+              // assertion will fail.
               checkAnswer(selfJoinDF, Seq.empty)
             case "4.1" | "4.0" =>
               // Connect before 4.2: the self-join is ambiguous, fixed in 4.2.
@@ -159,14 +196,19 @@ trait DeltaJoinRefreshTests
           }
         } else {
           // The recreated table has the same schema, so df1 stays valid; df2 reads the new empty
-          // table and nothing joins, in every classic mode.
+          // table and nothing joins, in every classic mode. TODO: once [[DeltaV2Table]] implements
+          // [[Table.id]], the recreated table reports a new identity, so Spark treats it as a
+          // different table and df1's stale reference raises an analysis exception. Without a
+          // table id (as today) the join still executes empty.
           checkAnswer(selfJoinDF, Seq.empty)
         }
       }
     }
   }
 
-  // Same expectations whether the re-added column keeps its type or changes to a different one.
+  // Today's expectations are identical whether the re-added column keeps its type or changes to a
+  // different one; the desired behavior differs by scenario and Spark version, noted in the STRICT
+  // arm.
   for ((scenario, label, newColumnType) <- Seq(
       (5, "same type", IntegerType), (6, "different type", StringType))) {
     test(s"scenario $scenario: join after external DROP/ADD $label (column mapping)") {
@@ -193,8 +235,12 @@ trait DeltaJoinRefreshTests
         } else {
           v2EnableMode match {
             case "STRICT" =>
-              // TODO: column mapping is not fully supported in V2 STRICT yet, and df1 is pinned
-              // (no version()/id() API), so the join returns no rows.
+              // Column mapping is not fully supported in V2 STRICT yet, and df1 is pinned, so the
+              // join returns no rows. TODO: once [[DeltaV2Table]] implements [[Table.version]] and
+              // exposes column ids, Spark 4.1 refreshes and picks up the new schema for the
+              // same-type re-add (scenario 5, one joined row), while the different-type re-add
+              // (scenario 6) raises an analysis exception; Spark 4.2+ raises an analysis exception
+              // for both, since the re-added column gets a fresh column id.
               checkAnswer(selfJoinDF, Seq.empty)
             case "AUTO" =>
               checkError(
@@ -224,8 +270,11 @@ trait DeltaJoinRefreshTests
       } else {
         v2EnableMode match {
           case "STRICT" =>
-            // TODO: STRICT pins df1 to its pre-widening snapshot (no version()/id() API yet), so
-            // the change is invisible. Should refresh like AUTO once implemented.
+            // Today STRICT pins df1 to its pre-widening snapshot, so the change is invisible.
+            // TODO: once [[DeltaV2Table]] implements [[Table.version]], Spark refreshes like AUTO.
+            // Type widening is left to future consideration; Delta could assign a fresh column id
+            // when a column type changes, which would then surface as an analysis exception like a
+            // drop and re-add.
             checkAnswer(selfJoinDF, Seq(Row(1, 100, 1, 100)))
           case "AUTO" =>
             checkError(
