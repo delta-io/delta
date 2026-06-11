@@ -1,7 +1,7 @@
 # Iceberg V4 Adaptive Metadata Tree
 **Associated Github issue for discussions: https://github.com/delta-io/delta/issues/6640**
 
-This RFC introduces a new reader-writer table feature `adaptiveMetadata` that enables Delta tables to adopt [Apache Iceberg™ V4's adaptive metadata tree](https://s.apache.org/iceberg-single-file-commit) as their native content metadata format.
+This RFC introduces a new reader-writer table feature `adaptiveMetadata` that enables Delta tables to adopt the [Apache Iceberg™ V4 adaptive metadata tree](https://s.apache.org/iceberg-single-file-commit) as their native content metadata format.
 
 ## Motivation
 
