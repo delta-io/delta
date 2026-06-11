@@ -679,6 +679,67 @@ class DeltaFormatSharingSourceSuite
     }
   }
 
+  // forceToDeltaSourceOffset gates legacy-JSON parsing on the auto-resolve conf. CDF streaming
+  // (readChangeFeed=true) must be gated by the new
+  // DELTA_SHARING_CDF_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT and ignore the non-CDF flag, and
+  // vice versa for non-CDF streaming. This grid verifies all four conf combinations against both
+  // source kinds and confirms the two flags route independently.
+  Seq(
+    // (readChangeFeed, cdfFlag, streamingFlag, expectAutoResolveOn)
+    (true, true, false, true),   // CDF: CDF flag on -> auto-resolve on, ignores streamingFlag=false
+    (true, false, true, false),  // CDF: non-CDF flag must not enable CDF auto-resolve
+    (false, true, false, false), // non-CDF: CDF flag must not enable non-CDF auto-resolve
+    (false, false, true, true)   // non-CDF: streaming flag on -> auto-resolve on (existing path)
+  ).foreach { case (readChangeFeed, cdfFlag, streamingFlag, expectAutoResolveOn) =>
+    test(s"forceToDeltaSourceOffset: flag routing readChangeFeed=$readChangeFeed " +
+      s"cdfFlag=$cdfFlag streamingFlag=$streamingFlag -> autoResolve=$expectAutoResolveOn") {
+      withTempDir { tempDir =>
+        val deltaTableName = "delta_table_cdf_flag_routing"
+        withTable(deltaTableName) {
+          createTable(deltaTableName)
+          val sharedTableName = "some_table"
+          prepareMockedClientMetadata(deltaTableName, sharedTableName)
+          prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+          val profileFile = prepareProfileFile(tempDir)
+          val tableId = "test-table-id"
+          val cdfKey = DeltaSQLConf
+            .DELTA_SHARING_CDF_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT.key
+          val streamingKey = DeltaSQLConf
+            .DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT.key
+          withSQLConf(
+            (getDeltaSharingClassesSQLConf ++ Seq(
+              cdfKey -> cdfFlag.toString,
+              streamingKey -> streamingFlag.toString
+            )).toSeq: _*
+          ) {
+            val params = Map("path" ->
+              s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName") ++
+              (if (readChangeFeed) Map("readChangeFeed" -> "true") else Map.empty)
+            val source = getSource(params)
+            val tableIdField = source.getClass.getDeclaredField("tableId")
+            tableIdField.setAccessible(true)
+            tableIdField.set(source, tableId)
+            val legacyJson = "{\"sourceVersion\":1," +
+              s""""tableId":"$tableId",""" +
+              "\"tableVersion\":1," +
+              "\"index\":-1," +
+              "\"isStartingVersion\":true}"
+            val serializedOffset = SerializedOffset(legacyJson)
+            if (expectAutoResolveOn) {
+              val (deltaOffset, fromLegacy) = source.forceToDeltaSourceOffset(serializedOffset)
+              assert(fromLegacy, "fromLegacy should be true for DeltaSharingSourceOffset JSON")
+              assert(deltaOffset.reservoirId === tableId)
+              assert(deltaOffset.reservoirVersion === 1L)
+            } else {
+              intercept[Exception](source.forceToDeltaSourceOffset(serializedOffset))
+            }
+            cleanUpDeltaSharingBlocks()
+          }
+        }
+      }
+    }
+  }
+
   // E2E: Custom checkpoint with legacy DeltaSharingSourceOffset format;
   // restart with delta streaming using that checkpoint.
   // Flag on/off. Mocks use delta table only.
@@ -939,6 +1000,128 @@ class DeltaFormatSharingSourceSuite
         }
       }
     }
+    }
+  }
+
+  // E2E CDF migration: a prior parquet CDF streaming run left a legacy
+  // DeltaSharingSourceOffset checkpoint behind; the next run restarts with
+  // responseFormat=delta + readChangeFeed=true. The CDF auto-resolve conf
+  // (DELTA_SHARING_CDF_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT) must be the one
+  // that gates legacy-offset parsing -- not the non-CDF streaming conf. To pin
+  // that down, the test sets the non-CDF flag to the opposite of the CDF flag
+  // for every scenario; if the routing was wrong the test would invert.
+  Seq(
+    (true, "cdfFlag on: CDF restart with delta succeeds"),
+    (false, "cdfFlag off: CDF restart fails parsing legacy checkpoint")
+  ).foreach { case (cdfAutoResolve, desc) =>
+    test(s"E2E: CDF legacy checkpoint then restart with delta CDF streaming [$desc]") {
+      withTempDirs { (inputDir, outputDir, checkpointDir) =>
+        val deltaTableName = "delta_table_e2e_cdf_migration"
+        withTable(deltaTableName) {
+          sql(s"""CREATE TABLE $deltaTableName (c1 INT, c2 STRING) USING DELTA
+                 |TBLPROPERTIES (delta.enableChangeDataFeed = true)""".stripMargin)
+          sql(s"INSERT INTO $deltaTableName VALUES (1, 'a'), (2, 'b')") // v1
+          sql(s"INSERT INTO $deltaTableName VALUES (3, 'c'), (4, 'd')") // v2
+          sql(s"INSERT INTO $deltaTableName VALUES (5, 'e'), (6, 'f')") // v3
+          val tableId = DeltaLog.forTable(spark, new TableIdentifier(deltaTableName))
+            .update().metadata.id
+          val sharedTableName = "shared_cdf_migration"
+          val profileFile = prepareProfileFile(inputDir)
+          val tablePath = profileFile.getCanonicalPath +
+            s"#share1.default.$sharedTableName"
+          spark.sessionState.conf.setConfString(
+            "spark.delta.sharing.streaming.queryTableVersionIntervalSeconds", "10s")
+
+          // Two committed legacy CDF offsets: simulates a prior parquet CDF stream
+          // that progressed through v1 (batch 0) and v2 (batch 1).
+          val (checkpointPath, fileManager) = initCheckpointDirs(checkpointDir)
+          writeLegacyOffsetAndCommit(fileManager, checkpointPath,
+            batchId = 0, tableId, tableVersion = 1, index = -1,
+            isStartingVersion = false)
+          writeLegacyOffsetAndCommit(fileManager, checkpointPath,
+            batchId = 1, tableId, tableVersion = 2, index = -1,
+            isStartingVersion = false)
+
+          val cdfKey = DeltaSQLConf
+            .DELTA_SHARING_CDF_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT.key
+          val streamingKey = DeltaSQLConf
+            .DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT.key
+          withSQLConf(
+            (getDeltaSharingClassesSQLConf ++ Seq(
+              // Vary the CDF flag; pin the non-CDF flag to the opposite so the
+              // test also confirms only the CDF flag governs the CDF path.
+              cdfKey -> cdfAutoResolve.toString,
+              streamingKey -> (!cdfAutoResolve).toString
+            )).toSeq: _*
+          ) {
+            prepareMockedClientMetadata(deltaTableName, sharedTableName)
+            // CDF responses spanning the priming range (v1) and the ongoing
+            // range (v2..v3); the source will resume from v2 after parsing the
+            // legacy checkpoint at index=-1 (BASE_INDEX).
+            prepareMockedClientAndFileSystemResultForCdf(
+              deltaTableName, sharedTableName, startingVersion = 1L)
+            prepareMockedClientAndFileSystemResultForCdf(
+              deltaTableName, sharedTableName, startingVersion = 2L)
+            prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+            if (cdfAutoResolve) {
+              val q = spark.readStream
+                .format("deltaSharing")
+                .option("responseFormat", "delta")
+                .option("readChangeFeed", "true")
+                .load(tablePath)
+                .select("c1", "c2", "_change_type", "_commit_version")
+                .writeStream
+                .format("delta")
+                .option("checkpointLocation", checkpointDir.toString)
+                .start(outputDir.toString)
+              try {
+                q.processAllAvailable()
+              } finally {
+                q.stop()
+              }
+              // Legacy offset at batch 1 was tableVersion=2 index=-1, so on
+              // resume the stream emits CDF from v2 onwards (priming re-fetches
+              // v1 with endVersion=v2-1=1, then ongoing fetches v2..v3). The
+              // CDF rows should be inserts at v2 (3,4) and v3 (5,6).
+              val emitted = spark.read.format("delta").load(outputDir.getCanonicalPath)
+                .select("c1", "c2", "_change_type", "_commit_version")
+                .orderBy("c1")
+              checkAnswer(emitted, Seq(
+                Row(3, "c", "insert", 2L),
+                Row(4, "d", "insert", 2L),
+                Row(5, "e", "insert", 3L),
+                Row(6, "f", "insert", 3L)
+              ))
+            } else {
+              var q: StreamingQuery = null
+              val e = intercept[Exception] {
+                q = spark.readStream
+                  .format("deltaSharing")
+                  .option("responseFormat", "delta")
+                  .option("readChangeFeed", "true")
+                  .load(tablePath)
+                  .writeStream
+                  .format("delta")
+                  .option("checkpointLocation", checkpointDir.toString)
+                  .start(outputDir.toString)
+                try {
+                  q.processAllAvailable()
+                } finally {
+                  if (q != null) q.stop()
+                }
+              }
+              assert(e.getMessage != null && (
+                e.getMessage.contains("legacy") ||
+                e.getMessage.contains("checkpoint") ||
+                e.getCause != null && (
+                  e.getCause.getMessage.contains("legacy") ||
+                  e.getCause.getMessage.contains("checkpoint"))),
+                s"Expected legacy/checkpoint-related error, got: $e")
+            }
+          }
+        }
+      }
     }
   }
 
