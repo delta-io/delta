@@ -1518,7 +1518,7 @@ object DeltaSource extends DeltaLogging {
   /**
    * Build the latest offset based on the last indexedFile. The function also checks if latest
    * version is valid by comparing with previous version.
-   * Public for use by SparkMicroBatchStream.
+   * Public for use by DeltaV2MicroBatchStream.
    * @param tableId The table ID
    * @param fileVersion The version of the last indexed file.
    * @param fileIndex The index of the last indexed file.
