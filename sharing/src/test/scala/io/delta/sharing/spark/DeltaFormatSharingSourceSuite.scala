@@ -1018,8 +1018,13 @@ class DeltaFormatSharingSourceSuite
       withTempDirs { (inputDir, outputDir, checkpointDir) =>
         val deltaTableName = "delta_table_e2e_cdf_migration"
         withTable(deltaTableName) {
+          // Row tracking off so each INSERT is a clean blind append whose CDF rows
+          // are derivable by the standard CDF reader (no read-time/Auto-CDF needed).
           sql(s"""CREATE TABLE $deltaTableName (c1 INT, c2 STRING) USING DELTA
-                 |TBLPROPERTIES (delta.enableChangeDataFeed = true)""".stripMargin)
+                 |TBLPROPERTIES (
+                 |  delta.enableChangeDataFeed = true,
+                 |  delta.enableRowTracking = false
+                 |)""".stripMargin)
           sql(s"INSERT INTO $deltaTableName VALUES (1, 'a'), (2, 'b')") // v1
           sql(s"INSERT INTO $deltaTableName VALUES (3, 'c'), (4, 'd')") // v2
           sql(s"INSERT INTO $deltaTableName VALUES (5, 'e'), (6, 'f')") // v3
