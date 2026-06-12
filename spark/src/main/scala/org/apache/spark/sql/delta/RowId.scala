@@ -341,7 +341,7 @@ object RowId {
     }
 
     val materializedColumnName = MaterializedRowId.getMaterializedColumnNameOrThrow(
-      snapshot.protocol, snapshot.metadata, snapshot.unsafeVolatileTableId)
+      snapshot.protocol, snapshot.metadata, snapshot.metadata.id)
 
     val rowIdColumn = DeltaTableUtils.getFileMetadataColumn(dataFrame).getField(ROW_ID)
     val shouldSetIcebergReservedFieldId = IcebergCompat.isGeqEnabled(snapshot.metadata, 3)

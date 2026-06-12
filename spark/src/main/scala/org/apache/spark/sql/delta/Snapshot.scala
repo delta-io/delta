@@ -65,11 +65,6 @@ trait SnapshotDescriptor extends DeltaLoggingProvider {
   def metadata: Metadata
   def protocol: Protocol
 
-  // Named "unsafeVolatile" because `Snapshot` overrides this with the DeltaLog's volatile cached
-  // id (see the override there for why), so the value may not match this descriptor's
-  // `metadata.id`.
-  def unsafeVolatileTableId: String = metadata.id
-
   def schema: StructType = metadata.schema
 
   def dataPath: Path
@@ -414,16 +409,6 @@ class Snapshot(
 
   override def protocol: Protocol = _reconstructedProtocolMetadataAndICT.protocol
 
-  // Use the DeltaLog's cached (volatile) table id rather than `metadata.id`. The base
-  // `SnapshotDescriptor.unsafeVolatileTableId` reads `metadata.id`, but for a `Snapshot`
-  // accessing `metadata` forces state reconstruction (`_reconstructedProtocolMetadataAndICT`).
-  // `unsafeVolatileTableId` is used by the logging methods below, and those are invoked *during*
-  // reconstruction itself (e.g. the usage log on the incremental-checksum path) and during
-  // snapshot construction. Reading `metadata.id` there would re-enter the reconstruction lazy
-  // val on the same thread and overflow the stack, so we read the always-available cached id
-  // instead.
-  override def unsafeVolatileTableId: String = deltaLog.unsafeVolatileTableId
-
   /**
    * Tries to retrieve the protocol, metadata, and in-commit-timestamp (if needed) from the
    * checksum file. If the checksum file is not present or if the protocol or metadata is missing
@@ -751,26 +736,33 @@ class Snapshot(
     spark.createDataFrame(spark.sparkContext.emptyRDD[Row], logSchema)
 
 
+  // These logging methods must NOT read `this.metadata`: they are invoked *during* P&M
+  // reconstruction (e.g. the usage log on the incremental-checksum path) and during snapshot
+  // construction, where reading `metadata` re-enters the `_reconstructedProtocolMetadataAndICT`
+  // lazy val on the same thread and overflows the stack. Use the DeltaLog's cached id instead.
   def logInfo(msg: MessageWithContext): Unit = {
-    super.logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, unsafeVolatileTableId)}] " + msg)
+    val tableId = deltaLog.unsafeVolatileTableId
+    super.logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, tableId)}] " + msg)
   }
 
   def logWarning(msg: MessageWithContext): Unit = {
-    super.logWarning(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, unsafeVolatileTableId)}] " + msg)
+    val tableId = deltaLog.unsafeVolatileTableId
+    super.logWarning(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, tableId)}] " + msg)
   }
 
   def logWarning(msg: MessageWithContext, throwable: Throwable): Unit = {
-    super.logWarning(
-      log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, unsafeVolatileTableId)}] " + msg, throwable)
+    val tableId = deltaLog.unsafeVolatileTableId
+    super.logWarning(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, tableId)}] " + msg, throwable)
   }
 
   def logError(msg: MessageWithContext): Unit = {
-    super.logError(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, unsafeVolatileTableId)}] " + msg)
+    val tableId = deltaLog.unsafeVolatileTableId
+    super.logError(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, tableId)}] " + msg)
   }
 
   def logError(msg: MessageWithContext, throwable: Throwable): Unit = {
-    super.logError(
-      log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, unsafeVolatileTableId)}] " + msg, throwable)
+    val tableId = deltaLog.unsafeVolatileTableId
+    super.logError(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, tableId)}] " + msg, throwable)
   }
 
   override def toString: String =
