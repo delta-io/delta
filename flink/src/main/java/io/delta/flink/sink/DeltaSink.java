@@ -21,6 +21,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.stream.Collectors;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.connector.sink2.*;
 import org.apache.flink.core.io.SimpleVersionedSerializer;
@@ -185,6 +186,8 @@ public class DeltaSink
     private TableBuilder tableBuilder = new TableBuilder();
     private RowType flinkSchema;
     private Map<String, String> configurations;
+    private DeltaSinkConf.WriteMode writeMode;
+    private List<Integer> primaryKeyOrdinals;
 
     private Builder() {
       configurations = new HashMap<>();
@@ -246,13 +249,62 @@ public class DeltaSink
       tableBuilder.withConfigurations(configurations);
       this.configurations.clear();
       this.configurations.putAll(configurations);
+
+      String writeModeRaw = configurations.get(DeltaSinkConf.WRITE_MODE.key());
+      if (writeModeRaw != null) {
+        this.writeMode = DeltaSinkConf.WriteMode.valueOf(writeModeRaw.toUpperCase());
+      }
+      String primaryKeyRaw = configurations.get(DeltaSinkConf.PRIMARY_KEY.key());
+      if (primaryKeyRaw != null && !primaryKeyRaw.trim().isEmpty()) {
+        this.primaryKeyOrdinals =
+            java.util.Arrays.stream(primaryKeyRaw.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .map(Integer::parseInt)
+                .collect(Collectors.toList());
+      }
+      return this;
+    }
+
+    /**
+     * Sets the sink {@code write.mode}. Use {@link DeltaSinkConf.WriteMode#APPEND} (default) or
+     * {@link DeltaSinkConf.WriteMode#UPSERT}.
+     *
+     * <p>Sink-only — does not propagate to the Delta table's persisted properties.
+     */
+    public Builder withWriteMode(DeltaSinkConf.WriteMode writeMode) {
+      this.writeMode = writeMode;
+      return this;
+    }
+
+    /**
+     * Sets the sink primary-key columns by 0-based ordinal in the Flink {@code RowType} (required
+     * for {@code write.mode = "upsert"}).
+     *
+     * <p>Callers are responsible for resolving column names to ordinals against the schema they
+     * pass via {@link #withFlinkSchema(RowType)}. The Flink SQL path performs this resolution in
+     * {@link io.delta.flink.sink.sql.DeltaDynamicTableSink}; DataStream API callers can resolve
+     * with {@code flinkSchema.getFieldIndex(columnName)}.
+     *
+     * <p>Sink-only — does not propagate to the Delta table's persisted properties.
+     */
+    public Builder withPrimaryKey(List<Integer> primaryKeyOrdinals) {
+      this.primaryKeyOrdinals = primaryKeyOrdinals;
       return this;
     }
 
     public DeltaSink build() {
       Objects.requireNonNull(flinkSchema, "flinkSchema must not be null");
       if (configurations == null) {
-        configurations = Map.of();
+        configurations = new HashMap<>();
+      }
+      if (writeMode != null) {
+        configurations.put(DeltaSinkConf.WRITE_MODE.key(), writeMode.name());
+      }
+      if (primaryKeyOrdinals != null && !primaryKeyOrdinals.isEmpty()) {
+        configurations.put(
+            DeltaSinkConf.PRIMARY_KEY.key(),
+            primaryKeyOrdinals.stream().map(String::valueOf).collect(Collectors.joining(",")));
       }
       DeltaSinkConf sinkConf = new DeltaSinkConf(flinkSchema, configurations);
       if (deltaTable == null) {

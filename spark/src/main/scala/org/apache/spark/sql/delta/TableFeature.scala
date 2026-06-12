@@ -1256,6 +1256,8 @@ object CatalogOwnedTableFeature
   extends ReaderWriterFeature(name = "catalogManaged")
   with RemovableFeature {
 
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
+
   override def requiredFeatures: Set[TableFeature] =
     Set(InCommitTimestampTableFeature, VacuumProtocolCheckTableFeature)
 
@@ -1382,6 +1384,13 @@ object InCommitTimestampTableFeature
 object VacuumProtocolCheckTableFeature
   extends ReaderWriterFeature(name = "vacuumProtocolCheck")
   with RemovableFeature {
+
+  // Allowing concurrent transactions to rebase over this feature's enablement is safe:
+  // VACUUM already performs the writer-side protocol check at transaction start regardless
+  // of whether VacuumProtocolCheckTableFeature is in the protocol. So a rebased commit
+  // acquiring this feature mid-flight gains no new check at commit time -- the protection
+  // is already in place.
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
 
   override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand = {
     VacuumProtocolCheckPreDowngradeCommand(table)
