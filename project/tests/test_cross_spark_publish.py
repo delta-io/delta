@@ -674,7 +674,56 @@ class SparkVersionsScriptTest:
                     print(f"  ✗ {key}: expected {expected_value}, got {values.get(key)}")
                     return False
 
+            if "cache_key" not in values:
+                print("  ✗ --resolve-source-build did not emit cache_key")
+                return False
+            if not values["cache_key"].startswith("spark-m2-ubuntu-24.04-scala-2.13-4.2-4.2.0-"):
+                print(f"  ✗ unexpected cache_key: {values['cache_key']}")
+                return False
+
             print("  ✓ --resolve-source-build: emitted expected cache metadata")
+            return True
+
+        except Exception as e:
+            print(f"  ✗ Failed: {e}")
+            return False
+
+    def test_resolve_source_build_cache_key(self) -> bool:
+        """Test that compute_spark_m2_cache_key is exact and SHA/build-script sensitive."""
+        fake_sha = "b6bd005ac7549411ec4e7dc944d7a0e19fd56561"
+        build_script = self.delta_root / "project" / "scripts" / "build_spark.sh"
+        try:
+            spec = importlib.util.spec_from_file_location("get_spark_version_info", self.script_path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+
+            cache_key = module.compute_spark_m2_cache_key(
+                "ubuntu-24.04", "4.2", "4.2.0", fake_sha, build_script
+            )
+            if not cache_key.startswith("spark-m2-ubuntu-24.04-scala-2.13-4.2-4.2.0-"):
+                print(f"  ✗ unexpected cache_key prefix: {cache_key}")
+                return False
+            if fake_sha not in cache_key:
+                print("  ✗ cache_key should include the resolved Spark SHA")
+                return False
+
+            # Deterministic for the same inputs.
+            again = module.compute_spark_m2_cache_key(
+                "ubuntu-24.04", "4.2", "4.2.0", fake_sha, build_script
+            )
+            if cache_key != again:
+                print("  ✗ cache_key should be deterministic for the same inputs")
+                return False
+
+            # Changes when the Spark SHA changes.
+            other = module.compute_spark_m2_cache_key(
+                "ubuntu-24.04", "4.2", "4.2.0", "deadbeef" * 5, build_script
+            )
+            if other == cache_key:
+                print("  ✗ cache_key should change when the Spark SHA changes")
+                return False
+
+            print("  ✓ compute_spark_m2_cache_key: exact and SHA-sensitive")
             return True
 
         except Exception as e:
@@ -759,6 +808,7 @@ def main():
         script_test4_passed = script_test.test_source_build_spark_versions()
         script_test5_passed = script_test.test_non_source_build_spark_versions()
         script_test6_passed = script_test.test_resolve_source_build()
+        script_test6b_passed = script_test.test_resolve_source_build_cache_key()
         script_test7_passed = script_test.test_get_field()
 
         # Test cross-Spark build workflow
@@ -784,6 +834,7 @@ def main():
         print(f"  Source-Build Spark Versions Output:     {'✓ PASSED' if script_test4_passed else '✗ FAILED'}")
         print(f"  Non-Source-Build Spark Versions Output: {'✓ PASSED' if script_test5_passed else '✗ FAILED'}")
         print(f"  Source-Build Resolve Output:            {'✓ PASSED' if script_test6_passed else '✗ FAILED'}")
+        print(f"  Source-Build Cache Key:                 {'✓ PASSED' if script_test6b_passed else '✗ FAILED'}")
         print(f"  Get Field Functionality:                {'✓ PASSED' if script_test7_passed else '✗ FAILED'}")
         print("\nPart 2: Cross-Spark Build Tests")
         print(f"  Default publishM2 (with suffix):        {'✓ PASSED' if build_test1_passed else '✗ FAILED'}")
@@ -793,7 +844,7 @@ def main():
 
         all_tests_passed = (
             script_test1_passed and script_test2_passed and script_test3_passed and script_test4_passed and
-            script_test5_passed and script_test6_passed and script_test7_passed and
+            script_test5_passed and script_test6_passed and script_test6b_passed and script_test7_passed and
             build_test1_passed and build_test2_passed and build_test3_passed
         )
 
