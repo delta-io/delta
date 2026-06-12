@@ -26,6 +26,8 @@ import scala.jdk.OptionConverters._
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{DeltaFileProviderUtils, DummySnapshot, IcebergConstants, NoMapping, Snapshot}
+import org.apache.spark.sql.delta.IcebergCompat
+import org.apache.spark.sql.delta.RowId
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction, Metadata, RemoveFile}
 import org.apache.spark.sql.delta.icebergShaded.IcebergTransactionUtils._
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -83,6 +85,12 @@ class IcebergConversionTransaction(
       new java.util.ArrayList[MetadataUpdate]()
     ) extends DeltaLogging {
 
+  // Tracks the Delta version of the last commit that produced an Iceberg snapshot.
+  // Updated by TransactionHelper.commit() for non-NullHelper commits. Used to detect
+  // gaps caused by trailing non-data commits (NullHelper) so that
+  // UnityCatalogTableOperations.doCommit can validate the sequence number correctly.
+  private[delta] var lastDataDeltaVersion: Option[Long] = None
+
   ///////////////////////////
   // Nested Helper Classes //
   ///////////////////////////
@@ -134,6 +142,11 @@ class IcebergConversionTransaction(
 
     def commit(expectedSequenceNumber: Long): Unit = {
       assert(!committed, "Already committed.")
+      if (IcebergCompat.isGeqEnabled(postCommitSnapshot.metadata, 3)) {
+        // set lastSequenceNumber in TableMetadata to delta version - 1
+        // so iceberg will create snapshot/manifest at the delta version
+        IcebergTransactionUtils.setIcebergTxnLastSequenceNumber(txn, expectedSequenceNumber - 1)
+      }
       impl.commit()
       committed = true
     }
@@ -501,6 +514,13 @@ class IcebergConversionTransaction(
       case _ =>
         updateTxn.remove(IcebergConverter.BASE_DELTA_VERSION_PROPERTY)
     }
+    if (IcebergCompat.isGeqEnabled(postCommitSnapshot.metadata, 3)) {
+      updateTxn.set(
+        IcebergConverter.DELTA_HIGH_WATER_MARK_PROPERTY,
+        RowId.extractHighWatermark(postCommitSnapshot)
+          .getOrElse(RowId.MISSING_HIGH_WATER_MARK).toString
+      )
+    }
     updateTxn.commit()
 
     // We ensure the iceberg txns are serializable by only allowing them to commit against
@@ -523,6 +543,17 @@ class IcebergConversionTransaction(
       )
     }
     try {
+      // Set last sequence number in iceberg metadata to be same as Delta version, as
+      // some delta operations (eg, schema change, table property change) result in a new
+      // delta version but no new iceberg snapshot. This is needed to ensure the IRC iceberg
+      // writer sends the correct sequence number when it adds new snapshots.
+      if (IcebergCompat.isGeqEnabled(postCommitSnapshot.metadata, 3)) {
+        // Set lastSequenceNumber in TableMetadata to delta version
+        IcebergTransactionUtils.setIcebergTxnLastSequenceNumber(txn, postCommitSnapshot.version)
+        // For non-DBI tables, the post commit snapshot already contains the updated highWaterMark,
+        // so we can directly set it as the Iceberg nextRowId.
+        DeltaToIcebergConvert.RowTracking.setNextRowId(postCommitSnapshot, txn)
+      }
       txn.commitTransaction()
       recordIcebergCommit()
     } catch {
