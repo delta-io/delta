@@ -99,7 +99,29 @@ def load_spark_version_specs(root_dir):
         return json.load(f)
 
 
-def publish_all_variants(root_dir, spark_specs):
+def get_spark_major_minor(spark_version):
+    parts = spark_version.split(".")
+    if len(parts) < 2:
+        raise Exception("Spark version must include major.minor: %s" % spark_version)
+    return "%s.%s" % (parts[0], parts[1])
+
+
+def matching_spark_specs(spark_specs, spark_version):
+    if spark_version is None:
+        return spark_specs
+
+    requested_short_version = get_spark_major_minor(spark_version)
+    filtered_specs = [
+        spec for spec in spark_specs if spec["shortVersion"] == requested_short_version
+    ]
+    if not filtered_specs:
+        raise Exception(
+            "No Spark spec found for %s. Available specs: %s" %
+            (spark_version, ", ".join([spec["fullVersion"] for spec in spark_specs])))
+    return filtered_specs
+
+
+def publish_all_variants(root_dir, spark_specs, spark_version=None):
     """
     Publishes all artifact variants once upfront (replaces per-function publishM2 calls).
 
@@ -112,7 +134,7 @@ def publish_all_variants(root_dir, spark_specs):
 
     # Step 2: suffixed for each non-master Spark version
     # Clean between publishes to avoid stale class files from different Spark shims
-    for spec in spark_specs:
+    for spec in matching_spark_specs(spark_specs, spark_version):
         if spec.get("isMaster", False):
             continue
         spark_version = spec["fullVersion"]
@@ -176,6 +198,28 @@ def get_spark_variants(spark_specs):
         })
 
     return variants
+
+
+def filter_spark_variants(variants, spark_specs, spark_version):
+    if spark_version is None:
+        return variants
+
+    requested_short_version = get_spark_major_minor(spark_version)
+    # Validate against CrossSparkVersions' major.minor specs. This intentionally allows patch
+    # runtime versions like 4.1.2 to reuse the 4.1 artifact family.
+    matching_spark_specs(spark_specs, spark_version)
+
+    filtered_variants = []
+    for variant in variants:
+        variant_short_version = get_spark_major_minor(variant["spark_version"])
+        if variant_short_version == requested_short_version:
+            runtime_variant = dict(variant)
+            runtime_variant["spark_version"] = spark_version
+            filtered_variants.append(runtime_variant)
+
+    if not filtered_variants:
+        raise Exception("No integration test variants found for Spark %s" % spark_version)
+    return filtered_variants
 
 
 def run_scala_integration_tests(root_dir, version, test_name, extra_maven_repo, scala_version,
@@ -797,6 +841,12 @@ if __name__ == "__main__":
         action="store_true",
         help="Generate JARs from local source code and use to run tests")
     parser.add_argument(
+        "--spark-version",
+        required=False,
+        default=None,
+        help="In --use-local mode, run only variants matching this Spark major.minor. " +
+             "Patch versions such as 4.1.2 reuse the matching major.minor artifact suffix.")
+    parser.add_argument(
         "--run-storage-s3-dynamodb-integration-tests",
         required=False,
         default=False,
@@ -881,8 +931,9 @@ if __name__ == "__main__":
     if args.use_local:
         spark_specs = load_spark_version_specs(root_dir)
         clear_artifact_cache()
-        publish_all_variants(root_dir, spark_specs)
+        publish_all_variants(root_dir, spark_specs, args.spark_version)
         variants = get_spark_variants(spark_specs)
+        variants = filter_spark_variants(variants, spark_specs, args.spark_version)
 
     run_python = not args.scala_only and not args.pip_only
     run_scala = not args.python_only and not args.pip_only
@@ -986,7 +1037,10 @@ if __name__ == "__main__":
             run_python_integration_tests(root_dir, args.version, args.test, args.maven_repo,
                                          variant)
 
-        test_missing_delta_storage_jar(root_dir, args.version, args.use_local)
+        if any(variant["suffix"] == "" for variant in variants):
+            test_missing_delta_storage_jar(root_dir, args.version, args.use_local)
+        else:
+            print("Skipping 'missing_delta_storage_jar' - unsuffixed variant not selected")
 
     if run_pip:
         if args.use_testpypi and args.use_localpypiartifact is not None:
