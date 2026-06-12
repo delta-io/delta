@@ -143,8 +143,6 @@ case class CreateDeltaTableCommand(
     }
     val deltaLog = DeltaUtils.getDeltaLogFromTableOrPath(
       sparkSession, existingTableOpt, tableLocation, fileSystemOptions)
-    CoordinatedCommitsUtils.validateConfigurationsForCreateDeltaTableCommand(
-      sparkSession, deltaLog.tableExists, query, tableWithLocation.properties)
     CatalogOwnedTableUtils.validatePropertiesForCreateDeltaTableCommand(
       spark = sparkSession,
       tableExists = deltaLog.tableExists,

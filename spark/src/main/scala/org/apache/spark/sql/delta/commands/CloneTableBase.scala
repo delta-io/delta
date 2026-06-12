@@ -340,30 +340,6 @@ abstract class CloneTableBase(
   }
 
   /**
-   * Priority of Coordinated Commits configurations:
-   *   - When CLONE into a new table, explicit command specification takes precedence over default
-   *     SparkSession configurations.
-   *   - When CLONE into an existing table, use the existing table's configurations.
-   */
-  private def determineCoordinatedCommitsConfigurations(
-      spark: SparkSession,
-      targetSnapshot: SnapshotDescriptor,
-      validatedOverrides: Map[String, String]): Map[String, String] = {
-    if (tableExists(targetSnapshot)) {
-      assert(validatedOverrides.isEmpty,
-        "Explicit overrides on Coordinated Commits configurations for existing tables" +
-          " are not supported, and should have been caught earlier.")
-      CoordinatedCommitsUtils.getExplicitCCConfigurations(targetSnapshot.metadata.configuration)
-    } else {
-      if (validatedOverrides.nonEmpty) {
-        validatedOverrides
-      } else {
-        CoordinatedCommitsUtils.getDefaultCCConfigurations(spark)
-      }
-    }
-  }
-
-  /**
    * Helper function to determine [[UCCommitCoordinatorClient.UC_TABLE_ID_KEY]]
    * for the target table.
    */
@@ -390,22 +366,12 @@ abstract class CloneTableBase(
     var metadata = prepareSourceMetadata(targetSnapshot, opName)
     val validatedConfigurations = DeltaConfigs.validateConfigurations(tablePropertyOverrides)
 
-    // Finalize Coordinated Commits configurations for the target
-    val coordinatedCommitsConfigurationOverrides =
-      CoordinatedCommitsUtils.getExplicitCCConfigurations(validatedConfigurations)
-    val validatedConfigurationsWithoutCoordinatedCommits =
-      validatedConfigurations -- coordinatedCommitsConfigurationOverrides.keys
-    val finalCoordinatedCommitsConfigurations = determineCoordinatedCommitsConfigurations(
-      spark,
-      targetSnapshot,
-      coordinatedCommitsConfigurationOverrides)
-    val finalCatalogOwnedMetadata = finalCoordinatedCommitsConfigurations ++
-      determineCatalogOwnedUCTableId(targetSnapshot)
+    val finalCatalogOwnedMetadata = determineCatalogOwnedUCTableId(targetSnapshot)
 
-    // Merge source configuration, table property overrides and coordinated-commits configurations.
+    // Merge source configuration, table property overrides, and CatalogManaged metadata.
     metadata = metadata.copy(configuration =
       metadata.configuration ++
-        validatedConfigurationsWithoutCoordinatedCommits ++
+        validatedConfigurations ++
         finalCatalogOwnedMetadata)
 
     verifyMetadataInvariants(targetSnapshot, metadata)
