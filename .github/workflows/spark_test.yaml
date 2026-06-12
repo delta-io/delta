@@ -11,11 +11,20 @@ on:
       - '**.md'
       - '**.txt'
 # Every PR runs:
-# 1. generate-matrix: split Spark versions into published vs source-build lists.
-# 2. prepare_spark_source_cache: resolve metadata-owned Spark SHAs, restore exact Maven cache,
-#    and build/save Spark on cache miss.
+# 1. generate-matrix: split Spark versions (from CrossSparkVersions.scala) into published
+#    vs source-build lists.
+# 2. prepare_spark_source_cache: for each source-build Spark version, build Spark once and
+#    save the Maven cache (via the prepare-spark-env action with build-on-miss).
 # 3. test: published Spark shards (4.0/4.1) without waiting on step 2.
 # 4. source_spark_test: source-built Spark shards (4.2 today) after step 2.
+#
+# test and source_spark_test share two composite actions:
+#   - .github/actions/prepare-spark-env: installs the JDK and, for source-build rows,
+#     restores the Spark Maven cache (the prepare-cache job builds/saves it; shards restore).
+#   - .github/actions/run-delta-spark-tests: restores the SBT cache, publishes the pinned
+#     Unity Catalog build, and runs the sharded tests.
+# The Spark SHA, artifact version, and exact Maven cache key all come from
+# project/scripts/get_spark_version_info.py, so they are not hand-assembled in this workflow.
 jobs:
   # Generate Spark versions matrix from CrossSparkVersions.scala
   # This ensures the workflow always uses the versions defined in the build
@@ -47,7 +56,8 @@ jobs:
           echo "Generated source-build Spark versions: $SOURCE_BUILD_SPARK_VERSIONS"
           echo "Generated non-source-build Spark versions: $NON_SOURCE_BUILD_SPARK_VERSIONS"
 
-  # Warms ~/.m2/repository/org/apache/spark once per source-build Spark version in this PR.
+  # Builds ~/.m2/repository/org/apache/spark once per source-build Spark version so the
+  # sharded source_spark_test jobs all restore the same cache instead of rebuilding 8x.
   prepare_spark_source_cache:
     name: "Prepare Spark ${{ matrix.spark_version }} source cache"
     runs-on: ubuntu-24.04
@@ -58,54 +68,12 @@ jobs:
         spark_version: ${{ fromJson(needs.generate-matrix.outputs.source_build_spark_versions) }}
     steps:
       - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
-      - name: Get Spark version details
-        id: spark-details
-        run: |
-          # The script automatically generates spark-versions.json if needed
-          JVM_VERSION=$(python3 project/scripts/get_spark_version_info.py --get-field "${{ matrix.spark_version }}" targetJvm | jq -r)
-          echo "jvm_version=$JVM_VERSION" >> $GITHUB_OUTPUT
-          echo "Using JVM version: $JVM_VERSION for Spark ${{ matrix.spark_version }}"
-      - name: install java
-        uses: actions/setup-java@17f84c3641ba7b8f6deff6309fc4c864478f5d62 # v3.14.1
+      - name: Prepare Spark environment (build + cache)
+        uses: ./.github/actions/prepare-spark-env
         with:
-          distribution: "zulu"
-          java-version: ${{ steps.spark-details.outputs.jvm_version }}
-      - name: Resolve Spark source build
-        id: spark-source
-        run: |
-          # Resolves the Spark compatibility line, metadata-owned source ref,
-          # immutable Spark SHA, and commit-qualified local Maven version.
-          python3 project/scripts/get_spark_version_info.py \
-            --resolve-source-build \
-            --spark-version "${{ matrix.spark_version }}"
-      - name: Compute Spark Maven cache key
-        id: spark-cache-key
-        run: |
-          # Key is exact and has no restore-keys: a different SHA or build script must not reuse this cache.
-          echo "cache_key=spark-m2-ubuntu-24.04-scala-2.13-${{ steps.spark-source.outputs.spark_version }}-${{ steps.spark-source.outputs.artifact_base_version }}-${{ steps.spark-source.outputs.spark_sha }}-${{ hashFiles('project/scripts/build_spark.sh') }}" >> "$GITHUB_OUTPUT"
-      - name: Restore Spark Maven cache
-        id: spark-source-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: ~/.m2/repository/org/apache/spark
-          # Exact-match cache only. Spark source builds must not fall back to a
-          # different SHA or artifact base version. The matrix uses Scala 2.13.16
-          # for tests, while Spark artifacts are keyed by the Scala binary line.
-          key: ${{ steps.spark-cache-key.outputs.cache_key }}
-      - name: Build Spark source ref locally
-        if: steps.spark-source-cache.outputs.cache-hit != 'true'
-        env:
-          SPARK_SOURCE_REF: ${{ steps.spark-source.outputs.source_ref }}
-          SPARK_VERSION: ${{ steps.spark-source.outputs.spark_version }}
-          SPARK_BASE_VERSION: ${{ steps.spark-source.outputs.artifact_base_version }}
-          SPARK_ARTIFACT_VERSION: ${{ steps.spark-source.outputs.spark_artifact_version }}
-        run: bash project/scripts/build_spark.sh
-      - name: Save Spark Maven cache
-        if: steps.spark-source-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: ~/.m2/repository/org/apache/spark
-          key: ${{ steps.spark-cache-key.outputs.cache_key }}
+          spark-version: ${{ matrix.spark_version }}
+          use-spark-source-cache: 'true'
+          build-on-miss: 'true'
 
   # Published Spark artifacts only. This job does not depend on prepare_spark_source_cache.
   test:
@@ -122,61 +90,20 @@ jobs:
         scala: [2.13.16]
         # Important: This list of shards must be [0..NUM_SHARDS - 1]
         shard: [0, 1, 2, 3, 4, 5, 6, 7]
-    env:
-      SCALA_VERSION: ${{ matrix.scala }}
-      SPARK_VERSION: ${{ matrix.spark_version }}
-      # Important: This must be the same as the length of shards in matrix
-      NUM_SHARDS: 8
     steps:
       - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
-      - name: Get Spark version details
-        id: spark-details
-        run: |
-          # The script automatically generates spark-versions.json if needed
-          JVM_VERSION=$(python3 project/scripts/get_spark_version_info.py --get-field "${{ matrix.spark_version }}" targetJvm | jq -r)
-          echo "jvm_version=$JVM_VERSION" >> $GITHUB_OUTPUT
-          echo "Using JVM version: $JVM_VERSION for Spark ${{ matrix.spark_version }}"
-      - name: install java
-        uses: actions/setup-java@17f84c3641ba7b8f6deff6309fc4c864478f5d62 # v3.14.1
+      - name: Prepare Spark environment
+        uses: ./.github/actions/prepare-spark-env
         with:
-          distribution: "zulu"
-          java-version: ${{ steps.spark-details.outputs.jvm_version }}
-      - name: Restore SBT cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+          spark-version: ${{ matrix.spark_version }}
+      - name: Run Delta Spark tests
+        uses: ./.github/actions/run-delta-spark-tests
         with:
-          path: |
-            ~/.sbt
-            ~/.ivy2
-            ~/.cache/coursier
-          key: delta-sbt-cache-spark${{ matrix.spark_version }}-scala${{ matrix.scala }}
-      # Delta's sparkUnityCatalog module (part of sparkGroup) depends on APIs that are only in
-      # unreleased UC. Publish the pinned UC build locally before sbt tries to resolve it.
-      - name: Set up pinned Unity Catalog
-        uses: ./.github/actions/setup-unitycatalog
-      - name: Scala structured logging style check
-        run: |
-          if [ -f ./dev/spark_structured_logging_style.py ]; then
-              python3 ./dev/spark_structured_logging_style.py
-          fi
-      - name: Run Scala/Java tests
-        run: |
-          TEST_PARALLELISM_COUNT=4 python3 run-tests.py --group spark --shard ${{ matrix.shard }} --spark-version ${{ matrix.spark_version }}
-      - name: Upload test reports
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: test-reports-spark${{ matrix.spark_version }}-shard${{ matrix.shard }}
-          path: "**/target/test-reports/*.xml"
-          retention-days: 7
-      - name: Save SBT cache
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: |
-            ~/.sbt
-            ~/.ivy2
-            ~/.cache/coursier
-          key: delta-sbt-cache-spark${{ matrix.spark_version }}-scala${{ matrix.scala }}
+          spark-version: ${{ matrix.spark_version }}
+          scala: ${{ matrix.scala }}
+          shard: ${{ matrix.shard }}
+          # Important: This must be the same as the length of shards in matrix
+          num-shards: '8'
 
   # Validates source-built Spark for every PR using the SHA in this branch's metadata.
   source_spark_test:
@@ -192,100 +119,18 @@ jobs:
         spark_version: ${{ fromJson(needs.generate-matrix.outputs.source_build_spark_versions) }}
         scala: [2.13.16]
         shard: [0, 1, 2, 3, 4, 5, 6, 7]
-    env:
-      SCALA_VERSION: ${{ matrix.scala }}
-      SPARK_VERSION: ${{ matrix.spark_version }}
-      NUM_SHARDS: 8
     steps:
       - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
-      - name: Get Spark version details
-        id: spark-details
-        run: |
-          # The script automatically generates spark-versions.json if needed
-          JVM_VERSION=$(python3 project/scripts/get_spark_version_info.py --get-field "${{ matrix.spark_version }}" targetJvm | jq -r)
-          echo "jvm_version=$JVM_VERSION" >> $GITHUB_OUTPUT
-          echo "Using JVM version: $JVM_VERSION for Spark ${{ matrix.spark_version }}"
-      - name: install java
-        uses: actions/setup-java@17f84c3641ba7b8f6deff6309fc4c864478f5d62 # v3.14.1
+      - name: Prepare Spark environment (restore source cache)
+        uses: ./.github/actions/prepare-spark-env
         with:
-          distribution: "zulu"
-          java-version: ${{ steps.spark-details.outputs.jvm_version }}
-      - name: Resolve Spark source build
-        id: spark-source
-        run: |
-          # Recomputes the same exact cache key prepared by prepare_spark_source_cache.
-          python3 project/scripts/get_spark_version_info.py \
-            --resolve-source-build \
-            --spark-version "${{ matrix.spark_version }}"
-      - name: Compute Spark Maven cache key
-        id: spark-cache-key
-        run: |
-          echo "cache_key=spark-m2-ubuntu-24.04-scala-2.13-${{ steps.spark-source.outputs.spark_version }}-${{ steps.spark-source.outputs.artifact_base_version }}-${{ steps.spark-source.outputs.spark_sha }}-${{ hashFiles('project/scripts/build_spark.sh') }}" >> "$GITHUB_OUTPUT"
-      - name: Restore prepared Spark Maven cache
-        id: spark-source-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+          spark-version: ${{ matrix.spark_version }}
+          use-spark-source-cache: 'true'
+          build-on-miss: 'false'
+      - name: Run Delta Spark tests
+        uses: ./.github/actions/run-delta-spark-tests
         with:
-          path: ~/.m2/repository/org/apache/spark
-          # Recompute the same exact key used by prepare_spark_source_cache for this Spark version.
-          key: ${{ steps.spark-cache-key.outputs.cache_key }}
-      - name: Verify restored Spark Maven artifacts
-        env:
-          SPARK_SOURCE_REF: ${{ steps.spark-source.outputs.source_ref }}
-          SPARK_ARTIFACT_VERSION: ${{ steps.spark-source.outputs.spark_artifact_version }}
-        run: |
-          if [[ "${{ steps.spark-source-cache.outputs.cache-hit }}" != "true" ]]; then
-            echo "::error::Prepared Spark Maven cache was not found for $SPARK_SOURCE_REF."
-            exit 1
-          fi
-          missing=0
-          for module in spark-sql_2.13 spark-core_2.13 spark-catalyst_2.13 spark-hive_2.13; do
-            pom="$HOME/.m2/repository/org/apache/spark/$module/$SPARK_ARTIFACT_VERSION/$module-$SPARK_ARTIFACT_VERSION.pom"
-            if [[ ! -f "$pom" ]]; then
-              echo "::error::Missing restored Spark Maven artifact: $pom"
-              missing=1
-            fi
-          done
-          if [[ "$missing" != "0" ]]; then
-            echo "The Spark cache was restored, but it does not contain the expected Maven artifacts."
-            exit 1
-          fi
-      - name: Restore SBT cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: |
-            ~/.sbt
-            ~/.ivy2
-            ~/.cache/coursier
-          key: delta-sbt-cache-spark${{ matrix.spark_version }}-scala${{ matrix.scala }}
-      # Delta's sparkUnityCatalog module (part of sparkGroup) depends on APIs that are only in
-      # unreleased UC. Publish the pinned UC build locally before sbt tries to resolve it.
-      - name: Set up pinned Unity Catalog
-        uses: ./.github/actions/setup-unitycatalog
-      - name: Scala structured logging style check
-        run: |
-          if [ -f ./dev/spark_structured_logging_style.py ]; then
-              python3 ./dev/spark_structured_logging_style.py
-          fi
-      - name: Run Scala/Java tests
-        env:
-          # run-tests.py / build/sbt use these to resolve the commit-qualified Spark artifacts.
-          SPARK_COMMIT: ${{ steps.spark-source.outputs.spark_sha }}
-          SPARK_ARTIFACT_VERSION: ${{ steps.spark-source.outputs.spark_artifact_version }}
-        run: |
-          TEST_PARALLELISM_COUNT=4 python3 run-tests.py --group spark --shard ${{ matrix.shard }} --spark-version ${{ matrix.spark_version }}
-      - name: Upload test reports
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: test-reports-spark${{ matrix.spark_version }}-shard${{ matrix.shard }}
-          path: "**/target/test-reports/*.xml"
-          retention-days: 7
-      - name: Save SBT cache
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: |
-            ~/.sbt
-            ~/.ivy2
-            ~/.cache/coursier
-          key: delta-sbt-cache-spark${{ matrix.spark_version }}-scala${{ matrix.scala }}
+          spark-version: ${{ matrix.spark_version }}
+          scala: ${{ matrix.scala }}
+          shard: ${{ matrix.shard }}
+          num-shards: '8'

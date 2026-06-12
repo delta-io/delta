@@ -35,6 +35,7 @@ Usage:
 """
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -132,6 +133,34 @@ def strip_suffix(value, suffix):
     return value
 
 
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(8192), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def compute_spark_m2_cache_key(
+    runner_label,
+    spark_version,
+    artifact_base_version,
+    spark_sha,
+    build_script_path,
+):
+    script_hash = sha256_file(build_script_path)
+    return (
+        "spark-m2-{}-scala-2.13-"
+        "{}-{}-{}-{}".format(
+            runner_label,
+            spark_version,
+            artifact_base_version,
+            spark_sha,
+            script_hash,
+        )
+    )
+
+
 def emit_output(values):
     github_output = os.environ.get("GITHUB_OUTPUT")
     if github_output:
@@ -143,7 +172,7 @@ def emit_output(values):
         print("{}={}".format(key, value))
 
 
-def resolve_source_build(args, versions):
+def resolve_source_build(args, versions, repo_root):
     version_entry = find_version_entry(versions, args.spark_version)
     if not version_entry:
         print(f"ERROR: Spark version '{args.spark_version}' not found", file=sys.stderr)
@@ -164,6 +193,14 @@ def resolve_source_build(args, versions):
     )
     spark_sha = resolve_spark_sha(args.spark_repo, source_ref, Path(args.spark_dir))
     spark_artifact_version = "{}-{}-SNAPSHOT".format(artifact_base_version, spark_sha[:12])
+    build_script_path = repo_root / "project" / "scripts" / "build_spark.sh"
+    cache_key = compute_spark_m2_cache_key(
+        args.runner_label,
+        normalized_spark_version,
+        artifact_base_version,
+        spark_sha,
+        build_script_path,
+    )
 
     print(
         "Resolved Spark {} source ref {} to {} and Maven version {}".format(
@@ -177,6 +214,7 @@ def resolve_source_build(args, versions):
             "spark_sha": spark_sha,
             "artifact_base_version": artifact_base_version,
             "spark_artifact_version": spark_artifact_version,
+            "cache_key": cache_key,
         }
     )
 
@@ -234,6 +272,11 @@ def main():
         "--spark-dir",
         default="/tmp/spark",
         help="Temporary Spark checkout used for source-ref resolution"
+    )
+    parser.add_argument(
+        "--runner-label",
+        default="ubuntu-24.04",
+        help="GitHub Actions runner label used in Spark Maven cache keys"
     )
 
     args = parser.parse_args()
@@ -302,7 +345,7 @@ def main():
         elif args.resolve_source_build:
             if not args.spark_version:
                 parser.error("--resolve-source-build requires --spark-version")
-            resolve_source_build(args, versions)
+            resolve_source_build(args, versions, repo_root)
 
         else:
             parser.print_help()
