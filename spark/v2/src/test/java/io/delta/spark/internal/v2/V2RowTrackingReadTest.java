@@ -17,13 +17,14 @@ package io.delta.spark.internal.v2;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import org.apache.spark.sql.delta.DeltaLog;
 import java.io.File;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import org.apache.spark.sql.AnalysisException;
 import org.apache.spark.sql.Row;
-import org.apache.spark.sql.delta.DeltaLog;
+import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.util.Utils;
 import org.junit.jupiter.api.AfterEach;
@@ -169,16 +170,27 @@ public class V2RowTrackingReadTest extends DeltaV2TestBase {
     org.apache.spark.sql.Dataset<Row> metadataDf =
         spark.sql(String.format("SELECT _metadata FROM dsv2.delta.`%s`", noRtPath));
     StructType metadataSchema = (StructType) metadataDf.schema().apply("_metadata").dataType();
+    // Spark file-source base metadata fields; row tracking fields are absent when RT is disabled.
     assertEquals(
-        0,
+        6,
         metadataSchema.fields().length,
-        "Expected _metadata to be an empty struct for row-tracking-disabled tables");
+        "Expected _metadata to contain six Spark base metadata fields when RT is disabled");
+    assertArrayEquals(
+        new String[] {
+          FileFormat$.MODULE$.FILE_PATH(),
+          FileFormat$.MODULE$.FILE_NAME(),
+          FileFormat$.MODULE$.FILE_SIZE(),
+          FileFormat$.MODULE$.FILE_BLOCK_START(),
+          FileFormat$.MODULE$.FILE_BLOCK_LENGTH(),
+          FileFormat$.MODULE$.FILE_MODIFICATION_TIME()
+        },
+        metadataSchema.fieldNames());
 
     List<Row> metadataRows = metadataDf.collectAsList();
     assertEquals(2, metadataRows.size());
     for (Row row : metadataRows) {
       assertNotNull(row.getStruct(0), "Expected _metadata struct value to be present");
-      assertEquals(0, row.getStruct(0).size(), "Expected _metadata struct to have no fields");
+      assertEquals(6, row.getStruct(0).size(), "Expected full base _metadata struct width");
     }
 
     AnalysisException e =
@@ -241,6 +253,47 @@ public class V2RowTrackingReadTest extends DeltaV2TestBase {
     assertEquals(3, rows.size());
     assertEquals(
         originalUpdatedRowId, rows.get(0).getLong(2), "Updated row should keep the same row_id");
+  }
+
+  /**
+   * Exercises the {@code _metadata.row_id} fallback across mixed file history: one file written by
+   * INSERT (materialized row_id column null or absent in the parquet file) plus another file
+   * written by UPDATE rewrite (materialized row_id column populated). Both branches of the {@code
+   * RowIdValueSetterBuilder} coalesce must produce the right value, and updated rows must keep
+   * their original row_id.
+   */
+  @Test
+  public void testMixedFileHistoryRowIdResolves() {
+    // Snapshot row_id assignments from the initial INSERT (id 1..3) before we mutate the table.
+    List<Row> before = queryRowTrackingWithRowTrackingMetadata(tablePath);
+    assertEquals(3, before.size());
+    long bobRowIdBefore = before.get(1).getLong(2); // ordered by id, so index 1 = Bob (id=2)
+
+    // UPDATE rewrites Bob -> Bobby. With row tracking, the rewritten row materialises its
+    // original row_id into a hidden helper column. Other untouched files keep the materialised
+    // column null / absent for the rows they contain.
+    spark.sql(String.format("UPDATE delta.`%s` SET name = 'Bobby' WHERE id = 2", tablePath));
+
+    // Add a third file via a fresh INSERT (also materialised-row-id-absent).
+    spark.sql(String.format("INSERT INTO delta.`%s` VALUES (4, 'David')", tablePath));
+
+    List<Row> rows = queryRowTrackingWithRowTrackingMetadata(tablePath);
+    assertEquals(4, rows.size());
+
+    // id=2 must keep its original row_id (came from the materialised column).
+    assertEquals(2L, rows.get(1).getLong(0), "result ordered by id");
+    assertEquals("Bobby", rows.get(1).getString(1));
+    assertEquals(
+        bobRowIdBefore,
+        rows.get(1).getLong(2),
+        "UPDATEd row should keep its original row_id (materialised column path)");
+
+    // All row_ids must be non-null and unique across the mixed history.
+    Set<Long> uniqueRowIds = new HashSet<>();
+    for (Row row : rows) {
+      assertFalse(row.isNullAt(2), "row_id must be non-null for every row in mixed history");
+      assertTrue(uniqueRowIds.add(row.getLong(2)), "row_id collision across mixed-history files");
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -343,7 +396,16 @@ public class V2RowTrackingReadTest extends DeltaV2TestBase {
         "Expected output ordering: data columns, _metadata, partition columns");
     StructType metadataSchema = (StructType) df.schema().apply("_metadata").dataType();
     assertArrayEquals(
-        new String[] {"row_id", "row_commit_version"},
+        new String[] {
+          FileFormat$.MODULE$.FILE_PATH(),
+          FileFormat$.MODULE$.FILE_NAME(),
+          FileFormat$.MODULE$.FILE_SIZE(),
+          FileFormat$.MODULE$.FILE_BLOCK_START(),
+          FileFormat$.MODULE$.FILE_BLOCK_LENGTH(),
+          FileFormat$.MODULE$.FILE_MODIFICATION_TIME(),
+          "row_id",
+          "row_commit_version"
+        },
         metadataSchema.fieldNames(),
         "Unexpected _metadata struct field order");
 
@@ -359,8 +421,14 @@ public class V2RowTrackingReadTest extends DeltaV2TestBase {
       Row metadata = row.getStruct(3);
       String date = row.getString(4);
       String city = row.getString(5);
-      long rowId = metadata.getLong(0);
-      long rowCommitVersion = metadata.getLong(1);
+      // Base metadata (0..5), then row_id (6), row_commit_version (7)
+      assertNotNull(metadata.getString(0));
+      assertTrue(
+          metadata.getString(0).contains("part-") || metadata.getString(0).endsWith(".parquet"),
+          "file_path should reference a data file");
+      assertTrue(metadata.getLong(2) > 0L, "file_size should be positive");
+      long rowId = metadata.getLong(6);
+      long rowCommitVersion = metadata.getLong(7);
 
       if (id == 1L) {
         assertEquals("Alice", name);
