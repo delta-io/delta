@@ -17,13 +17,13 @@ package io.delta.spark.internal.v2;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import org.apache.spark.sql.delta.DeltaLog;
 import java.io.File;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import org.apache.spark.sql.AnalysisException;
 import org.apache.spark.sql.Row;
+import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.util.Utils;
