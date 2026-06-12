@@ -32,7 +32,7 @@ import org.apache.spark.sql.types.StructType;
 
 /**
  * WriteBuilder for DSv2 batch writes to Delta tables. Mirrors the read-side {@code
- * SparkScanBuilder} pattern: takes table-level state and Spark's {@link LogicalWriteInfo}, and
+ * DeltaV2ScanBuilder} pattern: takes table-level state and Spark's {@link LogicalWriteInfo}, and
  * builds a {@link DeltaV2BatchWrite} (which implements both Write and BatchWrite).
  *
  * <p>Schema validation uses the shared V1 utility {@code SchemaMergingUtils.mergeSchemas} to check
