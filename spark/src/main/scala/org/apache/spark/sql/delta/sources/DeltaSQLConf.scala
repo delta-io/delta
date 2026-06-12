@@ -2418,7 +2418,7 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           |kernel-based Auto-CDF reader stack. When disabled, the catalog falls back to the
           |default behavior (UNSUPPORTED_FEATURE.CHANGE_DATA_CAPTURE).""".stripMargin)
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP = {
     buildConf("changeDataFeed.timestampOutOfRange.enabled")
