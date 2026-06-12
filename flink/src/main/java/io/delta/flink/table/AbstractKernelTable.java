@@ -113,8 +113,9 @@ public abstract class AbstractKernelTable implements DeltaTable {
         target =
             new URI(
                 target.getScheme(),
-                Optional.ofNullable(target.getHost()).orElse(""),
+                Optional.ofNullable(target.getAuthority()).orElse(""),
                 target.getPath() + "/",
+                target.getQuery(),
                 target.getFragment());
       }
     } catch (URISyntaxException e) {
