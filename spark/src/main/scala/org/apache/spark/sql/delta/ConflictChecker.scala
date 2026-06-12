@@ -32,6 +32,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils.CheckDeterministicOptions
 import org.apache.spark.sql.delta.util.FileNames
 import io.delta.storage.commit.UpdatedActions
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import io.delta.storage.commit.uniform.UniformMetadata
 import org.apache.hadoop.fs.FileStatus
 
@@ -770,8 +771,12 @@ private[delta] class ConflictChecker(
     val ictAllowList =
         InCommitTimestampUtils.TABLE_PROPERTY_KEYS.toSet
 
+    val catalogManagedAllowList =
+        Set(UCCommitCoordinatorClient.UC_TABLE_ID_KEY)
+
     rowTrackingAllowList ++ columnMappingAllowList ++ dvsAllowList
       .++(v2CheckpointAllowList)
+      .++(catalogManagedAllowList)
       .++(ictAllowList)
   }
 
@@ -846,6 +851,10 @@ private[delta] class ConflictChecker(
             value.toBoolean // only allow enabling, not disabling
         case DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.key => isNew
         case DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.key => isNew
+        // Catalog-owned enablement configuration
+        case UCCommitCoordinatorClient.UC_TABLE_ID_KEY
+            if currentTransactionInfo.protocol.isFeatureSupported(CatalogOwnedTableFeature) =>
+          isNew
         case _ => true
       }
     }
