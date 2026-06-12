@@ -939,6 +939,7 @@ class DummySnapshot(
     val logPath: Path,
     override val deltaLog: DeltaLog,
     override val metadata: Metadata,
+    domainMetadataOpt: Option[Seq[DomainMetadata]] = None,
     protocolOpt: Option[Protocol] = None)
   extends Snapshot(
     path = logPath,
@@ -966,6 +967,7 @@ class DummySnapshot(
   override def protocol: Protocol =
     protocolOpt.getOrElse(Protocol.forNewTable(spark, Some(metadata)))
 
+  override def domainMetadata: Seq[DomainMetadata] = domainMetadataOpt.getOrElse(Seq.empty)
   override protected lazy val computedState: SnapshotState = initialState(metadata, protocol)
   override protected lazy val getInCommitTimestampOpt: Option[Long] = None
   _computedStateTriggered = true
