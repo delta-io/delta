@@ -28,6 +28,7 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.UnsupportedTableFeatureException;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction;
@@ -44,6 +45,8 @@ import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.adapters.KernelMetadataAdapter;
+import io.delta.spark.internal.v2.exception.KernelExceptionConverter;
+import io.delta.spark.internal.v2.exception.Operation;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.utils.PartitionUtils;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
@@ -499,6 +502,10 @@ public class SparkMicroBatchStream
       if (interruptCause.isPresent()) {
         throw new UncheckedIOException(interruptCause.get());
       }
+      if (e instanceof KernelException) {
+        throw KernelExceptionConverter.translateAndThrow(
+            (KernelException) e, tablePath, Operation.STREAMING_MICROBATCH);
+      }
       throw e;
     }
   }
@@ -663,6 +670,10 @@ public class SparkMicroBatchStream
       Optional<ClosedByInterruptException> interruptCause = findClosedByInterruptCause(e);
       if (interruptCause.isPresent()) {
         throw new UncheckedIOException(interruptCause.get());
+      }
+      if (e instanceof KernelException) {
+        throw KernelExceptionConverter.translateAndThrow(
+            (KernelException) e, tablePath, Operation.STREAMING_MICROBATCH);
       }
       throw e;
     }

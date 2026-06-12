@@ -23,8 +23,11 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.rowtracking.RowTracking;
+import io.delta.spark.internal.v2.exception.KernelExceptionConverter;
+import io.delta.spark.internal.v2.exception.Operation;
 import io.delta.spark.internal.v2.read.MetadataEvolutionHandler;
 import io.delta.spark.internal.v2.read.SparkScanBuilder;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
@@ -197,8 +200,14 @@ public class DeltaV2Table
         SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(options));
     this.kernelEngine = DefaultEngine.create(this.hadoopConf);
     this.snapshotManager = SnapshotManagerFactory.create(tablePath, kernelEngine, catalogTable);
-    // Load the initial snapshot through the manager
-    this.initialSnapshot = snapshotManager.loadLatestSnapshot();
+    Snapshot loadedSnapshot;
+    try {
+      loadedSnapshot = snapshotManager.loadLatestSnapshot();
+    } catch (KernelException e) {
+      // Surface the same exceptions the DSv1 connector raises (delta-io/delta#5900).
+      throw KernelExceptionConverter.translateAndThrow(e, tablePath, Operation.TABLE_RESOLUTION);
+    }
+    this.initialSnapshot = loadedSnapshot;
 
     this.isCDCRead = CDCReader.isCDCRead(new CaseInsensitiveStringMap(this.options));
 
