@@ -23,9 +23,11 @@ import io.delta.storage.commit.actions.AbstractProtocol;
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.CommitReport;
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.StagingTableInfo;
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.TableInfo;
+import io.delta.storage.commit.uniform.UniformMetadata;
 import java.io.IOException;
 import java.net.URI;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Extends {@link UCClient} with Delta table lifecycle operations backed by the UC Delta API
@@ -73,6 +75,8 @@ public interface UCDeltaClient extends UCClient {
    *                               row-tracking); pass an empty list when none are set
    * @param lastCommitTimestampMs  Delta-log timestamp of the initial commit; UC stores this on
    *                               the catalog entry
+   * @param uniformMetadata        UniForm Iceberg metadata generated for the initial snapshot;
+   *                               empty when the table was not created with UniForm enabled
    * @return the newly created table's {@link TableInfo}
    * @throws IOException on network or API errors
    */
@@ -83,7 +87,8 @@ public interface UCDeltaClient extends UCClient {
       AbstractMetadata metadata,
       AbstractProtocol protocol,
       List<AbstractDomainMetadata> domainMetadata,
-      long lastCommitTimestampMs) throws IOException;
+      long lastCommitTimestampMs,
+      Optional<UniformMetadata> uniformMetadata) throws IOException;
 
   /**
    * Reports post-commit telemetry for a table (file/row counts, byte counts, file-size

@@ -27,6 +27,7 @@ import scala.util.control.NonFatal
 import io.delta.storage.commit.{TableIdentifier => StorageTableIdentifier}
 import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.{UCDeltaClient, UCDeltaModels}
+import io.delta.storage.commit.uniform.{UniformMetadata => StorageUniformMetadata}
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.TableInfo
 import io.delta.storage.commit.uccommitcoordinator.exceptions.{
@@ -263,15 +264,25 @@ private[catalog] class UCDeltaCatalogClientImpl(
   /**
    * Applies UC's required properties to `augmented`. Caller-supplied values that conflict
    * with a required key throw.
+   *
+   * Exception: if the table is being created with IcebergCompatV2 enabled, the DV property
+   * is silently skipped even if the catalog marks it required as IcebergCompatV2 is
+   * incompatible with DV
    */
   private def applyRequiredProperties(
       augmented: util.Map[String, String],
       required: util.Map[String, String],
       ident: Identifier): Unit = {
     if (required == null) return
+    val isIcebergCompatV2Enabled =
+      "true".equalsIgnoreCase(augmented.get(DeltaConfigs.ICEBERG_COMPAT_V2_ENABLED.key))
     // `null` values are engine-generated-at-commit sentinels (see [[applySuggestedProperties]]).
     required.asScala.foreach { case (k, v) =>
-      if (v != null) putRequiredOrThrow(augmented, k, v, ident)
+      if (v != null) {
+        val isDvProperty = k == DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key
+        // For IcebergCompatV2 enabled tables, skip DV requirement
+        if (!(isIcebergCompatV2Enabled && isDvProperty)) putRequiredOrThrow(augmented, k, v, ident)
+      }
     }
   }
 
@@ -469,7 +480,8 @@ private[catalog] class UCDeltaCatalogClientImpl(
       metadata: Metadata,
       domainMetadata: Seq[DomainMetadata],
       protocol: Protocol,
-      lastCommitTimestampMs: Long): Unit = {
+      lastCommitTimestampMs: Long,
+      uniformMetadata: Option[StorageUniformMetadata] = None): Unit = {
     if (table.tableType != CatalogTableType.MANAGED) {
       throw new IllegalArgumentException(
         s"UCDeltaClient createTable only supports MANAGED tables; " +
@@ -493,7 +505,8 @@ private[catalog] class UCDeltaCatalogClientImpl(
         configuration = cleanedConfiguration),
       protocol,
       domainMetadata.map(d => d: AbstractDomainMetadata).asJava,
-      lastCommitTimestampMs)
+      lastCommitTimestampMs,
+      uniformMetadata.toJava)
   }
 
   // -------------------------------------------------------------------------
