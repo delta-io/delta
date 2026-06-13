@@ -17,21 +17,24 @@
 package io.delta.flink.sink;
 
 import io.delta.flink.table.DeltaTable;
-import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Literal;
 import java.io.IOException;
 import java.io.Serializable;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
+import org.apache.flink.api.connector.sink2.SinkWriter;
+import org.apache.flink.table.data.RowData;
 
 /**
  * Performing the row-level merge that turns an incoming upsert/delete stream into Delta {@code
  * Add}/{@code Remove} file actions.
  *
  * <p>A strategy owns the per-checkpoint bookkeeping it needs to do its job. {@link DeltaSinkWriter}
- * pushes primary-key information into the strategy as rows arrive ({@link #recordUpsert} for {@code
- * INSERT}/{@code UPDATE_AFTER}; {@link #recordDelete} for {@code DELETE}) and calls {@link #merge}
- * once per checkpoint to materialize that bookkeeping into Delta actions and reset internal state.
+ * pushes primary-key information into the strategy as rows arrive ({@link #upsert} for {@code
+ * INSERT}/{@code UPDATE_AFTER}; {@link #delete} for {@code DELETE}) and calls {@link #merge} once
+ * per checkpoint to materialize that bookkeeping into Delta actions and reset internal state.
  *
  * <p>Implementations are responsible for emitting:
  *
@@ -46,19 +49,61 @@ import java.util.Map;
  *
  * <p>Implementations must be {@link Serializable} so the writer can be shipped to TaskManagers.
  * Implementations should keep their internal state empty between checkpoints (i.e. {@link #merge}
- * must clear whatever {@link #recordUpsert} / {@link #recordDelete} accumulated).
+ * must clear whatever {@link #upsert} / {@link #delete} accumulated).
  */
 public interface MergeStrategy extends Serializable {
 
   /**
-   * Records the primary key of an {@code INSERT} or {@code UPDATE_AFTER} row written during the
-   * current checkpoint, so the strategy can later remove any pre-existing row that shares this key.
-   * The new row itself has already been appended by the writer via {@link DeltaTable#writeParquet}.
+   * Stable cache key for a per-partition writer task; collapses {@link Literal} partition values to
+   * their string form so logically-equal partitions hash to the same bucket.
+   */
+  static Map<String, String> writerKey(Map<String, Literal> partitionValues) {
+    return partitionValues.entrySet().stream()
+        .collect(Collectors.toMap(Map.Entry::getKey, entry -> entry.getValue().toString()));
+  }
+
+  /**
+   * Hash of a composite primary key. Strategies use this as the index into per-partition PK
+   * tracking; collisions are tolerated by the consumers (see {@link DeltaUpsertWriterTask}).
+   */
+  static int keyHash(List<Literal> keys) {
+    return Arrays.hashCode(keys.stream().map(Literal::toString).toArray());
+  }
+
+  /**
+   * Binds the strategy to the owning writer for the lifetime of the writer (called once after
+   * construction). Strategies that need access to the table, schema or partition columns read them
+   * from {@code writer}.
+   */
+  void init(DeltaSinkWriter writer);
+
+  /**
+   * Records an {@code INSERT} row written during the current checkpoint. The new row is appended to
+   * the partition's writer task with no pre-image bookkeeping; see {@link #upsert} for the update
+   * path that also schedules pre-image removal.
    *
    * @param primaryKey the primary-key values, not null but individual elements may be null
    * @param partitionValues the partition column values of the row; empty for unpartitioned tables
+   * @param content the actual row written
    */
-  void recordUpsert(List<Literal> primaryKey, Map<String, Literal> partitionValues);
+  void insert(
+      List<Literal> primaryKey,
+      Map<String, Literal> partitionValues,
+      RowData content,
+      SinkWriter.Context context);
+  /**
+   * Records an {@code UPDATE_AFTER} row written during the current checkpoint, so the strategy can
+   * later remove any pre-existing row that shares this key.
+   *
+   * @param primaryKey the primary-key values, not null but individual elements may be null
+   * @param partitionValues the partition column values of the row; empty for unpartitioned tables
+   * @param content the actual row written
+   */
+  void upsert(
+      List<Literal> primaryKey,
+      Map<String, Literal> partitionValues,
+      RowData content,
+      SinkWriter.Context context);
 
   /**
    * Records the primary key of a {@code DELETE} row observed during the current checkpoint. The
@@ -68,20 +113,15 @@ public interface MergeStrategy extends Serializable {
    * @param primaryKey the primary-key values, not null but individual elements may be null
    * @param partitionValues the partition column values of the row; empty for unpartitioned tables
    */
-  void recordDelete(List<Literal> primaryKey, Map<String, Literal> partitionValues);
+  void delete(List<Literal> primaryKey, Map<String, Literal> partitionValues);
 
   /**
    * Resolves the recorded checkpoint work into Delta actions and clears internal state.
    *
    * <p>If no records were observed since the last call, returns an empty list.
    *
-   * @param table the target Delta table; implementations may use it to read the current snapshot
-   *     and to write replacement data files via {@link DeltaTable#writeParquet}
-   * @param conf the sink configuration, providing the schema, primary-key columns, and rolling
-   *     strategy
-   * @return additional actions to include in the commit. Empty if no existing files need
-   *     modification.
+   * @return actions to include in the commit.
    * @throws IOException if reading existing files or writing replacement files fails
    */
-  List<Row> merge(DeltaTable table, DeltaSinkConf conf) throws IOException;
+  List<DeltaWriterResult> merge() throws IOException;
 }
