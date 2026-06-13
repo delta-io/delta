@@ -89,13 +89,29 @@ public final class S3LogStoreUtil {
             Path parentPath) throws IOException {
         S3AFileSystem s3afs;
         try {
-             s3afs = (S3AFileSystem) fs;
+             s3afs = (S3AFileSystem) unwrapFilterFileSystem(fs);
         } catch (ClassCastException e) {
             throw new UnsupportedOperationException(
                     "The Hadoop file system used for the S3LogStore must be castable to " +
-                            "org.apache.hadoop.fs.s3a.S3AFileSystem.", e);
+                            "org.apache.hadoop.fs.s3a.S3AFileSystem. The actual file system " +
+                            "class is " + fs.getClass().getName() + ".", e);
         }
         return iteratorToStatuses(S3LogStoreUtil.s3ListFrom(s3afs, resolvedPath, parentPath));
+    }
+
+    /**
+     * Unwraps any {@link FilterFileSystem} layers to get the underlying filesystem.
+     *
+     * This is necessary because credential-scoped filesystem wrappers (e.g. Unity Catalog's
+     * CredScopedFileSystem) wrap S3AFileSystem inside a FilterFileSystem. Without unwrapping,
+     * the cast to S3AFileSystem in {@link #s3ListFromArray} would fail.
+     */
+    static FileSystem unwrapFilterFileSystem(FileSystem fs) {
+        FileSystem current = fs;
+        while (current instanceof FilterFileSystem) {
+            current = ((FilterFileSystem) current).getRawFileSystem();
+        }
+        return current;
     }
 
     /**
