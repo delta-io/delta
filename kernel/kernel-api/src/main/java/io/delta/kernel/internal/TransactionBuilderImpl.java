@@ -47,6 +47,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   private Optional<Map<String, String>> tableProperties = Optional.empty();
   private Optional<Set<String>> unsetTablePropertiesKeys = Optional.empty();
   private boolean needDomainMetadataSupport = false;
+  private Map<String, String> commitTags = emptyMap();
 
   // The original clustering columns provided by the user when building the transaction.
   // This represents logical column references before schema resolution is applied.
@@ -167,6 +168,12 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   }
 
   @Override
+  public TransactionBuilder withCommitTags(Map<String, String> tags) {
+    this.commitTags = Collections.unmodifiableMap(requireNonNull(tags, "tags is null"));
+    return this;
+  }
+
+  @Override
   public Transaction build(Engine engine) {
     if (operation == Operation.REPLACE_TABLE) {
       throw new UnsupportedOperationException("REPLACE TABLE is not yet supported");
@@ -243,7 +250,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           Optional.empty(), /* clustering cols=empty */
           userProvidedMaxRetries,
           logCompactionInterval,
-          table.getClock());
+          table.getClock(),
+          commitTags);
     }
 
     // Instead of special casing enabling domain metadata, we should just add them
@@ -307,7 +315,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         outputMetadata.physicalNewClusteringColumns,
         userProvidedMaxRetries,
         logCompactionInterval,
-        table.getClock());
+        table.getClock(),
+        commitTags);
   }
 
   /**
