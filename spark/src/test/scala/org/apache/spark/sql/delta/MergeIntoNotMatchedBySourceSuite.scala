@@ -16,10 +16,16 @@
 
 package org.apache.spark.sql.delta
 
+import scala.concurrent.duration.Duration
+
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.concurrency.PhaseLockingTestMixin
+import org.apache.spark.sql.delta.concurrency.TransactionExecutionTestMixin
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.Row
+import org.apache.spark.sql.functions.{col, lit}
+import org.apache.spark.util.ThreadUtils
 
 trait MergeIntoNotMatchedBySourceWithCDCMixin extends MergeIntoSuiteBaseMixin {
   import testImplicits._
@@ -423,7 +429,10 @@ trait MergeIntoNotMatchedBySourceCDCPart2Tests extends MergeIntoNotMatchedBySour
     cdc = Seq.empty)
 }
 
-trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBaseMixin {
+trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBaseMixin
+  with PhaseLockingTestMixin
+  with TransactionExecutionTestMixin {
+
   import testImplicits._
 
   // Test analysis errors with NOT MATCHED BY SOURCE clauses.
@@ -538,6 +547,84 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBaseMixin {
       checkAnswer(
         readDeltaTableByIdentifier(s"delta.`$target`"),
         Seq(0, 10, 2, 30, 4, 50, 6, 70, 8, 90).toDF("id"))
+    }
+  }
+
+  test("files touched - not matched by source") {
+    withTempDir { tempDir =>
+      val source = s"$tempDir/source"
+      val target = s"$tempDir/target"
+      spark.range(10)
+        .withColumn("part", col("id") % 4)
+        .coalesce(1)
+        .write
+        .format("delta")
+        .partitionBy("part")
+        .save(target)
+      spark.range(0).withColumn("part", lit(0)).write.format("delta").save(source)
+
+      // part=4 doesn't exist so no merge operation should happen
+      executeMerge(
+        tgt = s"delta.`$target` t",
+        src = s"delta.`$source` s",
+        cond = "t.id = s.id AND t.part = 4",
+        clauses = deleteNotMatched("part = 4"))
+
+      var df = spark.sql(s"DESCRIBE HISTORY delta.`$target` LIMIT 1")
+      assert(df.select("operation").collect().head.getString(0) == "WRITE")
+
+      // Only the single file in part=3 partition should be deleted and no others touched
+      executeMerge(
+        tgt = s"delta.`$target` t",
+        src = s"delta.`$source` s",
+        cond = "t.id = s.id AND t.part = 3",
+        clauses = deleteNotMatched("part = 3"))
+
+      df = spark.sql(s"DESCRIBE HISTORY delta.`$target` LIMIT 1")
+      checkAnswer(
+        df.select(
+          "operation",
+          "operationMetrics.numTargetFilesRemoved",
+          "operationMetrics.numTargetFilesAdded"),
+        Seq(("MERGE", "1", "0")).toDF())
+    }
+  }
+
+  test("concurrent disjoint not matched by source filter") {
+    withTempDir { tempDir =>
+      val source = s"$tempDir/source"
+      val target = s"$tempDir/target"
+      spark.range(10)
+        .withColumn("part", col("id") % 4)
+        .coalesce(1)
+        .write
+        .format("delta")
+        .partitionBy("part")
+        .save(target)
+      spark.range(0).withColumn("part", lit(0)).write.format("delta").save(source)
+
+      // Only the single file in part=3 partition should be deleted and no others touched
+      val merge1 = () => {
+        executeMerge(
+          tgt = s"delta.`$target` t",
+          src = s"delta.`$source` s",
+          cond = "t.id = s.id AND t.part = 3",
+          clauses = deleteNotMatched("part = 3"))
+        Array.empty[Row]
+      }
+
+      val merge2 = () => {
+        executeMerge(
+          tgt = s"delta.`$target` t",
+          src = s"delta.`$source` s",
+          cond = "t.id = s.id AND t.part = 4",
+          clauses = deleteNotMatched("part = 4"))
+        Array.empty[Row]
+      }
+
+      // Simply check that this succeeds without an error
+      val future = runTxnsWithOrder__A_Start__B__A_end_without_observer_on_B(merge1, merge2)
+      ThreadUtils.awaitResult(future, Duration.Inf)
     }
   }
 }
