@@ -22,7 +22,7 @@ import io.delta.spark.internal.v2.read.changelog.DeltaChangelog
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.connector.catalog.{Changelog, ChangelogInfo, Identifier, TableCatalog}
 import org.apache.spark.sql.connector.catalog.ChangelogRange.{TimestampRange, UnboundedRange, VersionRange}
-import org.apache.spark.sql.delta.DeltaErrors
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaV2Mode}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 /**
@@ -34,8 +34,9 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
  * `TableCatalog` implementation.
  *
  * <p>The trait is intentionally thin. `loadChangelog` resolves the table via the catalog's own
- * `loadTable`, validates that the result is a V2 [[DeltaV2Table]] (read-time CDF only flows
- * through the V2 connector. V1 tables go through the legacy Delta CDF path), resolves the
+ * `loadTable`. Read-time CDF only flows through the V2 connector, so in `AUTO`/`STRICT` mode (see
+ * [[DeltaV2Mode.shouldRouteChangelogToV2]]) a V1 `DeltaTableV2` is re-resolved as a
+ * [[DeltaV2Table]] for the CHANGES read; in `NONE` mode it is rejected. It then resolves the
  * requested [[ChangelogRange]] against the table's snapshot manager, and wraps everything into
  * a [[DeltaChangelog]]. All connector-level work (loading snapshots, validating row tracking,
  * inspecting metadata actions) is deferred to the read path inside [[DeltaChangelog]].
@@ -53,11 +54,23 @@ trait ChangelogSupport extends TableCatalog {
       // UNSUPPORTED_FEATURE.CHANGE_DATA_CAPTURE to the user.
       return super.loadChangelog(ident, changelogInfo)
     }
+    val routeChangelogToV2 = new DeltaV2Mode(spark.sessionState.conf).shouldRouteChangelogToV2()
     val sparkTable = loadTable(ident) match {
       case st: DeltaV2Table => st
+      case v1: DeltaTableV2 if routeChangelogToV2 =>
+        // In AUTO mode the catalog returns the V1 connector (DeltaTableV2) for general batch
+        // reads/writes, but Auto-CDF only flows through the V2 connector. Re-resolve the same
+        // table as a DeltaV2Table so CHANGES queries work without forcing STRICT mode.
+        v1.catalogTable match {
+          case Some(catalogTable) =>
+            new DeltaV2Table(ident, catalogTable, new java.util.HashMap[String, String]())
+          case None =>
+            new DeltaV2Table(ident, v1.path.toString)
+        }
       case other =>
-        // Auto-CDF only supports the V2 connector. V1 Delta tables (DeltaTableV2 under the
-        // hood) keep going through the legacy CDF path that DeltaCatalog already exposes.
+        // Auto-CDF only supports the V2 connector and the mode does not route CHANGES to it
+        // (e.g. NONE). V1 Delta tables keep going through the legacy CDF path that DeltaCatalog
+        // already exposes.
         DeltaErrors.throwChangelogRequiresV2Table(ident.toString, other.getClass.getName)
     }
     val (startVersion, endVersion) = resolveRange(sparkTable, changelogInfo.range())
