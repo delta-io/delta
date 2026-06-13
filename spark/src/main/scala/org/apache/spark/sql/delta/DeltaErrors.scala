@@ -980,6 +980,30 @@ trait DeltaErrorsBase
     )
   }
 
+  def cannotWriteEmptySchemaTableNoColumns(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CANNOT_WRITE_EMPTY_SCHEMA.TABLE_NO_COLUMNS",
+      messageParameters = Array.empty)
+  }
+
+  def cannotWriteEmptySchemaTableAllVoidColumns(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CANNOT_WRITE_EMPTY_SCHEMA.TABLE_ALL_VOID_COLUMNS",
+      messageParameters = Array.empty)
+  }
+
+  def cannotWriteEmptySchemaStructNoFields(columnPath: Seq[String]): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CANNOT_WRITE_EMPTY_SCHEMA.STRUCT_NO_FIELDS",
+      messageParameters = Array(SchemaUtils.prettyFieldName(columnPath)))
+  }
+
+  def cannotWriteEmptySchemaStructAllVoidFields(columnPath: Seq[String]): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CANNOT_WRITE_EMPTY_SCHEMA.STRUCT_ALL_VOID_FIELDS",
+      messageParameters = Array(SchemaUtils.prettyFieldName(columnPath)))
+  }
+
   def castingCauseOverflowErrorInTableWrite(
       from: DataType,
       to: DataType,

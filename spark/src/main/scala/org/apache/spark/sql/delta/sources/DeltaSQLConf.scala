@@ -2532,7 +2532,7 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .internal()
       .doc("Whether to drop columns with NullType in DeltaLog.createDataFrame.")
       .booleanConf
-      .createWithDefault(true)
+      .createWithDefault(false)
 
   val DELTA_STREAMING_SINK_IMPLICIT_CAST_FOR_TYPE_MISMATCH_ONLY =
     buildConf("streaming.sink.implicitCastForTypeMismatchOnly")

@@ -24,9 +24,12 @@ import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.types.{ArrayType, IntegerType, MapType, StringType, StructType}
+import org.apache.spark.sql.execution.datasources.parquet.ParquetTest
+import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.types.{ArrayType, IntegerType, MapType, NullType, StringType, StructType}
 
 class DeltaDropColumnSuite extends QueryTest
+  with ParquetTest
   with DeltaArbitraryColumnNameSuiteBase {
 
   override protected def sparkConf: SparkConf =
@@ -173,6 +176,47 @@ class DeltaDropColumnSuite extends QueryTest
       val resultSchema = spark.table("t1").schema
       assert(resultSchema.findNestedField("e" :: "e2" :: Nil).isDefined)
       assert(resultSchema.findNestedField("e" :: "e1" :: Nil).isEmpty)
+    }
+  }
+
+  dropTest("drop column - only NullType column remains") { drop =>
+    withTable("t1") {
+      withSQLConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false") {
+        createTableWithSQLAPI("t1",
+          spark.createDataFrame((1, null) :: Nil).toDF("id", "value"),
+          Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name"))
+
+        // drop non-NullType column
+        drop("t1", "id" :: Nil)
+        withAllParquetReaders {
+          checkAnswer(spark.read.format("delta").table("t1"), Row(null) :: Nil)
+        }
+      }
+    }
+  }
+
+  dropTest("drop column - only NullType column in a struct remains") { drop =>
+    withTable("t1") {
+      withSQLConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false") {
+        createTableWithSQLAPI("t1",
+          spark.createDataFrame(
+            Seq(Row(1, Row(1, null))).asJava,
+            new StructType()
+              .add("a", IntegerType)
+              .add("b", new StructType()
+                .add("c", IntegerType)
+                .add("d", NullType))
+          ),
+          Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name"))
+
+        // drop non-NullType column from the struct
+        drop("t1", "b.c" :: Nil)
+        withAllParquetReaders {
+          checkAnswer(
+            spark.read.format("delta").table("t1").withColumn("isnull", col("b").isNull),
+            Row(1, Row(null), false) :: Nil)
+        }
+      }
     }
   }
 

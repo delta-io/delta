@@ -685,7 +685,9 @@ class DeltaLog private(
       snapshot: SnapshotDescriptor,
       fileIndex: TahoeFileIndex,
       bucketSpec: Option[BucketSpec],
-      dropNullTypeColumnsFromSchema: Boolean = true): HadoopFsRelation = {
+      dropNullTypeColumnsFromSchema: Boolean = spark.conf
+        .get(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS)
+    ): HadoopFsRelation = {
     val dataSchema = if (dropNullTypeColumnsFromSchema) {
       SchemaUtils.dropNullTypeColumns(snapshot.metadata.schema)
     } else {

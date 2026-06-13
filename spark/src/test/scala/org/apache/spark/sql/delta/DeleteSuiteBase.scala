@@ -237,6 +237,29 @@ trait DeleteBaseTests extends DeleteBaseMixin {
     }
   }
 
+  test("basic case with NullType") {
+    withSQLConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false") {
+      append(Seq((null, 2), (null, 4), (null, 1), (null, 3)).toDF("key", "value"))
+      checkDelete(condition = None, Nil)
+    }
+  }
+
+  test("basic case with condition on NullType") {
+    withSQLConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false") {
+      append(Seq((null, 2), (null, 4), (null, 1), (null, 3)).toDF("key", "value"))
+      checkDelete(condition = Some("key is null"), Nil)
+    }
+  }
+
+  test("basic case with nested NullType") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false"
+    ) {
+      append(Seq(Tuple1((null, 2)), Tuple1((null, 4)), Tuple1(null), Tuple1((null, 1))).toDF("s"))
+      checkDelete(condition = Some("s._1 IS NULL AND s IS NOT NULL"), Row(null) :: Nil)
+    }
+  }
+
   test("Negative case - non-Delta target") {
     writeTable(
       Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value")

@@ -48,6 +48,11 @@ trait GeneratedColumnSuiteBase
   import GeneratedColumn._
   import testImplicits._
 
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    spark.conf.set(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key, "false")
+  }
+
   protected def replaceTable(
       tableName: String,
       path: Option[String],
@@ -69,8 +74,10 @@ trait GeneratedColumnSuiteBase
 
   // Define the information for a default test table used by many tests.
   protected val defaultTestTableSchema =
+    "c0_g void, " +
     "c1 bigint, c2_g bigint, c3_p string, c4_g_p date, c5 timestamp, c6 int, c7_g_p int, c8 date"
   protected val defaultTestTableGeneratedColumns = Map(
+    "c0_g" -> "null",
     "c2_g" -> "c1 + 10",
     "c4_g_p" -> "cast(c5 as date)",
     "c7_g_p" -> "c6 * 10"
@@ -90,7 +97,8 @@ trait GeneratedColumnSuiteBase
   /**
    * @param updateFunc A function that's called with the table information (tableName, path). It
    *                   should execute update operations, and return the expected data after
-   *                   updating.
+   *                   updating. Null value for VOID will be prepended to the returned expected
+   *                   data.
    */
   protected def testTableUpdate(
       testName: String,
@@ -100,7 +108,15 @@ trait GeneratedColumnSuiteBase
       withTempDir { path =>
         withTable(table) {
           createDefaultTestTable(tableName = table, path = Some(path.getCanonicalPath))
-          val expected = updateFunc(testName, path.getCanonicalPath)
+          if (isStreaming) {
+            // Streaming writer does not support VOID column, drop it.
+            sql(s"ALTER TABLE $table SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+            sql(s"ALTER TABLE $table DROP COLUMN c0_g")
+          }
+          var expected = updateFunc(testName, path.getCanonicalPath)
+          if (!isStreaming) {
+            expected = expected.map(row => Row.fromSeq(null +: row.toSeq))
+          }
           checkAnswer(sql(s"select * from $table"), expected)
         }
       }
@@ -184,7 +200,7 @@ trait GeneratedColumnSuiteBase
 
   testTableUpdate("insert_into_values_provide_all_columns") { (table, path) =>
     sql(s"INSERT INTO $table VALUES" +
-      s"(1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12')")
+      s"(null, 1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12')")
     Row(1L, 11L, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
       100, 1000, sqlDate("2020-11-12")) :: Nil
   }
@@ -212,7 +228,7 @@ trait GeneratedColumnSuiteBase
 
   testTableUpdate("insert_into_select_provide_all_columns") { (table, path) =>
     sql(s"INSERT INTO $table SELECT " +
-      s"1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
+      s"null, 1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
     Row(1L, 11L, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
       100, 1000, sqlDate("2020-11-12")) :: Nil
   }
@@ -230,14 +246,14 @@ trait GeneratedColumnSuiteBase
 
   testTableUpdate("insert_overwrite_values_provide_all_columns") { (table, path) =>
     sql(s"INSERT OVERWRITE TABLE $table VALUES" +
-      s"(1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12')")
+      s"(null, 1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12')")
     Row(1L, 11L, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
       100, 1000, sqlDate("2020-11-12")) :: Nil
   }
 
   testTableUpdate("insert_overwrite_select_provide_all_columns") { (table, path) =>
     sql(s"INSERT OVERWRITE TABLE $table SELECT " +
-      s"1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
+      s"null, 1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
     Row(1L, 11L, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
       100, 1000, sqlDate("2020-11-12")) :: Nil
   }
@@ -276,14 +292,14 @@ trait GeneratedColumnSuiteBase
 
   testTableUpdateDPO("insert_overwrite_values_provide_all_columns") { (table, path) =>
     sql(s"INSERT OVERWRITE TABLE $table VALUES" +
-      s"(1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12')")
+      s"(null, 1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12')")
     Row(1L, 11L, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
       100, 1000, sqlDate("2020-11-12")) :: Nil
   }
 
   testTableUpdateDPO("insert_overwrite_select_provide_all_columns") { (table, path) =>
     sql(s"INSERT OVERWRITE TABLE $table SELECT " +
-      s"1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
+      s"null, 1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
     Row(1L, 11L, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
       100, 1000, sqlDate("2020-11-12")) :: Nil
   }
@@ -343,7 +359,7 @@ trait GeneratedColumnSuiteBase
 
   testTableUpdate("update_generated_column_with_correct_value") { (table, path) =>
     sql(s"INSERT INTO $table SELECT " +
-      s"1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
+      s"null, 1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
     sql(s"UPDATE $table SET c2_g = 11 WHERE c1 = 1")
     Row(1, 11, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
       100, 1000, sqlDate("2020-11-12")) :: Nil
@@ -351,7 +367,7 @@ trait GeneratedColumnSuiteBase
 
   testTableUpdate("update_generated_column_with_incorrect_value") { (table, path) =>
     sql(s"INSERT INTO $table SELECT " +
-      s"1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
+      s"null, 1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
     val e = intercept[InvariantViolationException] {
       quietly {
         sql(s"UPDATE $table SET c2_g = 12 WHERE c1 = 1")
@@ -365,7 +381,7 @@ trait GeneratedColumnSuiteBase
 
   testTableUpdate("update_source_column_used_by_generated_column") { (table, _) =>
     sql(s"INSERT INTO $table SELECT " +
-      s"1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
+      s"null, 1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
     sql(s"UPDATE $table SET c1 = 2 WHERE c1 = 1")
     Row(2, 12, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
       100, 1000, sqlDate("2020-11-12")) :: Nil
@@ -373,7 +389,7 @@ trait GeneratedColumnSuiteBase
 
   testTableUpdate("update_source_and_generated_columns_with_correct_value") { (table, _) =>
     sql(s"INSERT INTO $table SELECT " +
-      s"1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
+      s"null, 1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
     sql(s"UPDATE $table SET c2_g = 12, c1 = 2 WHERE c1 = 1")
     Row(2, 12, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
       100, 1000, sqlDate("2020-11-12")) :: Nil
@@ -381,7 +397,7 @@ trait GeneratedColumnSuiteBase
 
   testTableUpdate("update_source_and_generated_columns_with_incorrect_value") { (table, _) =>
     sql(s"INSERT INTO $table SELECT " +
-      s"1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
+      s"null, 1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
     val e = intercept[InvariantViolationException] {
       quietly {
         sql(s"UPDATE $table SET c2_g = 12, c1 = 3 WHERE c1 = 1")
@@ -2161,15 +2177,7 @@ trait GeneratedColumnSuiteBase
         .toDF("c1", "c3_p", "c5", "c6", "c8")
         .write.format("delta").mode("append").saveAsTable(tableName)
 
-      val expectedSchema = new StructType()
-        .add("c1", LongType)
-        .add("c2_g", LongType)
-        .add("c3_p", StringType)
-        .add("c4_g_p", DateType)
-        .add("c5", TimestampType)
-        .add("c6", IntegerType)
-        .add("c7_g_p", IntegerType)
-        .add("c8", DateType)
+      val expectedSchema = StructType.fromDDL(defaultTestTableSchema)
 
       assert(spark.read.table(tableName).schema === expectedSchema)
 
