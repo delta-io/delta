@@ -1271,6 +1271,10 @@ object DeltaSource extends DeltaLogging {
   trait DeltaSourceAdmissionBase { self: AdmissionLimits =>
     // This variable indicates whether a commit has already been processed by a batch or not.
     var commitProcessedInBatch = false
+    // Tracks whether at least one data file has been admitted in this batch. Used by the per-file
+    // admit path to apply the "admit at least one file even if oversized" deadlock guard only to
+    // the first file, not to every file with any positive remaining capacity.
+    var fileAdmittedInBatch = false
 
     protected def take(files: Int, bytes: Long): Unit = {
       filesToTake -= files
@@ -1313,11 +1317,13 @@ object DeltaSource extends DeltaLogging {
         return true
       }
 
-      // We always admit a file if we still have capacity _before_ we take it. This ensures that we
-      // will even admit a file when it is larger than the remaining capacity, and that we will
-      // admit at least one file.
-      val shouldAdmit = hasCapacity
-      take(files = 1, bytes = admittableFile.getFileSize)
+      // Admit the first data file unconditionally to prevent deadlock when a single file exceeds
+      // the limit. Subsequent files must fit within the remaining capacity, matching Seq-admit.
+      val sz = admittableFile.getFileSize
+      val shouldAdmit = !fileAdmittedInBatch ||
+        (filesToTake - 1 >= 0 && bytesToTake - sz >= 0)
+      fileAdmittedInBatch = true
+      take(files = 1, bytes = sz)
       shouldAdmit
     }
 

@@ -1275,7 +1275,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       }
     }
 
-    val schema = StructType(fields)
+    val schema = StructType(fields.toSeq)
 
     val random = new Random(27 /* seed */)
     def generateRandomBigDecimal(precision: Int, scale: Int): JBigDecimal = {
@@ -1303,10 +1303,10 @@ class GoldenTables extends QueryTest with SharedSparkSession {
           }
         }
       }
-      rows.append(Row(rowValues: _*))
+      rows.append(Row(rowValues.toSeq: _*))
     }
 
-    spark.createDataFrame(spark.sparkContext.parallelize(rows), schema)
+    spark.createDataFrame(spark.sparkContext.parallelize(rows.toSeq), schema)
       .repartition(1)
       .write
       .format("delta")
@@ -1566,6 +1566,80 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     sql(s"RESTORE TABLE delta.`$tablePath` TO VERSION AS OF 1")
   }
 
+  generateGoldenTable("streaming-row-tracking-append") { tablePath =>
+    sql(
+      s"""
+         |CREATE TABLE delta.`$tablePath` (id INT, value STRING)
+         |USING delta
+         |TBLPROPERTIES ('delta.enableRowTracking' = 'true')
+         |""".stripMargin)
+    sql(s"INSERT INTO delta.`$tablePath` VALUES (1, 'a'), (2, 'b'), (3, 'c')")
+    sql(s"INSERT INTO delta.`$tablePath` VALUES (4, 'd'), (5, 'e'), (6, 'f')")
+    sql(s"INSERT INTO delta.`$tablePath` VALUES (7, 'g'), (8, 'h'), (9, 'i')")
+  }
+
+  generateGoldenTable("streaming-ict-append") { tablePath =>
+    sql(
+      s"""
+         |CREATE TABLE delta.`$tablePath` (id INT, value STRING, ts TIMESTAMP)
+         |USING delta
+         |TBLPROPERTIES ('delta.enableInCommitTimestamps' = 'true')
+         |""".stripMargin)
+    sql(
+      s"""INSERT INTO delta.`$tablePath` VALUES
+         |  (1, 'a', TIMESTAMP '2024-01-01 00:00:00'),
+         |  (2, 'b', TIMESTAMP '2024-01-01 00:00:01'),
+         |  (3, 'c', TIMESTAMP '2024-01-01 00:00:02')""".stripMargin)
+    sql(
+      s"""INSERT INTO delta.`$tablePath` VALUES
+         |  (4, 'd', TIMESTAMP '2024-01-02 00:00:00'),
+         |  (5, 'e', TIMESTAMP '2024-01-02 00:00:01'),
+         |  (6, 'f', TIMESTAMP '2024-01-02 00:00:02')""".stripMargin)
+    sql(
+      s"""INSERT INTO delta.`$tablePath` VALUES
+         |  (7, 'g', TIMESTAMP '2024-01-03 00:00:00'),
+         |  (8, 'h', TIMESTAMP '2024-01-03 00:00:01'),
+         |  (9, 'i', TIMESTAMP '2024-01-03 00:00:02')""".stripMargin)
+  }
+
+  // Append-only v2-checkpoint table with multiple commits so that incremental streaming tests
+  // (which require >= 2 commits and no remove actions) can exercise the v2 checkpoint code path.
+  generateGoldenTable("streaming-v2checkpoint-append") { tablePath =>
+    val tbl = "streaming_v2ckpt_tbl"
+    withTable(tbl) {
+      withSQLConf(
+        (DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key, "2"),
+        ("spark.databricks.delta.properties.defaults.checkpointInterval", "2"),
+        (DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key, "json")) {
+        spark.conf.set(DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key, "json")
+        sql(s"CREATE TABLE $tbl (id LONG, value STRING) USING delta LOCATION '$tablePath'")
+        sql(s"ALTER TABLE $tbl SET TBLPROPERTIES('delta.checkpointPolicy' = 'v2')")
+        sql(s"INSERT INTO $tbl VALUES (1, 'a'), (2, 'b')")
+        sql(s"INSERT INTO $tbl VALUES (3, 'c'), (4, 'd')")
+        sql(s"INSERT INTO $tbl VALUES (5, 'e'), (6, 'f')")
+        sql(s"INSERT INTO $tbl VALUES (7, 'g'), (8, 'h')")
+        sql(s"INSERT INTO $tbl VALUES (9, 'i'), (10, 'j')")
+      }
+    }
+  }
+
+  // ICT + DV table with a delete that uses deletion vectors. Used by the mid-restart curated
+  // subset where non-append history is acceptable.
+  generateGoldenTable("streaming-ict-dv") { tablePath =>
+    sql(
+      s"""
+         |CREATE TABLE delta.`$tablePath` (id INT, value STRING)
+         |USING delta
+         |TBLPROPERTIES (
+         |  'delta.enableInCommitTimestamps' = 'true',
+         |  'delta.enableDeletionVectors' = 'true')
+         |""".stripMargin)
+    sql(s"INSERT INTO delta.`$tablePath` VALUES (1, 'a'), (2, 'b'), (3, 'c')")
+    sql(s"INSERT INTO delta.`$tablePath` VALUES (4, 'd'), (5, 'e'), (6, 'f')")
+    sql(s"DELETE FROM delta.`$tablePath` WHERE id = 2")
+    sql(s"INSERT INTO delta.`$tablePath` VALUES (7, 'g'), (8, 'h'), (9, 'i')")
+  }
+
   /* ----- Data skipping tables for Kernel ------ */
 
   def writeBasicStatsAllTypesTable(tablePath: String): Unit = {
@@ -1680,6 +1754,40 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     // Run optimize that generates a commitInfo with arbitrary value types
     // operationParameters
     spark.sql("OPTIMIZE delta.`%s` ZORDER BY id".format(tablePath))
+  }
+
+  // Column-mapping name-mode, append-only. Used as a streaming differential fixture
+  // exercising the CM-name protocol without ADD COLUMN / RENAME complexity.
+  generateGoldenTable("streaming-cm-name-append") { tablePath =>
+    spark.sql(
+      s"""
+         |CREATE TABLE delta.`$tablePath` (id INT, value STRING)
+         |USING DELTA
+         |TBLPROPERTIES (
+         |  'delta.columnMapping.mode' = 'name',
+         |  'delta.minReaderVersion' = '2',
+         |  'delta.minWriterVersion' = '5'
+         |)""".stripMargin)
+    spark.sql(s"INSERT INTO delta.`$tablePath` VALUES (1, 'a'), (2, 'b'), (3, 'c')")
+    spark.sql(s"INSERT INTO delta.`$tablePath` VALUES (4, 'd'), (5, 'e'), (6, 'f')")
+    spark.sql(s"INSERT INTO delta.`$tablePath` VALUES (7, 'g'), (8, 'h'), (9, 'i')")
+  }
+
+  // Deletion vectors + row tracking enabled in the protocol, but data is append-only.
+  // Eligible for the streaming differential mid-restart subset - exercises DV+RT protocol
+  // validation without requiring removes.
+  generateGoldenTable("streaming-dv-rt-append") { tablePath =>
+    spark.sql(
+      s"""
+         |CREATE TABLE delta.`$tablePath` (id INT, value STRING)
+         |USING DELTA
+         |TBLPROPERTIES (
+         |  'delta.enableDeletionVectors' = 'true',
+         |  'delta.enableRowTracking' = 'true'
+         |)""".stripMargin)
+    spark.sql(s"INSERT INTO delta.`$tablePath` VALUES (1, 'a'), (2, 'b'), (3, 'c')")
+    spark.sql(s"INSERT INTO delta.`$tablePath` VALUES (4, 'd'), (5, 'e'), (6, 'f')")
+    spark.sql(s"INSERT INTO delta.`$tablePath` VALUES (7, 'g'), (8, 'h'), (9, 'i')")
   }
 }
 

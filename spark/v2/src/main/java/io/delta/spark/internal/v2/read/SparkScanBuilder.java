@@ -20,6 +20,8 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.expressions.And;
 import io.delta.kernel.expressions.Predicate;
+import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.utils.ExpressionUtils;
@@ -29,7 +31,11 @@ import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.connector.read.Statistics;
 import org.apache.spark.sql.connector.read.SupportsPushDownFilters;
 import org.apache.spark.sql.connector.read.SupportsPushDownRequiredColumns;
+import org.apache.spark.sql.delta.RowCommitVersion$;
+import org.apache.spark.sql.delta.RowId$;
+import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.sources.Filter;
+import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
@@ -53,7 +59,7 @@ public class SparkScanBuilder
   private StructType requiredDataSchema;
   // pushedKernelPredicates: Predicates that have been pushed down to the Delta Kernel for
   // evaluation.
-  // pushedSparkFilters: The same pushed predicates, but represented using Spark’s {@link Filter}
+  // pushedSparkFilters: The same pushed predicates, but represented using Spark's {@link Filter}
   // API (needed because Spark operates on Filter objects while the Kernel uses Predicate)
   private Predicate[] pushedKernelPredicates;
   private Filter[] pushedSparkFilters;
@@ -88,7 +94,14 @@ public class SparkScanBuilder
     this.tableSchema = requireNonNull(tableSchema, "tableSchema is null");
     this.catalogStats = requireNonNull(catalogStats, "catalogStats is null");
     this.options = requireNonNull(options, "options is null");
-    this.requiredDataSchema = this.dataSchema;
+    // Default the required data schema to the full data schema augmented with the _metadata
+    // struct when row tracking is enabled. DSv2 streaming planning never invokes pruneColumns
+    // (see MicroBatchExecution.scala "TODO: operator pushdown"), so for streaming this default
+    // is what the reader factory sees. Including _metadata here makes the streaming reader emit
+    // row-tracking columns and disables vectorized reads, mirroring the batch path that prunes
+    // _metadata in via pruneColumns. For batch, pruneColumns overwrites this default so there is
+    // no behavior change.
+    this.requiredDataSchema = augmentWithRowTrackingMetadata(this.dataSchema, this.initialSnapshot);
     this.partitionColumnSet =
         Arrays.stream(this.partitionSchema.fields())
             .map(f -> f.name().toLowerCase(Locale.ROOT))
@@ -186,6 +199,25 @@ public class SparkScanBuilder
         kernelScanBuilder.build(),
         catalogStats,
         options);
+  }
+
+  /**
+   * Returns {@code dataSchema} with a trailing {@code _metadata} struct field appended when row
+   * tracking is enabled on the snapshot. The struct contains {@code row_id} and {@code
+   * row_commit_version} fields, matching {@link
+   * io.delta.spark.internal.v2.catalog.SparkTable#metadataColumns()}.
+   */
+  private static StructType augmentWithRowTrackingMetadata(
+      StructType dataSchema, Snapshot snapshot) {
+    SnapshotImpl snapshotImpl = (SnapshotImpl) snapshot;
+    if (!RowTracking.isEnabled(snapshotImpl.getProtocol(), snapshotImpl.getMetadata())) {
+      return dataSchema;
+    }
+    StructType metadataType =
+        new StructType()
+            .add(RowId$.MODULE$.ROW_ID(), DataTypes.LongType, false)
+            .add(RowCommitVersion$.MODULE$.METADATA_STRUCT_FIELD_NAME(), DataTypes.LongType, false);
+    return dataSchema.add(FileFormat$.MODULE$.METADATA_NAME(), metadataType, false);
   }
 
   CaseInsensitiveStringMap getOptions() {
