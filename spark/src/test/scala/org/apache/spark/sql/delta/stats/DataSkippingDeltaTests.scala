@@ -888,6 +888,23 @@ trait DataSkippingDeltaTestsBase extends QueryTest
     checkAnswer(df.where("value > 0"), Seq(Row(1), Row(2), Row(3)))
   }
 
+  test("data skipping with partially missing stats in AND") {
+    val tempDir = Utils.createTempDir()
+
+    withSQLConf(getDataSkippingConfs(indexedCols = 1, deltaStatsColNamesOpt = None).toSeq: _*) {
+      Seq((1, 10)).toDF("a", "b").coalesce(1).write.format("delta").save(tempDir.toString)
+    }
+
+    setNumIndexedColumns(tempDir.toString, numIndexedCols = 2)
+    Seq((2, 20)).toDF("a", "b").coalesce(1).write.format("delta").mode("append")
+      .save(tempDir.toString)
+
+    val log = DeltaLog.forTable(spark, new Path(tempDir.toString))
+
+    assert(filesRead(log, "a < 0 AND b < 100") == 0)
+    assert(filesRead(log, "a > 0 AND b < 100") == 2)
+  }
+
   test("data skipping stats before and after optimize") {
       assume(!catalogOwnedDefaultCreationEnabledInTests,
         "OPTIMIZE is blocked on catalog-managed tables")
