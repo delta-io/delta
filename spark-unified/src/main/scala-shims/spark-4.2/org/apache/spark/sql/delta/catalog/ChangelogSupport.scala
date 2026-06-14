@@ -47,6 +47,14 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
  */
 trait ChangelogSupport extends TableCatalog {
 
+  /**
+   * Re-resolves an already-loaded V1 [[DeltaTableV2]] to the sparkV2 [[DeltaV2Table]] connector for
+   * an Auto-CDF read. Implemented by the concrete catalog so all V1/V2 connector construction stays
+   * in one place (see `DeltaCatalog.asV2ChangelogTable`) and this trait does not need to reach into
+   * V1 connector internals.
+   */
+  def asV2ChangelogTable(ident: Identifier, table: DeltaTableV2): DeltaV2Table
+
   override def loadChangelog(ident: Identifier, changelogInfo: ChangelogInfo): Changelog = {
     val spark = SparkSession.active
     if (!spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CHANGELOG_V2_ENABLED)) {
@@ -61,12 +69,7 @@ trait ChangelogSupport extends TableCatalog {
         // In AUTO mode the catalog returns the V1 connector (DeltaTableV2) for general batch
         // reads/writes, but Auto-CDF only flows through the V2 connector. Re-resolve the same
         // table as a DeltaV2Table so CHANGES queries work without forcing STRICT mode.
-        v1.catalogTable match {
-          case Some(catalogTable) =>
-            new DeltaV2Table(ident, catalogTable, new java.util.HashMap[String, String]())
-          case None =>
-            new DeltaV2Table(ident, v1.path.toString)
-        }
+        asV2ChangelogTable(ident, v1)
       case other =>
         // Auto-CDF only supports the V2 connector and the mode does not route CHANGES to it
         // (e.g. NONE). V1 Delta tables keep going through the legacy CDF path that DeltaCatalog
