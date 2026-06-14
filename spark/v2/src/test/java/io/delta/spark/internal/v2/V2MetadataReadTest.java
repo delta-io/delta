@@ -209,6 +209,11 @@ public class V2MetadataReadTest extends DeltaV2TestBase {
   }
 
   private void insertRows(String path) {
+    // Force the VALUES list into a single partition so the INSERT writes exactly one parquet file.
+    // LocalRelation parallelism otherwise follows the executor core count, so on multi-core CI
+    // runners the 3 rows get split across part-00000/part-00001 and no longer share a single
+    // _metadata.file_path, breaking the single-file assumption these tests rely on.
+    spark.conf().set("spark.sql.leafNodeDefaultParallelism", "1");
     spark.sql(
         String.format(
             "INSERT INTO delta.`%s` VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Charlie')", path));
