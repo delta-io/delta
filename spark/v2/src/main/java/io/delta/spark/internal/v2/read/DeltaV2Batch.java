@@ -33,7 +33,7 @@ import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.StructType;
 
-public class SparkBatch implements Batch {
+public class DeltaV2Batch implements Batch {
   private final Snapshot snapshot;
   private final StructType readDataSchema;
   private final StructType dataSchema;
@@ -51,7 +51,7 @@ public class SparkBatch implements Batch {
   private scala.collection.immutable.Map<String, String> scalaOptions;
   private final List<PartitionedFile> partitionedFiles;
 
-  public SparkBatch(
+  public DeltaV2Batch(
       Snapshot snapshot,
       StructType dataSchema,
       StructType partitionSchema,
@@ -109,9 +109,9 @@ public class SparkBatch implements Batch {
   @Override
   public boolean equals(Object obj) {
     if (this == obj) return true;
-    if (!(obj instanceof SparkBatch)) return false;
+    if (!(obj instanceof DeltaV2Batch)) return false;
 
-    SparkBatch that = (SparkBatch) obj;
+    DeltaV2Batch that = (DeltaV2Batch) obj;
     return Objects.equals(this.snapshot, that.snapshot)
         && Objects.equals(this.readDataSchema, that.readDataSchema)
         && Objects.equals(this.dataSchema, that.dataSchema)
