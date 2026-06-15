@@ -1575,7 +1575,7 @@ lazy val hudi = (project in file("hudi"))
     libraryDependencies ++= {
       if (supportHudi) {
         Seq(
-          "org.apache.hudi" % "hudi-java-client" % "0.15.0" % "compile" excludeAll(
+          "org.apache.hudi" % "hudi-java-client" % "1.1.0" % "compile" excludeAll(
             ExclusionRule(organization = "org.apache.hadoop"),
             ExclusionRule(organization = "org.apache.zookeeper"),
           ),
