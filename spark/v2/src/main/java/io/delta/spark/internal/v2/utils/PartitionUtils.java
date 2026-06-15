@@ -271,10 +271,10 @@ public class PartitionUtils {
    * <p>Delta stores file paths URL-encoded per the protocol. Building the absolute path with {@code
    * new Path(parent, child)} re-encodes the already-encoded child (e.g. '%' -> '%25'), and {@code
    * SparkPath.fromUrlString(Path.toString())} then assumes a fully URL-encoded URI that {@code
-   * Path.toString()} does not produce. Reserved characters in the path (spaces, '%') therefore raise
-   * {@link URISyntaxException} or resolve to the wrong (double-encoded) file. Wrapping the child in
-   * {@code new URI(child)} accepts the already-encoded form verbatim, and {@link SparkPath#fromPath}
-   * routes through Hadoop's URI builder instead of assuming an encoded string.
+   * Path.toString()} does not produce. Reserved characters in the path (spaces, '%') therefore
+   * raise {@link URISyntaxException} or resolve to the wrong (double-encoded) file. Wrapping the
+   * child in {@code new URI(child)} accepts the already-encoded form verbatim, and {@link
+   * SparkPath#fromPath} routes through Hadoop's URI builder instead of assuming an encoded string.
    */
   public static SparkPath resolveTableRelativePath(String tablePath, String relativeOrAbsolute) {
     try {
