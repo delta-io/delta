@@ -369,7 +369,8 @@ trait MetadataCleanup extends DeltaLogging {
       shallowCopyDf,
       finalPath,
       hadoopConf,
-      useRename = false)
+      useRename = false,
+      tableProperties = snapshotToCleanup.metadata.configuration)
     metrics.v2CheckpointCompatLogicTimeTakenMs = System.currentTimeMillis() - startTimeMs
     metrics.checkpointVersion = checkpointVersion
   }
