@@ -27,8 +27,17 @@ import org.apache.spark.sql.types.{DataType, GeographyType, GeometryType}
  */
 object GeoTypesShim {
   /** Returns true if `dt` is `GeometryType` or `GeographyType`. */
-  def isGeoSpatialType(dt: DataType): Boolean = dt match {
-    case _: GeometryType | _: GeographyType => true
+  def isGeoSpatialType(dt: DataType): Boolean = isGeometryType(dt) || isGeographyType(dt)
+
+  /** Returns true if `dt` is `GeometryType`. */
+  def isGeometryType(dt: DataType): Boolean = dt match {
+    case _: GeometryType => true
+    case _ => false
+  }
+
+  /** Returns true if `dt` is `GeographyType`. */
+  def isGeographyType(dt: DataType): Boolean = dt match {
+    case _: GeographyType => true
     case _ => false
   }
 
@@ -52,4 +61,19 @@ object GeoTypesShim {
     classOf[ST_GeomFromWKB],
     classOf[ST_SetSrid],
     classOf[ST_Srid])
+
+  /** Returns the CRS of a `GeometryType`. Only valid when `isGeometryType(dt)` is true. */
+  def geometryCrs(dt: DataType): String = dt match {
+    case g: GeometryType => g.crs
+    case _ => throw new IllegalArgumentException(s"Not a geometry type: $dt")
+  }
+
+  /**
+   * Returns the CRS and edge interpolation algorithm name (e.g. "SPHERICAL") of a
+   * `GeographyType`. Only valid when `isGeographyType(dt)` is true.
+   */
+  def geographyCrsAndAlgorithm(dt: DataType): (String, String) = dt match {
+    case g: GeographyType => (g.crs, g.algorithm.toString)
+    case _ => throw new IllegalArgumentException(s"Not a geography type: $dt")
+  }
 }
