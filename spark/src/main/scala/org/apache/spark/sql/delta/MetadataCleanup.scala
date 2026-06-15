@@ -363,7 +363,7 @@ trait MetadataCleanup extends DeltaLogging {
     val shallowCopyDf =
       loadIndex(snapshotToCleanup.checkpointProvider.topLevelFileIndex.get, Action.logSchema)
     val finalPath =
-      FileNames.checkpointFileSingular(snapshotToCleanup.deltaLog.logPath, checkpointVersion)
+      FileNames.checkpointFileSingular(snapshotToCleanup.logPath, checkpointVersion)
     Checkpoints.createCheckpointV2ParquetFile(
       spark,
       shallowCopyDf,

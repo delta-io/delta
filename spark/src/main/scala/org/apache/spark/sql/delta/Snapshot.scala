@@ -68,6 +68,7 @@ trait SnapshotDescriptor extends DeltaLoggingProvider {
   def schema: StructType = metadata.schema
 
   def dataPath: Path
+  def logPath: Path
 
   protected[delta] def numOfFilesIfKnown: Option[Long]
   protected[delta] def sizeInBytesIfKnown: Option[Long]
@@ -124,6 +125,7 @@ class Snapshot(
   import org.apache.spark.sql.delta.implicits._
 
   override def dataPath: Path = deltaLog.dataPath
+  override def logPath: Path = deltaLog.logPath
 
   protected def spark = SparkSession.active
 
@@ -936,7 +938,7 @@ object Snapshot extends DeltaLogging {
  *                    to compute the protocol might result in a protocol downgrade for the table.
  */
 class DummySnapshot(
-    val logPath: Path,
+    override val logPath: Path,
     override val deltaLog: DeltaLog,
     override val metadata: Metadata,
     domainMetadataOpt: Option[Seq[DomainMetadata]] = None,

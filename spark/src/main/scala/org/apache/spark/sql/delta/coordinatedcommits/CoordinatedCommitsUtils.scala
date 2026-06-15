@@ -101,7 +101,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
         snapshot.metadata.configuration
       TableCommitCoordinatorClient(
         commitCoordinatorClient = cc,
-        logPath = snapshot.deltaLog.logPath,
+        logPath = snapshot.logPath,
         tableConf = tableConf,
         hadoopConf = snapshot.deltaLog.newDeltaHadoopConf(),
         logStore = snapshot.deltaLog.store
@@ -120,7 +120,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
           .map { cc =>
             return Some(TableCommitCoordinatorClient(
               cc,
-              logPath = snapshot.deltaLog.logPath,
+              logPath = snapshot.logPath,
               tableConf = snapshot.metadata.configuration,
               hadoopConf = snapshot.deltaLog.newDeltaHadoopConf(),
               logStore = snapshot.deltaLog.store
@@ -671,7 +671,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
       commitCoordinator =>
         TableCommitCoordinatorClient(
           commitCoordinator,
-          snapshotDescriptor.deltaLog.logPath,
+          snapshotDescriptor.logPath,
           snapshotDescriptor.metadata.coordinatedCommitsTableConf,
           snapshotDescriptor.deltaLog.newDeltaHadoopConf(),
           snapshotDescriptor.deltaLog.store
