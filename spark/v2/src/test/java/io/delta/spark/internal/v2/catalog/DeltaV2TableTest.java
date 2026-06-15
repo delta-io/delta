@@ -17,6 +17,7 @@ package io.delta.spark.internal.v2.catalog;
 
 import static org.apache.spark.sql.connector.catalog.TableCapability.BATCH_READ;
 import static org.apache.spark.sql.connector.catalog.TableCapability.BATCH_WRITE;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -48,8 +49,10 @@ import java.util.stream.Stream;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.catalyst.TableIdentifier;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
+import org.apache.spark.sql.catalyst.expressions.FileSourceConstantMetadataStructField;
 import org.apache.spark.sql.connector.catalog.Column;
 import org.apache.spark.sql.connector.catalog.Identifier;
+import org.apache.spark.sql.connector.catalog.MetadataColumn;
 import org.apache.spark.sql.connector.catalog.SupportsWrite;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
@@ -58,6 +61,7 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
+import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
@@ -611,6 +615,70 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
   }
 
   @Test
+  public void testMetadataColumnsExposeSparkBaseFieldsWhenRowTrackingDisabled(
+      @TempDir File tempDir) {
+    String path = tempDir.getAbsolutePath();
+    spark.sql(
+        String.format(
+            "CREATE TABLE test_metadata_disabled (id INT) USING delta "
+                + "TBLPROPERTIES ('delta.enableRowTracking' = 'false') LOCATION '%s'",
+            path));
+
+    DeltaV2Table table =
+        new DeltaV2Table(Identifier.of(new String[] {"default"}, "test_metadata_disabled"), path);
+
+    MetadataColumn[] metadataColumns = table.metadataColumns();
+    assertEquals(1, metadataColumns.length, "Expected a single _metadata column");
+    assertEquals("_metadata", metadataColumns[0].name());
+
+    StructType metadataType = (StructType) metadataColumns[0].dataType();
+    assertArrayEquals(
+        new String[] {
+          FileFormat$.MODULE$.FILE_PATH(),
+          FileFormat$.MODULE$.FILE_NAME(),
+          FileFormat$.MODULE$.FILE_SIZE(),
+          FileFormat$.MODULE$.FILE_BLOCK_START(),
+          FileFormat$.MODULE$.FILE_BLOCK_LENGTH(),
+          FileFormat$.MODULE$.FILE_MODIFICATION_TIME()
+        },
+        metadataType.fieldNames(),
+        "Expected Spark base metadata fields (without row tracking) in FileFormat order");
+    assertTrue(
+        FileSourceConstantMetadataStructField.isValid(
+            metadataType.fields()[0].dataType(), metadataType.fields()[0].metadata()),
+        "file_path should be surfaced as a file-source constant metadata field");
+  }
+
+  @Test
+  public void testMetadataColumnsAppendRowTrackingAfterSparkBaseFieldsWhenEnabled(
+      @TempDir File tempDir) {
+    String path = tempDir.getAbsolutePath();
+    spark.sql(
+        String.format(
+            "CREATE TABLE test_metadata_enabled (id INT) USING delta "
+                + "TBLPROPERTIES ('delta.enableRowTracking' = 'true') LOCATION '%s'",
+            path));
+
+    DeltaV2Table table =
+        new DeltaV2Table(Identifier.of(new String[] {"default"}, "test_metadata_enabled"), path);
+
+    StructType metadataType = (StructType) table.metadataColumns()[0].dataType();
+    assertArrayEquals(
+        new String[] {
+          FileFormat$.MODULE$.FILE_PATH(),
+          FileFormat$.MODULE$.FILE_NAME(),
+          FileFormat$.MODULE$.FILE_SIZE(),
+          FileFormat$.MODULE$.FILE_BLOCK_START(),
+          FileFormat$.MODULE$.FILE_BLOCK_LENGTH(),
+          FileFormat$.MODULE$.FILE_MODIFICATION_TIME(),
+          "row_id",
+          "row_commit_version"
+        },
+        metadataType.fieldNames(),
+        "Row-tracking fields should follow the Spark base metadata fields");
+  }
+
+  @Test
   public void testSchemaWithReadChangeFeedIncludesCDCColumns(@TempDir File tempDir) {
     String path = tempDir.getAbsolutePath();
     spark.sql(String.format("CREATE TABLE test_cdc_on (id INT) USING delta LOCATION '%s'", path));
@@ -657,7 +725,7 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
   // Schema-tracking-aware schema construction
   // ---------------------------------------------------------------------------
 
-  /** Empty schema-tracking log → snapshot schema is used as fallback. */
+  /** Empty schema-tracking log: snapshot schema is used as fallback. */
   @Test
   public void testSchemaTracking_emptyLogFallsBackToSnapshotSchema(@TempDir File tempDir) {
     String tablePath = new File(tempDir, "table").getAbsolutePath();
@@ -733,7 +801,7 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
     // default) cannot fast-forward the seeded v0 entry past the upcoming v2 ALTER TABLE.
     spark.sql(String.format("INSERT INTO %s VALUES (1, 'a')", tableName));
 
-    // Evolve the table — version 1 has an extra non-partition column.
+    // Evolve the table: version 1 has an extra non-partition column.
     spark.sql(String.format("ALTER TABLE %s ADD COLUMNS (value DOUBLE)", tableName));
 
     // Construct DeltaV2Table with the schema-tracking option pointing at the seeded log. The
