@@ -224,22 +224,6 @@ trait GCSLogStoreSuiteBase extends LogStoreSuiteBase {
 }
 
 ////////////////////////////////
-// Concrete child test suites //
-////////////////////////////////
-
-class HDFSLogStoreSuite extends HDFSLogStoreSuiteBase {
-  override val logStoreClassName: String = classOf[HDFSLogStore].getName
-}
-
-class AzureLogStoreSuite extends AzureLogStoreSuiteBase {
-  override val logStoreClassName: String = classOf[AzureLogStore].getName
-}
-
-class LocalLogStoreSuite extends LocalLogStoreSuiteBase {
-  override val logStoreClassName: String = classOf[LocalLogStore].getName
-}
-
-////////////////////////////////
 // File System Helper Classes //
 ////////////////////////////////
 
@@ -333,14 +317,11 @@ class PublicHDFSLogStoreSuite extends PublicLogStoreSuite with HDFSLogStoreSuite
     classOf[io.delta.storage.HDFSLogStore].getName
 }
 
-class PublicS3SingleDriverLogStoreSuite
-  extends PublicLogStoreSuite
+class PublicS3SingleDriverLogStoreSuite extends PublicLogStoreSuite
   with S3SingleDriverLogStoreSuiteBase {
 
   override protected val publicLogStoreClassName: String =
     classOf[io.delta.storage.S3SingleDriverLogStore].getName
-
-  override protected def canInvalidateCache: Boolean = false
 }
 
 class PublicAzureLogStoreSuite extends PublicLogStoreSuite with AzureLogStoreSuiteBase {
@@ -356,4 +337,42 @@ class PublicLocalLogStoreSuite extends PublicLogStoreSuite with LocalLogStoreSui
 class PublicGCSLogStoreSuite extends PublicLogStoreSuite with GCSLogStoreSuiteBase {
   override protected val publicLogStoreClassName: String =
     classOf[io.delta.storage.GCSLogStore].getName
+}
+
+/////////////////////////////////////////////////////////////////////////////
+// Deprecated Scala LogStore class names redirected to Java implementations //
+/////////////////////////////////////////////////////////////////////////////
+
+/**
+ * Verifies that setting a deprecated Scala LogStore class name on the class-level conf
+ * `spark.delta.logStore.class` is redirected to the corresponding Java implementation
+ * by `LogStore.createLogStoreWithClassName`. This path bypasses `DelegatingLogStore`,
+ * which is exercised separately in `DelegatingLogStoreSuite`.
+ */
+class DeprecatedLogStoreClassNameRedirectSuite extends SparkFunSuite {
+
+  private def constructSparkConf(deprecatedClassName: String): SparkConf = {
+    new SparkConf(loadDefaults = false).setMaster("local")
+      .set(LogStore.logStoreClassConfKey, deprecatedClassName)
+  }
+
+  test("deprecated Scala LogStore class names set via spark.delta.logStore.class " +
+    "resolve to the Java implementation") {
+    // Iterate the production map so this test stays in sync as entries are added/removed.
+    for ((deprecatedScalaName, expectedJavaName) <- LogStore.deprecatedLogStoreClassNames) {
+      withSparkSession(
+        SparkSession.builder.config(constructSparkConf(deprecatedScalaName)).getOrCreate()) {
+          spark =>
+            val store = LogStore(spark)
+            assert(store.isInstanceOf[LogStoreAdaptor],
+              s"Expected a LogStoreAdaptor but got ${store.getClass.getName} " +
+                s"for deprecated class $deprecatedScalaName")
+            val actualImplName =
+              store.asInstanceOf[LogStoreAdaptor].logStoreImpl.getClass.getName
+            assert(actualImplName == expectedJavaName,
+              s"Expected $deprecatedScalaName to be redirected to $expectedJavaName " +
+                s"but got $actualImplName")
+      }
+    }
+  }
 }
