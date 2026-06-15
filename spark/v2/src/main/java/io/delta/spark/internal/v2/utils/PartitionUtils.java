@@ -32,8 +32,6 @@ import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorReadFunction
 import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorSchemaContext;
 import io.delta.spark.internal.v2.read.metadata.MetadataStructReadFunction;
 import io.delta.spark.internal.v2.read.metadata.MetadataStructSchemaContext;
-import io.delta.spark.internal.v2.read.rowtracking.RowTrackingReadFunction;
-import io.delta.spark.internal.v2.read.rowtracking.RowTrackingSchemaContext;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.time.ZoneId;
