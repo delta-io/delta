@@ -236,7 +236,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
             Option.apply(checkpointLocation),
             /* mergeConsecutiveSchemaChanges= */ false);
 
-    return new SparkMicroBatchStream(
+    return new DeltaV2MicroBatchStream(
         snapshotManager,
         latestSnapshot,
         hadoopConf,
