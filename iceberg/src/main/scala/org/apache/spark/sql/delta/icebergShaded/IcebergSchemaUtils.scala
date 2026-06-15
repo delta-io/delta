@@ -85,6 +85,8 @@ trait IcebergSchemaUtils extends DeltaLogging {
             DeltaToIcebergConvert.Schema.extractLiteralDefault(f) match {
               case Left(errorMsg) =>
                 throw new UnsupportedOperationException(errorMsg)
+              case Right(Some(defaultLiteral)) =>
+                IcebergTypes.NestedField.from(icebergField).withWriteDefault(defaultLiteral).build()
               case _ => icebergField
             }
           } else {
@@ -122,6 +124,7 @@ trait IcebergSchemaUtils extends DeltaLogging {
           )
         }
 
+      case variantType: VariantType => IcebergTypes.VariantType.get()
       case atomicType: AtomicType => convertAtomic(atomicType)
 
       case other =>
