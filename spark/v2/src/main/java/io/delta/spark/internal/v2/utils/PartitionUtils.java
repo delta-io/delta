@@ -32,6 +32,10 @@ import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorReadFunction
 import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorSchemaContext;
 import io.delta.spark.internal.v2.read.metadata.MetadataStructReadFunction;
 import io.delta.spark.internal.v2.read.metadata.MetadataStructSchemaContext;
+import io.delta.spark.internal.v2.read.rowtracking.RowTrackingReadFunction;
+import io.delta.spark.internal.v2.read.rowtracking.RowTrackingSchemaContext;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.time.ZoneId;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -201,7 +205,7 @@ public class PartitionUtils {
             buildDvMetadataScala(addFile.getDeletionVector()),
             buildRowTrackingMetadata(addFile.getBaseRowId(), addFile.getDefaultRowCommitVersion()));
     return makePartitionedFile(
-        new Path(tablePath, addFile.getPath()).toString(),
+        resolveTableRelativePath(tablePath, addFile.getPath()),
         addFile.getSize(),
         addFile.getModificationTime(),
         getPartitionRow(addFile.getPartitionValues(), partitionSchema, zoneId),
@@ -253,22 +257,45 @@ public class PartitionUtils {
             ? cdcFile.getAddFile().getModificationTime()
             : cdcFile.getCommitTimestamp();
     return makePartitionedFile(
-        new Path(tablePath, cdcFile.getPath()).toString(),
+        resolveTableRelativePath(tablePath, cdcFile.getPath()),
         cdcFile.getFileSize(),
         modificationTime,
         partitionRow,
         metadata);
   }
 
+  /**
+   * Resolves a Delta-log-stored relative path against the table root and returns its {@link
+   * SparkPath}.
+   *
+   * <p>Delta stores file paths URL-encoded per the protocol. Building the absolute path with {@code
+   * new Path(parent, child)} re-encodes the already-encoded child (e.g. '%' -> '%25'), and {@code
+   * SparkPath.fromUrlString(Path.toString())} then assumes a fully URL-encoded URI that {@code
+   * Path.toString()} does not produce. Reserved characters in the path (spaces, '%') therefore
+   * raise {@link URISyntaxException} or resolve to the wrong (double-encoded) file. Wrapping the
+   * child in {@code new URI(child)} accepts the already-encoded form verbatim, and {@link
+   * SparkPath#fromPath} routes through Hadoop's URI builder instead of assuming an encoded string.
+   */
+  public static SparkPath resolveTableRelativePath(String tablePath, String relativeOrAbsolute) {
+    try {
+      Path child = new Path(new URI(relativeOrAbsolute));
+      Path absolute = child.isAbsolute() ? child : new Path(new Path(tablePath), child);
+      return SparkPath.fromPath(absolute);
+    } catch (URISyntaxException e) {
+      throw new IllegalArgumentException(
+          "Could not parse Delta-log file path as URI: " + relativeOrAbsolute, e);
+    }
+  }
+
   private static PartitionedFile makePartitionedFile(
-      String path,
+      SparkPath path,
       long size,
       long modificationTime,
       InternalRow partitionRow,
       scala.collection.immutable.Map<String, Object> metadata) {
     return new PartitionedFile(
         partitionRow,
-        SparkPath.fromUrlString(path),
+        path,
         /* start= */ 0L,
         /* length= */ size,
         /* preferredLocations= */ new String[0],
