@@ -408,6 +408,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     loadTableWithTimeTravel(ident, Some(version), timestamp = None)
   }
 
+
   /**
    * Helper method which loads a Delta table with given time travel parameters.
    * Exactly one of the timetravel parameters (version or timestamp) must be present.
