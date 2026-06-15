@@ -14,16 +14,12 @@
 # limitations under the License.
 #
 
-# Importing delta.exceptions.captured installs the conversion that makes the classic (py4j)
-# PySpark client raise the Delta-specific exceptions exported below. In a Spark Connect-only
-# install (pyspark-connect) there is no py4j and pyspark does not export SparkContext, so
-# captured's "from pyspark import SparkContext" raises ImportError; guard it so that importing
-# delta still works there. On that path the equivalent conversion is registered instead by
-# delta.connect.exceptions.
-try:
+from pyspark.util import is_remote_only
+
+# Installs the conversion for the classic (py4j) client; needs SparkContext, hence the
+# is_remote_only() guard. Spark Connect-only installs do this in delta/connect/__init__.py.
+if not is_remote_only():
     import delta.exceptions.captured  # noqa: F401
-except ImportError:
-    pass
 
 from delta.exceptions.base import (
     DeltaConcurrentModificationException,

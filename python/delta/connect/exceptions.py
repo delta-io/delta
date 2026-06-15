@@ -131,15 +131,18 @@ def _register_exception_class_mappings() -> None:
     exceptions.
 
     The conversion iterates the server-sent class hierarchy (ordered most-derived first) and
-    returns the first registered match. A Delta exception's hierarchy contains both its concrete
-    class and the base DeltaConcurrentModificationException, both registered here, so the order
-    decides which wins. For example a ConcurrentAppendException arrives as
+    returns the first name found in EXCEPTION_CLASS_MAPPING. Only the io.delta.exceptions.*
+    names are registered, and both a concrete exception and the base
+    DeltaConcurrentModificationException are, so the most-derived one wins. For example a
+    ConcurrentAppendException arrives as
 
-        ["io.delta.exceptions.ConcurrentAppendException",
-         "org.apache.spark.sql.delta.ConcurrentAppendException",
-         "io.delta.exceptions.DeltaConcurrentModificationException", ...]
+        ["io.delta.exceptions.ConcurrentAppendException",  # registered, picked
+         "org.apache.spark.sql.delta.ConcurrentAppendException",  # not registered, skipped
+         "io.delta.exceptions.DeltaConcurrentModificationException",  # registered (base)
+         ...]
 
-    and maps to ConcurrentAppendException, not the base DeltaConcurrentModificationException.
+    so it matches the io.delta.exceptions.ConcurrentAppendException entry and maps to the Delta
+    ConcurrentAppendException class, rather than the base DeltaConcurrentModificationException.
 
     This mirrors, for Spark Connect, the conversion that delta.exceptions.captured installs for
     the classic (py4j) client.
