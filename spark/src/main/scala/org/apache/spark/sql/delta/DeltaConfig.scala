@@ -1031,6 +1031,18 @@ trait DeltaConfigsBase extends DeltaLogging {
     v => Option(v).map(_.toBoolean),
     _ => true,
     "needs to be a boolean.")
+
+
+  /**
+   * If false, does not write partition columns in parquet data files. Defaults to
+   * writing partition columns in parquet data files if unset.
+   */
+  val WRITE_PARTITION_COLUMNS_TO_PARQUET = buildConfig[Option[Boolean]](
+    "writePartitionColumnsToParquet",
+    null,
+    v => Option(v).map(_.toBoolean),
+    _ => true,
+    "needs to be a boolean.")
 }
 
 object DeltaConfigs extends DeltaConfigsBase
