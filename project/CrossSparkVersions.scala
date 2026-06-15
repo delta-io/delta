@@ -56,6 +56,9 @@ import Unidoc._
  *   build/sbt -DsparkVersion=4.1                 # Uses Spark 4.1.x whatever it is defined in ALL_SPECS
  *   build/sbt -DsparkVersion=default             # Uses default version
  *   build/sbt -DsparkVersion=master              # Uses master version (if defined)
+ *   build/sbt -DsparkVersion=4.2 -DsparkCommit=<sha>
+ *                                                # Uses Spark 4.2 compatibility settings
+ *                                                # with locally built Spark artifacts
  *
  * ========================================================
  * Cross-Building for Development and Testing
@@ -65,6 +68,7 @@ import Unidoc._
  *   build/sbt -DsparkVersion=<version> compile
  *   build/sbt -DsparkVersion=<version> test
  *   build/sbt -DsparkVersion=master compile test
+ *   build/sbt -DsparkVersion=4.2 -DsparkCommit=<sha> compile test
  *
  * To publish to local Maven for testing:
  *   # Publish all modules for default Spark version
@@ -183,6 +187,8 @@ import Unidoc._
  *   - isDefault: Whether this is the default Spark version
  *   - targetJvm: Target JVM version (e.g., "17")
  *   - packageSuffix: Maven artifact suffix for this version (e.g., "_4.0", "_4.1")
+ *   - sourceBuildArtifactBaseVersion: Base Maven artifact version for source-built Spark refs, if any
+ *   - sourceBuildDefaultRef: Default Spark source ref to build for source-built lanes, if any
  *
  *   Example:
  *     build/sbt exportSparkVersionsJson
@@ -210,6 +216,10 @@ import Unidoc._
  * @param additionalSourceDir Optional version-specific source directory suffix (e.g., "scala-spark-3.5")
  * @param antlr4Version ANTLR version to use (e.g., "4.9.3", "4.13.1")
  * @param additionalJavaOptions Additional JVM options for tests (e.g., Java 17 --add-opens flags)
+ * @param sourceBuildArtifactBaseVersion Base Spark artifact version for source-built refs, if different from fullVersion.
+ *   This is an overlay on the compatibility line, not a separate published Spark version.
+ * @param sourceBuildDefaultRef Default Spark source ref for source-built CI/cache workflows.
+ *   Workflows may override the ref manually, but the default lives here with the rest of the Spark policy.
  */
 case class SparkVersionSpec(
   fullVersion: String,
@@ -220,7 +230,9 @@ case class SparkVersionSpec(
   antlr4Version: String,
   additionalJavaOptions: Seq[String] = Seq.empty,
   jacksonVersion: String = "2.15.2",
-  additionalResolvers: Seq[Resolver] = Seq.empty
+  additionalResolvers: Seq[Resolver] = Seq.empty,
+  sourceBuildArtifactBaseVersion: Option[String] = None,
+  sourceBuildDefaultRef: Option[String] = None
 ) {
   /** Returns the Spark short version (e.g., "3.5", "4.0") */
   def shortVersion: String = {
@@ -246,6 +258,10 @@ case class SparkVersionSpec(
 
   /** Whether to generate Javadoc/Scaladoc for this version */
   def generateDocs: Boolean = isDefault
+
+  /** Base version used when deriving a local, commit-qualified artifact version for source-built Spark. */
+  def artifactBaseVersion: String = sourceBuildArtifactBaseVersion.getOrElse(
+    fullVersion.stripSuffix("-SNAPSHOT"))
 }
 
 object SparkVersionSpec {
@@ -286,15 +302,20 @@ object SparkVersionSpec {
     jacksonVersion = "2.18.2"
   )
 
-  private val spark42Preview = SparkVersionSpec(
-    fullVersion = "4.2.0-preview5",
+  // Spark 4.2 source-build jobs use this compatibility line (shims, JVM flags,
+  // dependency overrides) while resolving Spark artifacts from the configured
+  // source ref for CI.
+  private val spark42Snapshot = SparkVersionSpec(
+    fullVersion = "4.2.0-SNAPSHOT",
     targetJvm = "17",
     additionalSourceDir = Some("scala-shims/spark-4.2"),
     supportIceberg = false,
     supportHudi = false,
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,
-    jacksonVersion = "2.18.2"
+    jacksonVersion = "2.18.2",
+    sourceBuildArtifactBaseVersion = Some("4.2.0"),
+    sourceBuildDefaultRef = Some("b6bd005ac7549411ec4e7dc944d7a0e19fd56561")
   )
 
   /** Default Spark version */
@@ -304,7 +325,7 @@ object SparkVersionSpec {
   val MASTER: Option[SparkVersionSpec] = None
 
   /** All supported Spark versions - internal use only */
-  val ALL_SPECS = Seq(spark40, spark41, spark42Preview)
+  val ALL_SPECS = Seq(spark40, spark41, spark42Snapshot)
 }
 
 /** See docs on top of this file */
@@ -350,6 +371,54 @@ object CrossSparkVersions extends AutoPlugin {
    */
   def getSparkVersion(): String = getSparkVersionSpec().fullVersion
 
+  private def propertyOrEnv(propertyName: String, envName: String): Option[String] = {
+    sys.props.get(propertyName).orElse(sys.env.get(envName)).filter(_.nonEmpty)
+  }
+
+  private def getSparkCommit(): Option[String] =
+    propertyOrEnv("sparkCommit", "SPARK_COMMIT")
+
+  private def getSparkArtifactVersionOverride(): Option[String] =
+    propertyOrEnv("sparkArtifactVersion", "SPARK_ARTIFACT_VERSION")
+
+  private def shortCommit(commit: String): String = {
+    val trimmed = commit.trim.toLowerCase
+    if (!trimmed.matches("[0-9a-f]{7,40}")) {
+      throw new IllegalArgumentException(
+        s"Invalid sparkCommit '$commit'. Expected a 7 to 40 character git SHA.")
+    }
+    trimmed.take(12)
+  }
+
+  def sparkArtifactVersionForCommit(spec: SparkVersionSpec, commit: String): String = {
+    s"${spec.artifactBaseVersion}-${shortCommit(commit)}-SNAPSHOT"
+  }
+
+  /**
+   * Returns the Maven artifact version used for org.apache.spark dependencies.
+   *
+   * `sparkVersion` selects the compatibility profile (shims, suffixes, JVM options,
+   * Jackson overrides). `sparkCommit` is an opt-in overlay for resolving locally built
+   * Spark artifacts from project/scripts/build_spark.sh.
+   */
+  def getSparkArtifactVersion(): String = {
+    val spec = getSparkVersionSpec()
+    getSparkArtifactVersionOverride().getOrElse {
+      getSparkCommit().map(commit => sparkArtifactVersionForCommit(spec, commit))
+        .getOrElse(spec.fullVersion)
+    }
+  }
+
+  private def sourceBuiltSparkResolvers: Seq[Resolver] = {
+    if (getSparkCommit().isDefined || getSparkArtifactVersionOverride().isDefined) {
+      // This covers non-overridden SBT resolution. The build/sbt repository override path also
+      // needs maven-local in its repository config so source-built Spark artifacts are visible.
+      Seq(Resolver.mavenLocal)
+    } else {
+      Seq.empty
+    }
+  }
+
   /**
    * Returns module name with Spark version suffix.
    * 
@@ -359,10 +428,7 @@ object CrossSparkVersions extends AutoPlugin {
    * During release, the `skipSparkSuffix=true` property is used to also publish
    * backward-compatible artifacts without the suffix (e.g., delta-spark_2.13).
    */
-  private def moduleName(baseName: String, sparkVer: String): String = {
-    val spec = SparkVersionSpec.ALL_SPECS.find(_.fullVersion == sparkVer)
-      .getOrElse(throw new IllegalArgumentException(s"Unknown Spark version: $sparkVer"))
-
+  private def moduleName(baseName: String, spec: SparkVersionSpec): String = {
     // skipSparkSuffix removes the suffix (used during release for backward compatibility)
     val skipSparkSuffix = sys.props.getOrElse("skipSparkSuffix", "false").toBoolean
 
@@ -386,7 +452,7 @@ object CrossSparkVersions extends AutoPlugin {
     val baseSettings = Seq(
       scalaVersion := scala213,
       crossScalaVersions := Seq(scala213),
-      resolvers ++= spec.additionalResolvers,
+      resolvers ++= spec.additionalResolvers ++ sourceBuiltSparkResolvers,
       Antlr4 / antlr4Version := spec.antlr4Version,
       Test / javaOptions ++= (Seq(s"-Dlog4j.configurationFile=${spec.log4jConfig}") ++ spec.additionalJavaOptions)
     )
@@ -411,10 +477,7 @@ object CrossSparkVersions extends AutoPlugin {
     // Jackson dependency overrides to match Spark version and avoid conflicts
     val jacksonOverrides = Seq(
       dependencyOverrides ++= {
-        val sparkVer = sparkVersionKey.value
-        val jacksonVer = SparkVersionSpec.ALL_SPECS.find(_.fullVersion == sparkVer)
-          .getOrElse(throw new IllegalArgumentException(s"Unknown Spark version: $sparkVer"))
-          .jacksonVersion
+        val jacksonVer = spec.jacksonVersion
         Seq(
           "com.fasterxml.jackson.core" % "jackson-databind" % jacksonVer,
           "com.fasterxml.jackson.core" % "jackson-core" % jacksonVer,
@@ -436,9 +499,9 @@ object CrossSparkVersions extends AutoPlugin {
    */
   def sparkDependentModuleName(sparkVersionKey: SettingKey[String]): Seq[Setting[_]] = {
     Seq(
-      sparkVersionKey := getSparkVersion(),
+      sparkVersionKey := getSparkArtifactVersion(),
       // Dynamically modify moduleName to add Spark version suffix
-      Keys.moduleName := moduleName(Keys.name.value, sparkVersionKey.value)
+      Keys.moduleName := moduleName(Keys.name.value, getSparkVersionSpec())
     )
   }
 
@@ -585,6 +648,12 @@ object CrossSparkVersions extends AutoPlugin {
 
       val outputFile = new File("target/spark-versions.json")
       outputFile.getParentFile.mkdirs()
+
+      def jsonString(value: Option[String]): String = {
+        value.map { raw =>
+          "\"" + raw.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+        }.getOrElse("null")
+      }
       
       val writer = new PrintWriter(outputFile)
       // scalastyle:off
@@ -603,6 +672,8 @@ object CrossSparkVersions extends AutoPlugin {
           writer.println(s"""    "isDefault": $isDefault,""")
           writer.println(s"""    "targetJvm": "${spec.targetJvm}",""")
           writer.println(s"""    "packageSuffix": "$packageSuffix",""")
+          writer.println(s"""    "sourceBuildArtifactBaseVersion": ${jsonString(spec.sourceBuildArtifactBaseVersion)},""")
+          writer.println(s"""    "sourceBuildDefaultRef": ${jsonString(spec.sourceBuildDefaultRef)},""")
           writer.println(s"""    "supportIceberg": "${spec.supportIceberg}",""")
           writer.println(s"""    "supportHudi": "${spec.supportHudi}"""")
           writer.println(s"""  }$comma""")

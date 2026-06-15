@@ -16,6 +16,18 @@ Usage:
     python project/scripts/get_spark_version_info.py --released-spark-versions
     # Output: ["4.0", "4.1"] (excludes versions with -SNAPSHOT)
 
+    # Get Spark versions with configured source-build defaults
+    python project/scripts/get_spark_version_info.py --source-build-spark-versions
+    # Output: ["4.2"]
+
+    # Get Spark versions that use published Spark artifacts in the normal test job
+    python project/scripts/get_spark_version_info.py --non-source-build-spark-versions
+    # Output: ["4.0", "4.1"]
+
+    # Resolve a source-built Spark cache identity
+    python project/scripts/get_spark_version_info.py --resolve-source-build --spark-version 4.2
+    # Output: spark_version=4.2, spark_sha=..., spark_artifact_version=...
+
     # Get a specific field for a Spark version (using short version or "master")
     python project/scripts/get_spark_version_info.py --get-field 4.0 targetJvm
     python project/scripts/get_spark_version_info.py --get-field master targetJvm
@@ -23,6 +35,7 @@ Usage:
 """
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -69,6 +82,143 @@ def load_spark_versions(json_path: Path, repo_root: Path):
         return json.load(f)
 
 
+def run_command(args, cwd):
+    result = subprocess.run(
+        args,
+        cwd=str(cwd),
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        universal_newlines=True,
+    )
+    return result.stdout.strip()
+
+
+def find_version_entry(versions, spark_version):
+    """Find a Spark metadata entry by workflow-facing version selector."""
+    for v in versions:
+        if spark_version == "default" and v.get("isDefault", False):
+            return v
+        elif spark_version == "master" and v.get("isMaster", False):
+            return v
+        elif spark_version == v["shortVersion"] or spark_version == v["fullVersion"]:
+            return v
+    return None
+
+
+def resolve_spark_sha(spark_repo, spark_ref, spark_dir):
+    spark_dir.mkdir(parents=True, exist_ok=True)
+    if not (spark_dir / ".git").exists():
+        run_command(["git", "-C", str(spark_dir), "init"], spark_dir.parent)
+
+    try:
+        run_command(["git", "-C", str(spark_dir), "remote", "get-url", "origin"], spark_dir.parent)
+        run_command(
+            ["git", "-C", str(spark_dir), "remote", "set-url", "origin", spark_repo],
+            spark_dir.parent,
+        )
+    except subprocess.CalledProcessError:
+        run_command(
+            ["git", "-C", str(spark_dir), "remote", "add", "origin", spark_repo],
+            spark_dir.parent,
+        )
+
+    run_command(["git", "-C", str(spark_dir), "fetch", "--depth", "1", "origin", spark_ref], spark_dir.parent)
+    return run_command(["git", "-C", str(spark_dir), "rev-parse", "FETCH_HEAD"], spark_dir.parent)
+
+
+def strip_suffix(value, suffix):
+    if value.endswith(suffix):
+        return value[: -len(suffix)]
+    return value
+
+
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(8192), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def compute_spark_m2_cache_key(
+    runner_label,
+    spark_version,
+    artifact_base_version,
+    spark_sha,
+    build_script_path,
+):
+    script_hash = sha256_file(build_script_path)
+    return (
+        "spark-m2-{}-scala-2.13-"
+        "{}-{}-{}-{}".format(
+            runner_label,
+            spark_version,
+            artifact_base_version,
+            spark_sha,
+            script_hash,
+        )
+    )
+
+
+def emit_output(values):
+    github_output = os.environ.get("GITHUB_OUTPUT")
+    if github_output:
+        with open(github_output, "a") as handle:
+            for key, value in values.items():
+                handle.write("{}={}\n".format(key, value))
+
+    for key, value in values.items():
+        print("{}={}".format(key, value))
+
+
+def resolve_source_build(args, versions, repo_root):
+    version_entry = find_version_entry(versions, args.spark_version)
+    if not version_entry:
+        print(f"ERROR: Spark version '{args.spark_version}' not found", file=sys.stderr)
+        sys.exit(1)
+
+    source_ref = args.spark_source_ref.strip() or (version_entry.get("sourceBuildDefaultRef") or "")
+    if not source_ref:
+        raise SystemExit(
+            "No Spark source ref configured for Spark {}. Provide --spark-source-ref "
+            "or sourceBuildDefaultRef in CrossSparkVersions.scala.".format(args.spark_version)
+        )
+
+    artifact_base_version = version_entry.get("sourceBuildArtifactBaseVersion") or strip_suffix(
+        version_entry["fullVersion"], "-SNAPSHOT"
+    )
+    normalized_spark_version = (
+        "master" if version_entry.get("isMaster", False) else version_entry["shortVersion"]
+    )
+    spark_sha = resolve_spark_sha(args.spark_repo, source_ref, Path(args.spark_dir))
+    spark_artifact_version = "{}-{}-SNAPSHOT".format(artifact_base_version, spark_sha[:12])
+    build_script_path = repo_root / "project" / "scripts" / "build_spark.sh"
+    cache_key = compute_spark_m2_cache_key(
+        args.runner_label,
+        normalized_spark_version,
+        artifact_base_version,
+        spark_sha,
+        build_script_path,
+    )
+
+    print(
+        "Resolved Spark {} source ref {} to {} and Maven version {}".format(
+            normalized_spark_version, source_ref, spark_sha, spark_artifact_version
+        )
+    )
+    emit_output(
+        {
+            "spark_version": normalized_spark_version,
+            "source_ref": source_ref,
+            "spark_sha": spark_sha,
+            "artifact_base_version": artifact_base_version,
+            "spark_artifact_version": spark_artifact_version,
+            "cache_key": cache_key,
+        }
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Generate Spark version information from CrossSparkVersions.scala"
@@ -84,10 +234,49 @@ def main():
         help="Output only released Spark versions (excluding snapshots) as JSON array"
     )
     parser.add_argument(
+        "--source-build-spark-versions",
+        action="store_true",
+        help="Output Spark versions with configured source-build default refs as JSON array"
+    )
+    parser.add_argument(
+        "--non-source-build-spark-versions",
+        action="store_true",
+        help="Output Spark versions without source-build default refs as JSON array"
+    )
+    parser.add_argument(
         "--get-field",
         nargs=2,
         metavar=("SPARK_VERSION", "FIELD"),
         help="Get a specific field for a Spark version (e.g., --get-field 4.0 targetJvm or --get-field master targetJvm)"
+    )
+    parser.add_argument(
+        "--resolve-source-build",
+        action="store_true",
+        help="Resolve source-build cache metadata and emit GitHub outputs"
+    )
+    parser.add_argument(
+        "--spark-version",
+        help="Spark compatibility line for --resolve-source-build"
+    )
+    parser.add_argument(
+        "--spark-source-ref",
+        default="",
+        help="Optional Spark source ref override for --resolve-source-build"
+    )
+    parser.add_argument(
+        "--spark-repo",
+        default="https://github.com/apache/spark.git",
+        help="Spark git repository for --resolve-source-build"
+    )
+    parser.add_argument(
+        "--spark-dir",
+        default="/tmp/spark",
+        help="Temporary Spark checkout used for source-ref resolution"
+    )
+    parser.add_argument(
+        "--runner-label",
+        default="ubuntu-24.04",
+        help="GitHub Actions runner label used in Spark Maven cache keys"
     )
 
     args = parser.parse_args()
@@ -120,25 +309,23 @@ def main():
                     matrix_versions.append(v["shortVersion"])
             print(json.dumps(matrix_versions))
 
+        elif args.source_build_spark_versions:
+            matrix_versions = []
+            for v in versions:
+                if v.get("sourceBuildDefaultRef"):
+                    matrix_versions.append("master" if v.get("isMaster", False) else v["shortVersion"])
+            print(json.dumps(matrix_versions))
+
+        elif args.non_source_build_spark_versions:
+            matrix_versions = []
+            for v in versions:
+                if not v.get("sourceBuildDefaultRef"):
+                    matrix_versions.append("master" if v.get("isMaster", False) else v["shortVersion"])
+            print(json.dumps(matrix_versions))
+
         elif args.get_field:
             spark_version, field = args.get_field
-            
-            # Find the version entry by matching:
-            # - "default" matches isDefault=true
-            # - "master" matches isMaster=true
-            # - short version like "4.0" matches shortVersion
-            # - full version like "4.0.1" matches fullVersion
-            version_entry = None
-            for v in versions:
-                if spark_version == "default" and v.get("isDefault", False):
-                    version_entry = v
-                    break
-                elif spark_version == "master" and v.get("isMaster", False):
-                    version_entry = v
-                    break
-                elif spark_version == v["shortVersion"] or spark_version == v["fullVersion"]:
-                    version_entry = v
-                    break
+            version_entry = find_version_entry(versions, spark_version)
 
             if not version_entry:
                 print(f"ERROR: Spark version '{spark_version}' not found", file=sys.stderr)
@@ -154,6 +341,11 @@ def main():
 
             # Print as JSON for proper formatting
             print(json.dumps(version_entry[field]))
+
+        elif args.resolve_source_build:
+            if not args.spark_version:
+                parser.error("--resolve-source-build requires --spark-version")
+            resolve_source_build(args, versions, repo_root)
 
         else:
             parser.print_help()
