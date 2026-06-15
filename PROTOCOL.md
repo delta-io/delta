@@ -123,6 +123,7 @@
   - [Partition Value Serialization](#partition-value-serialization)
   - [Schema Serialization Format](#schema-serialization-format)
     - [Primitive Types](#primitive-types)
+      - [Void Type](#void-type)
     - [Struct Type](#struct-type)
     - [Struct Field](#struct-field)
     - [Array Type](#array-type)
@@ -2026,6 +2027,8 @@ The supported type changes are:
   - `Byte`, `Short` or `Int` -> `Decimal(10 + k1, k2)` where `k1 >= k2 >= 0`.
   - `Long` -> `Decimal(20 + k1, k2)` where `k1 >= k2 >= 0`.
 
+Note: changing a `void` column to another type does not require the Type Widening feature; see [Void Type](#void-type).
+
 To support this feature:
 - The table must be on Reader version 3 and Writer Version 7.
 - The feature `typeWidening` must exist in the table `protocol`'s `readerFeatures` and `writerFeatures`, either during its creation or at a later stage.
@@ -2743,10 +2746,22 @@ binary| A sequence of binary data.
 date| A calendar date, represented as a year-month-day triple without a timezone.
 timestamp| Microsecond precision timestamp elapsed since the Unix epoch, 1970-01-01 00:00:00 UTC. When this is stored in a parquet file, its `isAdjustedToUTC` must be set to `true`.
 timestamp without time zone | Microsecond precision timestamp in a local timezone elapsed since the Unix epoch, 1970-01-01 00:00:00. It doesn't have the timezone information, and a value of this type can map to multiple physical time instants. It should always be displayed in the same way, regardless of the local time zone in effect. When this is stored in a parquet file, its `isAdjustedToUTC` must be set to `false`. To use this type, a table must support a feature `timestampNtz`. See section [Timestamp without timezone (TimestampNtz)](#timestamp-without-timezone-timestampNtz) for more information.
+void| A column that contains only `null` values and is never materialized in data files. See section [Void Type](#void-type) for more information.
 
 See Parquet [timestamp type](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#timestamp) for more details about timestamp and `isAdjustedToUTC`.
 
-Note: Existing tables may have `void` data type columns. Behavior is undefined for `void` data type columns but it is recommended to drop any `void` data type columns on reads (as is implemented by the Spark connector).
+#### Void Type
+
+On write, `void` columns are omitted from data files: they do not appear in the data file's schema. On read, they are reconstructed as all-`null` columns, following the [rule](#consistency-between-table-metadata-and-data-files) that columns present in the table schema but missing from a data file are read as `null`.
+
+Because `void` is never written to data files, writers must reject **writing data** to a table whose schema contains any of the following shapes:
+- a `void` type inside an `array` or `map` at any nesting level;
+- a `struct` (at any nesting level) whose fields are all `void`; or
+- a table whose columns are all `void`.
+
+These restrictions are stated in terms of the **table schema**, not the schema of any individual data file. A table with such a schema can still be created, altered through metadata-only operations, and read. In particular, a table covered by these restrictions can be made writable by evolving its schema - for example, by changing a `void` column to another type.
+
+A `void` column may be changed to any other data type through supported schema-evolution operations; this does not require the [Type Widening](#type-widening) table feature.
 
 ### Struct Type
 
@@ -3108,3 +3123,5 @@ binary| `binary` |
 array| either as `2-level` or `3-level` representation. Refer to [Parquet documentation](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#lists) for further details | `LIST`
 map| either as `2-level` or `3-level` representation. Refer to [Parquet documentation](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#maps) for further details | `MAP`
 struct| `group` |
+
+Note that `void` columns are not stored in Parquet files. See section [Void Type](#void-type).
