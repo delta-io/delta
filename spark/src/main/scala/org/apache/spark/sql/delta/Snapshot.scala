@@ -736,6 +736,10 @@ class Snapshot(
     spark.createDataFrame(spark.sparkContext.emptyRDD[Row], logSchema)
 
 
+  // These logging methods must NOT read `this.metadata`: they are invoked *during* P&M
+  // reconstruction (e.g. the usage log on the incremental-checksum path) and during snapshot
+  // construction, where reading `metadata` re-enters the `_reconstructedProtocolMetadataAndICT`
+  // lazy val on the same thread and overflows the stack. Use the DeltaLog's cached id instead.
   def logInfo(msg: MessageWithContext): Unit = {
     val tableId = deltaLog.unsafeVolatileTableId
     super.logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, tableId)}] " + msg)
