@@ -14,6 +14,8 @@
 # limitations under the License.
 #
 
+# Side effect: registers the Delta exception classes in PySpark's Spark Connect error conversion.
+import delta.connect.exceptions  # noqa: F401
 from delta.connect.tables import DeltaTable
 
 __all__ = ['DeltaTable']
