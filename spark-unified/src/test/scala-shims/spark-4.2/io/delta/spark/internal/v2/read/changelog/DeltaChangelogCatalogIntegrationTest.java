@@ -181,6 +181,69 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
   }
 
   // ===========================================================================================
+  // Reserved characters in file paths (URI encoding)
+  // ===========================================================================================
+
+  /**
+   * Regression test for URI parsing of file paths that contain reserved characters. The table path
+   * contains a space, and data file names carry '%' via the default {@code
+   * testOnly.dataFileNamePrefix} ("test%file%prefix-").
+   *
+   * <p>Before the fix the changelog read built file paths with {@code new Path(tablePath,
+   * child).toString()} (re-encoding the already-encoded child) and {@code
+   * SparkPath.fromUrlString(...)} (assuming a fully encoded URI), so reading the changes threw
+   * {@code java.net.URISyntaxException}. With {@code PartitionUtils.resolveTableRelativePath} /
+   * {@code SparkPath.fromPath} the paths resolve correctly and the read returns the changes.
+   */
+  @Test
+  public void testChangesReadWithReservedCharsInPath() throws Exception {
+    String tableName = "dsv2_cdc_reserved_" + System.nanoTime();
+    // The space in the path exercises URL-encoding of reserved characters.
+    String tablePath = System.getProperty("java.io.tmpdir") + "/spark test-" + System.nanoTime();
+    withTable(
+        tablePath,
+        () ->
+            withTable(
+                new String[] {tableName},
+                () -> {
+                  spark.sql(
+                      String.format(
+                          "CREATE TABLE %s (id BIGINT, name STRING) USING delta LOCATION '%s' "
+                              + "TBLPROPERTIES ('delta.enableDeletionVectors'='false', "
+                              + "'delta.enableRowTracking'='true')",
+                          tableName, tablePath));
+                  spark.sql(
+                      String.format("INSERT INTO %s VALUES (1, 'Alice'), (2, 'Bob')", tableName));
+                  spark.sql(String.format("DELETE FROM %s WHERE id = 1", tableName));
+
+                  // CHANGES read needs the V2 connector; see withHistoryTable for the rationale.
+                  withSQLConf(
+                      "spark.databricks.delta.v2.enableMode",
+                      "STRICT",
+                      () -> {
+                        // Without the fix, collecting throws java.net.URISyntaxException because
+                        // the file path under the space-containing table path is double-encoded.
+                        List<Row> rows =
+                            spark
+                                .sql(
+                                    String.format(
+                                        "SELECT id, name, _change_type, _commit_version "
+                                            + "FROM %s CHANGES FROM VERSION 1 TO VERSION 2",
+                                        tableName))
+                                .orderBy("_commit_version", "id", "_change_type")
+                                .collectAsList();
+
+                        // v1: insert (1, Alice), (2, Bob); v2: delete (1, Alice).
+                        assertEquals(
+                            3,
+                            rows.size(),
+                            "Expected 3 change rows; a URISyntaxException here means the "
+                                + "reserved-character path was not resolved correctly");
+                      });
+                }));
+  }
+
+  // ===========================================================================================
   // Bounds inclusivity/exclusivity testing
   // ===========================================================================================
 

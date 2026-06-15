@@ -23,7 +23,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Supplier;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.Path;
 import org.apache.spark.paths.SparkPath;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.expressions.GenericInternalRow;
@@ -339,7 +338,7 @@ public class DeltaChangelogBatch implements Batch {
       CDCInputPartition cdcPartition = (CDCInputPartition) partition;
       InternalRow partitionValues = new GenericInternalRow(0);
       SparkPath sparkPath =
-          SparkPath.fromUrlString(new Path(tablePath, cdcPartition.getFilePath()).toString());
+          PartitionUtils.resolveTableRelativePath(tablePath, cdcPartition.getFilePath());
       scala.collection.immutable.Map<String, Object> constantMetadata =
           (scala.collection.immutable.Map<String, Object>)
               (scala.collection.immutable.Map<?, ?>)
