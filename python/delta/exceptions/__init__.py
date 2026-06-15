@@ -14,10 +14,12 @@
 # limitations under the License.
 #
 
-# Importing delta.exceptions.captured installs the conversion patch that makes the classic
-# (py4j) PySpark client raise the Delta-specific exceptions exported below. It cannot be
-# imported in Spark Connect-only environments, where pyspark ships without py4j; there the
-# equivalent conversion is registered by delta.connect.exceptions.
+# Importing delta.exceptions.captured installs the conversion that makes the classic (py4j)
+# PySpark client raise the Delta-specific exceptions exported below. In a Spark Connect-only
+# install (pyspark-connect) there is no py4j and pyspark does not export SparkContext, so
+# captured's "from pyspark import SparkContext" raises ImportError; guard it so that importing
+# delta still works there. On that path the equivalent conversion is registered instead by
+# delta.connect.exceptions.
 try:
     import delta.exceptions.captured  # noqa: F401
 except ImportError:

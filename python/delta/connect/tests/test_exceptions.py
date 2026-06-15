@@ -19,7 +19,7 @@ import unittest
 
 from google.rpc.error_details_pb2 import ErrorInfo
 
-# Imported for its side effect: registers the exception class mappings under test.
+# Registers the exception class mappings under test (on import).
 import delta.connect.exceptions  # noqa: F401
 import delta.exceptions
 from delta.connect.exceptions import ConcurrentAppendException
@@ -43,8 +43,13 @@ class DeltaConnectExceptionConversionTests(unittest.TestCase):
     def test_delta_exception_from_error_info(self):
         info = ErrorInfo()
         info.reason = "io.delta.exceptions.ConcurrentAppendException"
+        # Realistic server-sent hierarchy, ordered most-derived first: the concrete class, its
+        # org.apache.spark.sql.delta parent (not registered), then the registered base class.
+        # Both io.delta.exceptions classes are registered, so the conversion must return the
+        # most-derived one.
         info.metadata["classes"] = json.dumps([
             "io.delta.exceptions.ConcurrentAppendException",
+            "org.apache.spark.sql.delta.ConcurrentAppendException",
             "io.delta.exceptions.DeltaConcurrentModificationException",
         ])
         info.metadata["errorClass"] = "DELTA_CONCURRENT_APPEND"
@@ -56,12 +61,30 @@ class DeltaConnectExceptionConversionTests(unittest.TestCase):
         self.assertIsInstance(exception, ConcurrentAppendException)
         # User code catching the documented delta.exceptions types must keep working.
         self.assertIsInstance(exception, delta.exceptions.ConcurrentAppendException)
+        # The base class is registered and present in the hierarchy too; the most-derived class
+        # must win. The Python exception classes are flat siblings, so this fails if the base
+        # were picked instead.
+        self.assertNotIsInstance(exception, delta.exceptions.DeltaConcurrentModificationException)
         self.assertEqual(exception.getCondition(), "DELTA_CONCURRENT_APPEND")
         self.assertEqual(exception.getSqlState(), "2D521")
         self.assertEqual(
             exception.getMessageParameters(), {"partition": "the root of the table"})
         # The "(<reason>) " prefix added by the generic conversion must not leak in.
         self.assertEqual(exception.getMessage(), "Files were added by a concurrent update.")
+
+    def test_delta_base_exception_maps_to_base_class(self):
+        # A payload whose only registered class is the abstract base maps to the base Delta
+        # exception (the catch-all for commit conflicts), not a generic SparkConnectGrpcException.
+        info = ErrorInfo()
+        info.reason = "io.delta.exceptions.DeltaConcurrentModificationException"
+        info.metadata["classes"] = json.dumps([
+            "io.delta.exceptions.DeltaConcurrentModificationException",
+        ])
+
+        exception = self._convert(info, "A concurrent modification occurred.")
+
+        self.assertIsInstance(
+            exception, delta.exceptions.DeltaConcurrentModificationException)
 
     def test_delta_exception_with_fetch_error_details(self):
         # With an enriched error (FetchErrorDetailsResponse), the full message, the server-side

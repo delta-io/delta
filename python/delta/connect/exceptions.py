@@ -121,17 +121,28 @@ _delta_exceptions_registered = False
 
 def _register_exception_class_mappings() -> None:
     """
-    Register the Delta-specific exception classes in PySpark's Spark Connect error conversion
-    (EXCEPTION_CLASS_MAPPING maps server-side exception class names to Python exception
-    classes), so that Delta concurrent-modification exceptions raised by the server surface as
-    these classes instead of a generic SparkConnectGrpcException. The generic conversion
-    attaches the structured error metadata (error class, SQL state, server-side stacktrace,
-    message parameters, query contexts) to the registered classes the same way as to PySpark's
-    own exceptions. The conversion walks the server-sent class hierarchy from the most derived
-    class, so the most specific registered class wins.
+    Register the Delta-specific exception classes in PySpark's Spark Connect error conversion.
 
-    This mirrors, for Spark Connect, the conversion patch that delta.exceptions.captured
-    installs for the classic (py4j) client.
+    PySpark converts a server error by looking up the server-side exception class names in
+    EXCEPTION_CLASS_MAPPING. Registering the Delta classes there makes Delta commit-conflict
+    exceptions surface as these classes instead of a generic SparkConnectGrpcException, and lets
+    PySpark's generic conversion attach the structured error metadata (error class, SQL state,
+    server-side stacktrace, message parameters, query contexts) the same way it does for its own
+    exceptions.
+
+    The conversion iterates the server-sent class hierarchy (ordered most-derived first) and
+    returns the first registered match. A Delta exception's hierarchy contains both its concrete
+    class and the base DeltaConcurrentModificationException, both registered here, so the order
+    decides which wins. For example a ConcurrentAppendException arrives as
+
+        ["io.delta.exceptions.ConcurrentAppendException",
+         "org.apache.spark.sql.delta.ConcurrentAppendException",
+         "io.delta.exceptions.DeltaConcurrentModificationException", ...]
+
+    and maps to ConcurrentAppendException, not the base DeltaConcurrentModificationException.
+
+    This mirrors, for Spark Connect, the conversion that delta.exceptions.captured installs for
+    the classic (py4j) client.
     """
     pyspark.errors.exceptions.connect.EXCEPTION_CLASS_MAPPING.update(
         {
