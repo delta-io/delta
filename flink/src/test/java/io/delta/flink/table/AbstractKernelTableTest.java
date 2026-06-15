@@ -100,6 +100,14 @@ class AbstractKernelTableTest extends TestHelper {
         AbstractKernelTable.normalize(URI.create("file:///var/char/good")).toString());
     assertEquals(
         "s3://host/var/", AbstractKernelTable.normalize(URI.create("s3://host/var")).toString());
+    assertEquals(
+        "s3://my_bucket/var/",
+        AbstractKernelTable.normalize(URI.create("s3://my_bucket/var")).toString());
+    assertEquals(
+        "abfss://container@account.dfs.core.windows.net/path/",
+        AbstractKernelTable.normalize(
+                URI.create("abfss://container@account.dfs.core.windows.net/path"))
+            .toString());
   }
 
   @Test

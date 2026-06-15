@@ -131,6 +131,11 @@ object DeltaToIcebergConvert extends DeltaLogging {
   }
 
   object RowTracking {
+    /**
+     * Set the next row-id on an Iceberg transaction so that subsequent data files written by
+     * the transaction get first-row-ids picked up from the Delta-side row-id high water mark.
+     * No-op when the Delta snapshot has no row tracking high water mark recorded.
+     */
     private[delta] def setNextRowId(snapshot: Snapshot, icebergTxn: IcebergTransaction): Unit = {
       RowId.extractHighWatermark(snapshot).foreach { highWaterMark =>
         IcebergTransactionUtils.setIcebergTxnNextRowId(icebergTxn, highWaterMark + 1)

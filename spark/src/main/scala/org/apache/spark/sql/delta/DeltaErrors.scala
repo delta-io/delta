@@ -1152,9 +1152,11 @@ trait DeltaErrorsBase
     ).initCause(e)
   }
 
+  final val DELTA_TXN_LOG_FAILED_INTEGRITY = "DELTA_TXN_LOG_FAILED_INTEGRITY"
+
   def logFailedIntegrityCheck(version: Long, mismatchOption: String): Throwable = {
     new DeltaIllegalStateException(
-      errorClass = "DELTA_TXN_LOG_FAILED_INTEGRITY",
+      errorClass = DELTA_TXN_LOG_FAILED_INTEGRITY,
       messageParameters = Array(version.toString, mismatchOption)
     )
   }
