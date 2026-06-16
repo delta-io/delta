@@ -33,9 +33,13 @@ import org.apache.spark.sql.types.StringType
  * The `vacuum` command implementation for Spark SQL. Example SQL:
  * {{{
  *    VACUUM ('/path/to/dir' | delta.`/path/to/dir`)
- *    [USING INVENTORY (delta.`/path/to/dir`| ( sub_query ))]
+ *    [USING INVENTORY (<table_identifier> | ( <sub_query> ))]
  *    [RETAIN number HOURS] [DRY RUN];
  * }}}
+ *
+ * The inventory source (table identifier or subquery) is consumed as a
+ * DataFrame and validated against `VacuumCommand.INVENTORY_SCHEMA`. It does
+ * not need to be a Delta table.
  */
 case class VacuumTableCommand(
     override val child: LogicalPlan,

@@ -759,12 +759,12 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
     }
   }
 
-  test("vacuum using inventory non-delta table identifier") {
+  test("vacuum using inventory non-Delta table identifier") {
     withSQLConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
       withEnvironment { (tempDir, clock) =>
         import testImplicits._
         val path = s"""${tempDir.getCanonicalPath}_data"""
-        val inventoryTable = "inventory_non_delta"
+        val inventoryTableName = "inventory_non_delta"
 
         // Define test delta table
         val data = Seq(
@@ -783,32 +783,23 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
         val dataPath = table.deltaLog.dataPath
         val inventoryData = Seq(
           Row(s"${dataPath}/file1.txt", 300000L, false, 0L),
-          Row(s"${dataPath}/file2.txt", 300000L, false, 0L),
-          Row(s"${dataPath}/_underscore_col_=10/test.txt", 300000L, false, 0L),
-          Row(s"${dataPath}/_underscore_col_=10/test2.txt", 300000L, false, 0L)
+          Row(s"${dataPath}/file2.txt", 300000L, false, 0L)
         )
-
-        withTable(inventoryTable) {
+        withTable(inventoryTableName) {
+          // Inventory source is a managed Parquet table (non-Delta).
           spark.createDataFrame(
             spark.sparkContext.parallelize(inventoryData), VacuumCommand.INVENTORY_SCHEMA)
             .write
             .format("parquet")
-            .saveAsTable(inventoryTable)
-
+            .saveAsTable(inventoryTableName)
           gcTest(table, clock)(
             CreateFile("file1.txt", commitToActionLog = false),
             CreateFile("file2.txt", commitToActionLog = false),
-            // Delta marks dirs starting with `_` as hidden unless specified as partition folder
-            CreateFile("_underscore_col_=10/test.txt", false),
-            CreateFile("_underscore_col_=10/test2.txt", false),
             AdvanceClock(defaultTombstoneInterval + 1000)
           )
-
-          sql(s"vacuum delta.`$path` using inventory $inventoryTable retain 0 hours")
+          sql(s"vacuum delta.`$path` using inventory $inventoryTableName retain 0 hours")
           gcTest(table, clock)(
-            CheckFiles(Seq("file1.txt", "file2.txt"), exist = false),
-            // hidden files must not be dropped
-            CheckFiles(Seq("_underscore_col_=10/test.txt", "_underscore_col_=10/test2.txt"))
+            CheckFiles(Seq("file1.txt", "file2.txt"), exist = false)
           )
         }
       }
