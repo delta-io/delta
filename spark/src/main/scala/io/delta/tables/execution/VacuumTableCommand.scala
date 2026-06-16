@@ -16,7 +16,7 @@
 
 package io.delta.tables.execution
 
-import org.apache.spark.sql.{Row, SparkSession}
+import org.apache.spark.sql.{Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, UnaryNode}
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -61,8 +61,8 @@ case class VacuumTableCommand(
         DeltaTableIdentifier(path = Some(deltaTable.path.toString)))
     }
     val inventory = inventoryTable.map(sparkSession.sessionState.analyzer.execute)
-        .map(p => Some(getDeltaTable(p, "VACUUM").toDf(sparkSession)))
-        .getOrElse(inventoryQuery.map(sparkSession.sql))
+      .map(plan => Some(Dataset.ofRows(sparkSession, plan)))
+      .getOrElse(inventoryQuery.map(sparkSession.sql))
     VacuumCommand.gc(sparkSession, deltaTable, dryRun, horizonHours,
       inventory, vacuumType).collect()
   }
