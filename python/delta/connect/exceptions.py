@@ -116,7 +116,7 @@ class ConcurrentTransactionException(SparkConnectGrpcException, BaseConcurrentTr
     """
 
 
-_delta_exceptions_registered = False
+_delta_exception_registered = False
 
 
 def _register_exception_class_mappings() -> None:
@@ -165,6 +165,6 @@ def _register_exception_class_mappings() -> None:
     )
 
 
-if not _delta_exceptions_registered:
+if not _delta_exception_registered:
     _register_exception_class_mappings()
-    _delta_exceptions_registered = True
+    _delta_exception_registered = True
