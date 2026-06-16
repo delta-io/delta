@@ -537,7 +537,7 @@ object DeltaDataSource extends DatabricksLogging {
         DeltaSourceMetadataTrackingLog.create(
           spark,
           schemaTrackingLocation,
-          sourceSnapshot.deltaLog.unsafeVolatileTableId,
+          sourceSnapshot.metadata.id,
           sourceSnapshot.dataPath.toString,
           parameters,
           sourceMetadataPathOpt,
