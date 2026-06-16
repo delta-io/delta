@@ -49,7 +49,7 @@ import org.apache.spark.sql.delta.hooks.metrics.UpdateMetricsHook
 import org.apache.spark.sql.delta.util.CatalogTableUtils
 import org.apache.spark.sql.delta.implicits.addFileEncoder
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
-import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider}
+import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider, ThrottledEventLogger}
 import org.apache.spark.sql.delta.redirect.{RedirectFeature, TableRedirectConfiguration}
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils, UnsupportedDataTypeInfo}
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
@@ -1389,13 +1389,24 @@ trait OptimisticTransactionImpl extends TransactionHelper
   }
 
   /**
+   * Per-commit usage-log throttlers for the AddFile sanity checks. A single commit can contain
+   * many invalid AddFiles; in logging-only mode that would emit one event per invalid action and
+   * flood usage logs, so we cap each check to [[maxSanityCheckEventsToLog]] events per commit.
+   * These are instance fields, so each [[OptimisticTransaction]] (i.e. each commit) gets a fresh
+   * count.
+   */
+  private val maxSanityCheckEventsToLog = 2
+  private val emptyFileCheckEventLogger = new ThrottledEventLogger(maxSanityCheckEventsToLog)
+  private val nullPartitionCheckEventLogger = new ThrottledEventLogger(maxSanityCheckEventsToLog)
+
+  /**
    * Validates that an AddFile does not reference a zero-byte parquet file.
    * Logs a delta event regardless of the flag; throws only when
    * [[DeltaSQLConf.DELTA_EMPTY_FILE_CHECK_THROW_ENABLED]] is set.
    */
   protected def validateAddFileNotEmpty(addFile: AddFile): Unit = {
     if (addFile.size == 0) {
-      recordDeltaEvent(
+      emptyFileCheckEventLogger.recordThrottledDeltaEvent(
         deltaLog,
         "delta.sanityCheck.emptyParquetFile",
         data = Map(
@@ -1422,7 +1433,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     notNullPartitionCols.foreach { col =>
       addFile.partitionValues.get(col) match {
         case None | Some(null) =>
-          recordDeltaEvent(
+          nullPartitionCheckEventLogger.recordThrottledDeltaEvent(
             deltaLog,
             "delta.constraints.nullPartitionViolation",
             data = Map(
