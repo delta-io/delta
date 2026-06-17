@@ -17,6 +17,7 @@
 package io.delta.flink.table;
 
 import io.delta.flink.Conf;
+import java.util.Collections;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -55,6 +56,23 @@ import java.util.function.Supplier;
  */
 public class CredentialManager {
 
+  /**
+   * A {@link CredentialManager} that fetches no credentials. It relies on the ambient environment
+   * to provide them -- for example GKE Workload Identity, an AWS instance profile, or an Azure
+   * managed identity resolved by the filesystem's default credential chain, or static settings in
+   * {@code core-site.xml}. {@link #getCredentials()} always returns an empty map, and no refresh is
+   * ever scheduled.
+   */
+  public static class AmbientCredentialManager extends CredentialManager {
+    public AmbientCredentialManager() {
+      super(Collections::emptyMap, () -> {});
+    }
+
+    @Override
+    Map<String, String> getCredentials() {
+      return Collections.emptyMap();
+    }
+  }
   /**
    * Key in the credential map that represents the credential expiration time.
    *

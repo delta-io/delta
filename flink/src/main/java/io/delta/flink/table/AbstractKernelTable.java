@@ -582,8 +582,22 @@ public abstract class AbstractKernelTable implements DeltaTable {
   }
 
   private CredentialManager createCredentialManager() {
-    return new CredentialManager(
-        () -> catalog.getCredentials(this.getTableUUID()), this::refreshCredential);
+    String source = this.conf.getCredentialSource();
+    if (source.equalsIgnoreCase("ambient")) {
+      // Do not fetch credentials from Unity Catalog; rely on the ambient environment
+      // (workload identity, instance profile, ADC, or core-site.xml) to supply them.
+      return new CredentialManager.AmbientCredentialManager();
+    } else if (source.equalsIgnoreCase("uc")) {
+      return new CredentialManager(
+          () -> catalog.getCredentials(this.getTableUUID()), this::refreshCredential);
+    } else {
+      throw new IllegalArgumentException(
+          "Unsupported "
+              + TableConf.CREDENTIALS_SOURCE.key()
+              + " '"
+              + source
+              + "'. Supported values: 'uc' (default), 'ambient'.");
+    }
   }
 
   /**
