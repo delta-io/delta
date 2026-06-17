@@ -99,7 +99,9 @@ public class AppendOnly
   @Override
   public List<DeltaWriterResult> merge() {
     writerTasksByPartition.invalidateAll();
-    return this.completedWrites;
+    List<DeltaWriterResult> results = List.copyOf(completedWrites);
+    completedWrites.clear();
+    return results;
   }
 
   @Override

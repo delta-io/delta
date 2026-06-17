@@ -168,7 +168,9 @@ public abstract class Upsert
         primaryKeyIndices.clear();
       }
     }
-    return this.completedWrites;
+    List<DeltaWriterResult> results = List.copyOf(completedWrites);
+    completedWrites.clear();
+    return results;
   }
 
   @Override

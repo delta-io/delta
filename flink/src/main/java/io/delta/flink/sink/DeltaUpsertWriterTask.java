@@ -38,17 +38,17 @@ import org.apache.flink.table.data.RowData;
  */
 public class DeltaUpsertWriterTask extends DeltaWriterTask {
 
-  /** PK hash &rarr; current index into {@link #buffer} for rows still live in memory. */
-  private final Map<Integer, Integer> keyToPositionInMemory;
+  /** PK key &rarr; current index into {@link #buffer} for rows still live in memory. */
+  private final Map<String, Integer> keyToPositionInMemory;
 
   /** {@code true} when {@link #buffer} contains {@code null} holes left by {@link #erase}. */
   private boolean sparseMemory = false;
 
   /**
-   * One entry per dumped Parquet file (in dump order): PK hash &rarr; row index in that file. Used
+   * One entry per dumped Parquet file (in dump order): PK key &rarr; row index in that file. Used
    * by {@link #markAsRemoved} to locate rows produced earlier in the checkpoint.
    */
-  private final List<Map<Integer, Integer>> keyToPositionInFiles;
+  private final List<Map<String, Integer>> keyToPositionInFiles;
 
   /** Parallel to {@link #keyToPositionInFiles}: row indices to scrub via DV at complete time. */
   private final List<Set<Integer>> positionsToRemove;
@@ -79,14 +79,14 @@ public class DeltaUpsertWriterTask extends DeltaWriterTask {
    */
   public boolean write(List<Literal> primaryKey, RowData element, SinkWriter.Context context)
       throws IOException, InterruptedException {
-    int keyHash = MergeStrategy.keyHash(primaryKey);
-    int index = markAsRemoved(keyHash);
+    String key = MergeStrategy.keyString(primaryKey);
+    int index = markAsRemoved(key);
     if (index >= 0) {
       buffer.set(index, element);
       highWatermark = Math.max(highWatermark, context.currentWatermark());
       lowWatermark = Math.min(lowWatermark, context.currentWatermark());
     } else {
-      keyToPositionInMemory.put(keyHash, buffer.size());
+      keyToPositionInMemory.put(key, buffer.size());
       super.write(element, context);
     }
     return index != -1;
@@ -100,7 +100,7 @@ public class DeltaUpsertWriterTask extends DeltaWriterTask {
    * @return {@code true} if a prior row was found and marked for removal
    */
   public boolean erase(List<Literal> primaryKey) {
-    int removeIndex = markAsRemoved(MergeStrategy.keyHash(primaryKey));
+    int removeIndex = markAsRemoved(MergeStrategy.keyString(primaryKey));
     sparseMemory |= removeIndex >= 0;
     return removeIndex != -1;
   }
@@ -160,20 +160,20 @@ public class DeltaUpsertWriterTask extends DeltaWriterTask {
   }
 
   /**
-   * Marks the row for {@code keyHash} as removed: nulls its slot in {@link #buffer} if it is still
-   * in memory, or adds its position to {@link #positionsToRemove} if it has already been dumped to
-   * a Parquet file earlier in this checkpoint.
+   * Marks the row for {@code key} as removed: nulls its slot in {@link #buffer} if it is still in
+   * memory, or adds its position to {@link #positionsToRemove} if it has already been dumped to a
+   * Parquet file earlier in this checkpoint.
    *
    * @return the in-memory slot index ({@code >= 0}); {@code -2} if the row was on disk; {@code -1}
-   *     if no row for {@code keyHash} was tracked
+   *     if no row for {@code key} was tracked
    */
-  protected int markAsRemoved(int keyHash) {
-    int existIndex = keyToPositionInMemory.getOrDefault(keyHash, -1);
+  protected int markAsRemoved(String key) {
+    int existIndex = keyToPositionInMemory.getOrDefault(key, -1);
     if (existIndex >= 0) {
       buffer.set(existIndex, null);
     } else {
       for (int i = 0; i < keyToPositionInFiles.size(); i++) {
-        int index = keyToPositionInFiles.get(i).getOrDefault(keyHash, -1);
+        int index = keyToPositionInFiles.get(i).getOrDefault(key, -1);
         if (index >= 0 && !positionsToRemove.get(i).contains(index)) {
           positionsToRemove.get(i).add(index);
           existIndex = -2;
@@ -194,7 +194,7 @@ public class DeltaUpsertWriterTask extends DeltaWriterTask {
       return;
     }
     int writeIndex = 0;
-    int[] keyToPositionArray = new int[buffer.size()];
+    String[] keyToPositionArray = new String[buffer.size()];
     keyToPositionInMemory.forEach((key, value) -> keyToPositionArray[value] = key);
     keyToPositionInMemory.clear();
     for (int readIndex = 0; readIndex < buffer.size(); readIndex++) {

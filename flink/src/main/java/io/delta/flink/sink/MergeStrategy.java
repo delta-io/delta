@@ -20,9 +20,9 @@ import io.delta.flink.table.DeltaTable;
 import io.delta.kernel.expressions.Literal;
 import java.io.IOException;
 import java.io.Serializable;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Collectors;
 import org.apache.flink.api.connector.sink2.SinkWriter;
 import org.apache.flink.table.data.RowData;
@@ -55,19 +55,35 @@ public interface MergeStrategy extends Serializable {
 
   /**
    * Stable cache key for a per-partition writer task; collapses {@link Literal} partition values to
-   * their string form so logically-equal partitions hash to the same bucket.
+   * a canonical string so logically-equal partitions hash to the same bucket. A null-valued {@link
+   * Literal} is encoded distinctly from a literal whose string value is {@code "null"}.
    */
   static Map<String, String> writerKey(Map<String, Literal> partitionValues) {
     return partitionValues.entrySet().stream()
-        .collect(Collectors.toMap(Map.Entry::getKey, entry -> entry.getValue().toString()));
+        .collect(Collectors.toMap(Map.Entry::getKey, entry -> encodeLiteral(entry.getValue())));
   }
 
   /**
-   * Hash of a composite primary key. Strategies use this as the index into per-partition PK
-   * tracking; collisions are tolerated by the consumers (see {@link DeltaUpsertWriterTask}).
+   * Canonical, lossless string key for a composite primary key. Values are already in primary-key
+   * ordinal order, so no sorting is needed; each value is escaped so distinct keys cannot collide
+   * on the {@code ;} delimiter. A null-valued {@link Literal} is encoded with a marker that
+   * escaping can never produce, so it is distinguished from a literal whose string value is {@code
+   * "null"}.
    */
-  static int keyHash(List<Literal> keys) {
-    return Arrays.hashCode(keys.stream().map(Literal::toString).toArray());
+  static String keyString(List<Literal> keys) {
+    return keys.stream().map(MergeStrategy::encodeLiteral).collect(Collectors.joining(";"));
+  }
+
+  /**
+   * Encodes a single non-null {@link Literal} to a canonical string fragment: a null-valued literal
+   * becomes the marker {@code \0} (which escaping can never produce), every other value is its
+   * string form with {@code \} and {@code ;} escaped.
+   */
+  private static String encodeLiteral(Literal literal) {
+    Objects.requireNonNull(literal, "literal must not be null");
+    return literal.getValue() == null
+        ? "\\0"
+        : literal.toString().replace("\\", "\\\\").replace(";", "\\;");
   }
 
   /**
@@ -82,7 +98,7 @@ public interface MergeStrategy extends Serializable {
    * the partition's writer task with no pre-image bookkeeping; see {@link #upsert} for the update
    * path that also schedules pre-image removal.
    *
-   * @param primaryKey the primary-key values, not null but individual elements may be null
+   * @param primaryKey the primary-key values, not null and does not contain null elements.
    * @param partitionValues the partition column values of the row; empty for unpartitioned tables
    * @param content the actual row written
    */
@@ -95,7 +111,7 @@ public interface MergeStrategy extends Serializable {
    * Records an {@code UPDATE_AFTER} row written during the current checkpoint, so the strategy can
    * later remove any pre-existing row that shares this key.
    *
-   * @param primaryKey the primary-key values, not null but individual elements may be null
+   * @param primaryKey the primary-key values, not null and does not contain null elements
    * @param partitionValues the partition column values of the row; empty for unpartitioned tables
    * @param content the actual row written
    */
@@ -110,7 +126,7 @@ public interface MergeStrategy extends Serializable {
    * {@code DELETE} row itself is <em>not</em> appended to the table — the strategy must remove the
    * existing row with this key.
    *
-   * @param primaryKey the primary-key values, not null but individual elements may be null
+   * @param primaryKey the primary-key values, not null and does not contain null elements
    * @param partitionValues the partition column values of the row; empty for unpartitioned tables
    */
   void delete(List<Literal> primaryKey, Map<String, Literal> partitionValues);
