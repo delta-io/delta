@@ -107,6 +107,28 @@ class DeltaUpsertWriterTaskTest extends TestHelper {
   }
 
   @Test
+  void testCompositeKeysWithDelimiterInValueAreDistinct() {
+    withTempDir(
+        dir -> {
+          HadoopTable table = openTable(dir);
+          DeltaUpsertWriterTask task = newTask(table, defaultConf());
+
+          // Two distinct composite PKs that a naive join(";") would collapse to "a;b;c".
+          // The canonical key escapes the delimiter, so they must remain separate rows.
+          List<Literal> pk1 = List.of(Literal.ofString("a;b"), Literal.ofString("c"));
+          List<Literal> pk2 = List.of(Literal.ofString("a"), Literal.ofString("b;c"));
+
+          assertFalse(task.write(pk1, row(1, "first"), new TestSinkWriterContext(0, 0)));
+          assertFalse(task.write(pk2, row(2, "second"), new TestSinkWriterContext(0, 0)));
+
+          List<DeltaWriterResult> results = task.complete();
+          assertEquals(1, results.size());
+          List<Row> rows = readParquet(absolutePath(dir, addFileOf(results.get(0))), SCHEMA);
+          assertEquals(2, rows.size());
+        });
+  }
+
+  @Test
   void testEraseInMemoryRowYieldsNoFile() {
     withTempDir(
         dir -> {

@@ -33,7 +33,6 @@ import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
 import java.util.*;
 import java.util.function.BiPredicate;
-import java.util.stream.Collectors;
 import org.apache.flink.api.connector.sink2.SinkWriter;
 import org.apache.flink.table.data.RowData;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -59,7 +58,7 @@ public abstract class Upsert
   private final List<List<Literal>> deletedPrimaryKeys = new ArrayList<>();
 
   /** Indices for quick search of pks. */
-  private final Set<List<String>> primaryKeyIndices = new HashSet<>();
+  private final Set<String> primaryKeyIndices = new HashSet<>();
 
   protected DeltaSinkWriter writer;
   protected AbstractKernelTable table;
@@ -117,7 +116,7 @@ public abstract class Upsert
     try {
       if (!getWriterTask(partitionValues).write(primaryKey, element, context)) {
         upsertedPrimaryKeys.add(primaryKey);
-        cachePrimaryKey(primaryKey);
+        primaryKeyIndices.add(MergeStrategy.keyString(primaryKey));
       }
     } catch (Exception e) {
       throw ExceptionUtils.wrap(e);
@@ -129,7 +128,7 @@ public abstract class Upsert
     try {
       if (!getWriterTask(partitionValues).erase(primaryKey)) {
         deletedPrimaryKeys.add(primaryKey);
-        cachePrimaryKey(primaryKey);
+        primaryKeyIndices.add(MergeStrategy.keyString(primaryKey));
       }
     } catch (Exception e) {
       throw ExceptionUtils.wrap(e);
@@ -168,7 +167,9 @@ public abstract class Upsert
         primaryKeyIndices.clear();
       }
     }
-    return this.completedWrites;
+    List<DeltaWriterResult> results = List.copyOf(completedWrites);
+    completedWrites.clear();
+    return results;
   }
 
   @Override
@@ -210,21 +211,11 @@ public abstract class Upsert
   public abstract Row markRemovesOnStaged(
       DeltaTable table, Row stagedAddFile, Set<Integer> removePositions);
 
-  private void cachePrimaryKey(List<Literal> primaryKey) {
-    primaryKeyIndices.add(
-        primaryKey.stream()
-            .map(key -> Optional.ofNullable(key).map(Object::toString).orElse(""))
-            .collect(Collectors.toList()));
-  }
-
-  private List<String> extractPrimaryKey(int[] ordinals, ColumnarBatch data, Integer rowId) {
+  private String extractPrimaryKey(int[] ordinals, ColumnarBatch data, Integer rowId) {
     List<String> key = new ArrayList<>(ordinals.length);
     for (int ord : ordinals) {
-      key.add(
-          Optional.ofNullable(ColumnVectorUtils.get(data.getColumnVector(ord), rowId))
-              .map(Object::toString)
-              .orElse(""));
+      key.add(MergeStrategy.encodeObject(ColumnVectorUtils.get(data.getColumnVector(ord), rowId)));
     }
-    return key;
+    return String.join(";", key);
   }
 }

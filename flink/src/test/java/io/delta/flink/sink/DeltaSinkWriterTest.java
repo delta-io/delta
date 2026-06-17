@@ -98,6 +98,61 @@ class DeltaSinkWriterTest extends TestHelper {
   }
 
   @Test
+  void testPrepareCommitDoesNotReemitPreviousResultsAppendMode() {
+    withTempDir(
+        dir -> {
+          StructType schema =
+              new StructType().add("id", IntegerType.INTEGER).add("part", StringType.STRING);
+          HadoopTable table =
+              new HadoopTable(
+                  URI.create(dir.getAbsolutePath()),
+                  Collections.emptyMap(),
+                  schema,
+                  Collections.emptyList());
+          table.open();
+
+          DeltaSinkWriter sinkWriter =
+              newSinkWriter(table, new DeltaSinkConf(schema, Collections.emptyMap()));
+
+          for (int i = 0; i < 5; i++) {
+            sinkWriter.write(
+                GenericRowData.of(i, StringData.fromString("p0")), new TestSinkWriterContext(0, 0));
+          }
+          assertEquals(1, sinkWriter.prepareCommit().size());
+
+          // A second checkpoint with no new input must return nothing; the prior checkpoint's
+          // results must not be re-emitted (completedWrites must be cleared on each merge).
+          assertEquals(0, sinkWriter.prepareCommit().size());
+        });
+  }
+
+  @Test
+  void testPrepareCommitDoesNotReemitPreviousResultsUpsertMode() throws Exception {
+    withTempDir(
+        dir -> {
+          StructType schema =
+              new StructType().add("id", IntegerType.INTEGER).add("part", StringType.STRING);
+          HadoopTable table =
+              new HadoopTable(
+                  URI.create(dir.getAbsolutePath()),
+                  Collections.emptyMap(),
+                  schema,
+                  Collections.emptyList());
+          table.open();
+
+          DeltaSinkWriter sinkWriter = newSinkWriter(table, upsertConf(schema, new int[] {0}));
+
+          GenericRowData row = GenericRowData.of(5, StringData.fromString("p0"));
+          row.setRowKind(RowKind.INSERT);
+          sinkWriter.write(row, new TestSinkWriterContext(0, 0));
+          assertEquals(1, sinkWriter.prepareCommit().size());
+
+          // Second checkpoint, no new input: must not re-emit the prior checkpoint's AddFile.
+          assertEquals(0, sinkWriter.prepareCommit().size());
+        });
+  }
+
+  @Test
   void testWriteToEmptyTableUsingMultiplePartitions() {
     withTempDir(
         dir -> {
