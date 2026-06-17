@@ -143,6 +143,49 @@ class StatsUtilsTest {
     assertNotNull(result.get(FieldReference.apply("id")), "id stats should be present");
   }
 
+  @Test
+  void testToV2Statistics_columnNameWithSpace() {
+    // Regression test: under Delta column mapping a column name may contain a space (e.g.
+    // "Extract Year"). buildColumnStats used to call FieldReference.apply(colName),
+    // which re-parses the name as a multi-part SQL identifier and throws a ParseException on the
+    // space -- failing the entire v2 scan even when the query never references that column.
+    String colName = "Extract Year";
+    StructType dataSchema = new StructType().add(colName, DataTypes.LongType);
+    StructType partitionSchema = new StructType();
+
+    CatalogColumnStat colStat =
+        new CatalogColumnStat(
+            Option.apply(BigInt(3L)), // distinctCount
+            Option.apply("2020"), // min
+            Option.apply("2022"), // max
+            Option.apply(BigInt(0L)), // nullCount
+            Option.apply((Object) 8L), // avgLen
+            Option.apply((Object) 8L), // maxLen
+            Option.empty(), // histogram
+            CatalogColumnStat.VERSION());
+
+    scala.collection.immutable.Map<String, CatalogColumnStat> colStatsMap =
+        buildScalaMap(new String[] {colName}, new CatalogColumnStat[] {colStat});
+
+    CatalogStatistics catalogStats =
+        new CatalogStatistics(BigInt(256L), Option.apply(BigInt(3L)), colStatsMap);
+
+    // Must not throw: before the fix this raised a ParseException on the space in "Extract Year".
+    Statistics v2Stats = StatsUtils.toV2Statistics(catalogStats, dataSchema, partitionSchema);
+
+    Map<NamedReference, ColumnStatistics> result = v2Stats.columnStats();
+    assertEquals(1, result.size(), "Should have 1 column stat");
+
+    // The reference must be a single literal part, not split into ["Extract", "Year"].
+    NamedReference ref = FieldReference.column(colName);
+    assertEquals(1, ref.fieldNames().length, "column name must stay a single identifier part");
+    assertEquals(colName, ref.fieldNames()[0]);
+
+    ColumnStatistics stats = result.get(ref);
+    assertNotNull(stats, "stats for the space-containing column should be present");
+    assertEquals(3L, stats.distinctCount().getAsLong(), "distinctCount should be 3");
+  }
+
   private static scala.math.BigInt BigInt(long value) {
     return scala.math.BigInt.apply(value);
   }
