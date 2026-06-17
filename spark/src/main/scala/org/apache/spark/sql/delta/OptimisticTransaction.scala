@@ -2795,7 +2795,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       isolationLevel = isolationLevel,
       // We don't use postCommitSnapshot.fileSizeHistogram here
       // because it can trigger full state reconstruction.
-      fileSizeHistogramOpt = postCommitSnapshot.checksumOpt.flatMap(_.histogramOpt),
+      fileSizeHistogramOpt = postCommitSnapshot.checksumOpt.flatMap(_.fileSizeHistogram),
       commitInfoOpt = currentTransactionInfo.commitInfo,
       commitSizeBytes = commitSizeBytes
     )
