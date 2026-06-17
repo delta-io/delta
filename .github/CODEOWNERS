@@ -3,8 +3,8 @@
 # See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
 
 # Build configuration files and directories
-/build/                         @tdas
-/build.sbt                      @tdas
+/build/                         @tdas @huan233usc
+/build.sbt                      @tdas @huan233usc
 /project/                       @tdas
 /version.sbt                    @tdas
 
