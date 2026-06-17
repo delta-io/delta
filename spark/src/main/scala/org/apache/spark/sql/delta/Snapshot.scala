@@ -666,8 +666,8 @@ class Snapshot(
     deletedRecordCountsHistogramOpt = checksumOpt.flatMap(_.deletedRecordCountsHistogramOpt)
       .orElse(Option.when(_computedStateTriggered)(deletedRecordCountsHistogramOpt).flatten)
       .filter(_ => deletionVectorsReadableAndHistogramEnabled),
-    histogramOpt = Option.when(fileSizeHistogramEnabled) {
-      checksumOpt.flatMap(_.histogramOpt)
+    fileSizeHistogram = Option.when(fileSizeHistogramEnabled) {
+      checksumOpt.flatMap(_.fileSizeHistogram)
         .orElse(Option.when(_computedStateTriggered)(fileSizeHistogram).flatten)
     }.flatten
   )
