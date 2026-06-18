@@ -806,7 +806,7 @@ class IcebergConverter
         }
       case Some(_) =>
         commitInfo = actionsToCommit.collectFirst { case c: CommitInfo => c }
-        val isComputeStats = commitInfo.exists(_.operation == DeltaOperations.ComputeStats.OP_NAME)
+        val isComputeStats = commitInfo.exists(_.operation == "COMPUTE STATS")
 
         if (isComputeStats
         ) {
