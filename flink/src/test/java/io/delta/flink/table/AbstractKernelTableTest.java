@@ -162,6 +162,48 @@ class AbstractKernelTableTest extends TestHelper {
   }
 
   @Test
+  void testCredentialManagerFromConf() {
+    StructType schema = new StructType().add("id", IntegerType.INTEGER);
+    String key = TableConf.CREDENTIALS_SOURCE.key();
+
+    // Default (no conf) and explicit "uc" both yield a UC-vending manager, not the ambient one.
+    withTestTable(
+        schema,
+        Collections.emptyList(),
+        table ->
+            assertFalse(
+                table.credentialManager instanceof CredentialManager.AmbientCredentialManager));
+    withTestTable(
+        schema,
+        Collections.emptyList(),
+        Map.of(key, "uc"),
+        table ->
+            assertFalse(
+                table.credentialManager instanceof CredentialManager.AmbientCredentialManager));
+
+    // "ambient" (case-insensitive) yields the no-op manager that fetches no credentials.
+    withTestTable(
+        schema,
+        Collections.emptyList(),
+        Map.of(key, "AMBIENT"),
+        table -> {
+          assertInstanceOf(
+              CredentialManager.AmbientCredentialManager.class, table.credentialManager);
+          assertTrue(table.credentialManager.getCredentials().isEmpty());
+        });
+
+    // An unknown source fails fast.
+    withTempDir(
+        dir -> {
+          LocalFileSystemTable table =
+              new LocalFileSystemTable(
+                  dir.toURI(), Map.of(key, "not-a-source"), schema, Collections.emptyList());
+          IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, table::open);
+          assertTrue(ex.getMessage().contains(key));
+        });
+  }
+
+  @Test
   void testCreateTableAndCommitWithoutPartition() {
     StructType schema =
         new StructType().add("id", IntegerType.INTEGER).add("part", StringType.STRING);
