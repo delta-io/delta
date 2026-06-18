@@ -125,10 +125,9 @@ public class TableConf implements Serializable {
   /**
    * Configuration to be forwarded to the Kernel engine.
    *
-   * <p>This returns the subset of configuration entries that are relevant to engine-side behavior.
-   * Currently it includes all customer-provided file-system options (keys starting with {@code
-   * "fs."}), so file-system settings and credentials such as {@code fs.s3a.access.key} or {@code
-   * fs.azure.account.key} reach the Hadoop {@code Configuration} used by the engine.
+   * <p>This carries custom options that will be passed to the engine. Currently it includes all
+   * customer-provided file-system options (keys starting with {@code "fs."}, e.g. {@code
+   * fs.s3a.access.key}), which are added to the Hadoop {@code Configuration} used by the engine.
    *
    * @return a map of engine configuration entries
    */
