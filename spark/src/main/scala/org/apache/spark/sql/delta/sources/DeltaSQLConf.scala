@@ -2919,6 +2919,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val RETAIN_COMMENTS_DURING_REPLACE_TABLE =
+    buildConf("retainCommentsDuringReplace")
+      .internal()
+      .doc(
+        """
+          |If enabled, CREATE OR REPLACE TABLE retains table and column comments
+          |from the old table when the new DDL does not explicitly specify them.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val ALLOW_COLUMN_MAPPING_REMOVAL =
     buildConf("columnMapping.allowRemoval")
       .internal()
