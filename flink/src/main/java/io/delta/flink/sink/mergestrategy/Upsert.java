@@ -16,41 +16,27 @@
 
 package io.delta.flink.sink.mergestrategy;
 
-import io.delta.flink.sink.DeltaSinkConf;
-import io.delta.flink.sink.MergeStrategy;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.RemovalCause;
+import com.github.benmanes.caffeine.cache.RemovalListener;
+import io.delta.flink.Conf;
+import io.delta.flink.kernel.ColumnVectorUtils;
+import io.delta.flink.sink.*;
 import io.delta.flink.table.AbstractKernelTable;
 import io.delta.flink.table.DeltaTable;
-import io.delta.kernel.data.ColumnVector;
+import io.delta.flink.table.ExceptionUtils;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Literal;
-import io.delta.kernel.types.BinaryType;
-import io.delta.kernel.types.BooleanType;
-import io.delta.kernel.types.ByteType;
-import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.DateType;
-import io.delta.kernel.types.DecimalType;
-import io.delta.kernel.types.DoubleType;
-import io.delta.kernel.types.FloatType;
-import io.delta.kernel.types.IntegerType;
-import io.delta.kernel.types.LongType;
-import io.delta.kernel.types.ShortType;
-import io.delta.kernel.types.StringType;
-import io.delta.kernel.types.TimestampNTZType;
-import io.delta.kernel.types.TimestampType;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.Set;
+import java.util.*;
 import java.util.function.BiPredicate;
 import java.util.stream.Collectors;
+import org.apache.flink.api.connector.sink2.SinkWriter;
+import org.apache.flink.table.data.RowData;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 /**
  * Abstract base for upsert merge strategies. Owns the per-checkpoint PK bookkeeping (upserted /
@@ -61,7 +47,8 @@ import java.util.stream.Collectors;
  * <p>Subclasses choose how to materialize deletes, for example by rewriting matched files or by
  * writing deletion vectors over them.
  */
-public abstract class Upsert implements MergeStrategy {
+public abstract class Upsert
+    implements MergeStrategy, RemovalListener<Map<String, String>, DeltaWriterTask> {
   /**
    * Primary-key values (in {@link DeltaSinkConf#getPrimaryKeyOrdinals()} order) of every {@code
    * INSERT}/{@code UPDATE_AFTER} row recorded during the current checkpoint.
@@ -74,71 +61,140 @@ public abstract class Upsert implements MergeStrategy {
   /** Indices for quick search of pks. */
   private final Set<List<String>> primaryKeyIndices = new HashSet<>();
 
-  /**
-   * Distinct partition value maps touched during the checkpoint. Keyed by a stringified form of the
-   * partition map so we deduplicate cheaply; the value is the original {@code Literal}-based map
-   * used to bound the scan in {@link #merge}.
-   */
-  private final Map<Map<String, String>, Map<String, Literal>> touchedPartitions =
-      new LinkedHashMap<>();
-
-  protected transient AbstractKernelTable table;
+  protected DeltaSinkWriter writer;
+  protected AbstractKernelTable table;
 
   private final RowLocator rowLocator;
 
+  private final Cache<Map<String, String>, DeltaUpsertWriterTask> writerTasksByPartition;
+
+  private final List<DeltaWriterResult> completedWrites;
+
+  /**
+   * @param rowLocator selects which existing files to scan for PKs that need pre-image removal when
+   *     {@link #merge} runs at checkpoint boundaries.
+   */
   protected Upsert(RowLocator rowLocator) {
     this.rowLocator = Objects.requireNonNull(rowLocator, "rowLocator");
+    this.completedWrites = new ArrayList<>();
+    this.writerTasksByPartition =
+        Caffeine.newBuilder()
+            .executor(Runnable::run)
+            .maximumSize(Conf.getInstance().getSinkWriterNumConcurrentFiles())
+            .removalListener(this)
+            .build();
   }
 
   @Override
-  public void recordUpsert(List<Literal> primaryKey, Map<String, Literal> partitionValues) {
-    upsertedPrimaryKeys.add(primaryKey);
-    cachePrimaryKey(primaryKey);
-    cachePartition(partitionValues);
+  public void init(DeltaSinkWriter writer) {
+    this.writer = writer;
+    table = (AbstractKernelTable) writer.getTable();
   }
 
   @Override
-  public void recordDelete(List<Literal> primaryKey, Map<String, Literal> partitionValues) {
-    deletedPrimaryKeys.add(primaryKey);
-    cachePrimaryKey(primaryKey);
-    cachePartition(partitionValues);
-  }
-
-  @Override
-  public List<Row> merge(DeltaTable table, DeltaSinkConf conf) throws IOException {
-    this.table = (AbstractKernelTable) table;
-    boolean hasWork = !upsertedPrimaryKeys.isEmpty() || !deletedPrimaryKeys.isEmpty();
+  public void insert(
+      List<Literal> primaryKey,
+      Map<String, Literal> partitionValues,
+      RowData element,
+      SinkWriter.Context context) {
     try {
-      if (!hasWork) {
-        return Collections.emptyList();
-      }
-
-      // 1. Locate all data files that pending scan.
-      List<List<Literal>> pkToDelete = new ArrayList<>();
-      pkToDelete.addAll(upsertedPrimaryKeys);
-      pkToDelete.addAll(deletedPrimaryKeys);
-      CloseableIterator<Row> addFiles =
-          rowLocator.find(table, conf.getPrimaryKeyOrdinals(), pkToDelete);
-
-      // 2. Delete rows from found data files.
-      BiPredicate<ColumnarBatch, Integer> filter =
-          (batch, rowId) ->
-              primaryKeyIndices.contains(
-                  extractPrimaryKey(conf.getPrimaryKeyOrdinals(), batch, rowId));
-      return addFiles.flatMap(addFile -> deleteRecords(addFile, filter)).toInMemoryList();
-    } finally {
-      upsertedPrimaryKeys.clear();
-      deletedPrimaryKeys.clear();
-      primaryKeyIndices.clear();
-      touchedPartitions.clear();
+      // Route INSERT through the 3-arg, PK-aware write so the row participates in same-batch
+      // dedup with any later UPDATE_AFTER / DELETE on the same PK. The dump-time guard in
+      // DeltaUpsertWriterTask short-circuits when keyToPositionInMemory is empty, so failing to
+      // track the PK here would silently drop the row at commit time.
+      getWriterTask(partitionValues).write(primaryKey, element, context);
+    } catch (Exception e) {
+      throw ExceptionUtils.wrap(e);
     }
+  }
+
+  @Override
+  public void upsert(
+      List<Literal> primaryKey,
+      Map<String, Literal> partitionValues,
+      RowData element,
+      SinkWriter.Context context) {
+    try {
+      if (!getWriterTask(partitionValues).write(primaryKey, element, context)) {
+        upsertedPrimaryKeys.add(primaryKey);
+        cachePrimaryKey(primaryKey);
+      }
+    } catch (Exception e) {
+      throw ExceptionUtils.wrap(e);
+    }
+  }
+
+  @Override
+  public void delete(List<Literal> primaryKey, Map<String, Literal> partitionValues) {
+    try {
+      if (!getWriterTask(partitionValues).erase(primaryKey)) {
+        deletedPrimaryKeys.add(primaryKey);
+        cachePrimaryKey(primaryKey);
+      }
+    } catch (Exception e) {
+      throw ExceptionUtils.wrap(e);
+    }
+  }
+
+  @Override
+  public List<DeltaWriterResult> merge() throws IOException {
+    AbstractKernelTable table = (AbstractKernelTable) writer.getTable();
+    DeltaSinkConf conf = writer.getConf();
+
+    // Dump all Writer Tasks
+    writerTasksByPartition.invalidateAll();
+
+    if (!upsertedPrimaryKeys.isEmpty() || !deletedPrimaryKeys.isEmpty()) {
+      try {
+        // 1. Locate all data files that pending scan.
+        List<List<Literal>> pkToDelete = new ArrayList<>();
+        pkToDelete.addAll(upsertedPrimaryKeys);
+        pkToDelete.addAll(deletedPrimaryKeys);
+        CloseableIterator<Row> addFiles =
+            rowLocator.find(table, conf.getPrimaryKeyOrdinals(), pkToDelete);
+
+        // 2. Delete rows from found data files.
+        BiPredicate<ColumnarBatch, Integer> filter =
+            (batch, rowId) ->
+                primaryKeyIndices.contains(
+                    extractPrimaryKey(conf.getPrimaryKeyOrdinals(), batch, rowId));
+        completedWrites.add(
+            new DeltaWriterResult(
+                addFiles.flatMap(addFile -> deleteRecords(addFile, filter)).toInMemoryList(),
+                new WriterResultContext()));
+      } finally {
+        upsertedPrimaryKeys.clear();
+        deletedPrimaryKeys.clear();
+        primaryKeyIndices.clear();
+      }
+    }
+    List<DeltaWriterResult> results = List.copyOf(completedWrites);
+    completedWrites.clear();
+    return results;
+  }
+
+  @Override
+  public void onRemoval(
+      @Nullable Map<String, String> key, @Nullable DeltaWriterTask value, RemovalCause cause) {
+    try {
+      if (value != null) {
+        completedWrites.addAll(value.complete());
+      }
+    } catch (IOException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  protected DeltaUpsertWriterTask getWriterTask(Map<String, Literal> partitionValues) {
+    return writerTasksByPartition.get(
+        MergeStrategy.writerKey(partitionValues),
+        (key) -> (DeltaUpsertWriterTask) writer.newWriterTask(partitionValues));
   }
 
   /**
    * Emit the Delta actions needed to logically delete from {@code addFile} every row matched by
    * {@code filter}. Called once per candidate file returned by {@link RowLocator#find}; the
-   * returned iterator is flattened into {@link #merge}'s overall result. Implementations may assume
-   * {@link #table} has been initialized by the surrounding {@code merge(...)} call.
+   * returned iterator is flattened into {@link #merge}'s overall result.
    *
    * @param addFile scan-file row in Kernel's {@code Scan.getScanFiles(...)} shape
    * @param filter row-level predicate; {@code true} to remove the row, {@code false} to keep it
@@ -147,6 +203,15 @@ public abstract class Upsert implements MergeStrategy {
   protected abstract CloseableIterator<Row> deleteRecords(
       Row addFile, BiPredicate<ColumnarBatch, Integer> filter);
 
+  /**
+   * Mark rows at {@code removePositions} as deleted within a staged (not-yet-committed) file and
+   * return the replacement action row. Callers must ensure at least one row survives (i.e. {@code
+   * removePositions.size() < totalRowsInFile}); the all-deleted case must be handled before this
+   * call.
+   */
+  public abstract Row markRemovesOnStaged(
+      DeltaTable table, Row stagedAddFile, Set<Integer> removePositions);
+
   private void cachePrimaryKey(List<Literal> primaryKey) {
     primaryKeyIndices.add(
         primaryKey.stream()
@@ -154,57 +219,14 @@ public abstract class Upsert implements MergeStrategy {
             .collect(Collectors.toList()));
   }
 
-  private void cachePartition(Map<String, Literal> partitionValues) {
-    Map<String, String> dedupKey =
-        partitionValues.entrySet().stream()
-            .collect(Collectors.toMap(Map.Entry::getKey, e -> String.valueOf(e.getValue())));
-    touchedPartitions.putIfAbsent(dedupKey, partitionValues);
-  }
-
   private List<String> extractPrimaryKey(int[] ordinals, ColumnarBatch data, Integer rowId) {
     List<String> key = new ArrayList<>(ordinals.length);
     for (int ord : ordinals) {
       key.add(
-          Optional.ofNullable(columnVectorValue(data.getColumnVector(ord), rowId))
+          Optional.ofNullable(ColumnVectorUtils.get(data.getColumnVector(ord), rowId))
               .map(Object::toString)
               .orElse(""));
     }
     return key;
-  }
-
-  private Object columnVectorValue(ColumnVector input, int rowId) {
-    if (input.isNullAt(rowId)) {
-      return null;
-    }
-    DataType type = input.getDataType();
-    if (type.equivalent(BooleanType.BOOLEAN)) {
-      return input.getBoolean(rowId);
-    } else if (type.equivalent(ByteType.BYTE)) {
-      return input.getByte(rowId);
-    } else if (type.equivalent(ShortType.SHORT)) {
-      return input.getShort(rowId);
-    } else if (type.equivalent(IntegerType.INTEGER)) {
-      return input.getInt(rowId);
-    } else if (type.equivalent(LongType.LONG)) {
-      return input.getLong(rowId);
-    } else if (type.equivalent(FloatType.FLOAT)) {
-      return input.getFloat(rowId);
-    } else if (type.equivalent(DoubleType.DOUBLE)) {
-      return input.getDouble(rowId);
-    } else if (type.equivalent(StringType.STRING)) {
-      return input.getString(rowId);
-    } else if (type.equivalent(BinaryType.BINARY)) {
-      return input.getBinary(rowId);
-    } else if (type.equivalent(DateType.DATE)) {
-      return input.getInt(rowId);
-    } else if (type.equivalent(TimestampType.TIMESTAMP)) {
-      return input.getLong(rowId);
-    } else if (type.equivalent(TimestampNTZType.TIMESTAMP_NTZ)) {
-      return input.getLong(rowId);
-    } else if (type instanceof DecimalType) {
-      return input.getDecimal(rowId);
-    } else {
-      throw new UnsupportedOperationException("Unsupported column vector type: " + type);
-    }
   }
 }

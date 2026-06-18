@@ -1684,6 +1684,11 @@ lazy val flink = (project in file("flink"))
       "com.github.ben-manes.caffeine" % "caffeine" % "3.1.8",
       "org.apache.hadoop" % "hadoop-aws" % hadoopVersion,
       "com.google.cloud.bigdataoss" % "gcs-connector" % "hadoop3-2.2.31" % Provided,
+      // kernel-api uses RoaringBitmap but ships as a shaded fat-jar that excludes it, and the
+      // unmanagedJars trick used above does not propagate kernel-api's managed deps. Declare it
+      // here too -- pinned to the same version kernel-api uses -- so our DV code under
+      // io.delta.flink.kernel.dv compiles against the same library on the classpath.
+      "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
 
       // Test dependencies
       "org.junit.jupiter" % "junit-jupiter-api" % "5.11.4" % "test",
