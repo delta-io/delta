@@ -730,12 +730,12 @@ class IcebergConverter
    * not recognized/supported. IcebergConverter will do a re-try with REPLACE TABLE, which
    * collects all valid data files from the target Delta snapshot and commit to Iceberg.
    *
-   * Some Delta operations are known to contain only AddFiles(dataChange=false), intended to
-   * replace/overwrite existing AddFiles. They rely on Delta's dedup in state reconstruction
-   * and cannot be action-to-action translated to Iceberg, which lacks dedup abilities.
-   * We create corresponding RemoveFile entries for the AddFiles so these operations can be
-   * properly translated into [[RewriteFiles]] in Iceberg. These operations are marked as
-   * [[needAutoRewrite]] in the code and the table below.
+   * Some Delta operations only update metadata on existing files. They rely on Delta's
+   * dedup in state reconstruction and cannot be action-to-action translated to Iceberg.
+   * Iceberg lacks dedup abilities. These metadata-only commits are skipped here before
+   * choosing a TransactionHelper. The enclosing transaction still updates table properties
+   * such as delta-version and writes new metadata to keep Iceberg conversion state
+   * in sync.
    *
    * The following table demonstrates how to choose the appropriate TransactionHelper.
    * The conditions can overlap and should be checked in order.
@@ -748,10 +748,8 @@ class IcebergConverter
    * +-------------------+---------------+---------------------+--------------------+
    * |                   |  All          |   AppendHelper      |  INSERT            |
    * |  Add only         +---------------+---------------------+--------------------+
-   * |                   |  None         |   needAutoRewrite   |  Note 2            |
-   * |                   |               |       RewriteHelper |  COMPUTE STATS     |
-   * |                   |               |   else              |                    |
-   * |                   |               |       NullHelper    |  Add Tag           |
+   * |                   |  None         |   NullHelper        |  Note 2            |
+   * |                   |               |                     |  Add Tag           |
    * |                   +---------------+---------------------+--------------------+
    * |                   |  Some         |   Unsupported       |  (unknown)         |
    * +-------------------+---------------+---------------------+--------------------+
@@ -759,7 +757,7 @@ class IcebergConverter
    * |  with DV          +---------------+---------------------+--------------------+
    * |                   |  None         |   same as no dv     |  Note 2            |
    * |                   +---------------+---------------------+--------------------+
-   * |                   |  Some         |   same as All       |  Note 3            |
+   * |                   |  Some         |   Unsupported       |  (unknown)         |
    * +-------------------+---------------+---------------------+--------------------+
    * |  Remove only      |  Any          |   RemoveHelper      |  DELETE            |
    * +-------------------+---------------+---------------------+--------------------+
@@ -770,18 +768,17 @@ class IcebergConverter
    * |  Add + Remove     +---------------+---------------------+--------------------+
    * |                   |  None         |   RewriteHelper     |  OPTIMIZE          |
    * |                   +---------------+---------------------+--------------------+
-   * |                   |  Some         |   OverwriteHelper   |  Note 3            |
+   * |                   |  Some         |   Unsupported       |  (unknown)         |
    * +-------------------+---------------+---------------------+--------------------+
    * |  Add + Remove     |  All          |   RowDeltaHelper    |  UPDATE            |
    * |  with DV          +---------------+---------------------+--------------------+
    * |                   |  None         |   RewriteHelper     |  OPTIMIZE          |
    * |                   +---------------+---------------------+--------------------+
-   * |                   |  Some         |   RowDeltaHelper    |  Note 3            |
+   * |                   |  Some         |   Unsupported       |  (unknown)         |
    * +-------------------+---------------+---------------------+--------------------+
    * Note:
    * 1. We assume a Create/Replace table operation will only contain AddFiles.
-   * 2. DV is allowed but ignored as known operations (ComputeStats) do not touch DV.
-   * 3. DataChange.Some (mixed dataChange flags) is handled the same as All.
+   * 2. DV is allowed but ignored for no-data changes.
    */
   private[delta] def runIcebergConversionForActions(
       icebergTxn: IcebergConversionTransaction,
@@ -808,60 +805,56 @@ class IcebergConverter
           icebergTxn.getAppendOnlyHelper
         }
       case Some(_) =>
-        val addBuffer = new ArrayBuffer[AddFile]()
-        val removeBuffer = new ArrayBuffer[RemoveFile]()
-        // Scan the actions to collect info needed to determine which txnHelper to use
-        object DataChange extends Enumeration {
-          val Empty = Value(0, "Empty")
-          val None = Value(1, "None")
-          val All = Value(2, "All")
-          val Some = Value(3, "Some")
-        }
-        var dataChangeBits = 0
-        var hasDv: Boolean = false
-        val autoRewriteOprs = Set("COMPUTE STATS")
-        var needAutoRewrite = false
+        commitInfo = actionsToCommit.collectFirst { case c: CommitInfo => c }
+        val isComputeStats = commitInfo.exists(_.operation == DeltaOperations.ComputeStats.OP_NAME)
 
-        actionsToCommit.foreach {
-          case file: FileAction =>
-            addBuffer ++= Option(file.wrap.add)
-            removeBuffer ++= Option(file.wrap.remove)
-            if (file.wrap.add != null || file.wrap.remove != null) {
-              // We only care about data changes in add and remove actions
-              dataChangeBits |= (1 << (if (file.dataChange) 1 else 0))
-            }
-            hasDv |= file.deletionVector != null
-          case c: CommitInfo =>
-            commitInfo = Some(c)
-            needAutoRewrite = autoRewriteOprs.contains(c.operation)
-          case _ => // Ignore other actions
-        }
-        addFiles = addBuffer.toSeq
-        removeFiles = removeBuffer.toSeq
-        val dataChange = DataChange(dataChangeBits)
+        if (isComputeStats
+        ) {
+          icebergTxn.getNullHelper
+        } else {
+          val addBuffer = new ArrayBuffer[AddFile]()
+          val removeBuffer = new ArrayBuffer[RemoveFile]()
+          // Scan the actions to collect info needed to determine which txnHelper to use
+          object DataChange extends Enumeration {
+            val Empty = Value(0, "Empty")
+            val None = Value(1, "None")
+            val All = Value(2, "All")
+            val Some = Value(3, "Some")
+          }
+          var dataChangeBits = 0
+          var hasDv: Boolean = false
 
-        (addFiles.nonEmpty, removeFiles.nonEmpty, dataChange) match {
-          case (true, false, DataChange.All | DataChange.Some) if !hasDv =>
+          actionsToCommit.foreach {
+            case file: FileAction =>
+              addBuffer ++= Option(file.wrap.add)
+              removeBuffer ++= Option(file.wrap.remove)
+              if (file.wrap.add != null || file.wrap.remove != null) {
+                // We only care about data changes in add and remove actions
+                dataChangeBits |= (1 << (if (file.dataChange) 1 else 0))
+              }
+              hasDv |= file.deletionVector != null
+            case _ => // Ignore other actions
+          }
+          addFiles = addBuffer.toSeq
+          removeFiles = removeBuffer.toSeq
+          val dataChange = DataChange(dataChangeBits)
+
+          (addFiles.nonEmpty, removeFiles.nonEmpty, dataChange) match {
+          case (true, false, DataChange.All) if !hasDv =>
             icebergTxn.getAppendOnlyHelper
-          case (true, false, DataChange.All | DataChange.Some) if hasDv =>
+          case (true, false, DataChange.All) if hasDv =>
             icebergTxn.getRowDeltaHelper
           case (true, false, DataChange.None) =>
-            if (!needAutoRewrite) {
-              icebergTxn.getNullHelper // Ignore
-            } else {
-              // Create RemoveFiles to refresh these AddFiles without data change
-              removeFiles = addBuffer.map(_.removeWithTimestamp(dataChange = false)).toSeq
-              icebergTxn.getRewriteHelper
-            }
+            icebergTxn.getNullHelper // Ignore
           case (false, true, _) if hasDv =>
             icebergTxn.getRowDeltaHelper
           case (false, true, _) =>
             icebergTxn.getRemoveOnlyHelper
-          case (true, true, DataChange.All | DataChange.Some) if hasDv =>
+          case (true, true, DataChange.All) if hasDv =>
             icebergTxn.getRowDeltaHelper
           case (true, true, DataChange.None) if hasDv =>
             icebergTxn.getRewriteHelper
-          case (true, true, DataChange.All | DataChange.Some) if !hasDv =>
+          case (true, true, DataChange.All) if !hasDv =>
             icebergTxn.getOverwriteHelper
           case (true, true, DataChange.None) if !hasDv =>
             icebergTxn.getRewriteHelper
@@ -890,6 +883,7 @@ class IcebergConverter
                  |hasDv -> ${hasDv.toString}""".stripMargin)
             throw new UnsupportedOperationException(
               "Unsupported combination of actions for incremental conversion.")
+          }
         }
     }
     recordDeltaEvent(
