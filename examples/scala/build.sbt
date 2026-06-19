@@ -20,7 +20,10 @@ organizationName := "example"
 
 val scala213 = "2.13.17"
 val icebergVersion = "1.4.1"
-val unityCatalogVersion = "0.4.0"
+val unityCatalogVersion: String = sys.props.getOrElse("unityCatalogVersion", {
+  import scala.sys.process._
+  Process(Seq("bash", "../../project/scripts/setup_unitycatalog_main.sh", "--print-version")).!!.trim
+})
 val jacksonVersion = "2.15.4"
 
 val defaultDeltaVersion = {
@@ -159,6 +162,18 @@ def resolveSparkVersion(deltaVersion: String): String = {
   else lookupSparkVersion.apply(getMajorMinor(deltaVersion))
 }
 
+// The OSS Unity Catalog project publishes one Spark connector artifact per Spark major.minor
+// (e.g. unitycatalog-spark_4.1_2.13) and, unlike delta-spark, has no unsuffixed backward-compat
+// variant. So its suffix must track the resolved Spark version -- matching what
+// setup_unitycatalog_main.sh publishes -- rather than `getSparkPackageSuffix`, which is empty for
+// the default Spark version (since `delta-spark_2.13` resolves unsuffixed).
+val getUnityCatalogSparkArtifact = settingKey[String](
+  "Unity Catalog Spark connector artifact base name, suffixed with the resolved Spark major.minor.")
+getUnityCatalogSparkArtifact := {
+  val (sparkMajor, sparkMinor) = getMajorMinor(resolveSparkVersion(getDeltaVersion.value))
+  s"unitycatalog-spark_${sparkMajor}.${sparkMinor}"
+}
+
 def getLibraryDependencies(
     deltaVersion: String,
     deltaArtifactName: String,
@@ -213,7 +228,7 @@ lazy val root = (project in file("."))
       scalaBinaryVersion.value,
       getSupportIceberg.value),
     libraryDependencies ++= Seq(
-      "io.unitycatalog" %% "unitycatalog-spark" % unityCatalogVersion excludeAll(
+      "io.unitycatalog" %% getUnityCatalogSparkArtifact.value % unityCatalogVersion excludeAll(
         ExclusionRule(organization = "com.fasterxml.jackson.core"),
         ExclusionRule(organization = "com.fasterxml.jackson.module"),
         ExclusionRule(organization = "com.fasterxml.jackson.datatype"),

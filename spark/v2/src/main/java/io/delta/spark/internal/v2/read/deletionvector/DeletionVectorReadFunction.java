@@ -17,9 +17,12 @@ package io.delta.spark.internal.v2.read.deletionvector;
 
 import io.delta.spark.internal.v2.utils.CloseableIterator;
 import java.io.Serializable;
+import java.util.Arrays;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.ProjectingInternalRow;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
+import org.apache.spark.sql.vectorized.ColumnVector;
+import org.apache.spark.sql.vectorized.ColumnarBatch;
 import scala.Function1;
 import scala.collection.Iterator;
 import scala.runtime.AbstractFunction1;
@@ -37,6 +40,9 @@ import scala.runtime.AbstractFunction1;
  *
  * <p>The returned iterator implements {@link java.io.Closeable} to ensure proper resource cleanup
  * of the underlying Parquet reader, even when the iterator is not fully consumed.
+ *
+ * <p>The reader mode (row-based vs vectorized) is determined once at scan planning time and does
+ * not change mid-stream. See {@link #wrap}.
  */
 public class DeletionVectorReadFunction
     extends AbstractFunction1<PartitionedFile, Iterator<InternalRow>> implements Serializable {
@@ -48,27 +54,34 @@ public class DeletionVectorReadFunction
 
   private final Function1<PartitionedFile, Iterator<InternalRow>> baseReadFunc;
   private final DeletionVectorSchemaContext dvSchemaContext;
+  private final boolean isVectorizedReader;
 
   private DeletionVectorReadFunction(
       Function1<PartitionedFile, Iterator<InternalRow>> baseReadFunc,
-      DeletionVectorSchemaContext dvSchemaContext) {
+      DeletionVectorSchemaContext dvSchemaContext,
+      boolean isVectorizedReader) {
     this.baseReadFunc = baseReadFunc;
     this.dvSchemaContext = dvSchemaContext;
+    this.isVectorizedReader = isVectorizedReader;
   }
 
   @Override
   public Iterator<InternalRow> apply(PartitionedFile file) {
+    if (isVectorizedReader) {
+      return applyBatch(file);
+    } else {
+      return applyRow(file);
+    }
+  }
+
+  /** Row-based: filter deleted rows and project out the DV column. */
+  private Iterator<InternalRow> applyRow(PartitionedFile file) {
     int dvColumnIndex = dvSchemaContext.getDvColumnIndex();
-    // Use pre-computed ordinals from DeletionVectorSchemaContext.
     ProjectingInternalRow projection =
         ProjectingInternalRow.apply(
             dvSchemaContext.getOutputSchema(), dvSchemaContext.getOutputColumnOrdinals());
 
-    // Wrap the base iterator as CloseableIterator to preserve close() through filter/map.
-    // This ensures proper resource cleanup even when the iterator is not fully consumed.
-    Iterator<InternalRow> baseIterator = baseReadFunc.apply(file);
-
-    return CloseableIterator.wrap(baseIterator)
+    return CloseableIterator.wrap(baseReadFunc.apply(file))
         .filterCloseable(row -> row.getByte(dvColumnIndex) == ROW_NOT_DELETED)
         .mapCloseable(
             row -> {
@@ -77,10 +90,70 @@ public class DeletionVectorReadFunction
             });
   }
 
+  /** Vectorized: filter active rows and project out the DV column from each batch. */
+  @SuppressWarnings("unchecked")
+  private Iterator<InternalRow> applyBatch(PartitionedFile file) {
+    int dvColumnIndex = dvSchemaContext.getDvColumnIndex();
+
+    // In vectorized mode Spark passes ColumnarBatch via type erasure as InternalRow.
+    Iterator<Object> baseIterator = (Iterator<Object>) (Iterator<?>) baseReadFunc.apply(file);
+    return (Iterator<InternalRow>)
+        (Iterator<?>)
+            CloseableIterator.wrap(baseIterator)
+                .mapCloseable(
+                    item -> {
+                      if (item instanceof ColumnarBatch) {
+                        return filterAndProjectBatch((ColumnarBatch) item, dvColumnIndex);
+                      }
+                      throw new IllegalStateException(
+                          "Expected ColumnarBatch when vectorized reader is enabled, but got: "
+                              + item.getClass());
+                    });
+  }
+
+  /** Filter active rows and project out the DV column from a ColumnarBatch. */
+  private static ColumnarBatch filterAndProjectBatch(ColumnarBatch batch, int dvColumnIndex) {
+    int[] activeRows = findActiveRows(batch, dvColumnIndex);
+    ColumnVector[] filteredColumns = buildFilteredColumns(batch, dvColumnIndex, activeRows);
+    return new ColumnarBatch(filteredColumns, activeRows.length);
+  }
+
+  /**
+   * Build projected output columns by dropping the DV column and applying active row mapping. The
+   * excluded DV column's lifecycle is managed by the base Spark vectorized reader, not by us.
+   */
+  private static ColumnVector[] buildFilteredColumns(
+      ColumnarBatch batch, int dvColumnIndex, int[] activeRows) {
+    ColumnVector[] filteredColumns = new ColumnVector[batch.numCols() - 1];
+    int outputIndex = 0;
+    for (int inputIndex = 0; inputIndex < batch.numCols(); inputIndex++) {
+      if (inputIndex == dvColumnIndex) {
+        continue;
+      }
+      filteredColumns[outputIndex++] =
+          new ColumnVectorWithFilter(batch.column(inputIndex), activeRows);
+    }
+    return filteredColumns;
+  }
+
+  /** Find indices of rows where DV column is 0 (not deleted). */
+  private static int[] findActiveRows(ColumnarBatch batch, int dvColumnIndex) {
+    ColumnVector dvColumn = batch.column(dvColumnIndex);
+    int[] temp = new int[batch.numRows()];
+    int count = 0;
+    for (int i = 0; i < batch.numRows(); i++) {
+      if (dvColumn.getByte(i) == ROW_NOT_DELETED) {
+        temp[count++] = i;
+      }
+    }
+    return Arrays.copyOf(temp, count);
+  }
+
   /** Factory method to wrap a reader function with DV filtering. */
   public static DeletionVectorReadFunction wrap(
       Function1<PartitionedFile, Iterator<InternalRow>> baseReadFunc,
-      DeletionVectorSchemaContext dvSchemaContext) {
-    return new DeletionVectorReadFunction(baseReadFunc, dvSchemaContext);
+      DeletionVectorSchemaContext dvSchemaContext,
+      boolean isVectorizedReader) {
+    return new DeletionVectorReadFunction(baseReadFunc, dvSchemaContext, isVectorizedReader);
   }
 }

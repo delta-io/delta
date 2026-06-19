@@ -19,12 +19,16 @@ package io.delta.storage.commit.uccommitcoordinator;
 import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.CommitFailedException;
 import io.delta.storage.commit.GetCommitsResponse;
+import io.delta.storage.commit.TableIdentifier;
+import io.delta.storage.commit.actions.AbstractDomainMetadata;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
 import io.delta.storage.commit.uniform.UniformMetadata;
 
 import java.io.IOException;
 import java.net.URI;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -56,27 +60,33 @@ public interface UCClient extends AutoCloseable {
    * proper coordination and consistency of the commit process.
    * Note: At least one of commit or lastKnownBackfilledVersion must be present.
    *
-   * @param tableId The unique identifier of the Delta table.
-   * @param tableUri The URI of the storage location of the table. e.g. s3://bucket/path/to/table
-   *                 (and not s3://bucket/path/to/table/_delta_log).
-   *                 If the tableId exists but the tableUri is different from the one previously
-   *                 registered (e.g., if the table as moved), the request will fail.
+   * @param tableId The Unity Catalog table ID (UUID) identifying the target table.
+   * @param tableUri The URI of the storage location of the table (e.g.,
+   *                 {@code s3://bucket/path/to/table}, not the {@code _delta_log} path).
+   * @param tableIdentifier The three-part table identifier (catalog, schema, table name)
+   *                        for the table in Unity Catalog, or null when the caller has no
+   *                        catalog context. Implementations that require this value must
+   *                        reject null; implementations that don't use it may ignore it.
    * @param commit An Optional containing the Commit object with the changes to be committed.
    *               If empty, it indicates that no new data is being added in this commit.
    * @param lastKnownBackfilledVersion An Optional containing the last known backfilled version
-   *                                   of the table. This value serves as a hint to the UC about the
+   *                                   of the table. This value serves as a hint to UC about the
    *                                   most recent version that has been successfully backfilled.
-   *                                   UC can use this information to optimize its internal state
-   *                                   management by cleaning up tracking information for backfilled
-   *                                   commits up to this version.
+   *                                   UC can use this information to clean up tracking information
+   *                                   for backfilled commits up to this version.
    *                                   If not provided (Optional.empty()), UC will rely on its
    *                                   current state without any additional cleanup hints.
-   * @param disown A boolean flag indicating whether to disown the table after commit.
-   *               If true, the coordinator will release ownership of the table after the commit.
+   * @param oldMetadata An Optional containing the existing metadata of the table before the commit.
+   *                    If present, UC can validate the current state of the table.
    * @param newMetadata An Optional containing new metadata to be applied to the table.
    *                    If present, the table's metadata will be updated atomically with the commit.
+   * @param oldProtocol An Optional containing the existing protocol of the table before the commit.
+   *                    If present, UC can validate the current protocol state.
    * @param newProtocol An Optional containing a new protocol version to be applied to the table.
    *                    If present, the table's protocol will be updated atomically with the commit.
+   * @param transactionDomainMetadata The raw domain metadata actions from this transaction.
+   *                                  A non-removed action sets domain metadata, and a removed action
+   *                                  removes the domain metadata.
    * @param uniform An Optional containing UniForm metadata for Delta Universal Format support.
    *                If present, this metadata will be used by UC to manage format conversions
    *                (e.g., Iceberg, Hudi).
@@ -88,11 +98,14 @@ public interface UCClient extends AutoCloseable {
   void commit(
       String tableId,
       URI tableUri,
+      TableIdentifier tableIdentifier,
       Optional<Commit> commit,
       Optional<Long> lastKnownBackfilledVersion,
-      boolean disown,
+      Optional<AbstractMetadata> oldMetadata,
       Optional<AbstractMetadata> newMetadata,
+      Optional<AbstractProtocol> oldProtocol,
       Optional<AbstractProtocol> newProtocol,
+      List<AbstractDomainMetadata> transactionDomainMetadata,
       Optional<UniformMetadata> uniform
   ) throws IOException, CommitFailedException, UCCommitCoordinatorException;
 
@@ -104,6 +117,10 @@ public interface UCClient extends AutoCloseable {
    *                 (and not s3://bucket/path/to/table/_delta_log).
    *                 If the tableId exists but the tableUri is different from the one previously
    *                 registered (e.g., if the table as moved), the request will fail.
+   * @param tableIdentifier The three-part table identifier (catalog, schema, table name)
+   *                        for the table in Unity Catalog, or null when the caller has no
+   *                        catalog context. Implementations that require this value must
+   *                        reject null; implementations that don't use it may ignore it.
    * @param startVersion An Optional containing the start version of the range of commits to
    *                     retrieve.
    * @param endVersion An Optional containing the end version of the range of commits to retrieve.
@@ -118,8 +135,57 @@ public interface UCClient extends AutoCloseable {
   GetCommitsResponse getCommits(
       String tableId,
       URI tableUri,
+      TableIdentifier tableIdentifier,
       Optional<Long> startVersion,
       Optional<Long> endVersion) throws IOException, UCCommitCoordinatorException;
+
+  /** Column definition for registering table schema with Unity Catalog. */
+  class ColumnDef {
+    private final String name;
+    private final String typeName;
+    private final String typeText;
+    private final String typeJson;
+    private final boolean nullable;
+    private final int position;
+
+    public ColumnDef(
+        String name, String typeName, String typeText, String typeJson,
+        boolean nullable, int position) {
+      this.name = name;
+      this.typeName = typeName;
+      this.typeText = typeText;
+      this.typeJson = typeJson;
+      this.nullable = nullable;
+      this.position = position;
+    }
+
+    public String getName() { return name; }
+    public String getTypeName() { return typeName; }
+    public String getTypeText() { return typeText; }
+    public String getTypeJson() { return typeJson; }
+    public boolean isNullable() { return nullable; }
+    public int getPosition() { return position; }
+  }
+
+  /**
+   * Promotes a staging table to a real managed table in Unity Catalog. This is the correct API
+   * for version 0 (CREATE); for version 1+ (WRITE), use {@link #commit} instead.
+   *
+   * @param tableName table name (relative to parent schema)
+   * @param catalogName parent catalog name in Unity Catalog
+   * @param schemaName parent schema name in Unity Catalog
+   * @param storageLocation the storage root URL for the table
+   * @param columns column definitions for the table schema
+   * @param properties properties to persist in UC (protocol features, metadata config, etc.)
+   * @throws CommitFailedException if there is a network or server error during finalization
+   */
+  void finalizeCreate(
+      String tableName,
+      String catalogName,
+      String schemaName,
+      String storageLocation,
+      List<ColumnDef> columns,
+      Map<String, String> properties) throws CommitFailedException;
 
   /**
    * Closes any resources used by this client.

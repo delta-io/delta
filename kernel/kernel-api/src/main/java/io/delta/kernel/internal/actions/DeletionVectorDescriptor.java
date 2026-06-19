@@ -169,7 +169,7 @@ public class DeletionVectorDescriptor {
   public String getUniqueId() {
     String uniqueFileId = storageType + pathOrInlineDv;
     if (offset.isPresent()) {
-      return uniqueFileId + "@" + offset;
+      return uniqueFileId + "@" + offset.get();
     } else {
       return uniqueFileId;
     }
@@ -204,7 +204,7 @@ public class DeletionVectorDescriptor {
   }
 
   public boolean isInline() {
-    return storageType == INLINE_DV_MARKER;
+    return INLINE_DV_MARKER.equals(storageType);
   }
 
   public boolean isOnDisk() {

@@ -238,8 +238,11 @@ case class SparkVersionSpec(
   /** Returns log4j config file */
   def log4jConfig: String = "log4j2.properties"
 
+  /** Whether this is an unreleased snapshot or master version */
+  def isSnapshot: Boolean = isMaster || fullVersion.contains("SNAPSHOT")
+
   /** Whether to export JARs instead of class directories (needed for Spark Connect on master) */
-  def exportJars: Boolean = additionalSourceDir.exists(_.contains("master"))
+  def exportJars: Boolean = isMaster
 
   /** Whether to generate Javadoc/Scaladoc for this version */
   def generateDocs: Boolean = isDefault
@@ -276,25 +279,22 @@ object SparkVersionSpec {
     fullVersion = "4.1.0",
     targetJvm = "17",
     additionalSourceDir = Some("scala-shims/spark-4.1"),
-    supportIceberg = false,
+    supportIceberg = true,
     supportHudi = false,
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,
     jacksonVersion = "2.18.2"
   )
 
-  private val spark42Snapshot = SparkVersionSpec(
-    fullVersion = "4.2.0-SNAPSHOT",
+  private val spark42Preview = SparkVersionSpec(
+    fullVersion = "4.2.0-preview5",
     targetJvm = "17",
     additionalSourceDir = Some("scala-shims/spark-4.2"),
     supportIceberg = false,
     supportHudi = false,
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,
-    jacksonVersion = "2.18.2",
-    // Artifact updates in maven central for roaringbitmap stopped after 1.3.0.
-    // Spark master uses 1.5.3. Relevant Spark PR here https://github.com/apache/spark/pull/52892
-    additionalResolvers = Seq("jitpack" at "https://jitpack.io")
+    jacksonVersion = "2.18.2"
   )
 
   /** Default Spark version */
@@ -304,7 +304,7 @@ object SparkVersionSpec {
   val MASTER: Option[SparkVersionSpec] = None
 
   /** All supported Spark versions - internal use only */
-  val ALL_SPECS = Seq(spark40, spark41)
+  val ALL_SPECS = Seq(spark40, spark41, spark42Preview)
 }
 
 /** See docs on top of this file */
@@ -511,7 +511,7 @@ object CrossSparkVersions extends AutoPlugin {
     // Step 2+: Publish Spark-dependent modules WITH suffix for each non-master Spark version
     // This gives users versioned artifacts like delta-spark_4.0_2.13, delta-spark_4.1_2.13
     val suffixedSparkSteps: Seq[ReleaseStep] = SparkVersionSpec.ALL_SPECS
-      .filterNot(_.isMaster) // Exclude master/snapshot versions
+      .filterNot(_.isSnapshot)
       .map { spec =>
         { (state: State) =>
           runSbtSubprocess(

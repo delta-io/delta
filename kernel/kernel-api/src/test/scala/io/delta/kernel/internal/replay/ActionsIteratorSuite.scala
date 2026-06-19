@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.internal.replay
 
+import java.io.{InterruptedIOException, UncheckedIOException}
 import java.util.{Collections, Optional}
 
 import scala.collection.JavaConverters._
@@ -76,5 +77,52 @@ class ActionsIteratorSuite extends AnyFunSuite with MockEngineUtils {
 
     // Verify that resources were cleaned up
     assert(iteratorClosed, "Internal iterator should be closed after exception in ActionsIterator")
+  }
+
+  /**
+   * When the calling thread is interrupted before next() begins an NIO read, ActionsIterator
+   * must surface the interrupt as a typed InterruptedIOException (wrapped in
+   * UncheckedIOException, since next() does not declare checked exceptions) so that engine
+   * interrupt-handling (e.g. Spark's StreamExecution.isInterruptionException) recognizes
+   * it as a clean shutdown rather than a real error.
+   */
+  test("ActionsIterator.next() throws InterruptedIOException when thread is interrupted") {
+    val engine = mockEngine(jsonHandler = new BaseMockJsonHandler {
+      override def readJsonFiles(
+          fileIter: CloseableIterator[FileStatus],
+          physicalSchema: StructType,
+          predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
+        // Return a non-empty iterator so hasNext() succeeds and next() is reached.
+        new CloseableIterator[ColumnarBatch] {
+          override def hasNext(): Boolean = true
+          override def next(): ColumnarBatch =
+            throw new UnsupportedOperationException("next() should not be called after interrupt")
+          override def close(): Unit = {}
+        }
+      }
+    })
+
+    val testFile = FileStatus.of(
+      "/path/to/00000000000000000000.json",
+      100L,
+      System.currentTimeMillis())
+    val actionsIterator =
+      new ActionsIterator(
+        engine,
+        Collections.singletonList(testFile),
+        new StructType(),
+        Optional.empty[Predicate]())
+
+    Thread.currentThread().interrupt()
+    try {
+      val ex = intercept[UncheckedIOException] {
+        actionsIterator.next()
+      }
+      assert(ex.getCause.isInstanceOf[InterruptedIOException])
+      assert(ex.getCause.getMessage == "Thread was interrupted")
+    } finally {
+      // Clear the interrupt flag so it doesn't leak into subsequent tests.
+      Thread.interrupted()
+    }
   }
 }

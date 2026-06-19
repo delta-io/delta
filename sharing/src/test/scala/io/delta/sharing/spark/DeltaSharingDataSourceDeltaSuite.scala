@@ -21,11 +21,12 @@ package io.delta.sharing.spark
 
 import scala.concurrent.duration._
 
-import org.apache.spark.sql.delta.{DeltaConfigs, VariantShreddingPreviewTableFeature, VariantTypePreviewTableFeature, VariantTypeTableFeature}
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, VariantShreddingPreviewTableFeature, VariantShreddingTableFeature, VariantTypePreviewTableFeature, VariantTypeTableFeature}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.sql.{DataFrame, QueryTest, Row}
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.delta.sharing.DeltaSharingTestSparkUtils
 import org.apache.spark.sql.functions.col
@@ -1037,6 +1038,250 @@ trait DeltaSharingDataSourceDeltaSuiteBase
     }
   }
 
+  test("DeltaSharingDataSource auto-resolves responseFormat for cdf query gated by flag") {
+    withTempDir { tempDir =>
+      for (autoResolveEnabled <- Seq(true, false)) {
+        val suffix = if (autoResolveEnabled) "on" else "off"
+        val deltaTableName = s"delta_table_cdf_autoresolve_$suffix"
+        withTable(deltaTableName) {
+          sql(s"""
+                 |CREATE TABLE $deltaTableName (c1 INT, c2 STRING) USING DELTA PARTITIONED BY (c2)
+                 |TBLPROPERTIES (
+                 |  delta.enableChangeDataFeed = true,
+                 |  delta.enableDeletionVectors = true
+                 |)
+                 |""".stripMargin)
+          sql(s"""INSERT INTO $deltaTableName VALUES (1, "one"), (2, "two")""")
+          sql(s"""INSERT INTO $deltaTableName VALUES (3, "two")""")
+          sql(s"""UPDATE $deltaTableName SET c2="new two" where c1=2""")
+          sql(s"""DELETE FROM $deltaTableName WHERE c1 = 2""")
+
+          val sharedTableName = s"shared_cdf_autoresolve_$suffix"
+          prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+          val autoResolveConf = Map(
+            DeltaSQLConf.DELTA_SHARING_ENABLE_AUTO_RESOLVE_FOR_CDF.key ->
+              autoResolveEnabled.toString
+          )
+
+          val expectedSchema: StructType = new StructType()
+            .add("c1", IntegerType)
+            .add("c2", StringType)
+            .add("_change_type", StringType)
+            .add("_commit_version", LongType)
+            .add("_commit_timestamp", TimestampType)
+
+          // Versions: v0 CREATE, v1/v2 INSERT, v3 UPDATE, v4 DELETE. Read CDF from v1, and use v3
+          // as the (inclusive) end bound for the bounded cases so it excludes the v4 delete.
+          val startVersion = 1L
+          val endVersion = 3L
+          def isoTimestampForVersion(version: Long): String =
+            DateTimeUtils
+              .toJavaTimestamp(getTimeStampForVersion(deltaTableName, version) * 1000)
+              .toInstant
+              .toString
+          val startTimestamp = isoTimestampForVersion(startVersion)
+          val endTimestamp = isoTimestampForVersion(endVersion)
+
+          // Auto-resolve calls getMetadata to learn the server's preferred format, pinned to the
+          // end of the CDF range (latest when unbounded), and the legacy parquet RemoteDeltaLog
+          // also calls getMetadata on init. Mock every boundary the cases below exercise.
+          prepareMockedClientMetadata(deltaTableName, sharedTableName)
+          prepareMockedClientMetadata(
+            deltaTableName,
+            sharedTableName,
+            versionAsOf = Some(endVersion)
+          )
+          prepareMockedClientMetadata(
+            deltaTableName,
+            sharedTableName,
+            timestampAsOf = Some(endTimestamp)
+          )
+
+          // Flatten an exception and its causes into the concatenated message text, so assertions
+          // can look for a marker anywhere in the chain regardless of wrapping.
+          def causeChain(ex: Throwable): String =
+            Iterator
+              .iterate[Throwable](ex)(t => if (t == null) null else t.getCause)
+              .takeWhile(_ != null)
+              .map(t => Option(t.getMessage).getOrElse(""))
+              .mkString("\n")
+
+          val versionOnlyOpts = Seq("startingVersion" -> startVersion.toString)
+          val versionRangeOpts =
+            Seq("startingVersion" -> startVersion.toString, "endingVersion" -> endVersion.toString)
+          val timestampOnlyOpts = Seq("startingTimestamp" -> startTimestamp)
+          val timestampRangeOpts =
+            Seq("startingTimestamp" -> startTimestamp, "endingTimestamp" -> endTimestamp)
+
+          // (label, options applied to the sharing read, options applied to the expected delta
+          // read). Timestamp-based sharing reads are compared against the equivalent version
+          // bounds on the delta side to avoid depending on delta's timestamp-resolution edges.
+          val cdfCases = Seq(
+            ("startingVersion, no end", versionOnlyOpts, versionOnlyOpts),
+            ("startingVersion, endingVersion", versionRangeOpts, versionRangeOpts),
+            ("startingTimestamp, no end", timestampOnlyOpts, versionOnlyOpts),
+            ("startingTimestamp, endingTimestamp", timestampRangeOpts, versionRangeOpts)
+          )
+
+          for ((label, sharingOptions, deltaOptions) <- cdfCases) {
+            // The test client keys getCDFFiles on the starting bound only, so register the
+            // starting timestamp block when needed, and bound the mocked files by endingVersion
+            // so an ending bound is reflected in what the server returns (the local delta CDF read
+            // derives its end from those files, not from the request option).
+            val mockStartTimestamp =
+              sharingOptions.collectFirst { case ("startingTimestamp", value) => value }
+            val mockEndingVersion =
+              if (deltaOptions.exists(_._1 == "endingVersion")) Some(endVersion) else None
+            prepareMockedClientAndFileSystemResultForCdf(
+              deltaTableName,
+              sharedTableName,
+              startVersion,
+              startingTimestamp = mockStartTimestamp,
+              endingVersion = mockEndingVersion
+            )
+
+            if (autoResolveEnabled) {
+              def testAutoResolveCdf(tablePath: String): Unit = {
+                val sharingDf = spark.read
+                  .format("deltaSharing")
+                  .option("readChangeFeed", "true")
+                  .options(sharingOptions.toMap)
+                  .load(tablePath)
+                assert(sharingDf.schema == expectedSchema, s"schema mismatch for case: $label")
+
+                val expected = spark.read
+                  .format("delta")
+                  .option("readChangeFeed", "true")
+                  .options(deltaOptions.toMap)
+                  .table(deltaTableName)
+                checkAnswer(sharingDf, expected)
+                assert(sharingDf.count() > 0, s"expected non-empty result for case: $label")
+              }
+
+              withSQLConf((autoResolveConf ++ getDeltaSharingClassesSQLConf).toSeq: _*) {
+                val profileFile = prepareProfileFile(tempDir)
+                testAutoResolveCdf(
+                  profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
+                )
+              }
+            } else {
+              withSQLConf((autoResolveConf ++ getDeltaSharingClassesSQLConf).toSeq: _*) {
+                val profileFile = prepareProfileFile(tempDir)
+                val tablePath = profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
+                // With flag off + no responseFormat, the query falls through to the legacy parquet
+                // path. The OSS parquet RemoteDeltaLog receives the delta-format response from
+                // TestClientForDeltaFormatSharing (the test client always responds delta) and dies
+                // initializing its RemoteSnapshot. That failure proves the auto-resolve gate did
+                // NOT fire: had it fired, the request would have succeeded via the delta CDF path
+                // (as the flag-on branch demonstrates).
+                val ex = intercept[Exception] {
+                  spark.read
+                    .format("deltaSharing")
+                    .option("readChangeFeed", "true")
+                    .options(sharingOptions.toMap)
+                    .load(tablePath)
+                    .collect()
+                }
+                val chain = causeChain(ex)
+                assert(
+                  chain.contains("RemoteSnapshot"),
+                  s"Expected the legacy parquet path (RemoteSnapshot) to surface for case " +
+                    s"$label; got:\n$chain"
+                )
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  test("DeltaSharingDataSource reads cdf from a parquet-format shared table " +
+    "regardless of auto-resolve flag") {
+    withTempDir { tempDir =>
+      // A parquet-format shared table has no advanced delta features, so a CDF read lands on the
+      // legacy parquet path either way: with the flag on it is resolved to parquet via getMetadata,
+      // and with the flag off it is the default parquet fall-through. Both should read the
+      // parquet-format CDF response end-to-end and match a direct Delta CDF read.
+      for (autoResolveEnabled <- Seq(true, false)) {
+        val suffix = if (autoResolveEnabled) "on" else "off"
+        val deltaTableName = s"delta_table_cdf_parquet_$suffix"
+        withTable(deltaTableName) {
+          // Mimic a parquet-format table: change data feed on, deletion vectors off (a real
+          // parquet-format share cannot carry advanced features like deletion vectors).
+          sql(s"""
+                 |CREATE TABLE $deltaTableName (c1 INT, c2 STRING) USING DELTA PARTITIONED BY (c2)
+                 |TBLPROPERTIES (
+                 |  delta.enableChangeDataFeed = true,
+                 |  delta.enableDeletionVectors = false
+                 |)
+                 |""".stripMargin)
+          sql(s"""INSERT INTO $deltaTableName VALUES (1, "one"), (2, "two")""")
+          sql(s"""INSERT INTO $deltaTableName VALUES (3, "two")""")
+          sql(s"""UPDATE $deltaTableName SET c2="new two" where c1=2""")
+          sql(s"""DELETE FROM $deltaTableName WHERE c1 = 2""")
+
+          val startVersion = 1L
+          val parquetSharedTable = s"shared_parquet_table_cdf_$suffix"
+          prepareMockedClientGetTableVersion(deltaTableName, parquetSharedTable)
+          // getMetadata responds parquet (SingleAction-shaped) -- used by the auto-resolve probe
+          // (flag on) and by the legacy parquet RemoteSnapshot init (flag off).
+          prepareMockedClientAndFileSystemResultForParquet(deltaTableName, parquetSharedTable)
+          // Parquet-format CDF response so the parquet CDF reader can read it end-to-end.
+          prepareMockedClientAndFileSystemResultForCdf(
+            deltaTableName,
+            parquetSharedTable,
+            startVersion,
+            responseFormat = DeltaSharingOptions.RESPONSE_FORMAT_PARQUET
+          )
+
+          val autoResolveConf = Map(
+            DeltaSQLConf.DELTA_SHARING_ENABLE_AUTO_RESOLVE_FOR_CDF.key ->
+              autoResolveEnabled.toString
+          )
+
+          // The legacy parquet CDF reader surfaces the same CDF columns but orders them differently
+          // and emits _commit_timestamp as epoch-millis (LongType) rather than delta's
+          // TimestampType, so compare on the columns whose representation is identical, and assert
+          // on the column set rather than strict schema equality.
+          val cdfColumns = Seq("c1", "c2", "_change_type", "_commit_version")
+          val expectedColumns =
+            Set("c1", "c2", "_change_type", "_commit_version", "_commit_timestamp")
+
+          def testParquetCdf(tablePath: String): Unit = {
+            val sharingDf = spark.read
+              .format("deltaSharing")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", startVersion)
+              .load(tablePath)
+            assert(
+              sharingDf.columns.toSet == expectedColumns,
+              s"unexpected columns for parquet cdf read: ${sharingDf.columns.mkString(",")}"
+            )
+
+            val expected = spark.read
+              .format("delta")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", startVersion)
+              .table(deltaTableName)
+              .select(cdfColumns.map(col): _*)
+            val sharingCdf = sharingDf.select(cdfColumns.map(col): _*)
+            checkAnswer(sharingCdf, expected)
+            assert(sharingCdf.count() > 0, "expected non-empty result for parquet cdf read")
+          }
+
+          withSQLConf((autoResolveConf ++ getDeltaSharingClassesSQLConf).toSeq: _*) {
+            val profileFile = prepareProfileFile(tempDir)
+            testParquetCdf(
+              profileFile.getCanonicalPath + s"#share1.default.$parquetSharedTable"
+            )
+          }
+        }
+      }
+    }
+  }
+
   test("DeltaSharingDataSource able to read data for cdf query with more entries") {
     withTempDir { tempDir =>
       val deltaTableName = "delta_table_cdf_more"
@@ -1501,22 +1746,27 @@ trait DeltaSharingDataSourceDeltaSuiteBase
   Seq(
     VariantTypePreviewTableFeature,
     VariantTypeTableFeature,
-    VariantShreddingPreviewTableFeature
+    VariantShreddingPreviewTableFeature,
+    VariantShreddingTableFeature
   ).foreach { feature =>
     test(s"basic variant test - table feature: $feature") {
       withTempDir { tempDir =>
+        val shreddingConfs = Map(
+          "spark.sql.variant.writeShredding.enabled" -> "true",
+          "spark.sql.variant.allowReadingShredded" -> "true",
+          "spark.sql.variant.forceShreddingSchemaForTest" -> "a long"
+        )
         val extraConfs = feature match {
-          case VariantShreddingPreviewTableFeature => Map(
-            "spark.sql.variant.writeShredding.enabled" -> "true",
-            "spark.sql.variant.allowReadingShredded" -> "true",
-            "spark.sql.variant.forceShreddingSchemaForTest" -> "a long"
-          )
-          case _ => Map.empty
+          case VariantShreddingPreviewTableFeature => shreddingConfs
+          case VariantShreddingTableFeature => shreddingConfs +
+            (DeltaSQLConf.FORCE_USE_PREVIEW_SHREDDING_FEATURE.key -> "false")
+          case _ => Map.empty[String, String]
         }
         withSQLConf(extraConfs.toSeq: _*) {
           val deltaTableName = s"variant_table_${feature.name.replaceAll("-", "_")}"
           withTable(deltaTableName) {
-            if (feature == VariantShreddingPreviewTableFeature) {
+            if (feature == VariantShreddingPreviewTableFeature ||
+                feature == VariantShreddingTableFeature) {
               spark.sql(s"CREATE TABLE $deltaTableName(v variant) USING DELTA " +
                 s"TBLPROPERTIES('${DeltaConfigs.ENABLE_VARIANT_SHREDDING.key}' = 'true')")
             } else {
@@ -1530,6 +1780,12 @@ trait DeltaSharingDataSourceDeltaSuiteBase
               .format("delta")
               .mode("append")
               .insertInto(deltaTableName)
+
+            val (_, snapshot) =
+              DeltaLog.forTableWithSnapshot(spark, TableIdentifier(deltaTableName))
+            assert(snapshot.protocol.readerAndWriterFeatures.contains(feature),
+              s"Expected table feature ${feature.name} not found in " +
+                s"protocol: ${snapshot.protocol}")
 
             val sharedTableName = s"shared_table_variant_${feature.name.replaceAll("-", "_")}"
             prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
@@ -1692,6 +1948,53 @@ trait DeltaSharingDataSourceDeltaSuiteBase
             )
             checkAnswer(df, expected)
           }
+        }
+      }
+    }
+  }
+  test("callerOrg option is passed to DeltaSharingRestClient") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      val deltaTableName = "delta_table_caller_org"
+      withTable(deltaTableName) {
+        createSimpleTable(deltaTableName, enableCdf = false)
+        sql(s"""INSERT INTO $deltaTableName VALUES (1, "one")""")
+
+        val sharedTableName = "shared_table_caller_org"
+        prepareMockedClientAndFileSystemResult(
+          deltaTableName, sharedTableName)
+        DeltaSharingUtils.overrideSingleBlock[Long](
+          blockId = TestClientForDeltaFormatSharing.getBlockId(
+            sharedTableName, "getTableVersion"),
+          value = 1
+        )
+
+        withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+          val profileFile = prepareProfileFile(inputDir)
+          val tablePath =
+            s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName"
+
+          TestClientForDeltaFormatSharing.lastCallerOrg = ""
+          spark.read
+            .format("deltaSharing")
+            .option("responseFormat", "delta")
+            .option(DeltaSharingOptions.CALLER_ORG_OPTION, "test-org")
+            .load(tablePath)
+            .collect()
+          assert(
+            TestClientForDeltaFormatSharing.lastCallerOrg == "test-org",
+            "callerOrg should be passed through to the client"
+          )
+
+          TestClientForDeltaFormatSharing.lastCallerOrg = ""
+          spark.read
+            .format("deltaSharing")
+            .option("responseFormat", "delta")
+            .load(tablePath)
+            .collect()
+          assert(
+            TestClientForDeltaFormatSharing.lastCallerOrg == "",
+            "callerOrg should be empty when not set"
+          )
         }
       }
     }

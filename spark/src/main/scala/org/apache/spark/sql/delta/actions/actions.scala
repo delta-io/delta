@@ -31,7 +31,7 @@ import com.databricks.spark.util.TagDefinition
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
-import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, JsonUtils, Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.FileNames
@@ -44,6 +44,7 @@ import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize
 import com.fasterxml.jackson.databind.node.ObjectNode
 import io.delta.storage.commit.actions.{
   AbstractCommitInfo => StorageAbstractCommitInfo,
+  AbstractDomainMetadata => StorageAbstractDomainMetadata,
   AbstractMetadata => StorageAbstractMetadata,
   AbstractProtocol => StorageAbstractProtocol
 }
@@ -76,12 +77,12 @@ object Action extends DeltaLogging {
   // We can't extend the [[Action]] class itself since it affects serialization.
   // Instead, we add a wrapper here as a helper method for logging.
   override def recordDeltaEvent(
-      deltaLog: DeltaLog,
+      provider: DeltaLoggingProvider,
       opType: String,
       tags: Map[TagDefinition, String] = Map.empty,
       data: AnyRef = null,
       path: Option[Path] = None): Unit = {
-    super.recordDeltaEvent(deltaLog, opType, tags, data, path)
+    super.recordDeltaEvent(provider, opType, tags, data, path)
   }
 
   /**
@@ -96,6 +97,45 @@ object Action extends DeltaLogging {
       protocolVersion.withFeatures(featuresToAdd)
     } else {
       protocolVersion
+    }
+  }
+
+  /**
+   * Normalizes partition values to typed Literals. This method is serializable and does not
+   * require SparkSession, so it can be used inside UDFs for parallel processing.
+   *
+   * @param rawPartitionValues Map of partition column names to their string values.
+   * @param partitionSchema Schema defining the data types for each partition column.
+   * @param timeZoneId The Spark session time zone ID. This should ALWAYS be the session timezone
+   *                   to ensure consistent parsing between read and write paths.
+   * @param parseToTypedLiterals Whether to parse partition values to their actual types.
+   *                             When false, verbatim value from the log action is returned in a
+   *                             String Literal.
+   * @param failOnParsingError If true, throw the exception if parsing fails.
+   *                           If false, return the raw partition values as string Literals.
+   * @return Map of partition column names to their literal values.
+   */
+  def normalizePartitionValues(
+      rawPartitionValues: Map[String, String],
+      partitionSchema: StructType,
+      timeZoneId: String,
+      parseToTypedLiterals: Boolean,
+      failOnParsingError: Boolean): Map[String, Literal] = {
+    def parseToStringLiterals = rawPartitionValues.map { case (k, v) => (k, Literal(v)) }
+    if (parseToTypedLiterals) {
+      try {
+        PartitionUtils.parsePartitionValues(
+          rawPartitionValues, partitionSchema, timeZoneId, validatePartitionColumns = true)
+      } catch {
+        case NonFatal(e) =>
+          if (failOnParsingError) {
+            throw e
+          } else {
+            parseToStringLiterals
+          }
+      }
+    } else {
+      parseToStringLiterals
     }
   }
 
@@ -140,6 +180,29 @@ object Action extends DeltaLogging {
       if (f.name == "add") f.copy(dataType = logAddSchema.add(statsParsed)) else f
     }
     StructType(fields)
+  }
+
+  /**
+   * Returns the tag value corresponding to a given `key`.
+   * This method throws [[DeltaErrors.tagCouldNotBeParsedException]] exception
+   * if the value is not a valid json or if it cannot be parsed to type `T`.
+   *
+   * @param key key for which we want the extra attribute value
+   * @tparam T value type
+   * @return None if the given key is not present, else returns the corresponding value of type `T`
+   *         from the stored json version of the value for the given key.
+   */
+  def getDeserializedValueForTag[T: Manifest](
+      tags: Map[String, String],
+      key: String): Option[T] = {
+    Option(tags).flatMap(_.get(key)).map { serializedValue =>
+      try {
+        JsonUtils.fromJson[T](serializedValue)
+      } catch {
+        case NonFatal(e) =>
+          throw DeltaErrors.tagCouldNotBeParsedException(key, tags, e)
+      }
+    }
   }
 }
 
@@ -629,8 +692,11 @@ case class SetTransaction(
 case class DomainMetadata(
     domain: String,
     configuration: String,
-    removed: Boolean) extends Action {
+    removed: Boolean) extends Action with StorageAbstractDomainMetadata {
   override def wrap: SingleAction = SingleAction(domainMetadata = this)
+  override def getDomain: String = domain
+  override def getConfiguration: String = configuration
+  override def isRemoved: Boolean = removed
 }
 
 /** Actions pertaining to the addition and removal of files. */
@@ -673,11 +739,81 @@ sealed trait FileAction extends Action {
   def getTag(tagName: String): Option[String] = Option(tags).flatMap(_.get(tagName))
 
 
+  /**
+   * Return partition values as literals, optionally parsed to their actual data types.
+   * When `parseToTypedLiterals` is true, partition values are parsed to their actual
+   * types for comparison purposes. When false, they are returned as string literals,
+   * using verbatim value written in the action.
+   *
+   * @param deltaLog The DeltaLog for logging events. May be null if unavailable.
+   * @param errorOpType Prefix for logging event opTypes.
+   * @param errorData Extra fields to include in logging events.
+   * @return Map of partition column names to literals.
+   */
+  private[delta] def normalizedPartitionValues(
+      spark: SparkSession,
+      partitionSchema: StructType,
+      parseToTypedLiterals: Boolean,
+      deltaLog: DeltaLog,
+      errorOpType: String,
+      errorData: Map[String, Any]): Map[String, Literal] = {
+    val timeZone = spark.sessionState.conf.sessionLocalTimeZone
+
+    try {
+      val partitionValueLiterals = Action.normalizePartitionValues(
+        partitionValues,
+        partitionSchema,
+        timeZone,
+        parseToTypedLiterals && partitionSchema.nonEmpty,
+        failOnParsingError = true)
+
+      if (parseToTypedLiterals && partitionSchema.nonEmpty) {
+        val stringNormalizedPartitionValues = partitionValueLiterals.map {
+          case (k, v) => (k, PartitionUtils.literalToNormalizedString(
+            v,
+            Some(timeZone),
+            useUtcNormalizedTimestamp = true))
+        }
+        if (stringNormalizedPartitionValues != partitionValues) {
+          Action.recordDeltaEvent(
+            deltaLog,
+            opType = errorOpType + ".unnormalizedValuesExist",
+            data = errorData
+          )
+        }
+      }
+      partitionValueLiterals
+    } catch {
+      case NonFatal(e) =>
+        val opTypeSuffix = PartitionUtils.classifyPartitionValueParsingError(e)
+        Action.recordDeltaEvent(
+          deltaLog,
+          opType = errorOpType + ".partitionValueParsingError" + opTypeSuffix,
+          data = errorData ++ Map(
+            "exceptionMessage" -> e.getMessage,
+            "timeZone" -> timeZone
+          )
+        )
+        if (spark.conf.get(DeltaSQLConf.DELTA_FAIL_ON_PARTITION_VALUE_PARSING_ERROR)) {
+          throw e
+        }
+        partitionValues.map { case (k, v) => (k, Literal(v)) }
+    }
+  }
+
   /** Returns the [[SparkPath]] for this file action. */
   def sparkPath: SparkPath = SparkPath.fromUrlString(path)
 
   /** Returns the [[Path]] for this file action (not URL-encoded). */
   def toPath: Path = sparkPath.toPath
+
+  /** Returns the absolute [[Path]] for this file action (not URL-encoded). */
+  def absolutePath(snapshot: SnapshotDescriptor): Path = {
+    // dataPath is not URL-encoded.
+    val dataPath: Path = snapshot.dataPath
+    // this.path is a URL-encoded String, that is either the relative or absolute path.
+    DeltaFileOperations.absolutePath(dataPath.toString, path)
+  }
 
   /** Returns the absolute [[Path]] for this file action (not URL-encoded). */
   def absolutePath(deltaLog: DeltaLog): Path = {
@@ -889,63 +1025,19 @@ case class AddFile(
       spark: SparkSession,
       partitionSchema: StructType,
       deltaTxn: Option[OptimisticTransaction] = None): Map[String, Literal] = {
-
-    def partitionValuesAsStringLiterals: Map[String, Literal] = {
-      // Convert all partition values to string literals
-      partitionValues.map { case (k, v) => (k, Literal(v)) }
-    }
-
-    val normalizePartitionValuesOnRead =
-      spark.conf.get(DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ)
-    if (normalizePartitionValuesOnRead) {
-      val timeZone = spark.sessionState.conf.sessionLocalTimeZone
-
-      try {
-        val typedPartitionValueLiterals = PartitionUtils.parsePartitionValues(
-          partitionValues,
-          partitionSchema,
-          java.util.TimeZone.getDefault.getID,
-          validatePartitionColumns = true)
-
-        val stringNormalizedPartitionValues = typedPartitionValueLiterals.map {
-          case (k, v) => (k, PartitionUtils.literalToNormalizedString(
-            v,
-            Some(timeZone),
-            useUtcNormalizedTimestamp = true))
-        }
-
-        if (stringNormalizedPartitionValues != partitionValues) {
-          Action.recordDeltaEvent(
-            deltaTxn.map(_.deltaLog).orNull,
-            opType = "delta.normalizedPartitionValues.unnormalizedValuesExist",
-            data = Map(
-              "readSnapshotMetadata" -> deltaTxn.map(_.snapshot.metadata).orNull,
-              "txnMetadata" -> deltaTxn.map(_.metadata).orNull,
-              "commitInfo" -> deltaTxn.map(_.getCommitInfo).orNull
-            )
-          )
-        }
-        typedPartitionValueLiterals
-      } catch {
-        case NonFatal(e) =>
-          val opTypeSuffix = PartitionUtils.classifyPartitionValueParsingError(e)
-          Action.recordDeltaEvent(
-            deltaTxn.map(_.deltaLog).orNull,
-            opType = "delta.normalizedPartitionValues.partitionValueParsingError" + opTypeSuffix,
-            data = Map(
-              "exceptionMessage" -> e.getMessage,
-              "readSnapshotMetadata" -> deltaTxn.map(_.snapshot.metadata).orNull,
-              "txnMetadata" -> deltaTxn.map(_.metadata).orNull,
-              "commitInfo" -> deltaTxn.map(_.getCommitInfo).orNull,
-              "readSnapshotVersion" -> deltaTxn.map(_.snapshot.version).getOrElse(-1L),
-              "timeZone" -> timeZone
-            )
-          )
-          partitionValuesAsStringLiterals
-      }
-    } else {
-        partitionValuesAsStringLiterals
-    }
+    normalizedPartitionValues(
+      spark,
+      partitionSchema,
+      parseToTypedLiterals =
+        spark.conf.get(DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ),
+      deltaLog = deltaTxn.map(_.deltaLog).orNull,
+      errorOpType = "delta.normalizedPartitionValues",
+      errorData = Map(
+        "readSnapshotMetadata" -> deltaTxn.map(_.snapshot.metadata).orNull,
+        "txnMetadata" -> deltaTxn.map(_.metadata).orNull,
+        "commitInfo" -> deltaTxn.map(_.getCommitInfo).orNull,
+        "readSnapshotVersion" -> deltaTxn.map(_.snapshot.version).getOrElse(-1L))
+    )
   }
 
   // Don't use lazy val because we want to save memory.
@@ -1196,8 +1288,7 @@ case class Metadata(
 
   /** Returns the partitionSchema as a [[StructType]] */
   @JsonIgnore
-  lazy val partitionSchema: StructType =
-    new StructType(partitionColumns.map(c => schema(c)).toArray)
+  override lazy val partitionSchema: StructType = super.partitionSchema
 
   /** Partition value keys in the AddFile map. */
   @JsonIgnore
@@ -1525,8 +1616,61 @@ case class CheckpointMetadata(
   extends CheckpointOnlyAction {
 
   override def wrap: SingleAction = SingleAction(checkpointMetadata = this)
+
+  import CheckpointMetadata.Tags
+
+  /** Number of actions in the [[SidecarFile]]s */
+  @JsonIgnore
+  def sidecarNumActions: Option[Long] =
+    Action.getDeserializedValueForTag[Long](tags, Tags.SIDECAR_NUM_ACTIONS.name)
+
+  /** Size in bytes across all part files */
+  @JsonIgnore
+  def sidecarSizeInBytes: Option[Long] =
+    Action.getDeserializedValueForTag[Long](tags, Tags.SIDECAR_SIZE_IN_BYTES.name)
+
+  /** Number of add file actions in the underlying checkpoint */
+  @JsonIgnore
+  def numOfAddFiles: Option[Long] =
+    Action.getDeserializedValueForTag[Long](tags, Tags.NUM_OF_ADD_FILES.name)
+
+  /** Schema of the [[SidecarFile]]s stored in the checkpoint */
+  @JsonIgnore
+  def sidecarFileSchema: Option[StructType] = {
+    Option(tags)
+      .flatMap(_.get(Tags.SIDECAR_FILE_SCHEMA.name))
+      .map(DataType.fromJson(_).asInstanceOf[StructType])
+  }
 }
 
+object CheckpointMetadata {
+
+  def apply(
+      version: Long,
+      sidecarNumActions: Long,
+      sidecarSizeInBytes: Long,
+      numOfAddFiles: Long,
+      sidecarFileSchemaOpt: Option[StructType]): CheckpointMetadata = {
+    val tagMapWithSchema = sidecarFileSchemaOpt.map(Tags.SIDECAR_FILE_SCHEMA.name -> _.json)
+    CheckpointMetadata(
+      version = version,
+      tags = Map(
+        Tags.SIDECAR_NUM_ACTIONS.name -> sidecarNumActions.toString,
+        Tags.SIDECAR_SIZE_IN_BYTES.name -> sidecarSizeInBytes.toString,
+        Tags.NUM_OF_ADD_FILES.name -> numOfAddFiles.toString
+      ) ++ tagMapWithSchema
+    )
+  }
+
+  object Tags {
+    sealed abstract class KeyType(val name: String)
+
+    object SIDECAR_NUM_ACTIONS extends KeyType("sidecarNumActions")
+    object SIDECAR_SIZE_IN_BYTES extends KeyType("sidecarSizeInBytes")
+    object NUM_OF_ADD_FILES extends KeyType("numOfAddFiles")
+    object SIDECAR_FILE_SCHEMA extends KeyType("sidecarFileSchema")
+  }
+}
 
 /** A serialization helper to create a common action envelope. */
 case class SingleAction(

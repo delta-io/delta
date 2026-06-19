@@ -23,7 +23,7 @@ import java.util.{Collections, Optional}
 import com.fasterxml.jackson.databind.{JsonNode, ObjectMapper}
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import io.delta.storage.commit.{Commit, CommitFailedException}
-import io.delta.storage.commit.actions.AbstractMetadata
+import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata}
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 import io.unitycatalog.client.auth.TokenProvider
 
@@ -153,8 +153,10 @@ class UCTokenBasedRestClientSuite
   // commit tests
   test("commit succeeds with valid parameters") {
     withClient { client =>
-      client.commit(testTableId, testTableUri, Optional.of(createCommit(1L)),
-        Optional.empty(), false, Optional.empty(), Optional.empty(), Optional.empty())
+      client.commit(testTableId, testTableUri, null,
+        Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
+        Optional.empty(), Optional.empty(), Optional.empty(),
+        Collections.emptyList[AbstractDomainMetadata](), Optional.empty())
     }
   }
 
@@ -163,11 +165,14 @@ class UCTokenBasedRestClientSuite
       client.commit(
         testTableId,
         testTableUri,
+        null,
         Optional.of(createCommit(1L)),
         Optional.of(java.lang.Long.valueOf(0L)),
-        true,
+        Optional.empty(),
         Optional.of(createMetadata()),
         Optional.empty(),
+        Optional.empty(),
+        Collections.emptyList[AbstractDomainMetadata](),
         Optional.empty())
     }
   }
@@ -175,12 +180,14 @@ class UCTokenBasedRestClientSuite
   test("commit validates required parameters") {
     withClient { client =>
       intercept[NullPointerException] {
-        client.commit(null, testTableUri, Optional.empty(), Optional.empty(),
-          false, Optional.empty(), Optional.empty(), Optional.empty())
+        client.commit(null, testTableUri, null, Optional.empty(),
+          Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
+          Optional.empty(), Collections.emptyList[AbstractDomainMetadata](), Optional.empty())
       }
       intercept[NullPointerException] {
-        client.commit(testTableId, null, Optional.empty(), Optional.empty(),
-          false, Optional.empty(), Optional.empty(), Optional.empty())
+        client.commit(testTableId, null, null, Optional.empty(),
+          Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
+          Optional.empty(), Collections.emptyList[AbstractDomainMetadata](), Optional.empty())
       }
     }
   }
@@ -189,8 +196,10 @@ class UCTokenBasedRestClientSuite
     def commitWith(status: Int): Unit = {
       commitsHandler = exchange => sendJson(exchange, status, s"""{"error":"$status"}""")
       withClient { client =>
-        client.commit(testTableId, testTableUri, Optional.of(createCommit(1L)),
-          Optional.empty(), false, Optional.empty(), Optional.empty(), Optional.empty())
+        client.commit(testTableId, testTableUri, null,
+          Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
+          Optional.empty(), Optional.empty(), Optional.empty(),
+          Collections.emptyList[AbstractDomainMetadata](), Optional.empty())
       }
     }
 
@@ -222,7 +231,11 @@ class UCTokenBasedRestClientSuite
     commitsHandler = exchange => sendJson(exchange, HttpStatus.SC_OK, responseJson)
     withClient { client =>
       val response = client.getCommits(
-        testTableId, testTableUri, Optional.empty(), Optional.empty())
+        testTableId,
+        testTableUri,
+        /* tableIdentifier = */ null,
+        Optional.empty(),
+        Optional.empty())
       assert(response.getCommits.size() === 1)
       assert(response.getCommits.get(0).getVersion === 1L)
       assert(response.getLatestTableVersion === 1L)
@@ -232,10 +245,20 @@ class UCTokenBasedRestClientSuite
   test("getCommits validates required parameters") {
     withClient { client =>
       intercept[NullPointerException] {
-        client.getCommits(null, testTableUri, Optional.empty(), Optional.empty())
+        client.getCommits(
+          null,
+          testTableUri,
+          /* tableIdentifier = */ null,
+          Optional.empty(),
+          Optional.empty())
       }
       intercept[NullPointerException] {
-        client.getCommits(testTableId, null, Optional.empty(), Optional.empty())
+        client.getCommits(
+          testTableId,
+          null,
+          /* tableIdentifier = */ null,
+          Optional.empty(),
+          Optional.empty())
       }
     }
   }
@@ -244,34 +267,65 @@ class UCTokenBasedRestClientSuite
     commitsHandler = exchange => sendJson(exchange, HttpStatus.SC_NOT_FOUND, "{}")
     withClient { client =>
       intercept[InvalidTargetTableException] {
-        client.getCommits(testTableId, testTableUri, Optional.empty(), Optional.empty())
+        client.getCommits(
+          testTableId,
+          testTableUri,
+          /* tableIdentifier = */ null,
+          Optional.empty(),
+          Optional.empty())
       }
     }
   }
 
   // uniform tests
   test("commit with uniform.iceberg sends correct snake_case JSON per all.yaml") {
-    var capturedBody: String = null
-    commitsHandler = exchange => {
-      capturedBody = readRequestBody(exchange)
-      sendJson(exchange, HttpStatus.SC_OK, "{}")
+    val cases: Seq[(String, Option[Long])] = Seq(
+      ("without baseConvertedDeltaVersion", None),
+      ("with baseConvertedDeltaVersion", Some(42L))
+    )
+
+    cases.foreach { case (desc, baseVersion) =>
+      val icebergMeta = baseVersion match {
+        case Some(base) =>
+          new IcebergMetadata(
+            "s3://bucket/metadata/v1.json", 42L, "2025-01-04T03:13:11.423Z",
+            Optional.of(java.lang.Long.valueOf(base)))
+        case None =>
+          new IcebergMetadata("s3://bucket/metadata/v1.json", 42L, "2025-01-04T03:13:11.423Z")
+      }
+
+      var capturedBody: String = null
+      commitsHandler = exchange => {
+        capturedBody = readRequestBody(exchange)
+        sendJson(exchange, HttpStatus.SC_OK, "{}")
+      }
+
+      withClient { client =>
+        client.commit(testTableId, testTableUri, null,
+          Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
+          Optional.empty(), Optional.empty(), Optional.empty(),
+          Collections.emptyList[AbstractDomainMetadata](),
+          Optional.of(new UniformMetadata(icebergMeta)))
+      }
+
+      val json: JsonNode = objectMapper.readTree(capturedBody)
+      assert(json.get("table_id").asText() === testTableId, desc)
+      assert(!json.has("protocol"), s"$desc: protocol must not be sent")
+
+      val iceberg = json.get("uniform").get("iceberg")
+      assert(iceberg.get("metadata_location").asText() === "s3://bucket/metadata/v1.json", desc)
+      assert(iceberg.get("converted_delta_version").asLong() === 42L, desc)
+      assert(iceberg.get("converted_delta_timestamp").asText() === "2025-01-04T03:13:11.423Z", desc)
+
+      baseVersion match {
+        case Some(base) =>
+          assert(iceberg.get("base_converted_delta_version").asLong() === base, desc)
+        case None =>
+          assert(
+            !iceberg.has("base_converted_delta_version"),
+            s"$desc: base_converted_delta_version must be absent")
+      }
     }
-
-    withClient { client =>
-      client.commit(testTableId, testTableUri, Optional.of(createCommit(1L)),
-        Optional.empty(), false, Optional.empty(), Optional.empty(),
-        Optional.of(createUniformMetadata()))
-    }
-
-    val json: JsonNode = objectMapper.readTree(capturedBody)
-    assert(json.get("table_id").asText() === testTableId)
-
-    val iceberg = json.get("uniform").get("iceberg")
-    assert(iceberg.get("metadata_location").asText() === "s3://bucket/metadata/v1.json")
-    assert(iceberg.get("converted_delta_version").asLong() === 42L)
-    assert(iceberg.get("converted_delta_timestamp").asText() === "2025-01-04T03:13:11.423Z")
-
-    assert(!json.has("protocol"), "protocol is not in the OpenAPI spec and must not be sent")
   }
 
   test("commit without uniform does not include uniform field in JSON") {
@@ -282,8 +336,10 @@ class UCTokenBasedRestClientSuite
     }
 
     withClient { client =>
-      client.commit(testTableId, testTableUri, Optional.of(createCommit(1L)),
-        Optional.empty(), false, Optional.empty(), Optional.empty(), Optional.empty())
+      client.commit(testTableId, testTableUri, null,
+        Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
+        Optional.empty(), Optional.empty(), Optional.empty(),
+        Collections.emptyList[AbstractDomainMetadata](), Optional.empty())
     }
 
     val json = objectMapper.readTree(capturedBody)
@@ -298,8 +354,10 @@ class UCTokenBasedRestClientSuite
     }
 
     withClient { client =>
-      client.commit(testTableId, testTableUri, Optional.of(createCommit(1L)),
-        Optional.empty(), false, Optional.empty(), Optional.empty(),
+      client.commit(testTableId, testTableUri, null,
+        Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
+        Optional.empty(), Optional.empty(), Optional.empty(),
+        Collections.emptyList[AbstractDomainMetadata](),
         Optional.of(new UniformMetadata(null)))
     }
 

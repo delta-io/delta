@@ -47,7 +47,7 @@ import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.Try
 
-import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaErrors}
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaErrors, DeltaGeoSpatial}
 import org.apache.hadoop.fs.Path
 import org.apache.spark.unsafe.types.UTF8String
 
@@ -447,7 +447,7 @@ private[delta] object PartitionUtils {
     }
 
     checkColumnNameDuplication(
-      normalizedPartSpec.map(_._1), "in the partition schema", resolver)
+      normalizedPartSpec.map(_._1), "PARTITION_SCHEMA", resolver)
 
     normalizedPartSpec.toMap
   }
@@ -610,13 +610,15 @@ private[delta] object PartitionUtils {
       caseSensitive: Boolean): Unit = {
     checkColumnNameDuplication(
       partitionColumns,
-      "in the partition columns",
+      "PARTITION_COLUMNS",
       caseSensitive)
 
     partitionColumnsSchema(schema, partitionColumns, caseSensitive).foreach {
       field => field.dataType match {
-        // Variant types are not orderable and thus cannot be partition columns.
-        case a: AtomicType if !a.isInstanceOf[VariantType] => // OK
+        // Variant, Geometry and Geography types are not orderable and thus cannot be partition
+        // columns.
+        case a: AtomicType
+          if !a.isInstanceOf[VariantType] && !DeltaGeoSpatial.isGeoSpatialType(a) => // OK
         case _ => throw DeltaErrors.cannotUseDataTypeForPartitionColumnError(field)
       }
     }
@@ -712,12 +714,13 @@ private[delta] object PartitionUtils {
    * the duplication exists.
    *
    * @param columnNames column names to check
-   * @param colType column type name, used in an exception message
+   * @param errorSubClass error sub-class for DELTA_DUPLICATE_COLUMNS_FOUND indicating where the
+   *                      duplicate was found (e.g. "PARTITION_SCHEMA", "CLUSTER_BY").
    * @param resolver resolver used to determine if two identifiers are equal
    */
   def checkColumnNameDuplication(
-      columnNames: Seq[String], colType: String, resolver: Resolver): Unit = {
-    checkColumnNameDuplication(columnNames, colType, isCaseSensitiveAnalysis(resolver))
+      columnNames: Seq[String], errorSubClass: String, resolver: Resolver): Unit = {
+    checkColumnNameDuplication(columnNames, errorSubClass, isCaseSensitiveAnalysis(resolver))
   }
 
   /**
@@ -725,11 +728,12 @@ private[delta] object PartitionUtils {
    * the duplication exists.
    *
    * @param columnNames column names to check
-   * @param colType column type name, used in an exception message
+   * @param errorSubClass error sub-class for DELTA_DUPLICATE_COLUMNS_FOUND indicating where the
+   *                      duplicate was found (e.g. "PARTITION_COLUMNS", "CLUSTER_BY").
    * @param caseSensitiveAnalysis whether duplication checks should be case sensitive or not
    */
   def checkColumnNameDuplication(
-      columnNames: Seq[String], colType: String, caseSensitiveAnalysis: Boolean): Unit = {
+      columnNames: Seq[String], errorSubClass: String, caseSensitiveAnalysis: Boolean): Unit = {
     // scalastyle:off caselocale
     val names = if (caseSensitiveAnalysis) columnNames else columnNames.map(_.toLowerCase)
     // scalastyle:on caselocale
@@ -737,7 +741,7 @@ private[delta] object PartitionUtils {
       val duplicateColumns = names.groupBy(identity).collect {
         case (x, ys) if ys.length > 1 => s"`$x`"
       }
-      throw DeltaErrors.foundDuplicateColumnsException(colType,
+      throw DeltaErrors.foundDuplicateColumnsException(errorSubClass,
         duplicateColumns.mkString(", "))
     }
   }
@@ -839,7 +843,12 @@ private[delta] object PartitionUtils {
    * @param rawValue The raw string value of the partition.
    * @param dataType Optional data type from the schema. If None, type inference is used.
    * @param typeInference Whether to infer the type when dataType is None.
-   * @param timeZone Time zone for timestamp parsing.
+   * @param timeZone Time zone used as a fallback for timestamp parsing. The timestampFormatter is
+   *                 always tried first. Only when it fails (e.g., "2026-01-01T12:00:00" with a 'T'
+   *                 separator) and the timestamp does not have a timezone identifier, the Cast
+   *                 fallback uses this timezone to interpret the timestamp. For data written by
+   *                 Spark this will not happen as the timestamp format always matches the
+   *                 timestampFormatter format.
    * @param dateFormatter Formatter for date parsing.
    * @param timestampFormatter Formatter for timestamp parsing.
    * @param validatePartitionColumns Throw an error when casting fails.

@@ -6,7 +6,11 @@
 /build/                         @tdas @huan233usc
 /build.sbt                      @tdas @huan233usc
 /project/                       @tdas
+/project/scripts/               @tdas @openinx @yili-db
 /version.sbt                    @tdas
+
+# Python client, examples, and tooling
+/python/                        @tdas
 
 # Spark V2 and Unified modules
 /spark/v2/                      @tdas @huan233usc @TimothyW553 @raveeram-db @murali-db

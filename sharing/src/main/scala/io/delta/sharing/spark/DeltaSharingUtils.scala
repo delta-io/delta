@@ -29,6 +29,8 @@ import io.delta.sharing.client.{DeltaSharingClient, DeltaSharingRestClient}
 import io.delta.sharing.client.model.{DeltaTableFiles, DeltaTableMetadata, Table}
 import io.delta.sharing.client.util.JsonUtils
 
+import org.apache.hadoop.fs.Path
+
 import org.apache.spark.SparkEnv
 import org.apache.spark.delta.sharing.TableRefreshResult
 import org.apache.spark.internal.Logging
@@ -45,9 +47,11 @@ object DeltaSharingUtils extends Logging {
       TimestampNTZTableFeature.name,
       TypeWideningPreviewTableFeature.name,
       TypeWideningTableFeature.name,
+      GeoSpatialTableFeature.name,
       VariantTypePreviewTableFeature.name,
       VariantTypeTableFeature.name,
-      VariantShreddingPreviewTableFeature.name
+      VariantShreddingPreviewTableFeature.name,
+      VariantShreddingTableFeature.name
     )
 
   val SUPPORTED_READER_FEATURES: Seq[String] =
@@ -58,8 +62,10 @@ object DeltaSharingUtils extends Logging {
       TypeWideningPreviewTableFeature.name,
       TypeWideningTableFeature.name,
       VariantTypePreviewTableFeature.name,
+      GeoSpatialTableFeature.name,
       VariantTypeTableFeature.name,
-      VariantShreddingPreviewTableFeature.name
+      VariantShreddingPreviewTableFeature.name,
+      VariantShreddingTableFeature.name
     )
 
   // The prefix will be used for block ids of all blocks that store the delta log in BlockManager.
@@ -186,7 +192,8 @@ object DeltaSharingUtils extends Logging {
       versionAsOf: Option[Long],
       timestampAsOf: Option[String],
       jsonPredicateHints: Option[String],
-      useRefreshToken: Boolean): RefresherFunction = { refreshTokenOpt =>
+      useRefreshToken: Boolean,
+      fileIdHash: Option[String] = None): RefresherFunction = { refreshTokenOpt =>
     {
       // If versionAsOf is specified, ignore refresh token (e.g., in streaming queries)
       val tableFiles = client
@@ -197,7 +204,8 @@ object DeltaSharingUtils extends Logging {
           versionAsOf = versionAsOf,
           timestampAsOf = timestampAsOf,
           jsonPredicateHints = jsonPredicateHints,
-          refreshToken = if (useRefreshToken) refreshTokenOpt else None
+          refreshToken = if (useRefreshToken) refreshTokenOpt else None,
+          fileIdHash = fileIdHash
         )
       getTableRefreshResult(tableFiles)
     }
@@ -212,12 +220,14 @@ object DeltaSharingUtils extends Logging {
   def getRefresherForGetCDFFiles(
       client: DeltaSharingClient,
       table: Table,
-      cdfOptions: Map[String, String]): RefresherFunction = { (_: Option[String]) =>
+      cdfOptions: Map[String, String],
+      fileIdHash: Option[String] = None): RefresherFunction = { (_: Option[String]) =>
     {
       val tableFiles = client.getCDFFiles(
         table = table,
         cdfOptions = cdfOptions,
-        includeHistoricalMetadata = true
+        includeHistoricalMetadata = true,
+        fileIdHash = fileIdHash
       )
       getTableRefreshResult(tableFiles)
     }
@@ -233,10 +243,16 @@ object DeltaSharingUtils extends Logging {
       client: DeltaSharingClient,
       table: Table,
       startingVersion: Long,
-      endingVersion: Option[Long]): RefresherFunction = { (_: Option[String]) =>
+      endingVersion: Option[Long],
+      fileIdHash: Option[String] = None): RefresherFunction = { (_: Option[String]) =>
     {
       val tableFiles = client
-        .getFiles(table = table, startingVersion = startingVersion, endingVersion = endingVersion)
+        .getFiles(
+          table = table,
+          startingVersion = startingVersion,
+          endingVersion = endingVersion,
+          fileIdHash = fileIdHash
+        )
       getTableRefreshResult(tableFiles)
     }
   }
@@ -288,6 +304,8 @@ object DeltaSharingUtils extends Logging {
       localDeltaLog,
       new SnapshotDescriptor {
         val deltaLog: DeltaLog = localDeltaLog
+        val dataPath: Path = localDeltaLog.dataPath
+        val logPath: Path = localDeltaLog.logPath
         val metadata: Metadata = deltaSharingTableMetadata.metadata.deltaMetadata
         val protocol: Protocol = deltaSharingTableMetadata.protocol.deltaProtocol
         val version = deltaSharingTableMetadata.version

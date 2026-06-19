@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.{DataSkippingReaderConf, StatisticsCollection}
 import org.apache.spark.sql.delta.util.{DeltaSqlParserUtils, JsonUtils}
+import org.apache.spark.sql.delta.util.ParquetFormatVersion
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.util.{DateTimeConstants, IntervalUtils}
@@ -186,43 +187,59 @@ trait DeltaConfigsBase extends DeltaLogging {
     val allowArbitraryProperties = SparkSession.active.sessionState.conf
       .getConf(DeltaSQLConf.ALLOW_ARBITRARY_TABLE_PROPERTIES)
 
-    configurations.map { case kv @ (key, value) =>
-      key.toLowerCase(Locale.ROOT) match {
-        case lKey if lKey.startsWith("delta.constraints.") =>
-          // This is a CHECK constraint, we should allow it.
-          kv
-        case lKey if lKey.startsWith(TableFeatureProtocolUtils.FEATURE_PROP_PREFIX) =>
-          // This is a table feature, we should allow it.
-          lKey -> value
-        case lKey if lKey.startsWith("delta.") =>
-          Option(entries.get(lKey.stripPrefix("delta."))) match {
-            case Some(deltaConfig) if (
-              lKey == DeltaConfigs.TOMBSTONE_RETENTION.key.toLowerCase(Locale.ROOT) ||
-              lKey == DeltaConfigs.LOG_RETENTION.key.toLowerCase(Locale.ROOT)) =>
-              val ret = deltaConfig(value) // validate the value
-              validateTombstoneAndLogRetentionDurationCompatibility(configurations)
-              ret
-            case Some(deltaConfig) =>
-              deltaConfig(value) // validate the value
-            case None if lKey.startsWith(DELTA_UNIVERSAL_FORMAT_CONFIG_PREFIX) =>
-              // always allow any delta universal format config with key converted to lower case
-              lKey -> value
-            case None if allowArbitraryProperties =>
-              logConsole(
-                s"You are setting a property: $key that is not recognized by this " +
-                  "version of Delta")
-              kv
-            case None => throw DeltaErrors.unknownConfigurationKeyException(key)
-          }
-        case _ =>
-          if (entries.containsKey(key)) {
-            logConsole(s"""
-              |You are trying to set a property the key of which is the same as Delta config: $key.
-              |If you are trying to set a Delta config, prefix it with "delta.", e.g. 'delta.$key'.
-            """.stripMargin)
-          }
-          kv
-      }
+    configurations.map { case (key, value) =>
+      validateConfiguration(key, value, allowArbitraryProperties, configurations)
+    }
+  }
+
+  /**
+   * Validates a single key-value entry and returns the normalized key -> value pair.
+   * Throws if the key isn't acceptable as a Delta table property.
+   *
+   * @param allConfigurations the full configuration map; used for cross-key checks
+   *                          (e.g. tombstone / log retention compatibility).
+   */
+  def validateConfiguration(
+      key: String,
+      value: String,
+      allowArbitraryProperties: Boolean,
+      allConfigurations: Map[String, String]): (String, String) = {
+    val kv = key -> value
+    key.toLowerCase(Locale.ROOT) match {
+      case lKey if lKey.startsWith("delta.constraints.") =>
+        // This is a CHECK constraint, we should allow it.
+        kv
+      case lKey if lKey.startsWith(TableFeatureProtocolUtils.FEATURE_PROP_PREFIX) =>
+        // This is a table feature, we should allow it.
+        lKey -> value
+      case lKey if lKey.startsWith("delta.") =>
+        Option(entries.get(lKey.stripPrefix("delta."))) match {
+          case Some(deltaConfig) if (
+            lKey == DeltaConfigs.TOMBSTONE_RETENTION.key.toLowerCase(Locale.ROOT) ||
+            lKey == DeltaConfigs.LOG_RETENTION.key.toLowerCase(Locale.ROOT)) =>
+            val ret = deltaConfig(value) // validate the value
+            validateTombstoneAndLogRetentionDurationCompatibility(allConfigurations)
+            ret
+          case Some(deltaConfig) =>
+            deltaConfig(value) // validate the value
+          case None if lKey.startsWith(DELTA_UNIVERSAL_FORMAT_CONFIG_PREFIX) =>
+            // always allow any delta universal format config with key converted to lower case
+            lKey -> value
+          case None if allowArbitraryProperties =>
+            logConsole(
+              s"You are setting a property: $key that is not recognized by this " +
+                "version of Delta")
+            kv
+          case None => throw DeltaErrors.unknownConfigurationKeyException(key)
+        }
+      case _ =>
+        if (entries.containsKey(key)) {
+          logConsole(s"""
+            |You are trying to set a property the key of which is the same as Delta config: $key.
+            |If you are trying to set a Delta config, prefix it with "delta.", e.g. 'delta.$key'.
+          """.stripMargin)
+        }
+        kv
     }
   }
 
@@ -610,6 +627,23 @@ trait DeltaConfigsBase extends DeltaLogging {
     validationFunction = _ => true,
     helpMessage = "needs to be a boolean.")
 
+  /*
+   * This is the table property that determines which Parquet format version should be used when
+   * writing new Parquet files on the table.
+   */
+  val PARQUET_FORMAT_VERSION: DeltaConfig[Option[String]] =
+    buildConfig[Option[String]](
+      "parquet.format.version",
+      ParquetFormatVersion.V1_0_0.getVersion(),
+      fromString = v => Option(v),
+      validationFunction = v => {
+        v.foreach(s => ParquetFormatVersion.resolve(s))
+        true
+      },
+      s"needs to be a valid Parquet format version " +
+      s"(${ParquetFormatVersion.values().map(_.getVersion).mkString(", ")})"
+    )
+
   val ENABLE_VARIANT_SHREDDING = buildConfig[Boolean](
     key = "enableVariantShredding",
     defaultValue = "false",
@@ -851,6 +885,27 @@ trait DeltaConfigsBase extends DeltaLogging {
     helpMessage = "needs to be a boolean."
   )
 
+  val ICEBERG_COMPAT_V3_ENABLED = buildConfig[Option[Boolean]](
+    key = "enableIcebergCompatV3",
+    defaultValue = null,
+    fromString = v => Option(v).map(_.toBoolean),
+    validationFunction = _ => true,
+    helpMessage = "needs to be a boolean."
+  )
+
+  /**
+   * Guard property automatically set when a new IcebergCompat table is created
+   * Atomic UniForm Iceberg conversion requires this property to be present
+   */
+  val ICEBERG_ATOMIC_CONVERSION_SUPPORTED = buildConfig[Boolean](
+    "universalFormat.iceberg.atomicConversion.supported",
+    "false",
+    _.toBoolean,
+    _ => true,
+    "needs to be a boolean.",
+    userConfigurable = true
+  )
+
   val CAST_ICEBERG_TIME_TYPE = buildConfig[Boolean](
     key = "castIcebergTimeType",
     defaultValue = "false",
@@ -972,6 +1027,18 @@ trait DeltaConfigsBase extends DeltaLogging {
    */
   val ENABLE_MATERIALIZE_PARTITION_COLUMNS_FEATURE = buildConfig[Option[Boolean]](
     "enableMaterializePartitionColumnsFeature",
+    null,
+    v => Option(v).map(_.toBoolean),
+    _ => true,
+    "needs to be a boolean.")
+
+
+  /**
+   * If false, does not write partition columns in parquet data files. Defaults to
+   * writing partition columns in parquet data files if unset.
+   */
+  val WRITE_PARTITION_COLUMNS_TO_PARQUET = buildConfig[Option[Boolean]](
+    "writePartitionColumnsToParquet",
     null,
     v => Option(v).map(_.toBoolean),
     _ => true,

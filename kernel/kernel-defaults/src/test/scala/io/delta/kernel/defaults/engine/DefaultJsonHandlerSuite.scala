@@ -452,6 +452,63 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
     }
   }
 
+  test("parse geometry type as WKT string") {
+    val schema = new StructType()
+      .add("geom", GeometryType.ofDefault())
+    testJsonParserWithSchema(
+      """{"geom": "POINT (1.0 2.0)"}""",
+      schema,
+      TestRow("POINT (1.0 2.0)"))
+  }
+
+  test("parse geography type as WKT string") {
+    val schema = new StructType()
+      .add("geog", GeographyType.ofDefault())
+    testJsonParserWithSchema(
+      """{"geog": "POINT (10.5 20.5)"}""",
+      schema,
+      TestRow("POINT (10.5 20.5)"))
+  }
+
+  test("parse geometry/geography with null values") {
+    val schema = new StructType()
+      .add("geom", GeometryType.ofDefault(), true)
+      .add("geog", GeographyType.ofDefault(), true)
+    testJsonParserWithSchema(
+      """{"geom": null, "geog": null}""",
+      schema,
+      TestRow(null, null))
+  }
+
+  test("parse geometry POINT variants (Z, M, ZM)") {
+    val schema = new StructType()
+      .add("col1", GeometryType.ofDefault())
+    testJsonParserWithSchema(
+      """{"col1": "POINT Z(1.0 2.0 3.0)"}""",
+      schema,
+      TestRow("POINT Z(1.0 2.0 3.0)"))
+    testJsonParserWithSchema(
+      """{"col1": "POINT M(1.0 2.0 4.0)"}""",
+      schema,
+      TestRow("POINT M(1.0 2.0 4.0)"))
+    testJsonParserWithSchema(
+      """{"col1": "POINT ZM(1.0 2.0 3.0 4.0)"}""",
+      schema,
+      TestRow("POINT ZM(1.0 2.0 3.0 4.0)"))
+  }
+
+  test("parse geometry with non-string value throws") {
+    val schema = new StructType()
+      .add("geom", GeometryType.ofDefault())
+    val e = intercept[RuntimeException] {
+      testJsonParserWithSchema(
+        """{"geom": 1234}""",
+        schema,
+        TestRow())
+    }
+    assert(e.getMessage.contains("string"))
+  }
+
   test("parse diverse type values in a map[string, string]") {
     val input =
       """

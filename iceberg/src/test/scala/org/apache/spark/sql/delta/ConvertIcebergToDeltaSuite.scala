@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
-import java.io.File
+import java.io.{ByteArrayOutputStream, File}
 import java.text.SimpleDateFormat
 import java.util.TimeZone
 
@@ -32,8 +32,12 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatsUtils
 import io.delta.sql.DeltaSparkSessionExtension
 import org.apache.hadoop.fs.Path
-import org.apache.iceberg.{Table, TableProperties}
+import org.apache.avro.file.{DataFileReader, DataFileWriter, SeekableByteArrayInput}
+import org.apache.avro.generic.{GenericDatumReader, GenericDatumWriter, GenericRecord}
+import org.apache.iceberg.{PartitionSpec, Schema, Table, TableProperties}
 import org.apache.iceberg.hadoop.HadoopTables
+import org.apache.iceberg.types.Types
+import org.apache.iceberg.types.Types.NestedField
 import org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions
 
 import org.apache.spark.SparkConf
@@ -591,6 +595,83 @@ trait ConvertIcebergToDeltaSuiteBase
     }
   }
 
+  /**
+   * Strips the "schema" metadata key from all manifest Avro files of the table's current snapshot.
+   * This simulates a V2 writer that omits the optional schema field. Without passing specsById
+   * to ManifestFiles.read, reading such manifests causes an NPE in SchemaParser.fromJson.
+   */
+  private def stripSchemaFromManifests(table: Table): Unit = {
+    val manifests = table.currentSnapshot().dataManifests(table.io()).asScala
+    // scalastyle:off deltahadoopconfiguration
+    val conf = spark.sessionState.newHadoopConf()
+    // scalastyle:on deltahadoopconfiguration
+    manifests.foreach { manifest =>
+      val path = new Path(manifest.path())
+      val fs = path.getFileSystem(conf)
+
+      // Read the entire manifest file into a byte array
+      val inputStream = fs.open(path)
+      val bytes = try {
+        org.apache.commons.io.IOUtils.toByteArray(inputStream)
+      } finally {
+        inputStream.close()
+      }
+
+      val datumReader = new GenericDatumReader[GenericRecord]()
+      val reader = new DataFileReader[GenericRecord](
+        new SeekableByteArrayInput(bytes), datumReader)
+
+      // Collect records and metadata
+      val records = new java.util.ArrayList[GenericRecord]()
+      while (reader.hasNext) {
+        records.add(reader.next())
+      }
+      val avroSchema = reader.getSchema
+      val metaKeys = reader.getMetaKeys.asScala.toSeq
+
+      // Write back without the "schema" metadata key
+      val out = new ByteArrayOutputStream()
+      val datumWriter = new GenericDatumWriter[GenericRecord](avroSchema)
+      val writer = new DataFileWriter[GenericRecord](datumWriter)
+      val reservedKeys = Set("schema", "avro.schema", "avro.codec")
+      metaKeys.filterNot(reservedKeys.contains).foreach { key =>
+        writer.setMeta(key, reader.getMeta(key))
+      }
+      writer.create(avroSchema, out)
+      records.asScala.foreach(writer.append)
+      writer.close()
+      reader.close()
+
+      // Overwrite the original file
+      val outputStream = fs.create(path, true)
+      try {
+        outputStream.write(out.toByteArray)
+      } finally {
+        outputStream.close()
+      }
+    }
+  }
+
+  test("convert Iceberg table with manifest missing schema metadata") {
+    withTable(table) {
+      spark.sql(
+        s"""CREATE TABLE $table (id bigint, data string)
+           |USING iceberg PARTITIONED BY (data)
+           |TBLPROPERTIES ("format-version" = "2")""".stripMargin)
+      Seq((1L, "a"), (2L, "b")).toDF("id", "data")
+        .write.format("iceberg").mode("append").saveAsTable(table)
+      // Strip the "schema" metadata from manifest Avro files to simulate a V2 writer
+      // that omits the optional schema field. Without passing specsById to
+      // ManifestFiles.read, this causes an NPE in SchemaParser.fromJson.
+      val iceTable = readIcebergHadoopTable(tablePath)
+      stripSchemaFromManifests(iceTable)
+      convert(s"iceberg.`$tablePath`")
+      checkAnswer(
+        spark.read.format("delta").load(tablePath),
+        Row(1, "a") :: Row(2, "b") :: Nil)
+    }
+  }
+
   test("convert Iceberg table with not null columns") {
     withTable(table) {
       spark.sql(
@@ -929,6 +1010,81 @@ trait ConvertIcebergToDeltaSuiteBase
         convert(s"iceberg.`$tablePath`")
       }
       assert(e.getMessage.contains("Unsupported partition transform expression"))
+    }
+  }
+
+  test("convert Iceberg renamed identity partition with high source field id") {
+    withTempDir { icebergDir =>
+      val icebergUri = "file://" + icebergDir.getCanonicalPath
+      val icebergSchema = new Schema(
+        Seq(
+          NestedField.required(1, "id", Types.LongType.get()),
+          NestedField.required(1000, "org_id", Types.StringType.get()),
+          NestedField.required(1001, "other_id", Types.LongType.get())
+        ).asJava)
+      val partSpec = PartitionSpec
+        .builderFor(icebergSchema)
+        .identity("org_id", "org_id_identity")
+        .build()
+      // scalastyle:off deltahadoopconfiguration
+      val tables = new HadoopTables(spark.sessionState.newHadoopConf())
+      // scalastyle:on deltahadoopconfiguration
+      tables.create(icebergSchema, partSpec, icebergUri)
+
+      spark
+        .createDataFrame(
+          Seq(Row(1L, "acme", 42L)).asJava,
+          StructType(
+            Seq(
+              StructField("id", LongType, nullable = false),
+              StructField("org_id", StringType, nullable = false),
+              StructField("other_id", LongType, nullable = false))))
+        .write
+        .format("iceberg")
+        .mode("append")
+        .save(icebergUri)
+
+      // Iceberg re-assigns IDs
+      val icebergTable = readIcebergHadoopTable(icebergDir.getCanonicalPath)
+      assert(icebergTable.schema().findField("id").fieldId() === 1)
+      assert(icebergTable.schema().findField("org_id").fieldId() === 2)
+      assert(icebergTable.schema().findField("other_id").fieldId() === 3)
+      assert(icebergTable.spec().fields().get(0).fieldId() === 1000)
+      assert(icebergTable.spec().fields().get(0).sourceId() === 2)
+
+      withTempDir { deltaDir =>
+        ConvertToDeltaCommand(
+          TableIdentifier(icebergUri, Some("iceberg")),
+          None,
+          collectStats = true,
+          Some(deltaDir.getCanonicalPath)).run(spark)
+
+        val deltaLog = DeltaLog.forTable(spark, new Path(deltaDir.getCanonicalPath))
+        val snapshot = deltaLog.update()
+        val schema = snapshot.schema
+        val fields = schema.fields
+        assert(fields.length == 4)
+        val idsByName = fields.map(f => f.name -> DeltaColumnMapping.getColumnId(f)).toMap
+        assert(idsByName.keySet == Set("id", "org_id", "other_id", "org_id_identity"))
+        assert(idsByName.values.toSet.size == 4)
+        // Delta column mapping ids observed after convert
+        assert(idsByName("id") === 1L)
+        assert(idsByName("org_id") === 2L)
+        assert(idsByName("other_id") === 3L)
+        assert(idsByName("org_id_identity") === 4L)
+
+        checkAnswer(
+          spark.read.format("delta").load(deltaDir.getCanonicalPath)
+            .select("id", "org_id", "other_id", "org_id_identity"),
+          Row(1L, "acme", 42L, "acme") :: Nil)
+
+        // Spark Iceberg scan may not expose the identity partition column as a top-level field
+        // here; still verify the table on disk and data columns.
+        assert(icebergTable.spec().fields.asScala.exists(_.name == "org_id_identity"))
+        checkAnswer(
+          spark.read.format("iceberg").load(icebergUri).select("id", "org_id", "other_id"),
+          Row(1L, "acme", 42L) :: Nil)
+      }
     }
   }
 }

@@ -121,6 +121,23 @@ public class IcebergRESTServletWithPlanSupport extends RESTCatalogServlet {
 
   private void handlePlanRequest(HttpServletRequest req, HttpServletResponse resp)
       throws IOException {
+    // Track plan request count for testing retry behavior
+    IcebergRESTCatalogAdapterWithPlanSupport.incrementPlanRequestCount();
+
+    // Check if we should inject a failure for testing HTTP retry logic
+    int remainingFailures = IcebergRESTCatalogAdapterWithPlanSupport.getAndDecrementFailCount();
+    if (remainingFailures > 0) {
+      int failStatusCode = IcebergRESTCatalogAdapterWithPlanSupport.getPlanRequestFailStatusCode();
+      LOG.info("Injecting test failure: returning HTTP {} ({} failures remaining)",
+          failStatusCode, remainingFailures - 1);
+      resp.setStatus(failStatusCode);
+      resp.setContentType("application/json");
+      resp.getWriter().write(
+          "{\"error\": {\"message\": \"Injected test failure\", \"type\": \"TestError\", \"code\": "
+          + failStatusCode + "}}");
+      return;
+    }
+
     try {
       // Extract request components
       String path = req.getPathInfo();
@@ -231,6 +248,7 @@ public class IcebergRESTServletWithPlanSupport extends RESTCatalogServlet {
    * Follows Iceberg REST catalog spec structure for credentials:
    * {
    *   "storage-credentials": [{
+   *     "prefix": "s3://...",
    *     "config": {
    *       "s3.access-key-id": "...",
    *       ...
@@ -245,10 +263,10 @@ public class IcebergRESTServletWithPlanSupport extends RESTCatalogServlet {
     // Parse original JSON
     Map<String, Object> responseMap = mapper.readValue(originalJson, Map.class);
     
-    // Build storage-credentials structure
-    Map<String, Object> credConfig = new HashMap<>(credentials);
+    // Build storage-credentials structure (Iceberg 1.11.0 requires "prefix" field)
     Map<String, Object> credWrapper = new HashMap<>();
-    credWrapper.put("config", credConfig);
+    credWrapper.put("prefix", "*");
+    credWrapper.put("config", new HashMap<>(credentials));
     
     // Add as array (spec requires array even with single element)
     responseMap.put("storage-credentials", Collections.singletonList(credWrapper));

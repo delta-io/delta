@@ -52,8 +52,9 @@ object DeltaSharingCDFUtils extends Logging {
     // and also any metadata changes between [startingVersion, endingVersion], to put them in the
     // delta log. This is to allow delta library to check the metadata change and handle it
     // properly -- currently it throws error for column mapping changes.
-    val deltaTableFiles =
-      client.getCDFFiles(table, options.cdfOptions, includeHistoricalMetadata = true)
+    val deltaTableFiles = client.getCDFFiles(
+      table, options.cdfOptions, includeHistoricalMetadata = true, fileIdHash = None
+    )
     logInfo(
       s"Fetched ${deltaTableFiles.lines.size} lines with cdf options ${options.cdfOptions} " +
       s"for table ${table} from delta sharing server, took ${getDuration(startTime)}s."

@@ -26,10 +26,11 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaDataSource
 
+import org.apache.spark.SparkException
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.FunctionIdentifier
 import org.apache.spark.sql.catalyst.analysis.{FunctionRegistryBase, NamedRelation, TableFunctionRegistry, UnresolvedLeafNode, UnresolvedRelation}
-import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, ExpressionInfo, Literal, StringLiteral, Unevaluable}
+import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, ExpressionInfo, Literal, StringLiteral}
 import org.apache.spark.sql.catalyst.plans.logical.{LeafNode, LogicalPlan, UnaryNode}
 import org.apache.spark.sql.connector.catalog.V1Table
 import org.apache.spark.sql.execution.datasources.LogicalRelation
@@ -114,12 +115,11 @@ trait CDCStatementBase extends DeltaTableValueFunction {
         val fakePlan = util.AnalysisHelper.FakeLogicalPlan(Seq(value), Nil)
         val timestampExpression =
           org.apache.spark.sql.catalyst.optimizer.ComputeCurrentTime(fakePlan).expressions.head
-        if (timestampExpression.isInstanceOf[Unevaluable]) {
-          throw DeltaErrors.cdcNonConstantArgument(fnName, keyPrefix, position, value)
-        }
         timestampExpression.eval().toString
       } catch {
         case _: NullPointerException => throw DeltaErrors.nullRangeBoundaryInCDCRead()
+        case e: SparkException if e.getErrorClass == "INTERNAL_ERROR" =>
+          throw DeltaErrors.cdcNonConstantArgument(fnName, keyPrefix, position, value)
       }
       value.dataType match {
         // We dont need to explicitly handle ShortType as it is parsed as IntegerType.

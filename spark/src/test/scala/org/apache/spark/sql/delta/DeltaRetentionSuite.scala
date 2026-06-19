@@ -130,10 +130,9 @@ class DeltaRetentionSuite extends QueryTest
         deltaFile.setLastModified(clock.getTimeMillis() + i * 10000)
         val crcFile = new File(FileNames.checksumFile(log.logPath, version).toUri)
         crcFile.setLastModified(clock.getTimeMillis() + i * 10000)
-        val chk = new File(FileNames.checkpointFileSingular(log.logPath, version).toUri)
-        if (chk.exists()) {
-          chk.setLastModified(clock.getTimeMillis() + i * 10000)
-        }
+        getCheckpointFiles(logPath)
+          .filter(f => FileNames.checkpointVersion(new Path(f.getCanonicalPath)) == version)
+          .foreach(_.setLastModified(clock.getTimeMillis() + i * 10000))
       }
 
       // delete some files in the middle

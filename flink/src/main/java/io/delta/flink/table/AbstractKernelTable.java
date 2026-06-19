@@ -16,6 +16,8 @@
 
 package io.delta.flink.table;
 
+import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
+
 import dev.failsafe.Failsafe;
 import dev.failsafe.Fallback;
 import dev.failsafe.RetryPolicy;
@@ -24,6 +26,7 @@ import dev.failsafe.function.CheckedSupplier;
 import io.delta.flink.Conf;
 import io.delta.flink.table.postcommit.ChecksumListener;
 import io.delta.flink.table.postcommit.MaintenanceListener;
+import io.delta.flink.table.postcommit.ReportCommitMetricsListener;
 import io.delta.kernel.*;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
@@ -33,8 +36,10 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.TableAlreadyExistsException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.data.TransactionStateRow;
+import io.delta.kernel.metrics.TransactionReport;
 import io.delta.kernel.transaction.CreateTableTransactionBuilder;
 import io.delta.kernel.transaction.DataLayoutSpec;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
@@ -108,8 +113,9 @@ public abstract class AbstractKernelTable implements DeltaTable {
         target =
             new URI(
                 target.getScheme(),
-                Optional.ofNullable(target.getHost()).orElse(""),
+                Optional.ofNullable(target.getAuthority()).orElse(""),
                 target.getPath() + "/",
+                target.getQuery(),
                 target.getFragment());
       }
     } catch (URISyntaxException e) {
@@ -181,6 +187,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
 
     addEventListener(new MaintenanceListener());
     addEventListener(new ChecksumListener());
+    addEventListener(new ReportCommitMetricsListener());
   }
 
   public AbstractKernelTable(DeltaCatalog catalog, String tableId, Map<String, String> conf) {
@@ -275,12 +282,13 @@ public abstract class AbstractKernelTable implements DeltaTable {
 
                   TransactionCommitResult result =
                       withTiming("commit.txn", () -> txn.commit(localEngine, actions));
+                  TransactionReport report = result.getTransactionReport();
                   return result
                       .getPostCommitSnapshot()
                       .map(
                           pcSnapshot -> {
                             this.refresh(pcSnapshot);
-                            onPostCommit(pcSnapshot);
+                            onPostCommit(pcSnapshot, report);
                             return pcSnapshot;
                           });
                 }));
@@ -312,6 +320,19 @@ public abstract class AbstractKernelTable implements DeltaTable {
           return Transaction.generateAppendActions(
               localEngine, writeState, dataFiles, writeContext);
         });
+  }
+
+  @Override
+  public CloseableIterator<Row> scan(Predicate predicate) {
+    return snapshot()
+        .map(
+            s ->
+                s.getScanBuilder()
+                    .withFilter(predicate)
+                    .build()
+                    .getScanFiles(getEngine())
+                    .flatMap(FilteredColumnarBatch::getRows))
+        .orElse(toCloseableIterator(Collections.emptyIterator()));
   }
 
   /**
@@ -413,7 +434,8 @@ public abstract class AbstractKernelTable implements DeltaTable {
     try {
       TransactionCommitResult result =
           txnBuilder.build(engine).commit(engine, CloseableIterable.emptyIterable());
-      result.getPostCommitSnapshot().ifPresent(this::onPostCommit);
+      TransactionReport report = result.getTransactionReport();
+      result.getPostCommitSnapshot().ifPresent(snapshot -> this.onPostCommit(snapshot, report));
     } catch (TableAlreadyExistsException ignore) {
       // Concurrent open may cause this. Ignore it safely.
     }
@@ -498,7 +520,9 @@ public abstract class AbstractKernelTable implements DeltaTable {
     conf.set("fs.AbstractFileSystem.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS");
 
     this.conf.engineConf().forEach(conf::set);
-    this.credentialManager.getCredentials().forEach(conf::set);
+    Map<String, String> creds = this.credentialManager.getCredentials();
+    creds.forEach(conf::set);
+    applyAzureSasTokenIfPresent(conf, creds);
 
     // Explicitly load external conf files
     // TODO this is because Flink does not auto load this file in Docker
@@ -540,9 +564,40 @@ public abstract class AbstractKernelTable implements DeltaTable {
     return Map.of();
   }
 
+  /**
+   * Remaps the generic Azure SAS token key to an account-scoped key derived from the table path.
+   * Azure ABFS requires the SAS token to be configured per storage account, e.g., {@code
+   * fs.azure.sas.fixed.token.<account>.dfs.core.windows.net}.
+   */
+  private void applyAzureSasTokenIfPresent(Configuration conf, Map<String, String> creds) {
+    String sasToken = creds.get(UnityCatalog.AZURE_SAS_TOKEN_KEY);
+    if (sasToken == null || tablePath == null) {
+      return;
+    }
+    String host = tablePath.getHost();
+    if (host != null && host.endsWith(".dfs.core.windows.net")) {
+      conf.set("fs.azure.account.auth.type." + host, "SAS");
+      conf.set("fs.azure.sas.fixed.token." + host, sasToken);
+    }
+  }
+
   private CredentialManager createCredentialManager() {
-    return new CredentialManager(
-        () -> catalog.getCredentials(this.getTableUUID()), this::refreshCredential);
+    String source = this.conf.getCredentialSource();
+    if (source.equalsIgnoreCase("ambient")) {
+      // Do not fetch credentials from Unity Catalog; rely on the ambient environment
+      // (workload identity, instance profile, ADC, or core-site.xml) to supply them.
+      return new CredentialManager.AmbientCredentialManager();
+    } else if (source.equalsIgnoreCase("uc")) {
+      return new CredentialManager(
+          () -> catalog.getCredentials(this.getTableUUID()), this::refreshCredential);
+    } else {
+      throw new IllegalArgumentException(
+          "Unsupported "
+              + TableConf.CREDENTIALS_SOURCE.key()
+              + " '"
+              + source
+              + "'. Supported values: 'uc' (default), 'ambient'.");
+    }
   }
 
   /**
@@ -634,11 +689,11 @@ public abstract class AbstractKernelTable implements DeltaTable {
     this.eventListeners.remove(listener);
   }
 
-  public void onPostCommit(Snapshot snapshot) {
+  public void onPostCommit(Snapshot snapshot, TransactionReport report) {
     eventListeners.forEach(
         listener -> {
           try {
-            listener.onPostCommit(this, snapshot);
+            listener.onPostCommit(this, snapshot, report);
           } catch (Exception e) {
             LOG.error("Suppressed exception from listener", e);
           }

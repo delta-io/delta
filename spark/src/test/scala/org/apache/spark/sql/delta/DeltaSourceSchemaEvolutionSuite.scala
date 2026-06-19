@@ -190,26 +190,42 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     }
   }
 
+  /** Like `addData`, but also fills nested struct fields recursively. */
+  protected def addNestedData(data: Seq[Int])(implicit log: DeltaLog): Unit = {
+    val schema = log.update().schema
+    def buildRow(s: StructType, value: String): Row = Row.fromSeq(s.fields.map { f =>
+      f.dataType match {
+        case sub: StructType => buildRow(sub, value)
+        case _ => value
+      }
+    })
+    data.foreach { i =>
+      val row = buildRow(schema, i.toString)
+      spark.createDataFrame(Seq(row).asJava, schema)
+        .write.format("delta").mode("append").save(log.dataPath.toString)
+    }
+  }
+
   protected def readStream(
       schemaLocation: Option[String] = None,
       sourceTrackingId: Option[String] = None,
       startingVersion: Option[Long] = None,
       maxFilesPerTrigger: Option[Int] = None,
       ignoreDeletes: Option[Boolean] = None)(implicit log: DeltaLog): DataFrame = {
-    var dsr = spark.readStream.format("delta")
+    var options = Map.empty[String, String]
     if (isCdcTest) {
-      dsr = dsr.option(DeltaOptions.CDC_READ_OPTION, "true")
+      options += DeltaOptions.CDC_READ_OPTION -> "true"
     }
-    schemaLocation.foreach { loc => dsr = dsr.option(DeltaOptions.SCHEMA_TRACKING_LOCATION, loc) }
+    schemaLocation.foreach { loc =>
+      options += DeltaOptions.SCHEMA_TRACKING_LOCATION -> loc
+    }
     sourceTrackingId.foreach { name =>
-      dsr = dsr.option(DeltaOptions.STREAMING_SOURCE_TRACKING_ID, name)
+      options += DeltaOptions.STREAMING_SOURCE_TRACKING_ID -> name
     }
-    startingVersion.foreach { v => dsr = dsr.option("startingVersion", v) }
-    maxFilesPerTrigger.foreach { f => dsr = dsr.option("maxFilesPerTrigger", f) }
-    ignoreDeletes.foreach{ i => dsr.option("ignoreDeletes", i) }
-    val df = {
-        dsr.load(log.dataPath.toString)
-    }
+    startingVersion.foreach { v => options += "startingVersion" -> v.toString }
+    maxFilesPerTrigger.foreach { f => options += "maxFilesPerTrigger" -> f.toString }
+    ignoreDeletes.foreach { i => options += "ignoreDeletes" -> i.toString }
+    val df = loadStreamWithOptions(log.dataPath.toString, options)
     if (isCdcTest) {
       dropCDCFields(df)
     } else {
@@ -222,8 +238,8 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       initializeEagerly: Boolean = true
   )(implicit log: DeltaLog): DeltaSourceMetadataTrackingLog =
     DeltaSourceMetadataTrackingLog.create(
-      spark, getDefaultSchemaLocation.toString, log.update(),
-      catalogTableOpt = None,
+      spark, getDefaultSchemaLocation.toString,
+      log.unsafeVolatileTableId, log.dataPath.toString,
       parameters = sourceTrackingId.map(DeltaOptions.STREAMING_SOURCE_TRACKING_ID -> _).toMap,
       initMetadataLogEagerly = initializeEagerly)
 
@@ -233,16 +249,22 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
   protected def getDefaultSchemaLocation(implicit log: DeltaLog): Path =
     new Path(getDefaultCheckpoint, "_schema_location")
 
+  /**
+   * Executes a DDL/DML SQL statement. Overridable so that V2 suites can route it through the V1
+   * connector, since DeltaV2Table (V2) is read-only and does not support writes/DDL.
+   */
+  protected def executeDml(sqlText: String): Unit = sql(sqlText)
+
   protected def addColumn(column: String, dt: String = "STRING")(implicit log: DeltaLog): Unit = {
-    sql(s"ALTER TABLE delta.`${log.dataPath}` ADD COLUMN ($column $dt)")
+    executeDml(s"ALTER TABLE delta.`${log.dataPath}` ADD COLUMN ($column $dt)")
   }
 
   protected def renameColumn(oldColumn: String, newColumn: String)(implicit log: DeltaLog): Unit = {
-    sql(s"ALTER TABLE delta.`${log.dataPath}` RENAME COLUMN $oldColumn TO $newColumn")
+    executeDml(s"ALTER TABLE delta.`${log.dataPath}` RENAME COLUMN $oldColumn TO $newColumn")
   }
 
   protected def dropColumn(column: String)(implicit log: DeltaLog): Unit = {
-    sql(s"ALTER TABLE delta.`${log.dataPath}` DROP COLUMN $column")
+    executeDml(s"ALTER TABLE delta.`${log.dataPath}` DROP COLUMN $column")
   }
 
   protected def overwriteSchema(
@@ -257,7 +279,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
   }
 
   protected def upgradeToNameMode(implicit log: DeltaLog): Unit = {
-    sql(
+    executeDml(
       s"""ALTER TABLE delta.`${log.dataPath}` SET TBLPROPERTIES (
          |'delta.columnMapping.mode' = "name",
          |'delta.minReaderVersion' = '2',
@@ -537,9 +559,9 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       val schemaLocation = getDefaultSchemaLocation.toString
       val snapshot = log.update()
       val schemaLog1 = DeltaSourceMetadataTrackingLog.create(
-        spark, schemaLocation, snapshot, catalogTableOpt = None, parameters = Map.empty)
+        spark, schemaLocation, log.unsafeVolatileTableId, log.dataPath.toString, Map.empty)
       val schemaLog2 = DeltaSourceMetadataTrackingLog.create(
-        spark, schemaLocation, snapshot, catalogTableOpt = None, Map.empty)
+        spark, schemaLocation, log.unsafeVolatileTableId, log.dataPath.toString, Map.empty)
       val newSchema =
         PersistedMetadata("1", 1,
           makeMetadata(new StructType(), partitionSchema = new StructType()),
@@ -838,12 +860,16 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
 
   test("identity columns shouldn't cause schema mismatches") {
     withTable("source") {
-      sql(
-        s"""
-          |CREATE TABLE source (key INT, id LONG GENERATED ALWAYS AS IDENTITY)
-          |USING DELTA
-        """.stripMargin
-      )
+      io.delta.tables.DeltaTable.create()
+        .tableName("source")
+        .addColumn(
+          io.delta.tables.DeltaTable.columnBuilder("key").dataType("INT").build())
+        .addColumn(
+          io.delta.tables.DeltaTable.columnBuilder("id")
+            .dataType("LONG")
+            .generatedAlwaysAsIdentity()
+            .build())
+        .execute()
 
       val deltaLog = DeltaLog.forTable(spark, TableIdentifier("source"))
       deltaLog.update()
@@ -851,8 +877,8 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       val checkpointLocation = getDefaultCheckpoint(deltaLog).toString
 
       def addData(values: Seq[Int]): Unit =
-        spark.createDataFrame(values.map(Row(_)).asJava, StructType.fromDDL("key INT"))
-          .write.format("delta").mode("append").saveAsTable("source")
+        executeDml(
+          s"INSERT INTO source (key) VALUES ${values.map(v => s"($v)").mkString(", ")}")
 
       def readStream(): DataFrame =
         spark.readStream
@@ -1625,9 +1651,9 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
 
     // Both schema log initialized
     def schemaLog1: DeltaSourceMetadataTrackingLog = DeltaSourceMetadataTrackingLog.create(
-      spark, schemaLog1Location, log.update(), catalogTableOpt = None, parameters = Map.empty)
+      spark, schemaLog1Location, log.unsafeVolatileTableId, log.dataPath.toString, Map.empty)
     def schemaLog2: DeltaSourceMetadataTrackingLog = DeltaSourceMetadataTrackingLog.create(
-      spark, schemaLog2Location, log.update(), catalogTableOpt = None, parameters = Map.empty)
+      spark, schemaLog2Location, log.unsafeVolatileTableId, log.dataPath.toString, Map.empty)
 
     // The schema log initializes @ v5 with schema <a, b>
     testStream(df)(
@@ -1918,6 +1944,43 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     }
   }
 
+  /**
+   * Same as `withSimpleStreamingDf` but with a nested struct column, so tests can exercise
+   * drop / rename of fields inside a struct: schema is `a STRING, s STRUCT<x STRING, y STRING>`.
+   */
+  protected def withNestedStructStreamingDf(f: (() => DataFrame, DeltaLog) => Unit): Unit = {
+    withTempDir { dir =>
+      val tablePath = dir.getCanonicalPath
+      val schema = StructType.fromDDL("a STRING, s STRUCT<x: STRING, y: STRING>")
+      val initialRow = Seq(Row("0", Row("0", "0")))
+      spark.createDataFrame(initialRow.asJava, schema)
+        .write.mode("append").format("delta").save(tablePath)
+      implicit val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+      val s0 = log.update()
+      val schemaLog = getDefaultSchemaLog()
+      schemaLog.writeNewMetadata(
+        PersistedMetadata(log.unsafeVolatileTableId, s0.version, s0.metadata, s0.protocol,
+          sourceMetadataPath = "")
+      )
+
+      def read(): DataFrame =
+        readStream(
+          Some(getDefaultSchemaLocation.toString),
+          startingVersion = Some(s0.version))
+
+      withSQLConf(
+        DeltaSQLConf.DELTA_STREAMING_SCHEMA_TRACKING_METADATA_PATH_CHECK_ENABLED.key -> "false") {
+        testStream(read())(
+          StartStream(checkpointLocation = getDefaultCheckpoint.toString),
+          ProcessAllAvailable(),
+          CheckAnswer(Row("0", Row("0", "0"))),
+          StopStream
+        )
+        f(read, log)
+      }
+    }
+  }
+
   testWithoutAllowStreamRestart("unblock with sql conf") {
     def testStreamFlow(
         changeSchema: DeltaLog => Unit,
@@ -2020,6 +2083,105 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
           columnChangeDetails =
             s"""Columns renamed:
                |'b' -> 'c'
+               |""".stripMargin,
+          getConfKV
+        )
+      }
+    }
+  }
+
+  testWithoutAllowStreamRestart("unblock with sql conf - nested struct") {
+    def testStreamFlow(
+        changeSchema: DeltaLog => Unit,
+        schemaChangeType: String,
+        columnChangeDetails: String,
+        getConfKV: (Int, Long) => (String, String)): Unit = {
+      withNestedStructStreamingDf { (readDf, log) =>
+        val ckptHash = (getDefaultCheckpoint(log).toString + "/sources/0").hashCode
+        changeSchema(log)
+        val v1 = log.update().version
+        addNestedData(Seq(1))(log)
+        // Encounter schema evolution exception
+        testStream(readDf())(
+          StartStream(checkpointLocation = getDefaultCheckpoint(log).toString),
+          ProcessAllAvailableIgnoreError,
+          CheckAnswer(Nil: _*),
+          ExpectMetadataEvolutionException
+        )
+        // Restart fails on SQL conf validation
+        testStream(readDf())(
+          StartStream(checkpointLocation = getDefaultCheckpoint(log).toString),
+          ProcessAllAvailableIgnoreError,
+          CheckAnswer(Nil: _*),
+          expectSqlConfException(schemaChangeType, v1, columnChangeDetails, ckptHash)
+        )
+        // With SQL Conf set we can move on
+        val (k, v) = getConfKV(ckptHash, v1)
+        withSQLConf(k -> v) {
+          testStream(readDf())(
+            StartStream(checkpointLocation = getDefaultCheckpoint(log).toString),
+            ProcessAllAvailable()
+          )
+        }
+      }
+    }
+
+    // Test drop column inside a nested struct (s.x)
+    Seq("allowSourceColumnRenameAndDrop", "allowSourceColumnDrop").foreach { allow =>
+      Seq(
+        (
+          (log: DeltaLog) => {
+            dropColumn("s.x")(log)
+            // Revert via add to ensure consecutive schema changes don't affect sql conf validation
+            addColumn("s.x")(log)
+          },
+          (ckptHash: Int, _: Long) =>
+            (s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming.$allow.ckpt_$ckptHash", "always")
+        ),
+        (
+          (log: DeltaLog) => {
+            dropColumn("s.x")(log)
+            addColumn("s.x")(log)
+          },
+          (ckptHash: Int, ver: Long) =>
+            (s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming.$allow.ckpt_$ckptHash", ver.toString)
+        )
+      ).foreach { case (changeSchema, getConfKV) =>
+        testStreamFlow(
+          changeSchema,
+          schemaChangeType = "DROP COLUMN",
+          columnChangeDetails =
+            s"""Columns dropped:
+               |'s.x'
+               |""".stripMargin,
+          getConfKV)
+      }
+    }
+
+    // Test rename column inside a nested struct (s.x -> s.z)
+    Seq("allowSourceColumnRenameAndDrop", "allowSourceColumnRename").foreach { allow =>
+      Seq(
+        (
+          (log: DeltaLog) => {
+            renameColumn("s.x", "z")(log)
+          },
+          (ckptHash: Int, _: Long) =>
+            (s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming.$allow.ckpt_$ckptHash", "always")
+        ),
+        (
+          (log: DeltaLog) => {
+            renameColumn("s.x", "z")(log)
+          },
+          (ckptHash: Int, ver: Long) =>
+            (s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming.$allow.ckpt_$ckptHash", ver.toString)
+        )
+      ).foreach { case (changeSchema, getConfKV) =>
+        testStreamFlow(
+          changeSchema,
+          schemaChangeType = "RENAME COLUMN",
+          columnChangeDetails =
+            s"""Columns renamed:
+               |'s.x' -> 's.z'
                |""".stripMargin,
           getConfKV
         )
@@ -2292,11 +2454,11 @@ trait CDCStreamingSchemaEvolutionSuiteBase extends StreamingSchemaEvolutionSuite
             .toDF("id").withColumn("age", lit("string"))
             .createOrReplaceTempView("data")
 
-          spark.sql(s"CREATE TABLE merge_source USING delta AS SELECT * FROM data")
+          executeDml(s"CREATE TABLE merge_source USING delta AS SELECT * FROM data")
 
           // Use merge to trigger schema evolution as well (add column age)
           withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
-            spark.sql(
+            executeDml(
               s"""
                  |MERGE INTO delta.`${log.dataPath}` t
                  |USING merge_source s
@@ -2351,7 +2513,7 @@ trait CDCStreamingSchemaEvolutionSuiteBase extends StreamingSchemaEvolutionSuite
   testSchemaEvolution(
     "protocol and configuration evolution", columnMapping = false) { implicit log =>
     // Updates table properties / protocol
-    spark.sql(
+    executeDml(
       s"""
          |ALTER TABLE delta.`${log.dataPath}`
          |SET TBLPROPERTIES (
@@ -2363,7 +2525,7 @@ trait CDCStreamingSchemaEvolutionSuiteBase extends StreamingSchemaEvolutionSuite
 
     addData(5 until 10)
     // Update just delta table property
-    spark.sql(
+    executeDml(
       s"""
          |ALTER TABLE delta.`${log.dataPath}`
          |SET TBLPROPERTIES (
@@ -2375,7 +2537,7 @@ trait CDCStreamingSchemaEvolutionSuiteBase extends StreamingSchemaEvolutionSuite
 
     addData(10 until 13)
     // Update non-delta property won't need stream stop
-    spark.sql(
+    executeDml(
       s"""
          |ALTER TABLE delta.`${log.dataPath}`
          |SET TBLPROPERTIES (

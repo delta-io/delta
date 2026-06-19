@@ -73,6 +73,72 @@ public class UCDeltaUtilityTest extends UCDeltaTableIntegrationBaseTest {
     Assertions.assertThat(prunedResults).isEqualTo(expected);
   }
 
+  @TestAllTableTypes
+  public void testFsPropertiesHiddenFromTableProperties(TableType tableType) throws Exception {
+    withNewTable(
+        "fs_props_hidden",
+        "id INT, name STRING",
+        null, // no partition
+        tableType,
+        "'myCustomProp'='myCustomValue'",
+        tableName -> {
+          // SHOW TBLPROPERTIES returns one row per property (key, value).
+          List<List<String>> propRows = sql("SHOW TBLPROPERTIES %s", tableName);
+          List<String> propKeys = new ArrayList<>();
+          for (List<String> row : propRows) {
+            propKeys.add(row.get(0));
+          }
+
+          // Verify no key starts with option.fs. — these are internal catalog-vended
+          // credentials/metadata that should not be user-visible.
+          for (String key : propKeys) {
+            Assertions.assertThat(key)
+                .as("SHOW TBLPROPERTIES should not expose option.fs.* keys")
+                .doesNotStartWith("option.fs.");
+          }
+
+          // Verify that non-fs storage properties and user-set table properties ARE
+          // still present — confirming the filter is selective, not a blanket removal.
+          Assertions.assertThat(propKeys)
+              .as("User-set table properties should still be visible")
+              .contains("myCustomProp");
+          Assertions.assertThat(propKeys)
+              .as("Delta table properties should still be visible")
+              .contains("delta.minReaderVersion");
+
+          // DESCRIBE EXTENDED returns a "Table Properties" row with all properties
+          // in a single string like "[key1=val1,key2=val2,...]".
+          boolean foundTableProperties = false;
+          List<List<String>> descRows = sql("DESCRIBE EXTENDED %s", tableName);
+          for (List<String> row : descRows) {
+            if (row.size() >= 2 && "Table Properties".equals(row.get(0))) {
+              foundTableProperties = true;
+              Assertions.assertThat(row.get(1))
+                  .as("DESCRIBE EXTENDED should not expose option.fs.* storage properties")
+                  .doesNotContain("option.fs.");
+              Assertions.assertThat(row.get(1))
+                  .as("DESCRIBE EXTENDED should not expose fs.* storage properties either")
+                  .doesNotContain("fs.");
+              Assertions.assertThat(row.get(1))
+                  .as("DESCRIBE EXTENDED should still show user-set properties")
+                  .contains("myCustomProp=myCustomValue");
+            }
+          }
+          Assertions.assertThat(foundTableProperties)
+              .as("DESCRIBE EXTENDED must include a 'Table Properties' row")
+              .isTrue();
+
+          // Verify the data path still works — credentials still flow to the filesystem
+          // via CatalogTable.storage.properties even though they are hidden from properties().
+          sql("INSERT INTO %s VALUES (1, 'hello'), (2, 'world')", tableName);
+          check(tableName, List.of(List.of("1", "hello"), List.of("2", "world")));
+          sql("INSERT INTO %s VALUES (3, 'foo')", tableName);
+          check(
+              tableName,
+              List.of(List.of("1", "hello"), List.of("2", "world"), List.of("3", "foo")));
+        });
+  }
+
   @Test
   public void testMaintenanceOpsBlockedOnManagedTable() throws Exception {
     withNewTable(

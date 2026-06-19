@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProto
 import org.apache.spark.sql.delta.commands.CloneTableCommand
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.spark.sql.delta.util.FileNames.{BackfilledDeltaFile, CompactedDeltaFile, DeltaFile, UnbackfilledDeltaFile}
 import io.delta.storage.LogStore
@@ -100,7 +101,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
         snapshot.metadata.configuration
       TableCommitCoordinatorClient(
         commitCoordinatorClient = cc,
-        logPath = snapshot.deltaLog.logPath,
+        logPath = snapshot.logPath,
         tableConf = tableConf,
         hadoopConf = snapshot.deltaLog.newDeltaHadoopConf(),
         logStore = snapshot.deltaLog.store
@@ -119,11 +120,11 @@ object CatalogOwnedTableUtils extends DeltaLogging {
           .map { cc =>
             return Some(TableCommitCoordinatorClient(
               cc,
-              logPath = snapshot.deltaLog.logPath,
+              logPath = snapshot.logPath,
               tableConf = snapshot.metadata.configuration,
               hadoopConf = snapshot.deltaLog.newDeltaHadoopConf(),
-              logStore = snapshot.deltaLog.store)
-            )
+              logStore = snapshot.deltaLog.store
+            ))
           }
       }
       // This table is catalog owned table but catalogTableOpt is not defined. This means
@@ -166,7 +167,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
       case spark.sessionState.analyzer.CatalogAndIdentifier(catalog, _) =>
         if (catalog.getClass.getName == UCCommitCoordinatorBuilder.UNITY_CATALOG_CONNECTOR_CLASS) {
           // UC is the current commit coordinator.
-          Some("unity-catalog")
+          Some(UCCommitCoordinatorBuilder.COORDINATOR_NAME)
         } else {
           // Other catalog (e.g., `spark_catalog`) is the commit coordinator.
           Some(catalog.name)
@@ -309,6 +310,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
    * @param tableExists Whether the table already exists.
    * @param query The query to be executed (e.g., CloneTableCommand).
    * @param catalogTableProperties The table properties from the catalog table.
+   * @param catalogTable The catalog table, used to derive the table name in error messages.
    * @param existingTableSnapshotOpt The snapshot of the existing table, if it exists.
    */
   def validatePropertiesForCreateDeltaTableCommand(
@@ -316,6 +318,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
       tableExists: Boolean,
       query: Option[LogicalPlan],
       catalogTableProperties: Map[String, String],
+      catalogTable: CatalogTable,
       existingTableSnapshotOpt: Option[Snapshot] = None): Unit = {
     val (command, propertyOverrides) = query match {
       // For CLONE, we cannot use the properties from the catalog table, because they are already
@@ -351,10 +354,8 @@ object CatalogOwnedTableUtils extends DeltaLogging {
       // the CatalogManaged status during REPLACE (the table type won't change), there's no need
       // to block that case.
       if (isSpecifyingCatalogManaged && !existingTableIsCatalogManaged) {
-        throw new IllegalStateException(
-          "Specifying CatalogManaged in REPLACE TABLE command is not supported " +
-          "for tables that are not already CatalogManaged. " +
-          "Please either upgrade the existing table or create a fresh CatalogManaged table.")
+        throw DeltaErrors.replaceTableWithCatalogManagedNotSupported(
+          catalogTable.identifier.nameParts)
       }
     }
   }
@@ -458,7 +459,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
     val allData = baseData ++ catalogData ++ coordinatorData ++ stackTraceData ++ diagnosticData
 
     recordDeltaEvent(
-      deltaLog = deltaLog,
+      provider = deltaLog,
       opType = opType,
       data = allData
     )
@@ -565,14 +566,48 @@ object CoordinatedCommitsUtils extends DeltaLogging {
         case UnbackfilledDeltaFile(fileStatus, version, _) if version > maxVersionSeen =>
           (fileStatus, version)
       }
-      // Check for a gap between listing and commit files in the logsegment
-      val gapListing = unbackfilledDeltas.headOption match {
-        case Some((_, version)) if maxVersionSeen + 1 < version =>
-          listDeltas(maxVersionSeen + 1, Some(version))
-        // no gap before
-        case _ => Iterator.empty
+      val backfillGapFixEnabled = SparkSession.active.sessionState.conf.getConf(
+        DeltaSQLConf.COMMIT_FILES_ITERATOR_BACKFILL_GAP_FIX_ENABLED)
+      if (backfillGapFixEnabled) {
+        // This fixes two bugs in the gap listing between Phase 1 (filesystem) and
+        // Phase 2 (coordinator/snapshot):
+        //
+        // Bug 1 - data loss: between Phase 1 and Phase 2,
+        // a concurrent writer backfills ALL remaining commits. unbackfilledDeltas is empty,
+        // headOption returns None, and the old code falls through to Iterator.empty,
+        // silently dropping versions [maxVersionSeen+1, endSnapshot.version].
+        // Fix: fall back to filesystem listing up to endSnapshot.version.
+        //
+        // Bug 2 - duplicate entries (Some case): listDeltas uses an inclusive upper bound
+        // (takeWhile { version <= endVersion }). If the first unbackfilled version is also
+        // backfilled on filesystem (either it happened after we contacted UC, or UC did not
+        // know), the gap listing includes it, producing a duplicate with unbackfilledDeltas.
+        // Example: prev snapshot v100, latest v110. update() returns v105-v110 as
+        // unbackfilled, but v105 is backfilled on filesystem. Old code calls
+        // listDeltas(101, Some(105)), which includes 105.json. gapListing=[v101..v105],
+        // unbackfilledDeltas=[v105..v110]. v105 appears twice.
+        // Fix: use version - 1 as exclusive upper bound. listDeltas(101, Some(104)) stops
+        // before v105, eliminating the overlap.
+        val highestGapVersion = unbackfilledDeltas.headOption match {
+          case Some((_, version)) => version - 1
+          case None => endSnapshot.version
+        }
+        val gapListing = if (maxVersionSeen < highestGapVersion) {
+          listDeltas(maxVersionSeen + 1, Some(highestGapVersion))
+        } else {
+          Iterator.empty
+        }
+        gapListing ++ unbackfilledDeltas
+      } else {
+        // Check for a gap between listing and commit files in the logsegment
+        val gapListing = unbackfilledDeltas.headOption match {
+          case Some((_, version)) if maxVersionSeen + 1 < version =>
+            listDeltas(maxVersionSeen + 1, Some(version))
+          // no gap before
+          case _ => Iterator.empty
+        }
+        gapListing ++ unbackfilledDeltas
       }
-      gapListing ++ unbackfilledDeltas
     }
 
     // We want to avoid invoking `tailFromSnapshot()` as it internally calls deltaLog.update()
@@ -636,7 +671,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
       commitCoordinator =>
         TableCommitCoordinatorClient(
           commitCoordinator,
-          snapshotDescriptor.deltaLog.logPath,
+          snapshotDescriptor.logPath,
           snapshotDescriptor.metadata.coordinatedCommitsTableConf,
           snapshotDescriptor.deltaLog.newDeltaHadoopConf(),
           snapshotDescriptor.deltaLog.store
@@ -769,6 +804,18 @@ object CoordinatedCommitsUtils extends DeltaLogging {
    */
   def getExplicitICTConfigurations(properties: Map[String, String]): Map[String, String] = {
     properties.filter { case (k, _) => ICT_TABLE_PROPERTY_KEYS.contains(k) }
+  }
+
+  /**
+   * Extracts the explicit QoL configurations from the provided properties.
+   *
+   * These are preserved across catalog-managed REPLACE when the existing table already has the
+   * QoL defaults materialized in metadata, so a no-op REPLACE does not accidentally drop them
+   * while rebuilding the configuration map.
+   */
+  def getExplicitQoLConfigurations(properties: Map[String, String]): Map[String, String] = {
+    val qolKeys = CatalogOwnedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES.map(_._2.key).toSet
+    properties.filter { case (k, _) => qolKeys.contains(k) }
   }
 
   /**

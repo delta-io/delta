@@ -44,7 +44,7 @@ public class DefaultFileSystemManagedTableOnlyCommitter implements Committer {
   public static final DefaultFileSystemManagedTableOnlyCommitter INSTANCE =
       new DefaultFileSystemManagedTableOnlyCommitter();
 
-  private DefaultFileSystemManagedTableOnlyCommitter() {}
+  protected DefaultFileSystemManagedTableOnlyCommitter() {}
 
   @Override
   public CommitResponse commit(
@@ -87,7 +87,7 @@ public class DefaultFileSystemManagedTableOnlyCommitter implements Committer {
     }
   }
 
-  private void validateProtocol(Protocol protocol) {
+  protected void validateProtocol(Protocol protocol) {
     if (TableFeatures.isCatalogManagedSupported(protocol)) {
       throw DeltaErrorsInternal.defaultCommitterDoesNotSupportCatalogManagedTables();
     }

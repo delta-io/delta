@@ -354,6 +354,7 @@ class AddFileSuite extends SparkFunSuite with SharedSparkSession with DeltaSQLCo
 
   test("normalizedPartitionValues for DateType should return the original date string") {
     withSQLConf(
+      DeltaSQLConf.DELTA_FAIL_ON_PARTITION_VALUE_PARSING_ERROR.key -> "true",
       DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ.key -> "true"
     ) {
       withTempDir { tempDir =>
@@ -379,6 +380,7 @@ class AddFileSuite extends SparkFunSuite with SharedSparkSession with DeltaSQLCo
 
   test("normalizedPartitionValues should handle __HIVE_DEFAULT_PARTITION__") {
     withSQLConf(
+      DeltaSQLConf.DELTA_FAIL_ON_PARTITION_VALUE_PARSING_ERROR.key -> "true",
       DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ.key -> "true"
     ) {
       withTempDir { tempDir =>
@@ -402,6 +404,7 @@ class AddFileSuite extends SparkFunSuite with SharedSparkSession with DeltaSQLCo
 
   test("normalizedPartitionValues preserves escaped characters in AddFile partition values") {
     withSQLConf(
+      DeltaSQLConf.DELTA_FAIL_ON_PARTITION_VALUE_PARSING_ERROR.key -> "true",
       DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ.key -> "true"
     ) {
       withTempDir { tempDir =>
@@ -429,6 +432,7 @@ class AddFileSuite extends SparkFunSuite with SharedSparkSession with DeltaSQLCo
     withJvmTimeZone("Europe/Berlin") {
       withSQLConf(
         DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ.key -> "true",
+        DeltaSQLConf.DELTA_FAIL_ON_PARTITION_VALUE_PARSING_ERROR.key -> "true",
         "spark.sql.session.timeZone" -> "Europe/Berlin" // UTC + 1 in winter time
       ) {
         withTempDir { tempDir =>
@@ -457,6 +461,7 @@ class AddFileSuite extends SparkFunSuite with SharedSparkSession with DeltaSQLCo
     "and a non UTC session time zone gets converted to UTC.") {
     withSQLConf(
       DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ.key -> "true",
+      DeltaSQLConf.DELTA_FAIL_ON_PARTITION_VALUE_PARSING_ERROR.key -> "true",
       "spark.sql.session.timeZone" -> "America/Los_Angeles" // UTC - 8 in winter time
     ) {
       withTempDir { tempDir =>
@@ -493,6 +498,7 @@ class AddFileSuite extends SparkFunSuite with SharedSparkSession with DeltaSQLCo
     withJvmTimeZone("UTC") {
       withSQLConf(
         DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ.key -> "true",
+        DeltaSQLConf.DELTA_FAIL_ON_PARTITION_VALUE_PARSING_ERROR.key -> "true",
         "spark.sql.session.timeZone" -> "UTC"
       ) {
         withTempDir { tempDir =>
@@ -545,7 +551,8 @@ class AddFileSuite extends SparkFunSuite with SharedSparkSession with DeltaSQLCo
     withJvmTimeZone("Europe/Berlin") {
       withSQLConf(
         DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ.key -> "true",
-        "spark.sql.session.timeZone" -> "Europe/Berlin" // UTC + 1 in winter time
+        DeltaSQLConf.DELTA_FAIL_ON_PARTITION_VALUE_PARSING_ERROR.key -> "true",
+        "spark.sql.session.timeZone" -> "America/Los_Angeles" // UTC - 8 in winter time
       ) {
         withTempDir { tempDir =>
           spark.createDataFrame(
@@ -557,20 +564,23 @@ class AddFileSuite extends SparkFunSuite with SharedSparkSession with DeltaSQLCo
           ).write.format("delta").partitionBy("tsCol").save(tempDir.getCanonicalPath)
           val deltaTxn = DeltaLog.forTable(spark, tempDir.getCanonicalPath).startTransaction()
 
-          // ISO 8601 format with 'T' separator but no time zone should use the JVM time zone.
+          // ISO 8601 format with 'T' separator but no time zone should use the session time zone
+          // since the timestamp formatter fails to parse this format.
           val file = createAddFileWithPartitionValue(Map("tsCol" -> "2000-01-01T12:00:00"))
-          // The normalized timestamp should be 11:00 UTC (12:00 Berlin = 11:00 UTC)
+          // The normalized timestamp should be 20:00 UTC (12:00 LA + 8h = 20:00 UTC)
           val normalized = file.normalizedPartitionValues(spark, deltaTxn)
-          assert(normalized("tsCol") == timestampLiteral("2000-01-01 12:00:00", "Europe/Berlin"))
+          assert(normalized("tsCol") ==
+            timestampLiteral("2000-01-01 12:00:00", "America/Los_Angeles"))
         }
       }
     }
   }
 
-  test("normalizedPartitionValues should also use the JVM timezone on read") {
+  test("normalizedPartitionValues should use the session timezone on read") {
     withJvmTimeZone("America/Los_Angeles") {
       withSQLConf(
         DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ.key -> "true",
+        DeltaSQLConf.DELTA_FAIL_ON_PARTITION_VALUE_PARSING_ERROR.key -> "true",
         "spark.sql.session.timeZone" -> "UTC"
       ) {
         withTempDir { tempDir =>
@@ -583,15 +593,15 @@ class AddFileSuite extends SparkFunSuite with SharedSparkSession with DeltaSQLCo
           ).write.format("delta").partitionBy("tsCol").save(tempDir.getCanonicalPath)
           val deltaTxn = DeltaLog.forTable(spark, tempDir.getCanonicalPath).startTransaction()
 
-          // ON WRITE we use the JVM timezone, parsing this as an America/Los_Angeles timestamp.
           val file = createAddFileWithPartitionValue(Map("tsCol" -> "2000-01-01 12:00:00"))
           val normalized = file.normalizedPartitionValues(spark, deltaTxn)
 
-          // ON READ we also need to use the JVM timezone again, reading it again as an
-          // America/Los_Angeles timestamp.
-          assert(
-            normalized("tsCol") == timestampLiteral("2000-01-01 12:00:00", "America/Los_Angeles"))
-          assert(normalized("tsCol") != timestampLiteral("2000-01-01 12:00:00", "UTC"))
+          // ON READ we use the session timezone (UTC), not the JVM timezone
+          // (America/Los_Angeles), to be consistent with the WRITE path in
+          // DelayedCommitProtocol which also uses the session timezone.
+          assert(normalized("tsCol") == timestampLiteral("2000-01-01 12:00:00", "UTC"))
+          assert(normalized("tsCol") !=
+            timestampLiteral("2000-01-01 12:00:00", "America/Los_Angeles"))
         }
       }
     }

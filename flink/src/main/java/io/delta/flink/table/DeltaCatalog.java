@@ -125,5 +125,17 @@ public interface DeltaCatalog extends Serializable {
       this.uuid = uuid;
       this.tablePath = tablePath;
     }
+
+    public String getTableId() {
+      return tableId;
+    }
+
+    public String getUuid() {
+      return uuid;
+    }
+
+    public URI getTablePath() {
+      return tablePath;
+    }
   }
 }

@@ -30,6 +30,7 @@ import io.delta.kernel.defaults.internal.data.vector.DefaultBooleanVector;
 import io.delta.kernel.defaults.internal.data.vector.DefaultConstantVector;
 import io.delta.kernel.engine.ExpressionHandler;
 import io.delta.kernel.expressions.*;
+import io.delta.kernel.internal.util.GeometryUtils;
 import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -361,6 +362,37 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
       return new ExpressionTransformResult(transformedExpression, BooleanType.BOOLEAN);
     }
 
+    @Override
+    ExpressionTransformResult visitStGeometryBoxesIntersectOnStats(Predicate predicate) {
+      List<ExpressionTransformResult> children =
+          predicate.getChildren().stream().map(this::visit).collect(Collectors.toList());
+      checkArgument(
+          children.size() == 4,
+          "ST_GEOMETRY_BOXES_INTERSECT_ON_STATS expects 4 children but got %d",
+          children.size());
+      // All 4 children must be GeometryType.
+      // Children 0,1 are stats columns, children 2,3 are query literals.
+      DataType child0Type = children.get(0).outputType;
+      checkArgument(
+          child0Type instanceof GeometryType,
+          "ST_GEOMETRY_BOXES_INTERSECT_ON_STATS child 0 must be " + "geometry type, got %s",
+          child0Type);
+      for (int i = 1; i < 4; i++) {
+        checkArgument(
+            child0Type.equals(children.get(i).outputType),
+            "ST_GEOMETRY_BOXES_INTERSECT_ON_STATS child %d type %s "
+                + "doesn't match child 0 type %s",
+            i,
+            children.get(i).outputType,
+            child0Type);
+      }
+      return new ExpressionTransformResult(
+          new Predicate(
+              "ST_GEOMETRY_BOXES_INTERSECT_ON_STATS",
+              children.stream().map(c -> c.expression).collect(Collectors.toList())),
+          BooleanType.BOOLEAN);
+    }
+
     private Predicate validateIsPredicate(
         Expression baseExpression, ExpressionTransformResult result) {
       checkArgument(
@@ -554,7 +586,9 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
           || dataType instanceof DecimalType
           || dataType instanceof DateType
           || dataType instanceof TimestampType
-          || dataType instanceof TimestampNTZType) {
+          || dataType instanceof TimestampNTZType
+          || dataType instanceof GeometryType
+          || dataType instanceof GeographyType) {
         return new DefaultConstantVector(dataType, input.getSize(), literal.getValue());
       }
 
@@ -745,6 +779,38 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
     ColumnVector visitIn(In in) {
       return InExpressionEvaluator.eval(
           in.getChildren().stream().map(this::visit).collect(toList()));
+    }
+
+    @Override
+    ColumnVector visitStGeometryBoxesIntersectOnStats(Predicate predicate) {
+      List<Expression> children = predicate.getChildren();
+      ColumnVector leftMin = visit(children.get(0));
+      ColumnVector leftMax = visit(children.get(1));
+      ColumnVector rightMin = visit(children.get(2));
+      ColumnVector rightMax = visit(children.get(3));
+      int numRows = input.getSize();
+      boolean[] result = new boolean[numRows];
+      boolean[] nullability = new boolean[numRows];
+      for (int rowId = 0; rowId < numRows; rowId++) {
+        if (leftMin.isNullAt(rowId)
+            || leftMax.isNullAt(rowId)
+            || rightMin.isNullAt(rowId)
+            || rightMax.isNullAt(rowId)) {
+          nullability[rowId] = true;
+          continue;
+        }
+        double[] lMin = GeometryUtils.parsePointXY(leftMin.getString(rowId));
+        double[] lMax = GeometryUtils.parsePointXY(leftMax.getString(rowId));
+        double[] rMin = GeometryUtils.parsePointXY(rightMin.getString(rowId));
+        double[] rMax = GeometryUtils.parsePointXY(rightMax.getString(rowId));
+        result[rowId] = boxesIntersect(lMin, lMax, rMin, rMax);
+      }
+      return new DefaultBooleanVector(numRows, Optional.of(nullability), result);
+    }
+
+    private static boolean boxesIntersect(
+        double[] lMin, double[] lMax, double[] rMin, double[] rMax) {
+      return lMax[0] >= rMin[0] && rMax[0] >= lMin[0] && lMax[1] >= rMin[1] && rMax[1] >= lMin[1];
     }
 
     /**

@@ -18,10 +18,13 @@ package org.apache.spark.sql.delta
 
 import java.util.ConcurrentModificationException
 
+import scala.jdk.CollectionConverters._
+
 import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Truncate}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction, Metadata, RemoveFile}
 import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.QueryTest
@@ -199,5 +202,139 @@ trait OptimisticTransactionSuiteBase
       }
     }
     checkErrorFun(e)
+  }
+
+  def testDuplicateActions(actions: Seq[FileAction], deltaLog: DeltaLog): Unit = {
+    withSQLConf(
+        DeltaSQLConf.DELTA_DUPLICATE_ACTION_CHECK_ENABLED.key -> "true"
+        ) {
+      testRuntimeErrorOnCommit(actions, deltaLog) { e =>
+        checkError(
+          exception = e,
+          condition = "DELTA_DUPLICATE_ACTIONS_FOUND",
+          sqlState = "2D521",
+          // Don't check params.
+          parameters = e.getMessageParameters.asScala.toMap)
+      }
+    }
+  }
+
+  test("Duplicate action - remove file twice") {
+    withTempPath { tempPath =>
+      val path = tempPath.getPath
+      val deltaLog = DeltaLog.forTable(spark, path)
+      val removedFile = writeDuplicateActionsData(path).head.remove
+      testDuplicateActions(Seq(removedFile, removedFile), deltaLog)
+    }
+  }
+
+  test("Duplicate action - remove file twice - same DV") {
+    withTempPath { tempPath =>
+      val path = tempPath.getPath
+      val deltaLog = DeltaLog.forTable(spark, path)
+      val firstFile = writeDuplicateActionsData(path).head
+      enableDeletionVectorsInTable(deltaLog)
+      val (addFileWithDV, removeFileWithoutDV) = addDVToFileInTable(path, firstFile)
+      deltaLog.startTransaction().commitManually(addFileWithDV, removeFileWithoutDV)
+      val removedFileWithDV = addFileWithDV.remove
+      testDuplicateActions(Seq(removedFileWithDV, removedFileWithDV), deltaLog)
+    }
+  }
+
+  test("Duplicate action - remove file twice - DV vs. no DV") {
+    withTempPath { tempPath =>
+      val path = tempPath.getPath
+      val deltaLog = DeltaLog.forTable(spark, path)
+      val firstFile = writeDuplicateActionsData(path).head
+      enableDeletionVectorsInTable(deltaLog)
+      val (addFileWithDV, removeFileWithoutDV) = addDVToFileInTable(path, firstFile)
+      deltaLog.startTransaction().commitManually(addFileWithDV, removeFileWithoutDV)
+      val removedFileWithDV = addFileWithDV.remove
+      // This isn't legal for other reasons, either, but should fail on the duplicate action
+      // check first.
+      testDuplicateActions(Seq(removedFileWithDV, removeFileWithoutDV), deltaLog)
+    }
+  }
+
+  test("Duplicate action - remove file twice - different DVs") {
+    withTempPath { tempPath =>
+      val path = tempPath.getPath
+      val deltaLog = DeltaLog.forTable(spark, path)
+      val firstFile = writeDuplicateActionsData(path).head
+      enableDeletionVectorsInTable(deltaLog)
+      val (addFileWithDV, removeFileWithoutDV) = addDVToFileInTable(path, firstFile)
+      deltaLog.startTransaction().commitManually(addFileWithDV, removeFileWithoutDV)
+      val removedFileWithDV = addFileWithDV.remove
+      val removedFileWithDifferentDV = removedFileWithDV.copy(
+        // Doesn't have to be a legal DV. The other one's relative, so these won't match.
+        deletionVector = removedFileWithDV.deletionVector.copy(storageType = "i"))
+      // This isn't legal for other reasons, either, but should fail on the duplicate action
+      // check first.
+      testDuplicateActions(Seq(removedFileWithDV, removedFileWithDifferentDV), deltaLog)
+    }
+  }
+
+  test("Duplicate action - add file twice") {
+    withTempPath { tempPath =>
+      val path = tempPath.getPath
+      val deltaLog = DeltaLog.forTable(spark, path)
+      val addFile = writeDuplicateActionsData(path).head
+      testDuplicateActions(Seq(addFile, addFile), deltaLog)
+    }
+  }
+
+  test("Duplicate action - add file twice - same DV") {
+    withTempPath { tempPath =>
+      val path = tempPath.getPath
+      val deltaLog = DeltaLog.forTable(spark, path)
+      val firstFile = writeDuplicateActionsData(path).head
+      enableDeletionVectorsInTable(deltaLog)
+      val (addFileWithDV, _) = addDVToFileInTable(path, firstFile)
+      testDuplicateActions(Seq(addFileWithDV, addFileWithDV), deltaLog)
+    }
+  }
+
+  test("Duplicate action - add file twice - DV vs. no DV") {
+    withTempPath { tempPath =>
+      val path = tempPath.getPath
+      val deltaLog = DeltaLog.forTable(spark, path)
+      val firstFile = writeDuplicateActionsData(path).head.copy(dataChange = true)
+      enableDeletionVectorsInTable(deltaLog)
+      val (addFileWithDV, _) = addDVToFileInTable(path, firstFile)
+      testDuplicateActions(Seq(firstFile, addFileWithDV), deltaLog)
+    }
+  }
+
+  test("Duplicate action - add file twice - different DVs") {
+    withTempPath { tempPath =>
+      val path = tempPath.getPath
+      val deltaLog = DeltaLog.forTable(spark, path)
+      val firstFile = writeDuplicateActionsData(path).head
+      enableDeletionVectorsInTable(deltaLog)
+      // These will produce different UUIDs so shouldn't match.
+      val (addFileWithDV1, _) = addDVToFileInTable(path, firstFile)
+      val (addFileWithDV2, _) = addDVToFileInTable(path, firstFile)
+      testDuplicateActions(Seq(addFileWithDV1, addFileWithDV2), deltaLog)
+    }
+  }
+
+  test("Duplicate action - remove and add file") {
+    withTempPath { tempPath =>
+      val path = tempPath.getPath
+      val deltaLog = DeltaLog.forTable(spark, path)
+      val addFile = writeDuplicateActionsData(path).head.copy(dataChange = true)
+      testDuplicateActions(Seq(addFile, addFile.remove), deltaLog)
+    }
+  }
+  test("Duplicate action - remove and add file - same DV") {
+    withTempPath { tempPath =>
+      val path = tempPath.getPath
+      val deltaLog = DeltaLog.forTable(spark, path)
+      val firstFile = writeDuplicateActionsData(path).head
+      enableDeletionVectorsInTable(deltaLog)
+      val (addFileWithDV, _) = addDVToFileInTable(path, firstFile)
+      val removeFileWithDV = addFileWithDV.remove
+      testDuplicateActions(Seq(addFileWithDV, removeFileWithDV), deltaLog)
+    }
   }
 }

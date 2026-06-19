@@ -18,7 +18,8 @@ package io.delta.sharing.spark.test.shims
 
 import org.apache.spark.sql.execution.streaming.checkpointing.{
   CheckpointFileManager => CheckpointFileManagerShim,
-  CommitMetadata => CommitMetadataShim
+  CommitMetadata => CommitMetadataShim,
+  OffsetSeqLog => OffsetSeqLogShim
 }
 import org.apache.spark.sql.execution.streaming.runtime.{
   SerializedOffset => SerializedOffsetShim,
@@ -31,9 +32,11 @@ import org.apache.spark.sql.execution.streaming.runtime.{
  * In Spark 4.2, these classes remain in the same locations as Spark 4.1.
  */
 object SharingStreamingTestShims {
+  type CheckpointFileManager = CheckpointFileManagerShim
   val CheckpointFileManager: CheckpointFileManagerShim.type =
     CheckpointFileManagerShim
   val CommitMetadata: CommitMetadataShim.type = CommitMetadataShim
+  type OffsetSeqLog = OffsetSeqLogShim
   val SerializedOffset: SerializedOffsetShim.type = SerializedOffsetShim
   val StreamMetadata: StreamMetadataShim.type = StreamMetadataShim
   val StreamingCheckpointConstants: StreamingCheckpointConstantsShim.type =
