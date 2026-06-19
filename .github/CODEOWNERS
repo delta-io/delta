@@ -10,7 +10,7 @@
 /version.sbt                    @tdas
 
 # Python client, examples, and tooling
-/python/                        @tdas
+/python/                        @tdas @huan233usc
 
 # Spark V2 and Unified modules
 /spark/v2/                      @tdas @huan233usc @TimothyW553 @raveeram-db @murali-db
