@@ -52,7 +52,7 @@ trait TypeWideningTableFeatureEnablementTests extends QueryTest
       s"TBLPROPERTIES ('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'true')")
     assert(isTypeWideningSupported)
     assert(isTypeWideningEnabled)
-    enableTypeWidening(tempPath, enabled = false)
+    enableTypeWidening(enabled = false)
     assert(isTypeWideningSupported)
     assert(!isTypeWideningEnabled)
   }
@@ -63,14 +63,14 @@ trait TypeWideningTableFeatureEnablementTests extends QueryTest
     assert(!isTypeWideningSupported)
     assert(!isTypeWideningEnabled)
     // Setting the property to false shouldn't add the table feature if it's not present.
-    enableTypeWidening(tempPath, enabled = false)
+    enableTypeWidening(enabled = false)
     assert(!isTypeWideningSupported)
     assert(!isTypeWideningEnabled)
 
-    enableTypeWidening(tempPath)
+    enableTypeWidening()
     assert(isTypeWideningSupported)
     assert(isTypeWideningEnabled)
-    enableTypeWidening(tempPath, enabled = false)
+    enableTypeWidening(enabled = false)
     assert(isTypeWideningSupported)
     assert(!isTypeWideningEnabled)
   }
@@ -134,9 +134,9 @@ trait TypeWideningTableFeatureEnablementTests extends QueryTest
     sql(s"CREATE TABLE delta.`$tempPath` (a int) USING DELTA " +
       s"TBLPROPERTIES ('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'false')")
     sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE INT")
-    enableTypeWidening(tempPath, enabled = true)
+    enableTypeWidening(enabled = true)
     sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE INT")
-    enableTypeWidening(tempPath, enabled = false)
+    enableTypeWidening(enabled = false)
     sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE INT")
   }
 }
@@ -222,7 +222,7 @@ trait TypeWideningTableFeatureDropTests
       sql(s"CREATE TABLE delta.`$tempPath` (a byte) USING DELTA " +
         s"TBLPROPERTIES ('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'false')")
       addSingleFile(Seq(1, 2, 3), ByteType)
-      enableTypeWidening(tempPath)
+      enableTypeWidening()
       sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE int")
 
       dropTableFeature(
@@ -731,7 +731,7 @@ trait TypeWideningTableFeatureVersionTests extends QueryTest
     addTableFeature(tempPath, TypeWideningPreviewTableFeature)
     assertFeatureSupported(preview = true, stable = true)
 
-    enableTypeWidening(tempPath)
+    enableTypeWidening()
     addSingleFile(Seq(1), ByteType)
     sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE int")
     // Dropping the stable feature doesn't also drop the preview feature.
@@ -772,7 +772,7 @@ trait TypeWideningTableFeatureVersionTests extends QueryTest
     assertFeatureSupported(preview = true, stable = false)
 
     // Enable the table property, this should keep the preview feature but not add the stable one.
-    enableTypeWidening(tempPath)
+    enableTypeWidening()
     assertFeatureSupported(preview = true, stable = false)
 
     addSingleFile(Seq(1), ByteType)
@@ -808,7 +808,7 @@ trait TypeWideningTableFeatureVersionTests extends QueryTest
       s"TBLPROPERTIES ('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'false')")
 
     addTableFeature(tempPath, TypeWideningPreviewTableFeature)
-    enableTypeWidening(tempPath)
+    enableTypeWidening()
     addSingleFile(Seq(1), ByteType)
     sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE short")
 
@@ -847,7 +847,7 @@ trait TypeWideningTableFeatureVersionTests extends QueryTest
       s"TBLPROPERTIES ('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'false')")
 
     addTableFeature(tempPath, TypeWideningTableFeature)
-    enableTypeWidening(tempPath)
+    enableTypeWidening()
     addSingleFile(Seq(1), ByteType)
     sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE short")
     assert(deltaLog.update().metadata.schema === new StructType()

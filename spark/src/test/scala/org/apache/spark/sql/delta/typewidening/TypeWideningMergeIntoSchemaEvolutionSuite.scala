@@ -31,8 +31,8 @@ import org.apache.spark.sql.types._
  */
 class TypeWideningMergeIntoSchemaEvolutionSuite
     extends TypeWideningMergeIntoSchemaEvolutionTests
-    with DeltaDMLTestUtils
-    with TypeWideningTestMixin {
+    with TypeWideningTestMixin
+    with DeltaDMLTestUtilsNameBased {
 
   protected override def sparkConf: SparkConf = {
     super.sparkConf
@@ -53,20 +53,20 @@ trait TypeWideningMergeIntoSchemaEvolutionTests extends QueryTest
 
   test(s"MERGE - always automatic type widening TINYINT -> DOUBLE") {
     withTable("source") {
-      sql(s"CREATE TABLE delta.`$tempPath` (a short) USING DELTA")
+      sql(s"CREATE TABLE $tableSQLIdentifier (a short) USING DELTA")
       sql("CREATE TABLE source (a double) USING DELTA")
       sql("INSERT INTO source VALUES (3.0), (-10.5)")
 
       withSQLConf(DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING.key -> "always") {
         // Merge double values. This should succeed and widen the short column to double.
         executeMerge(
-          tgt = s"delta.`$tempPath` t",
+          tgt = s"$tableSQLIdentifier t",
           src = "source",
           cond = "0 = 1",
           clauses = insert("*")
         )
-        assert(readDeltaTable(tempPath).schema("a").dataType === DoubleType)
-        checkAnswer(readDeltaTable(tempPath),
+        assert(readDeltaTableByIdentifier().schema("a").dataType === DoubleType)
+        checkAnswer(readDeltaTableByIdentifier(),
           Seq(3.0, -10.5).toDF("a"))
       }
     }
@@ -74,7 +74,7 @@ trait TypeWideningMergeIntoSchemaEvolutionTests extends QueryTest
 
   test(s"MERGE - never automatic type widening TINYINT -> INT") {
     withTable("source") {
-      sql(s"CREATE TABLE delta.`$tempPath` (a short) USING DELTA")
+      sql(s"CREATE TABLE $tableSQLIdentifier (a short) USING DELTA")
       sql("CREATE TABLE source (a int) USING DELTA")
       sql("INSERT INTO source VALUES (1), (2)")
 
@@ -82,12 +82,12 @@ trait TypeWideningMergeIntoSchemaEvolutionTests extends QueryTest
         SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.LEGACY.toString) {
         // Merge int values into short column. This should not widen the target schema.
         executeMerge(
-          tgt = s"delta.`$tempPath` t",
+          tgt = s"$tableSQLIdentifier t",
           src = "source",
           cond = "0 = 1",
           clauses = insert("*")
         )
-        assert(readDeltaTable(tempPath).schema("a").dataType === ShortType)
+        assert(readDeltaTableByIdentifier().schema("a").dataType === ShortType)
       }
     }
   }
@@ -103,14 +103,14 @@ trait TypeWideningMergeIntoSchemaEvolutionTests extends QueryTest
         // We mainly want to ensure type widening is correctly applied to the schema. We use a
         // trivial insert only merge to make it easier to validate results.
         executeMerge(
-          tgt = s"delta.`$tempPath` t",
+          tgt = s"$tableSQLIdentifier t",
           src = "source",
           cond = "0 = 1",
           clauses = insert("*"))
 
-        assert(readDeltaTable(tempPath).schema("value").dataType === testCase.toType)
+        assert(readDeltaTableByIdentifier().schema("value").dataType === testCase.toType)
         checkAnswerWithTolerance(
-          actualDf = readDeltaTable(tempPath).select("value"),
+          actualDf = readDeltaTableByIdentifier().select("value"),
           expectedDf = testCase.expectedResult.select($"value".cast(testCase.toType)),
           toType = testCase.toType
         )
@@ -133,11 +133,11 @@ trait TypeWideningMergeIntoSchemaEvolutionTests extends QueryTest
         // that the table schema didn't evolve.
         withSQLConf(SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.LEGACY.toString) {
           executeMerge(
-            tgt = s"delta.`$tempPath` t",
+            tgt = s"$tableSQLIdentifier t",
             src = "source",
             cond = "0 = 1",
             clauses = insert("*"))
-          assert(readDeltaTable(tempPath).schema("value").dataType === testCase.fromType)
+          assert(readDeltaTableByIdentifier().schema("value").dataType === testCase.fromType)
         }
       }
     }
@@ -145,20 +145,20 @@ trait TypeWideningMergeIntoSchemaEvolutionTests extends QueryTest
 
   test("MERGE - type widening isn't applied when it's disabled") {
     withTable("source") {
-      sql(s"CREATE TABLE delta.`$tempPath` (a short) USING DELTA")
+      sql(s"CREATE TABLE $tableSQLIdentifier (a short) USING DELTA")
       sql("CREATE TABLE source (a int) USING DELTA")
       sql("INSERT INTO source VALUES (1), (2)")
-      enableTypeWidening(tempPath, enabled = false)
+      enableTypeWidening(enabled = false)
       withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
         // Merge integer values. This should succeed and downcast the values to short.
         executeMerge(
-          tgt = s"delta.`$tempPath` t",
+          tgt = s"$tableSQLIdentifier t",
           src = "source",
           cond = "0 = 1",
           clauses = insert("*")
         )
-        assert(readDeltaTable(tempPath).schema("a").dataType === ShortType)
-        checkAnswer(readDeltaTable(tempPath),
+        assert(readDeltaTableByIdentifier().schema("a").dataType === ShortType)
+        checkAnswer(readDeltaTableByIdentifier(),
           Seq(1, 2).toDF("a").select($"a".cast(ShortType)))
       }
     }
@@ -166,33 +166,33 @@ trait TypeWideningMergeIntoSchemaEvolutionTests extends QueryTest
 
   test("MERGE - type widening isn't applied when schema evolution is disabled") {
     withTable("source") {
-      sql(s"CREATE TABLE delta.`$tempPath` (a short) USING DELTA")
+      sql(s"CREATE TABLE $tableSQLIdentifier (a short) USING DELTA")
       sql("CREATE TABLE source (a int) USING DELTA")
       sql("INSERT INTO source VALUES (1), (2)")
 
       withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "false") {
         // Merge integer values. This should succeed and downcast the values to short.
         executeMerge(
-          tgt = s"delta.`$tempPath` t",
+          tgt = s"$tableSQLIdentifier t",
           src = "source",
           cond = "0 = 1",
           clauses = insert("*")
         )
-        assert(readDeltaTable(tempPath).schema("a").dataType === ShortType)
-        checkAnswer(readDeltaTable(tempPath),
+        assert(readDeltaTableByIdentifier().schema("a").dataType === ShortType)
+        checkAnswer(readDeltaTableByIdentifier(),
           Seq(1, 2).toDF("a").select($"a".cast(ShortType)))
       }
 
       // Check that we would actually widen if schema evolution was enabled.
       withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
         executeMerge(
-          tgt = s"delta.`$tempPath` t",
+          tgt = s"$tableSQLIdentifier t",
           src = "source",
           cond = "0 = 1",
           clauses = insert("*")
         )
-        assert(readDeltaTable(tempPath).schema("a").dataType === IntegerType)
-        checkAnswer(readDeltaTable(tempPath), Seq(1, 2, 1, 2).toDF("a"))
+        assert(readDeltaTableByIdentifier().schema("a").dataType === IntegerType)
+        checkAnswer(readDeltaTableByIdentifier(), Seq(1, 2, 1, 2).toDF("a"))
       }
     }
   }
@@ -355,9 +355,9 @@ trait TypeWideningMergeIntoSchemaEvolutionTests extends QueryTest
 
   for (enabled <- BOOLEAN_DOMAIN)
   test(s"MERGE - fail if type widening gets ${if (enabled) "enabled" else "disabled"} by a " +
-    "concurrent transaction") {
-    sql(s"CREATE TABLE delta.`$tempPath` (a short) USING DELTA")
-    enableTypeWidening(tempPath, !enabled)
+    "concurrent transaction", NameBasedAccessIncompatible) {
+    sql(s"CREATE TABLE $tableSQLIdentifier (a short) USING DELTA")
+    enableTypeWidening(enabled = !enabled)
     val target = io.delta.tables.DeltaTable.forPath(tempPath)
     import testImplicits._
     val merge = target.as("target")
@@ -368,7 +368,7 @@ trait TypeWideningMergeIntoSchemaEvolutionTests extends QueryTest
 
     // The MERGE operation was created with the previous type widening value, which will apply
     // during analysis. Toggle type widening so that the actual MERGE runs with a different setting.
-    enableTypeWidening(tempPath, enabled)
+    enableTypeWidening(enabled = enabled)
     intercept[MetadataChangedException] {
       merge.execute()
     }
