@@ -31,6 +31,8 @@ import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
+import static java.util.Objects.requireNonNull;
+
 import java.io.IOException;
 import java.util.Optional;
 import org.slf4j.Logger;
@@ -50,11 +52,21 @@ public class ProtocolMetadataLogReplay {
     public final Protocol protocol;
     public final Metadata metadata;
     private final long numDeltaFilesRead;
+    private final Optional<Long> inCommitTimestampOpt;
 
-    public Result(Protocol protocol, Metadata metadata, long numDeltaFilesRead) {
+    public Result(
+        Protocol protocol,
+        Metadata metadata,
+        long numDeltaFilesRead,
+        Optional<Long> inCommitTimestampOpt) {
       this.protocol = protocol;
       this.metadata = metadata;
       this.numDeltaFilesRead = numDeltaFilesRead;
+      this.inCommitTimestampOpt = requireNonNull(inCommitTimestampOpt);
+    }
+
+    public Optional<Long> getInCommitTimestampOpt() {
+      return inCommitTimestampOpt;
     }
   }
 
@@ -108,7 +120,7 @@ public class ProtocolMetadataLogReplay {
 
         final Protocol protocol = crcInfo.get().getProtocol();
         final Metadata metadata = crcInfo.get().getMetadata();
-        return new Result(protocol, metadata, 0 /* logFilesRead */);
+        return new Result(protocol, metadata, 0 /* logFilesRead */, Optional.empty());
       }
     }
 
@@ -118,6 +130,10 @@ public class ProtocolMetadataLogReplay {
     long numDeltaFilesRead = 0;
     Protocol protocol = null;
     Metadata metadata = null;
+    // Track the timestamp from the ActionWrapper at the snapshot version's delta file.
+    // When InCommitTimestamp is enabled this contains the ICT from the CommitInfo,
+    // allowing us to avoid a separate N.json cloud read later.
+    Optional<Long> inCommitTimestampOpt = Optional.empty();
 
     try (CloseableIterator<ActionWrapper> reverseIter =
         new ActionsIterator(
@@ -132,6 +148,11 @@ public class ProtocolMetadataLogReplay {
         // Load this lazily (as needed). We may be able to just use the CRC.
         ColumnarBatch columnarBatch = null;
 
+        // If this is the snapshot version's delta file and has a timestamp (ICT), track it.
+        if (version == snapshotVersion && nextElem.getTimestamp().isPresent()) {
+          inCommitTimestampOpt = nextElem.getTimestamp();
+        }
+
         if (protocol == null) {
           columnarBatch = nextElem.getColumnarBatch();
           assert (columnarBatch.getSchema().equals(PROTOCOL_METADATA_READ_SCHEMA));
@@ -144,7 +165,8 @@ public class ProtocolMetadataLogReplay {
 
               if (metadata != null) {
                 // Stop since we have found the latest Protocol and Metadata.
-                return new Result(protocol, metadata, numDeltaFilesRead);
+                return new Result(
+                    protocol, metadata, numDeltaFilesRead, inCommitTimestampOpt);
               }
 
               break; // We just found the protocol, exit this for-loop
@@ -165,7 +187,8 @@ public class ProtocolMetadataLogReplay {
 
               if (protocol != null) {
                 // Stop since we have found the latest Protocol and Metadata.
-                return new Result(protocol, metadata, numDeltaFilesRead);
+                return new Result(
+                    protocol, metadata, numDeltaFilesRead, inCommitTimestampOpt);
               }
 
               break; // We just found the metadata, exit this for-loop
@@ -188,7 +211,8 @@ public class ProtocolMetadataLogReplay {
               metadata = crcInfo.get().getMetadata();
             }
 
-            return new Result(protocol, metadata, numDeltaFilesRead);
+            return new Result(
+                protocol, metadata, numDeltaFilesRead, inCommitTimestampOpt);
           }
         }
       }
@@ -206,7 +230,7 @@ public class ProtocolMetadataLogReplay {
           String.format("No metadata found at version %s", logSegment.getVersion()));
     }
 
-    return new Result(protocol, metadata, numDeltaFilesRead);
+    return new Result(protocol, metadata, numDeltaFilesRead, inCommitTimestampOpt);
   }
 
   private static void validateCrcInfoMatchesExpectedVersion(CRCInfo crcInfo, long expectedVersion) {

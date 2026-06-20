@@ -179,7 +179,7 @@ public class SnapshotManager {
             protocolMetadataResult.metadata,
             DefaultFileSystemManagedTableOnlyCommitter.INSTANCE,
             snapshotContext,
-            Optional.empty() /* inCommitTimestampOpt */);
+            protocolMetadataResult.getInCommitTimestampOpt());
 
     return snapshot;
   }
