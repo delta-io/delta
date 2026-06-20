@@ -25,7 +25,6 @@ import io.delta.kernel.expressions.ScalarExpression;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.*;
 import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * Provides information and utilities for statistics columns given a table schema. Specifically, it
@@ -152,6 +151,18 @@ public class StatsSchemaHelper {
   // Instance fields and public methods
   //////////////////////////////////////////////////////////////////////////////////
 
+  private static final Comparator<Column> COLUMN_CASE_INSENSITIVE_COMPARATOR =
+      (c1, c2) -> {
+        String[] n1 = c1.getNames();
+        String[] n2 = c2.getNames();
+        int len = Math.min(n1.length, n2.length);
+        for (int i = 0; i < len; i++) {
+          int cmp = n1[i].compareToIgnoreCase(n2[i]);
+          if (cmp != 0) return cmp;
+        }
+        return Integer.compare(n1.length, n2.length);
+      };
+
   private final StructType dataSchema;
   /* Map of all leaf columns from logical to physical names */
   private final Map<Column, Column> logicalToPhysicalColumn;
@@ -162,18 +173,13 @@ public class StatsSchemaHelper {
     this.dataSchema = dataSchema;
     Map<Column, Tuple2<Column, DataType>> logicalToPhysicalColumnAndDataType =
         getLogicalToPhysicalColumnAndDataType(dataSchema);
-    this.logicalToPhysicalColumn =
-        logicalToPhysicalColumnAndDataType.entrySet().stream()
-            .collect(
-                Collectors.toMap(
-                    Map.Entry::getKey, e -> e.getValue()._1 // map to just the column
-                    ));
-    this.logicalToDataType =
-        logicalToPhysicalColumnAndDataType.entrySet().stream()
-            .collect(
-                Collectors.toMap(
-                    Map.Entry::getKey, e -> e.getValue()._2 // map to just the data type
-                    ));
+    this.logicalToPhysicalColumn = new TreeMap<>(COLUMN_CASE_INSENSITIVE_COMPARATOR);
+    this.logicalToDataType = new TreeMap<>(COLUMN_CASE_INSENSITIVE_COMPARATOR);
+    for (Map.Entry<Column, Tuple2<Column, DataType>> entry :
+        logicalToPhysicalColumnAndDataType.entrySet()) {
+      this.logicalToPhysicalColumn.put(entry.getKey(), entry.getValue()._1);
+      this.logicalToDataType.put(entry.getKey(), entry.getValue()._2);
+    }
   }
 
   /**
