@@ -418,8 +418,19 @@ public class LogSegment {
 
   @Override
   public int hashCode() {
-    // TODO: support staged commits #4927
-    return Objects.hash(deltas, checkpoints, compactions);
+    // Use version numbers of log files instead of their full paths for hash computation
+    // so that staged commit file renames (e.g., 9.uuid.json -> 9.json) don't change the hash.
+    // This is required for pagination log segment validation (issue #4927).
+    List<Long> deltaVersions = deltas.stream()
+        .map(fs -> FileNames.deltaVersion(fs.getPath()))
+        .collect(Collectors.toList());
+    List<Long> checkpointVersions = checkpoints.stream()
+        .map(fs -> FileNames.checkpointVersion(fs.getPath()))
+        .collect(Collectors.toList());
+    List<Tuple2<Long, Long>> compactionRanges = compactions.stream()
+        .map(fs -> FileNames.logCompactionVersions(fs.getPath()))
+        .collect(Collectors.toList());
+    return Objects.hash(deltaVersions, checkpointVersions, compactionRanges);
   }
 
   //////////////////////////////
