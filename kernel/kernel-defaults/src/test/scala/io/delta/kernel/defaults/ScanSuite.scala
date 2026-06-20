@@ -2748,6 +2748,39 @@ class ScanSuite extends AnyFunSuite with TestUtils
         }
     }
   }
+
+  test("data skipping - decimal precision mismatch between filter literal and column type") {
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getCanonicalPath
+
+      // Create table with DECIMAL(18, 6) column
+      spark.sql(s"""
+        CREATE TABLE delta.`$tablePath` (id INT, price DECIMAL(18, 6)) USING delta
+      """)
+      // File 1: low values
+      spark.sql(s"""
+        INSERT INTO delta.`$tablePath` VALUES (1, 100.500000), (2, 150.250000)
+      """)
+      // File 2: high values
+      spark.sql(s"""
+        INSERT INTO delta.`$tablePath` VALUES (3, 500.750000), (4, 600.100000)
+      """)
+
+      // Filter with DECIMAL(10, 3) literal against DECIMAL(18, 6) column.
+      // Without the ImplicitCastExpression fix for decimal widening, this throws
+      // UnsupportedOperationException in DefaultExpressionEvaluator.
+      checkSkipping(
+        tablePath,
+        // 200.000 as DECIMAL(10,3), should hit (both files have values on either side)
+        hits = Seq(
+          greaterThan(col("price"), ofDecimal(new JBigDecimal("200.000"), 10, 3))),
+        misses = Seq(
+          // 700.000 as DECIMAL(10,3), all values < 700 so this should miss
+          greaterThan(col("price"), ofDecimal(new JBigDecimal("700.000"), 10, 3)),
+          // 50.000 as DECIMAL(10,3), all values > 50 so this should miss
+          lessThan(col("price"), ofDecimal(new JBigDecimal("50.000"), 10, 3))))
+    }
+  }
 }
 
 object ScanSuite {
