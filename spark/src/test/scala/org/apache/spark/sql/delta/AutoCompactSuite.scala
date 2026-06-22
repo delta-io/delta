@@ -385,6 +385,122 @@ class AutoCompactExecutionSuite extends
     spark.sql(s"ALTER TABLE delta.`${log.dataPath}` SET TBLPROPERTIES " +
       s"($key = $value)")
   }
+
+  // ---- Histogram-backed eligibility regression tests ----
+
+  test("auto compact - histogram gate fires on un-partitioned cold start when " +
+    "JVM cache is empty") {
+    withSQLConf(
+        DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED.key -> "true",
+        DeltaSQLConf.DELTA_AUTO_COMPACT_USE_FILE_SIZE_HISTOGRAM.key -> "true",
+        DeltaSQLConf.DELTA_AUTO_COMPACT_MIN_NUM_FILES.key -> "5",
+        DeltaSQLConf.DELTA_AUTO_COMPACT_MAX_FILE_SIZE.key -> "20000",
+        DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED.key -> "true") {
+      withTempDir { tempDir =>
+        val dir = tempDir.getCanonicalPath
+        // Seed 4 small files (below MIN_NUM_FILES so AC does not fire yet).
+        spark.range(10).repartition(4).write.format("delta").mode("append").save(dir)
+        val deltaLog = DeltaLog.forTable(spark, dir)
+        assert(deltaLog.update().numOfFiles === 4)
+
+        // Simulate JVM restart / LRU eviction: clear in-memory per-partition stats.
+        AutoCompactPartitionStats.instance(spark).resetTestOnly()
+
+        // Append a single small file. The legacy in-memory cache only sees 1 small file
+        // in this commit (< MIN_NUM_FILES=5) and would skip; the snapshot histogram
+        // reports 5 small files table-wide and must drive AC to fire.
+        val usageLogs = captureOptimizeLogs(AutoCompact.OP_TYPE) {
+          spark.range(1).repartition(1).write.format("delta").mode("append").save(dir)
+        }
+        val log = JsonUtils.mapper.readValue[Map[String, String]](usageLogs.head.blob)
+        assert(log("status") === "runOnModifiedPartitionsFromHistogram",
+          s"Expected histogram gate to fire AC on cold start; got status=${log("status")}")
+        assert(deltaLog.update().numOfFiles === 1,
+          "AC should have compacted the 5 small files into 1")
+      }
+    }
+  }
+
+  test("auto compact - feature flag off falls back to in-memory cache " +
+    "(no cold-start fire)") {
+    withSQLConf(
+        DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED.key -> "true",
+        DeltaSQLConf.DELTA_AUTO_COMPACT_USE_FILE_SIZE_HISTOGRAM.key -> "false",
+        DeltaSQLConf.DELTA_AUTO_COMPACT_MIN_NUM_FILES.key -> "5",
+        DeltaSQLConf.DELTA_AUTO_COMPACT_MAX_FILE_SIZE.key -> "20000") {
+      withTempDir { tempDir =>
+        val dir = tempDir.getCanonicalPath
+        spark.range(10).repartition(4).write.format("delta").mode("append").save(dir)
+        val deltaLog = DeltaLog.forTable(spark, dir)
+        assert(deltaLog.update().numOfFiles === 4)
+
+        AutoCompactPartitionStats.instance(spark).resetTestOnly()
+
+        val usageLogs = captureOptimizeLogs(AutoCompact.OP_TYPE) {
+          spark.range(1).repartition(1).write.format("delta").mode("append").save(dir)
+        }
+        val log = JsonUtils.mapper.readValue[Map[String, String]](usageLogs.head.blob)
+        assert(log("status") === "skipInsufficientFilesInModifiedPartitions",
+          s"Expected legacy cache fall-through to skip AC; got status=${log("status")}")
+        assert(deltaLog.update().numOfFiles === 5,
+          "AC should NOT have fired with feature flag off; 4 seeded + 1 new = 5 files")
+      }
+    }
+  }
+
+  test("auto compact - histogram absent (legacy snapshot) falls back to in-memory cache") {
+    // With the histogram capture feature disabled, postCommitSnapshot.fileSizeHistogram
+    // is None even for fresh tables. The eligibility gate must fall through to the
+    // existing JVM-local cache logic with no regression.
+    withSQLConf(
+        DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED.key -> "true",
+        DeltaSQLConf.DELTA_AUTO_COMPACT_USE_FILE_SIZE_HISTOGRAM.key -> "true",
+        DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED.key -> "false",
+        DeltaSQLConf.DELTA_AUTO_COMPACT_MIN_NUM_FILES.key -> "5",
+        DeltaSQLConf.DELTA_AUTO_COMPACT_MAX_FILE_SIZE.key -> "20000") {
+      withTempDir { tempDir =>
+        val dir = tempDir.getCanonicalPath
+        spark.range(10).repartition(4).write.format("delta").mode("append").save(dir)
+        val deltaLog = DeltaLog.forTable(spark, dir)
+        AutoCompactPartitionStats.instance(spark).resetTestOnly()
+
+        val usageLogs = captureOptimizeLogs(AutoCompact.OP_TYPE) {
+          spark.range(1).repartition(1).write.format("delta").mode("append").save(dir)
+        }
+        val log = JsonUtils.mapper.readValue[Map[String, String]](usageLogs.head.blob)
+        // No "FromHistogram" suffix; legacy path drives the decision.
+        assert(!log("status").endsWith("FromHistogram"),
+          s"Histogram absent should fall through to legacy path; got status=${log("status")}")
+        assert(log("status") === "skipInsufficientFilesInModifiedPartitions")
+      }
+    }
+  }
+
+  test("auto compact - partitioned tables do not consult snapshot histogram") {
+    // The histogram is table-wide. For partitioned tables this would over-trigger on
+    // the N-partitions x 1-small-file pathology. The eligibility path must skip the
+    // histogram branch and rely on the per-partition cache.
+    withSQLConf(
+        DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED.key -> "true",
+        DeltaSQLConf.DELTA_AUTO_COMPACT_USE_FILE_SIZE_HISTOGRAM.key -> "true",
+        DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED.key -> "true",
+        DeltaSQLConf.DELTA_AUTO_COMPACT_MIN_NUM_FILES.key -> "5") {
+      withTempDir { tempDir =>
+        val dir = tempDir.getCanonicalPath
+        // 3 partitions x 2 small files each = 6 files table-wide (> MIN_NUM_FILES=5);
+        // no individual partition has >=5, so per-partition selector should skip.
+        createFilesToPartitions(numFilePartitions = 3, numFilesPerPartition = 2, dir)
+        AutoCompactPartitionStats.instance(spark).resetTestOnly()
+
+        val usageLogs = captureOptimizeLogs(AutoCompact.OP_TYPE) {
+          createFilesToPartitions(numFilePartitions = 1, numFilesPerPartition = 1, dir)
+        }
+        val log = JsonUtils.mapper.readValue[Map[String, String]](usageLogs.head.blob)
+        assert(!log("status").endsWith("FromHistogram"),
+          s"Partitioned tables must not consult the histogram; got status=${log("status")}")
+      }
+    }
+  }
 }
 
 class AutoCompactConfigurationIdColumnMappingSuite extends AutoCompactConfigurationSuite
