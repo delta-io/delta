@@ -38,6 +38,13 @@ class DeltaLogMinorCompactionSuite extends QueryTest
   with DeltaSQLTestUtils
   with CatalogOwnedTestBaseSuite {
 
+  // This suite exercises *reading* of compaction files that it creates manually via
+  // `minorCompactDeltaLog`. Disable the log-compaction post-commit hook (on by default) so its
+  // automatically produced compaction files don't interfere with the precise sets asserted here.
+  // The write path is covered by LogCompactionSuite.
+  override protected def sparkConf: SparkConf =
+    super.sparkConf.set(DeltaSQLConf.DELTALOG_MINOR_COMPACTION_USE_FOR_WRITES.key, "false")
+
   /** Helper method to do minor compaction of [[DeltaLog]] from [startVersion, endVersion] */
   private def minorCompactDeltaLog(
       tablePath: String,
