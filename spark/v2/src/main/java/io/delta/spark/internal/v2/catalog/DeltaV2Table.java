@@ -25,7 +25,7 @@ import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.rowtracking.RowTracking;
-import io.delta.spark.internal.v2.read.DeltaV2ScanBuilder;
+import io.delta.spark.internal.v2.read.DeltaV2Reads;
 import io.delta.spark.internal.v2.read.MetadataEvolutionHandler;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
@@ -387,7 +387,7 @@ public class DeltaV2Table
                         stats,
                         schemaProvider.getDataSchema(),
                         schemaProvider.getPartitionSchema()));
-    return new DeltaV2ScanBuilder(
+    return DeltaV2Reads.newScanBuilder(
         name(),
         initialSnapshot,
         snapshotManager,

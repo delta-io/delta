@@ -59,8 +59,13 @@ import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import scala.Option;
 
-/** Spark DSV2 Scan implementation backed by Delta Kernel. */
-public class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Filtering {
+/**
+ * Package-private scan implementation for Delta's Spark DataSource V2 read path.
+ *
+ * <p>This class must remain package-private so callers outside {@code v2.read} depend only on
+ * Spark's public connector interfaces instead of coupling to Delta's internal V2 implementation.
+ */
+class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Filtering {
 
   private final DeltaSnapshotManager snapshotManager;
   private final Snapshot initialSnapshot;
