@@ -58,11 +58,22 @@ public class TableConf implements Serializable {
           .defaultValue(true)
           .withDescription("Whether to generate checksum files for commits on this table.");
 
+  /** Source of storage credentials for this table. */
+  public static final ConfigOption<String> CREDENTIALS_SOURCE =
+      ConfigOptions.key("credentials.source")
+          .stringType()
+          .defaultValue("uc")
+          .withDescription(
+              "Source of storage credentials: \"uc\" (default) to fetch temporary credentials from "
+                  + "Unity Catalog, or \"ambient\" to fetch nothing and rely on the runtime "
+                  + "environment (workload identity, instance profile, ADC, or core-site.xml) to "
+                  + "supply them.");
+
   private static final Map<String, String> DEFAULT_CONFS =
       Map.of("delta.feature.v2Checkpoint", "supported");
 
   private final Map<String, String> raw;
-  private final Configuration cfg;
+  private Configuration cfg;
 
   private final Random randgen = new Random(System.currentTimeMillis());
 
@@ -75,17 +86,27 @@ public class TableConf implements Serializable {
    * @param conf raw configuration map; must not be null
    */
   public TableConf(Map<String, String> conf) {
-    raw = Map.copyOf(Objects.requireNonNull(conf, "conf"));
+    raw = new HashMap<>(Objects.requireNonNull(conf, "conf"));
     cfg = Configuration.fromMap(raw);
 
     validate();
   }
 
   /**
+   * Update the table conf by merging the provided conf into it.
+   *
+   * @param toUpdate configurations to be updated.
+   */
+  public void update(Map<String, String> toUpdate) {
+    raw.putAll(toUpdate);
+    cfg = Configuration.fromMap(raw);
+  }
+
+  /**
    * Configuration to be persisted in the catalog.
    *
    * <p>This returns a subset of options that are intended to be stored with the table definition.
-   * Now it includes configuration starts with "delta."
+   * Now it includes configuration starts with "delta." or "io.unitycatalog."
    *
    * @return a map of catalog-persisted configuration entries
    */
@@ -93,7 +114,10 @@ public class TableConf implements Serializable {
     Map<String, String> merged = new HashMap<>(DEFAULT_CONFS);
     merged.putAll(
         raw.entrySet().stream()
-            .filter(entry -> entry.getKey().startsWith("delta."))
+            .filter(
+                entry ->
+                    entry.getKey().startsWith("delta.")
+                        || entry.getKey().startsWith("io.unitycatalog."))
             .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)));
     return merged;
   }
@@ -113,6 +137,11 @@ public class TableConf implements Serializable {
   /** @return whether checksum file creation is enabled for this table */
   public boolean isChecksumEnabled() {
     return cfg.get(CHECKSUM_ENABLED);
+  }
+
+  /** @return the storage credential source for this table ("uc" or "ambient") */
+  public String getCredentialSource() {
+    return cfg.get(CREDENTIALS_SOURCE);
   }
 
   /**

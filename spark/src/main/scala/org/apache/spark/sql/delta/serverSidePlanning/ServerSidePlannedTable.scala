@@ -179,7 +179,7 @@ class ServerSidePlannedTable(
     tableName: String,
     tableSchema: StructType,
     planningClient: ServerSidePlanningClient)
-    extends Table with SupportsRead with DeltaLogging {
+    extends Table with SupportsRead with AutoCloseable with DeltaLogging {
 
   // Returns fully qualified name (e.g., "catalog.database.table").
   // The databaseName parameter receives ident.namespace().mkString(".") from DeltaCatalog,
@@ -194,6 +194,10 @@ class ServerSidePlannedTable(
 
   override def newScanBuilder(options: CaseInsensitiveStringMap): ScanBuilder = {
     new ServerSidePlannedScanBuilder(spark, databaseName, tableName, tableSchema, planningClient)
+  }
+
+  override def close(): Unit = {
+    planningClient.close()
   }
 }
 
@@ -341,13 +345,19 @@ class ServerSidePlannedScan(
     }
   }
 
-  // Call the server-side planning API to get the scan plan with files AND credentials
-  private lazy val scanPlan: ScanPlan = planningClient.planScan(
-    databaseName,
-    tableName,
-    combinedFilter,
-    projectionColumnNames,
-    limit)
+  // Call the server-side planning API to get the scan plan with files AND credentials.
+  // Close the client after planning - the scan plan contains all data needed for partition
+  // creation and reading, so the client (and its HTTP connection) is no longer needed.
+  private lazy val scanPlan: ScanPlan = {
+    val plan = planningClient.planScan(
+      databaseName,
+      tableName,
+      combinedFilter,
+      projectionColumnNames,
+      limit)
+    planningClient.close()
+    plan
+  }
 
   // Explicitly signal that columnar is unsupported to prevent early enumeration of the partitions
   override def columnarSupportMode(): Scan.ColumnarSupportMode =

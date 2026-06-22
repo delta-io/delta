@@ -18,7 +18,9 @@ package io.delta.spark.internal.v2.snapshot.unitycatalog;
 import static java.util.Objects.requireNonNull;
 import static scala.jdk.javaapi.CollectionConverters.asJava;
 
+import io.delta.kernel.unitycatalog.UCTableIdentifier;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import org.apache.spark.sql.SparkSession;
@@ -87,7 +89,37 @@ public final class UCUtils {
     UCCatalogConfig config = configOpt.get();
     String ucUri = config.uri();
 
-    return Optional.of(new UCTableInfo(tableId, tablePath, ucUri, asJava(config.authConfig())));
+    return Optional.of(
+        new UCTableInfo(
+            tableId,
+            tablePath,
+            extractTableIdentifier(catalogTable),
+            ucUri,
+            asJava(config.authConfig()),
+            extractOptInFlags(asJava(config.ucConfig()))));
+  }
+
+  /**
+   * Selects the per-catalog opt-in flag keys recognized by {@code
+   * UCTokenBasedRestClientFactory.createUCClient} (e.g. {@code deltaRestApi.enabled}) so they
+   * propagate through {@link UCTableInfo#toUcConfig()} into the V2 connector's UC client
+   * construction. Without this, the factory falls back to the legacy client even when the catalog
+   * has opted into the new Delta API path.
+   */
+  private static Map<String, String> extractOptInFlags(Map<String, String> ucConfig) {
+    Map<String, String> flags = new HashMap<>();
+    for (String key :
+        new String[] {
+          UCTableInfo.DELTA_REST_API_ENABLED_KEY,
+          UCTableInfo.RENEW_CREDENTIAL_ENABLED_KEY,
+          UCTableInfo.CRED_SCOPED_FS_ENABLED_KEY
+        }) {
+      String value = ucConfig.get(key);
+      if (value != null) {
+        flags.put(key, value);
+      }
+    }
+    return flags;
   }
 
   private static String extractUCTableId(CatalogTable catalogTable) {
@@ -109,5 +141,24 @@ public final class UCUtils {
           "Cannot extract table path: location is null for table " + catalogTable.identifier());
     }
     return catalogTable.location().toString();
+  }
+
+  private static UCTableIdentifier extractTableIdentifier(CatalogTable catalogTable) {
+    scala.Option<String> catalogOption = catalogTable.identifier().catalog();
+    if (catalogOption.isEmpty()) {
+      throw new IllegalArgumentException(
+          "Unable to determine Unity Catalog for table "
+              + catalogTable.identifier()
+              + ": catalog name is missing.");
+    }
+    scala.Option<String> schemaOption = catalogTable.identifier().database();
+    if (schemaOption.isEmpty()) {
+      throw new IllegalArgumentException(
+          "Unable to determine Unity Catalog schema for table "
+              + catalogTable.identifier()
+              + ": schema name is missing.");
+    }
+    return new UCTableIdentifier(
+        catalogOption.get(), schemaOption.get(), catalogTable.identifier().table());
   }
 }

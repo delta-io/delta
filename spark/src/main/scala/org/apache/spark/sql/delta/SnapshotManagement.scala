@@ -278,7 +278,7 @@ trait SnapshotManagement { self: DeltaLog =>
           unbackfilledCommitsResponse.getCommits.asScala.map(commit => commit.getVersion),
         "latestCommitVersion" -> unbackfilledCommitsResponse.getLatestTableVersion)
       recordDeltaEvent(
-        deltaLog = this,
+        provider = this,
         opType = CoordinatedCommitsUsageLogs.FS_COMMIT_COORDINATOR_LISTING_UNEXPECTED_GAPS,
         data = eventData)
       if (DeltaUtils.isTesting) {
@@ -666,7 +666,7 @@ trait SnapshotManagement { self: DeltaLog =>
       "missingCommits" -> missingCommits
     )
     recordDeltaEvent(
-      deltaLog = this,
+      provider = this,
       opType = "delta.getLogSegmentForVersion.compactedDeltaValidationFailed",
       data = eventData)
     if (DeltaUtils.isTesting) {
@@ -744,8 +744,8 @@ trait SnapshotManagement { self: DeltaLog =>
       log" starting from checkpoint version " +
       log"${MDC(DeltaLogKeys.START_VERSION, initSegment.checkpointProvider.version)}."
     } else log"."
-    logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] Loading version " +
-      log"${MDC(DeltaLogKeys.VERSION, initSegment.version)}" + startingFrom)
+    logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedUnsafeVolatileTableId)}] " +
+      log"Loading version ${MDC(DeltaLogKeys.VERSION, initSegment.version)}" + startingFrom)
     createSnapshotFromGivenOrEquivalentLogSegment(
         initSegment, tableCommitCoordinatorClientOpt, catalogTableOpt) { segment =>
       new Snapshot(
@@ -1407,13 +1407,19 @@ trait SnapshotManagement { self: DeltaLog =>
         // NOTE: Validation is a no-op with incremental commit disabled.
         newSnapshot.validateChecksum(Map("context" -> checksumContext))
       } catch {
-        case _: IllegalStateException if !DeltaUtils.isTesting => false
+        case e: IllegalStateException if !DeltaUtils.isTesting =>
+          logWarning(log"Incremental checksum validation failed: " +
+            log"${MDC(DeltaLogKeys.ERROR, e.getMessage)}")
+          false
       }
 
       if (!crcIsValid) {
         // Create snapshot without incremental checksum. This will fallback to creating
         // a checksum based on state reconstruction. Disable incremental commit to avoid
         // further error triggers in this session.
+        logWarning(log"Disabling incremental commit for this session due to checksum " +
+          log"validation failure at version " +
+          log"${MDC(DeltaLogKeys.VERSION, newSnapshot.version)}")
         spark.sessionState.conf.setConf(DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED, false)
         spark.sessionState.conf.setConf(DeltaSQLConf.DELTA_WRITE_SET_TRANSACTIONS_IN_CRC, false)
         return createSnapshotWithCrc(checksumOpt = None)
@@ -1505,6 +1511,21 @@ trait SnapshotManagement { self: DeltaLog =>
       lastCheckpointProvider: Option[CheckpointProvider],
       catalogTableOpt: Option[CatalogTable],
       enforceTimeTravelWithinDeletedFileRetention: Boolean): Snapshot = {
+    getSnapshotAtInternal(
+      version,
+      lastCheckpointHint,
+      lastCheckpointProvider,
+      catalogTableOpt,
+      enforceTimeTravelWithinDeletedFileRetention)
+  }
+
+  private def getSnapshotAtInternal(
+      version: Long,
+      lastCheckpointHint: Option[CheckpointInstance],
+      lastCheckpointProvider: Option[CheckpointProvider],
+      catalogTableOpt: Option[CatalogTable],
+      enforceTimeTravelWithinDeletedFileRetention: Boolean,
+      checksumOpt: Option[VersionChecksum] = None): Snapshot = {
 
     // See if the version currently cached on the cluster satisfies the requirement
     val currentSnapshot = unsafeVolatileSnapshot
@@ -1532,7 +1553,7 @@ trait SnapshotManagement { self: DeltaLog =>
       case _ =>
         val lastCheckpointInfoForListing = lastCheckpointHint
             .filter(_.version <= version)
-            .orElse(findLastCompleteCheckpointBefore(version))
+            .orElse(findLastCompleteCheckpointBefore(version + 1))
             .map(manuallyLoadCheckpoint)
         lastCheckpointInfoForListing -> None
     }
@@ -1553,7 +1574,7 @@ trait SnapshotManagement { self: DeltaLog =>
       initSegment = logSegment,
       tableCommitCoordinatorClientOpt = commitCoordinatorOpt,
       catalogTableOpt = catalogTableOpt,
-      checksumOpt = None)
+      checksumOpt = checksumOpt)
 
     if (enforceTimeTravelWithinDeletedFileRetention) {
       enforceTimeTravelWithinDeletedFileRetentionDuration(ret, currentSnapshot)
@@ -1657,7 +1678,7 @@ object SnapshotManagement extends DeltaLogging {
         // in some cases, which needs to be explicitly filtered out.
         val snapshot = cachedSnapshot.filter(_ != null)
         recordDeltaEvent(
-          deltaLog = null,
+          provider = null,
           opType = "delta.exceptions.deltaVersionsNotContiguous",
           data = Map(
             // Remove the first element of the stack trace since this represents

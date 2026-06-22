@@ -17,12 +17,18 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
+import java.io.File
 import java.nio.file.FileAlreadyExistsException
+import java.util.concurrent.{CountDownLatch, Executors, TimeUnit}
 
-import com.databricks.spark.util.Log4jUsageLogger
+import scala.collection.JavaConverters._
+import scala.concurrent.{ExecutionContext, Future}
+import scala.concurrent.duration._
+
+import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Truncate}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
-import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, Metadata, Protocol, RemoveFile, SetTransaction}
+import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, Metadata, Protocol, RemoveFile, SetTransaction}
 import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorBuilder, CommitCoordinatorProvider, InMemoryCommitCoordinator, InMemoryCommitCoordinatorBuilder, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -33,11 +39,12 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{Row, SaveMode, SparkSession}
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.expressions.{EqualTo, Literal}
-import org.apache.spark.sql.functions.lit
-import org.apache.spark.sql.types.{IntegerType, StructType}
-import org.apache.spark.util.ManualClock
+import org.apache.spark.sql.functions.{col, lit}
+import org.apache.spark.sql.types.{IntegerType, StructType, TimestampType}
+import org.apache.spark.util.{ManualClock, ThreadUtils}
 
 
 class OptimisticTransactionSuite
@@ -336,6 +343,42 @@ class OptimisticTransactionSuite
       assert(!fs.exists(commitDir))
       intercept[java.io.FileNotFoundException] {
         log.startTransaction().commit(Seq(newMetadata), ManualUpdate)
+      }
+    }
+  }
+
+  test("concurrent feature enablement with failConcurrentTransactionsAtUpgrade should conflict") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_CONFLICT_CHECKER_ENFORCE_FEATURE_ENABLEMENT_VALIDATION.key -> "true") {
+      withTempDir { tempDir =>
+        val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+
+        val metadata = Metadata(
+          schemaString = new StructType().add("x", IntegerType).json,
+          partitionColumns = Seq("x"))
+        val protocol = Protocol(3, 7)
+        log.startTransaction().commit(Seq(metadata, protocol), ManualUpdate)
+
+        // Start a transaction that will write to the table concurrently with feature enablement.
+        val txn = log.startTransaction()
+
+        // Concurrently, enable the MaterializePartitionColumns feature
+        // This feature has failConcurrentTransactionsAtUpgrade = true
+        val newProtocol = txn.snapshot.protocol.withFeatures(
+          Set(MaterializePartitionColumnsTableFeature))
+
+        log.startTransaction().commit(Seq(newProtocol), ManualUpdate)
+
+        // The original transaction should fail when trying to commit
+        // because a feature with failConcurrentTransactionsAtUpgrade=true was added
+        val e = intercept[io.delta.exceptions.ProtocolChangedException] {
+          txn.commit(
+            Seq(AddFile("test", Map("x" -> "1"), 1, 1, dataChange = true)),
+            ManualUpdate)
+        }
+
+        // Verify the error message
+        assert(e.getMessage.contains("The protocol version of the Delta table has been changed"))
       }
     }
   }
@@ -695,8 +738,7 @@ class OptimisticTransactionSuite
 
             // txn1: read files in partitions of our new data (part=0)
             val txn = log.startTransaction()
-            val addFiles =
-                txn.filterFiles(newData.map(_.partitionValues).toSet)
+            val addFiles = txn.filterFiles(newData)
 
             // txn2
             log.startTransaction().commit(concurrentActions(partCol), ManualUpdate)
@@ -761,6 +803,153 @@ class OptimisticTransactionSuite
     concurrentActions = partCol => Seq(
       RemoveFile("b", None, partitionValues = Map(partCol -> "1")))
   )
+
+  for (enableNormalization <- BOOLEAN_DOMAIN) {
+    test("filterFiles for timestamp partitions with different string formats, " +
+      s"enableNormalization = $enableNormalization") {
+      withSQLConf(
+        DeltaSQLConf.DELTA_DYNAMIC_PARTITION_OVERWRITE_PARSE_PARTITION_VALUES.key ->
+          enableNormalization.toString
+      ) {
+        DeltaTestUtils.withTimeZone("UTC") {
+          withTempDir { tempDir =>
+            val tablePath = tempDir.getCanonicalPath
+            val log = DeltaLog.forTable(spark, tablePath)
+
+            log.startTransaction().commit(Seq(
+              Metadata(
+                schemaString = new StructType()
+                  .add("ts", TimestampType)
+                  .add("value", IntegerType).json,
+                partitionColumns = Seq("ts"))
+            ), ManualUpdate)
+
+            // Add files with non-UTC formatted timestamp partition values
+            val nonUtcTimestamp = "2000-01-01 12:00:00"
+            log.startTransaction().commit(
+              Seq(
+                AddFile("a", Map("ts" -> nonUtcTimestamp), 1, 1, dataChange = true),
+                AddFile("b", Map("ts" -> "2000-02-02 12:00:00"), 1, 1, dataChange = true)),
+              ManualUpdate)
+
+            // Query using UTC formatted timestamp (different string, same logical value)
+            val utcTimestamp = "2000-01-01T12:00:00.000000Z"
+            val txn = log.startTransaction()
+            val utcAddFile = AddFile("tmp", Map("ts" -> utcTimestamp), 0, 0, dataChange = false)
+            val matchedFiles = txn.filterFiles(Seq(utcAddFile))
+
+            if (enableNormalization) {
+              assert(matchedFiles.map(_.path).toSet == Set("a"))
+            } else {
+              assert(matchedFiles.isEmpty)
+            }
+          }
+        }
+      }
+    }
+  }
+
+  for (failOnError <- BOOLEAN_DOMAIN) {
+    test("filterFiles falls back to string comparison when partition parsing fails, " +
+      s"failOnError = $failOnError") {
+      withSQLConf(
+        DeltaSQLConf.DELTA_DYNAMIC_PARTITION_OVERWRITE_PARSE_PARTITION_VALUES.key -> "true",
+        DeltaSQLConf.DELTA_FAIL_ON_PARTITION_VALUE_PARSING_ERROR.key -> failOnError.toString
+      ) {
+        withTempDir { tempDir =>
+          val tablePath = tempDir.getCanonicalPath
+          val log = DeltaLog.forTable(spark, tablePath)
+
+          log.startTransaction().commit(Seq(
+            Metadata(
+              schemaString = new StructType()
+                .add("part", IntegerType)
+                .add("value", IntegerType).json,
+              partitionColumns = Seq("part"))
+          ), ManualUpdate)
+
+          // Add existing file with an unparseable partition value.
+          val badValue = "not_a_number"
+          log.startTransaction().commit(
+            Seq(AddFile("a", Map("part" -> badValue), 1, 1, dataChange = true)),
+            ManualUpdate)
+
+          // New file also has the same unparseable value
+          val txn = log.startTransaction()
+          val newFile = AddFile("tmp", Map("part" -> badValue), 0, 0, dataChange = false)
+
+          if (failOnError) {
+            checkError(
+              intercept[DeltaRuntimeException] {
+                txn.filterFiles(Seq(newFile))
+              },
+              condition = "DELTA_PARTITION_COLUMN_CAST_FAILED",
+              sqlState = "22525",
+              parameters = Map(
+                "value" -> badValue,
+                "dataType" -> "IntegerType",
+                "columnName" -> "part")
+            )
+          } else {
+            // Falls back to raw string comparison — strings match, so file "a" is returned
+            val matched = txn.filterFiles(Seq(newFile))
+            assert(matched.map(_.path).toSet == Set("a"))
+          }
+        }
+      }
+    }
+  }
+
+  for (failOnError <- BOOLEAN_DOMAIN) {
+    test("filterFiles when existing files have unparseable partition values, " +
+      s"failOnError = $failOnError") {
+      withSQLConf(
+        DeltaSQLConf.DELTA_DYNAMIC_PARTITION_OVERWRITE_PARSE_PARTITION_VALUES.key -> "true",
+        DeltaSQLConf.DELTA_FAIL_ON_PARTITION_VALUE_PARSING_ERROR.key -> failOnError.toString
+      ) {
+        withTempDir { tempDir =>
+          val tablePath = tempDir.getCanonicalPath
+          val log = DeltaLog.forTable(spark, tablePath)
+
+          log.startTransaction().commit(Seq(
+            Metadata(
+              schemaString = new StructType()
+                .add("part", IntegerType)
+                .add("value", IntegerType).json,
+              partitionColumns = Seq("part"))
+          ), ManualUpdate)
+
+          // Existing file has an unparseable partition value.
+          val badValue = "not_a_number"
+          log.startTransaction().commit(
+            Seq(AddFile("a", Map("part" -> badValue), 1, 1, dataChange = true)),
+            ManualUpdate)
+
+          // New file has a valid partition value. Only the UDF fails
+          val txn = log.startTransaction()
+          val newFile = AddFile("tmp", Map("part" -> "1"), 0, 0, dataChange = false)
+
+          if (failOnError) {
+            checkError(
+              intercept[DeltaRuntimeException] {
+                txn.filterFiles(Seq(newFile))
+              },
+              condition = "DELTA_PARTITION_COLUMN_CAST_FAILED",
+              sqlState = "22525",
+              parameters = Map(
+                "value" -> badValue,
+                "dataType" -> "IntegerType",
+                "columnName" -> "part")
+            )
+          } else {
+            // Falls back to raw string comparison — "1" != "not_a_number", so no match
+            val matched = txn.filterFiles(Seq(newFile))
+            assert(matched.isEmpty)
+          }
+        }
+      }
+    }
+  }
 
   test("can set partition columns in first commit") {
     withTempDir { tableDir =>
@@ -1024,6 +1213,684 @@ class OptimisticTransactionSuite
         val postCommitSnapshot = deltaLog.update()
         assert(!preCommitSnapshot.stateReconstructionTriggered)
         assert(!postCommitSnapshot.stateReconstructionTriggered)
+      }
+    }
+  }
+
+
+  test("partition column changes not thrown for valid CREATE/REPLACE operations") {
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getAbsolutePath
+
+      sql(s"""CREATE TABLE delta.`$tablePath`
+              USING delta
+              PARTITIONED BY (part)
+              AS SELECT id, id % 3 as part FROM range(10)""")
+
+      sql(s"""CREATE OR REPLACE TABLE delta.`$tablePath`
+              USING delta
+              PARTITIONED BY (newpart)
+              AS SELECT id, id % 5 as newpart FROM range(10)""")
+
+      sql(s"""REPLACE TABLE delta.`$tablePath`
+              USING delta
+              PARTITIONED BY (newpart)
+              AS SELECT id, id % 5 as newpart FROM range(10)""")
+    }
+  }
+
+  Seq(("path", true), ("catalog", false)).foreach { case (tableType, isPath) =>
+    Seq("dfv1", "dfv2", "sql").foreach { method =>
+      Seq("error", "overwrite")
+        .filterNot(mode => method == "dfv2" && mode == "overwrite")
+        .foreach { mode =>
+          test(s"partition column changes not thrown for $method $mode on new $tableType table") {
+            withTempDir { tempDir =>
+              val pathOrTable = getPathOrTable(tempDir, isPath, s"${method}_${mode}_${tableType}")
+
+              try {
+                writePartitionedTable(
+                  pathOrTable, isPath, "part", 10, mode = mode, method = method)
+                assertPartitionColumnsForTest(pathOrTable, isPath, Seq("part"))
+              } finally {
+                if (!isPath) sql(s"DROP TABLE IF EXISTS $pathOrTable")
+              }
+            }
+          }
+        }
+    }
+  }
+
+  Seq(("path", true), ("catalog", false)).foreach { case (tableType, isPath) =>
+    Seq("sql", "dfv1", "dfv2").foreach { method =>
+      test(s"partition column changes not thrown for $method append on $tableType") {
+        withTempDir { tempDir =>
+          val pathOrTable = getPathOrTable(tempDir, isPath, s"${method}_append_${tableType}")
+
+          try {
+            writePartitionedTable(
+              pathOrTable, isPath, "part", 10, mode = "error", method = method)
+            writePartitionedTable(
+              pathOrTable, isPath, "part", 10, mode = "append",
+              rangeStart = 10, rangeEnd = 20, method = method)
+            assertPartitionColumnsForTest(pathOrTable, isPath, Seq("part"))
+          } finally {
+            if (!isPath) sql(s"DROP TABLE IF EXISTS $pathOrTable")
+          }
+        }
+      }
+    }
+  }
+
+  // Among others, this includes a test containing an overwrite using .saveAsTable() which
+  // creates a ReplaceTable operation under the hood.
+  Seq(
+    ("path", true),
+    ("catalog", false)
+  ).foreach { case (tableType, isPath) =>
+    Seq("dfv1", "dfv2", "sql").foreach { method =>
+      Seq("overwrite", "createOrReplace").foreach { mode =>
+        // Skip unsupported combinations
+        if (!(method == "dfv1" && mode == "createOrReplace")) {
+          test(s"partition col changes allowed for $method $tableType $mode") {
+            withTempDir { tempDir =>
+              val pathOrTable = if (isPath) {
+                tempDir.getAbsolutePath
+              } else {
+                s"test_table_${method}_${tableType}_${mode}"
+              }
+
+              // Create initial table
+              writeThreeColumnTable(pathOrTable, "col1")
+
+              if (isPath) {
+                assertPartitionColumns(pathOrTable, Seq("col1"))
+              } else {
+                assertPartitionColumns(new TableIdentifier(pathOrTable), Seq("col1"))
+              }
+
+              // Overwrite with different partition column
+              writeThreeColumnTable(pathOrTable, "col2", method = method, mode = mode)
+
+              val expectedAnswer = spark.range(10)
+                .withColumn("col1", col("id") % 3).withColumn("col2", col("id") % 5)
+
+              if (isPath) {
+                assertPartitionColumns(pathOrTable, Seq("col2"))
+                checkAnswer(spark.read.format("delta").load(pathOrTable), expectedAnswer)
+              } else {
+                assertPartitionColumns(new TableIdentifier(pathOrTable), Seq("col2"))
+                checkAnswer(spark.table(pathOrTable), expectedAnswer)
+                sql(s"DROP TABLE IF EXISTS $pathOrTable")
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  test("partition column changes validation modes for UPDATE operations") {
+    val testCases = Seq(
+      ("true", Some(classOf[DeltaAnalysisException]), true),
+      ("log-only", None, true),
+      ("false", None, false)
+    )
+
+    testCases.foreach { case (mode, exceptionClassOpt, expectLogEvent) =>
+      withSQLConf(DeltaSQLConf.DELTA_PARTITION_COLUMN_CHANGE_CHECK.key -> mode) {
+        withTempDir { tempDir =>
+          val tablePath = tempDir.getAbsolutePath
+          writeThreeColumnTable(tablePath, "col1")
+
+          val deltaLog = DeltaLog.forTable(spark, tablePath)
+          val txn = deltaLog.startTransaction()
+          val newMetadata = txn.metadata.copy(partitionColumns = Seq("col2"))
+
+          val logRecords = Log4jUsageLogger.track {
+            exceptionClassOpt match {
+              case Some(_) =>
+                checkError(
+                  intercept[DeltaAnalysisException] {
+                    txn.commit(
+                      Seq(newMetadata),
+                      DeltaOperations.Update(predicate = Some(EqualTo(Literal(1), Literal(1))))
+                    )
+                  },
+                  condition = "DELTA_UNSUPPORTED_PARTITION_COLUMN_CHANGE",
+                  sqlState = "42P10",
+                  parameters = Map(
+                    "operation" -> "UPDATE",
+                    "oldPartitionColumns" -> "col1",
+                    "newPartitionColumns" -> "col2"
+                  )
+                )
+              case None =>
+                // Should succeed without throwing
+                txn.commit(
+                  Seq(newMetadata),
+                  DeltaOperations.Update(predicate = Some(EqualTo(Literal(1), Literal(1))))
+                )
+            }
+          }
+
+          // Check for log event if expected
+          if (expectLogEvent) {
+            val matchingRecords =
+              filterUsageRecords(logRecords, "delta.metadataCheck.illegalPartitionColumnChange")
+            assert(matchingRecords.nonEmpty,
+              "Expected to find log event 'delta.metadataCheck.illegalPartitionColumnChange' " +
+                "but it was not logged")
+          }
+
+          // Verify final state only if commit succeeded
+          if (exceptionClassOpt.isEmpty) {
+            assertPartitionColumns(tablePath, Seq("col2"))
+          }
+        }
+      }
+    }
+  }
+
+  test("partition column changes validation default mode blocks UPDATE operations") {
+    // Test that the default behavior (without explicit config) is to block partition column changes
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getAbsolutePath
+      writeThreeColumnTable(tablePath, "col1")
+
+      val deltaLog = DeltaLog.forTable(spark, tablePath)
+      val txn = deltaLog.startTransaction()
+      val newMetadata = txn.metadata.copy(partitionColumns = Seq("col2"))
+
+      checkError(
+        intercept[DeltaAnalysisException] {
+          txn.commit(
+            Seq(newMetadata),
+            DeltaOperations.Update(predicate = Some(EqualTo(Literal(1), Literal(1))))
+          )
+        },
+        condition = "DELTA_UNSUPPORTED_PARTITION_COLUMN_CHANGE",
+        sqlState = "42P10",
+        parameters = Map(
+          "operation" -> "UPDATE",
+          "oldPartitionColumns" -> "col1",
+          "newPartitionColumns" -> "col2"
+        )
+      )
+      assertPartitionColumns(tablePath, Seq("col1"))
+    }
+  }
+
+  Seq(
+    // Recreation of running DFv1 .save() overwrite changing partition cols.
+    ("blocked for Write(Overwrite, partitionBy)", "WRITE",
+      (_: Metadata) => DeltaOperations.Write(SaveMode.Overwrite, partitionBy = Some(Seq("col2")))),
+
+    // Recreation of running DFv1 .save() replaceWhere changing partition cols.
+    ("blocked for Write(Overwrite, partitionBy, predicate)", "WRITE",
+      (_: Metadata) => DeltaOperations.Write(SaveMode.Overwrite, partitionBy = Some(Seq("col2")),
+        predicate = Some("col1=0"))),
+
+    // Recreation of running DFv1 .save() DPO changing partition cols.
+    ("blocked for Write(Overwrite, partitionBy, DPO)", "WRITE",
+      (_: Metadata) => DeltaOperations.Write(SaveMode.Overwrite, partitionBy = Some(Seq("col2")),
+        isDynamicPartitionOverwrite = Some(true))),
+
+    // Recreation of running DFv1 .saveAsTable() overwrite changing partition cols.
+    ("blocked for ReplaceTable(isV1SaveAsTableOverwrite=true)", "CREATE OR REPLACE TABLE AS SELECT",
+      (newMeta: Metadata) => DeltaOperations.ReplaceTable(
+        metadata = newMeta,
+        isManaged = true,
+        orCreate = true,
+        asSelect = true,
+        isV1SaveAsTableOverwrite = Some(true)))
+  ).foreach { case (testSuffix, expectedOpName, mkOp) =>
+    test(s"partition column changes $testSuffix") {
+      withTempDir { tempDir =>
+        val tablePath = tempDir.getAbsolutePath
+        writeThreeColumnTable(tablePath, "col1")
+
+        val deltaLog = DeltaLog.forTable(spark, tablePath)
+        val txn = deltaLog.startTransaction()
+        val newMetadata = txn.metadata.copy(partitionColumns = Seq("col2"))
+
+        checkError(
+          intercept[DeltaAnalysisException] {
+            txn.commit(Seq(newMetadata), mkOp(newMetadata))
+          },
+          condition = "DELTA_UNSUPPORTED_PARTITION_COLUMN_CHANGE",
+          sqlState = "42P10",
+          parameters = Map(
+            "operation" -> expectedOpName,
+            "oldPartitionColumns" -> "col1",
+            "newPartitionColumns" -> "col2"
+          )
+        )
+        assertPartitionColumns(tablePath, Seq("col1"))
+      }
+    }
+  }
+
+  test("partition column changes allowed for CLONE operations") {
+    withTempDir { sourceDir =>
+      withTempDir { targetDir =>
+        val sourcePath = sourceDir.getAbsolutePath
+        val targetPath = targetDir.getAbsolutePath
+
+        writePartitionedTable(sourcePath, isPath = true, "part", 10)
+
+        // Test SHALLOW CLONE
+        sql(s"CREATE TABLE delta.`$targetPath` SHALLOW CLONE delta.`$sourcePath`")
+        assertPartitionColumns(targetPath, Seq("part"))
+      }
+    }
+  }
+
+  test("partition column changes allowed for RenameColumn when partition column renamed") {
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getAbsolutePath
+      writePartitionedTable(tablePath, isPath = true, "part", 10)
+
+      sql(s"ALTER TABLE delta.`$tablePath` SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+      sql(s"ALTER TABLE delta.`$tablePath` RENAME COLUMN part TO renamed_part")
+
+      assertPartitionColumns(tablePath, Seq("renamed_part"))
+    }
+  }
+
+  Seq(("path", true), ("catalog", false)).foreach { case (tableType, isPath) =>
+    test(s"dfv1 overwrite without overwriteSchema blocks partition column changes - $tableType") {
+      withTempDir { tempDir =>
+        val pathOrTable = getPathOrTable(tempDir, isPath, s"dfv1_overwrite_${tableType}")
+
+        try {
+          writeThreeColumnTable(pathOrTable, "col1")
+          assertPartitionColumnsForTest(pathOrTable, isPath, Seq("col1"))
+
+          val df = spark.range(10)
+            .withColumn("col1", col("id") % 3)
+            .withColumn("col2", col("id") % 5)
+
+          val ex = intercept[DeltaAnalysisException] {
+            val writer = df.write.format("delta").mode("overwrite").partitionBy("col2")
+            if (isPath) writer.save(pathOrTable) else writer.saveAsTable(pathOrTable)
+          }
+
+          assert(ex.getMessage.contains("overwriteSchema") ||
+            ex.getMessage.contains("incompatible"))
+          assertPartitionColumnsForTest(pathOrTable, isPath, Seq("col1"))
+        } finally {
+          if (!isPath) sql(s"DROP TABLE IF EXISTS $pathOrTable")
+        }
+      }
+    }
+  }
+
+  // Helper methods
+  private def writePartitionedTable(
+    pathOrTable: String,
+    isPath: Boolean,
+    partitionCol: String,
+    range: Int,
+    mode: String = "error",
+    rangeStart: Int = 0,
+    rangeEnd: Int = -1,
+    method: String = "dfv1"): Unit = {
+
+    val end = if (rangeEnd == -1) range else rangeEnd
+    val df = spark.range(rangeStart, end)
+      .withColumn(partitionCol, col("id") % 3)
+
+    val tableRef = if (isPath) s"delta.`$pathOrTable`" else pathOrTable
+    val v2WriteDf = df.writeTo(tableRef).using("delta").partitionedBy(col(partitionCol))
+
+    method match {
+      case "dfv1" =>
+        val writer = df.write.format("delta").mode(mode).partitionBy(partitionCol)
+        if (isPath) {
+          writer.save(pathOrTable)
+        } else {
+          writer.saveAsTable(pathOrTable)
+        }
+      case "dfv2" =>
+        mode match {
+          case "error" | "errorifexists" =>
+            v2WriteDf.create()
+          case "overwrite" =>
+            v2WriteDf.replace()
+          case "append" =>
+            df.writeTo(tableRef).append()
+          case "createOrReplace" =>
+            v2WriteDf.createOrReplace()
+        }
+      case "sql" =>
+        val tempView = s"temp_view_${System.nanoTime()}"
+        df.createOrReplaceTempView(tempView)
+        val stmt = mode match {
+          case "append" => s"INSERT INTO $tableRef SELECT * FROM $tempView"
+          case _ =>
+            s"""CREATE OR REPLACE TABLE $tableRef
+               |USING delta PARTITIONED BY ($partitionCol)
+               |AS SELECT * FROM $tempView""".stripMargin
+        }
+        sql(stmt)
+    }
+  }
+
+  private def writeThreeColumnTable(
+    pathOrTable: String,
+    partitionCol: String,
+    method: String = "dfv1",
+    mode: String = "error"): Unit = {
+
+    val df = spark.range(10)
+      .withColumn("col1", col("id") % 3)
+      .withColumn("col2", col("id") % 5)
+
+    val isPath = pathOrTable.contains("/")
+
+    method match {
+      case "dfv1" =>
+        val writer = df.write.format("delta").partitionBy(partitionCol)
+        if (mode == "overwrite") {
+          writer.option("overwriteSchema", "true")
+        }
+        if (isPath) {
+          writer.mode(mode).save(pathOrTable)
+        } else {
+          writer.mode(mode).saveAsTable(pathOrTable)
+        }
+
+      case "dfv2" =>
+        val tableRef = if (isPath) s"delta.`$pathOrTable`" else pathOrTable
+        mode match {
+          case "error" =>
+            df.writeTo(tableRef).using("delta").partitionedBy(col(partitionCol)).create()
+          case "overwrite" =>
+            df.writeTo(tableRef).using("delta").partitionedBy(col(partitionCol)).replace()
+          case "createOrReplace" =>
+            df.writeTo(tableRef).using("delta").partitionedBy(col(partitionCol))
+              .createOrReplace()
+        }
+
+      case "sql" =>
+        val tempView = s"temp_view_${System.nanoTime()}"
+        df.createOrReplaceTempView(tempView)
+
+        val tableRef = if (isPath) s"delta.`$pathOrTable`" else pathOrTable
+        val stmt = mode match {
+          case "append" => s"INSERT INTO $tableRef SELECT * FROM $tempView"
+          case _ =>
+            s"""CREATE OR REPLACE TABLE $tableRef
+               |USING delta PARTITIONED BY ($partitionCol)
+               |AS SELECT * FROM $tempView""".stripMargin
+        }
+        sql(stmt)
+    }
+  }
+
+  private def assertPartitionColumns(pathOrTableId: Any, expected: Seq[String]): Unit = {
+    val deltaLog = pathOrTableId match {
+      case path: String => DeltaLog.forTable(spark, path)
+      case tableId: TableIdentifier => DeltaLog.forTable(spark, tableId)
+    }
+    assert(deltaLog.update().metadata.partitionColumns === expected)
+  }
+
+  // Helper to generate path or table name based on test context
+  private def getPathOrTable(
+      tempDir: File,
+      isPath: Boolean,
+      testSuffix: String): String = {
+    if (isPath) {
+      tempDir.getAbsolutePath
+    } else {
+      s"test_table_$testSuffix"
+    }
+  }
+
+  // Helper to assert partition columns for either path or table
+  private def assertPartitionColumnsForTest(
+      pathOrTable: String,
+      isPath: Boolean,
+      expected: Seq[String]): Unit = {
+    if (isPath) {
+      assertPartitionColumns(pathOrTable, expected)
+    } else {
+      assertPartitionColumns(new TableIdentifier(pathOrTable), expected)
+    }
+  }
+
+  test("filesForScan is thread-safe when invoked concurrently on a single transaction") {
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getCanonicalPath
+      val log = DeltaLog.forTable(spark, tablePath)
+
+      // Set up a partitioned table with one file per partition.
+      log.startTransaction().commit(Seq(
+        Metadata(
+          schemaString = new StructType()
+            .add("part", IntegerType)
+            .add("value", IntegerType).json,
+          partitionColumns = Seq("part"))
+      ), ManualUpdate)
+
+      val numPartitions = 16
+      val seedFiles = (0 until numPartitions).map { i =>
+        AddFile(s"f$i", Map("part" -> i.toString), 1, 1, dataChange = true)
+      }
+      log.startTransaction().commit(seedFiles, ManualUpdate)
+
+      val txn = log.startTransaction()
+
+      // Sanity check: filesForScan returns expected files when called concurrently. Each
+      // worker queries a single partition and must observe its own file independently of
+      // the other threads racing to update the transaction's state.
+      val numThreads = 8
+      val scanPool = Executors.newFixedThreadPool(numThreads)
+      locally {
+        implicit val ec: ExecutionContext = ExecutionContext.fromExecutorService(scanPool)
+        try {
+          val scanLatch = new CountDownLatch(1)
+          val scanFutures = (0 until numPartitions).map { i =>
+            Future {
+              scanLatch.await()
+              val filter = EqualTo('part, Literal(i))
+              val scan = txn.filesForScan(filter :: Nil)
+              assert(scan.files.map(_.path).toSet === Set(s"f$i"))
+            }
+          }
+          scanLatch.countDown()
+          ThreadUtils.awaitResult(Future.sequence(scanFutures), 60.seconds)
+        } finally {
+          scanPool.shutdown()
+          scanPool.awaitTermination(60, TimeUnit.SECONDS)
+        }
+      }
+
+      // Stress the mutator path that filesForScan ultimately uses (trackFilesRead) with a
+      // large, evenly partitioned write load timed so all threads start simultaneously.
+      // Without a thread-safe collection (e.g. mutable.HashSet) the concurrent updates
+      // race and lose entries or corrupt the table; with a ConcurrentHashMap-backed set
+      // every entry is observed.
+      val stressThreads = 32
+      val perThread = 1000
+      val totalExpected = stressThreads * perThread
+      val stressBatches = (0 until stressThreads).map { t =>
+        (0 until perThread).map { j =>
+          AddFile(s"stress-t${t}-j${j}", Map("part" -> "0"), 1, 1, dataChange = true)
+        }
+      }
+      val pool = Executors.newFixedThreadPool(stressThreads)
+      locally {
+        implicit val ec: ExecutionContext = ExecutionContext.fromExecutorService(pool)
+        try {
+          val startLatch = new CountDownLatch(1)
+          val readyLatch = new CountDownLatch(stressThreads)
+          val futures = stressBatches.map { batch =>
+            Future {
+              readyLatch.countDown()
+              startLatch.await()
+              txn.trackFilesRead(batch)
+            }
+          }
+          assert(readyLatch.await(60, TimeUnit.SECONDS),
+            "Timed out waiting for stress workers to reach the start barrier.")
+          startLatch.countDown()
+          ThreadUtils.awaitResult(Future.sequence(futures), 120.seconds)
+        } finally {
+          pool.shutdown()
+          pool.awaitTermination(60, TimeUnit.SECONDS)
+        }
+      }
+
+      // Access the protected `readFiles` field reflectively so the test is decoupled
+      // from whether the underlying collection is a Scala or Java Set.
+      val readFilesField = txn.getClass.getDeclaredFields
+        .find(_.getName.endsWith("readFiles"))
+        .getOrElse(fail("Could not locate readFiles field on the transaction class"))
+      readFilesField.setAccessible(true)
+      val tracked: Set[AddFile] = readFilesField.get(txn) match {
+        case javaSet: java.util.Collection[_] =>
+          javaSet.asScala.toSet.asInstanceOf[Set[AddFile]]
+        case scalaSet: scala.collection.Iterable[_] =>
+          scalaSet.toSet.asInstanceOf[Set[AddFile]]
+        case other => fail(s"Unexpected readFiles container type: ${other.getClass}")
+      }
+      // Tracked files = the files initially scanned (one per partition) plus every
+      // synthetic file added by the stress phase.
+      val expectedSize = numPartitions + totalExpected
+      assert(tracked.size === expectedSize,
+        s"Expected $expectedSize tracked read files, got ${tracked.size}. " +
+          s"This indicates lost updates from concurrent updates to readFiles, meaning " +
+          s"the underlying collection is not thread-safe.")
+    }
+  }
+
+  /* ************************
+   * Consistent dataChange validation
+   * ************************ */
+
+  /**
+   * Commits a mixed batch (one dataChange=true AddFile and one dataChange=false AddFile)
+   * against a fresh table under `mode` using either `commit` or `commitLarge`. Returns the
+   * captured `delta.commit.inconsistentDataChange` records along with the thrown exception
+   * (if any).
+   */
+  private def commitMixedDataChangeBatch(
+      tempDir: File,
+      mode: DeltaSQLConf.ConsistentDataChangeValidationMode,
+      useCommitLarge: Boolean)
+      : (Seq[UsageRecord], Option[Throwable]) = {
+    withSQLConf(
+      DeltaSQLConf.DELTA_COMMIT_VALIDATE_CONSISTENT_DATA_CHANGE_MODE.key -> mode.toString) {
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      val seedTxn = log.startTransaction()
+      seedTxn.updateMetadataForNewTable(Metadata())
+      seedTxn.commit(Seq.empty, ManualUpdate)
+
+      val mixedActions = Seq(
+        createTestAddFile(encodedPath = "data-change", dataChange = true),
+        createTestAddFile(encodedPath = "no-data-change", dataChange = false))
+      var thrown: Option[Throwable] = None
+      val allRecords = Log4jUsageLogger.track {
+        try {
+          if (useCommitLarge) {
+            log.startTransaction().commitLarge(
+              spark,
+              nonProtocolMetadataActions = mixedActions.iterator,
+              newProtocolOpt = None,
+              op = DeltaOperations.ManualUpdate,
+              context = Map.empty,
+              metrics = Map.empty)
+          } else {
+            log.startTransaction().commit(mixedActions, ManualUpdate)
+          }
+        } catch {
+          case t: Throwable => thrown = Some(t)
+        }
+      }
+      val records = filterUsageRecords(allRecords, "delta.commit.inconsistentDataChange")
+      (records, thrown)
+    }
+  }
+
+  for (useCommitLarge <- BOOLEAN_DOMAIN) {
+    val callerContext = if (useCommitLarge) "commitLarge" else "commit"
+
+    test(s"consistent dataChange validation: FATAL mode throws and logs payload" +
+        s" ($callerContext)") {
+      withTempDir { tempDir =>
+        val (records, thrown) = commitMixedDataChangeBatch(
+          tempDir, DeltaSQLConf.ConsistentDataChangeValidationMode.FATAL, useCommitLarge)
+        assert(thrown.exists(_.isInstanceOf[IllegalStateException]))
+        assert(records.size == 1)
+        val payload = JsonUtils.fromJson[Map[String, Any]](records.head.blob)
+        assert(payload("callerContext") == callerContext)
+        assert(payload("operation") == ManualUpdate.name)
+        assert(payload.contains("operationParameters"))
+        val firstDataChange = payload("firstDataChangeAction").asInstanceOf[Map[String, Any]]
+        val firstNoDataChange = payload("firstNoDataChangeAction").asInstanceOf[Map[String, Any]]
+        assert(firstDataChange("path") == "data-change")
+        assert(firstNoDataChange("path") == "no-data-change")
+      }
+    }
+
+    test(s"consistent dataChange validation: LOG mode logs but does not throw" +
+        s" ($callerContext)") {
+      withTempDir { tempDir =>
+        val (records, thrown) = commitMixedDataChangeBatch(
+          tempDir, DeltaSQLConf.ConsistentDataChangeValidationMode.LOG, useCommitLarge)
+        assert(thrown.isEmpty)
+        assert(records.size == 1)
+      }
+    }
+
+    test(s"consistent dataChange validation: OFF mode neither logs nor throws" +
+        s" ($callerContext)") {
+      withTempDir { tempDir =>
+        val (records, thrown) = commitMixedDataChangeBatch(
+          tempDir, DeltaSQLConf.ConsistentDataChangeValidationMode.OFF, useCommitLarge)
+        assert(thrown.isEmpty)
+        assert(records.isEmpty)
+      }
+    }
+  }
+
+  test("consistent dataChange validation: uniform commit passes in FATAL mode") {
+    withTempDir { tempDir =>
+      withSQLConf(DeltaSQLConf.DELTA_COMMIT_VALIDATE_CONSISTENT_DATA_CHANGE_MODE.key ->
+          DeltaSQLConf.ConsistentDataChangeValidationMode.FATAL.toString) {
+        val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+        val seedTxn = log.startTransaction()
+        seedTxn.updateMetadataForNewTable(Metadata())
+        seedTxn.commit(Seq.empty, ManualUpdate)
+        // All true.
+        log.startTransaction().commit(
+          Seq(createTestAddFile(encodedPath = "a", dataChange = true)), ManualUpdate)
+        // All false.
+        log.startTransaction().commit(
+          Seq(createTestAddFile(encodedPath = "b", dataChange = false)), ManualUpdate)
+      }
+    }
+  }
+
+  test("consistent dataChange validation: AddCDCFile is excluded from the check") {
+    withTempDir { tempDir =>
+      withSQLConf(DeltaSQLConf.DELTA_COMMIT_VALIDATE_CONSISTENT_DATA_CHANGE_MODE.key ->
+          DeltaSQLConf.ConsistentDataChangeValidationMode.FATAL.toString) {
+        val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+        val seedTxn = log.startTransaction()
+        seedTxn.updateMetadataForNewTable(Metadata())
+        seedTxn.commit(Seq.empty, ManualUpdate)
+        // AddCDCFile has dataChange = false hardcoded; co-committing it with a
+        // dataChange = true AddFile is the normal CDF write shape and must not trip
+        // the validation.
+        log.startTransaction().commit(
+          Seq(
+            createTestAddFile(encodedPath = "data", dataChange = true),
+            AddCDCFile(path = "_change_data/cdc-file", partitionValues = Map.empty, size = 1)),
+          ManualUpdate)
       }
     }
   }

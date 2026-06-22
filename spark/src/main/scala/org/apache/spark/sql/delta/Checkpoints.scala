@@ -474,7 +474,7 @@ trait Checkpoints extends DeltaLogging {
         .filterNot(cv => cv.version < 0 || cv.version == CheckpointInstance.MaxValue.version)
         .getOrElse {
           logInfo(
-            log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] Try to " +
+            log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedUnsafeVolatileTableId)}] Try to " +
             log"find Delta last complete checkpoint")
           eventData("listingFromZero") = true.toString
           return findLastCompleteCheckpoint()
@@ -484,8 +484,8 @@ trait Checkpoints extends DeltaLogging {
     eventData("upperBoundCheckpointType") = upperBoundCv.format.name
     var iterations: Long = 0L
     var numFilesScanned: Long = 0L
-    logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] Try to find " +
-      log"Delta last complete checkpoint before version " +
+    logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedUnsafeVolatileTableId)}] " +
+      log"Try to find Delta last complete checkpoint before version " +
       log"${MDC(DeltaLogKeys.VERSION, upperBoundCv.version)}")
     var listingEndVersion = upperBoundCv.version
 
@@ -530,7 +530,7 @@ trait Checkpoints extends DeltaLogging {
       eventData("numFilesScanned") = numFilesScanned.toString
       if (lastCheckpoint.isDefined) {
         logInfo(
-          log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] Delta " +
+          log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedUnsafeVolatileTableId)}] Delta " +
           log"checkpoint is found at version " +
           log"${MDC(DeltaLogKeys.VERSION, lastCheckpoint.get.version)}")
         return lastCheckpoint
@@ -538,7 +538,7 @@ trait Checkpoints extends DeltaLogging {
       listingEndVersion = listingEndVersion - 1000
     }
     logInfo(
-      log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] No checkpoint " +
+      log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedUnsafeVolatileTableId)}] No checkpoint " +
       log"found for Delta table before version ${MDC(DeltaLogKeys.VERSION, upperBoundCv.version)}")
     None
   }
@@ -628,7 +628,7 @@ object Checkpoints
    */
   def getV2CheckpointFormatOpt(
       spark: SparkSession,
-      snapshot: Snapshot): Option[V2Checkpoint.Format] = {
+      snapshot: SnapshotDescriptor): Option[V2Checkpoint.Format] = {
     val policy = DeltaConfigs.CHECKPOINT_POLICY.fromMetaData(snapshot.metadata)
     if (policy.needsV2CheckpointSupport) {
       assert(CheckpointProvider.isV2CheckpointEnabled(snapshot))
@@ -670,7 +670,8 @@ object Checkpoints
       spark: SparkSession,
       deltaLog: DeltaLog,
       snapshot: Snapshot,
-      catalogTableOpt: Option[CatalogTable]): LastCheckpointInfo = recordFrameProfile(
+      catalogTableOpt: Option[CatalogTable]): LastCheckpointInfo =
+    recordFrameProfile(
       "Delta", "Checkpoints.writeCheckpoint") {
     if (spark.conf.get(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED)) {
       snapshot.validateChecksum(Map("context" -> "writeCheckpoint"))
@@ -724,9 +725,10 @@ object Checkpoints
     val sessionConf = spark.sessionState.conf
     val checkpointPartSize =
         sessionConf.getConf(DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE)
+          .orElse(if (v2CheckpointEnabled) Some(50000L) else None)
 
     val numParts = checkpointPartSize.map { partSize =>
-      math.ceil((snapshot.numOfFiles + snapshot.numOfRemoves).toDouble / partSize).toLong
+      math.ceil((snapshot.numOfFiles + snapshot.numOfRemoves).toDouble / partSize).toLong.max(1L)
     }.getOrElse(1L).toInt
     val legacyMultiPartCheckpoint = !v2CheckpointEnabled && numParts > 1
 
@@ -982,7 +984,13 @@ object Checkpoints
     // Filter out the sidecar schema if it is too large.
     val sidecarFileSchemaOpt =
       Checkpoints.checkpointSchemaToWriteInLastCheckpointFile(spark, sidecarSchema)
-    val checkpointMetadata = CheckpointMetadata(snapshot.version)
+    val checkpointMetadata = CheckpointMetadata(
+      version = snapshot.version,
+      sidecarNumActions = rowsWrittenInCheckpointJob,
+      sidecarSizeInBytes = parquetFilesSizeInBytes,
+      numOfAddFiles = snapshot.numOfFiles,
+      sidecarFileSchemaOpt = sidecarFileSchemaOpt
+    )
 
     val nonFileActionsToWrite =
       (checkpointMetadata +: sidecarFilesWritten) ++ snapshot.nonFileActions
@@ -1221,12 +1229,12 @@ object Checkpoints
     )
   }
 
-  def shouldWriteStatsAsStruct(conf: SQLConf, snapshot: Snapshot): Boolean = {
+  def shouldWriteStatsAsStruct(conf: SQLConf, snapshot: SnapshotDescriptor): Boolean = {
     DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_STRUCT.fromMetaData(snapshot.metadata) &&
       !conf.getConf(DeltaSQLConf.STATS_AS_STRUCT_IN_CHECKPOINT_FORCE_DISABLED).getOrElse(false)
   }
 
-  def shouldWriteStatsAsJson(snapshot: Snapshot): Boolean = {
+  def shouldWriteStatsAsJson(snapshot: SnapshotDescriptor): Boolean = {
     DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_JSON.fromMetaData(snapshot.metadata)
   }
 

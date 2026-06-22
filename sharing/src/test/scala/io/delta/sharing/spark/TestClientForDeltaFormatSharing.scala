@@ -26,9 +26,13 @@ import io.delta.sharing.client.{
   DeltaSharingRestClient
 }
 import io.delta.sharing.client.model.{
+  AddCDCFile => ClientAddCDCFile,
   AddFile => ClientAddFile,
+  AddFileForCDF => ClientAddFileForCDF,
   DeltaTableFiles,
   DeltaTableMetadata,
+  Metadata => ClientMetadata,
+  RemoveFile => ClientRemoveFile,
   SingleAction,
   Table,
   TemporaryCredentials
@@ -60,7 +64,9 @@ private[spark] class TestClientForDeltaFormatSharing(
     asyncQueryMaxDuration: Long = 600000L,
     tokenExchangeMaxRetries: Int = 5,
     tokenExchangeMaxRetryDurationInSeconds: Int = 60,
-    tokenRenewalThresholdInSeconds: Int = 600)
+    tokenRenewalThresholdInSeconds: Int = 600,
+    callerOrg: String = "",
+    skipFileIdHashVerification: Boolean = false)
     extends DeltaSharingClient {
 
   private val supportedReaderFeatures: Seq[String] = Seq(
@@ -69,9 +75,11 @@ private[spark] class TestClientForDeltaFormatSharing(
     TimestampNTZTableFeature,
     TypeWideningPreviewTableFeature,
     TypeWideningTableFeature,
+    GeoSpatialTableFeature,
     VariantTypePreviewTableFeature,
     VariantTypeTableFeature,
-    VariantShreddingPreviewTableFeature
+    VariantShreddingPreviewTableFeature,
+    VariantShreddingTableFeature
   ).map(_.name)
 
   assert(
@@ -82,6 +90,8 @@ private[spark] class TestClientForDeltaFormatSharing(
   )
 
   import TestClientForDeltaFormatSharing._
+
+  TestClientForDeltaFormatSharing.lastCallerOrg = callerOrg
 
   override def listAllTables(): Seq[Table] = throw new UnsupportedOperationException("not needed")
 
@@ -144,11 +154,16 @@ private[spark] class TestClientForDeltaFormatSharing(
       versionAsOf: Option[Long],
       timestampAsOf: Option[String],
       jsonPredicateHints: Option[String],
-      refreshToken: Option[String]
+      refreshToken: Option[String],
+      fileIdHash: Option[String]
   ): DeltaTableFiles = {
     val tableFullName = s"${table.share}.${table.schema}.${table.name}"
     limit.foreach(lim => TestClientForDeltaFormatSharing.limits.put(tableFullName, lim))
     TestClientForDeltaFormatSharing.requestedFormat.put(tableFullName, responseFormat)
+    TestClientForDeltaFormatSharing.fileIdHashHistory.synchronized {
+      TestClientForDeltaFormatSharing.fileIdHashHistory +=
+        ((table.name, "getFiles_snapshot", fileIdHash))
+    }
     jsonPredicateHints.foreach(p =>
       TestClientForDeltaFormatSharing.jsonPredicateHints.put(tableFullName, p))
 
@@ -206,12 +221,24 @@ private[spark] class TestClientForDeltaFormatSharing(
   override def getFiles(
       table: Table,
       startingVersion: Long,
-      endingVersion: Option[Long]
+      endingVersion: Option[Long],
+      fileIdHash: Option[String]
   ): DeltaTableFiles = {
     assert(
       endingVersion.isDefined,
       "endingVersion is not defined. This shouldn't happen in unit test."
     )
+    assert(
+      startingVersion <= endingVersion.get,
+      s"startingVersion($startingVersion) is greater than " +
+        s"endingVersion(${endingVersion.get}). This shouldn't happen in unit test."
+    )
+    val tableFullName = s"${table.share}.${table.schema}.${table.name}"
+    TestClientForDeltaFormatSharing.requestedFormat.put(tableFullName, responseFormat)
+    TestClientForDeltaFormatSharing.fileIdHashHistory.synchronized {
+      TestClientForDeltaFormatSharing.fileIdHashHistory +=
+        ((table.name, s"getFiles_streaming_${startingVersion}_${endingVersion.get}", fileIdHash))
+    }
     val iterator = SparkEnv.get.blockManager
       .get[String](getBlockId(table.name, s"getFiles_${startingVersion}_${endingVersion.get}"))
       .map(_.data.asInstanceOf[Iterator[String]])
@@ -237,7 +264,8 @@ private[spark] class TestClientForDeltaFormatSharing(
   override def getCDFFiles(
       table: Table,
       cdfOptions: Map[String, String],
-      includeHistoricalMetadata: Boolean
+      includeHistoricalMetadata: Boolean,
+      fileIdHash: Option[String]
   ): DeltaTableFiles = {
     val suffix = cdfOptions
       .get(DeltaSharingOptions.CDF_START_VERSION)
@@ -265,11 +293,41 @@ private[spark] class TestClientForDeltaFormatSharing(
     while (iterator.hasNext) {
       linesBuilder += iterator.next()
     }
-    DeltaTableFiles(
-      version = getTableVersion(table),
-      lines = linesBuilder.result(),
-      respondedFormat = DeltaSharingRestClient.RESPONSE_FORMAT_DELTA
-    )
+    if (table.name.contains("shared_parquet_table") &&
+      responseFormat.contains(DeltaSharingRestClient.RESPONSE_FORMAT_PARQUET)) {
+      val lines = linesBuilder.result()
+      val protocol = JsonUtils.fromJson[SingleAction](lines(0)).protocol
+      val metadata = JsonUtils.fromJson[SingleAction](lines(1)).metaData
+      val addFiles = ArrayBuffer[ClientAddFileForCDF]()
+      val cdfFiles = ArrayBuffer[ClientAddCDCFile]()
+      val removeFiles = ArrayBuffer[ClientRemoveFile]()
+      val additionalMetadatas = ArrayBuffer[ClientMetadata]()
+      lines.drop(2).foreach { line =>
+        JsonUtils.fromJson[SingleAction](line).unwrap match {
+          case c: ClientAddCDCFile => cdfFiles.append(c)
+          case a: ClientAddFileForCDF => addFiles.append(a)
+          case r: ClientRemoveFile => removeFiles.append(r)
+          case m: ClientMetadata => additionalMetadatas.append(m)
+          case _ => throw new IllegalStateException(s"Unexpected Line:${line}")
+        }
+      }
+      DeltaTableFiles(
+        version = getTableVersion(table),
+        protocol = protocol,
+        metadata = metadata,
+        addFiles = addFiles.toSeq,
+        cdfFiles = cdfFiles.toSeq,
+        removeFiles = removeFiles.toSeq,
+        additionalMetadatas = additionalMetadatas.toSeq,
+        respondedFormat = DeltaSharingRestClient.RESPONSE_FORMAT_PARQUET
+      )
+    } else {
+      DeltaTableFiles(
+        version = getTableVersion(table),
+        lines = linesBuilder.result(),
+        respondedFormat = DeltaSharingRestClient.RESPONSE_FORMAT_DELTA
+      )
+    }
   }
 
   override def generateTemporaryTableCredential(
@@ -308,4 +366,16 @@ object TestClientForDeltaFormatSharing {
   val limits = scala.collection.mutable.Map[String, Long]()
   val requestedFormat = scala.collection.mutable.Map[String, String]()
   val jsonPredicateHints = scala.collection.mutable.Map[String, String]()
+  @volatile var lastCallerOrg: String = ""
+
+  // Captures (tableName, queryType, fileIdHash) for each getFiles call.
+  val fileIdHashHistory = scala.collection.mutable.ArrayBuffer[(String, String, Option[String])]()
+
+  def clearFileIdHashHistory(): Unit = fileIdHashHistory.synchronized {
+    fileIdHashHistory.clear()
+  }
+
+  def getFileIdHashHistory: Seq[(String, String, Option[String])] = fileIdHashHistory.synchronized {
+    fileIdHashHistory.toSeq
+  }
 }

@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
+import org.apache.spark.SparkThrowable
 import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
@@ -32,7 +33,6 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
 
   override def beforeAll(): Unit = {
     super.beforeAll()
-    spark.conf.set(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key, "true")
     spark.conf.set(SQLConf.ANSI_ENABLED.key, "true")
   }
 
@@ -97,9 +97,9 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
     )
 
 
-    // Adding new top-level columns with schema evolution is allowed for all inserts except SQL
-    // inserts by name, but dataframe inserts by name don't support implicit casting and will fail
-    // due to the type mismatch.
+    // Adding new top-level columns with schema evolution is allowed for all inserts.
+    // save() and saveAsTable() overwrite don't support implicit casting and will fail.
+    // SQL inserts by-name have different error messages and are covered in a separate test below.
     testInserts(s"insert with extra top-level column and implicit cast," +
       s"schemaEvolution=$schemaEvolution")(
       initialData = TestData("a int, b int", Seq("""{ "a": 1, "b": 2 }""")),
@@ -117,7 +117,8 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
           checkError(ex, "DELTA_METADATA_MISMATCH", "42KDG", Map.empty[String, String])
         })
       },
-      includeInserts = insertsByPosition + StreamingInsert,
+      excludeInserts = insertsSQL.intersect(insertsByName) ++
+        insertsWithoutImplicitCastSupport,
       withSchemaEvolution = schemaEvolution
     )
 
@@ -136,26 +137,36 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
             "updateField" -> "b"
           ))
       }),
-      includeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert,
+      includeInserts = insertsWithoutImplicitCastSupport,
       withSchemaEvolution = schemaEvolution
     )
 
+    // SQL inserts by name fail with a different error in the analysis when there's an extra column
+    // and schema evolution is disabled.
     testInserts(s"insert with extra top-level column and implicit cast," +
       s"schemaEvolution=$schemaEvolution")(
       initialData = TestData("a int, b int", Seq("""{ "a": 1, "b": 2 }""")),
       partitionBy = Seq("a"),
       overwriteWhere = "a" -> 1,
       insertData = TestData("a int, b long, c int", Seq("""{ "a": 1, "b": 4, "c": 5  }""")),
-      expectedResult = ExpectedResult.Failure(ex => {
-        checkError(
-          ex,
-          "INSERT_COLUMN_ARITY_MISMATCH.TOO_MANY_DATA_COLUMNS",
-          parameters = Map(
-            "tableName" -> s"`$catalogName`.`default`.`target`",
-            "tableColumns" -> "`a`, `b`",
-            "dataColumns" -> "`a`, `b`, `c`"
-          ))
-      }),
+      expectedResult = if (schemaEvolution) {
+        ExpectedResult.Success(
+          expected = new StructType()
+            .add("a", IntegerType)
+            .add("b", IntegerType)
+            .add("c", IntegerType))
+      } else {
+        ExpectedResult.Failure(ex => {
+          checkError(
+            ex,
+            "INSERT_COLUMN_ARITY_MISMATCH.TOO_MANY_DATA_COLUMNS",
+            parameters = Map(
+              "tableName" -> s"`$catalogName`.`default`.`target`",
+              "tableColumns" -> "`a`, `b`",
+              "dataColumns" -> "`a`, `b`, `c`"
+            ))
+        })
+      },
       includeInserts = insertsSQL.intersect(insertsByName) -- Set(
         // It's not possible to specify a column that doesn't exist in the target using SQL with an
         // explicit column list.
@@ -243,13 +254,13 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
           checkError(ex, "DELTA_METADATA_MISMATCH", "42KDG", Map.empty[String, String])
         })
       },
-      includeInserts = insertsSQL ++ insertsByPosition + StreamingInsert -- Seq(
+      excludeInserts = Set(
         // It's not possible to specify a column that doesn't exist in the target using SQL with an
         // explicit column list.
         SQLInsertColList(SaveMode.Append),
         SQLInsertColList(SaveMode.Overwrite),
-        SQLInsertOverwritePartitionColList
-      ),
+        SQLInsertOverwritePartitionColList) ++
+        insertsWithoutImplicitCastSupport,
       withSchemaEvolution = schemaEvolution
     )
 
@@ -269,8 +280,32 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
             "updateField" -> "s"
           ))
       }),
-      includeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert,
+      includeInserts = insertsWithoutImplicitCastSupport,
       withSchemaEvolution = schemaEvolution
     )
+  }
+
+  // When DELTA_INSERT_BY_NAME_SCHEMA_EVOLUTION_ENABLED is disabled, SQL INSERT BY NAME with extra
+  // top-level columns should fail even when schema evolution is enabled.
+  test("insert by name with extra top-level column and implicit cast fails " +
+      "when byNameSchemaEvolution is disabled") {
+    withTable("target") {
+      sql("CREATE TABLE target (a INT, b INT) USING DELTA")
+      withSQLConf(
+          DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true",
+          DeltaSQLConf.DELTA_INSERT_BY_NAME_SCHEMA_EVOLUTION_ENABLED.key -> "false") {
+        val ex = intercept[SparkThrowable] {
+          sql("INSERT INTO target BY NAME SELECT 1 AS a, 2L AS b, 3 AS c")
+        }
+        checkError(
+          ex,
+          "INSERT_COLUMN_ARITY_MISMATCH.TOO_MANY_DATA_COLUMNS",
+          parameters = Map(
+            "tableName" -> s"`$catalogName`.`default`.`target`",
+            "tableColumns" -> "`a`, `b`",
+            "dataColumns" -> "`a`, `b`, `c`"
+          ))
+      }
+    }
   }
 }

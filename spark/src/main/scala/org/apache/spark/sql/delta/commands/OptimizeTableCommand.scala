@@ -28,7 +28,7 @@ import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescri
 import org.apache.spark.sql.delta.commands.optimize._
 import org.apache.spark.sql.delta.files.SQLMetricsReporting
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
-import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.schema.{SchemaUtils, UnsupportedDataTypeInfo}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.BinPackingUtils
 
@@ -96,6 +96,14 @@ abstract class OptimizeTableCommandBase extends RunnableCommand with DeltaComman
       if (df.queryExecution.analyzed.resolve(colAttribute.nameParts, isNameEqual).isEmpty) {
         throw DeltaErrors.zOrderingColumnDoesNotExistException(colName)
       }
+      val attr = df.queryExecution.analyzed.resolve(colAttribute.nameParts, isNameEqual).get
+
+      if (DeltaGeoSpatial.containsGeoColumns(attr.dataType)) {
+        throw DeltaErrors.operationNotSupportedForDataTypes(
+          "Z-ORDER",
+          UnsupportedDataTypeInfo(colName, attr.dataType))
+      }
+
     }
     if (checkColStat && colsWithoutStats.nonEmpty) {
       throw DeltaErrors.zOrderingOnColumnWithNoStatsException(
@@ -152,6 +160,10 @@ case class OptimizeTableCommand(
     val snapshot = table.update()
     if (snapshot.version == -1) {
       throw DeltaErrors.notADeltaTableException(table.deltaLog.dataPath.toString)
+    }
+
+    if (snapshot.isCatalogOwned) {
+      throw DeltaErrors.operationBlockedOnCatalogManagedTable("OPTIMIZE")
     }
 
     val isClusteredTable = ClusteredTableUtils.isSupported(snapshot.protocol)
@@ -308,7 +320,14 @@ class OptimizeExecutor(
         case None =>
           filterCandidateFileList(minFileSize, maxDeletedRowsRatio, candidateFiles)
       }
-      val partitionsToCompact = filesToProcess.groupBy(_.partitionValues).toSeq
+      // Group files by their normalized (typed) partition values so that logically equivalent
+      // but differently formatted values (e.g. timestamp variants) end up in the same group.
+      val partitionsToCompact = filesToProcess
+        .groupBy(_.normalizedPartitionValues(
+          sparkSession,
+          snapshot.metadata.physicalPartitionSchema))
+        .map { case (_, files) => (files.head.partitionValues, files) }
+        .toSeq
 
       val jobs = groupFilesIntoBins(partitionsToCompact)
 
@@ -350,7 +369,7 @@ class OptimizeExecutor(
 
       optimizeStrategy.updateOptimizeStats(optimizeStats, removedFiles, jobs)
 
-      return Seq(Row(snapshot.deltaLog.dataPath.toString, optimizeStats.toOptimizeMetrics))
+      return Seq(Row(snapshot.dataPath.toString, optimizeStats.toOptimizeMetrics))
     }
   }
 

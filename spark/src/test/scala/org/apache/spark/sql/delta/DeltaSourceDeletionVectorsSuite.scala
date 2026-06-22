@@ -31,8 +31,16 @@ import org.apache.spark.sql.streaming.util.StreamManualClock
 
 trait DeltaSourceDeletionVectorTests extends StreamTest
   with DeletionVectorsTestUtils {
+  self: DeltaSourceConnectorTrait =>
 
   import testImplicits._
+
+  /**
+   * Executes a DML SQL statement (DELETE, INSERT, etc.).
+   * Overridable so that V2 suites can route DML through the V1 connector,
+   * since DeltaV2Table (V2) is read-only and does not support writes.
+   */
+  protected def executeDml(sqlText: String): Unit = sql(sqlText)
 
   test("allow to delete files before starting a streaming query") {
     withTempDir { inputDir =>
@@ -41,7 +49,7 @@ trait DeltaSourceDeletionVectorTests extends StreamTest
         val v = Seq(i.toString).toDF
         v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
-      sql(s"DELETE FROM delta.`$inputDir`")
+      executeDml(s"DELETE FROM delta.`$inputDir`")
       (5 until 10).foreach { i =>
         val v = Seq(i.toString).toDF
         v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
@@ -49,9 +57,7 @@ trait DeltaSourceDeletionVectorTests extends StreamTest
       deltaLog.checkpoint()
       assert(deltaLog.readLastCheckpointFile().nonEmpty, "this test requires a checkpoint")
 
-      val df = spark.readStream
-        .format("delta")
-        .load(inputDir.getCanonicalPath)
+      val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
 
       testStream(df)(
         AssertOnQuery { q =>
@@ -69,16 +75,14 @@ trait DeltaSourceDeletionVectorTests extends StreamTest
         val v = Seq(i.toString).toDF
         v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
-      sql(s"DELETE FROM delta.`$inputDir`")
+      executeDml(s"DELETE FROM delta.`$inputDir`")
       (5 until 7).foreach { i =>
         val v = Seq(i.toString).toDF
         v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
       assert(deltaLog.readLastCheckpointFile().isEmpty, "this test requires no checkpoint")
 
-      val df = spark.readStream
-        .format("delta")
-        .load(inputDir.getCanonicalPath)
+      val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
 
       testStream(df)(
         AssertOnQuery { q =>
@@ -115,7 +119,7 @@ trait DeltaSourceDeletionVectorTests extends StreamTest
       Seq(i, i + 1).toDF().coalesce(1).write.format("delta").mode("append").save(inputDir)
     }
 
-    val df = spark.readStream.format("delta").options(sourceOptions.toMap).load(inputDir)
+    val df = loadStreamWithOptions(inputDir, sourceOptions.toMap)
     val expectDVs = commandShouldProduceDVs.getOrElse(
       sqlCommand.toUpperCase().startsWith("DELETE"))
 
@@ -126,7 +130,7 @@ trait DeltaSourceDeletionVectorTests extends StreamTest
       },
       CheckAnswer((0 until 10): _*),
       AssertOnQuery { q =>
-        sql(sqlCommand)
+        executeDml(sqlCommand)
         deletionVectorsPresentIfExpected(inputDir, expectDVs)
       })
 
@@ -148,7 +152,7 @@ trait DeltaSourceDeletionVectorTests extends StreamTest
     }
     val log = DeltaLog.forTable(spark, inputDir)
     val commitVersionBeforeDML = log.update().version
-    val df = spark.readStream.format("delta").options(sourceOptions.toMap).load(inputDir)
+    val df = loadStreamWithOptions(inputDir, sourceOptions.toMap)
     def expectDVsInCommand(shouldProduceDVs: Option[Boolean], command: String): Boolean = {
       shouldProduceDVs.getOrElse(command.toUpperCase().startsWith("DELETE"))
     }
@@ -177,11 +181,11 @@ trait DeltaSourceDeletionVectorTests extends StreamTest
         true
       },
       AssertOnQuery { q =>
-        sql(sqlCommand1)
+        executeDml(sqlCommand1)
         deletionVectorsPresentIfExpected(inputDir, expectDVsInCommand1)
       },
       AssertOnQuery { q =>
-        sql(sqlCommand2)
+        executeDml(sqlCommand2)
         deletionVectorsPresentIfExpected(inputDir, expectDVsInCommand2)
       },
       AssertOnQuery { q =>
@@ -407,6 +411,109 @@ trait DeltaSourceDeletionVectorTests extends StreamTest
     }
   }
 
+  // Regression for #6578: ColumnVectorWithFilter.closeIfFreeable must not release the
+  // underlying Parquet vector's `nulls` array - the reader reuses it for the next batch.
+  test("streaming read with nulls and deletion vectors does not NPE") {
+    withTempDir { inputDir =>
+      val path = inputDir.getAbsolutePath
+      sql(
+        s"""CREATE TABLE delta.`$path` (id INT, value STRING, opt_int INT) USING delta
+           |TBLPROPERTIES ('delta.enableDeletionVectors' = 'true')""".stripMargin)
+      executeDml(
+        s"INSERT INTO delta.`$path` VALUES (1, null, null), (2, 'b', null), (null, null, null)")
+      executeDml(s"INSERT INTO delta.`$path` VALUES (3, 'c', 3), (null, 'x', 1)")
+
+      val df = loadStreamWithOptions(path, Map.empty)
+      testStream(df)(
+        AssertOnQuery { q =>
+          q.processAllAvailable()
+          true
+        },
+        AssertOnQuery { q =>
+          assert(
+            q.exception.isEmpty,
+            s"Expected no exception, but got: ${q.exception.map(_.toString).orNull}")
+          true
+        })
+    }
+  }
+
+  // Regression for #6578: ColumnVectorWithFilter.getChild must not assume dataType() is a
+  // StructType - Spark's ColumnVector.getVariant calls getChild(0) on VARIANT vectors.
+  test("streaming read with variant column and deletion vectors does not ClassCastException") {
+    withTempDir { inputDir =>
+      val path = inputDir.getAbsolutePath
+      sql(
+        s"""CREATE TABLE delta.`$path` (id INT, data VARIANT) USING delta
+           |TBLPROPERTIES ('delta.enableDeletionVectors' = 'true')""".stripMargin)
+      executeDml(
+        s"""INSERT INTO delta.`$path`
+           |SELECT 1, parse_json('{"key": "value"}')
+           |UNION ALL SELECT 2, parse_json('[1,2,3]')""".stripMargin)
+      executeDml(
+        s"""INSERT INTO delta.`$path` SELECT 3, parse_json('{"nested": {"a": 1}}')""".stripMargin)
+
+      val df = loadStreamWithOptions(path, Map.empty)
+      testStream(df)(
+        AssertOnQuery { q =>
+          q.processAllAvailable()
+          true
+        },
+        AssertOnQuery { q =>
+          assert(
+            q.exception.isEmpty,
+            s"Expected no exception, but got: ${q.exception.map(_.toString).orNull}")
+          true
+        })
+    }
+  }
+
+  test("variant column and deletion vectors preserve payload identity") {
+    withTempDir { inputDir =>
+      val path = inputDir.getAbsolutePath
+      sql(s"CREATE TABLE delta.`$path` (id INT, v VARIANT) USING delta")
+      // Coalesce into one file so DELETE creates a DV rather than a file rewrite.
+      spark.range(10)
+        .selectExpr("cast(id as int) as id", "parse_json(concat('{\"row\":', id, '}')) as v")
+        .coalesce(1)
+        .write.format("delta").mode("append").save(path)
+      executeDml(s"DELETE FROM delta.`$path` WHERE id % 2 = 0")
+
+      val df = loadStreamWithOptions(path, Map.empty)
+        .selectExpr("id", "variant_get(v, '$.row', 'long') as row_in_payload")
+      testStream(df)(
+        AssertOnQuery { q =>
+          q.processAllAvailable()
+          true
+        },
+        CheckAnswer((1, 1L), (3, 3L), (5, 5L), (7, 7L), (9, 9L)))
+    }
+  }
+
+  test("array column and deletion vectors preserve element identity") {
+    withTempDir { inputDir =>
+      val path = inputDir.getAbsolutePath
+      sql(s"CREATE TABLE delta.`$path` (id INT, arr ARRAY<INT>) USING delta")
+      // Coalesce into one file so DELETE creates a DV rather than a file rewrite.
+      spark.range(10)
+        .selectExpr(
+          "cast(id as int) as id",
+          "array(cast(id*10 as int), cast(id*10+1 as int)) as arr")
+        .coalesce(1)
+        .write.format("delta").mode("append").save(path)
+      executeDml(s"DELETE FROM delta.`$path` WHERE id % 2 = 0")
+
+      val df = loadStreamWithOptions(path, Map.empty)
+        .selectExpr("id", "arr[0] as a0", "arr[1] as a1")
+      testStream(df)(
+        AssertOnQuery { q =>
+          q.processAllAvailable()
+          true
+        },
+        CheckAnswer((1, 10, 11), (3, 30, 31), (5, 50, 51), (7, 70, 71), (9, 90, 91)))
+    }
+  }
+
   test("multiple deletion vectors per file with initial snapshot") {
     withTempDir { inputDir =>
       val path = inputDir.getAbsolutePath
@@ -416,21 +523,19 @@ trait DeltaSourceDeletionVectorTests extends StreamTest
       (0 until 10).toDF("value").coalesce(1).write.format("delta").save(path)
 
       // V1: Delete row 0
-      sql(s"DELETE FROM delta.`$path` WHERE value = 0")
+      executeDml(s"DELETE FROM delta.`$path` WHERE value = 0")
 
       // V2: Delete row 1
-      sql(s"DELETE FROM delta.`$path` WHERE value = 1")
+      executeDml(s"DELETE FROM delta.`$path` WHERE value = 1")
 
       // V3: Delete row 2
-      sql(s"DELETE FROM delta.`$path` WHERE value = 2")
+      executeDml(s"DELETE FROM delta.`$path` WHERE value = 2")
 
       // Verify DVs are present
       assert(getFilesWithDeletionVectors(deltaLog).nonEmpty,
         "This test requires deletion vectors to be present")
 
-      val df = spark.readStream
-        .format("delta")
-        .load(path)
+      val df = loadStreamWithOptions(path, Map.empty)
 
       testStream(df)(
         // Process the initial snapshot
@@ -457,10 +562,7 @@ trait DeltaSourceDeletionVectorTests extends StreamTest
       // V0: 10 rows in a single file
       (0 until 10).toDF("value").coalesce(1).write.format("delta").save(path)
 
-      val df = spark.readStream
-        .format("delta")
-        .options(sourceOptions.toMap)
-        .load(path)
+      val df = loadStreamWithOptions(path, sourceOptions.toMap)
 
       testStream(df)(
         AssertOnQuery { q =>
@@ -470,12 +572,12 @@ trait DeltaSourceDeletionVectorTests extends StreamTest
         CheckAnswer((0 until 10): _*),
         AssertOnQuery { q =>
           // V1: Delete row 0 - creates first DV (version 1)
-          sql(s"DELETE FROM delta.`$path` WHERE value = 0")
+          executeDml(s"DELETE FROM delta.`$path` WHERE value = 0")
           true
         },
         AssertOnQuery { q =>
           // V2: Delete row 1 - updates DV (version 2). DV is cumulative: {0, 1}
-          sql(s"DELETE FROM delta.`$path` WHERE value = 1")
+          executeDml(s"DELETE FROM delta.`$path` WHERE value = 1")
           true
         },
         AssertOnQuery { q =>

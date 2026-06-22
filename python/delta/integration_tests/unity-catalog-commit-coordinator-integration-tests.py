@@ -472,7 +472,7 @@ class UnityCatalogManagedTableUtilitySuite(UnityCatalogManagedTableTestBase):
             # VACUUM is currently unsupported on catalog owned tables.
             spark.sql(f"VACUUM {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME}")
         except UnsupportedOperationException as error:
-            assert("DELTA_UNSUPPORTED_VACUUM_ON_MANAGED_TABLE" in str(error))
+            assert("DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION" in str(error))
 
     def test_restore(self) -> None:
         # Intentionally add a new data change commit.

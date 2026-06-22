@@ -46,7 +46,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import java.util.stream.StreamSupport;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils;
@@ -143,6 +145,14 @@ public abstract class TestHelper {
             /* defaultRowCommitVersion= */ Optional.empty(),
             /* deletionVectorDescriptor= */ Optional.empty());
     return SingleAction.createAddFileSingleAction(addFile.toRow());
+  }
+
+  /** Create Multiple add files rows */
+  protected List<Row> dummyAddFileRows(
+      StructType schema, int count, Function<Integer, Map<String, Literal>> partgen) {
+    return IntStream.range(0, count)
+        .mapToObj(i -> dummyAddFileRow(schema, 10 + i, partgen.apply(i)))
+        .collect(Collectors.toList());
   }
 
   /**

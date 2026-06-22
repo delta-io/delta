@@ -36,6 +36,7 @@ import org.apache.spark.sql.catalyst.expressions.{Alias, Expression, GetArrayIte
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, Project}
 import org.apache.spark.sql.catalyst.types.DataTypeUtils
+import org.apache.spark.sql.catalyst.util.CharVarcharUtils
 import org.apache.spark.sql.types.{BooleanType, StructType}
 
 /**
@@ -147,7 +148,8 @@ object Constraints extends DeltaLogging {
       validateCheckConstraintsInternal(spark, constraints, schema)
       val durationMs = duration.NANOSECONDS.toMillis(System.nanoTime() - startTime)
       logInfo(
-        log"Validated CHECK constraints on table ${MDC(DeltaLogKeys.TABLE_ID, deltaLog.tableId)} " +
+        log"Validated CHECK constraints on table " +
+        log"${MDC(DeltaLogKeys.TABLE_ID, deltaLog.unsafeVolatileTableId)} " +
         log"in ${MDC(DeltaLogKeys.TIME_MS, durationMs)} ms and processed " +
         log"${MDC(DeltaLogKeys.NUM_PREDICATES, constraints.size)} constraints"
       )
@@ -194,7 +196,9 @@ object Constraints extends DeltaLogging {
     // Use LocalRelation with the table schema to ensure column references can be validated
     val analyzed = try {
       val analyzer = spark.sessionState.analyzer
-      val relation = LocalRelation(DataTypeUtils.toAttributes(schema))
+      val relation = LocalRelation(
+        DataTypeUtils.toAttributes(CharVarcharUtils.replaceCharVarcharWithStringInSchema(schema))
+      )
       val plan = analyzer.execute(Project(selectExprs, relation))
       analyzer.checkAnalysis(plan)
       plan

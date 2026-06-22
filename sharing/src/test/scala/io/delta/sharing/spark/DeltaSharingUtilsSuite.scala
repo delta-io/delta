@@ -18,6 +18,7 @@ package io.delta.sharing.spark
 
 import scala.reflect.ClassTag
 
+import org.apache.spark.sql.delta.GeoSpatialTableFeature
 import io.delta.sharing.client.{DeltaSharingClient, DeltaSharingRestClient}
 import io.delta.sharing.client.model.{DeltaTableFiles, DeltaTableMetadata, Table, TemporaryCredentials}
 import io.delta.sharing.spark.DeltaSharingUtils._
@@ -133,7 +134,8 @@ class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
       versionAsOf: Option[Long],
       timestampAsOf: Option[String],
       jsonPredicateHints: Option[String],
-      refreshToken: Option[String]
+      refreshToken: Option[String],
+      fileIdHash: Option[String]
     ): DeltaTableFiles = {
       val file = getAddFileStr()
       val dv = getDeletionVectorStr()
@@ -144,8 +146,12 @@ class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
       )
     }
 
-    override def getFiles(table: Table, startingVersion: Long, endingVersion: Option[Long])
-    : DeltaTableFiles = {
+    override def getFiles(
+      table: Table,
+      startingVersion: Long,
+      endingVersion: Option[Long],
+      fileIdHash: Option[String]
+    ): DeltaTableFiles = {
       val file = getAddFileStr()
       val dv = getDeletionVectorStr()
       DeltaTableFiles(
@@ -158,7 +164,8 @@ class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
     override def getCDFFiles(
       table: Table,
       cdfOptions: Map[String, String],
-      includeHistoricalMetadata: Boolean): DeltaTableFiles = {
+      includeHistoricalMetadata: Boolean,
+      fileIdHash: Option[String]): DeltaTableFiles = {
       val file = getAddFileStr()
       val dv = getDeletionVectorStr()
       val cdc = getCdcStr()
@@ -271,6 +278,21 @@ class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
     assert(idToUrls.get("cdc_file_id") == Some("_change_data/cdc.c000.snappy.parquet"))
   }
 
+  test("GeoSpatial stable feature is advertised in both reader-features lists") {
+    assert(STREAMING_SUPPORTED_READER_FEATURES.contains(GeoSpatialTableFeature.name))
+    assert(SUPPORTED_READER_FEATURES.contains(GeoSpatialTableFeature.name))
+    assert(GeoSpatialTableFeature.name == "geospatial")
+  }
+
+  test("readerFeatures header string contains the geospatial feature name") {
+    val streamingHeader = STREAMING_SUPPORTED_READER_FEATURES.mkString(",")
+    val batchHeader = SUPPORTED_READER_FEATURES.mkString(",")
+    assert(streamingHeader.split(",").contains("geospatial"),
+      s"streaming readerFeatures header missing 'geospatial': $streamingHeader")
+    assert(batchHeader.split(",").contains("geospatial"),
+      s"batch readerFeatures header missing 'geospatial': $batchHeader")
+  }
+
   test("getRefresherForGetFiles respects useRefreshToken parameter") {
     // Test client that tracks the refresh token parameter
     class RefreshTokenTrackingClient extends SimpleTestDeltaSharingClient {
@@ -283,11 +305,12 @@ class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
         versionAsOf: Option[Long],
         timestampAsOf: Option[String],
         jsonPredicateHints: Option[String],
-        refreshToken: Option[String]
+        refreshToken: Option[String],
+        fileIdHash: Option[String]
       ): DeltaTableFiles = {
         lastRefreshToken = refreshToken
         super.getFiles(table, predicates, limit, versionAsOf, timestampAsOf,
-          jsonPredicateHints, refreshToken)
+          jsonPredicateHints, refreshToken, fileIdHash)
       }
     }
 

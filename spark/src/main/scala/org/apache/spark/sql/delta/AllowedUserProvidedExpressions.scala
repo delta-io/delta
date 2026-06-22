@@ -18,6 +18,8 @@ package org.apache.spark.sql.delta
 
 import scala.reflect.ClassTag
 
+import org.apache.spark.sql.delta.shims.GeoTypesShim
+
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.xml._
 
@@ -369,6 +371,10 @@ object AllowedUserProvidedExpressions {
 
     // Comparison functions
     expression[ILike]("ilike"),
+    expression[LikeAny]("likeany"),
+    expression[NotLikeAny]("notlikeany"),
+    expression[LikeAll]("likeall"),
+    expression[NotLikeAll]("notlikeall"),
 
     // Try arithmetic functions
     expression[TryAdd]("try_add"),
@@ -379,6 +385,14 @@ object AllowedUserProvidedExpressions {
     // Try parsing/conversion functions
     expression[TryToBinary]("try_to_binary"),
     expression[TryToNumber]("try_to_number"),
-    expression[ToNumber]("to_number")
-  )
+    expression[ToNumber]("to_number"),
+
+
+    // Collection functions
+    expression[ArraySize]("array_size"),
+    expression[ArrayCompact]("array_compact"),
+    expression[ArrayAppend]("array_append"),
+    expression[ArrayPrepend]("array_prepend"),
+    expression[ArrayInsert]("array_insert")
+  ) ++ GeoTypesShim.geoExpressions
 }

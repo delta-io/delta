@@ -20,6 +20,7 @@ import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
 import io.unitycatalog.client.ApiClient;
 import io.unitycatalog.client.ApiClientBuilder;
+import io.unitycatalog.client.VersionUtils;
 import io.unitycatalog.client.api.CatalogsApi;
 import io.unitycatalog.client.api.SchemasApi;
 import io.unitycatalog.client.auth.TokenProvider;
@@ -31,6 +32,7 @@ import java.io.File;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.nio.file.Files;
+import java.util.Arrays;
 import java.util.Properties;
 import org.apache.commons.io.FileUtils;
 import org.apache.log4j.Logger;
@@ -133,6 +135,11 @@ public abstract class UnityCatalogSupport {
     return ucRemote != null && ucRemote.equalsIgnoreCase("true");
   }
 
+  /** Subclasses can override to false for A/B comparison with the legacy path. */
+  protected boolean useDeltaRestApiForTests() {
+    return true;
+  }
+
   /** The Unity Catalog info instance for subclasses access */
   private UnityCatalogInfo ucInfo = null;
 
@@ -229,6 +236,26 @@ public abstract class UnityCatalogSupport {
             + "' must already exist in the remote UC server");
   }
 
+  /**
+   * Returns the {@link Properties} used to configure the embedded UC server. Subclasses may
+   * override this method, call {@code super.serverProperties()}, and add extra entries.
+   */
+  protected Properties serverProperties() {
+    Properties serverProps = new Properties();
+    serverProps.setProperty("server.env", "test");
+    serverProps.setProperty("server.managed-table.enabled", "true");
+    serverProps.setProperty(
+        "storage-root.tables", new File(ucServerDir, "ucroot").getAbsolutePath());
+    if (useDeltaRestApiForTests()) {
+      serverProps.setProperty("server.managed-table.use-delta-api-only", "true");
+    }
+    serverProps.setProperty("s3.bucketPath.0", "s3://" + FAKE_S3_BUCKET);
+    serverProps.setProperty("s3.accessKey.0", "fakeAccessKey");
+    serverProps.setProperty("s3.secretKey.0", "fakeSecretKey");
+    serverProps.setProperty("s3.sessionToken.0", "fakeSessionToken");
+    return serverProps;
+  }
+
   private void setUpLocalServer() throws Exception {
     // Create temporary directory for UC server data
     ucServerDir = Files.createTempDirectory("unity-catalog-test-").toFile();
@@ -241,22 +268,8 @@ public abstract class UnityCatalogSupport {
     // Find an available port
     ucServerPort = findAvailablePort();
 
-    // Set up server properties
-    Properties serverProps = new Properties();
-    serverProps.setProperty("server.env", "test");
-    // Enable managed tables (experimental feature in Unity Catalog)
-    serverProps.setProperty("server.managed-table.enabled", "true");
-    serverProps.setProperty(
-        "storage-root.tables", new File(ucServerDir, "ucroot").getAbsolutePath());
-
-    // Configure S3 credentials for the fake bucket (mirrors UC OSS BaseSparkIntegrationTest).
-    serverProps.setProperty("s3.bucketPath.0", "s3://" + FAKE_S3_BUCKET);
-    serverProps.setProperty("s3.accessKey.0", "fakeAccessKey");
-    serverProps.setProperty("s3.secretKey.0", "fakeSecretKey");
-    serverProps.setProperty("s3.sessionToken.0", "fakeSessionToken");
-
     // Start UC server with configuration
-    ServerProperties initServerProperties = new ServerProperties(serverProps);
+    ServerProperties initServerProperties = new ServerProperties(serverProperties());
 
     UnityCatalogServer server =
         UnityCatalogServer.builder()
@@ -336,5 +349,20 @@ public abstract class UnityCatalogSupport {
   /** Recursively deletes a directory and all its contents. */
   private void deleteRecursively(File file) {
     FileUtils.deleteQuietly(file);
+  }
+
+  /** Returns Unity Catalog Spark version, like [0, 4, 0]. */
+  protected static int[] getUnityCatalogSparkVersion() {
+    String version = Preconditions.checkNotNull(VersionUtils.VERSION);
+    String[] parts = version.split("[.\\-]", 4);
+    int major = Integer.parseInt(parts[0]);
+    int minor = Integer.parseInt(parts[1]);
+    int patch = Integer.parseInt(parts[2]);
+    return new int[] {major, minor, patch};
+  }
+
+  /** Returns whether the Unity Catalog Spark version is at least {@code major.minor.patch}. */
+  protected static boolean isUnityCatalogSparkAtLeast(int major, int minor, int patch) {
+    return Arrays.compare(getUnityCatalogSparkVersion(), new int[] {major, minor, patch}) >= 0;
   }
 }

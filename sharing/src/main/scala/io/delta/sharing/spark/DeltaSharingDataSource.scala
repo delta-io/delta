@@ -26,8 +26,8 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSQLConf}
-import io.delta.sharing.client.{DeltaSharingClient, DeltaSharingRestClient}
-import io.delta.sharing.client.model.{Table => DeltaSharingTable}
+import io.delta.sharing.client.{DeltaSharingClient, DeltaSharingRestClient, ParsedDeltaSharingTablePath}
+import io.delta.sharing.client.model.{DeltaTableMetadata, Table => DeltaSharingTable}
 import io.delta.sharing.client.util.{ConfUtils, JsonUtils}
 import org.apache.hadoop.fs.Path
 
@@ -69,13 +69,17 @@ private[sharing] class DeltaSharingDataSource
     }
     val path = options.options.getOrElse("path", throw DeltaSharingErrors.pathNotSpecifiedException)
 
-    if (options.responseFormat == DeltaSharingOptions.RESPONSE_FORMAT_PARQUET) {
+    val (responseFormat, parsedPath, deltaTableMetadataOpt) =
+      autoResolveStreamingSource(sqlContext, path, options)
+
+    if (responseFormat == DeltaSharingOptions.RESPONSE_FORMAT_PARQUET) {
       logInfo(s"sourceSchema with parquet format for table path:$path, parameters:$parameters")
       val deltaLog = RemoteDeltaLog(
         path,
         shareCredentialsOptions = options.shareCredentialsOptions,
         forStreaming = true,
-        responseFormat = options.responseFormat
+        responseFormat = DeltaSharingOptions.RESPONSE_FORMAT_PARQUET,
+        callerOrg = options.callerOrg
       )
       val schemaToUse = deltaLog.snapshot().schema
       if (schemaToUse.isEmpty) {
@@ -87,24 +91,20 @@ private[sharing] class DeltaSharingDataSource
       } else {
         (shortName(), schemaToUse)
       }
-    } else if (options.responseFormat == DeltaSharingOptions.RESPONSE_FORMAT_DELTA) {
+    } else if (responseFormat == DeltaSharingOptions.RESPONSE_FORMAT_DELTA) {
       logInfo(s"sourceSchema with delta format for table path:$path, parameters:$parameters")
       if (options.readChangeFeed) {
-        throw new UnsupportedOperationException(
-          s"Delta sharing cdc streaming is not supported when responseforma=delta."
-        )
       }
       //  1. create delta sharing client
-      val parsedPath =
-        DeltaSharingRestClient.parsePath(path, options.shareCredentialsOptions)
       val client = DeltaSharingRestClient(
         profileFile = parsedPath.profileFile,
         shareCredentialsOptions = options.shareCredentialsOptions,
         forStreaming = true,
-        responseFormat = options.responseFormat,
+        responseFormat = DeltaSharingOptions.RESPONSE_FORMAT_DELTA,
         // comma separated delta reader features, used to tell delta sharing server what delta
         // reader features the client is able to process.
-        readerFeatures = DeltaSharingUtils.STREAMING_SUPPORTED_READER_FEATURES.mkString(",")
+        readerFeatures = DeltaSharingUtils.STREAMING_SUPPORTED_READER_FEATURES.mkString(","),
+        callerOrg = options.callerOrg
       )
       val dsTable = DeltaSharingTable(
         share = parsedPath.share,
@@ -113,10 +113,13 @@ private[sharing] class DeltaSharingDataSource
       )
 
       //  2. getMetadata for schema to be used in the file index.
-      val deltaSharingTableMetadata = DeltaSharingUtils.getDeltaSharingTableMetadata(
-        client = client,
-        table = dsTable
-      )
+      val deltaSharingTableMetadata = deltaTableMetadataOpt match {
+        case Some(metadata) =>
+          DeltaSharingUtils.getDeltaSharingTableMetadata(
+            table = dsTable, deltaTableMetadata = metadata)
+        case None =>
+          DeltaSharingUtils.getDeltaSharingTableMetadata(client = client, table = dsTable)
+      }
       val customTablePathWithUUIDSuffix = DeltaSharingUtils.getTablePathWithIdSuffix(
         client.getProfileProvider.getCustomTablePath(path),
         DeltaSharingUtils.getFormattedTimestampWithUUID()
@@ -164,10 +167,14 @@ private[sharing] class DeltaSharingDataSource
       }
 
       DeltaSharingLogFileSystem.tryToCleanUpDeltaLog(deltaLogPath)
-      (shortName(), schemaToUse)
+      if (options.readChangeFeed) {
+        (shortName(), CDCReader.cdcReadSchema(schemaToUse))
+      } else {
+        (shortName(), schemaToUse)
+      }
     } else {
       throw new UnsupportedOperationException(
-        s"responseformat(${options.responseFormat}) is not " +
+        s"responseformat(${responseFormat}) is not " +
         s"supported in delta sharing."
       )
     }
@@ -186,33 +193,33 @@ private[sharing] class DeltaSharingDataSource
     val options = new DeltaSharingOptions(parameters)
     val path = options.options.getOrElse("path", throw DeltaSharingErrors.pathNotSpecifiedException)
 
-    if (options.responseFormat == DeltaSharingOptions.RESPONSE_FORMAT_PARQUET) {
+    val (responseFormat, parsedPath, _) =
+      autoResolveStreamingSource(sqlContext, path, options)
+
+    if (responseFormat == DeltaSharingOptions.RESPONSE_FORMAT_PARQUET) {
       logInfo(s"createSource with parquet format for table path:$path, parameters:$parameters")
       val deltaLog = RemoteDeltaLog(
         path,
         shareCredentialsOptions = options.shareCredentialsOptions,
         forStreaming = true,
-        responseFormat = options.responseFormat
+        responseFormat = DeltaSharingOptions.RESPONSE_FORMAT_PARQUET,
+        callerOrg = options.callerOrg
       )
       DeltaSharingSource(SparkSession.active, deltaLog, options)
-    } else if (options.responseFormat == DeltaSharingOptions.RESPONSE_FORMAT_DELTA) {
+    } else if (responseFormat == DeltaSharingOptions.RESPONSE_FORMAT_DELTA) {
       logInfo(s"createSource with delta format for table path:$path, parameters:$parameters")
       if (options.readChangeFeed) {
-        throw new UnsupportedOperationException(
-          s"Delta sharing cdc streaming is not supported when responseforma=delta."
-        )
       }
       //  1. create delta sharing client
-      val parsedPath =
-        DeltaSharingRestClient.parsePath(path, options.shareCredentialsOptions)
       val client = DeltaSharingRestClient(
         profileFile = parsedPath.profileFile,
         shareCredentialsOptions = options.shareCredentialsOptions,
         forStreaming = true,
-        responseFormat = options.responseFormat,
+        responseFormat = DeltaSharingOptions.RESPONSE_FORMAT_DELTA,
         // comma separated delta reader features, used to tell delta sharing server what delta
         // reader features the client is able to process.
-        readerFeatures = DeltaSharingUtils.STREAMING_SUPPORTED_READER_FEATURES.mkString(",")
+        readerFeatures = DeltaSharingUtils.STREAMING_SUPPORTED_READER_FEATURES.mkString(","),
+        callerOrg = options.callerOrg
       )
       val dsTable = DeltaSharingTable(
         share = parsedPath.share,
@@ -231,10 +238,113 @@ private[sharing] class DeltaSharingDataSource
       )
     } else {
       throw new UnsupportedOperationException(
-        s"responseformat(${options.responseFormat}) is not " +
+        s"responseformat(${responseFormat}) is not " +
         s"supported in delta sharing."
       )
     }
+  }
+
+  /**
+   * Resolves the response format for streaming: when the relevant auto-resolve conf is true,
+   * calls getMetadata on the table and uses the server's responded format; otherwise uses the
+   * user's responseFormat option. CDF streaming (readChangeFeed=true) is gated independently by
+   * DELTA_SHARING_CDF_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT, while non-CDF streaming is gated by
+   * DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT.
+   * Returns (responseFormat, parsedPath, deltaTableMetadataOpt). When the conf is on,
+   * deltaTableMetadataOpt is Some; sourceSchema's delta path reuses it to avoid a second RPC.
+   */
+  private def autoResolveStreamingSource(
+      sqlContext: SQLContext,
+      path: String,
+      options: DeltaSharingOptions
+  ): (String, ParsedDeltaSharingTablePath, Option[DeltaTableMetadata]) = {
+    val autoResolveConf = if (options.readChangeFeed) {
+      DeltaSQLConf.DELTA_SHARING_CDF_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT
+    } else {
+      DeltaSQLConf.DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT
+    }
+    val useGetMetadata = sqlContext.sparkSession.sessionState.conf.getConf(autoResolveConf)
+    val parsedPath =
+      DeltaSharingRestClient.parsePath(path, options.shareCredentialsOptions)
+
+    if (!useGetMetadata) {
+      (options.responseFormat, parsedPath, None)
+    } else if (options.responseFormat == DeltaSharingOptions.RESPONSE_FORMAT_DELTA) {
+      // User explicitly requested delta; no need to call getMetadata.
+      // Delta format can handle both parquet tables and delta tables.
+      // Parquet format can only handle parquet tables.
+      (DeltaSharingOptions.RESPONSE_FORMAT_DELTA, parsedPath, None)
+    } else {
+      val (_, deltaTableMetadata) = createClientAndQueryMetadata(
+        sqlContext = sqlContext,
+        parsedPath = parsedPath,
+        shareCredentialsOptions = options.shareCredentialsOptions,
+        forStreaming = true,
+        versionAsOf = None,
+        timestampAsOf = None,
+        callerOrg = options.callerOrg
+      )
+      logInfo(s"Streaming format resolved via getMetadata: ${deltaTableMetadata.respondedFormat} " +
+        s"for path:$path")
+      (deltaTableMetadata.respondedFormat, parsedPath, Some(deltaTableMetadata))
+    }
+  }
+
+  /**
+   * Creates a Delta Sharing client (accepting parquet and/or delta per conf), a DeltaSharingTable,
+   * and queries getMetadata. Used by streaming auto-resolve and batch auto-resolve.
+   * Returns (dsTable, deltaTableMetadata); the client is not returned as callers either discard it
+   * or create a format-specific client when needed.
+   */
+  private def createClientAndQueryMetadata(
+      sqlContext: SQLContext,
+      parsedPath: ParsedDeltaSharingTablePath,
+      shareCredentialsOptions: Map[String, String],
+      forStreaming: Boolean,
+      versionAsOf: Option[Long],
+      timestampAsOf: Option[String],
+      callerOrg: Option[String] = None): (DeltaSharingTable, DeltaTableMetadata) = {
+    val responseFormat = {
+      if (sqlContext.sparkSession.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_SHARING_FORCE_DELTA_FORMAT)) {
+        // If the Spark config is enabled, force the query to return results in Delta format.
+        // This is primarily used for testing the Delta format code path, even when the source
+        // table doesn't include advanced features like deletion vector.
+        logInfo("Set delta sharing client to only accept delta format due to Spark config setting.")
+        DeltaSharingOptions.RESPONSE_FORMAT_DELTA
+      } else {
+        s"${DeltaSharingOptions.RESPONSE_FORMAT_PARQUET}," +
+          s"${DeltaSharingOptions.RESPONSE_FORMAT_DELTA}"
+      }
+    }
+    // comma separated delta reader features, used to tell delta sharing server what delta
+    // reader features the client is able to process.
+    val readerFeatures = if (forStreaming) {
+      DeltaSharingUtils.STREAMING_SUPPORTED_READER_FEATURES.mkString(",")
+    } else {
+      DeltaSharingUtils.SUPPORTED_READER_FEATURES.mkString(",")
+    }
+    val client = DeltaSharingRestClient(
+      profileFile = parsedPath.profileFile,
+      shareCredentialsOptions = shareCredentialsOptions,
+      forStreaming = forStreaming,
+      // Indicating that the client is able to process response format in both parquet and delta.
+      responseFormat = responseFormat,
+      readerFeatures = readerFeatures,
+      callerOrg = callerOrg
+    )
+    val dsTable = DeltaSharingTable(
+      share = parsedPath.share,
+      schema = parsedPath.schema,
+      name = parsedPath.table
+    )
+    val deltaTableMetadata = DeltaSharingUtils.queryDeltaTableMetadata(
+      client = client,
+      table = dsTable,
+      versionAsOf = versionAsOf,
+      timestampAsOf = timestampAsOf
+    )
+    (dsTable, deltaTableMetadata)
   }
 
   override def createRelation(
@@ -244,8 +354,10 @@ private[sharing] class DeltaSharingDataSource
     val options = new DeltaSharingOptions(parameters)
 
     val userInputResponseFormat = options.options.get(DeltaSharingOptions.RESPONSE_FORMAT)
-    if (userInputResponseFormat.isEmpty && !options.readChangeFeed) {
-      return autoResolveBaseRelationForSnapshotQuery(options, sqlContext)
+
+    if (userInputResponseFormat.isEmpty &&
+      (!options.readChangeFeed || shouldAutoResolveCDF(options, sqlContext))) {
+      return autoResolveBaseRelation(options, sqlContext)
     }
 
     val path = options.options.getOrElse("path", throw DeltaSharingErrors.pathNotSpecifiedException)
@@ -257,7 +369,8 @@ private[sharing] class DeltaSharingDataSource
         path,
         shareCredentialsOptions = options.shareCredentialsOptions,
         forStreaming = false,
-        responseFormat = options.responseFormat
+        responseFormat = options.responseFormat,
+        callerOrg = options.callerOrg
       )
       deltaLog.createRelation(
         options.versionAsOf,
@@ -278,7 +391,8 @@ private[sharing] class DeltaSharingDataSource
         responseFormat = options.responseFormat,
         // comma separated delta reader features, used to tell delta sharing server what delta
         // reader features the client is able to process.
-        readerFeatures = DeltaSharingUtils.SUPPORTED_READER_FEATURES.mkString(",")
+        readerFeatures = DeltaSharingUtils.SUPPORTED_READER_FEATURES.mkString(","),
+        callerOrg = options.callerOrg
       )
       val dsTable = DeltaSharingTable(
         share = parsedPath.share,
@@ -317,6 +431,20 @@ private[sharing] class DeltaSharingDataSource
   }
 
   /**
+   * Whether a CDF query should auto-resolve its response format (parquet vs delta) by asking the
+   * server, rather than falling back to the legacy parquet path. True only for change-feed reads
+   * with the CDF auto-resolve flag enabled.
+   */
+  private def shouldAutoResolveCDF(
+      options: DeltaSharingOptions,
+      sqlContext: SQLContext): Boolean = {
+    options.readChangeFeed && sqlContext.sparkSession.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_SHARING_ENABLE_AUTO_RESOLVE_FOR_CDF
+    )
+  }
+
+  /**
+   * Auto-resolves the response format for a batch query (snapshot or CDF).
    * "parquet format sharing" leverages the existing set of remote classes to directly handle the
    * list of presigned urls and read data.
    * "delta format sharing" instead constructs a local delta log and leverages the delta library to
@@ -325,71 +453,57 @@ private[sharing] class DeltaSharingDataSource
    * of the shared table by the server (based on whether there are advanced delta features in the
    * shared table), and then decide the code path on the client side.
    */
-  private def autoResolveBaseRelationForSnapshotQuery(
+  private def autoResolveBaseRelation(
       options: DeltaSharingOptions,
       sqlContext: SQLContext): BaseRelation = {
     val path = options.options.getOrElse("path", throw DeltaSharingErrors.pathNotSpecifiedException)
-    logInfo(s"autoResolving BaseRelation for path:${path}, " +
+    val queryKind = if (options.readChangeFeed) "cdf query" else "snapshot query"
+    logInfo(s"autoResolving BaseRelation for $queryKind, path:${path}, " +
       s"with options:${DeltaSharingDataSource.redactOptions(options.options)}.")
     val parsedPath =
       DeltaSharingRestClient.parsePath(path, options.shareCredentialsOptions)
 
-    val responseFormat = {
-      if (sqlContext.sparkSession.sessionState.conf.getConf(
-        DeltaSQLConf.DELTA_SHARING_FORCE_DELTA_FORMAT)) {
-        // If the Spark config is enabled, force the query to return results in Delta format.
-        // This is primarily used for testing the Delta format code path, even when the source
-        // table doesn't include advanced features like deletion vector.
-        logInfo("Set delta sharing client to only accept delta format due to Spark config setting.")
-        DeltaSharingOptions.RESPONSE_FORMAT_DELTA
-      }
-      else {
-        s"${DeltaSharingOptions.RESPONSE_FORMAT_PARQUET}," +
-          s"${DeltaSharingOptions.RESPONSE_FORMAT_DELTA}"
-      }
+    // For a CDF query, pin getMetadata to the end of the CDF range so the returned
+    // schema/protocol matches what the downstream CDF reader will see. Fall back to None
+    // (= latest) when no ending boundary is given.
+    val (pinnedMetadataVersion, pinnedMetadataTimestamp) = if (options.readChangeFeed) {
+      val endingVersion = options.cdfOptions.get(DeltaDataSource.CDC_END_VERSION_KEY).map(_.toLong)
+      val endingTimestamp = options.cdfOptions.get(DeltaDataSource.CDC_END_TIMESTAMP_KEY)
+      if (endingVersion.isDefined) (endingVersion, None)
+      else if (endingTimestamp.isDefined) (None, endingTimestamp)
+      else (None, None)
+    } else {
+      (options.versionAsOf, options.timestampAsOf)
     }
+    logInfo(s"Pinning getMetadata for $queryKind to " +
+      s"pinnedMetadataVersion:$pinnedMetadataVersion, " +
+      s"pinnedMetadataTimestamp:$pinnedMetadataTimestamp.")
 
-    val client = DeltaSharingRestClient(
-      profileFile = parsedPath.profileFile,
+    val (dsTable, deltaTableMetadata) = createClientAndQueryMetadata(
+      sqlContext = sqlContext,
+      parsedPath = parsedPath,
       shareCredentialsOptions = options.shareCredentialsOptions,
       forStreaming = false,
-      // Indicating that the client is able to process response format in both parquet and delta.
-      responseFormat = responseFormat,
-      // comma separated delta reader features, used to tell delta sharing server what delta
-      // reader features the client is able to process.
-      readerFeatures = DeltaSharingUtils.SUPPORTED_READER_FEATURES.mkString(",")
-    )
-    val dsTable = DeltaSharingTable(
-      name = parsedPath.table,
-      schema = parsedPath.schema,
-      share = parsedPath.share
-    )
-
-    val deltaTableMetadata = DeltaSharingUtils.queryDeltaTableMetadata(
-      client = client,
-      table = dsTable,
-      versionAsOf = options.versionAsOf,
-      timestampAsOf = options.timestampAsOf
+      versionAsOf = pinnedMetadataVersion,
+      timestampAsOf = pinnedMetadataTimestamp,
+      callerOrg = options.callerOrg
     )
 
     if (deltaTableMetadata.respondedFormat == DeltaSharingOptions.RESPONSE_FORMAT_PARQUET) {
-      logInfo(s"Resolved as parquet format for table path:$path, " +
+      logInfo(s"Resolved $queryKind as parquet format for table path:$path, " +
         s"parameters:${DeltaSharingDataSource.redactOptions(options.options)}")
       val deltaLog = RemoteDeltaLog(
         path = path,
         options.shareCredentialsOptions,
         forStreaming = false,
         responseFormat = DeltaSharingOptions.RESPONSE_FORMAT_PARQUET,
-        initDeltaTableMetadata = Some(deltaTableMetadata)
+        initDeltaTableMetadata = Some(deltaTableMetadata),
+        callerOrg = options.callerOrg
       )
       deltaLog.createRelation(options.versionAsOf, options.timestampAsOf, options.cdfOptions)
     } else if (deltaTableMetadata.respondedFormat == DeltaSharingOptions.RESPONSE_FORMAT_DELTA) {
-      logInfo(s"Resolved as delta format for table path:$path, " +
+      logInfo(s"Resolved $queryKind as delta format for table path:$path, " +
         s"parameters:${DeltaSharingDataSource.redactOptions(options.options)}")
-      val deltaSharingTableMetadata = DeltaSharingUtils.getDeltaSharingTableMetadata(
-        table = dsTable,
-        deltaTableMetadata = deltaTableMetadata
-      )
       val deltaOnlyClient = DeltaSharingRestClient(
         profileFile = parsedPath.profileFile,
         shareCredentialsOptions = options.shareCredentialsOptions,
@@ -398,15 +512,24 @@ private[sharing] class DeltaSharingDataSource
         responseFormat = DeltaSharingOptions.RESPONSE_FORMAT_DELTA,
         // comma separated delta reader features, used to tell delta sharing server what delta
         // reader features the client is able to process.
-        readerFeatures = DeltaSharingUtils.SUPPORTED_READER_FEATURES.mkString(",")
+        readerFeatures = DeltaSharingUtils.SUPPORTED_READER_FEATURES.mkString(","),
+        callerOrg = options.callerOrg
       )
-      getHadoopFsRelationForDeltaSnapshotQuery(
-        path = path,
-        options = options,
-        dsTable = dsTable,
-        client = deltaOnlyClient,
-        deltaSharingTableMetadata = deltaSharingTableMetadata
-      )
+      if (options.readChangeFeed) {
+        DeltaSharingCDFUtils.prepareCDFRelation(sqlContext, options, dsTable, deltaOnlyClient)
+      } else {
+        val deltaSharingTableMetadata = DeltaSharingUtils.getDeltaSharingTableMetadata(
+          table = dsTable,
+          deltaTableMetadata = deltaTableMetadata
+        )
+        getHadoopFsRelationForDeltaSnapshotQuery(
+          path = path,
+          options = options,
+          dsTable = dsTable,
+          client = deltaOnlyClient,
+          deltaSharingTableMetadata = deltaSharingTableMetadata
+        )
+      }
     } else {
       throw new UnsupportedOperationException(
         s"Unexpected respondedFormat for getMetadata rpc:${deltaTableMetadata.respondedFormat}."

@@ -16,14 +16,18 @@
 
 package org.apache.spark.sql.delta.sources
 
+import java.sql.Timestamp
+
 import scala.collection.mutable
 
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.delta.DataFrameUtils
+import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql.delta.Relocated._
 import org.apache.spark.sql.delta.TypeWideningMode
 import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.util.{DateTimeUtils, TimestampFormatter}
 
 import org.apache.spark.sql.{Column, DataFrame, SparkSession}
 import org.apache.spark.sql.classic.ClassicConversions._
@@ -251,6 +255,53 @@ object DeltaStreamUtils {
       }
     } else {
       SchemaCompatibilityResult.Compatible
+    }
+  }
+
+  /**
+   * - If commit's timestamp exactly matches the provided timestamp, we return it.
+   * - Otherwise, we return the earliest commit version
+   *   with a timestamp greater than the provided one.
+   * - If the provided timestamp is larger than the timestamp
+   *   of any committed version, and canExceedLatest is disabled we throw an error.
+   * - If the provided timestamp is larger than the timestamp
+   *   of any committed version, and canExceedLatest is enabled we return a version that is greater
+   *   than commitVersion by one
+   *
+   * @param timeZone - time zone for formatting error messages
+   * @param commitTimestamp - timestamp of the commit
+   * @param commitVersion - version of the commit
+   * @param latestVersion - latest snapshot version
+   * @param timestamp - user specified timestamp
+   * @param canExceedLatest - if true, version can be greater than the latest snapshot commit
+   * @return - corresponding version number for timestamp
+   */
+  def getStartingVersionFromCommitAtTimestamp(
+      timeZone: String,
+      commitTimestamp: Long,
+      commitVersion: Long,
+      latestVersion: Long,
+      timestamp: Timestamp,
+      canExceedLatest: Boolean = false): Long = {
+    if (commitTimestamp >= timestamp.getTime) {
+      // Find the commit at the `timestamp` or the earliest commit
+      commitVersion
+    } else {
+      // commitTimestamp is not the same, so this commit is a commit before the timestamp and
+      // the next version if exists should be the earliest commit after the timestamp.
+      //
+      // Note: In the use case of [[CDCReader]] timestamp passed in can exceed the latest commit
+      // timestamp, caller doesn't expect exception, and can handle the non-existent version.
+      val latestNotExceeded = commitVersion + 1 <= latestVersion
+      if (latestNotExceeded || canExceedLatest) {
+        commitVersion + 1
+      } else {
+        val commitTs = new Timestamp(commitTimestamp)
+        val timestampFormatter = TimestampFormatter(DateTimeUtils.getTimeZone(timeZone))
+        val tsString = DateTimeUtils.timestampToString(
+          timestampFormatter, DateTimeUtils.fromJavaTimestamp(commitTs))
+        throw DeltaErrors.timestampGreaterThanLatestCommit(timestamp, commitTs, tsString)
+      }
     }
   }
 }

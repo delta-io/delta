@@ -51,6 +51,7 @@ public class CRCInfo {
   private static final String TXN_ID = "txnId";
   private static final String DOMAIN_METADATA = "domainMetadata";
   private static final String FILE_SIZE_HISTOGRAM = "fileSizeHistogram";
+  private static final String HISTOGRAM_OPT = "histogramOpt";
 
   public static final StructType CRC_FILE_SCHEMA =
       new StructType()
@@ -63,6 +64,10 @@ public class CRCInfo {
           .add(TXN_ID, StringType.STRING, /*nullable*/ true)
           .add(DOMAIN_METADATA, new ArrayType(DomainMetadata.FULL_SCHEMA, false), /*nullable*/ true)
           .add(FILE_SIZE_HISTOGRAM, FileSizeHistogram.FULL_SCHEMA, /*nullable*/ true);
+
+  // Used by ChecksumReader to support reading CRC files with the legacy "histogramOpt" field.
+  public static final StructType CRC_FILE_READ_SCHEMA =
+      CRC_FILE_SCHEMA.add(HISTOGRAM_OPT, FileSizeHistogram.FULL_SCHEMA, /*nullable*/ true);
 
   public static Optional<CRCInfo> fromColumnarBatch(
       long version, ColumnarBatch batch, int rowId, String crcFilePath) {
@@ -89,6 +94,13 @@ public class CRCInfo {
     Optional<FileSizeHistogram> fileSizeHistogram =
         FileSizeHistogram.fromColumnVector(
             batch.getColumnVector(getSchemaIndex(FILE_SIZE_HISTOGRAM)), rowId);
+    if (!fileSizeHistogram.isPresent()) {
+      int histogramOptIdx = batch.getSchema().indexOf(HISTOGRAM_OPT);
+      if (histogramOptIdx >= 0) {
+        fileSizeHistogram =
+            FileSizeHistogram.fromColumnVector(batch.getColumnVector(histogramOptIdx), rowId);
+      }
+    }
     ColumnVector domainMetadataVector = batch.getColumnVector(getSchemaIndex(DOMAIN_METADATA));
     Optional<Set<DomainMetadata>> domainMetadata =
         domainMetadataVector.isNullAt(rowId)

@@ -42,7 +42,6 @@ import lombok.Setter;
 import lombok.ToString;
 import lombok.experimental.Accessors;
 import org.apache.commons.lang3.tuple.Pair;
-import org.apache.hadoop.fs.Path;
 import org.apache.log4j.Logger;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.assertj.core.api.Assertions;
@@ -59,17 +58,13 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
 
   // Property constants related to managed table creation
   private static final String UC_TABLE_ID_KEY = "io.unitycatalog.tableId";
-  private static final String UC_TABLE_ID_KEY_OLD = "ucTableId";
   private static final String DELTA_CATALOG_MANAGED_KEY = "delta.feature.catalogManaged";
   private static final String SUPPORTED = "supported";
-  private static final String MANAGED_TBLPROPERTIES_CLAUSE =
-      String.format("TBLPROPERTIES ('%s'='%s', 'Foo'='Bar')", DELTA_CATALOG_MANAGED_KEY, SUPPORTED);
+  private static final String CUSTOM_TBLPROPERTIES_CLAUSE = "TBLPROPERTIES ('Foo'='Bar')";
   // In the table REPLACE test, a slightly different table property clause will be used to create
   // the first table. Then the REPLACE command would use TBLPROPERTIES_CLAUSE. This is to make sure
   // that the table properties are properly updated in the REPLACE command.
-  private static final String MANAGED_TBLPROPERTIES_CLAUSE_OTHER =
-      String.format(
-          "TBLPROPERTIES ('%s'='%s', 'Foo2'='Bar2')", DELTA_CATALOG_MANAGED_KEY, SUPPORTED);
+  private static final String CUSTOM_TBLPROPERTIES_CLAUSE_OTHER = "TBLPROPERTIES ('Foo2'='Bar2')";
 
   // Expected table features to be enabled for managed tables
   private static final List<String> EXPECTED_MANAGED_TABLE_FEATURES =
@@ -81,6 +76,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
           "delta.feature.inCommitTimestamp",
           "delta.feature.invariants",
           "delta.feature.rowTracking",
+          "delta.feature.columnMapping",
           "delta.feature.v2Checkpoint",
           "delta.feature.vacuumProtocolCheck");
   private static final Map<String, String> EXPECTED_MANAGED_TABLE_FEATURES_PROPERTIES =
@@ -88,6 +84,23 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
           .collect(Collectors.toMap(Function.identity(), k -> SUPPORTED));
 
   private static final String EXTERNAL_TBLPROPERTIES_CLAUSE = "TBLPROPERTIES ('Foo'='Bar')";
+
+  /** The DDL command that introduces a CREATE / REPLACE / CTAS / RTAS statement. */
+  private enum DdlMode {
+    CREATE("CREATE"),
+    REPLACE("REPLACE"),
+    CREATE_OR_REPLACE("CREATE OR REPLACE");
+
+    private final String sql;
+
+    DdlMode(String sql) {
+      this.sql = sql;
+    }
+
+    String sql() {
+      return sql;
+    }
+  }
 
   String tempDir;
   private Set<String> tablesToCleanUp = new HashSet<>();
@@ -124,7 +137,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     private Optional<String> clusterColumn = Optional.empty();
     private Optional<Pair<Integer, String>> asSelect = Optional.empty();
     private Optional<String> comment = Optional.empty();
-    private boolean replaceTable = false;
+    private DdlMode ddlMode = DdlMode.CREATE;
 
     public TableSetupOptions() {}
 
@@ -182,7 +195,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     }
 
     public String ddlCommand() {
-      return replaceTable ? "REPLACE" : "CREATE";
+      return ddlMode.sql();
     }
 
     private String createManagedTableSql() {
@@ -195,7 +208,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
           columnsClause(),
           partitionClause(),
           clusterClause(),
-          MANAGED_TBLPROPERTIES_CLAUSE,
+          CUSTOM_TBLPROPERTIES_CLAUSE,
           commentClause(),
           asSelectClause());
     }
@@ -237,37 +250,110 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
   public Stream<DynamicTest> testCreateTable() {
     int counter = 0;
     List<DynamicTest> tests = new ArrayList<>();
-    for (TableType tableType : TableType.values()) {
-      for (boolean withPartition : List.of(true, false)) {
-        for (boolean withCluster : List.of(true, false)) {
-          if (withCluster && withPartition) {
-            // Can not have CLUSTER BY and PARTITIONED BY on the same table
-            continue;
-          }
-          for (boolean withAsSelect : List.of(true, false)) {
-            for (boolean replaceTable : List.of(true, false)) {
-              String displayName =
-                  String.format(
-                      "tableType=%s, withPartition=%s, withCluster=%s, withAsSelect=%s, replaceTable=%s",
-                      tableType, withPartition, withCluster, withAsSelect, replaceTable);
-              counter++;
-              int finalCounter = counter;
-              tests.add(
-                  DynamicTest.dynamicTest(
-                      displayName,
-                      () ->
-                          runTableCreationTest(
-                              finalCounter,
-                              tableType,
-                              withPartition,
-                              withCluster,
-                              withAsSelect,
-                              replaceTable)));
-            }
+
+    // Matrix 1: EXTERNAL tables -- CREATE only. REPLACE on EXTERNAL fails for an unrelated
+    // Delta-side reason (UpdateCatalog post-commit hook) and is covered by the dedicated
+    // testExternalReplaceIsRejected test.
+    for (boolean withPartition : List.of(true, false)) {
+      for (boolean withCluster : List.of(true, false)) {
+        if (withCluster && withPartition) {
+          // Can not have CLUSTER BY and PARTITIONED BY on the same table
+          continue;
+        }
+        for (boolean withAsSelect : List.of(true, false)) {
+          String displayName =
+              String.format(
+                  "tableType=EXTERNAL, withPartition=%s, withCluster=%s, withAsSelect=%s, ddlMode=CREATE",
+                  withPartition, withCluster, withAsSelect);
+          counter++;
+          int finalCounter = counter;
+          tests.add(
+              DynamicTest.dynamicTest(
+                  displayName,
+                  () ->
+                      runTableCreationTest(
+                          finalCounter,
+                          TableType.EXTERNAL,
+                          withPartition,
+                          withCluster,
+                          withAsSelect,
+                          DdlMode.CREATE,
+                          /* withPartitionBeforeReplace */ false,
+                          /* withClusterBeforeReplace */ false)));
+        }
+      }
+    }
+
+    // Matrix 2: MANAGED tables -- CREATE and REPLACE (seed has no partition / cluster).
+    for (boolean withPartition : List.of(true, false)) {
+      for (boolean withCluster : List.of(true, false)) {
+        if (withCluster && withPartition) {
+          // Can not have CLUSTER BY and PARTITIONED BY on the same table
+          continue;
+        }
+        for (boolean withAsSelect : List.of(true, false)) {
+          for (DdlMode ddlMode : List.of(DdlMode.CREATE, DdlMode.REPLACE)) {
+            String displayName =
+                String.format(
+                    "tableType=MANAGED, withPartition=%s, withCluster=%s, withAsSelect=%s, ddlMode=%s",
+                    withPartition, withCluster, withAsSelect, ddlMode);
+            counter++;
+            int finalCounter = counter;
+            tests.add(
+                DynamicTest.dynamicTest(
+                    displayName,
+                    () ->
+                        runTableCreationTest(
+                            finalCounter,
+                            TableType.MANAGED,
+                            withPartition,
+                            withCluster,
+                            withAsSelect,
+                            ddlMode,
+                            /* withPartitionBeforeReplace */ false,
+                            /* withClusterBeforeReplace */ false)));
           }
         }
       }
     }
+
+    // Matrix 3: MANAGED REPLACE — partition / cluster shape transitions on existing
+    // tables. Only the transitions exercised through the standard runner live here:
+    //   - partition->cluster, partition->none
+    // The other two (`cluster->none` has its own UC clearing assertion; and
+    // `cluster->partition` is unconditionally rejected by Delta) are in
+    // UCDeltaManagedReplaceSemanticsTest because they don't use this runner.
+    counter++;
+    int partitionToClusterCounter = counter;
+    tests.add(
+        DynamicTest.dynamicTest(
+            "tableType=MANAGED, ddlMode=REPLACE, transition=partition->cluster",
+            () ->
+                runTableCreationTest(
+                    partitionToClusterCounter,
+                    TableType.MANAGED,
+                    /* withPartition */ false,
+                    /* withCluster */ true,
+                    /* withAsSelect */ false,
+                    DdlMode.REPLACE,
+                    /* withPartitionBeforeReplace */ true,
+                    /* withClusterBeforeReplace */ false)));
+    counter++;
+    int partitionToNoneCounter = counter;
+    tests.add(
+        DynamicTest.dynamicTest(
+            "tableType=MANAGED, ddlMode=REPLACE, transition=partition->none",
+            () ->
+                runTableCreationTest(
+                    partitionToNoneCounter,
+                    TableType.MANAGED,
+                    /* withPartition */ false,
+                    /* withCluster */ false,
+                    /* withAsSelect */ false,
+                    DdlMode.REPLACE,
+                    /* withPartitionBeforeReplace */ true,
+                    /* withClusterBeforeReplace */ false)));
+
     return tests.stream();
   }
 
@@ -277,7 +363,9 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       boolean withPartition,
       boolean withCluster,
       boolean withAsSelect,
-      boolean replaceTable)
+      DdlMode ddlMode,
+      boolean withPartitionBeforeReplace,
+      boolean withClusterBeforeReplace)
       throws Exception {
     UnityCatalogInfo uc = unityCatalogInfo();
     final String comment = "This is comment.";
@@ -292,7 +380,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
             .setSchemaName(schemaName)
             .setTableName(tableName)
             .setTableType(tableType)
-            .setReplaceTable(replaceTable)
+            .setDdlMode(ddlMode)
             .setComment(comment);
     if (withPartition) {
       options.setPartitionColumn("i");
@@ -306,23 +394,37 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     LOG.info("Running table creation test: " + options);
 
     String fullTableName = options.fullTableName();
-    if (replaceTable) {
-      // First, create a different table to replace.
+    boolean isReplace = ddlMode == DdlMode.REPLACE;
+    if (isReplace) {
+      // Seed a different table with the configured pre-replace shape and write a row
+      // into it. The seed schema is unrelated to the REPLACE schema -- REPLACE swaps
+      // everything. Two columns are needed so `PARTITIONED BY (col1)` is legal (Delta
+      // forbids partitioning by every column of a table). The seed row anchors the
+      // post-REPLACE row-count assertion in `assertReplaceLikeIdentityPreserved`, which
+      // confirms the seed data was wiped.
+      String seedPartitionClause = withPartitionBeforeReplace ? "PARTITIONED BY (col1)" : "";
+      String seedClusterClause = withClusterBeforeReplace ? "CLUSTER BY (col1)" : "";
       sql(
-          "CREATE TABLE %s USING DELTA %s AS SELECT 0.1 AS col1",
-          fullTableName, MANAGED_TBLPROPERTIES_CLAUSE_OTHER);
+          "CREATE TABLE %s (col1 STRING, col2 STRING) USING DELTA %s %s %s",
+          fullTableName, CUSTOM_TBLPROPERTIES_CLAUSE_OTHER, seedPartitionClause, seedClusterClause);
+      sql("INSERT INTO %s VALUES ('seed_col1', 'seed_col2')", fullTableName);
       tablesToCleanUp.add(fullTableName);
     }
 
-    // TODO: Remove the block if UC and delta support the atomic RT and RTAS.
-    if (replaceTable) {
-      assertThatThrownBy(() -> sql(options.createTableSql()));
-      return;
-    }
+    // Capture UC identity before the REPLACE so we can verify it survives and that the
+    // seed table's rows are discarded.
+    String ucTableIdBefore = isReplace ? currentUcTableId(fullTableName) : null;
+    long versionBefore = isReplace ? currentVersion(fullTableName) : -1L;
 
     // Create table
     sql(options.createTableSql());
     tablesToCleanUp.add(fullTableName);
+
+    if (isReplace) {
+      assertReplaceLikeIdentityPreserved(
+          fullTableName, ucTableIdBefore, versionBefore, withAsSelect);
+    }
+
     // Basic read/write test
     sql("INSERT INTO %s SELECT 2, 'b'", fullTableName);
     if (withAsSelect) {
@@ -332,23 +434,23 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     }
 
     // Verify that table information maintained at the uc server side are expected.
-    // TODO: Remove the block when delta supports the CTAS in the correct way. Currently CTAS
-    //  is missing AbstractDeltaCatalog.translateUCTableIdProperty
-    if (!withAsSelect || replaceTable) {
-      assertUCTableInfo(
-          tableType,
-          fullTableName,
-          List.of("i", "s"),
-          Map.of("Foo", "Bar"),
-          comment,
-          options.getExternalTableLocation(),
-          withCluster,
-          options.getClusterColumn());
-    }
+    boolean isManagedReplace = isReplace && tableType == TableType.MANAGED;
+    assertUCTableInfo(
+        tableType,
+        fullTableName,
+        List.of("i", "s"),
+        Map.of("Foo", "Bar"),
+        comment,
+        options.getExternalTableLocation(),
+        withCluster,
+        options.getClusterColumn(),
+        options.getPartitionColumn(),
+        // For MANAGED+REPLACE: seed CREATE=v0, seed INSERT=v1, REPLACE=v2.
+        isManagedReplace ? "2" : "0");
   }
 
   @Test
-  public void testCreateManagedTableErrors() {
+  public void testCreateManagedTableErrors() throws Exception {
     String tableName = "test_delta_errors";
     UnityCatalogInfo uc = unityCatalogInfo();
     String fullTableName = uc.catalogName() + "." + uc.schemaName() + "." + tableName;
@@ -358,7 +460,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
             () ->
                 sql(
                     "CREATE TABLE %s(name STRING) USING parquet %s",
-                    fullTableName, MANAGED_TBLPROPERTIES_CLAUSE))
+                    fullTableName, CUSTOM_TBLPROPERTIES_CLAUSE))
         .hasMessageContaining("not support non-Delta managed table");
 
     // Test 2: Invalid property value 'disabled' for catalogManaged feature
@@ -370,69 +472,148 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
         .hasMessageContaining(
             String.format("Invalid property value 'disabled' for '%s'", DELTA_CATALOG_MANAGED_KEY));
 
-    // Test 3: Cannot set UC table ID manually
-    for (String ucTableIdProperty : List.of(UC_TABLE_ID_KEY, UC_TABLE_ID_KEY_OLD)) {
-      assertThatThrownBy(
-              () ->
-                  sql(
-                      "CREATE TABLE %s(name STRING) USING delta TBLPROPERTIES ('%s' = 'some_id')",
-                      fullTableName, ucTableIdProperty))
-          .hasMessageContaining(ucTableIdProperty);
-    }
+    // Test 3: Canonical UC table ID cannot be set manually.
+    assertThatThrownBy(
+            () ->
+                sql(
+                    "CREATE TABLE %s(name STRING) USING delta "
+                        + "TBLPROPERTIES ('%s'='%s', '%s'='some_id')",
+                    fullTableName, DELTA_CATALOG_MANAGED_KEY, SUPPORTED, UC_TABLE_ID_KEY))
+        .hasMessageContaining(UC_TABLE_ID_KEY);
 
-    // Test 4: Cannot set is_managed_location to false for managed tables
+    // Test 4: Cannot set is_managed_location to false for managed tables.
     assertThatThrownBy(
             () ->
                 sql(
                     "CREATE TABLE %s(name STRING) USING delta TBLPROPERTIES ('%s' = 'false')",
                     fullTableName, TableCatalog.PROP_IS_MANAGED_LOCATION))
         .hasMessageContaining("is_managed_location");
-
-    // Test 5: Managed table creation requires catalogManaged property
-    assertThatThrownBy(() -> sql("CREATE TABLE %s(name STRING) USING delta", fullTableName))
-        .hasMessageContaining(
-            String.format(
-                "Managed table creation requires table property '%s'='%s' to be set",
-                DELTA_CATALOG_MANAGED_KEY, SUPPORTED));
   }
 
-  @TestAllTableTypes
-  public void testCreateOrReplaceTable(TableType tableType) throws Exception {
+  // EXTERNAL is intentionally excluded: CREATE OR REPLACE is not supported yet.
+  @TestFactory
+  public Stream<DynamicTest> testCreateOrReplaceTable() {
+    int counter = 0;
+    List<DynamicTest> tests = new ArrayList<>();
+    for (boolean withPartition : List.of(true, false)) {
+      for (boolean withCluster : List.of(true, false)) {
+        if (withCluster && withPartition) {
+          // Can not have CLUSTER BY and PARTITIONED BY on the same table
+          continue;
+        }
+        for (boolean withAsSelect : List.of(true, false)) {
+          String displayName =
+              String.format(
+                  "withPartition=%s, withCluster=%s, withAsSelect=%s",
+                  withPartition, withCluster, withAsSelect);
+          counter++;
+          int finalCounter = counter;
+          tests.add(
+              DynamicTest.dynamicTest(
+                  displayName,
+                  () ->
+                      runCreateOrReplaceTableTest(
+                          finalCounter, withPartition, withCluster, withAsSelect)));
+        }
+      }
+    }
+    return tests.stream();
+  }
+
+  private void runCreateOrReplaceTableTest(
+      int count, boolean withPartition, boolean withCluster, boolean withAsSelect)
+      throws Exception {
     UnityCatalogInfo uc = unityCatalogInfo();
-    String tableName = String.format("%s.%s.create_or_replace", uc.catalogName(), uc.schemaName());
-    withTempDir(
-        (Path dir) -> {
-          try {
-            // TODO: Once the UC and delta support the stageCreateOrReplace, then we should remove
-            // the failure assertion. Please see https://github.com/delta-io/delta/issues/6013.
-            // CREATE OR REPLACE with new schema
-            if (tableType == TableType.MANAGED) {
-              assertThatThrownBy(
-                  () ->
-                      sql(
-                          "CREATE OR REPLACE TABLE %s (id INT, name STRING) USING DELTA %s ",
-                          tableName, MANAGED_TBLPROPERTIES_CLAUSE));
-            } else {
-              assertThatThrownBy(
-                  () ->
-                      sql(
-                          "CREATE OR REPLACE TABLE %s (id INT, name STRING) USING DELTA LOCATION '%s'",
-                          tableName, dir.toString()));
-            }
+    final String comment = "This is comment.";
+    final String catalogName = uc.catalogName();
+    final String schemaName = uc.schemaName();
+    String tableName = "test_cor_table_" + count;
 
-            // TODO: Uncommon those code once support the stageCreateOrReplace, as said above.
+    TableSetupOptions options =
+        new TableSetupOptions()
+            .setCatalogName(catalogName)
+            .setSchemaName(schemaName)
+            .setTableName(tableName)
+            .setTableType(TableType.MANAGED)
+            .setDdlMode(DdlMode.CREATE_OR_REPLACE)
+            .setComment(comment);
+    if (withPartition) {
+      options.setPartitionColumn("i");
+    }
+    if (withCluster) {
+      options.setClusterColumn("s");
+    }
+    if (withAsSelect) {
+      options.setAsSelect(1, "a");
+    }
+    String fullTableName = options.fullTableName();
 
-            // Assert the unity catalog table information.
-            // assertUCTableInfo(
-            //     tableType, tableName, List.of("id", "name"), Map.of("Foo", "Bar"), null, null);
+    // First CREATE OR REPLACE: table does not exist yet; must succeed and create the table
+    // via the `NoSuchTableException` fallback in
+    // `AbstractDeltaCatalog.maybeStageDeltaCreateOrReplace`.
+    sql(options.createTableSql());
+    tablesToCleanUp.add(fullTableName);
+    sql("INSERT INTO %s SELECT 2, 'b'", fullTableName);
+    if (withAsSelect) {
+      check(fullTableName, List.of(List.of("1", "a"), List.of("2", "b")));
+    } else {
+      check(fullTableName, List.of(List.of("2", "b")));
+    }
+    assertUCTableInfo(
+        TableType.MANAGED,
+        fullTableName,
+        List.of("i", "s"),
+        Map.of("Foo", "Bar"),
+        comment,
+        options.getExternalTableLocation(),
+        withCluster,
+        options.getClusterColumn(),
+        options.getPartitionColumn(),
+        "0");
 
-            // Insert data to verify new schema
-            // sql("INSERT INTO %s VALUES (1, 'Alice')", tableName);
-            // check(tableName, List.of(List.of("1", "Alice")));
-          } finally {
-            sql("DROP TABLE IF EXISTS %s", tableName);
-          }
-        });
+    // Second CREATE OR REPLACE: identical metadata; goes through
+    // `loadTableAndBuildReplaceProps`. Identity must survive and the post-create INSERT
+    // row must be discarded.
+    String ucTableIdBefore = currentUcTableId(fullTableName);
+    long versionBefore = currentVersion(fullTableName);
+    sql(options.createTableSql());
+    assertReplaceLikeIdentityPreserved(fullTableName, ucTableIdBefore, versionBefore, withAsSelect);
+
+    // Read/write again to confirm the replaced table works end-to-end.
+    sql("INSERT INTO %s VALUES (3, 'c')", fullTableName);
+    if (withAsSelect) {
+      check(fullTableName, List.of(List.of("1", "a"), List.of("3", "c")));
+    } else {
+      check(fullTableName, List.of(List.of("3", "c")));
+    }
+    // Identical clustered metadata still sends clustering domain metadata intent to UC, so UC's
+    // lastUpdateVersion advances to the replacement commit version.
+    assertUCTableInfo(
+        TableType.MANAGED,
+        fullTableName,
+        List.of("i", "s"),
+        Map.of("Foo", "Bar"),
+        comment,
+        options.getExternalTableLocation(),
+        withCluster,
+        options.getClusterColumn(),
+        options.getPartitionColumn(),
+        withCluster ? "2" : "0");
+  }
+
+  /**
+   * Asserts the post-REPLACE invariants common to {@link #runTableCreationTest} (REPLACE branch)
+   * and {@link #runCreateOrReplaceTableTest} (second-COR branch): UC table id preserved, Delta
+   * version advanced, and rows from before the replace are discarded (only the AS-SELECT row
+   * survives, if any).
+   */
+  private void assertReplaceLikeIdentityPreserved(
+      String fullTableName, String ucTableIdBefore, long versionBefore, boolean withAsSelect)
+      throws Exception {
+    assertThat(currentUcTableId(fullTableName)).isEqualTo(ucTableIdBefore);
+    assertThat(currentVersion(fullTableName)).isGreaterThan(versionBefore);
+    assertThat(sql("SELECT COUNT(*) FROM %s", fullTableName))
+        .containsExactly(row(withAsSelect ? "1" : "0"));
   }
 
   @TestAllTableTypes
@@ -594,7 +775,9 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
         comment,
         externalTableLocation,
         false,
-        Optional.empty());
+        Optional.empty(),
+        Optional.empty(),
+        "0");
   }
 
   private void assertUCTableInfo(
@@ -605,7 +788,9 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       String comment,
       String externalTableLocation,
       boolean withCluster,
-      Optional<String> clusterColumn)
+      Optional<String> clusterColumn,
+      Optional<String> partitionColumn,
+      String expectedLastUpdateVersion)
       throws ApiException {
     UnityCatalogInfo uc = unityCatalogInfo();
     String catalogName = uc.catalogName();
@@ -624,45 +809,74 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       assertThat(tableInfo.getStorageLocation()).isEqualTo(externalTableLocation);
     }
 
-    // At this point table schema can not be sent to server yet because it won't be
-    // updated later and that would cause problem.
     List<ColumnInfo> columns = tableInfo.getColumns();
     assertThat(columns).isNotNull();
-    assertThat(columns).isEmpty();
 
     if (tableType == TableType.MANAGED) {
+      assertThat(columns).isNotEmpty();
+      List<String> columnNamesFromServer =
+          columns.stream().map(ColumnInfo::getName).collect(Collectors.toList());
+      assertThat(columnNamesFromServer).containsExactlyInAnyOrderElementsOf(expectedColumns);
+      if (partitionColumn.isPresent()) {
+        List<ColumnInfo> matchingColumns =
+            columns.stream()
+                .filter(c -> c.getName().equals(partitionColumn.get()))
+                .collect(Collectors.toList());
+        assertThat(matchingColumns).hasSize(1);
+        assertThat(matchingColumns.get(0).getPartitionIndex()).isEqualTo(0);
+      } else {
+        assertThat(columns.stream().anyMatch(c -> c.getPartitionIndex() != null)).isFalse();
+      }
       // Delta sent properties of managed tables to server
       Map<String, String> tablePropertiesFromServer = tableInfo.getProperties();
       tablePropertiesFromServer.remove("table_type", "MANAGED"); // New property by Spark 4.1
 
-      // CLUSTER BY has two extra properties
+      // CLUSTER BY adds `delta.feature.clustering`. The accompanying `clusteringColumns` property
+      // holds the physical (column-mapped) column reference, whose value isn't predictable, so it
+      // is verified by existence only via `expectedPropertiesWithVariableValue` below.
       final Map<String, String> expectedClusteringProperties =
           withCluster
               ? ImmutableMap.<String, String>builder()
-                  .put("clusteringColumns", "[[\"" + clusterColumn.get() + "\"]]")
                   .put("delta.feature.clustering", SUPPORTED)
                   .build()
               : ImmutableMap.of();
       final Map<String, String> expectedOtherProperties =
           ImmutableMap.<String, String>builder()
               .put("delta.checkpointPolicy", "v2")
+              .put("delta.checkpoint.writeStatsAsJson", "true")
+              .put("delta.checkpoint.writeStatsAsStruct", "true")
+              .put("delta.columnMapping.mode", "name")
               .put("delta.enableDeletionVectors", "true")
               .put("delta.enableInCommitTimestamps", "true")
               .put("delta.enableRowTracking", "true")
-              .put("delta.lastUpdateVersion", "0")
+              .put("delta.lastUpdateVersion", expectedLastUpdateVersion)
               .put("delta.minReaderVersion", "3")
               .put("delta.minWriterVersion", "7")
+              .put("delta.randomizeFilePrefixes", "true")
               .put(UC_TABLE_ID_KEY, tableInfo.getTableId())
               // User specified custom table property is also sent.
               .putAll(customizedProps)
               .putAll(expectedClusteringProperties)
               .build();
-      // The value of these properties aren't predictable. But at least we confirm their existence.
+      // The value of these properties aren't predictable, so they are listed here to keep the
+      // unexpected-property check below from flagging them; their values are asserted separately.
+      // Column-mapping rewrites the logical CLUSTER BY column to a physical `col-<UUID>` reference,
+      // so `clusteringColumns` can't be matched against the logical name -- its shape is validated
+      // explicitly below instead.
       final Set<String> expectedPropertiesWithVariableValue =
-          Set.of(
-              "delta.lastCommitTimestamp",
-              "delta.rowTracking.materializedRowCommitVersionColumnName",
-              "delta.rowTracking.materializedRowIdColumnName");
+          Stream.concat(
+                  Stream.of(
+                      "delta.lastCommitTimestamp",
+                      // Schema-dependent; value is the largest column id assigned by Delta.
+                      "delta.columnMapping.maxColumnId",
+                      "delta.rowTracking.materializedRowCommitVersionColumnName",
+                      "delta.rowTracking.materializedRowIdColumnName"),
+                  withCluster ? Stream.of("clusteringColumns") : Stream.empty())
+              .collect(Collectors.toUnmodifiableSet());
+
+      // `delta.rowTracking.rowIdHighWaterMark` is emitted when using UC Delta API only.
+      // Difference servers may or may not persist it as a table property.
+      final Set<String> ignoredPropertyKeys = Set.of("delta.rowTracking.rowIdHighWaterMark");
 
       // This is combination of expectedOtherProperties and
       //  EXPECTED_MANAGED_TABLE_FEATURES_PROPERTIES.
@@ -678,6 +892,14 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       expectedPropertiesWithVariableValue.forEach(
           key -> assertThat(tablePropertiesFromServer).containsKey(key));
 
+      // CLUSTER BY (col) persists the column as a column-mapped physical `col-<UUID>` reference.
+      // The UUID is unpredictable, so validate the shape: exactly one column-mapped clustering
+      // column.
+      if (withCluster) {
+        assertThat(tablePropertiesFromServer.get("clusteringColumns"))
+            .matches("\\[\\[\"col-[0-9a-f-]+\"\\]\\]");
+      }
+
       // Server doesn't have any unexpected table properties. If anyone introduces a new table
       // property and this fails, update the list of expected properties.
       Map<String, String> unexpectedTablePropertiesFromServer =
@@ -685,9 +907,12 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
               .filter(
                   entry ->
                       !expectedProperties.containsKey(entry.getKey())
-                          && !expectedPropertiesWithVariableValue.contains(entry.getKey()))
+                          && !expectedPropertiesWithVariableValue.contains(entry.getKey())
+                          && !ignoredPropertyKeys.contains(entry.getKey()))
               .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
       assertThat(unexpectedTablePropertiesFromServer).isEmpty();
+    } else {
+      assertThat(columns).isEmpty();
     }
 
     // Also verify table using DESC EXTENDED

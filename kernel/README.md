@@ -24,7 +24,7 @@ Scan.transformPhysicalData(...)                             // returns the table
 A complete version of the above example program and more examples of reading from and writing into a Delta table are available [here](https://github.com/delta-io/delta/tree/master/kernel/examples).
 
 Notice that there are two sets of public APIs to build connectors. 
-- **Table APIs** - Interfaces like [`Table`](https://delta-io.github.io/delta/snapshot/kernel-api/java/index.html?io/delta/kernel/Table.html) and [`Snapshot`](https://delta-io.github.io/delta/snapshot/kernel-api/java/index.html?io/delta/kernel/Snapshot.html) that allow you to read (and soon write to) Delta tables
+- **Table APIs** - Interfaces like [`Table`](https://delta-io.github.io/delta/snapshot/kernel-api/java/index.html?io/delta/kernel/Table.html), [`Snapshot`](https://delta-io.github.io/delta/snapshot/kernel-api/java/index.html?io/delta/kernel/Snapshot.html), and [`Transaction`](https://delta-io.github.io/delta/snapshot/kernel-api/java/index.html?io/delta/kernel/Transaction.html) that allow you to read from and write to Delta tables
 - **Engine APIs** - The [`Engine`](https://delta-io.github.io/delta/snapshot/kernel-api/java//index.html?io/delta/kernel/engine/Engine.html) interface allows you to plug in connector-specific optimizations to compute-intensive components in the Kernel. For example, Delta Kernel provides a *default* Parquet file reader via the `DefaultEngine`, but you may choose to replace that default with a custom `Engine` implementation that has a faster Parquet reader for your connector/processing engine.
 
 # Project setup with Delta Kernel 

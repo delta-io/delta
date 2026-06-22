@@ -25,6 +25,7 @@ import scala.language.existentials
 
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.{Checkpoints, DeletionVectorsTableFeature, DeltaColumnMapping, DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, DeltaIllegalArgumentException, DeltaLog, DeltaUDF, NoMapping}
+import org.apache.spark.sql.delta.expressions.EncodeNestedVariantAsZ85String
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.DeltaColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY
 import org.apache.spark.sql.delta.DeltaOperations.ComputeStats
@@ -232,8 +233,18 @@ trait StatisticsCollection extends DeltaLogging {
     }
 
     // This may be very expensive because it is rewriting JSON.
+    // If the stats schema contains variant types, we need to encode them as Z85 strings
+    // before serializing to JSON. This preserves the variant stats that were originally
+    // written with Z85 encoding.
+    val statsStruct = struct(allStatCols: _*)
+    val encodedStatsStruct = if (SchemaUtils.checkForVariantTypeColumnsRecursively(statsSchema)) {
+      Column(EncodeNestedVariantAsZ85String(statsStruct.expr))
+    } else {
+      statsStruct
+    }
+
     withStats
-      .withColumn("stats", when(col(statsColName).isNotNull, to_json(struct(allStatCols: _*))))
+      .withColumn("stats", when(col(statsColName).isNotNull, to_json(encodedStatsStruct)))
       .drop(col(Checkpoints.STRUCT_STATS_COL_NAME)) // Note: does not always exist.
   }
 
@@ -253,6 +264,8 @@ trait StatisticsCollection extends DeltaLogging {
    */
   lazy val statsCollector: Column = {
     val stringPrefix = getDataSkippingStringPrefixLength
+    val variantFieldsLimit =
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STATS_LIMIT_PER_VARIANT)
 
     // On file initialization/stat recomputation TIGHT_BOUNDS is always set to true
     val tightBoundsColOpt =
@@ -268,10 +281,10 @@ trait StatisticsCollection extends DeltaLogging {
         case (c, SkippingEligibleDataType(StringType), true) =>
           substring(min(c), 0, stringPrefix)
 
-        // Write null for min/max Variant stats because collecting variant stats is not supported
-        // yet.
         case (c, SkippingEligibleDataType(_: VariantType), true) =>
-          lit(null).cast(VariantType)
+          val variantUdf = DeltaUDF.variantFromVariant(
+            VariantStatsHelper.trimVariant(variantFieldsLimit))
+          variantUdf(Column(MinVariantStats(c.expr)))
 
         // Collect all numeric min values
         case (c, SkippingEligibleDataType(_), true) =>
@@ -284,10 +297,10 @@ trait StatisticsCollection extends DeltaLogging {
             DeltaUDF.stringFromString(StatisticsCollection.truncateMaxStringAgg(stringPrefix)_)
           udfTruncateMax(max(c))
 
-        // Write null for min/max Variant stats because collecting variant stats is not supported
-        // yet.
         case (c, SkippingEligibleDataType(_: VariantType), true) =>
-          lit(null).cast(VariantType)
+          val variantUdf = DeltaUDF.variantFromVariant(
+            VariantStatsHelper.trimVariant(variantFieldsLimit))
+          variantUdf(Column(MaxVariantStats(c.expr)))
 
         // Collect all numeric max values
         case (c, SkippingEligibleDataType(_), true) =>

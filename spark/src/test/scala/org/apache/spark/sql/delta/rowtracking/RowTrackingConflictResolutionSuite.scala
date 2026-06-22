@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.rowtracking
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Truncate}
 import org.apache.spark.sql.delta.actions.{Action, AddFile}
-import org.apache.spark.sql.delta.actions.{Metadata, RemoveFile}
+import org.apache.spark.sql.delta.actions.{Metadata, Protocol, RemoveFile}
 import org.apache.spark.sql.delta.commands.backfill.{BackfillCommandStats, RowTrackingBackfillExecutor}
 import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.rowid.RowIdTestUtils
@@ -75,8 +75,9 @@ class RowTrackingConflictResolutionSuite extends QueryTest
   /** Add Row tracking table feature support. */
   private def activateRowTracking(): Unit = {
     require(!latestSnapshot.protocol.isFeatureSupported(RowTrackingFeature))
-    deltaLog.upgradeProtocol(Action.supportedProtocolVersion(
-      featuresToExclude = Seq(CatalogOwnedTableFeature)))
+    val protocolWithRowTracking = Protocol(3, 7).withFeature(RowTrackingFeature)
+    deltaLog.upgradeProtocol(
+      None, latestSnapshot, latestSnapshot.protocol.merge(protocolWithRowTracking))
   }
 
   // Add 'numRecords' records to the table.
@@ -116,9 +117,10 @@ class RowTrackingConflictResolutionSuite extends QueryTest
       val filePath = "file_path"
 
       val txn = deltaLog.startTransaction()
+      val protocolWithRowTracking = Protocol(3, 7).withFeature(RowTrackingFeature)
       deltaLog.startTransaction().commit(
         Seq(
-          Action.supportedProtocolVersion(featuresToExclude = Seq(CatalogOwnedTableFeature)),
+          latestSnapshot.protocol.merge(protocolWithRowTracking),
           addFile("other_path")
         ), DeltaOperations.ManualUpdate)
       txn.commit(Seq(addFile(filePath)), DeltaOperations.ManualUpdate)

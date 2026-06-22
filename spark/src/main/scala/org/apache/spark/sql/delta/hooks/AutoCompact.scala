@@ -120,7 +120,7 @@ trait AutoCompactBase extends PostCommitHook with DeltaLogging {
       opType: String,
       maxDeletedRowsRatio: Option[Double]
   ): Seq[OptimizeMetrics] = {
-    val tableId = txn.deltaLog.tableId
+    val tableId = txn.deltaLog.unsafeVolatileTableId
     val autoCompactRequest = AutoCompactUtils.prepareAutoCompactRequest(
       spark,
       txn,

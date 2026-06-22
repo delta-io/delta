@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.catalog
 
-import io.delta.spark.internal.v2.catalog.SparkTable
+import io.delta.spark.internal.v2.catalog.DeltaV2Table
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
@@ -28,13 +28,13 @@ import java.util.Locale
  *
  * Verifies that DeltaCatalog correctly routes table loading based on
  * DeltaSQLConf.V2_ENABLE_MODE:
- * - STRICT mode: Kernel's SparkTable (V2 connector)
+ * - STRICT mode: Kernel's DeltaV2Table (V2 connector)
  * - NONE mode (default): DeltaTableV2 (V1 connector)
  */
 class DeltaCatalogSuite extends DeltaSQLCommandTest {
 
   private val modeTestCases = Seq(
-    ("STRICT", classOf[SparkTable], "Kernel SparkTable"),
+    ("STRICT", classOf[DeltaV2Table], "Kernel DeltaV2Table"),
     ("NONE", classOf[DeltaTableV2], "DeltaTableV2")
   )
 

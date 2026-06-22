@@ -247,6 +247,83 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
     }
   }
 
+  test("negative case - non-constant expressions in version/timestamp argument") {
+    val tbl = "tbl"
+    val otherTbl = "other_tbl"
+    withTempDir { dir =>
+      withTable(tbl, otherTbl) {
+        spark.range(10).write.format("delta").option("path", dir.getAbsolutePath).saveAsTable(tbl)
+        spark.range(5).toDF("version").write.format("delta").saveAsTable(otherTbl)
+
+        // (query, expectedFunctionName, expectedParamName, expectedPos, sqlExprPattern)
+        val testCases = Seq(
+          // Scalar subquery as starting arg
+          (s"SELECT * FROM table_changes('$tbl', (SELECT MAX(version) FROM $otherTbl))",
+            "table_changes", "starting", 2, "scalarsubquery.*"),
+          // Scalar subquery as ending arg
+          (s"SELECT * FROM table_changes('$tbl', 0, (SELECT MAX(version) FROM $otherTbl))",
+            "table_changes", "ending", 3, "scalarsubquery.*"),
+          // Scalar subquery in table_changes_by_path
+          (s"SELECT * FROM table_changes_by_path('${dir.getAbsolutePath}'," +
+            s" (SELECT MAX(version) FROM $otherTbl))",
+            "table_changes_by_path", "starting", 2, "scalarsubquery.*"),
+          // Aggregate expression as starting arg
+          (s"SELECT * FROM table_changes('$tbl', MAX(1))",
+            "table_changes", "starting", 2, ".*[Mm]ax.*"),
+          // Aggregate expression as ending arg
+          (s"SELECT * FROM table_changes('$tbl', 0, MAX(1))",
+            "table_changes", "ending", 3, ".*[Mm]ax.*"),
+          // Aggregate expression in table_changes_by_path
+          (s"SELECT * FROM table_changes_by_path('${dir.getAbsolutePath}', MAX(1))",
+            "table_changes_by_path", "starting", 2, ".*[Mm]ax.*")
+        )
+
+        testCases.foreach { case (q, expectedFn, expectedParam, expectedPos, sqlExprPattern) =>
+          checkErrorMatchPVals(
+            intercept[AnalysisException] { sql(q) },
+            "DELTA_CDC_NON_CONSTANT_ARGUMENT",
+            parameters = Map(
+              "argumentName" -> s"`$expectedParam`",
+              "pos" -> expectedPos.toString,
+              "functionName" -> s"`$expectedFn`",
+              "sqlExpr" -> sqlExprPattern
+            )
+          )
+        }
+      }
+    }
+  }
+
+  test("negative case - table_changes in correlated subquery with OuterReference") {
+    // When table_changes() is used inside a correlated subquery with an expression that
+    // wraps an OuterReference (e.g. `o.version + 0`), the top-level node is not Unevaluable
+    // (Add is evaluable) but its child OuterReference is. The old isInstanceOf[Unevaluable]
+    // check on the top-level expression misses this case and .eval() throws INTERNAL_ERROR.
+    // We instead catch that SparkException and re-throw as DELTA_CDC_NON_CONSTANT_ARGUMENT.
+    val tbl = "tbl"
+    val otherTbl = "other_tbl"
+    withTable(tbl, otherTbl) {
+      spark.range(10).write.format("delta").saveAsTable(tbl)
+      spark.range(5).toDF("version").write.format("delta").saveAsTable(otherTbl)
+
+      val q = s"""
+        SELECT * FROM $otherTbl o WHERE EXISTS (
+          SELECT 1 FROM table_changes('$tbl', o.version + 0)
+        )
+      """
+      checkErrorMatchPVals(
+        intercept[AnalysisException] { sql(q) },
+        "DELTA_CDC_NON_CONSTANT_ARGUMENT",
+        parameters = Map(
+          "argumentName" -> "`starting`",
+          "pos" -> "2",
+          "functionName" -> "`table_changes`",
+          "sqlExpr" -> ".*"
+        )
+      )
+    }
+  }
+
   test("resolve expression for timestamp function") {
     val tbl = "tbl"
     withDefaultTimeZone(UTC) {

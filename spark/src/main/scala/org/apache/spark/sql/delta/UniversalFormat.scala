@@ -136,7 +136,7 @@ object UniversalFormat extends DeltaLogging {
       }
       SchemaUtils.findAnyTypeRecursively(newestMetadata.schema) { f =>
         f.isInstanceOf[NullType] | f.isInstanceOf[ByteType] | f.isInstanceOf[ShortType] |
-        f.isInstanceOf[TimestampNTZType]
+        f.isInstanceOf[TimestampNTZType] | DeltaGeoSpatial.isGeoSpatialType(f)
       } match {
         case Some(unsupportedType) =>
           throw DeltaErrors.uniFormHudiSchemaCompat(unsupportedType)
@@ -331,6 +331,24 @@ abstract class UniversalFormatConverter {
       snapshotToConvert: Snapshot, catalogTable: CatalogTable): Option[(Long, Long)]
 
   /**
+   * Perform a blocking pre-commit conversion for an uncommitted transaction.
+   * Generates metadata before the Delta commit so both can be submitted atomically.
+   *
+   * @param txnInfo              The uncommitted transaction info containing the proposed actions.
+   * @param deltaAttemptVersion  The Delta version this transaction is targeting.
+   * @param deltaLog             The DeltaLog for this table.
+   * @param catalogTable         The catalog table this conversion targets.
+   * @return (generated metadata path, last converted Delta version)
+   */
+  def convertUncommitedTxn(
+      txnInfo: CurrentTransactionInfo,
+      deltaAttemptVersion: Long,
+      deltaLog: DeltaLog,
+      catalogTable: CatalogTable): (String, Option[Long]) =
+    throw new UnsupportedOperationException(
+      s"${getClass.getSimpleName} does not support atomic UniForm pre-commit conversion")
+
+  /**
    * Fetch the delta version corresponding to the latest conversion.
    * @param snapshot the snapshot to be converted
    * @param table the catalogTable with info of previous conversions
@@ -343,6 +361,18 @@ object IcebergConstants {
   val ICEBERG_TBLPROP_METADATA_LOCATION = "metadata_location"
   val ICEBERG_PROVIDER = "iceberg"
   val ICEBERG_NAME_MAPPING_PROPERTY = "schema.name-mapping.default"
+
+  // UniForm metadata would be stored inside catalogTable's properties upon loading
+  // Those are kept in-memory only and won't be sent to catalog
+  /** CatalogTable property key for the last converted Iceberg metadata location. */
+  val CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP =
+    "deltaUniformIceberg.metadataLocation"
+  /** CatalogTable property key for the last converted Delta version. */
+  val CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP =
+    "deltaUniformIceberg.convertedDeltaVersion"
+  /** CatalogTable property key for the last converted Delta timestamp. */
+  val CATALOG_TABLE_ICEBERG_CONVERTED_TIMESTAMP_PROP =
+    "deltaUniformIceberg.convertedDeltaTimestamp"
 
   // Reserved field ID for the `_row_id` column
   // Iceberg spec: https://iceberg.apache.org/spec/?h=row#reserved-field-ids

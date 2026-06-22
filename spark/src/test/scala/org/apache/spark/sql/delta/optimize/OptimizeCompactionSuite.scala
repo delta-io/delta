@@ -24,8 +24,9 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.commands.{DeltaOptimizeContext, OptimizeExecutor}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
+import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import io.delta.tables.DeltaTable
 
@@ -43,6 +44,7 @@ import org.apache.spark.sql.types.LongType
  */
 trait OptimizeCompactionSuiteBase extends QueryTest
   with SharedSparkSession
+  with DeltaSQLTestUtils
   with DeletionVectorsTestUtils
   with DeltaColumnMappingTestUtils {
 
@@ -636,6 +638,70 @@ trait OptimizeCompactionSuiteBase extends QueryTest
       df = df.partitionBy(columns: _*)
     })
     df.format("delta").mode("append").save(tablePath)
+  }
+
+  test("optimize on a catalog managed table should fail") {
+    withCatalogManagedTable() { tableName =>
+      checkError(
+        intercept[DeltaUnsupportedOperationException] {
+          spark.sql(s"OPTIMIZE $tableName")
+        },
+        "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION",
+        parameters = Map("operation" -> "OPTIMIZE")
+      )
+    }
+  }
+
+  for (enableNormalization <- BOOLEAN_DOMAIN) {
+    test("optimize groups files correctly by normalized partition values, " +
+      s"enableNormalization=$enableNormalization") {
+      withSQLConf(
+        DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ.key ->
+          enableNormalization.toString
+      ) {
+        DeltaTestUtils.withTimeZone("UTC") {
+          withTempDir { tempDir =>
+            val path = tempDir.getAbsolutePath
+            sql(s"CREATE TABLE delta.`$path` (id LONG, ts TIMESTAMP) " +
+              s"USING delta PARTITIONED BY (ts)")
+            // Insert with non-UTC format (2 files)
+            withSQLConf(DeltaSQLConf.UTC_TIMESTAMP_PARTITION_VALUES.key -> "false") {
+              sql(s"INSERT INTO delta.`$path` VALUES (0, '2000-01-01 12:00:00')")
+              sql(s"INSERT INTO delta.`$path` VALUES (1, '2000-01-01 12:00:00')")
+            }
+            // Insert with UTC format (2 files)
+            withSQLConf(DeltaSQLConf.UTC_TIMESTAMP_PARTITION_VALUES.key -> "true") {
+              sql(s"INSERT INTO delta.`$path` VALUES (2, '2000-01-01T12:00:00.000Z')")
+              sql(s"INSERT INTO delta.`$path` VALUES (3, '2000-01-01T12:00:00.000Z')")
+            }
+            val deltaLog = DeltaLog.forTable(spark, path)
+            val snapshot = deltaLog.update()
+            assert(snapshot.allFiles.count() == 4)
+
+            new OptimizeExecutor(
+              spark,
+              snapshot,
+              catalogTable = None,
+              partitionPredicate = Seq.empty,
+              zOrderByColumns = Seq.empty,
+              isAutoCompact = false,
+              DeltaOptimizeContext()
+            ).optimize()
+
+            val filesAfter = deltaLog.update().allFiles.count()
+            if (enableNormalization) {
+              // All 4 files in 1 partition.
+              assert(filesAfter == 1)
+            } else {
+              // non-UTC and UTC formats stay separate partitions.
+              assert(filesAfter == 2)
+            }
+            checkAnswer(spark.read.format("delta").load(path).select("id"),
+              Seq(Row(0), Row(1), Row(2), Row(3)))
+          }
+        }
+      }
+    }
   }
 }
 

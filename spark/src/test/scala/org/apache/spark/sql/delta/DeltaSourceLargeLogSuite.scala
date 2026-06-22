@@ -18,18 +18,33 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
+import org.apache.spark.SparkConf
+
 class DeltaSourceLargeLogSuite extends DeltaSourceSuite {
   protected override def sparkConf = {
     super.sparkConf.set(DeltaSQLConf.LOG_SIZE_IN_MEMORY_THRESHOLD.key, "0")
   }
 }
 
-class DeltaSourceLargeLogWithCoordinatedCommitsBatch1Suite
+// Batch sizes 1, 2, and 100 exercise different backfill behaviors in the commit coordinator.
+// Batch size 1 triggers a backfill on every commit (commitVersion % 1 == 0), testing the most
+// granular backfill path. Batch size 2 triggers backfill every other commit, testing the boundary
+// between backfilled and unbackfilled commits. Batch size 100 leaves most commits unbackfilled,
+// testing the production-like path where streaming must read from both the commit coordinator
+// and the filesystem. This follows the same pattern as other CatalogManaged (CCv2) test suites
+// (DeltaLogSuite, DeltaCDCStreamSuite, etc.).
+
+class DeltaSourceLargeLogWithCatalogManagedBatch1Suite
     extends DeltaSourceLargeLogSuite {
-  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class DeltaSourceLargeLogWithCoordinatedCommitsBatch100Suite
+class DeltaSourceLargeLogWithCatalogManagedBatch2Suite
     extends DeltaSourceLargeLogSuite {
-  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+}
+
+class DeltaSourceLargeLogWithCatalogManagedBatch100Suite
+    extends DeltaSourceLargeLogSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }

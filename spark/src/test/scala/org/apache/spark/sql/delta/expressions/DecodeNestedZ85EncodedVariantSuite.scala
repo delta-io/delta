@@ -21,6 +21,7 @@ import java.util.Arrays
 import org.apache.spark.sql.{Column, QueryTest, Row}
 import org.apache.spark.sql.catalyst.expressions.variant.VariantExpressionEvalUtils
 import org.apache.spark.sql.delta.ClassicColumnConversions._
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.DeltaStatsJsonUtils
 import org.apache.spark.sql.functions.{col, from_json}
@@ -152,5 +153,76 @@ class DecodeNestedZ85EncodedVariantSuite extends QueryTest with DeltaSQLCommandT
     val decodedVariant2Max = result.get(9).asInstanceOf[VariantVal]
     assert(Arrays.equals(inputVariant2.getMetadata, decodedVariant2Max.getMetadata))
     assert(Arrays.equals(inputVariant2.getValue, decodedVariant2Max.getValue))
+  }
+
+  test("fault tolerance - returns null for invalid Z85 encoded variants by default") {
+    // Create a stats schema with variant fields
+    val statsSchema = StructType(Seq(
+      StructField("numRecords", LongType, nullable = true),
+      StructField("minValues", StructType(Seq(
+        StructField("intCol", IntegerType, nullable = true),
+        StructField("v", VariantType, nullable = true)
+      )), nullable = true)
+    ))
+
+    // Create stats JSON with an invalid Z85 string (not a valid Z85 encoding)
+    // The variant field contains a non-Z85-encoded variant (just a regular JSON object)
+    val invalidStatsJson =
+      """{"numRecords": 100, "minValues": {"intCol": 1, "v": {"invalid": "not_z85"}}}"""
+
+    val df = spark.range(1).selectExpr(s"""'$invalidStatsJson' as stats""")
+
+    val parsedDf = df.withColumn("parsed", from_json(col("stats"), statsSchema))
+
+    // By default (failOnZ85DecodeError = false), should return null for invalid variant
+    val decodedDf = parsedDf.withColumn(
+      "decoded",
+      Column(DecodeNestedZ85EncodedVariant(col("parsed").expr))
+    )
+
+    val result = decodedDf.select(
+      "decoded.numRecords",
+      "decoded.minValues.intCol",
+      "decoded.minValues.v"
+    ).head()
+
+    // Non-variant fields should be preserved
+    assert(result.getLong(0) == 100L)
+    assert(result.getInt(1) == 1)
+
+    // Invalid variant field should be null (fault tolerant)
+    assert(result.isNullAt(2), "Expected null for invalid Z85-encoded variant")
+  }
+
+  test("fault tolerance - handles corrupted Z85 string gracefully") {
+    // Create a valid Z85 string and then corrupt it
+    val json = "{\"id\": 42}"
+    val inputVariant = VariantExpressionEvalUtils.parseJson(UTF8String.fromString(json))
+    val variant = new Variant(inputVariant.getValue, inputVariant.getMetadata)
+    val validZ85 = DeltaStatsJsonUtils.encodeVariantAsZ85(variant)
+
+    // Corrupt the Z85 string by replacing some characters with invalid ones
+    val corruptedZ85 = validZ85.take(5) + "!!!!!CORRUPTED!!!!!" + validZ85.drop(10)
+
+    val statsSchema = StructType(Seq(
+      StructField("v", VariantType, nullable = true)
+    ))
+
+    val statsJson = s"""{"v": "$corruptedZ85"}"""
+
+    val df = spark.range(1).selectExpr(s"""'$statsJson' as stats""")
+
+    val parsedDf = df.withColumn("parsed", from_json(col("stats"), statsSchema))
+
+    // With default fault tolerance, should return null
+    val decodedDf = parsedDf.withColumn(
+      "decoded",
+      Column(DecodeNestedZ85EncodedVariant(col("parsed").expr))
+    )
+
+    val result = decodedDf.select("decoded.v").head()
+
+    // Corrupted Z85 should result in null (fault tolerant)
+    assert(result.isNullAt(0), "Expected null for corrupted Z85 string")
   }
 }

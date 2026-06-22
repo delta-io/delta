@@ -18,14 +18,14 @@ package io.delta.kernel.unitycatalog
 
 import java.lang.{Long => JLong}
 import java.net.URI
-import java.util.Optional
+import java.util.{Collections, List => JList, Optional}
 import java.util.concurrent.ConcurrentHashMap
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
-import io.delta.storage.commit.{Commit, CommitFailedException, GetCommitsResponse}
-import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
+import io.delta.storage.commit.{Commit, CommitFailedException, GetCommitsResponse, TableIdentifier}
+import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.{InvalidTargetTableException, UCClient}
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 
@@ -117,6 +117,15 @@ object InMemoryUCClient {
   object TableData {
     def afterCreate(): TableData = new TableData(0, ArrayBuffer.empty[Commit])
   }
+
+  /** Record of arguments passed to {@code finalizeCreate}. */
+  case class FinalizeCreateRecord(
+      tableName: String,
+      catalogName: String,
+      schemaName: String,
+      storageLocation: String,
+      columns: java.util.List[UCClient.ColumnDef],
+      properties: java.util.Map[String, String])
 }
 
 /**
@@ -145,34 +154,37 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       tableUri: URI,
       commit: Optional[Commit],
       lastKnownBackfilledVersion: Optional[JLong] = Optional.empty(),
-      disown: Boolean = false,
       newMetadata: Optional[AbstractMetadata] = Optional.empty(),
       newProtocol: Optional[AbstractProtocol] = Optional.empty()): Unit = {
     this.commit(
       tableId,
       tableUri,
+      null, // tableIdentifier
       commit,
       lastKnownBackfilledVersion,
-      disown,
+      Optional.empty(), // oldMetadata
       newMetadata,
+      Optional.empty(), // oldProtocol
       newProtocol,
-      Optional.empty() /* uniform */ )
+      Collections.emptyList[AbstractDomainMetadata](), // transactionDomainMetadata
+      Optional.empty() // uniform
+    )
   }
 
+  // scalastyle:off argcount
   override def commit(
       tableId: String,
       tableUri: URI,
+      tableIdentifier: TableIdentifier,
       commitOpt: Optional[Commit] = Optional.empty(),
       lastKnownBackfilledVersionOpt: Optional[JLong],
-      disown: Boolean,
+      oldMetadata: Optional[AbstractMetadata],
       newMetadata: Optional[AbstractMetadata],
+      oldProtocol: Optional[AbstractProtocol],
       newProtocol: Optional[AbstractProtocol],
+      transactionDomainMetadata: JList[AbstractDomainMetadata],
       uniform: Optional[UniformMetadata]): Unit = {
     forceThrowInCommitMethod()
-
-    if (disown) {
-      throw new UnsupportedOperationException("disown not yet supported in InMemoryUCClient")
-    }
 
     val tableData = getOrCreateTableIfNotExists(tableId)
 
@@ -193,10 +205,12 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       }
     }
   }
+  // scalastyle:on argcount
 
   override def getCommits(
       tableId: String,
       tableUri: URI,
+      tableIdentifier: TableIdentifier,
       startVersion: Optional[JLong],
       endVersion: Optional[JLong]): GetCommitsResponse = {
     val tableData = getTableDataElseThrow(tableId)
@@ -204,7 +218,37 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
     new GetCommitsResponse(filteredCommits.asJava, tableData.getMaxRatifiedVersion)
   }
 
+  /** Captured arguments from the last {@code finalizeCreate} call, for test assertions. */
+  private var lastFinalizeCreateRecord: Option[InMemoryUCClient.FinalizeCreateRecord] = None
+
+  private[unitycatalog] def getLastFinalizeCreateRecord
+      : Option[InMemoryUCClient.FinalizeCreateRecord] =
+    lastFinalizeCreateRecord
+
+  override def finalizeCreate(
+      tableName: String,
+      catalogName: String,
+      schemaName: String,
+      storageLocation: String,
+      columns: java.util.List[UCClient.ColumnDef],
+      properties: java.util.Map[String, String]): Unit = {
+    forceThrowInFinalizeCreateMethod()
+    lastFinalizeCreateRecord = Some(InMemoryUCClient.FinalizeCreateRecord(
+      tableName,
+      catalogName,
+      schemaName,
+      storageLocation,
+      columns,
+      properties))
+    val fqn = s"$catalogName.$schemaName.$tableName"
+    Option(tables.putIfAbsent(fqn, TableData.afterCreate()))
+      .foreach(_ => throw new IllegalArgumentException(s"$fqn already exists"))
+  }
+
   override def close(): Unit = {}
+
+  /** Can be overridden to force an exception in finalizeCreate. */
+  protected def forceThrowInFinalizeCreateMethod(): Unit = {}
 
   /** Visible for testing. Can be overridden to force an exception in commit method. */
   protected def forceThrowInCommitMethod(): Unit = {}

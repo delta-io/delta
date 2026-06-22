@@ -1931,8 +1931,16 @@ class DeltaTableCreationSuite
     def getDeltaLog: DeltaLog =
       DeltaLog.forTable(spark, TableIdentifier(emptyTableName))
 
+    // Cleanup
+    def resetTable(): Unit = {
+      sql(s"DROP TABLE IF EXISTS $emptyTableName")
+      Utils.deleteRecursively(
+        new File(spark.sessionState.catalog.defaultTablePath(TableIdentifier(emptyTableName))))
+    }
+
     // create using SQL API
     withTable(emptyTableName) {
+      resetTable()
       sql(s"CREATE TABLE $emptyTableName USING delta")
       assert(getDeltaLog.snapshot.schema.isEmpty)
       f
@@ -1943,6 +1951,7 @@ class DeltaTableCreationSuite
 
     // create using Delta table API (creates v1 table)
     withTable(emptyTableName) {
+      resetTable()
       io.delta.tables.DeltaTable
         .create(spark)
         .tableName(emptyTableName)
@@ -2149,7 +2158,7 @@ class DeltaTableCreationSuite
                  |""".stripMargin)
           }
         } catch {
-            case _: AssertionError | _: SparkException =>
+          case _: AssertionError | _: SparkException | _: DeltaAnalysisException =>
         }
       }
 
@@ -2704,6 +2713,37 @@ class DeltaTableCreationSuite
           assert(schemaContainsExistsKey("test_table_4") === false)
           assert(defaultsTableFeatureEnabled("test_table_4") === false)
       }
+    }
+  }
+
+  test("Default column values: defaults of different column types are materialized") {
+    val tbl = "default_column_types"
+    withTable(tbl) {
+      sql(
+        s"""CREATE TABLE $tbl (
+           |  id INT,
+           |  str_col STRING DEFAULT 'hello',
+           |  int_col INT DEFAULT 42,
+           |  long_col BIGINT DEFAULT 1234567890123,
+           |  bool_col BOOLEAN DEFAULT true,
+           |  double_col DOUBLE DEFAULT 3.14,
+           |  decimal_col DECIMAL(5, 2) DEFAULT 9.99,
+           |  date_col DATE DEFAULT DATE'2024-01-01',
+           |  arr_col ARRAY<INT> DEFAULT ARRAY(1, 2, 3),
+           |  map_col MAP<STRING, INT> DEFAULT MAP('a', 1, 'b', 2),
+           |  struct_col STRUCT<x: INT, y: STRING> DEFAULT NAMED_STRUCT('x', 7, 'y', 'foo')
+           |)
+           |USING DELTA
+           |TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported')""".stripMargin)
+
+      // Provide only the column without a default; the rest fall back to their DEFAULT values.
+      sql(s"INSERT INTO $tbl (id) VALUES (1)")
+
+      checkAnswer(
+        sql(s"SELECT * FROM $tbl"),
+        Row(1, "hello", 42, 1234567890123L, true, 3.14,
+          new java.math.BigDecimal("9.99"), java.sql.Date.valueOf("2024-01-01"),
+          Seq(1, 2, 3), Map("a" -> 1, "b" -> 2), Row(7, "foo")))
     }
   }
 }

@@ -116,6 +116,15 @@ sealed abstract class TableFeature(
   def isRemovable: Boolean = this.isInstanceOf[RemovableFeature]
 
   /**
+   * True if the addition of this feature in the protocol is expected to fail concurrent
+   * transactions. This is desirable for features that are implicitly enabled by being present
+   * in the protocol, and also impose write-time requirements that need to be respected by all
+   * writers beyond the protocol upgrade. Note that features that do reconciliation at conflict
+   * checking time (e.g. RowTrackingFeature) should return false.
+   */
+  def failConcurrentTransactionsAtUpgrade: Boolean = true
+
+  /**
    * Set of table features that this table feature depends on. I.e. the set of features that need
    * to be enabled if this table feature is enabled.
    */
@@ -377,7 +386,10 @@ object TableFeature {
       TypeWideningTableFeature,
       IcebergCompatV1TableFeature,
       IcebergCompatV2TableFeature,
+      IcebergCompatV3TableFeature,
       DeletionVectorsTableFeature,
+      GeoSpatialPreviewTableFeature,
+      GeoSpatialTableFeature,
       VacuumProtocolCheckTableFeature,
       V2CheckpointTableFeature,
       RowTrackingFeature,
@@ -455,6 +467,18 @@ object TableFeature {
     oldFeatures -- newFeatures
   }
 
+  /**
+   * Extracts the added features by comparing new and old protocols.
+   * Returns None if there are no added features.
+   */
+  def getAddedFeatures(
+      newProtocol: Protocol,
+      oldProtocol: Protocol): Set[TableFeature] = {
+    val newFeatures = newProtocol.implicitlyAndExplicitlySupportedFeatures
+    val oldFeatures = oldProtocol.implicitlyAndExplicitlySupportedFeatures
+    newFeatures -- oldFeatures
+  }
+
   /** Identifies whether there was any feature removal between two protocols. */
   def isProtocolRemovingFeatures(newProtocol: Protocol, oldProtocol: Protocol): Boolean = {
     getDroppedFeatures(newProtocol = newProtocol, oldProtocol = oldProtocol).nonEmpty
@@ -520,6 +544,7 @@ object AppendOnlyTableFeature
       spark: SparkSession): Boolean = {
     DeltaConfigs.IS_APPEND_ONLY.fromMetaData(metadata)
   }
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
 }
 
 object InvariantsTableFeature
@@ -565,6 +590,7 @@ object ChangeDataFeedTableFeature
       spark: SparkSession): Boolean = {
     DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(metadata)
   }
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
 }
 
 object GeneratedColumnsTableFeature
@@ -594,6 +620,8 @@ object ColumnMappingTableFeature
       case _ => true
     }
   }
+
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
 
   override def validateDropInvariants(table: DeltaTableV2, snapshot: Snapshot): Boolean = {
     val schemaHasNoColumnMappingMetadata =
@@ -625,12 +653,62 @@ object IdentityColumnsTableFeature
   }
 }
 
+
+/** Common base shared by the preview and geospatial table features. */
+abstract class GeoSpatialTableFeatureBase(name: String)
+  extends ReaderWriterFeature(name)
+  with RemovableFeature {
+
+  override def validateDropInvariants(table: DeltaTableV2, snapshot: Snapshot): Boolean =
+    !DeltaGeoSpatial.containsGeoColumns(snapshot.metadata.schema)
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    GeospatialPreDowngradeCommand(table)
+
+  override def actionUsesFeature(action: Action): Boolean = false
+}
+
+/**
+ * Feature used for the private preview phase of geospatial support. Tables that have this
+ * feature are still supported even after the preview.
+ */
+object GeoSpatialPreviewTableFeature
+  extends GeoSpatialTableFeatureBase(name = "geospatial-dev")
+
+/**
+ * Stable feature for geospatial support.
+ *
+ * Table feature that adds support for GeoSpatial types (Geometry and Geography).
+ * Feature is automatically added whenever schema contains any of these two types.
+ * Additionally, feature is gated behind a delta.geo.preview.enabled config.
+ */
+object GeoSpatialTableFeature
+  extends GeoSpatialTableFeatureBase(name = "geospatial")
+  with FeatureAutomaticallyEnabledByMetadata {
+  override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol, metadata: Metadata, spark: SparkSession): Boolean = {
+    val hasGeoColumns = DeltaGeoSpatial.containsGeoColumns(metadata.schema)
+
+    if (hasGeoColumns && !DeltaGeoSpatial.isPreviewEnabled(spark)) {
+      throw DeltaErrors.geoSpatialNotSupportedException()
+    }
+
+    hasGeoColumns &&
+    // Don't automatically enable the stable feature if the preview feature is already supported, to
+    // avoid possibly breaking old clients that only support the preview feature.
+    !protocol.isFeatureSupported(GeoSpatialPreviewTableFeature)
+  }
+
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+}
+
 object TimestampNTZTableFeature extends ReaderWriterFeature(name = "timestampNtz")
     with FeatureAutomaticallyEnabledByMetadata {
   override def metadataRequiresFeatureToBeEnabled(
       protocol: Protocol, metadata: Metadata, spark: SparkSession): Boolean = {
     SchemaUtils.checkForTimestampNTZColumnsRecursively(metadata.schema)
   }
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
 }
 
 object RedirectReaderWriterFeature
@@ -780,6 +858,8 @@ object VariantShreddingTableFeature
     // feature is enabled so old tables with only the preview table feature can be read.
     !protocol.isFeatureSupported(VariantShreddingPreviewTableFeature)
   }
+
+  override def requiredFeatures: Set[TableFeature] = Set(VariantTypeTableFeature)
 }
 
 object DeletionVectorsTableFeature
@@ -794,6 +874,8 @@ object DeletionVectorsTableFeature
       spark: SparkSession): Boolean = {
     DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.fromMetaData(metadata)
   }
+
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
 
   /**
    * Validate whether all deletion vector traces are removed from the snapshot.
@@ -837,6 +919,8 @@ object RowTrackingFeature extends WriterFeature(name = "rowTracking")
     DeltaConfigs.ROW_TRACKING_ENABLED.fromMetaData(metadata)
 
   override def requiredFeatures: Set[TableFeature] = Set(DomainMetadataTableFeature)
+
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
 
   /**
    * When dropping row tracking we remove all relevant properties at downgrade commit.
@@ -949,6 +1033,8 @@ object DomainMetadataTableFeature
     snapshot.domainMetadata.isEmpty
   }
 
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
+
   override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand = {
     DomainMetadataPreDowngradeCommand(table)
   }
@@ -961,6 +1047,8 @@ object IcebergCompatV1TableFeature extends WriterFeature(name = "icebergCompatV1
   with FeatureAutomaticallyEnabledByMetadata {
 
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
 
   override def metadataRequiresFeatureToBeEnabled(
       protocol: Protocol,
@@ -975,6 +1063,8 @@ object IcebergCompatV2TableFeature extends WriterFeature(name = "icebergCompatV2
 
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
 
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
+
   override def metadataRequiresFeatureToBeEnabled(
       protocol: Protocol,
       metadata: Metadata,
@@ -982,6 +1072,23 @@ object IcebergCompatV2TableFeature extends WriterFeature(name = "icebergCompatV2
 
   override def requiredFeatures: Set[TableFeature] = Set(ColumnMappingTableFeature)
 }
+
+object IcebergCompatV3TableFeature extends WriterFeature(name = "icebergCompatV3")
+  with FeatureAutomaticallyEnabledByMetadata {
+
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
+
+  override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol,
+      metadata: Metadata,
+      spark: SparkSession): Boolean = IcebergCompatV3.isEnabled(metadata)
+
+  override def requiredFeatures: Set[TableFeature] =
+    Set(ColumnMappingTableFeature, RowTrackingFeature)
+}
+
 
 /**
  * Clustering table feature is enabled when a table is created with CLUSTER BY clause.
@@ -1034,6 +1141,13 @@ object MaterializePartitionColumnsTableFeature
 
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
 
+  /**
+   * MaterializePartitionColumnsTableFeature is always enabled when present in the protocol.
+   * The Delta protocol does not require any metadata or domain metadata configs for this
+   * feature to be effective.
+   */
+  override def failConcurrentTransactionsAtUpgrade: Boolean = true
+
   override def metadataRequiresFeatureToBeEnabled(
       protocol: Protocol,
       metadata: Metadata,
@@ -1070,6 +1184,8 @@ object V2CheckpointTableFeature
   with FeatureAutomaticallyEnabledByMetadata {
 
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
 
   private def isV2CheckpointSupportNeededByMetadata(metadata: Metadata): Boolean =
     DeltaConfigs.CHECKPOINT_POLICY.fromMetaData(metadata).needsV2CheckpointSupport
@@ -1140,6 +1256,8 @@ object CatalogOwnedTableFeature
   extends ReaderWriterFeature(name = "catalogManaged")
   with RemovableFeature {
 
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
+
   override def requiredFeatures: Set[TableFeature] =
     Set(InCommitTimestampTableFeature, VacuumProtocolCheckTableFeature)
 
@@ -1176,6 +1294,8 @@ abstract class TypeWideningTableFeatureBase(name: String) extends ReaderWriterFe
 
   override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
     TypeWideningPreDowngradeCommand(table)
+
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
 }
 
 /**
@@ -1227,6 +1347,7 @@ object InCommitTimestampTableFeature
   override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
     InCommitTimestampsPreDowngradeCommand(table)
 
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
 
   /**
    * As per the spec, we can disable ICT by just setting
@@ -1263,6 +1384,13 @@ object InCommitTimestampTableFeature
 object VacuumProtocolCheckTableFeature
   extends ReaderWriterFeature(name = "vacuumProtocolCheck")
   with RemovableFeature {
+
+  // Allowing concurrent transactions to rebase over this feature's enablement is safe:
+  // VACUUM already performs the writer-side protocol check at transaction start regardless
+  // of whether VacuumProtocolCheckTableFeature is in the protocol. So a rebased commit
+  // acquiring this feature mid-flight gains no new check at commit time -- the protection
+  // is already in place.
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
 
   override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand = {
     VacuumProtocolCheckPreDowngradeCommand(table)
@@ -1311,7 +1439,7 @@ object CheckpointProtectionTableFeature
    * Gets the version requiring checkpoint protection from `snapshot`. If the table property is
    * not set, return the default value 0.
    */
-  def getCheckpointProtectionVersion(snapshot: Snapshot): Long = {
+  def getCheckpointProtectionVersion(snapshot: SnapshotDescriptor): Long = {
     getCheckpointProtectionVersionOption(snapshot.protocol, snapshot.metadata).getOrElse(0)
   }
 
@@ -1338,7 +1466,7 @@ object CheckpointProtectionTableFeature
   }
 
   def historyPriorToCheckpointProtectionVersionIsTruncated(
-      snapshot: Snapshot,
+      snapshot: SnapshotDescriptor,
       catalogTableOpt: Option[CatalogTable]): Boolean = {
     val checkpointProtectionVersion = getCheckpointProtectionVersion(snapshot)
     if (checkpointProtectionVersion <= 0) return true

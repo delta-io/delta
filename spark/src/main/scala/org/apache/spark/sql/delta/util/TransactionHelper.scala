@@ -30,6 +30,7 @@ import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.{FileSizeHistogram, FileSizeHistogramUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
 
 import org.apache.spark.internal.MDC
@@ -262,6 +263,12 @@ trait TransactionHelper extends DeltaLogging {
 
     private var inputActionsIteratorOpt = Option.empty[Iterator[Action]]
 
+    private val (addFilesHistogram, removeFilesHistogram) =
+      if (spark.conf.get(DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED)) {
+        (Some(FileSizeHistogramUtils.emptyHistogram), Some(FileSizeHistogramUtils.emptyHistogram))
+      } else {
+        (None, None)
+      }
 
     private def assertStateBeforeFinalization(): Unit = {
       assert(
@@ -292,9 +299,11 @@ trait TransactionHelper extends DeltaLogging {
             numAdd += 1
             if (a.pathAsUri.isAbsolute) numAbsolutePaths += 1
             partitionsAdded += a.partitionValues
+            addFilesHistogram.foreach(_.insert(a.size))
             if (a.dataChange) bytesNew += a.size
           case r: RemoveFile =>
             numRemove += 1
+            removeFilesHistogram.foreach(_.insert(r.size.getOrElse(0L)))
           case c: AddCDCFile =>
             numCdcFiles += 1
             cdcBytesNew += c.size
@@ -347,6 +356,7 @@ trait TransactionHelper extends DeltaLogging {
         postCommitSnapshot: Snapshot,
         computedNeedsCheckpoint: Boolean,
         isolationLevel: IsolationLevel,
+        fileSizeHistogramOpt: Option[FileSizeHistogram],
         commitInfoOpt: Option[CommitInfo],
         commitSizeBytes: Long): Unit = {
       assertStateBeforeFinalization()
@@ -389,6 +399,9 @@ trait TransactionHelper extends DeltaLogging {
         numPartitionColumnsInTable = postCommitSnapshot.metadata.partitionColumns.size,
         isolationLevel = isolationLevel.toString,
         coordinatedCommitsInfo = createCoordinatedCommitsStats(newProtocolOpt),
+        fileSizeHistogram = fileSizeHistogramOpt.map(FileSizeHistogramUtils.compress),
+        addFilesHistogram = addFilesHistogram.map(FileSizeHistogramUtils.compress),
+        removeFilesHistogram = removeFilesHistogram.map(FileSizeHistogramUtils.compress),
         numOfDomainMetadatas = numOfDomainMetadatas,
         txnId = Some(txnId))
       recordDeltaEvent(deltaLog, DeltaLogging.DELTA_COMMIT_STATS_OPTYPE, data = stats)

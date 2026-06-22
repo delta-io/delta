@@ -44,6 +44,7 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.JsonToStructs
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.NullType
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.Utils
 
@@ -855,6 +856,35 @@ class DeltaLogSuite extends QueryTest
         assert(readLog.snapshot.protocol.equals(protocol))
       }
     }
+  }
+
+  private def testCreateDataFrame(shouldDropNullTypeColumns: Boolean): Unit = {
+    withSQLConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key ->
+      shouldDropNullTypeColumns.toString) {
+      withTempDir { tempDir =>
+        spark.sql("select CAST(null as VOID) as nullTypeCol, id from range(10)")
+          .write
+          .format("delta")
+          .mode("append")
+          .save(tempDir.getCanonicalPath)
+        val deltaLog = DeltaLog.forTable(spark, tempDir)
+        val df = deltaLog.createDataFrame(deltaLog.update(), Seq.empty, isStreaming = false)
+        val nullTypeFields = df.schema.filter(_.dataType == NullType)
+        if (shouldDropNullTypeColumns) {
+          assert(nullTypeFields.isEmpty)
+        } else {
+          assert(nullTypeFields.size == 1)
+        }
+      }
+    }
+  }
+
+  test("DeltaLog.createDataFrame should drop null columns with feature flag") {
+    testCreateDataFrame(shouldDropNullTypeColumns = true)
+  }
+
+  test("DeltaLog.createDataFrame should not drop null columns without feature flag") {
+    testCreateDataFrame(shouldDropNullTypeColumns = false)
   }
 }
 
