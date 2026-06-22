@@ -55,6 +55,13 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   with DeltaColumnMappingTestUtils
   with DeltaSQLCommandTest {
 
+  // Many tests in this suite deliberately delete commit JSON files to exercise streaming's own
+  // missing-commit-file / failOnDataLoss handling. The DeltaLog.getChangeLogFiles version-gap
+  // validator (which throws in tests by default) would pre-empt that streaming-layer check
+  // with a different error class, so disable the test-only throw suite-wide.
+  override protected def sparkConf: SparkConf = super.sparkConf
+    .set(DeltaSQLConf.DELTA_GET_CHANGE_LOG_FILES_FAIL_ON_GAPS_IN_TESTS.key, "false")
+
   import testImplicits._
 
   def testNullTypeColumn(shouldDropNullTypeColumns: Boolean): Unit = {
