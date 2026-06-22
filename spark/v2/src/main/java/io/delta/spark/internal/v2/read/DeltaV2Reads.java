@@ -30,4 +30,5 @@ public final class DeltaV2Reads {
       Function1<PartitionedFile, Iterator<InternalRow>> readFunc, boolean supportsColumnar) {
     return new DeltaV2ReaderFactory(readFunc, supportsColumnar);
   }
+
 }
