@@ -164,8 +164,8 @@ trait IdentityColumnSqlDDLSuiteBase
         sql(s"""CREATE TABLE $t (id INT GENERATED ALWAYS AS IDENTITY) USING delta""")
       }
       val msg = Option(ex.getMessage).getOrElse("")
-      assert(msg.toUpperCase.contains("UNSUPPORTED") || msg.toLowerCase.contains("identity"),
-        s"unexpected error: $msg")
+      assert(msg.toUpperCase(Locale.ROOT).contains("UNSUPPORTED") ||
+        msg.toLowerCase(Locale.ROOT).contains("identity"), s"unexpected error: $msg")
     }
   }
 
@@ -181,7 +181,7 @@ trait IdentityColumnSqlDDLSuiteBase
              |PARTITIONED BY (id)
              |""".stripMargin)
       }
-      assert(Option(ex.getMessage).getOrElse("").toLowerCase.contains("identity"))
+      assert(Option(ex.getMessage).getOrElse("").toLowerCase(Locale.ROOT).contains("identity"))
     }
   }
 
@@ -196,7 +196,7 @@ trait IdentityColumnSqlDDLSuiteBase
              |""".stripMargin)
       }
       val msg = Option(ex.getMessage).getOrElse("")
-      assert(msg.contains("step") || msg.toLowerCase.contains("increment"),
+      assert(msg.contains("step") || msg.toLowerCase(Locale.ROOT).contains("increment"),
         s"unexpected error: $msg")
     }
   }
