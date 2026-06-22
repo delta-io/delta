@@ -14,9 +14,11 @@ on:
 # 1. generate-matrix: split Spark versions (from CrossSparkVersions.scala) into published
 #    vs source-build lists.
 # 2. prepare_spark_source_cache: for each source-build Spark version, build Spark once and
-#    save the Maven cache (via the prepare-spark-env action with build-on-miss).
+#    save the Maven cache (via the prepare-spark-env action with build-on-miss). This job is
+#    non-blocking; any source Spark build/cache failure is reported through source_spark_test.
 # 3. test: published Spark shards (4.0/4.1) without waiting on step 2.
-# 4. source_spark_test: source-built Spark shards (4.2 today) after step 2.
+# 4. source_spark_test: source-built Spark shards (4.2 today) after step 2. It still runs if
+#    prepare_spark_source_cache fails, so the source-built Spark signal stays non-blocking.
 #
 # test and source_spark_test share two composite actions:
 #   - .github/actions/prepare-spark-env: installs the JDK and, for source-build rows,
@@ -62,6 +64,10 @@ jobs:
     name: "Prepare Spark ${{ matrix.spark_version }} source cache"
     runs-on: ubuntu-24.04
     needs: generate-matrix
+    # Source-built Spark tracks unreleased APIs. Keep the producer non-blocking too,
+    # otherwise a checkout/build/cache-save failure blocks the whole workflow before
+    # source_spark_test can surface the same signal.
+    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
@@ -110,6 +116,9 @@ jobs:
     name: "DS Source Spark ${{ matrix.spark_version }}, Scala ${{ matrix.scala }}, Shard ${{ matrix.shard }}"
     runs-on: ubuntu-24.04
     needs: [generate-matrix, prepare_spark_source_cache]
+    # Run even if the non-blocking prepare job failed. If no cache was produced, each
+    # shard fails during restore/verification under this already non-blocking job.
+    if: ${{ always() && needs.generate-matrix.result == 'success' }}
     # Source-built Spark lanes track unreleased Spark APIs and remain non-blocking
     # while still producing a full pass/fail signal for every PR.
     continue-on-error: true
