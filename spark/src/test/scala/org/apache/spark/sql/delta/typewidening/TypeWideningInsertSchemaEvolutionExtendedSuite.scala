@@ -25,10 +25,9 @@ import org.apache.spark.sql.types._
 
 class TypeWideningInsertSchemaEvolutionExtendedSuite
   extends QueryTest
-  with DeltaDMLTestUtils
   with TypeWideningTestMixin
-  with TypeWideningInsertSchemaEvolutionExtendedTests {
-}
+  with DeltaDMLTestUtilsNameBased
+  with TypeWideningInsertSchemaEvolutionExtendedTests
 
 trait TypeWideningInsertSchemaEvolutionExtendedTests
   extends DeltaInsertIntoTest
