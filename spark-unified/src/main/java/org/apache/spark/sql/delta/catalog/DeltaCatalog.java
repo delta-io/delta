@@ -109,11 +109,8 @@ public class DeltaCatalog extends AbstractDeltaCatalog implements ChangelogSuppo
    * Re-resolves an already-loaded V1 {@link DeltaTableV2} to the sparkV2 {@link DeltaV2Table}
    * connector for an Auto-CDF (CHANGES) read.
    *
-   * <p>Auto-CDF is V2-only, but in AUTO mode {@link #loadCatalogTable}/{@link #loadPathTable}
-   * return the V1 connector for general reads/writes. The Spark 4.2 {@code ChangelogSupport} trait
-   * calls this from {@code loadChangelog} to obtain the V2 table without forcing STRICT mode.
-   * Keeping the V2 construction here (next to the V1/V2 routing) means the changelog trait does not
-   * need to reach into V1 connector internals.
+   * <p>The Spark 4.2 {@code ChangelogSupport} trait calls this from {@code loadChangelog} to
+   * obtain the V2 table without forcing STRICT mode.
    *
    * <p>Note: intentionally not annotated with {@code @Override}. This method satisfies the abstract
    * {@code asV2ChangelogTable} declared by {@code ChangelogSupport} only in the Spark 4.2 shim; the

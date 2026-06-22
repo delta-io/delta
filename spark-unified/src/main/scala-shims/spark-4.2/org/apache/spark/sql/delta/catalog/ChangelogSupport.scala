@@ -65,15 +65,10 @@ trait ChangelogSupport extends TableCatalog {
     val routeChangelogToV2 = new DeltaV2Mode(spark.sessionState.conf).shouldRouteChangelogToV2()
     val sparkTable = loadTable(ident) match {
       case st: DeltaV2Table => st
+      // Auto-CDF is V2-only. Re-resolve to V2.
       case v1: DeltaTableV2 if routeChangelogToV2 =>
-        // In AUTO mode the catalog returns the V1 connector (DeltaTableV2) for general batch
-        // reads/writes, but Auto-CDF only flows through the V2 connector. Re-resolve the same
-        // table as a DeltaV2Table so CHANGES queries work without forcing STRICT mode.
         asV2ChangelogTable(ident, v1)
       case other =>
-        // Auto-CDF only supports the V2 connector and the mode does not route CHANGES to it
-        // (e.g. NONE). V1 Delta tables keep going through the legacy CDF path that DeltaCatalog
-        // already exposes.
         DeltaErrors.throwChangelogRequiresV2Table(ident.toString, other.getClass.getName)
     }
     val (startVersion, endVersion) = resolveRange(sparkTable, changelogInfo.range())

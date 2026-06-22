@@ -91,15 +91,7 @@ public class DeltaV2Mode {
   }
 
   /**
-   * Determines if catalog-driven CHANGES reads (TableCatalog.loadChangelog, i.e. Auto-CDF) should
-   * route to the sparkV2 connector.
-   *
-   * <p>Auto-CDF is only implemented by the sparkV2 connector ({@link
-   * io.delta.spark.internal.v2.catalog.DeltaV2Table}), so both AUTO and STRICT route CHANGES reads
-   * to the V2 connector. This is distinct from {@link #shouldCatalogReturnV2Tables()}: AUTO keeps
-   * general batch reads/writes on the sparkV1 connector (full feature support) and only opts into
-   * V2 for V2-supported operations like CHANGES. NONE keeps everything on sparkV1, so the V2
-   * Auto-CDF path is not available.
+   * Determines if catalog-driven Auto-CDF (CHANGES) reads should route to the sparkV2 connector.
    *
    * @return true if CHANGES reads should use the sparkV2 connector
    */
