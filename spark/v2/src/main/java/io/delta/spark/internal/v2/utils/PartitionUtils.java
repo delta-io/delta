@@ -25,7 +25,7 @@ import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.spark.internal.v2.read.ColumnReorderReadFunction;
 import io.delta.spark.internal.v2.read.DeltaParquetFileFormatV2;
-import io.delta.spark.internal.v2.read.DeltaV2ReaderFactory;
+import io.delta.spark.internal.v2.read.DeltaV2Reads;
 import io.delta.spark.internal.v2.read.cdc.CDCReadFunction;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorReadFunction;
@@ -453,7 +453,7 @@ public class PartitionUtils {
             partitionSchema,
             ddlOrderedReadOutputSchema);
 
-    return new DeltaV2ReaderFactory(readFunc, enableVectorizedReader);
+    return DeltaV2Reads.newReaderFactory(readFunc, enableVectorizedReader);
   }
 
   /**

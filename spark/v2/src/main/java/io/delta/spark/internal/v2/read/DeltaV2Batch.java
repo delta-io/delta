@@ -33,7 +33,13 @@ import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.StructType;
 
-public class DeltaV2Batch implements Batch {
+/**
+ * Package-private batch implementation for Delta's Spark DataSource V2 read path.
+ *
+ * <p>This class must remain package-private so callers outside {@code v2.read} depend only on
+ * Spark's public connector interfaces instead of coupling to Delta's internal V2 implementation.
+ */
+class DeltaV2Batch implements Batch {
   private final Snapshot snapshot;
   private final StructType readDataSchema;
   private final StructType dataSchema;

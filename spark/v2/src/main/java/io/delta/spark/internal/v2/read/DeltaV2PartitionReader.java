@@ -24,7 +24,13 @@ import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import scala.Function1;
 import scala.collection.Iterator;
 
-public class DeltaV2PartitionReader<T> implements PartitionReader<T> {
+/**
+ * Package-private partition reader for Delta's Spark DataSource V2 read path.
+ *
+ * <p>This class must remain package-private so callers outside {@code v2.read} depend only on
+ * Spark's public connector interfaces instead of coupling to Delta's internal V2 implementation.
+ */
+class DeltaV2PartitionReader<T> implements PartitionReader<T> {
   // Function that produces an Iterator for a given file.
   private final Function1<PartitionedFile, Iterator<InternalRow>> readFunc;
   private final FilePartition partition;
