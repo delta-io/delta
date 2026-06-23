@@ -80,7 +80,7 @@ public class DeltaChangelogBatch implements Batch {
     // Pre-check catches schema drift between start and end. The per-commit loop below catches
     // in-range Metadata commits.
     StructType startSchema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
-    if (!startSchema.equals(endDataSchema)) {
+    if (!SchemaUtils.isReadCompatible(startSchema, endDataSchema)) {
       DeltaErrors.throwChangelogSchemaChangeInRange(
           ((CommitRangeImpl) commitRange).getStartVersion());
     }
@@ -152,7 +152,7 @@ public class DeltaChangelogBatch implements Batch {
                 Metadata md = metadataOpt.get();
                 StructType commitSchema =
                     SchemaUtils.convertKernelSchemaToSparkSchema(md.getSchema());
-                if (!commitSchema.equals(endDataSchema)) {
+                if (!SchemaUtils.isReadCompatible(commitSchema, endDataSchema)) {
                   DeltaErrors.throwChangelogSchemaChangeInRange(commit.getVersion());
                 }
                 String rtValue = md.getConfiguration().get("delta.enableRowTracking");

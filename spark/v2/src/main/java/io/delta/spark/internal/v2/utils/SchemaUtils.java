@@ -160,6 +160,31 @@ public class SchemaUtils {
         ordered.toArray(new org.apache.spark.sql.types.StructField[0]));
   }
 
+  /**
+   * Whether data written under {@code existingSchema} can be read using {@code endSchema}. Backed by
+   * Delta's read-compatibility check, which accepts additive changes (new columns, relaxed
+   * nullability) and ignores internal field metadata, unlike strict equality. Nullability tightening
+   * is rejected because older data may contain nulls.
+   */
+  public static boolean isReadCompatible(
+      org.apache.spark.sql.types.StructType existingSchema,
+      org.apache.spark.sql.types.StructType endSchema) {
+    requireNonNull(existingSchema, "existingSchema is null");
+    requireNonNull(endSchema, "endSchema is null");
+    org.apache.spark.sql.delta.schema.SchemaUtils$ delta =
+        org.apache.spark.sql.delta.schema.SchemaUtils$.MODULE$;
+    return delta.isReadCompatible(
+        existingSchema,
+        endSchema,
+        /* forbidTightenNullability */ true,
+        delta.isReadCompatible$default$4(),
+        delta.isReadCompatible$default$5(),
+        delta.isReadCompatible$default$6(),
+        delta.isReadCompatible$default$7(),
+        delta.isReadCompatible$default$8(),
+        delta.isReadCompatible$default$9());
+  }
+
   //////////////////////
   // Spark --> Kernel //
   //////////////////////
