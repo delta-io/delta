@@ -22,7 +22,8 @@ Here is the history of all the RFCs propose/accepted/rejected since Feb 6, 2024,
 | 2024-04-30    | [collated-string-type.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/collated-string-type.md)                   | https://github.com/delta-io/delta/issues/2894 | Collated String Type                   |
 | 2025-03-13    | [checkpoint-protection.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/checkpoint-protection.md)                 | https://github.com/delta-io/delta/issues/4152 | Checkpoint Protection                  |
 | 2025-03-18    | [iceberg-writer-compat-v1.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/iceberg-writer-compat-v1.md)           | https://github.com/delta-io/delta/issues/4284 | IcebergWriterCompatV1                  |
-| 2025-11-20    | [materialize-partition-columns.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/materialize-partition-columns.md)                         | https://github.com/delta-io/delta/issues/5555 | Materialize Partition Columns                      |
+| 2025-11-20    | [materialize-partition-columns.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/materialize-partition-columns.md) | https://github.com/delta-io/delta/issues/5555 | Materialize Partition Columns          |
+| 2026-06-22    | [void-type.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/void-type.md)                                         | https://github.com/delta-io/delta/issues/7072 | Void Type                              |
 
 ### Accepted RFCs
 
