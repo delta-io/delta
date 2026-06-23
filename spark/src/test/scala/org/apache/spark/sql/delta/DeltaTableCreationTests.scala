@@ -2715,6 +2715,37 @@ class DeltaTableCreationSuite
       }
     }
   }
+
+  test("Default column values: defaults of different column types are materialized") {
+    val tbl = "default_column_types"
+    withTable(tbl) {
+      sql(
+        s"""CREATE TABLE $tbl (
+           |  id INT,
+           |  str_col STRING DEFAULT 'hello',
+           |  int_col INT DEFAULT 42,
+           |  long_col BIGINT DEFAULT 1234567890123,
+           |  bool_col BOOLEAN DEFAULT true,
+           |  double_col DOUBLE DEFAULT 3.14,
+           |  decimal_col DECIMAL(5, 2) DEFAULT 9.99,
+           |  date_col DATE DEFAULT DATE'2024-01-01',
+           |  arr_col ARRAY<INT> DEFAULT ARRAY(1, 2, 3),
+           |  map_col MAP<STRING, INT> DEFAULT MAP('a', 1, 'b', 2),
+           |  struct_col STRUCT<x: INT, y: STRING> DEFAULT NAMED_STRUCT('x', 7, 'y', 'foo')
+           |)
+           |USING DELTA
+           |TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported')""".stripMargin)
+
+      // Provide only the column without a default; the rest fall back to their DEFAULT values.
+      sql(s"INSERT INTO $tbl (id) VALUES (1)")
+
+      checkAnswer(
+        sql(s"SELECT * FROM $tbl"),
+        Row(1, "hello", 42, 1234567890123L, true, 3.14,
+          new java.math.BigDecimal("9.99"), java.sql.Date.valueOf("2024-01-01"),
+          Seq(1, 2, 3), Map("a" -> 1, "b" -> 2), Row(7, "foo")))
+    }
+  }
 }
 
 trait DeltaTableCreationColumnMappingSuiteBase extends DeltaColumnMappingSelectedTestMixin {

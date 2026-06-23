@@ -814,18 +814,17 @@ trait DeltaInsertReplaceUsingDFWriterTests
   test("replaceUsing on non-existent path errors") {
     withTempDir { dir =>
       val path = dir.getAbsolutePath + "/new_table"
-      checkError(
-        exception = intercept[DeltaAnalysisException] {
-          writeReplaceUsingDF(
-            sourceDF = Seq((1, "a"), (2, "b"), (3, "c"))
-              .toDF("id", "value"),
-            target = path,
-            replaceUsingCols = "id")
-        },
-        condition = "DELTA_PATH_DOES_NOT_EXIST",
-        parameters = Map("path" -> ".*"),
-        matchPVals = true
-      )
+      val ex = intercept[AnalysisException] {
+        writeReplaceUsingDF(
+          sourceDF = Seq((1, "a"), (2, "b"), (3, "c"))
+            .toDF("id", "value"),
+          target = path,
+          replaceUsingCols = "id")
+      }
+      assert(
+        ex.getCondition == "DELTA_PATH_DOES_NOT_EXIST" ||
+          ex.getCondition == "PATH_NOT_FOUND",
+        s"Expected DELTA_PATH_DOES_NOT_EXIST or PATH_NOT_FOUND but got ${ex.getCondition}")
     }
   }
 

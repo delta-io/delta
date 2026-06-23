@@ -24,6 +24,7 @@ import java.util.Set;
 import org.apache.spark.sql.AnalysisException;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.delta.DeltaLog;
+import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.util.Utils;
 import org.junit.jupiter.api.AfterEach;
@@ -169,16 +170,27 @@ public class V2RowTrackingReadTest extends DeltaV2TestBase {
     org.apache.spark.sql.Dataset<Row> metadataDf =
         spark.sql(String.format("SELECT _metadata FROM dsv2.delta.`%s`", noRtPath));
     StructType metadataSchema = (StructType) metadataDf.schema().apply("_metadata").dataType();
+    // Spark file-source base metadata fields; row tracking fields are absent when RT is disabled.
     assertEquals(
-        0,
+        6,
         metadataSchema.fields().length,
-        "Expected _metadata to be an empty struct for row-tracking-disabled tables");
+        "Expected _metadata to contain six Spark base metadata fields when RT is disabled");
+    assertArrayEquals(
+        new String[] {
+          FileFormat$.MODULE$.FILE_PATH(),
+          FileFormat$.MODULE$.FILE_NAME(),
+          FileFormat$.MODULE$.FILE_SIZE(),
+          FileFormat$.MODULE$.FILE_BLOCK_START(),
+          FileFormat$.MODULE$.FILE_BLOCK_LENGTH(),
+          FileFormat$.MODULE$.FILE_MODIFICATION_TIME()
+        },
+        metadataSchema.fieldNames());
 
     List<Row> metadataRows = metadataDf.collectAsList();
     assertEquals(2, metadataRows.size());
     for (Row row : metadataRows) {
       assertNotNull(row.getStruct(0), "Expected _metadata struct value to be present");
-      assertEquals(0, row.getStruct(0).size(), "Expected _metadata struct to have no fields");
+      assertEquals(6, row.getStruct(0).size(), "Expected full base _metadata struct width");
     }
 
     AnalysisException e =
@@ -243,6 +255,47 @@ public class V2RowTrackingReadTest extends DeltaV2TestBase {
         originalUpdatedRowId, rows.get(0).getLong(2), "Updated row should keep the same row_id");
   }
 
+  /**
+   * Exercises the {@code _metadata.row_id} fallback across mixed file history: one file written by
+   * INSERT (materialized row_id column null or absent in the parquet file) plus another file
+   * written by UPDATE rewrite (materialized row_id column populated). Both branches of the {@code
+   * RowIdValueSetterBuilder} coalesce must produce the right value, and updated rows must keep
+   * their original row_id.
+   */
+  @Test
+  public void testMixedFileHistoryRowIdResolves() {
+    // Snapshot row_id assignments from the initial INSERT (id 1..3) before we mutate the table.
+    List<Row> before = queryRowTrackingWithRowTrackingMetadata(tablePath);
+    assertEquals(3, before.size());
+    long bobRowIdBefore = before.get(1).getLong(2); // ordered by id, so index 1 = Bob (id=2)
+
+    // UPDATE rewrites Bob -> Bobby. With row tracking, the rewritten row materialises its
+    // original row_id into a hidden helper column. Other untouched files keep the materialised
+    // column null / absent for the rows they contain.
+    spark.sql(String.format("UPDATE delta.`%s` SET name = 'Bobby' WHERE id = 2", tablePath));
+
+    // Add a third file via a fresh INSERT (also materialised-row-id-absent).
+    spark.sql(String.format("INSERT INTO delta.`%s` VALUES (4, 'David')", tablePath));
+
+    List<Row> rows = queryRowTrackingWithRowTrackingMetadata(tablePath);
+    assertEquals(4, rows.size());
+
+    // id=2 must keep its original row_id (came from the materialised column).
+    assertEquals(2L, rows.get(1).getLong(0), "result ordered by id");
+    assertEquals("Bobby", rows.get(1).getString(1));
+    assertEquals(
+        bobRowIdBefore,
+        rows.get(1).getLong(2),
+        "UPDATEd row should keep its original row_id (materialised column path)");
+
+    // All row_ids must be non-null and unique across the mixed history.
+    Set<Long> uniqueRowIds = new HashSet<>();
+    for (Row row : rows) {
+      assertFalse(row.isNullAt(2), "row_id must be non-null for every row in mixed history");
+      assertTrue(uniqueRowIds.add(row.getLong(2)), "row_id collision across mixed-history files");
+    }
+  }
+
   // ---------------------------------------------------------------------------
   //  DV + row tracking: wrapper order keeps physical row IDs
   // ---------------------------------------------------------------------------
@@ -260,9 +313,14 @@ public class V2RowTrackingReadTest extends DeltaV2TestBase {
             dvRtPath));
 
     // Insert enough rows to encourage DV-based deletes (instead of full-file rewrites).
+    // Use coalesce(1) so that all rows land in a single file, making the base row-id
+    // assignment deterministic (row_id == position in the file == id).  Without this,
+    // spark.range() creates N partitions (N = available cores) and the per-file base
+    // row-ids become non-deterministic and therefore make the test flaky.
     spark
         .range(1000)
         .selectExpr("id", "cast(id as string) as name")
+        .coalesce(1)
         .write()
         .format("delta")
         .mode("append")
@@ -338,7 +396,16 @@ public class V2RowTrackingReadTest extends DeltaV2TestBase {
         "Expected output ordering: data columns, _metadata, partition columns");
     StructType metadataSchema = (StructType) df.schema().apply("_metadata").dataType();
     assertArrayEquals(
-        new String[] {"row_id", "row_commit_version"},
+        new String[] {
+          FileFormat$.MODULE$.FILE_PATH(),
+          FileFormat$.MODULE$.FILE_NAME(),
+          FileFormat$.MODULE$.FILE_SIZE(),
+          FileFormat$.MODULE$.FILE_BLOCK_START(),
+          FileFormat$.MODULE$.FILE_BLOCK_LENGTH(),
+          FileFormat$.MODULE$.FILE_MODIFICATION_TIME(),
+          "row_id",
+          "row_commit_version"
+        },
         metadataSchema.fieldNames(),
         "Unexpected _metadata struct field order");
 
@@ -354,8 +421,14 @@ public class V2RowTrackingReadTest extends DeltaV2TestBase {
       Row metadata = row.getStruct(3);
       String date = row.getString(4);
       String city = row.getString(5);
-      long rowId = metadata.getLong(0);
-      long rowCommitVersion = metadata.getLong(1);
+      // Base metadata (0..5), then row_id (6), row_commit_version (7)
+      assertNotNull(metadata.getString(0));
+      assertTrue(
+          metadata.getString(0).contains("part-") || metadata.getString(0).endsWith(".parquet"),
+          "file_path should reference a data file");
+      assertTrue(metadata.getLong(2) > 0L, "file_size should be positive");
+      long rowId = metadata.getLong(6);
+      long rowCommitVersion = metadata.getLong(7);
 
       if (id == 1L) {
         assertEquals("Alice", name);
@@ -385,9 +458,98 @@ public class V2RowTrackingReadTest extends DeltaV2TestBase {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  //  Helpers
-  // ---------------------------------------------------------------------------
+  /**
+   * Row tracking with a partition column declared in the MIDDLE of the DDL. Exercises the
+   * interaction between {@code RowTrackingReadFunction} (splices {@code _metadata} between data and
+   * partition columns) and {@code ColumnReorderReadFunction} (permutes data++partitions into DDL
+   * order). Without correct layering the row-mode path would emit values from the wrong column.
+   */
+  @Test
+  public void testReadWithRowTrackingAndPartitionColumnInMiddle(@TempDir File tempDir) {
+    String path = tempDir.getAbsolutePath();
+    spark.sql(
+        String.format(
+            "CREATE TABLE delta.`%s` (id LONG, part STRING, value DOUBLE) USING delta "
+                + "PARTITIONED BY (part) "
+                + "TBLPROPERTIES ('delta.enableRowTracking' = 'true')",
+            path));
+    spark.sql(
+        String.format(
+            "INSERT INTO delta.`%s` VALUES (1, 'a', 10.5), (2, 'b', 20.0), (3, 'a', 30.25)", path));
+
+    org.apache.spark.sql.Dataset<Row> df =
+        spark.sql(
+            String.format(
+                "SELECT id, part, value, _metadata.row_id FROM dsv2.delta.`%s` ORDER BY id", path));
+    assertArrayEquals(new String[] {"id", "part", "value", "row_id"}, df.schema().fieldNames());
+
+    List<Row> rows = df.collectAsList();
+    assertEquals(3, rows.size());
+    assertEquals(1L, rows.get(0).getLong(0));
+    assertEquals("a", rows.get(0).getString(1));
+    assertEquals(10.5d, rows.get(0).getDouble(2), 0.0d);
+    assertEquals(2L, rows.get(1).getLong(0));
+    assertEquals("b", rows.get(1).getString(1));
+    assertEquals(20.0d, rows.get(1).getDouble(2), 0.0d);
+    assertEquals(3L, rows.get(2).getLong(0));
+    assertEquals("a", rows.get(2).getString(1));
+    assertEquals(30.25d, rows.get(2).getDouble(2), 0.0d);
+    Set<Long> rowIds = new HashSet<>();
+    for (Row row : rows) {
+      assertTrue(rowIds.add(row.getLong(3)), "row_id should be unique");
+    }
+  }
+
+  @Test
+  public void testReadWithRowTrackingAndDeletionVectorAndPartitionColumnInMiddle(
+      @TempDir File tempDir) {
+    String path = tempDir.getAbsolutePath();
+    spark.sql(
+        String.format(
+            "CREATE TABLE delta.`%s` (id LONG, part LONG, value INT) USING delta "
+                + "PARTITIONED BY (part) "
+                + "TBLPROPERTIES ("
+                + "'delta.enableRowTracking' = 'true', "
+                + "'delta.enableDeletionVectors' = 'true')",
+            path));
+    // Insert enough rows so DELETE picks the DV path instead of rewriting whole files.
+    spark
+        .range(1000)
+        .selectExpr("id", "id % 4 AS part", "cast(id * 10 AS INT) AS value")
+        .write()
+        .format("delta")
+        .mode("append")
+        .save(path);
+    // Low-selectivity, non-partition predicate so Delta uses DVs.
+    spark.sql(String.format("DELETE FROM delta.`%s` WHERE id < 100", path));
+
+    DeltaLog deltaLog = DeltaLog.forTable(spark, path);
+    long numDVs =
+        (long)
+            deltaLog
+                .update(false, Option.empty(), Option.empty())
+                .numDeletionVectorsOpt()
+                .getOrElse(() -> 0L);
+    assertTrue(numDVs > 0, "Expected deletion vectors to be produced");
+
+    org.apache.spark.sql.Dataset<Row> df =
+        spark.sql(
+            String.format(
+                "SELECT id, part, value, _metadata.row_id FROM dsv2.delta.`%s` ORDER BY id", path));
+    assertArrayEquals(new String[] {"id", "part", "value", "row_id"}, df.schema().fieldNames());
+
+    List<Row> rows = df.collectAsList();
+    assertEquals(900, rows.size(), "Expected 900 surviving rows (id >= 100) after DV delete");
+    Set<Long> rowIds = new HashSet<>();
+    for (Row row : rows) {
+      long id = row.getLong(0);
+      long part = row.getLong(1);
+      int value = row.getInt(2);
+      assertEquals(id % 4, part, "Partition column should match insert formula");
+      assertEquals((int) (id * 10), value, "Value column should match insert formula");
+      assertTrue(rowIds.add(row.getLong(3)), "row_id should be unique under DV filtering");
+    }
+  }
 
   /**
    * Queries row tracking metadata via the DSv2 SQL path. V2 metadata columns are nested in

@@ -551,7 +551,7 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
 
       assert(files.length == 1)
       fs.rename(
-        files.head, new Path(files.head.getParent.getName, "some-data-id=1.snappy.parquet"))
+        files.head, new Path(files.head.getParent.toString, "some-data-id=1.snappy.parquet"))
 
       convertToDelta(s"parquet.`$tempDir`", Some("part string"))
       checkAnswer(spark.read.format("delta").load(tempDir), Row(1, "1"))

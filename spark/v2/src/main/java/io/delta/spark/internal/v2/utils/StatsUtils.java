@@ -98,7 +98,15 @@ public final class StatsUtils {
         continue;
       }
 
-      NamedReference ref = FieldReference.apply(colName);
+      // Use FieldReference.column (a single literal part) rather than FieldReference.apply, which
+      // re-parses the string as a multi-part SQL identifier. colName is always a top-level column
+      // name -- it must match a top-level field in columnTypes above, and catalog column stats are
+      // never collected for nested fields -- so a single-part reference is correct. Under column
+      // mapping the name may contain spaces, dots, etc. that are invalid in an unquoted identifier
+      // (e.g. "Extract Year"); FieldReference.apply would throw a ParseException on a space or
+      // silently mis-split a dotted name ("a.b" -> [a, b]), while column() keeps it as one part.
+      // See SparkScan, which builds its NamedReferences the same way.
+      NamedReference ref = FieldReference.column(colName);
       int version = stat.version();
 
       // Eagerly parse min/max to avoid repeated fromExternalString calls

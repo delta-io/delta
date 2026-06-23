@@ -28,6 +28,8 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
 
   override protected def useDsv2: Boolean = true
 
+  override protected def executeDml(sqlText: String): Unit = executeInV1Mode(sqlText)
+
   /**
    * Override disableLogCleanup to use DeltaLog API instead of SQL ALTER TABLE.
    * Path-based ALTER TABLE doesn't work properly with V2_ENABLE_MODE=STRICT.
@@ -46,7 +48,19 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     )
   }
 
-  override protected def shouldPassTests: Set[String] = Set(
+  override protected def shouldPassTests: Set[String] = DeltaV2SourceSuite.PassingTests
+
+  override protected def shouldFailTests: Set[String] = DeltaV2SourceSuite.FailingTests
+}
+
+/**
+ * Shared V2-connector test classifications for `DeltaSourceSuite`. Other V2 suites that inherit
+ * from `DeltaSourceSuite` (e.g. the V2 column-mapping suites) can compose these sets with
+ * their own additions or overrides.
+ */
+object DeltaV2SourceSuite {
+
+  val PassingTests: Set[String] = Set(
     // ========== Core streaming tests ==========
     "basic",
     "initial snapshot ends at base index of next version",
@@ -85,10 +99,14 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "incremental: commit file gap between versions, fails",
     "incremental: first commit file missing, failOnDataLoss=false succeeds",
     "initial snapshot: commit file missing but checkpoint intact, succeeds",
+    "initial snapshot: checkpoint missing but all commit files intact, succeeds",
     "initial snapshot: both checkpoint and commit file missing, fails",
     "initial snapshot: log retention deletes old checkpoint and commit files mid-stream," +
       " restart fails",
     "streaming processes 100 sequential single-value commits and contains all values 0 to 99",
+
+    // ========== Passthrough options ==========
+    "batch-only options are ignored in streaming",
 
     // ========== startingVersion option tests ==========
     "startingVersion",
@@ -102,6 +120,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "startingVersion should be ignored when restarting from a checkpoint, withRowTracking = false",
     "startingVersion and startingTimestamp are both set",
     "startingTimestamp",
+    "startingTimestamp with mid-history ICT",
 
     // ========== Rate limiting tests ==========
     "maxFilesPerTrigger",
@@ -132,18 +151,27 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "should not attempt to read a non exist version",
     "can delete old files of a snapshot without update",
     "Delta source advances with non-data inserts and generates empty dataframe for " +
-      "non-data operations"
+      "non-data operations",
+    "reading from table with multiple partition columns succeeds during restart",
+    "streaming read returns correct data from table with partition column in middle",
+    "streaming read with column pruning and partition column in middle",
+    "streaming read with column mapping id and partition column in middle",
+    "streaming read after column rename with partition column in middle",
+    "streaming read preserves percent-literal string partition value",
+    "initial snapshot: checkpoint resume produces all rows without duplicates",
+    "initial snapshot: Trigger.AvailableNow processes all data and terminates",
+    "initial snapshot: checkpoint resume after new commits produces all rows"
   )
 
-  override protected def shouldFailTests: Set[String] = Set(
+  val FailingTests: Set[String] = Set(
     // === Null Type Column Handling ===
     "streaming delta source should not drop null columns",
     "streaming delta source should drop null columns without feature flag",
 
     // === Schema Evolution ===
-    // TODO(#6232): enable the two tests after spark streaming engine supports leaf node projection
-    //  for datasource v2 such that we can adopt the two schema changes without refreshing the
-    //  dataframe
+    // TODO(#6232): DSv2 pins the table schema when the DataFrame is loaded, so restarting from a
+    //  stale DataFrame can't adopt the schema change. Enable once the V2 relation refreshes its
+    //  schema without rebuilding the DataFrame.
     "relax nullability: restarting with stale DataFrame should recover",
     "type widening: restarting with stale DataFrame should recover",
 
@@ -151,9 +179,6 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     // V2 only tolerates missing start versions with failOnDataLoss=false; mid-log gaps still
     // throw InvalidTableException because non-contiguous versions are not a log-retention scenario.
     "incremental: commit file gap between versions, failOnDataLoss=false succeeds",
-    // Kernel cannot reconstruct snapshot without checkpoint file (_last_checkpoint still
-    // points to deleted checkpoint). V1 falls back to delta files; Kernel does not.
-    "initial snapshot: checkpoint missing but all commit files intact, succeeds",
 
     // === Misc ===
     // TODO(#5900): fix exception mismatch
@@ -172,4 +197,18 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     // Calls deltaSource.createSource() directly
     "createSource should create source with empty or matching table schema provided"
   )
+}
+
+/**
+ * Runs DeltaV2SourceSuite with the distributed initial snapshot path enabled.
+ * Every test that reads from the beginning (no startingVersion) automatically
+ * exercises the DataFrame-based snapshot cache.
+ */
+class DeltaV2SourceDistributedInitialSnapshotSuite extends DeltaV2SourceSuite {
+  import org.apache.spark.sql.delta.sources.DeltaSQLConf
+
+  override protected def sparkConf: org.apache.spark.SparkConf = {
+    super.sparkConf.set(
+      DeltaSQLConf.DELTA_STREAMING_USE_DISTRIBUTED_INITIAL_SNAPSHOT.key, "true")
+  }
 }

@@ -16,11 +16,13 @@
 
 package org.apache.spark.sql.delta.sources
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaOptions, DeltaTestUtilsBase, DeltaThrowable}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaColumnMappingMode, DeltaOptions}
+import org.apache.spark.sql.delta.{DeltaTestUtilsBase, DeltaThrowable, NoMapping}
+import org.apache.spark.sql.delta.v2.interop.{AbstractMetadata, AbstractProtocol}
 
 import org.apache.spark.{SparkConf, SparkFunSuite}
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{StringType, StructType}
 
 /**
  * Unit tests covering `DeltaSourceMetadataEvolutionSupport`, which detects non-additive schema
@@ -661,5 +663,81 @@ class DeltaSourceMetadataEvolutionSupportSuite
       currentSchema = persistedMetadata("a int", Map.empty),
       previousSchema = persistedMetadata("a byte", Map.empty)
     )
+  }
+
+  test("detects metadata/protocol changes through the AbstractMetadata/AbstractProtocol " +
+      "surface") {
+    // Anonymous trait impls (not V1 Metadata/Protocol) prove the static actually relies on
+    // the abstract surface. The trait wrapper used in production always passes V1 types,
+    // so this is the only path that would catch a regression specific to non-V1 impls.
+    val baseSchema = new StructType().add("a", StringType, nullable = true)
+
+    def mkMetadata(
+        sch: StructType = baseSchema,
+        partCols: Seq[String] = Seq.empty,
+        conf: Map[String, String] = Map.empty): AbstractMetadata = new AbstractMetadata {
+      override def id: String = "tid"
+      override def name: String = ""
+      override def description: String = ""
+      override def schema: StructType = sch
+      override def partitionColumns: Seq[String] = partCols
+      override def configuration: Map[String, String] = conf
+      override def columnMappingMode: DeltaColumnMappingMode = NoMapping
+    }
+
+    def mkProtocol(
+        readerV: Int = 1,
+        writerV: Int = 2,
+        readerFs: Option[Set[String]] = None,
+        writerFs: Option[Set[String]] = None): AbstractProtocol = new AbstractProtocol {
+      override def minReaderVersion: Int = readerV
+      override def minWriterVersion: Int = writerV
+      override def readerFeatures: Option[Set[String]] = readerFs
+      override def writerFeatures: Option[Set[String]] = writerFs
+    }
+
+    val readMetadata = mkMetadata()
+    val readProtocol = mkProtocol()
+
+    def call(
+        metadataChange: Option[AbstractMetadata] = None,
+        protocolChange: Option[AbstractProtocol] = None,
+        newVer: Long = 1L,
+        persisted: Option[PersistedMetadata] = None): Boolean =
+      DeltaSourceMetadataEvolutionSupport.hasMetadataOrProtocolChangeComparedToStreamMetadata(
+        metadataChange, protocolChange, newVer, persisted, readProtocol, readMetadata, spark)
+
+    // No change: both sides identical anonymous impls -> false.
+    assert(!call(metadataChange = Some(mkMetadata()), protocolChange = Some(mkProtocol())))
+
+    // Schema differs.
+    assert(call(metadataChange =
+      Some(mkMetadata(sch = baseSchema.add("b", StringType, nullable = true)))))
+
+    // Partition schema differs (same data schema, different partition columns).
+    assert(call(metadataChange = Some(mkMetadata(partCols = Seq("a")))))
+
+    // delta.* configuration differs.
+    assert(call(metadataChange = Some(mkMetadata(conf = Map("delta.foo" -> "bar")))))
+
+    // Non-delta.* configuration differs -> filtered out, no change.
+    assert(!call(metadataChange = Some(mkMetadata(conf = Map("foo" -> "bar")))))
+
+    // Protocol differs by a single field (uses equalsByFields under the hood).
+    assert(call(protocolChange = Some(mkProtocol(readerV = 2))))
+
+    // Persisted metadata is at or beyond newSchemaVersion -> short-circuits to false even if
+    // every other input would otherwise indicate a change.
+    val persisted = PersistedMetadata(
+      tableId = "tid",
+      deltaCommitVersion = 5L,
+      dataSchemaJson = baseSchema.json,
+      partitionSchemaJson = new StructType().json,
+      sourceMetadataPath = "")
+    assert(!call(
+      metadataChange = Some(mkMetadata(sch = baseSchema.add("b", StringType, nullable = true))),
+      protocolChange = Some(mkProtocol(readerV = 99)),
+      newVer = 3L,
+      persisted = Some(persisted)))
   }
 }

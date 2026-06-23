@@ -128,6 +128,12 @@
     ],
     "sqlState" : "42703"
   },
+  "DELTA_BLOOM_FILTER_INVALID_PARAMETER_VALUE" : {
+    "message" : [
+      "Cannot create bloom filter index, invalid parameter value: '<message>'."
+    ],
+    "sqlState" : "22023"
+  },
   "DELTA_CANNOT_CHANGE_DATA_TYPE" : {
     "message" : [
       "Cannot change data type: <dataType>"
@@ -180,6 +186,12 @@
     "message" : [
       "Cannot drop the CHECK constraints table feature.",
       "The following constraints must be dropped first: <constraints>."
+    ],
+    "sqlState" : "0AKDE"
+  },
+  "DELTA_CANNOT_DROP_GEOSPATIAL_FEATURE" : {
+    "message" : [
+      "Cannot drop the geospatial table feature. Recreate the table or drop columns with geometry/geography types: <colNames> and try again."
     ],
     "sqlState" : "0AKDE"
   },
@@ -258,6 +270,12 @@
   "DELTA_CANNOT_RESOLVE_COLUMN" : {
     "message" : [
       "Can't resolve column <columnName> in <schema>"
+    ],
+    "sqlState" : "42703"
+  },
+  "DELTA_CANNOT_RESOLVE_EXPRESSION" : {
+    "message" : [
+      "Cannot resolve expression: <expression>"
     ],
     "sqlState" : "42703"
   },
@@ -383,6 +401,46 @@
       "Start version <start> for change data feed exceeds the latest table version <latest>."
     ],
     "sqlState" : "22003"
+  },
+  "DELTA_CHANGELOG_REQUIRES_ROW_TRACKING" : {
+    "message" : [
+      "Change data capture via CHANGES on `<tableName>` requires row tracking.",
+      "Enable it by setting TBLPROPERTIES ('delta.enableRowTracking' = 'true')."
+    ],
+    "sqlState" : "0AKDE"
+  },
+  "DELTA_CHANGELOG_REQUIRES_V2_TABLE" : {
+    "message" : [
+      "Auto-CDF reads on `<tableName>` require the V2 Delta connector, but the catalog resolved the table to `<actualClassName>`.",
+      "Set the Delta V2 mode SQL conf to `AUTO` or `STRICT` to read this table through the V2 connector."
+    ],
+    "sqlState" : "0AKDE"
+  },
+  "DELTA_CHANGELOG_ROW_TRACKING_DISABLED_IN_RANGE" : {
+    "message" : [
+      "Delta CDC requires row tracking to remain enabled across the requested range.",
+      "Commit at version <version> disabled row tracking. Pick a starting/ending version that brackets a row-tracking-enabled state."
+    ],
+    "sqlState" : "0AKDE"
+  },
+  "DELTA_CHANGELOG_SCHEMA_CHANGE_IN_RANGE" : {
+    "message" : [
+      "Delta CDC does not support reading a changelog range that includes a schema change.",
+      "Commit at version <version> changes the table schema. Pick a starting/ending version that brackets a single schema."
+    ],
+    "sqlState" : "0AKDE"
+  },
+  "DELTA_CHANGELOG_UNBOUNDED_RANGE" : {
+    "message" : [
+      "Delta CDC does not support unbounded ranges in batch reads. Specify a starting and ending version or timestamp."
+    ],
+    "sqlState" : "0AKDE"
+  },
+  "DELTA_CHANGELOG_UNSUPPORTED_OPTION" : {
+    "message" : [
+      "The `<option>` option is not supported by the read-time CDC reader. Remove it from your query."
+    ],
+    "sqlState" : "0AKDC"
   },
   "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA" : {
     "message" : [
@@ -736,6 +794,17 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_CONVERT_METASTORE_METADATA_MISMATCH" : {
+    "message" : [
+      "You are trying to convert a table which already has a delta log where the table properties in the catalog don't match the configuration in the delta log.",
+      "Table properties in catalog:",
+      "<tableProperties>",
+      "Delta configuration:",
+      "<configuration>",
+      "If you would like to merge the configurations (update existing fields and insert new ones), set the SQL configuration `<metadataCheckSqlConf>` to false."
+    ],
+    "sqlState" : "42K03"
+  },
   "DELTA_CONVERT_NON_PARQUET_TABLE" : {
     "message" : [
       "CONVERT TO DELTA only supports parquet tables, but you are trying to convert a <sourceName> source: <tableId>"
@@ -917,6 +986,14 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_DUPLICATE_ACTIONS_FOUND" : {
+    "message" : [
+      "File operation '<actionType>' for path <path> was specified several times.",
+      "It conflicts with <conflictingPath>. ",
+      "It is not valid for multiple file operations with the same path to exist in a single commit."
+    ],
+    "sqlState" : "2D521"
+  },
   "DELTA_DUPLICATE_COLUMNS_FOUND" : {
     "message" : [
       "Found duplicate column(s): <duplicateCols>."
@@ -1046,6 +1123,16 @@
       "To use column mapping, create a new table and reload the data into it."
     ],
     "sqlState" : "XXKDS"
+  },
+  "DELTA_ERROR_FINDING_COLUMN_POSITION" : {
+    "message" : [
+      "Error while searching for the position of the column <column>.",
+      "Schema:",
+      "<schema>",
+      "Error:",
+      "<message>"
+    ],
+    "sqlState" : "42703"
   },
   "DELTA_EXCEED_CHAR_VARCHAR_LIMIT" : {
     "message" : [
@@ -1338,6 +1425,18 @@
     ],
     "sqlState" : "42K09"
   },
+  "DELTA_GEOSPATIAL_NOT_SUPPORTED" : {
+    "message" : [
+      "Geospatial types are not supported in this version of Delta Lake."
+    ],
+    "sqlState" : "0AKDC"
+  },
+  "DELTA_GEOSPATIAL_SRID_NOT_SUPPORTED" : {
+    "message" : [
+      "Geospatial type has an unsupported srid: <srid>. Delta tables only support non-negative srid values."
+    ],
+    "sqlState" : "0AKDC"
+  },
   "DELTA_ICEBERG_COMPAT_VIOLATION" : {
     "message" : [
       "The validation of IcebergCompatV<version> has failed."
@@ -1352,6 +1451,11 @@
       "COMPAT_VERSION_NOT_SUPPORTED" : {
         "message" : [
           "IcebergCompatVersion = <version> is not supported. Supported versions are between 1 and <maxVersion> "
+        ]
+      },
+      "CONFIG_NOT_ENABLED" : {
+        "message" : [
+          "IcebergCompatV<version> is not enabled in this environment."
         ]
       },
       "DELETION_VECTORS_NOT_PURGED" : {
@@ -1489,6 +1593,12 @@
       "IDENTITY column cannot be specified with a generated column expression."
     ],
     "sqlState" : "42613"
+  },
+  "DELTA_IDENTITY_COLUMN_INCONSISTENT_METADATA" : {
+    "message" : [
+      "Inconsistent IDENTITY metadata for column <colName> detected: <hasStart>, <hasStep>, <hasInsert>"
+    ],
+    "sqlState" : "42000"
   },
   "DELTA_ILLEGAL_FILE_FOUND" : {
     "message" : [
@@ -1643,6 +1753,12 @@
       "The commit succeeded at version <committedVersion>, but post-commit validation detected version <currentVersion>."
     ],
     "sqlState" : "XXKDS"
+  },
+  "DELTA_INVALID_CONSTRAINT_NAME" : {
+    "message" : [
+      "Cannot use <name> as the name of a CHECK constraint. This name is reserved."
+    ],
+    "sqlState" : "42939"
   },
   "DELTA_INVALID_FORMAT_FROM_SOURCE_VERSION" : {
     "message" : [
@@ -2268,6 +2384,12 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_OPERATION_NOT_SUPPORTED_FOR_DATATYPES" : {
+    "message" : [
+      "<operation> is not supported for data types: <dataTypeList>."
+    ],
+    "sqlState" : "0AKDC"
+  },
   "DELTA_OPERATION_ON_TEMP_VIEW_WITH_GENERATED_COLS_NOT_SUPPORTED" : {
     "message" : [
       "<operation> command on a temp view referring to a Delta table that contains generated columns is not supported. Please run the <operation> command on the Delta table directly"
@@ -2433,6 +2555,12 @@
       "<invariantViolationMessage>"
     ],
     "sqlState" : "44000"
+  },
+  "DELTA_REPLACE_TABLE_WITH_CATALOG_MANAGED_NOT_SUPPORTED" : {
+    "message" : [
+      "REPLACE TABLE cannot enable catalog-managed on the existing non-catalog-managed table <tableName>. Upgrade or recreate the table instead."
+    ],
+    "sqlState" : "0A000"
   },
   "DELTA_REPLACE_WHERE_IN_OVERWRITE" : {
     "message" : [
@@ -2670,15 +2798,6 @@
       "Streaming read is not supported on tables with read-incompatible schema changes (e.g. rename or drop or datatype changes).",
       "Please provide a 'schemaTrackingLocation' to enable non-additive schema evolution for Delta stream processing.",
       "See <docLink> for more details.",
-      "Read schema: <readSchema>. Incompatible data schema: <incompatibleSchema>."
-    ],
-    "sqlState" : "42KD4"
-  },
-  "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE_V2" : {
-    "message" : [
-      "Streaming read is not supported on tables with read-incompatible schema changes (e.g. rename or drop or datatype changes).",
-      "Non-additive schema change handling is not supported in Delta source v2 yet.",
-      "For further information and possible next steps to resolve this issue, please review the documentation at <docLink>",
       "Read schema: <readSchema>. Incompatible data schema: <incompatibleSchema>."
     ],
     "sqlState" : "42KD4"
@@ -3176,6 +3295,12 @@
     ],
     "sqlState" : "42621"
   },
+  "DELTA_UNSUPPORTED_EXPRESSION_IN_TARGET_COLUMN" : {
+    "message" : [
+      "<optionalPrefixMessage>Found unsupported expression <expression> while parsing target column name parts."
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_UNSUPPORTED_FEATURES_FOR_READ" : {
     "message" : [
       "Unsupported Delta read feature: table \"<tableNameOrPath>\" requires reader table feature(s) that are unsupported by Delta Lake \"<deltaVersion>\": <unsupported>."
@@ -3248,6 +3373,12 @@
       "Nested field is not supported in the <operation> (field = <fieldName>)."
     ],
     "sqlState" : "0AKDC"
+  },
+  "DELTA_UNSUPPORTED_NESTED_FIELD_IN_UPDATE" : {
+    "message" : [
+      "<optionalPrefixMessage>Updating nested fields is only supported for StructType."
+    ],
+    "sqlState" : "0A000"
   },
   "DELTA_UNSUPPORTED_NON_EMPTY_CLONE" : {
     "message" : [
@@ -3518,54 +3649,5 @@
       "TBLPROPERTIES('delta.feature.allowColumnDefaults' = 'supported')."
     ],
     "sqlState" : "0AKDE"
-  },
-  "_LEGACY_ERROR_TEMP_DELTA_0001" : {
-    "message" : [
-      "Cannot use '<name>' as the name of a CHECK constraint."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_DELTA_0002" : {
-    "message" : [
-      "Cannot create bloom filter index, invalid parameter value: '<message>'."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_DELTA_0003" : {
-    "message" : [
-      "You are trying to convert a table which already has a delta log where the table properties in the catalog don't match the configuration in the delta log.",
-      "Table properties in catalog:",
-      "<tableProperties>",
-      "Delta configuration:",
-      "<configuration>",
-      "If you would like to merge the configurations (update existing fields and insert new ones), set the SQL configuration `<metadataCheckSqlConf>` to false."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_DELTA_0006" : {
-    "message" : [
-      "Inconsistent IDENTITY metadata for column <colName> detected: <hasStart>, <hasStep>, <hasInsert>"
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_DELTA_0008" : {
-    "message" : [
-      "Error while searching for position of column <column>.",
-      "Schema:",
-      "<schema>",
-      "Error:",
-      "<message>"
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_DELTA_0009" : {
-    "message" : [
-      "<optionalPrefixMessage>Updating nested fields is only supported for StructType."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_DELTA_0010" : {
-    "message" : [
-      "<optionalPrefixMessage>Found unsupported expression <expression> while parsing target column name parts."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_DELTA_0012" : {
-    "message" : [
-      "Could not resolve expression: <expression>"
-    ]
   }
 }

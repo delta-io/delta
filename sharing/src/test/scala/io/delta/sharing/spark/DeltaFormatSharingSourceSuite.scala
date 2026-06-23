@@ -679,6 +679,67 @@ class DeltaFormatSharingSourceSuite
     }
   }
 
+  // forceToDeltaSourceOffset gates legacy-JSON parsing on the auto-resolve conf. CDF streaming
+  // (readChangeFeed=true) must be gated by the new
+  // DELTA_SHARING_CDF_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT and ignore the non-CDF flag, and
+  // vice versa for non-CDF streaming. This grid verifies all four conf combinations against both
+  // source kinds and confirms the two flags route independently.
+  Seq(
+    // (readChangeFeed, cdfFlag, streamingFlag, expectAutoResolveOn)
+    (true, true, false, true),   // CDF: CDF flag on -> auto-resolve on, ignores streamingFlag=false
+    (true, false, true, false),  // CDF: non-CDF flag must not enable CDF auto-resolve
+    (false, true, false, false), // non-CDF: CDF flag must not enable non-CDF auto-resolve
+    (false, false, true, true)   // non-CDF: streaming flag on -> auto-resolve on (existing path)
+  ).foreach { case (readChangeFeed, cdfFlag, streamingFlag, expectAutoResolveOn) =>
+    test(s"forceToDeltaSourceOffset: flag routing readChangeFeed=$readChangeFeed " +
+      s"cdfFlag=$cdfFlag streamingFlag=$streamingFlag -> autoResolve=$expectAutoResolveOn") {
+      withTempDir { tempDir =>
+        val deltaTableName = "delta_table_cdf_flag_routing"
+        withTable(deltaTableName) {
+          createTable(deltaTableName)
+          val sharedTableName = "some_table"
+          prepareMockedClientMetadata(deltaTableName, sharedTableName)
+          prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+          val profileFile = prepareProfileFile(tempDir)
+          val tableId = "test-table-id"
+          val cdfKey = DeltaSQLConf
+            .DELTA_SHARING_CDF_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT.key
+          val streamingKey = DeltaSQLConf
+            .DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT.key
+          withSQLConf(
+            (getDeltaSharingClassesSQLConf ++ Seq(
+              cdfKey -> cdfFlag.toString,
+              streamingKey -> streamingFlag.toString
+            )).toSeq: _*
+          ) {
+            val params = Map("path" ->
+              s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName") ++
+              (if (readChangeFeed) Map("readChangeFeed" -> "true") else Map.empty)
+            val source = getSource(params)
+            val tableIdField = source.getClass.getDeclaredField("tableId")
+            tableIdField.setAccessible(true)
+            tableIdField.set(source, tableId)
+            val legacyJson = "{\"sourceVersion\":1," +
+              s""""tableId":"$tableId",""" +
+              "\"tableVersion\":1," +
+              "\"index\":-1," +
+              "\"isStartingVersion\":true}"
+            val serializedOffset = SerializedOffset(legacyJson)
+            if (expectAutoResolveOn) {
+              val (deltaOffset, fromLegacy) = source.forceToDeltaSourceOffset(serializedOffset)
+              assert(fromLegacy, "fromLegacy should be true for DeltaSharingSourceOffset JSON")
+              assert(deltaOffset.reservoirId === tableId)
+              assert(deltaOffset.reservoirVersion === 1L)
+            } else {
+              intercept[Exception](source.forceToDeltaSourceOffset(serializedOffset))
+            }
+            cleanUpDeltaSharingBlocks()
+          }
+        }
+      }
+    }
+  }
+
   // E2E: Custom checkpoint with legacy DeltaSharingSourceOffset format;
   // restart with delta streaming using that checkpoint.
   // Flag on/off. Mocks use delta table only.
@@ -2366,8 +2427,8 @@ class DeltaFormatSharingSourceSuite
           }
           assert(streamingCalls.nonEmpty, "Expected at least one streaming getFiles call")
           streamingCalls.foreach { case (_, queryType, fileIdHash) =>
-            assert(fileIdHash.contains(DeltaSharingRestClient.FILEIDHASH_SHA256),
-              s"Expected SHA256 for boundary legacy offset but got $fileIdHash in $queryType")
+            assert(fileIdHash.contains(DeltaSharingRestClient.FILEIDHASH_DELTA),
+              s"Expected DELTA for boundary legacy offset but got $fileIdHash in $queryType")
           }
         }
       }
@@ -2449,12 +2510,12 @@ class DeltaFormatSharingSourceSuite
           // The first streaming call should use MD5 (mid-version legacy),
           // subsequent calls after transition should use SHA256.
           val firstCall = streamingCalls.head
-          assert(firstCall._3.contains(DeltaSharingRestClient.FILEIDHASH_MD5),
-            s"Expected MD5 for mid-version legacy offset but got ${firstCall._3}")
+          assert(firstCall._3.contains(DeltaSharingRestClient.FILEIDHASH_PARQUET),
+            s"Expected PARQUET for mid-version legacy offset but got ${firstCall._3}")
           if (streamingCalls.size > 1) {
             streamingCalls.tail.foreach { case (_, queryType, fileIdHash) =>
-              assert(fileIdHash.contains(DeltaSharingRestClient.FILEIDHASH_SHA256),
-                s"Expected SHA256 after transition but got $fileIdHash in $queryType")
+              assert(fileIdHash.contains(DeltaSharingRestClient.FILEIDHASH_DELTA),
+                s"Expected DELTA after transition but got $fileIdHash in $queryType")
             }
           }
         }
@@ -2547,8 +2608,9 @@ class DeltaFormatSharingSourceSuite
           }
           assert(streamingCalls.nonEmpty, "Expected at least one streaming getFiles call")
           val firstCall = streamingCalls.head
-          assert(firstCall._3.contains(DeltaSharingRestClient.FILEIDHASH_MD5),
-            s"Expected MD5 for priming getBatch with both-legacy offsets but got ${firstCall._3}")
+          assert(firstCall._3.contains(DeltaSharingRestClient.FILEIDHASH_PARQUET),
+            s"Expected PARQUET for priming getBatch with both-legacy offsets but got " +
+            s"${firstCall._3}")
         }
       }
     }
@@ -3034,8 +3096,8 @@ class DeltaFormatSharingSourceSuite
     )
   }
 
-  private val MD5 = DeltaSharingRestClient.FILEIDHASH_MD5
-  private val SHA256 = DeltaSharingRestClient.FILEIDHASH_SHA256
+  private val MD5 = DeltaSharingRestClient.FILEIDHASH_PARQUET
+  private val SHA256 = DeltaSharingRestClient.FILEIDHASH_DELTA
 
   test("determineVersionAndHashFromGetBatch: all branches") {
     withTempDir { tempDir =>

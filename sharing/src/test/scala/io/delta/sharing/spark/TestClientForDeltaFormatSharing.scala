@@ -26,9 +26,13 @@ import io.delta.sharing.client.{
   DeltaSharingRestClient
 }
 import io.delta.sharing.client.model.{
+  AddCDCFile => ClientAddCDCFile,
   AddFile => ClientAddFile,
+  AddFileForCDF => ClientAddFileForCDF,
   DeltaTableFiles,
   DeltaTableMetadata,
+  Metadata => ClientMetadata,
+  RemoveFile => ClientRemoveFile,
   SingleAction,
   Table,
   TemporaryCredentials
@@ -71,6 +75,7 @@ private[spark] class TestClientForDeltaFormatSharing(
     TimestampNTZTableFeature,
     TypeWideningPreviewTableFeature,
     TypeWideningTableFeature,
+    GeoSpatialTableFeature,
     VariantTypePreviewTableFeature,
     VariantTypeTableFeature,
     VariantShreddingPreviewTableFeature,
@@ -288,11 +293,41 @@ private[spark] class TestClientForDeltaFormatSharing(
     while (iterator.hasNext) {
       linesBuilder += iterator.next()
     }
-    DeltaTableFiles(
-      version = getTableVersion(table),
-      lines = linesBuilder.result(),
-      respondedFormat = DeltaSharingRestClient.RESPONSE_FORMAT_DELTA
-    )
+    if (table.name.contains("shared_parquet_table") &&
+      responseFormat.contains(DeltaSharingRestClient.RESPONSE_FORMAT_PARQUET)) {
+      val lines = linesBuilder.result()
+      val protocol = JsonUtils.fromJson[SingleAction](lines(0)).protocol
+      val metadata = JsonUtils.fromJson[SingleAction](lines(1)).metaData
+      val addFiles = ArrayBuffer[ClientAddFileForCDF]()
+      val cdfFiles = ArrayBuffer[ClientAddCDCFile]()
+      val removeFiles = ArrayBuffer[ClientRemoveFile]()
+      val additionalMetadatas = ArrayBuffer[ClientMetadata]()
+      lines.drop(2).foreach { line =>
+        JsonUtils.fromJson[SingleAction](line).unwrap match {
+          case c: ClientAddCDCFile => cdfFiles.append(c)
+          case a: ClientAddFileForCDF => addFiles.append(a)
+          case r: ClientRemoveFile => removeFiles.append(r)
+          case m: ClientMetadata => additionalMetadatas.append(m)
+          case _ => throw new IllegalStateException(s"Unexpected Line:${line}")
+        }
+      }
+      DeltaTableFiles(
+        version = getTableVersion(table),
+        protocol = protocol,
+        metadata = metadata,
+        addFiles = addFiles.toSeq,
+        cdfFiles = cdfFiles.toSeq,
+        removeFiles = removeFiles.toSeq,
+        additionalMetadatas = additionalMetadatas.toSeq,
+        respondedFormat = DeltaSharingRestClient.RESPONSE_FORMAT_PARQUET
+      )
+    } else {
+      DeltaTableFiles(
+        version = getTableVersion(table),
+        lines = linesBuilder.result(),
+        respondedFormat = DeltaSharingRestClient.RESPONSE_FORMAT_DELTA
+      )
+    }
   }
 
   override def generateTemporaryTableCredential(

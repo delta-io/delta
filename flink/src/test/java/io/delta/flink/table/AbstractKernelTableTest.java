@@ -100,6 +100,14 @@ class AbstractKernelTableTest extends TestHelper {
         AbstractKernelTable.normalize(URI.create("file:///var/char/good")).toString());
     assertEquals(
         "s3://host/var/", AbstractKernelTable.normalize(URI.create("s3://host/var")).toString());
+    assertEquals(
+        "s3://my_bucket/var/",
+        AbstractKernelTable.normalize(URI.create("s3://my_bucket/var")).toString());
+    assertEquals(
+        "abfss://container@account.dfs.core.windows.net/path/",
+        AbstractKernelTable.normalize(
+                URI.create("abfss://container@account.dfs.core.windows.net/path"))
+            .toString());
   }
 
   @Test
@@ -150,6 +158,48 @@ class AbstractKernelTableTest extends TestHelper {
           assertFalse(snapshot.getTableProperties().containsKey("something"));
           assertTrue(
               ((SnapshotImpl) snapshot).getProtocol().getWriterFeatures().contains("v2Checkpoint"));
+        });
+  }
+
+  @Test
+  void testCredentialManagerFromConf() {
+    StructType schema = new StructType().add("id", IntegerType.INTEGER);
+    String key = TableConf.CREDENTIALS_SOURCE.key();
+
+    // Default (no conf) and explicit "uc" both yield a UC-vending manager, not the ambient one.
+    withTestTable(
+        schema,
+        Collections.emptyList(),
+        table ->
+            assertFalse(
+                table.credentialManager instanceof CredentialManager.AmbientCredentialManager));
+    withTestTable(
+        schema,
+        Collections.emptyList(),
+        Map.of(key, "uc"),
+        table ->
+            assertFalse(
+                table.credentialManager instanceof CredentialManager.AmbientCredentialManager));
+
+    // "ambient" (case-insensitive) yields the no-op manager that fetches no credentials.
+    withTestTable(
+        schema,
+        Collections.emptyList(),
+        Map.of(key, "AMBIENT"),
+        table -> {
+          assertInstanceOf(
+              CredentialManager.AmbientCredentialManager.class, table.credentialManager);
+          assertTrue(table.credentialManager.getCredentials().isEmpty());
+        });
+
+    // An unknown source fails fast.
+    withTempDir(
+        dir -> {
+          LocalFileSystemTable table =
+              new LocalFileSystemTable(
+                  dir.toURI(), Map.of(key, "not-a-source"), schema, Collections.emptyList());
+          IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, table::open);
+          assertTrue(ex.getMessage().contains(key));
         });
   }
 

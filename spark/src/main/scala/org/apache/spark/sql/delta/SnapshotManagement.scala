@@ -278,7 +278,7 @@ trait SnapshotManagement { self: DeltaLog =>
           unbackfilledCommitsResponse.getCommits.asScala.map(commit => commit.getVersion),
         "latestCommitVersion" -> unbackfilledCommitsResponse.getLatestTableVersion)
       recordDeltaEvent(
-        deltaLog = this,
+        provider = this,
         opType = CoordinatedCommitsUsageLogs.FS_COMMIT_COORDINATOR_LISTING_UNEXPECTED_GAPS,
         data = eventData)
       if (DeltaUtils.isTesting) {
@@ -666,7 +666,7 @@ trait SnapshotManagement { self: DeltaLog =>
       "missingCommits" -> missingCommits
     )
     recordDeltaEvent(
-      deltaLog = this,
+      provider = this,
       opType = "delta.getLogSegmentForVersion.compactedDeltaValidationFailed",
       data = eventData)
     if (DeltaUtils.isTesting) {
@@ -1511,6 +1511,21 @@ trait SnapshotManagement { self: DeltaLog =>
       lastCheckpointProvider: Option[CheckpointProvider],
       catalogTableOpt: Option[CatalogTable],
       enforceTimeTravelWithinDeletedFileRetention: Boolean): Snapshot = {
+    getSnapshotAtInternal(
+      version,
+      lastCheckpointHint,
+      lastCheckpointProvider,
+      catalogTableOpt,
+      enforceTimeTravelWithinDeletedFileRetention)
+  }
+
+  private def getSnapshotAtInternal(
+      version: Long,
+      lastCheckpointHint: Option[CheckpointInstance],
+      lastCheckpointProvider: Option[CheckpointProvider],
+      catalogTableOpt: Option[CatalogTable],
+      enforceTimeTravelWithinDeletedFileRetention: Boolean,
+      checksumOpt: Option[VersionChecksum] = None): Snapshot = {
 
     // See if the version currently cached on the cluster satisfies the requirement
     val currentSnapshot = unsafeVolatileSnapshot
@@ -1538,7 +1553,7 @@ trait SnapshotManagement { self: DeltaLog =>
       case _ =>
         val lastCheckpointInfoForListing = lastCheckpointHint
             .filter(_.version <= version)
-            .orElse(findLastCompleteCheckpointBefore(version))
+            .orElse(findLastCompleteCheckpointBefore(version + 1))
             .map(manuallyLoadCheckpoint)
         lastCheckpointInfoForListing -> None
     }
@@ -1559,7 +1574,7 @@ trait SnapshotManagement { self: DeltaLog =>
       initSegment = logSegment,
       tableCommitCoordinatorClientOpt = commitCoordinatorOpt,
       catalogTableOpt = catalogTableOpt,
-      checksumOpt = None)
+      checksumOpt = checksumOpt)
 
     if (enforceTimeTravelWithinDeletedFileRetention) {
       enforceTimeTravelWithinDeletedFileRetentionDuration(ret, currentSnapshot)
@@ -1663,7 +1678,7 @@ object SnapshotManagement extends DeltaLogging {
         // in some cases, which needs to be explicitly filtered out.
         val snapshot = cachedSnapshot.filter(_ != null)
         recordDeltaEvent(
-          deltaLog = null,
+          provider = null,
           opType = "delta.exceptions.deltaVersionsNotContiguous",
           data = Map(
             // Remove the first element of the stack trace since this represents

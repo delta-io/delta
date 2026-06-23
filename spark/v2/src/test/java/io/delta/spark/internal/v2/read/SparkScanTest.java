@@ -3,7 +3,7 @@ package io.delta.spark.internal.v2.read;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.delta.spark.internal.v2.DeltaV2TestBase;
-import io.delta.spark.internal.v2.catalog.SparkTable;
+import io.delta.spark.internal.v2.catalog.DeltaV2Table;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
 import java.io.File;
 import java.lang.reflect.Field;
@@ -29,7 +29,6 @@ import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.connector.read.Statistics;
 import org.apache.spark.sql.connector.read.colstats.ColumnStatistics;
-import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
@@ -52,8 +51,8 @@ public class SparkScanTest extends DeltaV2TestBase {
   private final CaseInsensitiveStringMap options =
       new CaseInsensitiveStringMap(new java.util.HashMap<>());
 
-  private final SparkTable table =
-      new SparkTable(
+  private final DeltaV2Table table =
+      new DeltaV2Table(
           Identifier.of(new String[] {"spark_catalog", "default"}, tableName), tablePath, options);
 
   protected static final Predicate cityPredicate =
@@ -156,8 +155,8 @@ public class SparkScanTest extends DeltaV2TestBase {
               "spark.sql.parquet.enableNestedColumnVectorizedReader",
               "false",
               () -> {
-                SparkTable mapTable =
-                    new SparkTable(
+                DeltaV2Table mapTable =
+                    new DeltaV2Table(
                         Identifier.of(new String[] {"spark_catalog", "default"}, mapTableName),
                         path,
                         options);
@@ -197,7 +196,7 @@ public class SparkScanTest extends DeltaV2TestBase {
     StructType prunedSchema =
         new StructType()
             .add("name", DataTypes.StringType)
-            .add("_metadata", new StructType())
+            .add("_metadata", new StructType().add("file_path", DataTypes.StringType))
             .add("date", DataTypes.StringType)
             .add("city", DataTypes.StringType)
             .add("part", DataTypes.IntegerType);
@@ -230,8 +229,8 @@ public class SparkScanTest extends DeltaV2TestBase {
                   dvTableName, dvPath));
           spark.sql(String.format("INSERT INTO %s VALUES (1, 'a'), (2, 'b')", dvTableName));
 
-          SparkTable dvTable =
-              new SparkTable(
+          DeltaV2Table dvTable =
+              new DeltaV2Table(
                   Identifier.of(new String[] {"spark_catalog", "default"}, dvTableName),
                   dvPath,
                   options);
@@ -487,7 +486,7 @@ public class SparkScanTest extends DeltaV2TestBase {
   }
 
   protected static void checkSupportsRuntimeFilters(
-      SparkTable table,
+      DeltaV2Table table,
       CaseInsensitiveStringMap scanOptions,
       org.apache.spark.sql.connector.expressions.filter.Predicate[] runtimeFilters,
       List<String> remainingPartitionValueAfterDpp)
@@ -553,6 +552,13 @@ public class SparkScanTest extends DeltaV2TestBase {
     return (long) field.get(scan);
   }
 
+  private static org.apache.spark.sql.sources.Filter[] getDataFilters(SparkScan scan)
+      throws Exception {
+    Field field = SparkScan.class.getDeclaredField("dataFilters");
+    field.setAccessible(true);
+    return (org.apache.spark.sql.sources.Filter[]) field.get(scan);
+  }
+
   private static long getTotalRows(SparkScan scan) throws Exception {
     scan.estimateStatistics(); // ensurePlanned
     Field field = SparkScan.class.getDeclaredField("totalRows");
@@ -604,9 +610,9 @@ public class SparkScanTest extends DeltaV2TestBase {
 
   @Test
   public void testNumRowsAfterRuntimeFiltering() throws Exception {
-    // Runtime partition filtering invalidates the cached totalRows: per-file row counts are
-    // not retained (to avoid O(n) memory on every scan), so numRows() returns empty after
-    // filtering rather than a recomputed value.
+    // Runtime partition filtering recomputes totalRows from the per-file counts of files that
+    // survive pruning, so numRows() reflects the post-prune row count rather than the
+    // pre-filter total or empty.
     withSQLConf(
         "spark.sql.cbo.planStats.enabled",
         "true",
@@ -617,18 +623,23 @@ public class SparkScanTest extends DeltaV2TestBase {
           assertEquals(
               5L, scan.estimateStatistics().numRows().getAsLong(), "5 rows before filtering");
 
+          // Two rows in the table have city=hz (Alice and Bob, in different date partitions).
           scan.filter(new Predicate[] {cityPredicate}); // city=hz
 
-          assertFalse(
+          assertTrue(
               scan.estimateStatistics().numRows().isPresent(),
-              "numRows should be empty after runtime filtering invalidates row count");
+              "numRows should remain known after runtime filtering");
+          assertEquals(
+              2L,
+              scan.estimateStatistics().numRows().getAsLong(),
+              "numRows should be recomputed to the post-prune count (2 city=hz rows)");
         });
   }
 
   @Test
-  public void testNumRowsEmptyAfterFilteringOutAllFiles() throws Exception {
-    // Same reasoning as testNumRowsAfterRuntimeFiltering: runtime filtering invalidates the
-    // cached totalRows regardless of how many files remain.
+  public void testNumRowsZeroAfterFilteringOutAllFiles() throws Exception {
+    // When runtime filtering prunes every file, totalRows recomputes to 0 (still a known
+    // value, not OptionalLong.empty()).
     withSQLConf(
         "spark.sql.cbo.planStats.enabled",
         "true",
@@ -638,9 +649,13 @@ public class SparkScanTest extends DeltaV2TestBase {
 
           scan.filter(new Predicate[] {negativeCityPredicate}); // city=zz doesn't exist
 
-          assertFalse(
+          assertTrue(
               scan.estimateStatistics().numRows().isPresent(),
-              "numRows should be empty after runtime filtering (even when all files filtered)");
+              "numRows should remain known after runtime filtering (even when all files filtered)");
+          assertEquals(
+              0L,
+              scan.estimateStatistics().numRows().getAsLong(),
+              "numRows should be 0 when all files are filtered out");
         });
   }
 
@@ -662,8 +677,8 @@ public class SparkScanTest extends DeltaV2TestBase {
       spark.sql("INSERT INTO " + tblName + " VALUES (2, 'sh')");
 
       // Table now has two AddFile entries: one with stats (first insert), one without (second).
-      SparkTable mixedStatsTable =
-          new SparkTable(
+      DeltaV2Table mixedStatsTable =
+          new DeltaV2Table(
               Identifier.of(new String[] {"spark_catalog", "default"}, tblName), path, options);
 
       withSQLConf(
@@ -685,55 +700,153 @@ public class SparkScanTest extends DeltaV2TestBase {
     }
   }
 
-  // ================================================================================================
-  // Tests for streaming options validation
-  // ================================================================================================
-
   @Test
-  public void testValidateStreamingOptions_SupportedOptions() {
-    // Test with supported options (case insensitive) and custom user options
-    Map<String, String> javaOptions = new HashMap<>();
-    javaOptions.put("startingVersion", "0");
-    javaOptions.put("MaxFilesPerTrigger", "100");
-    javaOptions.put("MAXBYTESPERTRIGGER", "1g");
-    javaOptions.put("myCustomOption", "value");
-    scala.collection.immutable.Map<String, String> supportedOptions =
-        ScalaUtils.toScalaMap(javaOptions);
-    DeltaOptions deltaOptions = new DeltaOptions(supportedOptions, spark.sessionState().conf());
+  public void testReadSchema_cdcRead_returnsTableSchemaWithCDCColumns() {
+    // When readChangeFeed=true and no pruning is pushed, readSchema() returns
+    // readDataSchema + partitionSchema + CDC columns. Without pruneColumns, readDataSchema
+    // equals the full data schema, so all table columns appear.
+    Map<String, String> cdcOptions = new HashMap<>();
+    cdcOptions.put("readChangeFeed", "true");
+    CaseInsensitiveStringMap cdcOptionsMap = new CaseInsensitiveStringMap(cdcOptions);
 
-    // Verify DeltaOptions can recognize the options (case insensitive)
-    assertEquals(true, deltaOptions.maxFilesPerTrigger().isDefined());
-    assertEquals(100, deltaOptions.maxFilesPerTrigger().get());
-    assertEquals(true, deltaOptions.maxBytesPerTrigger().isDefined());
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(cdcOptionsMap);
+    SparkScan scan = (SparkScan) builder.build();
 
-    // Should not throw - supported and custom options are allowed
-    SparkScan.validateStreamingOptions(deltaOptions);
+    StructType schema = scan.readSchema();
+
+    // Table schema: name STRING, cnt INT, date STRING, city STRING, part INT (logical order)
+    // CDC columns: _change_type STRING, _commit_version LONG, _commit_timestamp TIMESTAMP
+    assertTrue(schema.fieldIndex("name") >= 0);
+    assertTrue(schema.fieldIndex("cnt") >= 0);
+    assertTrue(schema.fieldIndex("date") >= 0);
+    assertTrue(schema.fieldIndex("city") >= 0);
+    assertTrue(schema.fieldIndex("part") >= 0);
+    assertTrue(schema.fieldIndex("_change_type") >= 0);
+    assertTrue(schema.fieldIndex("_commit_version") >= 0);
+    assertTrue(schema.fieldIndex("_commit_timestamp") >= 0);
+    assertEquals(8, schema.fields().length);
+
+    // CDC columns should be at the end, after table columns
+    assertEquals("_change_type", schema.fields()[5].name());
+    assertEquals("_commit_version", schema.fields()[6].name());
+    assertEquals("_commit_timestamp", schema.fields()[7].name());
   }
 
   @Test
-  public void testValidateStreamingOptions_UnsupportedOptions() {
-    // Test with blocked DeltaOptions, supported options, and custom user options
-    Map<String, String> javaOptions = new HashMap<>();
-    javaOptions.put("startingVersion", "0");
-    javaOptions.put("readChangeFeed", "true");
-    javaOptions.put("myCustomOption", "value");
-    scala.collection.immutable.Map<String, String> mixedOptions =
-        ScalaUtils.toScalaMap(javaOptions);
-    DeltaOptions deltaOptions = new DeltaOptions(mixedOptions, spark.sessionState().conf());
+  public void testReadSchema_nonCdcRead_returnsDataAndPartitionSchema() {
+    // Without readChangeFeed, readSchema() returns readDataSchema + partitionSchema.
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan = (SparkScan) builder.build();
 
-    UnsupportedOperationException exception =
-        assertThrows(
-            UnsupportedOperationException.class,
-            () -> SparkScan.validateStreamingOptions(deltaOptions));
+    StructType schema = scan.readSchema();
 
-    // Verify exact error message - only the blocked option should appear
-    // Note: DeltaOptions uses CaseInsensitiveMap which lowercases keys during iteration
-    assertEquals(
-        "The following streaming options are not supported: [readchangefeed]. "
-            + "Supported options are: [startingVersion, startingTimestamp, maxFilesPerTrigger, "
-            + "maxBytesPerTrigger, ignoreFileDeletion, ignoreChanges, ignoreDeletes, skipChangeCommits, "
-            + "excludeRegex, failOnDataLoss].",
-        exception.getMessage());
+    // Should have data columns + partition columns, no CDC columns
+    assertTrue(schema.fieldIndex("name") >= 0);
+    assertTrue(schema.fieldIndex("cnt") >= 0);
+    assertTrue(schema.fieldIndex("date") >= 0);
+    assertTrue(schema.fieldIndex("city") >= 0);
+    assertTrue(schema.fieldIndex("part") >= 0);
+    assertThrows(IllegalArgumentException.class, () -> schema.fieldIndex("_change_type"));
+    assertThrows(IllegalArgumentException.class, () -> schema.fieldIndex("_commit_version"));
+  }
+
+  @Test
+  public void testPruneColumns_cdcRead_filtersCDCColumns() {
+    // pruneColumns should filter out partition and CDC columns from the data schema, since
+    // partition columns are read separately and CDC columns are injected by CDCReadFunction.
+    // The remaining data columns are honored - pruning a data column ("cnt") shrinks the
+    // underlying parquet read.
+    Map<String, String> cdcOptions = new HashMap<>();
+    cdcOptions.put("readChangeFeed", "true");
+    CaseInsensitiveStringMap cdcOptionsMap = new CaseInsensitiveStringMap(cdcOptions);
+
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(cdcOptionsMap);
+    StructType requiredSchema =
+        new StructType()
+            .add("name", DataTypes.StringType)
+            .add("_change_type", DataTypes.StringType)
+            .add("_commit_version", DataTypes.LongType)
+            .add("_commit_timestamp", DataTypes.TimestampType)
+            .add("date", DataTypes.StringType);
+    builder.pruneColumns(requiredSchema);
+
+    SparkScan scan = (SparkScan) builder.build();
+
+    // readDataSchema reflects pruning: only "name" remains (cnt dropped, partition + CDC filtered)
+    StructType readDataSchema = scan.getReadDataSchema();
+    assertEquals(1, readDataSchema.fields().length);
+    assertEquals("name", readDataSchema.fields()[0].name());
+
+    // readSchema = readDataSchema + partition + CDC
+    StructType readSchema = scan.readSchema();
+    assertTrue(readSchema.fieldIndex("name") >= 0);
+    assertTrue(readSchema.fieldIndex("date") >= 0);
+    assertTrue(readSchema.fieldIndex("_change_type") >= 0);
+    assertTrue(readSchema.fieldIndex("_commit_version") >= 0);
+    assertTrue(readSchema.fieldIndex("_commit_timestamp") >= 0);
+    // Pruned column "cnt" should not appear.
+    assertThrows(IllegalArgumentException.class, () -> readSchema.fieldIndex("cnt"));
+  }
+
+  @Test
+  public void testCdcRead_toBatchRejectsCDCOptions() {
+    Map<String, String> cdcOptions = new HashMap<>();
+    cdcOptions.put("readChangeFeed", "true");
+    CaseInsensitiveStringMap cdcOptionsMap = new CaseInsensitiveStringMap(cdcOptions);
+
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(cdcOptionsMap);
+    SparkScan scan = (SparkScan) builder.build();
+
+    // Sanity: scan still advertises the CDC schema (this is needed for the streaming path).
+    StructType advertised = scan.readSchema();
+    assertEquals(8, advertised.fields().length, "scan should advertise 5 base + 3 CDC columns");
+    assertTrue(advertised.fieldIndex("_change_type") >= 0);
+
+    UnsupportedOperationException e =
+        assertThrows(UnsupportedOperationException.class, scan::toBatch);
+    assertTrue(
+        e.getMessage().contains("CDC"),
+        "exception message should mention CDC; was: " + e.getMessage());
+  }
+
+  @Test
+  public void testCdcRead_toBatchRejectsLegacyCDCOption() {
+    Map<String, String> cdcOptions = new HashMap<>();
+    cdcOptions.put("readChangeData", "true");
+    CaseInsensitiveStringMap cdcOptionsMap = new CaseInsensitiveStringMap(cdcOptions);
+
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(cdcOptionsMap);
+    SparkScan scan = (SparkScan) builder.build();
+
+    assertEquals(8, scan.readSchema().fields().length);
+    UnsupportedOperationException e =
+        assertThrows(UnsupportedOperationException.class, scan::toBatch);
+    assertTrue(e.getMessage().contains("CDC"));
+  }
+
+  @Test
+  public void testCdcRead_invalidBooleanThrowsOnConstruction() {
+    Map<String, String> cdcOptions = new HashMap<>();
+    cdcOptions.put("readChangeFeed", "yes");
+    CaseInsensitiveStringMap cdcOptionsMap = new CaseInsensitiveStringMap(cdcOptions);
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> ((SparkScanBuilder) table.newScanBuilder(cdcOptionsMap)).build());
+  }
+
+  @Test
+  public void testCdcRead_falseDoesNotAdvertiseCDCColumns() {
+    Map<String, String> nonCdcOptions = new HashMap<>();
+    nonCdcOptions.put("readChangeFeed", "false");
+    CaseInsensitiveStringMap nonCdcOptionsMap = new CaseInsensitiveStringMap(nonCdcOptions);
+
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(nonCdcOptionsMap);
+    SparkScan scan = (SparkScan) builder.build();
+
+    StructType schema = scan.readSchema();
+    assertThrows(IllegalArgumentException.class, () -> schema.fieldIndex("_change_type"));
+    assertNotNull(scan.toBatch());
   }
 
   // ================================================================================================
@@ -809,6 +922,53 @@ public class SparkScanTest extends DeltaV2TestBase {
     // Same options but different filters should not be equal and hashCodes should differ
     assertNotEquals(scan1, scan2);
     assertNotEquals(scan1.hashCode(), scan2.hashCode());
+  }
+
+  @Test
+  public void testEqualsWithPushedFiltersInDifferentOrder() {
+    org.apache.spark.sql.sources.Filter cityEq =
+        new org.apache.spark.sql.sources.EqualTo("city", "hz");
+    org.apache.spark.sql.sources.Filter dateEq =
+        new org.apache.spark.sql.sources.EqualTo("date", "20180520");
+
+    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
+    builder1.pushFilters(new org.apache.spark.sql.sources.Filter[] {cityEq, dateEq});
+    SparkScan scan1 = (SparkScan) builder1.build();
+
+    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    builder2.pushFilters(new org.apache.spark.sql.sources.Filter[] {dateEq, cityEq});
+    SparkScan scan2 = (SparkScan) builder2.build();
+
+    assertEquals(scan1, scan2);
+    assertEquals(scan1.hashCode(), scan2.hashCode());
+  }
+
+  @Test
+  public void testEqualsWithDataFiltersInDifferentOrder() throws Exception {
+    // city/date are partition columns, so the test above only exercises pushedToKernelFiltersSet.
+    // name and cnt are data columns (per the partitioned table schema), so per
+    // ExpressionUtils.classifyFilter these filters have isDataFilter=true and flow into
+    // SparkScan.dataFilters, exercising the dataFiltersSet branch of equals/hashCode.
+    org.apache.spark.sql.sources.Filter nameEq =
+        new org.apache.spark.sql.sources.EqualTo("name", "x");
+    org.apache.spark.sql.sources.Filter cntGt =
+        new org.apache.spark.sql.sources.GreaterThan("cnt", 10);
+
+    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
+    builder1.pushFilters(new org.apache.spark.sql.sources.Filter[] {nameEq, cntGt});
+    SparkScan scan1 = (SparkScan) builder1.build();
+
+    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    builder2.pushFilters(new org.apache.spark.sql.sources.Filter[] {cntGt, nameEq});
+    SparkScan scan2 = (SparkScan) builder2.build();
+
+    // Sanity check that dataFilters is actually populated, otherwise this test would trivially
+    // pass without exercising the dataFiltersSet path it's intended to cover.
+    assertEquals(2, getDataFilters(scan1).length);
+    assertEquals(2, getDataFilters(scan2).length);
+
+    assertEquals(scan1, scan2);
+    assertEquals(scan1.hashCode(), scan2.hashCode());
   }
 
   // ================================================================================================
@@ -1149,7 +1309,7 @@ public class SparkScanTest extends DeltaV2TestBase {
         "true",
         () -> {
           Identifier id = Identifier.of(new String[] {"default"}, tblName);
-          SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
+          DeltaV2Table sparkTable = new DeltaV2Table(id, catalogTable, Collections.emptyMap());
 
           SparkScanBuilder builder =
               (SparkScanBuilder)
@@ -1157,7 +1317,7 @@ public class SparkScanTest extends DeltaV2TestBase {
           SparkScan scan = (SparkScan) builder.build();
           Statistics stats = scan.estimateStatistics();
 
-          // numRows comes from catalog stats (per-file parsing is skipped when catalog has it)
+          // numRows comes from per-file (post-prune) stats
           assertTrue(stats.numRows().isPresent(), "numRows should be present with CBO enabled");
           assertEquals(2L, stats.numRows().getAsLong(), "numRows should be 2");
 
@@ -1183,13 +1343,12 @@ public class SparkScanTest extends DeltaV2TestBase {
   }
 
   @Test
-  public void testCatalogNumRowsPreferredOverPerFile(@TempDir File tempDir) throws Exception {
-    // Verifies that catalog numRows (from ANALYZE TABLE) is preferred over per-file numRows
-    // when both are available. This lets us skip per-file stats JSON parsing during planning,
-    // trading off freshness for planning cost. If the catalog value is stale, the user is
-    // expected to re-run ANALYZE TABLE.
+  public void testPerFileNumRowsPreferredOverCatalog(@TempDir File tempDir) throws Exception {
+    // Verifies that per-file (post-prune) numRows is used in preference to catalog numRows.
+    // numRows() reflects the row count for this scan after pruning, while catalog stats are
+    // table-level and unpruned.
     String path = tempDir.getAbsolutePath();
-    String tblName = "stats_catalog_wins";
+    String tblName = "stats_per_file_wins";
     spark.sql(
         String.format(
             "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'", tblName, path));
@@ -1208,20 +1367,75 @@ public class SparkScanTest extends DeltaV2TestBase {
         "true",
         () -> {
           Identifier id = Identifier.of(new String[] {"default"}, tblName);
-          SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
+          DeltaV2Table sparkTable = new DeltaV2Table(id, catalogTable, Collections.emptyMap());
           SparkScanBuilder builder =
               (SparkScanBuilder)
                   sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
           SparkScan scan = (SparkScan) builder.build();
           Statistics stats = scan.estimateStatistics();
 
-          // Catalog numRows wins; per-file parsing is skipped entirely.
+          // Per-file numRows wins over catalog stats.
           assertTrue(stats.numRows().isPresent(), "numRows should be present");
           assertEquals(
-              999L,
+              2L,
               stats.numRows().getAsLong(),
-              "numRows should come from catalog (999), not per-file (2)");
+              "numRows should come from per-file (2), not catalog (999)");
         });
+  }
+
+  @Test
+  public void testCatalogNumRowsFallbackWhenPerFileUnknown(@TempDir File tempDir) throws Exception {
+    // When per-file numRecords is unavailable for any AddFile (rowCountKnown=false), numRows()
+    // should fall back to the catalog value rather than return OptionalLong.empty().
+    String path = tempDir.getAbsolutePath();
+    String tblName = "stats_catalog_fallback";
+    try {
+      spark.sql(
+          String.format(
+              "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'", tblName, path));
+      spark.sql(String.format("INSERT INTO %s VALUES (1, 'a')", tblName));
+
+      // Disable stats collection so the next AddFile has no numRecords. With one file lacking
+      // numRecords, rowCountKnown is false for the whole scan.
+      spark.sql("SET spark.databricks.delta.stats.collect=false");
+      spark.sql(String.format("INSERT INTO %s VALUES (2, 'b')", tblName));
+
+      // Inject catalog stats with a distinguishable row count (777) so the fallback is observable.
+      CatalogStatistics catalogStats =
+          new CatalogStatistics(
+              scala.math.BigInt.apply(1024L),
+              scala.Option.apply(scala.math.BigInt.apply(777L)),
+              buildColStatsMap(new String[] {}, new CatalogColumnStat[] {}));
+      CatalogTable catalogTable = injectCatalogStats(tblName, catalogStats);
+
+      withSQLConf(
+          "spark.sql.cbo.enabled",
+          "true",
+          () -> {
+            Identifier id = Identifier.of(new String[] {"default"}, tblName);
+            DeltaV2Table sparkTable = new DeltaV2Table(id, catalogTable, Collections.emptyMap());
+            SparkScanBuilder builder =
+                (SparkScanBuilder)
+                    sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
+            SparkScan scan = (SparkScan) builder.build();
+
+            assertFalse(
+                isRowCountKnown(scan),
+                "rowCountKnown should be false when an AddFile lacks numRecords");
+
+            Statistics stats = scan.estimateStatistics();
+            assertTrue(
+                stats.numRows().isPresent(),
+                "numRows should fall back to catalog when per-file unknown");
+            assertEquals(
+                777L,
+                stats.numRows().getAsLong(),
+                "numRows should come from catalog stats (777) when per-file is unknown");
+          });
+    } finally {
+      spark.sql("RESET spark.databricks.delta.stats.collect");
+      spark.sql("DROP TABLE IF EXISTS " + tblName);
+    }
   }
 
   @Test
@@ -1248,7 +1462,7 @@ public class SparkScanTest extends DeltaV2TestBase {
         "false",
         () -> {
           Identifier id = Identifier.of(new String[] {"default"}, tblName);
-          SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
+          DeltaV2Table sparkTable = new DeltaV2Table(id, catalogTable, Collections.emptyMap());
 
           SparkScanBuilder builder =
               (SparkScanBuilder)
@@ -1294,7 +1508,8 @@ public class SparkScanTest extends DeltaV2TestBase {
               "true",
               () -> {
                 Identifier id = Identifier.of(new String[] {"default"}, tblName);
-                SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
+                DeltaV2Table sparkTable =
+                    new DeltaV2Table(id, catalogTable, Collections.emptyMap());
 
                 SparkScanBuilder builder =
                     (SparkScanBuilder)
@@ -1302,7 +1517,7 @@ public class SparkScanTest extends DeltaV2TestBase {
                 SparkScan scan = (SparkScan) builder.build();
                 Statistics stats = scan.estimateStatistics();
 
-                // With planStatsEnabled, numRows should come from catalog stats
+                // With planStatsEnabled, numRows should be present (from per-file stats)
                 assertTrue(
                     stats.numRows().isPresent(), "numRows should be present with planStatsEnabled");
                 assertEquals(2L, stats.numRows().getAsLong(), "numRows should be 2");
@@ -1328,9 +1543,9 @@ public class SparkScanTest extends DeltaV2TestBase {
         "spark.sql.cbo.enabled",
         "true",
         () -> {
-          // Path-based table — no catalog table, no ANALYZE TABLE stats
+          // Path-based table - no catalog table, no ANALYZE TABLE stats
           Identifier id = Identifier.of(new String[] {"default"}, tblName);
-          SparkTable sparkTable = new SparkTable(id, path);
+          DeltaV2Table sparkTable = new DeltaV2Table(id, path);
 
           SparkScanBuilder builder =
               (SparkScanBuilder)
@@ -1398,7 +1613,7 @@ public class SparkScanTest extends DeltaV2TestBase {
         "true",
         () -> {
           Identifier id = Identifier.of(new String[] {"default"}, tblName);
-          SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
+          DeltaV2Table sparkTable = new DeltaV2Table(id, catalogTable, Collections.emptyMap());
 
           SparkScanBuilder builder =
               (SparkScanBuilder)
@@ -1464,7 +1679,8 @@ public class SparkScanTest extends DeltaV2TestBase {
               "false",
               () -> {
                 Identifier id = Identifier.of(new String[] {"default"}, tblName);
-                SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
+                DeltaV2Table sparkTable =
+                    new DeltaV2Table(id, catalogTable, Collections.emptyMap());
 
                 SparkScanBuilder builder =
                     (SparkScanBuilder)
@@ -1524,7 +1740,7 @@ public class SparkScanTest extends DeltaV2TestBase {
           CatalogTable catalogTable =
               spark.sessionState().catalog().getTableMetadata(new TableIdentifier(tblName));
           Identifier id = Identifier.of(new String[] {"default"}, tblName);
-          SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
+          DeltaV2Table sparkTable = new DeltaV2Table(id, catalogTable, Collections.emptyMap());
 
           SparkScanBuilder builder =
               (SparkScanBuilder)
@@ -1569,7 +1785,7 @@ public class SparkScanTest extends DeltaV2TestBase {
         "true",
         () -> {
           Identifier id = Identifier.of(new String[] {"default"}, tblName);
-          SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
+          DeltaV2Table sparkTable = new DeltaV2Table(id, catalogTable, Collections.emptyMap());
 
           SparkScanBuilder builder =
               (SparkScanBuilder)

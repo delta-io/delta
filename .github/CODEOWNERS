@@ -3,17 +3,14 @@
 # See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
 
 # Build configuration files and directories
-/build/                         @tdas
-/build.sbt                      @tdas
+/build/                         @tdas @huan233usc
+/build.sbt                      @tdas @huan233usc
 /project/                       @tdas
+/project/scripts/               @tdas @openinx @yili-db
 /version.sbt                    @tdas
 
 # Python client, examples, and tooling
-/python/                        @tdas
-
-# Iceberg / UniForm integration and shaded Iceberg sources
-/iceberg/                       @tdas
-/icebergShaded/                 @tdas
+/python/                        @tdas @huan233usc
 
 # Spark V2 and Unified modules
 /spark/v2/                      @tdas @huan233usc @TimothyW553 @raveeram-db @murali-db

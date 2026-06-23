@@ -21,14 +21,16 @@ import java.util.{Locale, TimeZone}
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
+import scala.util.Try
 
+import com.databricks.spark.util.TagDefinition
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.Action.logSchema
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CommitCoordinatorClient, CommitCoordinatorProvider, CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.expressions.EncodeNestedVariantAsZ85String
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
-import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider}
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DataSkippingReader
@@ -57,13 +59,16 @@ import org.apache.spark.util.Utils
  * A description of a Delta [[Snapshot]], including basic information such its [[DeltaLog]]
  * metadata, protocol, and version.
  */
-trait SnapshotDescriptor {
+trait SnapshotDescriptor extends DeltaLoggingProvider {
   def deltaLog: DeltaLog
   def version: Long
   def metadata: Metadata
   def protocol: Protocol
 
   def schema: StructType = metadata.schema
+
+  def dataPath: Path
+  def logPath: Path
 
   protected[delta] def numOfFilesIfKnown: Option[Long]
   protected[delta] def sizeInBytesIfKnown: Option[Long]
@@ -73,6 +78,13 @@ trait SnapshotDescriptor {
     version >= 0 &&
       protocol.readerAndWriterFeatureNames.contains(CatalogOwnedTableFeature.name)
   }
+
+  /**
+   * Recording tags for this snapshot, anchored to the snapshot's own `metadata.id` (as opposed to
+   * the latest volatile metadata id that a bare [[DeltaLog]] would report).
+   */
+  override def getCommonTags: Map[TagDefinition, String] =
+    deltaLog.getCommonTags(Try(metadata.id).getOrElse(null))
 }
 
 /**
@@ -111,6 +123,9 @@ class Snapshot(
   import DeltaLogFileIndex.COMMIT_VERSION_COLUMN
   // For implicits which re-use Encoder:
   import org.apache.spark.sql.delta.implicits._
+
+  override def dataPath: Path = deltaLog.dataPath
+  override def logPath: Path = deltaLog.logPath
 
   protected def spark = SparkSession.active
 
@@ -651,8 +666,8 @@ class Snapshot(
     deletedRecordCountsHistogramOpt = checksumOpt.flatMap(_.deletedRecordCountsHistogramOpt)
       .orElse(Option.when(_computedStateTriggered)(deletedRecordCountsHistogramOpt).flatten)
       .filter(_ => deletionVectorsReadableAndHistogramEnabled),
-    histogramOpt = Option.when(fileSizeHistogramEnabled) {
-      checksumOpt.flatMap(_.histogramOpt)
+    fileSizeHistogram = Option.when(fileSizeHistogramEnabled) {
+      checksumOpt.flatMap(_.fileSizeHistogram)
         .orElse(Option.when(_computedStateTriggered)(fileSizeHistogram).flatten)
     }.flatten
   )
@@ -723,6 +738,10 @@ class Snapshot(
     spark.createDataFrame(spark.sparkContext.emptyRDD[Row], logSchema)
 
 
+  // These logging methods must NOT read `this.metadata`: they are invoked *during* P&M
+  // reconstruction (e.g. the usage log on the incremental-checksum path) and during snapshot
+  // construction, where reading `metadata` re-enters the `_reconstructedProtocolMetadataAndICT`
+  // lazy val on the same thread and overflows the stack. Use the DeltaLog's cached id instead.
   def logInfo(msg: MessageWithContext): Unit = {
     val tableId = deltaLog.unsafeVolatileTableId
     super.logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, tableId)}] " + msg)
@@ -890,15 +909,12 @@ object Snapshot extends DeltaLogging {
       spark: SparkSession,
       deltaLog: DeltaLog,
       file: FileStatus): (StructType, Long) = {
-    // Converter used to convert Parquet `MessageType` to Spark SQL `StructType`
-    val converter = new ParquetToSparkSchemaConverter(
-      assumeBinaryIsString = spark.sessionState.conf.isParquetBinaryAsString,
-      assumeInt96IsTimestamp = spark.sessionState.conf.isParquetINT96AsTimestamp)
-
     val conf = deltaLog.newDeltaHadoopConf()
+    // Converter used to convert Parquet `MessageType` to Spark SQL `StructType`
+    val converter = new ParquetToSparkSchemaConverter(spark.sessionState.conf)
 
     val parquetMetadata = {
-      ParquetFileReader.readFooter(deltaLog.newDeltaHadoopConf(), file.getPath)
+      ParquetFileReader.readFooter(conf, file.getPath)
     }
     val rowCount = parquetMetadata.getBlocks.asScala.map(_.getRowCount).sum
 
@@ -926,9 +942,10 @@ object Snapshot extends DeltaLogging {
  *                    to compute the protocol might result in a protocol downgrade for the table.
  */
 class DummySnapshot(
-    val logPath: Path,
+    override val logPath: Path,
     override val deltaLog: DeltaLog,
     override val metadata: Metadata,
+    domainMetadataOpt: Option[Seq[DomainMetadata]] = None,
     protocolOpt: Option[Protocol] = None)
   extends Snapshot(
     path = logPath,
@@ -956,6 +973,7 @@ class DummySnapshot(
   override def protocol: Protocol =
     protocolOpt.getOrElse(Protocol.forNewTable(spark, Some(metadata)))
 
+  override def domainMetadata: Seq[DomainMetadata] = domainMetadataOpt.getOrElse(Seq.empty)
   override protected lazy val computedState: SnapshotState = initialState(metadata, protocol)
   override protected lazy val getInCommitTimestampOpt: Option[Long] = None
   _computedStateTriggered = true

@@ -23,8 +23,10 @@ import scala.collection.JavaConverters._
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
-import org.apache.spark.sql.delta.actions.{Action, CommitInfo}
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedCommitCoordinatorProvider, CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite, CommitCoordinatorProvider, CommitCoordinatorUtilBase, TrackingInMemoryCommitCoordinatorBuilder}
+import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedCommitCoordinatorProvider,
+  CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite, CommitCoordinatorProvider,
+  CommitCoordinatorUtilBase, TrackingInMemoryCommitCoordinatorBuilder}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -308,6 +310,10 @@ class InCommitTimestampSuite
     }
   }
 
+  ///////////////////////////////////////////////////////////////////
+  // Recording when ICT was first enabled: the enablement commit   //
+  // stamps its own version and timestamp into the table metadata. //
+  ///////////////////////////////////////////////////////////////////
   test("Enablement tracking properties should not be added if ICT is enabled on commit 0") {
     withTempTable(createTable = false) { tableName =>
       spark.range(10).write.format("delta").saveAsTable(tableName)
@@ -383,6 +389,525 @@ class InCommitTimestampSuite
         assert(observedEnablementTimestamp.get == getInCommitTimestamp(deltaLog, version = 3))
         assert(observedEnablementVersion.get == 3)
       }
+    }
+  }
+
+  ///////////////////////////////////////////////////////////////////
+  // Provenance survives subsequent commits: the enablementVersion //
+  // and enablementTimestamp must not be overwritten by conflict   //
+  // resolution or later transactions rebasing over enablement.   //
+  ///////////////////////////////////////////////////////////////////
+  // Both transactions carry a Protocol action, so ConflictChecker aborts the loser before
+  // resolveTimestampOrderingConflicts is reached.
+  testWithDefaultCommitCoordinatorUnset(
+      "Conflict resolution with ICT enablement: concurrent ICT enablements abort the loser") {
+    withSQLConf(
+      DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString
+    ) {
+      withTempTable(createTable = false) { tableName =>
+        spark.range(10).write.format("delta").saveAsTable(tableName)
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        val snapshot = deltaLog.snapshot
+        val ictEnablementMetadata = snapshot.metadata.copy(
+          configuration = snapshot.metadata.configuration ++ Map(
+            DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true"))
+
+        val txn1 = deltaLog.startTransaction()
+        deltaLog.startTransaction().commit(Seq(ictEnablementMetadata), ManualUpdate)
+        intercept[io.delta.exceptions.ProtocolChangedException] {
+          txn1.commit(Seq(ictEnablementMetadata), ManualUpdate)
+        }
+      }
+    }
+  }
+
+  // An ALTER TABLE on an ICT-enabled table carries a Metadata action with the historical
+  // enablementTimestamp already present. When such a transaction loses a conflict to a plain DML,
+  // resolveTimestampOrderingConflicts must not compare that historical timestamp against the
+  // current commit's inCommitTimestamp (which would assert-fail). The enablement provenance
+  // must remain unchanged after the retry.
+  testWithDefaultCommitCoordinatorUnset(
+      "Conflict resolution with ICT enablement: " +
+      "ALTER TABLE on ICT-enabled table preserves enablementTimestamp") {
+    withSQLConf(
+      DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString
+    ) {
+      withTempTable(createTable = false) { tableName =>
+        // Create the table with ICT off and make a non-ICT commit so that when ICT is later
+        // enabled the enablement tracking properties (timestamp + version) are actually written.
+        // (When ICT is enabled on commit 0 those properties are intentionally omitted.)
+        spark.range(10).write.format("delta").saveAsTable(tableName)
+        spark.sql(s"INSERT INTO $tableName VALUES 10")
+        spark.sql(s"ALTER TABLE $tableName SET TBLPROPERTIES " +
+          s"('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        val snapshot = deltaLog.snapshot
+        val origEnablementTimestamp =
+          DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.fromMetaData(snapshot.metadata)
+        val origEnablementVersion =
+          DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.fromMetaData(snapshot.metadata)
+        assert(origEnablementTimestamp.isDefined)
+        assert(origEnablementVersion.isDefined)
+
+        // Simulate ALTER TABLE adding a property -- carries a Metadata action that includes
+        // the existing enablementTimestamp/Version from the snapshot.
+        val alterTableMetadata = snapshot.metadata.copy(
+          configuration = snapshot.metadata.configuration ++ Map("delta.testProp" -> "testValue"))
+        val alterTxn = deltaLog.startTransaction()
+        deltaLog.startTransaction().commit(Seq(createTestAddFile("dml_winner")), ManualUpdate)
+        val usageRecords = Log4jUsageLogger.track {
+          alterTxn.commit(Seq(alterTableMetadata), ManualUpdate)
+        }
+        assert(filterUsageRecords(usageRecords, "delta.commit.retry").length == 1)
+
+        val finalSnapshot = deltaLog.update()
+        assert(
+          DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP
+            .fromMetaData(finalSnapshot.metadata) == origEnablementTimestamp)
+        assert(
+          DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION
+            .fromMetaData(finalSnapshot.metadata) == origEnablementVersion)
+      }
+    }
+  }
+
+  // A REPLACE/CLONE that drops the ICT enablement provenance keys (while keeping ICT enabled)
+  // and loses a conflict to a plain DML must have those keys restored by the retention fix.
+  // The restored keys must equal the originals -- not the current commit's timestamp.
+  testWithDefaultCommitCoordinatorUnset(
+      "Conflict resolution with ICT enablement: " +
+      "REPLACE on ICT-enabled table retains enablementTimestamp") {
+    withSQLConf(
+      DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString
+    ) {
+      withTempTable(createTable = false) { tableName =>
+        spark.range(10).write.format("delta").saveAsTable(tableName)
+        spark.sql(s"INSERT INTO $tableName VALUES 10")
+        spark.sql(s"ALTER TABLE $tableName SET TBLPROPERTIES " +
+          s"('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        val snapshot = deltaLog.snapshot
+        val origEnablementTimestamp =
+          DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.fromMetaData(snapshot.metadata)
+        val origEnablementVersion =
+          DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.fromMetaData(snapshot.metadata)
+        assert(origEnablementTimestamp.isDefined)
+        assert(origEnablementVersion.isDefined)
+
+        // Simulate a REPLACE that keeps ICT enabled but drops the provenance keys.
+        val replaceMetadata = snapshot.metadata.copy(
+          configuration = Map(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true"))
+        val replaceTxn = deltaLog.startTransaction()
+        deltaLog.startTransaction().commit(Seq(createTestAddFile("dml_winner")), ManualUpdate)
+        val usageRecords = Log4jUsageLogger.track {
+          replaceTxn.commit(Seq(replaceMetadata), ManualUpdate)
+        }
+        assert(filterUsageRecords(usageRecords, "delta.commit.retry").length == 1)
+
+        val finalSnapshot = deltaLog.update()
+        assert(
+          DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP
+            .fromMetaData(finalSnapshot.metadata) == origEnablementTimestamp)
+        assert(
+          DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION
+            .fromMetaData(finalSnapshot.metadata) == origEnablementVersion)
+      }
+    }
+  }
+
+  // When the ICT-enablement txn loses a conflict, enablementTimestamp must be updated to match
+  // the inCommitTimestamp actually assigned at commit time, not the one from the first attempt.
+  testWithDefaultCommitCoordinatorUnset(
+      "Conflict resolution with ICT enablement: " +
+      "ICT-enablement loser updates enablementTimestamp after rebase") {
+    withSQLConf(
+      DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString
+    ) {
+      withTempTable(createTable = false) { tableName =>
+        spark.range(10).write.format("delta").saveAsTable(tableName)
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        val snapshot = deltaLog.snapshot
+        val ictEnablementMetadata = snapshot.metadata.copy(
+          configuration = snapshot.metadata.configuration ++ Map(
+            DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true"))
+
+        val ictTxn = deltaLog.startTransaction()
+        deltaLog.startTransaction().commit(Seq(createTestAddFile("dml_winner")), ManualUpdate)
+        val usageRecords = Log4jUsageLogger.track {
+          ictTxn.commit(Seq(ictEnablementMetadata), ManualUpdate)
+        }
+        assert(filterUsageRecords(usageRecords, "delta.commit.retry").length == 1)
+
+        val finalSnapshot = deltaLog.update()
+        val observedEnablementTimestamp =
+          DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP
+            .fromMetaData(finalSnapshot.metadata)
+        val observedEnablementVersion =
+          DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION
+            .fromMetaData(finalSnapshot.metadata)
+        assert(observedEnablementTimestamp.get ==
+          getInCommitTimestamp(deltaLog, finalSnapshot.version))
+        assert(observedEnablementVersion.get == finalSnapshot.version)
+      }
+    }
+  }
+
+  // When the ICT-enablement txn loses conflicts against multiple consecutive DML winners,
+  // resolveTimestampOrderingConflicts is called once per winning commit. The final
+  // enablementVersion and enablementTimestamp must reflect the version and inCommitTimestamp
+  // actually written, not an intermediate value from an earlier winning commit.
+  testWithDefaultCommitCoordinatorUnset(
+      "Conflict resolution with ICT enablement: ICT-enablement loser updates " +
+      "enablementTimestamp across multiple winning commits") {
+    withSQLConf(
+      DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString
+    ) {
+      withTempTable(createTable = false) { tableName =>
+        spark.range(10).write.format("delta").saveAsTable(tableName)
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        val snapshot = deltaLog.snapshot
+        val ictEnablementMetadata = snapshot.metadata.copy(
+          configuration = snapshot.metadata.configuration ++ Map(
+            DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true"))
+
+        val ictTxn = deltaLog.startTransaction()
+        // Two DML winners committed before the enablement txn tries to commit; both are
+        // processed by checkAndRetry in a single retry, so resolveTimestampOrderingConflicts
+        // runs twice -- once per winning commit.
+        deltaLog.startTransaction().commit(Seq(createTestAddFile("dml_winner_1")), ManualUpdate)
+        deltaLog.startTransaction().commit(Seq(createTestAddFile("dml_winner_2")), ManualUpdate)
+        val usageRecords = Log4jUsageLogger.track {
+          ictTxn.commit(Seq(ictEnablementMetadata), ManualUpdate)
+        }
+        assert(filterUsageRecords(usageRecords, "delta.commit.retry").length == 1)
+
+        val finalSnapshot = deltaLog.update()
+        val observedEnablementTimestamp =
+          DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP
+            .fromMetaData(finalSnapshot.metadata)
+        val observedEnablementVersion =
+          DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION
+            .fromMetaData(finalSnapshot.metadata)
+        assert(observedEnablementTimestamp.get ==
+          getInCommitTimestamp(deltaLog, finalSnapshot.version))
+        assert(observedEnablementVersion.get == finalSnapshot.version)
+      }
+    }
+  }
+
+  ///////////////////////////////////////////////////////////////////
+  // Timestamps stay in order across the enablement boundary:      //
+  // DML transactions rebased over ICT enablement must receive an  //
+  // inCommitTimestamp strictly greater than the enabling commit.  //
+  ///////////////////////////////////////////////////////////////////
+  // Fix 2: DML prepared before ICT was enabled (inCommitTimestamp=None in CommitInfo)
+  // must fall back to wall-clock time rather than throwing missingCommitTimestamp.
+  testWithDefaultCommitCoordinatorUnset(
+      "Conflict resolution with ICT enablement: pre-ICT DML gets ICT via wall-clock fallback") {
+    withSQLConf(
+      DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString) {
+      withTempTable(createTable = false) { tableName =>
+        spark.range(10).write.format("delta").saveAsTable(tableName)
+        val startTime = System.currentTimeMillis()
+        val clock = new ManualClock(startTime)
+        val deltaLog = getDeltaLogWithClock(tableName, clock)
+        val snapshot = deltaLog.snapshot
+
+        // Start a DML transaction against the pre-ICT snapshot.
+        // When commit() is called later, CommitInfo.inCommitTimestamp will be None
+        // because ICT is not enabled in the transaction's read snapshot.
+        val dmlTxn = deltaLog.startTransaction()
+
+        // ICT enablement wins concurrently. Move clock forward slightly.
+        clock.setTime(startTime + 1000)
+        val ictEnablementMetadataConfig = snapshot.metadata.configuration ++ Map(
+          DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true")
+        val ictEnablementMetadata =
+          snapshot.metadata.copy(configuration = ictEnablementMetadataConfig)
+        deltaLog.startTransaction().commit(Seq(ictEnablementMetadata), ManualUpdate)
+        val enablementVersion = deltaLog.update().version
+
+        // Move clock backward to exercise the Fix 2 fallback path:
+        // resolveTimestampOrderingConflicts falls back to CommitInfo.getTimestamp(),
+        // then Math.max(backwardTime, enablementICT + 1) restores monotonicity.
+        clock.setTime(startTime - 10000)
+        val usageRecords = Log4jUsageLogger.track {
+          dmlTxn.commit(Seq(createTestAddFile("dml")), ManualUpdate)
+        }
+        val dmlVersion = deltaLog.update().version
+
+        assert(filterUsageRecords(usageRecords, "delta.commit.retry").length == 1)
+        // DML must have received a valid ICT despite inCommitTimestamp=None at prepare time.
+        assert(getInCommitTimestamp(deltaLog, dmlVersion) >
+          getInCommitTimestamp(deltaLog, enablementVersion))
+      }
+    }
+  }
+
+  // Fix 3: winningCommitTimestamp must be read from CommitInfo.inCommitTimestamp, not from the
+  // log file's mtime. When rapid commits drive ICT above wall clock, file mtime <
+  // inCommitTimestamp, so using file mtime as the reference produces a DML ICT less than
+  // the winning commit's ICT.
+  testWithDefaultCommitCoordinatorUnset(
+      "Conflict resolution with ICT enablement: DML uses winning commit ICT, not file mtime") {
+    withSQLConf(
+      DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString) {
+      withTempTable(createTable = false) { tableName =>
+        spark.range(10).write.format("delta").saveAsTable(tableName)
+        val startTime = System.currentTimeMillis()
+        // Set the clock far into the future so the enablement commit's ICT will be
+        // well above the file's actual mtime on disk, simulating a table where rapid
+        // commits have driven ICT far above wall clock.
+        val futureTime = startTime + 100000000L
+        val clock = new ManualClock(startTime)
+        val deltaLog = getDeltaLogWithClock(tableName, clock)
+        val snapshot = deltaLog.snapshot
+
+        // DML starts at startTime. CommitInfo.inCommitTimestamp = None (pre-ICT).
+        val dmlTxn = deltaLog.startTransaction()
+
+        // Enablement commit with ICT = futureTime, but file mtime on disk ~= startTime.
+        clock.setTime(futureTime)
+        val ictEnablementMetadataConfig = snapshot.metadata.configuration ++ Map(
+          DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true")
+        val ictEnablementMetadata =
+          snapshot.metadata.copy(configuration = ictEnablementMetadataConfig)
+        deltaLog.startTransaction().commit(Seq(ictEnablementMetadata), ManualUpdate)
+        val enablementVersion = deltaLog.update().version
+        val enablementICT = getInCommitTimestamp(deltaLog, enablementVersion)
+
+        // Verify the test setup: ICT must be well above file mtime.
+        val fs = deltaLog.logPath.getFileSystem(deltaLog.newDeltaHadoopConf())
+        val enablementFileMtime = fs
+          .getFileStatus(FileNames.unsafeDeltaFile(deltaLog.logPath, enablementVersion))
+          .getModificationTime
+        assert(enablementICT > enablementFileMtime,
+          s"Setup: enablementICT $enablementICT must be > file mtime $enablementFileMtime")
+
+        // DML retries with clock back at startTime.
+        clock.setTime(startTime)
+        dmlTxn.commit(Seq(createTestAddFile("dml")), ManualUpdate)
+        val dmlVersion = deltaLog.update().version
+
+        // Without Fix 3: winningCommitTimestamp = commitFileTimestamp ~= startTime, so
+        // updatedTimestamp = max(startTime, startTime+1) = startTime+1 << enablementICT.
+        // With Fix 3: winningCommitTimestamp = enablementICT, so
+        // updatedTimestamp = max(startTime, enablementICT+1) = enablementICT+1 > enablementICT.
+        assert(getInCommitTimestamp(deltaLog, dmlVersion) > enablementICT)
+      }
+    }
+  }
+
+  // Two DML transactions both started before ICT was enabled.  Both rebase over the same
+  // enablement commit and commit sequentially; each must receive an ICT strictly greater than
+  // the previous commit.
+  testWithDefaultCommitCoordinatorUnset(
+      "Conflict resolution with ICT enablement: two pre-ICT DML losers get monotone ICTs") {
+    withSQLConf(
+      DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString) {
+      withTempTable(createTable = false) { tableName =>
+        spark.range(10).write.format("delta").saveAsTable(tableName)
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        val snapshot = deltaLog.snapshot
+        val ictEnablementMetadata = snapshot.metadata.copy(
+          configuration = snapshot.metadata.configuration ++ Map(
+            DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true"))
+
+        val dmlTxn1 = deltaLog.startTransaction()
+        val dmlTxn2 = deltaLog.startTransaction()
+
+        deltaLog.startTransaction().commit(Seq(ictEnablementMetadata), ManualUpdate)
+        val enablementVersion = deltaLog.update().version
+
+        dmlTxn1.commit(Seq(createTestAddFile("dml1")), ManualUpdate)
+        val dml1Version = deltaLog.update().version
+        dmlTxn2.commit(Seq(createTestAddFile("dml2")), ManualUpdate)
+        val dml2Version = deltaLog.update().version
+
+        val enablementICT = getInCommitTimestamp(deltaLog, enablementVersion)
+        val dml1ICT = getInCommitTimestamp(deltaLog, dml1Version)
+        val dml2ICT = getInCommitTimestamp(deltaLog, dml2Version)
+        assert(dml1ICT > enablementICT,
+          s"DML1 ICT $dml1ICT must be > enablement ICT $enablementICT")
+        assert(dml2ICT > dml1ICT, s"DML2 ICT $dml2ICT must be > DML1 ICT $dml1ICT")
+      }
+    }
+  }
+
+  // Complement to "DML prepared pre-ICT gets ICT via wall-clock fallback":
+  // when the DML's wall-clock time is already ABOVE the enabling commit's ICT,
+  // Math.max takes the left (wall-clock) branch and the DML's ICT equals the wall clock.
+  testWithDefaultCommitCoordinatorUnset(
+      "Conflict resolution with ICT enablement: " +
+      "DML wall-clock above enabling ICT uses wall-clock branch") {
+    withSQLConf(
+      DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString) {
+      withTempTable(createTable = false) { tableName =>
+        spark.range(10).write.format("delta").saveAsTable(tableName)
+        val highTime = System.currentTimeMillis() + 500000L
+        val lowTime = highTime - 100000L
+        val clock = new ManualClock(highTime)
+        val deltaLog = getDeltaLogWithClock(tableName, clock)
+        val snapshot = deltaLog.snapshot
+
+        // DML starts while clock is at highTime (pre-ICT, no inCommitTimestamp in CommitInfo).
+        val dmlTxn = deltaLog.startTransaction()
+
+        // ICT enablement commits at lowTime < highTime.
+        clock.setTime(lowTime)
+        val ictEnablementMetadata = snapshot.metadata.copy(
+          configuration = snapshot.metadata.configuration ++ Map(
+            DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true"))
+        deltaLog.startTransaction().commit(Seq(ictEnablementMetadata), ManualUpdate)
+        val enablementVersion = deltaLog.update().version
+        val enablementICT = getInCommitTimestamp(deltaLog, enablementVersion)
+
+        // DML commits with clock back at highTime.
+        clock.setTime(highTime)
+        dmlTxn.commit(Seq(createTestAddFile("dml")), ManualUpdate)
+        val dmlVersion = deltaLog.update().version
+        val dmlICT = getInCommitTimestamp(deltaLog, dmlVersion)
+
+        // Math.max(highTime, enablementICT + 1) = highTime since highTime > enablementICT + 1.
+        assert(dmlICT >= highTime,
+          s"DML ICT $dmlICT must be >= wall-clock $highTime (left branch of Math.max)")
+        assert(dmlICT > enablementICT,
+          s"DML ICT $dmlICT must be > enablement ICT $enablementICT")
+      }
+    }
+  }
+
+  // Regression guard: a plain DML-vs-DML conflict on an already-ICT-enabled table must
+  // still produce strictly monotone ICTs and must not disturb the enablement provenance.
+  testWithDefaultCommitCoordinatorUnset(
+      "Conflict resolution with ICT enablement: concurrent DML preserves ICT provenance") {
+    withSQLConf(
+      DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString) {
+      withTempTable(createTable = false) { tableName =>
+        spark.range(10).write.format("delta").saveAsTable(tableName)
+        spark.sql(s"ALTER TABLE $tableName SET TBLPROPERTIES " +
+          s"('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        val snapshot = deltaLog.snapshot
+        val origEnablementVersion =
+          DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.fromMetaData(snapshot.metadata)
+        val origEnablementTimestamp =
+          DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.fromMetaData(snapshot.metadata)
+        assert(origEnablementVersion.isDefined && origEnablementTimestamp.isDefined)
+
+        val dmlTxn1 = deltaLog.startTransaction()
+        val dmlTxn2 = deltaLog.startTransaction()
+
+        dmlTxn1.commit(Seq(createTestAddFile("dml1")), ManualUpdate)
+        val dml1Version = deltaLog.update().version
+        dmlTxn2.commit(Seq(createTestAddFile("dml2")), ManualUpdate)
+        val dml2Version = deltaLog.update().version
+
+        assert(getInCommitTimestamp(deltaLog, dml2Version) >
+          getInCommitTimestamp(deltaLog, dml1Version))
+        val finalSnapshot = deltaLog.update()
+        assert(
+          DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION
+            .fromMetaData(finalSnapshot.metadata) == origEnablementVersion)
+        assert(
+          DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP
+            .fromMetaData(finalSnapshot.metadata) == origEnablementTimestamp)
+      }
+    }
+  }
+
+  ///////////////////////////////////////////////////////////////////
+  // Recovering dropped provenance (Branch 2 fix): REPLACE/CLONE   //
+  // drops provenance keys while keeping ICT enabled; the fix      //
+  // must restore them from the last committed snapshot.           //
+  ///////////////////////////////////////////////////////////////////
+  // Covers the case where the snapshot that REPLACE reads is NOT the ICT-enablement commit
+  // but a later metadata-changing commit that carried provenance forward. Branch 2 of
+  // getUpdatedMetadataWithICTEnablementInfo must still restore provenance from that
+  // intermediate snapshot, not skip it.
+  testWithDefaultCommitCoordinatorUnset(
+      "REPLACE retains ICT provenance when last committed metadata " +
+      "is from a non-enablement commit") {
+    withSQLConf(
+      DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString,
+      DeltaSQLConf.IN_COMMIT_TIMESTAMP_RETAIN_ENABLEMENT_INFO_FIX_ENABLED.key -> "true") {
+      withTempTable(createTable = false) { tableName =>
+        spark.range(10).write.format("delta").saveAsTable(tableName)
+        spark.sql(s"INSERT INTO $tableName VALUES 10")
+        spark.sql(s"ALTER TABLE $tableName SET TBLPROPERTIES " +
+          s"('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        val enablementSnapshot = deltaLog.snapshot
+        val origEnablementTimestamp =
+          DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP
+            .fromMetaData(enablementSnapshot.metadata)
+        val origEnablementVersion =
+          DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION
+            .fromMetaData(enablementSnapshot.metadata)
+        assert(origEnablementTimestamp.isDefined && origEnablementVersion.isDefined)
+
+        // A metadata-changing commit after enablement makes this the snapshot the REPLACE
+        // will read, not the ICT-enablement commit itself. Provenance is carried forward.
+        spark.sql(s"ALTER TABLE $tableName SET TBLPROPERTIES " +
+          s"('${DeltaConfigs.CHECKPOINT_INTERVAL.key}' = '20')")
+        val intermediateSnapshot = deltaLog.update()
+        assert(intermediateSnapshot.version > enablementSnapshot.version)
+        assert(DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP
+          .fromMetaData(intermediateSnapshot.metadata) == origEnablementTimestamp,
+          "intermediate commit must carry provenance forward")
+
+        // Simulate a REPLACE that keeps ICT enabled but drops provenance keys.
+        val replaceMetadata = intermediateSnapshot.metadata.copy(
+          configuration = Map(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true"))
+        deltaLog.startTransaction().commit(Seq(replaceMetadata), ManualUpdate)
+
+        val finalSnapshot = deltaLog.update()
+        assert(
+          DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP
+            .fromMetaData(finalSnapshot.metadata) == origEnablementTimestamp)
+        assert(
+          DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION
+            .fromMetaData(finalSnapshot.metadata) == origEnablementVersion)
+      }
+    }
+  }
+
+  // Direct unit test of Branch 2 of getUpdatedMetadataWithICTEnablementInfo:
+  // when ICT is still enabled but provenance was dropped (REPLACE/CLONE pattern),
+  // the fix must copy provenance from lastCommittedMetadata; kill switch disables it.
+  testWithDefaultCommitCoordinatorUnset(
+      "getUpdatedMetadataWithICTEnablementInfo Branch 2 restores dropped provenance") {
+    val enablementVersion = 5L
+    val enablementTimestamp = 12345678L
+    val lastCommittedMetadata = Metadata(configuration = Map(
+      DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true",
+      DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.key -> enablementVersion.toString,
+      DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.key -> enablementTimestamp.toString))
+    val currentMetadata = Metadata(configuration = Map(
+      DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true"))
+
+    withSQLConf(
+        DeltaSQLConf.IN_COMMIT_TIMESTAMP_RETAIN_ENABLEMENT_INFO_FIX_ENABLED.key -> "true") {
+      val result = InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo(
+        spark,
+        inCommitTimestamp = 99999999L,
+        InCommitTimestampUtils.MetadataWithVersion(6, currentMetadata),
+        InCommitTimestampUtils.MetadataWithVersion(5, lastCommittedMetadata))
+      assert(result.isDefined)
+      assert(DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION
+        .fromMetaData(result.get).contains(enablementVersion))
+      assert(DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP
+        .fromMetaData(result.get).contains(enablementTimestamp))
+    }
+
+    withSQLConf(
+        DeltaSQLConf.IN_COMMIT_TIMESTAMP_RETAIN_ENABLEMENT_INFO_FIX_ENABLED.key -> "false") {
+      val result = InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo(
+        spark,
+        inCommitTimestamp = 99999999L,
+        InCommitTimestampUtils.MetadataWithVersion(6, currentMetadata),
+        InCommitTimestampUtils.MetadataWithVersion(5, lastCommittedMetadata))
+      assert(result.isEmpty)
     }
   }
 

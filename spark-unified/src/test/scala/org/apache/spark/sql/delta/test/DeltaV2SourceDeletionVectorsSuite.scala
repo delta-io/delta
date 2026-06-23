@@ -55,7 +55,11 @@ class DeltaV2SourceDeletionVectorsSuite
     "subsequent DML commands are processed correctly in a batch - INSERT->DELETE" +
       " - List((ignoreChanges,true))",
     "multiple deletion vectors per file - List((ignoreChanges,true))",
-    "multiple deletion vectors per file - List((ignoreFileDeletion,true))"
+    "multiple deletion vectors per file - List((ignoreFileDeletion,true))",
+    "streaming read with nulls and deletion vectors does not NPE",
+    "streaming read with variant column and deletion vectors does not ClassCastException",
+    "variant column and deletion vectors preserve payload identity",
+    "array column and deletion vectors preserve element identity"
   )
 
   override protected def shouldFailTests: Set[String] = Set.empty

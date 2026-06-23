@@ -219,7 +219,7 @@ object FileMetadataMaterializationTracker extends DeltaLogging {
       logInfo(log"File metadata materialization metrics for the completed query: " +
         log"${MDC(DeltaLogKeys.METRICS, trackerMetrics)}")
       recordDeltaEvent(
-        deltaLog = origTxn.deltaLog,
+        provider = origTxn,
         opType = metricsOpType,
         data = trackerMetrics)
     } finally { tracker.releaseAllPermits()  }
