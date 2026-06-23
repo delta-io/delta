@@ -46,6 +46,14 @@ import org.apache.spark.sql.types.StructType;
 import org.apache.spark.unsafe.types.UTF8String;
 import scala.Tuple2;
 
+/**
+ * Batch implementation for read-time CDF that turns a commit range into CDC input partitions. It
+ * iterates the AddFile, RemoveFile and Metadata actions of each commit in the range, emitting one
+ * partition per data-changing file (RemoveFiles before AddFiles per commit), and rejects ranges
+ * whose schema or row-tracking state is not stable. {@link #createReaderFactory()} wraps the Parquet
+ * reader with {@link CDCPartitionReaderFactory} to append the CDC tail columns ({@code _change_type},
+ * {@code _commit_version}, {@code _commit_timestamp}).
+ */
 public class DeltaChangelogBatch implements Batch {
   private static final Set<DeltaLogActionUtils.DeltaAction> CHANGELOG_ACTION_SET =
       Set.of(
