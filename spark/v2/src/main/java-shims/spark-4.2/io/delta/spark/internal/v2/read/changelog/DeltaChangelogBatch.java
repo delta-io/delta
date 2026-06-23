@@ -170,10 +170,9 @@ public class DeltaChangelogBatch implements Batch {
         } catch (RuntimeException e) {
           throw e;
         } catch (Exception e) {
-          // Include the inner message so AnalysisException error classes
-          // (e.g. DELTA_CHANGELOG_ROW_TRACKING_DISABLED_IN_RANGE) reach the user.
-          throw new RuntimeException(
-              "Failed to process CDC commit actions: " + e.getMessage(), e);
+          // Delta error-class exceptions raised above are rethrown unchanged; other checked
+          // exceptions are wrapped in a Delta error class rather than a bare RuntimeException.
+          DeltaErrors.throwChangelogReadFailed("processing commit actions", e);
         }
         partitions.addAll(commitRemoves);
         partitions.addAll(commitAdds);
@@ -181,8 +180,7 @@ public class DeltaChangelogBatch implements Batch {
     } catch (RuntimeException e) {
       throw e;
     } catch (Exception e) {
-      throw new RuntimeException(
-          "Failed to plan CDC input partitions: " + e.getMessage(), e);
+      DeltaErrors.throwChangelogReadFailed("planning input partitions", e);
     }
     return partitions.toArray(new InputPartition[0]);
   }

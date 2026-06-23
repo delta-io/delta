@@ -696,6 +696,22 @@ trait DeltaErrorsBase
       messageParameters = Array(version.toString))
   }
 
+  /**
+   * Read-time CDF batch read failed while reading the changelog (e.g. an IO error while iterating
+   * commit actions or planning input partitions). A cause that already carries a Spark error class
+   * is rethrown unchanged so its user-facing class is preserved. Anything else is wrapped in a
+   * Delta error class rather than a bare RuntimeException. `context` names the phase, e.g.
+   * "processing commit actions".
+   */
+  def throwChangelogReadFailed(context: String, cause: Throwable): Nothing = cause match {
+    case t: org.apache.spark.SparkThrowable => throw t.asInstanceOf[Throwable]
+    case t =>
+      throw new DeltaIllegalStateException(
+        errorClass = "DELTA_CHANGELOG_READ_FAILED",
+        messageParameters = Array(context),
+        cause = t)
+  }
+
   def setTransactionVersionConflict(appId: String, version1: Long, version2: Long): Throwable = {
     new IllegalArgumentException(
       s"Two SetTransaction actions within the same transaction have the same appId ${appId} but " +

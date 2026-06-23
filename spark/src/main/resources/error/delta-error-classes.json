@@ -402,6 +402,12 @@
     ],
     "sqlState" : "22003"
   },
+  "DELTA_CHANGELOG_READ_FAILED" : {
+    "message" : [
+      "Failed to read the changelog while <context>."
+    ],
+    "sqlState" : "XXKDS"
+  },
   "DELTA_CHANGELOG_REQUIRES_ROW_TRACKING" : {
     "message" : [
       "Change data capture via CHANGES on `<tableName>` requires row tracking.",
