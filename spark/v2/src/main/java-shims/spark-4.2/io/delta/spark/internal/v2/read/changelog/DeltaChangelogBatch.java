@@ -235,7 +235,7 @@ public class DeltaChangelogBatch implements Batch {
         scala.collection.immutable.Map$.MODULE$.empty();
     SQLConf sqlConf = SQLConf.get();
 
-    // Read-time Auto-CDF: tail columns are added by CDCPartitionReaderFactory below, so
+    // Read-time CDF: tail columns are added by CDCPartitionReaderFactory below, so
     // isWriteTimeCDCRead stays false (write-time streaming is the only true caller).
     PartitionReaderFactory delegate =
         PartitionUtils.createDeltaParquetReaderFactory(

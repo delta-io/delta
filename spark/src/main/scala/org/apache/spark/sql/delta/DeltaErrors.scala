@@ -634,7 +634,7 @@ trait DeltaErrorsBase
   }
 
   /**
-   * Auto-CDF batch read rejected because the source table does not have row tracking enabled.
+   * Read-time CDF batch read rejected because the source table does not have row tracking enabled.
    * Row tracking is required for the V2 changelog reader to identify rows across commits.
    *
    * Returns `Nothing` so Scala callers can use this in expression position (e.g. as a `match`
@@ -647,7 +647,7 @@ trait DeltaErrorsBase
   }
 
   /**
-   * Auto-CDF batch read rejected because the user requested an unbounded changelog range.
+   * Read-time CDF batch read rejected because the user requested an unbounded changelog range.
    * Batch CHANGES queries require explicit start and end bounds.
    *
    * Returns `Nothing` so Scala callers can use this in expression position (e.g. as a `match`
@@ -660,7 +660,7 @@ trait DeltaErrorsBase
   }
 
   /**
-   * Auto-CDF batch read rejected because the table resolved by the catalog is not a V2
+   * Read-time CDF batch read rejected because the table resolved by the catalog is not a V2
    * [[io.delta.spark.internal.v2.catalog.DeltaV2Table]]. The V2 connector is the only path that
    * implements the catalog-driven CHANGES surface. V1 Delta tables (`DeltaTableV2`) continue to
    * use the legacy CDF path that does not go through `TableCatalog.loadChangelog`. Use
@@ -676,7 +676,7 @@ trait DeltaErrorsBase
   }
 
   /**
-   * Auto-CDF batch read rejected because the table schema differs at some commit within the
+   * Read-time CDF batch read rejected because the table schema differs at some commit within the
    * requested range. The connector requires the schema to be stable across the read range so
    * that downstream batch CDC post-processing sees a single schema.
    */
@@ -687,7 +687,7 @@ trait DeltaErrorsBase
   }
 
   /**
-   * Auto-CDF batch read rejected because row tracking was disabled at some commit within the
+   * Read-time CDF batch read rejected because row tracking was disabled at some commit within the
    * requested range (the `delta.enableRowTracking` table property was set to `false`).
    */
   def throwChangelogRowTrackingDisabledInRange(version: Long): Nothing = {

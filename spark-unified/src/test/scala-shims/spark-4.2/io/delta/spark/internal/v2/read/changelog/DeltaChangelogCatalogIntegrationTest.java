@@ -76,7 +76,7 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
                   spark.sql(String.format("INSERT INTO %s VALUES (3, 'Charlie')", tableName));
                   spark.sql(String.format("INSERT INTO %s VALUES (4, 'Dave')", tableName));
                   spark.sql(String.format("INSERT INTO %s VALUES (5, 'Eve')", tableName));
-                  // Auto-CDF requires the V2 connector at read time. Writes above run in the
+                  // Read-time CDF requires the V2 connector at read time. Writes above run in the
                   // session-default mode (AUTO → V1 connector for INSERT). The CHANGES read in
                   // the test body needs STRICT to ensure loadTable returns a V2 DeltaV2Table.
                   withSQLConf(
@@ -94,7 +94,7 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
   /**
    * Returns the commit timestamp of {@code version}. Resolves the snapshot directly through the
    * kernel snapshot manager, so it works irrespective of the catalog mode flipped on by the test
-   * body (which keeps the catalog in STRICT for the Auto-CDF read path).
+   * body (which keeps the catalog in STRICT for the read-time CDF read path).
    */
   private java.sql.Timestamp commitTimestamp(String tablePath, long version) {
     DeltaSnapshotManager snapshotManager =
