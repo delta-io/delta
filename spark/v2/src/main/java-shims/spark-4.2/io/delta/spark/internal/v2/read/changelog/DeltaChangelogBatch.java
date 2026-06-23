@@ -56,19 +56,19 @@ public class DeltaChangelogBatch implements Batch {
 
   private final CommitRange commitRange;
   private final Engine engine;
-  private final StructType dataSchema;
+  private final StructType endDataSchema;
   private final Snapshot snapshot;
   private final Configuration hadoopConf;
 
   public DeltaChangelogBatch(
       CommitRange commitRange,
       Engine engine,
-      StructType dataSchema,
+      StructType endDataSchema,
       Snapshot snapshot,
       Configuration hadoopConf) {
     this.commitRange = commitRange;
     this.engine = engine;
-    this.dataSchema = dataSchema;
+    this.endDataSchema = endDataSchema;
     this.snapshot = snapshot;
     this.hadoopConf = hadoopConf;
   }
@@ -80,7 +80,7 @@ public class DeltaChangelogBatch implements Batch {
     // Pre-check catches schema drift between start and end. The per-commit loop below catches
     // in-range Metadata commits.
     StructType startSchema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
-    if (!startSchema.equals(dataSchema)) {
+    if (!startSchema.equals(endDataSchema)) {
       DeltaErrors.throwChangelogSchemaChangeInRange(
           ((CommitRangeImpl) commitRange).getStartVersion());
     }
@@ -152,7 +152,7 @@ public class DeltaChangelogBatch implements Batch {
                 Metadata md = metadataOpt.get();
                 StructType commitSchema =
                     SchemaUtils.convertKernelSchemaToSparkSchema(md.getSchema());
-                if (!commitSchema.equals(dataSchema)) {
+                if (!commitSchema.equals(endDataSchema)) {
                   DeltaErrors.throwChangelogSchemaChangeInRange(commit.getVersion());
                 }
                 String rtValue = md.getConfiguration().get("delta.enableRowTracking");
@@ -229,7 +229,7 @@ public class DeltaChangelogBatch implements Batch {
   public PartitionReaderFactory createReaderFactory() {
     StructType partitionSchema = new StructType();
     StructType readDataSchema =
-        dataSchema.add(DeltaChangelog.METADATA_COLUMN, DeltaChangelog.METADATA_STRUCT, false);
+        endDataSchema.add(DeltaChangelog.METADATA_COLUMN, DeltaChangelog.METADATA_STRUCT, false);
     Filter[] dataFilters = new Filter[0];
     scala.collection.immutable.Map<String, String> scalaOptions =
         scala.collection.immutable.Map$.MODULE$.empty();
@@ -240,7 +240,7 @@ public class DeltaChangelogBatch implements Batch {
     PartitionReaderFactory delegate =
         PartitionUtils.createDeltaParquetReaderFactory(
             snapshot,
-            dataSchema,
+            endDataSchema,
             partitionSchema,
             readDataSchema,
             /* ddlOrderedReadOutputSchema */ readDataSchema,
