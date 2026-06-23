@@ -28,6 +28,7 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.UnsupportedProtocolVersionException;
 import io.delta.kernel.exceptions.UnsupportedTableFeatureException;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction;
@@ -499,6 +500,16 @@ public class SparkMicroBatchStream
       if (interruptCause.isPresent()) {
         throw new UncheckedIOException(interruptCause.get());
       }
+      // Translate Kernel's protocol-version error into Delta's InvalidProtocolVersionException.
+      Optional<UnsupportedProtocolVersionException> protocolCause = findUnsupportedProtocolCause(e);
+      if (protocolCause.isPresent()) {
+        UnsupportedProtocolVersionException p = protocolCause.get();
+        boolean isReader =
+            p.getVersionType() == UnsupportedProtocolVersionException.ProtocolVersionType.READER;
+        throw (RuntimeException)
+            DeltaErrors.invalidProtocolVersionError(
+                p.getTablePath(), isReader ? p.getVersion() : 0, isReader ? 0 : p.getVersion());
+      }
       throw e;
     }
   }
@@ -743,6 +754,22 @@ public class SparkMicroBatchStream
     Throwable cause = t.getCause();
     if (cause instanceof ClosedByInterruptException) {
       return Optional.of((ClosedByInterruptException) cause);
+    }
+    return Optional.empty();
+  }
+
+  /**
+   * Walks the cause chain of the given throwable looking for a Kernel {@link
+   * UnsupportedProtocolVersionException}.
+   */
+  static Optional<UnsupportedProtocolVersionException> findUnsupportedProtocolCause(Throwable t) {
+    for (Throwable current = t; current != null; current = current.getCause()) {
+      if (current instanceof UnsupportedProtocolVersionException) {
+        return Optional.of((UnsupportedProtocolVersionException) current);
+      }
+      if (current.getCause() == current) {
+        break;
+      }
     }
     return Optional.empty();
   }

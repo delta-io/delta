@@ -23,6 +23,7 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.spark.internal.v2.read.MetadataEvolutionHandler;
@@ -44,6 +45,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Supplier;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
@@ -62,6 +64,7 @@ import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.connector.read.Statistics;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.WriteBuilder;
+import org.apache.spark.sql.delta.DeltaErrors;
 import org.apache.spark.sql.delta.DeltaTableUtils;
 import org.apache.spark.sql.delta.RowCommitVersion$;
 import org.apache.spark.sql.delta.RowId$;
@@ -199,7 +202,18 @@ public class DeltaV2Table
     this.kernelEngine = DefaultEngine.create(this.hadoopConf);
     this.snapshotManager = SnapshotManagerFactory.create(tablePath, kernelEngine, catalogTable);
     // Load the initial snapshot through the manager
-    this.initialSnapshot = snapshotManager.loadLatestSnapshot();
+    Snapshot loadedSnapshot;
+    try {
+      loadedSnapshot = snapshotManager.loadLatestSnapshot();
+    } catch (TableNotFoundException e) {
+      // The _delta_log directory exists but holds no commits: the location is an initialized but
+      // empty Delta table.
+      if (deltaLogDirExists()) {
+        DeltaErrors.throwSchemaNotSet();
+      }
+      throw e;
+    }
+    this.initialSnapshot = loadedSnapshot;
 
     this.isCDCRead = CDCReader.isCDCRead(new CaseInsensitiveStringMap(this.options));
 
@@ -224,6 +238,17 @@ public class DeltaV2Table
     // Schema-related metadata is lazily computed on first access within SchemaProvider
     this.schemaProvider =
         new SchemaProvider(SparkSession.active(), rawSchema, partitionColumnNames);
+  }
+
+  /** Returns whether the table's {@code _delta_log} directory exists. */
+  private boolean deltaLogDirExists() {
+    try {
+      Path logPath = new Path(tablePath, "_delta_log");
+      FileSystem fs = logPath.getFileSystem(hadoopConf);
+      return fs.exists(logPath);
+    } catch (Exception ioe) {
+      return false;
+    }
   }
 
   /**

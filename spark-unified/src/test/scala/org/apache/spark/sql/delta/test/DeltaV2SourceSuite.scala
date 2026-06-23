@@ -145,6 +145,8 @@ object DeltaV2SourceSuite {
     "deltaSourceIgnoreDeleteError contains removeFile, version, tablePath",
     "deltaSourceIgnoreChangesError contains changeInfo, version, tablePath",
     "excludeRegex throws good error on bad regex pattern",
+    "no schema should throw an exception",
+    "Delta sources should verify the protocol reader version",
 
     // ========== Misc tests ==========
     "a fast writer should not starve a Delta source",
@@ -181,10 +183,6 @@ object DeltaV2SourceSuite {
     "incremental: commit file gap between versions, failOnDataLoss=false succeeds",
 
     // === Misc ===
-    // TODO(#5900): fix exception mismatch
-    "no schema should throw an exception",
-    // TODO(#5900): fix exception mismatch
-    "Delta sources should verify the protocol reader version",
     // TODO(#5895): gracefully handle corrupt checkpoint
     "start from corrupt checkpoint",
 
