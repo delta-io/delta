@@ -845,6 +845,112 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
   }
 
   /**
+   * Row tracking is toggled off and back on entirely BEFORE the requested range. The read range
+   * itself stays row-tracking-enabled, so the out-of-range toggle must not fail the read.
+   */
+  @Test
+  public void testChangelogAllowsRowTrackingToggleBeforeRange() throws Exception {
+    String tableName = "dsv2_cdc_catalog_rt_toggle_before_" + System.nanoTime();
+    String tablePath = System.getProperty("java.io.tmpdir") + "/" + tableName;
+
+    withTable(
+        tablePath,
+        () ->
+            withTable(
+                new String[] {tableName},
+                () -> {
+                  // v0: CREATE with row tracking enabled.
+                  spark.sql(
+                      String.format(
+                          "CREATE TABLE %s (id BIGINT, name STRING) USING delta LOCATION '%s' "
+                              + "TBLPROPERTIES "
+                              + "('delta.enableDeletionVectors'='false', "
+                              + "'delta.enableRowTracking'='true')",
+                          tableName, tablePath));
+                  // v1: INSERT (row tracking on).
+                  spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice')", tableName));
+                  // v2: disable row tracking, v3: re-enable it -- both before the read range.
+                  spark.sql(
+                      String.format(
+                          "ALTER TABLE %s SET TBLPROPERTIES ('delta.enableRowTracking'='false')",
+                          tableName));
+                  spark.sql(
+                      String.format(
+                          "ALTER TABLE %s SET TBLPROPERTIES ('delta.enableRowTracking'='true')",
+                          tableName));
+                  // v4, v5: INSERTs inside the row-tracking-enabled read range.
+                  spark.sql(String.format("INSERT INTO %s VALUES (2, 'Bob')", tableName));
+                  spark.sql(String.format("INSERT INTO %s VALUES (3, 'Charlie')", tableName));
+
+                  withSQLConf(
+                      "spark.databricks.delta.v2.enableMode",
+                      "STRICT",
+                      () -> {
+                        List<Row> rows =
+                            spark
+                                .sql(
+                                    String.format(
+                                        "SELECT id, _change_type FROM %s "
+                                            + "CHANGES FROM VERSION 4 TO VERSION 5",
+                                        tableName))
+                                .collectAsList();
+                        assertEquals(
+                            2, rows.size(), "Expected the two in-range inserts to be returned");
+                      });
+                }));
+  }
+
+  /**
+   * Row tracking is disabled at a commit AFTER the requested range. The read range stays
+   * row-tracking-enabled, so the later toggle must not fail the read.
+   */
+  @Test
+  public void testChangelogAllowsRowTrackingDisabledAfterRange() throws Exception {
+    String tableName = "dsv2_cdc_catalog_rt_disabled_after_" + System.nanoTime();
+    String tablePath = System.getProperty("java.io.tmpdir") + "/" + tableName;
+
+    withTable(
+        tablePath,
+        () ->
+            withTable(
+                new String[] {tableName},
+                () -> {
+                  // v0: CREATE with row tracking enabled.
+                  spark.sql(
+                      String.format(
+                          "CREATE TABLE %s (id BIGINT, name STRING) USING delta LOCATION '%s' "
+                              + "TBLPROPERTIES "
+                              + "('delta.enableDeletionVectors'='false', "
+                              + "'delta.enableRowTracking'='true')",
+                          tableName, tablePath));
+                  // v1, v2: INSERTs inside the row-tracking-enabled read range.
+                  spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice')", tableName));
+                  spark.sql(String.format("INSERT INTO %s VALUES (2, 'Bob')", tableName));
+                  // v3: disable row tracking after the range.
+                  spark.sql(
+                      String.format(
+                          "ALTER TABLE %s SET TBLPROPERTIES ('delta.enableRowTracking'='false')",
+                          tableName));
+
+                  withSQLConf(
+                      "spark.databricks.delta.v2.enableMode",
+                      "STRICT",
+                      () -> {
+                        List<Row> rows =
+                            spark
+                                .sql(
+                                    String.format(
+                                        "SELECT id, _change_type FROM %s "
+                                            + "CHANGES FROM VERSION 1 TO VERSION 2",
+                                        tableName))
+                                .collectAsList();
+                        assertEquals(
+                            2, rows.size(), "Expected the two in-range inserts to be returned");
+                      });
+                }));
+  }
+
+  /**
    * A CHANGES read across a range where the table schema evolves mid-range must be rejected with
    * {@code DELTA_CHANGELOG_SCHEMA_CHANGE_IN_RANGE}.
    */
