@@ -268,7 +268,16 @@ case class CreateDeltaTableCommand(
       didNotChangeMetadata,
       createTableFunc)
 
+    runPostTableCreationUpdates(
+      sparkSession, txnUsedForCommit, deltaLog, postCommitSnapshot, tableWithLocation)
+  }
 
+  private def runPostTableCreationUpdates(
+      sparkSession: SparkSession,
+      txnUsedForCommit: OptimisticTransaction,
+      deltaLog: DeltaLog,
+      postCommitSnapshot: Snapshot,
+      tableWithLocation: CatalogTable): Unit = {
 
     if (UniversalFormat.hudiEnabled(postCommitSnapshot.metadata) &&
         !txnUsedForCommit.containsPostCommitHook(HudiConverterHook)) {
