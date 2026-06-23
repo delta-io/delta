@@ -160,7 +160,9 @@ object DeltaV2SourceSuite {
     "streaming read preserves percent-literal string partition value",
     "initial snapshot: checkpoint resume produces all rows without duplicates",
     "initial snapshot: Trigger.AvailableNow processes all data and terminates",
-    "initial snapshot: checkpoint resume after new commits produces all rows"
+    "initial snapshot: checkpoint resume after new commits produces all rows",
+    "no schema should throw an exception",
+    "Delta sources should verify the protocol reader version"
   )
 
   val FailingTests: Set[String] = Set(
@@ -181,10 +183,6 @@ object DeltaV2SourceSuite {
     "incremental: commit file gap between versions, failOnDataLoss=false succeeds",
 
     // === Misc ===
-    // TODO(#5900): fix exception mismatch
-    "no schema should throw an exception",
-    // TODO(#5900): fix exception mismatch
-    "Delta sources should verify the protocol reader version",
     // TODO(#5895): gracefully handle corrupt checkpoint
     "start from corrupt checkpoint",
 
