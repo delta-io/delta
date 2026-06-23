@@ -34,6 +34,7 @@ import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReader;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.delta.DefaultRowCommitVersion$;
+import org.apache.spark.sql.delta.DeltaConfigs$;
 import org.apache.spark.sql.delta.DeltaErrors;
 import org.apache.spark.sql.delta.RowId$;
 import org.apache.spark.sql.execution.datasources.FilePartition;
@@ -155,9 +156,11 @@ public class DeltaChangelogBatch implements Batch {
                 if (!SchemaUtils.isReadCompatible(commitSchema, endDataSchema)) {
                   DeltaErrors.throwChangelogSchemaChangeInRange(commit.getVersion());
                 }
-                String rtValue = md.getConfiguration().get("delta.enableRowTracking");
-                // Absent key means the prior value persists (no change at this commit).
-                boolean rowTrackingEnabled = rtValue == null || "true".equalsIgnoreCase(rtValue);
+                String rtValue =
+                    md.getConfiguration().get(DeltaConfigs$.MODULE$.ROW_TRACKING_ENABLED().key());
+                // A new Metadata action fully replaces the prior configuration, so an absent
+                // row-tracking key means the table default (disabled), not an inherited value.
+                boolean rowTrackingEnabled = "true".equalsIgnoreCase(rtValue);
                 if (!rowTrackingEnabled) {
                   DeltaErrors.throwChangelogRowTrackingDisabledInRange(commit.getVersion());
                 }
