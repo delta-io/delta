@@ -39,6 +39,7 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{DataFrame, _}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.Literal.{FalseLiteral, TrueLiteral}
@@ -273,7 +274,6 @@ trait DataSkippingReaderBase
   def version: Long
   def metadata: Metadata
   private[delta] def sizeInBytesIfKnown: Option[Long]
-  def deltaLog: DeltaLog
   def schema: StructType
   private[delta] def numOfFilesIfKnown: Option[Long]
   def redactedPath: String
@@ -710,7 +710,7 @@ trait DataSkippingReaderBase
     val (partitionFilters, dataFilters) = eligibleFilters
       .partition(isPredicatePartitionColumnsOnly(_, partitionColumns, spark))
 
-    if (dataFilters.isEmpty) recordDeltaOperation(deltaLog, "delta.skipping.partition") {
+    if (dataFilters.isEmpty) recordDeltaOperation(snapshotToScan, "delta.skipping.partition") {
       // When there are only partition filters we can scan allFiles
       // rather than withStats and thus we skip data skipping information.
       val (files, scanSize) = filterOnPartitions(partitionFilters, keepNumRecords)

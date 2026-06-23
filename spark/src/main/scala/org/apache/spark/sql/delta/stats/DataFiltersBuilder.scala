@@ -19,9 +19,9 @@ package org.apache.spark.sql.delta.stats
 // scalastyle:off import.ordering.noEmptyLine
 
 import org.apache.spark.sql.delta.skipping.clustering.ClusteringColumnInfo
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLog}
+import org.apache.spark.sql.delta.DeltaColumnMapping
 import org.apache.spark.sql.delta.ClassicColumnConversions._
-import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider}
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaDataSkippingType.DeltaDataSkippingType
@@ -31,6 +31,7 @@ import org.apache.spark.sql.util.ScalaExtensions._
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.Literal.{FalseLiteral, TrueLiteral}
 import org.apache.spark.sql.catalyst.util.TypeUtils
