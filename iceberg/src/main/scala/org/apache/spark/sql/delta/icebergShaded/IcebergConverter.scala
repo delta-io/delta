@@ -542,7 +542,7 @@ class IcebergConverter
       domainMetadata,
       Some(txnInfo.protocol),
       txnInfo,
-      Some(catalogTable)
+      catalogTable
     )
   }
 
@@ -950,7 +950,7 @@ class DummySnapshotWithAllFilesSupport(
     val domainMetadataOpt: Option[Seq[DomainMetadata]] = None,
     val protocolOpt: Option[Protocol] = None,
     val txnInfo: CurrentTransactionInfo,
-    override val catalogTable: Option[CatalogTable])
+    val catalogTable: CatalogTable)
   extends DummySnapshot(
     logPath,
     deltaLog,
@@ -968,7 +968,7 @@ class DummySnapshotWithAllFilesSupport(
       } else { // construct allFiles from baseSnapshot
         val baseSnapshot = baseVersion match {
           case txnInfo.readSnapshot.version => txnInfo.readSnapshot
-          case _ => deltaLog.getSnapshotAt(baseVersion, catalogTableOpt = catalogTable)
+          case _ => deltaLog.getSnapshotAt(baseVersion, catalogTableOpt = Some(catalogTable))
         }
         val existingFiles = baseSnapshot.allFiles.collect().toIterator
         replay.append(0, existingFiles)

@@ -127,7 +127,6 @@ class Snapshot(
   override def dataPath: Path = deltaLog.dataPath
   override def logPath: Path = deltaLog.logPath
 
-
   protected def spark = SparkSession.active
 
   /** Snapshot to scan by the DeltaScanGenerator for metadata query optimizations */
