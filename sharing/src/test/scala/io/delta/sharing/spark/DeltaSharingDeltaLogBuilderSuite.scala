@@ -24,6 +24,7 @@ import io.delta.sharing.client.{DeltaSharingClient, DeltaSharingRestClient}
 import io.delta.sharing.client.model.{Table => DeltaSharingTable}
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
+import org.apache.logging.log4j.Level
 
 import org.apache.spark.delta.sharing.CachedTableManager
 import org.apache.spark.sql.{QueryTest, SparkSession}
@@ -194,7 +195,10 @@ class DeltaSharingDeltaLogBuilderSuite
       val appender = new LogAppender("snapshot loader fetch log")
       withLogAppender(
         appender,
-        loggerNames = Seq("io.delta.sharing.spark.DeltaSharingDeltaLogBuilder")) {
+        loggerNames = Seq("io.delta.sharing.spark.DeltaSharingDeltaLogBuilder"),
+        // Pin the level: withLogAppender's default level differs by Spark version (None on 4.0,
+        // Some(INFO) on 4.1+), and without it the INFO line is filtered out under Spark 4.0.
+        level = Some(Level.INFO)) {
         DeltaSharingDeltaLogBuilder.buildSnapshotDeltaLogPath(
           client = client,
           table = dsTable,
