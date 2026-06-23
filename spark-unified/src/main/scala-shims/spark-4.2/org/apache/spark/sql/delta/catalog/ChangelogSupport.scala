@@ -35,25 +35,17 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
  *
  * <p>The trait is intentionally thin. `loadChangelog` resolves the table via the catalog's own
  * `loadTable`. Read-time CDF only flows through the V2 connector, so in `AUTO`/`STRICT` mode (see
- * [[DeltaV2Mode.shouldRouteChangelogToV2]]) a V1 `DeltaTableV2` is re-resolved as a
- * [[DeltaV2Table]] for the CHANGES read; in `NONE` mode it is rejected. It then resolves the
- * requested [[ChangelogRange]] against the table's snapshot manager, and wraps everything into
- * a [[DeltaChangelog]]. All connector-level work (loading snapshots, validating row tracking,
- * inspecting metadata actions) is deferred to the read path inside [[DeltaChangelog]].
+ * [[DeltaV2Mode.shouldRouteChangelogToV2]]) the table is re-resolved to a [[DeltaV2Table]] for the
+ * CHANGES read; in `NONE` mode it is rejected. It then resolves the requested [[ChangelogRange]]
+ * against the table's snapshot manager, and wraps everything into a [[DeltaChangelog]].
+ * All connector-level work (loading snapshots, validating row tracking, inspecting metadata
+ * actions) is deferred to the read path inside [[DeltaChangelog]].
  *
  * <p>The whole entry point is gated by [[DeltaSQLConf.DELTA_CHANGELOG_V2_ENABLED]] (default
  * `false`). When the flag is off the trait delegates to the parent `loadChangelog` default,
  * which surfaces `UNSUPPORTED_FEATURE.CHANGE_DATA_CAPTURE`.
  */
 trait ChangelogSupport extends TableCatalog {
-
-  /**
-   * Re-resolves an already-loaded V1 [[DeltaTableV2]] to the sparkV2 [[DeltaV2Table]] connector for
-   * an Auto-CDF read. Implemented by the concrete catalog so all V1/V2 connector construction stays
-   * in one place (see `DeltaCatalog.asV2ChangelogTable`) and this trait does not need to reach into
-   * V1 connector internals.
-   */
-  def asV2ChangelogTable(ident: Identifier, table: DeltaTableV2): DeltaV2Table
 
   override def loadChangelog(ident: Identifier, changelogInfo: ChangelogInfo): Changelog = {
     val spark = SparkSession.active
@@ -73,6 +65,21 @@ trait ChangelogSupport extends TableCatalog {
     }
     val (startVersion, endVersion) = resolveRange(sparkTable, changelogInfo.range())
     new DeltaChangelog(ident.name(), sparkTable, startVersion, endVersion)
+  }
+
+  /**
+   * Re-resolves an already-loaded V1 [[DeltaTableV2]] to the sparkV2 [[DeltaV2Table]].
+   *
+   * @param ident the table identifier
+   * @param table the V1 connector table previously resolved by [[loadTable]]
+   * @return the same table resolved through the sparkV2 connector
+   */
+  private def asV2ChangelogTable(ident: Identifier, table: DeltaTableV2): DeltaV2Table = {
+    if (table.catalogTable.isDefined) {
+      new DeltaV2Table(ident, table.catalogTable.get, new java.util.HashMap[String, String]())
+    } else {
+      new DeltaV2Table(ident, table.path.toString)
+    }
   }
 
   /**
