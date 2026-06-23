@@ -161,10 +161,10 @@ public class SchemaUtils {
   }
 
   /**
-   * Whether data written under {@code existingSchema} can be read using {@code endSchema}. Backed by
-   * Delta's read-compatibility check, which accepts additive changes (new columns, relaxed
-   * nullability) and ignores internal field metadata, unlike strict equality. Nullability tightening
-   * is rejected because older data may contain nulls.
+   * Whether data written under {@code existingSchema} can be read using {@code endSchema}. Backed
+   * by Delta's read-compatibility check, which accepts additive changes (new columns, relaxed
+   * nullability) and ignores internal field metadata, unlike strict equality. Nullability
+   * tightening is rejected because older data may contain nulls.
    */
   public static boolean isReadCompatible(
       org.apache.spark.sql.types.StructType existingSchema,

@@ -309,8 +309,8 @@ public class PartitionUtils {
    * @param isWriteTimeCDCRead If {@code true}, this is a write-time CDF read (streaming reads of
    *     the legacy {@code .option("readChangeFeed")} format): the read schema is augmented with CDC
    *     tail columns and the reader is wrapped with {@link CDCReadFunction}. If {@code false}, this
-   *     is a plain table scan or a read-time CDF read; CDC handling is left to the caller in
-   *     that case (read-time CDF's outer {@code CDCPartitionReaderFactory} injects the tail columns as
+   *     is a plain table scan or a read-time CDF read; CDC handling is left to the caller in that
+   *     case (read-time CDF's outer {@code CDCPartitionReaderFactory} injects the tail columns as
    *     per-partition constants instead).
    */
   public static PartitionReaderFactory createDeltaParquetReaderFactory(
