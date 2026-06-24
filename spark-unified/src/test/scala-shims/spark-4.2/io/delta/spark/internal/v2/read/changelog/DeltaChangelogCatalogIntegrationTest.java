@@ -94,7 +94,7 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
   /**
    * Returns the commit timestamp of {@code version}. Resolves the snapshot directly through the
    * kernel snapshot manager, so it works irrespective of the catalog mode flipped on by the test
-   * body (which keeps the catalog in STRICT for the read-time CDF path).
+   * body (which keeps the catalog in STRICT for the read path of read-time CDF).
    */
   private java.sql.Timestamp commitTimestamp(String tablePath, long version) {
     DeltaSnapshotManager snapshotManager =
