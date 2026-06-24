@@ -504,11 +504,9 @@ public class SparkMicroBatchStream
       Optional<UnsupportedProtocolVersionException> protocolCause = findUnsupportedProtocolCause(e);
       if (protocolCause.isPresent()) {
         UnsupportedProtocolVersionException p = protocolCause.get();
-        boolean isReader =
-            p.getVersionType() == UnsupportedProtocolVersionException.ProtocolVersionType.READER;
         throw (RuntimeException)
             DeltaErrors.invalidProtocolVersionError(
-                p.getTablePath(), isReader ? p.getVersion() : 0, isReader ? 0 : p.getVersion());
+                p.getTablePath(), p.getMinReaderVersion(), p.getMinWriterVersion());
       }
       throw e;
     }

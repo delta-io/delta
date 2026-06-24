@@ -159,18 +159,20 @@ public final class DeltaErrors {
 
   /* ------------------------ PROTOCOL EXCEPTIONS ----------------------------- */
   public static UnsupportedProtocolVersionException unsupportedReaderProtocol(
-      String tablePath, int tableReaderVersion) {
+      String tablePath, int minReaderVersion, int minWriterVersion) {
     return new UnsupportedProtocolVersionException(
         tablePath,
-        tableReaderVersion,
+        minReaderVersion,
+        minWriterVersion,
         UnsupportedProtocolVersionException.ProtocolVersionType.READER);
   }
 
   public static UnsupportedProtocolVersionException unsupportedWriterProtocol(
-      String tablePath, int tableWriterVersion) {
+      String tablePath, int minReaderVersion, int minWriterVersion) {
     return new UnsupportedProtocolVersionException(
         tablePath,
-        tableWriterVersion,
+        minReaderVersion,
+        minWriterVersion,
         UnsupportedProtocolVersionException.ProtocolVersionType.WRITER);
   }
 
