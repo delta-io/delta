@@ -67,8 +67,14 @@ trait SnapshotDescriptor extends DeltaLoggingProvider {
 
   def schema: StructType = metadata.schema
 
-  def dataPath: Path
+  def dataPath: Path =
+    throw new UnsupportedOperationException("dataPath is not implemented for this descriptor")
   def logPath: Path
+  def numDeltaFiles: Long =
+    throw new UnsupportedOperationException("numDeltaFiles is not implemented for this descriptor")
+  def totalDeltaFilesByteSize: Long =
+    throw new UnsupportedOperationException(
+      "totalDeltaFilesByteSize is not implemented for this descriptor")
 
   protected[delta] def numOfFilesIfKnown: Option[Long]
   protected[delta] def sizeInBytesIfKnown: Option[Long]
