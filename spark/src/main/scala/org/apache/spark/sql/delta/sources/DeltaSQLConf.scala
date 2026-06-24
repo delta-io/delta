@@ -325,6 +325,58 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           s"""${AUTO_COMPACT_ALLOWED_VALUES.mkString("(", ",", ")")}""")
       .createOptional
 
+  val DELTA_AUTO_COMPACT_ASYNC_ENABLED =
+    buildConf("autoCompact.async.enabled")
+      .doc(s"""Whether Auto Compaction runs asynchronously on a background daemon thread instead
+              |of inline on the writer's post-commit hook. When enabled, write commits return as
+              |soon as the data commit lands; the OPTIMIZE work is dispatched to a bounded thread
+              |pool and committed as its own transaction shortly after. The OPTIMIZE retry loop
+              |on concurrent commits is unchanged from inline mode, so this introduces no new
+              |conflict class. JVM-local partition reservation (AutoCompactPartitionReserve)
+              |still serializes overlapping AC runs on the same JVM because eligibility,
+              |reservation and OPTIMIZE all execute on the same worker thread.
+              |
+              |Session-only and opt-in. Default is false (today's inline behavior).""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_AUTO_COMPACT_ASYNC_PARALLELISM =
+    buildConf("autoCompact.async.parallelism")
+      .internal()
+      .doc("""Number of background daemon worker threads used to run Auto Compaction
+             |asynchronously. The pool is JVM-wide (shared across all SparkSessions and Delta
+             |tables in this JVM). Increasing this raises Auto Compaction's effective throughput
+             |but also its CPU footprint.""".stripMargin)
+      .intConf
+      .checkValue(_ > 0, "autoCompact.async.parallelism must be positive")
+      .createWithDefault(2)
+
+  val DELTA_AUTO_COMPACT_ASYNC_MAX_QUEUE_SIZE =
+    buildConf("autoCompact.async.maxQueueSize")
+      .internal()
+      .doc("""Maximum number of pending Auto Compaction tasks that may be enqueued for the
+             |async worker pool. When the queue is full, the backpressure policy decides what
+             |to do with new submissions.""".stripMargin)
+      .intConf
+      .checkValue(_ > 0, "autoCompact.async.maxQueueSize must be positive")
+      .createWithDefault(64)
+
+  val DELTA_AUTO_COMPACT_ASYNC_BACKPRESSURE =
+    buildConf("autoCompact.async.backpressure")
+      .internal()
+      .doc("""Backpressure policy when the async Auto Compaction queue is full. Allowed values:
+             |  - "drop": (default) silently decline the submission and record a
+             |    "delta.autoCompaction.async.dropped" event. The writer is unaffected; the
+             |    table simply skips Auto Compaction for that commit, the same outcome as if
+             |    Auto Compaction were disabled.
+             |Additional modes (block, fallback-inline) are reserved for a follow-up
+             |PR.""".stripMargin)
+      .stringConf
+      .transform(_.toLowerCase(Locale.ROOT))
+      .checkValue(Set("drop").contains,
+        """"spark.databricks.delta.autoCompact.async.backpressure" must be one of: (drop)""")
+      .createWithDefault("drop")
+
   val DELTA_AUTO_COMPACT_RECORD_PARTITION_STATS_ENABLED =
     buildConf("autoCompact.recordPartitionStats.enabled")
       .internal()

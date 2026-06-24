@@ -103,11 +103,19 @@ trait AutoCompactBase extends PostCommitHook with DeltaLogging {
     // Skip Auto Compact if current transaction is not qualified or the table is not qualified
     // based on the value of autoCompactTypeOpt.
     if (shouldSkipAutoCompact(autoCompactTypeOpt, spark, txn)) return
-    compactIfNecessary(
-        spark,
-        txn,
-        OP_TYPE,
-        maxDeletedRowsRatio = None)
+    if (AsyncAutoCompactService.isEnabled(spark)) {
+      // Hand the committed txn off to the JVM-wide async worker pool. The writer thread returns
+      // immediately; the worker re-evaluates eligibility against a fresh snapshot and (if still
+      // eligible) runs the OPTIMIZE as its own commit. See AsyncAutoCompactService for the
+      // correctness invariants around partition reservation and conflict handling.
+      AsyncAutoCompactService.submit(spark, txn)
+    } else {
+      compactIfNecessary(
+          spark,
+          txn,
+          OP_TYPE,
+          maxDeletedRowsRatio = None)
+    }
   }
 
   /**
