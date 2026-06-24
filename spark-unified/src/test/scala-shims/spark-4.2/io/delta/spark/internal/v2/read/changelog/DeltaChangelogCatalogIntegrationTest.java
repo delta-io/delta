@@ -94,7 +94,7 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
   /**
    * Returns the commit timestamp of {@code version}. Resolves the snapshot directly through the
    * kernel snapshot manager, so it works irrespective of the catalog mode flipped on by the test
-   * body (which keeps the catalog in STRICT for the read-time CDF read path).
+   * body (which keeps the catalog in STRICT for the read-time CDF path).
    */
   private java.sql.Timestamp commitTimestamp(String tablePath, long version) {
     DeltaSnapshotManager snapshotManager =
@@ -992,6 +992,58 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
                                 .collectAsList();
                         assertEquals(
                             2, rows.size(), "Additive schema change should not fail the read");
+                      });
+                }));
+  }
+
+  /**
+   * A non-read-compatible mid-range schema change (dropping a column) must be rejected with {@code
+   * DELTA_CHANGELOG_SCHEMA_CHANGE_IN_RANGE}: the end schema can no longer read the data written
+   * before the drop.
+   */
+  @Test
+  public void testChangelogRejectsIncompatibleSchemaChangeMidRange() throws Exception {
+    String tableName = "dsv2_cdc_catalog_drop_col_" + System.nanoTime();
+    String tablePath = System.getProperty("java.io.tmpdir") + "/" + tableName;
+
+    withTable(
+        tablePath,
+        () ->
+            withTable(
+                new String[] {tableName},
+                () -> {
+                  // Column mapping is required to drop a column.
+                  spark.sql(
+                      String.format(
+                          "CREATE TABLE %s (id BIGINT, name STRING, extra STRING) USING delta "
+                              + "LOCATION '%s' TBLPROPERTIES "
+                              + "('delta.enableDeletionVectors'='false', "
+                              + "'delta.enableRowTracking'='true', "
+                              + "'delta.columnMapping.mode'='name')",
+                          tableName, tablePath));
+                  spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice', 'x')", tableName));
+                  // Non-additive schema change mid-range: drop a column.
+                  spark.sql(String.format("ALTER TABLE %s DROP COLUMN extra", tableName));
+                  spark.sql(String.format("INSERT INTO %s VALUES (2, 'Bob')", tableName));
+
+                  withSQLConf(
+                      "spark.databricks.delta.v2.enableMode",
+                      "STRICT",
+                      () -> {
+                        Exception ex =
+                            assertThrows(
+                                Exception.class,
+                                () ->
+                                    spark
+                                        .sql(
+                                            String.format(
+                                                "SELECT * FROM %s CHANGES FROM VERSION 1 TO "
+                                                    + "VERSION 3",
+                                                tableName))
+                                        .collectAsList());
+                        assertTrue(
+                            ex.getMessage().contains("DELTA_CHANGELOG_SCHEMA_CHANGE_IN_RANGE"),
+                            "Expected schema-change error, got: " + ex.getMessage());
                       });
                 }));
   }
