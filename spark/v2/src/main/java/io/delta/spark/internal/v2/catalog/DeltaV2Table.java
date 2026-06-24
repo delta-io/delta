@@ -25,6 +25,8 @@ import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.rowtracking.RowTracking;
+import io.delta.spark.internal.v2.adapters.KernelMetadataAdapter;
+import io.delta.spark.internal.v2.adapters.KernelProtocolAdapter;
 import io.delta.spark.internal.v2.read.MetadataEvolutionHandler;
 import io.delta.spark.internal.v2.read.SparkScanBuilder;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
@@ -66,10 +68,11 @@ import org.apache.spark.sql.connector.write.WriteBuilder;
 import org.apache.spark.sql.delta.DeltaTableUtils;
 import org.apache.spark.sql.delta.RowCommitVersion$;
 import org.apache.spark.sql.delta.RowId$;
-import org.apache.spark.sql.delta.SparkTableShims$;
 import org.apache.spark.sql.delta.catalog.DeltaV2TableMarker;
 import org.apache.spark.sql.delta.commands.cdc.CDCReader;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
+import org.apache.spark.sql.delta.v2.interop.AbstractMetadata;
+import org.apache.spark.sql.delta.v2.interop.AbstractProtocol;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.DataTypes;
@@ -79,7 +82,7 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import scala.jdk.javaapi.CollectionConverters;
 
 /** DataSource V2 Table implementation for Delta Lake using the Delta Kernel API. */
-public class DeltaV2Table
+public class DeltaV2Table extends DeltaV2TableShims
     implements Table, SupportsRead, SupportsWrite, SupportsMetadataColumns, DeltaV2TableMarker {
   private static final String METADATA_COLUMN_NAME = FileFormat$.MODULE$.METADATA_NAME();
   private static final String ROW_ID_METADATA_FIELD_NAME = RowId$.MODULE$.ROW_ID();
@@ -94,11 +97,7 @@ public class DeltaV2Table
             TableCapability.BATCH_READ,
             TableCapability.MICRO_BATCH_READ,
             TableCapability.BATCH_WRITE);
-    scala.Option<TableCapability> schemaEvolution =
-        SparkTableShims$.MODULE$.schemaEvolutionCapability();
-    if (schemaEvolution.isDefined()) {
-      caps.add(schemaEvolution.get());
-    }
+    DeltaV2TableShims.schemaEvolutionCapability().ifPresent(caps::add);
     return Collections.unmodifiableSet(caps);
   }
 
@@ -374,6 +373,16 @@ public class DeltaV2Table
   @Override
   public Set<TableCapability> capabilities() {
     return CAPABILITIES;
+  }
+
+  /** The table protocol from the initial snapshot. */
+  protected AbstractProtocol protocol() {
+    return new KernelProtocolAdapter(((SnapshotImpl) initialSnapshot).getProtocol());
+  }
+
+  /** The table metadata from the initial snapshot. */
+  protected AbstractMetadata metadata() {
+    return new KernelMetadataAdapter(((SnapshotImpl) initialSnapshot).getMetadata());
   }
 
   /**

@@ -16,10 +16,10 @@
 
 package org.apache.spark.sql.delta.typewidening
 
-import org.apache.spark.sql.delta.DeltaAnalysisException
-import org.apache.spark.sql.delta.DeltaDMLTestUtilsNameBased
+import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
+import org.apache.spark.SparkArithmeticException
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.types._
@@ -32,9 +32,46 @@ class TypeWideningConstraintsSuite
   extends QueryTest
     with TypeWideningTestMixin
     with DeltaDMLTestUtilsNameBased
-    with TypeWideningConstraintsTests
+    with TypeWideningConstraintsTests {
+
+  // Valid DSv1 vs. DSv2 behavior difference: DSv1 rejects widening a map key/value referenced by
+  // a CHECK constraint up front. See DSv2 below.
+  override protected def checkMapConstraintTypeEvolutionError(
+      field: String)(insert: => Unit): Unit =
+    checkError(
+      intercept[DeltaAnalysisException](insert),
+      "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
+      parameters = Map(
+        "columnName" -> field,
+        "columnType" -> "TINYINT",
+        "dataType" -> "INT",
+        "constraints" -> "delta.constraints.ck -> s . arr [ 0 ] [ 3 ] = 3"
+      ))
+}
+
+/** Runs the type widening constraint tests against DSv2. */
+class TypeWideningConstraintsDSv2Suite
+  extends QueryTest
+    with TypeWideningDSv2TestMixin
+    with TypeWideningConstraintsTests {
+
+  // Valid DSv1 vs. DSv2 behavior difference: DSv2 skips evolving an unsupported map key/value
+  // instead of a hard-fail. The write then fails due to a cast overflow since the field isn't
+  // widened. See DSv1 above.
+  override protected def checkMapConstraintTypeEvolutionError(
+      field: String)(insert: => Unit): Unit =
+    checkError(
+      intercept[SparkArithmeticException](insert),
+      "CAST_OVERFLOW_IN_TABLE_INSERT",
+      parameters = Map(
+        "sourceType" -> "\"INT\"",
+        "targetType" -> "\"TINYINT\"",
+        "columnName" -> field.split('.').map(part => s"`$part`").mkString(".")))
+}
 
 trait TypeWideningConstraintsTests { self: QueryTest with TypeWideningTestMixin =>
+
+  protected def checkMapConstraintTypeEvolutionError(field: String)(insert: => Unit): Unit
 
   test("not null constraint with type change") {
     withTable("t") {
@@ -234,36 +271,18 @@ trait TypeWideningConstraintsTests { self: QueryTest with TypeWideningTestMixin 
 
       withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
         // Insert by name is not supported by type evolution.
-        checkError(
-          intercept[DeltaAnalysisException] {
-            // Migrate map's key to int type.
-            spark.createDataFrame(Seq(Tuple1(Tuple1(Array(Map(999999 -> 1, 3 -> 3))))))
-              .toDF("s").withColumn("s", col("s").cast("struct<arr:array<map<int,tinyint>>>"))
-              .write.format("delta").mode("append").saveAsTable("t")
-          },
-          "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
-          parameters = Map(
-            "columnName" -> "s.arr.element.key",
-            "columnType" -> "TINYINT",
-            "dataType" -> "INT",
-            "constraints" -> "delta.constraints.ck -> s . arr [ 0 ] [ 3 ] = 3"
-          )
-        )
-        checkError(
-          intercept[DeltaAnalysisException] {
-            // Migrate map's value to int type.
-            spark.createDataFrame(Seq(Tuple1(Tuple1(Array(Map(1 -> 999999, 3 -> 3))))))
-              .toDF("s").withColumn("s", col("s").cast("struct<arr:array<map<tinyint,int>>>"))
-              .write.format("delta").mode("append").saveAsTable("t")
-          },
-          "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
-          parameters = Map(
-            "columnName" -> "s.arr.element.value",
-            "columnType" -> "TINYINT",
-            "dataType" -> "INT",
-            "constraints" -> "delta.constraints.ck -> s . arr [ 0 ] [ 3 ] = 3"
-          )
-        )
+        checkMapConstraintTypeEvolutionError("s.arr.element.key") {
+          // Migrate map's key to int type.
+          spark.createDataFrame(Seq(Tuple1(Tuple1(Array(Map(999999 -> 1, 3 -> 3))))))
+            .toDF("s").withColumn("s", col("s").cast("struct<arr:array<map<int,tinyint>>>"))
+            .write.format("delta").mode("append").saveAsTable("t")
+        }
+        checkMapConstraintTypeEvolutionError("s.arr.element.value") {
+          // Migrate map's value to int type.
+          spark.createDataFrame(Seq(Tuple1(Tuple1(Array(Map(1 -> 999999, 3 -> 3))))))
+            .toDF("s").withColumn("s", col("s").cast("struct<arr:array<map<tinyint,int>>>"))
+            .write.format("delta").mode("append").saveAsTable("t")
+        }
       }
     }
   }

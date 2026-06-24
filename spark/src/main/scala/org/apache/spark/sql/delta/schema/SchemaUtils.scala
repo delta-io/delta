@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMod
 import org.apache.spark.sql.delta.{RowCommitVersion, RowId}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.v2.interop.AbstractProtocol
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -1656,7 +1657,7 @@ def normalizeColumnNamesInDataType(
   def findDependentGeneratedColumns(
       sparkSession: SparkSession,
       targetColumn: Seq[String],
-      protocol: Protocol,
+      protocol: AbstractProtocol,
       schema: StructType): Map[String, String] = {
     if (GeneratedColumn.satisfyGeneratedColumnProtocol(protocol) &&
         GeneratedColumn.hasGeneratedColumns(schema)) {
