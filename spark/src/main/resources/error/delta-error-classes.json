@@ -412,7 +412,7 @@
   "DELTA_CHANGELOG_REQUIRES_V2_TABLE" : {
     "message" : [
       "Auto-CDF reads on `<tableName>` require the V2 Delta connector, but the catalog resolved the table to `<actualClassName>`.",
-      "Set the Delta V2 mode SQL conf to `STRICT` (or `AUTO`, if AUTO routes CHANGES queries) to read this table through the V2 connector."
+      "Set the Delta V2 mode SQL conf to `AUTO` or `STRICT` to read this table through the V2 connector."
     ],
     "sqlState" : "0AKDE"
   },

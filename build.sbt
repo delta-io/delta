@@ -798,7 +798,7 @@ lazy val contribs = (project in file("contribs"))
 //
 // Override with -DunityCatalogVersion=<anything> for ad-hoc experiments.
 val unityCatalogReleaseVersion: Option[String] = None
-val defaultUnityCatalogReleaseVersion = "0.4.1"
+val defaultUnityCatalogReleaseVersion = "0.5.0"
 val useDefaultUnityCatalogReleaseVersion: Boolean =
   sys.props.getOrElse("useDefaultUnityCatalogReleaseVersion", "false").toBoolean
 val unityCatalogSetupScript = "project/scripts/setup_unitycatalog_main.sh"
