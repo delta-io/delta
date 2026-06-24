@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.actions.AddCDCFile;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.actions.GenerateIcebergCompatActionUtils;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.data.GenericRow;
@@ -29,6 +30,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import org.apache.spark.sql.delta.RowIndexFilterType;
 import org.apache.spark.sql.delta.commands.cdc.CDCReader;
 import org.junit.jupiter.api.Test;
 
@@ -37,7 +39,18 @@ public class CDCDataFileTest {
 
   private static final StructType EMPTY_SCHEMA = new StructType();
 
+  private static final DeletionVectorDescriptor TEST_DV =
+      new DeletionVectorDescriptor("u", "ab^-rstxgiarsd", Optional.of(4), 40, 3L);
+
   private static AddFile createTestAddFile(String path, long size, long modificationTime) {
+    return createTestAddFile(path, size, modificationTime, /* deletionVector= */ Optional.empty());
+  }
+
+  private static AddFile createTestAddFile(
+      String path,
+      long size,
+      long modificationTime,
+      Optional<DeletionVectorDescriptor> deletionVector) {
     return new AddFile(
         AddFile.createAddFileRow(
             EMPTY_SCHEMA,
@@ -46,7 +59,7 @@ public class CDCDataFileTest {
             size,
             modificationTime,
             /* dataChange= */ true,
-            /* deletionVector= */ Optional.empty(),
+            deletionVector,
             /* tags= */ Optional.empty(),
             /* baseRowId= */ Optional.empty(),
             /* defaultRowCommitVersion= */ Optional.empty(),
@@ -54,6 +67,11 @@ public class CDCDataFileTest {
   }
 
   private static RemoveFile createTestRemoveFile(String path, long size) {
+    return createTestRemoveFile(path, size, /* deletionVector= */ Optional.empty());
+  }
+
+  private static RemoveFile createTestRemoveFile(
+      String path, long size, Optional<DeletionVectorDescriptor> deletionVector) {
     Row row =
         GenerateIcebergCompatActionUtils.createRemoveFileRowWithExtendedFileMetadata(
             path,
@@ -65,7 +83,7 @@ public class CDCDataFileTest {
             /* physicalSchema= */ null,
             /* baseRowId= */ Optional.empty(),
             /* defaultRowCommitVersion= */ Optional.empty(),
-            /* deletionVector= */ Optional.empty());
+            deletionVector);
     return new RemoveFile(row);
   }
 
@@ -97,10 +115,53 @@ public class CDCDataFileTest {
     CDCDataFile cdcFile = CDCDataFile.fromRemoveFile(removeFile, /* commitTimestamp= */ 99999L);
 
     assertNull(cdcFile.getAddFile());
+    assertSame(removeFile, cdcFile.getRemoveFile());
     assertEquals(CDCReader.CDC_TYPE_DELETE_STRING(), cdcFile.getChangeType());
     assertEquals(99999L, cdcFile.getCommitTimestamp());
     assertEquals(4096, cdcFile.getFileSize());
     assertFalse(cdcFile.isAddCDCFile());
+  }
+
+  @Test
+  public void testGetRemoveFile_nullForAddFile() {
+    AddFile addFile = createTestAddFile("file.parquet", 1024, 100L);
+    CDCDataFile cdcFile = CDCDataFile.fromAddFile(addFile, /* commitTimestamp= */ 100L);
+    assertNull(cdcFile.getRemoveFile());
+  }
+
+  @Test
+  public void testHasDeletionVector_addFileWithDV() {
+    AddFile addFile = createTestAddFile("file.parquet", 1024, 100L, Optional.of(TEST_DV));
+    CDCDataFile cdcFile = CDCDataFile.fromAddFile(addFile, /* commitTimestamp= */ 100L);
+    assertTrue(cdcFile.hasDeletionVector());
+  }
+
+  @Test
+  public void testHasDeletionVector_addFileWithoutDV() {
+    AddFile addFile = createTestAddFile("file.parquet", 1024, 100L);
+    CDCDataFile cdcFile = CDCDataFile.fromAddFile(addFile, /* commitTimestamp= */ 100L);
+    assertFalse(cdcFile.hasDeletionVector());
+  }
+
+  @Test
+  public void testHasDeletionVector_removeFileWithDV() {
+    RemoveFile removeFile = createTestRemoveFile("file.parquet", 1024, Optional.of(TEST_DV));
+    CDCDataFile cdcFile = CDCDataFile.fromRemoveFile(removeFile, /* commitTimestamp= */ 100L);
+    assertTrue(cdcFile.hasDeletionVector());
+  }
+
+  @Test
+  public void testHasDeletionVector_removeFileWithoutDV() {
+    RemoveFile removeFile = createTestRemoveFile("file.parquet", 1024);
+    CDCDataFile cdcFile = CDCDataFile.fromRemoveFile(removeFile, /* commitTimestamp= */ 100L);
+    assertFalse(cdcFile.hasDeletionVector());
+  }
+
+  @Test
+  public void testHasDeletionVector_addCDCFile() {
+    Row cdcRow = createCDCRow(/* size= */ 8192);
+    CDCDataFile cdcFile = CDCDataFile.fromAddCDCFile(cdcRow, /* commitTimestamp= */ 100L);
+    assertFalse(cdcFile.hasDeletionVector());
   }
 
   @Test
@@ -113,5 +174,38 @@ public class CDCDataFileTest {
     assertEquals(55555L, cdcFile.getCommitTimestamp());
     assertEquals(8192, cdcFile.getFileSize());
     assertTrue(cdcFile.isAddCDCFile());
+  }
+
+  @Test
+  public void testFromDVDiff_delete() {
+    AddFile addFile = createTestAddFile("data.parquet", 1024, 100L, Optional.of(TEST_DV));
+    CDCDataFile cdcFile =
+        CDCDataFile.fromDVDiff(
+            addFile,
+            CDCReader.CDC_TYPE_DELETE_STRING(),
+            /* commitTimestamp= */ 77777L,
+            "inline-dv==");
+
+    assertSame(addFile, cdcFile.getAddFile());
+    assertEquals(CDCReader.CDC_TYPE_DELETE_STRING(), cdcFile.getChangeType());
+    assertEquals(77777L, cdcFile.getCommitTimestamp());
+    assertEquals(1024, cdcFile.getFileSize());
+    assertFalse(cdcFile.isAddCDCFile());
+    assertEquals(Optional.of("inline-dv=="), cdcFile.getEffectiveDv());
+    assertEquals(RowIndexFilterType.IF_NOT_CONTAINED, cdcFile.getDvFilterType());
+    assertEquals("data.parquet", cdcFile.getPath());
+    assertTrue(cdcFile.hasDeletionVector());
+  }
+
+  @Test
+  public void testFromDVDiff_insert() {
+    AddFile addFile = createTestAddFile("data.parquet", 2048, 200L, Optional.of(TEST_DV));
+    CDCDataFile cdcFile =
+        CDCDataFile.fromDVDiff(
+            addFile, CDCReader.CDC_TYPE_INSERT(), /* commitTimestamp= */ 88888L, "restore-dv==");
+
+    assertEquals(CDCReader.CDC_TYPE_INSERT(), cdcFile.getChangeType());
+    assertEquals(Optional.of("restore-dv=="), cdcFile.getEffectiveDv());
+    assertEquals(RowIndexFilterType.IF_NOT_CONTAINED, cdcFile.getDvFilterType());
   }
 }

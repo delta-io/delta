@@ -99,7 +99,7 @@ class DeltaInsertIntoMissingColumnSuite extends DeltaInsertIntoTest {
       overwriteWhere = "a" -> 1,
       insertData = TestData("a int, b long", Seq("""{ "a": 1, "b": 4 }""")),
       expectedResult = ExpectedResult.Failure(ex => {
-        // The missing column isn't an issue, but dataframe inserts by name (except streaming) don't
+        // The missing column isn't an issue, but save() and saveAsTable() overwrite don't
         // support implicit casting to reconcile the type mismatch.
         checkError(
           ex,
@@ -109,7 +109,24 @@ class DeltaInsertIntoMissingColumnSuite extends DeltaInsertIntoTest {
             "updateField" -> "a"
           ))
       }),
-      includeInserts = insertsByName.intersect(insertsDataframe) - StreamingInsert,
+      includeInserts = insertsWithoutImplicitCastSupport,
+      withSchemaEvolution = schemaEvolution
+    )
+
+    // Other df-by-name inserts (DFv2, saveAsTable append) support implicit casting.
+    testInserts(s"insert with implicit cast and missing top-level column," +
+      s"schemaEvolution=$schemaEvolution")(
+      initialData = TestData("a long, b int, c int", Seq("""{ "a": 1, "b": 2, "c": 3 }""")),
+      partitionBy = Seq("a"),
+      overwriteWhere = "a" -> 1,
+      insertData = TestData("a int, b long", Seq("""{ "a": 1, "b": 4 }""")),
+      expectedResult = ExpectedResult.Success(
+        expected = new StructType()
+          .add("a", LongType)
+          .add("b", IntegerType)
+          .add("c", IntegerType)),
+      includeInserts = insertsByName.intersect(insertsDataframe) - StreamingInsert --
+        insertsWithoutImplicitCastSupport,
       withSchemaEvolution = schemaEvolution
     )
 
@@ -122,7 +139,7 @@ class DeltaInsertIntoMissingColumnSuite extends DeltaInsertIntoTest {
       insertData =
         TestData("a int, s struct<y: long>", Seq("""{ "a": 1, "s": { "y": 5 } }""")),
       expectedResult = ExpectedResult.Failure(ex => {
-        // The missing column isn't an issue, but dataframe inserts by name (except streaming) don't
+        // The missing column isn't an issue, but save() and saveAsTable() overwrite don't
         // support implicit casting to reconcile the type mismatch.
         checkError(
           ex,
@@ -132,11 +149,11 @@ class DeltaInsertIntoMissingColumnSuite extends DeltaInsertIntoTest {
             "updateField" -> "s"
           ))
       }),
-      includeInserts = insertsByName.intersect(insertsDataframe) - StreamingInsert,
+      includeInserts = insertsWithoutImplicitCastSupport,
       withSchemaEvolution = schemaEvolution
     )
 
-  testInserts(s"insert with implicit cast and missing nested field," +
+    testInserts(s"insert with implicit cast and missing nested field," +
       s"schemaEvolution=$schemaEvolution")(
       initialData =
         TestData("a int, s struct<x: int, y: int>", Seq("""{ "a": 1, "s": { "x": 2, "y": 3 } }""")),
@@ -144,15 +161,16 @@ class DeltaInsertIntoMissingColumnSuite extends DeltaInsertIntoTest {
       overwriteWhere = "a" -> 1,
       insertData =
         TestData("a int, s struct<y: long>", Seq("""{ "a": 1, "s": { "y": 5 } }""")),
-      // Missing nested fields are allowed when writing to a delta streaming sink when there's a
-      // type mismatch, same as when there's no type mismatch.
+      // Missing nested fields are allowed when writing to a delta streaming sink or using DFv2 and
+      // saveAsTable(Append) when there's a type mismatch, same as when there's no type mismatch.
       expectedResult = ExpectedResult.Success(
         expected = new StructType()
           .add("a", IntegerType)
           .add("s", new StructType()
             .add("x", IntegerType)
             .add("y", IntegerType))),
-      includeInserts = Set(StreamingInsert),
+      includeInserts = insertsByName.intersect(insertsDataframe) --
+        insertsWithoutImplicitCastSupport,
       withSchemaEvolution = schemaEvolution
     )
 

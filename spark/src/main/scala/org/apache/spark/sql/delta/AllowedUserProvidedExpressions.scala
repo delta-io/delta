@@ -18,6 +18,8 @@ package org.apache.spark.sql.delta
 
 import scala.reflect.ClassTag
 
+import org.apache.spark.sql.delta.shims.GeoTypesShim
+
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.xml._
 
@@ -392,5 +394,5 @@ object AllowedUserProvidedExpressions {
     expression[ArrayAppend]("array_append"),
     expression[ArrayPrepend]("array_prepend"),
     expression[ArrayInsert]("array_insert")
-  )
+  ) ++ GeoTypesShim.geoExpressions
 }

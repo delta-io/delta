@@ -276,6 +276,110 @@ class DeltaCommitterTest extends TestHelper {
   }
 
   @Test
+  void testCommitMetricsOnSuccess() {
+    withTempDir(
+        dir -> {
+          StructType schema =
+              new StructType().add("id", IntegerType.INTEGER).add("part", StringType.STRING);
+
+          HadoopTable table =
+              new HadoopTable(dir.toURI(), Collections.emptyMap(), schema, List.of("part"));
+          table.open();
+
+          TestSinkCommitterMetricGroup freshMetrics = new TestSinkCommitterMetricGroup();
+
+          DeltaCommitter committer =
+              new DeltaCommitter.Builder()
+                  .withDeltaTable(table)
+                  .withJobId("test-job")
+                  .withMetricGroup(freshMetrics)
+                  .withConf(new DeltaSinkConf(schema, Collections.emptyMap()))
+                  .build();
+
+          List<Committer.CommitRequest<DeltaCommittable>> commitMessages =
+              List.of(
+                  new MockCommitRequest<>(
+                      new DeltaCommittable(
+                          "test-job",
+                          "test-opr",
+                          1000L,
+                          IntStream.range(0, 5)
+                              .mapToObj(
+                                  i ->
+                                      dummyAddFileRow(
+                                          schema,
+                                          10 + i,
+                                          Map.of(
+                                              "part",
+                                              io.delta.kernel.expressions.Literal.ofString(
+                                                  "p" + i))))
+                              .collect(Collectors.toList()),
+                          new WriterResultContext())));
+
+          committer.commit(commitMessages);
+
+          assertEquals(1, freshMetrics.getNumCommittablesTotalCounter().getCount());
+          assertEquals(1, freshMetrics.getNumCommittablesSuccessCounter().getCount());
+          assertEquals(0, freshMetrics.getNumCommittablesFailureCounter().getCount());
+          assertEquals(5, freshMetrics.counter("numActionsCommitted").getCount());
+        });
+  }
+
+  @Test
+  void testCommitMetricsOnSchemaEvolutionFailure() {
+    withTempDir(
+        dir -> {
+          DefaultEngine engine = DefaultEngine.create(new Configuration());
+          StructType schema =
+              new StructType().add("id", IntegerType.INTEGER).add("part", StringType.STRING);
+          StructType anotherSchema =
+              new StructType().add("v1", StringType.STRING).add("v2", StringType.STRING);
+          createNonEmptyTable(
+              engine, dir.getAbsolutePath(), anotherSchema, List.of("v1"), Collections.emptyMap());
+
+          HadoopTable table =
+              new HadoopTable(dir.toURI(), Collections.emptyMap(), schema, List.of("part"));
+          table.open();
+
+          TestSinkCommitterMetricGroup freshMetrics = new TestSinkCommitterMetricGroup();
+
+          DeltaCommitter committer =
+              new DeltaCommitter.Builder()
+                  .withDeltaTable(table)
+                  .withJobId("test-job")
+                  .withMetricGroup(freshMetrics)
+                  .withConf(new DeltaSinkConf(schema, Collections.emptyMap()))
+                  .build();
+
+          List<Committer.CommitRequest<DeltaCommittable>> commitMessages =
+              List.of(
+                  new MockCommitRequest<>(
+                      new DeltaCommittable(
+                          "test-job",
+                          "test-opr",
+                          1000L,
+                          IntStream.range(0, 5)
+                              .mapToObj(
+                                  i ->
+                                      dummyAddFileRow(
+                                          schema,
+                                          i + 10,
+                                          Map.of(
+                                              "part",
+                                              io.delta.kernel.expressions.Literal.ofString(
+                                                  "p" + i))))
+                              .collect(Collectors.toList()),
+                          new WriterResultContext())));
+
+          assertThrows(IllegalStateException.class, () -> committer.commit(commitMessages));
+
+          assertEquals(1, freshMetrics.getNumCommittablesTotalCounter().getCount());
+          assertEquals(0, freshMetrics.getNumCommittablesSuccessCounter().getCount());
+          assertEquals(1, freshMetrics.getNumCommittablesFailureCounter().getCount());
+        });
+  }
+
+  @Test
   void testCommitWritesWatermarks() {
     withTempDir(
         dir -> {

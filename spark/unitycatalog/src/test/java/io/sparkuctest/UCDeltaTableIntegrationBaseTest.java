@@ -18,6 +18,7 @@ package io.sparkuctest;
 
 import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
 
+import io.unitycatalog.client.api.TablesApi;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -31,12 +32,16 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.apache.hadoop.fs.Path;
+import org.apache.log4j.Logger;
 import org.apache.spark.SparkConf;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.delta.catalog.UCDeltaCatalogClientImpl;
+import org.apache.spark.sql.delta.coordinatedcommits.UCTokenBasedRestClientFactory;
 import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DynamicContainer;
 import org.junit.jupiter.api.DynamicTest;
@@ -55,6 +60,23 @@ import org.opentest4j.TestAbortedException;
 public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSupport {
   public static final List<TableType> ALL_TABLE_TYPES =
       List.of(TableType.EXTERNAL, TableType.MANAGED);
+
+  protected static String sparkVersion() {
+    return org.apache.spark.package$.MODULE$.SPARK_VERSION();
+  }
+
+  protected static boolean isSparkMasterSnapshot() {
+    return sparkVersion().contains("SNAPSHOT");
+  }
+
+  protected static void assumeUcSparkMasterCompatible(String suiteName) {
+    Assumptions.assumeFalse(
+        isSparkMasterSnapshot(),
+        suiteName
+            + " are temporarily skipped on Spark master because the current Unity Catalog "
+            + "Spark connector does not yet support the current Spark master "
+            + "CatalogStorageFormat ABI.");
+  }
 
   /**
    * Tests with this annotation will test against ALL_TABLE_TYPES. Example:
@@ -110,6 +132,8 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
   /** Create the SparkSession before all tests. */
   @BeforeAll
   public void setUpSpark() {
+    assumeUcSparkMasterCompatible("Unity Catalog integration tests");
+
     // UC server is started by UnityCatalogSupport.setupServer()
     // And the BeforeAll of parent class UnityCatalogSupport will be called before this method.
 
@@ -141,9 +165,71 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     // Set the catalog specific configs.
     UnityCatalogInfo uc = unityCatalogInfo();
     String catalogName = uc.catalogName();
-    return conf.set("spark.sql.catalog." + catalogName, "io.unitycatalog.spark.UCSingleCatalog")
-        .set("spark.sql.catalog." + catalogName + ".uri", uc.serverUri())
-        .set("spark.sql.catalog." + catalogName + ".token", uc.serverToken());
+    conf =
+        conf.set("spark.sql.catalog." + catalogName, "io.unitycatalog.spark.UCSingleCatalog")
+            .set("spark.sql.catalog." + catalogName + ".uri", uc.serverUri())
+            .set("spark.sql.catalog." + catalogName + ".token", uc.serverToken());
+    if (!useDeltaRestApiForTests()) {
+      // Default is true. Tests can opt out.
+      conf =
+          conf.set(
+              "spark.sql.catalog."
+                  + catalogName
+                  + "."
+                  + UCTokenBasedRestClientFactory.DELTA_REST_API_ENABLED_KEY(),
+              "false");
+    }
+    return conf;
+  }
+
+  /**
+   * Whether the class-level @AfterAll should assert that the UC Delta API actually served at least
+   * one load. Override to false in classes that intentionally exercise only the fallback path
+   * (which does NOT bump the successfulDeltaRestApiLoads counter), so the class-level check doesn't
+   * false-positive when test sharding distributes methods across CI shards.
+   */
+  protected boolean expectDeltaRestApiSuccessAtClassLevel() {
+    return true;
+  }
+
+  private static final Logger LOG = Logger.getLogger(UCDeltaTableIntegrationBaseTest.class);
+
+  private long deltaRestApiLoadsAtClassStart;
+  private long loadTableInvocationsAtClassStart;
+
+  @BeforeAll
+  public void captureDeltaRestApiBaseline() {
+    deltaRestApiLoadsAtClassStart =
+        UCDeltaCatalogClientImpl.successfulDeltaRestApiLoadsForTesting();
+    loadTableInvocationsAtClassStart = UCDeltaCatalogClientImpl.loadTableInvocationsForTesting();
+  }
+
+  @AfterAll
+  public void verifyDeltaRestApiExercisedAtClassLevel() {
+    if (!useDeltaRestApiForTests() || !expectDeltaRestApiSuccessAtClassLevel()) {
+      return;
+    }
+    long loadInvocationsAfter = UCDeltaCatalogClientImpl.loadTableInvocationsForTesting();
+    if (loadInvocationsAfter <= loadTableInvocationsAtClassStart) {
+      // Every test in the suite was aborted (e.g. via Assumption.assumeTrue) before any
+      // loadTable call ran, so there is nothing to assert about the UC Delta API path.
+      return;
+    }
+    long after = UCDeltaCatalogClientImpl.successfulDeltaRestApiLoadsForTesting();
+    if (after <= deltaRestApiLoadsAtClassStart) {
+      throw new AssertionError(
+          "Suite finished but no UCDeltaCatalogClientImpl.loadTable call actually returned a "
+              + "Delta table via the UC Delta API. deltaRestApi.enabled is on but every "
+              + "load either fell back to the legacy delegate or threw. baseline="
+              + deltaRestApiLoadsAtClassStart
+              + ", after="
+              + after);
+    }
+    LOG.info(
+        "[delta-api] "
+            + getClass().getSimpleName()
+            + " successful UC Delta API loads: "
+            + (after - deltaRestApiLoadsAtClassStart));
   }
 
   /** Stop the SparkSession after all tests. */
@@ -199,6 +285,18 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
    */
   protected void check(String tableName, List<List<String>> expected) {
     getSqlExecutor().checkWithSQL("SELECT * FROM " + tableName + " ORDER BY 1", expected);
+  }
+
+  /**
+   * Verify that {@code actual} equals {@code expected}, with an error message that includes both.
+   * Use this overload when the caller has already run the query and just needs to compare the row
+   * list (e.g. queries that aren't a plain {@code SELECT *}).
+   */
+  protected void check(List<List<String>> actual, List<List<String>> expected) {
+    if (!actual.equals(expected)) {
+      throw new AssertionError(
+          String.format("Query results do not match.\nExpected: %s\nActual: %s", expected, actual));
+    }
   }
 
   /** Helper method to run code with a temporary directory that gets cleaned up. */
@@ -264,6 +362,7 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
       withTempDir(
           (Path dir) -> {
             Path tablePath = new Path(dir, tableName);
+            sql("DROP TABLE IF EXISTS %s", fullTableName);
             sql(
                 "CREATE TABLE %s (%s) USING DELTA %s %s LOCATION '%s'",
                 fullTableName,
@@ -281,6 +380,7 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     } else {
       // Managed table - Spark manages the location
       // Unity Catalog requires 'delta.feature.catalogManaged'='supported' for managed tables
+      sql("DROP TABLE IF EXISTS %s", fullTableName);
       sql(
           "CREATE TABLE %s (%s) USING DELTA %s %s",
           fullTableName, tableSchema, partitionCause.toString(), tblPropertiesSql);
@@ -330,6 +430,12 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
   protected String fullTableName(String simpleName) {
     UnityCatalogInfo uc = unityCatalogInfo();
     return uc.catalogName() + "." + uc.schemaName() + "." + simpleName;
+  }
+
+  /** Returns the UC table ID for the given table. */
+  protected String currentUcTableId(String fullTableName) throws Exception {
+    TablesApi tablesApi = new TablesApi(unityCatalogInfo().createApiClient());
+    return tablesApi.getTable(fullTableName, false, false).getTableId();
   }
 
   /** Returns the current (latest) version of the table. */

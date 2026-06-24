@@ -15,6 +15,7 @@
  */
 package io.delta.spark.internal.v2.read;
 
+import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.delta.kernel.CommitActions;
@@ -23,6 +24,7 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction;
+import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.commitrange.CommitRangeImpl;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
@@ -39,6 +41,7 @@ import org.apache.spark.sql.catalyst.expressions.Expression;
 import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.delta.Snapshot;
+import org.apache.spark.sql.delta.commands.cdc.CDCReader;
 import org.apache.spark.sql.delta.sources.DeltaSource;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset$;
@@ -76,7 +79,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
             RuntimeException.class,
             () -> {
               try (CloseableIterator<IndexedFile> iter =
-                  stream.getFileChangesForCDC(
+                  stream.getFileChangesWithRateLimitForCDC(
                       /* fromVersion= */ 0L,
                       /* fromIndex= */ DeltaSourceOffset.BASE_INDEX(),
                       /* isInitialSnapshot= */ false,
@@ -94,6 +97,68 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
         "Expected DELTA_MISSING_CHANGE_DATA error class");
   }
 
+  @Test
+  public void testValidateCDFEnabled_passesWhenEnabledAtStartVersionEqualToInit(
+      @TempDir File tempDir) {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "test_cdf_init_version_" + System.nanoTime();
+    createEmptyTestTable(tablePath, tableName);
+    sql("ALTER TABLE %s SET TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')", tableName);
+    sql("INSERT INTO %s VALUES (1, 'User1')", tableName);
+
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
+    SparkMicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+
+    long initVersion = snapshotManager.loadLatestSnapshot().getVersion();
+    assertDoesNotThrow(() -> stream.validateCDFEnabledOnTable(initVersion));
+  }
+
+  @Test
+  public void testValidateCDFEnabled_throwsWhenCDFOffAtStartVersionButOnAtInit(
+      @TempDir File tempDir) {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "test_cdf_off_at_start_" + System.nanoTime();
+    // v0: CREATE (CDF off). v1: INSERT (CDF still off). v2: ALTER enable CDF. v3: INSERT.
+    createEmptyTestTable(tablePath, tableName);
+    sql("INSERT INTO %s VALUES (1, 'User1')", tableName);
+    sql("ALTER TABLE %s SET TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')", tableName);
+    sql("INSERT INTO %s VALUES (2, 'User2')", tableName);
+
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
+    SparkMicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+
+    // Init snapshot has CDF=on (v3), but startVersion=0 had CDF=off. The check must use the
+    // metadata at startVersion, not at source-init time.
+    RuntimeException exception =
+        assertThrows(RuntimeException.class, () -> stream.validateCDFEnabledOnTable(0L));
+    Throwable cause = exception.getCause() != null ? exception.getCause() : exception;
+    assertInstanceOf(AnalysisException.class, cause);
+    assertEquals("DELTA_MISSING_CHANGE_DATA", ((AnalysisException) cause).getErrorClass());
+  }
+
+  @Test
+  public void testValidateCDFEnabled_swallowsForUnmaterializedStartVersion(@TempDir File tempDir) {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "test_cdf_future_version_" + System.nanoTime();
+    createEmptyTestTable(tablePath, tableName);
+    sql("ALTER TABLE %s SET TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')", tableName);
+    sql("INSERT INTO %s VALUES (1, 'User1')", tableName);
+
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
+    SparkMicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+    long latestVersion = snapshotManager.loadLatestSnapshot().getVersion();
+
+    // startingVersion=latest resolves to latest+1, which is not materialized. The KernelException
+    // is swallowed and the validator returns without throwing.
+    assertDoesNotThrow(() -> stream.validateCDFEnabledOnTable(latestVersion + 1));
+  }
+
   private static final SparkMicroBatchStreamTest.ScenarioSetup CDC_TWO_INSERT_SETUP =
       (tableName, tempDir) -> {
         sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2')", tableName);
@@ -105,11 +170,17 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
     Optional<Long> noMaxBytes = Optional.empty();
 
     return Stream.of(
+        // Initial snapshot path (snapshot files + delta logs)
         Arguments.of(
-            "Initial snapshot (all inserts)", CDC_TWO_INSERT_SETUP, noMaxFiles, noMaxBytes),
+            "Initial snapshot (all inserts)",
+            CDC_TWO_INSERT_SETUP,
+            /* isInitialSnapshot= */ true,
+            noMaxFiles,
+            noMaxBytes),
         Arguments.of(
             "Empty table (no data files)",
             (SparkMicroBatchStreamTest.ScenarioSetup) (t, d) -> {},
+            /* isInitialSnapshot= */ true,
             noMaxFiles,
             noMaxBytes),
         Arguments.of(
@@ -120,11 +191,40 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
                     sql("INSERT INTO %s VALUES (%d, 'V%d')", t, i, i);
                   }
                 },
+            /* isInitialSnapshot= */ true,
             noMaxFiles,
             noMaxBytes),
-        Arguments.of("Rate limited (maxFiles=1)", CDC_TWO_INSERT_SETUP, Optional.of(1), noMaxBytes),
         Arguments.of(
-            "Rate limited (maxBytes=1)", CDC_TWO_INSERT_SETUP, noMaxFiles, Optional.of(1L)));
+            "Rate limited (maxFiles=1)",
+            CDC_TWO_INSERT_SETUP,
+            /* isInitialSnapshot= */ true,
+            Optional.of(1),
+            noMaxBytes),
+        Arguments.of(
+            "Rate limited (maxBytes=1)",
+            CDC_TWO_INSERT_SETUP,
+            /* isInitialSnapshot= */ true,
+            noMaxFiles,
+            Optional.of(1L)),
+        // Delta log path only (isInitialSnapshot=false, exercises filterDeltaLogsForCDC directly)
+        Arguments.of(
+            "Delta log (two inserts)",
+            CDC_TWO_INSERT_SETUP,
+            /* isInitialSnapshot= */ false,
+            noMaxFiles,
+            noMaxBytes),
+        Arguments.of(
+            "Delta log rate limited (maxFiles=1)",
+            CDC_TWO_INSERT_SETUP,
+            /* isInitialSnapshot= */ false,
+            Optional.of(1),
+            noMaxBytes),
+        Arguments.of(
+            "Delta log rate limited (maxBytes=1)",
+            CDC_TWO_INSERT_SETUP,
+            /* isInitialSnapshot= */ false,
+            noMaxFiles,
+            Optional.of(1L)));
   }
 
   @ParameterizedTest(name = "{0}")
@@ -132,19 +232,22 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
   public void testGetFileChangesForCDC(
       String testDescription,
       SparkMicroBatchStreamTest.ScenarioSetup setup,
+      boolean isInitialSnapshot,
       Optional<Integer> maxFiles,
       Optional<Long> maxBytes,
       @TempDir File tempDir)
       throws Exception {
     String tablePath = tempDir.getAbsolutePath();
     String tableName =
-        "test_cdc_compare_" + Math.abs(testDescription.hashCode()) + "_" + System.nanoTime();
+        "test_cdc_compare_" + (testDescription.hashCode() & 0x7fffffff) + "_" + System.nanoTime();
     createEmptyTestTable(tablePath, tableName);
     sql("ALTER TABLE %s SET TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')", tableName);
     setup.setup(tableName, tempDir);
 
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(tablePath));
     long latestVersion = deltaLog.update(false, Option.empty(), Option.empty()).version();
+    // For non-initial-snapshot, start from v2 (v0=CREATE, v1=ALTER CDF, v2+=INSERTs)
+    long fromVersion = isInitialSnapshot ? latestVersion : 2;
 
     // DSv1
     scala.collection.immutable.Map<String, String> cdcOptionsMap =
@@ -154,9 +257,9 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
     List<org.apache.spark.sql.delta.sources.IndexedFile> dsv1Files = new ArrayList<>();
     try (ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> iter =
         deltaSource.getFileChangesWithRateLimit(
-            latestVersion,
+            fromVersion,
             DeltaSourceOffset.BASE_INDEX(),
-            /* isInitialSnapshot= */ true,
+            isInitialSnapshot,
             ScalaUtils.toScalaOption(createAdmissionLimits(maxFiles, maxBytes)))) {
       while (iter.hasNext()) dsv1Files.add(iter.next());
     }
@@ -168,16 +271,227 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
     List<IndexedFile> dsv2Files = new ArrayList<>();
     try (CloseableIterator<IndexedFile> iter =
-        stream.getFileChangesForCDC(
-            /* fromVersion= */ latestVersion,
-            /* fromIndex= */ DeltaSourceOffset.BASE_INDEX(),
-            /* isInitialSnapshot= */ true,
-            /* limits= */ createAdmissionLimits(maxFiles, maxBytes),
-            /* endOffset= */ Optional.empty())) {
+        stream.getFileChangesWithRateLimitForCDC(
+            fromVersion,
+            DeltaSourceOffset.BASE_INDEX(),
+            isInitialSnapshot,
+            createAdmissionLimits(maxFiles, maxBytes),
+            Optional.empty())) {
       while (iter.hasNext()) dsv2Files.add(iter.next());
     }
 
-    assertCDCFileChangesMatch(dsv1Files, dsv2Files);
+    if (isInitialSnapshot) {
+      assertCDCFileChangesMatch(dsv1Files, dsv2Files);
+    } else {
+      SparkMicroBatchStreamTest.compareFileChanges(dsv1Files, dsv2Files);
+    }
+  }
+
+  /**
+   * Tests that version-level takeWhile stops processing commits once rate limit capacity is
+   * exhausted. With maxFiles=1 and two commits, only the first commit's files should be returned.
+   */
+  @Test
+  public void testGetFileChangesForCDC_versionLevelTakeWhile(@TempDir File tempDir)
+      throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "test_cdc_takewhile_" + System.nanoTime();
+    createCDFEnabledTable(tablePath, tableName);
+    sql("INSERT INTO %s VALUES (1, 'V1')", tableName);
+    sql("INSERT INTO %s VALUES (2, 'V2')", tableName);
+    // v0=CREATE, v1=ALTER CDF, v2=INSERT, v3=INSERT
+
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(tablePath));
+    deltaLog.update(false, Option.empty(), Option.empty());
+
+    // Unlimited: DSv1/DSv2 parity, should see data files from both commits (v2 and v3)
+    List<org.apache.spark.sql.delta.sources.IndexedFile> dsv1Unlimited =
+        getDsv1FileChanges(
+            deltaLog,
+            tablePath,
+            /* fromVersion= */ 2L,
+            DeltaSourceOffset.BASE_INDEX(),
+            /* isInitialSnapshot= */ false,
+            /* maxFiles= */ Optional.empty(),
+            /* maxBytes= */ Optional.empty());
+    List<IndexedFile> dsv2Unlimited =
+        getDsv2FileChanges(
+            tablePath,
+            /* fromVersion= */ 2L,
+            DeltaSourceOffset.BASE_INDEX(),
+            /* isInitialSnapshot= */ false,
+            /* maxFiles= */ Optional.empty(),
+            /* maxBytes= */ Optional.empty());
+    SparkMicroBatchStreamTest.compareFileChanges(dsv1Unlimited, dsv2Unlimited);
+
+    Set<Long> unlimitedVersions = new HashSet<>();
+    for (IndexedFile f : dsv2Unlimited) {
+      if (f.hasFileAction()) unlimitedVersions.add(f.getVersion());
+    }
+    assertTrue(
+        unlimitedVersions.size() >= 2,
+        "Expected data files from at least 2 versions, got: " + unlimitedVersions);
+
+    // Rate-limited (maxFiles=1): takeWhile(hasCapacity) should stop after first commit
+    List<org.apache.spark.sql.delta.sources.IndexedFile> dsv1Limited =
+        getDsv1FileChanges(
+            deltaLog,
+            tablePath,
+            /* fromVersion= */ 2L,
+            DeltaSourceOffset.BASE_INDEX(),
+            /* isInitialSnapshot= */ false,
+            /* maxFiles= */ Optional.of(1),
+            /* maxBytes= */ Optional.empty());
+    List<IndexedFile> dsv2Limited =
+        getDsv2FileChanges(
+            tablePath,
+            /* fromVersion= */ 2L,
+            DeltaSourceOffset.BASE_INDEX(),
+            /* isInitialSnapshot= */ false,
+            /* maxFiles= */ Optional.of(1),
+            /* maxBytes= */ Optional.empty());
+    SparkMicroBatchStreamTest.compareFileChanges(dsv1Limited, dsv2Limited);
+
+    Set<Long> limitedVersions = new HashSet<>();
+    for (IndexedFile f : dsv2Limited) {
+      if (f.hasFileAction()) limitedVersions.add(f.getVersion());
+    }
+    assertEquals(
+        1,
+        limitedVersions.size(),
+        "With maxFiles=1, version-level takeWhile should stop after first commit. "
+            + "Got versions: "
+            + limitedVersions);
+  }
+
+  /**
+   * Tests that partial admission on a CDC commit doesn't skip files. Without the conditional END
+   * sentinel fix, the END sentinel after partial admission would advance the offset past the
+   * remaining files.
+   */
+  @Test
+  public void testGetFileChangesForCDC_partialCommitAdmission(@TempDir File tempDir)
+      throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "test_cdc_partial_admit_" + System.nanoTime();
+    // Partition by name so each distinct value produces a separate file in one commit.
+    createEmptyPartitionedTestTable(tablePath, tableName);
+    sql("ALTER TABLE %s SET TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')", tableName);
+    sql("INSERT INTO %s VALUES (1, 'A'), (2, 'B')", tableName);
+
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(tablePath));
+    long latestVersion = deltaLog.update(false, Option.empty(), Option.empty()).version();
+    long insertVersion = latestVersion;
+
+    // Read all files without rate limit for reference
+    List<IndexedFile> dsv2All =
+        getDsv2FileChanges(
+            tablePath,
+            insertVersion,
+            DeltaSourceOffset.BASE_INDEX(),
+            /* isInitialSnapshot= */ false,
+            /* maxFiles= */ Optional.empty(),
+            /* maxBytes= */ Optional.empty());
+    long totalDataFiles = dsv2All.stream().filter(f -> f.getCDCDataFile() != null).count();
+    assertTrue(totalDataFiles > 1, "Partitioned insert should produce multiple files");
+
+    // Read with maxFiles=1: should get partial results
+    List<org.apache.spark.sql.delta.sources.IndexedFile> dsv1Call1 =
+        getDsv1FileChanges(
+            deltaLog,
+            tablePath,
+            insertVersion,
+            DeltaSourceOffset.BASE_INDEX(),
+            /* isInitialSnapshot= */ false,
+            /* maxFiles= */ Optional.of(1),
+            /* maxBytes= */ Optional.empty());
+    List<IndexedFile> dsv2Call1 =
+        getDsv2FileChanges(
+            tablePath,
+            insertVersion,
+            DeltaSourceOffset.BASE_INDEX(),
+            /* isInitialSnapshot= */ false,
+            /* maxFiles= */ Optional.of(1),
+            /* maxBytes= */ Optional.empty());
+    SparkMicroBatchStreamTest.compareFileChanges(dsv1Call1, dsv2Call1);
+
+    // Verify no END sentinel in partial result
+    boolean dsv2HasEnd =
+        dsv2Call1.stream()
+            .anyMatch(
+                f -> f.getIndex() == DeltaSourceOffset.END_INDEX() && f.getCDCDataFile() == null);
+    assertFalse(dsv2HasEnd, "Partial admission should not produce END sentinel");
+  }
+
+  /**
+   * Tests that a batch-rejected explicit CDC commit exhausts the admission budget, preventing
+   * subsequent commits from being admitted. AdmissionLimits.admit(Seq) consumes the budget even on
+   * reject, so the version-level takeWhile(hasCapacity) stops the iteration.
+   */
+  @Test
+  public void testGetFileChangesForCDC_batchRejectExhaustsBudget(@TempDir File tempDir)
+      throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "test_cdc_batch_reject_" + System.nanoTime();
+    createCDFEnabledTable(tablePath, tableName);
+    sql("INSERT INTO %s VALUES (1, 'A')", tableName); // v2
+    sql("DELETE FROM %s WHERE id = 1", tableName); // v3: explicit CDC
+    sql("INSERT INTO %s VALUES (2, 'B')", tableName); // v4
+
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(tablePath));
+    deltaLog.update(false, Option.empty(), Option.empty());
+
+    // Probe file sizes to craft a byte budget that admits v2 but rejects v3's batch.
+    List<IndexedFile> probeFiles =
+        getDsv2FileChanges(
+            tablePath,
+            /* fromVersion= */ 2L,
+            DeltaSourceOffset.BASE_INDEX(),
+            /* isInitialSnapshot= */ false,
+            /* maxFiles= */ Optional.empty(),
+            /* maxBytes= */ Optional.empty());
+
+    long v2Size = 0;
+    long v3BatchSize = 0;
+    for (IndexedFile f : probeFiles) {
+      if (f.getVersion() == 2 && f.hasFileAction()) v2Size += f.getFileSize();
+      if (f.getVersion() == 3 && f.hasFileAction()) v3BatchSize += f.getFileSize();
+    }
+    assertTrue(v3BatchSize > 0, "DELETE should produce data files");
+
+    // Budget enough for v2 but 1 byte short for v3's batch.
+    long maxBytes = v2Size + v3BatchSize - 1;
+
+    List<org.apache.spark.sql.delta.sources.IndexedFile> dsv1Files =
+        getDsv1FileChanges(
+            deltaLog,
+            tablePath,
+            /* fromVersion= */ 2L,
+            DeltaSourceOffset.BASE_INDEX(),
+            /* isInitialSnapshot= */ false,
+            /* maxFiles= */ Optional.empty(),
+            /* maxBytes= */ Optional.of(maxBytes));
+    List<IndexedFile> dsv2Files =
+        getDsv2FileChanges(
+            tablePath,
+            /* fromVersion= */ 2L,
+            DeltaSourceOffset.BASE_INDEX(),
+            /* isInitialSnapshot= */ false,
+            /* maxFiles= */ Optional.empty(),
+            /* maxBytes= */ Optional.of(maxBytes));
+    SparkMicroBatchStreamTest.compareFileChanges(dsv1Files, dsv2Files);
+
+    long v2DataFiles =
+        dsv2Files.stream().filter(f -> f.getVersion() == 2 && f.hasFileAction()).count();
+    assertTrue(v2DataFiles > 0, "Version 2 should be admitted");
+
+    long v3DataFiles =
+        dsv2Files.stream().filter(f -> f.getVersion() == 3 && f.hasFileAction()).count();
+    assertEquals(0, v3DataFiles, "Version 3 should be batch-rejected");
+
+    long v4DataFiles =
+        dsv2Files.stream().filter(f -> f.getVersion() == 4 && f.hasFileAction()).count();
+    assertEquals(0, v4DataFiles, "Version 4 should not be admitted after batch-reject");
   }
 
   private static final Set<DeltaAction> CDC_ACTION_SET =
@@ -185,6 +499,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
           DeltaAction.ADD,
           DeltaAction.REMOVE,
           DeltaAction.METADATA,
+          DeltaAction.PROTOCOL,
           DeltaAction.CDC,
           DeltaAction.COMMITINFO);
 
@@ -202,16 +517,17 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
     List<IndexedFile> files;
     try (CloseableIterator<IndexedFile> iter =
         stream.processCommitToIndexedFilesForCDC(
-            commit, /* startVersion= */ commitVersion, /* endOffsetOpt= */ Optional.empty())) {
+            commit,
+            /* startVersion= */ commitVersion,
+            /* limits= */ Optional.empty(),
+            /* endOffsetOpt= */ Optional.empty(),
+            /* lastProcessedVersion= */ commitVersion,
+            /* lastProcessedIndex= */ DeltaSourceOffset.BASE_INDEX())) {
       files = collectAll(iter);
     }
 
-    assertTrue(files.size() >= 3, "Expected at least BEGIN + data + END, got " + files.size());
-
-    IndexedFile begin = files.get(0);
-    assertEquals(commitVersion, begin.getVersion());
-    assertEquals(DeltaSourceOffset.BASE_INDEX(), begin.getIndex());
-    assertNull(begin.getCDCDataFile());
+    // BEGIN sentinel is filtered (at start boundary). Only data files + END remain.
+    assertTrue(files.size() >= 2, "Expected at least data + END, got " + files.size());
 
     IndexedFile end = files.get(files.size() - 1);
     assertEquals(commitVersion, end.getVersion());
@@ -225,7 +541,6 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
     assertFalse(dataFiles.isEmpty(), "Expected at least one data file");
 
     for (IndexedFile f : dataFiles) {
-      assertNotNull(f.getCDCDataFile(), "Data file should have a CDCDataFile");
       assertEquals("insert", f.getCDCDataFile().getChangeType(), "Change type should be 'insert'");
       assertTrue(
           f.getCDCDataFile().getCommitTimestamp() > 0, "Commit timestamp should be positive");
@@ -248,11 +563,17 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
     List<IndexedFile> files;
     try (CloseableIterator<IndexedFile> iter =
         stream.processCommitToIndexedFilesForCDC(
-            commit, /* startVersion= */ commitVersion, /* endOffsetOpt= */ Optional.empty())) {
+            commit,
+            /* startVersion= */ commitVersion,
+            /* limits= */ Optional.empty(),
+            /* endOffsetOpt= */ Optional.empty(),
+            /* lastProcessedVersion= */ commitVersion,
+            /* lastProcessedIndex= */ DeltaSourceOffset.BASE_INDEX())) {
       files = collectAll(iter);
     }
 
-    assertTrue(files.size() >= 3, "Expected at least BEGIN + data + END, got " + files.size());
+    // BEGIN sentinel is filtered (at start boundary). Only data files + END remain.
+    assertTrue(files.size() >= 2, "Expected at least data + END, got " + files.size());
 
     List<IndexedFile> dataFiles = new ArrayList<>();
     for (IndexedFile f : files) {
@@ -261,7 +582,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
     assertFalse(dataFiles.isEmpty(), "Expected at least one data file from DELETE");
 
     for (IndexedFile f : dataFiles) {
-      assertTrue(f.isAddCDCFile(), "Data file should be a CDC file");
+      assertTrue(f.isAddCDCFile(), "Data file should be an explicit CDC file");
       assertNotNull(f.getCDCDataFile(), "CDCDataFile should be present");
       assertTrue(f.getCDCDataFile().isAddCDCFile(), "Should be an explicit CDC file");
       assertEquals(commitVersion, f.getVersion());
@@ -304,15 +625,82 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
     List<IndexedFile> files;
     try (CloseableIterator<IndexedFile> iter =
         stream.processCommitToIndexedFilesForCDC(
-            commit, /* startVersion= */ commitVersion, /* endOffsetOpt= */ Optional.empty())) {
+            commit,
+            /* startVersion= */ commitVersion,
+            /* limits= */ Optional.empty(),
+            /* endOffsetOpt= */ Optional.empty(),
+            /* lastProcessedVersion= */ commitVersion,
+            /* lastProcessedIndex= */ DeltaSourceOffset.BASE_INDEX())) {
       files = collectAll(iter);
     }
 
-    assertEquals(2, files.size(), "Expected only BEGIN + END sentinels for no-op merge");
-    assertEquals(DeltaSourceOffset.BASE_INDEX(), files.get(0).getIndex());
-    assertEquals(DeltaSourceOffset.END_INDEX(), files.get(1).getIndex());
+    // BEGIN sentinel filtered (at start boundary). Only END sentinel remains.
+    assertEquals(1, files.size(), "Expected only END sentinel for no-op merge");
+    assertEquals(DeltaSourceOffset.END_INDEX(), files.get(0).getIndex());
     assertNull(files.get(0).getCDCDataFile());
-    assertNull(files.get(1).getCDCDataFile());
+  }
+
+  /**
+   * Tests that inferred CDC preserves delta-log action order for index assignment. A synthetic
+   * UPDATE commit writes RemoveFile before AddFile (in that order in the log JSON); DSv1 preserves
+   * that order via zipWithIndex. DSv2 must assign indices in the same order to maintain
+   * offset/checkpoint compatibility.
+   *
+   * <p>Regression test: a prior implementation collected AddFile and RemoveFile into separate
+   * lists, then emitted all adds before all removes, which reordered indices vs DSv1.
+   */
+  @Test
+  public void testProcessCommit_inferredCDCPreservesDeltaLogActionOrder(@TempDir File tempDir)
+      throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "test_cdc_inferred_order_" + System.nanoTime();
+    createCDFEnabledTable(tablePath, tableName);
+    sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2')", tableName);
+
+    // Write a synthetic UPDATE commit with RemoveFile BEFORE AddFile and non-zero metrics
+    // (so shouldSkip=false). This exercises the inferred CDC path (no AddCDCFile) with both
+    // action types, where action order determines index assignment.
+    long commitVersion = 3;
+    writeSyntheticInferredCDCCommit(tablePath, commitVersion);
+
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(tablePath));
+    deltaLog.update(false, Option.empty(), Option.empty());
+
+    // DSv1/DSv2 parity: index assignment must match DSv1's zipWithIndex ordering
+    List<org.apache.spark.sql.delta.sources.IndexedFile> dsv1Files =
+        getDsv1FileChanges(
+            deltaLog,
+            tablePath,
+            commitVersion,
+            DeltaSourceOffset.BASE_INDEX(),
+            /* isInitialSnapshot= */ false,
+            /* maxFiles= */ Optional.empty(),
+            /* maxBytes= */ Optional.empty());
+    List<IndexedFile> dsv2Files =
+        getDsv2FileChanges(
+            tablePath,
+            commitVersion,
+            DeltaSourceOffset.BASE_INDEX(),
+            /* isInitialSnapshot= */ false,
+            /* maxFiles= */ Optional.empty(),
+            /* maxBytes= */ Optional.empty());
+    SparkMicroBatchStreamTest.compareFileChanges(dsv1Files, dsv2Files);
+
+    // Verify ordering: RemoveFile (delete) before AddFile (insert) in delta log
+    List<IndexedFile> dataFiles = new ArrayList<>();
+    for (IndexedFile f : dsv2Files) {
+      if (f.getCDCDataFile() != null) dataFiles.add(f);
+    }
+    assertEquals(2, dataFiles.size(), "Expected exactly 2 data files (one remove + one add)");
+
+    assertEquals(
+        "delete",
+        dataFiles.get(0).getCDCDataFile().getChangeType(),
+        "First data file should be 'delete' (RemoveFile appears first in delta log)");
+    assertEquals(
+        "insert",
+        dataFiles.get(1).getCDCDataFile().getChangeType(),
+        "Second data file should be 'insert' (AddFile appears second in delta log)");
   }
 
   @Test
@@ -336,7 +724,12 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
     List<IndexedFile> files;
     try (CloseableIterator<IndexedFile> iter =
         stream.processCommitToIndexedFilesForCDC(
-            commit, /* startVersion= */ commitVersion, Optional.of(endOffset))) {
+            commit,
+            /* startVersion= */ commitVersion,
+            /* limits= */ Optional.empty(),
+            Optional.of(endOffset),
+            /* lastProcessedVersion= */ commitVersion,
+            /* lastProcessedIndex= */ DeltaSourceOffset.BASE_INDEX())) {
       files = collectAll(iter);
     }
 
@@ -345,6 +738,405 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
     assertEquals(DeltaSourceOffset.END_INDEX(), files.get(1).getIndex());
     assertNull(files.get(0).getCDCDataFile());
     assertNull(files.get(1).getCDCDataFile());
+  }
+
+  /**
+   * Tests that resuming a rate-limited initial snapshot CDC read makes progress. Without the
+   * boundary pre-filter fix, already-processed files would consume the admission budget on the
+   * second call, causing the stream to stall.
+   */
+  @Test
+  public void testGetFileChangesForCDC_snapshotResumeWithRateLimit(@TempDir File tempDir)
+      throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "test_cdc_snapshot_resume_" + System.nanoTime();
+    createCDFEnabledTable(tablePath, tableName);
+    // Insert multiple rows so the snapshot has multiple files
+    sql("INSERT INTO %s VALUES (1, 'A')", tableName);
+    sql("INSERT INTO %s VALUES (2, 'B')", tableName);
+    sql("INSERT INTO %s VALUES (3, 'C')", tableName);
+
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(tablePath));
+    long latestVersion = deltaLog.update(false, Option.empty(), Option.empty()).version();
+    Optional<Integer> maxFiles = Optional.of(1);
+
+    // Call 1: from BASE_INDEX, should get 1 file
+    List<org.apache.spark.sql.delta.sources.IndexedFile> dsv1Call1 =
+        getDsv1FileChanges(
+            deltaLog,
+            tablePath,
+            latestVersion,
+            DeltaSourceOffset.BASE_INDEX(),
+            /* isInitialSnapshot= */ true,
+            maxFiles,
+            /* maxBytes= */ Optional.empty());
+    List<IndexedFile> dsv2Call1 =
+        getDsv2FileChanges(
+            tablePath,
+            latestVersion,
+            DeltaSourceOffset.BASE_INDEX(),
+            /* isInitialSnapshot= */ true,
+            maxFiles,
+            /* maxBytes= */ Optional.empty());
+    assertCDCFileChangesMatch(dsv1Call1, dsv2Call1);
+    long dsv1DataCount1 = dsv1Call1.stream().filter(f -> f.add() != null).count();
+    assertTrue(dsv1DataCount1 > 0, "Call 1 should return at least 1 data file");
+
+    // Find the last data file index from call 1
+    long lastIndex1 =
+        dsv2Call1.stream()
+            .filter(IndexedFile::hasFileAction)
+            .mapToLong(IndexedFile::getIndex)
+            .max()
+            .orElse(DeltaSourceOffset.BASE_INDEX());
+
+    // Call 2: resume from lastIndex1, should get the next file (not stall)
+    List<org.apache.spark.sql.delta.sources.IndexedFile> dsv1Call2 =
+        getDsv1FileChanges(
+            deltaLog,
+            tablePath,
+            latestVersion,
+            lastIndex1,
+            /* isInitialSnapshot= */ true,
+            maxFiles,
+            /* maxBytes= */ Optional.empty());
+    List<IndexedFile> dsv2Call2 =
+        getDsv2FileChanges(
+            tablePath,
+            latestVersion,
+            lastIndex1,
+            /* isInitialSnapshot= */ true,
+            maxFiles,
+            /* maxBytes= */ Optional.empty());
+    assertCDCFileChangesMatch(dsv1Call2, dsv2Call2);
+    long dsv2DataCount2 = dsv2Call2.stream().filter(IndexedFile::hasFileAction).count();
+    assertTrue(dsv2DataCount2 > 0, "Call 2 should return new data files (not stall)");
+  }
+
+  /**
+   * Per-commit barrier emission: a metadata-only commit on a CDC stream with schema tracking must
+   * produce a barrier sentinel (METADATA_CHANGE_INDEX) as element [0], followed by an END sentinel
+   * (limits=empty branch appends END after the barrier).
+   *
+   * <p>Setup: v0=CREATE, v1=ALTER ENABLE CDF, v2=INSERT, v3=ALTER ADD COLUMNS (metadata-only).
+   * Tracking log is seeded at v2, so v3 diverges from source-init.
+   */
+  @Test
+  public void testProcessCommit_emitsBarrierAtSchemaChange(@TempDir File tempDir) throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "test_cdc_process_barrier_" + System.nanoTime();
+    createCDFEnabledTable(tablePath, tableName); // v0=CREATE, v1=ALTER ENABLE CDF
+    sql("INSERT INTO %s VALUES (1, 'a')", tableName); // v2 data
+    sql("ALTER TABLE %s ADD COLUMNS (c3 INT)", tableName); // v3 metadata-only
+
+    String schemaLogPath = new File(tempDir, "schema_log").getAbsolutePath();
+    SparkMicroBatchStream stream =
+        createStreamWithSeededTrackingLog(tablePath, schemaLogPath, /* seededVersion= */ 2L);
+
+    long commitVersion = 3L;
+    CommitActions commit = getCommitActions(tablePath, commitVersion);
+    List<IndexedFile> files;
+    // lastProcessedVersion = commitVersion - 1: fresh process, the start-boundary filter
+    // doesn't run, so the barrier (which has index < BASE_INDEX) is preserved.
+    try (CloseableIterator<IndexedFile> iter =
+        stream.processCommitToIndexedFilesForCDC(
+            commit,
+            /* startVersion= */ commitVersion,
+            /* limits= */ Optional.empty(),
+            /* endOffsetOpt= */ Optional.empty(),
+            /* lastProcessedVersion= */ commitVersion - 1,
+            /* lastProcessedIndex= */ DeltaSourceOffset.BASE_INDEX())) {
+      files = collectAll(iter);
+    }
+
+    // limits=empty branch appends an END sentinel after the barrier.
+    assertEquals(2, files.size(), "Expected [barrier, END], got " + files.size());
+    IndexedFile barrier = files.get(0);
+    assertEquals(commitVersion, barrier.getVersion(), "Barrier must be at v3");
+    assertEquals(
+        DeltaSourceOffset.METADATA_CHANGE_INDEX(),
+        barrier.getIndex(),
+        "First entry must be the schema-change barrier sentinel");
+    assertFalse(barrier.hasFileAction(), "Barrier must not carry a file action");
+
+    IndexedFile end = files.get(1);
+    assertEquals(DeltaSourceOffset.END_INDEX(), end.getIndex(), "Second entry must be END");
+  }
+
+  /**
+   * On a CDC stream with schema tracking, a metadata-change commit must emit a barrier sentinel
+   * (METADATA_CHANGE_INDEX) and the iterator must truncate after it — no files from later commits
+   * appear in the same batch. Exercises four pieces of the CDC schema-tracking wiring at once:
+   *
+   * <ol>
+   *   <li>Metadata/protocol capture in {@code collectAndBuildCDCIndexedFiles}.
+   *   <li>Barrier emission via {@code getMetadataOrProtocolChangeIndexedFileIterator}.
+   *   <li>Barrier passthrough in {@code applyPerCommitCDCAdmission}.
+   *   <li>{@code stopIndexedFileIteratorAtSchemaChangeBarrier} truncating across commits.
+   * </ol>
+   *
+   * <p>Setup: v0=CREATE, v1=ALTER ENABLE CDF, v2=INSERT, v3=ALTER ADD COLUMNS (metadata-only),
+   * v4=INSERT. Tracking log is seeded at v2 (pre-ALTER schema), so v3 diverges from source-init.
+   */
+  @Test
+  public void testGetFileChangesForCDC_emitsBarrierAtSchemaChange(@TempDir File tempDir)
+      throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "test_cdc_barrier_" + System.nanoTime();
+    createCDFEnabledTable(tablePath, tableName); // v0=CREATE, v1=ALTER ENABLE CDF
+    sql("INSERT INTO %s VALUES (1, 'a')", tableName); // v2 data
+    sql("ALTER TABLE %s ADD COLUMNS (c3 INT)", tableName); // v3 metadata-only
+    sql("INSERT INTO %s VALUES (2, 'b', 99)", tableName); // v4 post-barrier
+
+    String schemaLogPath = new File(tempDir, "schema_log").getAbsolutePath();
+    SparkMicroBatchStream stream =
+        createStreamWithSeededTrackingLog(tablePath, schemaLogPath, /* seededVersion= */ 2L);
+
+    // Drive the stream from v2 (inclusive). Expected output structure:
+    //   v2: BASE + CDC data + END  (pre-barrier commit, fully emitted)
+    //   v3: barrier at METADATA_CHANGE_INDEX
+    //   v4: nothing — truncated.
+    List<IndexedFile> result;
+    try (CloseableIterator<IndexedFile> iter =
+        stream.getFileChangesWithRateLimitForCDC(
+            /* fromVersion= */ 2L,
+            /* fromIndex= */ DeltaSourceOffset.BASE_INDEX(),
+            /* isInitialSnapshot= */ false,
+            /* limits= */ Optional.empty(),
+            /* endOffset= */ Optional.empty())) {
+      result = collectAll(iter);
+    }
+
+    assertFalse(result.isEmpty(), "Expected at least the barrier in the output");
+    IndexedFile last = result.get(result.size() - 1);
+    assertEquals(
+        DeltaSourceOffset.METADATA_CHANGE_INDEX(),
+        last.getIndex(),
+        "Last entry must be the schema-change barrier sentinel");
+    assertEquals(3L, last.getVersion(), "Barrier must be at v3 (the ALTER commit)");
+
+    for (IndexedFile f : result) {
+      assertNotEquals(
+          4L, f.getVersion(), "v4 must not appear — stopIterator truncates at the barrier");
+    }
+  }
+
+  /**
+   * Same as {@link #testProcessCommit_emitsBarrierAtSchemaChange} but the divergence is a
+   * protocol-only ALTER (minReaderVersion/minWriterVersion bump). Targets the protocol-capture
+   * branch in {@code collectAndBuildCDCIndexedFiles} — without it, protocol-only commits would not
+   * fire the barrier.
+   *
+   * <p>Setup: v0=CREATE, v1=ALTER ENABLE CDF, v2=INSERT, v3=ALTER reader/writer protocol versions.
+   */
+  @Test
+  public void testProcessCommit_emitsBarrierAtProtocolChange(@TempDir File tempDir)
+      throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "test_cdc_process_protocol_barrier_" + System.nanoTime();
+    createCDFEnabledTable(tablePath, tableName); // v0, v1
+    sql("INSERT INTO %s VALUES (1, 'a')", tableName); // v2 data
+    sql(
+        "ALTER TABLE %s SET TBLPROPERTIES "
+            + "('delta.minReaderVersion' = '2', 'delta.minWriterVersion' = '5')",
+        tableName); // v3 protocol-only
+
+    String schemaLogPath = new File(tempDir, "schema_log").getAbsolutePath();
+    SparkMicroBatchStream stream =
+        createStreamWithSeededTrackingLog(tablePath, schemaLogPath, /* seededVersion= */ 2L);
+
+    long commitVersion = 3L;
+    CommitActions commit = getCommitActions(tablePath, commitVersion);
+    List<IndexedFile> files;
+    try (CloseableIterator<IndexedFile> iter =
+        stream.processCommitToIndexedFilesForCDC(
+            commit,
+            /* startVersion= */ commitVersion,
+            /* limits= */ Optional.empty(),
+            /* endOffsetOpt= */ Optional.empty(),
+            /* lastProcessedVersion= */ commitVersion - 1,
+            /* lastProcessedIndex= */ DeltaSourceOffset.BASE_INDEX())) {
+      files = collectAll(iter);
+    }
+
+    assertEquals(2, files.size(), "Expected [barrier, END], got " + files.size());
+    IndexedFile barrier = files.get(0);
+    assertEquals(commitVersion, barrier.getVersion());
+    assertEquals(
+        DeltaSourceOffset.METADATA_CHANGE_INDEX(),
+        barrier.getIndex(),
+        "First entry must be the schema-change barrier sentinel (fired by protocol change)");
+  }
+
+  /**
+   * The barrier sentinel must survive {@code applyPerCommitCDCAdmission} when limits are set —
+   * admission is bypassed for barrier-only commits. Without that bypass, admission would treat the
+   * barrier as a normal file action and either lose it or count it against the budget.
+   *
+   * <p>Setup: v0=CREATE, v1=ALTER ENABLE CDF, v2=INSERT, v3=ALTER ADD COLUMNS (metadata-only).
+   */
+  @Test
+  public void testProcessCommit_barrierSurvivesAdmissionLimit(@TempDir File tempDir)
+      throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "test_cdc_barrier_admission_" + System.nanoTime();
+    createCDFEnabledTable(tablePath, tableName); // v0, v1
+    sql("INSERT INTO %s VALUES (1, 'a')", tableName); // v2 data
+    sql("ALTER TABLE %s ADD COLUMNS (c3 INT)", tableName); // v3 metadata-only
+
+    String schemaLogPath = new File(tempDir, "schema_log").getAbsolutePath();
+    SparkMicroBatchStream stream =
+        createStreamWithSeededTrackingLog(tablePath, schemaLogPath, /* seededVersion= */ 2L);
+
+    long commitVersion = 3L;
+    CommitActions commit = getCommitActions(tablePath, commitVersion);
+    Optional<DeltaSource.AdmissionLimits> limits =
+        createAdmissionLimits(/* maxFiles= */ Optional.of(1), /* maxBytes= */ Optional.empty());
+
+    List<IndexedFile> files;
+    try (CloseableIterator<IndexedFile> iter =
+        stream.processCommitToIndexedFilesForCDC(
+            commit,
+            /* startVersion= */ commitVersion,
+            /* limits= */ limits,
+            /* endOffsetOpt= */ Optional.empty(),
+            /* lastProcessedVersion= */ commitVersion - 1,
+            /* lastProcessedIndex= */ DeltaSourceOffset.BASE_INDEX())) {
+      files = collectAll(iter);
+    }
+
+    // With limits set, applyPerCommitCDCAdmission returns the barrier list unchanged (no END
+    // appended — END is only added in the no-limits branch).
+    assertEquals(
+        1, files.size(), "Barrier must pass through admission unchanged (1 entry expected)");
+    IndexedFile barrier = files.get(0);
+    assertEquals(commitVersion, barrier.getVersion());
+    assertEquals(
+        DeltaSourceOffset.METADATA_CHANGE_INDEX(),
+        barrier.getIndex(),
+        "Barrier sentinel must survive admission");
+  }
+
+  /**
+   * Builds a stream where the schema-tracking log has been seeded with the table's metadata at
+   * {@code seededVersion}. {@code mergeConsecutiveSchemaChanges=false} so the merger doesn't fold
+   * later metadata into the seeded entry — useful when the test wants a specific divergence point.
+   */
+  private SparkMicroBatchStream createStreamWithSeededTrackingLog(
+      String tablePath, String schemaLogPath, long seededVersion) {
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
+    Engine engine = DefaultEngine.create(hadoopConf);
+
+    Map<String, String> javaOptions = new HashMap<>();
+    javaOptions.put(DeltaOptions.SCHEMA_TRACKING_LOCATION(), schemaLogPath);
+    javaOptions.put("readChangeFeed", "true");
+    scala.collection.immutable.Map<String, String> scalaOptions =
+        ScalaUtils.toScalaMap(javaOptions);
+    DeltaOptions deltaOptions = new DeltaOptions(scalaOptions, spark.sessionState().conf());
+
+    io.delta.kernel.internal.SnapshotImpl latestSnapshot =
+        (io.delta.kernel.internal.SnapshotImpl) snapshotManager.loadLatestSnapshot();
+    io.delta.kernel.internal.SnapshotImpl seededSnapshot =
+        (io.delta.kernel.internal.SnapshotImpl) snapshotManager.loadSnapshotAt(seededVersion);
+
+    org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog trackingLog =
+        MetadataEvolutionHandler.getMetadataTrackingLogForMicroBatchStream(
+                spark,
+                latestSnapshot,
+                javaOptions,
+                snapshotManager,
+                engine,
+                Option.empty(),
+                /* mergeConsecutiveSchemaChanges= */ false)
+            .get();
+    org.apache.spark.sql.delta.sources.PersistedMetadata seeded =
+        org.apache.spark.sql.delta.sources.PersistedMetadata.apply(
+            seededSnapshot.getMetadata().getId(),
+            seededVersion,
+            new io.delta.spark.internal.v2.adapters.KernelMetadataAdapter(
+                seededSnapshot.getMetadata()),
+            new io.delta.spark.internal.v2.adapters.KernelProtocolAdapter(
+                seededSnapshot.getProtocol()),
+            tablePath + "/_delta_log/_streaming_metadata");
+    trackingLog.writeNewMetadata(seeded, /* replaceCurrent= */ false);
+
+    StructType tableSchema =
+        io.delta.spark.internal.v2.utils.SchemaUtils.convertKernelSchemaToSparkSchema(
+            seededSnapshot.getSchema());
+    return new SparkMicroBatchStream(
+        snapshotManager,
+        latestSnapshot,
+        hadoopConf,
+        spark,
+        deltaOptions,
+        tablePath,
+        tableSchema,
+        /* partitionSchema= */ new StructType(),
+        /* readDataSchema= */ tableSchema,
+        /* ddlOrderedReadOutputSchema= */ tableSchema,
+        /* dataFilters= */ new org.apache.spark.sql.sources.Filter[0],
+        scalaOptions,
+        Option.apply(trackingLog),
+        tablePath + "/_checkpoint");
+  }
+
+  /**
+   * Helper: get DSv1 CDC file changes for given offset. Creates a fresh {@link
+   * DeltaSource.AdmissionLimits} internally so the stateful budget is not shared across calls.
+   */
+  private List<org.apache.spark.sql.delta.sources.IndexedFile> getDsv1FileChanges(
+      DeltaLog deltaLog,
+      String tablePath,
+      long fromVersion,
+      long fromIndex,
+      boolean isInitialSnapshot,
+      Optional<Integer> maxFiles,
+      Optional<Long> maxBytes)
+      throws Exception {
+    scala.collection.immutable.Map<String, String> cdcOptionsMap =
+        Map$.MODULE$.<String, String>empty().updated("readChangeFeed", "true");
+    DeltaOptions cdcOptions = new DeltaOptions(cdcOptionsMap, spark.sessionState().conf());
+    DeltaSource deltaSource = createDeltaSource(deltaLog, tablePath, cdcOptions);
+    List<org.apache.spark.sql.delta.sources.IndexedFile> files = new ArrayList<>();
+    try (ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> iter =
+        deltaSource.getFileChangesWithRateLimit(
+            fromVersion,
+            fromIndex,
+            isInitialSnapshot,
+            ScalaUtils.toScalaOption(createAdmissionLimits(maxFiles, maxBytes)))) {
+      while (iter.hasNext()) files.add(iter.next());
+    }
+    return files;
+  }
+
+  /**
+   * Helper: get DSv2 CDC file changes for given offset. Creates a fresh {@link
+   * DeltaSource.AdmissionLimits} internally so the stateful budget is not shared across calls.
+   */
+  private List<IndexedFile> getDsv2FileChanges(
+      String tablePath,
+      long fromVersion,
+      long fromIndex,
+      boolean isInitialSnapshot,
+      Optional<Integer> maxFiles,
+      Optional<Long> maxBytes)
+      throws Exception {
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
+    SparkMicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+    List<IndexedFile> files = new ArrayList<>();
+    try (CloseableIterator<IndexedFile> iter =
+        stream.getFileChangesWithRateLimitForCDC(
+            fromVersion,
+            fromIndex,
+            isInitialSnapshot,
+            createAdmissionLimits(maxFiles, maxBytes),
+            Optional.empty())) {
+      while (iter.hasNext()) files.add(iter.next());
+    }
+    return files;
   }
 
   private static void sql(String query, Object... args) {
@@ -404,8 +1196,11 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
         /* dataSchema= */ tableSchema,
         /* partitionSchema= */ new StructType(),
         /* readDataSchema= */ new StructType(),
+        /* ddlOrderedReadOutputSchema= */ new StructType(),
         /* dataFilters= */ new org.apache.spark.sql.sources.Filter[0],
-        /* scalaOptions= */ scala.collection.immutable.Map$.MODULE$.empty());
+        /* scalaOptions= */ scala.collection.immutable.Map$.MODULE$.<String, String>empty(),
+        /* metadataTrackingLog= */ scala.Option.empty(),
+        /* metadataPath= */ "");
   }
 
   private SparkMicroBatchStream createStream(String tablePath) {
@@ -492,10 +1287,214 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
   }
 
   /**
-   * Compare CDC file changes between DSv1 and DSv2. Delegates to {@link
-   * SparkMicroBatchStreamTest#compareFileChanges} for version/index/path comparison, then verifies
-   * CDC metadata on DSv2 data files.
+   * Writes a synthetic UPDATE commit with RemoveFile before AddFile (different paths) and non-zero
+   * operation metrics. This produces the inferred CDC path (no AddCDCFile) with both action types
+   * where the RemoveFile precedes the AddFile in the delta log.
    */
+  private void writeSyntheticInferredCDCCommit(String tablePath, long version) throws Exception {
+    String logDir = tablePath + "/_delta_log";
+    String filename = String.format("%020d.json", version);
+    java.nio.file.Path commitFile = java.nio.file.Paths.get(logDir, filename);
+
+    long ts = System.currentTimeMillis();
+    String commitInfo =
+        "{\"commitInfo\":{"
+            + "\"timestamp\":"
+            + ts
+            + ","
+            + "\"operation\":\"UPDATE\","
+            + "\"operationParameters\":{},"
+            + "\"isBlindAppend\":false,"
+            + "\"operationMetrics\":{"
+            + "\"numTargetRowsUpdated\":\"1\","
+            + "\"numTargetFilesAdded\":\"1\","
+            + "\"numTargetFilesRemoved\":\"1\""
+            + "}}}";
+    // RemoveFile first, then AddFile — different paths so they are not a same-path DV pair
+    String remove =
+        "{\"remove\":{"
+            + "\"path\":\"update-old.parquet\","
+            + "\"deletionTimestamp\":"
+            + ts
+            + ","
+            + "\"dataChange\":true,"
+            + "\"partitionValues\":{},"
+            + "\"size\":100"
+            + "}}";
+    String add =
+        "{\"add\":{"
+            + "\"path\":\"update-new.parquet\","
+            + "\"partitionValues\":{},"
+            + "\"size\":100,"
+            + "\"modificationTime\":"
+            + ts
+            + ","
+            + "\"dataChange\":true"
+            + "}}";
+
+    java.nio.file.Files.writeString(commitFile, commitInfo + "\n" + remove + "\n" + add + "\n");
+  }
+
+  @Test
+  public void testProcessCommit_samePath_noDV_emitsPlainInsertDelete(@TempDir File tempDir)
+      throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "test_cdc_samepath_nodv_" + (System.nanoTime() & 0x7fffffff);
+    createCDFEnabledTable(tablePath, tableName);
+    sql("INSERT INTO %s VALUES (1, 'A'), (2, 'B')", tableName);
+
+    // Write a synthetic commit where Add and Remove reference the same path but neither has a DV.
+    // This exercises the non-DV same-path branch that emits plain insert + delete.
+    long commitVersion = 3;
+    writeSyntheticSamePathNoDVCommit(tablePath, commitVersion);
+
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(tablePath));
+    deltaLog.update(false, Option.empty(), Option.empty());
+
+    SparkMicroBatchStream stream = createStream(tablePath);
+    CommitActions commit = getCommitActions(tablePath, commitVersion);
+
+    List<IndexedFile> files;
+    try (CloseableIterator<IndexedFile> iter =
+        stream.processCommitToIndexedFilesForCDC(
+            commit,
+            /* startVersion= */ commitVersion,
+            /* limits= */ Optional.empty(),
+            Optional.empty(),
+            /* lastProcessedVersion= */ commitVersion,
+            /* lastProcessedIndex= */ DeltaSourceOffset.BASE_INDEX())) {
+      files = collectAll(iter);
+    }
+
+    List<IndexedFile> dataFiles = new ArrayList<>();
+    for (IndexedFile f : files) {
+      if (f.getCDCDataFile() != null) dataFiles.add(f);
+    }
+    assertEquals(2, dataFiles.size(), "Expected exactly 2 CDC data files (insert + delete)");
+    for (IndexedFile f : dataFiles) {
+      assertFalse(
+          f.getCDCDataFile().getEffectiveDv().isPresent(),
+          "Plain same-path pair must not produce a DV-diff CDCDataFile");
+    }
+    long inserts =
+        dataFiles.stream()
+            .filter(f -> CDCReader.CDC_TYPE_INSERT().equals(f.getCDCDataFile().getChangeType()))
+            .count();
+    long deletes =
+        dataFiles.stream()
+            .filter(
+                f -> CDCReader.CDC_TYPE_DELETE_STRING().equals(f.getCDCDataFile().getChangeType()))
+            .count();
+    assertEquals(1, inserts, "Expected 1 insert");
+    assertEquals(1, deletes, "Expected 1 delete");
+  }
+
+  /**
+   * Writes a synthetic UPDATE commit where AddFile and RemoveFile reference the same path and
+   * neither has a DV. This exercises the non-DV same-path CDC branch.
+   */
+  private void writeSyntheticSamePathNoDVCommit(String tablePath, long version) throws Exception {
+    String logDir = tablePath + "/_delta_log";
+    String filename = String.format("%020d.json", version);
+    java.nio.file.Path commitFile = java.nio.file.Paths.get(logDir, filename);
+
+    long ts = System.currentTimeMillis();
+    String commitInfo =
+        "{\"commitInfo\":{"
+            + "\"timestamp\":"
+            + ts
+            + ","
+            + "\"operation\":\"UPDATE\","
+            + "\"operationParameters\":{},"
+            + "\"isBlindAppend\":false,"
+            + "\"operationMetrics\":{"
+            + "\"numTargetRowsUpdated\":\"1\","
+            + "\"numTargetFilesAdded\":\"1\","
+            + "\"numTargetFilesRemoved\":\"1\""
+            + "}}}";
+    // Same path on both Remove and Add, no deletionVector on either side.
+    String remove =
+        "{\"remove\":{"
+            + "\"path\":\"same-file.parquet\","
+            + "\"deletionTimestamp\":"
+            + ts
+            + ","
+            + "\"dataChange\":true,"
+            + "\"partitionValues\":{},"
+            + "\"size\":100"
+            + "}}";
+    String add =
+        "{\"add\":{"
+            + "\"path\":\"same-file.parquet\","
+            + "\"partitionValues\":{},"
+            + "\"size\":100,"
+            + "\"modificationTime\":"
+            + ts
+            + ","
+            + "\"dataChange\":true"
+            + "}}";
+
+    java.nio.file.Files.writeString(commitFile, commitInfo + "\n" + remove + "\n" + add + "\n");
+  }
+
+  @Test
+  public void testApplyPerCommitCDCAdmission_dvDiffNoDvOnAdd_batchAdmitted(@TempDir File tempDir)
+      throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "test_admission_gap_" + (System.nanoTime() & 0x7fffffff);
+    createEmptyTestTable(tablePath, tableName);
+    sql("INSERT INTO %s VALUES (1, 'A')", tableName);
+
+    SparkMicroBatchStream stream = createStream(tablePath);
+
+    // Simulate a "Some+None" DV-diff result: the CDCDataFile is from fromDVDiff but the backing
+    // AddFile has NO deletion vector (restore case). hasDeletionVector() returns false.
+    AddFile addFileNoDv =
+        new AddFile(
+            AddFile.createAddFileRow(
+                new io.delta.kernel.types.StructType(),
+                "restore-file.parquet",
+                stringStringMapValue(java.util.Collections.emptyMap()),
+                1024L,
+                100L,
+                /* dataChange= */ true,
+                /* deletionVector= */ java.util.Optional.empty(),
+                java.util.Optional.empty(),
+                java.util.Optional.empty(),
+                java.util.Optional.empty(),
+                java.util.Optional.empty()));
+
+    CDCDataFile dvDiffFile =
+        CDCDataFile.fromDVDiff(
+            addFileNoDv,
+            CDCReader.CDC_TYPE_INSERT(),
+            /* commitTimestamp= */ 1000L,
+            /* dvBase64= */ "some-inline-dv==");
+    CDCDataFile plainInsert = CDCDataFile.fromAddFile(addFileNoDv, /* commitTimestamp= */ 1000L);
+
+    long version = 2;
+    List<IndexedFile> commitFiles = new ArrayList<>();
+    commitFiles.add(IndexedFile.sentinel(version, DeltaSourceOffset.BASE_INDEX()));
+    commitFiles.add(IndexedFile.cdc(version, 0, dvDiffFile));
+    commitFiles.add(IndexedFile.cdc(version, 1, plainInsert));
+
+    // With maxFilesPerTrigger=1: if batch admission is NOT triggered, the two files are split
+    // across batches. The bug: dvDiffFile.hasDeletionVector() == false because addFileNoDv has
+    // no DV, so requiresBatchAdmission is false and DSv2 allows splitting.
+    Optional<DeltaSource.AdmissionLimits> limits =
+        createAdmissionLimits(Optional.of(1), Optional.empty());
+    List<IndexedFile> result =
+        stream.applyPerCommitCDCAdmission(commitFiles, limits.get(), version);
+
+    // Both files must be admitted together: any DV-diff file (getEffectiveDv().isPresent())
+    // signals that the commit cannot be split, even when the backing AddFile has no DV.
+    long admittedData = result.stream().filter(IndexedFile::hasFileAction).count();
+    assertEquals(
+        2,
+        admittedData,
+        "DV-diff CDCDataFile must trigger batch admission even when AddFile has no DV");
+  }
+
   private void assertCDCFileChangesMatch(
       List<org.apache.spark.sql.delta.sources.IndexedFile> dsv1Files, List<IndexedFile> dsv2Files) {
     SparkMicroBatchStreamTest.compareFileChanges(dsv1Files, dsv2Files);

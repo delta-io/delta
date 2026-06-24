@@ -1,12 +1,12 @@
 name: "Delta Spark"
 on:
   push:
-    branches: [master]
+    branches: [master, branch-*]
     paths-ignore:
       - '**.md'
       - '**.txt'
   pull_request:
-    branches: [master]
+    branches: [master, branch-*]
     paths-ignore:
       - '**.md'
       - '**.txt'
@@ -37,6 +37,9 @@ jobs:
     name: "DS: Spark ${{ matrix.spark_version }}, Scala ${{ matrix.scala }}, Shard ${{ matrix.shard }}"
     runs-on: ubuntu-24.04
     needs: generate-matrix
+    # Spark 4.2 is a preview release until the Spark 4.2 release is published.
+    # Do not block PRs on its failures while the preview lane is stabilizing.
+    continue-on-error: ${{ matrix.spark_version == '4.2' }}
     strategy:
       fail-fast: false
       matrix:
@@ -74,6 +77,10 @@ jobs:
             ~/.ivy2
             ~/.cache/coursier
           key: delta-sbt-cache-spark${{ matrix.spark_version }}-scala${{ matrix.scala }}
+      # Delta's sparkUnityCatalog module (part of sparkGroup) depends on APIs that are only in
+      # unreleased UC. Publish the pinned UC build locally before sbt tries to resolve it.
+      - name: Set up pinned Unity Catalog
+        uses: ./.github/actions/setup-unitycatalog
       - name: Scala structured logging style check
         run: |
           if [ -f ./dev/spark_structured_logging_style.py ]; then

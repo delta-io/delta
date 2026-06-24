@@ -16,6 +16,8 @@
 
 package io.delta.flink.table;
 
+import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
+
 import dev.failsafe.Failsafe;
 import dev.failsafe.Fallback;
 import dev.failsafe.RetryPolicy;
@@ -34,6 +36,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.TableAlreadyExistsException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.metrics.TransactionReport;
@@ -110,8 +113,9 @@ public abstract class AbstractKernelTable implements DeltaTable {
         target =
             new URI(
                 target.getScheme(),
-                Optional.ofNullable(target.getHost()).orElse(""),
+                Optional.ofNullable(target.getAuthority()).orElse(""),
                 target.getPath() + "/",
+                target.getQuery(),
                 target.getFragment());
       }
     } catch (URISyntaxException e) {
@@ -316,6 +320,19 @@ public abstract class AbstractKernelTable implements DeltaTable {
           return Transaction.generateAppendActions(
               localEngine, writeState, dataFiles, writeContext);
         });
+  }
+
+  @Override
+  public CloseableIterator<Row> scan(Predicate predicate) {
+    return snapshot()
+        .map(
+            s ->
+                s.getScanBuilder()
+                    .withFilter(predicate)
+                    .build()
+                    .getScanFiles(getEngine())
+                    .flatMap(FilteredColumnarBatch::getRows))
+        .orElse(toCloseableIterator(Collections.emptyIterator()));
   }
 
   /**
@@ -565,8 +582,22 @@ public abstract class AbstractKernelTable implements DeltaTable {
   }
 
   private CredentialManager createCredentialManager() {
-    return new CredentialManager(
-        () -> catalog.getCredentials(this.getTableUUID()), this::refreshCredential);
+    String source = this.conf.getCredentialSource();
+    if (source.equalsIgnoreCase("ambient")) {
+      // Do not fetch credentials from Unity Catalog; rely on the ambient environment
+      // (workload identity, instance profile, ADC, or core-site.xml) to supply them.
+      return new CredentialManager.AmbientCredentialManager();
+    } else if (source.equalsIgnoreCase("uc")) {
+      return new CredentialManager(
+          () -> catalog.getCredentials(this.getTableUUID()), this::refreshCredential);
+    } else {
+      throw new IllegalArgumentException(
+          "Unsupported "
+              + TableConf.CREDENTIALS_SOURCE.key()
+              + " '"
+              + source
+              + "'. Supported values: 'uc' (default), 'ambient'.");
+    }
   }
 
   /**

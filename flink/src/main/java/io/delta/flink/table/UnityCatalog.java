@@ -21,6 +21,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.failsafe.function.CheckedSupplier;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
 import io.delta.kernel.types.*;
+import io.delta.kernel.unitycatalog.UCTableIdentifier;
 import io.unitycatalog.client.ApiClient;
 import io.unitycatalog.client.ApiClientBuilder;
 import io.unitycatalog.client.ApiException;
@@ -231,6 +232,33 @@ public class UnityCatalog implements DeltaCatalog {
     return apiClient;
   }
 
+  /**
+   * Parses {@code schema.table} or {@code catalog.schema.table} into a {@link UCTableIdentifier}.
+   * In the 2-part form the catalog defaults to this catalog's name; in the 3-part form the leading
+   * segment must equal this catalog's name.
+   */
+  UCTableIdentifier toUcTableIdentifier(String qualifiedTableName) {
+    String[] namespaces = qualifiedTableName.split("\\.");
+    Preconditions.checkArgument(namespaces.length == 2 || namespaces.length == 3);
+    String catalogName;
+    String schemaName;
+    String tableName;
+    if (namespaces.length == 3) {
+      Preconditions.checkArgument(
+          namespaces[0].equals(getName()),
+          String.format(
+              "table's catalog name %s must match catalog's name %s", namespaces[0], getName()));
+      catalogName = namespaces[0];
+      schemaName = namespaces[1];
+      tableName = namespaces[2];
+    } else {
+      catalogName = getName();
+      schemaName = namespaces[0];
+      tableName = namespaces[1];
+    }
+    return new UCTableIdentifier(catalogName, schemaName, tableName);
+  }
+
   @Override
   public void open() {
     if (apiClient == null) {
@@ -329,22 +357,9 @@ public class UnityCatalog implements DeltaCatalog {
         () -> {
           TablesApi tablesApi = new TablesApi(apiClient);
           // Obtain names
-          String[] namespaces = tableId.split("\\.");
-          Preconditions.checkArgument(namespaces.length == 2 || namespaces.length == 3);
-          String schemaName;
-          String tableName;
-          if (namespaces.length == 3) {
-            Preconditions.checkArgument(
-                namespaces[0].equals(getName()),
-                String.format(
-                    "table's catalog name %s must match catalog's name %s",
-                    namespaces[0], getName()));
-            schemaName = namespaces[1];
-            tableName = namespaces[2];
-          } else {
-            schemaName = namespaces[0];
-            tableName = namespaces[1];
-          }
+          UCTableIdentifier tableIdentifier = toUcTableIdentifier(tableId);
+          String schemaName = tableIdentifier.getSchemaName();
+          String tableName = tableIdentifier.getTableName();
           // Column Info
           List<ColumnInfo> columnInfos =
               IntStream.range(0, schema.fields().size())

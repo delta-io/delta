@@ -1786,6 +1786,14 @@ trait DeltaErrorsSuiteBase
         Map("path" -> path.toString))
     }
     {
+      val tableName = TableIdentifier("mytable")
+      val e = intercept[DeltaUnsupportedOperationException] {
+        throw DeltaErrors.replaceTableWithCatalogManagedNotSupported(tableName.nameParts)
+      }
+      checkError(e, "DELTA_REPLACE_TABLE_WITH_CATALOG_MANAGED_NOT_SUPPORTED", "0A000",
+        Map("tableName" -> "`mytable`"))
+    }
+    {
       val e = intercept[DeltaUnsupportedOperationException] {
         throw DeltaErrors.operationBlockedOnCatalogManagedTable("OPTIMIZE")
       }
@@ -2271,6 +2279,13 @@ trait DeltaErrorsSuiteBase
       checkError(e, "DELTA_MERGE_MISSING_WHEN", "42601", Map.empty[String, String])
     }
     {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.mergeIntoEmptySchemaTarget()
+      }
+      checkError(e, "DELTA_MERGE_INTO_EMPTY_SCHEMA_TARGET", "428GU",
+        Map.empty[String, String])
+    }
+    {
       val e = intercept[DeltaIllegalStateException] {
         throw DeltaErrors.unrecognizedFileAction("invalidAction", "invalidClass")
       }
@@ -2325,7 +2340,7 @@ trait DeltaErrorsSuiteBase
       }
       checkError(e, "DELTA_SOURCE_TABLE_IGNORE_CHANGES", "0A000", Map(
         "version" -> "10",
-        "file" -> "removedFile",
+        "changeInfo" -> "removedFile",
         "dataPath" -> "tablePath"
       ))
     }
@@ -2583,13 +2598,13 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.invalidConstraintName("foo")
       }
-      checkError(e, "_LEGACY_ERROR_TEMP_DELTA_0001", None, Map("name" -> "foo"))
+      checkError(e, "DELTA_INVALID_CONSTRAINT_NAME", None, Map("name" -> "foo"))
     }
     {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.bloomFilterInvalidParameterValueException("foo")
       }
-      checkError(e, "_LEGACY_ERROR_TEMP_DELTA_0002", None, Map("message" -> "foo"))
+      checkError(e, "DELTA_BLOOM_FILTER_INVALID_PARAMETER_VALUE", None, Map("message" -> "foo"))
     }
     {
       val e = intercept[DeltaAnalysisException] {
@@ -2597,7 +2612,7 @@ trait DeltaErrorsSuiteBase
           tableProperties = Map("delta.prop1" -> "foo"),
           deltaConfiguration = Map("delta.config1" -> "bar"))
       }
-      checkError(e, "_LEGACY_ERROR_TEMP_DELTA_0003", None, Map(
+      checkError(e, "DELTA_CONVERT_METASTORE_METADATA_MISMATCH", None, Map(
         "tableProperties" -> "[delta.prop1=foo]",
         "configuration" -> "[delta.config1=bar]",
         "metadataCheckSqlConf" -> DeltaSQLConf.DELTA_CONVERT_METADATA_CHECK_ENABLED.key))
@@ -2667,7 +2682,7 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.errorFindingColumnPosition(Seq("col2"), schema, "foo")
       }
-      checkError(e, "_LEGACY_ERROR_TEMP_DELTA_0008", None, Map(
+      checkError(e, "DELTA_ERROR_FINDING_COLUMN_POSITION", None, Map(
         "column" -> "col2",
         "schema" -> schema.treeString,
         "message" -> "foo"))
@@ -2687,7 +2702,7 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.identityColumnInconsistentMetadata("col1", true, true, true)
       }
-      checkError(e, "_LEGACY_ERROR_TEMP_DELTA_0006", None, Map(
+      checkError(e, "DELTA_IDENTITY_COLUMN_INCONSISTENT_METADATA", None, Map(
         "colName" -> "col1", "hasStart" -> "true", "hasStep" -> "true", "hasInsert" -> "true"))
     }
     {
@@ -2875,30 +2890,30 @@ trait DeltaErrorsSuiteBase
     {
       val e = intercept[DeltaAnalysisException] {
         throw new DeltaAnalysisException(
-          errorClass = "_LEGACY_ERROR_TEMP_DELTA_0009",
+          errorClass = "DELTA_UNSUPPORTED_NESTED_FIELD_IN_UPDATE",
           messageParameters = Array("prefixMsg - "))
       }
-      checkError(e, "_LEGACY_ERROR_TEMP_DELTA_0009", None,
+      checkError(e, "DELTA_UNSUPPORTED_NESTED_FIELD_IN_UPDATE", None,
         Map("optionalPrefixMessage" -> "prefixMsg - "))
     }
     {
       val expr = "someExp".expr
       val e = intercept[DeltaAnalysisException] {
         throw new DeltaAnalysisException(
-          errorClass = "_LEGACY_ERROR_TEMP_DELTA_0010",
+          errorClass = "DELTA_UNSUPPORTED_EXPRESSION_IN_TARGET_COLUMN",
           messageParameters = Array("prefixMsg - ", expr.sql))
       }
-      checkError(e, "_LEGACY_ERROR_TEMP_DELTA_0010", None,
+      checkError(e, "DELTA_UNSUPPORTED_EXPRESSION_IN_TARGET_COLUMN", None,
         Map("optionalPrefixMessage" -> "prefixMsg - ", "expression" -> "'someExp'"))
     }
     {
       val exprs = Seq("1".expr, "2".expr)
       val e = intercept[DeltaAnalysisException] {
         throw new DeltaAnalysisException(
-          errorClass = "_LEGACY_ERROR_TEMP_DELTA_0012",
+          errorClass = "DELTA_CANNOT_RESOLVE_EXPRESSION",
           messageParameters = Array(exprs.mkString(",")))
       }
-      checkError(e, "_LEGACY_ERROR_TEMP_DELTA_0012", None,
+      checkError(e, "DELTA_CANNOT_RESOLVE_EXPRESSION", None,
         Map("expression" -> exprs.mkString(",")))
     }
     {

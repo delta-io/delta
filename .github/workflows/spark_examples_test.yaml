@@ -1,12 +1,12 @@
 name: "Delta Spark Publishing and Examples"
 on:
   push:
-    branches: [master]
+    branches: [master, branch-*]
     paths-ignore:
       - '**.md'
       - '**.txt'
   pull_request:
-    branches: [master]
+    branches: [master, branch-*]
     paths-ignore:
       - '**.md'
       - '**.txt'
@@ -45,6 +45,10 @@ jobs:
         scala: [2.13.17]
     env:
       SCALA_VERSION: ${{ matrix.scala }}
+      # The setup-unitycatalog action's script reads SPARK_VERSION (cut to major-minor) to
+      # decide which `unitycatalog-spark_<major.minor>_2.13` artifact to publish. Matches
+      # spark_test.yaml's convention.
+      SPARK_VERSION: ${{ matrix.spark_version }}
     steps:
       - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
       - name: Get Spark version details
@@ -78,6 +82,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev libncursesw5-dev xz-utils tk-dev libffi-dev liblzma-dev python3-openssl git
           sudo apt install libedit-dev
+      # `publishM2` and `++ <scala>` both resolve every project's deps, which includes
+      # sparkUnityCatalog; publish the pinned UC build locally before sbt runs.
+      - name: Set up pinned Unity Catalog
+        uses: ./.github/actions/setup-unitycatalog
       - name: Run Delta Spark Local Publishing and Examples Compilation
         # examples/scala/build.sbt will compile against the local Delta release version (e.g. 3.2.0-SNAPSHOT).
         # Thus, we need to publishM2 first so those jars are locally accessible.

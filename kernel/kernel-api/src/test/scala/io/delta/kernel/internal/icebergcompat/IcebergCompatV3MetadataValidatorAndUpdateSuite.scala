@@ -36,7 +36,8 @@ trait IcebergCompatV3MetadataValidatorAndUpdaterSuiteBase
 
   override def icebergCompatVersion: String = "V3"
 
-  override def supportedDataColumnTypes: Set[DataType] = ALL_TYPES + VariantType.VARIANT
+  override def supportedDataColumnTypes: Set[DataType] =
+    ALL_TYPES + VariantType.VARIANT + GeometryType.ofDefault() + GeographyType.ofDefault()
 
   override def unsupportedDataColumnTypes: Set[DataType] = Set.empty
 

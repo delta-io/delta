@@ -240,10 +240,11 @@ public class UCDeltaTableDataFrameStreamingTest extends UCDeltaTableIntegrationB
   }
 
   /**
-   * CDF streaming reads work for EXTERNAL tables but fail for MANAGED tables.
+   * CDF streaming reads work for both EXTERNAL and MANAGED tables.
    *
-   * <p>For EXTERNAL: verifies that inserts and a delete produce the expected typed change events.
-   * For MANAGED: verifies the stream fails with an error containing "not supported" and "CDC".
+   * <p>Verifies that inserts and a delete produce the expected typed change events. Under the
+   * default AUTO mode, MANAGED (catalogManaged) reads are served by the DSv2 connector while
+   * EXTERNAL reads stay on the V1 connector.
    */
   @TestAllTableTypes
   public void testStreamingCDFRead(TableType tableType) throws Exception {
@@ -258,36 +259,28 @@ public class UCDeltaTableDataFrameStreamingTest extends UCDeltaTableIntegrationB
           long insertVersion = currentVersion(tableName);
           sql("DELETE FROM %s WHERE id = 1", tableName);
 
-          if (tableType == TableType.EXTERNAL) {
-            List<Row> changes = new ArrayList<>();
-            spark()
-                .readStream()
-                .format("delta")
-                .option("readChangeFeed", "true")
-                .option("startingVersion", insertVersion)
-                .table(tableName)
-                .writeStream()
-                .trigger(Trigger.AvailableNow())
-                .option("checkpointLocation", checkpoint())
-                .foreachBatch(
-                    (VoidFunction2<Dataset<Row>, Long>)
-                        (df, id) -> changes.addAll(df.select("id", "_change_type").collectAsList()))
-                .start()
-                .awaitTermination();
-            assertThat(changes)
-                .extracting(r -> r.getString(1))
-                .containsExactlyInAnyOrder("insert", "insert", "insert", "delete");
-            assertThat(changes)
-                .filteredOn(r -> "delete".equals(r.getString(1)))
-                .extracting(r -> r.getInt(0))
-                .containsExactly(1);
-          } else {
-            assertInvalidStreamOption(
-                tableName,
-                r -> r.option("readChangeFeed", "true").option("startingVersion", insertVersion),
-                "not supported",
-                "CDC");
-          }
+          List<Row> changes = new ArrayList<>();
+          spark()
+              .readStream()
+              .format("delta")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", insertVersion)
+              .table(tableName)
+              .writeStream()
+              .trigger(Trigger.AvailableNow())
+              .option("checkpointLocation", checkpoint())
+              .foreachBatch(
+                  (VoidFunction2<Dataset<Row>, Long>)
+                      (df, id) -> changes.addAll(df.select("id", "_change_type").collectAsList()))
+              .start()
+              .awaitTermination();
+          assertThat(changes)
+              .extracting(r -> r.getString(1))
+              .containsExactlyInAnyOrder("insert", "insert", "insert", "delete");
+          assertThat(changes)
+              .filteredOn(r -> "delete".equals(r.getString(1)))
+              .extracting(r -> r.getInt(0))
+              .containsExactly(1);
         });
   }
 

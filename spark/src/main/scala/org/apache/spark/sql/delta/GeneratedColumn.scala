@@ -581,7 +581,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
     val executionId = Option(spark.sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY))
       .getOrElse("unknown")
     recordDeltaEvent(
-      snapshot.deltaLog,
+      snapshot,
       "delta.generatedColumns.optimize",
       data = Map(
         "executionId" -> executionId,

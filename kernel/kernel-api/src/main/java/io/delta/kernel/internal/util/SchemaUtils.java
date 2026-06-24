@@ -293,6 +293,18 @@ public class SchemaUtils {
             .map(col -> ColumnMapping.getPhysicalColumnNameAndDataType(schema, col))
             .collect(Collectors.toList());
 
+    // Geo types are skipping-eligible (bbox stats) but have no total order, so cannot cluster.
+    List<String> geoColumns =
+        physicalColumnsWithTypes.stream()
+            .filter(tuple -> tuple._2 instanceof GeometryType || tuple._2 instanceof GeographyType)
+            .map(tuple -> tuple._1.toString() + " : " + tuple._2)
+            .collect(Collectors.toList());
+
+    if (!geoColumns.isEmpty()) {
+      throw new KernelException(
+          format("Clustering is not supported on geometry/geography column(s): %s", geoColumns));
+    }
+
     List<String> nonSkippingEligibleColumns =
         physicalColumnsWithTypes.stream()
             .filter(tuple -> !StatsSchemaHelper.isSkippingEligibleDataType(tuple._2))

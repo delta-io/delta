@@ -67,8 +67,12 @@ import org.apache.spark.util.Utils
  * @param output SQL output of the command
  * @param protocol This is used to create a table with specific protocol version
  * @param allowCatalogManaged This is used to create UC managed table with catalogManaged feature
- * @param createTableFunc If specified, call this function to create the table, instead of
- *                        Spark `SessionCatalog#createTable` which is backed by Hive Metastore.
+ * @param createTableFunc If specified, call this function (with a [[CreateTableFuncParams]]
+ *                        carrying the cleaned [[CatalogTable]], the post-commit [[Snapshot]], and
+ *                        any extra metadata such as UniForm Iceberg) to create the table, instead
+ *                        of Spark `SessionCatalog#createTable` which is backed by Hive Metastore.
+ *                        The snapshot is included so callers that need committed protocol/metadata
+ *                        (e.g. catalog-managed Delta) can avoid re-loading the table.
  */
 case class CreateDeltaTableCommand(
     override val table: CatalogTable,
@@ -80,7 +84,7 @@ case class CreateDeltaTableCommand(
     override val output: Seq[Attribute] = Nil,
     protocol: Option[Protocol] = None,
     override val allowCatalogManaged: Boolean = false,
-    createTableFunc: Option[CatalogTable => Unit] = None)
+    createTableFunc: Option[CreateTableFuncParams => Unit] = None)
   extends LeafRunnableCommand
   with DeltaCommand
   with DeltaLogging
@@ -147,6 +151,7 @@ case class CreateDeltaTableCommand(
       tableExists = deltaLog.tableExists,
       query = query,
       catalogTableProperties = tableWithLocation.properties,
+      catalogTable = tableWithLocation,
       existingTableSnapshotOpt =
         if (deltaLog.tableExists) Some(deltaLog.unsafeVolatileSnapshot) else None)
 
@@ -263,7 +268,16 @@ case class CreateDeltaTableCommand(
       didNotChangeMetadata,
       createTableFunc)
 
+    runPostTableCreationUpdates(
+      sparkSession, txnUsedForCommit, deltaLog, postCommitSnapshot, tableWithLocation)
+  }
 
+  private def runPostTableCreationUpdates(
+      sparkSession: SparkSession,
+      txnUsedForCommit: OptimisticTransaction,
+      deltaLog: DeltaLog,
+      postCommitSnapshot: Snapshot,
+      tableWithLocation: CatalogTable): Unit = {
 
     if (UniversalFormat.hudiEnabled(postCommitSnapshot.metadata) &&
         !txnUsedForCommit.containsPostCommitHook(HudiConverterHook)) {
@@ -356,7 +370,9 @@ case class CreateDeltaTableCommand(
     // We are either appending/overwriting with saveAsTable or creating a new table with CTAS
     if (!hasBeenExecuted(txn, sparkSession, Some(options))) {
       val (taggedCommitData, op) = doDeltaWrite(updatedWriter, updatedWriter.data.schema.asNullable)
-      txn.commit(taggedCommitData.actions, op, tags = taggedCommitData.stringTags)
+      InsertAtomicReplaceExecutionObserver.getObserver.commit {
+        txn.commit(taggedCommitData.actions, op, tags = taggedCommitData.stringTags)
+      }
     }
     txnToReturn
   }
@@ -731,7 +747,7 @@ case class CreateDeltaTableCommand(
       )
 
     // Legacy saveAsTable with Overwrite mode
-    case TableCreationModes.CreateOrReplace if options.exists(_.replaceWhere.isDefined) =>
+    case TableCreationModes.CreateOrReplace if options.exists(_.isInsertAtomicReplaceOp) =>
       DeltaOperations.Write(
         mode = mode,
         partitionBy = Option(table.partitionColumnNames),
@@ -740,7 +756,9 @@ case class CreateDeltaTableCommand(
         isDynamicPartitionOverwrite = options.flatMap(
           o => if (Try(o.isDynamicPartitionOverwriteMode).getOrElse(false)) Some(true) else None),
         canOverwriteSchema = options.flatMap(o => if (o.canOverwriteSchema) Some(true) else None),
-        canMergeSchema = options.flatMap(o => if (o.canMergeSchema) Some(true) else None)
+        canMergeSchema = options.flatMap(o => if (o.canMergeSchema) Some(true) else None),
+        replaceOnCond = options.flatMap(_.replaceOn),
+        replaceUsingCols = options.flatMap(_.replaceUsing)
       )
 
     // New DataSourceV2 saveAsTable with overwrite mode behavior

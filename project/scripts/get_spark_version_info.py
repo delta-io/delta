@@ -24,6 +24,7 @@ Usage:
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -33,8 +34,13 @@ def generate_spark_versions_json(repo_root: Path) -> bool:
     """Generate the spark-versions.json file by running sbt exportSparkVersionsJson."""
     try:
         print("Generating spark-versions.json...", file=sys.stderr)
+        cmd = ["build/sbt"]
+        kernel_version = os.getenv("KERNEL_VERSION")
+        if kernel_version:
+            cmd.append(f"-DkernelVersion={kernel_version}")
+        cmd.append("exportSparkVersionsJson")
         subprocess.run(
-            ["build/sbt", "exportSparkVersionsJson"],
+            cmd,
             cwd=repo_root,
             check=True,
             stdout=subprocess.DEVNULL,
@@ -105,10 +111,12 @@ def main():
             print(json.dumps(matrix_versions))
 
         elif args.released_spark_versions:
-            # Only include released versions (no -SNAPSHOT in fullVersion)
+            # Only include released versions; explicitly exclude pre-release markers
+            # (`-SNAPSHOT`, `-previewN`).
+            pre_release_markers = ("-SNAPSHOT", "-preview")
             matrix_versions = []
             for v in versions:
-                if "-SNAPSHOT" not in v["fullVersion"]:
+                if not any(m in v["fullVersion"] for m in pre_release_markers):
                     matrix_versions.append(v["shortVersion"])
             print(json.dumps(matrix_versions))
 

@@ -19,12 +19,13 @@ package org.apache.spark.sql.delta.icebergShaded
 import java.nio.ByteBuffer
 import java.time.Instant
 import java.time.format.DateTimeParseException
+import java.util.{Base64, List => JList, UUID}
 
 import scala.collection.JavaConverters._
 import scala.reflect.runtime.universe
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, Snapshot}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, DeltaLog, Snapshot, SnapshotDescriptor}
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction, RemoveFile}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.PartitionUtils.{timestampPartitionPattern, utcFormatter}
@@ -36,6 +37,7 @@ import shadedForDelta.org.apache.iceberg.Metrics
 import shadedForDelta.org.apache.iceberg.StructLike
 import shadedForDelta.org.apache.iceberg.catalog.{Namespace, TableIdentifier => IcebergTableIdentifier}
 import shadedForDelta.org.apache.iceberg.hive.HiveCatalog
+import shadedForDelta.org.apache.iceberg.unityCatalog.{IcebergSnapshotIdGenerator, UnityCatalogTableOperations}
 import shadedForDelta.org.apache.iceberg.util.DateTimeUtil
 
 import org.apache.spark.sql.catalyst.{InternalRow, TableIdentifier => SparkTableIdentifier}
@@ -109,7 +111,13 @@ object IcebergTransactionUtils
         // string is null/empty or not because this metric is required by Iceberg. If the number
         // of records is both unavailable here and unavailable in the Delta stats, Iceberg will
         // throw an exception when building the data file.
-        .withRecordCount(add.numLogicalRecords.getOrElse(-1L))
+        // Here, numPhysicalRecords is used as Iceberg's record count is position-oriented:
+        // it must reflect the total number of physical rows in the Parquet file,
+        // including rows masked by deletion vectors.
+        // This aligns with Delta's baseRowId assignment which reserves row ID space using
+        // numPhysicalRecords, and with Iceberg's row lineage where first_row_id + position
+        // must address every row in the file.
+        .withRecordCount(add.numPhysicalRecords.getOrElse(-1L))
 
     try {
       if (add.stats != null && add.stats.nonEmpty) {
@@ -130,10 +138,10 @@ object IcebergTransactionUtils
       tablePath: Path,
       partitionSpec: PartitionSpec,
       logicalToPhysicalPartitionNames: Map[String, String],
-      snapshot: Snapshot): DataFile = {
+      snapshot: SnapshotDescriptor): DataFile = {
     convertFileAction(
       remove, tablePath, partitionSpec, logicalToPhysicalPartitionNames, snapshot)
-      .withRecordCount(remove.numLogicalRecords.getOrElse(0L))
+      .withRecordCount(remove.numPhysicalRecords.getOrElse(0L))
       .build()
   }
 
@@ -142,7 +150,7 @@ object IcebergTransactionUtils
       tablePath: Path,
       partitionSpec: PartitionSpec,
       logicalToPhysicalPartitionNames: Map[String, String],
-      snapshot: Snapshot): DataFiles.Builder = {
+      snapshot: SnapshotDescriptor): DataFiles.Builder = {
     val absPath = canonicalizeFilePath(f, tablePath)
     var builder = DataFiles
       .builder(partitionSpec)
@@ -153,6 +161,17 @@ object IcebergTransactionUtils
       builder = builder.withPartition(
         DeltaToIcebergConvert.Partition.convertPartitionValues(
           snapshot, partitionSpec, f.partitionValues, logicalToPhysicalPartitionNames))
+    }
+    f match {
+      case add: AddFile =>
+        add.baseRowId.map { rowId =>
+          builder.withFirstRowId(rowId)
+        }
+      case remove: RemoveFile =>
+        remove.baseRowId.map { rowId =>
+          builder.withFirstRowId(rowId)
+        }
+      case _ =>
     }
     builder
   }
@@ -330,6 +349,64 @@ object IcebergTransactionUtils
             .asTerm
           instanceMirror.reflectField(specsField).set(newSpecs)
           instanceMirror.reflectField(specsByIdFiled).set(newSpecsById)
+        }
+    }
+
+    /**
+     * Pre-assigns a deterministic snapshot ID for a given Iceberg transaction.
+     *
+     * This method ensures that when committing through Unity Catalog, the next
+     * snapshot ID is deterministically assigned based on the Delta version
+     * and the table identifier.
+     */
+    def preAssignSnapshotIdForTxn(txn: IcebergTransaction, version: Long, tableId: String): Unit = {
+      txn match {
+        case baseTxn: BaseTransaction => baseTxn.underlyingOps() match {
+          case unityCatalogOps: UnityCatalogTableOperations =>
+            unityCatalogOps.setPreAssignedNextSnapshotId(
+              IcebergSnapshotIdGenerator.encode(
+                version,
+                UUID.fromString(tableId)))
+          case _ => throw new IllegalStateException(
+            "Expected tableOps to be UnityCatalogTableOperations")
+        }
+        case _ => throw new IllegalStateException("Expected txn to be BaseTransaction")
+      }
+    }
+
+    /**
+     * Use reflection to set lastSequenceNumber in TableMetadata
+     * @param txn
+     * @param sequenceNumber
+     */
+    def setIcebergTxnLastSequenceNumber(txn: IcebergTransaction, sequenceNumber: Long): Unit = {
+      Option(txn.asInstanceOf[BaseTransaction].currentMetadata())
+        .foreach { metadata =>
+          val mirror = universe.runtimeMirror(getClass.getClassLoader)
+          val instanceMirror = mirror.reflect(metadata)
+          val field = universe
+            .typeOf[TableMetadata]
+            .decl(universe.TermName("lastSequenceNumber"))
+            .asTerm
+          instanceMirror.reflectField(field).set(sequenceNumber)
+        }
+    }
+
+    /**
+     * Use reflection to set nextRowId in TableMetadata
+     * @param txn
+     * @param sequenceNumber
+     */
+    def setIcebergTxnNextRowId(txn: IcebergTransaction, nextRowId: Long): Unit = {
+      Option(txn.asInstanceOf[BaseTransaction].currentMetadata())
+        .foreach { metadata =>
+          val mirror = universe.runtimeMirror(getClass.getClassLoader)
+          val instanceMirror = mirror.reflect(metadata)
+          val field = universe
+            .typeOf[TableMetadata]
+            .decl(universe.TermName("nextRowId"))
+            .asTerm
+          instanceMirror.reflectField(field).set(nextRowId)
         }
     }
 }
