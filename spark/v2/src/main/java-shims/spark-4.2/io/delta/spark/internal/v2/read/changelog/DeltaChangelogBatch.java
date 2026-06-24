@@ -6,6 +6,7 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaLogActionUtils;
+import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.actions.Metadata;
@@ -34,7 +35,6 @@ import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReader;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.delta.DefaultRowCommitVersion$;
-import org.apache.spark.sql.delta.DeltaConfigs$;
 import org.apache.spark.sql.delta.DeltaErrors;
 import org.apache.spark.sql.delta.RowId$;
 import org.apache.spark.sql.execution.datasources.FilePartition;
@@ -89,10 +89,7 @@ public class DeltaChangelogBatch implements Batch {
     // Pre-check catches schema drift between start and end. The per-commit loop below catches
     // in-range Metadata commits.
     StructType startSchema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
-    if (!SchemaUtils.isReadCompatible(startSchema, endDataSchema)) {
-      DeltaErrors.throwChangelogSchemaChangeInRange(
-          ((CommitRangeImpl) commitRange).getStartVersion());
-    }
+    requireReadCompatible(startSchema, ((CommitRangeImpl) commitRange).getStartVersion());
 
     // TODO: Remove StreamingHelper usage. The helper is generic, only the class name is
     // streaming-flavored.
@@ -161,14 +158,10 @@ public class DeltaChangelogBatch implements Batch {
                 Metadata md = metadataOpt.get();
                 StructType commitSchema =
                     SchemaUtils.convertKernelSchemaToSparkSchema(md.getSchema());
-                if (!SchemaUtils.isReadCompatible(commitSchema, endDataSchema)) {
-                  DeltaErrors.throwChangelogSchemaChangeInRange(commit.getVersion());
-                }
-                String rtValue =
-                    md.getConfiguration().get(DeltaConfigs$.MODULE$.ROW_TRACKING_ENABLED().key());
+                requireReadCompatible(commitSchema, commit.getVersion());
                 // A new Metadata action fully replaces the prior configuration, so an absent
                 // row-tracking key means the table default (disabled), not an inherited value.
-                boolean rowTrackingEnabled = "true".equalsIgnoreCase(rtValue);
+                boolean rowTrackingEnabled = TableConfig.ROW_TRACKING_ENABLED.fromMetadata(md);
                 if (!rowTrackingEnabled) {
                   DeltaErrors.throwChangelogRowTrackingDisabledInRange(commit.getVersion());
                 }
@@ -191,6 +184,16 @@ public class DeltaChangelogBatch implements Batch {
       DeltaErrors.throwChangelogReadFailed("planning input partitions", e);
     }
     return partitions.toArray(new InputPartition[0]);
+  }
+
+  /**
+   * Rejects a schema at {@code version} that the end schema cannot read. Used for both the
+   * start/end pre-check and each in-range Metadata action.
+   */
+  private void requireReadCompatible(StructType schema, long version) {
+    if (!SchemaUtils.isReadCompatible(schema, endDataSchema)) {
+      DeltaErrors.throwChangelogSchemaChangeInRange(version);
+    }
   }
 
   /**
