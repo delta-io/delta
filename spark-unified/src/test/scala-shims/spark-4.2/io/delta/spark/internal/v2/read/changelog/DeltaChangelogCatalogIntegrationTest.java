@@ -951,11 +951,12 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
   }
 
   /**
-   * A CHANGES read across a range where the table schema evolves mid-range must be rejected with
-   * {@code DELTA_CHANGELOG_SCHEMA_CHANGE_IN_RANGE}.
+   * A CHANGES read across an additive mid-range schema change (adding a nullable column) is read
+   * compatible and must succeed. Rows from before the change are read with the end schema, leaving
+   * the added column null.
    */
   @Test
-  public void testChangelogRejectsSchemaChangeMidRange() throws Exception {
+  public void testChangelogAllowsAdditiveSchemaChangeMidRange() throws Exception {
     String tableName = "dsv2_cdc_catalog_schema_change_" + System.nanoTime();
     String tablePath = System.getProperty("java.io.tmpdir") + "/" + tableName;
 
@@ -973,7 +974,7 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
                               + "'delta.enableRowTracking'='true')",
                           tableName, tablePath));
                   spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice')", tableName));
-                  // Schema change mid-range: add a column.
+                  // Additive schema change mid-range: add a nullable column.
                   spark.sql(String.format("ALTER TABLE %s ADD COLUMN extra STRING", tableName));
                   spark.sql(String.format("INSERT INTO %s VALUES (2, 'Bob', 'x')", tableName));
 
@@ -981,20 +982,16 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
                       "spark.databricks.delta.v2.enableMode",
                       "STRICT",
                       () -> {
-                        Exception ex =
-                            assertThrows(
-                                Exception.class,
-                                () ->
-                                    spark
-                                        .sql(
-                                            String.format(
-                                                "SELECT * FROM %s CHANGES FROM VERSION 1 TO "
-                                                    + "VERSION 3",
-                                                tableName))
-                                        .collectAsList());
-                        assertTrue(
-                            ex.getMessage().contains("DELTA_CHANGELOG_SCHEMA_CHANGE_IN_RANGE"),
-                            "Expected schema-change error, got: " + ex.getMessage());
+                        List<Row> rows =
+                            spark
+                                .sql(
+                                    String.format(
+                                        "SELECT id, _change_type FROM %s "
+                                            + "CHANGES FROM VERSION 1 TO VERSION 3",
+                                        tableName))
+                                .collectAsList();
+                        assertEquals(
+                            2, rows.size(), "Additive schema change should not fail the read");
                       });
                 }));
   }
