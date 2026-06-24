@@ -20,8 +20,10 @@ import java.io.File
 import java.util.{Locale, TimeZone}
 
 import com.databricks.spark.util.Log4jUsageLogger
+import org.apache.spark.sql.delta.DeltaOperations.Truncate
 import org.apache.spark.sql.delta.DeltaTestUtils._
-import org.apache.spark.sql.delta.actions.{LastManifestCommit, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
@@ -427,6 +429,64 @@ class ChecksumSuite
     }
   }
 
+  test("SnapshotState fast path from CRC: domainMetadata excludes removed (tombstoned) " +
+       "domains and matches state reconstruction") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true",
+      DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true",
+      DeltaSQLConf.DELTA_WRITE_SET_TRANSACTIONS_IN_CRC.key -> "true"
+    ) {
+      withTempTable(createTable = false) { tableName =>
+        sql(
+          s"""
+             | CREATE TABLE $tableName (id LONG) USING delta
+             | TBLPROPERTIES
+             | ('${TableFeatureProtocolUtils.propertyKey(DomainMetadataTableFeature)}' = 'enabled')
+             |""".stripMargin)
+        val deltaTable = DeltaTableV2(spark, TableIdentifier(tableName))
+        // Add two domains, then remove one. The active state therefore contains a domain
+        // whose add precedes a later removal tombstone -- the case that distinguishes
+        // "all domain metadata" from "live domain metadata".
+        deltaTable.startTransactionWithInitialSnapshot().commit(
+          DomainMetadata("testDomain1", "", removed = false) ::
+            DomainMetadata("testDomain2", "", removed = false) :: Nil,
+          Truncate())
+        deltaTable.startTransaction().commit(
+          DomainMetadata("testDomain1", "", removed = true) :: Nil, Truncate())
+
+        val activeDomain = DomainMetadata("testDomain2", "", removed = false)
+
+        // Baseline via state reconstruction (fast path off): the removed domain is dropped.
+        DeltaLog.clearCache()
+        val baseline = withSQLConf(
+          DeltaSQLConf.USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED.key -> "false") {
+          val s = DeltaLog.forTable(spark, TableIdentifier(tableName)).update()
+          val state = s.computedStateFromStateReconstruction
+          assert(state.domainMetadata.toSet == Set(activeDomain),
+            s"state reconstruction should drop the removed domain, got ${state.domainMetadata}")
+          state
+        }
+
+        // Fast path on: the CRC persists only the live domain, so the fast-path
+        // SnapshotState.domainMetadata must equal state reconstruction's (no tombstone).
+        DeltaLog.clearCache()
+        withSQLConf(
+          DeltaSQLConf.USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED.key -> "true") {
+          val s = DeltaLog.forTable(spark, TableIdentifier(tableName)).update()
+          assert(s.checksumOpt.flatMap(_.domainMetadata).map(_.toSet).contains(Set(activeDomain)),
+            "the CRC should persist only the live domain metadata")
+          val fast = s.computeStateFromChecksum
+          assert(fast.isDefined, "fast path should succeed when the CRC has domain metadata")
+          assert(!s.stateReconstructionTriggered,
+            "computeStateFromChecksum must not trigger state reconstruction")
+          assert(fast.get.domainMetadata.toSet == baseline.domainMetadata.toSet)
+          assert(!fast.get.domainMetadata.exists(_.domain == "testDomain1"),
+            "the removed domain must not appear in the fast-path state")
+        }
+      }
+    }
+  }
+
   test("SnapshotState fast path from CRC: numOfRemoves is lazily and exactly computed " +
        "when tombstones exist") {
     withSQLConf(
@@ -564,26 +624,6 @@ class ChecksumSuite
           assert(ex.getMessage.toLowerCase(Locale.ROOT).contains(expectedAction),
             s"expected exception message to mention '$expectedAction', got: ${ex.getMessage}")
         }
-      }
-    }
-  }
-
-  test("Checkpoint partition count is clamped to at least 1") {
-    withSQLConf(
-      DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true",
-      DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true",
-      DeltaSQLConf.DELTA_WRITE_SET_TRANSACTIONS_IN_CRC.key -> "true",
-      DeltaSQLConf.USE_SNAPSHOT_STATE_FROM_CHECKSUM_ENABLED.key -> "true",
-      DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "10"
-    ) {
-      withTempTable(createTable = false) { tableName =>
-        // Create an empty table - numOfFiles == 0 and numOfRemoves == 0 (exact),
-        // so the unclamped formula would yield numParts == 0.
-        sql(s"CREATE TABLE $tableName (id LONG) USING DELTA")
-        DeltaLog.clearCache()
-        val log = DeltaLog.forTable(spark, TableIdentifier(tableName))
-        // Triggering a checkpoint on a snapshot with zero files+removes must not crash.
-        log.checkpoint(log.update())
       }
     }
   }

@@ -190,15 +190,6 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
           "source" -> "Checksum",
           "checksum.metadata" -> checksum.metadata,
           "snapshot.metadata" -> metadata))
-      recordDeltaEvent(
-        deltaLog,
-        opType = "delta.assertions.mismatchedAction",
-        data = Map(
-          "version" -> version.toString,
-          "action" -> "Metadata",
-          "source" -> "Checksum",
-          "checksum.metadata" -> checksum.metadata,
-          "snapshot.metadata" -> metadata))
       throw DeltaErrors.actionNotFoundException("metadata", version)
     }
 
