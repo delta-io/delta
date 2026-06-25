@@ -143,17 +143,19 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
    *    demand from `stateDS` only if a caller actually reads it. This keeps the case class
    *    free of partial / sentinel values and preserves the fast path benefit when callers
    *    never need the tombstone count.
-   *  - The checksum's `protocol` and `metadata` are validated against the snapshot's resolved
-   *    [[protocol]] and [[metadata]], mirroring the assertion in
-   *    [[computedStateFromStateReconstruction]]. This is most meaningful when
+   *  - The checksum's `protocol` and `metadata` are cross-checked against the snapshot's
+   *    resolved [[protocol]] and [[metadata]]. This is most meaningful when
    *    [[DeltaSQLConf.USE_PROTOCOL_AND_METADATA_FROM_CHECKSUM_ENABLED]] is false: in that
-   *    case the snapshot resolved its protocol/metadata via an independent state
-   *    reconstruction pass, so a mismatch here indicates CRC drift that would also
-   *    invalidate the CRC's aggregate fields (`sizeInBytes`, `numFiles`, ...). When the flag
-   *    is true the snapshot resolved protocol/metadata from this same CRC and the check is
-   *    trivially satisfied. After validation we copy the snapshot's resolved
-   *    `protocol`/`metadata` into the returned [[SnapshotState]] so the fast path remains
-   *    consistent regardless of which source the snapshot used.
+   *    case the snapshot resolved its protocol/metadata independently from the log, so a
+   *    mismatch here indicates CRC drift that would also invalidate the CRC's aggregate
+   *    fields (`sizeInBytes`, `numFiles`, ...). When the flag is true the snapshot resolved
+   *    protocol/metadata from this same CRC and the check is trivially satisfied. On a
+   *    mismatch we record the drift and return [[None]] so that [[computedState]] falls back
+   *    to state reconstruction: the transaction log stays the source of truth and the CRC
+   *    drift is reported by [[ValidateChecksum.validateChecksum]] honoring
+   *    [[DeltaSQLConf.DELTA_CHECKSUM_MISMATCH_IS_FATAL]], rather than making every read of
+   *    this snapshot fail. The snapshot's resolved `protocol`/`metadata` are copied into the
+   *    returned [[SnapshotState]] so the fast path is consistent regardless of source.
    */
   private[delta] def computeStateFromChecksum: Option[SnapshotState] = {
     if (!spark.sessionState.conf.getConf(
@@ -166,31 +168,33 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
     // backward compatibility with older checksum files, so guard against that explicitly.
     if (checksum.metadata == null || checksum.protocol == null) return None
 
-    // Validate the checksum's protocol/metadata against the snapshot's resolved
-    // protocol/metadata. See class-level doc above for why this is meaningful.
+    // Cross-check the checksum's protocol/metadata against the snapshot's resolved
+    // protocol/metadata. On drift, fall back to state reconstruction (return None) instead of
+    // failing the read: the log is the source of truth and validateChecksum reports the
+    // mismatch per DELTA_CHECKSUM_MISMATCH_IS_FATAL. See the class-level doc above.
     if (checksum.protocol != protocol) {
       recordDeltaEvent(
         deltaLog,
-        opType = "delta.assertions.mismatchedAction",
+        opType = "delta.assertions.mismatchedActionFromChecksum",
         data = Map(
           "version" -> version.toString,
           "action" -> "Protocol",
           "source" -> "Checksum",
           "checksum.protocol" -> checksum.protocol,
           "snapshot.protocol" -> protocol))
-      throw DeltaErrors.actionNotFoundException("protocol", version)
+      return None
     }
     if (checksum.metadata != metadata) {
       recordDeltaEvent(
         deltaLog,
-        opType = "delta.assertions.mismatchedAction",
+        opType = "delta.assertions.mismatchedActionFromChecksum",
         data = Map(
           "version" -> version.toString,
           "action" -> "Metadata",
           "source" -> "Checksum",
           "checksum.metadata" -> checksum.metadata,
           "snapshot.metadata" -> metadata))
-      throw DeltaErrors.actionNotFoundException("metadata", version)
+      return None
     }
 
     // The aggregation always collects setTransactions and domainMetadata, so the fast path
@@ -391,10 +395,19 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
    * reconstruction. The value is computed lazily from `stateDS` on first access. Callers that
    * never read `numOfRemoves` pay nothing extra.
    *
-   * When the slow path is in use, `stateDS` is already cached by the time `computedState`
-   * returns, so this `count` aggregation runs against the in-memory cached DataFrame and is
-   * cheap relative to the original (now-eliminated) `count(remove)` aggregation that ran as
-   * part of the main `aggregationsToComputeState` job.
+   * Cost depends on how `computedState` was resolved and on whether `stateDS` is cached
+   * (i.e. [[DeltaSQLConf.DELTA_SNAPSHOT_CACHE_STORAGE_LEVEL]] is not `NONE`, which is the
+   * default):
+   *  - Slow path: state reconstruction already materialized `stateDS` while computing
+   *    `computedState`, so this `count` runs against the cached data and is cheap relative to
+   *    the original (now-eliminated) `count(remove)` term of the `aggregationsToComputeState`
+   *    job.
+   *  - Fast path: `computedState` was served from the CRC and never touched `stateDS`, so the
+   *    first read of `numOfRemoves` triggers a full state reconstruction. The only production
+   *    caller is checkpoint part sizing ([[Checkpoints]]), reached only when a checkpoint part
+   *    size is configured or V2 checkpoints are enabled -- and that write has to scan `stateDS`
+   *    regardless, so the reconstruction is not extra work. Pure readers that only need the
+   *    CRC-backed fields keep the fast-path benefit and never pay this cost.
    */
   lazy val numOfRemoves: Long = {
     recordFrameProfile("Delta", "snapshot.numOfRemoves") {
