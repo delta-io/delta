@@ -109,7 +109,9 @@ class DeltaSinkSuite
           inputData.addData(1)
           query.processAllAvailable()
 
-          val outputDf = spark.read.table(table)
+          // Re-read on each assertion: the V2 read pins the snapshot at DataFrame
+          // creation.
+          def outputDf: DataFrame = spark.read.table(table)
           checkDatasetUnorderly(outputDf.as[Int], 1)
           assert(log.update().transactions.head == (query.id.toString -> 0L))
 
