@@ -377,6 +377,19 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         """"spark.databricks.delta.autoCompact.async.backpressure" must be one of: (drop)""")
       .createWithDefault("drop")
 
+  val DELTA_AUTO_COMPACT_ASYNC_FALLBACK_TO_INLINE_ENABLED =
+    buildConf("autoCompact.async.fallbackToInline.enabled")
+      .doc("""When true (default), if an async Auto Compaction yields to in-flight user DML
+             |(MERGE/DELETE/UPDATE/OVERWRITE) on a given table, that table sticks to running
+             |Auto Compaction inline on the writer's own post-commit hook for the remainder of
+             |the JVM's life. This avoids the streaming-MERGE pathology where every async AC
+             |is submitted only to be aborted by the next write's DML, wasting Spark cycles
+             |and never producing an OPTIMIZE commit. Inline runs cannot be cancelled by a
+             |future writer because the future writer has not started yet, so progress is
+             |guaranteed. State is JVM-wide and reset only on driver restart.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_AUTO_COMPACT_RECORD_PARTITION_STATS_ENABLED =
     buildConf("autoCompact.recordPartitionStats.enabled")
       .internal()

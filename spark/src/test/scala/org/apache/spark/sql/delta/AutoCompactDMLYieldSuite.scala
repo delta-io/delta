@@ -298,9 +298,12 @@ class AutoCompactDMLYieldSuite extends
   test("yielded async AC submission does not break the per-table async-AC dedup") {
     withTempDir { tempDir =>
       val dir = tempDir.getCanonicalPath
+      // Disable the sticky inline fallback so the table remains in async mode and the
+      // dedup invariant under test is actually exercised by the second submission.
       withSQLConf(
           DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED.key -> "true",
           DeltaSQLConf.DELTA_AUTO_COMPACT_ASYNC_ENABLED.key -> "true",
+          DeltaSQLConf.DELTA_AUTO_COMPACT_ASYNC_FALLBACK_TO_INLINE_ENABLED.key -> "false",
           DeltaSQLConf.DELTA_AUTO_COMPACT_MIN_NUM_FILES.key -> "0") {
         spark.range(10).repartition(5).write.format("delta").mode("append").save(dir)
         val deltaLog = DeltaLog.forTable(spark, dir)

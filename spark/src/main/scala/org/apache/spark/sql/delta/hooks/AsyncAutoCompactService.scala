@@ -68,7 +68,7 @@ private[delta] class AsyncAutoCompactCancelledException(val tableId: String, msg
  *     on entry and clears them in `finally`. Several delta-spark internals consult
  *     `SparkSession.getActiveSession` (including `OptimizeExecutor`'s codegen path).
  *
- * DML yielding (see [[InflightDMLRegistry]] and PR D in plan.md):
+ * DML yielding:
  *   - At dequeue, if a long-running DML is in flight on the target table, the task exits
  *     silently with a WARN log -- the next user write's post-commit hook will resubmit.
  *   - During execution, if a DML acquires the registry on the target table, a listener fires
@@ -91,6 +91,7 @@ private[delta] object AsyncAutoCompactService extends DeltaLogging {
   private val EV_YIELDED_DEQUEUE = "delta.autoCompaction.async.yieldedToDML.atDequeue"
   private val EV_YIELDED_MIDFLIGHT = "delta.autoCompaction.async.yieldedToDML.midFlight"
   private val EV_YIELDED_PRECOMMIT = "delta.autoCompaction.async.yieldedToDML.preCommit"
+  private val EV_FALLBACK_ENGAGED = "delta.autoCompaction.async.fallbackEngaged"
 
   /**
    * Per-table inflight count (queued + actively running). Used by tests
@@ -259,6 +260,7 @@ private[delta] object AsyncAutoCompactService extends DeltaLogging {
     queuedByTable.clear()
     workerGateForTesting = null
     yieldCountersForTesting.clear()
+    inlineFallbackTables.clear()
   }
 
   /**
@@ -276,6 +278,42 @@ private[delta] object AsyncAutoCompactService extends DeltaLogging {
    */
   @volatile private[delta] var beforeOptimizeGateForTesting:
     java.util.concurrent.CountDownLatch = null
+
+  /**
+   * Per-table sticky inline-fallback flag. Once a table is in this set, async AC
+   * submission for that table is bypassed in favour of inline AC. Set on any yield. The map
+   * is JVM-wide; state is lost on driver restart. Entry value is unused; the key set is the
+   * authoritative signal.
+   */
+  private val inlineFallbackTables = new ConcurrentHashMap[String, java.lang.Boolean]()
+
+  /** Whether `tableId` has been demoted to sticky inline mode. */
+  private[delta] def isInInlineFallback(tableId: String): Boolean =
+    inlineFallbackTables.containsKey(tableId)
+
+  /**
+   * Demote `tableId` to sticky inline mode. Idempotent; emits the
+   * `delta.autoCompaction.async.fallbackEngaged` event exactly once per table via
+   * `putIfAbsent`'s race-free semantics.
+   */
+  private[delta] def markInlineFallback(
+      deltaLog: org.apache.spark.sql.delta.DeltaLog,
+      tableId: String,
+      yieldKind: String): Unit = {
+    val prev = inlineFallbackTables.putIfAbsent(tableId, java.lang.Boolean.TRUE)
+    if (prev == null) {
+      logWarning(log"Async Auto Compaction for table " +
+        log"${MDC(DeltaLogKeys.METADATA_ID, tableId)} demoted to sticky inline mode after " +
+        log"yield kind=${MDC(DeltaLogKeys.METRICS, yieldKind)}; subsequent writes will run AC " +
+        log"inline. Disable via spark.databricks.delta.autoCompact.async.fallbackToInline.enabled.")
+      recordDeltaEvent(deltaLog, EV_FALLBACK_ENGAGED, data = Map(
+        "tableId" -> tableId,
+        "yieldKind" -> yieldKind))
+    }
+  }
+
+  /** Visible for testing: clear the inline-fallback table set. */
+  private[delta] def resetInlineFallbackForTesting(): Unit = inlineFallbackTables.clear()
 
   /**
    * Visible for testing. Per-table count of each yield kind, so tests can assert exact
@@ -328,6 +366,7 @@ private[delta] object AsyncAutoCompactService extends DeltaLogging {
           log"${MDC(DeltaLogKeys.METADATA_ID, tableId)}; skipping this OPTIMIZE attempt.")
         recordDeltaEvent(txn.deltaLog, EV_YIELDED_DEQUEUE, data = Map("tableId" -> tableId))
         incYieldCounter(tableId, "atDequeue")
+        markInlineFallback(txn.deltaLog, tableId, "atDequeue")
         decrementInflight()
         return
       }
@@ -361,6 +400,7 @@ private[delta] object AsyncAutoCompactService extends DeltaLogging {
             log"${MDC(DeltaLogKeys.METADATA_ID, tableId)} (post-listener race).")
           recordDeltaEvent(txn.deltaLog, EV_YIELDED_DEQUEUE, data = Map("tableId" -> tableId))
           incYieldCounter(tableId, "atDequeue")
+          markInlineFallback(txn.deltaLog, tableId, "atDequeue")
           return
         }
 
@@ -396,6 +436,7 @@ private[delta] object AsyncAutoCompactService extends DeltaLogging {
           recordDeltaEvent(txn.deltaLog, EV_YIELDED_PRECOMMIT,
             data = Map("tableId" -> tableId))
           incYieldCounter(tableId, "preCommit")
+          markInlineFallback(txn.deltaLog, tableId, "preCommit")
 
         case e: SparkException if cancelled.get() =>
           // Mid-flight: DML acquired while a Spark stage was running, listener fired
@@ -407,6 +448,7 @@ private[delta] object AsyncAutoCompactService extends DeltaLogging {
             "tableId" -> tableId,
             "exception" -> e.getClass.getName))
           incYieldCounter(tableId, "midFlight")
+          markInlineFallback(txn.deltaLog, tableId, "midFlight")
 
         case e: InterruptedException if cancelled.get() =>
           // Same scenario as above but on a code path where InterruptedException bubbles
@@ -418,6 +460,7 @@ private[delta] object AsyncAutoCompactService extends DeltaLogging {
             "tableId" -> tableId,
             "exception" -> e.getClass.getName))
           incYieldCounter(tableId, "midFlight")
+          markInlineFallback(txn.deltaLog, tableId, "midFlight")
           Thread.currentThread().interrupt() // preserve interrupt status
 
         case NonFatal(e) =>
