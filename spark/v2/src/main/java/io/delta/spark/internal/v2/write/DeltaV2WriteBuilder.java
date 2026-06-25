@@ -81,18 +81,25 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
               + "). Use the V1 write path (format(\"delta\").write()) instead.");
     }
 
+    validateDataSchema(initialSnapshot, writeInfo.schema());
+
+    return new DeltaV2BatchWrite(engine, hadoopConf, tablePath, initialSnapshot, writeInfo);
+  }
+
+  static void validateDataSchema(Snapshot initialSnapshot, StructType dataSchema) {
+    // Validate data schema against table schema using the same utility as V1
+    // (ImplicitMetadataOperation.updateMetadata -> SchemaMergingUtils.mergeSchemas).
     StructType tableSchema =
         SchemaUtils.convertKernelSchemaToSparkSchema(initialSnapshot.getSchema());
     // Strip column mapping metadata (physical names, IDs) so mergeSchemas compares
-    // only logical types -- matches V1's dropColumnMappingMetadata call.
+    // only logical types - matches V1's dropColumnMappingMetadata call.
     StructType cleanTableSchema =
         DeltaColumnMapping.dropColumnMappingMetadata(tableSchema.asNullable());
-    StructType dataSchema = writeInfo.schema();
 
     // Throws DeltaAnalysisException for type incompatibilities or duplicate columns.
-    // Return value discarded -- we only need the validation side-effect.
-    // TODO: Support schema evolution (mergeSchema option). When enabled, use the merged
-    // schema returned here to update table metadata instead of discarding it.
+    // Return value discarded - we only need the validation side-effect.
+    // TODO: Support schema evolution (mergeSchema option). When enabled, use the
+    // merged schema returned here to update table metadata instead of discarding it.
     SchemaMergingUtils.mergeSchemas(
         cleanTableSchema,
         dataSchema,
@@ -100,7 +107,5 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
         /* keepExistingType */ false,
         TypeWideningMode.NoTypeWidening$.MODULE$,
         /* caseSensitive */ false);
-
-    return new DeltaV2BatchWrite(engine, hadoopConf, tablePath, initialSnapshot, writeInfo);
   }
 }
