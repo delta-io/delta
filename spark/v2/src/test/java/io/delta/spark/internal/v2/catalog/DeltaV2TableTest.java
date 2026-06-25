@@ -902,4 +902,45 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
               ex.getMessage());
         });
   }
+
+  // ---------------------------------------------------------------------------
+  // Time travel: withVersion(long)
+  // ---------------------------------------------------------------------------
+
+  /** withVersion(N) returns a copy pinned to the snapshot at version N. */
+  @Test
+  public void testWithVersionPinsToHistoricalSnapshot(@TempDir File tempDir) {
+    String path = tempDir.getAbsolutePath();
+    spark.sql(
+        String.format("CREATE TABLE test_with_version (id INT) USING delta LOCATION '%s'", path));
+    spark.sql("ALTER TABLE test_with_version ADD COLUMNS (name STRING)");
+
+    Identifier identifier = Identifier.of(new String[] {"default"}, "test_with_version");
+    DeltaV2Table latest = new DeltaV2Table(identifier, path);
+    assertEquals(2, latest.schema().fields().length);
+
+    // withVersion(0) pins to the historical snapshot.
+    DeltaV2Table pinned = latest.withVersion(0L);
+    assertEquals(1, pinned.schema().fields().length, "pinned table should see the v0 schema");
+    assertEquals("id", pinned.schema().fields()[0].name());
+
+    // The original table is unaffected.
+    assertEquals(2, latest.schema().fields().length);
+    assertNotEquals(latest, pinned);
+  }
+
+  /** withVersion fails when the requested version is out of range. */
+  @Test
+  public void testWithVersionRejectsOutOfRangeVersion(@TempDir File tempDir) {
+    String path = tempDir.getAbsolutePath();
+    spark.sql(
+        String.format(
+            "CREATE TABLE test_with_version_oor (id INT) USING delta LOCATION '%s'", path));
+
+    Identifier identifier = Identifier.of(new String[] {"default"}, "test_with_version_oor");
+    DeltaV2Table table = new DeltaV2Table(identifier, path);
+
+    assertThrows(RuntimeException.class, () -> table.withVersion(5L));
+    assertThrows(RuntimeException.class, () -> table.withVersion(-1L));
+  }
 }

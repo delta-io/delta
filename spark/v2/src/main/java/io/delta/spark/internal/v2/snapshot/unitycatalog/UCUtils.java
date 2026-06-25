@@ -95,7 +95,7 @@ public final class UCUtils {
             tablePath,
             extractTableIdentifier(catalogTable),
             ucUri,
-            asJava(config.authConfig()),
+            config.authConfig(),
             extractOptInFlags(asJava(config.ucConfig()))));
   }
 

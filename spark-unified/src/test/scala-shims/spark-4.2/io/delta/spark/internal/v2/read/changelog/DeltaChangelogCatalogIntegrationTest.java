@@ -181,6 +181,161 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
   }
 
   // ===========================================================================================
+  // Connector-mode routing for CHANGES reads
+  // ===========================================================================================
+
+  /**
+   * Auto-CDF only flows through the V2 connector. {@code ChangelogSupport} re-resolves the
+   * table to a {@code DeltaV2Table} for the CHANGES read, so a SQL CHANGES query must succeed
+   * without forcing STRICT mode.
+   */
+  @Test
+  public void testAutoModeRoutesChangesToV2() throws Exception {
+    String tableName = "dsv2_cdc_catalog_auto_" + System.nanoTime();
+    String tablePath = System.getProperty("java.io.tmpdir") + "/" + tableName;
+
+    withTable(
+        tablePath,
+        () ->
+            withTable(
+                new String[] {tableName},
+                () -> {
+                  spark.sql(
+                      String.format(
+                          "CREATE TABLE %s (id BIGINT, name STRING) USING delta LOCATION '%s' "
+                              + "TBLPROPERTIES ('delta.enableDeletionVectors'='false', "
+                              + "'delta.enableRowTracking'='true')",
+                          tableName, tablePath));
+                  spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice')", tableName));
+                  spark.sql(String.format("INSERT INTO %s VALUES (2, 'Bob')", tableName));
+                  spark.sql(String.format("INSERT INTO %s VALUES (3, 'Charlie')", tableName));
+
+                  // CREATE/INSERTs above run on the V1 connector under AUTO. The CHANGES read must
+                  // still succeed: ChangelogSupport re-resolves the table to the V2 connector.
+                  withSQLConf(
+                      "spark.databricks.delta.v2.enableMode",
+                      "AUTO",
+                      () -> {
+                        List<Row> rows =
+                            spark
+                                .sql(
+                                    String.format(
+                                        "SELECT id, name, _change_type "
+                                            + "FROM %s CHANGES FROM VERSION 1 TO VERSION 3",
+                                        tableName))
+                                .orderBy("_commit_version", "id")
+                                .collectAsList();
+                        assertEquals(
+                            3,
+                            rows.size(),
+                            "Expected three inserts in the v1..v3 range under AUTO");
+                        for (int i = 0; i < 3; i++) {
+                          assertEquals(
+                              (long) (i + 1), ((Number) rows.get(i).getAs("id")).longValue());
+                          assertEquals("insert", rows.get(i).getAs("_change_type"));
+                        }
+                      });
+                }));
+  }
+
+  /**
+   * STRICT routes every operation to the V2 connector, so loadTable already returns a
+   * {@code DeltaV2Table} and the CHANGES read succeeds without any re-resolution.
+   */
+  @Test
+  public void testStrictModeRoutesChangesToV2() throws Exception {
+    String tableName = "dsv2_cdc_catalog_strict_" + System.nanoTime();
+    String tablePath = System.getProperty("java.io.tmpdir") + "/" + tableName;
+
+    withTable(
+        tablePath,
+        () ->
+            withTable(
+                new String[] {tableName},
+                () -> {
+                  spark.sql(
+                      String.format(
+                          "CREATE TABLE %s (id BIGINT, name STRING) USING delta LOCATION '%s' "
+                              + "TBLPROPERTIES ('delta.enableDeletionVectors'='false', "
+                              + "'delta.enableRowTracking'='true')",
+                          tableName, tablePath));
+                  spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice')", tableName));
+                  spark.sql(String.format("INSERT INTO %s VALUES (2, 'Bob')", tableName));
+                  spark.sql(String.format("INSERT INTO %s VALUES (3, 'Charlie')", tableName));
+
+                  withSQLConf(
+                      "spark.databricks.delta.v2.enableMode",
+                      "STRICT",
+                      () -> {
+                        List<Row> rows =
+                            spark
+                                .sql(
+                                    String.format(
+                                        "SELECT id, name, _change_type "
+                                            + "FROM %s CHANGES FROM VERSION 1 TO VERSION 3",
+                                        tableName))
+                                .orderBy("_commit_version", "id")
+                                .collectAsList();
+                        assertEquals(
+                            3,
+                            rows.size(),
+                            "Expected three inserts in the v1..v3 range under STRICT");
+                        for (int i = 0; i < 3; i++) {
+                          assertEquals(
+                              (long) (i + 1), ((Number) rows.get(i).getAs("id")).longValue());
+                          assertEquals("insert", rows.get(i).getAs("_change_type"));
+                        }
+                      });
+                }));
+  }
+
+  /**
+   * NONE mode keeps every operation on the V1 connector, so the V2 Auto-CDF path is unavailable.
+   * A CHANGES read must be rejected with {@code DELTA_CHANGELOG_REQUIRES_V2_TABLE}.
+   */
+  @Test
+  public void testNoneModeRejectsChanges() throws Exception {
+    String tableName = "dsv2_cdc_catalog_none_" + System.nanoTime();
+    String tablePath = System.getProperty("java.io.tmpdir") + "/" + tableName;
+
+    withTable(
+        tablePath,
+        () ->
+            withTable(
+                new String[] {tableName},
+                () -> {
+                  spark.sql(
+                      String.format(
+                          "CREATE TABLE %s (id BIGINT, name STRING) USING delta LOCATION '%s' "
+                              + "TBLPROPERTIES ('delta.enableDeletionVectors'='false', "
+                              + "'delta.enableRowTracking'='true')",
+                          tableName, tablePath));
+                  spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice')", tableName));
+
+                  withSQLConf(
+                      "spark.databricks.delta.v2.enableMode",
+                      "NONE",
+                      () -> {
+                        Exception ex =
+                            assertThrows(
+                                Exception.class,
+                                () ->
+                                    spark
+                                        .sql(
+                                            String.format(
+                                                "SELECT * FROM %s CHANGES FROM VERSION 0 TO "
+                                                    + "VERSION 1",
+                                                tableName))
+                                        .collectAsList());
+                        assertTrue(
+                            ex.getMessage().contains("DELTA_CHANGELOG_REQUIRES_V2_TABLE"),
+                            "Expected V2-connector-required error under NONE, got: "
+                                + ex.getMessage());
+                      });
+                }));
+  }
+
+  // ===========================================================================================
   // Bounds inclusivity/exclusivity testing
   // ===========================================================================================
 

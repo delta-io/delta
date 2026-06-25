@@ -488,6 +488,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_LIMIT_PUSHDOWN_SKIP_NON_DETERMINISTIC_FILTERS =
+    buildConf("stats.limitPushdown.skipNonDeterministicFilters.enabled")
+      .internal()
+      .doc("If true, non-deterministic predicates (e.g. rand()) are not eligible for Delta limit " +
+        "push-down. Such predicates reference no columns, so they would otherwise be treated as " +
+        "partition-only filters, evaluated once per file during limit-based file pruning and " +
+        "again per row at execution, double-filtering the data. When false, restores the legacy " +
+        "(incorrect) behavior of pushing them down.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_MAX_RETRY_COMMIT_ATTEMPTS =
     buildConf("maxCommitAttempts")
       .internal()
@@ -2408,6 +2419,26 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           |""".stripMargin)
       .booleanConf
       .createWithDefault(false)
+
+  val DELTA_GET_CHANGE_LOG_FILES_LOG_GAPS =
+    buildConf("deltaLog.getChangeLogFiles.logGaps")
+      .internal()
+      .doc(
+        """Whether `DeltaLog.getChangeLogFiles` emits a `delta.getChangeLogFiles.versionGap`
+          |usage event when the iterator it returns emits two successive versions that are not
+          |exactly `prev + 1` (a gap).""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_GET_CHANGE_LOG_FILES_FAIL_ON_GAPS_IN_TESTS =
+    buildConf("deltaLog.getChangeLogFiles.failOnGapsInTests")
+      .internal()
+      .doc(
+        """When true, `DeltaLog.getChangeLogFiles` throws on a version gap if we are running in
+          |a test JVM (`DeltaUtils.isTesting`). No-op in production. Used to catch unintentional
+          |gap-producing changes during test runs without affecting prod behaviour.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 
   val DELTA_CHANGELOG_V2_ENABLED =
     buildConf("changelogV2.enabled")
