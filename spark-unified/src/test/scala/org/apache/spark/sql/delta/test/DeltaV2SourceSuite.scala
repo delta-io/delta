@@ -189,7 +189,9 @@ object DeltaV2SourceSuite {
     "fail on missing trailing commit - trailing commit disappears between latestOffset and" +
       " getBatch readChangeFeed=false midVersionEndOffset=false",
     "fail on missing trailing commit - empty batch from startIndex >= endIndex is not a" +
-      " false positive",
+      " false positive readChangeFeed=true",
+    "fail on missing trailing commit - empty batch from startIndex >= endIndex is not a" +
+      " false positive readChangeFeed=false",
 
     // === Misc ===
     // TODO(#5900): fix exception mismatch

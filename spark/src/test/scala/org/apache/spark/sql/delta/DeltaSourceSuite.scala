@@ -2271,46 +2271,57 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  test("fail on missing trailing commit - empty batch from startIndex >= endIndex is not a" +
-      " false positive") {
-    withSQLConf(DeltaSQLConf.STREAMING_TRAILING_COMMIT_VALIDATION.key -> "true") {
-      withTempDir { srcData =>
-        spark.range(10).coalesce(1).write.format("delta").mode("append")
-          .save(srcData.getCanonicalPath)
-        spark.range(10, 20).coalesce(1).write.format("delta").mode("append")
-          .save(srcData.getCanonicalPath)
-        // Version 2: three files so multiple in-version indices exist.
-        spark.range(20, 30).repartition(3).write.format("delta").mode("append")
-          .save(srcData.getCanonicalPath)
+  for {
+    readChangeFeed <- Seq(true, false)
+  } {
+    test("fail on missing trailing commit - empty batch from startIndex >= endIndex is not a" +
+        s" false positive readChangeFeed=$readChangeFeed") {
+      withSQLConf(
+          DeltaSQLConf.STREAMING_TRAILING_COMMIT_VALIDATION.key -> "true",
+          DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> readChangeFeed.toString) {
+        withTempDir { srcData =>
+          spark.range(10).coalesce(1).write.format("delta").mode("append")
+            .save(srcData.getCanonicalPath)
+          spark.range(10, 20).coalesce(1).write.format("delta").mode("append")
+            .save(srcData.getCanonicalPath)
+          // Version 2: three files so multiple in-version indices exist.
+          spark.range(20, 30).repartition(3).write.format("delta").mode("append")
+            .save(srcData.getCanonicalPath)
 
-        val srcLog = DeltaLog.forTable(spark, srcData)
-        srcLog.update()
+          val srcLog = DeltaLog.forTable(spark, srcData)
+          srcLog.update()
 
-        val source = DeltaSource(
-          spark,
-          srcLog,
-          catalogTableOpt = None,
-          new DeltaOptions(Map("startingVersion" -> "0"), spark.sessionState.conf),
-          srcLog.update(),
-          metadataPath = "")
+          val optionsMap = {
+            var m = Map("startingVersion" -> "0")
+            if (readChangeFeed) m += (DeltaOptions.CDC_READ_OPTION -> "true")
+            m
+          }
+          val source = DeltaSource(
+            spark,
+            srcLog,
+            catalogTableOpt = None,
+            new DeltaOptions(optionsMap, spark.sessionState.conf),
+            srcLog.update(),
+            metadataPath = "")
 
-        val reservoirId = srcLog.unsafeVolatileTableId
-        // isInitialSnapshot=true keeps endOffset unequal to each start offset, so getBatch's
-        // start == end early return is skipped and the check actually runs.
-        val endOffset = DeltaSourceOffset(
-          reservoirId, reservoirVersion = 2, index = 1, isInitialSnapshot = true)
+          val reservoirId = srcLog.unsafeVolatileTableId
+          // isInitialSnapshot=true keeps endOffset unequal to each start offset, so getBatch's
+          // start == end early return is skipped and the check actually runs.
+          val endOffset = DeltaSourceOffset(
+            reservoirId, reservoirVersion = 2, index = 1, isInitialSnapshot = true)
 
-        // getBatch runs the check eagerly, so returning instead of throwing is the assertion.
+          // getBatch runs the check eagerly, so returning instead of throwing is the assertion.
 
-        // startIndex == endIndex: pins the comparison as `<`, not `<=`.
-        val equalStart = DeltaSourceOffset(
-          reservoirId, reservoirVersion = 2, index = 1, isInitialSnapshot = false)
-        source.getBatch(Some(equalStart), endOffset)
+          // startIndex == endIndex: pins the comparison as `<`, not `<=`.
+          val equalStart = DeltaSourceOffset(
+            reservoirId, reservoirVersion = 2, index = 1, isInitialSnapshot = false)
+          source.getBatch(Some(equalStart), endOffset)
 
-        // startIndex > endIndex.
-        val greaterStart = DeltaSourceOffset(
-          reservoirId, reservoirVersion = 2, index = 2, isInitialSnapshot = false)
-        source.getBatch(Some(greaterStart), endOffset)
+          // startIndex > endIndex.
+          val greaterStart = DeltaSourceOffset(
+            reservoirId, reservoirVersion = 2, index = 2, isInitialSnapshot = false)
+          source.getBatch(Some(greaterStart), endOffset)
+        }
       }
     }
   }

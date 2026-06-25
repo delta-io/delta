@@ -245,6 +245,9 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
     }
     if (spark.sessionState.conf.getConf(DeltaSQLConf.STREAMING_TRAILING_COMMIT_VALIDATION) &&
         maxVersionSeen < lastExpectedVersion) {
+      recordTrailingCommitMissingEvent(
+        startVersion, startIndex, isInitialSnapshot, endOffset,
+        lastExpectedVersion, maxVersionSeen, isStreamingCDC = true)
       throw DeltaErrors.streamingTrailingCommitMissing(
         lastExpectedVersion, maxVersionSeen)
     }

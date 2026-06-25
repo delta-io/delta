@@ -324,6 +324,9 @@ trait DeltaSourceBase extends Source
 
         if (spark.sessionState.conf.getConf(DeltaSQLConf.STREAMING_TRAILING_COMMIT_VALIDATION) &&
             maxVersionSeen < lastExpectedVersion) {
+          recordTrailingCommitMissingEvent(
+            startVersion, startIndex, isInitialSnapshot, endOffset,
+            lastExpectedVersion, maxVersionSeen, isStreamingCDC = false)
           throw DeltaErrors.streamingTrailingCommitMissing(
             lastExpectedVersion, maxVersionSeen)
         }
@@ -339,6 +342,32 @@ trait DeltaSourceBase extends Source
         fileActionsIter.close()
       }
     }
+  }
+
+  /** Records a Delta event when a trailing commit goes missing, for fleet visibility before we
+   * throw, mirroring [[DeltaFileProviderUtils.getDeltaFilesInVersionRange]]. */
+  protected def recordTrailingCommitMissingEvent(
+      startVersion: Long,
+      startIndex: Long,
+      isInitialSnapshot: Boolean,
+      endOffset: DeltaSourceOffset,
+      lastExpectedVersion: Long,
+      maxVersionSeen: Long,
+      isStreamingCDC: Boolean): Unit = {
+    recordDeltaEvent(
+      deltaLog,
+      opType = "delta.exceptions.streamingTrailingCommitMissing",
+      data = Map(
+        "stackTrace" -> Thread.currentThread().getStackTrace.tail.mkString("\n\t"),
+        "startVersion" -> startVersion,
+        "startIndex" -> startIndex,
+        "isInitialSnapshot" -> isInitialSnapshot,
+        "endOffsetReservoirVersion" -> endOffset.reservoirVersion,
+        "endOffsetIndex" -> endOffset.index,
+        "lastExpectedVersion" -> lastExpectedVersion,
+        "maxVersionSeen" -> maxVersionSeen,
+        "isStreamingCDC" -> isStreamingCDC
+      ))
   }
 
   /**
