@@ -46,9 +46,9 @@ The feature has a dual purpose:
 
 ### Structural void columns
 
-A `void` column is **structural** when it must be stored as `UNKNOWN` rather than omitted, because omitting it would leave an enclosing `struct`, `array`, or `map` (or the table) with nothing written to the data file. This arises only in the schema shapes that the missing columns mechanism cannot represent (the shapes listed in [Void columns without the table feature](#void-columns-without-the-table-feature)):
+A `void` column is **structural** when it cannot be omitted and is therefore stored as `UNKNOWN`, because omitting it would leave an enclosing `struct`, `array`, or `map` (or the table) with nothing written to the data file. This arises only in the schema shapes that the missing columns mechanism cannot represent (the shapes listed in [Void columns without the table feature](#void-columns-without-the-table-feature)):
 - a `void` directly inside an `array` or `map` (at any nesting level): the `void` element or value is structural and must be stored as `UNKNOWN`.
-- a `struct` whose fields are all `void`, or a table whose columns are all `void`: at least one of the `void` columns is structural and must be stored as `UNKNOWN`.
+- a `struct` whose fields are all `void`, or a table whose columns are all `void`: the writer chooses which `void` column is structural and must store it as `UNKNOWN`.
 
 A `void` column in any other position is never structural: it can be omitted, and does not require the feature. A schema that contains one of the shapes above is said to **require** the `voidType` feature.
 
@@ -56,7 +56,7 @@ A `void` column in any other position is never structural: it can be omitted, an
 
 When Void Type is supported (when the `writerFeatures` field of a table's `protocol` action contains `voidType`), writers:
 - must store the table's structural `void` columns as `UNKNOWN` (see [Structural void columns](#structural-void-columns)).
-- may store any non-structural `void` column either by omission or as an `UNKNOWN` column.
+- should store any non-structural `void` column by omission.
 
 ### Reader Requirements for Void Type
 
