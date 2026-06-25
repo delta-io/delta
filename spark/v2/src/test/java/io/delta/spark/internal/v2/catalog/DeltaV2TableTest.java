@@ -22,8 +22,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Metadata;
@@ -33,6 +35,7 @@ import io.delta.spark.internal.v2.adapters.KernelMetadataAdapter;
 import io.delta.spark.internal.v2.adapters.KernelProtocolAdapter;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
+import io.delta.spark.internal.v2.utils.ColumnV2Utils;
 import java.io.File;
 import java.lang.reflect.Method;
 import java.net.URI;
@@ -871,6 +874,93 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
         DeltaOptions.SCHEMA_TRACKING_LOCATION(),
         "path_based_constructor",
         /* usePathBasedConstructor= */ true);
+  }
+
+  @Test
+  public void testColumnsHaveNullIdWithoutColumnMapping(@TempDir File tempDir) throws Exception {
+    String path = tempDir.getAbsolutePath();
+    String tableName = "cm_no_mapping_" + UUID.randomUUID().toString().replace('-', '_');
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, data STRING) USING delta LOCATION '%s'", tableName, path));
+    DeltaV2Table table = new DeltaV2Table(Identifier.of(new String[] {"default"}, tableName), path);
+    for (Column column : table.columns()) {
+      assertNull(
+          ColumnV2Utils.getColumnId(column),
+          "Expected null column id without column mapping: " + column.name());
+    }
+  }
+
+  @Test
+  public void testColumnsExposeIdsForNameMappingTable(@TempDir File tempDir) throws Exception {
+    assumeTrue(ColumnV2Utils.supportsColumnId(), "Column.id() not supported on this Spark version");
+    String path = tempDir.getAbsolutePath();
+    String tableName = "cm_name_" + UUID.randomUUID().toString().replace('-', '_');
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, name STRING, value DOUBLE) USING delta "
+                + "TBLPROPERTIES ('delta.columnMapping.mode'='name') LOCATION '%s'",
+            tableName, path));
+    spark.sql(String.format("INSERT INTO %s VALUES (1, 'test', 100.0)", tableName));
+    DeltaV2Table table = new DeltaV2Table(Identifier.of(new String[] {"default"}, tableName), path);
+    for (Column column : table.columns()) {
+      String columnId = ColumnV2Utils.getColumnId(column);
+      assertNotNull(
+          columnId, "Expected non-null column id for name-mapping table column: " + column.name());
+      assertTrue(
+          columnId.matches("\\d+"), "Column id should be a numeric string, got: " + columnId);
+    }
+  }
+
+  @Test
+  public void testColumnsExposeIdsForIdMappingTable(@TempDir File tempDir) throws Exception {
+    assumeTrue(ColumnV2Utils.supportsColumnId(), "Column.id() not supported on this Spark version");
+    String path = tempDir.getAbsolutePath();
+    String tableName = "cm_id_" + UUID.randomUUID().toString().replace('-', '_');
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, name STRING, value DOUBLE) USING delta "
+                + "TBLPROPERTIES ('delta.columnMapping.mode'='id') LOCATION '%s'",
+            tableName, path));
+    spark.sql(String.format("INSERT INTO %s VALUES (1, 'test', 100.0)", tableName));
+    DeltaV2Table table = new DeltaV2Table(Identifier.of(new String[] {"default"}, tableName), path);
+    for (Column column : table.columns()) {
+      assertNotNull(
+          ColumnV2Utils.getColumnId(column),
+          "Expected non-null column id for id-mapping table column: " + column.name());
+    }
+  }
+
+  @Test
+  public void testColumnIdStableAfterRename(@TempDir File tempDir) throws Exception {
+    assumeTrue(ColumnV2Utils.supportsColumnId(), "Column.id() not supported on this Spark version");
+    String path = tempDir.getAbsolutePath();
+    String tableName = "cm_rename_" + UUID.randomUUID().toString().replace('-', '_');
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, old_name STRING) USING delta "
+                + "TBLPROPERTIES ('delta.columnMapping.mode'='name') LOCATION '%s'",
+            tableName, path));
+    DeltaV2Table beforeRename =
+        new DeltaV2Table(Identifier.of(new String[] {"default"}, tableName), path);
+    String oldNameColumnId =
+        Arrays.stream(beforeRename.columns())
+            .filter(c -> c.name().equals("old_name"))
+            .findFirst()
+            .map(ColumnV2Utils::getColumnId)
+            .orElseThrow();
+
+    spark.sql(String.format("ALTER TABLE %s RENAME COLUMN old_name TO new_name", tableName));
+
+    DeltaV2Table afterRename =
+        new DeltaV2Table(Identifier.of(new String[] {"default"}, tableName), path);
+    String newNameColumnId =
+        Arrays.stream(afterRename.columns())
+            .filter(c -> c.name().equals("new_name"))
+            .findFirst()
+            .map(ColumnV2Utils::getColumnId)
+            .orElseThrow();
+    assertEquals(oldNameColumnId, newNameColumnId);
   }
 
   /** Setting the option while the feature flag is off throws at construction. */
