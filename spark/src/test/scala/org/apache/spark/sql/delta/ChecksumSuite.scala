@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta
 
 import java.io.File
-import java.util.{Locale, TimeZone}
+import java.util.TimeZone
 
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
@@ -588,15 +588,15 @@ class ChecksumSuite
       (cs: VersionChecksum) =>
         cs.copy(protocol =
           cs.protocol.copy(minReaderVersion = cs.protocol.minReaderVersion + 1)),
-      "protocol"),
+      "Protocol"),
     ("metadata",
       (cs: VersionChecksum) =>
         cs.copy(metadata = cs.metadata.copy(description = "deliberately-corrupted")),
-      "metadata"))) {
-    test(s"SnapshotState fast path from CRC: throws when CRC $label disagrees with " +
-         s"snapshot's resolved $label") {
+      "Metadata"))) {
+    test(s"SnapshotState fast path from CRC: falls back (reads still succeed) when CRC " +
+         s"$label disagrees with snapshot's resolved $label") {
       // Resolve the snapshot's protocol/metadata via state reconstruction (not CRC) so the
-      // validation in computeStateFromChecksum has independent values to compare against.
+      // cross-check in computeStateFromChecksum has independent values to compare against.
       withSQLConf(
         DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true",
         DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true",
@@ -618,11 +618,27 @@ class ChecksumSuite
           val freshLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
           val s = freshLog.update()
           assert(s.checksumOpt.isDefined)
-          val ex = intercept[DeltaIllegalStateException] {
-            s.computeStateFromChecksum
+
+          // The fast path detects the drift, records it, and falls back (returns None)
+          // rather than throwing.
+          val usageLogs = Log4jUsageLogger.track {
+            assert(s.computeStateFromChecksum.isEmpty,
+              "fast path must fall back when the CRC disagrees with the resolved state")
           }
-          assert(ex.getMessage.toLowerCase(Locale.ROOT).contains(expectedAction),
-            s"expected exception message to mention '$expectedAction', got: ${ex.getMessage}")
+          val driftLogs =
+            filterUsageRecords(usageLogs, "delta.assertions.mismatchedActionFromChecksum")
+          assert(driftLogs.size == 1, "the CRC drift should be recorded exactly once")
+          val blob = JsonUtils.fromJson[Map[String, Any]](driftLogs.head.blob)
+          assert(blob.get("action").contains(expectedAction))
+          assert(blob.get("source").contains("Checksum"))
+
+          // Crucially, a drifted CRC must not make the snapshot unreadable: computedState
+          // falls back to state reconstruction (recovering the true file count from the log)
+          // and the table still reads correctly.
+          assert(s.computedState.numOfFiles == originalChecksum.numFiles)
+          assert(s.stateReconstructionTriggered,
+            "computedState should have fallen back to state reconstruction")
+          checkAnswer(spark.read.format("delta").table(tableName), spark.range(5).toDF())
         }
       }
     }
