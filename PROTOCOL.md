@@ -2748,6 +2748,8 @@ See Parquet [timestamp type](https://github.com/apache/parquet-format/blob/maste
 
 Note: Existing tables may have `void` data type columns. Behavior is undefined for `void` data type columns but it is recommended to drop any `void` data type columns on reads (as is implemented by the Spark connector).
 
+Note: Existing tables may contain columns of Spark's `udt` (UserDefinedType) complex type, serialized as `{"type":"udt", "class"/"pyClass"/"serializedClass", "sqlType": <type>}`. The `class`/`pyClass` identify engine-specific (JVM/Python) deserialization code and are not part of this protocol. A reader that does not implement that engine code MUST interpret the column as its physical `sqlType`; the `sqlType` is the on-disk Parquet representation. Writers that preserve a `udt` column MUST store its data physically as `sqlType` and retain the annotation in `schemaString`.
+
 ### Struct Type
 
 A struct is used to represent both the top-level schema of the table as well as struct columns that contain nested columns. A struct is encoded as a JSON object with the following fields:
