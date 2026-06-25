@@ -100,4 +100,34 @@ class DeltaV2SnapshotConversionsUtilsSuite extends SparkFunSuite {
     assert(protocol.readerFeatures === Some(Set("v2Checkpoint")))
     assert(protocol.writerFeatures === Some(Set("appendOnly", "invariants")))
   }
+
+  test("protocolFromKernel maps a legacy (1, 2) protocol with no table features") {
+    // A legacy protocol does not support table features (reader < 3, writer < 7), so the
+    // converted V1 Protocol must carry no feature sets at all.
+    val kernelProtocol = new KernelProtocol(1, 2)
+
+    val protocol = DeltaV2SnapshotConversionsUtils.protocolFromKernel(kernelProtocol)
+
+    assert(protocol.minReaderVersion === 1)
+    assert(protocol.minWriterVersion === 2)
+    assert(protocol.readerFeatures === None)
+    assert(protocol.writerFeatures === None)
+  }
+
+  test("protocolFromKernel maps a writer-only (1, 7) table-features protocol") {
+    // Writer version 7 supports writer features while the legacy reader version 1 does not, so
+    // only writerFeatures is populated and readerFeatures stays None.
+    val kernelProtocol = new KernelProtocol(
+      1,
+      7,
+      Set.empty[String].asJava,
+      Set("appendOnly", "invariants").asJava)
+
+    val protocol = DeltaV2SnapshotConversionsUtils.protocolFromKernel(kernelProtocol)
+
+    assert(protocol.minReaderVersion === 1)
+    assert(protocol.minWriterVersion === 7)
+    assert(protocol.readerFeatures === None)
+    assert(protocol.writerFeatures === Some(Set("appendOnly", "invariants")))
+  }
 }

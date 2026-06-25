@@ -25,11 +25,16 @@ import io.delta.kernel.internal.util.VectorUtils
 
 /**
  * Bridges Kernel's actions ([[KernelMetadata]] / [[KernelProtocol]]) to V1 Delta actions
- * ([[Metadata]] / [[Protocol]]). Used by `DeltaV2Snapshot` to expose Kernel snapshot
- * data through the V1 Snapshot contract.
+ * ([[Metadata]] / [[Protocol]]).
  */
 private[delta] object DeltaV2SnapshotConversionsUtils {
 
+  /**
+   * Converts a Kernel [[KernelMetadata]] into a V1 [[Metadata]], mapping id, name, description,
+   * format (provider + options), schema string, partition columns, configuration, and created
+   * time. Absent Kernel optionals (name, description, created time) map to `null` / `None` to
+   * match the V1 contract.
+   */
   def metadataFromKernel(metadata: KernelMetadata): Metadata = {
     Metadata(
       id = metadata.getId,
@@ -49,6 +54,10 @@ private[delta] object DeltaV2SnapshotConversionsUtils {
         else None)
   }
 
+  /**
+   * Converts a Kernel [[KernelProtocol]] into a V1 [[Protocol]], mapping the reader/writer
+   * versions and the reader/writer table features.
+   */
   def protocolFromKernel(protocol: KernelProtocol): Protocol = {
     val readerFeatures =
       Option(protocol.getReaderFeatures).map(_.asScala.toSet).getOrElse(Set.empty)
