@@ -20,7 +20,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * JVM-wide registry of in-flight long-running DML operations
+ * JVM-wide registry of in-flight DML operations
  * (MERGE / DELETE / UPDATE / OVERWRITE).
  *
  * Async Auto Compaction consults this registry to decide whether to start a new OPTIMIZE
@@ -29,10 +29,6 @@ import java.util.concurrent.atomic.AtomicInteger
  * MERGE loses to a concurrently-finishing OPTIMIZE and is forced to throw
  * `ConcurrentModificationException` -- losing minutes of Spark work -- after the AC commit
  * lands first.
- *
- * Intra-JVM only. A cross-JVM lease (via a `DomainMetadata` entry in the Delta log) is a
- * deferred follow-up; in practice async AC runs as a post-commit hook on the writer's own
- * driver, so the same-driver topology is dominant.
  *
  * Listener slot is per-table and exclusive (overwrites on re-registration) because the
  * async Auto Compaction service's dedup guarantees at most one async AC task is running per
