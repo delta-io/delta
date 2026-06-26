@@ -82,7 +82,8 @@ class IdentityColumnConverterSuite extends SparkFunSuite {
     StructField(name, dt, nullable = true, md)
   }
 
-  test("convertSparkIdentityMetadata: rewrites identity.* into delta.identity.* and strips originals") {
+  test("convertSparkIdentityMetadata: rewrites identity.* into delta.identity.*" +
+    "and strips originals") {
     val schema = StructType(Seq(
       StructField("plain", StringType),
       fieldWithSparkIdentity("id", LongType, start = 10L, step = 5L, allowExplicitInsert = true)))
@@ -98,7 +99,8 @@ class IdentityColumnConverterSuite extends SparkFunSuite {
 
   test("convertSparkIdentityMetadata: rejects non-BIGINT identity column") {
     val schema = StructType(Seq(
-      fieldWithSparkIdentity("id", IntegerType, start = 1L, step = 1L, allowExplicitInsert = false)))
+      fieldWithSparkIdentity(
+        "id", IntegerType, start = 1L, step = 1L, allowExplicitInsert = false)))
     intercept[DeltaUnsupportedOperationException] {
       IdentityColumn.convertSparkIdentityMetadata(schema)
     }
@@ -127,8 +129,7 @@ class IdentityColumnConverterSuite extends SparkFunSuite {
         LongType,
         /* nullable = */ false,
         /* comment = */ null,
-        new IdentityColumnSpec(7L, 3L, /* allowExplicitInsert = */ true),
-        /* metadataInJSON = */ null))
+        new IdentityColumnSpec(7L, 3L, true), null))
     val out = IdentityColumn.columnsToStructTypeWithIdentity(cols)
     assert(out("plain").dataType === StringType)
     assert(!out("plain").metadata.contains(DeltaSourceUtils.IDENTITY_INFO_START))
