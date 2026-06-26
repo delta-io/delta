@@ -1,7 +1,7 @@
 # Interval Types
 **Associated Github issue for discussions: https://github.com/delta-io/delta/issues/7077**
 
-This protocol change adds support for interval types. It consists of two changes to the protocol:
+This protocol change adds support for interval types (as defined [here](https://spark.apache.org/docs/latest/sql-ref-datatypes.html)). It consists of two changes to the protocol:
 
 - One new reader/writer table feature
 - Two new primitive types (year-month and day-second)
@@ -79,7 +79,7 @@ Interval partition values must not be used for partition pruning. Consistent wit
 
 ## Per-file Statistics
 
-Interval columns do not support `minValues`/`maxValues` statistics or data skipping. Writers must not record `minValues` or `maxValues` for interval columns, and readers must not perform data skipping over interval columns. The per-column `nullCount` and the per-file `numRecords` statistics are unaffected and are still recorded as normal, since they do not require interpreting interval values. This is consistent with existing tables that contain interval types, which do not record `minValues`/`maxValues` for these columns.
+Interval columns do not support `minValues`/`maxValues` statistics or data skipping. Writers must not record `minValues` or `maxValues` for interval columns, and readers must not perform data skipping over interval columns. The per-column `nullCount` and the per-file `numRecords` statistics are unaffected and are still recorded as normal, since they do not require interpreting interval values.
 
 ## Parquet Format
 
@@ -88,7 +88,7 @@ Interval values are stored using a raw Parquet physical type with no logical-typ
 - `interval year to month` is stored as a Parquet `int32` holding the signed count of months.
 - `interval day to second` is stored as a Parquet `int64` holding the signed count of microseconds.
 
-Because no Parquet logical type is written, an interval column is physically indistinguishable from a Parquet `int32`/`int64` (i.e. a Delta `integer`/`long`); the interval semantics are carried solely by the Delta schema in `Metadata.schemaString`. This representation supports signed intervals and microsecond precision while matching the physical layout of existing interval tables.
+Because no Parquet logical type is written, an interval column is physically indistinguishable from a Parquet `int32`/`int64` (i.e. a Delta `integer`/`long`); the interval semantics are carried solely by the Delta schema in `Metadata.schemaString`. This representation supports signed intervals and microsecond precision. 
 
 ## Feature Interactions
 
@@ -96,7 +96,7 @@ Beyond the partition-value and statistics behavior described above, and the rest
 
 ## Error Conditions
 
-- **Unrecognized type-name strings.** Type-name matching is case-sensitive. A reader that encounters an interval type-name string that is not one of the recognized canonical or narrowed spellings, including a mixed-family spelling such as `interval month to day`, or a case variant such as `INTERVAL Year To Month`, must reject the schema with an error rather than silently coercing it to a supported type.
+- **Unrecognized type-name strings.** Type-name matching is case-sensitive. A reader that encounters an interval type-name string that is not one of the recognized canonical or narrowed spellings, including a mixed-family spelling such as `interval month to day` (neither `year to month` nor `day to second`), or a case variant such as `INTERVAL Year To Month`, must reject the schema with an error rather than silently coercing it to a supported type.
 - **Feature not present.** A writer must add `intervalTypes` to the table `protocol`'s `readerFeatures` and `writerFeatures` whenever it writes a schema containing an interval type (see [Writer Requirements](#writer-requirements)). A reader that encounters an interval type in the schema while `intervalTypes` is absent from `readerFeatures` must reject the table.
 - **Value overflow on write.** An `interval year to month` value must fit in a signed `int32` count of months, and an `interval day to second` value must fit in a signed `int64` count of microseconds. A writer must reject any value that overflows these bounds.
 - **Malformed or out-of-range partition values.** When reading, a partition value that is not a valid ANSI interval literal, or whose decoded value does not fit the column's underlying `int32`/`int64` range, must be rejected with an error.
