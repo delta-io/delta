@@ -752,9 +752,10 @@ object Checkpoints
           .where("add is not null or remove is not null")
       } else {
         // When V2 Checkpoint is disabled, the baseCheckpoint refers to the main classic checkpoint
-        // which has all actions except "commitInfo", "cdc", "checkpointMetadata", "sidecar".
+        // which has all actions except "commitInfo", "cdc", "checkpointMetadata", "sidecar",
+        // "checkpoint".
         repartitioned
-          .drop("commitInfo", "cdc", "checkpointMetadata", "sidecar")
+          .drop("commitInfo", "cdc", "checkpointMetadata", "sidecar", "checkpoint")
           .withColumn("remove", col("remove").dropFields("tags", "stats"))
       }
     }

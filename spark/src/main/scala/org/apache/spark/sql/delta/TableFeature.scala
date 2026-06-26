@@ -425,6 +425,18 @@ object TableFeature {
         TestFeatureWithTransitiveDependency,
         TestWriterFeatureWithTransitiveDependency)
     }
+    val adaptiveMetadataFeatureEnabled =
+      try {
+        SparkSession
+          .getActiveSession
+          .map(_.conf.get(DeltaSQLConf.V4_ADAPTIVE_METADATA_TABLE_PREVIEW_ENABLED))
+          .getOrElse(false)
+      } catch {
+        case _ => false
+      }
+    if (adaptiveMetadataFeatureEnabled) {
+      features += AdaptiveMetadataTableFeature
+    }
     val featureMap = features.map(f => f.name.toLowerCase(Locale.ROOT) -> f).toMap
     require(features.size == featureMap.size, "Lowercase feature names must not duplicate.")
     featureMap
@@ -905,6 +917,15 @@ object DeletionVectorsTableFeature
 
   override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
     DeletionVectorsPreDowngradeCommand(table)
+}
+
+object AdaptiveMetadataTableFeature
+  extends ReaderWriterFeature(name = "adaptiveMetadata-preview") {
+
+  // Iceberg v4 manifests reference columns by field ID, so column mapping must be supported on
+  // any table that enables this feature.
+  // TODO(v4amt)(LC-14962): Add other dependencies and Column mapping mode enforcement.
+  override def requiredFeatures: Set[TableFeature] = Set(ColumnMappingTableFeature)
 }
 
 object RowTrackingFeature extends WriterFeature(name = "rowTracking")
