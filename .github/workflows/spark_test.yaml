@@ -10,6 +10,16 @@ on:
     paths-ignore:
       - '**.md'
       - '**.txt'
+  workflow_dispatch:
+    inputs:
+      spark-source-ref:
+        description: Optional Spark source ref override for source-build Spark rows
+        required: false
+        type: string
+      source-cache-key-suffix:
+        description: Optional suffix to force a distinct Spark Maven cache key
+        required: false
+        type: string
 # Every PR runs:
 # 1. generate-matrix: split Spark versions (from CrossSparkVersions.scala) into published
 #    vs source-build lists.
@@ -80,6 +90,8 @@ jobs:
           spark-version: ${{ matrix.spark_version }}
           use-spark-source-cache: 'true'
           build-on-miss: 'true'
+          spark-source-ref: ${{ github.event.inputs['spark-source-ref'] || '' }}
+          cache-key-suffix: ${{ github.event.inputs['source-cache-key-suffix'] || '' }}
 
   # Published Spark artifacts only. This job does not depend on prepare_spark_source_cache.
   test:
@@ -136,6 +148,8 @@ jobs:
           spark-version: ${{ matrix.spark_version }}
           use-spark-source-cache: 'true'
           build-on-miss: 'false'
+          spark-source-ref: ${{ github.event.inputs['spark-source-ref'] || '' }}
+          cache-key-suffix: ${{ github.event.inputs['source-cache-key-suffix'] || '' }}
       - name: Run Delta Spark tests
         uses: ./.github/actions/run-delta-spark-tests
         with:

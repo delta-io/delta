@@ -534,7 +534,7 @@ class SparkVersionsScriptTest:
             return False
 
     def test_source_build_spark_versions(self) -> bool:
-        """Test that --source-build-spark-versions only includes source-build defaults."""
+        """Test source-build Spark versions for the non-blocking source Spark lane."""
         if not self.ensure_json_exists():
             return False
 
@@ -578,7 +578,7 @@ class SparkVersionsScriptTest:
                     print("  ✗ Spark 4.2 sourceBuildArtifactBaseVersion is not 4.2.0")
                     return False
 
-            print(f"  ✓ --source-build-spark-versions: {source_build_versions}")
+            print(f"  ✓ --source-build-spark-versions (non-blocking lane metadata): {source_build_versions}")
             return True
 
         except (subprocess.CalledProcessError, json.JSONDecodeError) as e:
@@ -586,7 +586,7 @@ class SparkVersionsScriptTest:
             return False
 
     def test_non_source_build_spark_versions(self) -> bool:
-        """Test that --non-source-build-spark-versions excludes source-build defaults."""
+        """Test published Spark versions exclude non-blocking source-build versions."""
         if not self.ensure_json_exists():
             return False
 
@@ -621,7 +621,7 @@ class SparkVersionsScriptTest:
                 return False
 
             if "4.2" in non_source_build_versions:
-                print("  ✗ Spark 4.2 should be handled by the source-build test job")
+                print("  ✗ Spark 4.2 should be handled by the non-blocking source-build lane")
                 return False
 
             print(f"  ✓ --non-source-build-spark-versions: {non_source_build_versions}")
@@ -681,7 +681,7 @@ class SparkVersionsScriptTest:
                 print(f"  ✗ unexpected cache_key: {values['cache_key']}")
                 return False
 
-            print("  ✓ --resolve-source-build: emitted expected cache metadata")
+            print("  ✓ --resolve-source-build: emitted expected non-blocking source-build metadata")
             return True
 
         except Exception as e:
@@ -723,7 +723,7 @@ class SparkVersionsScriptTest:
                 print("  ✗ cache_key should change when the Spark SHA changes")
                 return False
 
-            print("  ✓ compute_spark_m2_cache_key: exact and SHA-sensitive")
+            print("  ✓ compute_spark_m2_cache_key: exact and SHA-sensitive for non-blocking source-build metadata")
             return True
 
         except Exception as e:
@@ -831,10 +831,10 @@ def main():
         print(f"  JSON Format:                            {'✓ PASSED' if script_test1_passed else '✗ FAILED'}")
         print(f"  All Spark Versions Output:              {'✓ PASSED' if script_test2_passed else '✗ FAILED'}")
         print(f"  Released Spark Versions Output:         {'✓ PASSED' if script_test3_passed else '✗ FAILED'}")
-        print(f"  Source-Build Spark Versions Output:     {'✓ PASSED' if script_test4_passed else '✗ FAILED'}")
+        print(f"  Source-Build Versions (non-blocking): {'✓ PASSED' if script_test4_passed else '✗ FAILED'}")
         print(f"  Non-Source-Build Spark Versions Output: {'✓ PASSED' if script_test5_passed else '✗ FAILED'}")
-        print(f"  Source-Build Resolve Output:            {'✓ PASSED' if script_test6_passed else '✗ FAILED'}")
-        print(f"  Source-Build Cache Key:                 {'✓ PASSED' if script_test6b_passed else '✗ FAILED'}")
+        print(f"  Source-Build Resolve (non-blocking):  {'✓ PASSED' if script_test6_passed else '✗ FAILED'}")
+        print(f"  Source-Build Cache Key (non-block):   {'✓ PASSED' if script_test6b_passed else '✗ FAILED'}")
         print(f"  Get Field Functionality:                {'✓ PASSED' if script_test7_passed else '✗ FAILED'}")
         print("\nPart 2: Cross-Spark Build Tests")
         print(f"  Default publishM2 (with suffix):        {'✓ PASSED' if build_test1_passed else '✗ FAILED'}")

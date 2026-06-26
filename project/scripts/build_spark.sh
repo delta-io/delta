@@ -46,20 +46,15 @@ SPARK_SHORT_SHA="$(echo "$ACTUAL_SHA" | cut -c1-12)"
 cd "$SPARK_DIR"
 
 read_spark_base_version() {
-  python3 - <<'PY'
-import re
-from pathlib import Path
-
-version_file = Path("version.sbt")
-if not version_file.exists():
-    raise SystemExit(1)
-
-match = re.search(r'\bversion\s*:?=\s*"([^"]+)"', version_file.read_text())
-if not match:
-    raise SystemExit(1)
-
-print(match.group(1).removesuffix("-SNAPSHOT"))
-PY
+  local version
+  if [[ ! -f version.sbt ]]; then
+    return 1
+  fi
+  version="$(sed -nE 's/.*(^|[^[:alnum:]_])version[[:space:]]*:?=[[:space:]]*"([^"]+)".*/\2/p' version.sbt | head -n 1)"
+  if [[ -z "$version" ]]; then
+    return 1
+  fi
+  echo "${version%-SNAPSHOT}"
 }
 
 if [[ -z "${SPARK_BASE_VERSION:-}" ]]; then
