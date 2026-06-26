@@ -153,7 +153,7 @@ trait DeltaSourceBase extends Source
       // Construct a snapshot descriptor with custom schema inline
       new SnapshotDescriptor {
         val deltaLog: DeltaLog = snapshotAtSourceInit.deltaLog
-        val dataPath: Path = snapshotAtSourceInit.dataPath
+        override val dataPath: Path = snapshotAtSourceInit.dataPath
         val logPath: Path = snapshotAtSourceInit.logPath
         val metadata: Metadata =
           snapshotAtSourceInit.metadata.copy(

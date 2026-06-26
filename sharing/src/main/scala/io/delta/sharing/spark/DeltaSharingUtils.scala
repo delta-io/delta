@@ -304,7 +304,7 @@ object DeltaSharingUtils extends Logging {
       localDeltaLog,
       new SnapshotDescriptor {
         val deltaLog: DeltaLog = localDeltaLog
-        val dataPath: Path = localDeltaLog.dataPath
+        override val dataPath: Path = localDeltaLog.dataPath
         val logPath: Path = localDeltaLog.logPath
         val metadata: Metadata = deltaSharingTableMetadata.metadata.deltaMetadata
         val protocol: Protocol = deltaSharingTableMetadata.protocol.deltaProtocol
