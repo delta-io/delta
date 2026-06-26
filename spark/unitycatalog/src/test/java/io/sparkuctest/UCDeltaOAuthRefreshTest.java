@@ -20,6 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledIf;
 
 /**
  * Exercises OAuth access-token renewal. With a token lifetime well under the connector's ~30s
@@ -34,6 +35,10 @@ import org.junit.jupiter.api.Test;
  * that triggers renewal here is the broker's advertised expires_in, not anything UC issues. So this
  * proves the client renews, not that renewal is required or that expiry is enforced.
  */
+@DisabledIf(
+    value = "isUCRemoteConfigured",
+    disabledReason =
+        "Requires the local mock OAuth broker; a remote UC server has no broker to count issuance.")
 public class UCDeltaOAuthRefreshTest extends UCDeltaTableIntegrationBaseTest {
 
   /** Cap the advertised lifetime at 1s so the token is always due for renewal. */

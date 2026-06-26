@@ -18,12 +18,18 @@ package io.sparkuctest;
 
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledIf;
 
 /**
  * Smoke test for the static-token auth path. The rest of the integration suite defaults to OAUTH
  * (server-validating), so this single test keeps the static-token path -- a local server with
  * authorization disabled and the connector sending a static bearer -- covered end to end.
  */
+@DisabledIf(
+    value = "isUCRemoteConfigured",
+    disabledReason =
+        "authMode()=STATIC only controls the local server; remote auth is selected by env vars, "
+            + "so this cannot force the static-token path remotely.")
 public class UCDeltaStaticTokenTest extends UCDeltaTableIntegrationBaseTest {
 
   @Override
