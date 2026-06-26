@@ -2732,9 +2732,11 @@ See Parquet [timestamp type](https://github.com/apache/parquet-format/blob/maste
 
 #### Void Type
 
-On write, `void` columns are omitted from data files: they do not appear in the data file's schema. On read, they are reconstructed as all-`null` columns, following the [rule](#consistency-between-table-metadata-and-data-files) that columns present in the table schema but missing from a data file are read as `null`.
+_Note: `void` was never deliberately designed as a Delta feature; the Spark connector has produced such columns for a long time without it being specified here. This section documents that pre-existing behavior post-facto, rather than introducing it through the usual RFC process. Because such columns already exist in tables written by earlier clients, `void` is not gated by any table feature and applies to all tables._
 
-Because `void` is never written to data files, writers must reject **writing data** to a table whose schema contains any of the following shapes:
+On write, writers MUST omit `void` columns from data files; they do not appear in the data file's schema. On read, readers MUST reconstruct them as all-`null` columns, consistent with the [rule](#consistency-between-table-metadata-and-data-files) that columns present in the table schema but missing from a data file are read as `null`.
+
+Because `void` is never written to data files, writers MUST reject **writing data** to a table whose schema contains any of the following shapes:
 - a `void` type inside an `array` or `map` at any nesting level;
 - a `struct` (at any nesting level) whose fields are all `void`; or
 - a table whose columns are all `void`.
