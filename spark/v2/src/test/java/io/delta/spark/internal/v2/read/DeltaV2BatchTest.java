@@ -37,7 +37,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-public class SparkBatchTest extends DeltaV2TestBase {
+public class DeltaV2BatchTest extends DeltaV2TestBase {
 
   private static String tablePath;
   private static final String tableName = "deltatbl_partitioned_batch";
@@ -58,7 +58,7 @@ public class SparkBatchTest extends DeltaV2TestBase {
   // Cases where two batches built from the same table must be equal. city/date are partition
   // columns (exercise pushedToKernelFiltersSet); name/cnt are data columns and per
   // ExpressionUtils.classifyFilter have isDataFilter=true, so they flow into
-  // SparkBatch.dataFilters and exercise the dataFiltersSet branch of equals/hashCode.
+  // DeltaV2Batch.dataFilters and exercise the dataFiltersSet branch of equals/hashCode.
   static Stream<Arguments> equalBatchCasesProvider() {
     Filter cityEq = new EqualTo("city", "hz");
     Filter dateEq = new EqualTo("date", "20180520");
