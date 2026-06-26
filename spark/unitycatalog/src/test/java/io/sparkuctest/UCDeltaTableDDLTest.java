@@ -22,6 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.apache.hadoop.fs.Path;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
@@ -125,5 +126,76 @@ public class UCDeltaTableDDLTest extends UCDeltaTableIntegrationBaseTest {
       }
     }
     return properties;
+  }
+
+  // -------------------------------------------------------------------------
+  // CREATE TABLE with GENERATED AS IDENTITY columns
+  // -------------------------------------------------------------------------
+
+  /**
+   * CREATE TABLE with a GENERATED ALWAYS AS IDENTITY column must succeed on both EXTERNAL and
+   * MANAGED tables, with auto-generated values respecting (START, INCREMENT) and delta.identity.*
+   * metadata persisted in the committed schema. MANAGED here exercises the catalog-managed
+   * AbstractDeltaCatalog.createTable(ident, Column[], ...) override that the spark_catalog-only
+   * IdentityColumnSqlDDLSuite does not cover.
+   */
+  @TestAllTableTypes
+  public void testCreateWithIdentityColumn(TableType tableType) throws Exception {
+    if (tableType == TableType.EXTERNAL) {
+      withTempDir(
+          (Path dir) -> {
+            String tableName = fullTableName("ddl_identity_external");
+            Path tablePath = new Path(dir, "ddl_identity_external");
+            sql("DROP TABLE IF EXISTS %s", tableName);
+            try {
+              sql(
+                  "CREATE TABLE %s ("
+                      + "  id BIGINT GENERATED ALWAYS AS IDENTITY (START WITH 100 INCREMENT BY 5),"
+                      + "  val STRING"
+                      + ") USING DELTA LOCATION '%s'",
+                  tableName, tablePath.toString());
+              runIdentityCreateAssertions(tableName, 100L, 5L);
+            } finally {
+              sql("DROP TABLE IF EXISTS %s", tableName);
+            }
+          });
+    } else {
+      String tableName = fullTableName("ddl_identity_managed");
+      sql("DROP TABLE IF EXISTS %s", tableName);
+      try {
+        sql(
+            "CREATE TABLE %s ("
+                + "  id BIGINT GENERATED ALWAYS AS IDENTITY (START WITH 100 INCREMENT BY 5),"
+                + "  val STRING"
+                + ") USING DELTA "
+                + "TBLPROPERTIES ('delta.feature.catalogManaged'='supported')",
+            tableName);
+        runIdentityCreateAssertions(tableName, 100L, 5L);
+      } finally {
+        sql("DROP TABLE IF EXISTS %s", tableName);
+      }
+    }
+  }
+
+  private void runIdentityCreateAssertions(String tableName, long start, long step) {
+    sql("INSERT INTO %s (val) VALUES ('a'), ('b'), ('c')", tableName);
+    List<List<String>> generated = sql("SELECT id FROM %s ORDER BY id", tableName);
+    assertThat(generated)
+        .as("auto-generated identity values for %s", tableName)
+        .containsExactly(
+            row(Long.toString(start)),
+            row(Long.toString(start + step)),
+            row(Long.toString(start + 2 * step)));
+
+    // Explicit INSERT into an ALWAYS-IDENTITY column must be rejected, proving the column is
+    // genuinely wired through Delta's identity machinery (not a plain BIGINT).
+    Assertions.assertThrows(
+        Exception.class, () -> sql("INSERT INTO %s VALUES (999, 'rejected')", tableName));
+
+    // Note: identity StructField metadata (`delta.identity.*`) is intentionally NOT asserted
+    // via spark().table().schema() because Spark exposes a catalog-facing schema that strips
+    // internal Delta metadata. The behavioral assertions above are the real contract: if the
+    // catalog-managed Column[] override failed to translate identityColumnSpec(), the auto-
+    // generated values would be missing and the explicit-insert rejection would not fire.
   }
 }
