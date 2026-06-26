@@ -1,7 +1,7 @@
 # Void Type
 **Associated Github issue for discussions: https://github.com/delta-io/delta/issues/7072**
 
-This protocol change adds support for using the `void` data type (also known as `NullType` in Spark, `UnknownType` in Iceberg, and `UNKNOWN` in Parquet) anywhere in a Delta table schema, via a new reader/writer table feature, `voidType`.
+The `voidType` reader/writer table feature adds support for using the `void` data type (also known as `NullType` in Spark, `UnknownType` in Iceberg, and `UNKNOWN` in Parquet) anywhere in a Delta table schema.
 
 `void` is a data type with a single possible value: `NULL`. A column ends up with this type when the writer has no information about its actual type, typically because every value observed so far has been `NULL` (for example, `CREATE TABLE t AS SELECT NULL AS a`, or schema evolution that adds a column containing only `NULL`s).
 
@@ -55,16 +55,15 @@ A `void` column in any other position is never structural: it can be omitted, an
 ### Writer Requirements for Void Type
 
 When Void Type is supported (when the `writerFeatures` field of a table's `protocol` action contains `voidType`), writers:
-- must store the table's structural `void` columns as `UNKNOWN` (see [Structural void columns](#structural-void-columns)).
-- should store any non-structural `void` column by omission.
+- must write the table's structural `void` columns to data files (see [Structural void columns](#structural-void-columns)).
+- should omit any non-structural `void` column.
 
 ### Reader Requirements for Void Type
 
 When Void Type is supported (when the `readerFeatures` field of a table's `protocol` action contains `voidType`), readers:
-- must recognize and tolerate a `void` data type anywhere in a Delta table schema.
-- must read a `void` column stored as `UNKNOWN` as an all-`NULL` column.
-- must read an omitted `void` column as an all-`NULL` [missing column](/PROTOCOL.md#consistency-between-table-metadata-and-data-files).
-- must, within a single scan, correctly combine data files that represent the same column differently - omitted, stored as `UNKNOWN`, or (after a type change) stored as a concrete type - into the requested read schema.
+- must allow a `void` data type anywhere in a Delta table schema.
+- must return only `NULL` values for a `void` column regardless of how it is represented.
+- must, within a single scan, correctly combine data files that represent the same column differently - omitted, written as an all-`NULL` column, or (after a type change) written with a concrete type - into the requested read schema.
 
 ### Removing the Void Type feature
 
