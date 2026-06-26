@@ -130,6 +130,22 @@ class Snapshot(
   // For implicits which re-use Encoder:
   import org.apache.spark.sql.delta.implicits._
 
+  /**
+   * Whether this snapshot is allowed to be constructed without a V1 [[LogSegment]] and [[DeltaLog]]
+   * (i.e. both `logSegment` and `deltaLog` are null). Defaults to false, so every V1 snapshot is
+   * required to be backed by real V1 storage. Only the Kernel-backed [[v2.interop.DeltaV2Snapshot]]
+   * overrides this to true, since the v2 path has no V1 LogSegment/DeltaLog.
+   */
+  protected def allowNullLogSegmentAndDeltaLog: Boolean = false
+
+  // Invariant: a V1 Snapshot must always be constructed with a non-null logSegment and deltaLog.
+  // Only the Kernel-backed DeltaV2Snapshot legitimately has neither and opts out above. This guards
+  // against accidentally constructing a V1 snapshot with null storage (e.g. when v2 is disabled),
+  // which would otherwise surface as a confusing NPE deep in a scan rather than at construction.
+  require(
+    allowNullLogSegmentAndDeltaLog || (logSegment != null && deltaLog != null),
+    "A V1 Snapshot must be constructed with a non-null logSegment and deltaLog.")
+
   override def dataPath: Path = deltaLog.dataPath
   override def logPath: Path = deltaLog.logPath
 
@@ -227,8 +243,13 @@ class Snapshot(
    * indeed contains any unbackfilled commits or the LogSegment is just based on an older
    * version.
    */
-  @volatile private var lastKnownBackfilledVersion: Long =
+  // The initial last-known backfilled version comes from this snapshot's LogSegment. `protected`
+  // so a subclass without a V1 LogSegment (e.g. DeltaV2Snapshot) can override it with a sentinel
+  // rather than dereferencing a null `logSegment`.
+  protected def initialLastKnownBackfilledVersion: Long =
     logSegment.lastBackfilledVersionInSegment
+
+  @volatile private var lastKnownBackfilledVersion: Long = initialLastKnownBackfilledVersion
 
   def getLastKnownBackfilledVersion: Long = lastKnownBackfilledVersion
 
@@ -335,7 +356,12 @@ class Snapshot(
    *   [[DeltaSQLConf.COORDINATED_COMMITS_IGNORE_MISSING_COORDINATOR_IMPLEMENTATION]] to false.
    * - This must be None when coordinated commits is disabled.
    */
-  val tableCommitCoordinatorClientOpt: Option[TableCommitCoordinatorClient] = {
+  // `protected` so a subclass without a V1 deltaLog (e.g. DeltaV2Snapshot) can override this to
+  // skip the coordinator lookup, which dereferences `deltaLog`, `metadata`, and `protocol`. The
+  // backing `val` initializer runs during the superclass constructor (Scala does not skip an
+  // overridden `val`'s superclass initializer), so the hook is a `def` to dispatch to the subclass
+  // override at construction time.
+  protected def computeTableCommitCoordinatorClientOpt: Option[TableCommitCoordinatorClient] = {
     val failIfImplUnavailable =
       !spark.conf.get(DeltaSQLConf.COORDINATED_COMMITS_IGNORE_MISSING_COORDINATOR_IMPLEMENTATION)
     CoordinatedCommitsUtils.getTableCommitCoordinator(
@@ -345,6 +371,8 @@ class Snapshot(
       failIfImplUnavailable
     )
   }
+  val tableCommitCoordinatorClientOpt: Option[TableCommitCoordinatorClient] =
+    computeTableCommitCoordinatorClientOpt
 
   /**
    * Returns the [[TableCommitCoordinatorClient]] that should be used for any type of mutation
@@ -743,33 +771,33 @@ class Snapshot(
   protected def emptyDF: DataFrame =
     spark.createDataFrame(spark.sparkContext.emptyRDD[Row], logSchema)
 
+  // The "Created snapshot" logInfo at the end of this constructor runs eagerly and reads the table
+  // id from the V1 `deltaLog`, which the constructor invariant guarantees is non-null for every V1
+  // snapshot. The Kernel-backed DeltaV2Snapshot has no V1 `deltaLog` and overrides this to report
+  // an empty id.
+  protected def tableId: String = deltaLog.unsafeVolatileTableId
 
   // These logging methods must NOT read `this.metadata`: they are invoked *during* P&M
   // reconstruction (e.g. the usage log on the incremental-checksum path) and during snapshot
   // construction, where reading `metadata` re-enters the `_reconstructedProtocolMetadataAndICT`
   // lazy val on the same thread and overflows the stack. Use the DeltaLog's cached id instead.
   def logInfo(msg: MessageWithContext): Unit = {
-    val tableId = deltaLog.unsafeVolatileTableId
     super.logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, tableId)}] " + msg)
   }
 
   def logWarning(msg: MessageWithContext): Unit = {
-    val tableId = deltaLog.unsafeVolatileTableId
     super.logWarning(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, tableId)}] " + msg)
   }
 
   def logWarning(msg: MessageWithContext, throwable: Throwable): Unit = {
-    val tableId = deltaLog.unsafeVolatileTableId
     super.logWarning(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, tableId)}] " + msg, throwable)
   }
 
   def logError(msg: MessageWithContext): Unit = {
-    val tableId = deltaLog.unsafeVolatileTableId
     super.logError(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, tableId)}] " + msg)
   }
 
   def logError(msg: MessageWithContext, throwable: Throwable): Unit = {
-    val tableId = deltaLog.unsafeVolatileTableId
     super.logError(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, tableId)}] " + msg, throwable)
   }
 
