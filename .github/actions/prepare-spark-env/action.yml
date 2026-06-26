@@ -17,10 +17,18 @@ inputs:
     default: 'false'
   build-on-miss:
     description: >-
-      When 'true', build Spark and save the cache on a miss (used by the dedicated
-      prepare-cache job). Test shards leave this 'false' and fail on an unexpected miss.
+      When 'true', build Spark and save the cache on a miss. Test shards explicitly
+      set this to 'false' so they restore/verify instead of rebuilding 8x.
     required: false
-    default: 'false'
+    default: 'true'
+  spark-source-ref:
+    description: Optional Spark source ref override for manual source-build runs.
+    required: false
+    default: ''
+  cache-key-suffix:
+    description: Optional suffix appended to the exact Spark Maven cache key.
+    required: false
+    default: ''
   runner-label:
     description: GitHub Actions runner label used in Spark Maven cache keys.
     required: false
@@ -48,13 +56,31 @@ runs:
       if: inputs.use-spark-source-cache == 'true'
       id: spark-source
       shell: bash
+      env:
+        SPARK_SOURCE_REF_OVERRIDE: ${{ inputs.spark-source-ref }}
       run: |
         # Resolves the Spark compatibility line, metadata-owned source ref, immutable Spark
         # SHA, commit-qualified local Maven version, and the exact Maven cache_key.
         python3 project/scripts/get_spark_version_info.py \
           --resolve-source-build \
           --spark-version "${{ inputs.spark-version }}" \
+          --spark-source-ref "$SPARK_SOURCE_REF_OVERRIDE" \
           --runner-label "${{ inputs.runner-label }}"
+
+    - name: Select Spark Maven cache key
+      if: inputs.use-spark-source-cache == 'true'
+      id: spark-cache-key
+      shell: bash
+      env:
+        BASE_SPARK_CACHE_KEY: ${{ steps.spark-source.outputs.cache_key }}
+        SPARK_CACHE_KEY_SUFFIX: ${{ inputs.cache-key-suffix }}
+      run: |
+        cache_key="$BASE_SPARK_CACHE_KEY"
+        suffix="$SPARK_CACHE_KEY_SUFFIX"
+        if [[ -n "$suffix" ]]; then
+          cache_key="${cache_key}-${suffix}"
+        fi
+        echo "cache_key=$cache_key" >> "$GITHUB_OUTPUT"
 
     - name: Restore Spark Maven cache
       if: inputs.use-spark-source-cache == 'true'
@@ -64,7 +90,7 @@ runs:
         path: ~/.m2/repository/org/apache/spark
         # Exact-match cache only. Spark source builds must not fall back to a different
         # SHA, artifact base version, or build_spark.sh hash.
-        key: ${{ steps.spark-source.outputs.cache_key }}
+        key: ${{ steps.spark-cache-key.outputs.cache_key }}
 
     - name: Build Spark source ref on cache miss
       if: inputs.use-spark-source-cache == 'true' && inputs.build-on-miss == 'true' && steps.spark-source-cache.outputs.cache-hit != 'true'
@@ -82,7 +108,7 @@ runs:
       with:
         path: ~/.m2/repository/org/apache/spark
         # Save under the same exact key so the test shards hit instead of rebuilding.
-        key: ${{ steps.spark-source.outputs.cache_key }}
+        key: ${{ steps.spark-cache-key.outputs.cache_key }}
 
     - name: Verify Spark Maven artifacts
       if: inputs.use-spark-source-cache == 'true'

@@ -66,37 +66,18 @@ realpath () {
 )
 }
 
-USE_MAVEN_LOCAL_FOR_SOURCE_SPARK=false
-if [[ -n "${SPARK_COMMIT:-}" || -n "${SPARK_ARTIFACT_VERSION:-}" ]]; then
-  USE_MAVEN_LOCAL_FOR_SOURCE_SPARK=true
-fi
-for arg in "$@"; do
-  case "$arg" in
-    -DsparkCommit=*|-DsparkArtifactVersion=*)
-      USE_MAVEN_LOCAL_FOR_SOURCE_SPARK=true
-      ;;
-  esac
-done
-
-# If MAVEN_PROXY_URL is set, use it (and Ivy local) as the sole repository for dependencies.
+# If MAVEN_PROXY_URL is set, use Maven local plus the proxy/Ivy-local repositories for dependencies.
 if [[ -n "$MAVEN_PROXY_URL" ]]; then
   SBT_REPOSITORIES_CONFIG=$(mktemp)
   cat > "$SBT_REPOSITORIES_CONFIG" <<EOF
 [repositories]
   local
+  maven-local: file:///${HOME}/.m2/repository
   maven-proxy: $MAVEN_PROXY_URL
   maven-proxy-ivy: $MAVEN_PROXY_URL, [organization]/[module]/(scala_[scalaVersion]/)(sbt_[sbtVersion]/)[revision]/[type]s/[artifact](-[classifier]).[ext]
 EOF
 else
   SBT_REPOSITORIES_CONFIG="$(dirname "$(realpath "$0")")/sbt-config/repositories"
-fi
-if [[ "$USE_MAVEN_LOCAL_FOR_SOURCE_SPARK" == "true" ]]; then
-  SBT_REPOSITORIES_WITH_MAVEN_LOCAL=$(mktemp)
-  cp "$SBT_REPOSITORIES_CONFIG" "$SBT_REPOSITORIES_WITH_MAVEN_LOCAL"
-  cat >> "$SBT_REPOSITORIES_WITH_MAVEN_LOCAL" <<EOF
-  maven-local: file:///${HOME}/.m2/repository
-EOF
-  SBT_REPOSITORIES_CONFIG="$SBT_REPOSITORIES_WITH_MAVEN_LOCAL"
 fi
 export SBT_OPTS="-Dsbt.override.build.repos=true -Dsbt.repository.config=$SBT_REPOSITORIES_CONFIG"
 
