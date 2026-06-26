@@ -165,10 +165,22 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     // Set the catalog specific configs.
     UnityCatalogInfo uc = unityCatalogInfo();
     String catalogName = uc.catalogName();
+    String catalogPrefix = "spark.sql.catalog." + catalogName;
     conf =
-        conf.set("spark.sql.catalog." + catalogName, "io.unitycatalog.spark.UCSingleCatalog")
-            .set("spark.sql.catalog." + catalogName + ".uri", uc.serverUri())
-            .set("spark.sql.catalog." + catalogName + ".token", uc.serverToken());
+        conf.set(catalogPrefix, "io.unitycatalog.spark.UCSingleCatalog")
+            .set(catalogPrefix + ".uri", uc.serverUri());
+    if (uc.oauthTokenUri() != null) {
+      // OAuth client-credentials: the connector fetches a token from the OAuth token endpoint
+      // (uc.oauthTokenUri(): the local broker, or a real IdP for remote runs) and sends it as a
+      // Bearer. No static `.token` is set.
+      conf =
+          conf.set(catalogPrefix + ".auth.type", "oauth")
+              .set(catalogPrefix + ".auth.oauth.uri", uc.oauthTokenUri())
+              .set(catalogPrefix + ".auth.oauth.clientId", uc.oauthClientId())
+              .set(catalogPrefix + ".auth.oauth.clientSecret", uc.oauthClientSecret());
+    } else {
+      conf = conf.set(catalogPrefix + ".token", uc.serverToken());
+    }
     if (!useDeltaRestApiForTests()) {
       // Default is true. Tests can opt out.
       conf =
