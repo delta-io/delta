@@ -97,10 +97,10 @@ Beyond the partition-value and statistics behavior described above, and the rest
 ## Error Conditions
 
 - **Unrecognized type-name strings.** Type-name matching is case-sensitive. A reader that encounters an interval type-name string that is not one of the recognized canonical or narrowed spellings, including a mixed-family spelling such as `interval month to day` (neither `year to month` nor `day to second`), or a case variant such as `INTERVAL Year To Month`, must reject the schema with an error rather than silently coercing it to a supported type.
-- **Feature not present.** A writer must add `intervalTypes` to the table `protocol`'s `readerFeatures` and `writerFeatures` whenever it writes a schema containing an interval type (see [Writer Requirements](#writer-requirements)). A reader that encounters an interval type in the schema while `intervalTypes` is absent from `readerFeatures` must reject the table.
+- **Feature not present.** A writer must add `intervalTypes` to the table `protocol`'s `readerFeatures` and `writerFeatures` whenever it writes a schema containing an interval type (see [Writer Requirements](#writer-requirements)).
 - **Value overflow on write.** An `interval year to month` value must fit in a signed `int32` count of months, and an `interval day to second` value must fit in a signed `int64` count of microseconds. A writer must reject any value that overflows these bounds.
 - **Malformed or out-of-range partition values.** When reading, a partition value that is not a valid ANSI interval literal, or whose decoded value does not fit the column's underlying `int32`/`int64` range, must be rejected with an error.
-- **IcebergCompat incompatibility.** Apache Iceberg has no interval type. When any of the `icebergCompatV1`, `icebergCompatV2`, or `icebergCompatV3` features is enabled, a writer must reject — at schema validation — any schema containing an interval type.
+- **IcebergCompat incompatibility.** Apache Iceberg has no interval type. When any of the `icebergCompatV1`, `icebergCompatV2`, or `icebergCompatV3` features is enabled, a writer must reject any schema containing an interval type.
 
 > ***Add new rows to the [Primitive Types](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#primitive-types) table.***
 
