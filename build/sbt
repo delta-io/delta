@@ -66,7 +66,8 @@ realpath () {
 )
 }
 
-# If MAVEN_PROXY_URL is set, use Maven local plus the proxy/Ivy-local repositories for dependencies.
+# Always include Maven local so source-built Spark artifacts restored under ~/.m2 are
+# resolvable in both normal and MAVEN_PROXY_URL CI paths.
 if [[ -n "$MAVEN_PROXY_URL" ]]; then
   SBT_REPOSITORIES_CONFIG=$(mktemp)
   cat > "$SBT_REPOSITORIES_CONFIG" <<EOF
@@ -77,7 +78,11 @@ if [[ -n "$MAVEN_PROXY_URL" ]]; then
   maven-proxy-ivy: $MAVEN_PROXY_URL, [organization]/[module]/(scala_[scalaVersion]/)(sbt_[sbtVersion]/)[revision]/[type]s/[artifact](-[classifier]).[ext]
 EOF
 else
-  SBT_REPOSITORIES_CONFIG="$(dirname "$(realpath "$0")")/sbt-config/repositories"
+  SBT_REPOSITORIES_CONFIG=$(mktemp)
+  cp "$(dirname "$(realpath "$0")")/sbt-config/repositories" "$SBT_REPOSITORIES_CONFIG"
+  cat >> "$SBT_REPOSITORIES_CONFIG" <<EOF
+  maven-local: file:///${HOME}/.m2/repository
+EOF
 fi
 export SBT_OPTS="-Dsbt.override.build.repos=true -Dsbt.repository.config=$SBT_REPOSITORIES_CONFIG"
 
