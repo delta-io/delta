@@ -86,7 +86,6 @@ class InMemoryLogReplay(
         }
       case _: CommitInfo => // do nothing
       case _: AddCDCFile => // do nothing
-      case _: Checkpoint => // AMT pointer; the manifest tree is loaded separately.
       case null => // Some crazy future feature. Ignore
     }
   }
