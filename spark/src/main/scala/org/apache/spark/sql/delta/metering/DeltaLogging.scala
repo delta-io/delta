@@ -227,6 +227,48 @@ object DeltaLogging {
 }
 
 /**
+ * A thread-safe, count-based throttler for usage-log emission via [[recordThrottledDeltaEvent]].
+ *
+ * Unlike [[LogThrottler]], which throttles by rate using a token bucket, this throttles purely by
+ * count: it records at most `maxEventsToLog` delta events and silently drops the rest. Each
+ * instance must be shared across all call sites it should throttle together, and its lifetime
+ * defines the throttling scope (for example, a field of an [[OptimisticTransaction]] gives
+ * per-commit throttling).
+ *
+ * @param maxEventsToLog Maximum number of events to log before throttling kicks in.
+ */
+class ThrottledEventLogger(val maxEventsToLog: Long) extends DeltaLogging {
+
+  private var numLogged: Long = 0
+
+  /**
+   * Records a delta event via [[recordDeltaEvent]] while fewer than `maxEventsToLog` events have
+   * been recorded; once the cap is reached further events are silently dropped.
+   *
+   * The counter is claimed under a lock but the (heavier) recording happens outside it, so
+   * concurrent callers serialize only on the cap check and not on event serialization.
+   */
+  def recordThrottledDeltaEvent(
+      provider: DeltaLoggingProvider,
+      opType: String,
+      tags: Map[TagDefinition, String] = Map.empty,
+      data: AnyRef = null,
+      path: Option[Path] = None): Unit = {
+    val shouldLog = this.synchronized {
+      if (numLogged < maxEventsToLog) {
+        numLogged += 1
+        true
+      } else {
+        false
+      }
+    }
+    if (shouldLog) {
+      recordDeltaEvent(provider, opType, tags, data, path)
+    }
+  }
+}
+
+/**
  * A thread-safe token bucket-based throttler implementation with nanosecond accuracy.
  *
  * Each instance must be shared across all scopes it should throttle.

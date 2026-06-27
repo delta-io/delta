@@ -25,11 +25,17 @@ import org.apache.spark.sql.vectorized.ColumnarBatch;
 import scala.Function1;
 import scala.collection.Iterator;
 
-public class SparkReaderFactory implements PartitionReaderFactory {
+/**
+ * Package-private reader factory for Delta's Spark DataSource V2 read path.
+ *
+ * <p>This class must remain package-private so callers outside {@code v2.read} depend only on
+ * Spark's public connector interfaces instead of coupling to Delta's internal V2 implementation.
+ */
+class DeltaV2ReaderFactory implements PartitionReaderFactory {
   private Function1<PartitionedFile, Iterator<InternalRow>> readFunc;
   private boolean supportsColumnar;
 
-  public SparkReaderFactory(
+  public DeltaV2ReaderFactory(
       Function1<PartitionedFile, Iterator<InternalRow>> readFunc, boolean supportsColumnar) {
     this.readFunc = readFunc;
     this.supportsColumnar = supportsColumnar;
@@ -37,7 +43,7 @@ public class SparkReaderFactory implements PartitionReaderFactory {
 
   @Override
   public PartitionReader<ColumnarBatch> createColumnarReader(InputPartition partition) {
-    return new SparkPartitionReader<ColumnarBatch>(readFunc, (FilePartition) partition);
+    return new DeltaV2PartitionReader<ColumnarBatch>(readFunc, (FilePartition) partition);
   }
 
   @Override
@@ -47,6 +53,6 @@ public class SparkReaderFactory implements PartitionReaderFactory {
 
   @Override
   public PartitionReader<InternalRow> createReader(InputPartition partition) {
-    return new SparkPartitionReader<InternalRow>(readFunc, (FilePartition) partition);
+    return new DeltaV2PartitionReader<InternalRow>(readFunc, (FilePartition) partition);
   }
 }

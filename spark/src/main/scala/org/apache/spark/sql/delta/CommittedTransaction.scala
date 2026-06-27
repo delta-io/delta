@@ -32,8 +32,10 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
  * @param txnId                 the unique identifier of the committed transaction.
  * @param deltaLog              the [[DeltaLog]] instance for the table the transaction
  *                              committed on.
- * @param catalogTable          the catalog table at the start of the transaction for the
- *                              committed table.
+ * @param catalogTable          the catalog table exposed to post-commit hooks.
+ *                              Normal commits use the transaction's construction-time table.
+ *                              UC retry and migration paths may pass the refreshed table.
+ *                              That table comes from the successful commit attempt.
  * @param readSnapshot          the snapshot of the table at the time of the transaction's read.
  * @param committedVersion      the version of the table after the txn committed.
  * @param committedActions      the actions that were committed in this transaction.

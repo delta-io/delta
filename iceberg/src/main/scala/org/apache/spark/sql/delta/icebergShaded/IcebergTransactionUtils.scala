@@ -162,6 +162,17 @@ object IcebergTransactionUtils
         DeltaToIcebergConvert.Partition.convertPartitionValues(
           snapshot, partitionSpec, f.partitionValues, logicalToPhysicalPartitionNames))
     }
+    f match {
+      case add: AddFile =>
+        add.baseRowId.map { rowId =>
+          builder.withFirstRowId(rowId)
+        }
+      case remove: RemoveFile =>
+        remove.baseRowId.map { rowId =>
+          builder.withFirstRowId(rowId)
+        }
+      case _ =>
+    }
     builder
   }
 

@@ -509,6 +509,15 @@ trait DeltaErrorsBase
     )
   }
 
+  def streamingTrailingCommitMissing(
+      expectedVersion: Long,
+      seenVersion: Long): DeltaIllegalStateException = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_STREAMING_TRAILING_COMMIT_MISSING",
+      messageParameters = Array(s"$expectedVersion", s"$seenVersion")
+    )
+  }
+
   def staticPartitionsNotSupportedException: Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_STATIC_PARTITIONS",
@@ -654,7 +663,8 @@ trait DeltaErrorsBase
    * Auto-CDF batch read rejected because the table resolved by the catalog is not a V2
    * [[io.delta.spark.internal.v2.catalog.DeltaV2Table]]. The V2 connector is the only path that
    * implements the catalog-driven CHANGES surface. V1 Delta tables (`DeltaTableV2`) continue to
-   * use the legacy CDF path that does not go through `TableCatalog.loadChangelog`.
+   * use the legacy CDF path that does not go through `TableCatalog.loadChangelog`. Use
+   * `AUTO`/`STRICT` mode so the catalog re-resolves V1 tables to the V2 connector for CHANGES.
    *
    * Returns `Nothing` so Scala callers can use this in expression position (e.g. as a `match`
    * arm) without an explicit `throw`. Java callers invoke it as a statement.
@@ -1152,9 +1162,11 @@ trait DeltaErrorsBase
     ).initCause(e)
   }
 
+  final val DELTA_TXN_LOG_FAILED_INTEGRITY = "DELTA_TXN_LOG_FAILED_INTEGRITY"
+
   def logFailedIntegrityCheck(version: Long, mismatchOption: String): Throwable = {
     new DeltaIllegalStateException(
-      errorClass = "DELTA_TXN_LOG_FAILED_INTEGRITY",
+      errorClass = DELTA_TXN_LOG_FAILED_INTEGRITY,
       messageParameters = Array(version.toString, mismatchOption)
     )
   }

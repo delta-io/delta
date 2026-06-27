@@ -29,6 +29,7 @@ import org.apache.spark.sql.types._
 class TypeWideningGeneratedColumnsSuite
   extends QueryTest
     with TypeWideningTestMixin
+    with DeltaDMLTestUtilsNameBased
     with GeneratedColumnTest
     with TypeWideningGeneratedColumnTests
 

@@ -425,6 +425,18 @@ object TableFeature {
         TestFeatureWithTransitiveDependency,
         TestWriterFeatureWithTransitiveDependency)
     }
+    val adaptiveMetadataFeatureEnabled =
+      try {
+        SparkSession
+          .getActiveSession
+          .map(_.conf.get(DeltaSQLConf.V4_ADAPTIVE_METADATA_TABLE_PREVIEW_ENABLED))
+          .getOrElse(false)
+      } catch {
+        case _ => false
+      }
+    if (adaptiveMetadataFeatureEnabled) {
+      features += AdaptiveMetadataTableFeature
+    }
     val featureMap = features.map(f => f.name.toLowerCase(Locale.ROOT) -> f).toMap
     require(features.size == featureMap.size, "Lowercase feature names must not duplicate.")
     featureMap
@@ -907,6 +919,14 @@ object DeletionVectorsTableFeature
     DeletionVectorsPreDowngradeCommand(table)
 }
 
+object AdaptiveMetadataTableFeature
+  extends ReaderWriterFeature(name = "adaptiveMetadata-preview") {
+
+  // Iceberg v4 manifests reference columns by field ID, so column mapping must be supported on
+  // any table that enables this feature.
+  override def requiredFeatures: Set[TableFeature] = Set(ColumnMappingTableFeature)
+}
+
 object RowTrackingFeature extends WriterFeature(name = "rowTracking")
   with RemovableFeature
   with FeatureAutomaticallyEnabledByMetadata {
@@ -1256,6 +1276,8 @@ object CatalogOwnedTableFeature
   extends ReaderWriterFeature(name = "catalogManaged")
   with RemovableFeature {
 
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
+
   override def requiredFeatures: Set[TableFeature] =
     Set(InCommitTimestampTableFeature, VacuumProtocolCheckTableFeature)
 
@@ -1382,6 +1404,13 @@ object InCommitTimestampTableFeature
 object VacuumProtocolCheckTableFeature
   extends ReaderWriterFeature(name = "vacuumProtocolCheck")
   with RemovableFeature {
+
+  // Allowing concurrent transactions to rebase over this feature's enablement is safe:
+  // VACUUM already performs the writer-side protocol check at transaction start regardless
+  // of whether VacuumProtocolCheckTableFeature is in the protocol. So a rebased commit
+  // acquiring this feature mid-flight gains no new check at commit time -- the protection
+  // is already in place.
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
 
   override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand = {
     VacuumProtocolCheckPreDowngradeCommand(table)

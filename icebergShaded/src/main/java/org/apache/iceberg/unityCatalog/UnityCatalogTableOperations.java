@@ -52,17 +52,6 @@ public class UnityCatalogTableOperations extends BaseMetastoreTableOperations {
     public static final String DELTA_TIMESTAMP_PROPERTY = "delta-timestamp";
     public static final String BASE_DELTA_VERSION_PROPERTY = "base-delta-version";
     public static final String DELTA_HIGH_WATER_MARK_PROPERTY = "delta-high-water-mark";
-    // Always set during Iceberg conversion when at least one data commit produces a snapshot.
-    // Records the Delta version of that last data commit. When trailing non-data commits
-    // (e.g., ALTER TABLE) cause delta-version to advance beyond the Iceberg sequence number,
-    // doCommit validates against this property instead of delta-version.
-    // Not updated when all commits in a batch are non-data.
-    public static final String LAST_DATA_DELTA_VERSION_PROPERTY = "last-data-delta-version";
-
-    public static final String DELTA_SQL_CONF_BYPASS_SEQUENCE_NUMBER_CHECK =
-            "spark.databricks.delta.uniform.bypassSnapshotSequenceNumberCheck";
-    public static final String DELTA_SQL_CONF_BYPASS_FORMAT_VERSION_DOWNGRAGDE_CHECK =
-            "spark.databricks.delta.uniform.bypassFormatVersionDowngradeCheck";
 
     private final FileIO fileIO;
     private final TableIdentifier tableIdentifier;

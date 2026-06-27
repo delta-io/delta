@@ -245,9 +245,11 @@ private[sharing] class DeltaSharingDataSource
   }
 
   /**
-   * Resolves the response format for streaming: when
-   * DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT is true, calls getMetadata on the
-   * table and uses the server's responded format; otherwise uses the user's responseFormat option.
+   * Resolves the response format for streaming: when the relevant auto-resolve conf is true,
+   * calls getMetadata on the table and uses the server's responded format; otherwise uses the
+   * user's responseFormat option. CDF streaming (readChangeFeed=true) is gated independently by
+   * DELTA_SHARING_CDF_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT, while non-CDF streaming is gated by
+   * DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT.
    * Returns (responseFormat, parsedPath, deltaTableMetadataOpt). When the conf is on,
    * deltaTableMetadataOpt is Some; sourceSchema's delta path reuses it to avoid a second RPC.
    */
@@ -256,8 +258,12 @@ private[sharing] class DeltaSharingDataSource
       path: String,
       options: DeltaSharingOptions
   ): (String, ParsedDeltaSharingTablePath, Option[DeltaTableMetadata]) = {
-    val useGetMetadata = sqlContext.sparkSession.sessionState.conf.getConf(
-      DeltaSQLConf.DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT)
+    val autoResolveConf = if (options.readChangeFeed) {
+      DeltaSQLConf.DELTA_SHARING_CDF_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT
+    } else {
+      DeltaSQLConf.DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT
+    }
+    val useGetMetadata = sqlContext.sparkSession.sessionState.conf.getConf(autoResolveConf)
     val parsedPath =
       DeltaSharingRestClient.parsePath(path, options.shareCredentialsOptions)
 

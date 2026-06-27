@@ -50,7 +50,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.util.{quietly, FailFastMode}
-import org.apache.spark.sql.execution.{FileSourceScanExec, QueryExecution, RDDScanExec, SparkPlan, WholeStageCodegenExec}
+import org.apache.spark.sql.execution.{FileSourceScanLike, QueryExecution, RDDScanExec, SparkPlan, WholeStageCodegenExec}
 import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
@@ -258,7 +258,7 @@ trait DeltaTestUtilsBase {
           hash.collectLeaves().size == 2 &&
             hash.collectLeaves()
               .forall { s =>
-                s.isInstanceOf[FileSourceScanExec] ||
+                s.isInstanceOf[FileSourceScanLike] ||
                   s.isInstanceOf[RDDScanExec]
               }
         case _ => false
@@ -746,6 +746,13 @@ trait DeltaDMLTestUtils
 
   protected def tableIdentifier: TableIdentifier
 
+  /**
+   * The backtick-quoted, fully-qualified name of the table under test as it appears in analyzer
+   * error messages (e.g. `spark_catalog`.`db`.`table`). Differs between path-based and name-based
+   * access, so tests that assert on table names in errors should use this instead of hardcoding.
+   */
+  protected def qualifiedErrorTableName: String
+
   protected def dropTable(): Unit
 
   /**
@@ -967,6 +974,8 @@ trait DeltaDMLTestUtilsPathBased extends DeltaDMLTestUtils {
 
   override protected def tableSQLIdentifier: String = s"delta.`$tempPath`"
 
+  override protected def qualifiedErrorTableName: String = s"`spark_catalog`.`delta`.`$tempPath`"
+
   protected def readDeltaTable(path: String): DataFrame = {
     spark.read.format("delta").load(path)
   }
@@ -1004,6 +1013,9 @@ trait DeltaDMLTestUtilsNameBased extends DeltaDMLTestUtils {
   // true, the table name used for dropping the table will not match the created table
   // name, causing the table not being dropped.
   override protected def tableSQLIdentifier: String = "test_delta_table"
+
+  override protected def qualifiedErrorTableName: String =
+    s"`spark_catalog`.`default`.`$tableSQLIdentifier`"
 
   override protected def dropTable(): Unit = {
     spark.sql(s"DROP TABLE IF EXISTS $tableSQLIdentifier")

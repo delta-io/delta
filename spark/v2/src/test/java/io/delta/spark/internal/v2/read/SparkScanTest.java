@@ -196,7 +196,7 @@ public class SparkScanTest extends DeltaV2TestBase {
     StructType prunedSchema =
         new StructType()
             .add("name", DataTypes.StringType)
-            .add("_metadata", new StructType())
+            .add("_metadata", new StructType().add("file_path", DataTypes.StringType))
             .add("date", DataTypes.StringType)
             .add("city", DataTypes.StringType)
             .add("part", DataTypes.IntegerType);
@@ -754,7 +754,7 @@ public class SparkScanTest extends DeltaV2TestBase {
   public void testPruneColumns_cdcRead_filtersCDCColumns() {
     // pruneColumns should filter out partition and CDC columns from the data schema, since
     // partition columns are read separately and CDC columns are injected by CDCReadFunction.
-    // The remaining data columns are honored — pruning a data column ("cnt") shrinks the
+    // The remaining data columns are honored - pruning a data column ("cnt") shrinks the
     // underlying parquet read.
     Map<String, String> cdcOptions = new HashMap<>();
     cdcOptions.put("readChangeFeed", "true");
@@ -1543,7 +1543,7 @@ public class SparkScanTest extends DeltaV2TestBase {
         "spark.sql.cbo.enabled",
         "true",
         () -> {
-          // Path-based table — no catalog table, no ANALYZE TABLE stats
+          // Path-based table - no catalog table, no ANALYZE TABLE stats
           Identifier id = Identifier.of(new String[] {"default"}, tblName);
           DeltaV2Table sparkTable = new DeltaV2Table(id, path);
 

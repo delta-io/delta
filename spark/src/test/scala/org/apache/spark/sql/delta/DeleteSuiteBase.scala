@@ -21,7 +21,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.{SparkThrowable, SparkUnsupportedOperationException}
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
-import org.apache.spark.sql.execution.FileSourceScanExec
+import org.apache.spark.sql.execution.FileSourceScanLike
 import org.apache.spark.sql.functions.{lit, struct}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
@@ -479,7 +479,7 @@ trait DeleteBaseTests extends DeleteBaseMixin {
     }
 
     val scans = executedPlans.flatMap(_.collect {
-      case f: FileSourceScanExec => f
+      case f: FileSourceScanLike => f
     })
 
     // The first scan is for finding files to delete. We only are matching against the key
@@ -503,7 +503,7 @@ trait DeleteBaseTests extends DeleteBaseMixin {
     }
 
     val scans = executedPlans.flatMap(_.collect {
-      case f: FileSourceScanExec => f
+      case f: FileSourceScanLike => f
     })
 
     assert(scans.head.schema == StructType.fromDDL("nested STRUCT<key: int>"))

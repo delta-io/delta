@@ -58,9 +58,15 @@ trait TypeWideningTestMixin
       .set(DeltaSQLConf.FAST_DROP_FEATURE_ENABLED.key, false.toString)
   }
 
-  /** Enable (or disable) type widening for the table under the given path. */
-  protected def enableTypeWidening(tablePath: String, enabled: Boolean = true): Unit =
-    sql(s"ALTER TABLE delta.`$tablePath` " +
+  /**
+   * Enable (or disable) type widening for the table under test. `table` defaults to the table under
+   * test ([[tableSQLIdentifier]]) so the same test body works with both path-based and name-based
+   * access; callers may pass an explicit identifier to target a different table.
+   */
+  protected def enableTypeWidening(
+      table: String = tableSQLIdentifier,
+      enabled: Boolean = true): Unit =
+    sql(s"ALTER TABLE $table " +
           s"SET TBLPROPERTIES('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = '${enabled.toString}')")
 
   /** Whether the test table supports the type widening table feature. */

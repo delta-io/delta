@@ -200,7 +200,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
               + "connector. Either remove the CDC read option or use a streaming read.");
     }
     ensurePlanned();
-    return new SparkBatch(
+    return new DeltaV2Batch(
         initialSnapshot,
         dataSchema,
         partitionSchema,

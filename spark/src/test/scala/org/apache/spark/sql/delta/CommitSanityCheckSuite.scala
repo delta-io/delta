@@ -62,18 +62,23 @@ class CommitSanityCheckSuite extends QueryTest
 
   private def commit(
     deltaLog: DeltaLog, addFile: AddFile, isCommitLarge: Boolean): Unit = {
+    commit(deltaLog, Seq(addFile), isCommitLarge)
+  }
+
+  private def commit(
+    deltaLog: DeltaLog, addFiles: Seq[AddFile], isCommitLarge: Boolean): Unit = {
     val txn = deltaLog.startTransaction()
     if (isCommitLarge) {
       txn.commitLarge(
         spark,
-        Seq(addFile).toIterator,
+        addFiles.toIterator,
         newProtocolOpt = None,
         op = DeltaOperations.ManualUpdate,
         context = Map.empty,
         metrics = Map.empty
       )
     } else {
-      txn.commit(Seq(addFile), DeltaOperations.ManualUpdate)
+      txn.commit(addFiles, DeltaOperations.ManualUpdate)
     }
   }
 
@@ -254,6 +259,98 @@ class CommitSanityCheckSuite extends QueryTest
           assert(eventBlob.contains("notNullPartitionCols"))
           assert(eventBlob("notNullPartitionCols").toString == "part")
           assert(eventBlob.contains("stackTrace"))
+        }
+      }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Per-commit usage-log throttling
+    // ---------------------------------------------------------------------------
+
+    test(s"empty file check - logs are throttled to 2 events per commit " +
+        s"[isCommitLarge: $isCommitLarge]") {
+      withTempDir { tempDir =>
+        withSQLConf(DeltaSQLConf.DELTA_EMPTY_FILE_CHECK_THROW_ENABLED.key -> "false") {
+          val deltaLog = createTable(tempDir)
+
+          val addFiles = (0 until 5).map { i =>
+            AddFile(
+              path = s"part-0000$i.parquet",
+              partitionValues = Map.empty,
+              size = 0,
+              modificationTime = System.currentTimeMillis(),
+              dataChange = true,
+              stats = """{"numRecords": 0}"""
+            )
+          }
+
+          val events = Log4jUsageLogger.track {
+            commit(deltaLog, addFiles, isCommitLarge)
+          }
+
+          val violationEvents =
+            filterUsageRecords(events, "delta.sanityCheck.emptyParquetFile")
+          assert(violationEvents.size == 2)
+        }
+      }
+    }
+
+    test(s"null partition check - logs are throttled to 2 events per commit " +
+        s"[isCommitLarge: $isCommitLarge]") {
+      withTempDir { tempDir =>
+        withSQLConf(DeltaSQLConf.DELTA_NULL_PARTITION_CHECK_THROW_ENABLED.key -> "false") {
+          val deltaLog = createPartitionedTableWithNotNullColumn(tempDir)
+
+          val addFiles = (0 until 5).map { i =>
+            AddFile(
+              path = s"part=__HIVE_DEFAULT_PARTITION__/file-$i.parquet",
+              partitionValues = Map("part" -> null),
+              size = 100,
+              modificationTime = System.currentTimeMillis(),
+              dataChange = true,
+              stats = """{"numRecords": 1}"""
+            )
+          }
+
+          val events = Log4jUsageLogger.track {
+            commit(deltaLog, addFiles, isCommitLarge)
+          }
+
+          val violationEvents =
+            filterUsageRecords(events, "delta.constraints.nullPartitionViolation")
+          assert(violationEvents.size == 2)
+        }
+      }
+    }
+
+    test(s"throttling is per-commit: a fresh commit re-allows 2 events " +
+        s"[isCommitLarge: $isCommitLarge]") {
+      withTempDir { tempDir =>
+        withSQLConf(DeltaSQLConf.DELTA_EMPTY_FILE_CHECK_THROW_ENABLED.key -> "false") {
+          val deltaLog = createTable(tempDir)
+
+          def invalidFiles(prefix: String): Seq[AddFile] = (0 until 5).map { i =>
+            AddFile(
+              path = s"$prefix-0000$i.parquet",
+              partitionValues = Map.empty,
+              size = 0,
+              modificationTime = System.currentTimeMillis(),
+              dataChange = true,
+              stats = """{"numRecords": 0}"""
+            )
+          }
+
+          val firstCommitEvents = Log4jUsageLogger.track {
+            commit(deltaLog, invalidFiles("first"), isCommitLarge)
+          }
+          val secondCommitEvents = Log4jUsageLogger.track {
+            commit(deltaLog, invalidFiles("second"), isCommitLarge)
+          }
+
+          assert(
+            filterUsageRecords(firstCommitEvents, "delta.sanityCheck.emptyParquetFile").size == 2)
+          assert(
+            filterUsageRecords(secondCommitEvents, "delta.sanityCheck.emptyParquetFile").size == 2)
         }
       }
     }
