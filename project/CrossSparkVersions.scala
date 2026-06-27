@@ -55,7 +55,9 @@ import Unidoc._
  *   build/sbt -DsparkVersion=4.0.1               # Uses Spark 4.0.1 only if this version is defined in ALL_SPECS
  *   build/sbt -DsparkVersion=4.1                 # Uses Spark 4.1.x whatever it is defined in ALL_SPECS
  *   build/sbt -DsparkVersion=default             # Uses default version
- *   build/sbt -DsparkVersion=master              # Uses master version (if defined)
+ *   build/sbt -DsparkVersion=4.2 -DsparkCommit=<sha>
+ *                                                # Uses Spark 4.2 shims and locally built
+ *                                                # Spark artifacts from the exact commit
  *
  * ========================================================
  * Cross-Building for Development and Testing
@@ -64,7 +66,7 @@ import Unidoc._
  * To build/test against a specific Spark version:
  *   build/sbt -DsparkVersion=<version> compile
  *   build/sbt -DsparkVersion=<version> test
- *   build/sbt -DsparkVersion=master compile test
+ *   build/sbt -DsparkVersion=4.2 -DsparkCommit=<sha> compile test
  *
  * To publish to local Maven for testing:
  *   # Publish all modules for default Spark version
@@ -183,6 +185,7 @@ import Unidoc._
  *   - isDefault: Whether this is the default Spark version
  *   - targetJvm: Target JVM version (e.g., "17")
  *   - packageSuffix: Maven artifact suffix for this version (e.g., "_4.0", "_4.1")
+ *   - requiresSparkCommit: Whether this entry is resolved from a locally built Spark commit
  *
  *   Example:
  *     build/sbt exportSparkVersionsJson
@@ -210,6 +213,7 @@ import Unidoc._
  * @param additionalSourceDir Optional version-specific source directory suffix (e.g., "scala-spark-3.5")
  * @param antlr4Version ANTLR version to use (e.g., "4.9.3", "4.13.1")
  * @param additionalJavaOptions Additional JVM options for tests (e.g., Java 17 --add-opens flags)
+ * @param requiresSparkCommit Whether this Spark profile requires a locally built Spark commit
  */
 case class SparkVersionSpec(
   fullVersion: String,
@@ -220,7 +224,8 @@ case class SparkVersionSpec(
   antlr4Version: String,
   additionalJavaOptions: Seq[String] = Seq.empty,
   jacksonVersion: String = "2.15.2",
-  additionalResolvers: Seq[Resolver] = Seq.empty
+  additionalResolvers: Seq[Resolver] = Seq.empty,
+  requiresSparkCommit: Boolean = false
 ) {
   /** Returns the Spark short version (e.g., "3.5", "4.0") */
   def shortVersion: String = {
@@ -246,6 +251,9 @@ case class SparkVersionSpec(
 
   /** Whether to generate Javadoc/Scaladoc for this version */
   def generateDocs: Boolean = isDefault
+
+  /** Base version used when deriving a local artifact version for a specific Spark commit. */
+  def artifactBaseVersion: String = fullVersion.stripSuffix("-SNAPSHOT")
 }
 
 object SparkVersionSpec {
@@ -297,14 +305,29 @@ object SparkVersionSpec {
     jacksonVersion = "2.18.2"
   )
 
+  private val spark42Commit = SparkVersionSpec(
+    fullVersion = "4.2.0",
+    targetJvm = "17",
+    additionalSourceDir = Some("scala-shims/spark-4.2"),
+    supportIceberg = false,
+    supportHudi = false,
+    antlr4Version = "4.13.1",
+    additionalJavaOptions = java17TestSettings,
+    jacksonVersion = "2.18.2",
+    // Artifact updates in maven central for roaringbitmap stopped after 1.3.0.
+    // Spark master uses 1.5.3. Relevant Spark PR here https://github.com/apache/spark/pull/52892
+    additionalResolvers = Seq("jitpack" at "https://jitpack.io"),
+    requiresSparkCommit = true
+  )
+
   /** Default Spark version */
   val DEFAULT = spark41
 
   /** Spark master branch version (optional). Release branches should not build against master */
-  val MASTER: Option[SparkVersionSpec] = None
+  val MASTER: Option[SparkVersionSpec] = Some(spark42Commit)
 
   /** All supported Spark versions - internal use only */
-  val ALL_SPECS = Seq(spark40, spark41, spark42Preview)
+  val ALL_SPECS = Seq(spark40, spark41, spark42Preview, spark42Commit)
 }
 
 /** See docs on top of this file */
@@ -331,10 +354,18 @@ object CrossSparkVersions extends AutoPlugin {
       case other => other
     }
 
-    // Find spec by full version or short version
-    SparkVersionSpec.ALL_SPECS.find { spec =>
+    // Find spec by full version or short version. When a Spark commit is provided,
+    // prefer the source-built profile for that line; otherwise prefer published artifacts.
+    val candidates = SparkVersionSpec.ALL_SPECS.filter { spec =>
       spec.fullVersion == resolvedInput || spec.shortVersion == resolvedInput
-    }.getOrElse {
+    }
+    val selected = if (getSparkCommit().isDefined || getSparkArtifactVersionOverride().isDefined) {
+      candidates.find(_.requiresSparkCommit).orElse(candidates.headOption)
+    } else {
+      candidates.find(!_.requiresSparkCommit).orElse(candidates.headOption)
+    }
+
+    selected.getOrElse {
       val aliases = Seq("default") ++ SparkVersionSpec.MASTER.map(_ => "master").toSeq
       val validInputs = SparkVersionSpec.ALL_SPECS.flatMap { spec =>
         Seq(spec.fullVersion, spec.shortVersion)
@@ -350,6 +381,52 @@ object CrossSparkVersions extends AutoPlugin {
    */
   def getSparkVersion(): String = getSparkVersionSpec().fullVersion
 
+  private def getSparkCommit(): Option[String] = {
+    sys.props.get("sparkCommit").orElse(sys.env.get("SPARK_COMMIT")).filter(_.nonEmpty)
+  }
+
+  private def getSparkArtifactVersionOverride(): Option[String] = {
+    sys.props.get("sparkArtifactVersion")
+      .orElse(sys.env.get("SPARK_ARTIFACT_VERSION"))
+      .filter(_.nonEmpty)
+  }
+
+  private def shortCommit(commit: String): String = {
+    val trimmed = commit.trim.toLowerCase
+    if (!trimmed.matches("[0-9a-f]{7,40}")) {
+      throw new IllegalArgumentException(
+        s"Invalid sparkCommit '$commit'. Expected a 7 to 40 character git SHA."
+      )
+    }
+    trimmed.take(12)
+  }
+
+  def sparkArtifactVersionForCommit(spec: SparkVersionSpec, commit: String): String = {
+    s"${spec.artifactBaseVersion}-${shortCommit(commit)}-SNAPSHOT"
+  }
+
+  /**
+   * Returns the Maven artifact version used for org.apache.spark dependencies.
+   *
+   * `sparkVersion` continues to select the compatibility profile (shims, suffixes,
+   * Jackson overrides). `sparkCommit` opt-in builds resolve Spark from local Maven using
+   * a deterministic commit-qualified version produced by project/scripts/build_spark_from_source.sh.
+   */
+  def getSparkArtifactVersion(): String = {
+    val spec = getSparkVersionSpec()
+    getSparkArtifactVersionOverride().getOrElse {
+      getSparkCommit() match {
+        case Some(commit) => sparkArtifactVersionForCommit(spec, commit)
+        case None if spec.requiresSparkCommit =>
+          throw new IllegalArgumentException(
+            s"Spark ${spec.fullVersion} requires -DsparkCommit=<sha> " +
+              "or -DsparkArtifactVersion=<local-maven-version>."
+          )
+        case None => spec.fullVersion
+      }
+    }
+  }
+
   /**
    * Returns module name with Spark version suffix.
    * 
@@ -359,10 +436,7 @@ object CrossSparkVersions extends AutoPlugin {
    * During release, the `skipSparkSuffix=true` property is used to also publish
    * backward-compatible artifacts without the suffix (e.g., delta-spark_2.13).
    */
-  private def moduleName(baseName: String, sparkVer: String): String = {
-    val spec = SparkVersionSpec.ALL_SPECS.find(_.fullVersion == sparkVer)
-      .getOrElse(throw new IllegalArgumentException(s"Unknown Spark version: $sparkVer"))
-
+  private def moduleName(baseName: String, spec: SparkVersionSpec): String = {
     // skipSparkSuffix removes the suffix (used during release for backward compatibility)
     val skipSparkSuffix = sys.props.getOrElse("skipSparkSuffix", "false").toBoolean
 
@@ -411,16 +485,12 @@ object CrossSparkVersions extends AutoPlugin {
     // Jackson dependency overrides to match Spark version and avoid conflicts
     val jacksonOverrides = Seq(
       dependencyOverrides ++= {
-        val sparkVer = sparkVersionKey.value
-        val jacksonVer = SparkVersionSpec.ALL_SPECS.find(_.fullVersion == sparkVer)
-          .getOrElse(throw new IllegalArgumentException(s"Unknown Spark version: $sparkVer"))
-          .jacksonVersion
         Seq(
-          "com.fasterxml.jackson.core" % "jackson-databind" % jacksonVer,
-          "com.fasterxml.jackson.core" % "jackson-core" % jacksonVer,
-          "com.fasterxml.jackson.core" % "jackson-annotations" % jacksonVer,
-          "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % jacksonVer,
-          "com.fasterxml.jackson.module" %% "jackson-module-scala" % jacksonVer
+          "com.fasterxml.jackson.core" % "jackson-databind" % spec.jacksonVersion,
+          "com.fasterxml.jackson.core" % "jackson-core" % spec.jacksonVersion,
+          "com.fasterxml.jackson.core" % "jackson-annotations" % spec.jacksonVersion,
+          "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % spec.jacksonVersion,
+          "com.fasterxml.jackson.module" %% "jackson-module-scala" % spec.jacksonVersion
         )
       }
     )
@@ -435,10 +505,11 @@ object CrossSparkVersions extends AutoPlugin {
    * @param sparkVersionKey The sparkVersion setting key for this project
    */
   def sparkDependentModuleName(sparkVersionKey: SettingKey[String]): Seq[Setting[_]] = {
+    val spec = getSparkVersionSpec()
     Seq(
-      sparkVersionKey := getSparkVersion(),
+      sparkVersionKey := getSparkArtifactVersion(),
       // Dynamically modify moduleName to add Spark version suffix
-      Keys.moduleName := moduleName(Keys.name.value, sparkVersionKey.value)
+      Keys.moduleName := moduleName(Keys.name.value, spec)
     )
   }
 
@@ -512,6 +583,7 @@ object CrossSparkVersions extends AutoPlugin {
     // This gives users versioned artifacts like delta-spark_4.0_2.13, delta-spark_4.1_2.13
     val suffixedSparkSteps: Seq[ReleaseStep] = SparkVersionSpec.ALL_SPECS
       .filterNot(_.isSnapshot)
+      .filterNot(_.requiresSparkCommit)
       .map { spec =>
         { (state: State) =>
           runSbtSubprocess(
@@ -574,7 +646,7 @@ object CrossSparkVersions extends AutoPlugin {
     },
     commands += Command.command("showSparkVersions") { state =>
       // Used for testing the cross-Spark publish workflow
-      SparkVersionSpec.ALL_SPECS.foreach { spec =>
+      SparkVersionSpec.ALL_SPECS.filterNot(_.requiresSparkCommit).foreach { spec =>
         println(spec.fullVersion)
       }
       state
@@ -604,7 +676,8 @@ object CrossSparkVersions extends AutoPlugin {
           writer.println(s"""    "targetJvm": "${spec.targetJvm}",""")
           writer.println(s"""    "packageSuffix": "$packageSuffix",""")
           writer.println(s"""    "supportIceberg": "${spec.supportIceberg}",""")
-          writer.println(s"""    "supportHudi": "${spec.supportHudi}"""")
+          writer.println(s"""    "supportHudi": "${spec.supportHudi}",""")
+          writer.println(s"""    "requiresSparkCommit": ${spec.requiresSparkCommit}""")
           writer.println(s"""  }$comma""")
         }
         writer.println("]")
