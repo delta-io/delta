@@ -45,7 +45,7 @@ import org.apache.spark.sql.connector.catalog.TableCatalog
 import org.apache.spark.sql.catalyst.expressions.InSet
 import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.logical.Filter
-import org.apache.spark.sql.execution.FileSourceScanExec
+import org.apache.spark.sql.execution.FileSourceScanLike
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelationWithTable}
 import org.apache.spark.sql.functions.{asc, col, expr, lit, map_values, struct}
 import org.apache.spark.sql.internal.SQLConf
@@ -122,7 +122,7 @@ class DeltaSuite extends QueryTest
       // Read only one partition
       val query = spark.read.format("delta").load(testPath).where("part = 1")
       val fileScans = query.queryExecution.executedPlan.collect {
-        case f: FileSourceScanExec => f
+        case f: FileSourceScanLike => f
       }
 
       // Force the query to read files and generate metrics

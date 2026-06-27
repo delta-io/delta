@@ -27,7 +27,7 @@ import org.apache.spark.sql.delta.test.shims.UnsupportedTableOperationErrorShims
 
 import org.apache.spark.{SparkThrowable, SparkUnsupportedOperationException}
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
-import org.apache.spark.sql.execution.FileSourceScanExec
+import org.apache.spark.sql.execution.FileSourceScanLike
 import org.apache.spark.sql.execution.datasources.FileFormat
 import org.apache.spark.sql.functions.{lit, struct}
 import org.apache.spark.sql.internal.SQLConf
@@ -843,7 +843,7 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
     }
 
     val scans = executedPlans.flatMap(_.collect {
-      case f: FileSourceScanExec => f
+      case f: FileSourceScanLike => f
     })
     // The first scan is for finding files to update. We only are matching against the key
     // so that should be the only field in the schema.
@@ -868,7 +868,7 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
     }
 
     val scans = executedPlans.flatMap(_.collect {
-      case f: FileSourceScanExec => f
+      case f: FileSourceScanLike => f
     })
 
     assert(scans.head.schema == StructType.fromDDL("nested STRUCT<key: int>"))
