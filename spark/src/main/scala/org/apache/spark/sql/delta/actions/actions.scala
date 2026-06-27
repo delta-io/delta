@@ -1568,6 +1568,83 @@ object CommitInfo {
 sealed trait CheckpointOnlyAction extends Action
 
 /**
+ * Pointer to an Iceberg v4 root manifest produced by an AMT commit.
+ *
+ * @param path        root manifest path, relative to the table root.
+ * @param sizeInBytes size of the root manifest file in bytes.
+ */
+case class ContentRoot(
+    path: String,
+    sizeInBytes: Long)
+
+/**
+ * Closed set of values for [[SidecarFile.sidecarType]] under the `adaptiveMetadata-preview`
+ * feature. Tells a reader which slice of the checkpoint's non-content metadata a sidecar
+ * carries.
+ *
+ * Implemented as String constants because the value flows through Spark's case-class encoder
+ * (via [[SingleAction]] -> [[SidecarFile]]), and Spark cannot derive an encoder for a sealed
+ * Scala ADT. Validation belongs to whichever code paths consume the field.
+ */
+object SidecarType {
+  object Type {
+    val DomainMetadata: String = "domainMetadata"
+    val Txn: String = "txn"
+  }
+
+  /** All valid [[SidecarType]] values. */
+  val all: Set[String] = Set(Type.DomainMetadata, Type.Txn)
+
+  /** Returns the given name iff it is a known [[SidecarType]] value; throws otherwise. */
+  def validate(name: String): String = {
+    require(all.contains(name), s"Unknown sidecar type: $name")
+    name
+  }
+}
+
+/**
+ * Top-level Delta action emitted by a commit which also writes AMT.
+ * Embeds the full checkpoint state -- `contentRoot` plus the non-content metadata snapshot
+ * (protocol, metadata, domain metadata, txns, sidecars) -- that a reader needs to
+ * reconstruct the table at the recorded version without replaying earlier commits. Distinct
+ * from [[CheckpointMetadata]], which describes V2 checkpoint sidecars.
+ *
+ * For domain metadata and transaction identifiers, the data can be carried inline, in
+ * sidecars, or split across both (e.g., small changes inline with the bulk in a sidecar).
+ * A given entry must not be duplicated across inline and sidecar.
+ *
+ * @param version        version at which this checkpoint is valid. May belong to a previous
+ *                       commit (the checkpoint can lag the enclosing commit).
+ * @param contentRoot    pointer to the Iceberg v4 root manifest.
+ * @param protocol       protocol snapshot at `version`. Must be non null.
+ * @param metaData       metadata snapshot at `version`. Must be non null.
+ * @param domainMetadata all [[DomainMetadata]] entries carried inline. An empty list means
+ *                       there are no domain metadata entries inline (they may still be
+ *                       carried via sidecars).
+ * @param txns           transaction identifiers carried inline. An empty list means there are
+ *                       no transaction identifiers inline (they may still be carried via
+ *                       sidecars).
+ * @param sidecars       sidecars that carry the long tail of non-content metadata (transaction
+ *                       ids, domain metadata, ...). Empty when all non-content metadata is
+ *                       inline.
+ */
+case class Checkpoint(
+    version: Long,
+    contentRoot: ContentRoot,
+    protocol: Protocol,
+    metaData: Metadata,
+    domainMetadata: Seq[DomainMetadata],
+    txns: Seq[SetTransaction],
+    sidecars: Seq[SidecarFile]) extends Action {
+
+  // AMT checkpoint sidecars must always declare their type.
+  require(sidecars.forall(_.sidecarType.isDefined),
+    "All sidecars in a Checkpoint must have a sidecarType.")
+
+  override def wrap: SingleAction = SingleAction(checkpoint = this)
+}
+
+/**
  * An [[Action]] containing the information about a sidecar file.
  *
  * @param path - sidecar path relative to `_delta_log/_sidecar` directory
@@ -1581,8 +1658,16 @@ case class SidecarFile(
     path: String,
     sizeInBytes: Long,
     modificationTime: Long,
-    tags: Map[String, String] = null)
+    tags: Map[String, String] = null,
+    // Applicable only for AMT checkpoint sidecars.
+    // Sidecars corresponding to V2Checkpoints do not have concept of sidecarType.
+    @JsonProperty("type")
+    @JsonInclude(Include.NON_ABSENT)
+    sidecarType: Option[String] = None)
   extends CheckpointOnlyAction {
+
+  // Either no sidecarType is supplied, or it must be one of the known [[SidecarType]] values.
+  sidecarType.foreach(SidecarType.validate)
 
   override def wrap: SingleAction = SingleAction(sidecar = this)
 
@@ -1683,7 +1768,8 @@ case class SingleAction(
     checkpointMetadata: CheckpointMetadata = null,
     sidecar: SidecarFile = null,
     domainMetadata: DomainMetadata = null,
-    commitInfo: CommitInfo = null) {
+    commitInfo: CommitInfo = null,
+    checkpoint: Checkpoint = null) {
 
   def unwrap: Action = {
     if (add != null) {
@@ -1706,6 +1792,8 @@ case class SingleAction(
       domainMetadata
     } else if (commitInfo != null) {
       commitInfo
+    } else if (checkpoint != null) {
+      checkpoint
     } else {
       null
     }
