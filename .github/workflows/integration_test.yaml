@@ -1,0 +1,136 @@
+name: "Integration Tests (Release Validation)"
+
+on:
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - '**.txt'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  SBT_OPTS: "-Dsbt.coursier.home-dir=/home/runner/.cache/coursier -Dsbt.ivy.home=/home/runner/.ivy2"
+
+jobs:
+  scala-python-integration:
+    name: "Scala + Python Integration / Spark ${{ matrix.spark_version }}"
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - spark_version: "4.0.1"
+            spark_major_minor: "4.0"
+          - spark_version: "4.1.0"
+            spark_major_minor: "4.1"
+          - spark_version: "4.1.2"
+            spark_major_minor: "4.1"
+    env:
+      SPARK_VERSION: ${{ matrix.spark_version }}
+      SPARK_MAJOR_MINOR: ${{ matrix.spark_major_minor }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
+        with:
+          distribution: "zulu"
+          java-version: "17"
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.10'
+      - name: Cache SBT and dependencies
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2/cache
+            ~/.coursier/cache
+            ~/.cache/coursier
+          key: sbt-integration-scala-python-${{ runner.os }}-${{ matrix.spark_version }}
+      - name: Cache Spark distributions
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/spark-*-bin-hadoop3
+          key: spark-dist-${{ runner.os }}-${{ matrix.spark_version }}
+      - name: Set up pinned Unity Catalog
+        uses: ./.github/actions/setup-unitycatalog
+        env:
+          SPARK_VERSION: ${{ matrix.spark_major_minor }}
+          SPARK_MAJOR_MINOR: ${{ matrix.spark_major_minor }}
+      - name: Download Spark distributions
+        run: bash project/scripts/install-spark.sh "${SPARK_VERSION}"
+      - name: Run Scala + Python integration tests
+        run: python run-integration-tests.py --use-local --no-pip --spark-version "${SPARK_VERSION}"
+
+  flink-integration:
+    name: "Flink Integration"
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
+        with:
+          distribution: "zulu"
+          java-version: "17"
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.10'
+      - name: Cache SBT and dependencies
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2/cache
+            ~/.coursier/cache
+            ~/.cache/coursier
+          key: sbt-integration-flink-${{ runner.os }}
+      # flink has unitycatalog-client as a compile-scope dep.
+      # Publish the pinned UC build locally before sbt runs.
+      - name: Set up pinned Unity Catalog
+        uses: ./.github/actions/setup-unitycatalog
+      - name: Run Flink integration tests
+        run: python run-integration-tests.py --flink-only
+
+  iceberg-integration:
+    name: "Iceberg Integration / Spark 4.0.1"
+    runs-on: ubuntu-24.04
+    env:
+      SPARK_VERSION: "4.0.1"
+      SPARK_MAJOR_MINOR: "4.0"
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
+        with:
+          distribution: "zulu"
+          java-version: "17"
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.10'
+      - name: Cache SBT and dependencies
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2/cache
+            ~/.coursier/cache
+            ~/.cache/coursier
+          key: sbt-integration-iceberg-${{ runner.os }}-4.0.1
+      - name: Cache Spark distributions
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/spark-*-bin-hadoop3
+          key: spark-dist-${{ runner.os }}-4.0.1
+      - name: Set up pinned Unity Catalog
+        uses: ./.github/actions/setup-unitycatalog
+        env:
+          SPARK_VERSION: "4.0"
+          SPARK_MAJOR_MINOR: "4.0"
+      - name: Download Spark distributions
+        run: bash project/scripts/install-spark.sh "${SPARK_VERSION}"
+      - name: Run Iceberg integration tests
+        run: >
+          python run-integration-tests.py
+          --use-local
+          --run-iceberg-integration-tests
+          --spark-version "${SPARK_VERSION}"
+          --iceberg-lib-version 1.10.1
