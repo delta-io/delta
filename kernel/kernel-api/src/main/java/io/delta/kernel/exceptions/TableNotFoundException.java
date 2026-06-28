@@ -25,22 +25,39 @@ import io.delta.kernel.annotation.Evolving;
 @Evolving
 public class TableNotFoundException extends KernelException {
 
+  /** Indicates why no Delta table was found at the given location. */
+  public enum Reason {
+    NO_DELTA_FILES_FOUND,
+    UNKNOWN
+  }
+
   private final String tablePath;
+  private final Reason reason;
 
   public TableNotFoundException(String tablePath) {
     this(tablePath, null);
   }
 
   public TableNotFoundException(String tablePath, String context) {
+    this(tablePath, context, Reason.UNKNOWN);
+  }
+
+  public TableNotFoundException(String tablePath, String context, Reason reason) {
     super(
         String.format(
             "Delta table at path `%s` is not found.%s",
             tablePath, context == null ? "" : " Context: " + context));
     this.tablePath = tablePath;
+    this.reason = reason == null ? Reason.UNKNOWN : reason;
   }
 
   /** @return the provided path where no Delta table was found */
   public String getTablePath() {
     return tablePath;
+  }
+
+  /** @return the reason this location was considered not to contain a Delta table */
+  public Reason getReason() {
+    return reason;
   }
 }

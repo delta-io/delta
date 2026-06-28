@@ -82,6 +82,28 @@ class ExceptionSuite extends AnyFunSuite {
     assert(ex.getMessage.contains("version 7"))
   }
 
+  test("TableNotFoundException - reason defaults to UNKNOWN") {
+    val tablePath = "/path/to/table"
+
+    assert(new TableNotFoundException(tablePath).getReason == TableNotFoundException.Reason.UNKNOWN)
+    assert(
+      new TableNotFoundException(tablePath, "some context").getReason
+        == TableNotFoundException.Reason.UNKNOWN)
+  }
+
+  test("TableNotFoundException - reason is preserved") {
+    val tablePath = "/path/to/table"
+
+    val ex = new TableNotFoundException(
+      tablePath,
+      "No delta files found in the directory",
+      TableNotFoundException.Reason.NO_DELTA_FILES_FOUND)
+
+    assert(ex.getTablePath == tablePath)
+    assert(ex.getReason == TableNotFoundException.Reason.NO_DELTA_FILES_FOUND)
+    assert(ex.getMessage.contains("is not found"))
+  }
+
   test("CommitRangeNotFoundException - with start and end version") {
     val tablePath = "/path/to/table"
     val startVersion = 5L

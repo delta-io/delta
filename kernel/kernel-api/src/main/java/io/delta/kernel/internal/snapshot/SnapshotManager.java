@@ -294,7 +294,9 @@ public class SnapshotManager {
       }
     }
     throw new TableNotFoundException(
-        tablePath.toString(), format("No delta files found in the directory: %s", logPath));
+        tablePath.toString(),
+        format("No delta files found in the directory: %s", logPath),
+        TableNotFoundException.Reason.NO_DELTA_FILES_FOUND);
   }
 
   /**

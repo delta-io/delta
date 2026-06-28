@@ -45,7 +45,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Supplier;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
@@ -206,9 +205,8 @@ public class DeltaV2Table
     try {
       loadedSnapshot = snapshotManager.loadLatestSnapshot();
     } catch (TableNotFoundException e) {
-      // The _delta_log directory exists but holds no commits: the location is an initialized but
-      // empty Delta table.
-      if (deltaLogDirExists()) {
+      // No Delta log files at the location.
+      if (e.getReason() == TableNotFoundException.Reason.NO_DELTA_FILES_FOUND) {
         DeltaErrors.throwSchemaNotSet();
       }
       throw e;
@@ -238,17 +236,6 @@ public class DeltaV2Table
     // Schema-related metadata is lazily computed on first access within SchemaProvider
     this.schemaProvider =
         new SchemaProvider(SparkSession.active(), rawSchema, partitionColumnNames);
-  }
-
-  /** Returns whether the table's {@code _delta_log} directory exists. */
-  private boolean deltaLogDirExists() {
-    try {
-      Path logPath = new Path(tablePath, "_delta_log");
-      FileSystem fs = logPath.getFileSystem(hadoopConf);
-      return fs.exists(logPath);
-    } catch (Exception ioe) {
-      return false;
-    }
   }
 
   /**
