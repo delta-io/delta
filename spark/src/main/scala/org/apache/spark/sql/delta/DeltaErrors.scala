@@ -1390,14 +1390,6 @@ trait DeltaErrorsBase
   }
 
   /**
-   * Throws [[schemaNotSetException]]. Returns `Nothing` so Java callers can invoke it as a
-   * statement to raise the checked [[DeltaAnalysisException]].
-   */
-  def throwSchemaNotSet(): Nothing = {
-    throw schemaNotSetException
-  }
-
-  /**
    * Java-friendly factory for [[InvalidProtocolVersionException]]. The supported reader/writer
    * version sets are `private[delta]` so this must be built in Scala.
    */
