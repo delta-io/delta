@@ -81,21 +81,37 @@ class DeltaSinkSuite
 
   import testImplicits._
 
+  /**
+   * Run a sink test against a name-based (catalog) target table.
+   */
+  protected def withSinkTarget(f: (String, File) => Unit): Unit = {
+    withTempDir { checkpointDir =>
+      // Unique table name per invocation: the target is a managed table at a deterministic
+      // warehouse path, so a fixed name leaks state across tests (stale data / DeltaLog cache).
+      val table = "test_delta_sink_" + checkpointDir.getName.replaceAll("[^A-Za-z0-9]", "")
+      withTable(table) {
+        f(table, checkpointDir)
+      }
+    }
+  }
+
   test("append mode") {
     failAfter(streamingTimeout) {
-      withTempDirs { (outputDir, checkpointDir) =>
+      withSinkTarget { (table, checkpointDir) =>
         val inputData = MemoryStream[Int]
         val df = inputData.toDF()
         val query = df.writeStream
           .option("checkpointLocation", checkpointDir.getCanonicalPath)
           .format("delta")
-          .start(outputDir.getCanonicalPath)
-        val log = DeltaLog.forTable(spark, outputDir.getCanonicalPath)
+          .toTable(table)
+        val log = DeltaLog.forTable(spark, TableIdentifier(table))
         try {
           inputData.addData(1)
           query.processAllAvailable()
 
-          val outputDf = spark.read.format("delta").load(outputDir.getCanonicalPath)
+          // Re-read on each assertion: the V2 read pins the snapshot at DataFrame
+          // creation.
+          def outputDf: DataFrame = spark.read.table(table)
           checkDatasetUnorderly(outputDf.as[Int], 1)
           assert(log.update().transactions.head == (query.id.toString -> 0L))
 
@@ -119,7 +135,7 @@ class DeltaSinkSuite
 
   test("complete mode") {
     failAfter(streamingTimeout) {
-      withTempDirs { (outputDir, checkpointDir) =>
+      withSinkTarget { (table, checkpointDir) =>
         val inputData = MemoryStream[Int]
         val df = inputData.toDF()
         val query =
@@ -128,13 +144,13 @@ class DeltaSinkSuite
             .outputMode("complete")
             .option("checkpointLocation", checkpointDir.getCanonicalPath)
             .format("delta")
-            .start(outputDir.getCanonicalPath)
-        val log = DeltaLog.forTable(spark, outputDir.getCanonicalPath)
+            .toTable(table)
+        val log = DeltaLog.forTable(spark, TableIdentifier(table))
         try {
           inputData.addData(1)
           query.processAllAvailable()
 
-          val outputDf = spark.read.format("delta").load(outputDir.getCanonicalPath)
+          val outputDf = spark.read.table(table)
           checkDatasetUnorderly(outputDf.as[Long], 1L)
           assert(log.update().transactions.head == (query.id.toString -> 0L))
 
@@ -158,7 +174,7 @@ class DeltaSinkSuite
 
   test("update mode: not supported") {
     failAfter(streamingTimeout) {
-      withTempDirs { (outputDir, checkpointDir) =>
+      withSinkTarget { (table, checkpointDir) =>
         val inputData = MemoryStream[Int]
         val df = inputData.toDF()
         val e = intercept[AnalysisException] {
@@ -166,7 +182,7 @@ class DeltaSinkSuite
             .option("checkpointLocation", checkpointDir.getCanonicalPath)
             .outputMode("update")
             .format("delta")
-            .start(outputDir.getCanonicalPath)
+            .toTable(table)
         }
         Seq("update", "not support").foreach { msg =>
           assert(e.getMessage.toLowerCase(Locale.ROOT).contains(msg))
@@ -194,7 +210,7 @@ class DeltaSinkSuite
   }
 
   test("SPARK-21167: encode and decode path correctly") {
-    withTempDirs { (outputDir, checkpointDir) =>
+    withSinkTarget { (table, checkpointDir) =>
       val inputData = MemoryStream[String]
       val query = inputData.toDS()
         .map(s => (s, s.length))
@@ -203,7 +219,7 @@ class DeltaSinkSuite
         .partitionBy("value")
         .option("checkpointLocation", checkpointDir.getCanonicalPath)
         .format("delta")
-        .start(outputDir.getCanonicalPath)
+        .toTable(table)
 
       try {
         // The output is partitioned by "value", so the value will appear in the file path.
@@ -212,7 +228,7 @@ class DeltaSinkSuite
         failAfter(streamingTimeout) {
           query.processAllAvailable()
         }
-        val outputDf = spark.read.format("delta").load(outputDir.getCanonicalPath)
+        val outputDf = spark.read.table(table)
         checkDatasetUnorderly(outputDf.as[(String, Int)], ("hello world", "hello world".length))
       } finally {
         query.stop()
@@ -221,7 +237,7 @@ class DeltaSinkSuite
   }
 
   test("partitioned writing and batch reading") {
-    withTempDirs { (outputDir, checkpointDir) =>
+    withSinkTarget { (table, checkpointDir) =>
       val inputData = MemoryStream[Int]
       val ds = inputData.toDS()
       val query =
@@ -231,7 +247,7 @@ class DeltaSinkSuite
           .partitionBy("id")
           .option("checkpointLocation", checkpointDir.getCanonicalPath)
           .format("delta")
-          .start(outputDir.getCanonicalPath)
+          .toTable(table)
       try {
 
         inputData.addData(1, 2, 3)
@@ -239,7 +255,7 @@ class DeltaSinkSuite
           query.processAllAvailable()
         }
 
-        val outputDf = spark.read.format("delta").load(outputDir.getCanonicalPath)
+        val outputDf = spark.read.table(table)
         val expectedSchema = new StructType()
           .add(StructField("id", IntegerType))
           .add(StructField("value", IntegerType))
@@ -301,7 +317,7 @@ class DeltaSinkSuite
   }
 
   test("work with aggregation + watermark") {
-    withTempDirs { (outputDir, checkpointDir) =>
+    withSinkTarget { (table, checkpointDir) =>
       val inputData = MemoryStream[Long]
       val inputDF = inputData.toDF.toDF("time")
       val outputDf = inputDF
@@ -315,7 +331,7 @@ class DeltaSinkSuite
         outputDf.writeStream
           .option("checkpointLocation", checkpointDir.getCanonicalPath)
           .format("delta")
-          .start(outputDir.getCanonicalPath)
+          .toTable(table)
       try {
         def addTimestamp(timestampInSecs: Int*): Unit = {
           inputData.addData(timestampInSecs.map(_ * 1L): _*)
@@ -325,7 +341,7 @@ class DeltaSinkSuite
         }
 
         def check(expectedResult: ((Long, Long), Long)*): Unit = {
-          val outputDf = spark.read.format("delta").load(outputDir.getCanonicalPath)
+          val outputDf = spark.read.table(table)
             .selectExpr(
               "CAST(start as BIGINT) AS start",
               "CAST(end as BIGINT) AS end",
@@ -350,7 +366,7 @@ class DeltaSinkSuite
   }
 
   test("throw exception when users are trying to write in batch with different partitioning") {
-    withTempDirs { (outputDir, checkpointDir) =>
+    withSinkTarget { (table, checkpointDir) =>
       val inputData = MemoryStream[Int]
       val ds = inputData.toDS()
       val query =
@@ -360,7 +376,7 @@ class DeltaSinkSuite
           .partitionBy("id")
           .option("checkpointLocation", checkpointDir.getCanonicalPath)
           .format("delta")
-          .start(outputDir.getCanonicalPath)
+          .toTable(table)
       try {
 
         inputData.addData(1, 2, 3)
@@ -368,16 +384,18 @@ class DeltaSinkSuite
           query.processAllAvailable()
         }
 
-        val e = intercept[AnalysisException] {
+        val e = intercept[IllegalArgumentException] {
           spark.range(100)
             .select('id.cast("integer"), 'id % 4 as "by4", 'id.cast("integer") * 1000 as "value")
             .write
             .format("delta")
             .partitionBy("id", "by4")
             .mode("append")
-            .save(outputDir.getCanonicalPath)
+            .saveAsTable(table)
         }
-        assert(e.getMessage.contains("Partition columns do not match"))
+        assert(
+          e.getMessage.contains(
+            "The provided partitioning or clustering columns do not match the existing table's"))
 
       } finally {
         query.stop()
@@ -464,32 +482,31 @@ class DeltaSinkSuite
   }
 
   test("can't write out with all columns being partition columns") {
-    withTempDirs { (outputDir, checkpointDir) =>
+    withSinkTarget { (table, checkpointDir) =>
       val inputData = MemoryStream[Int]
       val ds = inputData.toDS()
-      val query =
+      // Name-based: creating a table partitioned by all of its columns is rejected up front (at
+      // table creation), rather than surfacing as a StreamingQueryException once the stream runs.
+      val e = intercept[AnalysisException] {
         ds.map(i => (i, i * 1000))
           .toDF("id", "value")
           .writeStream
           .partitionBy("id", "value")
           .option("checkpointLocation", checkpointDir.getCanonicalPath)
           .format("delta")
-          .start(outputDir.getCanonicalPath)
-      val e = intercept[StreamingQueryException] {
-        inputData.addData(1)
-        query.awaitTermination(30000)
+          .toTable(table)
       }
-      assert(e.cause.isInstanceOf[AnalysisException])
+      assert(e.getMessage.contains("Cannot use all columns for partition columns"))
     }
   }
 
   test("streaming write correctly sets isBlindAppend in CommitInfo") {
-    withTempDirs { (outputDir, checkpointDir) =>
+    withSinkTarget { (table, checkpointDir) =>
 
       val input = MemoryStream[Int]
       val inputDataStream = input.toDF().toDF("value")
 
-      def tableData: DataFrame = spark.read.format("delta").load(outputDir.toString)
+      def tableData: DataFrame = spark.read.table(table)
 
       def appendToTable(df: DataFrame): Unit = failAfter(streamingTimeout) {
         var q: StreamingQuery = null
@@ -498,7 +515,7 @@ class DeltaSinkSuite
           q = df.writeStream
             .format("delta")
             .option("checkpointLocation", checkpointDir.toString)
-            .start(outputDir.toString)
+            .toTable(table)
           q.processAllAvailable()
         } finally {
           if (q != null) q.stop()
@@ -507,7 +524,7 @@ class DeltaSinkSuite
 
       var lastCheckedVersion = -1L
       def isLastCommitBlindAppend: Boolean = {
-        val log = DeltaLog.forTable(spark, outputDir.toString)
+        val log = DeltaLog.forTable(spark, TableIdentifier(table))
         val lastVersion = log.update().version
         assert(lastVersion > lastCheckedVersion, "no new commit was made")
         lastCheckedVersion = lastVersion
@@ -540,46 +557,47 @@ class DeltaSinkSuite
 
     withTempDir { base =>
       val sourceDir = new File(base, "source").getCanonicalPath
-      val tableDir = new File(base, "output").getCanonicalPath
       val chkDir = new File(base, "checkpoint").getCanonicalPath
 
       FileUtils.write(new File(sourceDir, "a.json"), jsonRec)
 
-      val q = spark.readStream
-        .format("json")
-        .schema(schema)
-        .load(sourceDir)
-        .withColumn("file", input_file_name()) // Not sure why needs this to reproduce
-        .writeStream
-        .format("delta")
-        .trigger(org.apache.spark.sql.streaming.Trigger.Once)
-        .option("checkpointLocation", chkDir)
-        .start(tableDir)
+      withTable("test_delta_sink") {
+        val q = spark.readStream
+          .format("json")
+          .schema(schema)
+          .load(sourceDir)
+          .withColumn("file", input_file_name()) // Not sure why needs this to reproduce
+          .writeStream
+          .format("delta")
+          .trigger(org.apache.spark.sql.streaming.Trigger.Once)
+          .option("checkpointLocation", chkDir)
+          .toTable("test_delta_sink")
 
-      q.awaitTermination()
+        q.awaitTermination()
 
-      checkAnswer(
-        spark.read.format("delta").load(tableDir).drop("file"),
-        Seq(Row("ss", Row("ss", null), null)))
+        checkAnswer(
+          spark.read.table("test_delta_sink").drop("file"),
+          Seq(Row("ss", Row("ss", null), null)))
+      }
     }
   }
 
   test("history includes user-defined metadata for DataFrame.writeStream API") {
     failAfter(streamingTimeout) {
-      withTempDirs { (outputDir, checkpointDir) =>
+      withSinkTarget { (table, checkpointDir) =>
         val inputData = MemoryStream[Int]
         val df = inputData.toDF()
         val query = df.writeStream
           .option("checkpointLocation", checkpointDir.getCanonicalPath)
           .option("userMetadata", "testMeta!")
           .format("delta")
-          .start(outputDir.getCanonicalPath)
-        val log = DeltaLog.forTable(spark, outputDir.getCanonicalPath)
+          .toTable(table)
+        val log = DeltaLog.forTable(spark, TableIdentifier(table))
 
         inputData.addData(1)
         query.processAllAvailable()
 
-        val lastCommitInfo = io.delta.tables.DeltaTable.forPath(spark, outputDir.getCanonicalPath)
+        val lastCommitInfo = io.delta.tables.DeltaTable.forName(spark, table)
             .history(1).as[DeltaHistory].head
 
         assert(lastCommitInfo.userMetadata === Some("testMeta!"))
@@ -625,7 +643,7 @@ class DeltaSinkSuite
 
   test("DeltaSink rejects DataFrame with UDT containing NullType") {
     failAfter(streamingTimeout) {
-      withTempDirs { (outputDir, checkpointDir) =>
+      withSinkTarget { (table, checkpointDir) =>
         val inputData = MemoryStream[Int]
         val ds = inputData.toDS()
         val dsWriter =
@@ -636,7 +654,7 @@ class DeltaSinkSuite
             .format("delta")
 
         val wrapperException = intercept[StreamingQueryException] {
-          val q = dsWriter.start(outputDir.getCanonicalPath)
+          val q = dsWriter.toTable(table)
           inputData.addData(42)
           q.processAllAvailable()
         }

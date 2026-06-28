@@ -93,7 +93,8 @@ public class DeltaV2Table
         EnumSet.of(
             TableCapability.BATCH_READ,
             TableCapability.MICRO_BATCH_READ,
-            TableCapability.BATCH_WRITE);
+            TableCapability.BATCH_WRITE,
+            TableCapability.STREAMING_WRITE);
     scala.Option<TableCapability> schemaEvolution =
         SparkTableShims$.MODULE$.schemaEvolutionCapability();
     if (schemaEvolution.isDefined()) {
@@ -469,7 +470,8 @@ public class DeltaV2Table
   @Override
   public WriteBuilder newWriteBuilder(LogicalWriteInfo info) {
     requireNonNull(info, "write info is null");
-    return new DeltaV2WriteBuilder(kernelEngine, tablePath, hadoopConf, initialSnapshot, info);
+    return new DeltaV2WriteBuilder(
+        kernelEngine, tablePath, hadoopConf, initialSnapshot, schemaProvider.getDataSchema(), info);
   }
 
   @Override
