@@ -1389,6 +1389,14 @@ trait DeltaErrorsBase
     )
   }
 
+  /**
+   * Throws [[schemaNotSetException]]. Returns `Nothing` so Java callers can invoke it as a
+   * statement to raise the checked [[DeltaAnalysisException]].
+   */
+  def throwSchemaNotSet(): Nothing = {
+    throw schemaNotSetException
+  }
+
   def specifySchemaAtReadTimeException: Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_SCHEMA_DURING_READ",
