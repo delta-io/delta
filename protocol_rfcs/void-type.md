@@ -69,6 +69,6 @@ When Void Type is supported (when the `readerFeatures` field of a table's `proto
 
 Because clients that do not support the feature cannot read `UNKNOWN` columns, removing `materializedVoidType` requires that the table no longer depend on the `UNKNOWN` representation. In the version that removes `materializedVoidType` from the `writerFeatures` and `readerFeatures` fields of the table's `protocol` action, writers:
 - must ensure that the table schema does not require the feature - it must contain none of the shapes in [Structural void columns](#structural-void-columns).
-- must ensure that no data file reachable by the table (including via time travel within the retained history) contains a column stored as `UNKNOWN`. This may require rewriting existing data files and/or truncating the table history so that every `void` column is represented by omission.
+- must ensure that no data file reachable by the table (including via time travel within the retained history) contains a column stored as `UNKNOWN`. This may require rewriting existing data files and/or truncating the table history so that every `void` column is represented by omission in order to be able to remove the `materializedVoidType` feature.
 
 After the feature is removed, the table reverts to representing `void` columns only by omission, and the shapes that require the feature must again be rejected when writing data.
