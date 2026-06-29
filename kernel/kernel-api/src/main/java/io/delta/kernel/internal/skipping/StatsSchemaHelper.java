@@ -259,6 +259,14 @@ public class StatsSchemaHelper {
   }
 
   /**
+   * Returns the data type of the given logical column in the data schema, or {@code null} if the
+   * column is not found.
+   */
+  public DataType getColumnDataType(Column column) {
+    return logicalToDataType.get(column);
+  }
+
+  /**
    * Returns true if the given column is skipping-eligible using null count statistics. This means
    * the column exists and is a leaf column as we only collect stats for leaf columns.
    */
