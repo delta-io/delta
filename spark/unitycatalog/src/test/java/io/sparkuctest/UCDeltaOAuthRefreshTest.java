@@ -34,6 +34,9 @@ import org.junit.jupiter.api.condition.DisabledIf;
  * because UC-internal tokens currently carry no exp claim and UC never expires them. The lifetime
  * that triggers renewal here is the broker's advertised expires_in, not anything UC issues. So this
  * proves the client renews, not that renewal is required or that expiry is enforced.
+ *
+ * <p>TODO(https://github.com/delta-io/delta/issues/7111): once UC-internal tokens carry an exp
+ * claim (and UC enforces expiry), close the loop by asserting that a non-renewed token is rejected.
  */
 @DisabledIf(
     value = "isUCRemoteConfigured",

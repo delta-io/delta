@@ -17,6 +17,7 @@
 package io.sparkuctest;
 
 import com.google.common.base.Preconditions;
+import io.sparkuctest.mock.MockOAuthBroker;
 import io.unitycatalog.client.ApiClient;
 import io.unitycatalog.client.ApiClientBuilder;
 import io.unitycatalog.client.VersionUtils;

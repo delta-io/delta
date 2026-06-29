@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.sparkuctest;
+package io.sparkuctest.mock;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;

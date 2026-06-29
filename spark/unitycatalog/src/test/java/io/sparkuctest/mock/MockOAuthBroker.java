@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.sparkuctest;
+package io.sparkuctest.mock;
 
 import com.auth0.jwt.JWT;
 import com.auth0.jwt.algorithms.Algorithm;
@@ -209,7 +209,7 @@ public class MockOAuthBroker {
       // Advertise the smaller of UC's expires_in (if any) and the broker's max lifetime. UC OSS
       // returns no expires_in today, so the max is used; if a future UC returns a longer expiry the
       // cap still applies, so a low test cap keeps forcing renewal. (The UC-internal token carries
-      // no exp claim, so server-side expiry is not testable yet; see UCDeltaOAuthRefreshTest.)
+      // no exp claim, so server-side expiry is not testable yet; only client-side renewal is.)
       long expiresInSeconds =
           exchanged.expiresInSeconds != null
               ? Math.min(exchanged.expiresInSeconds, maxLifetimeSeconds)
