@@ -302,8 +302,13 @@ public class MockOAuthBroker {
       JsonNode expiresIn = body.get("expires_in");
       Long expiresInSeconds = expiresIn != null && expiresIn.isNumber() ? expiresIn.asLong() : null;
       return new ExchangedToken(accessToken.asText(), expiresInSeconds);
-    } catch (IOException | InterruptedException e) {
+    } catch (IOException e) {
       throw new RuntimeException("token-exchange request failed", e);
+    } catch (InterruptedException e) {
+      // Restore the interrupt status that catching InterruptedException cleared, so the signal is
+      // not lost, then surface it as the same failure the caller turns into a 502.
+      Thread.currentThread().interrupt();
+      throw new RuntimeException("token-exchange request interrupted", e);
     }
   }
 
