@@ -17,6 +17,7 @@
 package io.delta.flink.table;
 
 import com.google.cloud.hadoop.util.AccessTokenProvider;
+import java.time.Instant;
 import org.apache.hadoop.conf.Configuration;
 
 /**
@@ -58,7 +59,7 @@ public class FixedGcsAccessTokenProvider implements AccessTokenProvider {
       expirationMs = System.currentTimeMillis() + FALLBACK_EXPIRATION_MS;
     }
 
-    return new AccessToken(token, expirationMs);
+    return new AccessToken(token, Instant.ofEpochMilli(expirationMs));
   }
 
   @Override
