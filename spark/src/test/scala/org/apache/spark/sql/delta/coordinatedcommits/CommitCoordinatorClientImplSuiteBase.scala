@@ -229,7 +229,7 @@ trait CommitCoordinatorClientImplSuiteBase extends QueryTest
       assert(e.getMessage === "Commit version 0 must go via filesystem.")
       writeCommitZero(logPath)
       assertResponseEquals(tableCommitCoordinatorClient.getCommits(),
-        new JGetCommitsResponse(Seq.empty.asJava, -1))
+        new JGetCommitsResponse(Seq.empty.asJava, 0))
       assertBackfilled(version = 0, logPath, Some(0L))
 
       // Test backfilling functionality for commits 1 - 8

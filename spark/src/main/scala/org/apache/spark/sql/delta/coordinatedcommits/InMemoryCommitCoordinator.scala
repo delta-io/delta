@@ -69,9 +69,9 @@ class InMemoryCommitCoordinator(val batchSize: Long)
 
     /**
      * Returns the last ratified commit version for the table. If no commits have been done from
-     * commit-coordinator yet, returns -1.
+     * commit-coordinator yet, returns 0.
      */
-    def lastRatifiedCommitVersion: Long = if (!active) -1 else maxCommitVersion
+    def lastRatifiedCommitVersion: Long = if (!active) 0 else maxCommitVersion
 
     // Map from version to Commit data
     val commitsMap: mutable.SortedMap[Long, JCommit] = mutable.SortedMap.empty
@@ -191,12 +191,11 @@ class InMemoryCommitCoordinator(val batchSize: Long)
     val newPerTableData = new PerTableData(currentVersion + 1)
     perTableMap.compute(logPath, (_, existingData) => {
       if (existingData != null) {
-        if (existingData.lastRatifiedCommitVersion != -1) {
+        if (existingData.active) {
           throw new IllegalStateException(
             s"Table $logPath already exists in the commit-coordinator.")
         }
-        // If lastRatifiedCommitVersion is -1 i.e. the commit-coordinator has never attempted any
-        // commit for this table => this table was just pre-registered. If there is another
+        // If this inactive table was just pre-registered and there is another
         // pre-registration request for an older version, we reject it and table can't go backward.
         if (currentVersion < existingData.maxCommitVersion) {
           throw new IllegalStateException(

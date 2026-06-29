@@ -478,7 +478,7 @@ abstract class CommitCoordinatorSuiteBase
       assert(getCommitsEventData1("versionToLoad") === -1)
       assert(getCommitsEventData1("async") === "true")
       assert(getCommitsEventData1("responseCommitsSize") === 0)
-      assert(getCommitsEventData1("responseLatestTableVersion") === -1)
+      assert(getCommitsEventData1("responseLatestTableVersion") === 0)
 
       Seq(2).toDF.write.format("delta").mode("overwrite").save(tablePath) // version 1
       Seq(3).toDF.write.format("delta").mode("append").save(tablePath) // version 2
