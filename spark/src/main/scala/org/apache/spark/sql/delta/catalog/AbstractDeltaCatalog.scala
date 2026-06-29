@@ -382,9 +382,23 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
           // for a metric view) must flow through the `case o => o` fallthrough unchanged so the
           // resolver can route it correctly. Capturing those in `ServerSidePlannedTable.tryCreate`
           // would short-circuit view loading.
-          ServerSidePlannedTable
-            .tryCreate(spark, ident, table, isUnityCatalog)
-            .getOrElse(loadCatalogTable(ident, v1.catalogTable))
+          //
+          // Only resolve to a `DeltaTableV2` and attempt SSP when the feature is enabled. SSP
+          // needs the real schema, which lives in the transaction log (a Delta `V1Table`'s
+          // metastore `CatalogTable` schema is empty), so it must read it from `DeltaTableV2`.
+          // But forcing that resolution on the normal (SSP-off) path would touch the `DeltaLog`
+          // / filesystem during `loadTable` -- which breaks lazy callers (e.g. time travel) and
+          // tables whose filesystem isn't resolvable at load time. So gate on the cheap config
+          // flag first and keep the SSP-off path returning the lazy `loadCatalogTable`, exactly
+          // as before this branch existed.
+          if (ServerSidePlannedTable.isEnabled(spark)) {
+            val deltaTable = loadCatalogTable(ident, v1.catalogTable)
+            ServerSidePlannedTable
+              .tryCreate(spark, ident, deltaTable, isUnityCatalog)
+              .getOrElse(deltaTable)
+          } else {
+            loadCatalogTable(ident, v1.catalogTable)
+          }
         case o => o
       }
     } catch {
