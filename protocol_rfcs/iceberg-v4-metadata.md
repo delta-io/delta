@@ -80,7 +80,7 @@ This design enables:
 
 > ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#deletion-vectors)***
 
-<ins>When the `adaptiveMetadata` table feature is enabled, inline deletion vectors (storage type `i`) are not supported. The V4 content entry represents deletion vectors as file references (`location`, `offset`, `size_in_bytes`, `cardinality`) with no field for inline bytes. Storage types `u` (UUID-relative) and `p` (absolute path) are supported since both resolve to file paths. When writing V4 manifest entries, writers must resolve the `u` encoding to a relative path (e.g., `data/deletion_vector_<uuid>.bin`) for the DV `location` field. Existing inline DVs must be converted to file-based DVs before or during feature enablement.</ins>
+<ins>When the `adaptiveMetadata` table feature is enabled, inline deletion vectors (storage type `i`) are forbidden. The V4 content entry represents deletion vectors as file references (`location`, `offset`, `size_in_bytes`, `cardinality`) with no field for inline bytes. Storage types `u` (UUID-relative) and `p` (absolute path) are supported since both resolve to file paths. When writing V4 manifest entries, writers must resolve the `u` encoding to a relative path (e.g., `data/deletion_vector_<uuid>.bin`) for the DV `location` field. Existing inline DVs must be converted to file-based DVs before or during feature enablement.</ins>
 
 ### Metadata Cleanup
 
