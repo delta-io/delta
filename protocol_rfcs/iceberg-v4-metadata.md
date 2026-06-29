@@ -61,7 +61,7 @@ This design enables:
 | <ins>protocol</ins> | <ins>Struct</ins> | <ins>The Protocol action for this checkpoint version.</ins> |
 | <ins>metadata</ins> | <ins>Struct</ins> | <ins>The Metadata action for this checkpoint version.</ins> |
 | <ins>domainMetadata</ins> | <ins>Array[Struct]</ins> | <ins>Optional. DomainMetadata actions at this checkpoint version. Presence is authoritative; absence means the reader must consult the checkpoint action or sidecars.</ins> |
-| <ins>txns</ins> | <ins>Array[Struct]</ins> | <ins>Optional list of SetTransaction actions. Each entry contains appId, version, and optional lastUpdated. When small, txns are embedded here; when large, stored in sidecars.</ins> |
+| <ins>txns</ins> | <ins>Array[Struct]</ins> | <ins>Optional list of SetTransaction actions. Each entry contains appId, version, and optional lastUpdated. When the list is small, it is embedded here; large lists are stored in sidecars instead.</ins> |
 | <ins>sidecars</ins> | <ins>Array[Struct]</ins> | <ins>Optional list of sidecar entries for overflow txns and domain metadata only. File-level metadata is stored in the content tree. Each entry contains path, sizeInBytes, modificationTime, and tags (matching the existing sidecar action schema).</ins> |
 
 <ins>When `v4` is true, readers can use `contentRoot.path` to begin prefetching the root manifest immediately. The `protocol`, `metadata`, `domainMetadata`, `txns`, and `sidecars` fields provide the complete table state at `version`. If the hint is absent, stale, or does not contain V4 fields, readers fall back to log replay to locate the latest `checkpoint` action.</ins>
