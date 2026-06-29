@@ -12,27 +12,29 @@ This protocol change adds support for interval types (as defined [here](https://
 
 # Interval Types Table Feature
 
-This table feature (`intervalTypes`) adds the year-month and day-second interval types from ANSI SQL:
+This table feature (`intervalTypes`) adds the year-month and day-second [interval types](https://spark.apache.org/docs/latest/sql-ref-datatypes.html) from ANSI SQL:
 
 1. **interval year to month**: A signed number of months, e.g. `INTERVAL '1-6' YEAR TO MONTH` represents 18 (1 year + 6 months = 18 months).
-2. **interval day to second**: A signed number of microseconds, e.g. `INTERVAL '1 00:00:01.000000' DAY TO SECOND` represents 86,401,000,000 (1 day + 1 second = 86,400,000,000 + 1,000,000 μs).
+2. **interval day to second**: A signed number of microseconds, e.g. `INTERVAL '1 12:24:36.000022' DAY TO SECOND` represents 131,076,000,022 (1 day + 12 hours + 24 minutes + 36 seconds + 22 microseconds = 86,400,000,000 + 43,200,000,000 + 1,440,000,000 + 36,000,000 + 22 = 131,076,000,022).
 
 To support this feature:
-- The table must be on **Reader Version 3** and **Writer Version 7**.
+- The table must be on Reader Version 3 and Writer Version 7.
 - The feature `intervalTypes` must be listed in the table `protocol`'s `readerFeatures` and `writerFeatures`.
 
 ## Type Definitions
 
-In the schema, interval types are serialized in `Metadata.schemaString` as
+In the schema, interval types are serialized in `Metadata.schemaString` (case-sensitive) as
 
 - `interval year to month`
 - `interval day to second`
 
-These are the canonical type-name strings. ANSI SQL also permits narrowed spellings that denote the same two types: for year-month, `interval year` and `interval month`; for day-second, `interval day`, `interval hour`, `interval minute`, `interval second`, and any `<start> to <end>` range between those fields (e.g. `interval day to minute`, `interval hour to second`). Mixed-family spellings (e.g. `interval month to day`) are not valid. Tables written by existing engines may use these narrowed spellings.
+Intervals have two families: year-month (made up of the fields `year` and `month`) and day-second (made up of the fields `day`, `hour`, `minute`, and `second`). `interval year to month` and `interval day to second` are the canonical type-name strings for these two families.
+
+ANSI SQL also permits narrowed spellings that denote the same two families: for year-month, `interval year` and `interval month`; for day-second, `interval day`, `interval hour`, `interval minute`, `interval second`, and any `<start> to <end>` range over the ordered fields `day`, `hour`, `minute`, `second` (e.g. `interval day to minute`, `interval hour to second`). A spelling is not valid if it is multi-family — that is, it combines fields from both families (for example, `interval month to second`). A spelling is also not valid if its fields are in the wrong order, going from a shorter unit to a longer one (for example, `interval second to day` or `interval month to year`).
 
 Regardless of which spelling is used, the stored value is the same: every year-month spelling stores a signed count of months, and every day-second spelling stores a signed count of microseconds. The spelling affects only how a value is displayed, not how it is stored.
 
-Interval types are permitted anywhere a primitive type is permitted: as top-level columns, as nested struct fields, as array element types, and as map key or value types. For example:
+Interval types are permitted anywhere a primitive type is permitted: as a top-level column, as a nested struct field, as an array element type, and as a map key or value type. For example:
 
 ```
 {
@@ -62,7 +64,7 @@ When this table feature is supported, readers must:
 When this table feature is supported, writers must:
 
 - Serialize an interval field's type in `Metadata.schemaString` using the canonical `interval year to month` or `interval day to second` form.
-- Ensure the `intervalTypes` feature is present in the table `protocol`'s `readerFeatures` and `writerFeatures` whenever the table schema contains an interval type. The feature is enabled automatically by the presence of an interval-typed column; there is no separate table property to set (analogous to `timestampNtz`).
+- Never write an interval type to a table unless the `intervalTypes` feature is present in the table `protocol`'s `readerFeatures` and `writerFeatures`. When a writer introduces an interval-typed column to a table that does not yet have the feature, it must add `intervalTypes` to both lists in the same commit, so the feature and the column are committed together. There is no separate table property to enable the feature; adding it to the reader and writer feature lists is what enables it (analogous to `timestampNtz`).
 
 ## Partition Value Serialization
 
@@ -81,6 +83,8 @@ Interval partition values must not be used for partition pruning. Consistent wit
 
 Interval columns do not support `minValues`/`maxValues` statistics or data skipping. Writers must not record `minValues` or `maxValues` for interval columns, and readers must not perform data skipping over interval columns. The per-column `nullCount` and the per-file `numRecords` statistics are unaffected and are still recorded as normal, since they do not require interpreting interval values.
 
+Since clustered tables require per-column statistics, including `minValues` and `maxValues`, a writer must not use an interval column as a clustering column.
+
 ## Parquet Format
 
 Interval values are stored using a raw Parquet physical type with no logical-type annotation:
@@ -96,7 +100,7 @@ Beyond the partition-value and statistics behavior described above, and the rest
 
 ## Error Conditions
 
-- **Unrecognized type-name strings.** Type-name matching is case-sensitive. A reader that encounters an interval type-name string that is not one of the recognized canonical or narrowed spellings, including a mixed-family spelling such as `interval month to day` (neither `year to month` nor `day to second`), or a case variant such as `INTERVAL Year To Month`, must reject the schema with an error rather than silently coercing it to a supported type.
+- **Unrecognized type-name strings.** Type-name matching is case-sensitive. A reader that encounters an interval type-name string that is not one of the recognized canonical or narrowed spellings, including a multi-family spelling such as `interval month to second`, or a case variant such as `INTERVAL Year To Month`, must reject the schema with an error rather than silently coercing it to a supported type.
 - **Feature not present.** A writer must add `intervalTypes` to the table `protocol`'s `readerFeatures` and `writerFeatures` whenever it writes a schema containing an interval type (see [Writer Requirements](#writer-requirements)).
 - **Value overflow on write.** An `interval year to month` value must fit in a signed `int32` count of months, and an `interval day to second` value must fit in a signed `int64` count of microseconds. A writer must reject any value that overflows these bounds.
 - **Malformed or out-of-range partition values.** When reading, a partition value that is not a valid ANSI interval literal, or whose decoded value does not fit the column's underlying `int32`/`int64` range, must be rejected with an error.
