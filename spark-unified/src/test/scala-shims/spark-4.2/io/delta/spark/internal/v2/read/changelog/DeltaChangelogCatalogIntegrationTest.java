@@ -842,11 +842,16 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
                     spark
                         .sql(
                             String.format(
-                                "SELECT id, _change_type FROM %s "
+                                "SELECT id, name, _change_type FROM %s "
                                     + "CHANGES FROM VERSION 4 TO VERSION 5",
                                 tableName))
+                        .orderBy("id")
                         .collectAsList();
                 assertEquals(2, rows.size(), "Expected the two in-range inserts to be returned");
+                assertEquals(2L, rows.get(0).getLong(0), "Expected id of Bob to be 2");
+                assertEquals("Bob", rows.get(0).getString(1), "Expected name to be Bob");
+                assertEquals(3L, rows.get(1).getLong(0), "Expected id of Charlie to be 3");
+                assertEquals("Charlie", rows.get(1).getString(1), "Expected name to be Charlie");
               });
         });
   }
@@ -885,11 +890,16 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
                     spark
                         .sql(
                             String.format(
-                                "SELECT id, _change_type FROM %s "
+                                "SELECT id, name, _change_type FROM %s "
                                     + "CHANGES FROM VERSION 1 TO VERSION 2",
                                 tableName))
+                        .orderBy("id")
                         .collectAsList();
                 assertEquals(2, rows.size(), "Expected the two in-range inserts to be returned");
+                assertEquals(1L, rows.get(0).getLong(0), "Expected id of Alice to be 1");
+                assertEquals("Alice", rows.get(0).getString(1), "Expected name to be Alice");
+                assertEquals(2L, rows.get(1).getLong(0), "Expected id of Bob to be 2");
+                assertEquals("Bob", rows.get(1).getString(1), "Expected name to be Bob");
               });
         });
   }
@@ -924,11 +934,18 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
                     spark
                         .sql(
                             String.format(
-                                "SELECT id, _change_type FROM %s "
+                                "SELECT id, name, extra, _change_type FROM %s "
                                     + "CHANGES FROM VERSION 1 TO VERSION 3",
                                 tableName))
+                        .orderBy("id")
                         .collectAsList();
                 assertEquals(2, rows.size(), "Additive schema change should not fail the read");
+                assertEquals(1L, rows.get(0).getLong(0), "Expected id of Alice to be 1");
+                assertEquals("Alice", rows.get(0).getString(1), "Expected name to be Alice");
+                assertTrue(rows.get(0).isNullAt(2), "extra is null for the pre-change Alice row");
+                assertEquals(2L, rows.get(1).getLong(0), "Expected id of Bob to be 2");
+                assertEquals("Bob", rows.get(1).getString(1), "Expected name to be Bob");
+                assertEquals("x", rows.get(1).getString(2), "Expected Bob's extra value to be x");
               });
         });
   }
