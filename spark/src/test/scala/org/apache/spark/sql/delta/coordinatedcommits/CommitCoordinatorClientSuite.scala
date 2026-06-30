@@ -52,7 +52,7 @@ class CommitCoordinatorClientSuite extends QueryTest with DeltaSQLTestUtils with
         tableDesc: TableDescriptor,
         startVersion: java.lang.Long,
         endVersion: java.lang.Long): JGetCommitsResponse =
-      new JGetCommitsResponse(Seq.empty.asJava, 0)
+      new JGetCommitsResponse(Seq.empty.asJava, -1)
 
     override def backfillToVersion(
         logStore: LogStore,

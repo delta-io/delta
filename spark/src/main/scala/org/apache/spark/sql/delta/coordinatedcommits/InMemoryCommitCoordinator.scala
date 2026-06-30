@@ -35,6 +35,7 @@ import io.delta.storage.commit.{
   TableIdentifier
 }
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -69,9 +70,9 @@ class InMemoryCommitCoordinator(val batchSize: Long)
 
     /**
      * Returns the last ratified commit version for the table. If no commits have been done from
-     * commit-coordinator yet, returns 0.
+     * commit-coordinator yet, returns -1.
      */
-    def lastRatifiedCommitVersion: Long = if (!active) 0 else maxCommitVersion
+    def lastRatifiedCommitVersion: Long = if (!active) -1 else maxCommitVersion
 
     // Map from version to Commit data
     val commitsMap: mutable.SortedMap[Long, JCommit] = mutable.SortedMap.empty
@@ -162,7 +163,20 @@ class InMemoryCommitCoordinator(val batchSize: Long)
       val commitsInRange = tableData.commitsMap.range(
         effectiveStartVersion, effectiveEndVersion + 1)
       new JGetCommitsResponse(
-        commitsInRange.values.toSeq.asJava, tableData.lastRatifiedCommitVersion)
+        commitsInRange.values.toSeq.asJava,
+        latestTableVersionForGetCommits(tableDesc, tableData))
+    }
+  }
+
+  private def latestTableVersionForGetCommits(
+      tableDesc: TableDescriptor,
+      tableData: PerTableData): Long = {
+    if (tableData.active) {
+      tableData.lastRatifiedCommitVersion
+    } else if (tableDesc.getTableConf.containsKey(UCCommitCoordinatorClient.UC_TABLE_ID_KEY)) {
+      0L
+    } else {
+      -1L
     }
   }
 
