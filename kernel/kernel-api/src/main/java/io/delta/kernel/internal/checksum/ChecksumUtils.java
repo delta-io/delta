@@ -115,7 +115,7 @@ public class ChecksumUtils {
       return;
     }
 
-    CRCInfo crcInfo = computeStateChecksum(engine, logSegmentAtVersion);
+    CRCInfo crcInfo = computeChecksum(engine, logSegmentAtVersion);
     ChecksumWriter checksumWriter = new ChecksumWriter(logSegmentAtVersion.getLogPath());
     checksumWriter.writeCheckSum(engine, crcInfo);
   }
@@ -140,7 +140,7 @@ public class ChecksumUtils {
    * @return The computed CRC info for the table at the given version
    * @throws IOException If an I/O error occurs during checksum computation
    */
-  public static CRCInfo computeStateChecksum(Engine engine, LogSegment logSegmentAtVersion)
+  public static CRCInfo computeChecksum(Engine engine, LogSegment logSegmentAtVersion)
       throws IOException {
     requireNonNull(engine);
     requireNonNull(logSegmentAtVersion);

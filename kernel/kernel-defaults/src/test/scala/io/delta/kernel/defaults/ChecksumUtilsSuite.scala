@@ -66,7 +66,7 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
     }
   }
 
-  test("computeStateChecksum returns the CRCInfo without writing a checksum file") {
+  test("computeChecksum returns the CRCInfo without writing a checksum file") {
     withTempDirAndEngine { (tablePath, engine) =>
       initialTestTable(tablePath, engine)
 
@@ -74,9 +74,8 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
         engine,
         tablePath).getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
 
-      // Same computation as computeStateAndWriteChecksum, but returns the CRC without
-      // persisting a version.crc file.
-      val crcInfo = ChecksumUtils.computeStateChecksum(engine, snapshot1.getLogSegment)
+      // Same computation as computeStateAndWriteChecksum
+      val crcInfo = ChecksumUtils.computeChecksum(engine, snapshot1.getLogSegment)
       assert(crcInfo.getVersion === 1)
 
       // No checksum file was written: a freshly loaded log segment still sees no checksum.
@@ -91,7 +90,7 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
     }
   }
 
-  test("computeStateChecksum returns the existing CRCInfo as-is for an already-checksummed " +
+  test("computeChecksum returns the existing CRCInfo as-is for an already-checksummed " +
     "version, without recomputation") {
     withTempDirAndEngine { (tablePath, engine) =>
       initialTestTable(tablePath, engine)
@@ -108,7 +107,7 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
       assert(reloaded.getLogSegment.getLastSeenChecksum.isPresent)
 
       // A checksum already exists for exactly this version => returned as-is (no full replay).
-      val crcInfo = ChecksumUtils.computeStateChecksum(engine, reloaded.getLogSegment)
+      val crcInfo = ChecksumUtils.computeChecksum(engine, reloaded.getLogSegment)
       assert(crcInfo.getVersion === 1)
     }
   }
