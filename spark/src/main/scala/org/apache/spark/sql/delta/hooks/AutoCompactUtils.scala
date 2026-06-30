@@ -218,6 +218,28 @@ object AutoCompactUtils extends DeltaLogging {
     chosenPartitions: PartitionKeySet,
     logMessage: String)
 
+  private def histogramSmallFileCount(
+      spark: SparkSession,
+      postCommitSnapshot: Snapshot,
+      minFileSize: Long): Option[Long] = {
+    val useHistogramEnabled = spark.sessionState.conf.getConf(
+      DELTA_AUTO_COMPACT_USE_FILE_SIZE_HISTOGRAM)
+
+    if (!useHistogramEnabled) return None
+    if (postCommitSnapshot.metadata.partitionColumns.nonEmpty) return None
+    postCommitSnapshot.fileSizeHistogram.map(_.smallFileCount(minFileSize))
+  }
+
+  /**
+   * Read the small-file threshold used by Auto Compaction's eligibility logic. Default is half of
+   * [[DELTA_AUTO_COMPACT_MAX_FILE_SIZE]], matching the default applied to the stats collector in
+   * [[OptimisticTransaction.createAutoCompactStatsCollector]].
+   */
+  private def autoCompactMinFileSize(spark: SparkSession): Long = {
+    val maxFileSize = spark.sessionState.conf.getConf(DELTA_AUTO_COMPACT_MAX_FILE_SIZE)
+    spark.sessionState.conf.getConf(DELTA_AUTO_COMPACT_MIN_FILE_SIZE).getOrElse(maxFileSize / 2L)
+  }
+
   private def choosePartitionsBasedOnMinNumSmallFiles(
       spark: SparkSession,
       deltaLog: DeltaLog,
@@ -229,38 +251,69 @@ object AutoCompactUtils extends DeltaLogging {
       val partitionEarlySkippingEnabled =
         getConf(DELTA_AUTO_COMPACT_EARLY_SKIP_PARTITION_TABLE_ENABLED)
       val tablePartitionStats = AutoCompactPartitionStats.instance(spark)
+      // For un-partitioned tables, the snapshot-level fileSizeHistogram is an authoritative
+      // source of truth for the small-file count, surviving JVM restart, LRU eviction, and
+      // cross-writer scenarios. It returns None for partitioned tables (the histogram is
+      // table-wide and would over-trigger on the per-partition selector), when the feature
+      // flag is off, or when the snapshot has no histogram (e.g. legacy CRC, see migration
+      // path in SnapshotState).
+      val histogramCountOpt = histogramSmallFileCount(
+        spark, postCommitSnapshot, autoCompactMinFileSize(spark))
       if (isModifiedPartitionsOnlyAutoCompactEnabled(spark)) {
         // If modified partition only Auto Compact is enabled, pick the partitions that have more
         // number of files than minNumFiles.
         // If table partition early skipping feature is enabled, use the current minimum number of
         // files threshold; otherwise, use 0 to indicate that any partition is qualified.
         val minNumFilesPerPartition = if (partitionEarlySkippingEnabled) minNumFiles else 0L
-        val pickedPartitions = tablePartitionStats.filterPartitionsWithSmallFiles(
-          deltaLog.unsafeVolatileTableId,
-          freePartitionsAddedTo,
-          minNumFilesPerPartition)
-        if (pickedPartitions.isEmpty) {
-          ChosenPartitionsResult(shouldRunAC = false,
-            chosenPartitions = pickedPartitions,
-            logMessage = "InsufficientFilesInModifiedPartitions")
-        } else {
-          ChosenPartitionsResult(shouldRunAC = true,
-            chosenPartitions = pickedPartitions,
-            logMessage = "OnModifiedPartitions")
+        histogramCountOpt match {
+          case Some(smallFiles) if smallFiles >= minNumFilesPerPartition =>
+            ChosenPartitionsResult(shouldRunAC = true,
+              chosenPartitions = freePartitionsAddedTo,
+              logMessage = "OnModifiedPartitionsFromHistogram")
+          case Some(_) =>
+            ChosenPartitionsResult(shouldRunAC = false,
+              chosenPartitions = Set.empty[PartitionKey],
+              logMessage = "InsufficientFilesInModifiedPartitionsFromHistogram")
+          case None =>
+            val pickedPartitions = tablePartitionStats.filterPartitionsWithSmallFiles(
+              deltaLog.unsafeVolatileTableId,
+              freePartitionsAddedTo,
+              minNumFilesPerPartition)
+            if (pickedPartitions.isEmpty) {
+              ChosenPartitionsResult(shouldRunAC = false,
+                chosenPartitions = pickedPartitions,
+                logMessage = "InsufficientFilesInModifiedPartitions")
+            } else {
+              ChosenPartitionsResult(shouldRunAC = true,
+                chosenPartitions = pickedPartitions,
+                logMessage = "OnModifiedPartitions")
+            }
         }
       } else if (partitionEarlySkippingEnabled) {
         // If only early skipping is enabled, then check whether there is any partition with more
         // files than minNumFiles.
-        val maxNumFiles = tablePartitionStats.maxNumFilesInTable(deltaLog.unsafeVolatileTableId)
-        val shouldCompact = maxNumFiles >= minNumFiles
-        if (shouldCompact) {
-          ChosenPartitionsResult(shouldRunAC = true,
-            chosenPartitions = Set.empty[PartitionKey],
-            logMessage = "OnAllPartitions")
-        } else {
-          ChosenPartitionsResult(shouldRunAC = false,
-            chosenPartitions = Set.empty[PartitionKey],
-            logMessage = "InsufficientInAllPartitions")
+        histogramCountOpt match {
+          case Some(smallFiles) if smallFiles >= minNumFiles =>
+            ChosenPartitionsResult(shouldRunAC = true,
+              chosenPartitions = Set.empty[PartitionKey],
+              logMessage = "OnAllPartitionsFromHistogram")
+          case Some(_) =>
+            ChosenPartitionsResult(shouldRunAC = false,
+              chosenPartitions = Set.empty[PartitionKey],
+              logMessage = "InsufficientInAllPartitionsFromHistogram")
+          case None =>
+            val maxNumFiles = tablePartitionStats.maxNumFilesInTable(
+              deltaLog.unsafeVolatileTableId)
+            val shouldCompact = maxNumFiles >= minNumFiles
+            if (shouldCompact) {
+              ChosenPartitionsResult(shouldRunAC = true,
+                chosenPartitions = Set.empty[PartitionKey],
+                logMessage = "OnAllPartitions")
+            } else {
+              ChosenPartitionsResult(shouldRunAC = false,
+                chosenPartitions = Set.empty[PartitionKey],
+                logMessage = "InsufficientInAllPartitions")
+            }
         }
       } else {
         // If both are disabled, then Auto Compaction should search all partitions of the target
