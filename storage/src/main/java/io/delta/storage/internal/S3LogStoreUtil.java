@@ -89,13 +89,23 @@ public final class S3LogStoreUtil {
             Path parentPath) throws IOException {
         S3AFileSystem s3afs;
         try {
-             s3afs = (S3AFileSystem) fs;
+            s3afs = (S3AFileSystem) unwrap(fs);
         } catch (ClassCastException e) {
             throw new UnsupportedOperationException(
                     "The Hadoop file system used for the S3LogStore must be castable to " +
                             "org.apache.hadoop.fs.s3a.S3AFileSystem.", e);
         }
         return iteratorToStatuses(S3LogStoreUtil.s3ListFrom(s3afs, resolvedPath, parentPath));
+    }
+
+    /**
+     * Unwraps {@link FilterFileSystem} wrappers that delegate to a real {@link S3AFileSystem}.
+     */
+    static FileSystem unwrap(FileSystem fs) {
+        while (fs instanceof FilterFileSystem) {
+            fs = ((FilterFileSystem) fs).getRawFileSystem();
+        }
+        return fs;
     }
 
     /**
