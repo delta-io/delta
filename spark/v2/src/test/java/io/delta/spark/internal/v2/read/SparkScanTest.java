@@ -538,6 +538,33 @@ public class SparkScanTest extends DeltaV2TestBase {
     return (List<PartitionedFile>) field.get(scan);
   }
 
+  @Test
+  public void testSelectedFilesTracksPlannedAndRuntimeFilteredFiles() throws Exception {
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan = (SparkScan) builder.build();
+
+    List<PartitionedFile> plannedFiles = getPartitionedFiles(scan);
+    List<DeltaScanFile> selectedFiles = scan.getSelectedFiles();
+    assertEquals(plannedFiles.size(), selectedFiles.size());
+    assertEquals(5, selectedFiles.size(), "test table should start with all selected files");
+    assertTrue(
+        selectedFiles.stream().allMatch(file -> file.getPath().contains("city=")),
+        "selected file descriptors should expose Delta-relative AddFile paths");
+    assertTrue(
+        selectedFiles.stream().allMatch(file -> file.getSize() > 0),
+        "selected file descriptors should expose file sizes");
+
+    scan.filter(new Predicate[] {cityPredicate});
+
+    List<PartitionedFile> filteredFiles = getPartitionedFiles(scan);
+    List<DeltaScanFile> filteredSelectedFiles = scan.getSelectedFiles();
+    assertEquals(filteredFiles.size(), filteredSelectedFiles.size());
+    assertEquals(2, filteredSelectedFiles.size(), "city=hz runtime filter should keep two files");
+    assertTrue(
+        filteredSelectedFiles.stream().allMatch(file -> file.getPath().contains("city=hz")),
+        "selected files should be pruned with runtime partition filters");
+  }
+
   private static long getTotalBytes(SparkScan scan) throws Exception {
     scan.estimateStatistics(); // ensurePlanned
     Field field = SparkScan.class.getDeclaredField("totalBytes");
