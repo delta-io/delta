@@ -66,6 +66,53 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
     }
   }
 
+  test("computeStateChecksum returns the CRCInfo without writing a checksum file") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      initialTestTable(tablePath, engine)
+
+      val snapshot1 = Table.forPath(
+        engine,
+        tablePath).getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
+
+      // Same computation as computeStateAndWriteChecksum, but returns the CRC without
+      // persisting a version.crc file.
+      val crcInfo = ChecksumUtils.computeStateChecksum(engine, snapshot1.getLogSegment)
+      assert(crcInfo.getVersion === 1)
+
+      // No checksum file was written: a freshly loaded log segment still sees no checksum.
+      val reloaded = Table.forPath(
+        engine,
+        tablePath).getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
+      assert(!reloaded.getLogSegment.getLastSeenChecksum.isPresent)
+
+      // The writing counterpart still persists an equivalent, valid checksum.
+      ChecksumUtils.computeStateAndWriteChecksum(engine, snapshot1.getLogSegment)
+      verifyChecksumForSnapshot(snapshot1)
+    }
+  }
+
+  test("computeStateChecksum returns the existing CRCInfo as-is for an already-checksummed " +
+    "version, without recomputation") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      initialTestTable(tablePath, engine)
+
+      val snapshot1 = Table.forPath(
+        engine,
+        tablePath).getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
+
+      // Persist a checksum for v1, then reload so the log segment sees it as lastSeenChecksum.
+      ChecksumUtils.computeStateAndWriteChecksum(engine, snapshot1.getLogSegment)
+      val reloaded = Table.forPath(
+        engine,
+        tablePath).getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
+      assert(reloaded.getLogSegment.getLastSeenChecksum.isPresent)
+
+      // A checksum already exists for exactly this version => returned as-is (no full replay).
+      val crcInfo = ChecksumUtils.computeStateChecksum(engine, reloaded.getLogSegment)
+      assert(crcInfo.getVersion === 1)
+    }
+  }
+
   test("Create checksum is idempotent") {
     withTempDirAndEngine { (tablePath, engine) =>
       initialTestTable(tablePath, engine)

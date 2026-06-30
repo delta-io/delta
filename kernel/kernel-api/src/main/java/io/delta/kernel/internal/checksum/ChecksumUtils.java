@@ -89,6 +89,8 @@ public class ChecksumUtils {
    *   <li>Domain metadata information
    * </ul>
    *
+   * <p>If a checksum file already exists for exactly this version, the existing {@link CRCInfo} is returned as-is.
+   * 
    * <p>Note: For very large tables, this operation may be expensive as it requires scanning the
    * table state to compute statistics.
    *
@@ -147,6 +149,10 @@ public class ChecksumUtils {
         logSegmentAtVersion
             .getLastSeenChecksum()
             .flatMap(file -> ChecksumReader.tryReadChecksumFile(engine, file));
+    if (lastSeenCrcInfo.isPresent()
+        && lastSeenCrcInfo.get().getVersion() == logSegmentAtVersion.getVersion()) {
+      return lastSeenCrcInfo.get();
+    }
     // Try to build CRC incrementally if possible
     Optional<CRCInfo> incrementallyBuiltCrc =
         lastSeenCrcInfo.isPresent()
