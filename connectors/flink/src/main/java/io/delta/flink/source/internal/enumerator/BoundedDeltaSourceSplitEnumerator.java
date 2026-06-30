@@ -62,4 +62,14 @@ public class BoundedDeltaSourceSplitEnumerator extends DeltaSourceSplitEnumerato
     protected void handleNoMoreSplits(int subtaskId) {
         enumContext.signalNoMoreSplits(subtaskId);
     }
+
+    @Override
+    protected boolean removeAwaitingReaderOnNoMoreSplits() {
+        return true;
+    }
+
+    @Override
+    protected boolean continueAssigningAfterNoMoreSplits() {
+        return true;
+    }
 }
