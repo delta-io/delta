@@ -113,6 +113,36 @@ public class ChecksumUtils {
       return;
     }
 
+    CRCInfo crcInfo = computeStateChecksum(engine, logSegmentAtVersion);
+    ChecksumWriter checksumWriter = new ChecksumWriter(logSegmentAtVersion.getLogPath());
+    checksumWriter.writeCheckSum(engine, crcInfo);
+  }
+
+  /**
+   * Computes the state of a Delta table at the provided snapshot's version.
+   *
+   * <p>The checksum contains table statistics including:
+   *
+   * <ul>
+   *   <li>Total table size in bytes
+   *   <li>Total number of files
+   *   <li>File size histogram
+   *   <li>Domain metadata information
+   * </ul>
+   *
+   * <p>Note: For very large tables, this operation may be expensive as it requires scanning the
+   * table state to compute statistics.
+   *
+   * @param engine The Engine instance used to access the underlying storage
+   * @param logSegmentAtVersion The LogSegment instance of the table at a specific version
+   * @return The computed CRC info for the table at the given version
+   * @throws IOException If an I/O error occurs during checksum computation
+   */
+  public static CRCInfo computeStateChecksum(Engine engine, LogSegment logSegmentAtVersion)
+      throws IOException {
+    requireNonNull(engine);
+    requireNonNull(logSegmentAtVersion);
+
     Optional<CRCInfo> lastSeenCrcInfo =
         logSegmentAtVersion
             .getLastSeenChecksum()
@@ -128,13 +158,9 @@ public class ChecksumUtils {
             : Optional.empty();
 
     // Use incrementally built CRC if available, otherwise do full log replay
-    CRCInfo crcInfo =
-        incrementallyBuiltCrc.isPresent()
-            ? incrementallyBuiltCrc.get()
-            : buildCrcInfoWithFullLogReplay(engine, logSegmentAtVersion);
-
-    ChecksumWriter checksumWriter = new ChecksumWriter(logSegmentAtVersion.getLogPath());
-    checksumWriter.writeCheckSum(engine, crcInfo);
+    return incrementallyBuiltCrc.isPresent()
+        ? incrementallyBuiltCrc.get()
+        : buildCrcInfoWithFullLogReplay(engine, logSegmentAtVersion);
   }
 
   /**
