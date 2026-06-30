@@ -23,8 +23,6 @@ import java.util.concurrent.locks.ReentrantReadWriteLock
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.CatalogOwnedTableFeature
-import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import io.delta.storage.LogStore
 import io.delta.storage.commit.{
@@ -37,6 +35,7 @@ import io.delta.storage.commit.{
   TableIdentifier
 }
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -174,13 +173,15 @@ class InMemoryCommitCoordinator(val batchSize: Long)
       tableData: PerTableData): Long = {
     if (tableData.active) {
       tableData.lastRatifiedCommitVersion
-    } else if (TableFeatureProtocolUtils.isFeatureSupportedInTableConfigs(
-        tableDesc.getTableConf.asScala.toMap,
-        CatalogOwnedTableFeature)) {
+    } else if (isCatalogManagedTableDesc(tableDesc)) {
       0L
     } else {
       -1L
     }
+  }
+
+  private def isCatalogManagedTableDesc(tableDesc: TableDescriptor): Boolean = {
+    tableDesc.getTableConf.asScala.contains(UCCommitCoordinatorClient.UC_TABLE_ID_KEY)
   }
 
   override protected[sql] def registerBackfill(

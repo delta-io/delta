@@ -16,16 +16,15 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
-import java.util.Optional
+import java.util.{Optional, UUID}
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.CatalogOwnedTableFeature
 import org.apache.spark.sql.delta.DeltaLog
-import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import io.delta.storage.commit.{GetCommitsResponse => JGetCommitsResponse, TableDescriptor}
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.hadoop.fs.Path
 
 abstract class InMemoryCommitCoordinatorSuite(batchSize: Int)
@@ -113,9 +112,7 @@ abstract class InMemoryCommitCoordinatorSuite(batchSize: Int)
       val catalogManagedTableDesc = new TableDescriptor(
         logPath,
         Optional.empty(),
-        Map(
-          TableFeatureProtocolUtils.propertyKey(CatalogOwnedTableFeature) ->
-            TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED).asJava)
+        Map(UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> UUID.randomUUID().toString).asJava)
       assert(
         coordinator.getCommits(catalogManagedTableDesc, null, null).getLatestTableVersion == 0L)
     }
