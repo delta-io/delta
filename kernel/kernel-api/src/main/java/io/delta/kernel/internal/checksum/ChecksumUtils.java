@@ -89,8 +89,8 @@ public class ChecksumUtils {
    *   <li>Domain metadata information
    * </ul>
    *
-   * <p>If a checksum file already exists for exactly this version, the existing {@link CRCInfo}
-   * is returned as-is.
+   * <p>If a checksum file already exists for exactly this version, the existing {@link CRCInfo} is
+   * returned as-is.
    *
    * <p>Note: For very large tables, this operation may be expensive as it requires scanning the
    * table state to compute statistics.
