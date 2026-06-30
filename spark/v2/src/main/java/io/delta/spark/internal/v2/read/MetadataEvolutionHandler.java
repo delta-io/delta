@@ -456,8 +456,7 @@ public class MetadataEvolutionHandler {
                 TypeWideningMode.NoTypeWidening$.MODULE$,
                 (Seq<String>) Seq$.MODULE$.empty(),
                 (Seq<String>) Seq$.MODULE$.empty(),
-                /* caseSensitive= */ true,
-                /* allowVoidTypeChange= */ false)) {
+                /* caseSensitive= */ true)) {
           throw (RuntimeException)
               DeltaErrors.streamingMetadataLogInitFailedIncompatibleMetadataException(
                   startVersion, endVersion);

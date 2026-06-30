@@ -405,6 +405,38 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
     }
   }
 
+  test("basic case with NullType") {
+    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
+    withSQLConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false") {
+      append(Seq((null, 2), (null, 4), (null, 1), (null, 3)).toDF("key", "value"))
+      checkUpdate(condition = None, setClauses = "value = 2",
+        expectedResults = Row(null, 2) :: Row(null, 2) :: Row(null, 2) :: Row(null, 2) :: Nil)
+    }
+  }
+
+  test("basic case with condition on NullType") {
+    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
+    withSQLConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false") {
+      append(Seq((null, 2), (null, 4), (null, 1), (null, 3)).toDF("key", "value"))
+      checkUpdate(condition = Some("key is null"), setClauses = "value = 2",
+        expectedResults = Row(null, 2) :: Row(null, 2) :: Row(null, 2) :: Row(null, 2) :: Nil)
+    }
+  }
+
+  test("basic case with nested NullType") {
+    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
+    withSQLConf(
+      DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false"
+    ) {
+      append(Seq(((null, 2), 1), ((null, 4), 1), (null, 1), ((null, 1), 1)).toDF("key", "value"))
+      checkUpdate(
+        condition = Some("key._1 IS NULL AND key IS NOT NULL"),
+        setClauses = "value = 5",
+        expectedResults = Row(Row(null, 2), 5) :: Row(Row(null, 4), 5) :: Row(null, 1) ::
+          Row(Row(null, 1), 5) :: Nil)
+    }
+  }
+
   for (storeAssignmentPolicy <- StoreAssignmentPolicy.values)
   test("upcast int source type into long target, storeAssignmentPolicy = " +
     s"$storeAssignmentPolicy") {
