@@ -59,6 +59,12 @@ import org.apache.spark.util.{ManualClock, SystemClock, Utils}
 
 object DeltaTestUtilsBase {
   final val BOOLEAN_DOMAIN: Seq[Boolean] = Seq(true, false)
+
+  /**
+   * Whether the running Spark version supports NullType (VOID) columns in Delta tables.
+   * Used to gate NullType tests so they run on Spark 4.1+ and are skipped on Spark 4.0.
+   */
+  def nullTypeColumnsSupported: Boolean = !org.apache.spark.SPARK_VERSION.startsWith("4.0")
 }
 
 trait CDCTestMixin extends SharedSparkSession {
