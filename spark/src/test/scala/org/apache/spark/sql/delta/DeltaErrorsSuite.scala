@@ -2957,6 +2957,24 @@ trait DeltaErrorsSuiteBase
     }
   }
 
+  test("throwChangelogReadFailed preserves SparkThrowable cause and wraps others") {
+    // A cause that already carries a Spark error class is rethrown unchanged.
+    val sparkThrowableCause = new DeltaAnalysisException(
+      errorClass = "DELTA_CHANGELOG_UNBOUNDED_RANGE",
+      messageParameters = Array.empty[String])
+    val passed = intercept[DeltaAnalysisException] {
+      DeltaErrors.throwChangelogReadFailed("PROCESS_COMMIT_ACTIONS", sparkThrowableCause)
+    }
+    assert(passed eq sparkThrowableCause)
+
+    // Any other cause is wrapped in a DELTA_CHANGELOG_READ_FAILED sub-class.
+    val wrapped = intercept[DeltaIllegalStateException] {
+      DeltaErrors.throwChangelogReadFailed("PLAN_INPUT_PARTITIONS", new RuntimeException("boom"))
+    }
+    checkError(wrapped, "DELTA_CHANGELOG_READ_FAILED.PLAN_INPUT_PARTITIONS", "XXKDS",
+      Map.empty[String, String])
+  }
+
   private def setCustomContext(session: SparkSession, context: SparkContext): Unit = {
     val scField = session.getClass.getDeclaredField("sparkContext")
     scField.setAccessible(true)

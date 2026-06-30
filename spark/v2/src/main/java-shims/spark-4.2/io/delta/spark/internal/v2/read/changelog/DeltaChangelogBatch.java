@@ -25,7 +25,6 @@ import java.util.Set;
 import java.util.function.Supplier;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
-import org.apache.spark.SparkThrowable;
 import org.apache.spark.paths.SparkPath;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.expressions.GenericInternalRow;
@@ -37,7 +36,6 @@ import org.apache.spark.sql.connector.read.PartitionReader;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.delta.DefaultRowCommitVersion$;
 import org.apache.spark.sql.delta.DeltaErrors;
-import org.apache.spark.sql.delta.DeltaIllegalStateException;
 import org.apache.spark.sql.delta.RowId$;
 import org.apache.spark.sql.execution.datasources.FilePartition;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
@@ -171,13 +169,15 @@ public class DeltaChangelogBatch implements Batch {
             }
           }
         } catch (Exception e) {
-          throwReadFailed("PROCESS_COMMIT_ACTIONS", e);
+          // A cause that already carries a Spark error class is rethrown unchanged by
+          // throwChangelogReadFailed; anything else is wrapped in a Delta error class.
+          DeltaErrors.throwChangelogReadFailed("PROCESS_COMMIT_ACTIONS", e);
         }
         partitions.addAll(commitRemoves);
         partitions.addAll(commitAdds);
       }
     } catch (Exception e) {
-      throwReadFailed("PLAN_INPUT_PARTITIONS", e);
+      DeltaErrors.throwChangelogReadFailed("PLAN_INPUT_PARTITIONS", e);
     }
     return partitions.toArray(new InputPartition[0]);
   }
@@ -190,26 +190,6 @@ public class DeltaChangelogBatch implements Batch {
     if (!SchemaUtils.isReadCompatible(schema, endDataSchema)) {
       DeltaErrors.throwChangelogSchemaChangeInRange(version);
     }
-  }
-
-  /**
-   * Surfaces a changelog read failure. A cause that already carries a Spark error class (e.g. an
-   * in-range schema/row-tracking rejection) is rethrown unchanged so its user-facing error class is
-   * preserved; anything else (e.g. a low-level IO error from the kernel) is wrapped in a
-   * {@code DELTA_CHANGELOG_READ_FAILED} sub-class.
-   */
-  private static void throwReadFailed(String errorSubClass, Exception cause) {
-    if (cause instanceof SparkThrowable) {
-      throw sneakyThrow(cause);
-    }
-    throw new DeltaIllegalStateException(
-        "DELTA_CHANGELOG_READ_FAILED." + errorSubClass, new String[0], cause);
-  }
-
-  /** Rethrows {@code e} as-is without declaring it, so a checked cause keeps its concrete type. */
-  @SuppressWarnings("unchecked")
-  private static <E extends Throwable> RuntimeException sneakyThrow(Throwable e) throws E {
-    throw (E) e;
   }
 
   /**
