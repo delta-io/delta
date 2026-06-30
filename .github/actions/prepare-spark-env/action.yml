@@ -138,3 +138,4 @@ runs:
         # run-tests.py / build/sbt read these to resolve the commit-qualified Spark artifacts.
         echo "SPARK_COMMIT=${{ steps.spark-source.outputs.spark_sha }}" >> "$GITHUB_ENV"
         echo "SPARK_ARTIFACT_VERSION=$SPARK_ARTIFACT_VERSION" >> "$GITHUB_ENV"
+        echo "USE_MAVEN_LOCAL_FOR_SOURCE_SPARK=true" >> "$GITHUB_ENV"
