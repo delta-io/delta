@@ -25,6 +25,7 @@ import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.engine.FileReadRequest;
 import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
 import io.delta.kernel.exceptions.KernelEngineException;
 import io.delta.kernel.exceptions.TableNotFoundException;
@@ -280,6 +281,137 @@ public class Checkpointer {
   /** Returns information about the most recent checkpoint. */
   public Optional<CheckpointMetaData> readLastCheckpointFile(Engine engine) {
     return loadMetadataFromFile(engine, 0 /* tries */);
+  }
+
+  /**
+   * Best-effort read of the raw bytes of {@value #LAST_CHECKPOINT_FILE_NAME} via the kernel's
+   * {@link io.delta.kernel.engine.FileSystemClient}.
+   *
+   * <p>Returns the file contents on success. Retries up to 3 times when the file appears empty or
+   * is in the process of being written. {@link FileNotFoundException} is not retried. Any
+   * unrecoverable failure surfaces as {@link Optional#empty()}. Callers should treat empty as "no
+   * checkpoint hint to ship" and skip updating downstream state.
+   *
+   * @param engine the {@link Engine} instance to use for file access
+   * @return the raw file bytes, or empty on any failure
+   */
+  public Optional<byte[]> readLastCheckpointHintBytes(Engine engine) {
+    return loadHintBytesFromFile(engine, 0 /* tries */);
+  }
+
+  /**
+   * Loads the raw bytes of the _last_checkpoint file.
+   *
+   * @param engine {@link Engine} instance to use
+   * @param tries Number of times already tried to load the bytes before this call.
+   */
+  private Optional<byte[]> loadHintBytesFromFile(Engine engine, int tries) {
+    if (tries >= READ_LAST_CHECKPOINT_FILE_MAX_RETRIES) {
+      logger.warn(
+          "Failed to load checkpoint hint bytes from file {} after {} attempts.",
+          lastCheckpointFilePath,
+          READ_LAST_CHECKPOINT_FILE_MAX_RETRIES);
+      return Optional.empty();
+    }
+
+    logger.info(
+        "Loading last checkpoint hint bytes from the _last_checkpoint file. Attempt: {} / {}",
+        tries + 1,
+        READ_LAST_CHECKPOINT_FILE_MAX_RETRIES);
+
+    final String path = lastCheckpointFilePath.toString();
+    try {
+      FileStatus fileStatus = engine.getFileSystemClient().getFileStatus(path);
+      long fileSize = fileStatus.getSize();
+      if (fileSize == 0) {
+        logger.warn(
+            "Last checkpoint file {} has no data. Retrying after 1sec. (current attempt = {})",
+            lastCheckpointFilePath,
+            tries);
+        try {
+          Thread.sleep(1000);
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+          return Optional.empty();
+        }
+        return loadHintBytesFromFile(engine, tries + 1);
+      }
+      if (fileSize > Integer.MAX_VALUE) {
+        logger.warn("_last_checkpoint file at {} is too large ({} bytes).", path, fileSize);
+        return Optional.empty();
+      }
+
+      FileReadRequest readRequest =
+          new FileReadRequest() {
+            @Override
+            public String getPath() {
+              return path;
+            }
+
+            @Override
+            public int getStartOffset() {
+              return 0;
+            }
+
+            @Override
+            public int getReadLength() {
+              return (int) fileSize;
+            }
+          };
+
+      try (CloseableIterator<ByteArrayInputStream> streamIter =
+          engine.getFileSystemClient().readFiles(singletonCloseableIterator(readRequest))) {
+        Optional<ByteArrayInputStream> streamOpt = InternalUtils.getSingularElement(streamIter);
+        if (!streamOpt.isPresent()) {
+          logger.warn(
+              "Last checkpoint file {} has no data. Retrying after 1sec. (current attempt = {})",
+              lastCheckpointFilePath,
+              tries);
+          try {
+            Thread.sleep(1000);
+          } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Optional.empty();
+          }
+          return loadHintBytesFromFile(engine, tries + 1);
+        }
+        byte[] bytes = streamOpt.get().readAllBytes();
+        if (bytes.length == 0) {
+          logger.warn(
+              "Last checkpoint file {} has no data. Retrying after 1sec. (current attempt = {})",
+              lastCheckpointFilePath,
+              tries);
+          try {
+            Thread.sleep(1000);
+          } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Optional.empty();
+          }
+          return loadHintBytesFromFile(engine, tries + 1);
+        }
+        return Optional.of(bytes);
+      }
+    } catch (Exception e) {
+      if (e instanceof FileNotFoundException
+          || (e instanceof KernelEngineException
+              && e.getCause() instanceof FileNotFoundException)) {
+        return Optional.empty(); // there's no point in retrying
+      }
+      String msg =
+          String.format(
+              "Failed to load checkpoint hint bytes from file %s. "
+                  + "It must be in the process of being written. "
+                  + "Retrying after 1sec. (current attempt of %s (max 3)",
+              lastCheckpointFilePath, tries);
+      logger.warn(msg, e);
+      try {
+        Thread.sleep(1000);
+      } catch (InterruptedException ie) {
+        Thread.currentThread().interrupt();
+        return Optional.empty();
+      }
+      return loadHintBytesFromFile(engine, tries + 1);
+    }
   }
 
   /**
