@@ -137,6 +137,25 @@ class CommitMetadataE2ESuite extends AnyFunSuite
     }
   }
 
+  test("commit tags are written to the Delta log JSON and can be read back") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val expectedTags = Map("k1" -> "v1", "k2" -> "v2").asJava
+
+      TableManager
+        .buildCreateTableTransaction(tablePath, testSchema, "engineInfo")
+        .withCommitTags(expectedTags)
+        .build(engine)
+        .commit(engine, emptyIterable())
+
+      // Read back the commitInfo from the written Delta log
+      val logPath = new io.delta.kernel.internal.fs.Path(tablePath + "/_delta_log")
+      val commitInfoOpt = io.delta.kernel.internal.actions.CommitInfo
+        .unsafeTryReadCommitInfoFromPublishedDeltaFile(engine, logPath, 0L)
+      assert(commitInfoOpt.isPresent)
+      assert(commitInfoOpt.get.getTags === expectedTags)
+    }
+  }
+
   test("maxKnownPublishedDeltaVersion is correctly passed for UPDATE operation") {
     withTempDirAndEngine { (tablePath, engine) =>
       val capturingCommitter = new CapturingCommitter()
