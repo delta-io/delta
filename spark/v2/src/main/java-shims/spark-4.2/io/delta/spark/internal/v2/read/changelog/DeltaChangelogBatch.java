@@ -168,20 +168,16 @@ public class DeltaChangelogBatch implements Batch {
               }
             }
           }
-        } catch (RuntimeException e) {
-          throw e;
         } catch (Exception e) {
-          // Delta error-class exceptions raised above are rethrown unchanged; other checked
-          // exceptions are wrapped in a Delta error class rather than a bare RuntimeException.
-          DeltaErrors.throwChangelogReadFailed("processing commit actions", e);
+          // A cause that already carries a Spark error class is rethrown unchanged by
+          // throwChangelogReadFailed; anything else is wrapped in a Delta error class.
+          DeltaErrors.throwChangelogReadFailed("PROCESS_COMMIT_ACTIONS", e);
         }
         partitions.addAll(commitRemoves);
         partitions.addAll(commitAdds);
       }
-    } catch (RuntimeException e) {
-      throw e;
     } catch (Exception e) {
-      DeltaErrors.throwChangelogReadFailed("planning input partitions", e);
+      DeltaErrors.throwChangelogReadFailed("PLAN_INPUT_PARTITIONS", e);
     }
     return partitions.toArray(new InputPartition[0]);
   }

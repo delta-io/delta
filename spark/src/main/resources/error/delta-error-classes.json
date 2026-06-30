@@ -404,8 +404,20 @@
   },
   "DELTA_CHANGELOG_READ_FAILED" : {
     "message" : [
-      "Failed to read the changelog while <context>."
+      "Failed to read the changelog."
     ],
+    "subClass" : {
+      "PLAN_INPUT_PARTITIONS" : {
+        "message" : [
+          "Failed while planning the input partitions."
+        ]
+      },
+      "PROCESS_COMMIT_ACTIONS" : {
+        "message" : [
+          "Failed while processing the commit actions."
+        ]
+      }
+    },
     "sqlState" : "XXKDS"
   },
   "DELTA_CHANGELOG_REQUIRES_ROW_TRACKING" : {

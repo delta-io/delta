@@ -2963,17 +2963,16 @@ trait DeltaErrorsSuiteBase
       errorClass = "DELTA_CHANGELOG_UNBOUNDED_RANGE",
       messageParameters = Array.empty[String])
     val passed = intercept[DeltaAnalysisException] {
-      DeltaErrors.throwChangelogReadFailed("processing commit actions", sparkThrowableCause)
+      DeltaErrors.throwChangelogReadFailed("PROCESS_COMMIT_ACTIONS", sparkThrowableCause)
     }
     assert(passed eq sparkThrowableCause)
 
-    // Any other cause is wrapped in DELTA_CHANGELOG_READ_FAILED.
+    // Any other cause is wrapped in a DELTA_CHANGELOG_READ_FAILED sub-class.
     val wrapped = intercept[DeltaIllegalStateException] {
-      DeltaErrors.throwChangelogReadFailed(
-        "planning input partitions", new RuntimeException("boom"))
+      DeltaErrors.throwChangelogReadFailed("PLAN_INPUT_PARTITIONS", new RuntimeException("boom"))
     }
-    checkError(wrapped, "DELTA_CHANGELOG_READ_FAILED", "XXKDS",
-      Map("context" -> "planning input partitions"))
+    checkError(wrapped, "DELTA_CHANGELOG_READ_FAILED.PLAN_INPUT_PARTITIONS", "XXKDS",
+      Map.empty[String, String])
   }
 
   private def setCustomContext(session: SparkSession, context: SparkContext): Unit = {

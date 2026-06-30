@@ -39,7 +39,7 @@ import org.apache.spark.sql.delta.util.JsonUtils
 import io.delta.exceptions
 import org.apache.hadoop.fs.{ChecksumException, Path}
 
-import org.apache.spark.{SparkConf, SparkEnv, SparkException}
+import org.apache.spark.{SparkConf, SparkEnv, SparkException, SparkThrowable}
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
@@ -700,16 +700,15 @@ trait DeltaErrorsBase
    * Read-time CDF batch read failed while reading the changelog (e.g. an IO error while iterating
    * commit actions or planning input partitions). A cause that already carries a Spark error class
    * is rethrown unchanged so its user-facing class is preserved. Anything else is wrapped in a
-   * Delta error class rather than a bare RuntimeException. `context` names the phase, e.g.
-   * "processing commit actions".
+   * Delta error class rather than a bare RuntimeException. `errorSubClass` names the phase, e.g.
+   * "PROCESS_COMMIT_ACTIONS".
    */
-  def throwChangelogReadFailed(context: String, cause: Throwable): Nothing = cause match {
-    case t: org.apache.spark.SparkThrowable => throw t.asInstanceOf[Throwable]
-    case t =>
+  def throwChangelogReadFailed(errorSubClass: String, cause: Throwable): Nothing = cause match {
+    case _: SparkThrowable => throw cause
+    case other =>
       throw new DeltaIllegalStateException(
-        errorClass = "DELTA_CHANGELOG_READ_FAILED",
-        messageParameters = Array(context),
-        cause = t)
+        errorClass = "DELTA_CHANGELOG_READ_FAILED." + errorSubClass,
+        cause = other)
   }
 
   def setTransactionVersionConflict(appId: String, version1: Long, version2: Long): Throwable = {
