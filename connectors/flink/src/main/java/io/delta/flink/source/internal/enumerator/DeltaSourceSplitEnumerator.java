@@ -19,8 +19,6 @@ import org.apache.flink.connector.file.src.assigners.FileSplitAssigner;
 import org.apache.flink.core.fs.Path;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import static io.delta.flink.source.internal.enumerator.DeltaSourceSplitEnumerator.AssignSplitStatus.NO_MORE_READERS;
-import static io.delta.flink.source.internal.enumerator.DeltaSourceSplitEnumerator.AssignSplitStatus.NO_MORE_SPLITS;
 
 /**
  * A base class for {@link SplitEnumerator} used by {@link io.delta.flink.source.DeltaSource}
@@ -62,7 +60,6 @@ public abstract class DeltaSourceSplitEnumerator implements
      */
     protected final LinkedHashMap<Integer, String> readersAwaitingSplit;
 
-
     protected DeltaSourceSplitEnumerator(
         Path deltaTablePath, FileSplitAssigner splitAssigner,
         SplitEnumeratorContext<DeltaSourceSplit> enumContext) {
@@ -88,12 +85,11 @@ public abstract class DeltaSourceSplitEnumerator implements
         }
 
         readersAwaitingSplit.put(subtaskId, requesterHostname);
-        assignSplits(subtaskId);
+        assignSplits();
     }
 
     @Override
     public void addSplitsBack(List<DeltaSourceSplit> splits, int subtaskId) {
-        LOG.debug("Bounded Delta Source Enumerator adds splits back: {}", splits);
         addSplits(splits);
     }
 
@@ -136,7 +132,7 @@ public abstract class DeltaSourceSplitEnumerator implements
         splitAssigner.addSplits((Collection<FileSourceSplit>) (Collection<?>) splits);
     }
 
-    protected AssignSplitStatus assignSplits() {
+    protected void assignSplits() {
         final Iterator<Entry<Integer, String>> awaitingReader =
             readersAwaitingSplit.entrySet().iterator();
 
@@ -156,27 +152,27 @@ public abstract class DeltaSourceSplitEnumerator implements
             if (nextSplit.isPresent()) {
                 FileSourceSplit split = nextSplit.get();
                 enumContext.assignSplit((DeltaSourceSplit) split, awaitingSubtask);
-                LOG.info("Assigned split to subtask {} : {}", awaitingSubtask, split);
                 awaitingReader.remove();
             } else {
                 // TODO for chunking load we will have to modify this to get a new chunk from Delta.
-                return NO_MORE_SPLITS;
+                handleNoMoreSplits(awaitingSubtask);
+
+                if (removeAwaitingReaderOnNoMoreSplits()) {
+                    awaitingReader.remove();
+                }
+
+                if (!continueAssigningAfterNoMoreSplits()) {
+                    return;
+                }
             }
         }
-
-        return NO_MORE_READERS;
     }
 
-    private void assignSplits(int subtaskId) {
-        AssignSplitStatus assignSplitStatus = assignSplits();
-        if (NO_MORE_SPLITS.equals(assignSplitStatus)) {
-            LOG.info("No more splits available for subtasks");
-            handleNoMoreSplits(subtaskId);
-        }
+    protected boolean removeAwaitingReaderOnNoMoreSplits() {
+        return false;
     }
 
-    public enum AssignSplitStatus {
-        NO_MORE_SPLITS,
-        NO_MORE_READERS
+    protected boolean continueAssigningAfterNoMoreSplits() {
+        return false;
     }
 }
