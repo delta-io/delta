@@ -16,15 +16,16 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
-import java.util.{Optional, UUID}
+import java.util.Optional
 
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.delta.CatalogOwnedTableFeature
 import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import io.delta.storage.commit.{GetCommitsResponse => JGetCommitsResponse, TableDescriptor}
-import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.hadoop.fs.Path
 
 abstract class InMemoryCommitCoordinatorSuite(batchSize: Int)
@@ -101,7 +102,7 @@ abstract class InMemoryCommitCoordinatorSuite(batchSize: Int)
     assert(cs3 ne cs2)
   }
 
-  test("empty getCommits returns zero only for UC table descriptors") {
+  test("empty getCommits returns zero only for catalog-managed table descriptors") {
     withTempTableDir { tempDir =>
       val logPath = DeltaLog.forTable(spark, tempDir.toString).logPath
       val coordinator = InMemoryCommitCoordinatorBuilder(batchSize).build(spark, Map.empty)
@@ -109,11 +110,14 @@ abstract class InMemoryCommitCoordinatorSuite(batchSize: Int)
       val nonUcTableDesc = new TableDescriptor(logPath, Optional.empty(), Map.empty.asJava)
       assert(coordinator.getCommits(nonUcTableDesc, null, null).getLatestTableVersion == -1L)
 
-      val ucTableDesc = new TableDescriptor(
+      val catalogManagedTableDesc = new TableDescriptor(
         logPath,
         Optional.empty(),
-        Map(UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> UUID.randomUUID().toString).asJava)
-      assert(coordinator.getCommits(ucTableDesc, null, null).getLatestTableVersion == 0L)
+        Map(
+          TableFeatureProtocolUtils.propertyKey(CatalogOwnedTableFeature) ->
+            TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED).asJava)
+      assert(
+        coordinator.getCommits(catalogManagedTableDesc, null, null).getLatestTableVersion == 0L)
     }
   }
 
