@@ -730,6 +730,46 @@ class SparkVersionsScriptTest:
             print(f"  ✗ Failed: {e}")
             return False
 
+    def test_source_build_artifact_version_format(self) -> bool:
+        """Test source-built Spark artifact version formatting from the shared helper."""
+        fake_sha = "b6bd005ac7549411ec4e7dc944d7a0e19fd56561"
+        try:
+            spec = importlib.util.spec_from_file_location("get_spark_version_info", self.script_path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+
+            artifact_version = module.compute_spark_artifact_version("4.2.0", fake_sha)
+            expected = "4.2.0-b6bd005ac754-SNAPSHOT"
+            if artifact_version != expected:
+                print(f"  ✗ artifact version: expected {expected}, got {artifact_version}")
+                return False
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(self.script_path),
+                    "--format-source-build-artifact-version",
+                    "--artifact-base-version",
+                    "4.2.0",
+                    "--spark-sha",
+                    fake_sha,
+                ],
+                cwd=self.delta_root,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            if result.stdout.strip() != expected:
+                print(f"  ✗ CLI artifact version: expected {expected}, got {result.stdout.strip()}")
+                return False
+
+            print("  ✓ source-built artifact version formatting: shared helper")
+            return True
+
+        except Exception as e:
+            print(f"  ✗ Failed: {e}")
+            return False
+
     def test_get_field(self) -> bool:
         """Test that --get-field works for various version formats."""
         if not self.ensure_json_exists():
@@ -809,6 +849,7 @@ def main():
         script_test5_passed = script_test.test_non_source_build_spark_versions()
         script_test6_passed = script_test.test_resolve_source_build()
         script_test6b_passed = script_test.test_resolve_source_build_cache_key()
+        script_test6c_passed = script_test.test_source_build_artifact_version_format()
         script_test7_passed = script_test.test_get_field()
 
         # Test cross-Spark build workflow
@@ -835,6 +876,7 @@ def main():
         print(f"  Non-Source-Build Spark Versions Output: {'✓ PASSED' if script_test5_passed else '✗ FAILED'}")
         print(f"  Source-Build Resolve (non-blocking):  {'✓ PASSED' if script_test6_passed else '✗ FAILED'}")
         print(f"  Source-Build Cache Key (non-block):   {'✓ PASSED' if script_test6b_passed else '✗ FAILED'}")
+        print(f"  Source-Build Artifact Version:          {'✓ PASSED' if script_test6c_passed else '✗ FAILED'}")
         print(f"  Get Field Functionality:                {'✓ PASSED' if script_test7_passed else '✗ FAILED'}")
         print("\nPart 2: Cross-Spark Build Tests")
         print(f"  Default publishM2 (with suffix):        {'✓ PASSED' if build_test1_passed else '✗ FAILED'}")
@@ -844,7 +886,8 @@ def main():
 
         all_tests_passed = (
             script_test1_passed and script_test2_passed and script_test3_passed and script_test4_passed and
-            script_test5_passed and script_test6_passed and script_test6b_passed and script_test7_passed and
+            script_test5_passed and script_test6_passed and script_test6b_passed and
+            script_test6c_passed and script_test7_passed and
             build_test1_passed and build_test2_passed and build_test3_passed
         )
 

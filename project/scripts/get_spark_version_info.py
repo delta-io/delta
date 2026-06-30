@@ -10,23 +10,26 @@ The script automatically generates the JSON file if it doesn't exist.
 Usage:
     # Get all Spark versions as JSON array
     python project/scripts/get_spark_version_info.py --all-spark-versions
-    # Output: ["4.0", "4.1"] or ["master", "4.0"] if master is present
 
-    # Get only released Spark versions (no snapshots)
+    # Get only released Spark versions (no snapshots/previews). Used by workflows that
+    # intentionally publish/test released Spark lines only.
     python project/scripts/get_spark_version_info.py --released-spark-versions
-    # Output: ["4.0", "4.1"] (excludes versions with -SNAPSHOT)
 
     # Get Spark versions with configured source-build defaults
     python project/scripts/get_spark_version_info.py --source-build-spark-versions
-    # Output: ["4.2"]
 
-    # Get Spark versions that use published Spark artifacts in the normal test job
+    # Get Spark test rows that do not need source-built Spark artifacts.
+    # This is distinct from released-only because a future preview/non-source row may
+    # still be a normal Spark test row.
     python project/scripts/get_spark_version_info.py --non-source-build-spark-versions
-    # Output: ["4.0", "4.1"]
 
     # Resolve a source-built Spark cache identity
     python project/scripts/get_spark_version_info.py --resolve-source-build --spark-version 4.2
     # Output: spark_version=4.2, spark_sha=..., spark_artifact_version=...
+
+    # Format a source-built Spark Maven artifact version after the Spark SHA is known
+    python project/scripts/get_spark_version_info.py --format-source-build-artifact-version \
+      --artifact-base-version 4.2.0 --spark-sha <full-sha>
 
     # Get a specific field for a Spark version (using short version or "master")
     python project/scripts/get_spark_version_info.py --get-field 4.0 targetJvm
@@ -38,6 +41,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -161,6 +165,19 @@ def compute_spark_m2_cache_key(
     )
 
 
+def short_spark_sha(spark_sha):
+    normalized = spark_sha.strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{7,40}", normalized):
+        raise ValueError(
+            "Invalid Spark SHA '{}'. Expected a 7 to 40 character git SHA.".format(spark_sha)
+        )
+    return normalized[:12]
+
+
+def compute_spark_artifact_version(artifact_base_version, spark_sha):
+    return "{}-{}-SNAPSHOT".format(artifact_base_version, short_spark_sha(spark_sha))
+
+
 def emit_output(values):
     github_output = os.environ.get("GITHUB_OUTPUT")
     if github_output:
@@ -192,7 +209,7 @@ def resolve_source_build(args, versions, repo_root):
         "master" if version_entry.get("isMaster", False) else version_entry["shortVersion"]
     )
     spark_sha = resolve_spark_sha(args.spark_repo, source_ref, Path(args.spark_dir))
-    spark_artifact_version = "{}-{}-SNAPSHOT".format(artifact_base_version, spark_sha[:12])
+    spark_artifact_version = compute_spark_artifact_version(artifact_base_version, spark_sha)
     build_script_path = repo_root / "project" / "scripts" / "build_spark.sh"
     cache_key = compute_spark_m2_cache_key(
         args.runner_label,
@@ -231,7 +248,7 @@ def main():
     parser.add_argument(
         "--released-spark-versions",
         action="store_true",
-        help="Output only released Spark versions (excluding snapshots) as JSON array"
+        help="Output released Spark versions only (exclude snapshots/previews) as JSON array"
     )
     parser.add_argument(
         "--source-build-spark-versions",
@@ -241,7 +258,7 @@ def main():
     parser.add_argument(
         "--non-source-build-spark-versions",
         action="store_true",
-        help="Output Spark versions without source-build default refs as JSON array"
+        help="Output Spark test rows that do not need source-built Spark artifacts as JSON array"
     )
     parser.add_argument(
         "--get-field",
@@ -255,8 +272,21 @@ def main():
         help="Resolve source-build cache metadata and emit GitHub outputs"
     )
     parser.add_argument(
+        "--format-source-build-artifact-version",
+        action="store_true",
+        help="Format the commit-qualified Maven version for a source-built Spark artifact"
+    )
+    parser.add_argument(
         "--spark-version",
         help="Spark compatibility line for --resolve-source-build"
+    )
+    parser.add_argument(
+        "--artifact-base-version",
+        help="Base Spark artifact version for --format-source-build-artifact-version"
+    )
+    parser.add_argument(
+        "--spark-sha",
+        help="Resolved Spark SHA for --format-source-build-artifact-version"
     )
     parser.add_argument(
         "--spark-source-ref",
@@ -287,6 +317,14 @@ def main():
     json_path = repo_root / "target" / "spark-versions.json"
 
     try:
+        if args.format_source_build_artifact_version:
+            if not args.artifact_base_version:
+                parser.error("--format-source-build-artifact-version requires --artifact-base-version")
+            if not args.spark_sha:
+                parser.error("--format-source-build-artifact-version requires --spark-sha")
+            print(compute_spark_artifact_version(args.artifact_base_version, args.spark_sha))
+            return
+
         versions = load_spark_versions(json_path, repo_root)
 
         if args.all_spark_versions:

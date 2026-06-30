@@ -16,6 +16,8 @@
 #
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 SPARK_SOURCE_REF="${SPARK_SOURCE_REF:-${SPARK_COMMIT:-master}}"
 SPARK_REPO="${SPARK_REPO:-https://github.com/apache/spark.git}"
 SPARK_DIR="${SPARK_DIR:-/tmp/spark}"
@@ -67,7 +69,14 @@ if [[ -z "${SPARK_BASE_VERSION:-}" ]]; then
   fi
 fi
 
-SPARK_ARTIFACT_VERSION="${SPARK_ARTIFACT_VERSION:-${SPARK_BASE_VERSION}-${SPARK_SHORT_SHA}-SNAPSHOT}"
+if [[ -z "${SPARK_ARTIFACT_VERSION:-}" ]]; then
+  SPARK_ARTIFACT_VERSION="$(
+    python3 "$REPO_ROOT/project/scripts/get_spark_version_info.py" \
+      --format-source-build-artifact-version \
+      --artifact-base-version "$SPARK_BASE_VERSION" \
+      --spark-sha "$ACTUAL_SHA"
+  )"
+fi
 
 echo "Building Spark ref $SPARK_SOURCE_REF ($ACTUAL_SHA) as Maven version $SPARK_ARTIFACT_VERSION"
 
