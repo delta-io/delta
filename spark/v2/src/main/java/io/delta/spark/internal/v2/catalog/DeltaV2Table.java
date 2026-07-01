@@ -333,6 +333,15 @@ public class DeltaV2Table
   }
 
   /**
+   * Returns the version of the snapshot loaded when this table was constructed, as a String.
+   *
+   * <p>Add {@code @Override} annotation eventually: TODO(#7128)
+   */
+  public String version() {
+    return Long.toString(initialSnapshot.getVersion());
+  }
+
+  /**
    * Exposes file-level and row-tracking metadata via a single DSv2 metadata struct column.
    *
    * <p>This always returns one metadata column named {@code _metadata}. The struct contains Spark
