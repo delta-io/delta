@@ -272,7 +272,7 @@ When an `add` supersedes an existing entry (e.g., `OPTIMIZE` backfilling stats o
 
 ## V4 Content Entry Schema
 
-Both root and leaf manifests use a single unified entry schema, following the [Iceberg V4 content entry design](https://github.com/apache/iceberg/pull/15049). Certain fields are only applicable to specific `content_type` values (noted below). Manifests are Parquet files; **projection must be done by field ID, not by name.** Writers must set Parquet `field_id` metadata on all fields so that readers can resolve them by field ID.
+Both root and leaf manifests use a single unified entry schema, following the [Iceberg V4 content entry design](https://github.com/apache/iceberg/pull/15049). Certain fields are only applicable to specific `content_type` values (noted below). Manifests are Parquet files. Writers must set Parquet `field_id` metadata on all fields so that readers can resolve them by field ID, and **readers must resolve fields by field ID, not by name.**
 
 Leaf manifests contain entries for data files only (`content_type` = DATA). They cannot reference other manifests: this enforces a two-level tree hierarchy (root -> leaves only).
 
