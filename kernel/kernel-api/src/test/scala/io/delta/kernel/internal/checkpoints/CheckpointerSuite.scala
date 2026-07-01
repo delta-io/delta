@@ -29,12 +29,7 @@ import io.delta.kernel.internal.checkpoints.Checkpointer.findLastCompleteCheckpo
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames.checkpointFileSingular
 import io.delta.kernel.internal.util.Utils
-import io.delta.kernel.test.{
-  BaseMockFileSystemClient,
-  BaseMockJsonHandler,
-  MockFileSystemClientUtils,
-  VectorTestUtils
-}
+import io.delta.kernel.test.{BaseMockFileSystemClient, BaseMockJsonHandler, MockFileSystemClientUtils, VectorTestUtils}
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 
@@ -155,7 +150,8 @@ class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     assert(!hintBytes.isPresent) // size guard fires before readFiles
   }
 
-  test("read last checkpoint hint bytes returns empty when content is empty after a non-zero stat") {
+  test(
+    "read last checkpoint hint bytes returns empty when content is empty after a non-zero stat") {
     val fsClient = new MockLastCheckpointHintBytesFileSystemClient()
     val hintBytes = new Checkpointer(EMPTY_CONTENT_LAST_CHECKPOINT_FILE_TABLE)
       .readLastCheckpointHintBytes(mockEngine(fileSystemClient = fsClient))
@@ -361,6 +357,7 @@ object CheckpointerSuite extends VectorTestUtils {
     override def getSize: Int = 0
   }
 
+  // scalastyle:off line.size.limit
   // A real V2 _last_checkpoint (from golden/v2-checkpoint-json)
   val SAMPLE_LAST_CHECKPOINT_HINT_BYTES: Array[Byte] =
     ("""{"version":2,"size":9,"sizeInBytes":19554,"numOfAddFiles":4,"v2Checkpoint":{""" +
@@ -379,6 +376,7 @@ object CheckpointerSuite extends VectorTestUtils {
       """"path":"00000000000000000002.checkpoint.0000000002.0000000002.0a8d73ee-aa83-49d0-9583-c99db75b89b2.parquet",""" +
       """"sizeInBytes":9296,"modificationTime":1714496115788}]},""" +
       """"checksum":"d09f95a326aab562c60d415a32ddd216"}""").getBytes(StandardCharsets.UTF_8)
+  // scalastyle:on line.size.limit
   val VALID_LAST_CHECKPOINT_FILE_TABLE = new Path("/valid")
   val ZERO_SIZED_LAST_CHECKPOINT_FILE_TABLE = new Path("/zero_sized")
   val INVALID_LAST_CHECKPOINT_FILE_TABLE = new Path("/invalid")
