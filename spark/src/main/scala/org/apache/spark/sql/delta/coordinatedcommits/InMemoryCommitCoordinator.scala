@@ -35,7 +35,6 @@ import io.delta.storage.commit.{
   TableIdentifier
 }
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
-import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -163,25 +162,8 @@ class InMemoryCommitCoordinator(val batchSize: Long)
       val commitsInRange = tableData.commitsMap.range(
         effectiveStartVersion, effectiveEndVersion + 1)
       new JGetCommitsResponse(
-        commitsInRange.values.toSeq.asJava,
-        latestTableVersionForGetCommits(tableDesc, tableData))
+        commitsInRange.values.toSeq.asJava, tableData.lastRatifiedCommitVersion)
     }
-  }
-
-  private def latestTableVersionForGetCommits(
-      tableDesc: TableDescriptor,
-      tableData: PerTableData): Long = {
-    if (tableData.active) {
-      tableData.lastRatifiedCommitVersion
-    } else if (isCatalogManagedTableDesc(tableDesc)) {
-      0L
-    } else {
-      -1L
-    }
-  }
-
-  private def isCatalogManagedTableDesc(tableDesc: TableDescriptor): Boolean = {
-    tableDesc.getTableConf.asScala.contains(UCCommitCoordinatorClient.UC_TABLE_ID_KEY)
   }
 
   override protected[sql] def registerBackfill(
@@ -209,11 +191,12 @@ class InMemoryCommitCoordinator(val batchSize: Long)
     val newPerTableData = new PerTableData(currentVersion + 1)
     perTableMap.compute(logPath, (_, existingData) => {
       if (existingData != null) {
-        if (existingData.active) {
+        if (existingData.lastRatifiedCommitVersion != -1) {
           throw new IllegalStateException(
             s"Table $logPath already exists in the commit-coordinator.")
         }
-        // If this inactive table was just pre-registered and there is another
+        // If lastRatifiedCommitVersion is -1 i.e. the commit-coordinator has never attempted any
+        // commit for this table => this table was just pre-registered. If there is another
         // pre-registration request for an older version, we reject it and table can't go backward.
         if (currentVersion < existingData.maxCommitVersion) {
           throw new IllegalStateException(

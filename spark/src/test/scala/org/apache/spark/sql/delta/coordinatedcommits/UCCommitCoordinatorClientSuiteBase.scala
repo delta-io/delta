@@ -62,8 +62,6 @@ trait UCCommitCoordinatorClientSuiteBase extends CommitCoordinatorClientImplSuit
 
   protected var ucCommitCoordinator: InMemoryUCCommitCoordinator = _
 
-  override protected def expectedEmptyGetCommitsLatestTableVersion: Long = 0
-
   protected override def beforeAll(): Unit = {
     val tmpDirName = System.getProperty("java.io.tmpdir")
     val tmpDir = new File(tmpDirName)

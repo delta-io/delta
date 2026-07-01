@@ -356,13 +356,13 @@ class InMemoryUCCommitCoordinator {
       endVersion: Option[Long]): JGetCommitsResponse = {
     val tableUUID = UUID.fromString(tableId)
     val path = Option(perTableMap.get(tableUUID)).map(_.path).getOrElse {
-      return new JGetCommitsResponse(Seq.empty.asJava, 0L)
+      return new JGetCommitsResponse(Seq.empty.asJava, -1)
     }
     validateTableURI(path, tableUri, UCCoordinatedCommitsRequestType.GET_COMMITS)
     withLock[JGetCommitsResponse](tableUUID) {
       val tableData = perTableMap.get(tableUUID)
       val commits = tableData.getCommits(startVersion, endVersion)
-      new JGetCommitsResponse(commits.asJava, math.max(tableData.lastRatifiedCommitVersion, 0L))
+      new JGetCommitsResponse(commits.asJava, tableData.lastRatifiedCommitVersion)
     }
   }
 }
