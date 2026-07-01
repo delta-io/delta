@@ -25,14 +25,10 @@ import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
-import java.util.stream.Stream;
 import org.apache.spark.sql.AnalysisException;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.Arguments;
-import org.junit.jupiter.params.provider.MethodSource;
 
 /**
  * Integration tests for catalog-routed CDC entrypoint (TableCatalog.loadChangelog).
@@ -996,20 +992,12 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
   }
 
   /**
-   * Every Delta-supported type widening (delta.enableTypeWidening) applied mid-range is read
-   * compatible: rows written before the change are upcast to the end (wider) type. The value is
-   * compared as a string so one assertion covers every numeric/temporal target type.
+   * A supported type-widening mid-range change (INT to LONG, with delta.enableTypeWidening) is read
+   * compatible: rows written before the change are upcast to the end (wider) type. This exercises
+   * the changelog wiring; the widening rules themselves are covered by SchemaUtils.isReadCompatible.
    */
-  @ParameterizedTest(name = "{0} -> {1}")
-  @MethodSource("typeWideningCases")
-  public void testChangelogAllowsTypeWideningMidRange(
-      String fromType,
-      String toType,
-      String v1Literal,
-      String v3Literal,
-      String expectedV1,
-      String expectedV3)
-      throws Exception {
+  @Test
+  public void testChangelogAllowsTypeWideningMidRange() throws Exception {
     String tableName = "dsv2_cdc_catalog_widen_" + System.nanoTime();
 
     withTable(
@@ -1017,14 +1005,14 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
         () -> {
           spark.sql(
               String.format(
-                  "CREATE TABLE %s (id BIGINT, val %s) USING delta TBLPROPERTIES "
+                  "CREATE TABLE %s (id BIGINT, val INT) USING delta TBLPROPERTIES "
                       + "('delta.enableDeletionVectors'='false', 'delta.enableRowTracking'='true', "
-                      + "'delta.enableTypeWidening'='true', 'delta.feature.timestampNtz'='supported')",
-                  tableName, fromType));
-          spark.sql(String.format("INSERT INTO %s VALUES (1, %s)", tableName, v1Literal)); // v1
+                      + "'delta.enableTypeWidening'='true')",
+                  tableName));
+          spark.sql(String.format("INSERT INTO %s VALUES (1, 10)", tableName)); // v1: val is INT
           spark.sql(
-              String.format("ALTER TABLE %s ALTER COLUMN val TYPE %s", tableName, toType)); // v2
-          spark.sql(String.format("INSERT INTO %s VALUES (2, %s)", tableName, v3Literal)); // v3
+              String.format("ALTER TABLE %s ALTER COLUMN val TYPE BIGINT", tableName)); // v2: widen
+          spark.sql(String.format("INSERT INTO %s VALUES (2, 20)", tableName)); // v3: val is LONG
 
           withSQLConf(
               "spark.databricks.delta.v2.enableMode",
@@ -1034,35 +1022,16 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
                     spark
                         .sql(
                             String.format(
-                                "SELECT id, CAST(val AS STRING) AS val, _change_type FROM %s "
+                                "SELECT id, val, _change_type FROM %s "
                                     + "CHANGES FROM VERSION 1 TO VERSION 3",
                                 tableName))
                         .orderBy("id")
                         .collectAsList();
                 assertEquals(2, rows.size(), "Expected both inserts across the widening");
-                // v1 was written as fromType; it must read back upcast to toType.
-                assertEquals(expectedV1, rows.get(0).getString(1), "v1 value upcast to " + toType);
-                assertEquals(expectedV3, rows.get(1).getString(1), "v3 value as " + toType);
+                // v1 was written as INT; it must read back as the widened LONG value.
+                assertEquals(10L, rows.get(0).getLong(1), "v1 val should read back as LONG 10");
+                assertEquals(20L, rows.get(1).getLong(1), "v3 val should be LONG 20");
               });
         });
-  }
-
-  static Stream<Arguments> typeWideningCases() {
-    return Stream.of(
-        Arguments.of("INT", "BIGINT", "10", "20", "10", "20"),
-        Arguments.of("TINYINT", "INT", "10", "20", "10", "20"),
-        Arguments.of("SMALLINT", "BIGINT", "10", "20", "10", "20"),
-        Arguments.of("FLOAT", "DOUBLE", "1.5", "2.5", "1.5", "2.5"),
-        Arguments.of("INT", "DOUBLE", "10", "20", "10.0", "20.0"),
-        Arguments.of("DECIMAL(10,2)", "DECIMAL(20,4)", "1.25", "2.50", "1.2500", "2.5000"),
-        Arguments.of("INT", "DECIMAL(20,0)", "10", "20", "10", "20"),
-        Arguments.of("BIGINT", "DECIMAL(20,0)", "10", "20", "10", "20"),
-        Arguments.of(
-            "DATE",
-            "TIMESTAMP_NTZ",
-            "DATE'2020-01-01'",
-            "DATE'2021-06-15'",
-            "2020-01-01 00:00:00",
-            "2021-06-15 00:00:00"));
   }
 }
