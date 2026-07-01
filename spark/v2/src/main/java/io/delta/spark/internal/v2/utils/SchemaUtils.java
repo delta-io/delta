@@ -172,18 +172,18 @@ public class SchemaUtils {
       org.apache.spark.sql.types.StructType endSchema) {
     requireNonNull(existingSchema, "existingSchema is null");
     requireNonNull(endSchema, "endSchema is null");
-    org.apache.spark.sql.delta.schema.SchemaUtils$ schemaUtils =
-        org.apache.spark.sql.delta.schema.SchemaUtils$.MODULE$;
-    return schemaUtils.isReadCompatible(
+    scala.collection.immutable.Seq<String> noPartitionColumns =
+        scala.collection.immutable.Seq$.MODULE$.<String>empty();
+    return org.apache.spark.sql.delta.schema.SchemaUtils$.MODULE$.isReadCompatible(
         existingSchema,
         endSchema,
         /* forbidTightenNullability */ true,
-        schemaUtils.isReadCompatible$default$4(),
+        /* allowMissingColumns */ false,
         /* typeWideningMode */ org.apache.spark.sql.delta.TypeWideningMode.AllTypeWidening$.MODULE$,
-        schemaUtils.isReadCompatible$default$6(),
-        schemaUtils.isReadCompatible$default$7(),
-        schemaUtils.isReadCompatible$default$8(),
-        schemaUtils.isReadCompatible$default$9());
+        /* newPartitionColumns */ noPartitionColumns,
+        /* oldPartitionColumns */ noPartitionColumns,
+        /* caseSensitive */ true,
+        /* allowVoidTypeChange */ false);
   }
 
   //////////////////////
