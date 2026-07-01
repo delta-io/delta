@@ -19,7 +19,11 @@ import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
 import static io.delta.kernel.internal.util.VectorUtils.toJavaMap;
 
 import io.delta.kernel.data.Row;
+import io.delta.kernel.internal.actions.Format;
+import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.data.GenericRow;
+import io.delta.kernel.internal.util.JsonUtils;
+import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.StringType;
@@ -27,48 +31,161 @@ import io.delta.kernel.types.StructType;
 import java.util.*;
 
 public class CheckpointMetaData {
-  public static CheckpointMetaData fromRow(Row row) {
-    return new CheckpointMetaData(
-        row.getLong(0),
-        row.getLong(1),
-        row.isNullAt(2) ? Optional.empty() : Optional.of(row.getLong(2)),
-        row.isNullAt(3) ? Map.of() : toJavaMap(row.getMap(3)));
-  }
+
+  /** Schema of {@code v2Checkpoint.nonFileActions[].metaData}. */
+  private static final StructType METADATA_SCHEMA =
+      new StructType()
+          .add("id", StringType.STRING, false /* nullable */)
+          .add("name", StringType.STRING, true /* nullable */)
+          .add("description", StringType.STRING, true /* nullable */)
+          .add("format", Format.FULL_SCHEMA, false /* nullable */)
+          .add("schemaString", StringType.STRING, false /* nullable */)
+          .add(
+              "partitionColumns",
+              new ArrayType(StringType.STRING, false /* contains null */),
+              false /* nullable */)
+          .add(
+              "configuration",
+              new MapType(StringType.STRING, StringType.STRING, false),
+              false /* nullable */)
+          .add("createdTime", LongType.LONG, true /* nullable */);
+
+  /** Schema of a single entry of {@code v2Checkpoint.nonFileActions}. */
+  private static final StructType NON_FILE_ACTION_SCHEMA =
+      new StructType()
+          .add("protocol", Protocol.FULL_SCHEMA, true /* nullable */)
+          .add("metaData", METADATA_SCHEMA, true /* nullable */)
+          .add("checkpointMetadata", CheckpointMetadataAction.FULL_SCHEMA, true /* nullable */);
+
+  /** Schema of the {@code v2Checkpoint} block. */
+  private static final StructType V2_CHECKPOINT_SCHEMA =
+      new StructType()
+          .add("path", StringType.STRING, false /* nullable */)
+          .add("sizeInBytes", LongType.LONG, false /* nullable */)
+          .add("modificationTime", LongType.LONG, false /* nullable */)
+          .add(
+              "nonFileActions",
+              new ArrayType(NON_FILE_ACTION_SCHEMA, false /* contains null */),
+              true /* nullable */)
+          .add(
+              "sidecarFiles",
+              new ArrayType(SidecarFile.READ_SCHEMA, false /* contains null */),
+              true /* nullable */);
 
   public static StructType READ_SCHEMA =
       new StructType()
           .add("version", LongType.LONG, false /* nullable */)
           .add("size", LongType.LONG, false /* nullable */)
-          .add("parts", LongType.LONG)
-          .add("tags", new MapType(StringType.STRING, StringType.STRING, false));
+          .add("parts", LongType.LONG, true /* nullable */)
+          .add("sizeInBytes", LongType.LONG, true /* nullable */)
+          .add("numOfAddFiles", LongType.LONG, true /* nullable */)
+          .add("v2Checkpoint", V2_CHECKPOINT_SCHEMA, true /* nullable */)
+          .add("checksum", StringType.STRING, true /* nullable */)
+          .add(
+              "tags",
+              new MapType(StringType.STRING, StringType.STRING, false),
+              true /* nullable */);
+
+  private static final int VERSION_ORDINAL = 0;
+  private static final int SIZE_ORDINAL = 1;
+  private static final int PARTS_ORDINAL = 2;
+  private static final int SIZE_IN_BYTES_ORDINAL = 3;
+  private static final int NUM_OF_ADD_FILES_ORDINAL = 4;
+  private static final int V2_CHECKPOINT_ORDINAL = 5;
+  private static final int CHECKSUM_ORDINAL = 6;
+  private static final int TAGS_ORDINAL = 7;
+
+  public static CheckpointMetaData fromRow(Row row) {
+    return new CheckpointMetaData(
+        row.getLong(VERSION_ORDINAL),
+        row.getLong(SIZE_ORDINAL),
+        row.isNullAt(PARTS_ORDINAL) ? Optional.empty() : Optional.of(row.getLong(PARTS_ORDINAL)),
+        row.isNullAt(SIZE_IN_BYTES_ORDINAL)
+            ? Optional.empty()
+            : Optional.of(row.getLong(SIZE_IN_BYTES_ORDINAL)),
+        row.isNullAt(NUM_OF_ADD_FILES_ORDINAL)
+            ? Optional.empty()
+            : Optional.of(row.getLong(NUM_OF_ADD_FILES_ORDINAL)),
+        row.isNullAt(V2_CHECKPOINT_ORDINAL)
+            ? Optional.empty()
+            : Optional.of(row.getStruct(V2_CHECKPOINT_ORDINAL)),
+        row.isNullAt(CHECKSUM_ORDINAL)
+            ? Optional.empty()
+            : Optional.of(row.getString(CHECKSUM_ORDINAL)),
+        row.isNullAt(TAGS_ORDINAL) ? Map.of() : toJavaMap(row.getMap(TAGS_ORDINAL)));
+  }
 
   public final long version;
   public final long size;
   public final Optional<Long> parts;
+  public final Optional<Long> sizeInBytes;
+  public final Optional<Long> numOfAddFiles;
+  public final Optional<Row> v2Checkpoint;
+  public final Optional<String> checksum;
   public final Map<String, String> tags;
 
   public CheckpointMetaData(long version, long size, Optional<Long> parts) {
-    this(version, size, parts, Map.of());
+    this(
+        version,
+        size,
+        parts,
+        Optional.empty() /* sizeInBytes */,
+        Optional.empty() /* numOfAddFiles */,
+        Optional.empty() /* v2Checkpoint */,
+        Optional.empty() /* checksum */,
+        Map.of() /* tags */);
   }
 
   public CheckpointMetaData(
       long version, long size, Optional<Long> parts, Map<String, String> tags) {
+    this(
+        version,
+        size,
+        parts,
+        Optional.empty() /* sizeInBytes */,
+        Optional.empty() /* numOfAddFiles */,
+        Optional.empty() /* v2Checkpoint */,
+        Optional.empty() /* checksum */,
+        tags);
+  }
+
+  public CheckpointMetaData(
+      long version,
+      long size,
+      Optional<Long> parts,
+      Optional<Long> sizeInBytes,
+      Optional<Long> numOfAddFiles,
+      Optional<Row> v2Checkpoint,
+      Optional<String> checksum,
+      Map<String, String> tags) {
     this.version = version;
     this.size = size;
     this.parts = parts;
+    this.sizeInBytes = sizeInBytes;
+    this.numOfAddFiles = numOfAddFiles;
+    this.v2Checkpoint = v2Checkpoint;
+    this.checksum = checksum;
     this.tags = tags;
   }
 
   public Row toRow() {
     Map<Integer, Object> dataMap = new HashMap<>();
-    dataMap.put(0, version);
-    dataMap.put(1, size);
-    parts.ifPresent(aLong -> dataMap.put(2, aLong));
+    dataMap.put(VERSION_ORDINAL, version);
+    dataMap.put(SIZE_ORDINAL, size);
+    parts.ifPresent(aLong -> dataMap.put(PARTS_ORDINAL, aLong));
+    sizeInBytes.ifPresent(aLong -> dataMap.put(SIZE_IN_BYTES_ORDINAL, aLong));
+    numOfAddFiles.ifPresent(aLong -> dataMap.put(NUM_OF_ADD_FILES_ORDINAL, aLong));
+    v2Checkpoint.ifPresent(row -> dataMap.put(V2_CHECKPOINT_ORDINAL, row));
+    checksum.ifPresent(str -> dataMap.put(CHECKSUM_ORDINAL, str));
     if (!tags.isEmpty()) {
-      dataMap.put(3, stringStringMapValue(tags));
+      dataMap.put(TAGS_ORDINAL, stringStringMapValue(tags));
     }
 
     return new GenericRow(READ_SCHEMA, dataMap);
+  }
+
+  public String toJson() {
+    return JsonUtils.rowToJson(toRow());
   }
 
   @Override
@@ -80,6 +197,14 @@ public class CheckpointMetaData {
         + size
         + ", parts="
         + parts
+        + ", sizeInBytes="
+        + sizeInBytes
+        + ", numOfAddFiles="
+        + numOfAddFiles
+        + ", v2Checkpoint="
+        + (v2Checkpoint.isPresent() ? "present" : "empty")
+        + ", checksum="
+        + checksum
         + ", tags="
         + tags
         + '}';
