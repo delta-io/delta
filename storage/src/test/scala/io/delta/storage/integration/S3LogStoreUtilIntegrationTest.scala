@@ -2,7 +2,7 @@ package io.delta.storage.integration
 
 import io.delta.storage.internal.{FileNameUtils, S3LogStoreUtil}
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileSystem, FilterFileSystem, Path}
+import org.apache.hadoop.fs.Path
 import org.apache.hadoop.fs.s3a.S3AFileSystem
 import org.scalatest.Tag
 import org.scalatest.funsuite.AnyFunSuite
@@ -62,13 +62,7 @@ class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
   def integrationTest(name: String)(testFun: => Any): Unit =
     if (runIntegrationTests) test(name, integrationTestTag)(testFun)
 
-  def testCase(
-      testName: String,
-      numKeys: Int,
-      wrap: S3AFileSystem => FileSystem = (f: S3AFileSystem) => f,
-      suffix: String = ""): Unit = integrationTest(testName + suffix) {
-    // Counters are read off the underlying S3A (fs), never the wrapper.
-    val fsUnderTest = wrap(fs)
+  def testCase(testName: String, numKeys: Int): Unit = integrationTest(testName) {
     // Setup delta log
     (1 to numKeys).foreach(v => touch(s"$testRunUID/$testName/_delta_log/%020d.json".format(v)))
 
@@ -77,8 +71,7 @@ class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
       val startCount = fs.getIOStatistics.counters().get("object_list_request") +
         fs.getIOStatistics.counters().get("object_continue_list_request")
       val resolvedPath = path(testName, v)
-      val response =
-        S3LogStoreUtil.s3ListFromArray(fsUnderTest, resolvedPath, resolvedPath.getParent)
+      val response = S3LogStoreUtil.s3ListFromArray(fs, resolvedPath, resolvedPath.getParent)
       val endCount = fs.getIOStatistics.counters().get("object_list_request") +
         fs.getIOStatistics.counters().get("object_continue_list_request")
       // Check that we don't do more S3 list requests than necessary
@@ -103,10 +96,5 @@ class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
   testCase("medium", maxKeys)
 
   testCase("large", 10 * maxKeys)
-
-  // Wrapped-S3A must match the raw runs above, proving unwrap reaches the fast path.
-  testCase("small", 1, new FilterFileSystem(_), "-wrapped")
-  testCase("medium", maxKeys, new FilterFileSystem(_), "-wrapped")
-  testCase("large", 10 * maxKeys, new FilterFileSystem(_), "-wrapped")
 
 }

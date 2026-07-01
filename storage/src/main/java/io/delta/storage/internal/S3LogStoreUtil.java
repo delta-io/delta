@@ -102,7 +102,7 @@ public final class S3LogStoreUtil {
      * Unwraps {@link FilterFileSystem} wrappers that delegate to a real {@link S3AFileSystem}.
      */
     static FileSystem unwrap(FileSystem fs) {
-        while (fs instanceof FilterFileSystem) {
+        while (!(fs instanceof S3AFileSystem) && fs instanceof FilterFileSystem) {
             fs = ((FilterFileSystem) fs).getRawFileSystem();
         }
         return fs;
