@@ -247,7 +247,7 @@ Backreferences enable efficient MDV creation during manifest commits: writers ca
 
 ### Add with Backreference (Re-add)
 
-When an `add` supersedes an existing entry (e.g., `OPTIMIZE` backfilling stats on a file), the backreference points to the old entry:
+When an `add` supersedes an existing manifest entry (e.g., `OPTIMIZE` backfilling stats on a file), the backreference points to the old entry:
 
 ```json
 {
