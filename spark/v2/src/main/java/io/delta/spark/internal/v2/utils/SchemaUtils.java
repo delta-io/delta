@@ -163,27 +163,26 @@ public class SchemaUtils {
   /**
    * Whether data written under {@code existingSchema} can be read using {@code endSchema}. Backed
    * by Delta's read-compatibility check, which accepts additive changes (new columns, relaxed
-   * nullability), supported type widening (e.g. INT to LONG; the reader upcasts older data to the
-   * end type), and ignores internal field metadata, unlike strict equality. Nullability tightening
-   * is rejected because older data may contain nulls.
+   * nullability) and ignores internal field metadata, unlike strict equality. Nullability
+   * tightening is rejected because older data may contain nulls.
    */
   public static boolean isReadCompatible(
       org.apache.spark.sql.types.StructType existingSchema,
       org.apache.spark.sql.types.StructType endSchema) {
     requireNonNull(existingSchema, "existingSchema is null");
     requireNonNull(endSchema, "endSchema is null");
-    scala.collection.immutable.Seq<String> noPartitionColumns =
-        scala.collection.immutable.Seq$.MODULE$.<String>empty();
-    return org.apache.spark.sql.delta.schema.SchemaUtils$.MODULE$.isReadCompatible(
+    org.apache.spark.sql.delta.schema.SchemaUtils$ delta =
+        org.apache.spark.sql.delta.schema.SchemaUtils$.MODULE$;
+    return delta.isReadCompatible(
         existingSchema,
         endSchema,
         /* forbidTightenNullability */ true,
-        /* allowMissingColumns */ false,
-        /* typeWideningMode */ org.apache.spark.sql.delta.TypeWideningMode.AllTypeWidening$.MODULE$,
-        /* newPartitionColumns */ noPartitionColumns,
-        /* oldPartitionColumns */ noPartitionColumns,
-        /* caseSensitive */ true,
-        /* allowVoidTypeChange */ false);
+        delta.isReadCompatible$default$4(),
+        delta.isReadCompatible$default$5(),
+        delta.isReadCompatible$default$6(),
+        delta.isReadCompatible$default$7(),
+        delta.isReadCompatible$default$8(),
+        delta.isReadCompatible$default$9());
   }
 
   //////////////////////

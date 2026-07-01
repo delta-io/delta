@@ -992,12 +992,12 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
   }
 
   /**
-   * A supported type-widening mid-range change (INT to LONG, with delta.enableTypeWidening) is read
-   * compatible: rows written before the change are upcast to the end (wider) type. This exercises
-   * the changelog wiring; the widening rules themselves are covered by SchemaUtils.isReadCompatible.
+   * A type-widening mid-range change (INT to LONG) is a schema change that the changelog read does
+   * not support, so it must be rejected with {@code DELTA_CHANGELOG_SCHEMA_CHANGE_IN_RANGE}. The
+   * check uses SchemaUtils.isReadCompatible, which does not permit type changes.
    */
   @Test
-  public void testChangelogAllowsTypeWideningMidRange() throws Exception {
+  public void testChangelogRejectsTypeWideningMidRange() throws Exception {
     String tableName = "dsv2_cdc_catalog_widen_" + System.nanoTime();
 
     withTable(
@@ -1018,19 +1018,19 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
               "spark.databricks.delta.v2.enableMode",
               "STRICT",
               () -> {
-                List<Row> rows =
-                    spark
-                        .sql(
-                            String.format(
-                                "SELECT id, val, _change_type FROM %s "
-                                    + "CHANGES FROM VERSION 1 TO VERSION 3",
-                                tableName))
-                        .orderBy("id")
-                        .collectAsList();
-                assertEquals(2, rows.size(), "Expected both inserts across the widening");
-                // v1 was written as INT; it must read back as the widened LONG value.
-                assertEquals(10L, rows.get(0).getLong(1), "v1 val should read back as LONG 10");
-                assertEquals(20L, rows.get(1).getLong(1), "v3 val should be LONG 20");
+                Exception ex =
+                    assertThrows(
+                        Exception.class,
+                        () ->
+                            spark
+                                .sql(
+                                    String.format(
+                                        "SELECT * FROM %s CHANGES FROM VERSION 1 TO VERSION 3",
+                                        tableName))
+                                .collectAsList());
+                assertTrue(
+                    ex.getMessage().contains("DELTA_CHANGELOG_SCHEMA_CHANGE_IN_RANGE"),
+                    "Expected schema-change error, got: " + ex.getMessage());
               });
         });
   }
