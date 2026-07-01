@@ -3,9 +3,19 @@
 
 This RFC introduces a new reader-writer table feature `adaptiveMetadata` that enables Delta tables to adopt the [Apache Iceberg™ V4 adaptive metadata tree](https://s.apache.org/iceberg-single-file-commit) as their native content metadata format.
 
+## Terminology
+
+This RFC adopts the *adaptive metadata tree* from the Iceberg V4 spec. The following terms are used throughout:
+
+- **`adaptiveMetadata`**: the Delta table feature defined by this RFC.
+- **metadata tree**: the data structure the feature adopts — a root manifest referencing leaf manifests, as defined by Iceberg's [single-file commit design](https://s.apache.org/iceberg-single-file-commit).
+- **manifest**: a Parquet file of content entries (a root manifest or a leaf manifest).
+
 ## Motivation
 
 Current Delta checkpoints rewrite the entire table state on every checkpoint, regardless of how much actually changed. This makes metadata costs proportional to table size rather than operation size, and prevents caching since checkpoint files change completely between versions.
+
+Delta also stores all of a commit's changes directly in the commit JSON file, regardless of how large the commit is. Compared to a columnar manifest, this gives up roughly an order of magnitude in compression (JSON vs. Parquet), cannot be read or written in parallel, and causes high memory pressure at both read and write time.
 
 The `adaptiveMetadata` feature addresses these limitations by adopting a two-level tree structure where:
 - A **root manifest** serves as the entry point, containing references to
@@ -33,7 +43,7 @@ This design enables:
 
 | Field Name | Data Type | Description |
 | - | - | - |
-| <ins>backReference</ins> | <ins>Struct</ins> | <ins>Reference to the existing entry in the V4 metadata tree that this add supersedes (e.g., stats backfill, DV update). Null when the add is for a genuinely new file not already in the tree. Contains `manifest` (String) and `pos` (Long). See [Backreferences](#backreferences).</ins> |
+| <ins>backReference</ins> | <ins>Struct</ins> | <ins>Reference to the existing entry in the metadata tree that this add supersedes (e.g., stats backfill, DV update). Null when the add is for a genuinely new file not already in the tree. Contains `manifest` (String) and `pos` (Long). See [Backreferences](#backreferences).</ins> |
 
 ### Remove File
 
@@ -44,7 +54,11 @@ This design enables:
 | Field Name | Data Type | Description |
 | - | - | - |
 | <ins>deletionTimestamp</ins> | <ins>Long</ins> | <ins>Must be null. Metadata cleanup uses tree reachability instead of timestamp-based expiration.</ins> |
-| <ins>backReference</ins> | <ins>Struct</ins> | <ins>Required reference to the file's location in the V4 metadata tree. Contains `manifest` (String) and `pos` (Long). See [Backreferences](#backreferences).</ins> |
+| <ins>backReference</ins> | <ins>Struct</ins> | <ins>Required reference to the file's location in the metadata tree. Contains `manifest` (String) and `pos` (Long). See [Backreferences](#backreferences).</ins> |
+
+<ins>`remove` actions are transient. During log replay a `remove` cancels the matching `add` (or, via its `backReference`, marks the corresponding tree entry deleted) and is then discarded. Removes are **not** retained as tombstones in checkpoints or in the reconstructed table state. There is no timestamp-based tombstone expiration; physical file cleanup is driven by tree reachability (see [Metadata Cleanup](#metadata-cleanup)).</ins>
+
+<ins>The `extendedFileMetadata` fields (`partitionValues` and `size`) of a removed file are always recoverable — from the entry referenced by its `backReference`, or from the matching `add` when the file exists only in the log. The `extendedFileMetadata` flag is therefore redundant when `adaptiveMetadata` is enabled: readers recover these fields as if `extendedFileMetadata` were always set, so writers need not replicate them on the `remove`. This availability is an invariant of the feature; a commit containing a `remove` whose metadata cannot be resolved is invalid. (The `deletionVector` is carried on the `remove` directly and is not gated by `extendedFileMetadata`.)</ins>
 
 ### Last Checkpoint File
 
@@ -52,19 +66,13 @@ This design enables:
 
 <ins>The `_last_checkpoint` file remains a non-authoritative hint, as defined in the existing protocol. Readers discover whether a table supports `adaptiveMetadata` from the `protocol` action in the log or checkpoint, not from `_last_checkpoint`.</ins>
 
-<ins>When the `adaptiveMetadata` table feature is enabled and a manifest commit has been written, the `_last_checkpoint` file may contain the following additional fields:</ins>
+<ins>When the `adaptiveMetadata` table feature is enabled and a manifest commit has been written, the `_last_checkpoint` file may embed the [`checkpoint` action](#checkpoint-action) for the latest checkpoint version:</ins>
 
 | Field Name | Data Type | Description |
 | - | - | - |
-| <ins>v4</ins> | <ins>Boolean</ins> | <ins>If true, indicates this is a V4 checkpoint.</ins> |
-| <ins>contentRoot</ins> | <ins>Struct</ins> | <ins>Reference to the V4 root manifest (path, sizeInBytes).</ins> |
-| <ins>protocol</ins> | <ins>Struct</ins> | <ins>The Protocol action for this checkpoint version.</ins> |
-| <ins>metadata</ins> | <ins>Struct</ins> | <ins>The Metadata action for this checkpoint version.</ins> |
-| <ins>domainMetadata</ins> | <ins>Array[Struct]</ins> | <ins>Optional. DomainMetadata actions at this checkpoint version. Presence is authoritative; absence means the reader must consult the checkpoint action or sidecars.</ins> |
-| <ins>txns</ins> | <ins>Array[Struct]</ins> | <ins>Optional list of SetTransaction actions. Each entry contains appId, version, and optional lastUpdated. When the list is small, it is embedded here; large lists are stored in sidecars instead.</ins> |
-| <ins>sidecars</ins> | <ins>Array[Struct]</ins> | <ins>Optional list of sidecar entries for overflow txns and domain metadata only. File-level metadata is stored in the content tree. Each entry contains path, sizeInBytes, modificationTime, and tags (matching the existing sidecar action schema).</ins> |
+| <ins>checkpoint</ins> | <ins>Struct</ins> | <ins>The `checkpoint` action for the latest manifest commit. Schema defined in [Checkpoint Action](#checkpoint-action).</ins> |
 
-<ins>When `v4` is true, readers can use `contentRoot.path` to begin prefetching the root manifest immediately. The `protocol`, `metadata`, `domainMetadata`, `txns`, and `sidecars` fields provide the complete table state at `version`. If the hint is absent, stale, or does not contain V4 fields, readers fall back to log replay to locate the latest `checkpoint` action.</ins>
+<ins>When the embedded `checkpoint` action is present, readers can use `checkpoint.contentRoot.path` to begin prefetching the root manifest immediately, and the action provides the complete table state at `checkpoint.version`. If the hint is absent, stale, or does not contain a `checkpoint` action, readers fall back to log replay to locate the latest `checkpoint` action.</ins>
 
 ### Checkpoints
 
@@ -74,13 +82,21 @@ This design enables:
 
 <ins>The `checkpoint` action is self-contained: it embeds the content root reference along with all non-content metadata (`protocol`, `metaData`, `domainMetadata`, `txns`, `sidecars`). Together with the referenced manifest tree, a single `checkpoint` action represents the complete table state up to `checkpoint.version`. Log commits after that version must still be replayed.</ins>
 
-<ins>Traditional checkpoints (single-file, multi-part, and V2) remain supported. Writers may produce a traditional checkpoint when: the table is being read by clients that do not support `adaptiveMetadata` during a rolling upgrade, or when the feature is being removed and the final checkpoint must be readable without the V4 tree.</ins>
+<ins>Traditional checkpoints (single-file, multi-part, and V2) remain supported. Writers may produce a traditional checkpoint when: the table is being read by clients that do not support `adaptiveMetadata` during a rolling upgrade, or when the feature is being removed and the final checkpoint must be readable without the metadata tree.</ins>
+
+<ins>Table-level aggregates (file count, total size, row count) are derived from the root manifest's aggregated metrics, not from a checkpoint that enumerates every file. Because checkpoints retain no remove tombstones, the count of removes is not part of checkpoint state, and multi-part checkpoint sizing based on that count does not apply.</ins>
+
+### Action Reconciliation
+
+> ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#action-reconciliation)***
+
+<ins>When the `adaptiveMetadata` table feature is enabled, `remove` actions are not carried through reconciliation. A `remove` is applied during replay to cancel its matching `add` (or to mark the referenced tree entry deleted) and is then dropped. The reconstructed table state and any checkpoint produced from it contain only live entries; they do not retain removes. Scans never consumed tombstones, and tree-reachability cleanup replaces the VACUUM use of tombstones, so removes have no remaining role in reconciled state.</ins>
 
 ### Deletion Vectors
 
 > ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#deletion-vectors)***
 
-<ins>When the `adaptiveMetadata` table feature is enabled, inline deletion vectors (storage type `i`) are forbidden. The V4 content entry represents deletion vectors as file references (`location`, `offset`, `size_in_bytes`, `cardinality`) with no field for inline bytes. Storage types `u` (UUID-relative) and `p` (absolute path) are supported since both resolve to file paths. When writing V4 manifest entries, writers must resolve the `u` encoding to a relative path (e.g., `data/deletion_vector_<uuid>.bin`) for the DV `location` field. Existing inline DVs must be converted to file-based DVs before or during feature enablement.</ins>
+<ins>When the `adaptiveMetadata` table feature is enabled, inline deletion vectors (storage type `i`) are forbidden. The content entry represents deletion vectors as file references (`location`, `offset`, `size_in_bytes`, `cardinality`) with no field for inline bytes. Storage types `u` (UUID-relative) and `p` (absolute path) are supported since both resolve to file paths. When writing manifest entries, writers must resolve the `u` encoding to a relative path (e.g., `data/deletion_vector_<uuid>.bin`) for the DV `location` field. Existing inline DVs must be converted to file-based DVs before or during feature enablement.</ins>
 
 ### Metadata Cleanup
 
@@ -102,26 +118,20 @@ This design enables:
 
 # Adaptive Metadata
 
-The `adaptiveMetadata` table feature enables Delta tables to store table state using an adaptive metadata tree structure. When enabled, commits can choose between writing changes to the Delta log (*log commits*) or producing a V4 metadata tree with an embedded checkpoint action (*manifest commits*).
+The `adaptiveMetadata` table feature enables Delta tables to store table state using an adaptive metadata tree structure. When enabled, commits can choose between writing changes to the Delta log (*log commits*) or producing a metadata tree with an embedded checkpoint action (*manifest commits*).
 
 ## Table Feature Enablement
 
 The `adaptiveMetadata` table feature is supported when:
 - The table is on Reader Version 3 and Writer Version 7.
-- The feature `adaptiveMetadata` exists in the table `protocol`'s `readerFeatures` and
-  `writerFeatures`.
+- The feature `adaptiveMetadata` exists in the table `protocol`'s `readerFeatures` and `writerFeatures`.
 
 Required table features that must also be enabled:
-- `columnMapping` (`id` mode): Stable column identification
-  across schema evolution
-- `rowTracking`: V4 manifest entries natively carry row-tracking
-  fields (`first_row_id`, `sequence_number`); see
-  [Row Tracking Compatibility](#row-tracking-compatibility)
-- `domainMetadata`: Storing V4-specific metadata
-- `deletionVectors`: V4 represents deletes as deletion vectors,
-  not by rewriting files
-- `inCommitTimestamp`: Reliable timestamp-based metadata
-  cleanup and time travel
+- `columnMapping` (`id` mode): Stable column identification across schema evolution
+- `rowTracking`: Manifest entries natively carry row-tracking fields (`first_row_id`, `sequence_number`); see [Row Tracking Compatibility](#row-tracking-compatibility)
+- `domainMetadata`: Storing feature-specific metadata
+- `deletionVectors`: Deletes are represented as deletion vectors, not by rewriting files
+- `inCommitTimestamp`: Reliable timestamp-based metadata cleanup and time travel
 
 ## Storage Layout
 
@@ -135,7 +145,7 @@ table/
 │   ├── _sidecars/
 │   │   └── txn-v42.parquet           # Transaction identifiers sidecar
 │   └── _last_checkpoint
-├── metadata/                          # V4 metadata tree
+├── metadata/                          # metadata tree
 │   ├── a3d1f7e2-v42.parquet          # Root manifest (UUID + version)
 │   ├── 7c2e8f1a-m0.parquet           # Leaf manifest
 │   └── e9f4a2b1-m0.parquet           # Leaf manifest
@@ -144,7 +154,7 @@ table/
 
 Filenames shown above are illustrative. The protocol does not prescribe manifest naming conventions. Readers locate files via explicit path references in the tree, not by filename pattern.
 
-The `metadata/` directory is the default and recommended location for V4 manifests. Manifest paths in the protocol are stored as **relative paths from the table root** (e.g., `metadata/root-v42.parquet`). A path is relative if it does not contain a URI scheme. Relative paths are resolved by joining the table location and the relative path with a `/` separator (`table_location + "/" + relative_path`). Absolute paths (with a URI scheme) are used as-is. Relative paths must not start with `/` and table locations must not end with `/` to avoid duplicate separators. This follows the [Iceberg V4 relative paths specification](https://iceberg.apache.org/spec/#paths-in-metadata).
+The `metadata/` directory is the default and recommended location for manifests. Manifest paths in the protocol are stored as **relative paths from the table root** (e.g., `metadata/root-v42.parquet`). A path is relative if it does not contain a URI scheme. Relative paths are resolved by joining the table location and the relative path with a `/` separator (`table_location + "/" + relative_path`). Absolute paths (with a URI scheme) are used as-is. Relative paths must not start with `/` and table locations must not end with `/` to avoid duplicate separators. This follows the [Iceberg V4 relative paths specification](https://iceberg.apache.org/spec/#paths-in-metadata).
 
 The `_delta_log/_sidecars/` directory stores auxiliary data that is too large to embed in the checkpoint action.
 
@@ -164,8 +174,7 @@ When a manifest commit occurs, the Delta log entry contains a self-contained `ch
       "minReaderVersion": 3,
       "minWriterVersion": 7,
       "readerFeatures": ["columnMapping", "deletionVectors", "adaptiveMetadata"],
-      "writerFeatures": ["columnMapping", "deletionVectors", "domainMetadata",
-                         "rowTracking", "adaptiveMetadata"]
+      "writerFeatures": ["columnMapping", "deletionVectors", "domainMetadata", "rowTracking", "adaptiveMetadata"]
     },
     "metaData": {
       "id": "af23c9d7-fff1-4a5a-a2c8-55c59bd782aa",
@@ -191,6 +200,7 @@ When a manifest commit occurs, the Delta log entry contains a self-contained `ch
     ],
     "sidecars": [
       {
+        "type": "txn",
         "path": "txn-v42.parquet",
         "sizeInBytes": 2048,
         "modificationTime": 1234567890000,
@@ -206,16 +216,18 @@ When a manifest commit occurs, the Delta log entry contains a self-contained `ch
 | Field | Type | Description |
 |-------|------|-------------|
 | `version` | Long | The table version up to which the checkpoint is complete. May be less than or equal to the commit version (e.g., commit v100 may checkpoint v50). Checkpoint versions must be strictly monotonically increasing across all checkpoint actions in the log (the next checkpoint must be for a version > 50). |
-| `contentRoot` | Struct | Reference to the V4 root manifest file |
+| `contentRoot` | Struct | Reference to the root manifest file |
 | `contentRoot.path` | String | Path to the root manifest, relative to the table root. May be an absolute URI for files outside the table root. |
 | `contentRoot.sizeInBytes` | Long | Size of the root manifest file in bytes |
 | `protocol` | Struct | The Protocol action at this checkpoint version |
 | `metaData` | Struct | The Metadata action at this checkpoint version |
-| `domainMetadata` | Array[Struct] | Optional. DomainMetadata actions at this checkpoint version |
-| `txns` | Array[Struct] | Optional. SetTransaction actions (appId, version, lastUpdated). When large, stored in sidecars. |
-| `sidecars` | Array[Struct] | Optional. Sidecar file references for overflow txns and domain metadata only. File-level metadata is stored in the content tree. Schema: path, sizeInBytes, modificationTime, tags. |
+| `domainMetadata` | Array[Struct] | Optional. Inlined DomainMetadata actions at this checkpoint version. System domains (keys prefixed with `delta.`) must always be inlined here. User domains may be inlined when small or stored in a sidecar. |
+| `txns` | Array[Struct] | Optional. SetTransaction actions (appId, version, lastUpdated). Either inlined here or stored in a sidecar. |
+| `sidecars` | Array[Struct] | Optional. Sidecar file references for user domain metadata and txns only. File-level metadata is stored in the content tree. Schema: type (`txn` or `domainMetadata`), path, sizeInBytes, modificationTime, tags. |
 
-An `appId` must not appear in both the inline `txns` array and a sidecar file. The complete set of transaction identifiers at `checkpoint.version` is the union of inline `txns` and sidecar contents, with no duplicates across the two.
+System domain metadata (domains prefixed with `delta.`) must always be inlined in the `domainMetadata` array; it is small and required for correctness. User domain metadata and `txns` may each be inlined or stored in a sidecar.
+
+For both user domain metadata and `txns`, inline and sidecar storage are mutually exclusive: a given kind is either inlined in the checkpoint action or stored in a sidecar, never both. Each sidecar carries a `type` field (`txn` or `domainMetadata`) identifying which kind it holds. The complete set of transaction identifiers (or user domain metadata) at `checkpoint.version` is the union of the inline entries and the corresponding sidecar contents, with no `appId` (or `domain`) appearing in both.
 
 ## Backreferences
 
@@ -270,7 +282,7 @@ When an `add` supersedes an existing manifest entry (e.g., `OPTIMIZE` backfillin
 | `manifest` | String | Path to the leaf manifest containing this file, relative to the table root (e.g., `metadata/leaf-m1.parquet`) |
 | `pos` | Long | Row position (0-indexed) of the file entry within the manifest |
 
-## V4 Content Entry Schema
+## Content Entry Schema
 
 Both root and leaf manifests use a single unified entry schema, following the [Iceberg V4 content entry design](https://github.com/apache/iceberg/pull/15049). Certain fields are only applicable to specific `content_type` values (noted below). Manifests are Parquet files. Writers must set Parquet `field_id` metadata on all fields so that readers can resolve them by field ID, and **readers must resolve fields by field ID, not by name.**
 
@@ -442,7 +454,7 @@ The `snapshot_id` field in tracking identifies when content was added or modifie
 
 Delta's row tracking fields map to Iceberg V4 tracking as follows:
 
-| Delta Field | V4 Tracking Field | Field ID |
+| Delta Field | Iceberg Tracking Field | Field ID |
 |-------------|-------------------|----------|
 | `baseRowId` | `first_row_id` | 142 |
 | `defaultRowCommitVersion` | `sequence_number`, `file_sequence_number` | 3, 4 |
@@ -463,7 +475,7 @@ Delta defines partitioning via `partitionColumns` in the table metadata and does
 
 Partition values are stored in the `partition` struct (field ID 102) on each DATA entry. The struct schema is derived from the partition spec, using partition field IDs as struct field IDs.
 
-When producing V4 manifest entries, writers convert Delta's `partitionValues` string map to the typed `partition` struct. When reading V4 entries back into Delta actions, readers extract partition values from the `partition` struct.
+When producing manifest entries, writers convert Delta's `partitionValues` string map to the typed `partition` struct. When reading manifest entries back into Delta actions, readers extract partition values from the `partition` struct.
 
 ## Commit Types
 
@@ -471,7 +483,7 @@ Writers can produce two types of commits:
 
 ### Log Commit
 
-A **log commit** writes changes directly to the Delta log JSON file without updating the V4 metadata tree. This is suitable for:
+A **log commit** writes changes directly to the Delta log JSON file without updating the metadata tree. This is suitable for:
 - Small appends (few files added)
 - Metadata-only changes (schema updates, table properties)
 
@@ -479,24 +491,24 @@ Log commits contain standard Delta actions (`add`, `remove`, `metadata`, etc.) w
 
 ### Manifest Commit
 
-A **manifest commit** produces a new V4 metadata tree and includes an embedded `checkpoint` action in the Delta log.
+A **manifest commit** produces a new metadata tree and includes an embedded `checkpoint` action in the Delta log.
 
 Writers should trigger manifest commits to limit the number of JSON log files and the volume of JSON bytes readers must consume. The specific thresholds are implementation-defined.
 
 Manifest commits have the following characteristics:
 
 1. **File actions may be logged**: A manifest commit may also
-   write `add` and `remove` actions to the Delta log, in addition to updating the V4 tree. The `checkpoint.version` may be less than the commit version (the tree covers up to `checkpoint.version`; remaining changes are in the log). Checkpoint versions must be strictly monotonically increasing across all checkpoint actions in the log.
+   write `add` and `remove` actions to the Delta log, in addition to updating the metadata tree. The `checkpoint.version` may be less than the commit version (the tree covers up to `checkpoint.version`; remaining changes are in the log). Checkpoint versions must be strictly monotonically increasing across all checkpoint actions in the log.
 
 2. **Non-file actions must be logged**: A manifest commit must always
-   write non-file actions (`metadata`, `protocol`, `txn`, `domainMetadata`, `commitInfo`) to the Delta log. These actions are not stored in the V4 tree.
+   write non-file actions (`metadata`, `protocol`, `txn`, `domainMetadata`, `commitInfo`) to the Delta log. These actions are not stored in the metadata tree.
 
 3. **Incorporates preceding commits**: Manifest commits must
-   incorporate all preceding log commits (since the last checkpoint) into the new V4 tree.
+   incorporate all preceding log commits (since the last checkpoint) into the new metadata tree.
 
 ### Standalone Checkpoint
 
-Independently of commits, any writer can produce a standalone checkpoint file that references an existing V4 tree without producing a new one.
+Independently of commits, any writer can produce a standalone checkpoint file that references an existing metadata tree without producing a new one.
 
 A standalone checkpoint uses the V2 checkpoint naming scheme (`n.checkpoint.u.parquet`) and contains a `checkpoint` action. It must reference an existing tree via `contentRoot` and must not produce a new root manifest. File actions (`add`, `remove`) since that tree's version are included inline in the checkpoint file (not in sidecars). This keeps standalone checkpoints cheap: any writer can produce one without the cost of building a new tree. The inline file actions are bounded: if the volume of pending file actions were large, the writer would produce a manifest commit instead.
 
@@ -528,7 +540,7 @@ When `adaptiveMetadata` is supported and active, readers must:
 1. **Find the latest checkpoint**: Scan the Delta log for the most recent
    commit containing a `checkpoint` action, or use `_last_checkpoint` if available.
 
-2. **Read the content root**: Parse the V4 root manifest file referenced by
+2. **Read the content root**: Parse the root manifest file referenced by
    `checkpoint.contentRoot.path`.
 
 3. **Apply MDVs**: When reading leaf manifests, skip entries at positions
@@ -570,10 +582,10 @@ When `adaptiveMetadata` is supported and active, writers must:
      (for re-adds) (used for CDF)
    - Add new DATA entries with updated info for re-added files
 
-6. **Set sequence numbers**: When producing V4 manifest entries, writers
+6. **Set sequence numbers**: When producing manifest entries, writers
    must set `sequence_number` (data sequence number) to the Delta commit version when the data was originally written, and `file_sequence_number` to the commit version that physically adds the file. For new files, both are the current commit version. For compacted files, `sequence_number` preserves the original version while `file_sequence_number` is the compaction version. See [Row Tracking Compatibility](#row-tracking-compatibility).
 
-7. **Populate partition and content_stats**: When producing V4 manifest
+7. **Populate partition and content_stats**: When producing manifest
    entries, writers must:
    - Convert Delta's `partitionValues` string map to the typed
      `partition` struct
@@ -582,7 +594,7 @@ When `adaptiveMetadata` is supported and active, writers must:
 ### Manifest Commit Procedure
 
 ```
-1. Read the previous checkpoint's V4 tree
+1. Read the previous checkpoint's metadata tree
 2. Collect all log commits since previous checkpoint.version
 3. For removes and re-adds with backreferences:
    - Group by manifest path
@@ -601,7 +613,7 @@ When `adaptiveMetadata` is supported and active, writers must:
    Sequence numbers may be null (inherited from root).
 6. For both (4) and (5):
    a. Convert partitionValues to partition struct
-   b. Convert Delta stats JSON to V4 content_stats struct
+   b. Convert Delta stats JSON to content_stats struct
    c. Small number of adds: inline in root manifest
    d. Large number of adds: create new leaf manifest
 7. Determine which leaf manifests need compaction
@@ -674,9 +686,9 @@ Over time, MDVs can accumulate, degrading read performance. Writers should perio
 
 ## Catalog-Managed Tables
 
-*Note: The CC protocol extensions in this section are independent of the adaptive metadata tree and apply to catalog-managed tables generally. They are included here because V4 metadata benefits significantly from catalog-level checkpoint tracking and inline commits.*
+*Note: The CC protocol extensions in this section are independent of the adaptive metadata tree and apply to catalog-managed tables generally. They are included here because the metadata tree benefits significantly from catalog-level checkpoint tracking and inline commits.*
 
-For catalog-managed tables, the commit coordination protocol is extended to support V4 metadata.
+For catalog-managed tables, the commit coordination protocol is extended to support the metadata tree.
 
 ### Design Goals
 
@@ -686,7 +698,7 @@ For catalog-managed tables, the commit coordination protocol is extended to supp
 
 ### CC Protocol Extensions
 
-Two extensions to the CC protocol enable efficient V4 metadata handling:
+Two extensions to the CC protocol enable efficient metadata tree handling:
 
 1. **Catalog stores latest checkpoint**: The catalog stores and returns
    the latest checkpoint in its response, enabling readers to immediately begin prefetching the root manifest in parallel with log replay.
@@ -707,11 +719,11 @@ The core reader and writer requirements are the same as for file-system-based ta
 
 ## Feature Enablement
 
-When `adaptiveMetadata` is added to `readerFeatures` and `writerFeatures`, the required dependent features must also be present. Existing checkpoints remain valid. The first manifest commit after enablement produces the initial V4 tree.
+When `adaptiveMetadata` is added to `readerFeatures` and `writerFeatures`, the required dependent features must also be present. Existing checkpoints remain valid. The first manifest commit after enablement produces the initial metadata tree.
 
 ## Feature Removal
 
-When `adaptiveMetadata` is removed from the protocol, a traditional checkpoint must be produced from the current V4 tree state so that the table can be read without V4 support. Manifest files that are no longer referenced may be cleaned up.
+When `adaptiveMetadata` is removed from the protocol, a traditional checkpoint must be produced from the current metadata tree state so that the table can be read without adaptiveMetadata support. Manifest files that are no longer referenced may be cleaned up.
 
 ## Compatibility Notes
 
