@@ -18,6 +18,7 @@ package io.delta.flink.table;
 
 import com.google.cloud.hadoop.util.AccessTokenProvider;
 import java.time.Instant;
+import java.util.logging.Logger;
 import org.apache.hadoop.conf.Configuration;
 
 /**
@@ -34,6 +35,8 @@ import org.apache.hadoop.conf.Configuration;
  * </ul>
  */
 public class FixedGcsAccessTokenProvider implements AccessTokenProvider {
+
+  private static final Logger LOG = Logger.getLogger(FixedGcsAccessTokenProvider.class.getName());
 
   private static final long FALLBACK_EXPIRATION_MS = 3600_000L;
 
@@ -53,6 +56,10 @@ public class FixedGcsAccessTokenProvider implements AccessTokenProvider {
       try {
         expirationMs = Long.parseLong(expirationStr);
       } catch (NumberFormatException e) {
+        LOG.warning(
+            "Invalid fs.gs.auth.access.token.expiration.ms value: "
+                + expirationStr
+                + ", using fallback expiration");
         expirationMs = System.currentTimeMillis() + FALLBACK_EXPIRATION_MS;
       }
     } else {

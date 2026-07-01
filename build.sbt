@@ -62,6 +62,7 @@ val parquet4sVersion = "1.9.4"
 val protoVersion = "3.25.1"
 val grpcVersion = "1.62.2"
 val flinkVersion = "2.0.1"
+val gcsConnectorVersion = "4.0.4"
 
 // Optional kernel version override. See `project/KernelVersion.scala` for the
 // resolution rule and `-DkernelVersion=<v>` semantics.
@@ -1408,7 +1409,7 @@ lazy val iceberg = (project in file("iceberg"))
           "org.apache.httpcomponents.client5" % "httpclient5" % "5.3.1" % "test",
           "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.11.0" % "provided",
           // For FixedGcsAccessTokenProvider (GCS server-side planning credentials)
-          "com.google.cloud.bigdataoss" % "util-hadoop" % "4.0.4" % "provided"
+          "com.google.cloud.bigdataoss" % "util-hadoop" % gcsConnectorVersion % "provided"
         )
       } else {
         Seq.empty
@@ -1683,7 +1684,7 @@ lazy val flink = (project in file("flink"))
       "dev.failsafe" % "failsafe" % "3.2.0",
       "com.github.ben-manes.caffeine" % "caffeine" % "3.1.8",
       "org.apache.hadoop" % "hadoop-aws" % hadoopVersion,
-      "com.google.cloud.bigdataoss" % "gcs-connector" % "4.0.4" % Provided classifier "shaded",
+      "com.google.cloud.bigdataoss" % "gcs-connector" % gcsConnectorVersion % Provided classifier "shaded",
 
       // Test dependencies
       "org.junit.jupiter" % "junit-jupiter-api" % "5.11.4" % "test",
