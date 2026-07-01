@@ -187,6 +187,10 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       case TableCatalog.PROP_COMMENT => false
       case TableCatalog.PROP_OWNER => false
       case TableCatalog.PROP_EXTERNAL => false
+      // `is_managed_location` is a reserved v2 catalog property used only to signal that the
+      // table location is system-generated (see `isManagedLocation` below). It is not a real
+      // Delta table property, so filter it out to avoid leaking it into the table metadata.
+      case TableCatalog.PROP_IS_MANAGED_LOCATION => false
       case "path" => false
       case "option.path" => false
       case _ => true

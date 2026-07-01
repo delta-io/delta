@@ -940,6 +940,15 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       // Check for catalogManaged feature
       assertThat(tableProperties)
           .contains(String.format("%s=%s", DELTA_CATALOG_MANAGED_KEY, SUPPORTED));
+      // Regression: the reserved `is_managed_location` catalog property must not leak into the
+      // committed Delta metadata configuration. `DESCRIBE DETAIL`'s `properties` column is the raw
+      // `snapshot.metadata.configuration` (the commit log), unlike DESC EXTENDED / SHOW
+      // TBLPROPERTIES which surface `is_managed_location` synthesized at load time. The `Type` /
+      // `Is_managed_location` rows asserted above still reflect that this is a managed table.
+      List<String> detailRow = sql("DESCRIBE DETAIL %s", fullTableName).get(0);
+      assertThat(String.join(",", detailRow))
+          .as("is_managed_location must not be persisted in the Delta commit log")
+          .doesNotContain(TableCatalog.PROP_IS_MANAGED_LOCATION);
     } else {
       // Check for UC table ID
       assertThat(tableProperties).doesNotContain(UC_TABLE_ID_KEY);
