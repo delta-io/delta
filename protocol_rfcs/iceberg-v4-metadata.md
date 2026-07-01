@@ -15,7 +15,7 @@ This RFC adopts the *adaptive metadata tree* from the Iceberg V4 spec. The follo
 
 Current Delta checkpoints rewrite the entire table state on every checkpoint, regardless of how much actually changed. This makes metadata costs proportional to table size rather than operation size, and prevents caching since checkpoint files change completely between versions.
 
-Delta also stores all of a commit's changes directly in the commit JSON file, regardless of how large the commit is. Compared to a columnar manifest, this gives up roughly an order of magnitude in compression (JSON vs. Parquet), cannot be read or written in parallel, and causes high memory pressure at both read and write time.
+Delta also stores all of a commit's changes directly in the commit JSON file, regardless of how large the commit is. Compared to a columnar manifest, JSON compresses roughly an order of magnitude worse than Parquet, cannot be read or written in parallel, and causes high memory pressure at both read and write time.
 
 The `adaptiveMetadata` feature addresses these limitations by adopting a two-level tree structure where:
 - A **root manifest** serves as the entry point, containing references to
