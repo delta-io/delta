@@ -354,12 +354,6 @@ public abstract class UnityCatalogSupport {
     serverProps.setProperty("s3.secretKey.0", "fakeSecretKey");
     serverProps.setProperty("s3.sessionToken.0", "fakeSessionToken");
     if (authMode() == AuthMode.OAUTH) {
-      // Server-validating OAuth: enable authorization, trust the broker's issuer, and require the
-      // audience it mints.
-      serverProps.setProperty("server.authorization", "enable");
-      serverProps.setProperty("server.allowed-issuers", mockOAuthBroker.issuer());
-      serverProps.setProperty("server.audiences", MockOAuthBroker.AUDIENCE);
-
       // Start the mock OAuth broker before building UnityCatalogInfo (and before
       // serverProperties(), which reads the broker's issuer for the allowed-issuers config).
       mockOAuthBroker =
@@ -367,6 +361,12 @@ public abstract class UnityCatalogSupport {
               MOCK_OAUTH_CLIENT_ID, MOCK_OAUTH_CLIENT_SECRET, oauthTokenMaxLifetimeSeconds());
       mockOAuthBroker.start();
       LOG.info("Mock OAuth broker started at " + mockOAuthBroker.issuer());
+
+      // Server-validating OAuth: enable authorization, trust the broker's issuer, and require the
+      // audience it mints.
+      serverProps.setProperty("server.authorization", "enable");
+      serverProps.setProperty("server.allowed-issuers", mockOAuthBroker.issuer());
+      serverProps.setProperty("server.audiences", MockOAuthBroker.AUDIENCE);
     }
 
     // Start UC server with configuration
