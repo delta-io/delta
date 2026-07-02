@@ -17,6 +17,7 @@ package io.delta.spark.internal.v2.utils;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.MapValue;
+import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
@@ -35,6 +36,7 @@ import io.delta.spark.internal.v2.read.metadata.MetadataStructSchemaContext;
 import java.time.ZoneId;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -183,6 +185,60 @@ public class PartitionUtils {
       }
     }
     return new GenericInternalRow(values);
+  }
+
+  /**
+   * Convert an AddFile partition-value map keyed by physical column names into a logical-name map
+   * using the provided partition schema.
+   */
+  public static Map<String, String> getLogicalPartitionValueStrings(
+      MapValue partitionValues, StructType partitionSchema) {
+    Map<String, String> rawPartitionValues = toJavaStringStringMap(partitionValues);
+    Map<String, String> logicalPartitionValues = new LinkedHashMap<>();
+    for (StructField field : partitionSchema.fields()) {
+      String physicalName = DeltaColumnMapping.getPhysicalName(field);
+      logicalPartitionValues.put(field.name(), rawPartitionValues.get(physicalName));
+    }
+    return logicalPartitionValues;
+  }
+
+  private static Map<String, String> toJavaStringStringMap(MapValue mapValue) {
+    Map<String, String> result = new LinkedHashMap<>(mapValue.getSize());
+    for (int i = 0; i < mapValue.getSize(); i++) {
+      String value = mapValue.getValues().isNullAt(i) ? null : mapValue.getValues().getString(i);
+      result.put(mapValue.getKeys().getString(i), value);
+    }
+    return result;
+  }
+
+  /** Build a Kernel write-context partition map keyed by logical partition-column names. */
+  public static Map<String, Literal> buildKernelPartitionLiteralMap(
+      Map<String, String> logicalPartitionValueStrings, StructType partitionSchema, ZoneId zoneId) {
+    Map<String, Literal> partitionLiteralMap = new LinkedHashMap<>();
+    for (StructField field : partitionSchema.fields()) {
+      String logicalName = field.name();
+      String rawValue = logicalPartitionValueStrings.get(logicalName);
+      if (rawValue == null) {
+        throw new IllegalArgumentException(
+            "Null partition literals are introduced in the partition edge slice");
+      }
+      Object typedValue =
+          PartitioningUtils.castPartValueToDesiredType(field.dataType(), rawValue, zoneId);
+      if (typedValue instanceof UTF8String) {
+        partitionLiteralMap.put(logicalName, Literal.ofString(typedValue.toString()));
+      } else if (typedValue instanceof String) {
+        partitionLiteralMap.put(logicalName, Literal.ofString((String) typedValue));
+      } else if (typedValue instanceof Integer) {
+        partitionLiteralMap.put(logicalName, Literal.ofInt((Integer) typedValue));
+      } else if (typedValue instanceof Long) {
+        partitionLiteralMap.put(logicalName, Literal.ofLong((Long) typedValue));
+      } else {
+        throw new IllegalArgumentException(
+            "Unsupported partition literal value type before partition edge slice: "
+                + typedValue.getClass().getName());
+      }
+    }
+    return partitionLiteralMap;
   }
 
   /**
