@@ -787,9 +787,18 @@ A delta file can optionally contain additional provenance information about what
 When the `catalogManaged` table feature is enabled, the `commitInfo` action must have a field
 `txnId` that stores a unique transaction identifier string.
 
-Implementations are free to store any valid JSON-formatted data via the `commitInfo` action.
+The `commitInfo` action must be a JSON object. Implementations are free to store any fields within that object; table features may require additional fields or impose semantics on specific fields.
 
 When [In-Commit Timestamps](#in-commit-timestamps) are enabled, writers are required to include a `commitInfo` action with every commit, which must include the `inCommitTimestamp` field. Also, the `commitInfo` action must be first action in the commit.
+
+The `commitInfo` action may include an optional `incremental` object describing how this commit affects aggregates derived from the log, such as the `numFiles`, `tableSizeBytes`, and `fileSizeHistogram` recorded in a [Version Checksum](#version-checksum-file). When present, a reader can update such aggregates from a baseline using this commit's own `add` and `remove` actions alone, without reconstructing table state. It has two required fields, each set to `apply` or `ignore`:
+
+- `adds`: `apply` asserts every [logical file](#add-file-and-remove-file) added by this commit is new (absent from the previous snapshot), so each `add` is counted. `ignore` asserts every `add` re-adds a logical file already present, contributing nothing.
+- `removes`: `apply` asserts every logical file removed by this commit was present in the previous snapshot and that every `remove` includes the (otherwise [optional](#add-file-and-remove-file)) `size` field, so each `remove` is subtracted. `ignore` asserts the `remove` actions are not reflected in the aggregates and are skipped.
+
+Each field applies uniformly to every action of its type in the commit, so a commit whose `add` (or `remove`) actions are not all alike cannot use the corresponding declaration. When `incremental` is absent, a reader makes no such assumption.
+
+In practice, ordinary DML and table-maintenance operations (e.g. `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `OPTIMIZE`) set both fields to `apply`. An operation that re-adds existing files (e.g. recomputing file statistics) sets `adds` to `ignore`; an operation that writes `remove` tombstones for files absent from the live set (e.g. protecting deletion-vector files from vacuum) sets `removes` to `ignore`.
 
 An example of storing provenance information related to an `INSERT` operation:
 ```json
@@ -800,6 +809,7 @@ An example of storing provenance information related to an `INSERT` operation:
     "userName":"michael@databricks.com",
     "operation":"INSERT",
     "operationParameters":{"mode":"Append","partitionBy":"[]"},
+    "incremental":{"adds":"apply","removes":"apply"},
     "notebook":{
       "notebookId":"4443029",
       "notebookPath":"Users/michael@databricks.com/actions"},
