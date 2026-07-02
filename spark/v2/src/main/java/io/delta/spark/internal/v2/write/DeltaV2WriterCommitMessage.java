@@ -15,7 +15,11 @@
  */
 package io.delta.spark.internal.v2.write;
 
+import io.delta.kernel.data.Row;
+import io.delta.kernel.internal.util.Utils;
+import io.delta.kernel.utils.CloseableIterable;
 import io.delta.spark.internal.v2.utils.SerializableKernelRowWrapper;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import org.apache.spark.sql.connector.write.WriterCommitMessage;
@@ -35,5 +39,21 @@ class DeltaV2WriterCommitMessage implements WriterCommitMessage {
 
   List<SerializableKernelRowWrapper> getActionRows() {
     return Collections.unmodifiableList(actionRows);
+  }
+
+  /**
+   * Flattens the Delta log action rows from every task's commit message into the {@link
+   * CloseableIterable} that {@link io.delta.kernel.Transaction#commit} expects.
+   */
+  static CloseableIterable<Row> toDataActions(WriterCommitMessage[] messages) {
+    List<Row> allActionRows = new ArrayList<>();
+    for (WriterCommitMessage msg : messages) {
+      if (msg instanceof DeltaV2WriterCommitMessage) {
+        for (SerializableKernelRowWrapper wrapper : ((DeltaV2WriterCommitMessage) msg).actionRows) {
+          allActionRows.add(wrapper.getRow());
+        }
+      }
+    }
+    return CloseableIterable.inMemoryIterable(Utils.toCloseableIterator(allActionRows.iterator()));
   }
 }

@@ -31,9 +31,9 @@ import org.apache.spark.sql.delta.schema.SchemaMergingUtils;
 import org.apache.spark.sql.types.StructType;
 
 /**
- * WriteBuilder for DSv2 batch writes to Delta tables. Mirrors the read-side {@code
- * SparkScanBuilder} pattern: takes table-level state and Spark's {@link LogicalWriteInfo}, and
- * builds a {@link DeltaV2BatchWrite} (which implements both Write and BatchWrite).
+ * WriteBuilder for DSv2 writes to Delta tables. Mirrors the read-side {@code SparkScanBuilder}
+ * pattern: takes table-level state and Spark's {@link LogicalWriteInfo}, and builds a {@link
+ * DeltaV2Write}.
  *
  * <p>Schema validation uses the shared V1 utility {@code SchemaMergingUtils.mergeSchemas} to check
  * type compatibility and reject duplicate columns before the write proceeds.
@@ -44,6 +44,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
   private final String tablePath;
   private final Configuration hadoopConf;
   private final Snapshot initialSnapshot;
+  private final StructType dataSchema;
   private final LogicalWriteInfo writeInfo;
 
   /**
@@ -51,6 +52,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
    * @param tablePath filesystem path to the Delta table root
    * @param hadoopConf Hadoop configuration (with merged table options)
    * @param initialSnapshot Kernel snapshot loaded at table construction time
+   * @param dataSchema the table's data (non-partition) schema, from DeltaV2Table's SchemaProvider
    * @param writeInfo Spark's logical write info (schema, queryId, options)
    */
   public DeltaV2WriteBuilder(
@@ -58,11 +60,13 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
       String tablePath,
       Configuration hadoopConf,
       Snapshot initialSnapshot,
+      StructType dataSchema,
       LogicalWriteInfo writeInfo) {
     this.engine = requireNonNull(engine, "engine is null");
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
     this.hadoopConf = requireNonNull(hadoopConf, "hadoopConf is null");
     this.initialSnapshot = requireNonNull(initialSnapshot, "initialSnapshot is null");
+    this.dataSchema = requireNonNull(dataSchema, "dataSchema is null");
     this.writeInfo = requireNonNull(writeInfo, "writeInfo is null");
   }
 
@@ -87,7 +91,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
     // only logical types -- matches V1's dropColumnMappingMetadata call.
     StructType cleanTableSchema =
         DeltaColumnMapping.dropColumnMappingMetadata(tableSchema.asNullable());
-    StructType dataSchema = writeInfo.schema();
+    StructType writeSchema = writeInfo.schema();
 
     // Throws DeltaAnalysisException for type incompatibilities or duplicate columns.
     // Return value discarded -- we only need the validation side-effect.
@@ -95,12 +99,12 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
     // schema returned here to update table metadata instead of discarding it.
     SchemaMergingUtils.mergeSchemas(
         cleanTableSchema,
-        dataSchema,
+        writeSchema,
         /* allowImplicitConversions */ false,
         /* keepExistingType */ false,
         TypeWideningMode.NoTypeWidening$.MODULE$,
         /* caseSensitive */ false);
 
-    return new DeltaV2BatchWrite(engine, hadoopConf, tablePath, initialSnapshot, writeInfo);
+    return new DeltaV2Write(engine, hadoopConf, tablePath, initialSnapshot, dataSchema, writeInfo);
   }
 }
