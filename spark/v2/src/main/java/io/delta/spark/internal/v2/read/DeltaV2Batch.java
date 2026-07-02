@@ -99,7 +99,7 @@ class DeltaV2Batch implements Batch {
   @Override
   public PartitionReaderFactory createReaderFactory() {
     // Non-CDC plain table scan. Write-time CDF streaming reads route through
-    // SparkMicroBatchStream; read-time Auto-CDF batch reads route through DeltaChangelogBatch.
+    // SparkMicroBatchStream; read-time CDF batch reads route through DeltaChangelogBatch.
     return PartitionUtils.createDeltaParquetReaderFactory(
         snapshot,
         dataSchema,

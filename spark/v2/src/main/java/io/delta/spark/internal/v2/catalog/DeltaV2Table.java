@@ -321,7 +321,7 @@ public class DeltaV2Table
   }
 
   /**
-   * Returns the snapshot manager backing this table. Catalog-driven features such as Auto-CDF
+   * Returns the snapshot manager backing this table. Catalog-driven features such as read-time CDF
    * (TableCatalog.loadChangelog) use this to resolve versions, timestamps, and snapshots without
    * having to build their own snapshot manager.
    */
