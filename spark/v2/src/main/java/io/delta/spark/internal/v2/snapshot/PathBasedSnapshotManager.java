@@ -90,9 +90,11 @@ public class PathBasedSnapshotManager implements DeltaSnapshotManager {
       boolean mustBeRecreatable,
       boolean canReturnEarliestCommit) {
     SnapshotImpl snapshot = (SnapshotImpl) loadLatestSnapshot();
+    // The backend history SPI downcasts the snapshot to its backend type (JvmSnapshot.require),
+    // so the dropin SnapshotImpl wrapper must not flow through, pass the unwrapped delegate.
     return DeltaHistoryManager.getActiveCommitAtTimestamp(
         kernelEngine,
-        snapshot,
+        snapshot.getDelegate(),
         snapshot.getLogPath(),
         timestampMillis,
         mustBeRecreatable,
