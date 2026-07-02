@@ -71,6 +71,15 @@
     ],
     "sqlState" : "42903"
   },
+  "DELTA_ALTER_COLUMN_TYPE_WIDENING_NOT_ENABLED" : {
+    "message" : [
+      "ALTER TABLE CHANGE COLUMN is rejected because the type widening table feature is not enabled on this table.",
+      "The requested change of column <fieldPath> from <fromType> to <toType> is a supported lossless widening. To enable it, run:",
+      "  ALTER TABLE <tableName> SET TBLPROPERTIES ('delta.enableTypeWidening' = 'true')",
+      "This upgrades the table protocol so that readers on older Delta versions that do not support the typeWidening reader feature will not be able to read the table."
+    ],
+    "sqlState" : "0AKDC"
+  },
   "DELTA_ALTER_TABLE_CHANGE_COL_NOT_SUPPORTED" : {
     "message" : [
       "ALTER TABLE CHANGE COLUMN is not supported for changing column <currentType> to <newType>"
