@@ -34,7 +34,8 @@ import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, LogicalPlan}
 import org.apache.spark.sql.execution.datasources.WriteTaskStats
 import org.apache.spark.sql.functions.{array, max, min, to_json}
-import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
+import org.apache.spark.sql.connector.catalog.{Column => V2Column, CatalogV2Util}
+import org.apache.spark.sql.types.{LongType, MetadataBuilder, StructField, StructType}
 
 /**
  * This object holds String constants used the field `debugInfo` for
@@ -55,6 +56,103 @@ object IdentityColumn extends DeltaLogging {
   // Default start and step configuration if not specified by user.
   val defaultStart = 1
   val defaultStep = 1
+
+  // Spark 4.0+ encodes `GENERATED ... AS IDENTITY` SQL DDL into StructField metadata using
+  // these (un-prefixed) keys. They live at `org.apache.spark.sql.catalyst.util.IdentityColumn`,
+  // but we replicate the constants here to avoid a hard dependency on a catalyst-internal type.
+  private val SPARK_IDENTITY_INFO_START = "identity.start"
+  private val SPARK_IDENTITY_INFO_STEP = "identity.step"
+  private val SPARK_IDENTITY_INFO_ALLOW_EXPLICIT_INSERT = "identity.allowExplicitInsert"
+
+  /**
+   * Translate any IDENTITY column metadata produced by Spark's SQL parser
+   * (`identity.start`/`identity.step`/`identity.allowExplicitInsert`) into the Delta-internal
+   * metadata keys (`delta.identity.start` / `delta.identity.step` /
+   * `delta.identity.allowExplicitInsert`) that the rest of the Delta codepath understands.
+   *
+   * For every translated column we also validate:
+   *   - column type is [[LongType]] (BIGINT), and
+   *   - `step != 0`.
+   *
+   * Columns without Spark identity metadata are returned untouched. The Spark identity keys are
+   * stripped from the output so the committed Delta metadata stays in a single (Delta) namespace.
+   */
+  def convertSparkIdentityMetadata(schema: StructType): StructType = {
+    if (!schema.exists(f => f.metadata.contains(SPARK_IDENTITY_INFO_START))) {
+      return schema
+    }
+    val translated = schema.map { field =>
+      if (!field.metadata.contains(SPARK_IDENTITY_INFO_START)) {
+        field
+      } else {
+        if (field.dataType != LongType) {
+          throw DeltaErrors.identityColumnDataTypeNotSupported(field.dataType)
+        }
+        val step = field.metadata.getLong(SPARK_IDENTITY_INFO_STEP)
+        if (step == 0L) {
+          throw DeltaErrors.identityColumnIllegalStep()
+        }
+        val start = field.metadata.getLong(SPARK_IDENTITY_INFO_START)
+        val allowExplicitInsert =
+          field.metadata.getBoolean(SPARK_IDENTITY_INFO_ALLOW_EXPLICIT_INSERT)
+        val newMd = new MetadataBuilder()
+          .withMetadata(field.metadata)
+          .remove(SPARK_IDENTITY_INFO_START)
+          .remove(SPARK_IDENTITY_INFO_STEP)
+          .remove(SPARK_IDENTITY_INFO_ALLOW_EXPLICIT_INSERT)
+          .putLong(IDENTITY_INFO_START, start)
+          .putLong(IDENTITY_INFO_STEP, step)
+          .putBoolean(IDENTITY_INFO_ALLOW_EXPLICIT_INSERT, allowExplicitInsert)
+          .build()
+        field.copy(metadata = newMd)
+      }
+    }
+    StructType(translated)
+  }
+
+  /**
+   * Spark 4.0+ delivers `GENERATED ... AS IDENTITY` column information via
+   * [[org.apache.spark.sql.connector.catalog.Column.identityColumnSpec()]] on the V2 column
+   * representation, NOT in StructField metadata. The default conversion
+   * [[CatalogV2Util.v2ColumnsToStructType]] drops that information.
+   *
+   * This helper performs the same conversion but additionally encodes any identity spec into
+   * the Delta-native StructField metadata keys (`delta.identity.start` /
+   * `delta.identity.step` / `delta.identity.allowExplicitInsert`) so the rest of the
+   * Delta codepath sees IDENTITY columns produced by SQL DDL.
+   *
+   * Validation performed per identity column:
+   *   - column type is [[LongType]] (BIGINT), and
+   *   - `step != 0`.
+   */
+  def columnsToStructTypeWithIdentity(columns: Array[V2Column]): StructType = {
+    val base = CatalogV2Util.v2ColumnsToStructType(columns)
+    if (!columns.exists(c => c.identityColumnSpec() != null)) {
+      return base
+    }
+    val fields = base.fields.zip(columns).map { case (field, v2col) =>
+      val spec = v2col.identityColumnSpec()
+      if (spec == null) {
+        field
+      } else {
+        if (field.dataType != LongType) {
+          throw DeltaErrors.identityColumnDataTypeNotSupported(field.dataType)
+        }
+        if (spec.getStep == 0L) {
+          throw DeltaErrors.identityColumnIllegalStep()
+        }
+        val newMd = new MetadataBuilder()
+          .withMetadata(field.metadata)
+          .putLong(IDENTITY_INFO_START, spec.getStart)
+          .putLong(IDENTITY_INFO_STEP, spec.getStep)
+          .putBoolean(IDENTITY_INFO_ALLOW_EXPLICIT_INSERT, spec.isAllowExplicitInsert)
+          .build()
+        field.copy(metadata = newMd)
+      }
+    }
+    StructType(fields)
+  }
+
   // Operation types in usage logs.
   // When IDENTITY columns are defined.
   val opTypeDefinition = "delta.identityColumn.definition"
