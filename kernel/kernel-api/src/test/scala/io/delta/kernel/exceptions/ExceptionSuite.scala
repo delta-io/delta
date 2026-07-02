@@ -58,12 +58,15 @@ class ExceptionSuite extends AnyFunSuite {
 
   test("UnsupportedProtocolVersionException - reader version") {
     val tablePath = "/path/to/table"
-    val version = 3
+    val minReaderVersion = 3
+    val minWriterVersion = 2
 
-    val ex = DeltaErrors.unsupportedReaderProtocol(tablePath, version)
+    val ex = DeltaErrors.unsupportedReaderProtocol(tablePath, minReaderVersion, minWriterVersion)
 
     assert(ex.getTablePath == tablePath)
-    assert(ex.getVersion == version)
+    assert(ex.getMinReaderVersion == minReaderVersion)
+    assert(ex.getMinWriterVersion == minWriterVersion)
+    assert(ex.getVersion == minReaderVersion)
     assert(ex.getVersionType == ProtocolVersionType.READER)
     assert(ex.getMessage.contains("reader"))
     assert(ex.getMessage.contains("version 3"))
@@ -71,12 +74,15 @@ class ExceptionSuite extends AnyFunSuite {
 
   test("UnsupportedProtocolVersionException - writer version") {
     val tablePath = "/path/to/table"
-    val version = 7
+    val minReaderVersion = 1
+    val minWriterVersion = 7
 
-    val ex = DeltaErrors.unsupportedWriterProtocol(tablePath, version)
+    val ex = DeltaErrors.unsupportedWriterProtocol(tablePath, minReaderVersion, minWriterVersion)
 
     assert(ex.getTablePath == tablePath)
-    assert(ex.getVersion == version)
+    assert(ex.getMinReaderVersion == minReaderVersion)
+    assert(ex.getMinWriterVersion == minWriterVersion)
+    assert(ex.getVersion == minWriterVersion)
     assert(ex.getVersionType == ProtocolVersionType.WRITER)
     assert(ex.getMessage.contains("writer"))
     assert(ex.getMessage.contains("version 7"))

@@ -68,6 +68,14 @@ object ServerSidePlannedTable extends DeltaLogging {
   }
 
   /**
+   * Cheap, table-free check of whether the server-side-planning feature flag is on. Callers use
+   * this to gate work that would otherwise touch the table (e.g. resolving a `DeltaTableV2`, which
+   * forces the `DeltaLog`/filesystem) before paying that cost on the common SSP-off path.
+   */
+  def isEnabled(spark: SparkSession): Boolean =
+    spark.conf.get(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key, "false").toBoolean
+
+  /**
    * Try to create a ServerSidePlannedTable if server-side planning is needed.
    * Returns None if not needed or if the planning client factory is not available.
    *
@@ -93,8 +101,7 @@ object ServerSidePlannedTable extends DeltaLogging {
       table: Table,
       isUnityCatalog: Boolean): Option[ServerSidePlannedTable] = {
     // Check if we should enable server-side planning (for testing)
-    val enableServerSidePlanning =
-      spark.conf.get(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key, "false").toBoolean
+    val enableServerSidePlanning = isEnabled(spark)
     val hasTableCredentials = hasCredentials(table)
 
     // Check if we should use server-side planning

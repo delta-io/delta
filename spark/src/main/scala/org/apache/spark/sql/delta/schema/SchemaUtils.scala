@@ -526,8 +526,7 @@ def normalizeColumnNamesInDataType(
       typeWideningMode: TypeWideningMode = TypeWideningMode.NoTypeWidening,
       newPartitionColumns: Seq[String] = Seq.empty,
       oldPartitionColumns: Seq[String] = Seq.empty,
-      caseSensitive: Boolean = true,
-      allowVoidTypeChange: Boolean = false): Boolean = {
+      caseSensitive: Boolean = true): Boolean = {
 
     def isNullabilityCompatible(existingNullable: Boolean, readNullable: Boolean): Boolean = {
       if (forbidTightenNullability) {
@@ -544,8 +543,7 @@ def normalizeColumnNamesInDataType(
             forbidTightenNullability,
             typeWideningMode = typeWideningMode,
             allowMissingColumns = allowMissingColumns,
-            caseSensitive = caseSensitive,
-            allowVoidTypeChange = allowVoidTypeChange
+            caseSensitive = caseSensitive
           )
         case (e: ArrayType, n: ArrayType) =>
           // if existing elements are non-nullable, so should be the new element
@@ -556,8 +554,7 @@ def normalizeColumnNamesInDataType(
           isNullabilityCompatible(e.valueContainsNull, n.valueContainsNull) &&
             isDatatypeReadCompatible(e.keyType, n.keyType) &&
             isDatatypeReadCompatible(e.valueType, n.valueType)
-        // This should only be true for dataframe by-name inserts.
-        case (_: NullType, _) if allowVoidTypeChange =>
+        case (_: NullType, _) =>
           true
         case (e: AtomicType, n: AtomicType)
           if typeWideningMode.shouldWidenTo(fromType = e, toType = n) => true
@@ -1171,6 +1168,7 @@ def normalizeColumnNamesInDataType(
                 (if (columnPath.nonEmpty) s" from $columnName" else ""))
           }
 
+        case (_: NullType, _) => ()
         case (fromDataType: AtomicType, toDataType: AtomicType) if allowTypeWidening =>
           verify(TypeWidening.isTypeChangeSupported(fromDataType, toDataType),
             s"changing data type of ${UnresolvedAttribute(columnPath).name} " +

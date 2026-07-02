@@ -24,7 +24,7 @@ import java.util.{ConcurrentModificationException, UUID}
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterBySpec}
-import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.commands.{AlterTableDropFeatureDeltaCommand, DeltaGenerateCommand}
 import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.hooks.AutoCompactType
@@ -990,6 +990,30 @@ trait DeltaErrorsBase
     )
   }
 
+  def cannotWriteEmptySchemaTableNoColumns(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CANNOT_WRITE_EMPTY_SCHEMA.TABLE_NO_COLUMNS",
+      messageParameters = Array.empty)
+  }
+
+  def cannotWriteEmptySchemaTableAllVoidColumns(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CANNOT_WRITE_EMPTY_SCHEMA.TABLE_ALL_VOID_COLUMNS",
+      messageParameters = Array.empty)
+  }
+
+  def cannotWriteEmptySchemaStructNoFields(columnPath: Seq[String]): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CANNOT_WRITE_EMPTY_SCHEMA.STRUCT_NO_FIELDS",
+      messageParameters = Array(SchemaUtils.prettyFieldName(columnPath)))
+  }
+
+  def cannotWriteEmptySchemaStructAllVoidFields(columnPath: Seq[String]): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CANNOT_WRITE_EMPTY_SCHEMA.STRUCT_ALL_VOID_FIELDS",
+      messageParameters = Array(SchemaUtils.prettyFieldName(columnPath)))
+  }
+
   def castingCauseOverflowErrorInTableWrite(
       from: DataType,
       to: DataType,
@@ -1397,6 +1421,22 @@ trait DeltaErrorsBase
       errorClass = "DELTA_SCHEMA_NOT_SET",
       messageParameters = Array.empty
     )
+  }
+
+  /**
+   * Java-friendly factory for [[InvalidProtocolVersionException]]. The supported reader/writer
+   * version sets are `private[delta]` so this must be built in Scala.
+   */
+  def invalidProtocolVersionError(
+      tableNameOrPath: String,
+      readerRequiredVersion: Int,
+      writerRequiredVersion: Int): Throwable = {
+    InvalidProtocolVersionException(
+      tableNameOrPath,
+      readerRequiredVersion,
+      writerRequiredVersion,
+      Action.supportedReaderVersionNumbers.toSeq,
+      Action.supportedWriterVersionNumbers.toSeq)
   }
 
   def specifySchemaAtReadTimeException: Throwable = {
