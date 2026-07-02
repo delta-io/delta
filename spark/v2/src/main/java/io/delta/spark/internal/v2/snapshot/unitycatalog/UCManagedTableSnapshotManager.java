@@ -110,9 +110,11 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
       boolean canReturnEarliestCommit) {
     SnapshotImpl snapshot = (SnapshotImpl) loadLatestSnapshot();
     List<ParsedCatalogCommitData> catalogCommits = snapshot.getLogSegment().getAllCatalogCommits();
+    // The backend history SPI downcasts the snapshot to its backend type (JvmSnapshot.require),
+    // so the dropin SnapshotImpl wrapper must not flow through, pass the unwrapped delegate.
     return DeltaHistoryManager.getActiveCommitAtTimestamp(
         engine,
-        snapshot,
+        snapshot.getDelegate(),
         snapshot.getLogPath(),
         timestampMillis,
         mustBeRecreatable,
