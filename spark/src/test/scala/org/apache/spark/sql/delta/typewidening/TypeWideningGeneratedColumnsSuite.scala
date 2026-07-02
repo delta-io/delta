@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.typewidening
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
+import org.apache.spark.SparkArithmeticException
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.types._
@@ -31,10 +32,50 @@ class TypeWideningGeneratedColumnsSuite
     with TypeWideningTestMixin
     with DeltaDMLTestUtilsNameBased
     with GeneratedColumnTest
-    with TypeWideningGeneratedColumnTests
+    with TypeWideningGeneratedColumnTests {
+
+  // Valid DSv1 vs. DSv2 behavior difference: DSv1 rejects widening a map key/value referenced by
+  // a generated column up front. See DSv2 below.
+  override protected def checkArrayElementGeneratedColumnError(insert: => Unit): Unit =
+    checkError(
+      intercept[DeltaAnalysisException](insert),
+      "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+      parameters = Map(
+        "columnName" -> "a.element",
+        "columnType" -> "TINYINT",
+        "dataType" -> "INT",
+        "generatedColumns" -> "gen -> hash(a[0])"))
+}
+
+/** Runs the type widening generated column tests against DSv2. */
+class TypeWideningGeneratedColumnsDSv2Suite
+  extends QueryTest
+    with TypeWideningDSv2TestMixin
+    with GeneratedColumnTest
+    with TypeWideningGeneratedColumnTests {
+
+  // Valid DSv1 vs. DSv2 behavior difference: DSv2 skips evolving an unsupported map key/value
+  // instead of a hard-fail. The write then fails due to a cast overflow since the field isn't
+  // widened. See DSv1 above.
+  override protected def checkArrayElementGeneratedColumnError(insert: => Unit): Unit =
+    checkError(
+      intercept[SparkArithmeticException](insert),
+      "CAST_OVERFLOW_IN_TABLE_INSERT",
+      parameters = Map(
+        "sourceType" -> "\"INT\"",
+        "targetType" -> "\"TINYINT\"",
+        "columnName" -> "`a`.`element`"))
+}
 
 trait TypeWideningGeneratedColumnTests extends GeneratedColumnTest {
   self: QueryTest with TypeWideningTestMixin =>
+
+  /**
+   * Asserts the error raised when `insert` attempts to widen the array element referenced by the
+   * generated column to an out-of-range int. The failure differs between the DSv1 and DSv2 write
+   * paths, so each suite overrides this with the matching assertion.
+   */
+  protected def checkArrayElementGeneratedColumnError(insert: => Unit): Unit
 
   test("generated column with type change") {
     withTable("t") {
@@ -197,20 +238,11 @@ trait TypeWideningGeneratedColumnTests extends GeneratedColumnTest {
 
       withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
         // Insert by name is not supported by type evolution.
-        checkError(
-          intercept[DeltaAnalysisException] {
-            spark.createDataFrame(Seq(Tuple1(Array(200000, 12345))))
-              .toDF("a").withColumn("a", col("a").cast("array<int>"))
-              .write.format("delta").mode("append").saveAsTable("t")
-          },
-          "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
-          parameters = Map(
-            "columnName" -> "a.element",
-            "columnType" -> "TINYINT",
-            "dataType" -> "INT",
-            "generatedColumns" -> "gen -> hash(a[0])"
-          )
-        )
+        checkArrayElementGeneratedColumnError {
+          spark.createDataFrame(Seq(Tuple1(Array(200000, 12345))))
+            .toDF("a").withColumn("a", col("a").cast("array<int>"))
+            .write.format("delta").mode("append").saveAsTable("t")
+        }
 
         checkAnswer(sql("SELECT gen FROM t"), Row(1765031574))
       }
