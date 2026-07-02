@@ -181,8 +181,7 @@ public class SchemaUtils {
         delta.isReadCompatible$default$5(),
         delta.isReadCompatible$default$6(),
         delta.isReadCompatible$default$7(),
-        delta.isReadCompatible$default$8(),
-        delta.isReadCompatible$default$9());
+        delta.isReadCompatible$default$8());
   }
 
   //////////////////////
