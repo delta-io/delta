@@ -31,7 +31,7 @@ import io.delta.kernel.internal.types.DataTypeJsonSerDe
 import io.delta.kernel.internal.util.ColumnMapping.{COLUMN_MAPPING_ID_KEY, COLUMN_MAPPING_MODE_KEY, COLUMN_MAPPING_PHYSICAL_NAME_KEY}
 import io.delta.kernel.internal.util.SchemaUtils.{computeSchemaChangesById, validateUpdatedSchemaAndGetUpdatedSchema}
 import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
-import io.delta.kernel.types.{ArrayType, ByteType, DataType, DoubleType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructField, StructType, TypeChange, VariantType}
+import io.delta.kernel.types.{ArrayType, ByteType, DataType, DoubleType, FieldMetadata, IntegerType, LongType, MapType, MetadataColumnSpec, StringType, StructField, StructType, TypeChange, VariantType}
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.LongType.LONG
 import io.delta.kernel.types.TimestampType.TIMESTAMP
@@ -2097,5 +2097,268 @@ class SchemaUtilsSuite extends AnyFunSuite {
       dummyProtocol,
       emptySet(),
       false)
+  }
+
+  ///////////////////////////////////////////////////////////////////////////
+  // validateReadSchemaIsSubset tests
+  ///////////////////////////////////////////////////////////////////////////
+
+  private val baseTableSchema = new StructType()
+    .add("id", INTEGER)
+    .add("name", StringType.STRING)
+    .add("age", INTEGER)
+
+  private def assertReadSchemaRejected(
+      readSchema: StructType,
+      tableSchema: StructType,
+      expectedMsg: String): Unit = {
+    val e = intercept[IllegalArgumentException] {
+      SchemaUtils.validateReadSchemaIsSubset(readSchema, tableSchema)
+    }
+    assert(
+      e.getMessage.contains(expectedMsg),
+      s"Error message '${e.getMessage}' didn't contain: $expectedMsg")
+  }
+
+  test("validateReadSchemaIsSubset - valid subset") {
+    val readSchema = new StructType().add("id", INTEGER)
+    SchemaUtils.validateReadSchemaIsSubset(readSchema, baseTableSchema)
+  }
+
+  test("validateReadSchemaIsSubset - full schema identity") {
+    SchemaUtils.validateReadSchemaIsSubset(baseTableSchema, baseTableSchema)
+  }
+
+  test("validateReadSchemaIsSubset - empty read schema") {
+    SchemaUtils.validateReadSchemaIsSubset(new StructType(), baseTableSchema)
+  }
+
+  test("validateReadSchemaIsSubset - non-existent column") {
+    val readSchema = new StructType().add("fake", INTEGER)
+    assertReadSchemaRejected(readSchema, baseTableSchema, "fake")
+  }
+
+  test("validateReadSchemaIsSubset - type mismatch") {
+    val readSchema = new StructType().add("id", StringType.STRING)
+    assertReadSchemaRejected(readSchema, baseTableSchema, "id")
+  }
+
+  test("validateReadSchemaIsSubset - case insensitive match") {
+    val readSchema = new StructType()
+      .add("ID", INTEGER)
+      .add("NAME", StringType.STRING)
+    SchemaUtils.validateReadSchemaIsSubset(readSchema, baseTableSchema)
+  }
+
+  test("validateReadSchemaIsSubset - metadata column is exempt") {
+    val readSchema = new StructType()
+      .add("id", INTEGER)
+      .addMetadataColumn("_row_index", MetadataColumnSpec.ROW_INDEX)
+    SchemaUtils.validateReadSchemaIsSubset(readSchema, baseTableSchema)
+  }
+
+  test("validateReadSchemaIsSubset - nested struct pruning allowed") {
+    val tableSchema = new StructType()
+      .add(
+        "addr",
+        new StructType()
+          .add("city", StringType.STRING)
+          .add("zip", StringType.STRING)
+          .add("state", StringType.STRING))
+    val readSchema = new StructType()
+      .add(
+        "addr",
+        new StructType()
+          .add("city", StringType.STRING))
+    SchemaUtils.validateReadSchemaIsSubset(readSchema, tableSchema)
+  }
+
+  test("validateReadSchemaIsSubset - nested struct field not found") {
+    val tableSchema = new StructType()
+      .add(
+        "addr",
+        new StructType()
+          .add("city", StringType.STRING)
+          .add("zip", StringType.STRING))
+    val readSchema = new StructType()
+      .add(
+        "addr",
+        new StructType()
+          .add("country", StringType.STRING))
+    assertReadSchemaRejected(readSchema, tableSchema, "country")
+    assertReadSchemaRejected(readSchema, tableSchema, "'addr'")
+  }
+
+  test("validateReadSchemaIsSubset - array element type mismatch") {
+    val tableSchema = new StructType()
+      .add("tags", new ArrayType(StringType.STRING, true))
+    val readSchema = new StructType()
+      .add("tags", new ArrayType(INTEGER, true))
+    assertReadSchemaRejected(readSchema, tableSchema, "tags.element")
+  }
+
+  test("validateReadSchemaIsSubset - array of struct pruning allowed") {
+    val tableSchema = new StructType()
+      .add(
+        "items",
+        new ArrayType(
+          new StructType()
+            .add("k", StringType.STRING)
+            .add("v", INTEGER),
+          true))
+    val readSchema = new StructType()
+      .add(
+        "items",
+        new ArrayType(
+          new StructType()
+            .add("k", StringType.STRING),
+          true))
+    SchemaUtils.validateReadSchemaIsSubset(readSchema, tableSchema)
+  }
+
+  test("validateReadSchemaIsSubset - map value type mismatch") {
+    val tableSchema = new StructType()
+      .add("m", new MapType(StringType.STRING, StringType.STRING, true))
+    val readSchema = new StructType()
+      .add("m", new MapType(StringType.STRING, INTEGER, true))
+    assertReadSchemaRejected(readSchema, tableSchema, "m.value")
+  }
+
+  test("validateReadSchemaIsSubset - map key type mismatch") {
+    val tableSchema = new StructType()
+      .add("m", new MapType(StringType.STRING, INTEGER, true))
+    val readSchema = new StructType()
+      .add("m", new MapType(INTEGER, INTEGER, true))
+    assertReadSchemaRejected(readSchema, tableSchema, "m.key")
+  }
+
+  test("validateReadSchemaIsSubset - map with struct value pruning allowed") {
+    val tableSchema = new StructType()
+      .add(
+        "m",
+        new MapType(
+          StringType.STRING,
+          new StructType()
+            .add("a", INTEGER)
+            .add("b", StringType.STRING),
+          true))
+    val readSchema = new StructType()
+      .add(
+        "m",
+        new MapType(
+          StringType.STRING,
+          new StructType()
+            .add("a", INTEGER),
+          true))
+    SchemaUtils.validateReadSchemaIsSubset(readSchema, tableSchema)
+  }
+
+  test("validateReadSchemaIsSubset - struct type where table has primitive") {
+    val tableSchema = new StructType().add("id", INTEGER)
+    val readSchema = new StructType()
+      .add("id", new StructType().add("x", INTEGER))
+    assertReadSchemaRejected(readSchema, tableSchema, "id")
+  }
+
+  test("validateReadSchemaIsSubset - deeply nested struct field not found") {
+    val tableSchema = new StructType()
+      .add(
+        "user",
+        new StructType()
+          .add(
+            "address",
+            new StructType()
+              .add("city", StringType.STRING)
+              .add("zip", StringType.STRING)))
+    val readSchema = new StructType()
+      .add(
+        "user",
+        new StructType()
+          .add(
+            "address",
+            new StructType()
+              .add("country", StringType.STRING)))
+    assertReadSchemaRejected(readSchema, tableSchema, "country")
+    assertReadSchemaRejected(readSchema, tableSchema, "'user.address'")
+  }
+
+  test("validateReadSchemaIsSubset - deeply nested type mismatch") {
+    val tableSchema = new StructType()
+      .add(
+        "user",
+        new StructType()
+          .add(
+            "address",
+            new StructType()
+              .add("city", StringType.STRING)))
+    val readSchema = new StructType()
+      .add(
+        "user",
+        new StructType()
+          .add(
+            "address",
+            new StructType()
+              .add("city", INTEGER)))
+    assertReadSchemaRejected(readSchema, tableSchema, "user.address.city")
+  }
+
+  test("validateReadSchemaIsSubset - map with struct value field not found includes path") {
+    val tableSchema = new StructType()
+      .add(
+        "m",
+        new MapType(
+          StringType.STRING,
+          new StructType()
+            .add("x", INTEGER)
+            .add("y", INTEGER),
+          true))
+    val readSchema = new StructType()
+      .add(
+        "m",
+        new MapType(
+          StringType.STRING,
+          new StructType()
+            .add("z", INTEGER),
+          true))
+    assertReadSchemaRejected(readSchema, tableSchema, "'m.value'")
+  }
+
+  test("validateReadSchemaIsSubset - map value struct type mismatch includes full path") {
+    val tableSchema = new StructType()
+      .add(
+        "m",
+        new MapType(
+          StringType.STRING,
+          new StructType()
+            .add("x", StringType.STRING),
+          true))
+    val readSchema = new StructType()
+      .add(
+        "m",
+        new MapType(
+          StringType.STRING,
+          new StructType()
+            .add("x", INTEGER),
+          true))
+    assertReadSchemaRejected(readSchema, tableSchema, "m.value.x")
+  }
+
+  test("validateReadSchemaIsSubset - array of struct nested field not found includes path") {
+    val tableSchema = new StructType()
+      .add(
+        "items",
+        new ArrayType(
+          new StructType()
+            .add("k", StringType.STRING)
+            .add("v", INTEGER),
+          true))
+    val readSchema = new StructType()
+      .add(
+        "items",
+        new ArrayType(
+          new StructType()
+            .add("missing", StringType.STRING),
+          true))
+    assertReadSchemaRejected(readSchema, tableSchema, "'items.element'")
   }
 }
