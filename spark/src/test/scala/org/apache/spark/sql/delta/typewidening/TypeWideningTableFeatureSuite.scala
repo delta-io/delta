@@ -367,6 +367,19 @@ trait TypeWideningTableFeatureDropTests
       }
     }
   }
+
+  test("void->any is not considered type-widening and doesn't cause rewrite when dropping " +
+      "the table feature") {
+    append(Seq((1, null), (2, null)).toDF("a", "v"))
+    sql(s"ALTER TABLE $tableSQLIdentifier CHANGE COLUMN v TYPE INT")
+    append(Seq((3, 3)).toDF("a", "v"))
+    dropTableFeature(
+      expectedOutcome = ExpectedOutcome.SUCCESS,
+      expectedNumFilesRewritten = 0,
+      expectedColumnTypes = Map.empty
+    )
+    checkAnswer(readDeltaTableByIdentifier(), Row(1, null) :: Row(2, null) :: Row(3, 3) :: Nil)
+  }
 }
 
 /**

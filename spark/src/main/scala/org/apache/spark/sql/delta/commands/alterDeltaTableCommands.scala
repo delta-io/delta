@@ -1061,8 +1061,9 @@ case class AlterTableChangeColumnDeltaCommand(
       case a: ArrayType if a != newColumn.dataType =>
         val fieldName = UnresolvedAttribute(columnPath :+ columnName).name
         throw DeltaErrors.cannotUpdateArrayField(table.name(), fieldName)
-      case _: AtomicType =>
+      case _: AtomicType => ()
       // update is okay
+      case _: NullType => ()
       case o =>
         throw DeltaErrors.cannotUpdateOtherField(table.name(), o)
     }

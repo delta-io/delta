@@ -184,7 +184,7 @@ trait DeltaInsertCastSupport extends DeltaLogging {
         val castedElement = addCastToColumn(
           elementVar, targetElementAttr, tblName, typeWideningMode, byName)
         ArrayTransform(attr, LambdaFunction(castedElement, Seq(elementVar)))
-      case (_, _: NullType) if byName =>
+      case (_, _: NullType) =>
         attr
       case (s: AtomicType, t: AtomicType)
         if typeWideningMode.shouldWidenTo(fromType = t, toType = s) =>
@@ -337,8 +337,7 @@ trait DeltaInsertCastSupport extends DeltaLogging {
       allowMissingColumns = isDfByNameInsert,
       // DF by-name casting preserves source field names, so (correctly) respect case to avoid
       // infinite loops.
-      caseSensitive = caseSensitive || !isDfByNameInsert,
-      allowVoidTypeChange = isDfByNameInsert
+      caseSensitive = caseSensitive || !isDfByNameInsert
     )
   }
 
@@ -386,12 +385,20 @@ trait DeltaInsertCastSupport extends DeltaLogging {
             val subField = Alias(GetStructField(parent, i, Option(name)), targetField.name)(
               explicitMetadata = Option(metadata))
             addCastsToStructsByPosition(tableName, subField, nested, t, typeWideningMode)
+          case _: NullType =>
+            Alias(GetStructField(parent, i, Option(name)), targetField.name)(
+              explicitMetadata = Option(metadata))
           case o =>
             val field = parent.qualifiedName + "." + name
             val targetName = parent.qualifiedName + "." + targetField.name
             throw DeltaErrors.cannotInsertIntoColumn(tableName, field, targetName, o.simpleString)
         }
 
+      case (StructField(name, _, _, _),
+            i @ TargetIndex(StructField(targetName, _: NullType, _, targetMetadata))) =>
+        Alias(
+          GetStructField(parent, i, Option(name)),
+          targetName)(explicitMetadata = Option(targetMetadata))
       case (StructField(name, sourceType: AtomicType, _, _),
             i @ TargetIndex(StructField(targetName, targetType: AtomicType, _, targetMetadata)))
           if typeWideningMode.shouldWidenTo(fromType = targetType, toType = sourceType) =>

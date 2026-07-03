@@ -26,7 +26,7 @@ import org.apache.spark.sql.delta.{DeltaErrors, DeltaV2Mode}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 /**
- * Mixed into a [[TableCatalog]] implementation to add Auto-CDF support. Provides the
+ * Mixed into a [[TableCatalog]] implementation to add read-time CDF support. Provides the
  * catalog-driven `TableCatalog.loadChangelog` entrypoint introduced by SPARK-56685.
  *
  * <p>This trait extends [[TableCatalog]] as a dependency marker: every concrete catalog that
@@ -57,7 +57,7 @@ trait ChangelogSupport extends TableCatalog {
     val routeChangelogToV2 = new DeltaV2Mode(spark.sessionState.conf).shouldRouteChangelogToV2()
     val sparkTable = loadTable(ident) match {
       case st: DeltaV2Table => st
-      // Auto-CDF is V2-only. Re-resolve to V2.
+      // Read-time CDF is V2-only. Re-resolve to V2.
       case v1: DeltaTableV2 if routeChangelogToV2 =>
         asV2ChangelogTable(ident, v1)
       case other =>

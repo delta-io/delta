@@ -187,6 +187,10 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       case TableCatalog.PROP_COMMENT => false
       case TableCatalog.PROP_OWNER => false
       case TableCatalog.PROP_EXTERNAL => false
+      // `is_managed_location` is a reserved v2 catalog property used only to signal that the
+      // table location is system-generated (see `isManagedLocation` below). It is not a real
+      // Delta table property, so filter it out to avoid leaking it into the table metadata.
+      case TableCatalog.PROP_IS_MANAGED_LOCATION => false
       case "path" => false
       case "option.path" => false
       case _ => true
@@ -374,13 +378,31 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         .map(_.loadTable(ident))
         .getOrElse(super.loadTable(ident))
 
-      ServerSidePlannedTable.tryCreate(spark, ident, table, isUnityCatalog).foreach { sspt =>
-        return sspt
-      }
-
       table match {
         case v1: V1Table if DeltaTableUtils.isDeltaTable(v1.catalogTable) =>
-          loadCatalogTable(ident, v1.catalogTable)
+          // Server-side planning only applies to Delta tables. Attempt it here, inside the
+          // Delta-`V1Table` branch, rather than on every loaded table: a non-Delta table or a
+          // catalog-specific shape (e.g. Unity Catalog's `MetadataTable` wrapping a `ViewInfo`
+          // for a metric view) must flow through the `case o => o` fallthrough unchanged so the
+          // resolver can route it correctly. Capturing those in `ServerSidePlannedTable.tryCreate`
+          // would short-circuit view loading.
+          //
+          // Only resolve to a `DeltaTableV2` and attempt SSP when the feature is enabled. SSP
+          // needs the real schema, which lives in the transaction log (a Delta `V1Table`'s
+          // metastore `CatalogTable` schema is empty), so it must read it from `DeltaTableV2`.
+          // But forcing that resolution on the normal (SSP-off) path would touch the `DeltaLog`
+          // / filesystem during `loadTable` -- which breaks lazy callers (e.g. time travel) and
+          // tables whose filesystem isn't resolvable at load time. So gate on the cheap config
+          // flag first and keep the SSP-off path returning the lazy `loadCatalogTable`, exactly
+          // as before this branch existed.
+          if (ServerSidePlannedTable.isEnabled(spark)) {
+            val deltaTable = loadCatalogTable(ident, v1.catalogTable)
+            ServerSidePlannedTable
+              .tryCreate(spark, ident, deltaTable, isUnityCatalog)
+              .getOrElse(deltaTable)
+          } else {
+            loadCatalogTable(ident, v1.catalogTable)
+          }
         case o => o
       }
     } catch {

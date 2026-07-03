@@ -363,6 +363,35 @@
     ],
     "sqlState" : "55000"
   },
+  "DELTA_CANNOT_WRITE_EMPTY_SCHEMA" : {
+    "message" : [
+      "The Delta table is not writable because parts of the schema are not supported.",
+      "Reason:"
+    ],
+    "subClass" : {
+      "STRUCT_ALL_VOID_FIELDS" : {
+        "message" : [
+          "The column <columnPath> is a struct where all fields have VOID type."
+        ]
+      },
+      "STRUCT_NO_FIELDS" : {
+        "message" : [
+          "The column <columnPath> is a struct with no fields."
+        ]
+      },
+      "TABLE_ALL_VOID_COLUMNS" : {
+        "message" : [
+          "All columns in the table schema have VOID type."
+        ]
+      },
+      "TABLE_NO_COLUMNS" : {
+        "message" : [
+          "The table schema has no columns defined."
+        ]
+      }
+    },
+    "sqlState" : "428GU"
+  },
   "DELTA_CANNOT_WRITE_INTO_VIEW" : {
     "message" : [
       "<table> is a view. Writes to a view are not supported."
@@ -401,6 +430,24 @@
       "Start version <start> for change data feed exceeds the latest table version <latest>."
     ],
     "sqlState" : "22003"
+  },
+  "DELTA_CHANGELOG_READ_FAILED" : {
+    "message" : [
+      "Failed to read the changelog."
+    ],
+    "subClass" : {
+      "PLAN_INPUT_PARTITIONS" : {
+        "message" : [
+          "Failed while planning the input partitions."
+        ]
+      },
+      "PROCESS_COMMIT_ACTIONS" : {
+        "message" : [
+          "Failed while processing the commit actions."
+        ]
+      }
+    },
+    "sqlState" : "XXKDS"
   },
   "DELTA_CHANGELOG_REQUIRES_ROW_TRACKING" : {
     "message" : [

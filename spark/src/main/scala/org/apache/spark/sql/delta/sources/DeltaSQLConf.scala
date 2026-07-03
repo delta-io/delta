@@ -2477,7 +2477,7 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .doc(
         """When enabled, the V2 connector's hybrid DeltaCatalog answers
           |CHANGES FROM ... batch queries (TableCatalog.loadChangelog) using the
-          |kernel-based Auto-CDF reader stack. When disabled, the catalog falls back to the
+          |kernel-based read-time CDF reader stack. When disabled, the catalog falls back to the
           |default behavior (UNSUPPORTED_FEATURE.CHANGE_DATA_CAPTURE).""".stripMargin)
       .booleanConf
       .createWithDefault(false)
@@ -2592,9 +2592,11 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
   val DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS =
     buildConf("createDataFrame.dropNullColumns")
       .internal()
-      .doc("Whether to drop columns with NullType in DeltaLog.createDataFrame.")
+      .doc("Whether to drop columns with NullType in DeltaLog.createDataFrame. Defaults to " +
+        "dropping (no NullType column support) on Spark 4.0, which lacks the Parquet read " +
+        "support for materializing NullType columns, and to keeping them on Spark 4.1+.")
       .booleanConf
-      .createWithDefault(true)
+      .createWithDefault(org.apache.spark.SPARK_VERSION.startsWith("4.0"))
 
   val DELTA_STREAMING_SINK_IMPLICIT_CAST_FOR_TYPE_MISMATCH_ONLY =
     buildConf("streaming.sink.implicitCastForTypeMismatchOnly")
