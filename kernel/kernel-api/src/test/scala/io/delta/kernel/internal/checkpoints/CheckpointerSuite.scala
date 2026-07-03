@@ -26,9 +26,10 @@ import io.delta.kernel.expressions.Predicate
 import io.delta.kernel.internal.checkpoints.Checkpointer.findLastCompleteCheckpointBeforeHelper
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames.checkpointFileSingular
+import io.delta.kernel.internal.util.JsonUtils
 import io.delta.kernel.internal.util.Utils
 import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils, VectorTestUtils}
-import io.delta.kernel.types.StructType
+import io.delta.kernel.types.{DataType, StructType}
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -85,6 +86,74 @@ class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       .readLastCheckpointFile(mockEngine(jsonHandler = jsonHandler))
     assert(!lastCheckpoint.isPresent)
     assert(jsonHandler.currentFailCount == 0)
+  }
+
+  //////////////////////////////////////////////////////////////////////////////////
+  // CheckpointMetaData.toJson / toRow tests
+  //////////////////////////////////////////////////////////////////////////////////
+  test("classic (V1) CheckpointMetaData serializes only the present fields") {
+    // A classic pointer has version/size (and optionally parts); the V2 fields are absent and must
+    // be omitted, matching the writer's NON_ABSENT behavior.
+    val cpm = new CheckpointMetaData(40L, 44L, Optional.of(20L))
+    val json = cpm.toJson()
+    assert(json == """{"version":40,"size":44,"parts":20}""")
+  }
+
+  test("classic (V1) CheckpointMetaData without parts omits parts") {
+    val cpm = new CheckpointMetaData(7L, 3L, Optional.empty())
+    assert(cpm.toJson() == """{"version":7,"size":3}""")
+  }
+
+  test("extractCheckpointSchema + toJson splices checkpointSchema between numOfAddFiles and v2Checkpoint") {
+    val raw =
+      """{"version":2,"size":9,"sizeInBytes":100,"numOfAddFiles":4,""" +
+        """"checkpointSchema":{"type":"struct","fields":[{"name":"id","type":"long",""" +
+        """"nullable":true,"metadata":{}}]},"checksum":"abc"}"""
+    val checkpointSchema = CheckpointMetaData.extractCheckpointSchema(raw)
+    assert(checkpointSchema.isPresent)
+
+    val cpm = new CheckpointMetaData(
+      2L,
+      9L,
+      Optional.empty[java.lang.Long](), // parts
+      Optional.of[java.lang.Long](100L), // sizeInBytes
+      Optional.of[java.lang.Long](4L), // numOfAddFiles
+      checkpointSchema,
+      Optional.empty[io.delta.kernel.data.Row](), // v2Checkpoint
+      Optional.of("abc"), // checksum
+      java.util.Map.of[String, String]())
+    val json = cpm.toJson()
+    // checkpointSchema is present and positioned after numOfAddFiles, before checksum.
+    assert(json.contains("checkpointSchema"))
+    assert(json.indexOf("numOfAddFiles") < json.indexOf("checkpointSchema"))
+    assert(json.indexOf("checkpointSchema") < json.indexOf("checksum"))
+    // Semantic round-trip of the whole object.
+    assert(JsonUtils.mapper.readTree(json) == JsonUtils.mapper.readTree(raw))
+  }
+
+  test("extractCheckpointSchema returns empty when absent") {
+    assert(!CheckpointMetaData.extractCheckpointSchema("""{"version":2,"size":9}""").isPresent)
+  }
+
+  test("CheckpointMetaData round-trips fields through toRow -> fromRow") {
+    val cpm = new CheckpointMetaData(
+      12L,
+      34L,
+      Optional.of[java.lang.Long](2L),
+      Optional.of[java.lang.Long](999L), // sizeInBytes
+      Optional.of[java.lang.Long](4L), // numOfAddFiles
+      Optional.empty[io.delta.kernel.types.StructType](), // checkpointSchema (see kernel-defaults)
+      Optional.empty[io.delta.kernel.data.Row](), // v2Checkpoint (see kernel-defaults)
+      Optional.of("abc123"), // checksum
+      java.util.Map.of("k", "v"))
+    val restored = CheckpointMetaData.fromRow(cpm.toRow())
+    assert(restored.version == 12L)
+    assert(restored.size == 34L)
+    assert(restored.parts == Optional.of(2L))
+    assert(restored.sizeInBytes == Optional.of(999L))
+    assert(restored.numOfAddFiles == Optional.of(4L))
+    assert(restored.checksum == Optional.of("abc123"))
+    assert(restored.tags == java.util.Map.of("k", "v"))
   }
 
   //////////////////////////////////////////////////////////////////////////////////
@@ -255,6 +324,19 @@ class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
 }
 
 object CheckpointerSuite extends VectorTestUtils {
+  private val nullLong: java.lang.Long = null
+
+  /** A null column vector for any type (only isNullAt is exercised for absent-field columns). */
+  private def nullVector(dt: DataType): ColumnVector = new ColumnVector {
+    override def getDataType: DataType = dt
+    override def getSize: Int = 1
+    override def close(): Unit = {}
+    override def isNullAt(rowId: Int): Boolean = true
+  }
+
+  // A classic (V1) `_last_checkpoint`: version/size/parts present, all V2 fields absent. The batch
+  // schema is the full READ_SCHEMA (version, size, parts, sizeInBytes, numOfAddFiles, v2Checkpoint,
+  // checksum, tags); absent columns are null.
   val SAMPLE_LAST_CHECKPOINT_FILE_CONTENT: ColumnarBatch = new ColumnarBatch {
     override def getSchema: StructType = CheckpointMetaData.READ_SCHEMA
 
@@ -262,8 +344,12 @@ object CheckpointerSuite extends VectorTestUtils {
       ordinal match {
         case 0 => longVector(Seq(40)) // version
         case 1 => longVector(Seq(44)) // size
-        case 2 => longVector(Seq(20)); // parts
-        case 3 => mapTypeVector(Seq(Map.empty[String, String])) // tags
+        case 2 => longVector(Seq(20)) // parts
+        case 3 => longVector(Seq(nullLong)) // sizeInBytes
+        case 4 => longVector(Seq(nullLong)) // numOfAddFiles
+        case 5 => nullVector(CheckpointMetaData.READ_SCHEMA.at(5).getDataType) // v2Checkpoint
+        case 6 => stringVector(Seq(null)) // checksum
+        case 7 => mapTypeVector(Seq(Map.empty[String, String])) // tags
       }
     }
 
