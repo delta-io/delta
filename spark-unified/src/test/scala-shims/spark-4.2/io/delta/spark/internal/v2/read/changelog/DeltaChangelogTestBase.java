@@ -29,7 +29,7 @@ import org.junit.jupiter.api.BeforeAll;
  *   <li>The hybrid {@code DeltaCatalog} (spark-unified) as {@code spark_catalog}, so {@code
  *       TableCatalog.loadChangelog} routes into the {@code ChangelogSupport} trait.
  *   <li>{@code spark.databricks.delta.changelogV2.enabled = true}, the SQLConf gate behind which
- *       Auto-CDF is hidden in production.
+ *       Read-time CDF is hidden in production.
  * </ul>
  *
  * <p>Keeping these two settings out of {@code DeltaV2TestBase} means the rest of the V2 test suites

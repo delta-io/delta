@@ -31,6 +31,7 @@ import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
+import io.delta.spark.internal.v2.write.DeltaRowLevelOperationBuilder;
 import io.delta.spark.internal.v2.write.DeltaV2WriteBuilder;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -41,6 +42,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.function.Supplier;
 import org.apache.hadoop.conf.Configuration;
@@ -61,6 +63,8 @@ import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.connector.read.Statistics;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
+import org.apache.spark.sql.connector.write.RowLevelOperationBuilder;
+import org.apache.spark.sql.connector.write.RowLevelOperationInfo;
 import org.apache.spark.sql.connector.write.WriteBuilder;
 import org.apache.spark.sql.delta.DeltaTableUtils;
 import org.apache.spark.sql.delta.RowCommitVersion$;
@@ -123,7 +127,7 @@ public class DeltaV2Table
    * @throws NullPointerException if identifier or tablePath is null
    */
   public DeltaV2Table(Identifier identifier, String tablePath) {
-    this(identifier, tablePath, Collections.emptyMap(), Optional.empty());
+    this(identifier, tablePath, Collections.emptyMap(), Optional.empty(), OptionalLong.empty());
   }
 
   /**
@@ -135,7 +139,23 @@ public class DeltaV2Table
    * @throws NullPointerException if identifier or tablePath is null
    */
   public DeltaV2Table(Identifier identifier, String tablePath, Map<String, String> options) {
-    this(identifier, tablePath, options, Optional.empty());
+    this(identifier, tablePath, options, Optional.empty(), OptionalLong.empty());
+  }
+
+  /**
+   * Path-based constructor pinned to an explicit time travel version (if present).
+   *
+   * @param identifier logical table identifier used by Spark's catalog
+   * @param tablePath filesystem path to the Delta table root
+   * @param options table options used to configure the Hadoop conf, table reads and writes
+   * @param timeTravelVersion the table version to pin the initial snapshot to
+   */
+  public DeltaV2Table(
+      Identifier identifier,
+      String tablePath,
+      Map<String, String> options,
+      OptionalLong timeTravelVersion) {
+    this(identifier, tablePath, options, Optional.empty(), timeTravelVersion);
   }
 
   /**
@@ -149,11 +169,28 @@ public class DeltaV2Table
    */
   public DeltaV2Table(
       Identifier identifier, CatalogTable catalogTable, Map<String, String> options) {
+    this(identifier, catalogTable, options, OptionalLong.empty());
+  }
+
+  /**
+   * Catalog-table constructor pinned to an explicit time travel version (if present).
+   *
+   * @param identifier logical table identifier used by Spark's catalog
+   * @param catalogTable the Spark CatalogTable containing table metadata including location
+   * @param options user-provided options to override catalog properties
+   * @param timeTravelVersion the table version to pin the initial snapshot to
+   */
+  public DeltaV2Table(
+      Identifier identifier,
+      CatalogTable catalogTable,
+      Map<String, String> options,
+      OptionalLong timeTravelVersion) {
     this(
         identifier,
         getDecodedPath(requireNonNull(catalogTable, "catalogTable is null").location()),
         options,
-        Optional.of(catalogTable));
+        Optional.of(catalogTable),
+        timeTravelVersion);
   }
 
   /**
@@ -172,7 +209,8 @@ public class DeltaV2Table
       Identifier identifier,
       String tablePath,
       Map<String, String> userOptions,
-      Optional<CatalogTable> catalogTable) {
+      Optional<CatalogTable> catalogTable,
+      OptionalLong timeTravelVersion) {
     this.identifier = requireNonNull(identifier, "identifier is null");
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
     this.catalogTable = catalogTable;
@@ -198,8 +236,10 @@ public class DeltaV2Table
         SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(options));
     this.kernelEngine = DefaultEngine.create(this.hadoopConf);
     this.snapshotManager = SnapshotManagerFactory.create(tablePath, kernelEngine, catalogTable);
-    // Load the initial snapshot through the manager
-    this.initialSnapshot = snapshotManager.loadLatestSnapshot();
+    this.initialSnapshot =
+        timeTravelVersion.isPresent()
+            ? loadSnapshotAtCheckedVersion(snapshotManager, timeTravelVersion.getAsLong())
+            : snapshotManager.loadLatestSnapshot();
 
     this.isCDCRead = CDCReader.isCDCRead(new CaseInsensitiveStringMap(this.options));
 
@@ -281,12 +321,19 @@ public class DeltaV2Table
   }
 
   /**
-   * Returns the snapshot manager backing this table. Catalog-driven features such as Auto-CDF
+   * Returns the snapshot manager backing this table. Catalog-driven features such as read-time CDF
    * (TableCatalog.loadChangelog) use this to resolve versions, timestamps, and snapshots without
    * having to build their own snapshot manager.
    */
   public DeltaSnapshotManager getSnapshotManager() {
     return snapshotManager;
+  }
+
+  /** Returns a copy of this table pinned to {@code version}. */
+  public DeltaV2Table withVersion(long version) {
+    return catalogTable.isPresent()
+        ? new DeltaV2Table(identifier, catalogTable.get(), options, OptionalLong.of(version))
+        : new DeltaV2Table(identifier, tablePath, options, OptionalLong.of(version));
   }
 
   /**
@@ -422,10 +469,29 @@ public class DeltaV2Table
         merged);
   }
 
+  /**
+   * Validates that {@code version} exists in the Delta log, then loads the snapshot pinned to it.
+   */
+  private static Snapshot loadSnapshotAtCheckedVersion(DeltaSnapshotManager manager, long version) {
+    manager.checkVersionExists(
+        version, /* mustBeRecreatable = */ true, /* allowOutOfRange = */ false);
+    return manager.loadSnapshotAt(version);
+  }
+
   @Override
   public WriteBuilder newWriteBuilder(LogicalWriteInfo info) {
     requireNonNull(info, "write info is null");
     return new DeltaV2WriteBuilder(kernelEngine, tablePath, hadoopConf, initialSnapshot, info);
+  }
+
+  /**
+   * Returns a builder for Delta row-level operations. The builder currently wires Spark planning to
+   * Delta's copy-on-write operation shell; the concrete ReplaceData write path is introduced in a
+   * follow-up PR.
+   */
+  public RowLevelOperationBuilder newRowLevelOperationBuilder(RowLevelOperationInfo info) {
+    requireNonNull(info, "row-level operation info is null");
+    return new DeltaRowLevelOperationBuilder(this, kernelEngine, hadoopConf, initialSnapshot, info);
   }
 
   @Override

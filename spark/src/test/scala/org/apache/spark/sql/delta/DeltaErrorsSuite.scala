@@ -1800,6 +1800,34 @@ trait DeltaErrorsSuiteBase
       checkError(e, "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION", "0AKDC",
         Map("operation" -> "OPTIMIZE"))
     }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cannotWriteEmptySchemaTableNoColumns()
+      }
+      checkError(e, "DELTA_CANNOT_WRITE_EMPTY_SCHEMA.TABLE_NO_COLUMNS", "428GU",
+        Map.empty[String, String])
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cannotWriteEmptySchemaTableAllVoidColumns()
+      }
+      checkError(e, "DELTA_CANNOT_WRITE_EMPTY_SCHEMA.TABLE_ALL_VOID_COLUMNS", "428GU",
+        Map.empty[String, String])
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cannotWriteEmptySchemaStructNoFields(Seq("a", "b"))
+      }
+      checkError(e, "DELTA_CANNOT_WRITE_EMPTY_SCHEMA.STRUCT_NO_FIELDS", "428GU",
+        Map("columnPath" -> "a.b"))
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cannotWriteEmptySchemaStructAllVoidFields(Seq("a", "b"))
+      }
+      checkError(e, "DELTA_CANNOT_WRITE_EMPTY_SCHEMA.STRUCT_ALL_VOID_FIELDS", "428GU",
+        Map("columnPath" -> "a.b"))
+    }
   }
 
   // The compiler complains the lambda function is too large if we put all tests in one lambda.
@@ -2955,6 +2983,24 @@ trait DeltaErrorsSuiteBase
         DeltaErrors.multipleSourceRowMatchingTargetRowInMergeException(newSession)
       assert(exceptionWithoutContext.getMessage.contains("https") === false)
     }
+  }
+
+  test("throwChangelogReadFailed preserves SparkThrowable cause and wraps others") {
+    // A cause that already carries a Spark error class is rethrown unchanged.
+    val sparkThrowableCause = new DeltaAnalysisException(
+      errorClass = "DELTA_CHANGELOG_UNBOUNDED_RANGE",
+      messageParameters = Array.empty[String])
+    val passed = intercept[DeltaAnalysisException] {
+      DeltaErrors.throwChangelogReadFailed("PROCESS_COMMIT_ACTIONS", sparkThrowableCause)
+    }
+    assert(passed eq sparkThrowableCause)
+
+    // Any other cause is wrapped in a DELTA_CHANGELOG_READ_FAILED sub-class.
+    val wrapped = intercept[DeltaIllegalStateException] {
+      DeltaErrors.throwChangelogReadFailed("PLAN_INPUT_PARTITIONS", new RuntimeException("boom"))
+    }
+    checkError(wrapped, "DELTA_CHANGELOG_READ_FAILED.PLAN_INPUT_PARTITIONS", "XXKDS",
+      Map.empty[String, String])
   }
 
   private def setCustomContext(session: SparkSession, context: SparkContext): Unit = {

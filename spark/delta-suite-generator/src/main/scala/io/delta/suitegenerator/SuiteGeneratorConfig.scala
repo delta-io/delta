@@ -229,6 +229,14 @@ object SuiteGeneratorConfig {
           )
         ),
         TestConfig(
+          List("MergeIntoNullTypeTests"),
+          List(
+            List(Dims.MERGE_SCALA),
+            List(Dims.MERGE_SQL, Dims.NAME_BASED),
+            List(Dims.MERGE_SQL, Dims.PATH_BASED, Dims.COLUMN_MAPPING)
+          )
+        ),
+        TestConfig(
           List(
             "MergeIntoBasicTests",
             "MergeIntoAnalysisExceptionTests",
