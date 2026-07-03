@@ -102,15 +102,17 @@ This design enables:
 
 > ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#metadata-cleanup)***
 
-<ins>When the `adaptiveMetadata` table feature is enabled, metadata cleanup must also handle:</ins>
+<ins>When the `adaptiveMetadata` table feature is enabled, cleanup (both metadata cleanup and VACUUM) is **reachability-based**: a file is retained if it is reachable from live table state, and only unreachable files past their retention period may be deleted. This applies uniformly to data files, deletion vectors, manifests, and sidecars. Cleanup must not use directory layout or filename patterns to decide what is deletable — these files are referenced by explicit paths and may reside in any location.</ins>
 
-<ins>1. **Root manifests**: Delete root manifest files that are no longer referenced by any checkpoint action in retained commits.</ins>
+<ins>The reachable set is computed by walking references from retained versions:</ins>
 
-<ins>2. **Leaf manifests**: Delete leaf manifest files that are no longer referenced by any retained root manifest. A leaf manifest may be referenced by multiple root manifests across versions. Cleanup must follow the manifest references in the tree rather than listing a fixed directory.</ins>
+<ins>1. **Manifests**: Starting from the content root referenced by each retained `checkpoint` action, follow tree references to each retained root manifest and every leaf manifest it references. A leaf manifest may be referenced by multiple root manifests across versions; it remains reachable as long as any retained root references it.</ins>
 
-<ins>3. **Sidecar files**: Delete sidecar files in `_delta_log/_sidecars/` that are no longer referenced by any retained checkpoint.</ins>
+<ins>2. **Data files and deletion vectors**: Any data file or deletion vector referenced by a reachable manifest entry, or by an `add` action in a retained log commit, is reachable.</ins>
 
-<ins>Care must be taken to not delete leaf manifests that are still referenced by newer root manifests. Writers should track manifest references across versions before performing cleanup.</ins>
+<ins>3. **Sidecars**: Any sidecar referenced by a retained `checkpoint` action is reachable.</ins>
+
+<ins>Files not in the reachable set may be deleted once past the retention period. Reachability is derived from the live tree, not from `remove` tombstones, so no tombstone tracking is required (see [Remove File](#remove-file)).</ins>
 
 --------
 
@@ -152,7 +154,7 @@ table/
 └── ... data files ...
 ```
 
-Filenames shown above are illustrative. The protocol does not prescribe manifest naming conventions. Readers locate files via explicit path references in the tree, not by filename pattern.
+Filenames and directory layout shown above are illustrative. The protocol does not prescribe manifest naming conventions or file locations: manifests, data files, and deletion vectors are referenced by explicit paths (relative to the table root, or absolute URIs) and may reside anywhere the writer places them, including outside the directories shown. Readers locate files via those path references, not by directory or filename pattern, and cleanup determines what to delete by reachability (see [Metadata Cleanup](#metadata-cleanup)), not by layout.
 
 The `metadata/` directory is the default and recommended location for manifests. Manifest paths in the protocol are stored as **relative paths from the table root** (e.g., `metadata/root-v42.parquet`). A path is relative if it does not contain a URI scheme. Relative paths are resolved by joining the table location and the relative path with a `/` separator (`table_location + "/" + relative_path`). Absolute paths (with a URI scheme) are used as-is. Relative paths must not start with `/` and table locations must not end with `/` to avoid duplicate separators. This follows the [Iceberg V4 relative paths specification](https://iceberg.apache.org/spec/#paths-in-metadata).
 
@@ -168,7 +170,8 @@ When a manifest commit occurs, the Delta log entry contains a self-contained `ch
     "version": 42,
     "contentRoot": {
       "path": "metadata/a3d1f7e2-v42.parquet",
-      "sizeInBytes": 1024
+      "sizeInBytes": 1024,
+      "version": 42
     },
     "protocol": {
       "minReaderVersion": 3,
@@ -219,21 +222,24 @@ When a manifest commit occurs, the Delta log entry contains a self-contained `ch
 | `contentRoot` | Struct | Reference to the root manifest file |
 | `contentRoot.path` | String | Path to the root manifest, relative to the table root. May be an absolute URI for files outside the table root. |
 | `contentRoot.sizeInBytes` | Long | Size of the root manifest file in bytes |
+| `contentRoot.version` | Long | The table version whose content this root manifest reflects. Must be `<= checkpoint.version`. In a manifest commit the two are equal — all content up to `checkpoint.version` is folded into the tree. In a standalone checkpoint it may be less, with the gap covered by inline file actions. |
 | `protocol` | Struct | The Protocol action at this checkpoint version |
 | `metaData` | Struct | The Metadata action at this checkpoint version |
-| `domainMetadata` | Array[Struct] | Optional. Inlined DomainMetadata actions at this checkpoint version. System domains (keys prefixed with `delta.`) must always be inlined here. User domains may be inlined when small or stored in a sidecar. |
-| `txns` | Array[Struct] | Optional. SetTransaction actions (appId, version, lastUpdated). Either inlined here or stored in a sidecar. |
+| `domainMetadata` | Array[Struct] | Optional. Inlined DomainMetadata actions at this checkpoint version. System domains (keys prefixed with `delta.`) must always be inlined here. User domains may be inlined, stored in sidecars, or split across both. |
+| `txns` | Array[Struct] | Optional. SetTransaction actions (appId, version, lastUpdated). May be inlined here, stored in sidecars, or split across both (see below). |
 | `sidecars` | Array[Struct] | Optional. Sidecar file references for user domain metadata and txns only. File-level metadata is stored in the content tree. Schema: type (`txn` or `domainMetadata`), path, sizeInBytes, modificationTime, tags. |
 
-System domain metadata (domains prefixed with `delta.`) must always be inlined in the `domainMetadata` array; it is small and required for correctness. User domain metadata and `txns` may each be inlined or stored in a sidecar.
+System domain metadata (domains prefixed with `delta.`) must always be inlined in the `domainMetadata` array; it is small and required for correctness. User domain metadata and `txns` may be inlined, stored in sidecars, or split across both.
 
-For both user domain metadata and `txns`, inline and sidecar storage are mutually exclusive: a given kind is either inlined in the checkpoint action or stored in a sidecar, never both. Each sidecar carries a `type` field (`txn` or `domainMetadata`) identifying which kind it holds. The complete set of transaction identifiers (or user domain metadata) at `checkpoint.version` is the union of the inline entries and the corresponding sidecar contents, with no `appId` (or `domain`) appearing in both.
+For both user domain metadata and `txns`, inline and sidecar storage may coexist: a small inline set and one or more sidecars can be present together. The only constraint is per-key uniqueness — a given `appId` (or `domain`) must appear in exactly one place, whether inline or in a single sidecar, never in more than one. Each sidecar carries a `type` field (`txn` or `domainMetadata`) identifying which kind it holds, and a kind may be split across multiple sidecars of the same `type`. The complete set of transaction identifiers (or user domain metadata) at `checkpoint.version` is the union of the inline entries and all sidecars of the corresponding type.
 
 ## Backreferences
 
 When `adaptiveMetadata` is enabled, `remove` and `add` actions carry a `backReference` field that identifies where the file's existing entry is located in the metadata tree. Backreferences are required when the file has an entry in a manifest. They are null when the file only exists in the Delta log (not yet incorporated into a manifest) or is genuinely new (first add of a path).
 
-Backreferences enable efficient MDV creation during manifest commits: writers can directly construct MDVs from backreferences without scanning leaf manifests. The engine must propagate (manifest, position) metadata through the planning pipeline so it is available at commit time.
+A backreference is meaningful only relative to the tree it was computed from, identified by that tree's `contentRoot.version`. A commit's backreferences are valid only if they target the current `contentRoot.version`; if a concurrent manifest commit has advanced the tree (e.g., compaction moved entries between manifests), they are stale and must be recomputed against the new tree before the commit can proceed (see [Conflict Resolution](#conflict-resolution)).
+
+Backreferences enable efficient [Manifest Deletion Vector (MDV)](#manifest-deletion-vectors-mdvs) creation during manifest commits: writers can directly construct MDVs from backreferences without scanning leaf manifests. The engine must propagate (manifest, position) metadata through the planning pipeline so it is available at commit time.
 
 ### Remove with Backreference
 
@@ -510,7 +516,7 @@ Manifest commits have the following characteristics:
 
 Independently of commits, any writer can produce a standalone checkpoint file that references an existing metadata tree without producing a new one.
 
-A standalone checkpoint uses the V2 checkpoint naming scheme (`n.checkpoint.u.parquet`) and contains a `checkpoint` action. It must reference an existing tree via `contentRoot` and must not produce a new root manifest. File actions (`add`, `remove`) since that tree's version are included inline in the checkpoint file (not in sidecars). This keeps standalone checkpoints cheap: any writer can produce one without the cost of building a new tree. The inline file actions are bounded: if the volume of pending file actions were large, the writer would produce a manifest commit instead.
+A standalone checkpoint uses the V2 checkpoint naming scheme (`n.checkpoint.u.parquet`) and contains a `checkpoint` action. It must reference an existing tree via `contentRoot` and must not produce a new root manifest, so its `contentRoot.version` is that existing tree's version and is less than `checkpoint.version`. File actions (`add`, `remove`) after `contentRoot.version` (up to `checkpoint.version`) are included inline in the checkpoint file (not in sidecars). This keeps standalone checkpoints cheap: any writer can produce one without the cost of building a new tree. The inline file actions are bounded: if the volume of pending file actions were large, the writer would produce a manifest commit instead.
 
 ## Manifest Deletion Vectors (MDVs)
 
