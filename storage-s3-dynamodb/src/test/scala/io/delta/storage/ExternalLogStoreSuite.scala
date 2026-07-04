@@ -425,6 +425,131 @@ class S3DynamoDBLogStoreSuite extends AnyFunSuite {
   }
 }
 
+///////////////////////////////////////////
+// BaseExternalLogStore PathLock Behavior //
+///////////////////////////////////////////
+
+class BaseExternalLogStorePathLockSuite extends AnyFunSuite {
+
+  private def writeOverwrite(store: MemoryLogStore, path: Path): Unit = {
+    import scala.jdk.CollectionConverters._
+    val actions = Iterator("foo").asJava
+    val overwrite = true
+    store.write(path, actions, overwrite, new Configuration())
+  }
+
+  /** Block until `thread` is parked in wait()/sleep()/park() (or dead) so interrupts land. */
+  private def awaitBlocked(thread: Thread): Unit = {
+    val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10)
+    while (thread.isAlive
+        && thread.getState != Thread.State.WAITING
+        && thread.getState != Thread.State.TIMED_WAITING
+        && System.nanoTime() < deadline) {
+      Thread.sleep(10)
+    }
+  }
+
+  // scalastyle:off line.size.limit
+  test("write interrupted while contending for the per-JVM lock does not break mutual exclusion") {
+    // scalastyle:on line.size.limit
+    val tempDir = java.nio.file.Files.createTempDirectory("path-lock-suite").toFile
+    try {
+      val logDir = new File(tempDir, "_delta_log")
+      logDir.mkdirs()
+      val path = new Path(new File(logDir, "00000000000000000000.json").toURI)
+
+      // The lock holder blocks inside its critical section until the test releases it. `overwrite=
+      // true` makes `write` call only `writeActions` under the lock, so blocking there
+      // deterministically holds the per-JVM PathLock (a single static instance shared by all
+      // BaseExternalLogStore instances) for `path`.
+      val holderInCriticalSection = new java.util.concurrent.CountDownLatch(1)
+      val releaseHolder = new java.util.concurrent.CountDownLatch(1)
+      val holderStore = new BlockingMemoryLogStore(
+        new Configuration(), holderInCriticalSection, releaseHolder)
+      // Other writers use a non-blocking store, so they finish as soon as they hold the lock.
+      val otherStore = new MemoryLogStore(new Configuration())
+
+      // T0 acquires the lock for `path` and parks inside the critical section.
+      val holder = new Thread(() => writeOverwrite(holderStore, path), "holder")
+      holder.start()
+      assert(holderInCriticalSection.await(10, java.util.concurrent.TimeUnit.SECONDS),
+        "holder never entered its critical section")
+
+      // T1 tries to write the same path and blocks in PathLock.acquire, then gets interrupted.
+      // Before the fix, `acquire` was inside the try whose finally released the lock, so the
+      // interrupt made T1 rip out T0's lock entry (and could NPE in release).
+      val contenderError = new java.util.concurrent.atomic.AtomicReference[Throwable]()
+      val contender = new Thread(() => {
+        try {
+          writeOverwrite(otherStore, path)
+        } catch {
+          case t: Throwable => contenderError.set(t)
+        }
+      }, "contender")
+      contender.start()
+      awaitBlocked(contender)
+      contender.interrupt()
+      contender.join(java.util.concurrent.TimeUnit.SECONDS.toMillis(10))
+      assert(!contender.isAlive, "interrupted contender did not terminate")
+
+      // The interrupt must surface as InterruptedIOException, not a NullPointerException from
+      // releasing a lock the contender never held.
+      val err = contenderError.get()
+      assert(err != null, "contender was expected to fail with an interrupt")
+      assert(err.isInstanceOf[java.io.InterruptedIOException],
+        s"expected InterruptedIOException, got $err")
+
+      // Mutual exclusion must still hold: while T0 is inside its critical section, a fresh writer
+      // for the same path must NOT be able to proceed. If T1's interrupt had freed T0's entry, this
+      // (non-blocking) writer would acquire and finish immediately.
+      val guardEntered = new java.util.concurrent.CountDownLatch(1)
+      val guard = new Thread(() => {
+        writeOverwrite(otherStore, path)
+        guardEntered.countDown()
+      }, "guard")
+      guard.start()
+      assert(!guardEntered.await(1, java.util.concurrent.TimeUnit.SECONDS),
+        "mutual exclusion was broken: a second writer acquired the lock while it was held")
+
+      // Let the holder finish; the guard writer should then be able to complete.
+      releaseHolder.countDown()
+      holder.join(java.util.concurrent.TimeUnit.SECONDS.toMillis(10))
+      assert(guardEntered.await(10, java.util.concurrent.TimeUnit.SECONDS),
+        "guard writer never completed after the holder released the lock")
+      guard.join(java.util.concurrent.TimeUnit.SECONDS.toMillis(10))
+    } finally {
+      def deleteRecursively(f: File): Unit = {
+        if (f.isDirectory) Option(f.listFiles()).foreach(_.foreach(deleteRecursively))
+        f.delete()
+      }
+      deleteRecursively(tempDir)
+    }
+  }
+}
+
+/**
+ * A [[MemoryLogStore]] whose `writeActions` blocks inside the `write` critical section until the
+ * test releases it, so a test can deterministically hold the per-JVM `PathLock` for a path.
+ */
+class BlockingMemoryLogStore(
+    hadoopConf: Configuration,
+    entered: java.util.concurrent.CountDownLatch,
+    release: java.util.concurrent.CountDownLatch) extends MemoryLogStore(hadoopConf) {
+
+  override def writeActions(
+      fs: FileSystem,
+      path: Path,
+      actions: java.util.Iterator[String]): Unit = {
+    entered.countDown()
+    try {
+      release.await()
+    } catch {
+      case _: InterruptedException => Thread.currentThread().interrupt()
+    }
+    super.writeActions(fs, path, actions)
+  }
+}
+
 ////////////////////////////////
 // File System Helper Classes //
 ////////////////////////////////
