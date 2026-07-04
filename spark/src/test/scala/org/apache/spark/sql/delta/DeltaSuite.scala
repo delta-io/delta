@@ -3042,24 +3042,27 @@ class DeltaSuite extends QueryTest
     assert(parseTableAndAlias("'store sales'") === "'store" -> Some("sales'"))
   }
 
-  test("DeltaTableV2.properties() filters fs.* storage properties injected by catalogs") {
+  test("DeltaTableV2.properties() filters fs.*/dfs.* storage properties injected by catalogs") {
     withTempDir { dir =>
       spark.range(1).write.format("delta").save(dir.getAbsolutePath)
 
       val tablePath = new Path(dir.toURI)
 
-      // Simulate catalog (e.g., Unity Catalog) injecting fs.* credentials and metadata
-      // into CatalogTable.storage.properties at table-load time.
-      val injectedFsProps = Map(
+      // Simulate catalog (e.g., Unity Catalog) injecting fs.*/dfs.* credentials and metadata
+      // into CatalogTable.storage.properties at table-load time. Both prefixes are part of
+      // DeltaTableUtils.validDeltaTableHadoopPrefixes and can carry cloud credentials.
+      val injectedHadoopProps = Map(
         "fs.s3a.fake-endpoint" -> "s3.us-west-2.amazonaws.com",
         "fs.unitycatalog.uri" -> "https://uc.example.com",
-        "fs.unitycatalog.auth.fake-token" -> "dapi_secret_token"
+        "fs.unitycatalog.auth.fake-token" -> "dapi_secret_token",
+        "dfs.adls.oauth2.credential" -> "dfs_secret_credential",
+        "dfs.adls.oauth2.refresh.token" -> "dfs_secret_refresh_token"
       )
       val otherStorageProps = Map(
         "nonFsProp" -> "visible_value",
         "path" -> dir.getAbsolutePath
       )
-      val allStorageProps = injectedFsProps ++ otherStorageProps
+      val allStorageProps = injectedHadoopProps ++ otherStorageProps
 
       val catalogTable = CatalogTable(
         identifier = TableIdentifier("test_fs_filter"),
@@ -3079,13 +3082,13 @@ class DeltaSuite extends QueryTest
       val deltaTable = DeltaTableV2(spark, tablePath, Some(catalogTable))
       val v2Props = deltaTable.properties()
 
-      injectedFsProps.keys.foreach { fsKey =>
-        assert(!v2Props.containsKey(TableCatalog.OPTION_PREFIX + fsKey),
-          s"DeltaTableV2.properties() should hide '${TableCatalog.OPTION_PREFIX}$fsKey'")
+      injectedHadoopProps.keys.foreach { hadoopKey =>
+        assert(!v2Props.containsKey(TableCatalog.OPTION_PREFIX + hadoopKey),
+          s"DeltaTableV2.properties() should hide '${TableCatalog.OPTION_PREFIX}$hadoopKey'")
       }
-      injectedFsProps.keys.foreach { fsKey =>
-        assert(!v2Props.containsKey(fsKey),
-          s"DeltaTableV2.properties() should also hide '$fsKey'")
+      injectedHadoopProps.keys.foreach { hadoopKey =>
+        assert(!v2Props.containsKey(hadoopKey),
+          s"DeltaTableV2.properties() should also hide '$hadoopKey'")
       }
       assert(v2Props.get(TableCatalog.OPTION_PREFIX + "nonFsProp") === "visible_value",
         "Non-fs storage properties should remain visible in DeltaTableV2.properties()")
