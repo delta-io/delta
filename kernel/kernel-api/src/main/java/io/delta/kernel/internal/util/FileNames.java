@@ -22,6 +22,7 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.utils.FileStatus;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -194,7 +195,7 @@ public final class FileNames {
 
   /** Returns the delta (json format) path for a given delta file. */
   public static String deltaFile(Path path, long version) {
-    return String.format("%s/%020d.json", path, version);
+    return String.format(Locale.ROOT, "%s/%020d.json", path, version);
   }
 
   /** Returns the delta (json format) path for a given delta file. */
@@ -204,7 +205,8 @@ public final class FileNames {
 
   public static String stagedCommitFile(Path logPath, long version) {
     final Path stagedCommitPath = new Path(logPath, STAGED_COMMIT_DIRECTORY);
-    return String.format("%s/%020d.%s.json", stagedCommitPath, version, UUID.randomUUID());
+    return String.format(
+        Locale.ROOT, "%s/%020d.%s.json", stagedCommitPath, version, UUID.randomUUID());
   }
 
   public static String stagedCommitFile(String logPath, long version) {
@@ -218,7 +220,7 @@ public final class FileNames {
 
   /** Returns the path to the checksum file for the given version. */
   public static Path checksumFile(Path path, long version) {
-    return new Path(path, String.format("%020d.crc", version));
+    return new Path(path, String.format(Locale.ROOT, "%020d.crc", version));
   }
 
   public static long checksumVersion(Path path) {
@@ -236,7 +238,7 @@ public final class FileNames {
    * will not exist as a file.
    */
   public static String listingPrefix(Path path, long version) {
-    return String.format("%s/%020d.", path, version);
+    return String.format(Locale.ROOT, "%s/%020d.", path, version);
   }
 
   /**
@@ -245,7 +247,7 @@ public final class FileNames {
    * <p>In a future protocol version this path will stop being written.
    */
   public static Path checkpointFileSingular(Path path, long version) {
-    return new Path(path, String.format("%020d.checkpoint.parquet", version));
+    return new Path(path, String.format(Locale.ROOT, "%020d.checkpoint.parquet", version));
   }
 
   /**
@@ -255,7 +257,8 @@ public final class FileNames {
   public static Path topLevelV2CheckpointFile(
       Path path, long version, String uuid, String fileType) {
     assert (fileType.equals("json") || fileType.equals("parquet"));
-    return new Path(path, String.format("%020d.checkpoint.%s.%s", version, uuid, fileType));
+    return new Path(
+        path, String.format(Locale.ROOT, "%020d.checkpoint.%s.%s", version, uuid, fileType));
   }
 
   /** Returns the path for a V2 sidecar file with a given UUID. */
@@ -265,7 +268,9 @@ public final class FileNames {
 
   public static Path multiPartCheckpointFile(Path path, long version, int part, int numParts) {
     return new Path(
-        path, String.format("%020d.checkpoint.%010d.%010d.parquet", version, part, numParts));
+        path,
+        String.format(
+            Locale.ROOT, "%020d.checkpoint.%010d.%010d.parquet", version, part, numParts));
   }
 
   /**
@@ -293,7 +298,8 @@ public final class FileNames {
    * @param endVersion the end version for the log compaction
    */
   public static Path logCompactionPath(Path logPath, long startVersion, long endVersion) {
-    String fileName = String.format("%020d.%020d.compacted.json", startVersion, endVersion);
+    String fileName =
+        String.format(Locale.ROOT, "%020d.%020d.compacted.json", startVersion, endVersion);
     return new Path(logPath, fileName);
   }
 
