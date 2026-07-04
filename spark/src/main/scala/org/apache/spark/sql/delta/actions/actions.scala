@@ -840,7 +840,7 @@ trait HasNumRecords {
   @transient
   protected lazy val parsedStatsFields: Option[ParsedStatsFields] = Option(stats).collect {
     case stats if stats.nonEmpty =>
-      val node = new ObjectMapper().readTree(stats)
+      val node = JsonUtils.mapper.readTree(stats)
       val numLogicalRecords = if (node.has("numRecords")) {
         Some(node.get("numRecords")).filterNot(_.isNull).map(_.asLong())
           .map(_ - numDeletedRecords)
