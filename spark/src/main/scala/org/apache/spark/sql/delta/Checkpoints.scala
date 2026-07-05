@@ -387,7 +387,7 @@ trait Checkpoints extends DeltaLogging {
       try {
         Some(unsafeLoadMetadataFromFile())
       } catch {
-        case _: FileNotFoundException =>
+        case e if DeltaFileOperations.isFileNotFoundException(e) =>
           None
         case NonFatal(e) if tries < 3 =>
           logWarning(log"Failed to parse ${MDC(DeltaLogKeys.PATH, LAST_CHECKPOINT)}. " +
