@@ -311,7 +311,7 @@ The root manifest contains entries of the following types:
 | 134 | `content_type` | Int | Required | All | 0=DATA, 3=DATA_MANIFEST |
 | 100 | `location` | String | Required | All | Path relative to table root (e.g., `metadata/leaf-m1.parquet` or `data/part-00001.parquet`). May be absolute URI. |
 | 101 | `file_format` | String | Required | All | File format name. Delta only supports `parquet`. |
-| 102 | `partition` | Struct | Required | DATA | Partition data tuple. Schema derived from partition spec, using partition field IDs as struct field IDs. |
+| 102 | `partition` | Struct | Required | DATA | Partition data tuple. Struct fields are keyed by partition `field-id` (`1000 + i` for the i-th partition column). |
 | 103 | `record_count` | Long | Required | All | Number of records in the file |
 | 104 | `file_size_in_bytes` | Long | Required | All | Total file size in bytes |
 | 141 | `spec_id` | Int | Optional | All | Partition spec ID used for this entry |
@@ -452,6 +452,22 @@ If any child entry is missing a stats field, the aggregate for that field must b
 - `tight_bounds`: AND (false if any constituent is false)
 - `avg_value_size_in_bytes`: must be null at the manifest level
 
+### Stats Reconciliation
+
+Delta `add` actions carry statistics as a JSON `stats` string (`numRecords`, `nullCount`, `minValues`, `maxValues`, `tightBounds`), keyed by physical column name. Manifest entries carry the same information as `content_stats`, keyed by column-mapping field ID and stored in each field's type. A file's stats exist as `add.stats` while it is only in the Delta log, and as `content_stats` once it is folded into the tree — never both. Readers must treat the two representations as equivalent for data skipping.
+
+When folding a log `add` into a manifest, writers convert `add.stats` to `content_stats` as follows. Field IDs are resolved via `columnMapping` (a required dependent feature), and `minValues`/`maxValues` are converted from their JSON representation to the field's typed value.
+
+| Delta `add.stats` | V4 `content_stats` |
+|-------------------|--------------------|
+| `numRecords` | entry `record_count` (field 103) |
+| `nullCount[col]` | `null_value_count` |
+| `minValues[col]` | `lower_bound` |
+| `maxValues[col]` | `upper_bound` |
+| `tightBounds` | `tight_bounds` |
+
+`value_count` and `nan_value_count` have no Delta source and are left unpopulated (readers treat them as unknown). `tightBounds` carries Delta's wide-bounds-under-deletion-vectors semantics to `tight_bounds`, consistent with manifest-level stats being `tight_bounds = false` when an MDV is present.
+
 ## Snapshot ID Generation
 
 The `snapshot_id` field in tracking identifies when content was added or modified. Writers must generate a unique long value for each manifest commit.
@@ -465,7 +481,7 @@ Delta's row tracking fields map to Iceberg V4 tracking as follows:
 | `baseRowId` | `first_row_id` | 142 |
 | `defaultRowCommitVersion` | `sequence_number`, `file_sequence_number` | 3, 4 |
 
-When `adaptiveMetadata` is enabled, Iceberg's `sequence_number` (data sequence number) and `file_sequence_number` are both set to the Delta commit version of the `add` action that introduced the file. They always resolve to the same value because Delta does not support late-arriving data (where a file's data logically belongs to an older version). `file_sequence_number` is required by Iceberg's inheritance model but Delta does not read it back.
+When `adaptiveMetadata` is enabled, Iceberg's `sequence_number` (data sequence number) and `file_sequence_number` are both set to the Delta commit version of the `add` action that introduced the file, and always resolve to the same value. In Iceberg these can diverge: the data sequence number records the relative age of a file's content and is used to decide which delete files apply to a data file, so a rewritten file (e.g., compaction) can keep an older data sequence number than the commit that physically wrote it. Delta has no such notion because it binds deletion vectors directly to their data file rather than resolving delete application by sequence number, so there is never a reason for the two to differ. `file_sequence_number` is required by Iceberg's inheritance model but Delta does not read it back.
 
 For ADDED entries in leaf manifests, both are null and inherited from the `DATA_MANIFEST` entry in the root (see [Inheritance](#inheritance)). For EXISTING entries (e.g., after compaction), both are materialized.
 
@@ -475,13 +491,13 @@ On compaction, the output file is a new physical file at the compaction commit v
 
 Iceberg uses **partition specs** to define how a table is partitioned. Each partition spec has a unique `spec_id` and describes the partition columns.
 
-Delta defines partitioning via `partitionColumns` in the table metadata and does not support partition evolution. When `adaptiveMetadata` is enabled, a single partition spec is derived from Delta's `partitionColumns` and column mapping field IDs.  All manifest entries reference this spec.
+Delta defines partitioning via `partitionColumns` in the table metadata, supports only identity partitioning, and does not support partition evolution. When `adaptiveMetadata` is enabled, the `partition` struct schema is derived deterministically from `partitionColumns`: the i-th column (0-based) is assigned partition `field-id = 1000 + i` and typed as that column's type. Writers and readers derive the same assignment from `partitionColumns`.
 
 ## Partition Values
 
-Partition values are stored in the `partition` struct (field ID 102) on each DATA entry. The struct schema is derived from the partition spec, using partition field IDs as struct field IDs.
+Partition values are stored in the `partition` struct (field ID 102) on each DATA entry. The struct has one field per partition column, keyed by `field-id = 1000 + i` and typed as the i-th partition column's type.
 
-When producing manifest entries, writers convert Delta's `partitionValues` string map to the typed `partition` struct. When reading manifest entries back into Delta actions, readers extract partition values from the `partition` struct.
+When producing manifest entries, writers convert Delta's `partitionValues` string map to the typed `partition` struct: each value is parsed into its column's type and placed at that column's `field-id`. When reading manifest entries back into Delta actions, readers extract each value by `field-id = 1000 + i` and map it back to the i-th partition column.
 
 ## Commit Types
 
