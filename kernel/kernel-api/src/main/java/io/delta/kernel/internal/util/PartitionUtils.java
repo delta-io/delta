@@ -558,12 +558,11 @@ public class PartitionUtils {
       return LocalDate.ofEpochDay(daysSinceEpochUTC).toString();
     } else if (dataType instanceof TimestampType || dataType instanceof TimestampNTZType) {
       long microsSinceEpochUTC = (long) value;
-      long seconds = microsSinceEpochUTC / 1_000_000;
-      int microsOfSecond = (int) (microsSinceEpochUTC % 1_000_000);
-      if (microsOfSecond < 0) {
-        // also adjust for negative microsSinceEpochUTC
-        microsOfSecond = 1_000_000 + microsOfSecond;
-      }
+      // Use floor semantics so the seconds and sub-second parts stay consistent for
+      // negative (pre-1970) timestamps. Truncating division would leave `seconds`
+      // one too high after borrowing to make the sub-second part positive.
+      long seconds = Math.floorDiv(microsSinceEpochUTC, 1_000_000L);
+      int microsOfSecond = (int) Math.floorMod(microsSinceEpochUTC, 1_000_000L);
       int nanosOfSecond = microsOfSecond * 1_000;
       LocalDateTime localDateTime =
           LocalDateTime.ofEpochSecond(seconds, nanosOfSecond, ZoneOffset.UTC);

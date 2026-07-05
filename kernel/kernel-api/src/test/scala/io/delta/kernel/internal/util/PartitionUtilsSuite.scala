@@ -362,7 +362,17 @@ class PartitionUtilsSuite extends AnyFunSuite {
       ("1970-01-28 02:39:02.342232", "1970-01-28 02%3A39%3A02.342232"),
     ofNull(TimestampType.TIMESTAMP) -> (null, nullFileName),
     ofTimestampNtz(-2342342342L) ->
-      ("1969-12-31 23:20:58.657658", "1969-12-31 23%3A20%3A58.657658"),
+      ("1969-12-31 23:20:57.657658", "1969-12-31 23%3A20%3A57.657658"),
+    // Pre-1970 (negative-epoch) sub-second timestamps must floor, not truncate, when
+    // splitting micros into seconds and the sub-second part; otherwise they serialize
+    // one second too high.
+    ofTimestamp(-500000L) ->
+      ("1969-12-31 23:59:59.500000", "1969-12-31 23%3A59%3A59.500000"),
+    ofTimestamp(-1L) ->
+      ("1969-12-31 23:59:59.999999", "1969-12-31 23%3A59%3A59.999999"),
+    // Whole-second negatives have no sub-second borrow and must stay unchanged.
+    ofTimestamp(-1000000L) ->
+      ("1969-12-31 23:59:59.000000", "1969-12-31 23%3A59%3A59.000000"),
     ofNull(TimestampNTZType.TIMESTAMP_NTZ) -> (null, nullFileName)).foreach {
     case (literal, (expSerializedValue, expFileName)) =>
       test(s"serialize partition value literal as string: ${literal.getDataType}($literal)") {
