@@ -559,8 +559,7 @@ When reading a leaf manifest, readers must check the `DATA_MANIFEST` entry for a
 
 When `adaptiveMetadata` is supported and active, readers must:
 
-1. **Find the latest checkpoint**: Scan the Delta log for the most recent
-   commit containing a `checkpoint` action, or use `_last_checkpoint` if available.
+1. **Find the latest checkpoint**: Locate the `checkpoint` action with the greatest `checkpoint.version` — across manifest commits, standalone checkpoints, and `_last_checkpoint` — and use its `contentRoot` as the metadata tree. Because `checkpoint.version` is monotonic, a later manifest commit that builds a newer tree supersedes an earlier standalone checkpoint that references an older tree.
 
 2. **Read the content root**: Parse the root manifest file referenced by
    `checkpoint.contentRoot.path`.
@@ -573,9 +572,6 @@ When `adaptiveMetadata` is supported and active, readers must:
 
 5. **Handle sidecars**: If `checkpoint.sidecars` is present, read auxiliary
    data from the referenced sidecar files.
-
-6. **Read partition values**: Extract partition values from the
-   `partition` struct (field ID 102) on DATA entries.
 
 ## Writer Requirements
 
@@ -591,8 +587,8 @@ When `adaptiveMetadata` is supported and active, writers must:
 3. **Maintain two-level hierarchy**: The metadata tree must have at most two levels
    (root -> leaves). Writers must not create nested manifest references.
 
-4. **Incorporate concurrent commits**: When producing a manifest commit,
-   writers must incorporate any concurrent log commits that succeeded before the manifest commit.
+4. **Resolve concurrent commits**: When another commit lands while a manifest
+   commit is in progress, resolve the conflict per [Conflict Resolution](#conflict-resolution).
 
 5. **Generate MDVs from backreferences**: When creating a manifest commit,
    use backreferences from accumulated removes and re-adds to populate `manifest_info.dv` on affected `DATA_MANIFEST` entries. For change data feed support, also populate tracking bitmaps:
@@ -751,9 +747,6 @@ When `adaptiveMetadata` is removed from the protocol, a traditional checkpoint m
 
 - **Existing readers**: Readers that do not support `adaptiveMetadata`
   will fail fast when encountering the feature in the protocol, as expected for reader features.
-
-- **V2 checkpoints**: Traditional V2 checkpoints can still be written for
-  compatibility or rollback purposes. The presence of `adaptiveMetadata` does not prevent V2 checkpoint creation.
 
 - **Iceberg interoperability**: This feature uses Iceberg V4's manifest
   format internally but does not enable Iceberg reader/writer access to the table. Iceberg interoperability requires the separate `icebergNativeV4` feature (not covered in this RFC).
