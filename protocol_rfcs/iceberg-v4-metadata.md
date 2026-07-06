@@ -7,8 +7,10 @@ This RFC introduces a new reader-writer table feature `adaptiveMetadata` that en
 
 This RFC adopts the *adaptive metadata tree* from the Iceberg V4 spec. The following terms are used throughout:
 
+- **content metadata**: metadata about data files and their statistics. e.g. the `add` and `remove` actions.
+- **non-content metadata**: all other table state. e.g. the `protocol`, `metaData`, `domainMetadata`, and `txn` (SetTransaction) actions.
 - **`adaptiveMetadata`**: the Delta table feature defined by this RFC.
-- **metadata tree**: the data structure the feature adopts — a root manifest referencing leaf manifests, as defined by Iceberg's [single-file commit design](https://s.apache.org/iceberg-single-file-commit).
+- **metadata tree**: the data structure the feature adopts: a root manifest referencing leaf manifests, as defined by Iceberg's [single-file commit design](https://s.apache.org/iceberg-single-file-commit).
 - **manifest**: a Parquet file of content entries (a root manifest or a leaf manifest).
 
 ## Motivation
@@ -49,16 +51,16 @@ This design enables:
 
 > ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#remove-file)***
 
-<ins>When the `adaptiveMetadata` table feature is enabled, the `remove` action requires a `backReference` field and `deletionTimestamp` must be null:</ins>
+<ins>When the `adaptiveMetadata` table feature is enabled, the `remove` action requires a `backReference` field, sets `extendedFileMetadata` to true, and has a null `deletionTimestamp`:</ins>
 
 | Field Name | Data Type | Description |
 | - | - | - |
 | <ins>deletionTimestamp</ins> | <ins>Long</ins> | <ins>Must be null. Metadata cleanup uses tree reachability instead of timestamp-based expiration.</ins> |
+| <ins>extendedFileMetadata</ins> | <ins>Boolean</ins> | <ins>Must be true. `partitionValues`, `size`, and `tags` are always present on the `remove`.</ins> |
 | <ins>backReference</ins> | <ins>Struct</ins> | <ins>Required reference to the file's location in the metadata tree. Contains `manifest` (String) and `pos` (Long). See [Backreferences](#backreferences).</ins> |
 
 <ins>`remove` actions are transient. During log replay a `remove` cancels the matching `add` (or, via its `backReference`, marks the corresponding tree entry deleted) and is then discarded. Removes are **not** retained as tombstones in checkpoints or in the reconstructed table state. There is no timestamp-based tombstone expiration; physical file cleanup is driven by tree reachability (see [Metadata Cleanup](#metadata-cleanup)).</ins>
 
-<ins>The `extendedFileMetadata` fields (`partitionValues` and `size`) of a removed file are always recoverable — from the entry referenced by its `backReference`, or from the matching `add` when the file exists only in the log. The `extendedFileMetadata` flag is therefore redundant when `adaptiveMetadata` is enabled: readers recover these fields as if `extendedFileMetadata` were always set, so writers need not replicate them on the `remove`. This availability is an invariant of the feature; a commit containing a `remove` whose metadata cannot be resolved is invalid. (The `deletionVector` is carried on the `remove` directly and is not gated by `extendedFileMetadata`.)</ins>
 
 ### Last Checkpoint File
 
@@ -82,7 +84,7 @@ This design enables:
 
 <ins>The `checkpoint` action is self-contained: it embeds the content root reference along with all non-content metadata (`protocol`, `metaData`, `domainMetadata`, `txns`, `sidecars`). Together with the referenced manifest tree, a single `checkpoint` action represents the complete table state up to `checkpoint.version`. Log commits after that version must still be replayed.</ins>
 
-<ins>Traditional checkpoints (single-file, multi-part, and V2) remain supported. Writers may produce a traditional checkpoint when: the table is being read by clients that do not support `adaptiveMetadata` during a rolling upgrade, or when the feature is being removed and the final checkpoint must be readable without the metadata tree.</ins>
+<ins>Once `adaptiveMetadata` is enabled, writers must not produce classic (single-file, multi-part) or V2 checkpoints; checkpoint state is instead carried by the `checkpoint` action, including in [standalone checkpoints](#standalone-checkpoint).</ins>
 
 <ins>Table-level aggregates (file count, total size, row count) are derived from the root manifest's aggregated metrics, not from a checkpoint that enumerates every file. Because checkpoints retain no remove tombstones, the count of removes is not part of checkpoint state, and multi-part checkpoint sizing based on that count does not apply.</ins>
 
