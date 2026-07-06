@@ -18,12 +18,21 @@ package io.delta.kernel.internal.checkpoints;
 import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
 import static io.delta.kernel.internal.util.VectorUtils.toJavaMap;
 
+import io.delta.kernel.data.ArrayValue;
+import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.internal.actions.Format;
+import io.delta.kernel.internal.actions.DomainMetadata;
+import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.actions.SetTransaction;
 import io.delta.kernel.internal.data.GenericRow;
+import io.delta.kernel.internal.data.StructRow;
 import io.delta.kernel.internal.util.JsonUtils;
+import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.ArrayType;
+import io.delta.kernel.types.BooleanType;
+import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.StringType;
@@ -32,29 +41,19 @@ import java.util.*;
 
 public class CheckpointMetaData {
 
-  /** Schema of {@code v2Checkpoint.nonFileActions[].metaData}. */
-  private static final StructType METADATA_SCHEMA =
-      new StructType()
-          .add("id", StringType.STRING, false /* nullable */)
-          .add("name", StringType.STRING, true /* nullable */)
-          .add("description", StringType.STRING, true /* nullable */)
-          .add("format", Format.FULL_SCHEMA, false /* nullable */)
-          .add("schemaString", StringType.STRING, false /* nullable */)
-          .add(
-              "partitionColumns",
-              new ArrayType(StringType.STRING, false /* contains null */),
-              false /* nullable */)
-          .add(
-              "configuration",
-              new MapType(StringType.STRING, StringType.STRING, false),
-              false /* nullable */)
-          .add("createdTime", LongType.LONG, true /* nullable */);
-
-  /** Schema of a single entry of {@code v2Checkpoint.nonFileActions}. */
+  /**
+   * Schema of a single entry of {@code v2Checkpoint.nonFileActions}. Each element is a single-key
+   * action wrapper. All action fields reuse the canonical action schemas (rather than hand-rolled
+   * copies) so this cannot drift from the action definitions, and so no action kind is silently
+   * dropped — dropping an element would also shift the array and corrupt any array-index checksum
+   * of the pointer.
+   */
   private static final StructType NON_FILE_ACTION_SCHEMA =
       new StructType()
+          .add("txn", SetTransaction.FULL_SCHEMA, true /* nullable */)
+          .add("metaData", Metadata.FULL_SCHEMA, true /* nullable */)
           .add("protocol", Protocol.FULL_SCHEMA, true /* nullable */)
-          .add("metaData", METADATA_SCHEMA, true /* nullable */)
+          .add("domainMetadata", DomainMetadata.FULL_SCHEMA, true /* nullable */)
           .add("checkpointMetadata", CheckpointMetadataAction.FULL_SCHEMA, true /* nullable */);
 
   /** Schema of the {@code v2Checkpoint} block. */
@@ -106,13 +105,78 @@ public class CheckpointMetaData {
         row.isNullAt(NUM_OF_ADD_FILES_ORDINAL)
             ? Optional.empty()
             : Optional.of(row.getLong(NUM_OF_ADD_FILES_ORDINAL)),
+        // Deep-copy the v2Checkpoint struct: row.getStruct returns a lazy view backed by the
+        // ColumnarBatch, which the caller (loadMetadataFromFile) closes right after this. Detaching
+        // it into a GenericRow of plain Java values keeps it valid after the batch is freed.
         row.isNullAt(V2_CHECKPOINT_ORDINAL)
             ? Optional.empty()
-            : Optional.of(row.getStruct(V2_CHECKPOINT_ORDINAL)),
+            : Optional.of(deepCopyRow(row.getStruct(V2_CHECKPOINT_ORDINAL))),
         row.isNullAt(CHECKSUM_ORDINAL)
             ? Optional.empty()
             : Optional.of(row.getString(CHECKSUM_ORDINAL)),
         row.isNullAt(TAGS_ORDINAL) ? Map.of() : toJavaMap(row.getMap(TAGS_ORDINAL)));
+  }
+
+  /**
+   * Recursively materializes {@code row} into a {@link GenericRow} whose values are plain Java
+   * objects (nested {@link GenericRow}s, {@link ArrayValue}s, and {@link MapValue}s built from Java
+   * collections), so the result holds no reference to the source {@link
+   * io.delta.kernel.data.ColumnarBatch}. Required because {@link Row#getStruct} may return a view
+   * over column vectors that are freed when the batch is closed.
+   */
+  private static GenericRow deepCopyRow(Row row) {
+    StructType schema = row.getSchema();
+    Map<Integer, Object> values = new HashMap<>();
+    for (int ordinal = 0; ordinal < schema.length(); ordinal++) {
+      if (!row.isNullAt(ordinal)) {
+        values.put(ordinal, deepCopyRowValue(row, ordinal, schema.at(ordinal).getDataType()));
+      }
+    }
+    return new GenericRow(schema, values);
+  }
+
+  private static Object deepCopyRowValue(Row row, int ordinal, DataType type) {
+    if (type instanceof StructType) {
+      return deepCopyRow(row.getStruct(ordinal));
+    } else if (type instanceof ArrayType) {
+      return deepCopyArray(row.getArray(ordinal), ((ArrayType) type).getElementType());
+    } else if (type instanceof MapType) {
+      // Every map in these schemas is string->string (e.g. Metadata.configuration, tags).
+      return stringStringMapValue(toJavaMap(row.getMap(ordinal)));
+    } else if (type instanceof StringType) {
+      return row.getString(ordinal);
+    } else if (type instanceof LongType) {
+      return row.getLong(ordinal);
+    } else if (type instanceof IntegerType) {
+      return row.getInt(ordinal);
+    } else if (type instanceof BooleanType) {
+      return row.getBoolean(ordinal);
+    } else {
+      throw new UnsupportedOperationException(
+          "Unsupported data type in v2Checkpoint deep copy: " + type);
+    }
+  }
+
+  private static ArrayValue deepCopyArray(ArrayValue array, DataType elementType) {
+    ColumnVector elements = array.getElements();
+    List<Object> copied = new ArrayList<>(array.getSize());
+    for (int i = 0; i < array.getSize(); i++) {
+      copied.add(elements.isNullAt(i) ? null : deepCopyVectorValue(elements, i, elementType));
+    }
+    return VectorUtils.buildArrayValue(copied, elementType);
+  }
+
+  private static Object deepCopyVectorValue(ColumnVector vector, int rowId, DataType type) {
+    if (type instanceof StructType) {
+      return deepCopyRow(StructRow.fromStructVector(vector, rowId));
+    } else if (type instanceof ArrayType) {
+      return deepCopyArray(vector.getArray(rowId), ((ArrayType) type).getElementType());
+    } else if (type instanceof MapType) {
+      return stringStringMapValue(toJavaMap(vector.getMap(rowId)));
+    } else {
+      // Scalars are returned by value by getValueAsObject (no batch reference retained).
+      return VectorUtils.getValueAsObject(vector, type, rowId);
+    }
   }
 
   public final long version;

@@ -25,7 +25,6 @@ import io.delta.kernel.internal.checkpoints.Checkpointer
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.JsonUtils
 
-import com.fasterxml.jackson.databind.node.ObjectNode
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -53,11 +52,15 @@ class LastCheckpointHintSuite extends AnyFunSuite {
       s"JSON mismatch.\n expected: $expectedNode\n actual:   $actualNode")
   }
 
-  /** Returns `json` with the top-level `checkpointSchema` field removed (kernel omits it). */
+  /**
+   * Returns `json` with the top-level `checkpointSchema` field removed (kernel omits it). Works
+   * through a `java.util.Map` rather than an `ObjectNode` cast so it is agnostic to whether
+   * `JsonUtils.mapper()` returns shaded or unshaded Jackson node types.
+   */
   private def withoutCheckpointSchema(json: String): String = {
-    val node = JsonUtils.mapper().readTree(json).asInstanceOf[ObjectNode]
-    node.remove("checkpointSchema")
-    JsonUtils.mapper().writeValueAsString(node)
+    val map = JsonUtils.mapper().readValue(json, classOf[java.util.LinkedHashMap[String, Object]])
+    map.remove("checkpointSchema")
+    JsonUtils.mapper().writeValueAsString(map)
   }
 
   private def logPathFor(goldenTable: String): Path =

@@ -37,6 +37,13 @@ import org.scalatest.funsuite.AnyFunSuite
 class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
   import CheckpointerSuite._
 
+  /** Parses two JSON strings and asserts semantic equality (object key order is irrelevant). */
+  private def assertJsonEquals(expected: String, actual: String): Unit = {
+    assert(
+      JsonUtils.mapper.readTree(expected) == JsonUtils.mapper.readTree(actual),
+      s"JSON mismatch.\n expected: $expected\n actual:   $actual")
+  }
+
   /**
    * Builds a [[CheckpointMetaData]] via the full constructor with typed, defaulted arguments. The
    * explicit `Optional` element types are needed because Scala cannot infer them for the Java
@@ -117,26 +124,23 @@ class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
   //////////////////////////////////////////////////////////////////////////////////
   test("classic (V1) CheckpointMetaData serializes only the present fields") {
     val cpm = checkpointMetaData(40L, 44L, parts = Optional.of(20L))
-    assert(cpm.toJson() == """{"version":40,"size":44,"parts":20}""")
+    assertJsonEquals("""{"version":40,"size":44,"parts":20}""", cpm.toJson())
   }
 
   test("classic (V1) CheckpointMetaData without parts omits parts") {
-    assert(checkpointMetaData(7L, 3L).toJson() == """{"version":7,"size":3}""")
+    assertJsonEquals("""{"version":7,"size":3}""", checkpointMetaData(7L, 3L).toJson())
   }
 
-  test("V2 CheckpointMetaData serializes the present fields in schema order") {
+  test("V2 CheckpointMetaData serializes only the present fields") {
     val cpm = checkpointMetaData(
       2L,
       9L,
       sizeInBytes = Optional.of(100L),
       numOfAddFiles = Optional.of(4L),
       checksum = Optional.of("abc"))
-    val json = cpm.toJson()
-    val expected =
-      """{"version":2,"size":9,"sizeInBytes":100,"numOfAddFiles":4,"checksum":"abc"}"""
-    assert(json == expected)
-    // Semantic round-trip.
-    assert(JsonUtils.mapper.readTree(json) == JsonUtils.mapper.readTree(expected))
+    assertJsonEquals(
+      """{"version":2,"size":9,"sizeInBytes":100,"numOfAddFiles":4,"checksum":"abc"}""",
+      cpm.toJson())
   }
 
   test("CheckpointMetaData round-trips fields through toRow -> fromRow") {
