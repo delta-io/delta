@@ -506,6 +506,31 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
   }
 
   @Test
+  public void testVersionReturnsSnapshotVersion(@TempDir File tempDir) {
+    String path = tempDir.getAbsolutePath();
+    spark.sql(String.format("CREATE TABLE test_version (id INT) USING delta LOCATION '%s'", path));
+
+    Identifier identifier = Identifier.of(new String[] {"default"}, "test_version");
+
+    // CREATE commit produces version 0.
+    DeltaV2Table tableAtV0 = new DeltaV2Table(identifier, path);
+    assertEquals(
+        "0", tableAtV0.version(), "version() should report the snapshot version as a String");
+
+    // Table loaded after an insert pins the newer snapshot.
+    spark.sql("INSERT INTO test_version VALUES (1)");
+    DeltaV2Table tableAtV1 = new DeltaV2Table(identifier, path);
+    assertEquals(
+        "1", tableAtV1.version(), "version() should reflect the snapshot loaded at construction");
+
+    // Earlier instance still reports the version it was constructed at.
+    assertEquals(
+        "0",
+        tableAtV0.version(),
+        "version() should remain pinned to the construction-time snapshot");
+  }
+
+  @Test
   public void testNewWriteBuilderReturnsWriteBuilder(@TempDir File tempDir) throws Exception {
     String path = tempDir.getAbsolutePath();
     spark.sql(
