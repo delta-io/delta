@@ -35,9 +35,15 @@ When Parameterized-Precision Timestamps are supported, writers must:
 
   with `isAdjustedToUTC = true` for `timestamp(p)` and `isAdjustedToUTC = false` for `timestamp without time zone(p)`. The Parquet logical type therefore records the physical time unit, not the declared precision `p`; `p` is recovered from the Delta schema.
 - Floor each value to the declared precision `p` before writing, so that a value stored in a wider physical unit carries zeros in the positions below `p`.
-- Reject on overflow: every value must fit inside its Parquet physical time unit representation, and writers must error rather than silently wrap.
 - Record per-column statistics at the declared precision (see [Per-file Statistics](#per-file-statistics)).
 - Serialize partition values at the declared precision (see [Partition Value Serialization](#partition-value-serialization)).
+- Reject on overflow: every value must fit inside its Parquet physical time unit representation, and writers must error rather than silently wrap.
+
+| Precision `p` | Physical unit | Representable range (approx.)                          |
+  |-|-|--------------------------------------------------------|
+| `0` to `3` | `int64` milliseconds | ~292 million years                                     |
+| `4` to `6` | `int64` microseconds | ~292,000 years               |
+| `7` to `9` | `int64` nanoseconds | ~1677 to 2262 |
 
 > ***Update the [Primitive Types](#primitive-types) table in the [Schema Serialization Format](#schema-serialization-format) section***
 
