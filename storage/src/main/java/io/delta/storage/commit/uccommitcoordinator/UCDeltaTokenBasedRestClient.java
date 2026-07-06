@@ -24,6 +24,7 @@ import io.delta.storage.commit.CommitFailedException;
 import io.delta.storage.commit.CoordinatedCommitsUtils;
 import io.delta.storage.commit.GetCommitsResponse;
 import io.delta.storage.commit.TableIdentifier;
+import io.delta.storage.commit.UCDeltaGetCommitsResponse;
 import io.delta.storage.commit.actions.AbstractDomainMetadata;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
@@ -31,37 +32,45 @@ import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.TableInfo;
 import io.delta.storage.commit.uccommitcoordinator.exceptions.CredentialFetchFailedException;
 import io.delta.storage.commit.uccommitcoordinator.exceptions.NoSuchTableException;
 import io.delta.storage.commit.uccommitcoordinator.exceptions.UnsupportedTableFormatException;
+import io.delta.storage.commit.uniform.IcebergMetadata;
+import io.delta.storage.commit.uniform.UniformMetadata;
 import io.unitycatalog.client.ApiClient;
 import io.unitycatalog.client.ApiClientBuilder;
 import io.unitycatalog.client.ApiException;
 import io.unitycatalog.client.api.MetastoresApi;
 import io.unitycatalog.client.auth.TokenProvider;
-import io.unitycatalog.client.delta.api.TablesApi;
-import io.unitycatalog.client.delta.model.AddCommitUpdate;
-import io.unitycatalog.client.delta.model.AssertTableUUID;
-import io.unitycatalog.client.delta.model.ClusteringDomainMetadata;
-import io.unitycatalog.client.delta.model.CreateStagingTableRequest;
-import io.unitycatalog.client.delta.model.CreateTableRequest;
-import io.unitycatalog.client.delta.model.DomainMetadataUpdates;
+import io.unitycatalog.client.delta.api.DeltaTablesApi;
+import io.unitycatalog.client.delta.model.DeltaAddCommitUpdate;
+import io.unitycatalog.client.delta.model.DeltaAssertTableUUID;
+import io.unitycatalog.client.delta.model.DeltaClusteringDomainMetadata;
 import io.unitycatalog.client.delta.model.DeltaCommit;
+import io.unitycatalog.client.delta.model.DeltaCreateStagingTableRequest;
+import io.unitycatalog.client.delta.model.DeltaCreateTableRequest;
+import io.unitycatalog.client.delta.model.DeltaDomainMetadataUpdates;
+import io.unitycatalog.client.delta.model.DeltaLoadTableResponse;
 import io.unitycatalog.client.delta.model.DeltaProtocol;
-import io.unitycatalog.client.delta.model.LoadTableResponse;
-import io.unitycatalog.client.delta.model.RemovePropertiesUpdate;
-import io.unitycatalog.client.delta.model.RowTrackingDomainMetadata;
-import io.unitycatalog.client.delta.model.SetLatestBackfilledVersionUpdate;
-import io.unitycatalog.client.delta.model.SetPartitionColumnsUpdate;
-import io.unitycatalog.client.delta.model.SetPropertiesUpdate;
-import io.unitycatalog.client.delta.model.SetProtocolUpdate;
-import io.unitycatalog.client.delta.model.SetSchemaUpdate;
-import io.unitycatalog.client.delta.model.SetTableCommentUpdate;
-import io.unitycatalog.client.delta.model.StagingTableResponse;
-import io.unitycatalog.client.delta.model.StagingTableResponseRequiredProtocol;
-import io.unitycatalog.client.delta.model.StagingTableResponseSuggestedProtocol;
-import io.unitycatalog.client.delta.model.TableMetadata;
-import io.delta.storage.commit.uniform.IcebergMetadata;
-import io.unitycatalog.client.delta.model.UniformMetadata;
-import io.unitycatalog.client.delta.model.UniformMetadataIceberg;
-import io.unitycatalog.client.delta.model.UpdateTableRequest;
+import io.unitycatalog.client.delta.model.DeltaRemoveDomainMetadataUpdate;
+import io.unitycatalog.client.delta.model.DeltaRemovePropertiesUpdate;
+import io.unitycatalog.client.delta.model.DeltaReportMetricsRequest;
+import io.unitycatalog.client.delta.model.DeltaReportMetricsRequestReport;
+import io.unitycatalog.client.delta.model.DeltaReportMetricsRequestReportCommitReport;
+import io.unitycatalog.client.delta.model.DeltaReportMetricsRequestReportCommitReportFileSizeHistogram;
+import io.unitycatalog.client.delta.model.DeltaRowTrackingDomainMetadata;
+import io.unitycatalog.client.delta.model.DeltaSetDomainMetadataUpdate;
+import io.unitycatalog.client.delta.model.DeltaSetLatestBackfilledVersionUpdate;
+import io.unitycatalog.client.delta.model.DeltaSetPartitionColumnsUpdate;
+import io.unitycatalog.client.delta.model.DeltaSetPropertiesUpdate;
+import io.unitycatalog.client.delta.model.DeltaSetProtocolUpdate;
+import io.unitycatalog.client.delta.model.DeltaSetSchemaUpdate;
+import io.unitycatalog.client.delta.model.DeltaSetTableCommentUpdate;
+import io.unitycatalog.client.delta.model.DeltaStagingTableResponse;
+import io.unitycatalog.client.delta.model.DeltaStagingTableResponseRequiredProtocol;
+import io.unitycatalog.client.delta.model.DeltaStagingTableResponseSuggestedProtocol;
+import io.unitycatalog.client.delta.model.DeltaTableMetadata;
+import io.unitycatalog.client.delta.model.DeltaTableType;
+import io.unitycatalog.client.delta.model.DeltaUniformMetadata;
+import io.unitycatalog.client.delta.model.DeltaUniformMetadataIceberg;
+import io.unitycatalog.client.delta.model.DeltaUpdateTableRequest;
 import io.unitycatalog.client.model.GetMetastoreSummaryResponse;
 import io.unitycatalog.hadoop.UCCredentialHadoopConfs;
 import io.unitycatalog.hadoop.UCCredentialHadoopConfs.TableOperation;
@@ -88,7 +97,7 @@ import org.apache.hadoop.fs.Path;
  * A REST client implementation of {@link UCDeltaClient} that uses the UC Delta API for
  * all table lifecycle and commit coordination operations.
  *
- * <p>This client uses {@code io.unitycatalog.client.delta.api.TablesApi} for Delta-specific
+ * <p>This client uses {@code io.unitycatalog.client.delta.api.DeltaTablesApi} for Delta-specific
  * table operations (load, create, update) and {@link MetastoresApi} for metastore queries.
  *
  * @see UCDeltaClient
@@ -99,7 +108,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   private static final int HTTP_CONFLICT = 409;
   private static final int HTTP_NOT_FOUND = 404;
 
-  private TablesApi deltaTablesApi;
+  private DeltaTablesApi deltaTablesApi;
   private MetastoresApi metastoresApi;
   private final ApiClient apiClient;
   private final String baseUri;
@@ -142,7 +151,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     });
 
     this.apiClient = builder.build();
-    this.deltaTablesApi = new TablesApi(this.apiClient);
+    this.deltaTablesApi = new DeltaTablesApi(this.apiClient);
     this.metastoresApi = new MetastoresApi(this.apiClient);
     this.baseUri = baseUri;
     this.tokenProvider = tokenProvider;
@@ -259,19 +268,21 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       Optional<AbstractMetadata> newMetadata,
       Optional<AbstractProtocol> oldProtocol,
       Optional<AbstractProtocol> newProtocol,
-      Optional<io.delta.storage.commit.uniform.UniformMetadata> uniform)
+      List<AbstractDomainMetadata> transactionDomainMetadata,
+      Optional<UniformMetadata> uniform)
       throws IOException, CommitFailedException, UCCommitCoordinatorException {
     ensureOpen();
     Objects.requireNonNull(tableId, "tableId must not be null");
+    Objects.requireNonNull(transactionDomainMetadata, "transactionDomainMetadata must not be null");
     ResolvedTableName name = requireThreePartName(tableIdentifier);
 
-    UpdateTableRequest request = new UpdateTableRequest();
-    request.addRequirementsItem(new AssertTableUUID()
+    DeltaUpdateTableRequest request = new DeltaUpdateTableRequest();
+    request.addRequirementsItem(new DeltaAssertTableUUID()
         .type("assert-table-uuid")
         .uuid(UUID.fromString(tableId)));
 
     commit.ifPresent(c -> {
-      AddCommitUpdate addCommit = new AddCommitUpdate()
+      DeltaAddCommitUpdate addCommit = new DeltaAddCommitUpdate()
           .action("add-commit")
           .commit(toSDKDeltaCommit(c));
       uniform.ifPresent(u -> addCommit.uniform(toSDKUniformMetadata(u)));
@@ -279,7 +290,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     });
 
     lastKnownBackfilledVersion.ifPresent(v ->
-        request.addUpdatesItem(new SetLatestBackfilledVersionUpdate()
+        request.addUpdatesItem(new DeltaSetLatestBackfilledVersionUpdate()
             .action("set-latest-backfilled-version")
             .latestPublishedVersion(v)));
 
@@ -291,10 +302,11 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     if (oldProtocol.isPresent()
         && newProtocol.isPresent()
         && !Objects.equals(oldProtocol.get(), newProtocol.get())) {
-      request.addUpdatesItem(new SetProtocolUpdate()
+      request.addUpdatesItem(new DeltaSetProtocolUpdate()
           .action("set-protocol")
           .protocol(toSDKDeltaProtocol(newProtocol.get())));
     }
+    addDomainMetadataUpdateActions(request, transactionDomainMetadata);
 
     try {
       deltaTablesApi.updateTable(name.catalog, name.schema, name.table, request);
@@ -321,7 +333,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     // The UC loadTable endpoint does not support server-side filtering by version range, so
     // we fetch the full unbackfilled commit window and filter client-side below. The server
     // bounds the window size, so this list is not unbounded in practice.
-    LoadTableResponse response;
+    DeltaLoadTableResponse response;
     try {
       response = deltaTablesApi.loadTable(name.catalog, name.schema, name.table);
     } catch (ApiException e) {
@@ -335,7 +347,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
           e);
     }
 
-    TableMetadata metadata = response.getMetadata();
+    DeltaTableMetadata metadata = response.getMetadata();
     String actualTableId = metadata != null && metadata.getTableUuid() != null
         ? metadata.getTableUuid().toString()
         : null;
@@ -366,7 +378,8 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
 
     long latestTableVersion = response.getLatestTableVersion() != null
         ? response.getLatestTableVersion() : -1L;
-    return new GetCommitsResponse(commits, latestTableVersion);
+    Optional<UniformMetadata> storageUniform = toStorageUniformMetadata(response.getUniform());
+    return new UCDeltaGetCommitsResponse(commits, latestTableVersion, storageUniform);
   }
 
   /** Converts a UC SDK {@link DeltaCommit} to a Delta {@link Commit}. */
@@ -397,7 +410,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     Objects.requireNonNull(columns, "columns must not be null");
     Objects.requireNonNull(properties, "properties must not be null");
 
-    CreateTableRequest sdkRequest = new CreateTableRequest()
+    DeltaCreateTableRequest sdkRequest = new DeltaCreateTableRequest()
         .name(tableName)
         .location(storageLocation)
         .properties(properties);
@@ -464,8 +477,9 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     ensureOpen();
     ResolvedTableName name = requireThreePartName(tableIdentifier);
     try {
-      CreateStagingTableRequest request = new CreateStagingTableRequest().name(name.table);
-      StagingTableResponse response =
+      DeltaCreateStagingTableRequest request =
+          new DeltaCreateStagingTableRequest().name(name.table);
+      DeltaStagingTableResponse response =
           deltaTablesApi.createStagingTable(name.catalog, name.schema, request);
       return toStagingTableInfo(response);
     } catch (ApiException e) {
@@ -483,7 +497,8 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       AbstractMetadata metadata,
       AbstractProtocol protocol,
       List<AbstractDomainMetadata> domainMetadata,
-      long lastCommitTimestampMs) throws IOException {
+      long lastCommitTimestampMs,
+      Optional<UniformMetadata> uniformMetadata) throws IOException {
     ensureOpen();
     Objects.requireNonNull(tableUri, "tableUri must not be null");
     Objects.requireNonNull(tableType, "tableType must not be null");
@@ -495,11 +510,10 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     Objects.requireNonNull(schemaJson, "metadata.schemaString must not be null");
 
     try {
-      CreateTableRequest sdkRequest = new CreateTableRequest()
+      DeltaCreateTableRequest sdkRequest = new DeltaCreateTableRequest()
           .name(name.table)
           .location(tableUri.toString())
-          .tableType(io.unitycatalog.client.delta.model.TableType.fromValue(tableType.name()))
-          .dataSourceFormat(io.unitycatalog.client.delta.model.DataSourceFormat.DELTA)
+          .tableType(DeltaTableType.fromValue(tableType.name()))
           .columns(UCDeltaSchemaConverter.parseSchemaString(schemaJson))
           .protocol(toSDKDeltaProtocol(protocol))
           .lastCommitTimestampMs(lastCommitTimestampMs);
@@ -514,10 +528,11 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       if (configuration != null && !configuration.isEmpty()) {
         sdkRequest.properties(configuration);
       }
-      DomainMetadataUpdates updates = toSDKDomainMetadataUpdates(domainMetadata);
+      DeltaDomainMetadataUpdates updates = toSDKDomainMetadataUpdates(domainMetadata);
       if (updates != null) {
         sdkRequest.domainMetadata(updates);
       }
+      uniformMetadata.ifPresent(u -> sdkRequest.uniform(toSDKUniformMetadata(u)));
 
       return toTableInfo(
           deltaTablesApi.createTable(name.catalog, name.schema, sdkRequest),
@@ -531,13 +546,59 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     }
   }
 
+  @Override
+  public void reportMetrics(
+      String tableId,
+      TableIdentifier tableIdentifier,
+      UCDeltaModels.CommitReport report) throws IOException {
+    ensureOpen();
+    Objects.requireNonNull(tableId, "tableId must not be null");
+    Objects.requireNonNull(report, "report must not be null");
+    ResolvedTableName name = requireThreePartName(tableIdentifier);
+    try {
+      DeltaReportMetricsRequest sdkRequest = new DeltaReportMetricsRequest()
+          .tableId(UUID.fromString(tableId))
+          .report(new DeltaReportMetricsRequestReport().commitReport(toSDKCommitReport(report)));
+      deltaTablesApi.reportMetrics(name.catalog, name.schema, name.table, sdkRequest);
+    } catch (ApiException e) {
+      throw new IOException(
+          String.format("Failed to report metrics for table %s (HTTP %s): %s",
+              name.fullName, e.getCode(), e.getResponseBody()), e);
+    }
+  }
+
+  private static DeltaReportMetricsRequestReportCommitReport toSDKCommitReport(
+      UCDeltaModels.CommitReport report) {
+    DeltaReportMetricsRequestReportCommitReport sdkReport =
+        new DeltaReportMetricsRequestReportCommitReport()
+            .numFilesAdded(report.getNumFilesAdded())
+            .numFilesRemoved(report.getNumFilesRemoved())
+            .numBytesAdded(report.getNumBytesAdded())
+            .numBytesRemoved(report.getNumBytesRemoved());
+    report.getNumRowsInserted().ifPresent(sdkReport::numRowsInserted);
+    report.getNumRowsRemoved().ifPresent(sdkReport::numRowsRemoved);
+    report.getNumRowsUpdated().ifPresent(sdkReport::numRowsUpdated);
+    report.getFileSizeHistogram().ifPresent(h -> sdkReport.fileSizeHistogram(toSDKHistogram(h)));
+    return sdkReport;
+  }
+
+  private static DeltaReportMetricsRequestReportCommitReportFileSizeHistogram toSDKHistogram(
+      UCDeltaModels.FileSizeHistogram h) {
+    return new DeltaReportMetricsRequestReportCommitReportFileSizeHistogram()
+        .sortedBinBoundaries(h.getSortedBinBoundaries())
+        .fileCounts(h.getFileCounts())
+        .totalBytes(h.getTotalBytes())
+        .commitVersion(h.getCommitVersion());
+  }
+
   // ===========================
   // Response Conversion Methods
   // ===========================
 
   private TableInfo toTableInfo(
-      LoadTableResponse response, String catalog, String schema, String name) throws IOException {
-    TableMetadata m = response.getMetadata();
+      DeltaLoadTableResponse response, String catalog, String schema, String name)
+      throws IOException {
+    DeltaTableMetadata m = response.getMetadata();
     String location = m.getLocation();
     if (location == null) {
       throw new IOException("UC returned null location for table " + name);
@@ -551,8 +612,8 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     }
     UCDeltaModels.TableType tableType =
         UCDeltaModels.TableType.valueOf(m.getTableType().getValue());
-    DeltaTableMetadata adapted = new DeltaTableMetadata(name, m);
-    Optional<io.delta.storage.commit.uniform.UniformMetadata> uniformMetadata =
+    AdaptedTableMetadata adapted = new AdaptedTableMetadata(name, m);
+    Optional<UniformMetadata> uniformMetadata =
         toStorageUniformMetadata(response.getUniform());
     Map<String, String> storageProps;
     try {
@@ -571,21 +632,21 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     return new TableInfo(ucTableId, tableType, location, adapted, storageProps, uniformMetadata);
   }
 
-  private static Optional<io.delta.storage.commit.uniform.UniformMetadata>
-      toStorageUniformMetadata(UniformMetadata sdkUniform) {
+  private static Optional<UniformMetadata> toStorageUniformMetadata(
+      DeltaUniformMetadata sdkUniform) {
     if (sdkUniform == null) {
       return Optional.empty();
     }
-    UniformMetadataIceberg sdkIceberg = sdkUniform.getIceberg();
+    DeltaUniformMetadataIceberg sdkIceberg = sdkUniform.getIceberg();
     if (sdkIceberg == null) {
-      return Optional.of(new io.delta.storage.commit.uniform.UniformMetadata(null));
+      return Optional.of(new UniformMetadata(null));
     }
     String metadataLocation = sdkIceberg.getMetadataLocation();
     Long rawVersion = sdkIceberg.getConvertedDeltaVersion();
     Long rawTimestamp = sdkIceberg.getConvertedDeltaTimestamp();
     if (metadataLocation == null || rawVersion == null || rawTimestamp == null) {
       throw new IllegalStateException(
-          "UC returned a non-null UniformMetadataIceberg with missing required fields: "
+          "UC returned a non-null DeltaUniformMetadataIceberg with missing required fields: "
               + "metadataLocation="
               + metadataLocation
               + ", convertedDeltaVersion="
@@ -596,10 +657,10 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     String convertedDeltaTimestamp = Instant.ofEpochMilli(rawTimestamp).toString();
     IcebergMetadata icebergMetadata =
         new IcebergMetadata(metadataLocation, rawVersion, convertedDeltaTimestamp);
-    return Optional.of(new io.delta.storage.commit.uniform.UniformMetadata(icebergMetadata));
+    return Optional.of(new UniformMetadata(icebergMetadata));
   }
 
-  private UCDeltaModels.StagingTableInfo toStagingTableInfo(StagingTableResponse r)
+  private UCDeltaModels.StagingTableInfo toStagingTableInfo(DeltaStagingTableResponse r)
       throws IOException, ApiException {
     if (r.getTableId() == null) {
       throw new IOException("UC returned null tableId for staging table");
@@ -626,7 +687,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
         storageProps);
   }
 
-  private UCDeltaModels.DeltaProtocol toDeltaProtocol(StagingTableResponseRequiredProtocol p) {
+  private UCDeltaModels.DeltaProtocol toDeltaProtocol(DeltaStagingTableResponseRequiredProtocol p) {
     if (p == null) {
       return null;
     }
@@ -642,7 +703,8 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     return protocol;
   }
 
-  private UCDeltaModels.DeltaProtocol toDeltaProtocol(StagingTableResponseSuggestedProtocol p) {
+  private UCDeltaModels.DeltaProtocol toDeltaProtocol(
+      DeltaStagingTableResponseSuggestedProtocol p) {
     if (p == null) {
       return null;
     }
@@ -684,44 +746,70 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     return protocol;
   }
 
+  private static void addDomainMetadataUpdateActions(
+      DeltaUpdateTableRequest request,
+      List<AbstractDomainMetadata> transactionDomainMetadata) throws IOException {
+    List<AbstractDomainMetadata> setDomainMetadata = new ArrayList<>();
+    List<String> removeDomains = new ArrayList<>();
+    for (AbstractDomainMetadata domainMetadata : transactionDomainMetadata) {
+      if (domainMetadata.isRemoved()) {
+        removeDomains.add(domainMetadata.getDomain());
+      } else {
+        setDomainMetadata.add(domainMetadata);
+      }
+    }
+
+    DeltaDomainMetadataUpdates setUpdates = toSDKDomainMetadataUpdates(setDomainMetadata);
+    if (setUpdates != null) {
+      request.addUpdatesItem(new DeltaSetDomainMetadataUpdate()
+          .action("set-domain-metadata")
+          .updates(setUpdates));
+    }
+    if (!removeDomains.isEmpty()) {
+      request.addUpdatesItem(new DeltaRemoveDomainMetadataUpdate()
+          .action("remove-domain-metadata")
+          .domains(removeDomains));
+    }
+  }
+
   /**
    * Maps Delta {@link AbstractDomainMetadata} entries onto the UC SDK's typed {@link
-   * DomainMetadataUpdates}. UC models only {@code delta.clustering} and {@code
-   * delta.rowTracking}; entries for unknown domains are dropped silently. Returns {@code null}
-   * when no known-domain entries were produced.
+   * DeltaDomainMetadataUpdates}. UC models only {@code delta.clustering} and {@code
+   * delta.rowTracking}; entries for unknown domains fail fast. Returns {@code null} when no
+   * known-domain entries were produced.
    *
    * <p>Each {@code configuration} JSON is parsed into a typed DTO so a shape mismatch fails at
    * parse time with a Jackson error rather than at first use after an unchecked cast.
    *
    * <p>Package-private for unit testing.
    */
-  static DomainMetadataUpdates toSDKDomainMetadataUpdates(
+  static DeltaDomainMetadataUpdates toSDKDomainMetadataUpdates(
       List<AbstractDomainMetadata> entries) throws IOException {
-    DomainMetadataUpdates updates = new DomainMetadataUpdates();
+    DeltaDomainMetadataUpdates updates = new DeltaDomainMetadataUpdates();
     boolean any = false;
     for (AbstractDomainMetadata dm : entries) {
-      // This function is for createTable only for now.
+      // Remove intents are carried separately by remove-domain-metadata commit updates.
       if (dm.isRemoved()) {
         continue;
       }
       String domain = dm.getDomain();
       switch (domain) {
-        case DomainMetadataUpdates.JSON_PROPERTY_DELTA_CLUSTERING: {
+        case DeltaDomainMetadataUpdates.JSON_PROPERTY_DELTA_CLUSTERING: {
           ClusteringDomainConfig config = DOMAIN_METADATA_MAPPER.readValue(
               dm.getConfiguration(), ClusteringDomainConfig.class);
           if (config.clusteringColumns != null) {
             updates.setDeltaClustering(
-                new ClusteringDomainMetadata().clusteringColumns(config.clusteringColumns));
+                new DeltaClusteringDomainMetadata().clusteringColumns(config.clusteringColumns));
             any = true;
           }
           break;
         }
-        case DomainMetadataUpdates.JSON_PROPERTY_DELTA_ROW_TRACKING: {
+        case DeltaDomainMetadataUpdates.JSON_PROPERTY_DELTA_ROW_TRACKING: {
           RowTrackingDomainConfig config = DOMAIN_METADATA_MAPPER.readValue(
               dm.getConfiguration(), RowTrackingDomainConfig.class);
           if (config.rowIdHighWaterMark != null) {
             updates.setDeltaRowTracking(
-                new RowTrackingDomainMetadata().rowIdHighWaterMark(config.rowIdHighWaterMark));
+                new DeltaRowTrackingDomainMetadata().rowIdHighWaterMark(config.rowIdHighWaterMark));
             any = true;
           }
           break;
@@ -729,8 +817,8 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
         default:
           throw new IOException(
               "Unsupported Delta domain metadata domain '" + domain + "': UC SDK only models "
-                  + DomainMetadataUpdates.JSON_PROPERTY_DELTA_CLUSTERING + " and "
-                  + DomainMetadataUpdates.JSON_PROPERTY_DELTA_ROW_TRACKING + ". Add SDK "
+                  + DeltaDomainMetadataUpdates.JSON_PROPERTY_DELTA_CLUSTERING + " and "
+                  + DeltaDomainMetadataUpdates.JSON_PROPERTY_DELTA_ROW_TRACKING + ". Add SDK "
                   + "support before issuing writes that produce this domain.");
       }
     }
@@ -754,11 +842,10 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     public Long rowIdHighWaterMark;
   }
 
-  private UniformMetadata toSDKUniformMetadata(
-      io.delta.storage.commit.uniform.UniformMetadata uniform) {
-    UniformMetadata ucUniform = new UniformMetadata();
+  private DeltaUniformMetadata toSDKUniformMetadata(UniformMetadata uniform) {
+    DeltaUniformMetadata ucUniform = new DeltaUniformMetadata();
     uniform.getIcebergMetadata().ifPresent(iceberg -> {
-      UniformMetadataIceberg ucIceberg = new UniformMetadataIceberg()
+      DeltaUniformMetadataIceberg ucIceberg = new DeltaUniformMetadataIceberg()
           .metadataLocation(iceberg.getMetadataLocation())
           .convertedDeltaVersion(iceberg.getConvertedDeltaVersion())
           .convertedDeltaTimestamp(parseTimestampToEpochMs(
@@ -790,21 +877,21 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
    * any fields that changed.
    */
   private void addMetadataUpdates(
-      UpdateTableRequest request,
+      DeltaUpdateTableRequest request,
       AbstractMetadata oldMetadata,
       AbstractMetadata newMetadata) {
     if (!Objects.equals(oldMetadata.getSchemaString(), newMetadata.getSchemaString())) {
-      request.addUpdatesItem(new SetSchemaUpdate()
+      request.addUpdatesItem(new DeltaSetSchemaUpdate()
           .action("set-columns")
           .columns(UCDeltaSchemaConverter.parseSchemaString(newMetadata.getSchemaString())));
     }
     if (!Objects.equals(oldMetadata.getPartitionColumns(), newMetadata.getPartitionColumns())) {
-      request.addUpdatesItem(new SetPartitionColumnsUpdate()
+      request.addUpdatesItem(new DeltaSetPartitionColumnsUpdate()
           .action("set-partition-columns")
           .partitionColumns(newMetadata.getPartitionColumns()));
     }
     if (!Objects.equals(oldMetadata.getDescription(), newMetadata.getDescription())) {
-      request.addUpdatesItem(new SetTableCommentUpdate()
+      request.addUpdatesItem(new DeltaSetTableCommentUpdate()
           .action("set-table-comment")
           .comment(newMetadata.getDescription()));
     }
@@ -822,7 +909,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
         }
       }
       if (!toSet.isEmpty()) {
-        request.addUpdatesItem(new SetPropertiesUpdate()
+        request.addUpdatesItem(new DeltaSetPropertiesUpdate()
             .action("set-properties")
             .updates(toSet));
       }
@@ -834,7 +921,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
         }
       }
       if (!toRemove.isEmpty()) {
-        request.addUpdatesItem(new RemovePropertiesUpdate()
+        request.addUpdatesItem(new DeltaRemovePropertiesUpdate()
             .action("remove-properties")
             .removals(toRemove));
       }
@@ -916,14 +1003,14 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   }
 
   /**
-   * Adapts a UC SDK {@link TableMetadata} to {@link AbstractMetadata}.
+   * Adapts a UC SDK {@link DeltaTableMetadata} to {@link AbstractMetadata}.
    */
-  private static final class DeltaTableMetadata implements AbstractMetadata {
+  private static final class AdaptedTableMetadata implements AbstractMetadata {
 
     private final String name;
-    private final TableMetadata m;
+    private final DeltaTableMetadata m;
 
-    DeltaTableMetadata(String name, TableMetadata m) {
+    AdaptedTableMetadata(String name, DeltaTableMetadata m) {
       this.name = name;
       this.m = m;
     }
@@ -948,7 +1035,9 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
 
     @Override
     public String getProvider() {
-      return m.getDataSourceFormat() != null ? m.getDataSourceFormat().getValue() : null;
+      // The UC Delta API only serves Delta tables; the data source format is implicit and is not
+      // carried on the SDK's table metadata, so the provider is always "DELTA".
+      return "DELTA";
     }
 
     @Override
@@ -980,8 +1069,8 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     @Override
     public boolean equals(Object o) {
       if (this == o) return true;
-      if (!(o instanceof DeltaTableMetadata)) return false;
-      DeltaTableMetadata that = (DeltaTableMetadata) o;
+      if (!(o instanceof AdaptedTableMetadata)) return false;
+      AdaptedTableMetadata that = (AdaptedTableMetadata) o;
       return Objects.equals(getId(), that.getId())
           && Objects.equals(getName(), that.getName())
           && Objects.equals(getProvider(), that.getProvider())

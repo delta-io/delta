@@ -27,8 +27,8 @@ import org.apache.spark.sql.delta.Relocated._
 import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.DeltaErrors.{TemporallyUnstableInputException, TimestampEarlierThanCommitRetentionException}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
+import org.apache.spark.sql.delta.catalog.{DeltaTableV2, DeltaV2TableMarker}
 import org.apache.spark.sql.delta.catalog.DeltaCatalogV1
-import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.catalog.IcebergTablePlaceHolder
 import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -84,6 +84,19 @@ class DeltaAnalysis(protected val session: SparkSession)
   extends Rule[LogicalPlan] with AnalysisHelper with DeltaInsertCastSupport {
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperatorsDown {
+    // Intercept SHOW PARTITIONS for Delta tables
+    // Spark's ShowPartitions command requires SUPPORTS_PARTITION_MANAGEMENT capability,
+    // but Delta manages partitions through the transaction log, not the metastore.
+    // We intercept and replace with our custom command that reads from the Delta log.
+    case ShowPartitions(
+        r @ ResolvedTable(_, _, _: DeltaTableV2, _), partSpec, _) =>
+      // DeltaTableV2 does not implement SUPPORTS_PARTITION_MANAGEMENT, so the spec is still
+      // expected to be UnresolvedPartitionSpec here.
+      val partitionSpec = partSpec.collect {
+        case UnresolvedPartitionSpec(spec, _) => spec
+      }.getOrElse(Map.empty[String, String])
+      ShowDeltaPartitionsCommand(r, partitionSpec)
+
     // INSERT INTO by ordinal and df.insertInto()
     case a @ AppendDelta(r, d) if !a.isByName &&
         needsSchemaAdjustmentByOrdinal(d, a.query, r.schema, a.writeOptions) =>
@@ -391,8 +404,10 @@ class DeltaAnalysis(protected val session: SparkSession)
     case stmt: CDCStatementBase if stmt.functionArgs.forall(_.resolved) =>
       stmt.toTableChanges(session)
 
-    case tc: TableChanges if tc.child.resolved => tc.toReadQuery
-
+    case tc: TableChanges if tc.child.resolved &&
+        // Skip CDF over DSv2 table, this will be resolved in [[ResolveTableChangesV2]].
+        !tc.child.exists(DeltaV2TableMarker.isDeltaV2TableRelation) =>
+      tc.toReadQuery
 
     // Here we take advantage of CreateDeltaTableCommand which takes a LogicalPlan for CTAS in order
     // to perform CLONE. We do this by passing the CloneTableCommand as the query in
@@ -684,6 +699,13 @@ class DeltaAnalysis(protected val session: SparkSession)
     case DeltaReorgTable(ResolvedTable(_, _, t, _), _) =>
       throw DeltaErrors.notADeltaTable(t.name())
 
+    case TruncateTable(child @ ResolvedTable(_, _, _: DeltaTableV2, _)) =>
+      TruncateDeltaTableCommand(child)
+
+    case TruncatePartition(ResolvedTable(_, _, delta: DeltaTableV2, _), _) =>
+      recordDeltaEvent(delta.deltaLog, "delta.unsupported.truncateTablePartition")
+      throw DeltaErrors.truncateTablePartitionNotSupportedException
+
     case cmd @ ShowColumns(child @ ResolvedTable(_, _, table: DeltaTableV2, _), namespace, _) =>
       // Adapted from the rule in spark ResolveSessionCatalog.scala, which V2 tables don't trigger.
       // NOTE: It's probably a spark bug to check head instead of tail, for 3-part identifiers.
@@ -705,8 +727,10 @@ class DeltaAnalysis(protected val session: SparkSession)
 
     case origStreamWrite: WriteToStream =>
       // The command could have Delta as source and/or sink. We need to look at both.
-      val streamWrite = origStreamWrite match {
-        case WriteToStream(_, _, sink @ DeltaSink(_, _, _, _, _, None), _, _, _, _, Some(ct)) =>
+      // Use field access rather than positional destructuring because WriteToStream's
+      // constructor signature differs across Spark versions.
+      val streamWrite = (origStreamWrite.sink, origStreamWrite.catalogTable) match {
+        case (sink @ DeltaSink(_, _, _, _, _, None), Some(ct)) =>
           // The command has a catalog table, but the DeltaSink does not. This happens because
           // DeltaDataSource.createSink (Spark API) didn't have access to the catalog table when it
           // created the DeltaSink. Fortunately we can fix it up here.

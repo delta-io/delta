@@ -19,6 +19,7 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
@@ -67,6 +68,19 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
 
   @Override
   public Write build() {
+    // Reject writes to column-mapped tables: the V2 write path writes Parquet with logical
+    // column names, but column-mapped tables store data under physical UUID-based names.
+    // The mismatch causes reads to return null for every value.
+    ColumnMapping.ColumnMappingMode cmMode =
+        ColumnMapping.getColumnMappingMode(initialSnapshot.getTableProperties());
+    if (ColumnMapping.isColumnMappingModeEnabled(cmMode)) {
+      throw new UnsupportedOperationException(
+          "DSv2 writes are not supported on column-mapped Delta tables "
+              + "(delta.columnMapping.mode = "
+              + cmMode.toString()
+              + "). Use the V1 write path (format(\"delta\").write()) instead.");
+    }
+
     StructType tableSchema =
         SchemaUtils.convertKernelSchemaToSparkSchema(initialSnapshot.getSchema());
     // Strip column mapping metadata (physical names, IDs) so mergeSchemas compares

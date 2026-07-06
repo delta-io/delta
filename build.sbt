@@ -62,6 +62,7 @@ val parquet4sVersion = "1.9.4"
 val protoVersion = "3.25.1"
 val grpcVersion = "1.62.2"
 val flinkVersion = "2.0.1"
+val gcsConnectorVersion = "4.0.4"
 
 // Optional kernel version override. See `project/KernelVersion.scala` for the
 // resolution rule and `-DkernelVersion=<v>` semantics.
@@ -201,6 +202,12 @@ lazy val connectClient = (project in file("spark-connect/client"))
     commonSettings,
     releaseSettings,
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
+    // Shared refresh test traits compiled into both this module and the `spark`
+    // module. See io.delta.tables.shared.
+    Test / unmanagedSourceDirectories += {
+      (LocalRootProject / baseDirectory).value /
+        "spark-shared-tests" / "src" / "test" / "scala-shared"
+    },
     libraryDependencies ++= Seq(
       "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
       "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "provided",
@@ -217,12 +224,16 @@ lazy val connectClient = (project in file("spark-connect/client"))
 
       if (!distributionDir.exists()) {
         IO.createDirectory(jarsDir)
+        // V2/STRICT mode requires the Delta Kernel engine at runtime
+        // (io.delta.kernel.defaults.engine.DefaultEngine), so add the packaged kernel jars.
+        val kernelJars = Seq(
+          (kernelApi / Compile / packageBin).value,
+          (kernelDefaults / Compile / packageBin).value)
         // Create symlinks for all dependencies (filter to only JAR files)
-        serverClassPath.distinct.filter(_.data.isFile).foreach { entry =>
-          val jarFile = entry.data.toPath
-          val linkedJarFile = jarsDir / entry.data.getName
+        (serverClassPath.map(_.data).filter(_.isFile) ++ kernelJars).distinct.foreach { jarFile =>
+          val linkedJarFile = jarsDir / jarFile.getName
           if (!java.nio.file.Files.exists(linkedJarFile.toPath)) {
-            Files.createSymbolicLink(linkedJarFile.toPath, jarFile)
+            Files.createSymbolicLink(linkedJarFile.toPath, jarFile.toPath)
           }
         }
         // Create a symlink for the log4j properties
@@ -542,22 +553,35 @@ lazy val spark = (project in file("spark-unified"))
     // Set Test baseDirectory before sparkDependentSettings() so it uses the correct directory
     Test / baseDirectory := (sparkV1 / baseDirectory).value,
 
-    // Test sources from spark/ directory (sparkV1's directory) AND spark-unified's own directory
-    // MUST be set BEFORE crossSparkSettings() to avoid overwriting version-specific directories
+    // Test sources from spark/ directory (sparkV1's directory) AND spark-unified's own directory,
+    // plus the version-specific shim directory (e.g. `src/test/scala-shims/spark-4.2`).
+    // MUST be set BEFORE crossSparkSettings() to avoid overwriting version-specific directories.
     Test / unmanagedSourceDirectories := {
       val sparkDir = (sparkV1 / baseDirectory).value
       val unifiedDir = baseDirectory.value
+      // Every supported Spark version sets additionalSourceDir, see SparkVersionSpec.ALL_SPECS.
+      val shimDir = unifiedDir / "src" / "test" / SparkVersionSpec.ALL_SPECS
+        .find(_.fullVersion == sparkVersion.value)
+        .flatMap(_.additionalSourceDir)
+        .get
       Seq(
         sparkDir / "src" / "test" / "scala",
         sparkDir / "src" / "test" / "java",
         unifiedDir / "src" / "test" / "scala",
-        unifiedDir / "src" / "test" / "java"
+        unifiedDir / "src" / "test" / "java",
+        shimDir
       )
     },
     Test / unmanagedResourceDirectories := Seq(
       (sparkV1 / baseDirectory).value / "src" / "test" / "resources",
       baseDirectory.value / "src" / "test" / "resources"
     ),
+    // Shared refresh test traits compiled into both this module and the
+    // `connectClient` module. See io.delta.tables.shared.
+    Test / unmanagedSourceDirectories += {
+      (LocalRootProject / baseDirectory).value /
+        "spark-shared-tests" / "src" / "test" / "scala-shared"
+    },
 
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
 
@@ -661,6 +685,10 @@ lazy val spark = (project in file("spark-unified"))
       "org.scalatestplus" %% "scalacheck-1-15" % "3.2.9.0" % "test",
       "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
+      "org.junit.jupiter" % "junit-jupiter-api" % "5.11.4" % "test",
+      "org.junit.jupiter" % "junit-jupiter-engine" % "5.11.4" % "test",
+      "org.junit.jupiter" % "junit-jupiter-params" % "5.11.4" % "test",
+      "com.github.sbt.junit" % "jupiter-interface" % "0.17.0" % "test",
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
@@ -771,7 +799,7 @@ lazy val contribs = (project in file("contribs"))
 //
 // Override with -DunityCatalogVersion=<anything> for ad-hoc experiments.
 val unityCatalogReleaseVersion: Option[String] = None
-val defaultUnityCatalogReleaseVersion = "0.4.1"
+val defaultUnityCatalogReleaseVersion = "0.5.0"
 val useDefaultUnityCatalogReleaseVersion: Boolean =
   sys.props.getOrElse("useDefaultUnityCatalogReleaseVersion", "false").toBoolean
 val unityCatalogSetupScript = "project/scripts/setup_unitycatalog_main.sh"
@@ -785,6 +813,12 @@ val unityCatalogVersion: String = sys.props.getOrElse(
   "unityCatalogVersion",
   if (useDefaultUnityCatalogReleaseVersion) defaultUnityCatalogReleaseVersion
   else unityCatalogReleaseVersion.getOrElse(pinnedUnityCatalogVersion))
+
+// UC publishes its Spark connector per Spark major.minor (e.g. unitycatalog-spark_4.1). This
+// is the artifact name without the Scala suffix - sbt's `%%` appends `_2.13` for dep
+// resolution; the canary check below appends `_2.13` explicitly for the Ivy/Maven path.
+val unityCatalogSparkArtifactName: String =
+  s"unitycatalog-spark_${CrossSparkVersions.getSparkVersionSpec().shortVersion}"
 
 /**
  * Returns true when `current` is at least `target`. Numeric segments only; suffix after
@@ -831,7 +865,12 @@ def publishPinnedUnityCatalog(log: sbt.util.Logger, canary: java.io.File): Unit 
   val procLogger = ProcessLogger(
     line => log.info(s"[UC setup] $line"),
     line => log.warn(s"[UC setup] $line"))
-  val exit = Process(Seq("bash", unityCatalogSetupScript)).!(procLogger)
+  // SPARK_VERSION tells the script which Spark variant to build (forwarded to UC's sbt as
+  // -DsparkVersion).
+  val exit = Process(
+    Seq("bash", unityCatalogSetupScript),
+    None,
+    "SPARK_VERSION" -> CrossSparkVersions.getSparkVersionSpec().shortVersion).!(procLogger)
   if (exit != 0) {
     sys.error(
       s"[UC] $unityCatalogSetupScript exited with code $exit. Run it manually to see full output.")
@@ -853,13 +892,17 @@ Global / ensurePinnedUnityCatalog := {
     sys.props.contains("unityCatalogVersion")
   if (unityCatalogReleaseVersion.isEmpty && !usingReleasedVersion) {
     val home = file(sys.props("user.home"))
+    // Canary on the spark artifact, not client/server: those are Spark-version-independent and
+    // would short-circuit the trigger when only the active Spark version changed, leaving the
+    // needed unitycatalog-spark_${X.Y}_2.13 unpublished.
+    val sparkArtifact = s"${unityCatalogSparkArtifactName}_2.13"
     // Check both layouts: a restored sbt cache can pre-populate ivy alone, leaving m2 empty -
     // checking only ivy would silently skip the slow publish and break mvn-based consumers.
     val ivy2Canary = home / ".ivy2" / "local" / "io.unitycatalog" /
-      "unitycatalog-client" / unityCatalogVersion / "ivys" / "ivy.xml"
+      sparkArtifact / unityCatalogVersion / "ivys" / "ivy.xml"
     val m2Canary = home / ".m2" / "repository" / "io" / "unitycatalog" /
-      "unitycatalog-client" / unityCatalogVersion /
-      s"unitycatalog-client-$unityCatalogVersion.pom"
+      sparkArtifact / unityCatalogVersion /
+      s"$sparkArtifact-$unityCatalogVersion.pom"
     if (!ivy2Canary.exists || !m2Canary.exists) {
       publishPinnedUnityCatalog(log, ivy2Canary)
     }
@@ -1052,8 +1095,8 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     ),
     assembly / assemblyMergeStrategy := {
       // Discard `module-info.class` to fix the `different file contents found` error.
-      // TODO Upgrade SBT to 1.5 which will do this automatically
       case "module-info.class" => MergeStrategy.discard
+      case PathList("META-INF", "versions", _*) => MergeStrategy.discard
       case PathList("META-INF", "services", xs @ _*) => MergeStrategy.discard
       case x =>
         val oldStrategy = (assembly / assemblyMergeStrategy).value
@@ -1366,7 +1409,7 @@ lazy val iceberg = (project in file("iceberg"))
           "org.apache.httpcomponents.client5" % "httpclient5" % "5.3.1" % "test",
           "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.11.0" % "provided",
           // For FixedGcsAccessTokenProvider (GCS server-side planning credentials)
-          "com.google.cloud.bigdataoss" % "util-hadoop" % "hadoop3-2.2.26" % "provided"
+          "com.google.cloud.bigdataoss" % "util-hadoop" % gcsConnectorVersion % "provided"
         )
       } else {
         Seq.empty
@@ -1435,7 +1478,7 @@ lazy val iceberg = (project in file("iceberg"))
   )
 // scalastyle:on println
 
-val icebergShadedVersion = "1.10.1"
+val icebergShadedVersion = "1.11.0"
 lazy val icebergShaded = (project in file("icebergShaded"))
   .dependsOn(spark % "provided")
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
@@ -1641,7 +1684,7 @@ lazy val flink = (project in file("flink"))
       "dev.failsafe" % "failsafe" % "3.2.0",
       "com.github.ben-manes.caffeine" % "caffeine" % "3.1.8",
       "org.apache.hadoop" % "hadoop-aws" % hadoopVersion,
-      "com.google.cloud.bigdataoss" % "gcs-connector" % "hadoop3-2.2.31" % Provided,
+      "com.google.cloud.bigdataoss" % "gcs-connector" % gcsConnectorVersion % Provided classifier "shaded",
 
       // Test dependencies
       "org.junit.jupiter" % "junit-jupiter-api" % "5.11.4" % "test",

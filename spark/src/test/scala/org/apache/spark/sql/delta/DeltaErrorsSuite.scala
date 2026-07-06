@@ -1800,6 +1800,34 @@ trait DeltaErrorsSuiteBase
       checkError(e, "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION", "0AKDC",
         Map("operation" -> "OPTIMIZE"))
     }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cannotWriteEmptySchemaTableNoColumns()
+      }
+      checkError(e, "DELTA_CANNOT_WRITE_EMPTY_SCHEMA.TABLE_NO_COLUMNS", "428GU",
+        Map.empty[String, String])
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cannotWriteEmptySchemaTableAllVoidColumns()
+      }
+      checkError(e, "DELTA_CANNOT_WRITE_EMPTY_SCHEMA.TABLE_ALL_VOID_COLUMNS", "428GU",
+        Map.empty[String, String])
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cannotWriteEmptySchemaStructNoFields(Seq("a", "b"))
+      }
+      checkError(e, "DELTA_CANNOT_WRITE_EMPTY_SCHEMA.STRUCT_NO_FIELDS", "428GU",
+        Map("columnPath" -> "a.b"))
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cannotWriteEmptySchemaStructAllVoidFields(Seq("a", "b"))
+      }
+      checkError(e, "DELTA_CANNOT_WRITE_EMPTY_SCHEMA.STRUCT_ALL_VOID_FIELDS", "428GU",
+        Map("columnPath" -> "a.b"))
+    }
   }
 
   // The compiler complains the lambda function is too large if we put all tests in one lambda.
@@ -2598,13 +2626,13 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.invalidConstraintName("foo")
       }
-      checkError(e, "_LEGACY_ERROR_TEMP_DELTA_0001", None, Map("name" -> "foo"))
+      checkError(e, "DELTA_INVALID_CONSTRAINT_NAME", None, Map("name" -> "foo"))
     }
     {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.bloomFilterInvalidParameterValueException("foo")
       }
-      checkError(e, "_LEGACY_ERROR_TEMP_DELTA_0002", None, Map("message" -> "foo"))
+      checkError(e, "DELTA_BLOOM_FILTER_INVALID_PARAMETER_VALUE", None, Map("message" -> "foo"))
     }
     {
       val e = intercept[DeltaAnalysisException] {
@@ -2612,7 +2640,7 @@ trait DeltaErrorsSuiteBase
           tableProperties = Map("delta.prop1" -> "foo"),
           deltaConfiguration = Map("delta.config1" -> "bar"))
       }
-      checkError(e, "_LEGACY_ERROR_TEMP_DELTA_0003", None, Map(
+      checkError(e, "DELTA_CONVERT_METASTORE_METADATA_MISMATCH", None, Map(
         "tableProperties" -> "[delta.prop1=foo]",
         "configuration" -> "[delta.config1=bar]",
         "metadataCheckSqlConf" -> DeltaSQLConf.DELTA_CONVERT_METADATA_CHECK_ENABLED.key))
@@ -2682,7 +2710,7 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.errorFindingColumnPosition(Seq("col2"), schema, "foo")
       }
-      checkError(e, "_LEGACY_ERROR_TEMP_DELTA_0008", None, Map(
+      checkError(e, "DELTA_ERROR_FINDING_COLUMN_POSITION", None, Map(
         "column" -> "col2",
         "schema" -> schema.treeString,
         "message" -> "foo"))
@@ -2702,7 +2730,7 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.identityColumnInconsistentMetadata("col1", true, true, true)
       }
-      checkError(e, "_LEGACY_ERROR_TEMP_DELTA_0006", None, Map(
+      checkError(e, "DELTA_IDENTITY_COLUMN_INCONSISTENT_METADATA", None, Map(
         "colName" -> "col1", "hasStart" -> "true", "hasStep" -> "true", "hasInsert" -> "true"))
     }
     {
@@ -2890,30 +2918,30 @@ trait DeltaErrorsSuiteBase
     {
       val e = intercept[DeltaAnalysisException] {
         throw new DeltaAnalysisException(
-          errorClass = "_LEGACY_ERROR_TEMP_DELTA_0009",
+          errorClass = "DELTA_UNSUPPORTED_NESTED_FIELD_IN_UPDATE",
           messageParameters = Array("prefixMsg - "))
       }
-      checkError(e, "_LEGACY_ERROR_TEMP_DELTA_0009", None,
+      checkError(e, "DELTA_UNSUPPORTED_NESTED_FIELD_IN_UPDATE", None,
         Map("optionalPrefixMessage" -> "prefixMsg - "))
     }
     {
       val expr = "someExp".expr
       val e = intercept[DeltaAnalysisException] {
         throw new DeltaAnalysisException(
-          errorClass = "_LEGACY_ERROR_TEMP_DELTA_0010",
+          errorClass = "DELTA_UNSUPPORTED_EXPRESSION_IN_TARGET_COLUMN",
           messageParameters = Array("prefixMsg - ", expr.sql))
       }
-      checkError(e, "_LEGACY_ERROR_TEMP_DELTA_0010", None,
+      checkError(e, "DELTA_UNSUPPORTED_EXPRESSION_IN_TARGET_COLUMN", None,
         Map("optionalPrefixMessage" -> "prefixMsg - ", "expression" -> "'someExp'"))
     }
     {
       val exprs = Seq("1".expr, "2".expr)
       val e = intercept[DeltaAnalysisException] {
         throw new DeltaAnalysisException(
-          errorClass = "_LEGACY_ERROR_TEMP_DELTA_0012",
+          errorClass = "DELTA_CANNOT_RESOLVE_EXPRESSION",
           messageParameters = Array(exprs.mkString(",")))
       }
-      checkError(e, "_LEGACY_ERROR_TEMP_DELTA_0012", None,
+      checkError(e, "DELTA_CANNOT_RESOLVE_EXPRESSION", None,
         Map("expression" -> exprs.mkString(",")))
     }
     {
@@ -2955,6 +2983,24 @@ trait DeltaErrorsSuiteBase
         DeltaErrors.multipleSourceRowMatchingTargetRowInMergeException(newSession)
       assert(exceptionWithoutContext.getMessage.contains("https") === false)
     }
+  }
+
+  test("throwChangelogReadFailed preserves SparkThrowable cause and wraps others") {
+    // A cause that already carries a Spark error class is rethrown unchanged.
+    val sparkThrowableCause = new DeltaAnalysisException(
+      errorClass = "DELTA_CHANGELOG_UNBOUNDED_RANGE",
+      messageParameters = Array.empty[String])
+    val passed = intercept[DeltaAnalysisException] {
+      DeltaErrors.throwChangelogReadFailed("PROCESS_COMMIT_ACTIONS", sparkThrowableCause)
+    }
+    assert(passed eq sparkThrowableCause)
+
+    // Any other cause is wrapped in a DELTA_CHANGELOG_READ_FAILED sub-class.
+    val wrapped = intercept[DeltaIllegalStateException] {
+      DeltaErrors.throwChangelogReadFailed("PLAN_INPUT_PARTITIONS", new RuntimeException("boom"))
+    }
+    checkError(wrapped, "DELTA_CHANGELOG_READ_FAILED.PLAN_INPUT_PARTITIONS", "XXKDS",
+      Map.empty[String, String])
   }
 
   private def setCustomContext(session: SparkSession, context: SparkContext): Unit = {

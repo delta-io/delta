@@ -62,36 +62,6 @@ import scala.Option;
 /** Spark DSV2 Scan implementation backed by Delta Kernel. */
 public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Filtering {
 
-  /** Supported streaming options for the V2 connector. */
-  private static final List<String> SUPPORTED_STREAMING_OPTIONS =
-      Collections.unmodifiableList(
-          Arrays.asList(
-              DeltaOptions.STARTING_VERSION_OPTION(),
-              DeltaOptions.STARTING_TIMESTAMP_OPTION(),
-              DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION(),
-              DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION(),
-              DeltaOptions.IGNORE_FILE_DELETION_OPTION(),
-              DeltaOptions.IGNORE_CHANGES_OPTION(),
-              DeltaOptions.IGNORE_DELETES_OPTION(),
-              DeltaOptions.SKIP_CHANGE_COMMITS_OPTION(),
-              DeltaOptions.EXCLUDE_REGEX_OPTION(),
-              DeltaOptions.FAIL_ON_DATA_LOSS_OPTION(),
-              DeltaOptions.CDC_READ_OPTION(),
-              DeltaOptions.CDC_READ_OPTION_LEGACY(),
-              DeltaOptions.SCHEMA_TRACKING_LOCATION(),
-              DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS(),
-              DeltaOptions.STREAMING_SOURCE_TRACKING_ID(),
-              DeltaOptions.ALLOW_SOURCE_COLUMN_DROP(),
-              DeltaOptions.ALLOW_SOURCE_COLUMN_RENAME(),
-              DeltaOptions.ALLOW_SOURCE_COLUMN_TYPE_CHANGE()));
-
-  private static final Set<String> UNSUPPORTED_STREAMING_OPTIONS =
-      Collections.unmodifiableSet(
-          new HashSet<>(
-              Arrays.asList(
-                  DeltaOptions.CDC_END_VERSION().toLowerCase(),
-                  DeltaOptions.CDC_END_TIMESTAMP().toLowerCase())));
-
   private final DeltaSnapshotManager snapshotManager;
   private final Snapshot initialSnapshot;
   private final StructType readDataSchema;
@@ -115,12 +85,13 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   private final DeltaOptions deltaOptions;
   private final ZoneId zoneId;
 
-  // Planned input files and stats
+  // Planned input files and the corresponding selected AddFile actions.
   private List<PartitionedFile> partitionedFiles = new ArrayList<>();
   // Per-file row counts, parallel to partitionedFiles. Populated only while rowCountKnown is
   // true; cleared if any AddFile lacks numRecords. Retained so totalRows can be recomputed
   // after runtime partition filtering prunes files, instead of invalidating the count.
   private List<Long> perFileRowCounts = new ArrayList<>();
+  private List<DeltaScanFile> selectedFiles = new ArrayList<>();
   private long totalBytes = 0L;
   private long totalRows = 0L;
   // true iff every AddFile in the scan had numRecords in its stats JSON.
@@ -230,7 +201,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
               + "connector. Either remove the CDC read option or use a streaming read.");
     }
     ensurePlanned();
-    return new SparkBatch(
+    return new DeltaV2Batch(
         initialSnapshot,
         dataSchema,
         partitionSchema,
@@ -246,8 +217,6 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
   @Override
   public MicroBatchStream toMicroBatchStream(String checkpointLocation) {
-    validateStreamingOptions(deltaOptions);
-
     // Loads a fresh snapshot as the baseline for schema change detection and table identity
     // checks. SparkScan's initialSnapshot is from analysis time and may be stale by stream
     // start/restart.
@@ -498,6 +467,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
           totalBytes += addFile.getSize();
           partitionedFiles.add(partitionedFile);
+          selectedFiles.add(new DeltaScanFile(addFile));
 
           if (rowCountKnown) {
             Optional<Long> numRecords = addFile.getNumRecords();
@@ -541,6 +511,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
       }
 
       List<PartitionedFile> runtimeFilteredPartitionedFiles = new ArrayList<>();
+      List<DeltaScanFile> runtimeFilteredFiles = new ArrayList<>();
       // Parallel to runtimeFilteredPartitionedFiles; only used when rowCountKnown is true.
       List<Long> filteredRowCounts = rowCountKnown ? new ArrayList<>() : null;
       long newTotalRows = 0L;
@@ -552,6 +523,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
                 .allMatch(predicate -> predicate.evaluator.eval(partitionValues));
         if (allMatch) {
           runtimeFilteredPartitionedFiles.add(pf);
+          runtimeFilteredFiles.add(this.selectedFiles.get(i));
           if (rowCountKnown) {
             long rc = this.perFileRowCounts.get(i);
             filteredRowCounts.add(rc);
@@ -564,6 +536,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
       // is filtered out
       if (runtimeFilteredPartitionedFiles.size() < this.partitionedFiles.size()) {
         this.partitionedFiles = runtimeFilteredPartitionedFiles;
+        this.selectedFiles = runtimeFilteredFiles;
         this.totalBytes =
             runtimeFilteredPartitionedFiles.stream().mapToLong(PartitionedFile::fileSize).sum();
         this.estimatedSizeInBytes = computeEstimatedSizeWithColumnProjection(this.totalBytes);
@@ -585,6 +558,19 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
   public StructType getDataSchema() {
     return dataSchema;
+  }
+
+  /**
+   * Returns the Delta files selected by this scan after pushdown and runtime filtering.
+   *
+   * <p>The returned descriptors preserve only the metadata needed by row-level ReplaceData commits
+   * to construct matching RemoveFile actions.
+   *
+   * @apiNote Internal API for the DSv2 DML write path (see {@code DeltaReplaceDataBatchWrite}).
+   */
+  public List<DeltaScanFile> getSelectedFiles() {
+    ensurePlanned();
+    return Collections.unmodifiableList(selectedFiles);
   }
 
   public StructType getPartitionSchema() {
@@ -653,39 +639,6 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
    */
   private boolean arePlanStatsEnabled() {
     return sqlConf.cboEnabled() || sqlConf.planStatsEnabled();
-  }
-
-  /**
-   * Validates that unsupported streaming options are not used. Uses a block list approach - only
-   * blocks known DeltaOptions that are unsupported, allowing user-defined custom options to pass
-   * through.
-   *
-   * <p>Note: DeltaOptions internally uses CaseInsensitiveMap, which preserves the original key
-   * casing but performs case-insensitive lookups.
-   *
-   * @param deltaOptions the DeltaOptions to validate
-   * @throws UnsupportedOperationException if unsupported options are found
-   */
-  static void validateStreamingOptions(DeltaOptions deltaOptions) {
-    List<String> unsupportedOptions = new ArrayList<>();
-    scala.collection.Iterator<String> keysIterator = deltaOptions.options().keysIterator();
-
-    while (keysIterator.hasNext()) {
-      String key = keysIterator.next();
-      // DeltaOptions uses CaseInsensitiveMap with keys already lowercased.
-      if (UNSUPPORTED_STREAMING_OPTIONS.contains(key)) {
-        unsupportedOptions.add(key);
-      }
-    }
-
-    if (!unsupportedOptions.isEmpty()) {
-      throw new UnsupportedOperationException(
-          String.format(
-              "The following streaming options are not supported: [%s]. "
-                  + "Supported options are: [%s].",
-              String.join(", ", unsupportedOptions),
-              String.join(", ", SUPPORTED_STREAMING_OPTIONS)));
-    }
   }
 
   @Override

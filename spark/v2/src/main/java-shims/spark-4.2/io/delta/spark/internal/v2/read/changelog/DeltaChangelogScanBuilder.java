@@ -48,16 +48,22 @@ public class DeltaChangelogScanBuilder implements ScanBuilder {
     // DeltaChangelogBatch will validate each in-range Metadata action against. Without these,
     // an RT-disabled boundary with no in-range toggle commit would surface as a raw
     // IllegalStateException "missing baseRowId" downstream.
+    //
+    // Order matters: check the end snapshot first. If RT is disabled at the latest
+    // boundary, the table never had RT (Delta protocol forbids disabling RT once
+    // enabled), so emit DELTA_CHANGELOG_REQUIRES_ROW_TRACKING. Only if the end has RT
+    // but the start does not, the toggle happened within the range -- emit
+    // DELTA_CHANGELOG_ROW_TRACKING_DISABLED_IN_RANGE with the offending start version.
     Snapshot startSnapshot = snapshotManager.loadSnapshotAt(startVersion);
     SnapshotImpl startSnapshotImpl = (SnapshotImpl) startSnapshot;
-    if (!RowTracking.isEnabled(startSnapshotImpl.getProtocol(), startSnapshotImpl.getMetadata())) {
-      DeltaErrors.throwChangelogRowTrackingDisabledInRange(startVersion);
-    }
     Snapshot endSnapshot = snapshotManager.loadSnapshotAt(endVersion);
     SnapshotImpl endSnapshotImpl = (SnapshotImpl) endSnapshot;
     StructType endSchema = SchemaUtils.convertKernelSchemaToSparkSchema(endSnapshot.getSchema());
     if (!RowTracking.isEnabled(endSnapshotImpl.getProtocol(), endSnapshotImpl.getMetadata())) {
       DeltaErrors.throwChangelogRequiresRowTracking(sparkTable.name());
+    }
+    if (!RowTracking.isEnabled(startSnapshotImpl.getProtocol(), startSnapshotImpl.getMetadata())) {
+      DeltaErrors.throwChangelogRowTrackingDisabledInRange(startVersion);
     }
 
     StructType cdcSchema =

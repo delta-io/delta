@@ -16,14 +16,20 @@
 
 package io.sparkuctest;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
+import io.unitycatalog.client.delta.api.DeltaTablesApi;
+import io.unitycatalog.client.delta.model.DeltaLoadTableResponse;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /** Tests metadata-changing operations on Unity Catalog managed (CatalogOwned) tables. */
 public class UCDeltaTableMetadataUpdateTest extends UCDeltaTableIntegrationBaseTest {
 
-  private static final String CLUSTERING_KILL_SWITCH_ERROR =
-      "Clustering column changes on Unity Catalog managed tables";
+  // UC's `clusteringColumns` value for a single column-mapped clustering column. Column mapping
+  // rewrites the logical column to a physical `col-<UUID>` reference, and the UC API exposes only
+  // the logical schema, so the exact physical name can't be resolved -- match its shape instead.
+  private static final String SINGLE_CLUSTERING_COLUMN = "\\[\\[\"col-[0-9a-f-]+\"\\]\\]";
 
   // ---------------------------------------------------------------------------
   // Metadata updates supported through UC updateTable
@@ -102,9 +108,36 @@ public class UCDeltaTableMetadataUpdateTest extends UCDeltaTableIntegrationBaseT
         });
   }
 
+  @Test
+  public void testAlterTableClusterByUpdatesUcDomainMetadata() throws Exception {
+    withNewTable(
+        "alter_cluster_by_domain_metadata_test",
+        "id INT, name STRING",
+        TableType.MANAGED,
+        tableName -> {
+          assertThat(loadTable(tableName).getMetadata().getProperties())
+              .doesNotContainKey("clusteringColumns");
+
+          sql("ALTER TABLE %s CLUSTER BY (id)", tableName);
+
+          DeltaLoadTableResponse response = loadTable(tableName);
+          assertThat(response.getMetadata().getProperties())
+              .containsEntry("delta.feature.clustering", "supported");
+          assertThat(response.getMetadata().getProperties().get("clusteringColumns"))
+              .matches(SINGLE_CLUSTERING_COLUMN);
+
+          sql("ALTER TABLE %s CLUSTER BY NONE", tableName);
+
+          response = loadTable(tableName);
+          assertThat(response.getMetadata().getProperties())
+              .containsEntry("delta.feature.clustering", "supported")
+              .containsEntry("clusteringColumns", "[]");
+        });
+  }
+
   /**
-   * RESTORE TABLE to a version with unchanged clustering must succeed. The clustering kill switch
-   * only fires when clustering actually changes.
+   * RESTORE TABLE to a version with unchanged clustering succeeds (basic RESTORE coverage for a
+   * UC-managed clustered table, alongside testRestoreTableWithClusteringChangePropagatesToUc).
    */
   @Test
   public void testRestoreTableWithUnchangedClusteringSucceeds() throws Exception {
@@ -125,11 +158,12 @@ public class UCDeltaTableMetadataUpdateTest extends UCDeltaTableIntegrationBaseT
   }
 
   /**
-   * RESTORE TABLE to a version whose clustering differs from the current version must be blocked
-   * until UC updateTable supports domain metadata updates.
+   * RESTORE TABLE to a version whose clustering differs from the current version succeeds and
+   * propagates the restored clustering columns back to Unity Catalog. RESTORE commits through the
+   * {@code commitLarge} path, so this exercises clustering DomainMetadata forwarding on that path.
    */
   @Test
-  public void testRestoreTableWithClusteringChangeIsBlocked() throws Exception {
+  public void testRestoreTableWithClusteringChangePropagatesToUc() throws Exception {
     String tableName = fullTableName("restore_clustering_change_test");
     try {
       sql(
@@ -137,15 +171,56 @@ public class UCDeltaTableMetadataUpdateTest extends UCDeltaTableIntegrationBaseT
               + " TBLPROPERTIES ('delta.feature.catalogManaged'='supported')",
           tableName);
       sql("INSERT INTO %s VALUES (1, 'a'), (2, 'b')", tableName);
-      long versionBeforeClusteringChange = currentVersion(tableName);
-      sql("ALTER TABLE %s CLUSTER BY (name)", tableName);
+      // UC's view of the clustering columns while clustered by `id`.
+      String clusteringById = clusteringColumns(tableName);
+      assertThat(clusteringById).matches(SINGLE_CLUSTERING_COLUMN);
+      long versionClusteredById = currentVersion(tableName);
 
-      assertThrowsWithCauseContaining(
-          CLUSTERING_KILL_SWITCH_ERROR,
-          () ->
-              sql(
-                  "RESTORE TABLE %s TO VERSION AS OF %d",
-                  tableName, versionBeforeClusteringChange));
+      // Change clustering to `name` and add a row, so the RESTORE below has both clustering and
+      // data to revert. UC must reflect a different single clustering column after the ALTER.
+      sql("ALTER TABLE %s CLUSTER BY (name)", tableName);
+      sql("INSERT INTO %s VALUES (3, 'c')", tableName);
+      assertThat(clusteringColumns(tableName)).matches(SINGLE_CLUSTERING_COLUMN);
+      assertThat(clusteringColumns(tableName)).isNotEqualTo(clusteringById);
+
+      // RESTORE back to the `id`-clustered version (committed via the commitLarge path): both the
+      // data and UC's clustering columns must revert -- the latter via the clustering
+      // DomainMetadata forwarded through CatalogTrackedInfo.
+      sql("RESTORE TABLE %s TO VERSION AS OF %d", tableName, versionClusteredById);
+      check(
+          sql("SELECT id, name FROM %s ORDER BY id", tableName),
+          List.of(row("1", "a"), row("2", "b")));
+      assertThat(clusteringColumns(tableName)).isEqualTo(clusteringById);
+    } finally {
+      sql("DROP TABLE IF EXISTS %s", tableName);
+    }
+  }
+
+  /**
+   * REPLACE TABLE (CREATE OR REPLACE) that changes the clustering columns propagates the new
+   * clustering to Unity Catalog. The clustering goes from one column to two, which UC reflects
+   * unambiguously -- unlike a same-count column swap, whose physical `col-<UUID>` names are
+   * reassigned by REPLACE anyway and so can't distinguish the new clustering from the old.
+   */
+  @Test
+  public void testReplaceTableWithClusteringChangePropagatesToUc() throws Exception {
+    String tableName = fullTableName("replace_clustering_change_test");
+    try {
+      // CREATE clustered by `id`: UC reflects a single clustering column.
+      sql(
+          "CREATE TABLE %s (id INT, name STRING) USING DELTA CLUSTER BY (id)"
+              + " TBLPROPERTIES ('delta.feature.catalogManaged'='supported')",
+          tableName);
+      sql("INSERT INTO %s VALUES (1, 'a')", tableName);
+      assertThat(clusteringColumns(tableName)).matches(SINGLE_CLUSTERING_COLUMN);
+
+      // CREATE OR REPLACE clustered by (id, name): UC must now reflect two clustering columns.
+      sql(
+          "CREATE OR REPLACE TABLE %s (id INT, name STRING) USING DELTA CLUSTER BY (id, name)"
+              + " TBLPROPERTIES ('delta.feature.catalogManaged'='supported')",
+          tableName);
+      assertThat(clusteringColumns(tableName))
+          .matches("\\[\\[\"col-[0-9a-f-]+\"\\],\\[\"col-[0-9a-f-]+\"\\]\\]");
     } finally {
       sql("DROP TABLE IF EXISTS %s", tableName);
     }
@@ -219,6 +294,17 @@ public class UCDeltaTableMetadataUpdateTest extends UCDeltaTableIntegrationBaseT
           sql("INSERT INTO %s VALUES (1, 'foo'), (2, 'bar')", tableName);
           check(tableName, List.of(List.of("1", "foo"), List.of("2", "bar")));
         });
+  }
+
+  private DeltaLoadTableResponse loadTable(String tableName) throws Exception {
+    String[] parts = tableName.split("\\.", 3);
+    return new DeltaTablesApi(unityCatalogInfo().createApiClient())
+        .loadTable(parts[0], parts[1], parts[2]);
+  }
+
+  /** UC's view of the table's clustering columns (the {@code clusteringColumns} table property). */
+  private String clusteringColumns(String tableName) throws Exception {
+    return loadTable(tableName).getMetadata().getProperties().get("clusteringColumns");
   }
 
   /**

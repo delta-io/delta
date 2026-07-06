@@ -23,7 +23,7 @@ import java.util.{Collections, Optional}
 import com.fasterxml.jackson.databind.{JsonNode, ObjectMapper}
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import io.delta.storage.commit.{Commit, CommitFailedException}
-import io.delta.storage.commit.actions.AbstractMetadata
+import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata}
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 import io.unitycatalog.client.auth.TokenProvider
 
@@ -155,7 +155,8 @@ class UCTokenBasedRestClientSuite
     withClient { client =>
       client.commit(testTableId, testTableUri, null,
         Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
-        Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty())
+        Optional.empty(), Optional.empty(), Optional.empty(),
+        Collections.emptyList[AbstractDomainMetadata](), Optional.empty())
     }
   }
 
@@ -171,6 +172,7 @@ class UCTokenBasedRestClientSuite
         Optional.of(createMetadata()),
         Optional.empty(),
         Optional.empty(),
+        Collections.emptyList[AbstractDomainMetadata](),
         Optional.empty())
     }
   }
@@ -180,12 +182,12 @@ class UCTokenBasedRestClientSuite
       intercept[NullPointerException] {
         client.commit(null, testTableUri, null, Optional.empty(),
           Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
-          Optional.empty(), Optional.empty())
+          Optional.empty(), Collections.emptyList[AbstractDomainMetadata](), Optional.empty())
       }
       intercept[NullPointerException] {
         client.commit(testTableId, null, null, Optional.empty(),
           Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
-          Optional.empty(), Optional.empty())
+          Optional.empty(), Collections.emptyList[AbstractDomainMetadata](), Optional.empty())
       }
     }
   }
@@ -196,7 +198,8 @@ class UCTokenBasedRestClientSuite
       withClient { client =>
         client.commit(testTableId, testTableUri, null,
           Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
-          Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty())
+          Optional.empty(), Optional.empty(), Optional.empty(),
+          Collections.emptyList[AbstractDomainMetadata](), Optional.empty())
       }
     }
 
@@ -301,6 +304,7 @@ class UCTokenBasedRestClientSuite
         client.commit(testTableId, testTableUri, null,
           Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
           Optional.empty(), Optional.empty(), Optional.empty(),
+          Collections.emptyList[AbstractDomainMetadata](),
           Optional.of(new UniformMetadata(icebergMeta)))
       }
 
@@ -334,7 +338,8 @@ class UCTokenBasedRestClientSuite
     withClient { client =>
       client.commit(testTableId, testTableUri, null,
         Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
-        Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty())
+        Optional.empty(), Optional.empty(), Optional.empty(),
+        Collections.emptyList[AbstractDomainMetadata](), Optional.empty())
     }
 
     val json = objectMapper.readTree(capturedBody)
@@ -352,6 +357,7 @@ class UCTokenBasedRestClientSuite
       client.commit(testTableId, testTableUri, null,
         Optional.of(createCommit(1L)), Optional.empty(), Optional.empty(),
         Optional.empty(), Optional.empty(), Optional.empty(),
+        Collections.emptyList[AbstractDomainMetadata](),
         Optional.of(new UniformMetadata(null)))
     }
 

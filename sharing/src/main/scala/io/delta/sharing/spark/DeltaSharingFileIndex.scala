@@ -16,7 +16,6 @@
 
 package io.delta.sharing.spark
 
-import java.lang.ref.WeakReference
 import java.util.UUID
 
 import org.apache.spark.sql.delta.{DeltaFileFormat, DeltaLog}
@@ -27,7 +26,6 @@ import io.delta.sharing.client.util.{ConfUtils, JsonUtils}
 import io.delta.sharing.filters.{AndOp, BaseOp, OpConverter}
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.delta.sharing.CachedTableManager
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.Expression
@@ -140,74 +138,23 @@ case class DeltaSharingFileIndex(
       jsonPredicateHints: Option[String],
       queryParamsHashId: String,
       overrideLimit: Option[Long]): DeltaLog = {
-    //  1. Call client.getFiles.
-    val startTime = System.currentTimeMillis()
-    val deltaTableFiles = client.getFiles(
+    // The getFiles RPC, synthetic delta-log construction, and CachedTableManager registration now
+    // live in the shared DeltaSharingDeltaLogBuilder so the DSV2 scan path can build a snapshot the
+    // same way. This path then opens the synthetic log as a classic DeltaLog (unchanged behavior).
+    // The CachedTableManager WeakReference is anchored to this FileIndex, which is per-query.
+    val encodedPath = DeltaSharingDeltaLogBuilder.buildSnapshotDeltaLogPath(
+      client = client,
       table = table,
-      predicates = Nil,
-      limit = overrideLimit.orElse(limitHint),
-      versionAsOf = params.options.versionAsOf,
-      timestampAsOf = params.options.timestampAsOf,
+      options = params.options,
+      tablePath = params.path.toString,
+      queryParamsHashId = queryParamsHashId,
       jsonPredicateHints = jsonPredicateHints,
-      refreshToken = None,
-      fileIdHash = None
-    )
-    logInfo(
-      s"Fetched ${deltaTableFiles.lines.size} lines for table $table with version " +
-      s"${deltaTableFiles.version} from delta sharing server, took " +
-      s"${(System.currentTimeMillis() - startTime) / 1000.0}s."
+      limit = overrideLimit.orElse(limitHint),
+      anchor = this,
+      logPrefix = "Delta Sharing (v1)"
     )
 
-    // 2. Prepare a DeltaLog.
-    val tablePathWithHashIdSuffix = DeltaSharingUtils.getTablePathWithIdSuffix(
-      client.getProfileProvider.getCustomTablePath(
-        params.path.toString
-      ),
-      queryParamsHashId
-    )
-    val deltaLogMetadata =
-      DeltaSharingLogFileSystem.constructLocalDeltaLogAtVersionZero(
-        deltaTableFiles.lines,
-        tablePathWithHashIdSuffix
-      )
-
-    // 3. Register parquet file id to url mapping
-    CachedTableManager.INSTANCE.register(
-      // Using params.path directly because it will be customized within CachedTableManager.
-      tablePath = DeltaSharingUtils.getTablePathWithIdSuffix(
-        params.path.toString,
-        queryParamsHashId
-      ),
-      idToUrl = deltaLogMetadata.idToUrl,
-      refs = Seq(new WeakReference(this)),
-      profileProvider = client.getProfileProvider,
-      refresher = DeltaSharingUtils.getRefresherForGetFiles(
-        client = client,
-        table = table,
-        predicates = Nil,
-        limit = overrideLimit.orElse(limitHint),
-        versionAsOf = params.options.versionAsOf,
-        timestampAsOf = params.options.timestampAsOf,
-        jsonPredicateHints = jsonPredicateHints,
-        useRefreshToken = true
-      ),
-      expirationTimestamp =
-        if (CachedTableManager.INSTANCE
-            .isValidUrlExpirationTime(deltaLogMetadata.minUrlExpirationTimestamp)) {
-          deltaLogMetadata.minUrlExpirationTimestamp.get
-        } else {
-          System.currentTimeMillis() + CachedTableManager.INSTANCE.preSignedUrlExpirationMs
-        },
-      refreshToken = deltaTableFiles.refreshToken
-    )
-
-    // 4. Create a local file index and call listFiles of this class.
-    val deltaLog = DeltaLog.forTable(
-      params.spark,
-      DeltaSharingLogFileSystem.encode(tablePathWithHashIdSuffix)
-    )
-
-    deltaLog
+    DeltaLog.forTable(params.spark, encodedPath)
   }
 
   def asTahoeFileIndex(

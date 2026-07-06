@@ -48,7 +48,19 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     )
   }
 
-  override protected def shouldPassTests: Set[String] = Set(
+  override protected def shouldPassTests: Set[String] = DeltaV2SourceSuite.PassingTests
+
+  override protected def shouldFailTests: Set[String] = DeltaV2SourceSuite.FailingTests
+}
+
+/**
+ * Shared V2-connector test classifications for `DeltaSourceSuite`. Other V2 suites that inherit
+ * from `DeltaSourceSuite` (e.g. the V2 column-mapping suites) can compose these sets with
+ * their own additions or overrides.
+ */
+object DeltaV2SourceSuite {
+
+  val PassingTests: Set[String] = Set(
     // ========== Core streaming tests ==========
     "basic",
     "initial snapshot ends at base index of next version",
@@ -87,10 +99,14 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "incremental: commit file gap between versions, fails",
     "incremental: first commit file missing, failOnDataLoss=false succeeds",
     "initial snapshot: commit file missing but checkpoint intact, succeeds",
+    "initial snapshot: checkpoint missing but all commit files intact, succeeds",
     "initial snapshot: both checkpoint and commit file missing, fails",
     "initial snapshot: log retention deletes old checkpoint and commit files mid-stream," +
       " restart fails",
     "streaming processes 100 sequential single-value commits and contains all values 0 to 99",
+
+    // ========== Passthrough options ==========
+    "batch-only options are ignored in streaming",
 
     // ========== startingVersion option tests ==========
     "startingVersion",
@@ -129,6 +145,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "deltaSourceIgnoreDeleteError contains removeFile, version, tablePath",
     "deltaSourceIgnoreChangesError contains changeInfo, version, tablePath",
     "excludeRegex throws good error on bad regex pattern",
+    "Delta sources should verify the protocol reader version",
 
     // ========== Misc tests ==========
     "a fast writer should not starve a Delta source",
@@ -147,15 +164,15 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "initial snapshot: checkpoint resume after new commits produces all rows"
   )
 
-  override protected def shouldFailTests: Set[String] = Set(
+  val FailingTests: Set[String] = Set(
     // === Null Type Column Handling ===
     "streaming delta source should not drop null columns",
     "streaming delta source should drop null columns without feature flag",
 
     // === Schema Evolution ===
-    // TODO(#6232): enable the two tests after spark streaming engine supports leaf node projection
-    //  for datasource v2 such that we can adopt the two schema changes without refreshing the
-    //  dataframe
+    // TODO(#6232): DSv2 pins the table schema when the DataFrame is loaded, so restarting from a
+    //  stale DataFrame can't adopt the schema change. Enable once the V2 relation refreshes its
+    //  schema without rebuilding the DataFrame.
     "relax nullability: restarting with stale DataFrame should recover",
     "type widening: restarting with stale DataFrame should recover",
 
@@ -163,15 +180,23 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     // V2 only tolerates missing start versions with failOnDataLoss=false; mid-log gaps still
     // throw InvalidTableException because non-contiguous versions are not a log-retention scenario.
     "incremental: commit file gap between versions, failOnDataLoss=false succeeds",
-    // Kernel cannot reconstruct snapshot without checkpoint file (_last_checkpoint still
-    // points to deleted checkpoint). V1 falls back to delta files; Kernel does not.
-    "initial snapshot: checkpoint missing but all commit files intact, succeeds",
+    // These tests directly use DeltaSource, not applicable to the v2 path.
+    "fail on missing trailing commit - trailing commit disappears between latestOffset and" +
+      " getBatch readChangeFeed=true midVersionEndOffset=true",
+    "fail on missing trailing commit - trailing commit disappears between latestOffset and" +
+      " getBatch readChangeFeed=true midVersionEndOffset=false",
+    "fail on missing trailing commit - trailing commit disappears between latestOffset and" +
+      " getBatch readChangeFeed=false midVersionEndOffset=true",
+    "fail on missing trailing commit - trailing commit disappears between latestOffset and" +
+      " getBatch readChangeFeed=false midVersionEndOffset=false",
+    "fail on missing trailing commit - empty batch from startIndex >= endIndex is not a" +
+      " false positive readChangeFeed=true",
+    "fail on missing trailing commit - empty batch from startIndex >= endIndex is not a" +
+      " false positive readChangeFeed=false",
 
     // === Misc ===
     // TODO(#5900): fix exception mismatch
     "no schema should throw an exception",
-    // TODO(#5900): fix exception mismatch
-    "Delta sources should verify the protocol reader version",
     // TODO(#5895): gracefully handle corrupt checkpoint
     "start from corrupt checkpoint",
 

@@ -470,4 +470,71 @@ public class DeltaSinkTest extends TestHelper {
                   assertEquals("ab", ((UnityCatalog) table.getCatalog()).getName());
                 }));
   }
+
+  @Test
+  void testBuilderUpsertOptionsTypedSettersPreservedWhenMapLacksKeys() {
+    RowType flinkSchema =
+        RowType.of(
+            new LogicalType[] {new IntType(), new VarCharType(VarCharType.MAX_LENGTH)},
+            new String[] {"id", "part"});
+    withTempDir(
+        dir -> {
+          DeltaSink sink =
+              DeltaSink.builder()
+                  .withFlinkSchema(flinkSchema)
+                  .withWriteMode(DeltaSinkConf.WriteMode.UPSERT)
+                  .withPrimaryKey(List.of(0))
+                  .withConfigurations(
+                      Map.of("type", "hadoop", "hadoop.table_path", dir.getAbsolutePath()))
+                  .build();
+          assertEquals(DeltaSinkConf.WriteMode.UPSERT, sink.getConf().getWriteMode());
+          assertArrayEquals(new int[] {0}, sink.getConf().getPrimaryKeyOrdinals());
+        });
+  }
+
+  @Test
+  void testBuilderUpsertOptionsTypedSettersWinWhenAppliedLast() {
+    RowType flinkSchema =
+        RowType.of(
+            new LogicalType[] {new IntType(), new VarCharType(VarCharType.MAX_LENGTH)},
+            new String[] {"id", "part"});
+    withTempDir(
+        dir -> {
+          DeltaSink sink =
+              DeltaSink.builder()
+                  .withFlinkSchema(flinkSchema)
+                  .withConfigurations(
+                      Map.of("type", "hadoop", "hadoop.table_path", dir.getAbsolutePath()))
+                  .withWriteMode(DeltaSinkConf.WriteMode.UPSERT)
+                  .withPrimaryKey(List.of(0))
+                  .build();
+          assertEquals(DeltaSinkConf.WriteMode.UPSERT, sink.getConf().getWriteMode());
+          assertArrayEquals(new int[] {0}, sink.getConf().getPrimaryKeyOrdinals());
+        });
+  }
+
+  @Test
+  void testBuilderUpsertOptionsMapOverridesTypedSetters() {
+    RowType flinkSchema =
+        RowType.of(
+            new LogicalType[] {new IntType(), new VarCharType(VarCharType.MAX_LENGTH)},
+            new String[] {"id", "part"});
+    withTempDir(
+        dir -> {
+          DeltaSink sink =
+              DeltaSink.builder()
+                  .withFlinkSchema(flinkSchema)
+                  .withWriteMode(DeltaSinkConf.WriteMode.APPEND)
+                  .withPrimaryKey(List.of(1))
+                  .withConfigurations(
+                      Map.of(
+                          "type", "hadoop",
+                          "hadoop.table_path", dir.getAbsolutePath(),
+                          "write.mode", "upsert",
+                          "primary_key", "0"))
+                  .build();
+          assertEquals(DeltaSinkConf.WriteMode.UPSERT, sink.getConf().getWriteMode());
+          assertArrayEquals(new int[] {0}, sink.getConf().getPrimaryKeyOrdinals());
+        });
+  }
 }
