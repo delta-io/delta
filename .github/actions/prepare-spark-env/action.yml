@@ -128,7 +128,14 @@ runs:
           echo "Spark Maven artifacts are not present after restore/build."
           exit 1
         fi
+        # Expose only the restored Spark artifacts as a Maven repo. Pointing sbt at the
+        # whole ~/.m2 tree can let unrelated stale/partial local artifacts shadow remotes.
+        spark_maven_local_repo="${RUNNER_TEMP:-$HOME}/source-built-spark-m2"
+        rm -rf "$spark_maven_local_repo/org/apache/spark"
+        mkdir -p "$spark_maven_local_repo/org/apache"
+        cp -R "$HOME/.m2/repository/org/apache/spark" "$spark_maven_local_repo/org/apache/"
         # run-tests.py / build/sbt read these to resolve the commit-qualified Spark artifacts.
         echo "SPARK_COMMIT=${{ steps.spark-source.outputs.spark_sha }}" >> "$GITHUB_ENV"
         echo "SPARK_ARTIFACT_VERSION=$SPARK_ARTIFACT_VERSION" >> "$GITHUB_ENV"
         echo "USE_MAVEN_LOCAL_FOR_SOURCE_SPARK=true" >> "$GITHUB_ENV"
+        echo "SPARK_MAVEN_LOCAL_REPO=$spark_maven_local_repo" >> "$GITHUB_ENV"
