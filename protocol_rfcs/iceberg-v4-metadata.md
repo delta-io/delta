@@ -482,12 +482,26 @@ Delta's row tracking fields map to Iceberg V4 tracking as follows:
 |-------------|-------------------|----------|
 | `baseRowId` | `first_row_id` | 142 |
 | `defaultRowCommitVersion` | `sequence_number`, `file_sequence_number` | 3, 4 |
+| `rowIdHighWaterMark` | `next-row-id` | - |
+
+The `rowIdHighWaterMark` in the `delta.rowTracking` domain metadata remains the authoritative row ID allocator. It is the highest assigned row ID, while Iceberg's `next-row-id` table metadata field is the next unassigned one, so `next-row-id` resolves to `rowIdHighWaterMark + 1`.
 
 When `adaptiveMetadata` is enabled, Iceberg's `sequence_number` (data sequence number) and `file_sequence_number` are both set to the Delta commit version of the `add` action that introduced the file, and always resolve to the same value. In Iceberg these can diverge: the data sequence number records the relative age of a file's content and is used to decide which delete files apply to a data file, so a rewritten file (e.g., compaction) can keep an older data sequence number than the commit that physically wrote it. Delta has no such notion because it binds deletion vectors directly to their data file rather than resolving delete application by sequence number, so there is never a reason for the two to differ. `file_sequence_number` is required by Iceberg's inheritance model but Delta does not read it back.
 
 For ADDED entries in leaf manifests, both are null and inherited from the `DATA_MANIFEST` entry in the root (see [Inheritance](#inheritance)). For EXISTING entries (e.g., after compaction), both are materialized.
 
-On compaction, the output file is a new physical file at the compaction commit version, so all three file-level fields (`defaultRowCommitVersion`, `sequence_number`, `file_sequence_number`) are the compaction version. The original per-row values (`_row_id`, `_row_commit_version`) are materialized as data columns in the output Parquet file to preserve row-level tracking.
+On compaction, the output file is a new physical file at the compaction commit version, so all three file-level fields (`defaultRowCommitVersion`, `sequence_number`, `file_sequence_number`) are the compaction version. The original per-row values are preserved by materializing them into the row tracking columns of the output Parquet file (see [Materialized Row Tracking Columns](#materialized-row-tracking-columns)).
+
+### Materialized Row Tracking Columns
+
+Row tracking values that must survive file rewrites are stored in the materialized row ID and row commit version columns of the data files (see [Row Tracking](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#row-tracking)). The physical names of these columns are table-specific, so writers must set Parquet `field_id` metadata on them using the field IDs that the [Iceberg specification reserves](https://iceberg.apache.org/spec/#reserved-field-ids) for row lineage, and readers must resolve them by field ID, not by name:
+
+| Materialized Column | Iceberg Row Lineage Field | Field ID |
+|---------------------|---------------------------|----------|
+| Row ID (`delta.rowTracking.materializedRowIdColumnName`) | `_row_id` | 2147483540 |
+| Row commit version (`delta.rowTracking.materializedRowCommitVersionColumnName`) | `_last_updated_sequence_number` | 2147483539 |
+
+A null (or absent) materialized value resolves to the same result under both protocols: the row ID is the entry's `first_row_id` plus the row's physical position in the file, and the last updated sequence number is the entry's data sequence number. Because `sequence_number` is the Delta commit version, materialized row commit versions are valid `_last_updated_sequence_number` values without conversion.
 
 ## Partition Specs
 
@@ -605,7 +619,10 @@ When `adaptiveMetadata` is supported and active, writers must:
 6. **Set sequence numbers**: When producing manifest entries, writers
    must set `sequence_number` (data sequence number) to the Delta commit version when the data was originally written, and `file_sequence_number` to the commit version that physically adds the file. For new files, both are the current commit version. For compacted files, `sequence_number` preserves the original version while `file_sequence_number` is the compaction version. See [Row Tracking Compatibility](#row-tracking-compatibility).
 
-7. **Populate partition and content_stats**: When producing manifest
+7. **Set field IDs on materialized row tracking columns**: When writing
+   data files, writers must set Parquet `field_id` metadata on the materialized row ID and row commit version columns using the Iceberg reserved field IDs. See [Materialized Row Tracking Columns](#materialized-row-tracking-columns).
+
+8. **Populate partition and content_stats**: When producing manifest
    entries, writers must:
    - Convert Delta's `partitionValues` string map to the typed
      `partition` struct
