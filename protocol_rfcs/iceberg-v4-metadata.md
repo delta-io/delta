@@ -541,65 +541,23 @@ DATA_MANIFEST entry:
 
 When reading a leaf manifest, readers must check the `DATA_MANIFEST` entry for a non-null `manifest_info.dv`. If present, deserialize the bitmap and skip entries at positions marked in it.
 
-## Reader Requirements
+## Reader Requirements for Adaptive Metadata
 
 When `adaptiveMetadata` is supported and active, readers must:
+- Take the latest checkpoint to be the `checkpoint` action with the greatest `checkpointMetadata.version` (across manifest commits, standalone checkpoints, and `_last_checkpoint`), and use its `contentRoot` as the metadata tree. A later manifest commit that builds a newer tree supersedes an earlier standalone checkpoint that references an older tree.
+- Read the root manifest at `contentRoot.path` and skip leaf-manifest entries marked in `manifest_info.dv` (see [Manifest Deletion Vectors](#manifest-deletion-vectors-mdvs)).
+- Reconstruct the current table state by applying the commits after `checkpointMetadata.version` on top of the tree, following [Action Reconciliation](#action-reconciliation).
+- Read any `sidecar` entries referenced by the checkpoint to obtain the complete set of transaction identifiers and domain metadata (see [Checkpoint Action](#checkpoint-action)).
 
-1. **Find the latest checkpoint**: Locate the `checkpoint` action with the greatest `checkpointMetadata.version` — across manifest commits, standalone checkpoints, and `_last_checkpoint` — and use its `contentRoot` as the metadata tree. Because `checkpointMetadata.version` is monotonic, a later manifest commit that builds a newer tree supersedes an earlier standalone checkpoint that references an older tree.
-
-2. **Read the content root**: Parse the root manifest file referenced by
-   `contentRoot.path`.
-
-3. **Apply MDVs**: When reading leaf manifests, skip entries at positions
-   marked in `manifest_info.dv`.
-
-4. **Replay log commits**: Apply any log commits after `checkpointMetadata.version`
-   to get the current table state.
-
-5. **Handle sidecars**: If the checkpoint has `sidecar` entries, read auxiliary
-   data from the referenced sidecar files.
-
-## Writer Requirements
+## Writer Requirements for Adaptive Metadata
 
 When `adaptiveMetadata` is supported and active, writers must:
-
-1. **Track backreferences**: Writers must record the manifest location
-   (manifest path and row position) for every file they read from the tree. For `remove` actions, the backreference identifies the entry being deleted. For `add` actions that supersede an existing entry (stats backfill, DV update), the backreference identifies the entry being replaced. See [Backreferences](#backreferences).
-
-2. **Choose commit type**: Based on operation size and accumulated log entries:
-   - Small operations -> log commit
-   - Large operations or compaction threshold reached -> manifest commit
-
-3. **Maintain two-level hierarchy**: The metadata tree must have at most two levels
-   (root -> leaves). Writers must not create nested manifest references.
-
-4. **Resolve concurrent commits**: When another commit lands while a manifest
-   commit is in progress, resolve the conflict per [Conflict Resolution](#conflict-resolution).
-
-5. **Generate MDVs from backreferences**: When creating a manifest commit,
-   use backreferences from accumulated removes and re-adds to populate `manifest_info.dv` on affected `DATA_MANIFEST` entries. For change data feed support, also populate tracking bitmaps:
-   - `manifest_info.dv`: accumulates all deleted/replaced positions (used
-     for reading)
-   - `tracking.deleted_positions`: positions deleted in this commit only
-     (for removes) (used for CDF)
-   - `tracking.replaced_positions`: positions replaced in this commit only
-     (for re-adds) (used for CDF)
-   - Add new DATA entries with updated info for re-added files
-
-6. **Set sequence numbers**: When producing manifest entries, writers
-   must set `sequence_number` (data sequence number) to the Delta commit version when the data was originally written, and `file_sequence_number` to the commit version that physically adds the file. For new files, both are the current commit version. For compacted files, `sequence_number` preserves the original version while `file_sequence_number` is the compaction version. See [Row Tracking Compatibility](#row-tracking-compatibility).
-
-7. **Set field IDs on materialized row tracking columns**: When writing
-   data files, writers must set Parquet `field_id` metadata on the materialized row ID and row commit version columns using the Iceberg reserved field IDs. See [Materialized Row Tracking Columns](#materialized-row-tracking-columns).
-
-8. **Materialize partition columns**: Partition column values must be
-   materialized when writing Parquet data files, written with the partition column's `field_id`. See [Partition Values](#partition-values).
-
-9. **Populate partition and content_stats**: When producing manifest
-   entries, writers must:
-   - Convert Delta's `partitionValues` string map to the typed
-     `partition` struct
-   - Convert Delta's `stats` JSON to typed content_stats entries
+- Choose a commit type based on operation size: a log commit for small changes, a manifest commit for large changes or when the compaction threshold is reached (see [Commit Types](#commit-types)).
+- Maintain a two-level tree (root -> leaves) and not create nested manifest references.
+- Record a `backReference` for every file read from the tree, and use the accumulated backreferences to build MDVs and re-add entries when producing a manifest commit (see [Backreferences](#backreferences) and [Manifest Deletion Vectors](#manifest-deletion-vectors-mdvs)).
+- Populate manifest entries with partition values, content stats, deletion vectors, and tracking and sequence numbers (see [Content Entry Schema](#content-entry-schema) and [Row Tracking Compatibility](#row-tracking-compatibility)).
+- Materialize row-tracking and partition columns in data files, tagged with their Iceberg `field_id`s (see [Materialized Row Tracking Columns](#materialized-row-tracking-columns) and [Partition Values](#partition-values)).
+- Resolve conflicts with commits that land concurrently, per [Conflict Resolution](#conflict-resolution).
 
 ### Manifest Commit Procedure
 
