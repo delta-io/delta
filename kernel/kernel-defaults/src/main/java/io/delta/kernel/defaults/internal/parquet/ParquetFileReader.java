@@ -33,10 +33,10 @@ import io.delta.kernel.utils.FileStatus;
 import java.io.IOException;
 import java.util.*;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.parquet.ParquetReadOptions;
 import org.apache.parquet.filter2.compat.FilterCompat;
 import org.apache.parquet.filter2.predicate.FilterPredicate;
 import org.apache.parquet.format.converter.ParquetMetadataConverter;
-import org.apache.parquet.hadoop.ParquetReader;
 import org.apache.parquet.hadoop.api.InitContext;
 import org.apache.parquet.hadoop.api.ReadSupport;
 import org.apache.parquet.hadoop.metadata.ParquetMetadata;
@@ -71,7 +71,7 @@ public class ParquetFileReader {
 
     return new CloseableIterator<ColumnarBatch>() {
       private final BatchReadSupport readSupport = new BatchReadSupport(maxBatchSize, schema);
-      private ParquetReader<Object> reader;
+      private ParquetRecordReaderWrapper<Object> reader;
       private boolean hasNotConsumedNextElement;
 
       @Override
@@ -87,8 +87,7 @@ public class ParquetFileReader {
             return true;
           }
 
-          Object next = reader.read();
-          hasNotConsumedNextElement = next != null;
+          hasNotConsumedNextElement = reader.nextKeyValue() && reader.getCurrentValue() != null;
           return hasNotConsumedNextElement;
         } catch (IOException ex) {
           throw new KernelEngineException(
@@ -134,16 +133,8 @@ public class ParquetFileReader {
             Optional<FilterPredicate> parquetPredicate =
                 predicate.flatMap(predicate -> toParquetFilter(parquetSchema, predicate));
 
-            // TODO: We can avoid reading the footer again if we can pass the footer, but there is
-            // no API to do that in the current version of parquet-mr which takes InputFile
-            // as input.
-            reader =
-                new ParquetReader.Builder<Object>(parquetInputFile) {
-                  @Override
-                  protected ReadSupport<Object> getReadSupport() {
-                    return readSupport;
-                  }
-                }.withFilter(parquetPredicate.map(FilterCompat::get).orElse(FilterCompat.NOOP))
+            ParquetReadOptions readOptions =
+                ParquetReadOptions.builder()
                     // Disable the record level filtering as the `parquet-mr` evaluates
                     // the filter once the entire record has been materialized. Instead,
                     // we use the predicate to prune the row groups which is more efficient.
@@ -154,8 +145,16 @@ public class ParquetFileReader {
                     .useBloomFilter(false)
                     .useDictionaryFilter(false)
                     .useColumnIndexFilter(false)
+                    .withRecordFilter(
+                        parquetPredicate.map(FilterCompat::get).orElse(FilterCompat.NOOP))
                     .build();
 
+            // Pass the already read footer to the reader to avoid reading it again.
+            fileReader =
+                org.apache.parquet.hadoop.ParquetFileReader.open(
+                    parquetInputFile, footer, readOptions, parquetInputFile.newStream());
+            reader = new ParquetRecordReaderWrapper<>(readSupport);
+            reader.initialize(fileReader, readOptions);
           } catch (IOException e) {
             Utils.closeCloseablesSilently(fileReader, reader);
             throw new KernelEngineException(
