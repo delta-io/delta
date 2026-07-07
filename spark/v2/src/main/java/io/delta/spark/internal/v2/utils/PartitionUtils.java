@@ -17,12 +17,14 @@ package io.delta.spark.internal.v2.utils;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.MapValue;
+import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
+import io.delta.kernel.internal.util.InternalUtils;
 import io.delta.spark.internal.v2.read.ColumnReorderReadFunction;
 import io.delta.spark.internal.v2.read.DeltaParquetFileFormatV2;
 import io.delta.spark.internal.v2.read.DeltaV2Reads;
@@ -32,9 +34,13 @@ import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorReadFunction
 import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorSchemaContext;
 import io.delta.spark.internal.v2.read.metadata.MetadataStructReadFunction;
 import io.delta.spark.internal.v2.read.metadata.MetadataStructSchemaContext;
+import java.math.BigDecimal;
+import java.sql.Date;
+import java.sql.Timestamp;
 import java.time.ZoneId;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -61,6 +67,7 @@ import org.apache.spark.sql.execution.datasources.PartitioningUtils;
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
+import org.apache.spark.sql.types.DecimalType;
 import org.apache.spark.sql.types.StringType;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
@@ -183,6 +190,114 @@ public class PartitionUtils {
       }
     }
     return new GenericInternalRow(values);
+  }
+
+  /**
+   * Convert an AddFile partition-value map keyed by physical column names into a logical-name map
+   * using the provided partition schema.
+   */
+  public static Map<String, String> getLogicalPartitionValueStrings(
+      MapValue partitionValues, StructType partitionSchema) {
+    Map<String, String> rawPartitionValues = toJavaStringStringMap(partitionValues);
+    Map<String, String> logicalPartitionValues = new LinkedHashMap<>();
+    for (StructField field : partitionSchema.fields()) {
+      String physicalName = DeltaColumnMapping.getPhysicalName(field);
+      logicalPartitionValues.put(field.name(), rawPartitionValues.get(physicalName));
+    }
+    return logicalPartitionValues;
+  }
+
+  /**
+   * Convert a Kernel {@link MapValue} with string keys and string values into a Java map. Inlined
+   * here because the {@code VectorUtils} dropin wrapper no longer exposes {@code toJavaMap}; the
+   * iteration is trivial against {@link MapValue}'s {@code getKeys()/getValues()} column-vector
+   * API.
+   */
+  private static Map<String, String> toJavaStringStringMap(MapValue mapValue) {
+    Map<String, String> result = new LinkedHashMap<>(mapValue.getSize());
+    for (int i = 0; i < mapValue.getSize(); i++) {
+      String value = mapValue.getValues().isNullAt(i) ? null : mapValue.getValues().getString(i);
+      result.put(mapValue.getKeys().getString(i), value);
+    }
+    return result;
+  }
+
+  /** Build a Kernel write-context partition map keyed by logical partition-column names. */
+  public static Map<String, Literal> buildKernelPartitionLiteralMap(
+      Map<String, String> logicalPartitionValueStrings, StructType partitionSchema, ZoneId zoneId) {
+    Map<String, Literal> partitionLiteralMap = new LinkedHashMap<>();
+    for (StructField field : partitionSchema.fields()) {
+      String logicalName = field.name();
+      String rawValue = logicalPartitionValueStrings.get(logicalName);
+      if (rawValue == null) {
+        partitionLiteralMap.put(
+            logicalName,
+            Literal.ofNull(SchemaUtils.convertSparkDataTypeToKernelDataType(field.dataType())));
+        continue;
+      }
+      Object typedValue =
+          PartitioningUtils.castPartValueToDesiredType(field.dataType(), rawValue, zoneId);
+      partitionLiteralMap.put(
+          logicalName, convertPartitionValueToKernelLiteral(typedValue, field.dataType()));
+    }
+    return partitionLiteralMap;
+  }
+
+  private static Literal convertPartitionValueToKernelLiteral(
+      Object value, org.apache.spark.sql.types.DataType sparkDataType) {
+    if (value == null) {
+      throw new IllegalArgumentException(
+          "Partition literal conversion does not accept null values");
+    }
+    if (value instanceof Boolean) {
+      return Literal.ofBoolean((Boolean) value);
+    }
+    if (value instanceof Byte) {
+      return Literal.ofByte((Byte) value);
+    }
+    if (value instanceof Short) {
+      return Literal.ofShort((Short) value);
+    }
+    if (value instanceof Integer) {
+      return Literal.ofInt((Integer) value);
+    }
+    if (value instanceof Long) {
+      return Literal.ofLong((Long) value);
+    }
+    if (value instanceof Float) {
+      return Literal.ofFloat((Float) value);
+    }
+    if (value instanceof Double) {
+      return Literal.ofDouble((Double) value);
+    }
+    if (value instanceof BigDecimal) {
+      BigDecimal decimal = (BigDecimal) value;
+      DecimalType decimalType = (DecimalType) sparkDataType;
+      return Literal.ofDecimal(decimal, decimalType.precision(), decimalType.scale());
+    }
+    if (value instanceof org.apache.spark.sql.types.Decimal) {
+      org.apache.spark.sql.types.Decimal decimal = (org.apache.spark.sql.types.Decimal) value;
+      DecimalType decimalType = (DecimalType) sparkDataType;
+      return Literal.ofDecimal(
+          decimal.toJavaBigDecimal(), decimalType.precision(), decimalType.scale());
+    }
+    if (value instanceof UTF8String) {
+      return Literal.ofString(value.toString());
+    }
+    if (value instanceof String) {
+      return Literal.ofString((String) value);
+    }
+    if (value instanceof byte[]) {
+      return Literal.ofBinary((byte[]) value);
+    }
+    if (value instanceof Date) {
+      return Literal.ofDate(InternalUtils.daysSinceEpoch((Date) value));
+    }
+    if (value instanceof Timestamp) {
+      return Literal.ofTimestamp(InternalUtils.microsSinceEpoch((Timestamp) value));
+    }
+    throw new IllegalArgumentException(
+        "Unsupported partition literal value type: " + value.getClass().getName());
   }
 
   /**
