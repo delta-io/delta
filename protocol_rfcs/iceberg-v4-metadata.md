@@ -152,7 +152,7 @@ table/
 │   ├── _sidecars/
 │   │   └── txn-v42.parquet           # Transaction identifiers sidecar
 │   └── _last_checkpoint
-├── metadata/                          # metadata tree
+├── metadata/                         # metadata tree
 │   ├── a3d1f7e2-v42.parquet          # Root manifest (UUID + version)
 │   ├── 7c2e8f1a-m0.parquet           # Leaf manifest
 │   └── e9f4a2b1-m0.parquet           # Leaf manifest
