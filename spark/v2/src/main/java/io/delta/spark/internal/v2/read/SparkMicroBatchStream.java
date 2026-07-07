@@ -46,7 +46,7 @@ import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.adapters.KernelMetadataAdapter;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
-import io.delta.spark.internal.v2.utils.KernelExceptionUtils;
+import io.delta.spark.internal.v2.utils.KernelUnsupportedFeatureTranslator;
 import io.delta.spark.internal.v2.utils.PartitionUtils;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
@@ -903,7 +903,8 @@ public class SparkMicroBatchStream
       // If snapshot reconstruction fails, fall back to old behavior where the only
       // requirement was for the commit to exist. An unsupported reader feature is translated to
       // Delta's DeltaUnsupportedTableFeatureException and rethrown (not suppressed) below.
-      KernelExceptionUtils.runTranslating(() -> snapshotManager.loadSnapshotAt(version));
+      KernelUnsupportedFeatureTranslator.translatingUnsupportedFeature(
+          () -> snapshotManager.loadSnapshotAt(version));
       return true;
     } catch (DeltaUnsupportedTableFeatureException e) {
       // Unsupported reader feature: fail loud with the Delta error class.
@@ -1191,7 +1192,8 @@ public class SparkMicroBatchStream
         // TODO(#5318): kernel should ideally relax this constraint.
         endVersionOpt =
             Optional.of(
-                KernelExceptionUtils.runTranslating(snapshotManager::loadLatestSnapshot)
+                KernelUnsupportedFeatureTranslator.translatingUnsupportedFeature(
+                        snapshotManager::loadLatestSnapshot)
                     .getVersion());
       }
 
@@ -1206,7 +1208,9 @@ public class SparkMicroBatchStream
       // latest version. We must load the current latest (not snapshotAtSourceInit) because new
       // commits may have arrived since stream initialization.
       long currentLatestVersion =
-          KernelExceptionUtils.runTranslating(snapshotManager::loadLatestSnapshot).getVersion();
+          KernelUnsupportedFeatureTranslator.translatingUnsupportedFeature(
+                  snapshotManager::loadLatestSnapshot)
+              .getVersion();
       if (startVersion > currentLatestVersion) {
         return Utils.toCloseableIterator(Collections.emptyIterator());
       }
@@ -1495,9 +1499,9 @@ public class SparkMicroBatchStream
       // iterator. Unwrap and translate it into Delta's DeltaUnsupportedTableFeatureException so the
       // failure carries the DELTA_UNSUPPORTED_FEATURES_FOR_READ error class; rethrow anything else.
       UnsupportedTableFeatureException unsupported =
-          KernelExceptionUtils.findUnsupportedTableFeatureCause(e);
+          KernelUnsupportedFeatureTranslator.findUnsupportedTableFeatureCause(e);
       if (unsupported != null) {
-        throw KernelExceptionUtils.toUnsupportedReaderFeatureException(unsupported);
+        throw KernelUnsupportedFeatureTranslator.toUnsupportedReaderFeatureException(unsupported);
       }
       throw e;
     }
@@ -1885,7 +1889,8 @@ public class SparkMicroBatchStream
     // metadata-only on driver; log replay runs on executors via ScanFileRDD.
     SnapshotImpl snapshot =
         (SnapshotImpl)
-            KernelExceptionUtils.runTranslating(() -> snapshotManager.loadSnapshotAt(version));
+            KernelUnsupportedFeatureTranslator.translatingUnsupportedFeature(
+                () -> snapshotManager.loadSnapshotAt(version));
     SerializableReadOnlySnapshot serSnapshot =
         SerializableReadOnlySnapshot.fromSnapshot(snapshot, hadoopConf);
 
@@ -1968,7 +1973,8 @@ public class SparkMicroBatchStream
   private InitialSnapshotCache loadAndValidateSnapshot(long version) {
     SnapshotImpl snapshot =
         (SnapshotImpl)
-            KernelExceptionUtils.runTranslating(() -> snapshotManager.loadSnapshotAt(version));
+            KernelUnsupportedFeatureTranslator.translatingUnsupportedFeature(
+                () -> snapshotManager.loadSnapshotAt(version));
     // If schema tracking is already active and the initial snapshot has advanced since the tracked
     // read snapshot, replace the tracked metadata/protocol before reading snapshot files.
     if (metadataEvolutionHandler.shouldTrackMetadataChange()

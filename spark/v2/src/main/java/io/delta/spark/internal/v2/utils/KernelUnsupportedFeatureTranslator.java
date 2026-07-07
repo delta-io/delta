@@ -22,29 +22,30 @@ import org.apache.spark.sql.delta.DeltaUnsupportedTableFeatureException;
 import scala.jdk.javaapi.CollectionConverters;
 
 /**
- * Translates Kernel-native exceptions raised on the DSv2 read path into Delta's exception types.
+ * Translates Kernel's {@link UnsupportedTableFeatureException} raised on the DSv2 read path into
+ * Delta's {@link DeltaUnsupportedTableFeatureException}.
  *
  * <p>Protocol validation lives inside Kernel for DSv2, so an unsupported reader feature surfaces as
  * Kernel's {@link UnsupportedTableFeatureException} with no Delta error class. Delta and downstream
  * consumers key on Delta's {@link DeltaUnsupportedTableFeatureException} / {@code
  * DELTA_UNSUPPORTED_FEATURES_FOR_READ}, so callers translate at every Kernel boundary that can
- * raise it on read.
+ * raise it on read. Other Kernel exceptions are out of scope and handled at their own call sites.
  */
-public final class KernelExceptionUtils {
+public final class KernelUnsupportedFeatureTranslator {
 
-  private KernelExceptionUtils() {}
+  private KernelUnsupportedFeatureTranslator() {}
 
   /**
    * Runs {@code snapshotLoad} (a Kernel snapshot build), translating a Kernel {@link
    * UnsupportedTableFeatureException} thrown directly by it into Delta's {@link
    * DeltaUnsupportedTableFeatureException}. Use this to wrap {@code loadLatestSnapshot} / {@code
    * loadSnapshotAt} calls on the read path so the unsupported-feature failure carries the {@code
-   * DELTA_UNSUPPORTED_FEATURES_FOR_READ} error class.
+   * DELTA_UNSUPPORTED_FEATURES_FOR_READ} error class. Any other exception propagates unchanged.
    *
    * <p>For the mid-run per-commit path, where Kernel's action iterator wraps the exception in a
    * {@link RuntimeException}, use {@link #findUnsupportedTableFeatureCause} instead.
    */
-  public static <T> T runTranslating(Supplier<T> snapshotLoad) {
+  public static <T> T translatingUnsupportedFeature(Supplier<T> snapshotLoad) {
     try {
       return snapshotLoad.get();
     } catch (UnsupportedTableFeatureException e) {

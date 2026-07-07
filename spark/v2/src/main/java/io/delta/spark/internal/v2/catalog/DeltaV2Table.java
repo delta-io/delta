@@ -30,7 +30,7 @@ import io.delta.spark.internal.v2.read.SparkScanBuilder;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
-import io.delta.spark.internal.v2.utils.KernelExceptionUtils;
+import io.delta.spark.internal.v2.utils.KernelUnsupportedFeatureTranslator;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import io.delta.spark.internal.v2.write.DeltaRowLevelOperationBuilder;
 import io.delta.spark.internal.v2.write.DeltaV2WriteBuilder;
@@ -237,8 +237,10 @@ public class DeltaV2Table
         SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(options));
     this.kernelEngine = DefaultEngine.create(this.hadoopConf);
     this.snapshotManager = SnapshotManagerFactory.create(tablePath, kernelEngine, catalogTable);
+    // Load the initial snapshot through the manager. Kernel validates the latest protocol here, so
+    // translate its unsupported-feature failure to Delta's error class.
     this.initialSnapshot =
-        KernelExceptionUtils.runTranslating(() ->
+        KernelUnsupportedFeatureTranslator.translatingUnsupportedFeature(() ->
             timeTravelVersion.isPresent()
               ? loadSnapshotAtCheckedVersion(snapshotManager, timeTravelVersion.getAsLong())
               : snapshotManager.loadLatestSnapshot());
