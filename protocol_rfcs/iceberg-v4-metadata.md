@@ -515,6 +515,8 @@ Partition values are stored in the `partition` struct (field ID 102) on each DAT
 
 When producing manifest entries, writers convert Delta's `partitionValues` string map to the typed `partition` struct: each value is parsed into its column's type and placed at that column's `field-id`. When reading manifest entries back into Delta actions, readers extract each value by `field-id = 1000 + i` and map it back to the i-th partition column.
 
+Because partition column values are materialized in the data files (see [Writer Requirements](#writer-requirements)), readers read them from the file like any other column; the `partition` struct is used only for partition pruning.
+
 ## Commit Types
 
 Writers can produce two types of commits:
@@ -622,7 +624,10 @@ When `adaptiveMetadata` is supported and active, writers must:
 7. **Set field IDs on materialized row tracking columns**: When writing
    data files, writers must set Parquet `field_id` metadata on the materialized row ID and row commit version columns using the Iceberg reserved field IDs. See [Materialized Row Tracking Columns](#materialized-row-tracking-columns).
 
-8. **Populate partition and content_stats**: When producing manifest
+8. **Materialize partition columns**: Partition column values must be
+   materialized when writing Parquet data files, written with the partition column's `field_id`. See [Partition Values](#partition-values).
+
+9. **Populate partition and content_stats**: When producing manifest
    entries, writers must:
    - Convert Delta's `partitionValues` string map to the typed
      `partition` struct
