@@ -16,8 +16,9 @@
 package io.delta.spark.internal.v2.utils;
 
 import io.delta.kernel.data.Row;
-import io.delta.kernel.defaults.internal.json.JsonUtils;
+import io.delta.kernel.defaults.internal.data.DefaultJsonRow;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
+import io.delta.kernel.internal.util.JsonUtils;
 import io.delta.kernel.types.StructType;
 import java.io.Serializable;
 
@@ -36,7 +37,7 @@ public class SerializableKernelRowWrapper implements Serializable {
   public Row getRow() {
     if (row == null) {
       StructType schema = DataTypeJsonSerDe.deserializeStructType(schemaJson);
-      row = JsonUtils.rowFromJson(rowJson, schema);
+      row = DefaultJsonRow.fromJsonString(rowJson, schema);
     }
     return row;
   }
