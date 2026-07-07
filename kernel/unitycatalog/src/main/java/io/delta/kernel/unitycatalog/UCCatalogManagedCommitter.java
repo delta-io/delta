@@ -29,6 +29,7 @@ import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.internal.files.ParsedPublishedDeltaData;
 import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.unitycatalog.adapters.DomainMetadataAdapter;
 import io.delta.kernel.unitycatalog.adapters.MetadataAdapter;
 import io.delta.kernel.unitycatalog.adapters.ProtocolAdapter;
 import io.delta.kernel.unitycatalog.adapters.UniformAdapter;
@@ -47,6 +48,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import org.apache.hadoop.fs.Path;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -450,6 +452,13 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
                         });
               });
 
+          // UCClient ignores the old P&M and domain metadata; UCDeltaClient compares the old and
+          // new P&M to emit set-protocol/metadata updates and forwards domain-metadata updates.
+          final List<AbstractDomainMetadata> domainMetadatas =
+              commitMetadata.getCommitDomainMetadatas().stream()
+                  .map(DomainMetadataAdapter::new)
+                  .collect(Collectors.toList());
+
           try {
             ucClient.commit(
                 ucTableId,
@@ -459,11 +468,11 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
                     .orElse(null),
                 Optional.of(getUcCommitPayload(commitMetadata, kernelStagedCommitFileStatus)),
                 commitMetadata.getMaxKnownPublishedDeltaVersion(),
-                Optional.empty() /* oldMetadata */,
+                commitMetadata.getReadMetadataOpt().map(MetadataAdapter::new),
                 generateMetadataPayloadOpt(commitMetadata).map(MetadataAdapter::new),
-                Optional.empty() /* oldProtocol */,
+                commitMetadata.getReadProtocolOpt().map(ProtocolAdapter::new),
                 commitMetadata.getNewProtocolOpt().map(ProtocolAdapter::new),
-                Collections.<AbstractDomainMetadata>emptyList(),
+                domainMetadatas,
                 uniformMetadataOpt);
             return null;
           } catch (io.delta.storage.commit.CommitFailedException cfe) {

@@ -47,6 +47,13 @@ object InMemoryUCClient {
     private var currentMetadataOpt: Option[AbstractMetadata] = None
     private var currentIcebergOpt: Option[IcebergMetadata] = None
 
+    // For test only: capture the read-side (old) Protocol/Metadata and domain metadata that the
+    // last commit() call received. The UCClient ignores these; capturing them lets tests assert
+    // the committer forwards them, which is needed by the UCDeltaClient.
+    private var lastOldProtocolOpt: Option[AbstractProtocol] = None
+    private var lastOldMetadataOpt: Option[AbstractMetadata] = None
+    private var lastDomainMetadatas: List[AbstractDomainMetadata] = Nil
+
     /** @return the maximum ratified version. */
     def getMaxRatifiedVersion: Long = synchronized { maxRatifiedVersion }
 
@@ -74,6 +81,25 @@ object InMemoryUCClient {
     /** @return the current Iceberg metadata. For test only. */
     def getCurrentIcebergOpt: Option[IcebergMetadata] = synchronized {
       currentIcebergOpt
+    }
+
+    /** @return the read-side (old) protocol passed to the last commit(). For test only. */
+    def getLastOldProtocolOpt: Option[AbstractProtocol] = synchronized { lastOldProtocolOpt }
+
+    /** @return the read-side (old) metadata passed to the last commit(). For test only. */
+    def getLastOldMetadataOpt: Option[AbstractMetadata] = synchronized { lastOldMetadataOpt }
+
+    /** @return the domain metadata passed to the last commit(). For test only. */
+    def getLastDomainMetadatas: List[AbstractDomainMetadata] = synchronized { lastDomainMetadatas }
+
+    /** Records the read-side P&M and domain metadata seen by a commit(). For test only. */
+    def recordCommitInputs(
+        oldProtocol: Optional[AbstractProtocol],
+        oldMetadata: Optional[AbstractMetadata],
+        domainMetadatas: JList[AbstractDomainMetadata]): Unit = synchronized {
+      lastOldProtocolOpt = if (oldProtocol.isPresent) Some(oldProtocol.get()) else None
+      lastOldMetadataOpt = if (oldMetadata.isPresent) Some(oldMetadata.get()) else None
+      lastDomainMetadatas = domainMetadatas.asScala.toList
     }
 
     /** Updates the Iceberg metadata. */
@@ -189,6 +215,8 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
     val tableData = getOrCreateTableIfNotExists(tableId)
 
     tableData.synchronized {
+      tableData.recordCommitInputs(oldProtocol, oldMetadata, transactionDomainMetadata)
+
       commitOpt.ifPresent { commit =>
         tableData.appendCommit(commit, newProtocol, newMetadata)
       }
