@@ -142,7 +142,7 @@ Delta Column Statistics | **Supported:** A `file` column supports the `nullCount
 Generated Columns | **Supported:** A `file` column is allowed to be used as a source in a generated column expression. <br/> **Open question:** Whether `file` may be the *result* type of a generated column expression (for example, constructing a `file` reference from other columns) is left open for discussion on the associated issue, and is not specified by this RFC.
 Delta CHECK Constraints | **Supported:** A `file` column is allowed to be used for a CHECK constraint expression.
 Default Column Values | **Supported:** A `file` column is allowed to have a default column value.
-Change Data Feed | **Supported:** A table using the `file` data type is allowed to enable the Delta Change Data Feed.
+Change Data Feed | **Supported:** A table using the `file` data type is allowed to enable the Delta Change Data Feed. A `file` value is an ordinary column value, so it flows through Change Data Feed and time travel like any other column. See [Time Travel and Change Data Feed](#time-travel-and-change-data-feed) for the distinction between the reference and the referenced bytes.
 
 ## Statistics for File Columns
 
@@ -155,6 +155,22 @@ A `file` value is physically a group of leaf fields (see [File data in Parquet](
 Collecting `minValues` / `maxValues` on `path` in particular enables data skipping on file-inventory and manifest tables that filter by path (for example, an object-store prefix).
 
 The set of columns for which statistics are collected is otherwise governed by the table's existing statistics configuration (for example, the number of indexed columns).
+
+## Time Travel and Change Data Feed
+
+A `file` value is a reference, and it is stored in the table's data files like any other column value. Delta therefore time-travels and change-data-feeds the **reference**: querying a historical version of the table, or reading `file` columns through the Change Data Feed, returns the reference values exactly as they were written at that version.
+
+Delta makes **no guarantee about the referenced bytes**, because those bytes live outside the Delta transaction log:
+
+- The bytes may be overwritten or deleted independently of the table, so dereferencing a reference read from a historical version (via time travel or Change Data Feed) may fail or may return different bytes than when the reference was written. The `checksum` field, when present, allows a reader to detect that the bytes have changed, but does not allow it to recover the original bytes.
+- Availability of the referenced bytes is orthogonal to which table version is queried: time travel of the reference does not imply time travel of the bytes.
+
+## Non-Goals
+
+The following are out of scope for this RFC:
+
+- **Lifecycle and garbage collection of referenced bytes.** This RFC defines `file` as a reference only; it does not specify how, or whether, the referenced bytes are created, retained, or reclaimed. In particular, it does not define a notion of Delta-managed referenced bytes or their interaction with `VACUUM`. Referenced bytes are managed out-of-band by the writer or an external system.
+- **Access brokering and governance** of the referenced bytes (for example, catalog-vended credentials or signed URLs).
 
 --------
 
