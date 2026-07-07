@@ -2367,76 +2367,9 @@ trait DataSkippingDeltaTestsBase extends QueryTest
   }
 }
 
-trait DataSkippingDeltaTestsUtils extends PredicateHelper {
-  protected def parse(
-      spark: SparkSession, deltaLog: DeltaLog, predicate: String): Seq[Expression] = {
-
-    // We produce a wrong filter in this case otherwise
-    if (predicate == "True") return Seq(Literal.TrueLiteral)
-
-    val filtered =
-      spark.read.format("delta").load(deltaLog.dataPath.toString).where(predicate)
-
-    val optimizedPlan = filtered.queryExecution.optimizedPlan
-
-    // When pushVariantIntoScan = true, the plan is transformed such that a projection is inserted
-    // at the top of the plan. Therefore, the filter node is lower in the plan.
-    val filterNode = optimizedPlan.collectFirst {
-      case f: Filter => f
-    }.getOrElse {
-      optimizedPlan
-    }
-    filterNode
-      .expressions
-      .flatMap(splitConjunctivePredicates)
-  }
-
-  /**
-   * Returns the number of files that should be included in a scan after applying the given
-   * predicate on a snapshot of the Delta log.
-   *
-   * @param deltaLog Delta log for a table.
-   * @param predicate Predicate to run on the Delta table.
-   * @param checkEmptyUnusedFilters If true, check if there were no unused filters, meaning
-   *                                the given predicate was used as data or partition filters.
-   * @return The number of files that should be included in a scan after applying the predicate.
-   */
-  protected def filesRead(
-      spark: SparkSession,
-      deltaLog: DeltaLog,
-      predicate: String,
-      checkEmptyUnusedFilters: Boolean): Int =
-    getFilesRead(spark, deltaLog, predicate, checkEmptyUnusedFilters).size
-
-  /**
-   * Returns the files that should be included in a scan after applying the given predicate on
-   * a snapshot of the Delta log.
-   * @param deltaLog Delta log for a table.
-   * @param predicate Predicate to run on the Delta table.
-   * @param checkEmptyUnusedFilters If true, check if there were no unused filters, meaning
-   *                                the given predicate was used as data or partition filters.
-   * @return The files that should be included in a scan after applying the predicate.
-   */
-  protected def getFilesRead(
-      spark: SparkSession,
-      deltaLog: DeltaLog,
-      predicate: String,
-      checkEmptyUnusedFilters: Boolean): Seq[AddFile] = {
-    val parsed = parse(spark, deltaLog, predicate)
-    val res = deltaLog.snapshot.filesForScan(parsed)
-    assert(res.total.files.get == deltaLog.snapshot.numOfFiles)
-    assert(res.total.bytesCompressed.get == deltaLog.snapshot.sizeInBytes)
-    assert(res.scanned.files.get == res.files.size)
-    assert(res.scanned.bytesCompressed.get == res.files.map(_.size).sum)
-    assert(!checkEmptyUnusedFilters || res.unusedFilters.isEmpty)
-    res.files
-  }
-}
-
-
 trait DataSkippingDeltaTests extends DataSkippingDeltaTestsBase
 /** Tests code paths within DataSkippingReader.scala */
-class DataSkippingDeltaV1Suite
+trait DataSkippingDeltaV1Tests
   extends DataSkippingDeltaTests
 {
   import testImplicits._
@@ -2483,7 +2416,7 @@ class DataSkippingDeltaV1Suite
  * avoid time-out
  * TODO(lin): remove this after we remove the DELTA_COLLECT_STATS_USING_TABLE_SCHEMA flag
  */
-trait DataSkippingDisableOldStatsSchemaTests extends DataSkippingDeltaTests {
+trait DataSkippingDisableOldStatsSchema extends DataSkippingDeltaTestsBase {
 
   protected override def test(testName: String, testTags: org.scalatest.Tag*)
                              (testFun: => Any)
@@ -2495,7 +2428,7 @@ trait DataSkippingDisableOldStatsSchemaTests extends DataSkippingDeltaTests {
 }
 
 /** DataSkipping tests under id column mapping */
-trait DataSkippingDeltaIdColumnMappingTests extends DataSkippingDeltaTests
+trait DataSkippingDeltaIdColumnMapping extends DataSkippingDeltaTestsBase
   with DeltaColumnMappingTestUtils {
 
   override def expectedStatsForFile(index: Int, colName: String, deltaLog: DeltaLog): String = {
@@ -2510,22 +2443,27 @@ trait DataSkippingDeltaIdColumnMappingTests extends DataSkippingDeltaTests
   }
 }
 
-trait DataSkippingDeltaTestV1ColumnMappingMode extends DataSkippingDeltaIdColumnMappingTests {
+trait DataSkippingDeltaTestV1ColumnMappingMode extends DataSkippingDeltaIdColumnMapping {
   override protected def getStatsDf(deltaLog: DeltaLog, columns: Column*): DataFrame = {
     deltaLog.snapshot.withStats.select("stats.*")
       .select(convertToPhysicalColumns(columns, deltaLog): _*)
   }
 }
 
-class DataSkippingDeltaV1NameColumnMappingSuite
-  extends DataSkippingDeltaV1Suite
-    with DeltaColumnMappingEnableNameMode
-    with DataSkippingDeltaTestV1ColumnMappingMode {
+/**
+ * V1 name-column-mapping additionally runs the full test body (the id-mode variant runs only the
+ * selected subset). `runAllTests` is declared on [[DeltaColumnMappingSelectedTestMixin]], which
+ * `DeltaColumnMappingEnableNameMode` brings in.
+ */
+trait DataSkippingDeltaV1NameColumnMappingMode
+  extends DataSkippingDeltaTestV1ColumnMappingMode
+  with DeltaColumnMappingEnableNameMode {
   override protected def runAllTests: Boolean = true
 }
 
-class DataSkippingDeltaV1JsonCheckpointV2Suite extends DataSkippingDeltaV1Suite {
-  override def sparkConf: SparkConf = {
+/** Writes V2 checkpoints with a JSON top-level file. */
+trait DataSkippingCheckpointV2Json extends DataSkippingDeltaTestsBase {
+  override protected def sparkConf: SparkConf = {
     super.sparkConf.setAll(
       Seq(
         DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name,
@@ -2535,8 +2473,9 @@ class DataSkippingDeltaV1JsonCheckpointV2Suite extends DataSkippingDeltaV1Suite 
   }
 }
 
-class DataSkippingDeltaV1ParquetCheckpointV2Suite extends DataSkippingDeltaV1Suite {
-  override def sparkConf: SparkConf = {
+/** Writes V2 checkpoints with a Parquet top-level file. */
+trait DataSkippingCheckpointV2Parquet extends DataSkippingDeltaTestsBase {
+  override protected def sparkConf: SparkConf = {
     super.sparkConf.setAll(
       Seq(
         DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name,
@@ -2544,16 +2483,4 @@ class DataSkippingDeltaV1ParquetCheckpointV2Suite extends DataSkippingDeltaV1Sui
       )
     )
   }
-}
-
-class DataSkippingDeltaV1WithCatalogOwnedBatch1Suite extends DataSkippingDeltaV1Suite {
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
-}
-
-class DataSkippingDeltaV1WithCatalogOwnedBatch2Suite extends DataSkippingDeltaV1Suite {
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
-}
-
-class DataSkippingDeltaV1WithCatalogOwnedBatch100Suite extends DataSkippingDeltaV1Suite {
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }
