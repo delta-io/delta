@@ -17,9 +17,13 @@
 package org.apache.spark.sql.delta.serverSidePlanning
 
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.connector.catalog.{Identifier, V1Table}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.sources.{And, EqualTo, Filter, GreaterThan, LessThan}
+import org.apache.hadoop.fs.Path
 
 /**
  * Tests for server-side planning with a mock client.
@@ -213,6 +217,52 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
           assert(result == expected, s"$description -> expected $expected but got $result")
         }
       }
+    }
+  }
+
+  test("hasCredentials must be read from the raw V1Table, not the DeltaTableV2") {
+    // Regression test: SSP's credential check looks for `option.fs.*` table properties. A raw
+    // `V1Table` surfaces `fs.*` storage properties as `option.fs.*` (Spark's
+    // `V1Table.addV2TableProperties`), but `DeltaTableV2.properties()` intentionally strips `fs.*`
+    // (see `DeltaTableV2.HIDDEN_STORAGE_PROPERTY_PREFIXES`). If the credential check runs against
+    // the `DeltaTableV2` it always reports "no credentials", which would wrongly route a
+    // credentialed UC table through server-side planning -- SSP is only a fallback for tables that
+    // lack credentials.
+    val ident = Identifier.of(Array("test_db"), "shared_test")
+    val baseCatalogTable =
+      spark.sessionState.catalog.getTableMetadata(TableIdentifier("shared_test", Some("test_db")))
+
+    // Simulate a UC-injected filesystem credential on the loaded table's storage properties.
+    val credentialedCatalogTable = baseCatalogTable.copy(
+      storage = baseCatalogTable.storage.copy(
+        properties = baseCatalogTable.storage.properties + ("fs.s3a.access.key" -> "secret")))
+
+    val rawV1Table = V1Table(credentialedCatalogTable)
+    val deltaTableV2 = DeltaTableV2(
+      spark,
+      new Path(credentialedCatalogTable.location),
+      catalogTable = Some(credentialedCatalogTable),
+      tableIdentifier = Some(ident.toString))
+
+    // The raw V1Table exposes the credential as `option.fs.*`...
+    assert(ServerSidePlannedTable.hasCredentials(rawV1Table),
+      "Expected the raw V1Table to expose fs.* credentials as option.fs.* properties")
+    // ...but the DeltaTableV2 strips fs.* storage properties, so it never does.
+    assert(!ServerSidePlannedTable.hasCredentials(deltaTableV2),
+      "Expected DeltaTableV2 to hide fs.* credentials, so hasCredentials must report false")
+
+    // tryCreate builds the planned table from `table` (the DeltaTableV2, for its schema) but must
+    // detect credentials from `credentialsTable` (the raw V1Table). With a real UC deployment
+    // (skipUCRequirementForTests = false) a credentialed table must NOT be routed to SSP.
+    withServerSidePlanningFactory(new TestServerSidePlanningClientFactory()) {
+      assert(
+        ServerSidePlannedTable.shouldUseServerSidePlanning(
+          isUnityCatalog = true,
+          hasCredentials = ServerSidePlannedTable.hasCredentials(rawV1Table),
+          enableServerSidePlanning = ServerSidePlannedTable.isEnabled(spark),
+          skipUCRequirementForTests = false) == false,
+        "A credentialed UC table (creds read from the raw V1Table) must not use server-side " +
+          "planning")
     }
   }
 
