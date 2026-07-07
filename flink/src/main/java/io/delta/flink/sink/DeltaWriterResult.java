@@ -17,8 +17,9 @@
 package io.delta.flink.sink;
 
 import io.delta.kernel.data.Row;
-import io.delta.kernel.defaults.internal.json.JsonUtils;
+import io.delta.kernel.defaults.internal.data.DefaultJsonRow;
 import io.delta.kernel.internal.actions.SingleAction;
+import io.delta.kernel.internal.util.JsonUtils;
 import io.delta.kernel.internal.util.Preconditions;
 import java.io.*;
 import java.util.ArrayList;
@@ -137,7 +138,7 @@ public class DeltaWriterResult implements Serializable {
         List<Row> actions = new ArrayList<>(numActions);
         for (int i = 0; i < numActions; i++) {
           final String actionJson = in.readUTF();
-          actions.add(JsonUtils.rowFromJson(actionJson, SingleAction.FULL_SCHEMA));
+          actions.add(DefaultJsonRow.fromJsonString(actionJson, SingleAction.FULL_SCHEMA));
         }
         return new DeltaWriterResult(actions, context);
       } catch (ClassNotFoundException e) {
