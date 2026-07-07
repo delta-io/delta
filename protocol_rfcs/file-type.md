@@ -16,8 +16,8 @@ The `file` data type is the Delta mapping of the Parquet `FILE` logical type pro
 This feature enables support for the `file` data type, which stores a reference to a range of bytes.
 A `file` value resolves to bytes that are located in one of three ways:
 - **inline** — the bytes are stored directly in the value,
-- **self-reference** — the bytes are stored elsewhere within the same data file, or
-- **external** — the bytes are stored in a separate file at a given path.
+- **self-reference** — the bytes are stored within the same data file that holds this `file` value, addressed by a byte range (`offset` / `size`) with no `path`. The bytes are written between column chunks and are not otherwise referenced by the Parquet footer, so a reader locates them within the current file rather than opening an external one. See [Byte Resolution](#byte-resolution).
+- **external** — the bytes are stored in a separate file at a given `path`.
 
 The schema serialization method is described in [Schema Serialization Format](#schema-serialization-format), and the physical encoding is described in [File data in Parquet](#file-data-in-parquet).
 
@@ -139,7 +139,7 @@ Feature | Support for File Data Type
 Partition Columns | **Supported:** A `file` column is allowed to be a non-partitioned column of a partitioned table. <br/> **Unsupported:** A `file` value is a group and cannot be serialized to a partition-value string, so a `file` column cannot be a partition column.
 Clustered Tables | **Supported:** A `file` column is allowed to be a non-clustering column of a clustered table. <br/> **Unsupported:** A `file` value is a group and is not a comparable data type as a whole, so a `file` column cannot be a clustering column.
 Delta Column Statistics | **Supported:** A `file` column supports the `nullCount` statistic, and `minValues` / `maxValues` on its comparable leaf fields. See [Statistics for File Columns](#statistics-for-file-columns). <br/> **Unsupported:** The `file` column as a whole is not a comparable data type, and the `inline` field does not support `minValues` / `maxValues`.
-Generated Columns | **Supported:** A `file` column is allowed to be used as a source in a generated column expression, as long as the `file` type is not the result type of the generated column expression. <br/> **Unsupported:** The `file` data type is not allowed to be the result type of a generated column expression.
+Generated Columns | **Supported:** A `file` column is allowed to be used as a source in a generated column expression. <br/> **Open question:** Whether `file` may be the *result* type of a generated column expression (for example, constructing a `file` reference from other columns) is left open for discussion on the associated issue, and is not specified by this RFC.
 Delta CHECK Constraints | **Supported:** A `file` column is allowed to be used for a CHECK constraint expression.
 Default Column Values | **Supported:** A `file` column is allowed to have a default column value.
 Change Data Feed | **Supported:** A table using the `file` data type is allowed to enable the Delta Change Data Feed.
