@@ -793,7 +793,9 @@ The `commitInfo` action may include an optional `incremental` object describing 
 
 Each field applies uniformly to every action of its type in the commit, so a commit whose `add` (or `remove`) actions are not all alike cannot use the corresponding declaration. When `incremental` is absent, a reader makes no such assumption.
 
-In practice, ordinary DML and table-maintenance operations (e.g. `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `OPTIMIZE`) set both fields to `apply`. An operation that re-adds existing files (e.g. recomputing file statistics) sets `adds` to `ignore`; an operation that writes `remove` tombstones for files absent from the live set (e.g. protecting deletion-vector files from vacuum) sets `removes` to `ignore`.
+The `incremental` object may also include optional pre-computed totals for this commit's own actions. `numFilesAdded` and `numBytesAdded` give the count of, and sum of the `size` field over, the commit's `add` actions, and may be present only when `adds` is `apply`. `numFilesRemoved` and `numBytesRemoved` give the same over its `remove` actions, and may be present only when `removes` is `apply`. When present, they let a reader maintain file-count and byte-size aggregates (such as `numFiles` and `tableSizeBytes`) without reading the commit's `add` and `remove` actions. Deriving per-file aggregates such as `fileSizeHistogram` still requires the individual file sizes.
+
+In practice, ordinary DML and table-maintenance operations (e.g. `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `OPTIMIZE`) set both fields to `apply`. An operation that re-adds files already present (e.g. recomputing file statistics) sets `adds` to `ignore`. An operation may set `removes` to `ignore` when its `remove` actions do not correspond to counted files leaving the table, so subtracting them would be wrong. The case today is dropping the `deletionVectors` feature, whose `remove` actions pin deletion-vector side files (referenced by [`add.deletionVector`](#deletion-vectors), never themselves an `add`) rather than record data files leaving: the `remove` marks each deletion-vector file so that [VACUUM](#vacuum-protocol-check) retains it, protecting older versions that still reference it.
 
 An example of storing provenance information related to an `INSERT` operation:
 ```json
@@ -804,7 +806,7 @@ An example of storing provenance information related to an `INSERT` operation:
     "userName":"michael@databricks.com",
     "operation":"INSERT",
     "operationParameters":{"mode":"Append","partitionBy":"[]"},
-    "incremental":{"adds":"apply","removes":"apply"},
+    "incremental":{"adds":"apply","removes":"apply","numFilesAdded":3,"numBytesAdded":1048576,"numFilesRemoved":0,"numBytesRemoved":0},
     "notebook":{
       "notebookId":"4443029",
       "notebookPath":"Users/michael@databricks.com/actions"},
