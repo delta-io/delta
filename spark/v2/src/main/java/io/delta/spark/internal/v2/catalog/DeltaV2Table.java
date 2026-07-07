@@ -30,6 +30,7 @@ import io.delta.spark.internal.v2.read.SparkScanBuilder;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
+import io.delta.spark.internal.v2.utils.KernelExceptionUtils;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import io.delta.spark.internal.v2.write.DeltaRowLevelOperationBuilder;
 import io.delta.spark.internal.v2.write.DeltaV2WriteBuilder;
@@ -237,9 +238,10 @@ public class DeltaV2Table
     this.kernelEngine = DefaultEngine.create(this.hadoopConf);
     this.snapshotManager = SnapshotManagerFactory.create(tablePath, kernelEngine, catalogTable);
     this.initialSnapshot =
-        timeTravelVersion.isPresent()
-            ? loadSnapshotAtCheckedVersion(snapshotManager, timeTravelVersion.getAsLong())
-            : snapshotManager.loadLatestSnapshot();
+        KernelExceptionUtils.runTranslating(() ->
+            timeTravelVersion.isPresent()
+              ? loadSnapshotAtCheckedVersion(snapshotManager, timeTravelVersion.getAsLong())
+              : snapshotManager.loadLatestSnapshot());
 
     this.isCDCRead = CDCReader.isCDCRead(new CaseInsensitiveStringMap(this.options));
 
