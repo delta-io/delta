@@ -31,7 +31,7 @@ class DeltaClassicExceptionConversionInstalledTests(unittest.TestCase):
         # Inspect sys.modules rather than importing delta.exceptions.captured ourselves (which would
         # set the flag regardless), so a missing import in the chain is caught.
         module = sys.modules.get("delta.exceptions.captured")
-        self.assertIsNotNone(module, "import delta did not import delta.exceptions.captured")
+        assert module is not None, "import delta did not import delta.exceptions.captured"
         self.assertTrue(module._delta_exception_patched)
 
     @unittest.skipIf(is_remote_only(), "classic conversion needs py4j/SparkContext")
