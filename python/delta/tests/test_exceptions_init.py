@@ -27,7 +27,7 @@ import delta  # noqa: F401
 
 class DeltaClassicExceptionConversionInstalledTests(unittest.TestCase):
     @unittest.skipIf(is_remote_only(), "classic conversion needs py4j/SparkContext")
-    def test_importing_delta_installs_conversion(self):
+    def test_importing_delta_installs_conversion(self) -> None:
         # Inspect sys.modules rather than importing delta.exceptions.captured ourselves (which would
         # set the flag regardless), so a missing import in the chain is caught.
         module = sys.modules.get("delta.exceptions.captured")
@@ -35,7 +35,7 @@ class DeltaClassicExceptionConversionInstalledTests(unittest.TestCase):
         self.assertTrue(module._delta_exception_patched)
 
     @unittest.skipIf(is_remote_only(), "classic conversion needs py4j/SparkContext")
-    def test_convert_exception_is_patched(self):
+    def test_convert_exception_is_patched(self) -> None:
         # delta replaces pyspark's classic convert_exception with its own wrapper; assert the
         # installed function comes from delta (see delta/exceptions/captured.py).
         import pyspark.errors.exceptions.captured as pyspark_captured
