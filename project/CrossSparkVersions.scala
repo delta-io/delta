@@ -189,7 +189,6 @@ import Unidoc._
  *   - isDefault: Whether this is the default Spark version
  *   - targetJvm: Target JVM version (e.g., "17")
  *   - packageSuffix: Maven artifact suffix for this version (e.g., "_4.0", "_4.1")
- *   - sourceBuildArtifactBaseVersion: Base Maven artifact version for source-built Spark refs, if any
  *   - sourceBuildDefaultRef: Default Spark source ref to build for source-built lanes, if any
  *
  *   Example:
@@ -217,10 +216,8 @@ import Unidoc._
  * @param additionalSourceDir Optional version-specific source directory suffix (e.g., "scala-spark-3.5")
  * @param antlr4Version ANTLR version to use (e.g., "4.9.3", "4.13.1")
  * @param additionalJavaOptions Additional JVM options for tests (e.g., Java 17 --add-opens flags)
- * @param sourceBuildArtifactBaseVersion Base Spark artifact version for source-built refs, if different from fullVersion.
- *   This is an overlay on the compatibility line, not a separate published Spark version.
  * @param sourceBuildDefaultRef Default Spark source ref for source-built CI/cache workflows.
- *   Workflows may override the ref manually, but the default lives here with the rest of the Spark policy.
+ *   This lives here with the rest of the Spark policy so CI workflows do not fragment refs.
  */
 case class SparkVersionSpec(
   fullVersion: String,
@@ -232,7 +229,6 @@ case class SparkVersionSpec(
   additionalJavaOptions: Seq[String] = Seq.empty,
   jacksonVersion: String = "2.15.2",
   additionalResolvers: Seq[Resolver] = Seq.empty,
-  sourceBuildArtifactBaseVersion: Option[String] = None,
   sourceBuildDefaultRef: Option[String] = None
 ) {
   /** Returns the Spark short version (e.g., "3.5", "4.0") */
@@ -261,8 +257,7 @@ case class SparkVersionSpec(
   def generateDocs: Boolean = isDefault
 
   /** Base version used when deriving a local, commit-qualified artifact version for source-built Spark. */
-  def artifactBaseVersion: String = sourceBuildArtifactBaseVersion.getOrElse(
-    fullVersion.stripSuffix("-SNAPSHOT"))
+  def artifactBaseVersion: String = fullVersion.stripSuffix("-SNAPSHOT")
 }
 
 object SparkVersionSpec {
@@ -315,7 +310,6 @@ object SparkVersionSpec {
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,
     jacksonVersion = "2.18.2",
-    sourceBuildArtifactBaseVersion = Some("4.2.0"),
     sourceBuildDefaultRef = Some("b6bd005ac7549411ec4e7dc944d7a0e19fd56561")
   )
 
@@ -665,7 +659,6 @@ object CrossSparkVersions extends AutoPlugin {
           writer.println(s"""    "isDefault": $isDefault,""")
           writer.println(s"""    "targetJvm": "${spec.targetJvm}",""")
           writer.println(s"""    "packageSuffix": "$packageSuffix",""")
-          writer.println(s"""    "sourceBuildArtifactBaseVersion": ${jsonString(spec.sourceBuildArtifactBaseVersion)},""")
           writer.println(s"""    "sourceBuildDefaultRef": ${jsonString(spec.sourceBuildDefaultRef)},""")
           writer.println(s"""    "supportIceberg": "${spec.supportIceberg}",""")
           writer.println(s"""    "supportHudi": "${spec.supportHudi}"""")

@@ -21,10 +21,6 @@ inputs:
       set this to 'false' so they restore/verify instead of rebuilding 8x.
     required: false
     default: 'true'
-  spark-source-ref:
-    description: Optional Spark source ref override for manual source-build runs.
-    required: false
-    default: ''
   cache-key-suffix:
     description: Optional suffix appended to the exact Spark Maven cache key.
     required: false
@@ -56,15 +52,12 @@ runs:
       if: inputs.use-spark-source-cache == 'true'
       id: spark-source
       shell: bash
-      env:
-        SPARK_SOURCE_REF_OVERRIDE: ${{ inputs.spark-source-ref }}
       run: |
         # Resolves the Spark compatibility line, metadata-owned source ref, immutable Spark
         # SHA, commit-qualified local Maven version, and the exact Maven cache_key.
         python3 project/scripts/get_spark_version_info.py \
           --resolve-source-build \
           --spark-version "${{ inputs.spark-version }}" \
-          --spark-source-ref "$SPARK_SOURCE_REF_OVERRIDE" \
           --runner-label "${{ inputs.runner-label }}"
 
     - name: Select Spark Maven cache key

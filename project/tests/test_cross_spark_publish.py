@@ -408,7 +408,7 @@ class SparkVersionsScriptTest:
             # Validate each entry has required fields
             required_fields = [
                 "fullVersion", "shortVersion", "isMaster", "isDefault", "targetJvm",
-                "packageSuffix", "sourceBuildArtifactBaseVersion", "sourceBuildDefaultRef"
+                "packageSuffix", "sourceBuildDefaultRef"
             ]
             for idx, entry in enumerate(data):
                 for field in required_fields:
@@ -420,8 +420,6 @@ class SparkVersionsScriptTest:
                 if not isinstance(entry["fullVersion"], str) or not isinstance(entry["shortVersion"], str) or \
                    not isinstance(entry["isMaster"], bool) or not isinstance(entry["isDefault"], bool) or \
                    not isinstance(entry["targetJvm"], str) or not isinstance(entry["packageSuffix"], str) or \
-                   not (entry["sourceBuildArtifactBaseVersion"] is None or
-                        isinstance(entry["sourceBuildArtifactBaseVersion"], str)) or \
                    not (entry["sourceBuildDefaultRef"] is None or
                         isinstance(entry["sourceBuildDefaultRef"], str)):
                     print(f"  ✗ Entry {idx}: Invalid field types")
@@ -573,9 +571,6 @@ class SparkVersionsScriptTest:
                 spark42 = by_short["4.2"]
                 if spark42["sourceBuildDefaultRef"] != "b6bd005ac7549411ec4e7dc944d7a0e19fd56561":
                     print("  ✗ Spark 4.2 sourceBuildDefaultRef is not the expected pinned SHA")
-                    return False
-                if spark42["sourceBuildArtifactBaseVersion"] != "4.2.0":
-                    print("  ✗ Spark 4.2 sourceBuildArtifactBaseVersion is not 4.2.0")
                     return False
 
             print(f"  ✓ --source-build-spark-versions (non-blocking lane metadata): {source_build_versions}")
@@ -785,11 +780,6 @@ class SparkVersionsScriptTest:
                 # Test short version and full version
                 test_cases.append((entry["shortVersion"], "targetJvm", entry["targetJvm"]))
                 test_cases.append((entry["fullVersion"], "fullVersion", entry["fullVersion"]))
-                test_cases.append((
-                    entry["shortVersion"],
-                    "sourceBuildArtifactBaseVersion",
-                    entry["sourceBuildArtifactBaseVersion"]
-                ))
                 test_cases.append((
                     entry["shortVersion"],
                     "sourceBuildDefaultRef",

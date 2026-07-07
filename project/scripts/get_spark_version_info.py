@@ -198,13 +198,13 @@ def resolve_source_build(args, versions, repo_root):
     source_ref = args.spark_source_ref.strip() or (version_entry.get("sourceBuildDefaultRef") or "")
     if not source_ref:
         raise SystemExit(
-            "No Spark source ref configured for Spark {}. Provide --spark-source-ref "
-            "or sourceBuildDefaultRef in CrossSparkVersions.scala.".format(args.spark_version)
+            "No Spark source ref configured for Spark {}. Add sourceBuildDefaultRef "
+            "in CrossSparkVersions.scala, or pass --spark-source-ref for local debugging.".format(
+                args.spark_version
+            )
         )
 
-    artifact_base_version = version_entry.get("sourceBuildArtifactBaseVersion") or strip_suffix(
-        version_entry["fullVersion"], "-SNAPSHOT"
-    )
+    artifact_base_version = strip_suffix(version_entry["fullVersion"], "-SNAPSHOT")
     normalized_spark_version = (
         "master" if version_entry.get("isMaster", False) else version_entry["shortVersion"]
     )
@@ -291,7 +291,7 @@ def main():
     parser.add_argument(
         "--spark-source-ref",
         default="",
-        help="Optional Spark source ref override for --resolve-source-build"
+        help="Optional local/debug source-ref override for --resolve-source-build; CI uses CrossSparkVersions.scala"
     )
     parser.add_argument(
         "--spark-repo",
