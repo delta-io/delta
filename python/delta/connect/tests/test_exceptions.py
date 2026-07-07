@@ -62,14 +62,17 @@ class DeltaConnectExceptionConversionTests(unittest.TestCase):
         # User code catching the documented delta.exceptions types must keep working.
         self.assertIsInstance(exception, delta.exceptions.ConcurrentAppendException)
         # The base class is registered and present in the hierarchy too; the most-derived class
-        # must win. The Python exception classes are flat siblings, so this fails if the base
-        # were picked instead.
+        # must win. In Python, ConcurrentAppendException and DeltaConcurrentModificationException
+        # do not inherit from each other (unlike the Scala side), so isinstance returning False
+        # for the base is proof that the conversion picked the concrete class, not the base.
         self.assertNotIsInstance(exception, delta.exceptions.DeltaConcurrentModificationException)
         self.assertEqual(exception.getCondition(), "DELTA_CONCURRENT_APPEND")
         self.assertEqual(exception.getSqlState(), "2D521")
         self.assertEqual(
             exception.getMessageParameters(), {"partition": "the root of the table"})
-        # The "(<reason>) " prefix added by the generic conversion must not leak in.
+        # When no mapping matches, pyspark's fallback wraps the message as "(<reason>) <message>"
+        # on a SparkConnectGrpcException. Asserting the plain message here proves we hit the
+        # mapped Delta path, not the fallback.
         self.assertEqual(exception.getMessage(), "Files were added by a concurrent update.")
 
     def test_delta_base_exception_maps_to_base_class(self):

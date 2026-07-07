@@ -36,24 +36,11 @@ class DeltaConnectExceptionConversionInstalledTests(unittest.TestCase):
         # Each Delta concurrency exception must be registered in PySpark's conversion mapping,
         # keyed by its server-side class name and mapped to the matching delta.connect class.
         from pyspark.errors.exceptions.connect import EXCEPTION_CLASS_MAPPING
-        module = sys.modules.get("delta.connect.exceptions")
-        self.assertIsNotNone(
-            module, "import delta.connect did not import delta.connect.exceptions")
-        names = [
-            "DeltaConcurrentModificationException",
-            "ConcurrentWriteException",
-            "MetadataChangedException",
-            "ProtocolChangedException",
-            "ConcurrentAppendException",
-            "ConcurrentDeleteReadException",
-            "ConcurrentDeleteDeleteException",
-            "ConcurrentTransactionException",
-        ]
-        for name in names:
-            class_name = "io.delta.exceptions." + name
+        from delta.connect.exceptions import _DELTA_EXCEPTION_CLASS_MAPPING
+        for class_name, cls in _DELTA_EXCEPTION_CLASS_MAPPING.items():
             self.assertIs(
-                EXCEPTION_CLASS_MAPPING.get(class_name), getattr(module, name),
-                "%s is not registered to the Delta %s" % (class_name, name))
+                EXCEPTION_CLASS_MAPPING.get(class_name), cls,
+                "%s is not registered to %s" % (class_name, cls.__name__))
 
 
 if __name__ == "__main__":

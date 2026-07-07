@@ -17,7 +17,7 @@
 from pyspark.util import is_remote_only
 
 # Installs the conversion for the classic (py4j) client; needs SparkContext, hence the
-# is_remote_only() guard. Spark Connect-only installs do this in delta/connect/__init__.py.
+# is_remote_only() guard. The Spark connect-specific installs do this in delta/connect/__init__.py.
 if not is_remote_only():
     import delta.exceptions.captured  # noqa: F401
 

@@ -119,6 +119,23 @@ class ConcurrentTransactionException(SparkConnectGrpcException, BaseConcurrentTr
 _delta_exception_registered = False
 
 
+# Server-side Delta exception class name -> Python Delta exception class. We register only the
+# io.delta.exceptions.* names because those are the public API; org.apache.spark.sql.delta.* are
+# their internal Scala superclasses (returned in the class hierarchy at runtime) and are not part
+# of the contract user code catches. See _register_exception_class_mappings for how this is used.
+_DELTA_EXCEPTION_CLASS_MAPPING = {
+    "io.delta.exceptions.DeltaConcurrentModificationException":
+        DeltaConcurrentModificationException,
+    "io.delta.exceptions.ConcurrentWriteException": ConcurrentWriteException,
+    "io.delta.exceptions.MetadataChangedException": MetadataChangedException,
+    "io.delta.exceptions.ProtocolChangedException": ProtocolChangedException,
+    "io.delta.exceptions.ConcurrentAppendException": ConcurrentAppendException,
+    "io.delta.exceptions.ConcurrentDeleteReadException": ConcurrentDeleteReadException,
+    "io.delta.exceptions.ConcurrentDeleteDeleteException": ConcurrentDeleteDeleteException,
+    "io.delta.exceptions.ConcurrentTransactionException": ConcurrentTransactionException,
+}
+
+
 def _register_exception_class_mappings() -> None:
     """
     Register the Delta-specific exception classes in PySpark's Spark Connect error conversion.
@@ -130,39 +147,30 @@ def _register_exception_class_mappings() -> None:
     server-side stacktrace, message parameters, query contexts) the same way it does for its own
     exceptions.
 
-    The conversion iterates the server-sent class hierarchy (ordered most-derived first) and
-    returns the first name found in EXCEPTION_CLASS_MAPPING. Only the io.delta.exceptions.*
-    names are registered, and both a concrete exception and the base
-    DeltaConcurrentModificationException are, so the most-derived one wins. For example a
-    ConcurrentAppendException arrives as
+    The lookup iterates the server-sent class hierarchy (ordered most-derived first) and returns
+    on the first name found in EXCEPTION_CLASS_MAPPING. We register only io.delta.exceptions.*
+    names - both the concrete exceptions and their base DeltaConcurrentModificationException - so
+    the most-derived registered class wins over the base. For example a ConcurrentAppendException
+    arrives as
 
-        ["io.delta.exceptions.ConcurrentAppendException",  # registered, picked
-         "org.apache.spark.sql.delta.ConcurrentAppendException",  # not registered, skipped
-         "io.delta.exceptions.DeltaConcurrentModificationException",  # registered (base)
+        ["io.delta.exceptions.ConcurrentAppendException",              # <- picked (registered)
+         "org.apache.spark.sql.delta.ConcurrentAppendException",       # <- skipped (legacy alias,
+                                                                       #    not registered)
+         "io.delta.exceptions.DeltaConcurrentModificationException",   # <- would match, but the
+                                                                       #    earlier hit wins
          ...]
 
-    so it matches the io.delta.exceptions.ConcurrentAppendException entry and maps to the Delta
-    ConcurrentAppendException class, rather than the base DeltaConcurrentModificationException.
+    and maps to the concrete ConcurrentAppendException, not the base.
+
+    The org.apache.spark.sql.delta.* entries are internal Scala superclasses of the
+    io.delta.exceptions.* classes; they appear in the hierarchy at runtime but are not part of the
+    user-facing catch contract, so we deliberately don't register them.
 
     This mirrors, for Spark Connect, the conversion that delta.exceptions.captured installs for
     the classic (py4j) client.
     """
     pyspark.errors.exceptions.connect.EXCEPTION_CLASS_MAPPING.update(
-        {
-            "io.delta.exceptions.DeltaConcurrentModificationException":
-                DeltaConcurrentModificationException,
-            "io.delta.exceptions.ConcurrentWriteException": ConcurrentWriteException,
-            "io.delta.exceptions.MetadataChangedException": MetadataChangedException,
-            "io.delta.exceptions.ProtocolChangedException": ProtocolChangedException,
-            "io.delta.exceptions.ConcurrentAppendException": ConcurrentAppendException,
-            "io.delta.exceptions.ConcurrentDeleteReadException":
-                ConcurrentDeleteReadException,
-            "io.delta.exceptions.ConcurrentDeleteDeleteException":
-                ConcurrentDeleteDeleteException,
-            "io.delta.exceptions.ConcurrentTransactionException":
-                ConcurrentTransactionException,
-        }
-    )
+        _DELTA_EXCEPTION_CLASS_MAPPING)
 
 
 if not _delta_exception_registered:
