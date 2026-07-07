@@ -20,7 +20,7 @@ import scala.collection.JavaConverters._
 import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue, Row}
 import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.test.VectorTestUtils
-import io.delta.kernel.types.{ArrayType, DataType, LongType, MapType, StringType, StructType}
+import io.delta.kernel.types._
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -132,5 +132,33 @@ class StructRowSuite extends AnyFunSuite with VectorTestUtils {
     assert(ids.getLong(0) == 1L)
     assert(ids.isNullAt(1), "the null element must remain null")
     assert(ids.getLong(2) == 2L)
+  }
+
+  test("deepCopy handles all top-level scalar types (symmetry with array-element path)") {
+    // Covers the scalar types beyond long/int/string/boolean so a top-level field copies the same
+    // way it would inside an array (which routes through VectorUtils.getValueAsObject).
+    val schema = new StructType()
+      .add("b", ByteType.BYTE, false)
+      .add("sh", ShortType.SHORT, false)
+      .add("f", FloatType.FLOAT, false)
+      .add("d", DoubleType.DOUBLE, false)
+      .add("dec", new DecimalType(10, 2), false)
+      .add("bin", BinaryType.BINARY, false)
+    val values = new java.util.HashMap[Integer, Object]()
+    values.put(0, java.lang.Byte.valueOf(1.toByte))
+    values.put(1, java.lang.Short.valueOf(2.toShort))
+    values.put(2, java.lang.Float.valueOf(3.5f))
+    values.put(3, java.lang.Double.valueOf(4.5d))
+    values.put(4, new java.math.BigDecimal("12.34"))
+    values.put(5, Array[Byte](7, 8, 9))
+
+    val copy = StructRow.deepCopy(new GenericRow(schema, values))
+
+    assert(copy.getByte(0) == 1.toByte)
+    assert(copy.getShort(1) == 2.toShort)
+    assert(copy.getFloat(2) == 3.5f)
+    assert(copy.getDouble(3) == 4.5d)
+    assert(copy.getDecimal(4) == new java.math.BigDecimal("12.34"))
+    assert(copy.getBinary(5).sameElements(Array[Byte](7, 8, 9)))
   }
 }

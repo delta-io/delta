@@ -25,14 +25,7 @@ import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.types.ArrayType;
-import io.delta.kernel.types.BooleanType;
-import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.IntegerType;
-import io.delta.kernel.types.LongType;
-import io.delta.kernel.types.MapType;
-import io.delta.kernel.types.StringType;
-import io.delta.kernel.types.StructType;
+import io.delta.kernel.types.*;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -67,20 +60,38 @@ public class StructRow extends ChildVectorBasedRow {
   }
 
   private static Object copyValue(Row row, int ordinal, DataType type) {
+    // Container types recurse so nested structs never retain a ColumnVector reference; scalars are
+    // returned by value. Type coverage mirrors VectorUtils.getValueAsObject (the ColumnVector-based
+    // walker used by copyElement) so a field copies the same way whether it is top-level or nested
+    // inside an array.
     if (type instanceof StructType) {
       return deepCopy(row.getStruct(ordinal));
     } else if (type instanceof ArrayType) {
       return copyArray(row.getArray(ordinal), ((ArrayType) type).getElementType());
     } else if (type instanceof MapType) {
       return stringStringMapValue(toJavaMap(row.getMap(ordinal)));
-    } else if (type instanceof StringType) {
-      return row.getString(ordinal);
-    } else if (type instanceof LongType) {
-      return row.getLong(ordinal);
-    } else if (type instanceof IntegerType) {
-      return row.getInt(ordinal);
     } else if (type instanceof BooleanType) {
       return row.getBoolean(ordinal);
+    } else if (type instanceof ByteType) {
+      return row.getByte(ordinal);
+    } else if (type instanceof ShortType) {
+      return row.getShort(ordinal);
+    } else if (type instanceof IntegerType || type instanceof DateType) {
+      return row.getInt(ordinal);
+    } else if (type instanceof LongType
+        || type instanceof TimestampType
+        || type instanceof TimestampNTZType) {
+      return row.getLong(ordinal);
+    } else if (type instanceof FloatType) {
+      return row.getFloat(ordinal);
+    } else if (type instanceof DoubleType) {
+      return row.getDouble(ordinal);
+    } else if (type instanceof StringType) {
+      return row.getString(ordinal);
+    } else if (type instanceof BinaryType) {
+      return row.getBinary(ordinal);
+    } else if (type instanceof DecimalType) {
+      return row.getDecimal(ordinal);
     } else {
       throw new UnsupportedOperationException("Unsupported data type in deep copy: " + type);
     }
