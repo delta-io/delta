@@ -42,14 +42,16 @@ class DeltaSourceFastDropFeatureSuite
     spark.conf.set(DeltaSQLConf.FAST_DROP_FEATURE_ENABLED.key, "true")
   }
 
+  protected def executeDml(sqlText: String): Unit = sql(sqlText)
+
   protected def dropUnsupportedFeature(dir: File): Unit =
-    sql(
+    executeDml(
       s"""ALTER TABLE delta.`${dir.getCanonicalPath}`
          |DROP FEATURE  ${TestUnsupportedReaderWriterFeature.name}
          |""".stripMargin)
 
   protected def addUnsupportedFeature(dir: File): Unit =
-    sql(
+    executeDml(
       s"""ALTER TABLE delta.`${dir.getCanonicalPath}` SET TBLPROPERTIES (
          |delta.feature.${TestUnsupportedReaderWriterFeature.name} = 'supported'
          |)""".stripMargin)
@@ -57,10 +59,9 @@ class DeltaSourceFastDropFeatureSuite
   protected def getReadOnlyStream(
       dir: File,
       cdcReadEnabled: Boolean = false): DataStreamWriter[Row] =
-    spark.readStream
-      .option(DeltaOptions.CDC_READ_OPTION, cdcReadEnabled)
-      .format("delta")
-      .load(dir.getCanonicalPath)
+    loadStreamWithOptions(
+      dir.getCanonicalPath,
+      Map(DeltaOptions.CDC_READ_OPTION -> cdcReadEnabled.toString))
       .writeStream
       .format("noop")
 
@@ -110,18 +111,16 @@ class DeltaSourceFastDropFeatureSuite
 
         // Start a stream to a version the feature was active.
         val e = intercept[StreamingQueryException] {
-          val stream = spark.readStream
-            .option(DeltaOptions.CDC_READ_OPTION, cdcReadEnabled)
-            .format("delta")
+          val startOption: (String, String) =
+            if (useStartingTS) {
+              "startingTimestamp" -> getTimestampForVersion(versionAfterProtocolUpgrade)
+            } else {
+              "startingVersion" -> versionAfterProtocolUpgrade.toString
+            }
 
-          if (useStartingTS) {
-            stream.option("startingTimestamp", getTimestampForVersion(versionAfterProtocolUpgrade))
-          } else {
-            stream.option("startingVersion", versionAfterProtocolUpgrade)
-          }
-
-          val q = stream
-            .load(inputDir.getCanonicalPath)
+          val q = loadStreamWithOptions(
+              inputDir.getCanonicalPath,
+              Map(DeltaOptions.CDC_READ_OPTION -> cdcReadEnabled.toString, startOption))
             .writeStream
             .format("noop")
             .start()
@@ -150,11 +149,11 @@ class DeltaSourceFastDropFeatureSuite
           DeltaSQLConf.FAST_DROP_FEATURE_STREAMING_ALWAYS_VALIDATE_PROTOCOL.key -> false.toString,
           DeltaSQLConf.UNSUPPORTED_TESTING_FEATURES_ENABLED.key -> true.toString) {
         // Start a stream to a version the feature was active.
-        val q = spark.readStream
-          .option(DeltaOptions.CDC_READ_OPTION, cdcReadEnabled)
-          .format("delta")
-          .option("startingVersion", versionAfterProtocolUpgrade)
-          .load(inputDir.getCanonicalPath)
+        val q = loadStreamWithOptions(
+            inputDir.getCanonicalPath,
+            Map(
+              DeltaOptions.CDC_READ_OPTION -> cdcReadEnabled.toString,
+              "startingVersion" -> versionAfterProtocolUpgrade.toString))
           .writeStream
           .format("noop")
           .start()
@@ -178,11 +177,11 @@ class DeltaSourceFastDropFeatureSuite
       dropUnsupportedFeature(inputDir)
 
       // Latest version looks clean. Feature is dropped.
-      val stream = spark.readStream
-        .option(DeltaOptions.CDC_READ_OPTION, cdcReadEnabled)
-        .format("delta")
-        .option("startingVersion", versionBeforeProtocolUpgrade)
-        .load(inputDir.getCanonicalPath)
+      val stream = loadStreamWithOptions(
+          inputDir.getCanonicalPath,
+          Map(
+            DeltaOptions.CDC_READ_OPTION -> cdcReadEnabled.toString,
+            "startingVersion" -> versionBeforeProtocolUpgrade.toString))
         .writeStream
         .format("noop")
 
@@ -204,11 +203,11 @@ class DeltaSourceFastDropFeatureSuite
       addData(inputDir, value = 2) // More data. Optional.
       addUnsupportedFeature(inputDir)
 
-      val stream = spark.readStream
-        .option(DeltaOptions.CDC_READ_OPTION, cdcReadEnabled)
-        .format("delta")
-        .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "1")
-        .load(inputDir.getCanonicalPath)
+      val stream = loadStreamWithOptions(
+          inputDir.getCanonicalPath,
+          Map(
+            DeltaOptions.CDC_READ_OPTION -> cdcReadEnabled.toString,
+            DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "1"))
         .drop(CDCReader.CDC_TYPE_COLUMN_NAME)
         .drop(CDCReader.CDC_COMMIT_VERSION)
         .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
@@ -255,6 +254,58 @@ class DeltaSourceFastDropFeatureSuite
     }
   }
 
+  test("Restart from checkpoint reads forward into an unsupported feature commit") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      // Unlike "Protocol validations after restarting from a checkpoint", here the checkpoint lands
+      // on a CLEAN version and the unsupported feature is introduced AFTER it, then dropped so the
+      // latest is clean again. Both connectors can therefore resume from the checkpoint (nothing
+      // dirty to reconstruct at the checkpoint version or at latest); the unsupported feature is
+      // only encountered by reading forward. This exercises the checkpoint-restart protocol-
+      // enforcement path on both DSv1 and DSv2 (the sibling test above cannot, because its
+      // checkpoint sits on the dirty version).
+      addData(inputDir, value = 1) // v0 (clean)
+      addData(inputDir, value = 2) // v1 (clean)
+
+      def mkStream(): DataStreamWriter[Row] =
+        loadStreamWithOptions(
+            inputDir.getCanonicalPath,
+            Map(
+              DeltaOptions.CDC_READ_OPTION -> cdcReadEnabled.toString,
+              DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "1"))
+          .drop(CDCReader.CDC_TYPE_COLUMN_NAME)
+          .drop(CDCReader.CDC_COMMIT_VERSION)
+          .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+          .writeStream
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .format("delta")
+
+      // Phase 1: consume the clean prefix and checkpoint on a clean version, then stop.
+      val q1 = mkStream().start(outputDir.getCanonicalPath)
+      q1.processAllAvailable()
+      q1.stop()
+
+      // Phase 2: introduce the unsupported feature AFTER the checkpoint, then drop it so latest is
+      // clean again. The dirty commit now sits strictly between the checkpoint and the latest.
+      addUnsupportedFeature(inputDir) // dirty commit, after the checkpoint
+      addData(inputDir, value = 3) // clean data on top of the dirty protocol
+      dropUnsupportedFeature(inputDir) // latest is clean again
+
+      // Phase 3: restart from the checkpoint. The stream resumes from the clean checkpoint version
+      // and only fails when it reads forward and reaches the unsupported feature commit. We assert
+      // on the error message rather than the cause type: DSv2 wraps the translated exception in an
+      // extra RuntimeException layer, so a type-based assertion would pass on DSv1 but not DSv2.
+      withSQLConf(DeltaSQLConf.UNSUPPORTED_TESTING_FEATURES_ENABLED.key -> true.toString) {
+        DeltaLog.clearCache()
+        val q2 = mkStream().start(outputDir.getCanonicalPath)
+        val e = intercept[StreamingQueryException] {
+          q2.processAllAvailable()
+        }
+        q2.stop()
+        assert(e.getCause.getMessage.contains("DELTA_UNSUPPORTED_FEATURES_FOR_READ"))
+      }
+    }
+  }
+
   test("Protocol validations supress errors when snapshot cannot be reconstructed") {
     withTempDir { inputDir =>
       val deltaLog = DeltaLog.forTable(spark, inputDir)
@@ -273,13 +324,13 @@ class DeltaSourceFastDropFeatureSuite
       withSQLConf(
           DeltaSQLConf.FAST_DROP_FEATURE_STREAMING_ALWAYS_VALIDATE_PROTOCOL.key -> "true") {
         DeltaLog.clearCache()
-        val q = spark.readStream
-          .option(DeltaOptions.CDC_READ_OPTION, cdcReadEnabled)
-          .format("delta")
-          // Starting version exists but we cannot reconstruct a snapshot because version 1
-          // is missing.
-          .option("startingVersion", 2)
-          .load(inputDir.getCanonicalPath)
+        val q = loadStreamWithOptions(
+            inputDir.getCanonicalPath,
+            // Starting version exists but we cannot reconstruct a snapshot because version 1
+            // is missing.
+            Map(
+              DeltaOptions.CDC_READ_OPTION -> cdcReadEnabled.toString,
+              "startingVersion" -> "2"))
           .writeStream
           .format("noop")
           .start()
