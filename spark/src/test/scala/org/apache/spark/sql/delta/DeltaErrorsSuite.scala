@@ -1456,7 +1456,7 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaIllegalStateException] {
         throw DeltaErrors.failOnDataLossException(12, 10)
       }
-      checkError(e, "DELTA_MISSING_FILES_UNEXPECTED_VERSION", "XXKDS",
+      checkError(e, "DELTA_MISSING_FILES_UNEXPECTED_VERSION", "42K03",
         Map("startVersion" -> "12", "earliestVersion" -> "10", "option" -> "failOnDataLoss"))
     }
     {

@@ -2270,8 +2270,8 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
             val e = intercept[DeltaIllegalStateException] {
               source.getBatch(startOffsetOption = None, endOffset)
             }
-            assert(e.getMessage ===
-              DeltaErrors.streamingTrailingCommitMissing(2L, 1L).getMessage)
+            checkError(e, "DELTA_STREAMING_TRAILING_COMMIT_MISSING", "42K03",
+              Map("expectedVersion" -> "2", "seenVersion" -> "1"))
           }
         }
       }
@@ -2367,7 +2367,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       if (useDsv2) {
         assert(e.getCause.getMessage.contains("no log file found for version"))
       } else {
-        assert(e.getCause.getMessage === DeltaErrors.failOnDataLossException(1L, 2L).getMessage)
+        checkError(e.getCause.asInstanceOf[DeltaIllegalStateException],
+          "DELTA_MISSING_FILES_UNEXPECTED_VERSION", "42K03",
+          Map("startVersion" -> "1", "earliestVersion" -> "2", "option" -> "failOnDataLoss"))
       }
     }
   }
@@ -2406,7 +2408,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       if (useDsv2) {
         assert(e.getCause.getMessage.contains("versions are not contiguous"))
       } else {
-        assert(e.getCause.getMessage === DeltaErrors.failOnDataLossException(2L, 3L).getMessage)
+        checkError(e.getCause.asInstanceOf[DeltaIllegalStateException],
+          "DELTA_MISSING_FILES_UNEXPECTED_VERSION", "42K03",
+          Map("startVersion" -> "2", "earliestVersion" -> "3", "option" -> "failOnDataLoss"))
       }
     }
   }
