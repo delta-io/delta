@@ -15,6 +15,7 @@
  */
 package io.delta.spark.internal.v2.utils;
 
+import com.google.common.base.Throwables;
 import io.delta.kernel.exceptions.UnsupportedTableFeatureException;
 import java.util.function.Supplier;
 import org.apache.spark.sql.delta.DeltaErrors;
@@ -29,7 +30,7 @@ import scala.jdk.javaapi.CollectionConverters;
  * Kernel's {@link UnsupportedTableFeatureException} with no Delta error class. Delta and downstream
  * consumers key on Delta's {@link DeltaUnsupportedTableFeatureException} / {@code
  * DELTA_UNSUPPORTED_FEATURES_FOR_READ}, so callers translate at every Kernel boundary that can
- * raise it on read. Other Kernel exceptions are out of scope and handled at their own call sites.
+ * raise it on read.
  */
 public final class KernelUnsupportedFeatureTranslator {
 
@@ -41,9 +42,6 @@ public final class KernelUnsupportedFeatureTranslator {
    * DeltaUnsupportedTableFeatureException}. Use this to wrap {@code loadLatestSnapshot} / {@code
    * loadSnapshotAt} calls on the read path so the unsupported-feature failure carries the {@code
    * DELTA_UNSUPPORTED_FEATURES_FOR_READ} error class. Any other exception propagates unchanged.
-   *
-   * <p>For the mid-run per-commit path, where Kernel's action iterator wraps the exception in a
-   * {@link RuntimeException}, use {@link #findUnsupportedTableFeatureCause} instead.
    */
   public static <T> T translatingUnsupportedFeature(Supplier<T> snapshotLoad) {
     try {
@@ -78,15 +76,10 @@ public final class KernelUnsupportedFeatureTranslator {
    */
   public static UnsupportedTableFeatureException findUnsupportedTableFeatureCause(
       Throwable throwable) {
-    for (Throwable current = throwable; current != null; current = current.getCause()) {
-      if (current instanceof UnsupportedTableFeatureException) {
-        return (UnsupportedTableFeatureException) current;
-      }
-      // Guard against self-referential cause chains.
-      if (current.getCause() == current) {
-        break;
-      }
-    }
-    return null;
+    return Throwables.getCausalChain(throwable).stream()
+        .filter(cause -> cause instanceof UnsupportedTableFeatureException)
+        .map(cause -> (UnsupportedTableFeatureException) cause)
+        .findFirst()
+        .orElse(null);
   }
 }

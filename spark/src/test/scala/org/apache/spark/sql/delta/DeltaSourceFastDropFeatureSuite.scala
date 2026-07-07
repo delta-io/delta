@@ -256,13 +256,9 @@ class DeltaSourceFastDropFeatureSuite
 
   test("Restart from checkpoint reads forward into an unsupported feature commit") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
-      // Unlike "Protocol validations after restarting from a checkpoint", here the checkpoint lands
-      // on a CLEAN version and the unsupported feature is introduced AFTER it, then dropped so the
-      // latest is clean again. Both connectors can therefore resume from the checkpoint (nothing
-      // dirty to reconstruct at the checkpoint version or at latest); the unsupported feature is
-      // only encountered by reading forward. This exercises the checkpoint-restart protocol-
-      // enforcement path on both DSv1 and DSv2 (the sibling test above cannot, because its
-      // checkpoint sits on the dirty version).
+      // Checkpoint on a clean version, with the unsupported feature added after it and dropped
+      // before latest. Both connectors resume from the checkpoint and only hit the feature by
+      // reading forward -- unlike the sibling test, whose checkpoint sits on the dirty version.
       addData(inputDir, value = 1) // v0 (clean)
       addData(inputDir, value = 2) // v1 (clean)
 
@@ -284,16 +280,14 @@ class DeltaSourceFastDropFeatureSuite
       q1.processAllAvailable()
       q1.stop()
 
-      // Phase 2: introduce the unsupported feature AFTER the checkpoint, then drop it so latest is
-      // clean again. The dirty commit now sits strictly between the checkpoint and the latest.
+      // Phase 2: the dirty commit now sits strictly between the checkpoint and the latest.
       addUnsupportedFeature(inputDir) // dirty commit, after the checkpoint
       addData(inputDir, value = 3) // clean data on top of the dirty protocol
       dropUnsupportedFeature(inputDir) // latest is clean again
 
-      // Phase 3: restart from the checkpoint. The stream resumes from the clean checkpoint version
-      // and only fails when it reads forward and reaches the unsupported feature commit. We assert
-      // on the error message rather than the cause type: DSv2 wraps the translated exception in an
-      // extra RuntimeException layer, so a type-based assertion would pass on DSv1 but not DSv2.
+      // Phase 3: restart resumes from the clean checkpoint and fails only on reading forward into
+      // the feature commit. Assert on the message, not the cause type: DSv2 adds an extra
+      // RuntimeException layer, so a type-based assertion would pass on DSv1 but not DSv2.
       withSQLConf(DeltaSQLConf.UNSUPPORTED_TESTING_FEATURES_ENABLED.key -> true.toString) {
         DeltaLog.clearCache()
         val q2 = mkStream().start(outputDir.getCanonicalPath)
