@@ -45,7 +45,7 @@ This design enables:
 
 | Field Name | Data Type | Description |
 | - | - | - |
-| <ins>backReference</ins> | <ins>Struct</ins> | <ins>Reference to the existing entry in the metadata tree that this add supersedes (e.g., stats backfill, DV update). Null when the add is for a genuinely new file not already in the tree. Contains `manifest` (String) and `pos` (Long). See [Backreferences](#backreferences).</ins> |
+| <ins>backReference</ins> | <ins>Struct</ins> | <ins>Reference to the existing entry in the metadata tree that this add supersedes (e.g., stats backfill, DV update). Null when the file has no entry in the tree. Contains `manifest` (String) and `pos` (Long). See [Backreferences](#backreferences).</ins> |
 
 ### Remove File
 
@@ -77,7 +77,7 @@ This design enables:
 | - | - | - |
 | <ins>checkpoint</ins> | <ins>Struct</ins> | <ins>The `checkpoint` action for the latest manifest commit. Schema defined in [Checkpoint Action](#checkpoint-action).</ins> |
 
-<ins>When the embedded `checkpoint` action is present, readers can use `checkpoint.contentRoot.path` to begin prefetching the root manifest immediately, and the action provides the complete table state at `checkpoint.version`. If the hint is absent, stale, or does not contain a `checkpoint` action, readers fall back to log replay to locate the latest `checkpoint` action.</ins>
+<ins>When the embedded `checkpoint` action is present, readers can use `contentRoot.path` to begin prefetching the root manifest immediately, and the action provides the complete table state at `checkpointMetadata.version`. If the hint is absent, stale, or does not contain a `checkpoint` action, readers fall back to log replay to locate the latest `checkpoint` action.</ins>
 
 ### Checkpoints
 
@@ -85,7 +85,7 @@ This design enables:
 
 <ins>When the `adaptiveMetadata` table feature is enabled, checkpoint information may be embedded directly in Delta log entries via the `checkpoint` action, rather than stored in separate checkpoint files. See [Checkpoint Action](#checkpoint-action) for details.</ins>
 
-<ins>The `checkpoint` action is self-contained: it embeds the content root reference along with all non-content metadata (`protocol`, `metaData`, `domainMetadata`, `txns`, `sidecars`). Together with the referenced manifest tree, a single `checkpoint` action represents the complete table state up to `checkpoint.version`. Log commits after that version must still be replayed.</ins>
+<ins>The `checkpoint` action is self-contained: it embeds the content root reference along with all non-content metadata (`protocol`, `metaData`, `domainMetadata`, `txn`, and `sidecar` entries). Together with the referenced manifest tree, a single `checkpoint` action represents the complete table state up to `checkpointMetadata.version`. Log commits after that version must still be replayed.</ins>
 
 <ins>Once `adaptiveMetadata` is enabled, writers must not produce classic (single-file, multi-part) or V2 checkpoints; checkpoint state is instead carried by the `checkpoint` action, including in [standalone checkpoints](#standalone-checkpoint).</ins>
 
@@ -167,80 +167,45 @@ The `_delta_log/_sidecars/` directory stores auxiliary data that is too large to
 
 ## Checkpoint Action
 
-When a manifest commit occurs, the Delta log entry contains a self-contained `checkpoint` action that includes all non-content metadata needed to reconstruct the full table state.
+When a manifest commit occurs, the Delta log entry contains a self-contained `checkpoint` action whose value is an array of the actions needed to reconstruct the full table state — the content root reference plus all non-content metadata:
 
 ```json
 {
-  "checkpoint": {
-    "version": 42,
-    "contentRoot": {
-      "path": "metadata/a3d1f7e2-v42.parquet",
-      "sizeInBytes": 1024,
-      "version": 42
-    },
-    "protocol": {
-      "minReaderVersion": 3,
-      "minWriterVersion": 7,
-      "readerFeatures": ["columnMapping", "deletionVectors", "adaptiveMetadata"],
-      "writerFeatures": ["columnMapping", "deletionVectors", "domainMetadata", "rowTracking", "adaptiveMetadata"]
-    },
-    "metaData": {
-      "id": "af23c9d7-fff1-4a5a-a2c8-55c59bd782aa",
-      "name": "my_table",
-      "schemaString": "{...}",
-      "partitionColumns": [],
-      "configuration": {},
-      "createdTime": 1234567890000
-    },
-    "domainMetadata": [
-      {
-        "domain": "delta.rowTracking",
-        "configuration": "{\"rowIdHighWaterMark\": 1000000}",
-        "removed": false
-      }
-    ],
-    "txns": [
-      {
-        "appId": "streaming-app-1",
-        "version": 100,
-        "lastUpdated": 1234567890000
-      }
-    ],
-    "sidecars": [
-      {
-        "type": "txn",
-        "path": "txn-v42.parquet",
-        "sizeInBytes": 2048,
-        "modificationTime": 1234567890000,
-        "tags": {}
-      }
-    ]
-  }
+  "checkpoint": [
+    { "checkpointMetadata": { "version": 42 } },
+    { "contentRoot": { "path": "metadata/a3d1f7e2-v42.parquet", "sizeInBytes": 1024, "version": 42 } },
+    { "protocol": { "minReaderVersion": 3, "minWriterVersion": 7, "readerFeatures": ["columnMapping", "deletionVectors", "adaptiveMetadata"], "writerFeatures": ["columnMapping", "deletionVectors", "domainMetadata", "rowTracking", "adaptiveMetadata"] } },
+    { "metaData": { "id": "af23c9d7-fff1-4a5a-a2c8-55c59bd782aa", "name": "my_table", "schemaString": "{...}", "partitionColumns": [], "configuration": {}, "createdTime": 1234567890000 } },
+    { "domainMetadata": { "domain": "delta.rowTracking", "configuration": "{\"rowIdHighWaterMark\": 1000000}", "removed": false } },
+    { "txn": { "appId": "streaming-app-1", "version": 100, "lastUpdated": 1234567890000 } },
+    { "sidecar": { "type": "txn", "path": "txn-v42.parquet", "sizeInBytes": 2048, "modificationTime": 1234567890000, "tags": {} } }
+  ]
 }
 ```
 
-### Checkpoint Action Fields
+The array wrapper is used only when the checkpoint is embedded inline in a commit's Delta log entry. In a [standalone checkpoint](#standalone-checkpoint), these same actions are stored as separate rows (one action per row) with no enclosing `checkpoint` array — the checkpoint file itself is the grouping.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `version` | Long | The table version up to which the checkpoint is complete. May be less than or equal to the commit version (e.g., commit v100 may checkpoint v50). Checkpoint versions must be strictly monotonically increasing across all checkpoint actions in the log (the next checkpoint must be for a version > 50). |
-| `contentRoot` | Struct | Reference to the root manifest file |
-| `contentRoot.path` | String | Path to the root manifest, relative to the table root. May be an absolute URI for files outside the table root. |
-| `contentRoot.sizeInBytes` | Long | Size of the root manifest file in bytes |
-| `contentRoot.version` | Long | The table version whose content this root manifest reflects. Must be `<= checkpoint.version`. In a manifest commit the two are equal — all content up to `checkpoint.version` is folded into the tree. In a standalone checkpoint it may be less, with the gap covered by inline file actions. |
-| `protocol` | Struct | The Protocol action at this checkpoint version |
-| `metaData` | Struct | The Metadata action at this checkpoint version |
-| `domainMetadata` | Array[Struct] | Optional. Inlined DomainMetadata actions at this checkpoint version. System domains (keys prefixed with `delta.`) must always be inlined here. User domains may be inlined, stored in sidecars, or split across both. |
-| `txns` | Array[Struct] | Optional. SetTransaction actions (appId, version, lastUpdated). May be inlined here, stored in sidecars, or split across both (see below). |
-| `sidecars` | Array[Struct] | Optional. Sidecar file references for user domain metadata and txns only. File-level metadata is stored in the content tree. Schema: type (`txn` or `domainMetadata`), path, sizeInBytes, modificationTime, tags. |
+### Checkpoint Action Contents
 
-System domain metadata (domains prefixed with `delta.`) must always be inlined in the `domainMetadata` array; it is small and required for correctness. User domain metadata and `txns` may be inlined, stored in sidecars, or split across both.
+The `checkpoint` action is an array of action entries. Each entry is one of:
 
-For both user domain metadata and `txns`, inline and sidecar storage may coexist: a small inline set and one or more sidecars can be present together. The only constraint is per-key uniqueness — a given `appId` (or `domain`) must appear in exactly one place, whether inline or in a single sidecar, never in more than one. Each sidecar carries a `type` field (`txn` or `domainMetadata`) identifying which kind it holds, and a kind may be split across multiple sidecars of the same `type`. The complete set of transaction identifiers (or user domain metadata) at `checkpoint.version` is the union of the inline entries and all sidecars of the corresponding type.
+| Action | Description |
+|--------|-------------|
+| `checkpointMetadata` | Contains `version`: the table version up to which the checkpoint is complete. May be less than or equal to the commit version (e.g., commit v100 may checkpoint v50). Checkpoint versions must be strictly monotonically increasing across all checkpoint actions in the log. |
+| `contentRoot` | Reference to the root manifest: `path` (relative to the table root, or an absolute URI), `sizeInBytes`, and `version` — the table version the root reflects. `version` must be `<= checkpointMetadata.version`; the two are equal in a manifest commit, and less in a standalone checkpoint (the gap is covered by inline file actions). |
+| `protocol` | The Protocol action at this checkpoint version. |
+| `metaData` | The Metadata action at this checkpoint version. |
+| `domainMetadata` | A DomainMetadata action. System domains (keys prefixed with `delta.`) must appear here; user domains may appear here or in a sidecar. |
+| `txn` | A SetTransaction action (`appId`, `version`, `lastUpdated`). May appear here or in a sidecar. |
+| `sidecar` | A sidecar reference for spilled user domain metadata or txns: `type` (`txn` or `domainMetadata`), `path`, `sizeInBytes`, `modificationTime`, `tags`. File-level metadata is stored in the content tree, not in sidecars. |
+
+System domain metadata (domains prefixed with `delta.`) must always appear as `domainMetadata` entries in the checkpoint action; it is small and required for correctness. User domain metadata and `txn`s may appear as entries, in sidecars, or split across both.
+
+For both user domain metadata and `txns`, inline and sidecar storage may coexist: a small inline set and one or more sidecars can be present together. The only constraint is per-key uniqueness — a given `appId` (or `domain`) must appear in exactly one place, whether inline or in a single sidecar, never in more than one. Each sidecar carries a `type` field (`txn` or `domainMetadata`) identifying which kind it holds, and a kind may be split across multiple sidecars of the same `type`. The complete set of transaction identifiers (or user domain metadata) at `checkpointMetadata.version` is the union of the inline entries and all sidecars of the corresponding type.
 
 ## Backreferences
 
-When `adaptiveMetadata` is enabled, `remove` and `add` actions carry a `backReference` field that identifies where the file's existing entry is located in the metadata tree. Backreferences are required when the file has an entry in a manifest. They are null when the file only exists in the Delta log (not yet incorporated into a manifest) or is genuinely new (first add of a path).
+When `adaptiveMetadata` is enabled, `remove` and `add` actions carry a `backReference` field that identifies where the file's existing entry is located in the metadata tree. A backreference is non-null when the file has a live entry in a manifest, and null when the file has no manifest entry (it exists only in the Delta log).
 
 A backreference is meaningful only relative to the tree it was computed from, identified by that tree's `contentRoot.version`. A commit's backreferences are valid only if they target the current `contentRoot.version`; if a concurrent manifest commit has advanced the tree (e.g., compaction moved entries between manifests), they are stale and must be recomputed against the new tree before the commit can proceed (see [Conflict Resolution](#conflict-resolution)).
 
@@ -541,7 +506,7 @@ Writers should trigger manifest commits to limit the number of JSON log files an
 Manifest commits have the following characteristics:
 
 1. **File actions may be logged**: A manifest commit may also
-   write `add` and `remove` actions to the Delta log, in addition to updating the metadata tree. The `checkpoint.version` may be less than the commit version (the tree covers up to `checkpoint.version`; remaining changes are in the log). Checkpoint versions must be strictly monotonically increasing across all checkpoint actions in the log.
+   write `add` and `remove` actions to the Delta log, in addition to updating the metadata tree. The `checkpointMetadata.version` may be less than the commit version (the tree covers up to `checkpointMetadata.version`; remaining changes are in the log). Checkpoint versions must be strictly monotonically increasing across all checkpoint actions in the log.
 
 2. **Non-file actions must be logged**: A manifest commit must always
    write non-file actions (`metadata`, `protocol`, `txn`, `domainMetadata`, `commitInfo`) to the Delta log. These actions are not stored in the metadata tree.
@@ -553,7 +518,7 @@ Manifest commits have the following characteristics:
 
 Independently of commits, any writer can produce a standalone checkpoint file that references an existing metadata tree without producing a new one.
 
-A standalone checkpoint uses the V2 checkpoint naming scheme (`n.checkpoint.u.parquet`) and contains a `checkpoint` action. It must reference an existing tree via `contentRoot` and must not produce a new root manifest, so its `contentRoot.version` is that existing tree's version and is less than `checkpoint.version`. File actions (`add`, `remove`) after `contentRoot.version` (up to `checkpoint.version`) are included inline in the checkpoint file (not in sidecars). This keeps standalone checkpoints cheap: any writer can produce one without the cost of building a new tree. The inline file actions are bounded: if the volume of pending file actions were large, the writer would produce a manifest commit instead.
+A standalone checkpoint uses the V2 checkpoint naming scheme (`n.checkpoint.u.parquet`) and contains a `checkpoint` action. It must reference an existing tree via `contentRoot` and must not produce a new root manifest, so its `contentRoot.version` is that existing tree's version and is less than `checkpointMetadata.version`. File actions (`add`, `remove`) after `contentRoot.version` (up to `checkpointMetadata.version`) are included inline in the checkpoint file (not in sidecars). This keeps standalone checkpoints cheap: any writer can produce one without the cost of building a new tree. The inline file actions are bounded: if the volume of pending file actions were large, the writer would produce a manifest commit instead.
 
 ## Manifest Deletion Vectors (MDVs)
 
@@ -580,18 +545,18 @@ When reading a leaf manifest, readers must check the `DATA_MANIFEST` entry for a
 
 When `adaptiveMetadata` is supported and active, readers must:
 
-1. **Find the latest checkpoint**: Locate the `checkpoint` action with the greatest `checkpoint.version` — across manifest commits, standalone checkpoints, and `_last_checkpoint` — and use its `contentRoot` as the metadata tree. Because `checkpoint.version` is monotonic, a later manifest commit that builds a newer tree supersedes an earlier standalone checkpoint that references an older tree.
+1. **Find the latest checkpoint**: Locate the `checkpoint` action with the greatest `checkpointMetadata.version` — across manifest commits, standalone checkpoints, and `_last_checkpoint` — and use its `contentRoot` as the metadata tree. Because `checkpointMetadata.version` is monotonic, a later manifest commit that builds a newer tree supersedes an earlier standalone checkpoint that references an older tree.
 
 2. **Read the content root**: Parse the root manifest file referenced by
-   `checkpoint.contentRoot.path`.
+   `contentRoot.path`.
 
 3. **Apply MDVs**: When reading leaf manifests, skip entries at positions
    marked in `manifest_info.dv`.
 
-4. **Replay log commits**: Apply any log commits after `checkpoint.version`
+4. **Replay log commits**: Apply any log commits after `checkpointMetadata.version`
    to get the current table state.
 
-5. **Handle sidecars**: If `checkpoint.sidecars` is present, read auxiliary
+5. **Handle sidecars**: If the checkpoint has `sidecar` entries, read auxiliary
    data from the referenced sidecar files.
 
 ## Writer Requirements
@@ -640,7 +605,7 @@ When `adaptiveMetadata` is supported and active, writers must:
 
 ```
 1. Read the previous checkpoint's metadata tree
-2. Collect all log commits since previous checkpoint.version
+2. Collect all log commits since previous checkpointMetadata.version
 3. For removes and re-adds with backreferences:
    - Group by manifest path
    - Add positions to manifest_info.dv bitmap (accumulates all
@@ -651,7 +616,7 @@ When `adaptiveMetadata` is supported and active, writers must:
      bitmap (this commit only)
    - Add new DATA entries with updated info for re-added files
 4. For adds from preceding log commits (versions <=
-   checkpoint.version): set status=EXISTING with explicit
+   checkpointMetadata.version): set status=EXISTING with explicit
    snapshot_id and sequence numbers. These files are already
    part of the table state.
 5. For adds from the current commit (if any): set status=ADDED.
@@ -676,7 +641,7 @@ When concurrent commits occur, conflict resolution depends on the commit types i
 | Winner Commit | Candidate Commit | Resolution |
 |---------------|------------------|------------|
 | Log commit | Log commit | Standard Delta conflict resolution (rebase add/remove actions) |
-| Log commit | Manifest commit | Candidate incorporates winner's changes, advances `checkpoint.version` |
+| Log commit | Manifest commit | Candidate incorporates winner's changes, advances `checkpointMetadata.version` |
 | Manifest commit | Log commit | Candidate recomputes backreferences against winner's new tree |
 | Manifest commit | Manifest commit | Candidate fails and must retry with fresh read of winner's tree |
 
@@ -689,7 +654,7 @@ Standard Delta conflict resolution applies. Both commits modify the Delta log di
 If a log commit wins while a manifest commit is in progress:
 1. The manifest commit reads the winning log commit
 2. Incorporates the winner's changes into the new tree
-3. Sets `checkpoint.version` to the version after the winner
+3. Sets `checkpointMetadata.version` to the version after the winner
 4. Proceeds with the manifest commit
 
 ### Manifest + Log Conflict
