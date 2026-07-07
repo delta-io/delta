@@ -199,6 +199,16 @@ public class TableBuilder {
     return this;
   }
 
+  /**
+   * Sets the source of storage credentials for this table: {@code "uc"} (default) to fetch
+   * temporary credentials from Unity Catalog, or {@code "ambient"} to fetch nothing and rely on the
+   * runtime environment (workload identity, instance profile, ADC, or core-site.xml).
+   */
+  public TableBuilder withCredentialSource(String credentialSource) {
+    this.configurations.put(TableConf.CREDENTIALS_SOURCE.key(), credentialSource);
+    return this;
+  }
+
   public TableBuilder withConfigurations(Map<String, String> configurations) {
     this.configurations.clear();
     this.configurations.putAll(configurations);

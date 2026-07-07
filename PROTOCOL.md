@@ -87,7 +87,7 @@
   - [Reader Requirements for Catalog-managed tables](#reader-requirements-for-catalog-managed-tables)
   - [Table Discovery](#table-discovery)
   - [Sample Catalog Client API](#sample-catalog-client-api)
-- [Requirements for Writers](#requirements-for-writers)
+- [Additional Requirements for Writers](#additional-requirements-for-writers)
   - [Creation of New Log Entries](#creation-of-new-log-entries)
   - [Consistency Between Table Metadata and Data Files](#consistency-between-table-metadata-and-data-files)
   - [Delta Log Entries](#delta-log-entries-1)
@@ -883,12 +883,28 @@ Field Name | Data Type | Description | optional/required
 version|`Long`|The checkpoint version.| required
 tags|`Map[String, String]`|Map containing any additional metadata about the v2 spec checkpoint.| optional
 
+##### Checkpoint Metadata Tags
+
+The following tag keys may be present in the `tags` map. All are optional, so there is no requirement for writers to produce these and readers cannot assume their presence.
+
+Tag Key | Value Type | Description
+-|-|-
+sidecarNumActions|`String` (parseable as `Long`)|The total number of actions stored across all [sidecar files](#sidecar-files) in this checkpoint.
+sidecarSizeInBytes|`String` (parseable as `Long`)|The total size in bytes across all [sidecar files](#sidecar-files) in this checkpoint.
+numOfAddFiles|`String` (parseable as `Long`)|The number of `add` file actions in this checkpoint.
+sidecarFileSchema|`String` (JSON-encoded `StructType`)|The schema of the [sidecar files](#sidecar-files) in this checkpoint. The value is the JSON serialization of the sidecar file's Parquet schema. Readers can use this to avoid reading the Parquet footer of sidecar files to determine their schema.
+
 E.g.
 ```json
 {
   "checkpointMetadata":{
     "version":1,
-    "tags":{}
+    "tags":{
+      "sidecarNumActions":"1234",
+      "sidecarSizeInBytes":"5678",
+      "numOfAddFiles":"42",
+      "sidecarFileSchema":"{\"type\":\"struct\",\"fields\":[{\"name\":\"add\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"path\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{}},{\"name\":\"remove\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"path\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{}}]}"
+    }
   }
 }
 ```
@@ -948,7 +964,10 @@ A feature being supported does not imply that it is active. For example, a table
 A feature is active on a table when it is supported *and* its metadata requirements are satisfied. Each feature defines its own metadata requirements, as stated in the corresponding sections of this document. For example, the Append-only feature is active when the `appendOnly` feature name is present in a `protocol`'s `writerFeatures` *and* a table property `delta.appendOnly` set to `true`.
 
 # Column Mapping
-Delta can use column mapping to avoid any column naming restrictions, and to support the renaming and dropping of columns without having to rewrite all the data. There are two modes of column mapping, by `name` and by `id`. In both modes, every column - nested or leaf - is assigned a unique _physical_ name, and a unique 32-bit integer as an id. The physical name is stored as part of the column metadata with the key `delta.columnMapping.physicalName`. The column id is stored within the metadata with the key `delta.columnMapping.id`.
+Delta can use column mapping to avoid any column naming restrictions, and to support the renaming and dropping of columns without having to rewrite all the data. There are two modes of column mapping, by `name` and by `id`. In both modes, every column - nested or leaf - is assigned a _physical_ name, and a unique 32-bit integer as an id. The physical name is stored as part of the column metadata with the key `delta.columnMapping.physicalName`. The column id is stored within the metadata with the key `delta.columnMapping.id`.
+
+## Field Path
+A _field path_ is the path from the schema root to a [struct field](#struct-field), formed by the ordered sequence of field names along that path. When the path traverses an [Array Type](#array-type) element, or a [Map Type](#map-type) key or value, the path component is `element`, `key`, or `value`, respectively. A _physical field path_ exists only when Column Mapping mode is `id` or `name`; it is formed by replacing each struct field name in a field path with that struct field's physical name. In these modes, a physical field path must be unique across all versions of the table. This supports cheap column deletions in `name` mode.
 
 The column mapping is governed by the table property `delta.columnMapping.mode` being one of `none`, `id`, and `name`. The table property should only be honored if the table's protocol has reader and writer versions and/or table features that support the `columnMapping` table feature. For readers this is Reader Version 2, or Reader Version 3 with the `columnMapping` table feature listed as supported. For writers this is Writer Version 5 or 6, or Writer Version 7 with the `columnMapping` table feature supported.
 
@@ -979,6 +998,7 @@ The following is an example for the column definition of a table that leverages 
     }
   }
 ```
+In this example, the field path of the nested field `d` is `["e", "element", "d"]`, and its physical field path is `["col-5f422f40-de70-45b2-88ab-1d5c90e94db1", "element", "col-a7f4159c-53be-4cb0-b81a-f7e5240cfc49"]`.
 
 ## Writer Requirements for Column Mapping
 In order to support column mapping, writers must:
@@ -990,7 +1010,7 @@ In order to support column mapping, writers must:
  - Write data files by using the _physical name_ that is chosen for each column. The physical name of the column is static and can be different than the _display name_ of the column, which is changeable.
  - Write the 32 bit integer column identifier as part of the `field_id` field of the `SchemaElement` struct in the [Parquet Thrift specification](https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift).
  - Track partition values, column level statistics, and [clustering column](#clustered-table) names with the physical name of the column in the transaction log.
- - Assign a globally unique identifier as the physical name for each new column that is added to the schema. This is especially important for supporting cheap column deletions in `name` mode. In addition, column identifiers need to be assigned to each column. The maximum id that is assigned to a column is tracked as the table property `delta.columnMapping.maxColumnId`. This is an internal table property that cannot be configured by users. This value must increase monotonically as new columns are introduced and committed to the table alongside the introduction of the new columns to the schema.
+ - Assign a physical name for each new column that is added to the schema, and ensure the physical field path of the new column is unique across all versions of the table. In addition, column identifiers need to be assigned to each column. The maximum id that is assigned to a column is tracked as the table property `delta.columnMapping.maxColumnId`. This is an internal table property that cannot be configured by users. This value must increase monotonically as new columns are introduced and committed to the table alongside the introduction of the new columns to the schema.
 
 ## Reader Requirements for Column Mapping
 If the table is on Reader Version 2, or if the table is on Reader Version 3 and the feature `columnMapping` is present in `readerFeatures`, readers and writers must read the table property `delta.columnMapping.mode` and do one of the following.
@@ -2124,14 +2144,14 @@ When Type Widening is supported (when the `readerFeatures` field of a table's `p
 - Readers must allow reading data files written before the table underwent any supported type change, and must convert such values to the current, wider type.
 - Readers must validate that they support all type changes in the `delta.typeChanges` field in the table schema for the table version they are reading and fail when finding any unsupported type change.
 
-# Requirements for Writers
+# Additional Requirements for Writers
 This section documents additional requirements that writers must follow in order to preserve some of the higher level guarantees that Delta provides.
 
 ## Creation of New Log Entries
  - Writers MUST never overwrite an existing log entry. When ever possible they should use atomic primitives of the underlying filesystem to ensure concurrent writers do not overwrite each other's entries.
 
 ## Consistency Between Table Metadata and Data Files
- - Any column that exists in a data file present in the table MUST also be present in the metadata of the table.
+ - Any data file column that exists in the table schema MUST have the same type (except as allowed by the [Type Widening](#type-widening) table feature, if enabled).
  - Values for all partition columns present in the schema MUST be present for all files in the table.
  - Columns present in the schema of the table MAY be missing from data files. Readers SHOULD fill these missing columns in with `null`.
 

@@ -36,7 +36,7 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
         name STRING,
         value INT,
         a STRUCT<`b.c`: STRING>
-      ) USING parquet
+      ) USING delta
     """)
     sql("""
       INSERT INTO test_db.shared_test (id, name, value, a) VALUES
@@ -222,7 +222,7 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
         CREATE TABLE readonly_test (
           id INT,
           data STRING
-        ) USING parquet
+        ) USING delta
       """)
 
       // First insert WITHOUT server-side planning should succeed

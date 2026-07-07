@@ -29,6 +29,8 @@ import org.apache.spark.sql.connector.expressions.FieldReference;
 import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.read.Statistics;
 import org.apache.spark.sql.connector.read.colstats.ColumnStatistics;
+import org.apache.spark.sql.connector.read.colstats.Histogram;
+import org.apache.spark.sql.connector.read.colstats.HistogramBin;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
@@ -98,7 +100,15 @@ public final class StatsUtils {
         continue;
       }
 
-      NamedReference ref = FieldReference.apply(colName);
+      // Use FieldReference.column (a single literal part) rather than FieldReference.apply, which
+      // re-parses the string as a multi-part SQL identifier. colName is always a top-level column
+      // name -- it must match a top-level field in columnTypes above, and catalog column stats are
+      // never collected for nested fields -- so a single-part reference is correct. Under column
+      // mapping the name may contain spaces, dots, etc. that are invalid in an unquoted identifier
+      // (e.g. "Extract Year"); FieldReference.apply would throw a ParseException on a space or
+      // silently mis-split a dotted name ("a.b" -> [a, b]), while column() keeps it as one part.
+      // See SparkScan, which builds its NamedReferences the same way.
+      NamedReference ref = FieldReference.column(colName);
       int version = stat.version();
 
       // Eagerly parse min/max to avoid repeated fromExternalString calls
@@ -130,6 +140,8 @@ public final class StatsUtils {
           toJavaOptional(stat.maxLen())
               .map(v -> OptionalLong.of(((Number) v).longValue()))
               .orElse(OptionalLong.empty());
+      Optional<Histogram> histogram =
+          toJavaOptional(stat.histogram()).map(StatsUtils::toV2Histogram);
 
       ColumnStatistics v2ColStats =
           new ColumnStatistics() {
@@ -162,9 +174,55 @@ public final class StatsUtils {
             public OptionalLong maxLen() {
               return maxLen;
             }
+
+            @Override
+            public Optional<Histogram> histogram() {
+              return histogram;
+            }
           };
       result.put(ref, v2ColStats);
     }
     return Collections.unmodifiableMap(result);
+  }
+
+  private static Histogram toV2Histogram(
+      org.apache.spark.sql.catalyst.plans.logical.Histogram histogram) {
+    double height = histogram.height();
+    org.apache.spark.sql.catalyst.plans.logical.HistogramBin[] catalystBins = histogram.bins();
+    HistogramBin[] v2Bins = new HistogramBin[catalystBins.length];
+    for (int i = 0; i < catalystBins.length; i++) {
+      org.apache.spark.sql.catalyst.plans.logical.HistogramBin catalystBin = catalystBins[i];
+      double lo = catalystBin.lo();
+      double hi = catalystBin.hi();
+      long ndv = catalystBin.ndv();
+      v2Bins[i] =
+          new HistogramBin() {
+            @Override
+            public double lo() {
+              return lo;
+            }
+
+            @Override
+            public double hi() {
+              return hi;
+            }
+
+            @Override
+            public long ndv() {
+              return ndv;
+            }
+          };
+    }
+    return new Histogram() {
+      @Override
+      public double height() {
+        return height;
+      }
+
+      @Override
+      public HistogramBin[] bins() {
+        return v2Bins;
+      }
+    };
   }
 }

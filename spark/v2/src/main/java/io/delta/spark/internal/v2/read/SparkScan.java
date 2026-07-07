@@ -85,12 +85,13 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   private final DeltaOptions deltaOptions;
   private final ZoneId zoneId;
 
-  // Planned input files and stats
+  // Planned input files and the corresponding selected AddFile actions.
   private List<PartitionedFile> partitionedFiles = new ArrayList<>();
   // Per-file row counts, parallel to partitionedFiles. Populated only while rowCountKnown is
   // true; cleared if any AddFile lacks numRecords. Retained so totalRows can be recomputed
   // after runtime partition filtering prunes files, instead of invalidating the count.
   private List<Long> perFileRowCounts = new ArrayList<>();
+  private List<DeltaScanFile> selectedFiles = new ArrayList<>();
   private long totalBytes = 0L;
   private long totalRows = 0L;
   // true iff every AddFile in the scan had numRecords in its stats JSON.
@@ -200,7 +201,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
               + "connector. Either remove the CDC read option or use a streaming read.");
     }
     ensurePlanned();
-    return new SparkBatch(
+    return new DeltaV2Batch(
         initialSnapshot,
         dataSchema,
         partitionSchema,
@@ -466,6 +467,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
           totalBytes += addFile.getSize();
           partitionedFiles.add(partitionedFile);
+          selectedFiles.add(new DeltaScanFile(addFile));
 
           if (rowCountKnown) {
             Optional<Long> numRecords = addFile.getNumRecords();
@@ -509,6 +511,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
       }
 
       List<PartitionedFile> runtimeFilteredPartitionedFiles = new ArrayList<>();
+      List<DeltaScanFile> runtimeFilteredFiles = new ArrayList<>();
       // Parallel to runtimeFilteredPartitionedFiles; only used when rowCountKnown is true.
       List<Long> filteredRowCounts = rowCountKnown ? new ArrayList<>() : null;
       long newTotalRows = 0L;
@@ -520,6 +523,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
                 .allMatch(predicate -> predicate.evaluator.eval(partitionValues));
         if (allMatch) {
           runtimeFilteredPartitionedFiles.add(pf);
+          runtimeFilteredFiles.add(this.selectedFiles.get(i));
           if (rowCountKnown) {
             long rc = this.perFileRowCounts.get(i);
             filteredRowCounts.add(rc);
@@ -532,6 +536,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
       // is filtered out
       if (runtimeFilteredPartitionedFiles.size() < this.partitionedFiles.size()) {
         this.partitionedFiles = runtimeFilteredPartitionedFiles;
+        this.selectedFiles = runtimeFilteredFiles;
         this.totalBytes =
             runtimeFilteredPartitionedFiles.stream().mapToLong(PartitionedFile::fileSize).sum();
         this.estimatedSizeInBytes = computeEstimatedSizeWithColumnProjection(this.totalBytes);
@@ -553,6 +558,19 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
   public StructType getDataSchema() {
     return dataSchema;
+  }
+
+  /**
+   * Returns the Delta files selected by this scan after pushdown and runtime filtering.
+   *
+   * <p>The returned descriptors preserve only the metadata needed by row-level ReplaceData commits
+   * to construct matching RemoveFile actions.
+   *
+   * @apiNote Internal API for the DSv2 DML write path (see {@code DeltaReplaceDataBatchWrite}).
+   */
+  public List<DeltaScanFile> getSelectedFiles() {
+    ensurePlanned();
+    return Collections.unmodifiableList(selectedFiles);
   }
 
   public StructType getPartitionSchema() {

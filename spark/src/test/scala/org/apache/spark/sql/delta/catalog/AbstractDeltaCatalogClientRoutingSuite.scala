@@ -595,17 +595,88 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
         "carrying it would also block REPLACE transitions away from a clustered table")
   }
 
-  test("loadTableAndBuildReplaceProps: does NOT carry Delta-internal / non-editable keys") {
+  test("loadTableAndBuildReplaceProps: does NOT carry derived / internal keys (not even tagged)") {
     val client = replaceClient(existingDeltaTableInfo(additionalConfig = Map(
-      // Delta-internal metadata that's not in DeltaConfigs.entries.
+      // Metastore-only bookkeeping; re-derived by the UpdateCatalog hook from the new snapshot.
       "delta.lastCommitTimestamp" -> "1234567890",
-      // Registered but non-editable; rejected by `DELTA_CANNOT_MODIFY_TABLE_PROPERTY`.
-      "delta.columnMapping.maxColumnId" -> "5")))
+      "delta.lastUpdateVersion" -> "7",
+      // Derived from the table schema.
+      "delta.columnMapping.maxColumnId" -> "5",
+      // Protocol versions, derived from the feature set.
+      "delta.minReaderVersion" -> "3",
+      "delta.minWriterVersion" -> "7",
+      // Engine-generated row-tracking materialized column names.
+      "delta.rowTracking.materializedRowIdColumnName" -> "_row-id-col-abc",
+      "delta.rowTracking.materializedRowCommitVersionColumnName" -> "_row-commit-version-col-xyz")))
     val out = client.loadTableAndBuildReplaceProps(
       Identifier.of(Array("sch"), "tbl"),
       stageProps("delta.feature.catalogManaged" -> "supported"))
-    assert(!out.containsKey("delta.lastCommitTimestamp"))
-    assert(!out.containsKey("delta.columnMapping.maxColumnId"))
+    val prefix = AbstractDeltaCatalogClient.CARRY_FORWARD_PREFIX
+    Seq(
+      "delta.lastCommitTimestamp",
+      "delta.lastUpdateVersion",
+      "delta.columnMapping.maxColumnId",
+      "delta.minReaderVersion",
+      "delta.minWriterVersion",
+      "delta.rowTracking.materializedRowIdColumnName",
+      "delta.rowTracking.materializedRowCommitVersionColumnName")
+      .foreach { k =>
+        assert(!out.containsKey(k), s"$k must not be carried forward")
+        assert(!out.containsKey(prefix + k), s"$k must not be tagged for carry-forward either")
+      }
+  }
+
+  test("loadTableAndBuildReplaceProps: carries forward existing arbitrary delta.* keys tagged " +
+      "for downstream re-injection") {
+    val client = replaceClient(existingDeltaTableInfo(additionalConfig = Map(
+      "delta.dummy_fake_key" -> "dummyValue",
+      "delta.random" -> "1")))
+    val out = client.loadTableAndBuildReplaceProps(
+      Identifier.of(Array("sch"), "tbl"),
+      stageProps("delta.feature.catalogManaged" -> "supported"))
+    val prefix = AbstractDeltaCatalogClient.CARRY_FORWARD_PREFIX
+    // Keys unknown to this Delta version are carried under the prefix so they bypass downstream
+    // `validateConfigurations` (which would reject them as DELTA_UNKNOWN_CONFIGURATION) and get
+    // re-injected after validation.
+    assert(out.get(prefix + "delta.dummy_fake_key") === "dummyValue")
+    assert(out.get(prefix + "delta.random") === "1")
+    // They must NOT appear under the bare key, which would hit validation and throw.
+    assert(!out.containsKey("delta.dummy_fake_key"))
+    assert(!out.containsKey("delta.random"))
+  }
+
+  test("loadTableAndBuildReplaceProps: does NOT carry a recognized key whose value this Delta " +
+      "version rejects (left to Delta's organic generation)") {
+    // `delta.columnMapping.mode` is a config this Delta version recognizes and manages, but the
+    // value `index` is one it doesn't know (e.g. a mode a newer engine introduced). Unlike a
+    // genuinely unknown key, this is an organic config Delta generates/derives itself, so the
+    // unparseable value must NOT be carried -- neither under the bare key nor tagged -- and is
+    // left to Delta's own handling.
+    val client = replaceClient(existingDeltaTableInfo(additionalConfig = Map(
+      "delta.columnMapping.mode" -> "index")))
+    val out = client.loadTableAndBuildReplaceProps(
+      Identifier.of(Array("sch"), "tbl"),
+      stageProps("delta.feature.catalogManaged" -> "supported"))
+    val prefix = AbstractDeltaCatalogClient.CARRY_FORWARD_PREFIX
+    assert(!out.containsKey("delta.columnMapping.mode"))
+    assert(!out.containsKey(prefix + "delta.columnMapping.mode"))
+  }
+
+  test("loadTableAndBuildReplaceProps: caller-supplied unknown delta.* is not tagged " +
+      "(stays subject to downstream validation)") {
+    val client = replaceClient(existingDeltaTableInfo(additionalConfig = Map(
+      "delta.random" -> "from-existing")))
+    val out = client.loadTableAndBuildReplaceProps(
+      Identifier.of(Array("sch"), "tbl"),
+      stageProps(
+        "delta.feature.catalogManaged" -> "supported",
+        "delta.random" -> "from-caller"))
+    val prefix = AbstractDeltaCatalogClient.CARRY_FORWARD_PREFIX
+    // Caller wins: their value stays under the bare key and is NOT tagged, so it reaches
+    // `validateConfigurations` downstream and is rejected -- the other half of the asymmetry.
+    assert(out.get("delta.random") === "from-caller")
+    assert(!out.containsKey(prefix + "delta.random"),
+      "a caller-supplied key must not be tagged for validation-bypass")
   }
 
   test("loadTableAndBuildReplaceProps: caller TBLPROPERTIES wins over carried-forward value") {
@@ -867,7 +938,8 @@ private abstract class ThrowingUCDeltaClient extends UCDeltaClient {
       metadata: AbstractMetadata,
       protocol: AbstractProtocol,
       domainMetadata: util.List[AbstractDomainMetadata],
-      lastCommitTimestampMs: Long): TableInfo =
+      lastCommitTimestampMs: Long,
+      uniformMetadata: Optional[UniformMetadata]): TableInfo =
     throw new UnsupportedOperationException
   // scalastyle:off argcount
   override def commit(
@@ -898,6 +970,11 @@ private abstract class ThrowingUCDeltaClient extends UCDeltaClient {
       storageLocation: String,
       columns: util.List[UCClient.ColumnDef],
       properties: util.Map[String, String]): Unit =
+    throw new UnsupportedOperationException
+  override def reportMetrics(
+      tableId: String,
+      tableIdentifier: StorageTableIdentifier,
+      report: UCDeltaModels.CommitReport): Unit =
     throw new UnsupportedOperationException
   override def close(): Unit = ()
 }

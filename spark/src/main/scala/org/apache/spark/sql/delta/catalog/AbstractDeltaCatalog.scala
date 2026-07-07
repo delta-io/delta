@@ -55,7 +55,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchNamespaceException, NoSuchTableException, UnresolvedAttribute, UnresolvedFieldName, UnresolvedFieldPosition}
 import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable, CatalogTableType, CatalogUtils, SessionCatalog}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, QualifiedColType, QualifiedColTypeShims, SyncIdentity}
-import org.apache.spark.sql.connector.catalog.{DelegatingCatalogExtension, Identifier, StagedTable, StagingTableCatalog, SupportsWrite, Table, TableCapability, TableCatalog, TableChange, V1Table}
+import org.apache.spark.sql.connector.catalog.{DelegatingCatalogExtension, Identifier, StagedTable, StagingTableCatalog, SupportsWrite, Table, TableCapability, TableCatalog, TableCatalogCapability, TableChange, V1Table}
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.catalog.TableChange._
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform, Literal, NamedReference, Transform}
@@ -120,6 +120,12 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     catalogOptions = options
   }
 
+  override def capabilities(): util.Set[TableCatalogCapability] = {
+    val capabilities = new util.HashSet[TableCatalogCapability](super.capabilities())
+    capabilities.add(TableCatalogCapability.SUPPORT_COLUMN_DEFAULT_VALUE)
+    capabilities
+  }
+
   private lazy val isUnityCatalog: Boolean = {
     val delegateField = classOf[DelegatingCatalogExtension].getDeclaredField("delegate")
     delegateField.setAccessible(true)
@@ -160,14 +166,31 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       operation: TableCreationModes.CreationMode
     ): Table = recordFrameProfile(
         "DeltaCatalog", "createDeltaTable") {
+    // `delta.*` properties carried forward from a catalog-managed REPLACE that this Delta version
+    // does not recognize arrive tagged with [[AbstractDeltaCatalogClient.CARRY_FORWARD_PREFIX]].
+    // Collect them (prefix stripped) and exclude the tagged entries from `tableProperties` -- the
+    // map that becomes `tableDesc.properties` and is fed to `DeltaConfigs.validateConfigurations`.
+    // This keeps the literal prefixed key from being persisted and lets the real key skip the
+    // unknown-key check that would otherwise reject it. They are NOT dropped from the commit:
+    // re-merged into the solidified table below, they land in the committed metadata configuration
+    // like any other table property.
+    val carriedForwardProps = allTableProperties.asScala.collect {
+      case (k, v) if k.startsWith(AbstractDeltaCatalogClient.CARRY_FORWARD_PREFIX) =>
+        k.stripPrefix(AbstractDeltaCatalogClient.CARRY_FORWARD_PREFIX) -> v
+    }.toMap
     // These two keys are tableProperties in data source v2 but not in v1, so we have to filter
     // them out. Otherwise property consistency checks will fail.
     val tableProperties = allTableProperties.asScala.filterKeys {
+      case k if k.startsWith(AbstractDeltaCatalogClient.CARRY_FORWARD_PREFIX) => false
       case TableCatalog.PROP_LOCATION => false
       case TableCatalog.PROP_PROVIDER => false
       case TableCatalog.PROP_COMMENT => false
       case TableCatalog.PROP_OWNER => false
       case TableCatalog.PROP_EXTERNAL => false
+      // `is_managed_location` is a reserved v2 catalog property used only to signal that the
+      // table location is system-generated (see `isManagedLocation` below). It is not a real
+      // Delta table property, so filter it out to avoid leaking it into the table metadata.
+      case TableCatalog.PROP_IS_MANAGED_LOCATION => false
       case "path" => false
       case "option.path" => false
       case _ => true
@@ -250,12 +273,19 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       comment = commentOpt
     )
 
-    val withDb =
-      verifyTableAndSolidify(
+    val withDb = {
+      val solidified = verifyTableAndSolidify(
         tableDesc,
         None,
         maybeClusterBySpec
       )
+      // Solidify validates `tableDesc.properties`; the carried-forward keys were held out above so
+      // validation can't reject them, then merged into the solidified table here. `withDb` is what
+      // `CreateDeltaTableCommand` commits, so these keys end up in the new metadata's
+      // configuration.
+      if (carriedForwardProps.isEmpty) solidified
+      else solidified.copy(properties = solidified.properties ++ carriedForwardProps)
+    }
 
     val writer = sourceQuery.map { df =>
       val catalogTbl = Some(tableDesc)
@@ -314,7 +344,9 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       //       Before this bug is fixed, we should only call the catalog plugin API to create tables
       //       if UC is enabled to replace `V2SessionCatalog`.
       createTableFunc = Option.when(isUnityCatalog) {
-        (v1Table: CatalogTable, snapshot: Snapshot) => {
+        (params: CreateTableFuncParams) => {
+          val v1Table = params.v1Table
+          val snapshot = params.snapshot
           // Route to the deltaCatalogClient only for MANAGED Delta creates when this client is
           // wired in. EXTERNAL Delta and the no-client case stay on the legacy `super.createTable`
           // path so existing behavior is preserved.
@@ -326,7 +358,8 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
                 snapshot.metadata,
                 snapshot.domainMetadata,
                 snapshot.protocol,
-                snapshot.timestamp)
+                snapshot.timestamp,
+                params.uniformMetadata)
             case _ =>
               val t = V1Table(v1Table)
               super.createTable(ident, t.columns(), t.partitioning, t.properties)
@@ -345,13 +378,31 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         .map(_.loadTable(ident))
         .getOrElse(super.loadTable(ident))
 
-      ServerSidePlannedTable.tryCreate(spark, ident, table, isUnityCatalog).foreach { sspt =>
-        return sspt
-      }
-
       table match {
         case v1: V1Table if DeltaTableUtils.isDeltaTable(v1.catalogTable) =>
-          loadCatalogTable(ident, v1.catalogTable)
+          // Server-side planning only applies to Delta tables. Attempt it here, inside the
+          // Delta-`V1Table` branch, rather than on every loaded table: a non-Delta table or a
+          // catalog-specific shape (e.g. Unity Catalog's `MetadataTable` wrapping a `ViewInfo`
+          // for a metric view) must flow through the `case o => o` fallthrough unchanged so the
+          // resolver can route it correctly. Capturing those in `ServerSidePlannedTable.tryCreate`
+          // would short-circuit view loading.
+          //
+          // Only resolve to a `DeltaTableV2` and attempt SSP when the feature is enabled. SSP
+          // needs the real schema, which lives in the transaction log (a Delta `V1Table`'s
+          // metastore `CatalogTable` schema is empty), so it must read it from `DeltaTableV2`.
+          // But forcing that resolution on the normal (SSP-off) path would touch the `DeltaLog`
+          // / filesystem during `loadTable` -- which breaks lazy callers (e.g. time travel) and
+          // tables whose filesystem isn't resolvable at load time. So gate on the cheap config
+          // flag first and keep the SSP-off path returning the lazy `loadCatalogTable`, exactly
+          // as before this branch existed.
+          if (ServerSidePlannedTable.isEnabled(spark)) {
+            val deltaTable = loadCatalogTable(ident, v1.catalogTable)
+            ServerSidePlannedTable
+              .tryCreate(spark, ident, deltaTable, isUnityCatalog)
+              .getOrElse(deltaTable)
+          } else {
+            loadCatalogTable(ident, v1.catalogTable)
+          }
         case o => o
       }
     } catch {
@@ -545,8 +596,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         properties.containsKey(TableCatalog.PROP_EXTERNAL)) {
       return false
     }
-    val ns = ident.namespace()
-    !(ns.length == 1 && new Path(ident.name()).isAbsolute)
+    !isPathIdentifier(ident)
   }
 
   /**
@@ -583,8 +633,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
           s"'${TableCatalog.PROP_EXTERNAL}': only catalog-managed Delta tables can " +
           "be replaced on this path.")
     }
-    val ns = ident.namespace()
-    !(ns.length == 1 && new Path(ident.name()).isAbsolute)
+    !isPathIdentifier(ident)
   }
 
   /**

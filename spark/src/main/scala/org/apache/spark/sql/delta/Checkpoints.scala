@@ -752,9 +752,10 @@ object Checkpoints
           .where("add is not null or remove is not null")
       } else {
         // When V2 Checkpoint is disabled, the baseCheckpoint refers to the main classic checkpoint
-        // which has all actions except "commitInfo", "cdc", "checkpointMetadata", "sidecar".
+        // which has all actions except "commitInfo", "cdc", "checkpointMetadata", "sidecar",
+        // "checkpoint".
         repartitioned
-          .drop("commitInfo", "cdc", "checkpointMetadata", "sidecar")
+          .drop("commitInfo", "cdc", "checkpointMetadata", "sidecar", "checkpoint")
           .withColumn("remove", col("remove").dropFields("tags", "stats"))
       }
     }
@@ -984,7 +985,13 @@ object Checkpoints
     // Filter out the sidecar schema if it is too large.
     val sidecarFileSchemaOpt =
       Checkpoints.checkpointSchemaToWriteInLastCheckpointFile(spark, sidecarSchema)
-    val checkpointMetadata = CheckpointMetadata(snapshot.version)
+    val checkpointMetadata = CheckpointMetadata(
+      version = snapshot.version,
+      sidecarNumActions = rowsWrittenInCheckpointJob,
+      sidecarSizeInBytes = parquetFilesSizeInBytes,
+      numOfAddFiles = snapshot.numOfFiles,
+      sidecarFileSchemaOpt = sidecarFileSchemaOpt
+    )
 
     val nonFileActionsToWrite =
       (checkpointMetadata +: sidecarFilesWritten) ++ snapshot.nonFileActions
@@ -1046,11 +1053,44 @@ object Checkpoints
       ds: Dataset[Row],
       finalPath: Path,
       hadoopConf: Configuration,
-      useRename: Boolean): StructType = recordFrameProfile(
-        "Checkpoints", "createCheckpointV2ParquetFile") {
+      useRename: Boolean): StructType = {
     val df = ds.select(
       "txn", "add", "remove", "metaData", "protocol", "domainMetadata",
       "checkpointMetadata", "sidecar")
+    writeAtomicCheckpointParquetFile(spark, df, finalPath, hadoopConf, useRename)
+  }
+
+  /**
+   * Atomically writes the given `df` to a single parquet file at `finalPath`. Uses the
+   * low-level [[ParquetOutputWriter]] machinery, so it bypasses [[DataFrameWriter]] and
+   * the Delta table-root format check -- safe to call when `finalPath` lives under a
+   * Delta-managed table root (e.g. the V2 checkpoint sidecar dir).
+   *
+   * The helper is schema-agnostic: it writes whatever columns `df` carries and never
+   * inspects column names, so callers control both the on-disk schema and the file
+   * basename.
+   *
+   * Note: when `useRename` is false and `finalPath` has already been written by a
+   * concurrent (zombie) task, the existing file is reused rather than failing the write --
+   * all writers of a given path are expected to produce identical content.
+   *
+   * @param df        DataFrame to write. Its schema (after `asNullable`) is the on-disk
+   *                  schema and is returned to the caller.
+   * @param finalPath The exact final path of the parquet file. Custom-named files are
+   *                  supported -- callers control the basename.
+   * @param useRename Write to a `.<finalPath>.<uuid>.tmp` first, then atomic-rename to
+   *                  `finalPath`. Required for log stores where partial writes are visible
+   *                  to concurrent readers.
+   * @return The schema actually written (`df.schema.asNullable`).
+   */
+  def writeAtomicCheckpointParquetFile(
+      spark: SparkSession,
+      df: DataFrame,
+      finalPath: Path,
+      hadoopConf: Configuration,
+      useRename: Boolean): StructType =
+      recordFrameProfile(
+        "Checkpoints", "writeAtomicCheckpointParquetFile") {
     val schema = df.schema.asNullable
     val format = new ParquetFileFormat()
     val job = Job.getInstance(hadoopConf)
@@ -1064,7 +1104,7 @@ object Checkpoints
       .execute()
       .mapPartitions { iter =>
         val actualNumParts = Option(TaskContext.get()).map(_.numPartitions()).getOrElse(1)
-        require(actualNumParts == 1, "The parquet V2 checkpoint must be written in 1 file")
+        require(actualNumParts == 1, "The parquet file must be written in 1 partition.")
         val partition = TaskContext.getPartitionId()
         val finalPath = finalSparkPath.toPath
         val writePath = if (useRename) {
@@ -1103,8 +1143,7 @@ object Checkpoints
         } catch {
           case _: org.apache.hadoop.fs.FileAlreadyExistsException
             if !useRename && fs.exists(writePath) =>
-          // The file has been written by a zombie task. We can just use this checkpoint file
-          // rather than failing a Delta commit.
+          // Reuse the file already written by a zombie task (see the method note).
           case t: Throwable =>
             throw t
         }

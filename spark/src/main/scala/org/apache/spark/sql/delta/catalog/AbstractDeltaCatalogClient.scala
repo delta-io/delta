@@ -16,13 +16,16 @@
 
 package org.apache.spark.sql.delta.catalog
 
+import io.delta.storage.commit.uniform.UniformMetadata
+
 import java.util
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.connector.catalog.{Identifier, Table}
-import org.apache.spark.sql.delta.actions.{DomainMetadata, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, DomainMetadata, Metadata, Protocol}
 import org.apache.spark.sql.delta.coordinatedcommits.UCTokenBasedRestClientFactory
+import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
@@ -36,7 +39,7 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
  * storage credentials on the returned [[Table]]. Keeping these behind a client interface
  * isolates that plumbing from `AbstractDeltaCatalog`.
  */
-private[catalog] trait AbstractDeltaCatalogClient {
+private[delta] trait AbstractDeltaCatalogClient {
 
   /**
    * Returns whether a table with `ident` exists in the catalog.
@@ -112,6 +115,9 @@ private[catalog] trait AbstractDeltaCatalogClient {
    *                              `metadata` / `protocol`, used by the catalog as the
    *                              authoritative "last updated" timestamp on the registered
    *                              entry.
+   * @param uniformMetadata       UniForm Iceberg metadata generated atomically with the initial
+   *                              snapshot;
+   *                              [[None]] when the table was not created with UniForm enabled.
    */
   def createTable(
       ident: Identifier,
@@ -119,7 +125,28 @@ private[catalog] trait AbstractDeltaCatalogClient {
       metadata: Metadata,
       domainMetadata: Seq[DomainMetadata],
       protocol: Protocol,
-      lastCommitTimestampMs: Long): Unit
+      lastCommitTimestampMs: Long,
+      uniformMetadata: Option[UniformMetadata] = None): Unit
+
+  /**
+   * Reports post-commit telemetry for the table to the catalog. Implementations build
+   * whatever payload their catalog expects from the per-commit fields and the
+   * `CatalogTable`'s storage properties (e.g. the catalog-side table id), then ship it.
+   *
+   * Exceptions bubble out; implementations must not swallow failures internally.
+   *
+   * @param ct                catalog metadata for the committed table.
+   * @param committedActions  actions written in this commit (used to derive file/row counts).
+   * @param committedVersion  the commit version (used as the histogram's commit version).
+   * @param snapshotHistogram post-commit file-size distribution read from the CRC; `None`
+   *                          when the CRC is unavailable. Read from the CRC only to avoid
+   *                          triggering state reconstruction.
+   */
+  def reportMetrics(
+      ct: CatalogTable,
+      committedActions: Seq[Action],
+      committedVersion: Long,
+      snapshotHistogram: Option[FileSizeHistogram]): Unit
 }
 
 /** Builds a [[AbstractDeltaCatalogClient]] from catalog options. */
@@ -130,10 +157,24 @@ private[catalog] trait AbstractDeltaCatalogClientFactory {
       fallbackLoadTableFunc: Identifier => Table): AbstractDeltaCatalogClient
 }
 
-private[catalog] object AbstractDeltaCatalogClient extends Logging {
+/**
+ * Factory entry point for [[AbstractDeltaCatalogClient]] instances. Used both by
+ * `AbstractDeltaCatalog.initialize` (to wire the catalog's own client at construction
+ * time) and by the post-commit metrics hook (to build a fresh per-commit client without
+ * caching state across commits).
+ */
+private[delta] object AbstractDeltaCatalogClient extends Logging {
 
   private val UC_DELTA_CATALOG_CLIENT_IMPL_CLASS_NAME: String =
     "org.apache.spark.sql.delta.catalog.UCDeltaCatalogClientImpl"
+
+  /**
+   * Marks a carried-forward `delta.*` property (from a catalog-managed REPLACE) that this Delta
+   * version doesn't recognize, so it can bypass validation and survive into the replaced table.
+   * Intentionally neither `delta.`- nor `option.`-prefixed so it rides untouched through the
+   * property plumbing until `AbstractDeltaCatalog.createDeltaTable` strips and re-injects it.
+   */
+  private[delta] val CARRY_FORWARD_PREFIX: String = "__replaceCarryForward."
 
   /**
    * Returns a [[AbstractDeltaCatalogClient]] wrapped in [[Some]] unless the catalog has

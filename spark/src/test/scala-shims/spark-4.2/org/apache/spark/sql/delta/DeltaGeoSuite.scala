@@ -24,7 +24,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
-import org.apache.spark.SparkThrowable
+import org.apache.spark.{SparkConf, SparkThrowable}
 import org.apache.spark.sql.{AnalysisException, QueryTest}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.st.{
@@ -48,6 +48,9 @@ class DeltaGeoSuite extends QueryTest
   with DeltaSQLCommandTest
   with DeltaSQLTestUtils {
 
+  override protected def sparkConf: SparkConf =
+    super.sparkConf.set(DeltaSQLConf.DELTA_GEO_PREVIEW_ENABLED.key, "true")
+
   // Default SRID used in Parquet/Iceberg/Delta specs (OGC:CRS84).
   private val DefaultSrid = 4326
 
@@ -68,6 +71,11 @@ class DeltaGeoSuite extends QueryTest
 
   private def metadataWithSchema(schema: StructType): Metadata = {
     Metadata(schemaString = schema.json)
+  }
+
+  test("geo preview is disabled by default") {
+    assert(DeltaSQLConf.DELTA_GEO_PREVIEW_ENABLED.defaultValue.contains(false),
+      "DELTA_GEO_PREVIEW_ENABLED must default to false while geospatial is in private preview")
   }
 
   test("containsGeoColumns detects top-level geometry and geography columns") {
@@ -298,6 +306,37 @@ class DeltaGeoSuite extends QueryTest
     }
   }
 
+  test("validateDropInvariants flips to true after dropping a struct containing nested geo") {
+    // `validateDropInvariants` checks `containsGeoColumns` recursively, so a geo column
+    // hidden inside a struct should block feature removal exactly like a top-level geo
+    // column does. After the entire struct column is dropped, the table feature must
+    // become droppable again. This protects against a regression where the drop-check
+    // is reduced to a flat field scan instead of a recursive one.
+    withTable("tbl") {
+      sql(
+        s"""CREATE TABLE tbl(id INT, outer STRUCT<inner: GEOMETRY($DefaultSrid)>)
+           |USING delta
+           |TBLPROPERTIES('delta.columnMapping.mode' = 'name')""".stripMargin)
+      val tableBefore = DeltaTableV2(spark, TableIdentifier("tbl"))
+      assert(!GeoSpatialTableFeature.validateDropInvariants(
+        tableBefore, tableBefore.initialSnapshot),
+        "Nested geo inside a struct should block feature removal")
+
+      // Also confirm the user-facing DROP FEATURE rejection fires for nested geo.
+      val ex = intercept[DeltaAnalysisException] {
+        sql(s"ALTER TABLE tbl DROP FEATURE ${GeoSpatialTableFeature.name}")
+      }
+      assert(ex.getErrorClass == "DELTA_CANNOT_DROP_GEOSPATIAL_FEATURE",
+        s"Unexpected error class: ${ex.getErrorClass}")
+
+      sql("ALTER TABLE tbl DROP COLUMN outer")
+      val tableAfter = DeltaTableV2(spark, TableIdentifier("tbl"))
+      assert(GeoSpatialTableFeature.validateDropInvariants(
+        tableAfter, tableAfter.initialSnapshot),
+        "After dropping the struct column, feature removal should be allowed")
+    }
+  }
+
   test("actionUsesFeature returns false for all actions (history protection disabled)") {
     val geoMeta = metadataWithSchema(new StructType().add("g", GeometryType(DefaultSrid)))
     val plainMeta = metadataWithSchema(new StructType().add("s", StringType))
@@ -376,6 +415,49 @@ class DeltaGeoSuite extends QueryTest
       .merge(Protocol.forTableFeature(GeoSpatialTableFeature))
     val ex = intercept[AnalysisException] {
       DeltaGeoSpatial.validateCommitActions(spark, protocol, Seq(metadata))
+    }
+    assert(ex.getCondition == "DELTA_GEOSPATIAL_SRID_NOT_SUPPORTED")
+  }
+
+  // Negative-SRID regression pins. Delta's `assertSridSupported` delegates the
+  // `isSridSupported` check to Spark catalyst (`GeometryType.isSridSupported` /
+  // `GeographyType.isSridSupported`). These tests document the Spark-side contract Delta
+  // relies on, so a future Spark change that accepts negative SRIDs cannot silently flip
+  // Delta to accepting them too. Negative SRIDs are how the `"ANY"` mixed-SRID type
+  // materialises (srid == MIXED_SRID == -1), which is the only path through which a
+  // negative SRID can reach Delta - `GeometryType(-1)` is rejected by the catalyst int
+  // constructor before any Delta code runs.
+  test("Spark contract: negative SRIDs are not supported for Geometry or Geography") {
+    assert(!GeometryType.isSridSupported(-1),
+      "Spark contract changed: GeometryType.isSridSupported(-1) now returns true. " +
+        "Delta's negative-SRID rejection relies on this returning false.")
+    assert(!GeographyType.isSridSupported(-1),
+      "Spark contract changed: GeographyType.isSridSupported(-1) now returns true. " +
+        "Delta's negative-SRID rejection relies on this returning false.")
+  }
+
+  test("GeometryType(\"ANY\") materialises with srid == -1 (mixed SRID sentinel)") {
+    // Pin the construction path: assertSridSupported relies on `GeometryType("ANY")`
+    // producing a negative `srid` so the unsupported-SRID check below can fire. If this
+    // ever changes, the assertSridSupported tests above would silently start passing for
+    // a no-op reason.
+    val geometryAnySrid = GeometryType("ANY").srid
+    val geographyAnySrid = GeographyType("ANY").srid
+    assert(geometryAnySrid == -1,
+      s"""Expected GeometryType("ANY").srid == -1, got $geometryAnySrid""")
+    assert(geographyAnySrid == -1,
+      s"""Expected GeographyType("ANY").srid == -1, got $geographyAnySrid""")
+  }
+
+  test("assertSridSupported rejects nested geo columns with negative SRIDs") {
+    // Defence-in-depth: a top-level scalar with a bad SRID is already tested; ensure
+    // recursion through `typeExistsRecursively` also catches a bad SRID buried inside a
+    // struct, since that's how the worst-case bug would manifest (a hidden negative SRID
+    // sneaking past the JSON ser/de).
+    val schema = new StructType()
+      .add("outer", new StructType().add("inner", GeometryType("ANY")))
+    val ex = intercept[AnalysisException] {
+      DeltaGeoSpatial.assertSridSupported(schema)
     }
     assert(ex.getCondition == "DELTA_GEOSPATIAL_SRID_NOT_SUPPORTED")
   }
@@ -488,6 +570,81 @@ class DeltaGeoSuite extends QueryTest
     }
   }
 
+  test("Column default on a STRUCT containing a geo field is rejected at CREATE TABLE") {
+    // `checkColumnDefaults` recurses through the column's data type via
+    // `typeExistsRecursively`, so a DEFAULT on a top-level struct column whose nested
+    // field is geo must also be rejected. This catches the regression where the default
+    // check stops at the top-level field type and ignores nested geo.
+    withTempDir { tempDir =>
+      withTable("tbl_geo_default_nested") {
+        val ex = intercept[AnalysisException] {
+          sql(s"CREATE TABLE tbl_geo_default_nested(" +
+            s"s STRUCT<inner: GEOMETRY($DefaultSrid)> DEFAULT NULL) " +
+            s"USING delta LOCATION '${tempDir.getAbsolutePath}/t' " +
+            "TBLPROPERTIES('delta.feature.allowColumnDefaults' = 'supported')")
+        }
+        assert(ex.getCondition == "DELTA_OPERATION_NOT_SUPPORTED_FOR_DATATYPES",
+          s"Expected DELTA_OPERATION_NOT_SUPPORTED_FOR_DATATYPES, got: ${ex.getCondition}")
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Universal Format (Hudi) compatibility
+  //
+  // `UniversalFormat.enforceHudiDependencies` rejects any schema containing a geo type
+  // when UniForm (Hudi) is enabled, throwing `DELTA_UNIVERSAL_FORMAT_VIOLATION`. These
+  // tests cover that code path on both the create-time and alter-time entry points.
+  // ---------------------------------------------------------------------------
+
+  test("UniForm (Hudi) rejects creating a table with a geometry column") {
+    withTable("tbl") {
+      val ex = intercept[DeltaUnsupportedOperationException] {
+        sql(s"CREATE TABLE tbl(id INT, g GEOMETRY($DefaultSrid)) USING delta " +
+          "TBLPROPERTIES(" +
+          "'delta.universalFormat.enabledFormats' = 'hudi', " +
+          "'delta.enableDeletionVectors' = 'false'" +
+          ")")
+      }
+      assert(ex.getErrorClass == "DELTA_UNIVERSAL_FORMAT_VIOLATION",
+        s"Expected DELTA_UNIVERSAL_FORMAT_VIOLATION, got: ${ex.getErrorClass}")
+      assert(ex.getMessage.toLowerCase(java.util.Locale.ROOT).contains("geometry"),
+        s"Expected message to mention GeometryType, got: ${ex.getMessage}")
+    }
+  }
+
+  test("UniForm (Hudi) rejects creating a table with a geography column") {
+    withTable("tbl") {
+      val ex = intercept[DeltaUnsupportedOperationException] {
+        sql(s"CREATE TABLE tbl(id INT, g GEOGRAPHY($DefaultSrid)) USING delta " +
+          "TBLPROPERTIES(" +
+          "'delta.universalFormat.enabledFormats' = 'hudi', " +
+          "'delta.enableDeletionVectors' = 'false'" +
+          ")")
+      }
+      assert(ex.getErrorClass == "DELTA_UNIVERSAL_FORMAT_VIOLATION",
+        s"Expected DELTA_UNIVERSAL_FORMAT_VIOLATION, got: ${ex.getErrorClass}")
+      assert(ex.getMessage.toLowerCase(java.util.Locale.ROOT).contains("geography"),
+        s"Expected message to mention GeographyType, got: ${ex.getMessage}")
+    }
+  }
+
+  test("UniForm (Hudi) rejects geo nested inside a struct") {
+    // Nested coverage: `findAnyTypeRecursively` is what `enforceHudiDependencies` calls,
+    // so a geo column buried inside a struct must also be rejected by the Hudi block.
+    withTable("tbl") {
+      val ex = intercept[DeltaUnsupportedOperationException] {
+        sql(s"CREATE TABLE tbl(s STRUCT<inner: GEOMETRY($DefaultSrid)>) USING delta " +
+          "TBLPROPERTIES(" +
+          "'delta.universalFormat.enabledFormats' = 'hudi', " +
+          "'delta.enableDeletionVectors' = 'false'" +
+          ")")
+      }
+      assert(ex.getErrorClass == "DELTA_UNIVERSAL_FORMAT_VIOLATION",
+        s"Expected DELTA_UNIVERSAL_FORMAT_VIOLATION, got: ${ex.getErrorClass}")
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // DML read/write on actual geo data (Spark 4.2+ Parquet writer)
   //
@@ -571,6 +728,129 @@ class DeltaGeoSuite extends QueryTest
       assert(rows.toSeq === Seq((1, PointOneOneWkb)))
       // Auto-enablement should also fire for nested geo columns.
       assert(getProtocolForTable("t_nested").isFeatureSupported(GeoSpatialTableFeature))
+    }
+  }
+
+  test("INSERT INTO ARRAY<GEOMETRY> round-trips geo values through Delta + Parquet") {
+    // Coverage parity with the struct-of-geo case: a top-level ARRAY column whose
+    // element is geo must also write + read back correctly.
+    withTable("t_arr") {
+      sql(s"CREATE TABLE t_arr(id INT, xs ARRAY<GEOMETRY($DefaultSrid)>) USING delta")
+      sql(s"INSERT INTO t_arr VALUES " +
+        s"(1, ARRAY(" +
+        s"ST_GeomFromWKB(X'$PointZeroZeroWkb', $DefaultSrid), " +
+        s"ST_GeomFromWKB(X'$PointOneOneWkb',  $DefaultSrid)))")
+      val rows = sql(
+          "SELECT id, transform(xs, x -> ST_AsBinary(x)) AS wkbs FROM t_arr ORDER BY id")
+        .collect()
+        .map { r =>
+          val wkbs = r.getSeq[Array[Byte]](1).map(bytesToHex)
+          (r.getInt(0), wkbs.toSeq)
+        }
+      assert(rows.toSeq === Seq((1, Seq(PointZeroZeroWkb, PointOneOneWkb))))
+      assert(getProtocolForTable("t_arr").isFeatureSupported(GeoSpatialTableFeature))
+    }
+  }
+
+  test("INSERT INTO MAP<STRING, GEOGRAPHY> round-trips geo values through Delta + Parquet") {
+    // Coverage parity with array-of-geo: a MAP whose value type is geo must write + read
+    // back correctly. Uses GEOGRAPHY to give the map test a non-Geometry geo type.
+    withTable("t_map") {
+      sql(s"CREATE TABLE t_map(id INT, m MAP<STRING, GEOGRAPHY($DefaultSrid)>) USING delta")
+      sql(s"INSERT INTO t_map VALUES " +
+        s"(1, MAP('a', ST_GeogFromWKB(X'$PointZeroZeroWkb')))")
+      val rows = sql("SELECT id, ST_AsBinary(m['a']) AS wkb FROM t_map ORDER BY id")
+        .collect()
+        .map(r => (r.getInt(0), bytesToHex(r.getAs[Array[Byte]]("wkb"))))
+      assert(rows.toSeq === Seq((1, PointZeroZeroWkb)))
+      assert(getProtocolForTable("t_map").isFeatureSupported(GeoSpatialTableFeature))
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // DML read/write on GEOGRAPHY values (Spark 4.2+ Parquet writer)
+  //
+  // Parity coverage with the GEOMETRY suite above: the DML path is unified, but the
+  // Geography type has its own Spark catalyst class and its own Parquet logical
+  // annotation, so the same operations need to be confirmed end-to-end against
+  // GeographyType too.
+  // ---------------------------------------------------------------------------
+
+  test("INSERT INTO geography table round-trips geog values through Delta + Parquet") {
+    withTable("t_geog_ins") {
+      sql(s"CREATE TABLE t_geog_ins(id INT, g GEOGRAPHY($DefaultSrid)) USING delta")
+      sql(s"INSERT INTO t_geog_ins VALUES " +
+        s"(1, ST_GeogFromWKB(X'$PointZeroZeroWkb')), " +
+        s"(2, ST_GeogFromWKB(X'$PointOneOneWkb')), " +
+        s"(3, NULL)")
+      val rows = sql("SELECT id, ST_AsBinary(g) AS wkb FROM t_geog_ins ORDER BY id")
+        .collect()
+        .map(r => (r.getInt(0), Option(r.getAs[Array[Byte]]("wkb")).map(bytesToHex)))
+      assert(rows.toSeq === Seq(
+        (1, Some(PointZeroZeroWkb)),
+        (2, Some(PointOneOneWkb)),
+        (3, None)))
+      assert(getProtocolForTable("t_geog_ins").isFeatureSupported(GeoSpatialTableFeature))
+      // Sanity: the persisted schema must round-trip as GeographyType, not GeometryType.
+      val schema = DeltaLog.forTable(spark, TableIdentifier("t_geog_ins")).update().metadata.schema
+      assert(schema("g").dataType.isInstanceOf[GeographyType])
+    }
+  }
+
+  test("UPDATE rewrites a geography column on matching rows") {
+    withTable("t_geog_upd") {
+      sql(s"CREATE TABLE t_geog_upd(id INT, g GEOGRAPHY($DefaultSrid)) USING delta")
+      sql(s"INSERT INTO t_geog_upd VALUES " +
+        s"(1, ST_GeogFromWKB(X'$PointZeroZeroWkb')), " +
+        s"(2, ST_GeogFromWKB(X'$PointOneOneWkb'))")
+      sql(s"UPDATE t_geog_upd SET g = ST_GeogFromWKB(X'$PointTwoTwoWkb') " +
+        s"WHERE id = 1")
+      val rows = sql("SELECT id, ST_AsBinary(g) AS wkb FROM t_geog_upd ORDER BY id")
+        .collect()
+        .map(r => (r.getInt(0), bytesToHex(r.getAs[Array[Byte]]("wkb"))))
+      assert(rows.toSeq === Seq((1, PointTwoTwoWkb), (2, PointOneOneWkb)))
+    }
+  }
+
+  test("DELETE removes rows from a geography table") {
+    withTable("t_geog_del") {
+      sql(s"CREATE TABLE t_geog_del(id INT, g GEOGRAPHY($DefaultSrid)) USING delta")
+      sql(s"INSERT INTO t_geog_del VALUES " +
+        s"(1, ST_GeogFromWKB(X'$PointZeroZeroWkb')), " +
+        s"(2, ST_GeogFromWKB(X'$PointOneOneWkb')), " +
+        s"(3, ST_GeogFromWKB(X'$PointTwoTwoWkb'))")
+      sql("DELETE FROM t_geog_del WHERE id = 2")
+      val ids = sql("SELECT id FROM t_geog_del ORDER BY id").collect().map(_.getInt(0)).toSeq
+      assert(ids === Seq(1, 3))
+    }
+  }
+
+  test("MERGE WITH SCHEMA EVOLUTION adds a new geography column from source to target") {
+    withTable("src_geog", "tgt_geog") {
+      sql(s"CREATE TABLE src_geog(id INT, g GEOGRAPHY($DefaultSrid)) USING delta")
+      sql(s"INSERT INTO src_geog VALUES " +
+        s"(1, ST_GeogFromWKB(X'$PointOneOneWkb')), " +
+        s"(2, ST_GeogFromWKB(X'$PointTwoTwoWkb'))")
+      sql("CREATE TABLE tgt_geog(id INT) USING delta")
+      sql("INSERT INTO tgt_geog VALUES (1), (3)")
+
+      sql(
+        """MERGE WITH SCHEMA EVOLUTION INTO tgt_geog USING src_geog
+          |  ON tgt_geog.id = src_geog.id
+          |WHEN MATCHED THEN UPDATE SET *
+          |WHEN NOT MATCHED THEN INSERT *""".stripMargin)
+
+      val schema =
+        DeltaLog.forTable(spark, TableIdentifier("tgt_geog")).update().metadata.schema
+      assert(schema("g").dataType.isInstanceOf[GeographyType])
+      assert(getProtocolForTable("tgt_geog").isFeatureSupported(GeoSpatialTableFeature))
+      val rows = sql("SELECT id, ST_AsBinary(g) AS wkb FROM tgt_geog ORDER BY id")
+        .collect()
+        .map(r => (r.getInt(0), Option(r.getAs[Array[Byte]]("wkb")).map(bytesToHex)))
+      assert(rows.toSeq === Seq(
+        (1, Some(PointOneOneWkb)),
+        (2, Some(PointTwoTwoWkb)),
+        (3, None)))
     }
   }
 
@@ -793,6 +1073,98 @@ class DeltaGeoSuite extends QueryTest
         // update v2: post and pre images for id=1
         (1, Some(PointTwoTwoWkb), "update_postimage"),
         (1, Some(PointZeroZeroWkb), "update_preimage")))
+    }
+  }
+
+  test("CDF lifecycle: INSERT/UPDATE on a nested geo column shows up in table_changes") {
+    // Same coverage as the top-level CDF lifecycle test above, but the geo column lives
+    // inside a struct. Ensures CDF preimage/postimage capture works correctly when geo
+    // is nested, since the write path goes through struct projection as well as Parquet
+    // encoding.
+    withTable("tbl") {
+      sql(
+        s"""CREATE TABLE tbl(id INT, s STRUCT<inner: GEOMETRY($DefaultSrid)>) USING delta
+           |TBLPROPERTIES('delta.enableChangeDataFeed' = 'true')""".stripMargin)
+      sql(s"INSERT INTO tbl VALUES " +
+        s"(1, named_struct('inner', ST_GeomFromWKB(X'$PointZeroZeroWkb', $DefaultSrid)))")
+      sql(s"UPDATE tbl SET s = named_struct(" +
+        s"'inner', ST_GeomFromWKB(X'$PointTwoTwoWkb', $DefaultSrid)) WHERE id = 1")
+
+      val cdf = spark.read.format("delta")
+        .option("readChangeFeed", "true")
+        .option("startingVersion", 1L)
+        .table("tbl")
+      val cdfSchema = cdf.schema
+      val sField = cdfSchema("s").dataType.asInstanceOf[StructType]
+      assert(sField("inner").dataType.isInstanceOf[GeometryType],
+        s"Expected GeometryType inside CDF struct, got: ${sField("inner").dataType}")
+
+      val records = cdf
+        .selectExpr("id", "ST_AsBinary(s.inner) AS wkb", "_change_type")
+        .collect()
+        .map(r => (
+          r.getInt(0),
+          Option(r.getAs[Array[Byte]]("wkb")).map(bytesToHex),
+          r.getString(2)))
+        .sortBy { case (id, _, ct) => (ct, id) }
+
+      // .sortBy yields _change_type ascending: "insert" < "update_postimage" <
+      // "update_preimage".
+      assert(records.toSeq === Seq(
+        (1, Some(PointZeroZeroWkb), "insert"),
+        (1, Some(PointTwoTwoWkb), "update_postimage"),
+        (1, Some(PointZeroZeroWkb), "update_preimage")))
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Iceberg / UniForm / Hudi compatibility for geospatial columns
+  // ---------------------------------------------------------------------------
+
+  test("IcebergCompatV1 is rejected on a table with a geometry column") {
+    // `CheckGeoSpatialTableFeatureDisabled` runs as part of `IcebergCompatV1.checks` and rejects
+    // the metadata before any conversion happens. V1 has no `CheckTypeInV2AllowList`, so this
+    // check is the only guard for geo columns under V1.
+    withTable("tbl") {
+      val ex = intercept[DeltaUnsupportedOperationException] {
+        sql(s"CREATE TABLE tbl(id INT, g GEOMETRY($DefaultSrid)) USING delta " +
+          "TBLPROPERTIES('delta.enableIcebergCompatV1' = 'true', " +
+          "'delta.columnMapping.mode' = 'name')")
+      }
+      assert(ex.getErrorClass == "DELTA_ICEBERG_COMPAT_VIOLATION.UNSUPPORTED_DATA_TYPE",
+        s"Unexpected error class: ${ex.getErrorClass}")
+    }
+  }
+
+  test("IcebergCompatV2 is rejected on a table with a geography column") {
+    // Same check as above, registered in `IcebergCompatV2.checks`. V2 also has
+    // `CheckTypeInV2AllowList` which would reject geo with a more generic error, but the
+    // dedicated geo check is ordered to fire first and produces the same error class.
+    withTable("tbl") {
+      val ex = intercept[DeltaUnsupportedOperationException] {
+        sql(s"CREATE TABLE tbl(id INT, g GEOGRAPHY($DefaultSrid)) USING delta " +
+          "TBLPROPERTIES('delta.enableIcebergCompatV2' = 'true', " +
+          "'delta.columnMapping.mode' = 'name')")
+      }
+      assert(ex.getErrorClass == "DELTA_ICEBERG_COMPAT_VIOLATION.UNSUPPORTED_DATA_TYPE",
+        s"Unexpected error class: ${ex.getErrorClass}")
+    }
+  }
+
+  test("Hudi UniForm on a table with a geometry column throws DELTA_UNIVERSAL_FORMAT_VIOLATION") {
+    // Covers the geo branch added to `UniversalFormat.enforceHudiDependencies`. The geo type
+    // is not representable in Hudi's schema, so we reject at commit time.
+    withTable("tbl") {
+      val ex = intercept[DeltaUnsupportedOperationException] {
+        sql(s"CREATE TABLE tbl(id INT, g GEOMETRY($DefaultSrid)) USING delta " +
+          "TBLPROPERTIES('delta.universalFormat.enabledFormats' = 'hudi', " +
+          "'delta.enableDeletionVectors' = 'false', " +
+          "'delta.columnMapping.mode' = 'name')")
+      }
+      assert(ex.getErrorClass == "DELTA_UNIVERSAL_FORMAT_VIOLATION",
+        s"Unexpected error class: ${ex.getErrorClass}")
+      assert(ex.getMessage.contains("hudi"),
+        s"Expected message to mention hudi, got: ${ex.getMessage}")
     }
   }
 }

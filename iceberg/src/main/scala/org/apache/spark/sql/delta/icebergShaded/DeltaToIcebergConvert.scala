@@ -17,19 +17,19 @@
 package org.apache.spark.sql.delta.icebergShaded
 
 import java.nio.ByteBuffer
-import java.sql.Timestamp
 import java.time.{LocalDateTime, OffsetDateTime, ZoneOffset}
 import java.time.format._
 import java.util.{Base64, List => JList}
 
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaConfig, DeltaConfigs, DummySnapshot, IcebergCompat, NoMapping, Snapshot, SnapshotDescriptor}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaConfig, DeltaConfigs, DummySnapshot, IcebergCompat, NoMapping, RowId, Snapshot, SnapshotDescriptor}
 import org.apache.spark.sql.delta.DeltaConfigs.{LOG_RETENTION, TOMBSTONE_RETENTION}
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction}
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore.getTotalSizeOfDVFieldsInFile
 import org.apache.spark.sql.delta.util.JsonUtils
-import shadedForDelta.org.apache.iceberg.{FileMetadata, PartitionData, PartitionSpec, Schema => IcebergSchema, StructLike, TableProperties => IcebergTableProperties}
+import shadedForDelta.org.apache.iceberg.{DeleteFile, FileFormat, FileMetadata, PartitionData, PartitionSpec, Schema => IcebergSchema, StructLike, TableProperties => IcebergTableProperties, Transaction => IcebergTransaction}
 import shadedForDelta.org.apache.iceberg.expressions.Literal
 import shadedForDelta.org.apache.iceberg.types.{Conversions, Type => IcebergType, Types => IcebergTypes}
 
@@ -59,7 +59,7 @@ class DeltaToIcebergConverter(val snapshot: SnapshotDescriptor, val catalogTable
         snapshot.metadata
       }
     new DummySnapshot(
-      logPath = snapshot.deltaLog.logPath,
+      logPath = snapshot.logPath,
       deltaLog = snapshot.deltaLog,
       metadata = effectiveMetadata,
       protocolOpt = Some(snapshot.protocol))
@@ -86,28 +86,62 @@ class DeltaToIcebergConverter(val snapshot: SnapshotDescriptor, val catalogTable
 /**
  * Utils for converting a Delta Table to Iceberg Table
  */
-object DeltaToIcebergConvert
-  extends DeltaLogging
-  {
-  object Action
-    extends DeltaLogging
-    {
-      def buildPartitionValues(
-          builder: FileMetadata.Builder,
-          fileAction: FileAction,
-          partitionSpec: PartitionSpec,
-          snapshot: SnapshotDescriptor,
-          logicalToPhysicalPartitionNames: Map[String, String]): Unit = {
-        if (partitionSpec.isPartitioned) {
-            builder.withPartition(
-              DeltaToIcebergConvert.Partition.convertPartitionValues(
-                snapshot,
-                partitionSpec,
-                fileAction.partitionValues,
-                logicalToPhysicalPartitionNames))
-        }
+object DeltaToIcebergConvert extends DeltaLogging {
+  object Action {
+
+    def buildPartitionValues(
+        builder: FileMetadata.Builder,
+        fileAction: FileAction,
+        partitionSpec: PartitionSpec,
+        snapshot: SnapshotDescriptor,
+        logicalToPhysicalPartitionNames: Map[String, String]): Unit = {
+      if (partitionSpec.isPartitioned) {
+          builder.withPartition(
+            DeltaToIcebergConvert.Partition.convertPartitionValues(
+              snapshot,
+              partitionSpec,
+              fileAction.partitionValues,
+              logicalToPhysicalPartitionNames))
       }
     }
+
+    private[delta] def dvToDeleteFile(
+        dvSource: FileAction,
+        partitionSpec: PartitionSpec,
+        logicalToPhysicalPartitionNames: Map[String, String],
+        snapshot: SnapshotDescriptor): DeleteFile = {
+      val dv = dvSource.deletionVector
+      if (dv == null || !dv.isOnDisk || dv.offset.isEmpty) {
+        throw new IllegalArgumentException("Invalid DeletionVector. Cannot convert.")
+      }
+      var builder = FileMetadata.deleteFileBuilder(partitionSpec)
+        .ofPositionDeletes()
+        .withFormat(FileFormat.PUFFIN)
+        .withPath(dv.absolutePath(snapshot.dataPath).toString)
+        .withFileSizeInBytes(dv.offset.get + getTotalSizeOfDVFieldsInFile(dv.sizeInBytes))
+        .withReferencedDataFile(dvSource.absolutePath(snapshot).toString)
+        .withContentOffset(dv.offset.get)
+        .withContentSizeInBytes(getTotalSizeOfDVFieldsInFile(dv.sizeInBytes))
+        .withRecordCount(dv.cardinality)
+
+      buildPartitionValues(
+        builder, dvSource, partitionSpec, snapshot, logicalToPhysicalPartitionNames)
+      builder.build
+    }
+  }
+
+  object RowTracking {
+    /**
+     * Set the next row-id on an Iceberg transaction so that subsequent data files written by
+     * the transaction get first-row-ids picked up from the Delta-side row-id high water mark.
+     * No-op when the Delta snapshot has no row tracking high water mark recorded.
+     */
+    private[delta] def setNextRowId(snapshot: Snapshot, icebergTxn: IcebergTransaction): Unit = {
+      RowId.extractHighWatermark(snapshot).foreach { highWaterMark =>
+        IcebergTransactionUtils.setIcebergTxnNextRowId(icebergTxn, highWaterMark + 1)
+      }
+    }
+  }
   /**
    * Utils used when converting Delta schema to Iceberg
    */

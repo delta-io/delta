@@ -25,13 +25,13 @@ import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.spark.internal.v2.read.ColumnReorderReadFunction;
 import io.delta.spark.internal.v2.read.DeltaParquetFileFormatV2;
-import io.delta.spark.internal.v2.read.SparkReaderFactory;
+import io.delta.spark.internal.v2.read.DeltaV2Reads;
 import io.delta.spark.internal.v2.read.cdc.CDCReadFunction;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorReadFunction;
 import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorSchemaContext;
-import io.delta.spark.internal.v2.read.rowtracking.RowTrackingReadFunction;
-import io.delta.spark.internal.v2.read.rowtracking.RowTrackingSchemaContext;
+import io.delta.spark.internal.v2.read.metadata.MetadataStructReadFunction;
+import io.delta.spark.internal.v2.read.metadata.MetadataStructSchemaContext;
 import java.time.ZoneId;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -309,8 +309,8 @@ public class PartitionUtils {
    * @param isWriteTimeCDCRead If {@code true}, this is a write-time CDF read (streaming reads of
    *     the legacy {@code .option("readChangeFeed")} format): the read schema is augmented with CDC
    *     tail columns and the reader is wrapped with {@link CDCReadFunction}. If {@code false}, this
-   *     is a plain table scan or a read-time Auto-CDF read; CDC handling is left to the caller in
-   *     that case (Auto-CDF's outer {@code CDCPartitionReaderFactory} injects the tail columns as
+   *     is a plain table scan or a read-time CDF read; CDC handling is left to the caller in that
+   *     case (read-time CDF's outer {@code CDCPartitionReaderFactory} injects the tail columns as
    *     per-partition constants instead).
    */
   public static PartitionReaderFactory createDeltaParquetReaderFactory(
@@ -359,7 +359,7 @@ public class PartitionUtils {
 
     // For write-time CDF reads (streaming with readChangeFeed=true), build the schema context
     // and augment readDataSchema with CDC tail columns before DV wrapping so that DV column
-    // indices account for them. Read-time CDF (Auto-CDF, via DeltaChangelogBatch) does not go
+    // indices account for them. Read-time CDF (via DeltaChangelogBatch) does not go
     // through this path: DeltaChangelogBatch's outer CDCPartitionReaderFactory injects the
     // tail columns as per-partition constants instead.
     Optional<CDCSchemaContext> cdcSchemaContext =
@@ -370,20 +370,31 @@ public class PartitionUtils {
       readDataSchema = cdcSchemaContext.get().getReadDataSchemaWithCDC();
     }
 
-    boolean metadataColumnRequested =
-        Arrays.stream(readDataSchema.fields())
-            .anyMatch(field -> FileFormat$.MODULE$.METADATA_NAME().equals(field.name()));
-    Optional<RowTrackingSchemaContext> rowTrackingSchemaContext = Optional.empty();
-    if (metadataColumnRequested) {
-      RowTrackingSchemaContext context =
-          new RowTrackingSchemaContext(readDataSchema, snapshotImpl.getMetadata(), partitionSchema);
-      rowTrackingSchemaContext = Optional.of(context);
-      readDataSchema = context.getSchemaWithRowTrackingColumns();
+    // DV presence governs `optimizationsEnabled` / `useMetadataRowIndex`, both of which feed
+    // into `DeltaParquetFileFormatV2` construction below. Compute it upfront so the format can
+    // be built before MetadataStructSchemaContext (which consumes the format's
+    // `fileConstantMetadataExtractors`).
+    boolean tableSupportsDV = tableSupportsDeletionVectors(snapshot);
+    boolean optimizationsEnabled = !tableSupportsDV;
+    Option<Boolean> useMetadataRowIndex =
+        tableSupportsDV ? Option.apply(Boolean.FALSE) : Option.empty();
+    DeltaParquetFileFormatV2 deltaFormat =
+        createDeltaParquetFileFormat(
+            snapshot, tablePath, optimizationsEnabled, useMetadataRowIndex, isWriteTimeCDCRead);
+
+    // Build the metadata context only when the scan requested `_metadata`. The context owns the
+    // pruned struct, the parquet read schema (with row-tracking helper columns when needed),
+    // and the per-field MetadataValueSetterBuilder array used to materialise values per row.
+    Optional<MetadataStructSchemaContext> metadataSchemaContext =
+        MetadataStructSchemaContext.forSchema(
+            readDataSchema, partitionSchema, deltaFormat, snapshotImpl.getMetadata());
+    if (metadataSchemaContext.isPresent()) {
+      readDataSchema = metadataSchemaContext.get().getParquetReadSchema();
     }
 
     // Create DV schema context if table supports deletion vectors
     Optional<DeletionVectorSchemaContext> dvSchemaContext =
-        tableSupportsDeletionVectors(snapshot)
+        tableSupportsDV
             ? Optional.of(new DeletionVectorSchemaContext(readDataSchema, partitionSchema))
             : Optional.empty();
     if (dvSchemaContext.isPresent()) {
@@ -391,9 +402,11 @@ public class PartitionUtils {
     }
 
     boolean enableVectorizedReader =
-        // Disabled because RowTrackingReadFunction operates on individual InternalRows to compute
-        // row_id from _tmp_metadata_row_index and coalesce with materialized columns.
-        !rowTrackingSchemaContext.isPresent()
+        // Disabled because MetadataStructReadFunction operates on individual InternalRows (to
+        // synthesise the `_metadata` struct, including row-tracking field coalesce against
+        // materialised helper columns). The wrapper does not currently produce ColumnarBatch
+        // output.
+        !metadataSchemaContext.isPresent()
             && ParquetUtils.isBatchReadSupportedForSchema(sqlConf, readDataSchema);
     scala.collection.immutable.Map<String, String> optionsWithVectorizedReading =
         scalaOptions.$plus(
@@ -402,14 +415,9 @@ public class PartitionUtils {
                 String.valueOf(enableVectorizedReader)));
 
     // TODO(https://github.com/delta-io/delta/issues/5859): Enable file splitting for DV tables
-    boolean optimizationsEnabled = !dvSchemaContext.isPresent();
-
-    // TODO(https://github.com/delta-io/delta/issues/5859): Support _metadata.row_index for DV
-    Option<Boolean> useMetadataRowIndex =
-        dvSchemaContext.isPresent() ? Option.apply(Boolean.FALSE) : Option.empty();
-    DeltaParquetFileFormatV2 deltaFormat =
-        createDeltaParquetFileFormat(
-            snapshot, tablePath, optimizationsEnabled, useMetadataRowIndex, isWriteTimeCDCRead);
+    // (`optimizationsEnabled`) and support _metadata.row_index for DV (`useMetadataRowIndex`).
+    // Both flags are computed above the metadata-context construction so the format can drive
+    // its `fileConstantMetadataExtractors`.
 
     Function1<PartitionedFile, Iterator<InternalRow>> readFunc =
         deltaFormat.buildReaderWithPartitionValues(
@@ -423,22 +431,28 @@ public class PartitionUtils {
 
     // Wrap reader to filter deleted rows and remove internal columns if DV is enabled.
     // DV must be the inner wrapper so it sees the raw reader output with the DV column
-    // at its expected index, before row tracking changes the column layout.
+    // at its expected index, before row tracking or metadata injection changes the column
+    // layout.
     if (dvSchemaContext.isPresent()) {
       readFunc =
           DeletionVectorReadFunction.wrap(readFunc, dvSchemaContext.get(), enableVectorizedReader);
     }
 
-    // Wrap reader to add rowTracking metadata.
-    // RT wraps DV: _tmp_metadata_row_index values are per-row physical positions generated by
-    // the Parquet reader, so they remain correct after DV filtering.
-    if (rowTrackingSchemaContext.isPresent()) {
-      readFunc = RowTrackingReadFunction.wrap(readFunc, rowTrackingSchemaContext.get());
+    // Wrap reader to materialise the `_metadata` struct whenever any `_metadata` subfield is
+    // requested by the scan. The metadata context owns one MetadataValueSetter per requested
+    // field; both file-source base fields and Delta row-tracking fields flow through the same
+    // per-row materialisation step.
+    if (metadataSchemaContext.isPresent()) {
+      readFunc = MetadataStructReadFunction.wrap(readFunc, metadataSchemaContext.get());
     }
 
     // TODO(#5319): add e2e test for CDC reads (full schema + column pruning) when streaming CDC
     // reads become user-reachable end-to-end.
     if (cdcSchemaContext.isPresent()) {
+      if (metadataSchemaContext.isPresent()) {
+        throw new UnsupportedOperationException(
+            "CDC reads combined with _metadata reads are not supported");
+      }
       readFunc = CDCReadFunction.wrap(readFunc, cdcSchemaContext.get(), enableVectorizedReader);
     }
 
@@ -453,7 +467,7 @@ public class PartitionUtils {
             partitionSchema,
             ddlOrderedReadOutputSchema);
 
-    return new SparkReaderFactory(readFunc, enableVectorizedReader);
+    return DeltaV2Reads.newReaderFactory(readFunc, enableVectorizedReader);
   }
 
   /**

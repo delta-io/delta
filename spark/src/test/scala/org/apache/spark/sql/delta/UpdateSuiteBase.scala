@@ -27,7 +27,7 @@ import org.apache.spark.sql.delta.test.shims.UnsupportedTableOperationErrorShims
 
 import org.apache.spark.{SparkThrowable, SparkUnsupportedOperationException}
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
-import org.apache.spark.sql.execution.FileSourceScanExec
+import org.apache.spark.sql.execution.FileSourceScanLike
 import org.apache.spark.sql.execution.datasources.FileFormat
 import org.apache.spark.sql.functions.{lit, struct}
 import org.apache.spark.sql.internal.SQLConf
@@ -402,6 +402,38 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
         condition = Some("cast(key as long) * cast('1.0' as decimal(38, 18)) > 100"),
         setClauses = "value = -3",
         expectedResults = Row(100, 4) :: Row(101, -3) :: Row(99, 2) :: Nil)
+    }
+  }
+
+  test("basic case with NullType") {
+    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
+    withSQLConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false") {
+      append(Seq((null, 2), (null, 4), (null, 1), (null, 3)).toDF("key", "value"))
+      checkUpdate(condition = None, setClauses = "value = 2",
+        expectedResults = Row(null, 2) :: Row(null, 2) :: Row(null, 2) :: Row(null, 2) :: Nil)
+    }
+  }
+
+  test("basic case with condition on NullType") {
+    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
+    withSQLConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false") {
+      append(Seq((null, 2), (null, 4), (null, 1), (null, 3)).toDF("key", "value"))
+      checkUpdate(condition = Some("key is null"), setClauses = "value = 2",
+        expectedResults = Row(null, 2) :: Row(null, 2) :: Row(null, 2) :: Row(null, 2) :: Nil)
+    }
+  }
+
+  test("basic case with nested NullType") {
+    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
+    withSQLConf(
+      DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false"
+    ) {
+      append(Seq(((null, 2), 1), ((null, 4), 1), (null, 1), ((null, 1), 1)).toDF("key", "value"))
+      checkUpdate(
+        condition = Some("key._1 IS NULL AND key IS NOT NULL"),
+        setClauses = "value = 5",
+        expectedResults = Row(Row(null, 2), 5) :: Row(Row(null, 4), 5) :: Row(null, 1) ::
+          Row(Row(null, 1), 5) :: Nil)
     }
   }
 
@@ -843,7 +875,7 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
     }
 
     val scans = executedPlans.flatMap(_.collect {
-      case f: FileSourceScanExec => f
+      case f: FileSourceScanLike => f
     })
     // The first scan is for finding files to update. We only are matching against the key
     // so that should be the only field in the schema.
@@ -868,7 +900,7 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
     }
 
     val scans = executedPlans.flatMap(_.collect {
-      case f: FileSourceScanExec => f
+      case f: FileSourceScanLike => f
     })
 
     assert(scans.head.schema == StructType.fromDDL("nested STRUCT<key: int>"))

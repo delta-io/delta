@@ -51,6 +51,10 @@ import io.unitycatalog.client.delta.model.DeltaLoadTableResponse;
 import io.unitycatalog.client.delta.model.DeltaProtocol;
 import io.unitycatalog.client.delta.model.DeltaRemoveDomainMetadataUpdate;
 import io.unitycatalog.client.delta.model.DeltaRemovePropertiesUpdate;
+import io.unitycatalog.client.delta.model.DeltaReportMetricsRequest;
+import io.unitycatalog.client.delta.model.DeltaReportMetricsRequestReport;
+import io.unitycatalog.client.delta.model.DeltaReportMetricsRequestReportCommitReport;
+import io.unitycatalog.client.delta.model.DeltaReportMetricsRequestReportCommitReportFileSizeHistogram;
 import io.unitycatalog.client.delta.model.DeltaRowTrackingDomainMetadata;
 import io.unitycatalog.client.delta.model.DeltaSetDomainMetadataUpdate;
 import io.unitycatalog.client.delta.model.DeltaSetLatestBackfilledVersionUpdate;
@@ -493,7 +497,8 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       AbstractMetadata metadata,
       AbstractProtocol protocol,
       List<AbstractDomainMetadata> domainMetadata,
-      long lastCommitTimestampMs) throws IOException {
+      long lastCommitTimestampMs,
+      Optional<UniformMetadata> uniformMetadata) throws IOException {
     ensureOpen();
     Objects.requireNonNull(tableUri, "tableUri must not be null");
     Objects.requireNonNull(tableType, "tableType must not be null");
@@ -527,6 +532,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       if (updates != null) {
         sdkRequest.domainMetadata(updates);
       }
+      uniformMetadata.ifPresent(u -> sdkRequest.uniform(toSDKUniformMetadata(u)));
 
       return toTableInfo(
           deltaTablesApi.createTable(name.catalog, name.schema, sdkRequest),
@@ -538,6 +544,51 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
           String.format("Failed to create table %s (HTTP %s): %s",
               name.fullName, e.getCode(), e.getResponseBody()), e);
     }
+  }
+
+  @Override
+  public void reportMetrics(
+      String tableId,
+      TableIdentifier tableIdentifier,
+      UCDeltaModels.CommitReport report) throws IOException {
+    ensureOpen();
+    Objects.requireNonNull(tableId, "tableId must not be null");
+    Objects.requireNonNull(report, "report must not be null");
+    ResolvedTableName name = requireThreePartName(tableIdentifier);
+    try {
+      DeltaReportMetricsRequest sdkRequest = new DeltaReportMetricsRequest()
+          .tableId(UUID.fromString(tableId))
+          .report(new DeltaReportMetricsRequestReport().commitReport(toSDKCommitReport(report)));
+      deltaTablesApi.reportMetrics(name.catalog, name.schema, name.table, sdkRequest);
+    } catch (ApiException e) {
+      throw new IOException(
+          String.format("Failed to report metrics for table %s (HTTP %s): %s",
+              name.fullName, e.getCode(), e.getResponseBody()), e);
+    }
+  }
+
+  private static DeltaReportMetricsRequestReportCommitReport toSDKCommitReport(
+      UCDeltaModels.CommitReport report) {
+    DeltaReportMetricsRequestReportCommitReport sdkReport =
+        new DeltaReportMetricsRequestReportCommitReport()
+            .numFilesAdded(report.getNumFilesAdded())
+            .numFilesRemoved(report.getNumFilesRemoved())
+            .numBytesAdded(report.getNumBytesAdded())
+            .numBytesRemoved(report.getNumBytesRemoved());
+    report.getNumRowsInserted().ifPresent(sdkReport::numRowsInserted);
+    report.getNumRowsRemoved().ifPresent(sdkReport::numRowsRemoved);
+    report.getNumRowsUpdated().ifPresent(sdkReport::numRowsUpdated);
+    report.getFileSizeHistogram().ifPresent(h -> sdkReport.fileSizeHistogram(toSDKHistogram(h)));
+    return sdkReport;
+  }
+
+  private static DeltaReportMetricsRequestReportCommitReportFileSizeHistogram toSDKHistogram(
+      UCDeltaModels.FileSizeHistogram h) {
+    return new DeltaReportMetricsRequestReportCommitReportFileSizeHistogram()
+        .sortedBinBoundaries(h.getSortedBinBoundaries())
+        .fileCounts(h.getFileCounts())
+        .totalBytes(h.getTotalBytes())
+        .commitVersion(h.getCommitVersion());
   }
 
   // ===========================

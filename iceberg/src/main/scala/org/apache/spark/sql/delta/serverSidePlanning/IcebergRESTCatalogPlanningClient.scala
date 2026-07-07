@@ -122,7 +122,7 @@ class IcebergRESTCatalogPlanningClient(
     override def configure(conf: Configuration): Unit = {
       conf.set("fs.gs.impl.disable.cache", "true")
       conf.set("fs.gs.auth.type", "ACCESS_TOKEN_PROVIDER")
-      conf.set("fs.gs.auth.access.token.provider.impl",
+      conf.set("fs.gs.auth.access.token.provider",
         classOf[FixedGcsAccessTokenProvider].getName)
       conf.set("fs.gs.auth.access.token", oauth2Token)
       expirationEpochMs.foreach { ms =>

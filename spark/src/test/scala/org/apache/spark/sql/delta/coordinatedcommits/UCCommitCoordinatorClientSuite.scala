@@ -104,7 +104,7 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
             startVersion: Optional[JLong],
             endVersion: Optional[JLong]): JGetCommitsResponse = {
           capturedTableIdentifier = tableIdentifier
-          new JGetCommitsResponse(Collections.emptyList(), -1L)
+          new JGetCommitsResponse(Collections.emptyList(), 0L)
         }
       }
       val tableCommitCoordinatorClient = TableCommitCoordinatorClient(

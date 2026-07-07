@@ -779,3 +779,15 @@ trait CoordinatedCommitsBaseSuite
         DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey).contains("true")
   }
 }
+
+trait WithCatalogOwnedBatch1 { self: CatalogOwnedTestBaseSuite =>
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+}
+
+trait WithCatalogOwnedBatch2 { self: CatalogOwnedTestBaseSuite =>
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+}
+
+trait WithCatalogOwnedBatch100 { self: CatalogOwnedTestBaseSuite =>
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
+}
