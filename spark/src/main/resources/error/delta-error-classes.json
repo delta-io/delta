@@ -311,7 +311,7 @@
   },
   "DELTA_CANNOT_SET_LOCATION_MULTIPLE_TIMES" : {
     "message" : [
-      "Can't set location multiple times. Found <location>"
+      "Can't set location multiple times. Found locations: <locations>."
     ],
     "sqlState" : "XXKDS"
   },
