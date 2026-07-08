@@ -68,6 +68,26 @@ public interface FileSystemClient {
       throws IOException;
 
   /**
+   * Read the entire contents of the file at {@code path} as a UTF-8 string in a single file-system
+   * read.
+   *
+   * <p>Unlike {@link #readFiles}, the caller does not need to know the file length up front: the
+   * implementation reads to end-of-file in one pass. This lets a caller obtain a file's exact bytes
+   * without a preceding {@link #getFileStatus} call, which {@link #readFiles} would otherwise
+   * require because its {@link FileReadRequest#getReadLength()} needs the length in advance.
+   *
+   * <p>Intended for small control files (e.g. {@code _last_checkpoint}) that must be read whole and
+   * whose exact text a caller needs to re-parse in more than one way from a single, consistent
+   * snapshot. Do not use for large data files.
+   *
+   * @param path Fully qualified path to the file to read.
+   * @return The full file contents decoded as UTF-8.
+   * @throws FileNotFoundException if the file at the given path is not found.
+   * @throws IOException for any other IO error.
+   */
+  String readWholeFileAsUtf8(String path) throws IOException;
+
+  /**
    * Create a directory at the given path including parent directories. This mimicks the behavior of
    * `mkdir -p` in Unix.
    *

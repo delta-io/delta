@@ -24,6 +24,7 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.LogStore;
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
@@ -100,6 +101,22 @@ public class DefaultFileSystemClient implements FileSystemClient {
   public void copyFileAtomically(String srcPath, String destPath, boolean overwrite)
       throws IOException {
     fileIO.copyFileAtomically(srcPath, destPath, overwrite);
+  }
+
+  @Override
+  public String readWholeFileAsUtf8(String path) throws IOException {
+    // Read to EOF in a single pass: unlike getStream (which readFully's an exact, caller-supplied
+    // length), this needs no prior getFileStatus, so the whole file is obtained in one FS op.
+    InputFile inputFile = this.fileIO.newInputFile(path, /* fileSize */ -1);
+    try (SeekableInputStream stream = inputFile.newStream();
+        ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+      byte[] buffer = new byte[8192];
+      int read;
+      while ((read = stream.read(buffer)) != -1) {
+        out.write(buffer, 0, read);
+      }
+      return new String(out.toByteArray(), StandardCharsets.UTF_8);
+    }
   }
 
   private ByteArrayInputStream getStream(String filePath, int offset, int size) {

@@ -163,4 +163,37 @@ class DefaultFileSystemClientSuite extends AnyFunSuite with TestUtils {
       }
     }
   }
+
+  test("readWholeFileAsUtf8 returns the full contents") {
+    withTempDir { tempDir =>
+      val path = tempDir + "/whole.txt"
+      val content = """{"version":2,"size":9,"checkpointSchema":{"type":"struct"}}"""
+      writeFile(path, content)
+      assert(fsClient.readWholeFileAsUtf8(path) == content)
+    }
+  }
+
+  test("readWholeFileAsUtf8 handles an empty file") {
+    withTempDir { tempDir =>
+      val path = tempDir + "/empty.txt"
+      writeFile(path, "")
+      assert(fsClient.readWholeFileAsUtf8(path) == "")
+    }
+  }
+
+  test("readWholeFileAsUtf8 handles multi-line / multi-byte content") {
+    withTempDir { tempDir =>
+      val path = tempDir + "/multi.txt"
+      // Multiple lines plus a multi-byte UTF-8 character to exercise byte-accurate decoding.
+      val content = "line1\nline2\néèê"
+      writeFile(path, content)
+      assert(fsClient.readWholeFileAsUtf8(path) == content)
+    }
+  }
+
+  test("readWholeFileAsUtf8 on non-existent file") {
+    intercept[FileNotFoundException] {
+      fsClient.readWholeFileAsUtf8("/non-existent-file.json")
+    }
+  }
 }
