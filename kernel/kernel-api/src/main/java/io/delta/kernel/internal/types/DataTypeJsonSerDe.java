@@ -83,6 +83,25 @@ public class DataTypeJsonSerDe {
   }
 
   /**
+   * Serializes a single {@link StructField} to a JSON string according to the Delta Protocol, i.e.
+   * an object with {@code name}, {@code type}, {@code nullable}, and {@code metadata}.
+   *
+   * @param structField the field to serialize
+   * @return JSON string representing the field
+   */
+  public static String serializeStructField(StructField structField) {
+    try {
+      StringWriter stringWriter = new StringWriter();
+      JsonGenerator generator = OBJECT_MAPPER.createGenerator(stringWriter);
+      writeStructField(generator, structField);
+      generator.flush();
+      return stringWriter.toString();
+    } catch (IOException ex) {
+      throw new KernelException("Could not serialize StructField to JSON", ex);
+    }
+  }
+
+  /**
    * Deserializes a JSON string representing a Delta data type to a {@link DataType}.
    *
    * @param structTypeJson JSON string representing a {@link StructType} data type
