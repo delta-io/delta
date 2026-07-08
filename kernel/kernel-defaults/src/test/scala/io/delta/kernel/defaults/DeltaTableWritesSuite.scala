@@ -2085,6 +2085,93 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
     }
   }
 
+  ///////////////////////////////////////////////////////////////////////////
+  // Conflict resolution: delete-vs-delete (concurrent removes of the same file)
+  ///////////////////////////////////////////////////////////////////////////
+
+  private def iterableOf(rows: Row*): CloseableIterable[Row] =
+    inMemoryIterable(toCloseableIterator(rows.toSeq.asJava.iterator()))
+
+  /** Create a table and seed it with two data files (file1.parquet, file2.parquet). */
+  private def createTableWithTwoFiles(engine: Engine, tablePath: String): Unit = {
+    commitTransaction(getCreateTxn(engine, tablePath, testSchema), engine, emptyIterable())
+    commitTransaction(
+      getUpdateTxn(engine, tablePath),
+      engine,
+      iterableOf(
+        createAddFileRow("file1.parquet", dataChange = true),
+        createAddFileRow("file2.parquet", dataChange = true)))
+  }
+
+  test("conflict resolution - two concurrent txns removing the same file fails") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createTableWithTwoFiles(engine, tablePath)
+
+      // Both transactions read the same starting version.
+      val losingTxn = getUpdateTxn(engine, tablePath)
+      val winningTxn = getUpdateTxn(engine, tablePath)
+
+      // Winner rewrites file1.parquet (remove + add), committing first.
+      commitTransaction(
+        winningTxn,
+        engine,
+        iterableOf(
+          createRemoveFileRow("file1.parquet", dataChange = true),
+          createAddFileRow("winner-new.parquet", dataChange = true)))
+
+      // Loser also removes file1.parquet -> delete-vs-delete conflict.
+      val e = intercept[ConcurrentWriteException] {
+        commitTransaction(
+          losingTxn,
+          engine,
+          iterableOf(
+            createRemoveFileRow("file1.parquet", dataChange = true),
+            createAddFileRow("loser-new.parquet", dataChange = true)))
+      }
+      assert(e.getMessage.contains("file1.parquet"))
+    }
+  }
+
+  test("conflict resolution - concurrent txns removing different files succeed") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createTableWithTwoFiles(engine, tablePath)
+
+      val losingTxn = getUpdateTxn(engine, tablePath)
+      val winningTxn = getUpdateTxn(engine, tablePath)
+
+      commitTransaction(
+        winningTxn,
+        engine,
+        iterableOf(createRemoveFileRow("file1.parquet", dataChange = true)))
+
+      // Removing a different file is not a conflict; the losing txn rebases and commits.
+      commitTransaction(
+        losingTxn,
+        engine,
+        iterableOf(createRemoveFileRow("file2.parquet", dataChange = true)))
+    }
+  }
+
+  test("conflict resolution - appending while a concurrent txn removes a file succeeds") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createTableWithTwoFiles(engine, tablePath)
+
+      val losingTxn = getUpdateTxn(engine, tablePath)
+      val winningTxn = getUpdateTxn(engine, tablePath)
+
+      commitTransaction(
+        winningTxn,
+        engine,
+        iterableOf(createRemoveFileRow("file1.parquet", dataChange = true)))
+
+      // The losing txn removes nothing, so the delete-vs-delete check must not fire.
+      commitTransaction(
+        losingTxn,
+        engine,
+        iterableOf(createAddFileRow("file3.parquet", dataChange = true)))
+    }
+  }
+
   def removeTimestampNtzTypeColumns(structType: StructType): StructType = {
     def process(dataType: DataType): Option[DataType] = dataType match {
       case a: ArrayType =>
