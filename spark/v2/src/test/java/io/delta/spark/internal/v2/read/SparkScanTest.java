@@ -700,8 +700,10 @@ public class SparkScanTest extends DeltaV2TestBase {
       spark.sql("INSERT INTO " + tblName + " VALUES (1, 'hz')");
 
       // Disable stats collection via session config so the second AddFile has no numRecords.
-      spark.sql("SET spark.databricks.delta.stats.collect=false");
-      spark.sql("INSERT INTO " + tblName + " VALUES (2, 'sh')");
+      withSQLConf(
+          "spark.databricks.delta.stats.collect",
+          "false",
+          () -> spark.sql("INSERT INTO " + tblName + " VALUES (2, 'sh')"));
 
       // Table now has two AddFile entries: one with stats (first insert), one without (second).
       DeltaV2Table mixedStatsTable =
@@ -722,7 +724,6 @@ public class SparkScanTest extends DeltaV2TestBase {
                 "numRows() should be OptionalLong.empty() when row count is unknown");
           });
     } finally {
-      spark.sql("RESET spark.databricks.delta.stats.collect");
       spark.sql("DROP TABLE IF EXISTS " + tblName);
     }
   }
@@ -1424,8 +1425,10 @@ public class SparkScanTest extends DeltaV2TestBase {
 
       // Disable stats collection so the next AddFile has no numRecords. With one file lacking
       // numRecords, rowCountKnown is false for the whole scan.
-      spark.sql("SET spark.databricks.delta.stats.collect=false");
-      spark.sql(String.format("INSERT INTO %s VALUES (2, 'b')", tblName));
+      withSQLConf(
+          "spark.databricks.delta.stats.collect",
+          "false",
+          () -> spark.sql(String.format("INSERT INTO %s VALUES (2, 'b')", tblName)));
 
       // Inject catalog stats with a distinguishable row count (777) so the fallback is observable.
       CatalogStatistics catalogStats =
@@ -1460,7 +1463,6 @@ public class SparkScanTest extends DeltaV2TestBase {
                 "numRows should come from catalog stats (777) when per-file is unknown");
           });
     } finally {
-      spark.sql("RESET spark.databricks.delta.stats.collect");
       spark.sql("DROP TABLE IF EXISTS " + tblName);
     }
   }

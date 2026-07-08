@@ -31,7 +31,7 @@ import io.delta.kernel.*;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
-import io.delta.kernel.defaults.internal.json.JsonUtils;
+import io.delta.kernel.defaults.internal.data.DefaultJsonRow;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.TableAlreadyExistsException;
 import io.delta.kernel.expressions.Column;
@@ -39,6 +39,7 @@ import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.data.TransactionStateRow;
+import io.delta.kernel.internal.util.JsonUtils;
 import io.delta.kernel.metrics.TransactionReport;
 import io.delta.kernel.transaction.CreateTableTransactionBuilder;
 import io.delta.kernel.transaction.DataLayoutSpec;
@@ -233,7 +234,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
           });
     }
     if (tableState == null) {
-      tableState = JsonUtils.rowFromJson(serializedTableState, TransactionStateRow.SCHEMA);
+      tableState = DefaultJsonRow.fromJsonString(serializedTableState, TransactionStateRow.SCHEMA);
     }
     if (schema == null) {
       schema = TransactionStateRow.getLogicalSchema(tableState);
