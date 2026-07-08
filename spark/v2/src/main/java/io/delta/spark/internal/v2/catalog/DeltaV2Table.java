@@ -240,10 +240,11 @@ public class DeltaV2Table
     // Load the initial snapshot through the manager. Kernel validates the latest protocol here, so
     // translate its unsupported-feature failure to Delta's error class.
     this.initialSnapshot =
-        KernelUnsupportedFeatureTranslator.translatingUnsupportedFeature(() ->
-            timeTravelVersion.isPresent()
-              ? loadSnapshotAtCheckedVersion(snapshotManager, timeTravelVersion.getAsLong())
-              : snapshotManager.loadLatestSnapshot());
+        KernelUnsupportedFeatureTranslator.translatingUnsupportedFeature(
+            () ->
+                timeTravelVersion.isPresent()
+                    ? loadSnapshotAtCheckedVersion(snapshotManager, timeTravelVersion.getAsLong())
+                    : snapshotManager.loadLatestSnapshot());
 
     this.isCDCRead = CDCReader.isCDCRead(new CaseInsensitiveStringMap(this.options));
 
