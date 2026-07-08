@@ -62,6 +62,9 @@ object GeoTypesShim {
     classOf[ST_SetSrid],
     classOf[ST_Srid])
 
+  /** Geospatial Catalyst type classes (`GeometryType`, `GeographyType`). */
+  val geoTypes: Seq[Class[_]] = Seq(classOf[GeometryType], classOf[GeographyType])
+
   /** Returns the CRS of a `GeometryType`. Only valid when `isGeometryType(dt)` is true. */
   def geometryCrs(dt: DataType): String = dt match {
     case g: GeometryType => g.crs
