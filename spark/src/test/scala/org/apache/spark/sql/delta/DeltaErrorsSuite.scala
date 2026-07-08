@@ -2429,7 +2429,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.cannotSetLocationMultipleTimes(locations)
       }
       checkError(e, "DELTA_CANNOT_SET_LOCATION_MULTIPLE_TIMES", "XXKDS",
-        Map("location" -> "List(location1, location2)"))
+        Map("locations" -> "location1, location2"))
     }
     {
       val e = intercept[DeltaIllegalStateException] {

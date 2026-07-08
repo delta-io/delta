@@ -2005,7 +2005,7 @@ trait DeltaErrorsBase
   def cannotSetLocationMultipleTimes(locations : Seq[String]) : Throwable = {
     new DeltaIllegalArgumentException(
       errorClass = "DELTA_CANNOT_SET_LOCATION_MULTIPLE_TIMES",
-      messageParameters = Array(s"${locations}")
+      messageParameters = Array(locations.mkString(", "))
     )
   }
 
