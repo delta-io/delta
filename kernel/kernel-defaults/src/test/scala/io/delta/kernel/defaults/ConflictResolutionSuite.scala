@@ -15,7 +15,7 @@
  */
 package io.delta.kernel.defaults
 
-import java.util.{Collections, Optional, UUID}
+import java.util.{Collections, Optional}
 
 import scala.collection.JavaConverters._
 
@@ -24,7 +24,7 @@ import io.delta.kernel.defaults.utils.{TestUtilsWithTableManagerAPIs, WriteUtils
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.ConcurrentWriteException
 import io.delta.kernel.expressions.Literal
-import io.delta.kernel.internal.actions.{AddFile, RemoveFile, SingleAction}
+import io.delta.kernel.internal.actions.{AddFile, DeletionVectorDescriptor, RemoveFile, SingleAction}
 import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.util.PartitionUtils
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
@@ -81,6 +81,35 @@ class ConflictResolutionSuite
     SingleAction.createRemoveFileSingleAction(removeFileRow)
   }
 
+  private def pathDv(uniqueSuffix: String): DeletionVectorDescriptor =
+    new DeletionVectorDescriptor(
+      "p", // path storage
+      s"/deletion_vector_$uniqueSuffix.bin",
+      Optional.of(Integer.valueOf(0)),
+      32, // sizeInBytes
+      1L
+    ) // cardinality
+
+  /** An AddFile that re-adds `path` carrying the given deletion vector (a merge-on-read update). */
+  private def createAddFileRowWithDv(path: String, dv: DeletionVectorDescriptor): Row = {
+    val partitionValues =
+      PartitionUtils.serializePartitionMap(Collections.emptyMap[String, Literal]())
+    val addFileRow = AddFile.createAddFileRow(
+      testSchema,
+      path,
+      partitionValues,
+      100L, // size
+      System.currentTimeMillis(), // modificationTime
+      true, // dataChange
+      Optional.of(dv), // deletionVector
+      Optional.empty(), // tags
+      Optional.empty(), // baseRowId
+      Optional.empty(), // defaultRowCommitVersion
+      Optional.empty() // stats
+    )
+    SingleAction.createAddFileSingleAction(addFileRow)
+  }
+
   /** Create a table and seed it with two data files (file1.parquet, file2.parquet). */
   private def createTableWithTwoFiles(engine: Engine, tablePath: String): Unit = {
     commitTransaction(getCreateTxn(engine, tablePath, testSchema), engine, emptyIterable())
@@ -116,6 +145,34 @@ class ConflictResolutionSuite
           iterableOf(
             createRemoveFileRow("file1.parquet"),
             createAddFileRow("loser-new.parquet")))
+      }
+      assert(e.getMessage.contains("file1.parquet"))
+    }
+  }
+
+  test("conflict resolution - two concurrent DV updates to the same file fail") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createTableWithTwoFiles(engine, tablePath)
+
+      val losingTxn = getUpdateTxn(engine, tablePath)
+      val winningTxn = getUpdateTxn(engine, tablePath)
+
+      // Winner attaches a DV to file1.parquet: remove the old entry, re-add it with the new DV.
+      commitTransaction(
+        winningTxn,
+        engine,
+        iterableOf(
+          createRemoveFileRow("file1.parquet"),
+          createAddFileRowWithDv("file1.parquet", pathDv("winner"))))
+
+      // Loser attaches a different DV to the same file -> delete-vs-delete conflict.
+      val e = intercept[ConcurrentWriteException] {
+        commitTransaction(
+          losingTxn,
+          engine,
+          iterableOf(
+            createRemoveFileRow("file1.parquet"),
+            createAddFileRowWithDv("file1.parquet", pathDv("loser"))))
       }
       assert(e.getMessage.contains("file1.parquet"))
     }
