@@ -165,11 +165,32 @@ Delta makes **no guarantee about the referenced bytes**, because those bytes liv
 - The bytes may be overwritten or deleted independently of the table, so dereferencing a reference read from a historical version (via time travel or Change Data Feed) may fail or may return different bytes than when the reference was written. The `checksum` field, when present, allows a reader to detect that the bytes have changed, but does not allow it to recover the original bytes.
 - Availability of the referenced bytes is orthogonal to which table version is queried: time travel of the reference does not imply time travel of the bytes.
 
+## Storage Mode
+
+A `file` column optionally carries a **storage mode** that records whether the referenced bytes are `managed` (their lifecycle is intended to be governed by the table/engine) or `external` (owned entirely outside the table), or leaves the column unqualified. The storage mode is a property of the *column*, not of an individual value, and it is stored in the column's [schema metadata](#schema-serialization-format) rather than inside the `file` value. This is intentional: the physical `file` value must round-trip through the Parquet `FILE` logical type (and equivalents such as Iceberg's file reference), whose field set is fixed, so a mode stored inside the value would not survive the round-trip. Keeping the mode in schema metadata also lets it propagate through the Delta transaction log unchanged.
+
+The storage mode is recorded in the `__FILE_TYPE_MODE` key of the metadata of the nearest ancestor [StructField](#struct-field), as a JSON object mapping a field path to one of `MANAGED`, `EXTERNAL`, or `UNKNOWN`. Nested maps and arrays are encoded using the same field-path convention as identifiers in [IcebergCompatV2](#writer-requirements-for-icebergcompatv2) (for example, `arr.element`). This mirrors the representation used for the [Collated String Type](#collated-string-type) (`__COLLATIONS`). A `file` column with no `__FILE_TYPE_MODE` entry is an unqualified `file` reference.
+
+This RFC standardizes only the **representation** of the storage mode, so that a mode set by one engine propagates through the log and is visible to others. It does **not** assign any behavioral difference to `MANAGED` versus `EXTERNAL` in Delta: byte lifecycle, garbage collection, and access brokering are out of scope (see [Non-Goals](#non-goals)). Engines may attach their own semantics to the mode, but must not assume that reading or writing a mode changes how Delta itself manages the referenced bytes.
+
+Example schema for `profile_image FILE MANAGED` (irrelevant fields stripped):
+
+```
+{
+  "name" : "profile_image",
+  "type" : "file",
+  "nullable" : true,
+  "metadata" : {
+    "__FILE_TYPE_MODE" : { "profile_image" : "MANAGED" }
+  }
+}
+```
+
 ## Non-Goals
 
 The following are out of scope for this RFC:
 
-- **Lifecycle and garbage collection of referenced bytes.** This RFC defines `file` as a reference only; it does not specify how, or whether, the referenced bytes are created, retained, or reclaimed. In particular, it does not define a notion of Delta-managed referenced bytes or their interaction with `VACUUM`. Referenced bytes are managed out-of-band by the writer or an external system.
+- **Lifecycle and garbage collection of referenced bytes.** This RFC defines `file` as a reference only; it does not specify how, or whether, the referenced bytes are created, retained, or reclaimed. In particular, although the [Storage Mode](#storage-mode) may record that a column is `managed`, this RFC does not define any resulting behavior, nor any interaction with `VACUUM`. Referenced bytes are managed out-of-band by the writer or an external system.
 - **Access brokering and governance** of the referenced bytes (for example, catalog-vended credentials or signed URLs).
 
 --------
@@ -191,6 +212,12 @@ type | Always the string "file"
 Add the following row to the Primitive Types table:
 
 > file | A reference to a range of bytes located inline, elsewhere in the same data file, or in an external file. When stored in a Parquet file it is a group annotated with the Parquet `FILE` logical type. To use this type, a table must support the feature `fileType`. See section [File Data Type](#file-data-type).
+
+--------
+
+> ***Add a row to the [Column Metadata](#column-metadata) table***
+
+> \_\_FILE\_TYPE\_MODE | The [storage mode](#storage-mode) (`MANAGED`, `EXTERNAL`, or `UNKNOWN`) of `file`-typed fields, or combinations of maps and arrays, stored in this field. Encoded as a JSON object mapping field path to mode. See [Storage Mode](#storage-mode) for details.
 
 --------
 
