@@ -33,11 +33,11 @@ jobs:
       SPARK_VERSION: "4.2"
     steps:
       - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
-      - name: Prepare Spark environment
-        uses: ./.github/actions/prepare-spark-env
+      - name: install java
+        uses: actions/setup-java@17f84c3641ba7b8f6deff6309fc4c864478f5d62 # v3.14.1
         with:
-          spark-version: "4.2"
-          use-spark-source-cache: "true"
+          distribution: "zulu"
+          java-version: "17"
       - name: Restore SBT cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
