@@ -45,8 +45,10 @@ class DeltaV2BatchWriteContext {
 
   /** Returns the engine info string for Delta commit metadata. */
   static String getEngineInfo() {
-    return "Apache-Spark/" + org.apache.spark.package$.MODULE$.SPARK_VERSION()
-        + " Delta-Lake/" + io.delta.package$.MODULE$.VERSION();
+    return "Apache-Spark/"
+        + org.apache.spark.package$.MODULE$.SPARK_VERSION()
+        + " Delta-Lake/"
+        + io.delta.package$.MODULE$.VERSION();
   }
 
   private final Transaction transaction;

@@ -90,9 +90,7 @@ public class DeltaV2BatchWriteContextTest extends DeltaV2TestBase {
   }
 
   private static StructType tableSchema() {
-    return new StructType()
-        .add("id", DataTypes.IntegerType)
-        .add("name", DataTypes.StringType);
+    return new StructType().add("id", DataTypes.IntegerType).add("name", DataTypes.StringType);
   }
 
   private static class TestLogicalWriteInfo implements LogicalWriteInfo {
