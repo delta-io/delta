@@ -140,6 +140,8 @@ Required table features that must also be enabled:
 - `deletionVectors`: Deletes are represented as deletion vectors, not by rewriting files
 - `inCommitTimestamp`: Reliable timestamp-based metadata cleanup and time travel
 
+`adaptiveMetadata` and `v2Checkpoint` are mutually exclusive: a table must not enable both.
+
 ## Storage Layout
 
 When `adaptiveMetadata` is enabled, the table storage layout includes a `metadata/` directory alongside the standard `_delta_log/`:
@@ -518,7 +520,7 @@ Manifest commits have the following characteristics:
 
 Independently of commits, any writer can produce a standalone checkpoint file that references an existing metadata tree without producing a new one.
 
-A standalone checkpoint uses the V2 checkpoint naming scheme (`n.checkpoint.u.parquet`) and contains a `checkpoint` action. It must reference an existing tree via `contentRoot` and must not produce a new root manifest, so its `contentRoot.version` is that existing tree's version and is less than `checkpointMetadata.version`. File actions (`add`, `remove`) after `contentRoot.version` (up to `checkpointMetadata.version`) are included inline in the checkpoint file (not in sidecars). This keeps standalone checkpoints cheap: any writer can produce one without the cost of building a new tree. The inline file actions are bounded: if the volume of pending file actions were large, the writer would produce a manifest commit instead.
+A standalone checkpoint uses the classic single-file checkpoint naming (`n.checkpoint.parquet`) and contains the checkpoint's contents as separate rows — the `contentRoot` action, the non-content actions, and the file actions since the root. V2 checkpoint naming (`n.checkpoint.u.parquet`) is not used: the V2 `sidecar` column has a different meaning that would conflict with the `sidecar` actions used here. It must reference an existing tree via `contentRoot` and must not produce a new root manifest, so its `contentRoot.version` is that existing tree's version and is less than or equal to `checkpointMetadata.version`. File actions (`add`, `remove`) after `contentRoot.version` (up to `checkpointMetadata.version`) are included inline in the checkpoint file (not in sidecars). This keeps standalone checkpoints cheap: any writer can produce one without the cost of building a new tree. The inline file actions are bounded: if the volume of pending file actions were large, the writer would produce a manifest commit instead.
 
 ## Manifest Deletion Vectors (MDVs)
 
