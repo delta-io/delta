@@ -18,6 +18,9 @@ package io.sparkuctest;
 
 import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
 
+import io.sparkuctest.mock.CredentialTestFileSystem;
+import io.sparkuctest.mock.S3CredentialFileSystem;
+import io.sparkuctest.mock.TimeBasedCredGenerator;
 import io.unitycatalog.client.api.TablesApi;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
@@ -28,6 +31,7 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -140,7 +144,7 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     SparkConf conf =
         new SparkConf()
             .setAppName("UnityCatalog Integration Tests")
-            .setMaster("local[2]")
+            .setMaster("local[" + sparkWorkerThreads() + "]")
             .set("spark.ui.enabled", "false")
             // Delta Lake required configurations
             .set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
@@ -151,7 +155,26 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     // Configure with Unity Catalog
     conf = configureSparkWithUnityCatalog(conf);
 
+    // Applied last so subclasses can override the defaults above (e.g. fs.<scheme>.impl).
+    extraSparkConf().forEach(conf::set);
+
     sparkSession = SparkSession.builder().config(conf).getOrCreate();
+  }
+
+  /**
+   * Number of local-mode worker threads (the {@code N} in {@code local[N]}): how many tasks can run
+   * concurrently. Override to 1 when a test needs deterministic single-task execution.
+   */
+  protected int sparkWorkerThreads() {
+    return 2;
+  }
+
+  /**
+   * Extra Spark configuration applied after the Unity Catalog defaults, so entries here can
+   * override them. Subclasses override to add their own session config.
+   */
+  protected Map<String, String> extraSparkConf() {
+    return Map.of();
   }
 
   private SparkConf configureSparkWithUnityCatalog(SparkConf conf) {
@@ -160,6 +183,13 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
       conf.set("spark.hadoop.fs.s3.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem");
     } else {
       conf.set("spark.hadoop.fs.s3.impl", S3CredentialFileSystem.class.getName());
+      // These suites run on the wall clock (no manual clock), so give the FS a long validity
+      // duration matching the generator's: the FS's containment check (now within [mint, mint +
+      // duration)) must not trip on the few millis of wall-clock drift between resolving a
+      // credential and reading the clock.
+      conf.set(
+          "spark.hadoop." + CredentialTestFileSystem.DURATION_CONF_KEY,
+          Long.toString(TimeBasedCredGenerator.SYSTEM_CLOCK_DURATION_MILLIS));
     }
 
     // Set the catalog specific configs.

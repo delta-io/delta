@@ -16,6 +16,7 @@
 
 package io.sparkuctest;
 
+import io.sparkuctest.mock.S3CredentialFileSystem;
 import io.unitycatalog.client.delta.api.DeltaTablesApi;
 import io.unitycatalog.client.delta.model.DeltaLoadTableResponse;
 import java.time.Instant;

@@ -16,6 +16,7 @@
 
 package io.sparkuctest;
 
+import io.sparkuctest.mock.S3CredentialFileSystem;
 import java.util.List;
 import org.junit.jupiter.api.Assertions;
 
