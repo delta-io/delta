@@ -17,6 +17,7 @@ package io.sparkuctest;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.sparkuctest.mock.S3CredentialFileSystem;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;

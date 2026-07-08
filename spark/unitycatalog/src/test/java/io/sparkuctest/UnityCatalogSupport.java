@@ -17,6 +17,8 @@
 package io.sparkuctest;
 
 import com.google.common.base.Preconditions;
+import io.sparkuctest.mock.AwsTimeBasedCredGenerator;
+import io.sparkuctest.mock.CredentialTestFileSystem;
 import io.sparkuctest.mock.MockOAuthBroker;
 import io.unitycatalog.client.ApiClient;
 import io.unitycatalog.client.ApiClientBuilder;
@@ -123,7 +125,7 @@ public abstract class UnityCatalogSupport {
   public static final String MOCK_OAUTH_CLIENT_SECRET = "test-client-secret";
 
   /** The fake S3 bucket name used for local integration tests. */
-  static final String FAKE_S3_BUCKET = "fakeS3Bucket";
+  public static final String FAKE_S3_BUCKET = CredentialTestFileSystem.BUCKET_NAME;
 
   // Environment variables for configuring access to remote unity catalog server.
   public static final String UC_REMOTE = "UC_REMOTE";
@@ -176,8 +178,8 @@ public abstract class UnityCatalogSupport {
    * mode runs the broker; remote runs authenticate against a real IdP, so there is none to count.
    */
   protected int oauthIssuedTokenCount() {
-    Preconditions.checkState(
-        mockOAuthBroker != null,
+    Preconditions.checkNotNull(
+        mockOAuthBroker,
         "oauthIssuedTokenCount() requires the local mock OAuth broker, which runs only for a "
             + "local server in OAUTH mode");
     return mockOAuthBroker.issuedTokenCount();
@@ -197,6 +199,19 @@ public abstract class UnityCatalogSupport {
 
   /** The temporary directory for external table location */
   private File ucBaseTableLocation = null;
+
+  /**
+   * The local-mode base directory under the fake bucket that external test table locations live in
+   * (the path component of {@link UnityCatalogInfo#baseTableLocation()}). Local-server tests build
+   * a LOCATION as {@code <scheme>://FAKE_S3_BUCKET + baseTableDir() + "/" + name}. Only valid for
+   * the embedded local server; remote runs configure their location via {@code
+   * UC_BASE_TABLE_LOCATION}.
+   */
+  protected String baseTableDir() {
+    Preconditions.checkNotNull(
+        ucBaseTableLocation, "baseTableDir() is only available for the local UC server");
+    return ucBaseTableLocation.getAbsolutePath();
+  }
 
   /** Mock OAuth broker (client-credentials front + OIDC IdP + exchange); started for OAUTH. */
   private MockOAuthBroker mockOAuthBroker;
@@ -274,8 +289,8 @@ public abstract class UnityCatalogSupport {
     String oauthClientId = null;
     String oauthClientSecret = null;
     if (authMode() == AuthMode.OAUTH) {
-      Preconditions.checkState(
-          mockOAuthBroker != null, "mock OAuth broker must be started for a local OAUTH server");
+      Preconditions.checkNotNull(
+          mockOAuthBroker, "mock OAuth broker must be started for a local OAUTH server");
       oauthTokenUri = mockOAuthBroker.tokenEndpoint();
       oauthClientId = MOCK_OAUTH_CLIENT_ID;
       oauthClientSecret = MOCK_OAUTH_CLIENT_SECRET;
@@ -342,6 +357,11 @@ public abstract class UnityCatalogSupport {
     serverProps.setProperty("s3.accessKey.0", "fakeAccessKey");
     serverProps.setProperty("s3.secretKey.0", "fakeSecretKey");
     serverProps.setProperty("s3.sessionToken.0", "fakeSessionToken");
+    // Vend timestamp-stamped, expiring credentials (system clock, long duration by default) so the
+    // shared S3CredentialFileSystem checks a real vended credential from the connector's provider
+    // path rather than a fixed dummy value. (Time-based renewal is exercised by the renewal suites,
+    // which switch this same generator to the manual clock.)
+    serverProps.setProperty("s3.credentialGenerator.0", AwsTimeBasedCredGenerator.class.getName());
     if (authMode() == AuthMode.OAUTH) {
       // Server-validating OAuth: enable authorization, trust the broker's issuer, and require the
       // audience it mints.

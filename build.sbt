@@ -969,6 +969,22 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
         ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
         ExclusionRule(organization = "com.fasterxml.jackson.dataformat")
       ),
+      // Provides CredScopedFileSystem, the *VendedTokenProvider classes and UCHadoopConfConstants
+      // used by the storage-credential-renewal integration tests (io.sparkuctest).
+      "io.unitycatalog" % "unitycatalog-hadoop" % unityCatalogVersion % "test" excludeAll(
+        ExclusionRule(organization = "com.fasterxml.jackson.core"),
+        ExclusionRule(organization = "com.fasterxml.jackson.module"),
+        ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
+        ExclusionRule(organization = "com.fasterxml.jackson.dataformat")
+      ),
+      // Provides com.google.cloud.hadoop.util.AccessTokenProvider for the GCS credential-renewal
+      // test (GcsCredRenewIT); google-auth (AccessToken) is already on the test classpath. Pinned
+      // to 3.0.2 because older versions on the default classpath fail at runtime with a
+      // NoSuchMethodError on the google-auth AccessToken(String, Instant) constructor.
+      "com.google.cloud.bigdataoss" % "util-hadoop" % "3.0.2" % "test",
+      // Provides org.apache.hadoop.fs.azurebfs.extensions.SASTokenProvider, implemented by
+      // AbfsVendedTokenProvider, for the Azure credential-renewal test (AbfsCredRenewIT).
+      "org.apache.hadoop" % "hadoop-azure" % hadoopVersion % "test",
 
       // Spark test dependencies
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test",
