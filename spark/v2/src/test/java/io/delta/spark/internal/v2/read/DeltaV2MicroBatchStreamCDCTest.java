@@ -58,7 +58,7 @@ import scala.collection.immutable.Map$;
 import scala.collection.immutable.Seq;
 
 /** Tests for DeltaV2MicroBatchStream CDC (Change Data Capture) support and DSv1/DSv2 parity. */
-public class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
+class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
 
   // TODO(cdf3): Add test for CDF enabled in initial snapshot but disabled in a later commit.
 
