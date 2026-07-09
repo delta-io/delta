@@ -20,13 +20,17 @@ import java.util.UUID
 
 import org.apache.spark.sql.delta.{
   DeltaLog,
+  IcebergCompatBase,
   IcebergCompatUtilsBase,
+  IcebergCompatV3,
   UniFormWithIcebergCompatV1SuiteBase,
   UniFormWithIcebergCompatV2SuiteBase,
   UniversalFormatMiscSuiteBase,
   UniversalFormatSuiteBase}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeltaReorgTableCommand
 import org.apache.spark.sql.delta.icebergShaded.IcebergTransactionUtils
+import org.apache.spark.sql.delta.uniform.UniFormIcebergVerifier
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{DataFrame, Row, SparkSession}
@@ -67,3 +71,46 @@ class UniFormWithIcebergCompatV1Suite
 class UniFormWithIcebergCompatV2Suite
     extends UniversalFormatSuiteUtilsBase
     with UniFormWithIcebergCompatV2SuiteBase
+
+class UniFormWithIcebergCompatV3Suite
+  extends IcebergCompatUtilsBase
+    with WriteDeltaUCCCReadIceberg {
+
+  import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+
+  override val compatObject: IcebergCompatBase = IcebergCompatV3
+
+  override def executeSql(sqlStr: String): DataFrame = write(sqlStr)
+
+  override def withTempTableAndDir(f: (String, String) => Unit): Unit = {
+    val tableId = s"testTable${UUID.randomUUID()}".replace("-", "_")
+    withTempDir { dir =>
+      val tablePath = new Path(dir.toString, "table")
+
+      withTable(tableId) {
+        f(tableId, s"'$tablePath'")
+      }
+    }
+  }
+
+  test("row tracking information should be converted") {
+    withTempTableAndDir { case (id, _) =>
+      executeSql(
+        s"""
+           |CREATE TABLE $id (ID INT) USING DELTA TBLPROPERTIES (
+           |  'delta.universalFormat.enabledFormats' = 'iceberg',
+           |  'delta.enableIcebergCompatV$compatVersion' = 'true'
+           |  $requiredTableProperties
+           |)""".stripMargin)
+      executeSql(s"insert into $id values (1), (2), (3)")
+      executeSql(s"update $id set id = 100 where id = 1")
+
+      val identifier = TableIdentifier(id)
+      val table = DeltaTableV2(spark, identifier)
+      val deltaLog = table.deltaLog
+      val icebergTable = UniFormIcebergVerifier.loadIcebergTableFromUC(id)
+
+      new UniFormIcebergVerifier(spark, deltaLog, table.catalogTable, icebergTable).verify()
+    }
+  }
+}

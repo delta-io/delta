@@ -41,6 +41,8 @@ object GeoTypesShim {
     case _ => false
   }
 
+  val geoTypes: Seq[Class[_]] = Seq(classOf[GeometryType], classOf[GeographyType])
+
   /**
    * If `dt` is a geospatial type with an unsupported SRID, returns `Some(srid)`. Returns
    * `None` for non-geospatial types or geospatial types with supported SRIDs.
