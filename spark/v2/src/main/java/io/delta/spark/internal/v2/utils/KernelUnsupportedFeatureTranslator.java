@@ -54,16 +54,20 @@ public final class KernelUnsupportedFeatureTranslator {
   /**
    * Translates a Kernel {@link UnsupportedTableFeatureException} into Delta's {@link
    * DeltaUnsupportedTableFeatureException} ({@code DELTA_UNSUPPORTED_FEATURES_FOR_READ}), carrying
-   * the unsupported feature name(s) and table path.
+   * the unsupported feature name(s) and table path, and setting the Kernel exception as the cause.
    *
    * @param kernelException the Kernel exception to translate
    * @return the equivalent Delta exception, to be thrown by the caller
    */
   public static DeltaUnsupportedTableFeatureException toUnsupportedReaderFeatureException(
       UnsupportedTableFeatureException kernelException) {
-    return DeltaErrors.unsupportedReaderTableFeaturesInTableException(
-        kernelException.getTablePath(),
-        CollectionConverters.asScala(kernelException.getUnsupportedFeatures()));
+    DeltaUnsupportedTableFeatureException translated =
+        DeltaErrors.unsupportedReaderTableFeaturesInTableException(
+            kernelException.getTablePath(),
+            CollectionConverters.asScala(kernelException.getUnsupportedFeatures()));
+    // Preserve the Kernel exception (and its stack) as the cause.
+    translated.initCause(kernelException);
+    return translated;
   }
 
   /**
