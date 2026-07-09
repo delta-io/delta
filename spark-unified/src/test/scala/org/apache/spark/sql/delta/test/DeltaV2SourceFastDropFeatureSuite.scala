@@ -39,19 +39,10 @@ class DeltaV2SourceFastDropFeatureSuite
   )
 
   override protected def shouldFailTests: Set[String] = Set(
-    // Artifact of how the two connectors decide a reader feature is unsupported, not a
-    // restart/streaming defect and not a translation gap. Both connectors build and protocol-check
-    // the latest snapshot when the stream is defined; they only differ in what counts as
-    // unsupported. testUnsupportedReaderWriter is a test-only feature: the V1 path registers it as
-    // supported and only treats it as unsupported when UNSUPPORTED_TESTING_FEATURES_ENABLED is on,
-    // whereas the Kernel-backed V2 path does not know the feature at all and never reads that
-    // config, so it rejects unconditionally. This test builds its first stream while the feature is
-    // still at the latest version and that config is off, so DSv1 accepts it (feature "supported")
-    // but V2 throws immediately at stream construction, before the drop and restart the test is
-    // trying to exercise. The restart path itself is fine on V2 -- verified separately that when
-    // the latest is clean and the unsupported feature sits in history after the checkpoint, both
-    // connectors resume from the checkpoint and fail identically on read-forward with
-    // DELTA_UNSUPPORTED_FEATURES_FOR_READ.
+    // Builds its first stream while testUnsupportedReaderWriter is still at the latest version.
+    // DSv1 gates that test-only feature on UNSUPPORTED_TESTING_FEATURES_ENABLED (off here) and
+    // accepts it, but Kernel-backed V2 doesn't know the feature and rejects unconditionally at
+    // stream construction -- before the drop and restart this test means to exercise.
     "Protocol validations after restarting from a checkpoint"
   )
 }
