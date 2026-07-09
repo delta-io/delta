@@ -2647,9 +2647,11 @@ trait DeltaErrorsBase
   }
 
   def metadataChangedException(
+      table: String,
       conflictingCommit: Option[CommitInfo]): io.delta.exceptions.MetadataChangedException = {
     new io.delta.exceptions.MetadataChangedException(
       Array(
+        table,
         conflictingCommit.map(ci => s"\nConflicting commit: ${JsonUtils.toJson(ci)}").getOrElse(""),
         DeltaErrors.generateDocsLink(SparkEnv.get.conf, "/concurrency-control.html"))
     )

@@ -2059,7 +2059,7 @@
   },
   "DELTA_METADATA_CHANGED" : {
     "message" : [
-      "MetadataChangedException: The metadata of the Delta table has been changed by a concurrent update. Please try the operation again.<conflictingCommit>\nRefer to <docLink> for more details."
+      "MetadataChangedException: The metadata of the Delta table <tableName> has been changed by a concurrent update. Please try the operation again.<conflictingCommit>\nRefer to <docLink> for more details."
     ],
     "sqlState" : "2D521"
   },

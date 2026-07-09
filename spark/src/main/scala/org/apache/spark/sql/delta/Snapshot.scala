@@ -157,6 +157,16 @@ class Snapshot(
   override def columnMappingMode: DeltaColumnMappingMode = metadata.columnMappingMode
 
   /**
+   * Returns the catalog-qualified table name when available, falling back to the table's metadata
+   * name and finally to its path. Intended for use in user-facing error messages.
+   */
+  def tableNameOrPath(catalogTable: Option[CatalogTable]): String = {
+    // `metadata.name` might be null, so we wrap it with an Option.
+    Option(catalogTable.map(_.qualifiedName).getOrElse(metadata.name))
+      .getOrElse(s"delta.`$dataPath`")
+  }
+
+  /**
    * Returns the timestamp of the latest commit of this snapshot.
    * For an uninitialized snapshot, this returns -1.
    *
