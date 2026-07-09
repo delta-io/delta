@@ -202,10 +202,8 @@ public class ParquetFileWriter {
               "Failed to write the Parquet file: " + parquetOutputFile.getPath(), e);
         } finally {
           if (!committed) {
-            // The row source (e.g. a checkpoint log replay) failed part-way through - or the
-            // checked-exception branch above is unwinding. Abort so the partially written file is
-            // never published: the abort-aware close() cancels the underlying write (e.g. aborts
-            // the object-store multipart upload, or deletes the temp file and skips the rename).
+            // the read failed before completing; abort the write so no partial
+            // file is published in the subsequent close()
             parquetOutputFile.abort();
           }
           if (writer != null) {
