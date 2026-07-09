@@ -390,6 +390,7 @@ trait DeltaCheckpointTestUtils
     val fileActionsFileIndex = ci.format match {
       case CheckpointInstance.Format.V2 =>
         val incompleteCheckpointProvider = ci.getCheckpointProvider(log, allCheckpointFiles)
+          .asInstanceOf[FileBasedUninitializedCheckpointProvider]
         val df = log.loadIndex(incompleteCheckpointProvider.topLevelFileIndex.get, Action.logSchema)
         val sidecarFileStatuses = df.as[SingleAction].collect().map(_.unwrap).collect {
           case sf: SidecarFile => sf
