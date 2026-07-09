@@ -27,6 +27,7 @@ import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.data.StructRow;
 import io.delta.kernel.internal.util.JsonUtils;
 import io.delta.kernel.types.ArrayType;
+import io.delta.kernel.types.FieldMetadata;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.StringType;
@@ -69,9 +70,17 @@ public class CheckpointMetaData {
           .add("v2Checkpoint", V2_CHECKPOINT_SCHEMA, true /* nullable */)
           .add("checksum", StringType.STRING, true /* nullable */)
           .add(
-              "tags",
-              new MapType(StringType.STRING, StringType.STRING, false),
-              true /* nullable */);
+              "tags", new MapType(StringType.STRING, StringType.STRING, false), true /* nullable */)
+          // `checkpointSchema` is a recursive, polymorphic schema-of-schema object (a serialized
+          // StructType) that the columnar reader cannot project into a fixed schema. It is declared
+          // as a String carrying the raw-JSON marker so the reader can capture its exact JSON text.
+          .add(
+              "checkpointSchema",
+              StringType.STRING,
+              true /* nullable */,
+              FieldMetadata.builder()
+                  .putBoolean(JsonUtils.RAW_JSON_FIELD_METADATA_KEY, true)
+                  .build());
 
   private static final int VERSION_ORDINAL = 0;
   private static final int SIZE_ORDINAL = 1;
@@ -81,6 +90,7 @@ public class CheckpointMetaData {
   private static final int V2_CHECKPOINT_ORDINAL = 5;
   private static final int CHECKSUM_ORDINAL = 6;
   private static final int TAGS_ORDINAL = 7;
+  private static final int CHECKPOINT_SCHEMA_ORDINAL = 8;
 
   public static CheckpointMetaData fromRow(Row row) {
     return new CheckpointMetaData(
@@ -102,7 +112,11 @@ public class CheckpointMetaData {
         row.isNullAt(CHECKSUM_ORDINAL)
             ? Optional.empty()
             : Optional.of(row.getString(CHECKSUM_ORDINAL)),
-        row.isNullAt(TAGS_ORDINAL) ? Map.of() : toJavaMap(row.getMap(TAGS_ORDINAL)));
+        row.isNullAt(TAGS_ORDINAL) ? Map.of() : toJavaMap(row.getMap(TAGS_ORDINAL)),
+        // Captured as raw JSON text by the reader
+        row.isNullAt(CHECKPOINT_SCHEMA_ORDINAL)
+            ? Optional.empty()
+            : Optional.of(row.getString(CHECKPOINT_SCHEMA_ORDINAL)));
   }
 
   public final long version;
@@ -113,6 +127,7 @@ public class CheckpointMetaData {
   public final Optional<Row> v2Checkpoint;
   public final Optional<String> checksum;
   public final Map<String, String> tags;
+  public final Optional<String> checkpointSchema;
 
   public CheckpointMetaData(long version, long size, Optional<Long> parts) {
     this(
@@ -123,7 +138,8 @@ public class CheckpointMetaData {
         Optional.empty() /* numOfAddFiles */,
         Optional.empty() /* v2Checkpoint */,
         Optional.empty() /* checksum */,
-        Map.of() /* tags */);
+        Map.of() /* tags */,
+        Optional.empty() /* checkpointSchema */);
   }
 
   public CheckpointMetaData(
@@ -136,7 +152,8 @@ public class CheckpointMetaData {
         Optional.empty() /* numOfAddFiles */,
         Optional.empty() /* v2Checkpoint */,
         Optional.empty() /* checksum */,
-        tags);
+        tags,
+        Optional.empty() /* checkpointSchema */);
   }
 
   public CheckpointMetaData(
@@ -148,6 +165,28 @@ public class CheckpointMetaData {
       Optional<Row> v2Checkpoint,
       Optional<String> checksum,
       Map<String, String> tags) {
+    this(
+        version,
+        size,
+        parts,
+        sizeInBytes,
+        numOfAddFiles,
+        v2Checkpoint,
+        checksum,
+        tags,
+        Optional.empty() /* checkpointSchema */);
+  }
+
+  public CheckpointMetaData(
+      long version,
+      long size,
+      Optional<Long> parts,
+      Optional<Long> sizeInBytes,
+      Optional<Long> numOfAddFiles,
+      Optional<Row> v2Checkpoint,
+      Optional<String> checksum,
+      Map<String, String> tags,
+      Optional<String> checkpointSchema) {
     this.version = version;
     this.size = size;
     this.parts = parts;
@@ -156,6 +195,7 @@ public class CheckpointMetaData {
     this.v2Checkpoint = v2Checkpoint;
     this.checksum = checksum;
     this.tags = tags;
+    this.checkpointSchema = checkpointSchema;
   }
 
   public Row toRow() {
@@ -170,6 +210,7 @@ public class CheckpointMetaData {
     if (!tags.isEmpty()) {
       dataMap.put(TAGS_ORDINAL, stringStringMapValue(tags));
     }
+    checkpointSchema.ifPresent(str -> dataMap.put(CHECKPOINT_SCHEMA_ORDINAL, str));
 
     return new GenericRow(READ_SCHEMA, dataMap);
   }
@@ -197,6 +238,8 @@ public class CheckpointMetaData {
         + checksum
         + ", tags="
         + tags
+        + ", checkpointSchema="
+        + checkpointSchema
         + '}';
   }
 }

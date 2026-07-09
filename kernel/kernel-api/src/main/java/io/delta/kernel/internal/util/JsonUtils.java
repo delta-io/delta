@@ -50,6 +50,34 @@ public class JsonUtils {
   private static final ObjectMapper MAPPER = new ObjectMapper();
   private static final JsonFactory FACTORY = new JsonFactory();
 
+  /**
+   * {@link FieldMetadata} key marking a {@link StringType} schema field whose value is a nested
+   * JSON document (an object or array), not a JSON string literal.
+   *
+   * <p>A field marked with this key is handled specially by both the reader and the writer, keeping
+   * this class free of any knowledge of specific field names:
+   *
+   * <ul>
+   *   <li><b>Read</b> (e.g. {@code DefaultJsonRow}): the field's raw JSON text is captured verbatim
+   *       into the {@code String} value, rather than type-decoded. This lets a recursive,
+   *       polymorphic JSON object (which the columnar reader cannot project into a fixed schema) be
+   *       carried through as a {@code String}.
+   *   <li><b>Write</b> ({@link #rowToJson}): the {@code String} is spliced back into the output as
+   *       raw JSON via {@link JsonGenerator#writeRawValue(String)} instead of being quoted and
+   *       escaped by {@link JsonGenerator#writeString(String)}.
+   * </ul>
+   */
+  public static final String RAW_JSON_FIELD_METADATA_KEY = "__kernel_rawJson";
+
+  /**
+   * Whether {@code field} is a raw-JSON field (see {@link #RAW_JSON_FIELD_METADATA_KEY}). Shared by
+   * the read and write paths so the two cannot disagree on which fields get raw-JSON handling.
+   */
+  public static boolean isRawJsonField(StructField field) {
+    return field.getDataType() instanceof StringType
+        && Boolean.TRUE.equals(field.getMetadata().getBoolean(RAW_JSON_FIELD_METADATA_KEY));
+  }
+
   public static JsonFactory factory() {
     return FACTORY;
   }
@@ -101,7 +129,12 @@ public class JsonUtils {
       StructField field = schema.at(ordinal);
       if (!row.isNullAt(ordinal)) {
         gen.writeFieldName(field.getName());
-        writeValue(gen, row, ordinal, field.getDataType());
+        if (isRawJsonField(field)) {
+          // Splice the string in unquoted so it stays a JSON object/array
+          gen.writeRawValue(row.getString(ordinal));
+        } else {
+          writeValue(gen, row, ordinal, field.getDataType());
+        }
       }
     }
     gen.writeEndObject();
@@ -115,7 +148,11 @@ public class JsonUtils {
       ColumnVector childVector = vector.getChild(ordinal);
       if (!childVector.isNullAt(rowId)) {
         gen.writeFieldName(field.getName());
-        writeValue(gen, childVector, rowId, field.getDataType());
+        if (isRawJsonField(field)) {
+          gen.writeRawValue(childVector.getString(rowId));
+        } else {
+          writeValue(gen, childVector, rowId, field.getDataType());
+        }
       }
     }
     gen.writeEndObject();

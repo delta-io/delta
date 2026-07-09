@@ -354,6 +354,7 @@ object CheckpointerSuite extends VectorTestUtils {
         case 5 => nullVector(CheckpointMetaData.READ_SCHEMA.at(5).getDataType) // v2Checkpoint
         case 6 => stringVector(Seq(null)) // checksum
         case 7 => mapTypeVector(Seq(Map.empty[String, String])) // tags
+        case 8 => stringVector(Seq(null)) // checkpointSchema
       }
     }
 

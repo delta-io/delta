@@ -27,6 +27,7 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.internal.DefaultKernelUtils;
 import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector;
 import io.delta.kernel.internal.util.InternalUtils;
+import io.delta.kernel.internal.util.JsonUtils;
 import io.delta.kernel.internal.util.TimestampUtils;
 import io.delta.kernel.types.*;
 import java.math.BigDecimal;
@@ -390,6 +391,10 @@ public class DefaultJsonRow implements Row {
           String.format(
               "Root node at key %s is null but field isn't nullable. Root node: %s",
               field.getName(), rootNode));
+    }
+
+    if (JsonUtils.isRawJsonField(field)) {
+      return rootNode.get(field.getName()).toString();
     }
 
     return decodeElement(rootNode.get(field.getName()), field.getDataType());

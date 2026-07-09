@@ -143,4 +143,52 @@ class DefaultJsonRowSuite extends AnyFunSuite with TestUtils with VectorTestUtil
       assert(JsonUtils.rowToJson(actRow) === expJson.linesIterator.mkString)
     }
   }
+
+  test("DefaultJsonRow raw-JSON field: nested object captured verbatim and spliced back") {
+    // Test that the reader of a StringType field marked with the raw-JSON key
+    // captures its exact text and is spliced back (unquoted) as a JSON object.
+    val rawJson = new FieldMetadata.Builder()
+      .putBoolean(JsonUtils.RAW_JSON_FIELD_METADATA_KEY, true)
+      .build()
+    val schema = new StructType()
+      .add("plain", StringType.STRING, true)
+      .add("nested", StringType.STRING, true, rawJson)
+
+    val nestedObject = """{"type":"struct","fields":[{"name":"id","type":"long"}]}"""
+    val testJson = s"""{"plain":"hi","nested":$nestedObject}"""
+
+    val row = DefaultJsonRow.fromJsonString(testJson, schema)
+    assert(row.getString(1) === nestedObject)
+    assert(row.getString(0) === "hi")
+
+    val out = JsonUtils.rowToJson(row)
+    assert(out === s"""{"plain":"hi","nested":$nestedObject}""")
+    assert(out.contains("\"nested\":{"))
+    assert(!out.contains("\"nested\":\""))
+  }
+
+  test("DefaultJsonRow raw-JSON field: nested array captured verbatim") {
+    val rawJson = new FieldMetadata.Builder()
+      .putBoolean(JsonUtils.RAW_JSON_FIELD_METADATA_KEY, true)
+      .build()
+    val schema = new StructType().add("arr", StringType.STRING, true, rawJson)
+
+    val nestedArray = """[1,2,{"k":"v"}]"""
+    val row = DefaultJsonRow.fromJsonString(s"""{"arr":$nestedArray}""", schema)
+    assert(row.getString(0) === nestedArray)
+    assert(JsonUtils.rowToJson(row) === s"""{"arr":$nestedArray}""")
+  }
+
+  test("DefaultJsonRow raw-JSON field: absent nullable field stays null and is omitted") {
+    val rawJson = new FieldMetadata.Builder()
+      .putBoolean(JsonUtils.RAW_JSON_FIELD_METADATA_KEY, true)
+      .build()
+    val schema = new StructType()
+      .add("plain", StringType.STRING, true)
+      .add("nested", StringType.STRING, true, rawJson)
+
+    val row = DefaultJsonRow.fromJsonString("""{"plain":"hi"}""", schema)
+    assert(row.isNullAt(1))
+    assert(JsonUtils.rowToJson(row) === """{"plain":"hi"}""")
+  }
 }
