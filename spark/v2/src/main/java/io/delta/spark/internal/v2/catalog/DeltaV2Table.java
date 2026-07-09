@@ -23,8 +23,10 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.rowtracking.RowTracking;
+import io.delta.spark.internal.v2.exception.TimestampOutOfRangeException;
 import io.delta.spark.internal.v2.read.MetadataEvolutionHandler;
 import io.delta.spark.internal.v2.read.SparkScanBuilder;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
@@ -334,6 +336,38 @@ public class DeltaV2Table
     return catalogTable.isPresent()
         ? new DeltaV2Table(identifier, catalogTable.get(), options, OptionalLong.of(version))
         : new DeltaV2Table(identifier, tablePath, options, OptionalLong.of(version));
+  }
+
+  /** Returns a copy of this table pinned to the snapshot active at {@code timestampMicros}. */
+  public DeltaV2Table withTimestamp(long timestampMicros) {
+    return withVersion(resolveTimestampToVersion(snapshotManager, timestampMicros));
+  }
+
+  /**
+   * Resolves a time travel timestamp to the active commit version using the Kernel snapshot
+   * manager.
+   *
+   * <p>This loads the latest snapshot more than once (here and inside the Kernel lookup), make it
+   * share a singular load once the snapshot manager exposes it TODO(#5999).
+   */
+  private static long resolveTimestampToVersion(
+      DeltaSnapshotManager manager, long timestampMicros) {
+    long timeMillis = timestampMicros / 1000;
+    DeltaHistoryManager.Commit commit =
+        manager.getActiveCommitAtTime(
+            timeMillis,
+            /* canReturnLastCommit = */ true,
+            /* mustBeRecreatable = */ true,
+            /* canReturnEarliestCommit = */ true);
+    long latestVersion = manager.loadLatestSnapshot().getVersion();
+    if (commit.getTimestamp() > timeMillis) {
+      // The earliest available commit is younger than the requested time.
+      throw new TimestampOutOfRangeException(timeMillis, commit.getTimestamp(), false);
+    } else if (commit.getVersion() == latestVersion && commit.getTimestamp() < timeMillis) {
+      // The requested time is after the latest commit.
+      throw new TimestampOutOfRangeException(timeMillis, commit.getTimestamp(), true);
+    }
+    return commit.getVersion();
   }
 
   /**
