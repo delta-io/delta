@@ -70,6 +70,50 @@ class DeltaV2BatchWriteContext {
     return new DeltaV2BatchWriteContext(engine, hadoopConf, tablePath, initialSnapshot, writeInfo);
   }
 
+  private static void verifySchemaForWrite(DeltaParquetFileFormatV2 format, StructType dataSchema) {
+    try {
+      org.apache.spark.sql.execution.datasources.DataSourceUtils.class
+          .getMethod(
+              "verifySchema",
+              org.apache.spark.sql.execution.datasources.FileFormat.class,
+              StructType.class,
+              boolean.class)
+          .invoke(null, format, dataSchema, false);
+    } catch (NoSuchMethodException e) {
+      invokeLegacyVerifySchema(format, dataSchema);
+    } catch (java.lang.reflect.InvocationTargetException e) {
+      throwUnchecked(e.getCause());
+    } catch (IllegalAccessException e) {
+      throw new IllegalStateException("Unable to verify Parquet write schema", e);
+    }
+  }
+
+  private static void invokeLegacyVerifySchema(
+      DeltaParquetFileFormatV2 format, StructType dataSchema) {
+    try {
+      org.apache.spark.sql.execution.datasources.DataSourceUtils.class
+          .getMethod(
+              "verifySchema",
+              org.apache.spark.sql.execution.datasources.FileFormat.class,
+              StructType.class)
+          .invoke(null, format, dataSchema);
+    } catch (java.lang.reflect.InvocationTargetException e) {
+      throwUnchecked(e.getCause());
+    } catch (ReflectiveOperationException e) {
+      throw new IllegalStateException("Unable to verify Parquet write schema", e);
+    }
+  }
+
+  private static void throwUnchecked(Throwable cause) {
+    if (cause instanceof RuntimeException) {
+      throw (RuntimeException) cause;
+    }
+    if (cause instanceof Error) {
+      throw (Error) cause;
+    }
+    throw new IllegalStateException("Unable to verify Parquet write schema", cause);
+  }
+
   private DeltaV2BatchWriteContext(
       Engine engine,
       Configuration hadoopConf,
@@ -125,7 +169,7 @@ class DeltaV2BatchWriteContext {
             /* optimizationsEnabled */ true,
             /* useMetadataRowIndex */ Option.empty(),
             /* isCDCRead */ false);
-    org.apache.spark.sql.execution.datasources.DataSourceUtils.verifySchema(format, dataSchema);
+    verifySchemaForWrite(format, dataSchema);
     org.apache.spark.sql.execution.datasources.DataSourceUtils.checkFieldNames(format, dataSchema);
     Map<String, String> options = writeInfo.options().asCaseSensitiveMap();
     scala.collection.immutable.Map<String, String> scalaOpts =
