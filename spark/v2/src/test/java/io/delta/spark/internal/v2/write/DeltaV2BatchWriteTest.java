@@ -162,14 +162,7 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
             .loadLatestSnapshot();
     LogicalWriteInfo info =
         WriteTestUtils.logicalWriteInfo(TABLE_SCHEMA, CaseInsensitiveStringMap.empty());
-    DeltaV2Write write =
-        new DeltaV2Write(
-            defaultEngine,
-            spark.sessionState().newHadoopConf(),
-            path,
-            snapshot,
-            TABLE_SCHEMA,
-            info);
-    return (DeltaV2BatchWrite) write.toBatch();
+    return new DeltaV2BatchWrite(
+        defaultEngine, spark.sessionState().newHadoopConf(), path, snapshot, info);
   }
 }
