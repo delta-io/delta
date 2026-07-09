@@ -58,6 +58,12 @@ trait TransactionHelper extends DeltaLogging {
   def protocol: Protocol
 
   /**
+   * Returns the catalog-qualified table name when available, falling back to the table's metadata
+   * name and finally to its path.
+   */
+  def tableNameOrPath: String = snapshot.tableNameOrPath(catalogTable)
+
+  /**
    * Default [[IsolationLevel]] as set in table metadata.
    */
   private[delta] def getDefaultIsolationLevel(): IsolationLevel = {

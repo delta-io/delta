@@ -122,7 +122,7 @@ trait DeltaErrorsSuiteBase
     "concurrentTransactionException" ->
       DeltaErrors.concurrentTransactionException(None),
     "metadataChangedException" ->
-      DeltaErrors.metadataChangedException(None),
+      DeltaErrors.metadataChangedException("test_table", None),
     "protocolChangedException" ->
       DeltaErrors.protocolChangedException(None)
   )
@@ -2909,11 +2909,14 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[io.delta.exceptions.MetadataChangedException] {
-        throw org.apache.spark.sql.delta.DeltaErrors.metadataChangedException(None)
+        throw org.apache.spark.sql.delta.DeltaErrors
+          .metadataChangedException("test_table", None)
       }
-      checkError(e, "DELTA_METADATA_CHANGED", "2D521", Map.empty[String, String])
-      assert(e.getMessage.contains("The metadata of the Delta table has been changed by a " +
-        "concurrent update."))
+      checkError(e, "DELTA_METADATA_CHANGED", "2D521",
+        Map(
+          "tableName" -> "test_table",
+          "conflictingCommit" -> "",
+          "docLink" -> generateDocsLink("/concurrency-control.html")))
     }
     {
       val e = intercept[DeltaAnalysisException] {
