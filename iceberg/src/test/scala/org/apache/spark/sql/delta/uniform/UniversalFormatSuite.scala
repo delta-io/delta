@@ -102,8 +102,14 @@ class UniFormWithIcebergCompatV3Suite
            |  'delta.enableIcebergCompatV$compatVersion' = 'true'
            |  $requiredTableProperties
            |)""".stripMargin)
-      executeSql(s"insert into $id values (1), (2), (3)")
-      executeSql(s"update $id set id = 100 where id = 1")
+      // TODO: Iceberg first_row_id is assigned by file add-order, which is non-deterministic for
+      // multi-file commits, so per-file baseRowId != firstRowId flakes. Until the converter
+      // assigns first_row_id deterministically (sort added files by baseRowId), force one file per
+      // txn via optimized writes so the row-tracking conversion is deterministic.
+      withSQLConf("spark.databricks.delta.optimizeWrite.enabled" -> "true") {
+        executeSql(s"insert into $id values (1), (2), (3)")
+        executeSql(s"update $id set id = 100 where id = 1")
+      }
 
       val identifier = TableIdentifier(id)
       val table = DeltaTableV2(spark, identifier)
