@@ -333,18 +333,18 @@ trait MetadataCleanup extends DeltaLogging {
       metrics: V2CompatCheckpointMetrics): Unit = {
     // Do nothing if this table does not use V2 Checkpoints, or has no checkpoints at all.
     if (!CheckpointProvider.isV2CheckpointEnabled(snapshotToCleanup)) return
-    if (snapshotToCleanup.checkpointProvider.isEmpty) return
+    val checkpointProvider = snapshotToCleanup.checkpointProvider
+    if (checkpointProvider.isEmpty) return
 
     val startTimeMs = System.currentTimeMillis()
     val hadoopConf = newDeltaHadoopConf()
-    val checkpointInstance =
-      CheckpointInstance(snapshotToCleanup.checkpointProvider.topLevelFiles.head.getPath)
+    val checkpointInstance = CheckpointInstance(checkpointProvider.topLevelFiles.head.getPath)
     // The current checkpoint provider is already using a checkpoint with the naming
     // scheme of classic checkpoints. There is no need to create a compatibility checkpoint
     // in this case.
     if (checkpointInstance.format != CheckpointInstance.Format.V2) return
 
-    val checkpointVersion = snapshotToCleanup.checkpointProvider.version
+    val checkpointVersion = checkpointProvider.version
     val checkpoints = listFrom(checkpointVersion)
       .takeWhile(file => FileNames.getFileVersionOpt(file.getPath).exists(_ <= checkpointVersion))
       .collect {
@@ -359,17 +359,8 @@ trait MetadataCleanup extends DeltaLogging {
       return
     }
 
-    // topLevelFileIndex must be non-empty when topLevelFiles are present
-    val shallowCopyDf =
-      loadIndex(snapshotToCleanup.checkpointProvider.topLevelFileIndex.get, Action.logSchema)
-    val finalPath =
-      FileNames.checkpointFileSingular(snapshotToCleanup.logPath, checkpointVersion)
-    Checkpoints.createCheckpointV2ParquetFile(
-      spark,
-      shallowCopyDf,
-      finalPath,
-      hadoopConf,
-      useRename = false)
+    checkpointProvider.createCompatibilityCheckpoint(
+      spark, self, snapshotToCleanup.logPath, hadoopConf)
     metrics.v2CheckpointCompatLogicTimeTakenMs = System.currentTimeMillis() - startTimeMs
     metrics.checkpointVersion = checkpointVersion
   }

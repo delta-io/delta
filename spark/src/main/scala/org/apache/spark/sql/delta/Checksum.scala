@@ -830,7 +830,7 @@ trait ValidateChecksum extends DeltaLogging { self: Snapshot =>
         "v2CheckpointEnabled" ->
           CheckpointProvider.isV2CheckpointEnabled(this),
         "checkpointProviderCheckpointPolicy" ->
-          checkpointProvider.checkpointPolicy.map(_.name).getOrElse("")
+          checkpointProvider.checkpointPolicyForLogging.map(_.name).getOrElse("")
       ) ++ contextInfo)
 
     val spark = sparkOpt.getOrElse {
