@@ -23,10 +23,29 @@ import java.io.OutputStream;
  * to write data into the file.
  */
 public abstract class PositionOutputStream extends OutputStream {
+  private boolean aborted = false;
+
   /**
    * Get the current position in the stream.
    *
    * @return the current position in bytes from the start of the stream
    */
   public abstract long getPos() throws IOException;
+
+  /**
+   * Record that this stream should discard, rather than publish, its output. abort() does not
+   * release resources on its own; the subsequent {@link #close()} does, and must honor this flag
+   * so that no file - partial or complete - becomes visible at the destination path.
+   */
+  public void abort() {
+    this.aborted = true;
+  }
+
+  /**
+   * @return true if {@link #abort()} has been called. Concrete {@link #close()} implementations
+   *     must honor this by discarding the in-progress write instead of publishing it.
+   */
+  protected final boolean isAborted() {
+    return aborted;
+  }
 }
