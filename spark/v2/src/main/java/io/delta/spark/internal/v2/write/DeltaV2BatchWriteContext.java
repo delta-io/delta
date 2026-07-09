@@ -125,8 +125,7 @@ class DeltaV2BatchWriteContext {
             /* optimizationsEnabled */ true,
             /* useMetadataRowIndex */ Option.empty(),
             /* isCDCRead */ false);
-    org.apache.spark.sql.execution.datasources.DataSourceUtils.verifySchema(
-        format, dataSchema, false);
+    org.apache.spark.sql.execution.datasources.DataSourceUtils.verifySchema(format, dataSchema);
     org.apache.spark.sql.execution.datasources.DataSourceUtils.checkFieldNames(format, dataSchema);
     Map<String, String> options = writeInfo.options().asCaseSensitiveMap();
     scala.collection.immutable.Map<String, String> scalaOpts =
