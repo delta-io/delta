@@ -122,16 +122,15 @@ public class DeltaV2WriterCommitMessageTest extends DeltaV2TestBase {
     Snapshot snapshot =
         new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf())
             .loadLatestSnapshot();
-    DeltaV2Write write =
-        new DeltaV2Write(
+    DeltaV2BatchWrite write =
+        new DeltaV2BatchWrite(
             defaultEngine,
             spark.sessionState().newHadoopConf(),
             path,
             snapshot,
-            TABLE_SCHEMA,
             WriteTestUtils.logicalWriteInfo(TABLE_SCHEMA, CaseInsensitiveStringMap.empty()));
     return (DeltaV2DataWriterFactory)
-        write.toBatch().createBatchWriterFactory(WriteTestUtils.physicalWriteInfo(1));
+        write.createBatchWriterFactory(WriteTestUtils.physicalWriteInfo(1));
   }
 
   private String createTable(File tempDir, String tableName) {
