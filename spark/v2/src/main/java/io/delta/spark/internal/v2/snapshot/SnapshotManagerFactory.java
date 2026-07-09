@@ -56,7 +56,12 @@ public final class SnapshotManagerFactory {
    */
   public static DeltaSnapshotManager create(
       String tablePath, Engine kernelEngine, Optional<CatalogTable> catalogTable) {
+    return new TranslatingDeltaSnapshotManager(
+        createUntranslated(tablePath, kernelEngine, catalogTable));
+  }
 
+  private static DeltaSnapshotManager createUntranslated(
+      String tablePath, Engine kernelEngine, Optional<CatalogTable> catalogTable) {
     if (catalogTable.isPresent()) {
       Optional<UCTableInfo> ucTableInfo =
           UCUtils.extractTableInfo(catalogTable.get(), SparkSession.active());

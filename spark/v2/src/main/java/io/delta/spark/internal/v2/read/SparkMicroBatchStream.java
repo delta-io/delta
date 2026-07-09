@@ -901,10 +901,8 @@ public class SparkMicroBatchStream
     try {
       // Attempt to construct a snapshot at the startingVersion to validate the protocol
       // If snapshot reconstruction fails, fall back to old behavior where the only
-      // requirement was for the commit to exist. An unsupported reader feature is translated to
-      // Delta's DeltaUnsupportedTableFeatureException and rethrown (not suppressed) below.
-      KernelUnsupportedFeatureTranslator.translatingUnsupportedFeature(
-          () -> snapshotManager.loadSnapshotAt(version));
+      // requirement was for the commit to exist
+      snapshotManager.loadSnapshotAt(version);
       return true;
     } catch (DeltaUnsupportedTableFeatureException e) {
       // Unsupported reader feature: fail loud with the Delta error class.
@@ -1190,11 +1188,7 @@ public class SparkMicroBatchStream
         // 2. buildOffsetFromIndexedFile bumps the version up by one when we hit the END_INDEX.
         // TODO(#5318): consider caching the latest version to avoid loading a new snapshot.
         // TODO(#5318): kernel should ideally relax this constraint.
-        endVersionOpt =
-            Optional.of(
-                KernelUnsupportedFeatureTranslator.translatingUnsupportedFeature(
-                        snapshotManager::loadLatestSnapshot)
-                    .getVersion());
+        endVersionOpt = Optional.of(snapshotManager.loadLatestSnapshot().getVersion());
       }
 
       // After capping, check if startVersion is beyond the endVersion.
@@ -1207,10 +1201,7 @@ public class SparkMicroBatchStream
       // When endOffset is empty (offset discovery), check if startVersion exceeds the current
       // latest version. We must load the current latest (not snapshotAtSourceInit) because new
       // commits may have arrived since stream initialization.
-      long currentLatestVersion =
-          KernelUnsupportedFeatureTranslator.translatingUnsupportedFeature(
-                  snapshotManager::loadLatestSnapshot)
-              .getVersion();
+      long currentLatestVersion = snapshotManager.loadLatestSnapshot().getVersion();
       if (startVersion > currentLatestVersion) {
         return Utils.toCloseableIterator(Collections.emptyIterator());
       }
@@ -1887,10 +1878,7 @@ public class SparkMicroBatchStream
   private DataFrameSnapshotCache buildDataFrameSnapshotCache(long version) {
     // May differ from snapshotAtSourceInit on checkpoint restart. loadSnapshotAt is
     // metadata-only on driver; log replay runs on executors via ScanFileRDD.
-    SnapshotImpl snapshot =
-        (SnapshotImpl)
-            KernelUnsupportedFeatureTranslator.translatingUnsupportedFeature(
-                () -> snapshotManager.loadSnapshotAt(version));
+    SnapshotImpl snapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(version);
     SerializableReadOnlySnapshot serSnapshot =
         SerializableReadOnlySnapshot.fromSnapshot(snapshot, hadoopConf);
 
@@ -1971,10 +1959,7 @@ public class SparkMicroBatchStream
 
   /** Loads snapshot files at the specified version. */
   private InitialSnapshotCache loadAndValidateSnapshot(long version) {
-    SnapshotImpl snapshot =
-        (SnapshotImpl)
-            KernelUnsupportedFeatureTranslator.translatingUnsupportedFeature(
-                () -> snapshotManager.loadSnapshotAt(version));
+    SnapshotImpl snapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(version);
     // If schema tracking is already active and the initial snapshot has advanced since the tracked
     // read snapshot, replace the tracked metadata/protocol before reading snapshot files.
     if (metadataEvolutionHandler.shouldTrackMetadataChange()
