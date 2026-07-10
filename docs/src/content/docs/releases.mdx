@@ -7,24 +7,30 @@ description: Learn about Delta Lake releases.
 
 The [GitHub releases page](https://github.com/delta-io/delta/releases/) describes features of each release.
 
-## Compatibility with Apache Spark
+## Compatibility with Apache Spark and Unity Catalog
 
-The following table lists Delta Lake versions and their compatible Apache Spark versions.
+The following table lists Delta Lake versions, their compatible Apache Spark
+versions, and the [Unity Catalog](https://github.com/unitycatalog/unitycatalog)
+versions that build against them. A single Delta or Unity Catalog release may
+support more than one Apache Spark version.
 
-| Delta Lake version | Apache Spark version    |
-| ------------------ | ----------------------- |
-| 4.0.x              | 4.0.x                   |
-| 3.3.x              | 3.5.x                   |
-| 3.2.x              | 3.5.x                   |
-| 3.1.x              | 3.5.x                   |
-| 3.0.x              | 3.5.x                   |
-| 2.4.x              | 3.4.x                   |
-| 2.3.x              | 3.3.x                   |
-| 2.2.x              | 3.3.x                   |
-| 2.1.x              | 3.3.x                   |
-| 2.0.x              | 3.2.x                   |
-| 1.2.x              | 3.2.x                   |
-| 1.1.x              | 3.2.x                   |
-| 1.0.x              | 3.1.x                   |
-| 0.7.x and 0.8.x    | 3.0.x                   |
-| Below 0.7.0        | 2.4.2 - 2.4._\<latest>_ |
+| Delta Lake version | Apache Spark version    | Unity Catalog version |
+| ------------------ | ----------------------- | --------------------- |
+| 4.3.x              | 4.0.x, 4.1.x            | N/A                   |
+| 4.2.x              | 4.0.x, 4.1.x            | 0.5.x                 |
+| 4.1.x              | 4.0.x, 4.1.x            | 0.4.1                 |
+| 4.0.x              | 4.0.x                   | 0.3.x, 0.4.0          |
+| 3.3.x              | 3.5.x                   | N/A                   |
+| 3.2.x              | 3.5.x                   | 0.1.x, 0.2.x          |
+| 3.1.x              | 3.5.x                   | N/A                   |
+| 3.0.x              | 3.5.x                   | N/A                   |
+| 2.4.x              | 3.4.x                   | N/A                   |
+| 2.3.x              | 3.3.x                   | N/A                   |
+| 2.2.x              | 3.3.x                   | N/A                   |
+| 2.1.x              | 3.3.x                   | N/A                   |
+| 2.0.x              | 3.2.x                   | N/A                   |
+| 1.2.x              | 3.2.x                   | N/A                   |
+| 1.1.x              | 3.2.x                   | N/A                   |
+| 1.0.x              | 3.1.x                   | N/A                   |
+| 0.7.x and 0.8.x    | 3.0.x                   | N/A                   |
+| Below 0.7.0        | 2.4.2 - 2.4._\<latest>_ | N/A                   |
