@@ -505,6 +505,19 @@ trait UniversalFormatMiscSuiteBase extends IcebergCompatUtilsBase with Universal
     }
   }
 
+  test("saveAsTable overwrite preserves Delta-log-only IcebergCompatV3 properties") {
+    withTempTableAndDir { case (id, _) =>
+      executeSql(s"""CREATE TABLE $id (id INT, name STRING) USING DELTA TBLPROPERTIES (
+        'delta.columnMapping.mode' = 'name')""")
+      executeSql(s"INSERT INTO $id VALUES (1, 'a')")
+      executeSql(s"ALTER TABLE $id SET TBLPROPERTIES ('delta.enableIcebergCompatV3' = 'true')")
+
+      spark.read.table(id).write.mode("overwrite").saveAsTable(id)
+
+      val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(id))
+      assert(snapshot.metadata.configuration.get("delta.enableIcebergCompatV3") === Some("true"))
+    }
+  }
   test("UniForm config validation") {
     Seq("ICEBERG", "iceberg,iceberg", "iceber", "paimon").foreach { invalidConf =>
       withTempTableAndDir { case (id, loc) =>

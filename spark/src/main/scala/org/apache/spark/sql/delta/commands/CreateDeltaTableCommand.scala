@@ -349,10 +349,19 @@ case class CreateDeltaTableCommand(
       )
       (taggedCommitData, op)
     }
+    // On a V1 saveAsTable overwrite we skip replaceMetadataIfNecessary, so
+    // deltaWriter.configuration only has writer/catalog options, not table properties kept
+    // in the Delta log (e.g. delta.enableIcebergCompatV3 set via ALTER TABLE). Merge the
+    // snapshot config in so the enforcement check below sees the full config; without it the
+    // check thinks IcebergCompat is off and fails the write with
+    // "IcebergCompat cannot be disabled".
+    val writerConfiguration = if (isV1WriterSaveAsTableOverwrite) {
+      txn.snapshot.metadata.configuration ++ deltaWriter.configuration
+    } else deltaWriter.configuration
     val updatedConfiguration = UniversalFormat.enforceDependenciesInConfiguration(
       sparkSession,
       tableWithLocation,
-      deltaWriter.configuration,
+      writerConfiguration,
       txn.snapshot
     )
     val updatedWriter = deltaWriter.withNewWriterConfiguration(updatedConfiguration)
