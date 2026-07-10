@@ -83,8 +83,8 @@ public class DataTypeJsonSerDe {
   }
 
   /**
-   * Serializes a single {@link StructField} to a JSON string according to the Delta Protocol, i.e.
-   * an object with {@code name}, {@code type}, {@code nullable}, and {@code metadata}.
+   * Serializes a single {@link StructField} to a JSON string as an object with {@code name}, {@code
+   * type}, {@code nullable}, and {@code metadata}.
    *
    * @param structField the field to serialize
    * @return JSON string representing the field
