@@ -19,6 +19,7 @@ package io.delta.flink.sink.mergestrategy;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 
+import io.delta.flink.kernel.ColumnMappingUtils;
 import io.delta.flink.kernel.dv.BinDVAccess;
 import io.delta.flink.kernel.dv.DVAccess;
 import io.delta.flink.kernel.dv.RoaringBitmapArray;
@@ -117,8 +118,11 @@ public class MoRUpsert extends Upsert {
     final Row removeAction =
         SingleAction.createRemoveFileSingleAction(
             sourceAddFile.toRemoveFileRow(true /* dataChange */, Optional.empty()));
+    // Stats are keyed by physical column names, so convert before serializing them onto the
+    // AddFile.
     final Row addAction =
-        SingleAction.createAddFileSingleAction(addFileRowWithNewDv(schema, sourceAddFile, newDv));
+        SingleAction.createAddFileSingleAction(
+            addFileRowWithNewDv(ColumnMappingUtils.toPhysicalSchema(schema), sourceAddFile, newDv));
     return toCloseableIterator(Arrays.asList(removeAction, addAction).iterator());
   }
 
@@ -131,7 +135,8 @@ public class MoRUpsert extends Upsert {
     bitmap.addAll(positions);
     DeletionVectorDescriptor dvDesc = dvAccess.store(kernelTable.getEngine(), tableRoot, bitmap);
     AddFile oldAddFile = new AddFile(stagedAddFile.getStruct(SingleAction.ADD_FILE_ORDINAL));
-    Row newAddFileRow = addFileRowWithNewDv(schema, oldAddFile, dvDesc);
+    Row newAddFileRow =
+        addFileRowWithNewDv(ColumnMappingUtils.toPhysicalSchema(schema), oldAddFile, dvDesc);
     return SingleAction.createAddFileSingleAction(newAddFileRow);
   }
 
