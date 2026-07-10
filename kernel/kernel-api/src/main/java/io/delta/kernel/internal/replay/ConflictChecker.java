@@ -52,8 +52,13 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * Class containing the conflict resolution logic when writing to a Delta table.
  *
- * <p>Currently, the support is to allow blind appends. Later on this can be extended to add support
- * for read-after-write scenarios.
+ * <p>Kernel's built-in conflict resolution fully supports only blind-append transactions.
+ *
+ * <p>For non-blind-append transactions, Kernel currently detects only delete-delete conflicts,
+ * where both the winning transaction and the transaction being rebased remove the same data file.
+ * Kernel does not detect other conflicts involving concurrent data-file modifications. Connectors
+ * issuing non-blind-append transactions are responsible for detecting or avoiding other
+ * concurrent-modification conflicts.
  */
 public class ConflictChecker {
   private static final int PROTOCOL_ORDINAL = CONFLICT_RESOLUTION_SCHEMA.indexOf("protocol");
