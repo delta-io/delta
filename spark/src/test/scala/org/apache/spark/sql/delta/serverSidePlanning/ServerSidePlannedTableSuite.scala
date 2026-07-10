@@ -251,9 +251,9 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
     assert(!ServerSidePlannedTable.hasCredentials(deltaTableV2),
       "Expected DeltaTableV2 to hide fs.* credentials, so hasCredentials must report false")
 
-    // tryCreate builds the planned table from `table` (the DeltaTableV2, for its schema) but must
-    // detect credentials from `credentialsTable` (the raw V1Table). With a real UC deployment
-    // (skipUCRequirementForTests = false) a credentialed table must NOT be routed to SSP.
+    // tryCreate builds the planned table from `table` (the DeltaTableV2, for its schema) but the
+    // caller passes it the credential result computed from the raw V1Table. With a real UC
+    // deployment (skipUCRequirementForTests = false) a credentialed table must NOT be routed to SSP.
     withServerSidePlanningFactory(new TestServerSidePlanningClientFactory()) {
       assert(
         ServerSidePlannedTable.shouldUseServerSidePlanning(

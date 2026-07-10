@@ -396,15 +396,16 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
           // flag first and keep the SSP-off path returning the lazy `loadCatalogTable`, exactly
           // as before this branch existed.
           //
-          // Pass the raw `V1Table` as the credentials source: SSP's credential check looks for
-          // `option.fs.*` properties, but `DeltaTableV2.properties()` strips `fs.*` storage
-          // properties, so checking the `DeltaTableV2` would always report "no credentials" and
-          // wrongly route credentialed UC tables through server-side planning (SSP is only meant
-          // as a fallback for tables that lack credentials).
+          // Check credentials on the raw `V1Table`, not the `DeltaTableV2`: SSP's credential check
+          // looks for `option.fs.*` properties, but `DeltaTableV2.properties()` strips `fs.*`
+          // storage properties, so checking the `DeltaTableV2` would always report "no credentials"
+          // and wrongly route credentialed UC tables through server-side planning (SSP is only
+          // meant as a fallback for tables that lack credentials).
           if (ServerSidePlannedTable.isEnabled(spark)) {
             val deltaTable = loadCatalogTable(ident, v1.catalogTable)
             ServerSidePlannedTable
-              .tryCreate(spark, ident, deltaTable, isUnityCatalog, credentialsTable = v1)
+              .tryCreate(spark, ident, deltaTable, isUnityCatalog,
+                hasCredentials = ServerSidePlannedTable.hasCredentials(v1))
               .getOrElse(deltaTable)
           } else {
             loadCatalogTable(ident, v1.catalogTable)

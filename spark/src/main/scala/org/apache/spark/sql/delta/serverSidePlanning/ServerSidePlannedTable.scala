@@ -93,12 +93,13 @@ object ServerSidePlannedTable extends DeltaLogging {
    * @param ident The table identifier
    * @param table The loaded table used for the planned table's schema and metadata.
    * @param isUnityCatalog Whether this is a Unity Catalog instance
-   * @param credentialsTable The table to inspect for credentials. Defaults to `table`, but callers
-   *        must override it when `table` cannot carry credentials. In particular, a `DeltaTableV2`
-   *        deliberately strips `fs.*` storage properties from `properties()` (see
-   *        `DeltaTableV2.HIDDEN_STORAGE_PROPERTY_PREFIXES`), so `hasCredentials` would always
-   *        report `false` for it -- the credential check must run against the raw `V1Table`, whose
-   *        `option.fs.*` properties are intact.
+   * @param hasCredentials Whether the table has credentials available. The caller computes this
+   *        (via [[hasCredentials]]) from the raw `V1Table` rather than letting this method read it
+   *        off `table`: `table` is a `DeltaTableV2`, whose `properties()` deliberately strips
+   *        `fs.*` storage properties (see `DeltaTableV2.HIDDEN_STORAGE_PROPERTY_PREFIXES`), so the
+   *        `option.fs.*` keys the check looks for never appear on it. We need the `DeltaTableV2`
+   *        here for its schema (a Delta `V1Table`'s metastore schema is empty), but the credential
+   *        check must run against the raw `V1Table`.
    * @return Some(ServerSidePlannedTable) if server-side planning should be used, None otherwise
    */
   def tryCreate(
@@ -106,14 +107,13 @@ object ServerSidePlannedTable extends DeltaLogging {
       ident: Identifier,
       table: Table,
       isUnityCatalog: Boolean,
-      credentialsTable: Table = null): Option[ServerSidePlannedTable] = {
+      hasCredentials: Boolean): Option[ServerSidePlannedTable] = {
     // Check if we should enable server-side planning (for testing)
     val enableServerSidePlanning = isEnabled(spark)
-    val hasTableCredentials = hasCredentials(Option(credentialsTable).getOrElse(table))
 
     // Check if we should use server-side planning
     if (shouldUseServerSidePlanning(
-        isUnityCatalog, hasTableCredentials, enableServerSidePlanning,
+        isUnityCatalog, hasCredentials, enableServerSidePlanning,
         skipUCRequirementForTests = DeltaUtils.isTesting)) {
       val namespace = ident.namespace().mkString(".")
       val tableName = ident.name()
@@ -171,7 +171,7 @@ object ServerSidePlannedTable extends DeltaLogging {
    * (see `DeltaTableV2.HIDDEN_STORAGE_PROPERTY_PREFIXES`), so the `option.fs.*` keys this method
    * looks for never appear and it would always report `false`.
    */
-  private[serverSidePlanning] def hasCredentials(table: Table): Boolean = {
+  private[delta] def hasCredentials(table: Table): Boolean = {
     val properties = table.properties()
     val keys = properties.keySet()
     val iter = keys.iterator()
