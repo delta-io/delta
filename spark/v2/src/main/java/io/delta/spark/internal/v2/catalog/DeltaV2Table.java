@@ -27,8 +27,8 @@ import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.spark.internal.v2.exception.TimestampOutOfRangeException;
+import io.delta.spark.internal.v2.read.DeltaV2ScanUtils;
 import io.delta.spark.internal.v2.read.MetadataEvolutionHandler;
-import io.delta.spark.internal.v2.read.SparkScanBuilder;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
@@ -492,7 +492,7 @@ public class DeltaV2Table
                         stats,
                         schemaProvider.getDataSchema(),
                         schemaProvider.getPartitionSchema()));
-    return new SparkScanBuilder(
+    return DeltaV2ScanUtils.newScanBuilder(
         name(),
         initialSnapshot,
         snapshotManager,
