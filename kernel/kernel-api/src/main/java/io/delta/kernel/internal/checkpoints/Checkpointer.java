@@ -22,6 +22,9 @@ import static io.delta.kernel.internal.snapshot.MetadataCleanup.cleanupExpiredLo
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.CHECKPOINT_PROTECTION_W_FEATURE;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
@@ -34,6 +37,7 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.*;
+import io.delta.kernel.types.StringType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import java.io.*;
@@ -279,7 +283,21 @@ public class Checkpointer {
 
   /** Returns information about the most recent checkpoint. */
   public Optional<CheckpointMetaData> readLastCheckpointFile(Engine engine) {
-    return loadMetadataFromFile(engine, 0 /* tries */);
+    return loadFromFile(engine, 0 /* tries */, Checkpointer::parseColumnarFields);
+  }
+
+  /**
+   * Reads {@code _last_checkpoint} as an opaque JSON blob. Intended for SnapshotHint caching and
+   * softstore relay.
+   */
+  public Optional<LastCheckpointSerialized> readLastCheckpointSerialized(Engine engine) {
+    return loadFromFile(
+        engine,
+        0 /* tries */,
+        (eng, json) -> {
+          validateJsonObject(json);
+          return new LastCheckpointSerialized(json);
+        });
   }
 
   /**
@@ -305,13 +323,18 @@ public class Checkpointer {
         lastCheckpointFilePath);
   }
 
+  @FunctionalInterface
+  private interface Utf8JsonLoader<T> {
+    T apply(Engine engine, String json) throws IOException;
+  }
+
   /**
-   * Loads the checkpoint metadata from the _last_checkpoint file.
+   * Loads UTF-8 JSON text from the _last_checkpoint file and maps it via {@code loader}.
    *
    * @param engine {@link Engine instance to use}
    * @param tries Number of times already tried to load the metadata before this call.
    */
-  private Optional<CheckpointMetaData> loadMetadataFromFile(Engine engine, int tries) {
+  private <T> Optional<T> loadFromFile(Engine engine, int tries, Utf8JsonLoader<T> loader) {
     if (tries >= READ_LAST_CHECKPOINT_FILE_MAX_RETRIES) {
       // We have tried 3 times and failed. Assume the checkpoint metadata file is corrupt.
       logger.warn(
@@ -327,31 +350,12 @@ public class Checkpointer {
         READ_LAST_CHECKPOINT_FILE_MAX_RETRIES);
 
     try {
-      // Use arbitrary values for size and mod time as they are not available.
-      // We could list and find the values, but it is an unnecessary FS call.
-      FileStatus lastCheckpointFile =
-          FileStatus.of(lastCheckpointFilePath.toString(), 0 /* size */, 0 /* modTime */);
-
-      try (CloseableIterator<ColumnarBatch> jsonIter =
-          wrapEngineExceptionThrowsIO(
-              () ->
-                  engine
-                      .getJsonHandler()
-                      .readJsonFiles(
-                          singletonCloseableIterator(lastCheckpointFile),
-                          CheckpointMetaData.READ_SCHEMA,
-                          Optional.empty()),
-              "Reading the last checkpoint file as JSON")) {
-        Optional<Row> checkpointRow = InternalUtils.getSingularRow(jsonIter);
-        if (checkpointRow.isPresent()) {
-          return Optional.of(CheckpointMetaData.fromRow(checkpointRow.get()));
-        }
-
-        // Checkpoint has no data. This is a valid case on some file systems where the
-        // contents are not visible until the file stream is closed.
-        // Sleep for one second and retry.
+      Optional<String> jsonOpt =
+          LastCheckpointFileReader.readUtf8(engine, lastCheckpointFilePath.toString());
+      if (!jsonOpt.isPresent()) {
+        // Empty file or not yet visible. Retry after a short sleep.
         logger.warn(
-            "Last checkpoint file {} has no data. " + "Retrying after 1sec. (current attempt = {})",
+            "Last checkpoint file {} has no data. Retrying after 1sec. (current attempt = {})",
             lastCheckpointFilePath,
             tries);
         try {
@@ -360,8 +364,10 @@ public class Checkpointer {
           Thread.currentThread().interrupt();
           return Optional.empty();
         }
-        return loadMetadataFromFile(engine, tries + 1);
+        return loadFromFile(engine, tries + 1, loader);
       }
+
+      return Optional.of(loader.apply(engine, jsonOpt.get()));
     } catch (Exception e) {
       if (e instanceof FileNotFoundException
           || (e instanceof KernelEngineException
@@ -378,7 +384,48 @@ public class Checkpointer {
       // we can retry until max tries are exhausted. It saves latency as the alternative
       // is to list files and find the last checkpoint file. And the `_last_checkpoint`
       // file is possibly being written to.
-      return loadMetadataFromFile(engine, tries + 1);
+      return loadFromFile(engine, tries + 1, loader);
+    }
+  }
+
+  /**
+   * Syntax check for the opaque blob path: valid JSON object with a {@code version} field. Does not
+   * validate columnar field types (see {@link #parseColumnarFields}).
+   */
+  private static void validateJsonObject(String json) throws IOException {
+    final JsonNode node;
+    try {
+      node = JsonUtils.mapper().readTree(json);
+    } catch (JsonProcessingException e) {
+      throw new IOException("Failed to parse _last_checkpoint as JSON", e);
+    }
+    if (node == null || !node.isObject()) {
+      throw new IOException("_last_checkpoint must be a JSON object");
+    }
+    if (!node.has("version")) {
+      throw new IOException("_last_checkpoint missing version field");
+    }
+  }
+
+  /**
+   * Projects the columnar {@link CheckpointMetaData#READ_SCHEMA} fields from {@code json} already
+   * loaded in memory. Fields outside the schema (e.g. {@code checkpointSchema}) stay in the blob
+   * only.
+   */
+  private static CheckpointMetaData parseColumnarFields(Engine engine, String json)
+      throws IOException {
+    ColumnVector jsonVector =
+        VectorUtils.buildColumnVector(Collections.singletonList(json), StringType.STRING);
+    ColumnarBatch batch =
+        engine
+            .getJsonHandler()
+            .parseJson(jsonVector, CheckpointMetaData.READ_SCHEMA, Optional.empty());
+    try (CloseableIterator<ColumnarBatch> batchIter = singletonCloseableIterator(batch)) {
+      Optional<Row> row = InternalUtils.getSingularRow(batchIter);
+      if (!row.isPresent()) {
+        throw new IOException("Failed to parse _last_checkpoint JSON into a row");
+      }
+      return CheckpointMetaData.fromRow(row.get(), Optional.of(json));
     }
   }
 }
