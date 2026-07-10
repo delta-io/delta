@@ -25,7 +25,7 @@ import java.util.Set;
 
 /**
  * This class is directly copied from iceberg repo 1.11.0 with the following change:
- * Changes: suppressFirstRowId returns the file directly instead of nulling out its first_row_id.
+ * Changes: L40: suppressFirstRowId returns the file directly instead of nulling out its first_row_id.
  *          UniForm assigns each Iceberg data file's first_row_id from the Delta baseRowId; the
  *          upstream behavior of suppressing the explicitly-set first_row_id for newly-added
  *          DataFiles (forcing Iceberg to re-assign sequentially) would drop that value and break
