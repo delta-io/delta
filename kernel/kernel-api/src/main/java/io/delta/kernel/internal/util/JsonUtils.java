@@ -17,7 +17,6 @@
 package io.delta.kernel.internal.util;
 
 import static io.delta.kernel.internal.DeltaErrors.unsupportedStatsDataType;
-import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.statistics.DataFileStatistics.EPOCH;
 import static io.delta.kernel.statistics.DataFileStatistics.TIMESTAMP_FORMATTER;
 import static java.time.format.DateTimeFormatter.ISO_LOCAL_DATE;
@@ -27,10 +26,6 @@ import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.delta.kernel.data.ArrayValue;
-import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.data.MapValue;
-import io.delta.kernel.data.Row;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.types.*;
@@ -82,138 +77,6 @@ public class JsonUtils {
       return writer.toString();
     } catch (IOException e) {
       throw new UncheckedIOException(e);
-    }
-  }
-
-  /**
-   * Serializes a {@link Row} to a single-line JSON string using the row's schema.
-   *
-   * @param row the row to serialize; only the types supported by the Delta protocol may appear
-   * @return the row encoded as a single-line JSON object
-   */
-  public static String rowToJson(Row row) {
-    return generate(generator -> writeRow(generator, row, row.getSchema()));
-  }
-
-  private static void writeRow(JsonGenerator gen, Row row, StructType schema) throws IOException {
-    gen.writeStartObject();
-    for (int ordinal = 0; ordinal < schema.length(); ordinal++) {
-      StructField field = schema.at(ordinal);
-      if (!row.isNullAt(ordinal)) {
-        gen.writeFieldName(field.getName());
-        writeValue(gen, row, ordinal, field.getDataType());
-      }
-    }
-    gen.writeEndObject();
-  }
-
-  private static void writeStruct(
-      JsonGenerator gen, ColumnVector vector, StructType type, int rowId) throws IOException {
-    gen.writeStartObject();
-    for (int ordinal = 0; ordinal < type.length(); ordinal++) {
-      StructField field = type.at(ordinal);
-      ColumnVector childVector = vector.getChild(ordinal);
-      if (!childVector.isNullAt(rowId)) {
-        gen.writeFieldName(field.getName());
-        writeValue(gen, childVector, rowId, field.getDataType());
-      }
-    }
-    gen.writeEndObject();
-  }
-
-  private static void writeArrayValue(JsonGenerator gen, ArrayValue arrayValue, ArrayType arrayType)
-      throws IOException {
-    gen.writeStartArray();
-    ColumnVector elements = arrayValue.getElements();
-    for (int i = 0; i < arrayValue.getSize(); i++) {
-      if (elements.isNullAt(i)) {
-        gen.writeNull();
-      } else {
-        writeValue(gen, elements, i, arrayType.getElementType());
-      }
-    }
-    gen.writeEndArray();
-  }
-
-  private static void writeMapValue(JsonGenerator gen, MapValue mapValue, MapType mapType)
-      throws IOException {
-    if (!(mapType.getKeyType() instanceof StringType)) {
-      throw new UnsupportedOperationException(
-          "Can not serialize a map with non-string keys to JSON: " + mapType);
-    }
-    gen.writeStartObject();
-    ColumnVector keys = mapValue.getKeys();
-    ColumnVector values = mapValue.getValues();
-    for (int i = 0; i < mapValue.getSize(); i++) {
-      gen.writeFieldName(keys.getString(i));
-      if (values.isNullAt(i)) {
-        gen.writeNull();
-      } else {
-        writeValue(gen, values, i, mapType.getValueType());
-      }
-    }
-    gen.writeEndObject();
-  }
-
-  private static void writeValue(JsonGenerator gen, Row row, int ordinal, DataType type)
-      throws IOException {
-    checkArgument(!row.isNullAt(ordinal), "value should not be null");
-    if (type instanceof BooleanType) {
-      gen.writeBoolean(row.getBoolean(ordinal));
-    } else if (type instanceof ByteType) {
-      gen.writeNumber(row.getByte(ordinal));
-    } else if (type instanceof ShortType) {
-      gen.writeNumber(row.getShort(ordinal));
-    } else if (type instanceof IntegerType) {
-      gen.writeNumber(row.getInt(ordinal));
-    } else if (type instanceof LongType) {
-      gen.writeNumber(row.getLong(ordinal));
-    } else if (type instanceof FloatType) {
-      gen.writeNumber(row.getFloat(ordinal));
-    } else if (type instanceof DoubleType) {
-      gen.writeNumber(row.getDouble(ordinal));
-    } else if (type instanceof StringType) {
-      gen.writeString(row.getString(ordinal));
-    } else if (type instanceof StructType) {
-      writeRow(gen, row.getStruct(ordinal), (StructType) type);
-    } else if (type instanceof ArrayType) {
-      writeArrayValue(gen, row.getArray(ordinal), (ArrayType) type);
-    } else if (type instanceof MapType) {
-      writeMapValue(gen, row.getMap(ordinal), (MapType) type);
-    } else {
-      throw new UnsupportedOperationException(
-          "Unsupported data type for JSON serialization: " + type);
-    }
-  }
-
-  private static void writeValue(JsonGenerator gen, ColumnVector vector, int rowId, DataType type)
-      throws IOException {
-    checkArgument(!vector.isNullAt(rowId), "value should not be null");
-    if (type instanceof BooleanType) {
-      gen.writeBoolean(vector.getBoolean(rowId));
-    } else if (type instanceof ByteType) {
-      gen.writeNumber(vector.getByte(rowId));
-    } else if (type instanceof ShortType) {
-      gen.writeNumber(vector.getShort(rowId));
-    } else if (type instanceof IntegerType) {
-      gen.writeNumber(vector.getInt(rowId));
-    } else if (type instanceof LongType) {
-      gen.writeNumber(vector.getLong(rowId));
-    } else if (type instanceof FloatType) {
-      gen.writeNumber(vector.getFloat(rowId));
-    } else if (type instanceof DoubleType) {
-      gen.writeNumber(vector.getDouble(rowId));
-    } else if (type instanceof StringType) {
-      gen.writeString(vector.getString(rowId));
-    } else if (type instanceof StructType) {
-      writeStruct(gen, vector, (StructType) type, rowId);
-    } else if (type instanceof ArrayType) {
-      writeArrayValue(gen, vector.getArray(rowId), (ArrayType) type);
-    } else if (type instanceof MapType) {
-      writeMapValue(gen, vector.getMap(rowId), (MapType) type);
-    } else {
-      throw new UnsupportedOperationException(
-          "Unsupported data type for JSON serialization: " + type);
     }
   }
 

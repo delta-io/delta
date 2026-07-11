@@ -20,53 +20,21 @@ import java.util.Optional
 
 import scala.util.control.NonFatal
 
-import io.delta.kernel.data.{ColumnarBatch, ColumnVector, Row}
+import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
 import io.delta.kernel.exceptions.KernelEngineException
 import io.delta.kernel.expressions.Predicate
 import io.delta.kernel.internal.checkpoints.Checkpointer.findLastCompleteCheckpointBeforeHelper
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames.checkpointFileSingular
-import io.delta.kernel.internal.util.JsonUtils
 import io.delta.kernel.internal.util.Utils
 import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils, VectorTestUtils}
-import io.delta.kernel.types.{DataType, StructType}
+import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 
 import org.scalatest.funsuite.AnyFunSuite
 
 class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
   import CheckpointerSuite._
-
-  /** Parses two JSON strings and asserts semantic equality (object key order is irrelevant). */
-  private def assertJsonEquals(expected: String, actual: String): Unit = {
-    assert(
-      JsonUtils.mapper.readTree(expected) == JsonUtils.mapper.readTree(actual),
-      s"JSON mismatch.\n expected: $expected\n actual:   $actual")
-  }
-
-  /**
-   * Builds a [[CheckpointMetaData]] via the full constructor with typed, defaulted arguments. The
-   * explicit `Optional` element types are needed because Scala cannot infer them for the Java
-   * `Optional` parameters (e.g. a bare `Optional.empty()` would be `Optional[Nothing]`).
-   */
-  private def checkpointMetaData(
-      version: Long,
-      size: Long,
-      parts: Optional[java.lang.Long] = Optional.empty(),
-      sizeInBytes: Optional[java.lang.Long] = Optional.empty(),
-      numOfAddFiles: Optional[java.lang.Long] = Optional.empty(),
-      v2Checkpoint: Optional[Row] = Optional.empty(),
-      checksum: Optional[String] = Optional.empty(),
-      tags: java.util.Map[String, String] = java.util.Map.of()): CheckpointMetaData =
-    new CheckpointMetaData(
-      version,
-      size,
-      parts,
-      sizeInBytes,
-      numOfAddFiles,
-      v2Checkpoint,
-      checksum,
-      tags)
 
   //////////////////////////////////////////////////////////////////////////////////
   // readLastCheckpointFile tests
@@ -117,49 +85,6 @@ class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       .readLastCheckpointFile(mockEngine(jsonHandler = jsonHandler))
     assert(!lastCheckpoint.isPresent)
     assert(jsonHandler.currentFailCount == 0)
-  }
-
-  //////////////////////////////////////////////////////////////////////////////////
-  // CheckpointMetaData.toJson / toRow tests
-  //////////////////////////////////////////////////////////////////////////////////
-  test("classic (V1) CheckpointMetaData serializes only the present fields") {
-    val cpm = checkpointMetaData(40L, 44L, parts = Optional.of(20L))
-    assertJsonEquals("""{"version":40,"size":44,"parts":20}""", cpm.toJson())
-  }
-
-  test("classic (V1) CheckpointMetaData without parts omits parts") {
-    assertJsonEquals("""{"version":7,"size":3}""", checkpointMetaData(7L, 3L).toJson())
-  }
-
-  test("V2 CheckpointMetaData serializes only the present fields") {
-    val cpm = checkpointMetaData(
-      2L,
-      9L,
-      sizeInBytes = Optional.of(100L),
-      numOfAddFiles = Optional.of(4L),
-      checksum = Optional.of("abc"))
-    assertJsonEquals(
-      """{"version":2,"size":9,"sizeInBytes":100,"numOfAddFiles":4,"checksum":"abc"}""",
-      cpm.toJson())
-  }
-
-  test("CheckpointMetaData round-trips fields through toRow -> fromRow") {
-    val cpm = checkpointMetaData(
-      12L,
-      34L,
-      parts = Optional.of(2L),
-      sizeInBytes = Optional.of(999L),
-      numOfAddFiles = Optional.of(4L),
-      checksum = Optional.of("abc123"),
-      tags = java.util.Map.of("k", "v"))
-    val restored = CheckpointMetaData.fromRow(cpm.toRow())
-    assert(restored.version == 12L)
-    assert(restored.size == 34L)
-    assert(restored.parts == Optional.of(2L))
-    assert(restored.sizeInBytes == Optional.of(999L))
-    assert(restored.numOfAddFiles == Optional.of(4L))
-    assert(restored.checksum == Optional.of("abc123"))
-    assert(restored.tags == java.util.Map.of("k", "v"))
   }
 
   //////////////////////////////////////////////////////////////////////////////////
@@ -330,17 +255,6 @@ class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
 }
 
 object CheckpointerSuite extends VectorTestUtils {
-  private val nullLong: java.lang.Long = null
-
-  /** A null column vector for any type (only isNullAt is exercised for absent-field columns). */
-  private def nullVector(dt: DataType): ColumnVector = new ColumnVector {
-    override def getDataType: DataType = dt
-    override def getSize: Int = 1
-    override def close(): Unit = {}
-    override def isNullAt(rowId: Int): Boolean = true
-  }
-
-  // A classic (V1) `_last_checkpoint`: version/size/parts present, all V2 fields absent.
   val SAMPLE_LAST_CHECKPOINT_FILE_CONTENT: ColumnarBatch = new ColumnarBatch {
     override def getSchema: StructType = CheckpointMetaData.READ_SCHEMA
 
@@ -348,12 +262,8 @@ object CheckpointerSuite extends VectorTestUtils {
       ordinal match {
         case 0 => longVector(Seq(40)) // version
         case 1 => longVector(Seq(44)) // size
-        case 2 => longVector(Seq(20)) // parts
-        case 3 => longVector(Seq(nullLong)) // sizeInBytes
-        case 4 => longVector(Seq(nullLong)) // numOfAddFiles
-        case 5 => nullVector(CheckpointMetaData.READ_SCHEMA.at(5).getDataType) // v2Checkpoint
-        case 6 => stringVector(Seq(null)) // checksum
-        case 7 => mapTypeVector(Seq(Map.empty[String, String])) // tags
+        case 2 => longVector(Seq(20)); // parts
+        case 3 => mapTypeVector(Seq(Map.empty[String, String])) // tags
       }
     }
 
