@@ -19,12 +19,12 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.defaults.internal.json.JsonUtils;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Format;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.actions.SingleAction;
-import io.delta.kernel.internal.util.JsonUtils;
 import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.StructType;
 import java.util.*;

@@ -13,19 +13,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.defaults.internal.data
+package io.delta.kernel.defaults.internal.json
 
 import scala.Double.NegativeInfinity
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
-import io.delta.kernel.internal.util.JsonUtils
 import io.delta.kernel.test.VectorTestUtils
 import io.delta.kernel.types._
 
 import org.scalatest.funsuite.AnyFunSuite
 
-class DefaultJsonRowSuite extends AnyFunSuite with TestUtils with VectorTestUtils {
+class JsonUtilsSuite extends AnyFunSuite with TestUtils with VectorTestUtils {
 
   // Tests for round trip of each data type
   Seq(
@@ -134,11 +133,11 @@ class DefaultJsonRowSuite extends AnyFunSuite with TestUtils with VectorTestUtil
         |"c1":{"cn0":29,"cn1":[200,null,111237]},
         |"c3":{}
         |}""".stripMargin)).foreach { case (dataType, testJson, expRow, expJson) =>
-    test(s"DefaultJsonRow round trip: $dataType") {
+    test(s"JsonUtils.RowSerializer: $dataType") {
       val schema = new StructType(Seq.range(0, 4).map(colOrdinal =>
         new StructField(s"c$colOrdinal", dataType, true)).asJava)
 
-      val actRow = DefaultJsonRow.fromJsonString(testJson, schema)
+      val actRow = JsonUtils.rowFromJson(testJson, schema)
       checkAnswer(Seq(actRow), Seq(expRow))
       assert(JsonUtils.rowToJson(actRow) === expJson.linesIterator.mkString)
     }
