@@ -32,9 +32,8 @@ import org.scalatest.funsuite.AnyFunSuite
 /**
  * End-to-end tests for `Checkpointer.readLastCheckpointFile` / `readLastCheckpointSerialized`.
  *
- * `_last_checkpoint` is captured as a single UTF-8 JSON blob (for SnapshotHint / softstore relay).
- * Only classic columnar fields are projected into [[CheckpointMetaData]]; extra JSON (e.g.
- * `checkpointSchema`) round-trips via the captured blob.
+ * The opaque JSON blob lives in [[io.delta.kernel.internal.checkpoints.LastCheckpointSerialized]]
+ * only. [[io.delta.kernel.internal.checkpoints.CheckpointMetaData]] carries classic columnar fields.
  */
 class LastCheckpointHintSuite extends AnyFunSuite {
 
@@ -57,19 +56,17 @@ class LastCheckpointHintSuite extends AnyFunSuite {
     new String(bytes, StandardCharsets.UTF_8).trim
   }
 
-  test("readLastCheckpointFile round-trips a V2 (json format) pointer via the captured blob") {
+  test("readLastCheckpointSerialized round-trips a V2 (json format) pointer") {
     val logPath = logPathFor("v2-checkpoint-json")
     val expectedJson = readLastCheckpoint(logPath)
 
-    val cpmOpt = new Checkpointer(logPath).readLastCheckpointFile(engine)
-    assert(cpmOpt.isPresent, "expected to read the _last_checkpoint pointer")
-    val cpm = cpmOpt.get()
-
+    val cpm = new Checkpointer(logPath).readLastCheckpointFile(engine).get()
     assert(cpm.version == 2L)
     assert(cpm.size == 9L)
     assert(!cpm.parts.isPresent, "V2 pointer has no `parts`")
 
-    assertJsonEquals(expectedJson, cpm.toJson())
+    val serialized = new Checkpointer(logPath).readLastCheckpointSerialized(engine).get()
+    assertJsonEquals(expectedJson, serialized.toJson())
   }
 
   test("V2 (parquet format) pointer round-trips every field including checkpointSchema") {
@@ -88,11 +85,10 @@ class LastCheckpointHintSuite extends AnyFunSuite {
 
     assert(serialized.json() == rawJson)
     assert(serialized.toJson().contains("\"checkpointSchema\":{"))
-    assertJsonEquals(rawJson, cpm.toJson())
+    assertJsonEquals(rawJson, serialized.toJson())
   }
 
-  test(
-    "classic checkpoint round-trips columnar fields and checkpointSchema via the captured blob") {
+  test("classic checkpoint round-trips columnar fields and checkpointSchema via the blob") {
     val logPath = logPathFor("spark-variant-checkpoint")
     val raw = readLastCheckpoint(logPath)
 
@@ -101,8 +97,9 @@ class LastCheckpointHintSuite extends AnyFunSuite {
     assert(cpm.size == 6L)
     assert(!cpm.parts.isPresent, "classic pointer here has no `parts`")
 
-    assert(cpm.toJson().contains("\"checkpointSchema\":{"))
-    assertJsonEquals(raw, cpm.toJson())
+    val serialized = new Checkpointer(logPath).readLastCheckpointSerialized(engine).get()
+    assert(serialized.toJson().contains("\"checkpointSchema\":{"))
+    assertJsonEquals(raw, serialized.toJson())
   }
 
   test("readLastCheckpointSerialized exposes utf8 bytes for softstore relay") {

@@ -409,8 +409,8 @@ public class Checkpointer {
 
   /**
    * Projects the columnar {@link CheckpointMetaData#READ_SCHEMA} fields from {@code json} already
-   * loaded in memory. Fields outside the schema (e.g. {@code checkpointSchema}) stay in the blob
-   * only.
+   * loaded in memory. Fields outside the schema (e.g. {@code checkpointSchema}) are not represented
+   * in {@link CheckpointMetaData}; use {@link #readLastCheckpointSerialized} for the full blob.
    */
   private static CheckpointMetaData parseColumnarFields(Engine engine, String json)
       throws IOException {
@@ -425,7 +425,7 @@ public class Checkpointer {
       if (!row.isPresent()) {
         throw new IOException("Failed to parse _last_checkpoint JSON into a row");
       }
-      return CheckpointMetaData.fromRow(row.get(), Optional.of(json));
+      return CheckpointMetaData.fromRow(row.get());
     }
   }
 }

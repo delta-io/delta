@@ -18,15 +18,12 @@ package io.delta.kernel.internal.checkpoints;
 import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
 import static io.delta.kernel.internal.util.VectorUtils.toJavaMap;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.data.GenericRow;
-import io.delta.kernel.internal.util.JsonUtils;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
-import java.io.UncheckedIOException;
 import java.util.*;
 
 public class CheckpointMetaData {
@@ -36,17 +33,11 @@ public class CheckpointMetaData {
   private static final int TAGS_ORDINAL = 3;
 
   public static CheckpointMetaData fromRow(Row row) {
-    return fromRow(row, Optional.empty());
-  }
-
-  /** @param serializedJson verbatim {@code _last_checkpoint} JSON when captured via file read */
-  public static CheckpointMetaData fromRow(Row row, Optional<String> serializedJson) {
     return new CheckpointMetaData(
         row.getLong(VERSION_ORDINAL),
         row.getLong(SIZE_ORDINAL),
         row.isNullAt(PARTS_ORDINAL) ? Optional.empty() : Optional.of(row.getLong(PARTS_ORDINAL)),
-        row.isNullAt(TAGS_ORDINAL) ? Map.of() : toJavaMap(row.getMap(TAGS_ORDINAL)),
-        serializedJson);
+        row.isNullAt(TAGS_ORDINAL) ? Map.of() : toJavaMap(row.getMap(TAGS_ORDINAL)));
   }
 
   public static StructType READ_SCHEMA =
@@ -60,28 +51,17 @@ public class CheckpointMetaData {
   public final long size;
   public final Optional<Long> parts;
   public final Map<String, String> tags;
-  public final Optional<String> serializedJson;
 
   public CheckpointMetaData(long version, long size, Optional<Long> parts) {
-    this(version, size, parts, Map.of(), Optional.empty());
+    this(version, size, parts, Map.of());
   }
 
   public CheckpointMetaData(
       long version, long size, Optional<Long> parts, Map<String, String> tags) {
-    this(version, size, parts, tags, Optional.empty());
-  }
-
-  public CheckpointMetaData(
-      long version,
-      long size,
-      Optional<Long> parts,
-      Map<String, String> tags,
-      Optional<String> serializedJson) {
     this.version = version;
     this.size = size;
     this.parts = parts;
     this.tags = tags;
-    this.serializedJson = serializedJson;
   }
 
   public Row toRow() {
@@ -94,24 +74,6 @@ public class CheckpointMetaData {
     }
 
     return new GenericRow(READ_SCHEMA, dataMap);
-  }
-
-  public String toJson() {
-    if (serializedJson.isPresent()) {
-      return serializedJson.get();
-    }
-    Map<String, Object> fields = new LinkedHashMap<>();
-    fields.put("version", version);
-    fields.put("size", size);
-    parts.ifPresent(p -> fields.put("parts", p));
-    if (!tags.isEmpty()) {
-      fields.put("tags", tags);
-    }
-    try {
-      return JsonUtils.mapper().writeValueAsString(fields);
-    } catch (JsonProcessingException e) {
-      throw new UncheckedIOException(e);
-    }
   }
 
   @Override

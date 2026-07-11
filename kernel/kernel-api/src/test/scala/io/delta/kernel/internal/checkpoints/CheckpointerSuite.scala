@@ -27,7 +27,6 @@ import io.delta.kernel.exceptions.KernelEngineException
 import io.delta.kernel.internal.checkpoints.Checkpointer.findLastCompleteCheckpointBeforeHelper
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames.checkpointFileSingular
-import io.delta.kernel.internal.util.JsonUtils
 import io.delta.kernel.internal.util.Utils
 import io.delta.kernel.test.{BaseMockFileSystemClient, BaseMockJsonHandler, MockFileSystemClientUtils, VectorTestUtils}
 import io.delta.kernel.types.StructType
@@ -37,25 +36,6 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
   import CheckpointerSuite._
-
-  /** Parses two JSON strings and asserts semantic equality (object key order is irrelevant). */
-  private def assertJsonEquals(expected: String, actual: String): Unit = {
-    assert(
-      JsonUtils.mapper.readTree(expected) == JsonUtils.mapper.readTree(actual),
-      s"JSON mismatch.\n expected: $expected\n actual:   $actual")
-  }
-
-  /**
-   * Builds a [[CheckpointMetaData]] via the full constructor with typed, defaulted arguments. The
-   * explicit `Optional` element types are needed because Scala cannot infer them for the Java
-   * `Optional` parameters (e.g. a bare `Optional.empty()` would be `Optional[Nothing]`).
-   */
-  private def checkpointMetaData(
-      version: Long,
-      size: Long,
-      parts: Optional[java.lang.Long] = Optional.empty(),
-      tags: java.util.Map[String, String] = java.util.Map.of()): CheckpointMetaData =
-    new CheckpointMetaData(version, size, parts, tags)
 
   //////////////////////////////////////////////////////////////////////////////////
   // readLastCheckpointFile tests
@@ -132,35 +112,17 @@ class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     assert(fsClient.currentFailCount == 0)
   }
 
-  //////////////////////////////////////////////////////////////////////////////////
-  // CheckpointMetaData.toJson / toRow tests
-  //////////////////////////////////////////////////////////////////////////////////
-  test("classic (V1) CheckpointMetaData serializes only the present fields") {
-    val cpm = checkpointMetaData(40L, 44L, parts = Optional.of(20L))
-    assertJsonEquals("""{"version":40,"size":44,"parts":20}""", cpm.toJson())
-  }
-
-  test("classic (V1) CheckpointMetaData without parts omits parts") {
-    assertJsonEquals("""{"version":7,"size":3}""", checkpointMetaData(7L, 3L).toJson())
-  }
-
   test("CheckpointMetaData round-trips classic fields through toRow -> fromRow") {
-    val cpm = checkpointMetaData(
+    val cpm = new CheckpointMetaData(
       12L,
       34L,
-      parts = Optional.of(2L),
-      tags = java.util.Map.of("k", "v"))
+      Optional.of(2L),
+      java.util.Map.of("k", "v"))
     val restored = CheckpointMetaData.fromRow(cpm.toRow())
     assert(restored.version == 12L)
     assert(restored.size == 34L)
     assert(restored.parts == Optional.of(2L))
     assert(restored.tags == java.util.Map.of("k", "v"))
-  }
-
-  test("CheckpointMetaData.toJson returns the captured blob when present") {
-    val blob = """{"version":2,"size":9,"checkpointSchema":{"type":"struct"}}"""
-    val cpm = CheckpointMetaData.fromRow(checkpointMetaData(2L, 9L).toRow(), Optional.of(blob))
-    assert(cpm.toJson() == blob)
   }
 
   //////////////////////////////////////////////////////////////////////////////////
