@@ -27,12 +27,17 @@ import io.delta.kernel.types.StructType;
 import java.util.*;
 
 public class CheckpointMetaData {
+  private static final int VERSION_ORDINAL = 0;
+  private static final int SIZE_ORDINAL = 1;
+  private static final int PARTS_ORDINAL = 2;
+  private static final int TAGS_ORDINAL = 3;
+
   public static CheckpointMetaData fromRow(Row row) {
     return new CheckpointMetaData(
-        row.getLong(0),
-        row.getLong(1),
-        row.isNullAt(2) ? Optional.empty() : Optional.of(row.getLong(2)),
-        row.isNullAt(3) ? Map.of() : toJavaMap(row.getMap(3)));
+        row.getLong(VERSION_ORDINAL),
+        row.getLong(SIZE_ORDINAL),
+        row.isNullAt(PARTS_ORDINAL) ? Optional.empty() : Optional.of(row.getLong(PARTS_ORDINAL)),
+        row.isNullAt(TAGS_ORDINAL) ? Map.of() : toJavaMap(row.getMap(TAGS_ORDINAL)));
   }
 
   public static StructType READ_SCHEMA =
@@ -61,11 +66,11 @@ public class CheckpointMetaData {
 
   public Row toRow() {
     Map<Integer, Object> dataMap = new HashMap<>();
-    dataMap.put(0, version);
-    dataMap.put(1, size);
-    parts.ifPresent(aLong -> dataMap.put(2, aLong));
+    dataMap.put(VERSION_ORDINAL, version);
+    dataMap.put(SIZE_ORDINAL, size);
+    parts.ifPresent(aLong -> dataMap.put(PARTS_ORDINAL, aLong));
     if (!tags.isEmpty()) {
-      dataMap.put(3, stringStringMapValue(tags));
+      dataMap.put(TAGS_ORDINAL, stringStringMapValue(tags));
     }
 
     return new GenericRow(READ_SCHEMA, dataMap);
