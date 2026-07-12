@@ -878,17 +878,32 @@ class UCDeltaTokenBasedRestClientSuite
         """{"name":"id","type":"long","nullable":false,"metadata":{}}""", false, 0),
       new UCClient.ColumnDef("name", "STRING", "string",
         """{"name":"name","type":"string","nullable":true,"metadata":{}}""", true, 1))
+    // Flattened protocol-derived keys in properties are lifted into the structured protocol field.
     val props = new java.util.HashMap[String, String]()
-    props.put("delta.minReaderVersion", "1")
+    props.put("delta.minReaderVersion", "3")
+    props.put("delta.feature.deletionVectors", "supported")
+    props.put("foo", "bar")
 
     withClient { c =>
-      c.finalizeCreate("my_table", testCatalog, testSchema, "s3://bucket/tbl", columns, props)
+      c.finalizeCreate(
+        "my_table",
+        testCatalog,
+        testSchema,
+        "s3://bucket/tbl",
+        columns,
+        protocol(3, 7, Collections.singleton("deletionVectors"), Collections.emptySet()),
+        props)
     }
 
     val json = objectMapper.readTree(captured)
     assert(json.get("name").asText() === "my_table")
     assert(json.get("location").asText() === "s3://bucket/tbl")
-    assert(json.get("properties").get("delta.minReaderVersion").asText() === "1")
+    // Protocol is sent as a structured field, not flattened into properties.
+    assert(json.get("protocol").get("min-reader-version").asInt() === 3)
+    assert(json.get("protocol").get("min-writer-version").asInt() === 7)
+    assert(json.get("properties").get("foo").asText() === "bar")
+    assert(!json.get("properties").has("delta.minReaderVersion"))
+    assert(!json.get("properties").has("delta.feature.deletionVectors"))
 
     val fields = json.get("columns").get("fields")
     assert(fields.size() === 2)
@@ -898,6 +913,35 @@ class UCDeltaTokenBasedRestClientSuite
     assert(fields.get(1).get("nullable").asBoolean() === true)
   }
 
+  test("finalizeCreate sends reader and writer features in the correct structured lists") {
+    var captured: String = null
+    deltaHandler = (exchange, body) => {
+      captured = body
+      sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+    }
+
+    withClient { c =>
+      c.finalizeCreate(
+        "t",
+        testCatalog,
+        testSchema,
+        "s3://bucket/tbl",
+        Collections.emptyList(),
+        protocol(
+          3,
+          7,
+          Collections.singleton("readerOnlyFeature"),
+          Collections.singleton("writerOnlyFeature")),
+        Collections.emptyMap())
+    }
+
+    val proto = objectMapper.readTree(captured).get("protocol")
+    val readerFeatures = proto.get("reader-features").elements().asScala.map(_.asText()).toSet
+    val writerFeatures = proto.get("writer-features").elements().asScala.map(_.asText()).toSet
+    assert(readerFeatures === Set("readerOnlyFeature"))
+    assert(writerFeatures === Set("writerOnlyFeature"))
+  }
+
   test("finalizeCreate throws CommitFailedException on server error") {
     deltaHandler = (exchange, _) =>
       sendJson(exchange, HttpStatus.SC_INTERNAL_SERVER_ERROR, """{"error":"fail"}""")
@@ -905,7 +949,7 @@ class UCDeltaTokenBasedRestClientSuite
     withClient { c =>
       val e = intercept[CommitFailedException] {
         c.finalizeCreate("t", testCatalog, testSchema, "s3://b/t",
-          Collections.emptyList(), Collections.emptyMap())
+          Collections.emptyList(), protocol(3, 7), Collections.emptyMap())
       }
       assert(e.getRetryable)
     }
@@ -914,10 +958,12 @@ class UCDeltaTokenBasedRestClientSuite
   test("finalizeCreate validates required parameters") {
     withClient { c =>
       intercept[NullPointerException] {
-        c.finalizeCreate(null, "c", "s", "loc", Collections.emptyList(), Collections.emptyMap())
+        c.finalizeCreate(
+          null, "c", "s", "loc", Collections.emptyList(), protocol(3, 7), Collections.emptyMap())
       }
       intercept[NullPointerException] {
-        c.finalizeCreate("t", null, "s", "loc", Collections.emptyList(), Collections.emptyMap())
+        c.finalizeCreate(
+          "t", null, "s", "loc", Collections.emptyList(), protocol(3, 7), Collections.emptyMap())
       }
     }
   }

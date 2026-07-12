@@ -107,6 +107,7 @@ class InMemoryUCClient(
       schemaName: String,
       storageLocation: String,
       columns: java.util.List[UCClient.ColumnDef],
+      protocol: AbstractProtocol,
       properties: java.util.Map[String, String]): Unit = {}
 
   override def close(): Unit = {}

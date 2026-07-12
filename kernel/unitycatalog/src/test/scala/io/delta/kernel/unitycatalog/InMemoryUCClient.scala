@@ -151,6 +151,7 @@ object InMemoryUCClient {
       schemaName: String,
       storageLocation: String,
       columns: java.util.List[UCClient.ColumnDef],
+      protocol: AbstractProtocol,
       properties: java.util.Map[String, String])
 }
 
@@ -259,6 +260,7 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       schemaName: String,
       storageLocation: String,
       columns: java.util.List[UCClient.ColumnDef],
+      protocol: AbstractProtocol,
       properties: java.util.Map[String, String]): Unit = {
     forceThrowInFinalizeCreateMethod()
     lastFinalizeCreateRecord = Some(InMemoryUCClient.FinalizeCreateRecord(
@@ -267,6 +269,7 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       schemaName,
       storageLocation,
       columns,
+      protocol,
       properties))
     val fqn = s"$catalogName.$schemaName.$tableName"
     Option(tables.putIfAbsent(fqn, TableData.afterCreate()))

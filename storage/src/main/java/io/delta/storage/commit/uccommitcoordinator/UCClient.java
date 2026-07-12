@@ -176,6 +176,7 @@ public interface UCClient extends AutoCloseable {
    * @param schemaName parent schema name in Unity Catalog
    * @param storageLocation the storage root URL for the table
    * @param columns column definitions for the table schema
+   * @param protocol the table's protocol (min reader/writer versions and features).
    * @param properties properties to persist in UC (protocol features, metadata config, etc.)
    * @throws CommitFailedException if there is a network or server error during finalization
    */
@@ -185,6 +186,7 @@ public interface UCClient extends AutoCloseable {
       String schemaName,
       String storageLocation,
       List<ColumnDef> columns,
+      AbstractProtocol protocol,
       Map<String, String> properties) throws CommitFailedException;
 
   /**

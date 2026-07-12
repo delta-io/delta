@@ -342,6 +342,7 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
           tableIdentifier.getSchemaName(),
           tablePath.toUri().toString(),
           columns,
+          new ProtocolAdapter(commitMetadata.getEffectiveProtocol()),
           ucProps);
       logger.info(
           "[{}] Finalized table creation in Unity Catalog as {}.{}.{}",
