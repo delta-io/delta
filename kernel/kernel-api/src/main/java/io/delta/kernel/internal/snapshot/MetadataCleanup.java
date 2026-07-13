@@ -16,22 +16,22 @@
 package io.delta.kernel.internal.snapshot;
 
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
-import static io.delta.kernel.internal.checkpoints.Checkpointer.getLatestCompleteCheckpointFromList;
-import static io.delta.kernel.internal.lang.ListUtils.getFirst;
-import static io.delta.kernel.internal.lang.ListUtils.getLast;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
-import static java.util.stream.Collectors.toList;
 
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.checkpoints.CheckpointInstance;
+import io.delta.kernel.internal.checkpoints.Checkpointer;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import java.io.IOException;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -42,39 +42,33 @@ public class MetadataCleanup {
   private MetadataCleanup() {}
 
   /**
-   * Delete the Delta log files (delta and checkpoint files) that are expired according to the table
-   * metadata retention settings. While deleting the log files, it makes sure the time travel
-   * continues to work for all unexpired table versions.
+   * Delete the Delta log files (delta, checkpoint, and checksum files) that are expired according
+   * to the table metadata retention settings. While deleting the log files, it makes sure that time
+   * travel continues to work for all unexpired table versions.
    *
-   * <p>Here is algorithm:
+   * <p>The algorithm mirrors Delta Spark's {@code listExpiredDeltaLogs} and {@code
+   * BufferingLogDeletionIterator}:
    *
-   * <ul>
-   *   <li>Initial the potential delete file list: `potentialFilesToDelete` as an empty list
-   *   <li>Initialize the last seen checkpoint file list: `lastSeenCheckpointFiles`. There could be
-   *       one or more checkpoint files for a given version.
-   *   <li>List the delta log files starting with prefix "00000000000000000000." (%020d). For each
-   *       file:
+   * <ol>
+   *   <li>Read {@code _last_checkpoint}. If absent, return immediately — never delete without a
+   *       checkpoint.
+   *   <li>Compute {@code maxVersion = lastCheckpoint.version - 1}. Files at or beyond the last
+   *       checkpoint version are never eligible for deletion.
+   *   <li>List all commit, checkpoint, and checksum files in the log directory.
+   *   <li>Pass the listing through {@link BufferingLogDeletionIterator}, which:
    *       <ul>
-   *         <li>Step 1: Check if the `lastSeenCheckpointFiles` contains a complete checkpoint, then
-   *             <ul>
-   *               <li>Step 1.1: delete all files in `potentialFilesToDelete`. Now we know there is
-   *                   a checkpoint that contains the compacted Delta log up to the checkpoint
-   *                   version and all commit/checkpoint files before this checkpoint version are
-   *                   not needed.
-   *               <li>Step 1.2: add `lastCheckpointFiles` to `potentialFileStoDelete` list. This
-   *                   checkpoint is potential candidate to delete later if we find another
-   *                   checkpoint
-   *             </ul>
-   *         <li>Step 2: If the timestamp falls within the retention period, stop
-   *         <li>Step 3: If the file is a delta log file, add it to the `potentialFilesToDelete`
-   *             list
-   *         <li>Step 4: If the file is a checkpoint file, add it to the `lastSeenCheckpointFiles`
+   *         <li>Adjusts non-monotonic file modification timestamps to preserve time-travel
+   *             correctness.
+   *         <li>Buffers files in a staging area and only promotes them to the delete queue when a
+   *             complete checkpoint that supersedes them is encountered.
+   *         <li>Gates each file on {@code effectiveMtime <= fileCutOffTime && version <=
+   *             maxVersion}.
    *       </ul>
-   * </ul>
+   *   <li>Delete every file yielded by the iterator.
+   * </ol>
    *
-   * @param engine {@link Engine} instance to delete the expired log files
-   * @param clock {@link Clock} instance to get the current time. Useful in testing to mock the
-   *     current time.
+   * @param engine {@link Engine} instance to use for file operations
+   * @param clock {@link Clock} instance to get the current time (useful in testing)
    * @param tablePath Table location
    * @param retentionMillis Log file retention period in milliseconds
    * @return number of log files deleted
@@ -84,123 +78,272 @@ public class MetadataCleanup {
       Engine engine, Clock clock, Path tablePath, long retentionMillis) throws IOException {
     checkArgument(retentionMillis >= 0, "Retention period must be non-negative");
 
-    List<String> potentialLogFilesToDelete = new ArrayList<>();
-    long lastSeenCheckpointVersion = -1; // -1 indicates no checkpoint seen yet
-    List<String> lastSeenCheckpointFiles = new ArrayList<>();
-
-    long fileCutOffTime = clock.getTimeMillis() - retentionMillis;
+    Path logPath = new Path(tablePath, "_delta_log");
     String tableName = tablePath.getName();
+
+    // Mirror Spark's listExpiredDeltaLogs: short-circuit when no checkpoint exists.
+    Optional<Long> lastCheckpoint =
+        new Checkpointer(logPath).readLastCheckpointFile(engine).map(x -> x.version);
+    if (!lastCheckpoint.isPresent()) {
+      logger.info(
+          "[tableName={}] No checkpoint found, skipping log cleanup to avoid deleting "
+              + "log files without a covering checkpoint.",
+          tableName);
+      return 0L;
+    }
+
+    // Files at or after the last checkpoint version are never candidates for deletion.
+    long maxVersion = lastCheckpoint.get() - 1;
+    long fileCutOffTime = clock.getTimeMillis() - retentionMillis;
+
     logger.info(
-        "[tableName={}] Starting the deletion of log files older than {}",
+        "[tableName={}] Starting the deletion of log files older than {} (maxVersion={})",
         tableName,
-        fileCutOffTime);
+        fileCutOffTime,
+        maxVersion);
+
+    // List only the file types we care about, mirroring Spark's filter in listExpiredDeltaLogs.
+    CloseableIterator<FileStatus> allFiles =
+        wrapEngineExceptionThrowsIO(
+            () -> engine.getFileSystemClient().listFrom(FileNames.listingPrefix(logPath, 0)),
+            "Listing log files for cleanup in %s",
+            logPath);
+
     long numDeleted = 0;
-    try (CloseableIterator<FileStatus> files = listDeltaLogs(engine, tablePath)) {
-      while (files.hasNext()) {
-        // Step 1: Check if the `lastSeenCheckpointFiles` contains a complete checkpoint
-        Optional<CheckpointInstance> lastCompleteCheckpoint =
-            getLatestCompleteCheckpointFromList(
-                lastSeenCheckpointFiles.stream().map(CheckpointInstance::new).collect(toList()),
-                CheckpointInstance.MAX_VALUE);
-
-        if (lastCompleteCheckpoint.isPresent()) {
-          // Step 1.1: delete all files in `potentialFilesToDelete`. Now we know there is a
-          //   checkpoint that contains the compacted Delta log up to the checkpoint version and all
-          //   commit/checkpoint files before this checkpoint version are not needed. add
-          //   `lastCheckpointFiles` to `potentialFileStoDelete` list. This checkpoint is potential
-          //   candidate to delete later if we find another checkpoint
-          if (!potentialLogFilesToDelete.isEmpty()) {
-            logger.info(
-                "[tableName={}] Deleting log files (start = {}, end = {}) because a checkpoint at "
-                    + "version {} indicates that these log files are no longer needed.",
-                tableName,
-                getFirst(potentialLogFilesToDelete),
-                getLast(potentialLogFilesToDelete),
-                lastSeenCheckpointVersion);
-
-            numDeleted += deleteLogFiles(engine, potentialLogFilesToDelete);
-            potentialLogFilesToDelete.clear();
-          }
-
-          // Step 1.2: add `lastCheckpointFiles` to `potentialFileStoDelete` list. This checkpoint
-          // is potential candidate to delete later if we find another checkpoint
-          potentialLogFilesToDelete.addAll(lastSeenCheckpointFiles);
-          lastSeenCheckpointFiles.clear();
-          lastSeenCheckpointVersion = -1;
+    try (CloseableIterator<FileStatus> expiredLogs =
+        new BufferingLogDeletionIterator(filteredIterator(allFiles), fileCutOffTime, maxVersion)) {
+      while (expiredLogs.hasNext()) {
+        String path = expiredLogs.next().getPath();
+        if (wrapEngineExceptionThrowsIO(
+            () -> engine.getFileSystemClient().delete(path),
+            "Failed to delete the log file as part of the metadata cleanup %s",
+            path)) {
+          numDeleted++;
         }
-
-        FileStatus nextFile = files.next();
-
-        // Step 2: If the timestamp is earlier than the retention period, stop
-        if (nextFile.getModificationTime() > fileCutOffTime) {
-          if (!potentialLogFilesToDelete.isEmpty()) {
-            logger.info(
-                "[tableName={}] Skipping deletion of expired log files {}, because there is "
-                    + "no checkpoint file that indicates that the log files are no longer "
-                    + "needed. ",
-                tableName,
-                potentialLogFilesToDelete.size());
-          }
-          break;
-        }
-
-        if (FileNames.isCommitFile(nextFile.getPath())) {
-          // Step 3: If the file is a delta log file, add it to the `potentialFilesToDelete` list
-          // We can't delete these files until we encounter a checkpoint later that indicates
-          // that the log files are no longer needed.
-          potentialLogFilesToDelete.add(nextFile.getPath());
-        } else if (FileNames.isCheckpointFile(nextFile.getPath())) {
-          // Step 4: If the file is a checkpoint file, add it to the `lastSeenCheckpointFiles`
-          long newLastSeenCheckpointVersion = FileNames.checkpointVersion(nextFile.getPath());
-          checkArgument(
-              lastSeenCheckpointVersion == -1
-                  || newLastSeenCheckpointVersion >= lastSeenCheckpointVersion);
-
-          if (lastSeenCheckpointVersion != -1
-              && newLastSeenCheckpointVersion > lastSeenCheckpointVersion) {
-            // We have found checkpoint file for a new version. This means the files gathered for
-            // the last checkpoint version are not complete (most likely an incomplete multipart
-            // checkpoint). We should delete the files gathered so far and start fresh
-            // last seen checkpoint state
-            logger.info(
-                "[tableName={}] Incomplete checkpoint files found at version {}, ignoring "
-                    + "the checkpoint files and adding them to potential log file delete list",
-                tableName,
-                lastSeenCheckpointVersion);
-            potentialLogFilesToDelete.addAll(lastSeenCheckpointFiles);
-            lastSeenCheckpointFiles.clear();
-          }
-
-          lastSeenCheckpointFiles.add(nextFile.getPath());
-          lastSeenCheckpointVersion = newLastSeenCheckpointVersion;
-        }
-        // Ignore non-delta and non-checkpoint files.
       }
     }
+
     logger.info(
         "[tableName={}] Deleted {} log files older than {}", tableName, numDeleted, fileCutOffTime);
     return numDeleted;
   }
 
-  private static CloseableIterator<FileStatus> listDeltaLogs(Engine engine, Path tablePath)
-      throws IOException {
-    Path logPath = new Path(tablePath, "_delta_log");
-    // TODO: Currently we don't update the timestamps of files to be monotonically increasing.
-    // In future we can do something similar to Delta Spark to make the timestamps monotonically
-    // increasing. See `BufferingLogDeletionIterator` in Delta Spark.
-    return engine.getFileSystemClient().listFrom(FileNames.listingPrefix(logPath, 0));
+  /**
+   * Returns the version of a commit, checkpoint, or checksum file. Mirrors Spark's {@code
+   * getDeltaFileChecksumOrCheckpointVersion}.
+   */
+  static long getFileVersion(String path) {
+    return FileNames.getFileVersion(new Path(path));
   }
 
-  private static int deleteLogFiles(Engine engine, List<String> logFiles) throws IOException {
-    int numDeleted = 0;
-    for (String logFile : logFiles) {
-      if (wrapEngineExceptionThrowsIO(
-          () -> engine.getFileSystemClient().delete(logFile),
-          "Failed to delete the log file as part of the metadata cleanup %s",
-          logFile)) {
-        numDeleted++;
+  /**
+   * Wraps the raw listing iterator to pass through only commit, checkpoint, and checksum files,
+   * skipping all other file types. Mirroring Spark's {@code listExpiredDeltaLogs} filter: {@code
+   * isCheckpointFile || isDeltaFile || isChecksumFile}.
+   */
+  private static CloseableIterator<FileStatus> filteredIterator(CloseableIterator<FileStatus> raw) {
+    return new CloseableIterator<FileStatus>() {
+      private FileStatus next = null;
+
+      @Override
+      public boolean hasNext() {
+        while (next == null && raw.hasNext()) {
+          FileStatus candidate = raw.next();
+          String path = candidate.getPath();
+          if (FileNames.isCommitFile(path)
+              || FileNames.isCheckpointFile(path)
+              || FileNames.isChecksumFile(path)) {
+            next = candidate;
+          }
+        }
+        return next != null;
+      }
+
+      @Override
+      public FileStatus next() {
+        FileStatus result = next;
+        next = null;
+        return result;
+      }
+
+      @Override
+      public void close() throws IOException {
+        raw.close();
+      }
+    };
+  }
+
+  /**
+   * Mirrors Delta Spark's {@code BufferingLogDeletionIterator} in {@code
+   * DeltaHistoryManager.scala}.
+   *
+   * <p>Wraps a sorted iterator of log {@link FileStatus} objects and yields only those that are
+   * safe to delete. Safety is enforced by two invariants:
+   *
+   * <ol>
+   *   <li><b>Checkpoint-gated flush:</b> commit and checksum files accumulate in a staging buffer
+   *       ({@code maybeDeleteFiles}). They are only promoted to the output queue ({@code
+   *       filesToDelete}) when a complete checkpoint that supersedes them is encountered. A file is
+   *       never deleted unless a checkpoint has confirmed it is no longer needed.
+   *   <li><b>Timestamp monotonicity:</b> because filesystem clocks can skew, a file's modification
+   *       time may not be strictly greater than the previous file's even though its version is
+   *       higher. When this is detected, the file's effective timestamp is adjusted to {@code
+   *       lastFile.modificationTime + 1}. The adjusted timestamp is used for the cutoff comparison,
+   *       preserving time-travel correctness.
+   * </ol>
+   *
+   * <p>A file is eligible to be flushed only when {@code effectiveMtime <= maxTimestamp &&
+   * version(file) <= maxVersion}. The {@code maxVersion} cap (= {@code lastCheckpointVersion - 1})
+   * provides a hard version ceiling matching Spark's {@code threshold} in {@code
+   * listExpiredDeltaLogs}.
+   */
+  static class BufferingLogDeletionIterator implements CloseableIterator<FileStatus> {
+
+    private final CloseableIterator<FileStatus> underlying;
+    private final long maxTimestamp;
+    private final long maxVersion;
+
+    /** Output queue: files confirmed safe to delete, dequeued one at a time by callers. */
+    private final ArrayDeque<FileStatus> filesToDelete = new ArrayDeque<>();
+
+    /**
+     * Staging buffer: files not yet confirmed safe to delete. Flushed to {@code filesToDelete} only
+     * when a complete checkpoint is encountered.
+     */
+    private final List<FileStatus> maybeDeleteFiles = new ArrayList<>();
+
+    /** The most recently consumed file; used for timestamp-monotonicity adjustment. */
+    private FileStatus lastFile = null;
+
+    /**
+     * Accumulates parts of in-progress multi-part checkpoints. Key: (version, totalParts). Value:
+     * list of parts seen so far. Keyed on both to match Spark's {@code checkpointMap} and handle
+     * the edge case of two different-arity multipart checkpoints at the same version.
+     */
+    private final Map<Long, Map<Integer, List<FileStatus>>> checkpointPartBuffer = new HashMap<>();
+
+    BufferingLogDeletionIterator(
+        CloseableIterator<FileStatus> underlying, long maxTimestamp, long maxVersion) {
+      this.underlying = underlying;
+      this.maxTimestamp = maxTimestamp;
+      this.maxVersion = maxVersion;
+      // Seed lastFile and maybeDeleteFiles with the first file, mirroring Spark's init().
+      if (underlying.hasNext()) {
+        lastFile = underlying.next();
+        maybeDeleteFiles.add(lastFile);
       }
     }
-    return numDeleted;
+
+    /**
+     * Returns true if {@code file} can be deleted: its effective modification time is at or before
+     * the cutoff and its version is at or below {@code maxVersion}.
+     */
+    private boolean shouldDeleteFile(FileStatus file) {
+      return file.getModificationTime() <= maxTimestamp
+          && getFileVersion(file.getPath()) <= maxVersion;
+    }
+
+    /**
+     * Returns true if {@code file} requires a timestamp adjustment. This occurs when the file has a
+     * higher version than {@code lastFile} but a modification time that is not strictly greater,
+     * indicating clock skew. Mirrors Spark's {@code needsTimeAdjustment}.
+     */
+    private boolean needsTimeAdjustment(FileStatus file) {
+      return lastFile != null
+          && getFileVersion(lastFile.getPath()) < getFileVersion(file.getPath())
+          && lastFile.getModificationTime() >= file.getModificationTime();
+    }
+
+    /**
+     * Promotes the staging buffer to the output queue if the last buffered file satisfies {@code
+     * shouldDeleteFile}. Always clears the buffer. Mirrors Spark's {@code flushBuffer}.
+     */
+    private void flushBuffer() {
+      if (!maybeDeleteFiles.isEmpty()
+          && shouldDeleteFile(maybeDeleteFiles.get(maybeDeleteFiles.size() - 1))) {
+        filesToDelete.addAll(maybeDeleteFiles);
+      }
+      maybeDeleteFiles.clear();
+    }
+
+    /**
+     * Advances the underlying iterator until the next complete checkpoint is processed, populating
+     * {@code filesToDelete} as appropriate. Mirrors Spark's {@code queueFilesInBuffer}.
+     *
+     * <p>Three cases per file:
+     *
+     * <ul>
+     *   <li>Needs timestamp adjustment: create an adjusted copy, append to buffer, keep advancing.
+     *   <li>Complete checkpoint (single-part, V2, or completed multi-part): flush the buffer then
+     *       append the checkpoint file(s) to the now-empty buffer and stop advancing.
+     *   <li>Regular commit or checksum: append to buffer, keep advancing.
+     * </ul>
+     */
+    private void queueFilesInBuffer() {
+      boolean continueBuffering = true;
+      while (continueBuffering && underlying.hasNext()) {
+        FileStatus currentFile = underlying.next();
+
+        if (needsTimeAdjustment(currentFile)) {
+          // Adjust the effective timestamp to lastFile.mtime + 1 to preserve time-travel
+          // anchor correctness. The adjusted FileStatus replaces the original in the buffer.
+          currentFile =
+              FileStatus.of(
+                  currentFile.getPath(), currentFile.getSize(), lastFile.getModificationTime() + 1);
+          maybeDeleteFiles.add(currentFile);
+        } else if (FileNames.isCheckpointFile(currentFile.getPath()) && currentFile.getSize() > 0) {
+          CheckpointInstance ci = new CheckpointInstance(currentFile.getPath());
+
+          if (!ci.numParts.isPresent() || ci.format == CheckpointInstance.CheckpointFormat.V2) {
+            // Single-part or V2 checkpoint: flush immediately.
+            flushBuffer();
+            maybeDeleteFiles.add(currentFile);
+            continueBuffering = false;
+          } else {
+            // Multi-part checkpoint: accumulate until all parts are present.
+            // Key on (version, expectedParts) mirroring Spark's (version -> numParts) map key.
+            long version = ci.version;
+            int expectedParts = ci.numParts.get();
+            List<FileStatus> parts =
+                checkpointPartBuffer
+                    .computeIfAbsent(version, v -> new HashMap<>())
+                    .computeIfAbsent(expectedParts, n -> new ArrayList<>());
+            parts.add(currentFile);
+            if (parts.size() == expectedParts) {
+              flushBuffer();
+              maybeDeleteFiles.addAll(parts);
+              checkpointPartBuffer.getOrDefault(version, new HashMap<>()).remove(expectedParts);
+              continueBuffering = false;
+            }
+          }
+        } else {
+          // Regular commit or checksum file: accumulate in the staging buffer.
+          maybeDeleteFiles.add(currentFile);
+        }
+
+        lastFile = currentFile;
+      }
+    }
+
+    @Override
+    public boolean hasNext() {
+      if (filesToDelete.isEmpty()) {
+        queueFilesInBuffer();
+      }
+      return !filesToDelete.isEmpty();
+    }
+
+    @Override
+    public FileStatus next() {
+      if (filesToDelete.isEmpty()) {
+        throw new java.util.NoSuchElementException("BufferingLogDeletionIterator is exhausted");
+      }
+      return filesToDelete.poll();
+    }
+
+    @Override
+    public void close() throws IOException {
+      underlying.close();
+    }
   }
 }

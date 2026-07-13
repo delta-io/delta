@@ -94,16 +94,29 @@ trait AbstractTestUtils
     }
   })
 
-  lazy val spark = SparkSession
-    .builder()
-    .appName("Spark Test Writer for Delta Kernel")
-    .config("spark.master", "local")
-    .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-    .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-    // Set this conf to empty string so that the golden tables generated
-    // using with the test-prefix (i.e. there is no DELTA_TESTING set) can still work
-    .config(DeltaSQLConf.TEST_DV_NAME_PREFIX.key, "")
-    .getOrCreate()
+  lazy val spark = {
+    val session = SparkSession
+      .builder()
+      .appName("Spark Test Writer for Delta Kernel")
+      .config("spark.master", "local")
+      .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+      .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+      // Set this conf to empty string so that the golden tables generated
+      // using with the test-prefix (i.e. there is no DELTA_TESTING set) can still work
+      .config(DeltaSQLConf.TEST_DV_NAME_PREFIX.key, "")
+      .getOrCreate()
+    // Disable whole-stage and expression-level codegen to prevent Spark 4.0
+    // RemoteClassLoaderError when running outside of sbt's forked JVM.
+    // Spark 4.0 codegen produces class names like
+    // `org.apache.spark.sql.catalyst.expressions.Object`; Janino resolves the `Object` type
+    // reference via ExecutorClassLoader, which fetches it from the artifact transport URI and
+    // fails with StacklessClosedChannelException. Disabling both codegen paths avoids Janino
+    // entirely. Set after getOrCreate() so the config applies even if a cached session is
+    // returned that was created before these configs were added.
+    session.conf.set("spark.sql.codegen.wholeStage", "false")
+    session.conf.set("spark.sql.codegen.factoryMode", "NO_CODEGEN")
+    session
+  }
 
   implicit class CloseableIteratorOps[T](private val iter: CloseableIterator[T]) {
     def forEach(f: T => Unit): Unit = {

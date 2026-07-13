@@ -20,6 +20,7 @@ import static io.delta.kernel.internal.TableConfig.EXPIRED_LOG_CLEANUP_ENABLED;
 import static io.delta.kernel.internal.TableConfig.LOG_RETENTION;
 import static io.delta.kernel.internal.snapshot.MetadataCleanup.cleanupExpiredLogs;
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.CHECKPOINT_PROTECTION_W_FEATURE;
+import static io.delta.kernel.internal.tablefeatures.TableFeatures.CHECKPOINT_V2_RW_FEATURE;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
 import io.delta.kernel.data.ColumnarBatch;
@@ -109,7 +110,15 @@ public class Checkpointer {
 
     final Metadata metadata = snapshot.getMetadata();
     if (shouldPerformLogCleanup(snapshot)) {
-      cleanupExpiredLogs(engine, clock, tablePath, LOG_RETENTION.fromMetadata(metadata));
+      try {
+        cleanupExpiredLogs(engine, clock, tablePath, LOG_RETENTION.fromMetadata(metadata));
+      } catch (Exception e) {
+        logger.warn(
+            "{}: Log cleanup failed; ignoring to avoid surfacing cleanup errors as commit "
+                + "failures.",
+            tablePath,
+            e);
+      }
     } else {
       logger.info(
           "{}: Log cleanup is disabled. Skipping the deletion of expired log files", tablePath);
@@ -120,10 +129,18 @@ public class Checkpointer {
    * Only clean up expired log files when:
    *
    * <ul>
-   *   <li>Snapshot was built as "latest" by intent (not time-traveled)
    *   <li>checkpointProtection feature is not enabled
+   *   <li>v2Checkpoint feature is not enabled (V2 cleanup requires sidecar handling, not yet
+   *       implemented)
    *   <li>delta.enableExpiredLogCleanup table property is set to true
    * </ul>
+   *
+   * <p>Note: the {@code wasBuiltAsLatest} guard that previously gated cleanup is intentionally
+   * removed. The real safety guarantee is provided by {@link
+   * io.delta.kernel.internal.snapshot.MetadataCleanup#cleanupExpiredLogs}, which short-circuits
+   * when no {@code _last_checkpoint} exists and only deletes files that are covered by a complete
+   * checkpoint observed in the log listing. Delta Spark has no equivalent "built as latest" guard
+   * and proceeds with cleanup unconditionally after every checkpoint write.
    */
   private static boolean shouldPerformLogCleanup(SnapshotImpl snapshot) {
     final boolean hasCheckpointProtection =
@@ -131,9 +148,11 @@ public class Checkpointer {
             .getProtocol()
             .getWriterFeatures()
             .contains(CHECKPOINT_PROTECTION_W_FEATURE.featureName());
-    return snapshot.wasBuiltAsLatest()
-        && EXPIRED_LOG_CLEANUP_ENABLED.fromMetadata(snapshot.getMetadata())
-        && !hasCheckpointProtection;
+    final boolean hasV2Checkpoint =
+        snapshot.getProtocol().getWriterFeatures().contains(CHECKPOINT_V2_RW_FEATURE.featureName());
+    return EXPIRED_LOG_CLEANUP_ENABLED.fromMetadata(snapshot.getMetadata())
+        && !hasCheckpointProtection
+        && !hasV2Checkpoint;
   }
 
   /**
