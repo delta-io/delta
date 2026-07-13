@@ -679,6 +679,67 @@ class DeltaFormatSharingSourceSuite
     }
   }
 
+  // forceToDeltaSourceOffset gates legacy-JSON parsing on the auto-resolve conf. CDF streaming
+  // (readChangeFeed=true) must be gated by the new
+  // DELTA_SHARING_CDF_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT and ignore the non-CDF flag, and
+  // vice versa for non-CDF streaming. This grid verifies all four conf combinations against both
+  // source kinds and confirms the two flags route independently.
+  Seq(
+    // (readChangeFeed, cdfFlag, streamingFlag, expectAutoResolveOn)
+    (true, true, false, true),   // CDF: CDF flag on -> auto-resolve on, ignores streamingFlag=false
+    (true, false, true, false),  // CDF: non-CDF flag must not enable CDF auto-resolve
+    (false, true, false, false), // non-CDF: CDF flag must not enable non-CDF auto-resolve
+    (false, false, true, true)   // non-CDF: streaming flag on -> auto-resolve on (existing path)
+  ).foreach { case (readChangeFeed, cdfFlag, streamingFlag, expectAutoResolveOn) =>
+    test(s"forceToDeltaSourceOffset: flag routing readChangeFeed=$readChangeFeed " +
+      s"cdfFlag=$cdfFlag streamingFlag=$streamingFlag -> autoResolve=$expectAutoResolveOn") {
+      withTempDir { tempDir =>
+        val deltaTableName = "delta_table_cdf_flag_routing"
+        withTable(deltaTableName) {
+          createTable(deltaTableName)
+          val sharedTableName = "some_table"
+          prepareMockedClientMetadata(deltaTableName, sharedTableName)
+          prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+          val profileFile = prepareProfileFile(tempDir)
+          val tableId = "test-table-id"
+          val cdfKey = DeltaSQLConf
+            .DELTA_SHARING_CDF_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT.key
+          val streamingKey = DeltaSQLConf
+            .DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT.key
+          withSQLConf(
+            (getDeltaSharingClassesSQLConf ++ Seq(
+              cdfKey -> cdfFlag.toString,
+              streamingKey -> streamingFlag.toString
+            )).toSeq: _*
+          ) {
+            val params = Map("path" ->
+              s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName") ++
+              (if (readChangeFeed) Map("readChangeFeed" -> "true") else Map.empty)
+            val source = getSource(params)
+            val tableIdField = source.getClass.getDeclaredField("tableId")
+            tableIdField.setAccessible(true)
+            tableIdField.set(source, tableId)
+            val legacyJson = "{\"sourceVersion\":1," +
+              s""""tableId":"$tableId",""" +
+              "\"tableVersion\":1," +
+              "\"index\":-1," +
+              "\"isStartingVersion\":true}"
+            val serializedOffset = SerializedOffset(legacyJson)
+            if (expectAutoResolveOn) {
+              val (deltaOffset, fromLegacy) = source.forceToDeltaSourceOffset(serializedOffset)
+              assert(fromLegacy, "fromLegacy should be true for DeltaSharingSourceOffset JSON")
+              assert(deltaOffset.reservoirId === tableId)
+              assert(deltaOffset.reservoirVersion === 1L)
+            } else {
+              intercept[Exception](source.forceToDeltaSourceOffset(serializedOffset))
+            }
+            cleanUpDeltaSharingBlocks()
+          }
+        }
+      }
+    }
+  }
+
   // E2E: Custom checkpoint with legacy DeltaSharingSourceOffset format;
   // restart with delta streaming using that checkpoint.
   // Flag on/off. Mocks use delta table only.

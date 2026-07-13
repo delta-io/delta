@@ -26,6 +26,7 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
+import io.delta.kernel.defaults.engine.fileio.FileIO;
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Literal;
@@ -39,6 +40,7 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.File;
+import java.lang.reflect.Field;
 import java.net.URI;
 import java.nio.file.AccessDeniedException;
 import java.util.*;
@@ -100,6 +102,14 @@ class AbstractKernelTableTest extends TestHelper {
         AbstractKernelTable.normalize(URI.create("file:///var/char/good")).toString());
     assertEquals(
         "s3://host/var/", AbstractKernelTable.normalize(URI.create("s3://host/var")).toString());
+    assertEquals(
+        "s3://my_bucket/var/",
+        AbstractKernelTable.normalize(URI.create("s3://my_bucket/var")).toString());
+    assertEquals(
+        "abfss://container@account.dfs.core.windows.net/path/",
+        AbstractKernelTable.normalize(
+                URI.create("abfss://container@account.dfs.core.windows.net/path"))
+            .toString());
   }
 
   @Test
@@ -150,6 +160,105 @@ class AbstractKernelTableTest extends TestHelper {
           assertFalse(snapshot.getTableProperties().containsKey("something"));
           assertTrue(
               ((SnapshotImpl) snapshot).getProtocol().getWriterFeatures().contains("v2Checkpoint"));
+        });
+  }
+
+  /**
+   * Reads a single merged Hadoop configuration value from the engine produced by {@link
+   * AbstractKernelTable#createEngine()}. {@code createEngine} builds the configuration internally
+   * and only exposes it through the engine's {@link FileIO}, so this reaches it via {@code
+   * DefaultEngine}'s private {@code fileIO} field rather than adding a production-only accessor.
+   */
+  private static String engineConfValue(Engine engine, String key) throws Exception {
+    Field fileIOField = DefaultEngine.class.getDeclaredField("fileIO");
+    fileIOField.setAccessible(true);
+    FileIO fileIO = (FileIO) fileIOField.get(engine);
+    return fileIO.getConf(key).orElse(null);
+  }
+
+  @Test
+  void testEngineConfigurationPrecedence() {
+    StructType schema = new StructType().add("id", IntegerType.INTEGER);
+
+    // Customer-provided fs.* options: one overrides a built-in default, one collides with a
+    // credential vended by the credential manager, one is unique.
+    Map<String, String> tableConfig = new HashMap<>();
+    tableConfig.put("fs.s3a.path.style.access", "true"); // built-in default is "false"
+    tableConfig.put("fs.s3a.access.key", "customer-key"); // also vended by the credential manager
+    tableConfig.put("fs.s3a.endpoint", "customer-endpoint"); // no default, no credential
+
+    withTempDir(
+        dir -> {
+          LocalFileSystemTable table =
+              new LocalFileSystemTable(dir.toURI(), tableConfig, schema, Collections.emptyList());
+          // Inject a credential manager that vends a value colliding with a customer fs.* key.
+          // The field is protected/transient and only initialized by open() when null, so setting
+          // it here needs no change to AbstractKernelTable.
+          table.credentialManager =
+              new CredentialManager.AmbientCredentialManager() {
+                @Override
+                Map<String, String> getCredentials() {
+                  return Map.of("fs.s3a.access.key", "credential-key");
+                }
+              };
+
+          // engineConf carries the customer-provided fs.* options verbatim.
+          assertEquals(
+              Map.of(
+                  "fs.s3a.path.style.access", "true",
+                  "fs.s3a.access.key", "customer-key",
+                  "fs.s3a.endpoint", "customer-endpoint"),
+              table.conf.engineConf());
+
+          Engine engine = table.createEngine();
+          // Customer value overrides the built-in default.
+          assertEquals("true", engineConfValue(engine, "fs.s3a.path.style.access"));
+          // Credential manager value overrides the customer value.
+          assertEquals("credential-key", engineConfValue(engine, "fs.s3a.access.key"));
+          // Customer value with no default/credential is passed through.
+          assertEquals("customer-endpoint", engineConfValue(engine, "fs.s3a.endpoint"));
+        });
+  }
+
+  @Test
+  void testCredentialManagerFromConf() {
+    StructType schema = new StructType().add("id", IntegerType.INTEGER);
+    String key = TableConf.CREDENTIALS_SOURCE.key();
+
+    // Default (no conf) and explicit "uc" both yield a UC-vending manager, not the ambient one.
+    withTestTable(
+        schema,
+        Collections.emptyList(),
+        table ->
+            assertFalse(
+                table.credentialManager instanceof CredentialManager.AmbientCredentialManager));
+    withTestTable(
+        schema,
+        Collections.emptyList(),
+        Map.of(key, "uc"),
+        table ->
+            assertFalse(
+                table.credentialManager instanceof CredentialManager.AmbientCredentialManager));
+
+    // "ambient" (case-insensitive) yields the no-op manager that fetches no credentials.
+    withTestTable(
+        schema,
+        Collections.emptyList(),
+        Map.of(key, "AMBIENT"),
+        table -> {
+          assertInstanceOf(
+              CredentialManager.AmbientCredentialManager.class, table.credentialManager);
+          assertTrue(table.credentialManager.getCredentials().isEmpty());
+        });
+
+    // An unknown source fails fast.
+    withTempDir(
+        dir -> {
+          LocalFileSystemTable table =
+              new LocalFileSystemTable(
+                  dir.toURI(), Map.of(key, "not-a-source"), schema, Collections.emptyList());
+          IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, table::open);
+          assertTrue(ex.getMessage().contains(key));
         });
   }
 

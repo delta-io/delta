@@ -20,10 +20,14 @@ import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.duration.Duration
 import scala.util.control.NonFatal
 
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.DataFrameUtils
+import org.apache.spark.sql.delta.DeltaLogFileIndex.COMMIT_VERSION_COLUMN
 import org.apache.spark.sql.delta.SnapshotManagement.checkpointV2ThreadPool
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.expressions.EncodeNestedVariantAsZ85String
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.FileNames._
@@ -31,9 +35,10 @@ import org.apache.spark.sql.delta.util.threads.NonFateSharingFuture
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
-import org.apache.spark.sql.Dataset
+import org.apache.spark.sql.{Column, DataFrame, Dataset}
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.functions.{col, lit, to_json}
+import org.apache.spark.sql.types.{StructField, StructType}
 
 /**
  * Represents basic information about a checkpoint.
@@ -54,12 +59,13 @@ trait UninitializedCheckpointProvider {
   def topLevelFiles: Seq[FileStatus]
 
   /**
-   * File index which could help derive actions stored in top level files
-   * for the checkpoint.
-   * This could be used to get [[Protocol]], [[Metadata]] etc from a checkpoint.
-   * This could also be used if we want to shallow copy a checkpoint.
+   * The checkpoint's contribution to the protocol/metadata/in-commit-timestamp fast path, as a
+   * DataFrame over [[Snapshot.pAndMQuerySchema]] tagged with [[COMMIT_VERSION_COLUMN]] (None when
+   * the checkpoint is empty). Callers read their delta side with the same schema so the two
+   * DataFrames can be unioned.
    */
-  def topLevelFileIndex: Option[DeltaLogFileIndex]
+  def loadProtocolMetadataActions(
+      spark: SparkSession, deltaLog: DeltaLog): Option[DataFrame]
 }
 
 /**
@@ -71,16 +77,58 @@ trait CheckpointProvider extends UninitializedCheckpointProvider {
   def effectiveCheckpointSizeInBytes(): Long
 
   /**
-   * List of different file indexes which could help derive full state-reconstruction
-   * for the checkpoint.
-   */
-  def allActionsFileIndexes(): Seq[DeltaLogFileIndex]
-
-  /**
    * The type of checkpoint (V2 vs Classic). This will be None when no checkpoint is available.
    * This is only intended to be used for logging and metrics.
    */
-  def checkpointPolicy: Option[CheckpointPolicy.Policy]
+  def checkpointPolicyForLogging: Option[CheckpointPolicy.Policy]
+
+  /**
+   * Writes a compatibility classic single-file checkpoint for this checkpoint at `logPath`, so a
+   * legacy reader that does not understand newer kind of checkpoints can read it and fail
+   * gracefully with a Protocol requirement failure. Only checkpoint kinds that need a compat
+   * checkpoint (i.e. V2 checkpoints) implement this; the default throws.
+   */
+  def createCompatibilityCheckpoint(
+      spark: SparkSession, deltaLog: DeltaLog, logPath: Path, hadoopConf: Configuration): Unit =
+    throw new IllegalStateException(
+      s"createCompatibilityCheckpoint is not supported for ${this.getClass.getName}.")
+
+  /**
+   * The checkpoint's full action set for state reconstruction as a single DataFrame (None when the
+   * checkpoint is empty), already carrying [[COMMIT_VERSION_COLUMN]] and
+   * [[Snapshot.ADD_STATS_TO_USE_COL_NAME]] and unioned across all underlying files. Consumers just
+   * union this with the delta DataFrames; the physical layout stays behind this method.
+   */
+  def loadActionsForStateReconstruction(
+      spark: SparkSession, deltaLog: DeltaLog): Option[DataFrame]
+}
+
+/**
+ * A trait representing [[UninitializedCheckpointProvider]] corresponding to checkpoints whose file
+ * actions are stored as flat set of parquet files.
+ */
+trait FileBasedUninitializedCheckpointProvider extends UninitializedCheckpointProvider {
+
+  /**
+   * File index which could help derive non-fileactions of a checkpoint. Note that the underlying
+   * files may contain fileactions which needs to be filtered out by the caller.
+   */
+  def topLevelFileIndex: Option[DeltaLogFileIndex]
+
+  override def loadProtocolMetadataActions(
+      spark: SparkSession, deltaLog: DeltaLog): Option[DataFrame] = {
+    topLevelFileIndex.map { index =>
+      deltaLog.loadIndex(index, Snapshot.pAndMQuerySchema)
+        .withColumn(COMMIT_VERSION_COLUMN, lit(version))
+    }
+  }
+}
+
+/**
+ * A [[CheckpointProvider]] whose file actions are stored as flat set of parquet files.
+ */
+trait FileBasedCheckpointProvider
+  extends CheckpointProvider with FileBasedUninitializedCheckpointProvider {
 
   /**
    * List of different file indexes and corresponding schemas which could help derive full
@@ -90,6 +138,44 @@ trait CheckpointProvider extends UninitializedCheckpointProvider {
    */
   def allActionsFileIndexesAndSchemas(
     spark: SparkSession, deltaLog: DeltaLog): Seq[(DeltaLogFileIndex, StructType)]
+
+  override def loadActionsForStateReconstruction(
+      spark: SparkSession, deltaLog: DeltaLog): Option[DataFrame] = {
+    val jsonStatsCol = col("add.stats")
+    val checkpointDataframes = allActionsFileIndexesAndSchemas(spark, deltaLog)
+      .map { case (index, schema) =>
+        val addSchema = schema("add").dataType.asInstanceOf[StructType]
+        val (checkpointSchemaToUse, checkpointStatsColToUse) =
+          if (addSchema.exists(_.name == "stats_parsed") && !addSchema.exists(_.name == "stats")) {
+            val statsParsedSchema = addSchema("stats_parsed").dataType.asInstanceOf[StructType]
+            val checkpointSchemaToUse =
+              Action.logSchemaWithAddStatsParsed(addSchema("stats_parsed"))
+            val statsCol = col("add.stats_parsed")
+            // Only use EncodeNestedVariantAsZ85String if the schema contains VariantType.
+            // This avoids performance overhead for tables without variant columns.
+            val encodedStatsCol =
+              if (SchemaUtils.checkForVariantTypeColumnsRecursively(statsParsedSchema)) {
+                Column(EncodeNestedVariantAsZ85String(statsCol.expr))
+              } else {
+                statsCol
+              }
+            (
+              checkpointSchemaToUse,
+              to_json(encodedStatsCol)
+            )
+          } else {
+            // Normal (JSON-like) schema suffices
+            (Action.logSchema, jsonStatsCol)
+          }
+
+        // For schema compat, make sure to discard add.stats_parsed (if present)
+        deltaLog.loadIndex(index, checkpointSchemaToUse)
+          .withColumn(COMMIT_VERSION_COLUMN, lit(version))
+          .withColumn(Snapshot.ADD_STATS_TO_USE_COL_NAME, checkpointStatsColToUse)
+          .withColumn("add", col("add").dropFields("stats_parsed"))
+      }
+    checkpointDataframes.reduceOption(_.union(_))
+  }
 }
 
 object CheckpointProvider extends DeltaLogging {
@@ -111,7 +197,7 @@ object CheckpointProvider extends DeltaLogging {
     // as it might need I/O.
     case uninitializedV2CheckpointProvider: UninitializedV2CheckpointProvider =>
       new LazyCompleteCheckpointProvider(uninitializedV2CheckpointProvider) {
-        override def createCheckpointProvider(): CheckpointProvider = {
+        override def createCheckpointProvider(): FileBasedCheckpointProvider = {
           val (checkpointMetadataOpt, sidecarFiles) =
             uninitializedV2CheckpointProvider.nonFateSharingCheckpointReadFuture.get(Duration.Inf)
           // This must be a v2 checkpoint, so checkpointMetadataOpt must be non empty.
@@ -144,7 +230,7 @@ object CheckpointProvider extends DeltaLogging {
           spark, provider.logPath, provider.fileStatus, snapshotDescriptor.deltaLog.options)
       }
       new LazyCompleteCheckpointProvider(provider) {
-        override def createCheckpointProvider(): CheckpointProvider = {
+        override def createCheckpointProvider(): FileBasedCheckpointProvider = {
           val (checkpointMetadataOpt, sidecarFiles) = future.get(Duration.Inf)
           checkpointMetadataOpt match {
             case Some(cm) =>
@@ -310,7 +396,7 @@ object CheckpointProvider extends DeltaLogging {
 case class PreloadedCheckpointProvider(
     override val topLevelFiles: Seq[FileStatus],
     lastCheckpointInfoOpt: Option[LastCheckpointInfo])
-  extends CheckpointProvider
+  extends FileBasedCheckpointProvider
   with DeltaLogging {
 
   require(topLevelFiles.nonEmpty, "There should be atleast 1 checkpoint file")
@@ -320,11 +406,10 @@ case class PreloadedCheckpointProvider(
 
   override def effectiveCheckpointSizeInBytes(): Long = fileIndex.sizeInBytes
 
-  override def allActionsFileIndexes(): Seq[DeltaLogFileIndex] = Seq(fileIndex)
-
   override lazy val topLevelFileIndex: Option[DeltaLogFileIndex] = Some(fileIndex)
 
-  override def checkpointPolicy: Option[CheckpointPolicy.Policy] = Some(CheckpointPolicy.Classic)
+  override def checkpointPolicyForLogging: Option[CheckpointPolicy.Policy] =
+    Some(CheckpointPolicy.Classic)
 
   override def allActionsFileIndexesAndSchemas(
       spark: SparkSession, deltaLog: DeltaLog): Seq[(DeltaLogFileIndex, StructType)] = {
@@ -354,15 +439,15 @@ object EmptyCheckpointProvider extends CheckpointProvider {
   override def version: Long = -1
   override def topLevelFiles: Seq[FileStatus] = Nil
   override def effectiveCheckpointSizeInBytes(): Long = 0L
-  override def allActionsFileIndexes(): Seq[DeltaLogFileIndex] = Nil
-  override def topLevelFileIndex: Option[DeltaLogFileIndex] = None
-  override def checkpointPolicy: Option[CheckpointPolicy.Policy] = None
-  override def allActionsFileIndexesAndSchemas(
-    spark: SparkSession, deltaLog: DeltaLog): Seq[(DeltaLogFileIndex, StructType)] = Nil
+  override def checkpointPolicyForLogging: Option[CheckpointPolicy.Policy] = None
+  override def loadProtocolMetadataActions(
+    spark: SparkSession, deltaLog: DeltaLog): Option[DataFrame] = None
+  override def loadActionsForStateReconstruction(
+    spark: SparkSession, deltaLog: DeltaLog): Option[DataFrame] = None
 }
 
 /** A trait representing a v2 [[UninitializedCheckpointProvider]] */
-trait UninitializedV2LikeCheckpointProvider extends UninitializedCheckpointProvider {
+trait UninitializedV2LikeCheckpointProvider extends FileBasedUninitializedCheckpointProvider {
   def fileStatus: FileStatus
   def logPath: Path
   def lastCheckpointInfoOpt: Option[LastCheckpointInfo]
@@ -453,26 +538,27 @@ case class UninitializedV2CheckpointProvider(
  * @param uninitializedCheckpointProvider the underlying [[UninitializedCheckpointProvider]]
  */
 abstract class LazyCompleteCheckpointProvider(
-    uninitializedCheckpointProvider: UninitializedCheckpointProvider)
-  extends CheckpointProvider {
+    uninitializedCheckpointProvider: FileBasedUninitializedCheckpointProvider)
+  extends FileBasedCheckpointProvider {
 
   override def version: Long = uninitializedCheckpointProvider.version
   override def topLevelFiles: Seq[FileStatus] = uninitializedCheckpointProvider.topLevelFiles
   override def topLevelFileIndex: Option[DeltaLogFileIndex] =
     uninitializedCheckpointProvider.topLevelFileIndex
 
-  protected def createCheckpointProvider(): CheckpointProvider
+  protected def createCheckpointProvider(): FileBasedCheckpointProvider
 
-  lazy val underlyingCheckpointProvider: CheckpointProvider = createCheckpointProvider()
+  lazy val underlyingCheckpointProvider: FileBasedCheckpointProvider = createCheckpointProvider()
 
   override def effectiveCheckpointSizeInBytes(): Long =
     underlyingCheckpointProvider.effectiveCheckpointSizeInBytes()
 
-  override def allActionsFileIndexes(): Seq[DeltaLogFileIndex] =
-    underlyingCheckpointProvider.allActionsFileIndexes()
+  override def checkpointPolicyForLogging: Option[CheckpointPolicy.Policy] =
+    underlyingCheckpointProvider.checkpointPolicyForLogging
 
-  override def checkpointPolicy: Option[CheckpointPolicy.Policy] =
-    underlyingCheckpointProvider.checkpointPolicy
+  override def createCompatibilityCheckpoint(
+      spark: SparkSession, deltaLog: DeltaLog, logPath: Path, hadoopConf: Configuration): Unit =
+    underlyingCheckpointProvider.createCompatibilityCheckpoint(spark, deltaLog, logPath, hadoopConf)
 
   override def allActionsFileIndexesAndSchemas(
       spark: SparkSession, deltaLog: DeltaLog): Seq[(DeltaLogFileIndex, StructType)] = {
@@ -502,7 +588,7 @@ case class V2CheckpointProvider(
     lastCheckpointInfoOpt: Option[LastCheckpointInfo],
     logPath: Path,
     sidecarSchemaFetcher: () => Option[StructType]
-  ) extends CheckpointProvider with DeltaLogging {
+  ) extends FileBasedCheckpointProvider with DeltaLogging {
 
   private[delta] def sidecarFileStatuses: Seq[FileStatus] =
     sidecarFiles.map(_.toFileStatus(logPath))
@@ -523,10 +609,23 @@ case class V2CheckpointProvider(
   override lazy val topLevelFileIndex: Option[DeltaLogFileIndex] = Some(fileIndexForV2Checkpoint)
   override def effectiveCheckpointSizeInBytes(): Long =
     sidecarFiles.map(_.sizeInBytes).sum + v2CheckpointFile.getLen
-  override def allActionsFileIndexes(): Seq[DeltaLogFileIndex] =
-    topLevelFileIndex ++: fileIndexesForSidecarFiles
 
-  override def checkpointPolicy: Option[CheckpointPolicy.Policy] = Some(CheckpointPolicy.V2)
+  override def checkpointPolicyForLogging: Option[CheckpointPolicy.Policy] =
+    Some(CheckpointPolicy.V2)
+
+  override def createCompatibilityCheckpoint(
+      spark: SparkSession, deltaLog: DeltaLog, logPath: Path, hadoopConf: Configuration): Unit = {
+    // topLevelFileIndex is non-empty for V2CheckpointProvider and
+    // represents the v2 manifest file
+    val shallowCopyDf = deltaLog.loadIndex(topLevelFileIndex.get, Action.logSchema)
+    val finalPath = checkpointFileSingular(logPath, version)
+    Checkpoints.createCheckpointV2ParquetFile(
+      spark,
+      shallowCopyDf,
+      finalPath,
+      hadoopConf,
+      useRename = false)
+  }
 
   private val v2SchemaWithCaching = new LazyCheckpointSchemaGetter {
     override def fileStatus: FileStatus = v2CheckpointFile
@@ -564,13 +663,17 @@ object V2CheckpointProvider {
       sidecarFiles: Seq[SidecarFile],
       deltaLog: DeltaLog): V2CheckpointProvider = {
     def getSidecarSchemaFetcher: () => Option[StructType] = {
+      val sidecarSchemaFromMetadata = checkpointMetadata.sidecarFileSchema
       val nonFateSharingSidecarSchemaFuture: NonFateSharingFuture[Option[StructType]] = {
         checkpointV2ThreadPool.submitNonFateSharing { spark: SparkSession =>
           sidecarFiles.headOption.map { sidecarFile =>
             val sidecarFileStatus =
               sidecarFile.toFileStatus(uninitializedV2LikeCheckpointProvider.logPath)
             CheckpointProvider.getParquetSchema(
-              spark, deltaLog, sidecarFileStatus, schemaFromLastCheckpoint = None)
+              spark,
+              deltaLog,
+              sidecarFileStatus,
+              schemaFromLastCheckpoint = sidecarSchemaFromMetadata)
           }
         }
       }

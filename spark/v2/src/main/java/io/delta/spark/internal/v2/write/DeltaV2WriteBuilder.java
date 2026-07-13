@@ -19,6 +19,8 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.util.ColumnMapping;
+import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
@@ -37,6 +39,7 @@ import org.apache.spark.sql.types.StructType;
  * <p>Schema validation uses the shared V1 utility {@code SchemaMergingUtils.mergeSchemas} to check
  * type compatibility and reject duplicate columns before the write proceeds.
  */
+// Public: accessed from DeltaV2Table in v2.catalog package.
 public class DeltaV2WriteBuilder implements WriteBuilder {
 
   private final Engine engine;
@@ -67,18 +70,38 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
 
   @Override
   public Write build() {
+    // Reject writes to column-mapped tables: the V2 write path writes Parquet with logical
+    // column names, but column-mapped tables store data under physical UUID-based names.
+    // The mismatch causes reads to return null for every value.
+    ColumnMappingMode cmMode =
+        ColumnMapping.getColumnMappingMode(initialSnapshot.getTableProperties());
+    if (cmMode != ColumnMappingMode.NONE) {
+      throw new UnsupportedOperationException(
+          "DSv2 writes are not supported on column-mapped Delta tables "
+              + "(delta.columnMapping.mode = "
+              + cmMode.toString()
+              + "). Use the V1 write path (format(\"delta\").write()) instead.");
+    }
+
+    validateDataSchema(initialSnapshot, writeInfo.schema());
+
+    return new DeltaV2BatchWrite(engine, hadoopConf, tablePath, initialSnapshot, writeInfo);
+  }
+
+  static void validateDataSchema(Snapshot initialSnapshot, StructType dataSchema) {
+    // Validate data schema against table schema using the same utility as V1
+    // (ImplicitMetadataOperation.updateMetadata -> SchemaMergingUtils.mergeSchemas).
     StructType tableSchema =
         SchemaUtils.convertKernelSchemaToSparkSchema(initialSnapshot.getSchema());
     // Strip column mapping metadata (physical names, IDs) so mergeSchemas compares
-    // only logical types -- matches V1's dropColumnMappingMetadata call.
+    // only logical types - matches V1's dropColumnMappingMetadata call.
     StructType cleanTableSchema =
         DeltaColumnMapping.dropColumnMappingMetadata(tableSchema.asNullable());
-    StructType dataSchema = writeInfo.schema();
 
     // Throws DeltaAnalysisException for type incompatibilities or duplicate columns.
-    // Return value discarded -- we only need the validation side-effect.
-    // TODO: Support schema evolution (mergeSchema option). When enabled, use the merged
-    // schema returned here to update table metadata instead of discarding it.
+    // Return value discarded - we only need the validation side-effect.
+    // TODO: Support schema evolution (mergeSchema option). When enabled, use the
+    // merged schema returned here to update table metadata instead of discarding it.
     SchemaMergingUtils.mergeSchemas(
         cleanTableSchema,
         dataSchema,
@@ -86,7 +109,5 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
         /* keepExistingType */ false,
         TypeWideningMode.NoTypeWidening$.MODULE$,
         /* caseSensitive */ false);
-
-    return new DeltaV2BatchWrite(engine, hadoopConf, tablePath, initialSnapshot, writeInfo);
   }
 }

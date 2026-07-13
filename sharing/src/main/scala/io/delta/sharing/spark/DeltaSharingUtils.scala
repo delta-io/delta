@@ -29,6 +29,8 @@ import io.delta.sharing.client.{DeltaSharingClient, DeltaSharingRestClient}
 import io.delta.sharing.client.model.{DeltaTableFiles, DeltaTableMetadata, Table}
 import io.delta.sharing.client.util.JsonUtils
 
+import org.apache.hadoop.fs.Path
+
 import org.apache.spark.SparkEnv
 import org.apache.spark.delta.sharing.TableRefreshResult
 import org.apache.spark.internal.Logging
@@ -302,6 +304,8 @@ object DeltaSharingUtils extends Logging {
       localDeltaLog,
       new SnapshotDescriptor {
         val deltaLog: DeltaLog = localDeltaLog
+        override val dataPath: Path = localDeltaLog.dataPath
+        val logPath: Path = localDeltaLog.logPath
         val metadata: Metadata = deltaSharingTableMetadata.metadata.deltaMetadata
         val protocol: Protocol = deltaSharingTableMetadata.protocol.deltaProtocol
         val version = deltaSharingTableMetadata.version

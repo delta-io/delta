@@ -16,6 +16,8 @@
 
 package io.delta.flink.sink;
 
+import io.delta.flink.sink.mergestrategy.AppendOnly;
+import io.delta.flink.sink.mergestrategy.CoWUpsert;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
@@ -116,6 +118,31 @@ public class DeltaSinkConf implements Serializable {
                   + "columns only.");
 
   /**
+   * Write mode controlling how the sink interprets the incoming changelog.
+   *
+   * <p>Supported values match the {@link WriteMode} enum constants (case-insensitive):
+   *
+   * <ul>
+   *   <li>{@code "append"} (default): treat every row as an INSERT. Compatible with {@code
+   *       ChangelogMode.insertOnly()}.
+   *   <li>{@code "upsert"}: use the row {@code RowKind} together with a declared primary key to
+   *       merge incoming changes into the table. {@code INSERT}/{@code UPDATE_AFTER} rows replace
+   *       any existing row with the same primary key; {@code DELETE} rows remove the matching row.
+   *       {@code UPDATE_BEFORE} rows are ignored.
+   * </ul>
+   *
+   * <p>{@code upsert} mode requires a primary key declared on the Flink table (or supplied via
+   * {@link #PRIMARY_KEY}).
+   */
+  public static final ConfigOption<WriteMode> WRITE_MODE =
+      ConfigOptions.key("write.mode")
+          .enumType(WriteMode.class)
+          .defaultValue(WriteMode.APPEND)
+          .withDescription(
+              "Write semantics. 'append' (default) treats all incoming rows as INSERTs. "
+                  + "'upsert' merges incoming changes by primary key.");
+
+  /**
    * Internal carrier for primary-key column ordinals (0-based field indices into the sink schema).
    *
    * <p>Format: comma-separated, decimal, non-negative integers. Example: {@code "0,3"} declares a
@@ -136,6 +163,7 @@ public class DeltaSinkConf implements Serializable {
   private final Map<String, String> conf;
   private final Configuration configuration;
   private final SchemaEvolutionPolicy schemaEvolutionPolicy;
+  private final WriteMode writeMode;
   private final int[] primaryKeyOrdinals;
 
   private transient StructType sinkSchema;
@@ -166,17 +194,32 @@ public class DeltaSinkConf implements Serializable {
       default:
         throw new IllegalArgumentException("unknown evolution mode:" + mode);
     }
-
+    this.writeMode = configuration.get(WRITE_MODE);
     this.primaryKeyOrdinals = parsePrimaryKeyOrdinals(configuration.get(PRIMARY_KEY), sinkSchema);
+    if (writeMode == WriteMode.UPSERT && primaryKeyOrdinals.length == 0) {
+      throw new IllegalArgumentException(
+          "write.mode = 'upsert' requires a non-empty primary key. Declare "
+              + "'PRIMARY KEY (...) NOT ENFORCED' on the Flink table (SQL), or call "
+              + "DeltaSink.Builder.withPrimaryKey(...) (DataStream API).");
+    }
   }
 
+  /**
+   * Parses the comma-separated ordinal list stored under {@link #PRIMARY_KEY} into a primitive
+   * {@code int[]}, validating that each ordinal is in range {@code [0, schema.length())}.
+   *
+   * @param raw raw option value; may be null or empty
+   * @param schema sink schema, used to validate ordinal ranges
+   * @return primitive array of validated, in-range ordinals (length 0 if {@code raw} was empty)
+   * @throws IllegalArgumentException if a segment is not a valid integer or is out of range
+   */
   private static int[] parsePrimaryKeyOrdinals(String raw, StructType schema) {
     if (raw == null || raw.trim().isEmpty()) {
       return new int[0];
     }
     int width = schema.length();
     String[] segments = raw.split(",");
-    int[] ordinals = new int[segments.length];
+    int[] tmp = new int[segments.length];
     int n = 0;
     for (String segment : segments) {
       String trimmed = segment.trim();
@@ -203,13 +246,13 @@ public class DeltaSinkConf implements Serializable {
                 + width
                 + ".");
       }
-      ordinals[n++] = ordinal;
+      tmp[n++] = ordinal;
     }
     if (n == segments.length) {
-      return ordinals;
+      return tmp;
     }
     int[] result = new int[n];
-    System.arraycopy(ordinals, 0, result, 0, n);
+    System.arraycopy(tmp, 0, result, 0, n);
     return result;
   }
 
@@ -248,6 +291,18 @@ public class DeltaSinkConf implements Serializable {
   }
 
   /**
+   * Creates a fresh {@link MergeStrategy} for the configured {@link WriteMode}.
+   *
+   * <p>Returns a new instance on every call — merge strategies hold per-checkpoint state and must
+   * not be shared across {@link DeltaSinkWriter} instances.
+   *
+   * @return {@link CoWUpsert} when in upsert mode; {@link AppendOnly} otherwise
+   */
+  public MergeStrategy createMergeStrategy() {
+    return isUpsert() ? new CoWUpsert() : new AppendOnly();
+  }
+
+  /**
    * Creates a {@link FileRollingStrategy} based on the per-table configuration.
    *
    * <p>Default behavior: {@code count} strategy with {@link #FILE_ROLLING_COUNT} = -1 (disabled).
@@ -272,6 +327,20 @@ public class DeltaSinkConf implements Serializable {
    */
   public SchemaEvolutionPolicy getSchemaEvolutionPolicy() {
     return schemaEvolutionPolicy;
+  }
+
+  /**
+   * Returns the configured write mode.
+   *
+   * @return the write mode (defaults to {@link WriteMode#APPEND})
+   */
+  public WriteMode getWriteMode() {
+    return writeMode;
+  }
+
+  /** Convenience: {@code true} iff {@link #getWriteMode()} is {@link WriteMode#UPSERT}. */
+  public boolean isUpsert() {
+    return writeMode == WriteMode.UPSERT;
   }
 
   /**
@@ -415,6 +484,27 @@ public class DeltaSinkConf implements Serializable {
       }
       return false;
     }
+  }
+
+  // ----------------------------------------------------------------------
+  // Write mode
+  // ----------------------------------------------------------------------
+
+  /**
+   * Write semantics selected via {@link #WRITE_MODE}.
+   *
+   * <p>This is independent from Flink's {@link org.apache.flink.table.connector.ChangelogMode}; the
+   * dynamic table sink translates between the two.
+   */
+  public enum WriteMode {
+    /** Append-only writes; every row treated as INSERT regardless of {@code RowKind}. */
+    APPEND,
+    /**
+     * Upsert writes by primary key. {@code INSERT}/{@code UPDATE_AFTER} rows replace any existing
+     * row with the same primary key; {@code DELETE} rows remove the matching row; {@code
+     * UPDATE_BEFORE} rows are ignored.
+     */
+    UPSERT
   }
 
   /** Rolls files based on number of records written. */

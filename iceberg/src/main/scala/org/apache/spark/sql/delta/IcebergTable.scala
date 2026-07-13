@@ -195,7 +195,11 @@ class IcebergTable(
 
   checkConvertible()
 
-  val fileManifest = new IcebergFileManifest(spark, icebergTable, partitionSchema, convertStats)
+  val fileManifest = new IcebergFileManifest(
+    spark,
+    icebergTable,
+    partitionSchema,
+    convertStats)
 
   lazy val numFiles: Long =
     Option(icebergTable.currentSnapshot())

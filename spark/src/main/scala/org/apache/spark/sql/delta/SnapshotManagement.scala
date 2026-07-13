@@ -1511,6 +1511,21 @@ trait SnapshotManagement { self: DeltaLog =>
       lastCheckpointProvider: Option[CheckpointProvider],
       catalogTableOpt: Option[CatalogTable],
       enforceTimeTravelWithinDeletedFileRetention: Boolean): Snapshot = {
+    getSnapshotAtInternal(
+      version,
+      lastCheckpointHint,
+      lastCheckpointProvider,
+      catalogTableOpt,
+      enforceTimeTravelWithinDeletedFileRetention)
+  }
+
+  private def getSnapshotAtInternal(
+      version: Long,
+      lastCheckpointHint: Option[CheckpointInstance],
+      lastCheckpointProvider: Option[CheckpointProvider],
+      catalogTableOpt: Option[CatalogTable],
+      enforceTimeTravelWithinDeletedFileRetention: Boolean,
+      checksumOpt: Option[VersionChecksum] = None): Snapshot = {
 
     // See if the version currently cached on the cluster satisfies the requirement
     val currentSnapshot = unsafeVolatileSnapshot
@@ -1538,7 +1553,7 @@ trait SnapshotManagement { self: DeltaLog =>
       case _ =>
         val lastCheckpointInfoForListing = lastCheckpointHint
             .filter(_.version <= version)
-            .orElse(findLastCompleteCheckpointBefore(version))
+            .orElse(findLastCompleteCheckpointBefore(version + 1))
             .map(manuallyLoadCheckpoint)
         lastCheckpointInfoForListing -> None
     }
@@ -1559,7 +1574,7 @@ trait SnapshotManagement { self: DeltaLog =>
       initSegment = logSegment,
       tableCommitCoordinatorClientOpt = commitCoordinatorOpt,
       catalogTableOpt = catalogTableOpt,
-      checksumOpt = None)
+      checksumOpt = checksumOpt)
 
     if (enforceTimeTravelWithinDeletedFileRetention) {
       enforceTimeTravelWithinDeletedFileRetentionDuration(ret, currentSnapshot)

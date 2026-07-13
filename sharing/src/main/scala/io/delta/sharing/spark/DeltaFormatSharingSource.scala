@@ -420,9 +420,7 @@ case class DeltaFormatSharingSource(
           // yields a null reservoirId, causing an exception
           // since toDeltaSourceOffset expects it to match tableId.
           case e: Exception =>
-            val autoResolve = sqlConf.getConf(
-              DeltaSQLConf.DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT)
-            if (!autoResolve) {
+            if (!isAutoResolveEnabled) {
               throw e
             }
             logInfo(s"Offset JSON not valid Delta format, parsing as legacy: ${e.getMessage}")
@@ -431,11 +429,23 @@ case class DeltaFormatSharingSource(
     }
   }
 
+  /**
+   * Whether the auto-resolve conf is enabled for this stream. CDF streaming
+   * (readChangeFeed=true) is gated by DELTA_SHARING_CDF_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT;
+   * non-CDF streaming is gated by DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT.
+   */
+  private def isAutoResolveEnabled: Boolean = {
+    val confKey = if (options.readChangeFeed) {
+      DeltaSQLConf.DELTA_SHARING_CDF_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT
+    } else {
+      DeltaSQLConf.DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT
+    }
+    sqlConf.getConf(confKey)
+  }
+
   /** Returns the file ID hash option based on auto-resolve config and whether MD5 is needed. */
   private def resolveFileIdHash(useParquetHash: Boolean): Option[String] = {
-    val autoResolve = sqlConf.getConf(
-      DeltaSQLConf.DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT)
-    if (!autoResolve) {
+    if (!isAutoResolveEnabled) {
       None
     } else if (useParquetHash) {
       Some(DeltaSharingRestClient.FILEIDHASH_PARQUET)

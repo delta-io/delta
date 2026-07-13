@@ -548,8 +548,8 @@ class FileSizeHistogramSuite extends QueryTest
     val checksum = JsonUtils.mapper.readValue[VersionChecksum](oldWriterJson)
 
     // Verify the histogram was deserialized correctly
-    assert(checksum.histogramOpt.isDefined)
-    val histogram = checksum.histogramOpt.get
+    assert(checksum.fileSizeHistogram.isDefined)
+    val histogram = checksum.fileSizeHistogram.get
 
     // Validate histogram fields
     assert(histogram.sortedBinBoundaries ===
@@ -562,11 +562,11 @@ class FileSizeHistogramSuite extends QueryTest
 
     // Verify histogram can be serialized back to JSON
     val roundTripJson = JsonUtils.toJson(checksum)
-    assert(roundTripJson.contains("histogramOpt"))
+    assert(roundTripJson.contains("fileSizeHistogram"))
     assert(roundTripJson.contains("sortedBinBoundaries"))
 
     // Verify roundtrip deserialization works
     val roundTripChecksum = JsonUtils.mapper.readValue[VersionChecksum](roundTripJson)
-    assert(roundTripChecksum.histogramOpt.get.equals(histogram))
+    assert(roundTripChecksum.fileSizeHistogram.get.equals(histogram))
   }
 }

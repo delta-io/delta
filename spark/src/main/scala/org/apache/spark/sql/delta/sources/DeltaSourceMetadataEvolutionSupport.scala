@@ -765,28 +765,44 @@ object DeltaSourceMetadataEvolutionSupport extends Logging {
         (!hasFileAction && (metadataAction.isDefined || protocolAction.isDefined),
           version, metadataAction, protocolAction)
       }.takeWhile(_._1)
-    DeltaSource.iteratorLast(untilMetadataChange.toClosable)
-      .flatMap { case (_, version, metadataOpt, protocolOpt) =>
-        if (version == currentMetadataVersion) {
-          None
-        } else {
-          log.info(s"Looked ahead from version $currentMetadataVersion and " +
-            s"will use metadata at version $version to read Delta stream.")
-          Some(
-            currentMetadata.copy(
-              deltaCommitVersion = version,
-              dataSchemaJson =
-                metadataOpt.map(_.schema.json).getOrElse(currentMetadata.dataSchemaJson),
-              partitionSchemaJson =
-                metadataOpt.map(_.partitionSchema.json)
-                  .getOrElse(currentMetadata.partitionSchemaJson),
-              tableConfigurations = metadataOpt.map(_.configuration)
-                .orElse(currentMetadata.tableConfigurations),
-              protocolJson = protocolOpt.map(_.json).orElse(currentMetadata.protocolJson)
-            )
-          )
-        }
+    // Fold the chain so the merged entry tracks the latest Metadata and Protocol seen
+    // anywhere in the run, not just the last commit's actions -- otherwise a (Metadata,
+    // Protocol-only) tail would advance deltaCommitVersion while losing the schema change.
+    var lastVersion: Option[Long] = None
+    var latestMetadata: Option[Metadata] = None
+    var latestProtocol: Option[Protocol] = None
+    val chainIter = untilMetadataChange.toClosable
+    try {
+      while (chainIter.hasNext) {
+        val (_, version, metadataOpt, protocolOpt) = chainIter.next()
+        lastVersion = Some(version)
+        metadataOpt.foreach(m => latestMetadata = Some(m))
+        protocolOpt.foreach(p => latestProtocol = Some(p))
       }
+    } finally {
+      chainIter.close()
+    }
+    lastVersion.flatMap { version =>
+      if (version == currentMetadataVersion) {
+        None
+      } else {
+        log.info(s"Looked ahead from version $currentMetadataVersion and " +
+          s"will use metadata at version $version to read Delta stream.")
+        Some(
+          currentMetadata.copy(
+            deltaCommitVersion = version,
+            dataSchemaJson =
+              latestMetadata.map(_.schema.json).getOrElse(currentMetadata.dataSchemaJson),
+            partitionSchemaJson =
+              latestMetadata.map(_.partitionSchema.json)
+                .getOrElse(currentMetadata.partitionSchemaJson),
+            tableConfigurations = latestMetadata.map(_.configuration)
+              .orElse(currentMetadata.tableConfigurations),
+            protocolJson = latestProtocol.map(_.json).orElse(currentMetadata.protocolJson)
+          )
+        )
+      }
+    }
   }
 
   // scalastyle:off

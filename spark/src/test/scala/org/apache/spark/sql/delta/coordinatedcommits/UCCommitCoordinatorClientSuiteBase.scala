@@ -32,6 +32,7 @@ import io.delta.storage.commit.{
   CoordinatedCommitsUtils => JCoordinatedCommitsUtils,
   GetCommitsResponse => JGetCommitsResponse
 }
+import io.delta.storage.commit.actions.AbstractDomainMetadata
 import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCommitCoordinatorClient}
 import org.apache.hadoop.fs.Path
 import org.mockito.ArgumentMatchers.any
@@ -60,6 +61,8 @@ trait UCCommitCoordinatorClientSuiteBase extends CommitCoordinatorClientImplSuit
   protected var mockFactory: UCClientFactory = _
 
   protected var ucCommitCoordinator: InMemoryUCCommitCoordinator = _
+
+  override protected def expectedEmptyGetCommitsLatestTableVersion: Long = 0
 
   protected override def beforeAll(): Unit = {
     val tmpDirName = System.getProperty("java.io.tmpdir")
@@ -126,6 +129,7 @@ trait UCCommitCoordinatorClientSuiteBase extends CommitCoordinatorClientImplSuit
       Optional.empty(), // newMetadata
       Optional.empty(), // oldProtocol
       Optional.empty(), // newProtocol
+      java.util.Collections.emptyList[AbstractDomainMetadata](), // transactionDomainMetadata
       Optional.empty() /* uniform */)
   }
 

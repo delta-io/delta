@@ -664,6 +664,27 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
       assert(updatedLogSegment === snapshot.logSegment)
     }
   }
+
+  test("getSnapshotAt uses checkpoint at requested version as listing hint") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      spark.range(10).write.format("delta").save(path)
+      spark.range(10).write.format("delta").mode("append").save(path)
+      spark.range(10).write.format("delta").mode("append").save(path)
+      var (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, path)
+      deltaLog.checkpoint(snapshot)
+      spark.range(10).write.format("delta").mode("append").save(path)
+
+      DeltaLog.clearCache()
+      deltaLog = DeltaLog.forTable(spark, path)
+
+      val usageRecords = DeltaTestUtils.collectUsageLogs("delta.findLastCompleteCheckpointBefore") {
+        assert(deltaLog.getSnapshotAt(2).version == 2)
+      }
+      val checkpointSearchEvent = JsonUtils.fromJson[Map[String, String]](usageRecords.head.blob)
+      assert(checkpointSearchEvent("resultantCheckpointVersion") == "2")
+    }
+  }
 }
 
 class SnapshotManagementWithCatalogManagedBatch1Suite extends SnapshotManagementSuite {

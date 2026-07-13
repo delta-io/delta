@@ -122,7 +122,7 @@ trait DeltaErrorsSuiteBase
     "concurrentTransactionException" ->
       DeltaErrors.concurrentTransactionException(None),
     "metadataChangedException" ->
-      DeltaErrors.metadataChangedException(None),
+      DeltaErrors.metadataChangedException("test_table", None),
     "protocolChangedException" ->
       DeltaErrors.protocolChangedException(None)
   )
@@ -1456,7 +1456,7 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaIllegalStateException] {
         throw DeltaErrors.failOnDataLossException(12, 10)
       }
-      checkError(e, "DELTA_MISSING_FILES_UNEXPECTED_VERSION", "XXKDS",
+      checkError(e, "DELTA_MISSING_FILES_UNEXPECTED_VERSION", "42K03",
         Map("startVersion" -> "12", "earliestVersion" -> "10", "option" -> "failOnDataLoss"))
     }
     {
@@ -1799,6 +1799,34 @@ trait DeltaErrorsSuiteBase
       }
       checkError(e, "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION", "0AKDC",
         Map("operation" -> "OPTIMIZE"))
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cannotWriteEmptySchemaTableNoColumns()
+      }
+      checkError(e, "DELTA_CANNOT_WRITE_EMPTY_SCHEMA.TABLE_NO_COLUMNS", "428GU",
+        Map.empty[String, String])
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cannotWriteEmptySchemaTableAllVoidColumns()
+      }
+      checkError(e, "DELTA_CANNOT_WRITE_EMPTY_SCHEMA.TABLE_ALL_VOID_COLUMNS", "428GU",
+        Map.empty[String, String])
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cannotWriteEmptySchemaStructNoFields(Seq("a", "b"))
+      }
+      checkError(e, "DELTA_CANNOT_WRITE_EMPTY_SCHEMA.STRUCT_NO_FIELDS", "428GU",
+        Map("columnPath" -> "a.b"))
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.cannotWriteEmptySchemaStructAllVoidFields(Seq("a", "b"))
+      }
+      checkError(e, "DELTA_CANNOT_WRITE_EMPTY_SCHEMA.STRUCT_ALL_VOID_FIELDS", "428GU",
+        Map("columnPath" -> "a.b"))
     }
   }
 
@@ -2401,7 +2429,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.cannotSetLocationMultipleTimes(locations)
       }
       checkError(e, "DELTA_CANNOT_SET_LOCATION_MULTIPLE_TIMES", "XXKDS",
-        Map("location" -> "List(location1, location2)"))
+        Map("locations" -> "location1, location2"))
     }
     {
       val e = intercept[DeltaIllegalStateException] {
@@ -2881,11 +2909,14 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[io.delta.exceptions.MetadataChangedException] {
-        throw org.apache.spark.sql.delta.DeltaErrors.metadataChangedException(None)
+        throw org.apache.spark.sql.delta.DeltaErrors
+          .metadataChangedException("test_table", None)
       }
-      checkError(e, "DELTA_METADATA_CHANGED", "2D521", Map.empty[String, String])
-      assert(e.getMessage.contains("The metadata of the Delta table has been changed by a " +
-        "concurrent update."))
+      checkError(e, "DELTA_METADATA_CHANGED", "2D521",
+        Map(
+          "tableName" -> "test_table",
+          "conflictingCommit" -> "",
+          "docLink" -> generateDocsLink("/concurrency-control.html")))
     }
     {
       val e = intercept[DeltaAnalysisException] {
@@ -2955,6 +2986,24 @@ trait DeltaErrorsSuiteBase
         DeltaErrors.multipleSourceRowMatchingTargetRowInMergeException(newSession)
       assert(exceptionWithoutContext.getMessage.contains("https") === false)
     }
+  }
+
+  test("throwChangelogReadFailed preserves SparkThrowable cause and wraps others") {
+    // A cause that already carries a Spark error class is rethrown unchanged.
+    val sparkThrowableCause = new DeltaAnalysisException(
+      errorClass = "DELTA_CHANGELOG_UNBOUNDED_RANGE",
+      messageParameters = Array.empty[String])
+    val passed = intercept[DeltaAnalysisException] {
+      DeltaErrors.throwChangelogReadFailed("PROCESS_COMMIT_ACTIONS", sparkThrowableCause)
+    }
+    assert(passed eq sparkThrowableCause)
+
+    // Any other cause is wrapped in a DELTA_CHANGELOG_READ_FAILED sub-class.
+    val wrapped = intercept[DeltaIllegalStateException] {
+      DeltaErrors.throwChangelogReadFailed("PLAN_INPUT_PARTITIONS", new RuntimeException("boom"))
+    }
+    checkError(wrapped, "DELTA_CHANGELOG_READ_FAILED.PLAN_INPUT_PARTITIONS", "XXKDS",
+      Map.empty[String, String])
   }
 
   private def setCustomContext(session: SparkSession, context: SparkContext): Unit = {
