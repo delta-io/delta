@@ -33,6 +33,7 @@ import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.PhysicalWriteInfo;
 import org.apache.spark.sql.connector.write.Write;
 import org.apache.spark.sql.connector.write.WriterCommitMessage;
+import org.apache.spark.sql.types.StructType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -62,9 +63,11 @@ class DeltaV2BatchWrite implements Write, BatchWrite {
       Configuration hadoopConf,
       String tablePath,
       Snapshot initialSnapshot,
+      StructType dataSchema,
       LogicalWriteInfo writeInfo) {
     this.context =
-        DeltaV2BatchWriteContext.create(engine, hadoopConf, tablePath, initialSnapshot, writeInfo);
+        DeltaV2BatchWriteContext.create(
+            engine, hadoopConf, tablePath, initialSnapshot, dataSchema, writeInfo);
     this.targetDirectory = context.getTargetDirectory(Collections.emptyMap());
   }
 
