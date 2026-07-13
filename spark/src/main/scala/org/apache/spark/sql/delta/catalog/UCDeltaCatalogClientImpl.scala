@@ -703,24 +703,27 @@ object UCDeltaCatalogClientImpl extends AbstractDeltaCatalogClientFactory with L
       catalogName: String,
       options: CaseInsensitiveStringMap,
       fallbackLoadTableFunc: Identifier => Table): UCDeltaCatalogClientImpl = {
+    // Normalize once at the Spark catalog boundary; downstream code uses a plain map only.
+    val caseSensitiveOptions =
+      new util.HashMap[String, String](options.asCaseSensitiveMap())
+
     // Pre-flight: keep our user-facing errors instead of the factory's less specific ones.
-    if (options.get(UriKey) == null) {
+    if (caseSensitiveOptions.get(UriKey) == null) {
       throw new IllegalArgumentException(s"'$UriKey' is required (catalog '$catalogName')")
     }
-    validateAuthConfigured(options, catalogName)
+    validateAuthConfigured(caseSensitiveOptions, catalogName)
 
-    // `asCaseSensitiveMap()` preserves the user's original key case; `containsKey` is
-    // case-insensitive so defaults don't create duplicate keys.
-    val merged = new java.util.HashMap[String, String](options.asCaseSensitiveMap())
+    val merged = new util.HashMap[String, String](caseSensitiveOptions)
     Seq(
       UCTokenBasedRestClientFactory.RENEW_CREDENTIAL_ENABLED_KEY -> "true",
       UCTokenBasedRestClientFactory.CRED_SCOPED_FS_ENABLED_KEY -> "false"
-    ).foreach { case (k, v) => if (!options.containsKey(k)) merged.put(k, v) }
+    ).foreach { case (k, v) => if (!merged.containsKey(k)) merged.put(k, v) }
     val ucClient = UCTokenBasedRestClientFactory
-      .createUCClient(new CaseInsensitiveStringMap(merged))
+      .createUCClient(merged)
       .asInstanceOf[UCDeltaClient]
 
-    val sspEnabled = options.getBoolean(ServerSidePlanningEnabledKey, false)
+    val sspEnabled = Option(caseSensitiveOptions.get(ServerSidePlanningEnabledKey))
+      .exists(_.equalsIgnoreCase("true"))
     new UCDeltaCatalogClientImpl(catalogName, ucClient, sspEnabled, fallbackLoadTableFunc)
   }
 
@@ -734,10 +737,14 @@ object UCDeltaCatalogClientImpl extends AbstractDeltaCatalogClientFactory with L
    * `TokenProvider.create` is handed an empty config.
    */
   private[catalog] def validateAuthConfigured(
-      options: CaseInsensitiveStringMap,
+      options: util.Map[String, String],
       catalogName: String): Unit = {
-    val hasAuthPrefix = options.entrySet().asScala.exists(_.getKey.startsWith(AuthPrefix))
-    val hasLegacyToken = options.get(LegacyTokenKey) != null
+    val authPrefixLower = AuthPrefix.toLowerCase(java.util.Locale.ROOT)
+    val hasAuthPrefix = options.asScala.keys.exists(
+      _.toLowerCase(java.util.Locale.ROOT).startsWith(authPrefixLower))
+    val hasLegacyToken = options.asScala.exists { case (k, v) =>
+      k.equalsIgnoreCase(LegacyTokenKey) && v != null
+    }
     if (!hasAuthPrefix && !hasLegacyToken) {
       throw new IllegalArgumentException(
         s"auth configuration is required (catalog '$catalogName'). " +
