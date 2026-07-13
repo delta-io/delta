@@ -16,6 +16,8 @@
 
 package io.sparkuctest;
 
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
 import java.util.List;
 import org.junit.jupiter.api.Assertions;
 
@@ -117,10 +119,9 @@ public class UCDeltaTableReadTest extends UCDeltaTableIntegrationBaseTest {
 
           // Path-based access isn't supported for catalog-owned (MANAGED) tables.
           if (tableType == TableType.MANAGED) {
-            Assertions.assertThrows(
-                Exception.class,
-                () -> sql("SELECT * FROM delta.`%s`", tablePath),
-                "For managed tables, path-based access should fail");
+            assertThatThrownBy(() -> sql("SELECT * FROM delta.`%s`", tablePath))
+                .as("For managed tables, path-based access should fail")
+                .hasMessageContaining("DELTA_PATH_BASED_ACCESS_TO_CATALOG_MANAGED_TABLE_BLOCKED");
           } else {
             // For EXTERNAL tables, path-based access should work
             S3CredentialFileSystem.credentialCheckEnabled = false;
