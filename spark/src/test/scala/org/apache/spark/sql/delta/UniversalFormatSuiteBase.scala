@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.Utils.try_element_at
 
@@ -273,6 +274,23 @@ trait UniversalFormatSuiteBase extends IcebergCompatUtilsBase
       }
     }
   }
+
+  test("V1 saveAsTable overwrite preserves Delta-log-only IcebergCompat property") {
+    withTempTableAndDir { case (id, _) =>
+      executeSql(s"""CREATE TABLE $id (id INT, name STRING) USING DELTA TBLPROPERTIES (
+        'delta.columnMapping.mode' = 'name')""")
+      executeSql(s"INSERT INTO $id VALUES (1, 'a')")
+      executeSql(
+        s"ALTER TABLE $id SET TBLPROPERTIES ('delta.enableIcebergCompatV$compatVersion' = 'true')")
+
+      // The overwrite does not re-pass enableIcebergCompatV$compatVersion, so it lives only in the
+      // Delta log. The write should still succeed and preserve it.
+      spark.sql("SELECT 2 AS id, 'b' AS name").write
+        .format("delta").mode("overwrite").saveAsTable(id)
+
+      assert(getProperties(id).get(s"delta.enableIcebergCompatV$compatVersion") === Some("true"))
+    }
+  }
 }
 
 trait UniFormWithIcebergCompatV1SuiteBase extends UniversalFormatSuiteBase {
@@ -505,19 +523,24 @@ trait UniversalFormatMiscSuiteBase extends IcebergCompatUtilsBase with Universal
     }
   }
 
-  test("saveAsTable overwrite preserves Delta-log-only IcebergCompatV3 properties") {
-    withTempTableAndDir { case (id, _) =>
-      executeSql(s"""CREATE TABLE $id (id INT, name STRING) USING DELTA TBLPROPERTIES (
-        'delta.columnMapping.mode' = 'name')""")
-      executeSql(s"INSERT INTO $id VALUES (1, 'a')")
-      executeSql(s"ALTER TABLE $id SET TBLPROPERTIES ('delta.enableIcebergCompatV3' = 'true')")
+  test("V1 saveAsTable overwrite preserves Delta-log-only IcebergCompatV3 property") {
+    withSQLConf(DeltaSQLConf.DELTA_UNIFORM_ICEBERG_TABLE_V3_ENABLED.key -> "true") {
+      withTempTableAndDir { case (id, _) =>
+        executeSql(s"""CREATE TABLE $id (id INT, name STRING) USING DELTA TBLPROPERTIES (
+          'delta.columnMapping.mode' = 'name')""")
+        executeSql(s"INSERT INTO $id VALUES (1, 'a')")
+        executeSql(s"ALTER TABLE $id SET TBLPROPERTIES ('delta.enableIcebergCompatV3' = 'true')")
 
-      spark.read.table(id).write.mode("overwrite").saveAsTable(id)
+        // The overwrite does not re-pass enableIcebergCompatV3, so it lives only in the Delta log.
+        // The write should still succeed and preserve it.
+        spark.sql("SELECT 2 AS id, 'b' AS name").write
+          .format("delta").mode("overwrite").saveAsTable(id)
 
-      val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(id))
-      assert(snapshot.metadata.configuration.get("delta.enableIcebergCompatV3") === Some("true"))
+        assert(getProperties(id).get("delta.enableIcebergCompatV3") === Some("true"))
+      }
     }
   }
+
   test("UniForm config validation") {
     Seq("ICEBERG", "iceberg,iceberg", "iceber", "paimon").foreach { invalidConf =>
       withTempTableAndDir { case (id, loc) =>
