@@ -821,6 +821,46 @@ class DeltaRetentionSuite extends QueryTest
       expectedCommitsAfterCleanup = Range.inclusive(0, 15).toSet,
       // Α checkpoint is automatically created every 10 commits.
       expectedCheckpointsAfterCleanup = Set(6, 8, 10, 12, 14))
+
+    // Corner cases.
+    testRequireCheckpointProtectionBeforeVersion(
+      createNumCommitsOutsideRetentionPeriod = 1,
+      createNumCommitsWithinRetentionPeriod = 15,
+      createCheckpoints = Set(1),
+      requireCheckpointProtectionBeforeVersion = 0,
+      expectedCommitsAfterCleanup = Range.inclusive(1, 15).toSet,
+      // Α checkpoint is automatically created every 10 commits.
+      expectedCheckpointsAfterCleanup = Set(1, 10))
+
+    testRequireCheckpointProtectionBeforeVersion(
+      createNumCommitsOutsideRetentionPeriod = 1,
+      createNumCommitsWithinRetentionPeriod = 15,
+      createCheckpoints = Set(1),
+      requireCheckpointProtectionBeforeVersion = 1,
+      expectedCommitsAfterCleanup = Range.inclusive(1, 15).toSet,
+      // Α checkpoint is automatically created every 10 commits.
+      expectedCheckpointsAfterCleanup = Set(1, 10))
+
+    // v1 can't be deleted because it is the only checkpoint before version 2.
+    // v0 can't be deleted because of the checkpoint protection, v0 and v1 needs
+    // to be deleted together.
+    testRequireCheckpointProtectionBeforeVersion(
+      createNumCommitsOutsideRetentionPeriod = 1,
+      createNumCommitsWithinRetentionPeriod = 15,
+      createCheckpoints = Set(1),
+      requireCheckpointProtectionBeforeVersion = 2,
+      expectedCommitsAfterCleanup = Range.inclusive(0, 15).toSet,
+      // Α checkpoint is automatically created every 10 commits.
+      expectedCheckpointsAfterCleanup = Set(1, 10))
+
+    testRequireCheckpointProtectionBeforeVersion(
+      createNumCommitsOutsideRetentionPeriod = 2,
+      createNumCommitsWithinRetentionPeriod = 14,
+      createCheckpoints = Set(1),
+      requireCheckpointProtectionBeforeVersion = 3,
+      expectedCommitsAfterCleanup = Range.inclusive(0, 15).toSet,
+      // Α checkpoint is automatically created every 10 commits.
+      expectedCheckpointsAfterCleanup = Set(1, 10))
   }
 
 }
