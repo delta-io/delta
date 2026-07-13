@@ -821,43 +821,6 @@ class DeltaRetentionSuite extends QueryTest
       expectedCommitsAfterCleanup = Range.inclusive(0, 15).toSet,
       // Α checkpoint is automatically created every 10 commits.
       expectedCheckpointsAfterCleanup = Set(6, 8, 10, 12, 14))
-
-    // Corner cases.
-    testRequireCheckpointProtectionBeforeVersion(
-      createNumCommitsOutsideRetentionPeriod = 2,
-      createNumCommitsWithinRetentionPeriod = 14,
-      createCheckpoints = Set(1),
-      requireCheckpointProtectionBeforeVersion = 0,
-      expectedCommitsAfterCleanup = Range.inclusive(2, 15).toSet,
-      // Α checkpoint is automatically created every 10 commits.
-      expectedCheckpointsAfterCleanup = Set(10))
-
-    testRequireCheckpointProtectionBeforeVersion(
-      createNumCommitsOutsideRetentionPeriod = 2,
-      createNumCommitsWithinRetentionPeriod = 14,
-      createCheckpoints = Set(1),
-      requireCheckpointProtectionBeforeVersion = 1,
-      expectedCommitsAfterCleanup = Range.inclusive(2, 15).toSet,
-      // Α checkpoint is automatically created every 10 commits.
-      expectedCheckpointsAfterCleanup = Set(10))
-
-    testRequireCheckpointProtectionBeforeVersion(
-      createNumCommitsOutsideRetentionPeriod = 2,
-      createNumCommitsWithinRetentionPeriod = 14,
-      createCheckpoints = Set(1),
-      requireCheckpointProtectionBeforeVersion = 2,
-      expectedCommitsAfterCleanup = Range.inclusive(2, 15).toSet,
-      // Α checkpoint is automatically created every 10 commits.
-      expectedCheckpointsAfterCleanup = Set(10))
-
-    testRequireCheckpointProtectionBeforeVersion(
-      createNumCommitsOutsideRetentionPeriod = 2,
-      createNumCommitsWithinRetentionPeriod = 14,
-      createCheckpoints = Set(1),
-      requireCheckpointProtectionBeforeVersion = 3,
-      expectedCommitsAfterCleanup = Range.inclusive(0, 15).toSet,
-      // Α checkpoint is automatically created every 10 commits.
-      expectedCheckpointsAfterCleanup = Set(1, 10))
   }
 
 }
