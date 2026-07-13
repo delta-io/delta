@@ -559,22 +559,21 @@ lazy val spark = (project in file("spark-unified"))
     Test / baseDirectory := (sparkV1 / baseDirectory).value,
 
     // Test sources from spark/ directory (sparkV1's directory) AND spark-unified's own directory,
-    // plus the version-specific shim directory (e.g. `src/test/scala-shims/spark-4.2`).
+    // plus this version's shim directories (e.g. `src/test/scala-shims/spark-4.2` and any
+    // cross-version shared dir like `src/test/scala-shims/spark-4.1-4.2`).
     // MUST be set BEFORE crossSparkSettings() to avoid overwriting version-specific directories.
     Test / unmanagedSourceDirectories := {
       val sparkDir = (sparkV1 / baseDirectory).value
       val unifiedDir = baseDirectory.value
-      // Every supported Spark version sets additionalSourceDir, see SparkVersionSpec.ALL_SPECS.
-      val shimDir = unifiedDir / "src" / "test" / CrossSparkVersions.getSparkVersionSpec()
-        .additionalSourceDir
-        .get
+      val shimDirs = CrossSparkVersions.getSparkVersionSpec()
+        .additionalSourceDirs
+        .map(dir => unifiedDir / "src" / "test" / dir)
       Seq(
         sparkDir / "src" / "test" / "scala",
         sparkDir / "src" / "test" / "java",
         unifiedDir / "src" / "test" / "scala",
-        unifiedDir / "src" / "test" / "java",
-        shimDir
-      )
+        unifiedDir / "src" / "test" / "java"
+      ) ++ shimDirs
     },
     Test / unmanagedResourceDirectories := Seq(
       (sparkV1 / baseDirectory).value / "src" / "test" / "resources",
