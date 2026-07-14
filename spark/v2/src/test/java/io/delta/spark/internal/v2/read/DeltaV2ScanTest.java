@@ -494,21 +494,21 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
     ScanBuilder newBuilder = table.newScanBuilder(scanOptions);
     DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) newBuilder;
     Scan scan = builder.build();
-    DeltaV2Scan sparkScan = (DeltaV2Scan) scan;
+    DeltaV2Scan deltaV2Scan = (DeltaV2Scan) scan;
 
-    List<PartitionedFile> beforeDppFiles = getPartitionedFiles(sparkScan);
+    List<PartitionedFile> beforeDppFiles = getPartitionedFiles(deltaV2Scan);
     // make a copy for comparison after DPP
     beforeDppFiles = new ArrayList<>(beforeDppFiles);
-    long beforeDppTotalBytes = getTotalBytes(sparkScan);
-    long beforeDppEstimatedSize = getEstimatedSizeInBytes(sparkScan);
+    long beforeDppTotalBytes = getTotalBytes(deltaV2Scan);
+    long beforeDppEstimatedSize = getEstimatedSizeInBytes(deltaV2Scan);
     assert (beforeDppFiles.size() == 5);
     // Without column pruning, estimatedSizeInBytes should equal totalBytes
     assertEquals(beforeDppTotalBytes, beforeDppEstimatedSize);
 
-    sparkScan.filter(runtimeFilters);
-    List<PartitionedFile> afterDppFiles = getPartitionedFiles(sparkScan);
-    long afterDppTotalBytes = getTotalBytes(sparkScan);
-    long afterDppEstimatedSize = getEstimatedSizeInBytes(sparkScan);
+    deltaV2Scan.filter(runtimeFilters);
+    List<PartitionedFile> afterDppFiles = getPartitionedFiles(deltaV2Scan);
+    long afterDppTotalBytes = getTotalBytes(deltaV2Scan);
+    long afterDppEstimatedSize = getEstimatedSizeInBytes(deltaV2Scan);
     assert (beforeDppFiles.containsAll(afterDppFiles));
     assert (beforeDppTotalBytes >= afterDppTotalBytes);
 
