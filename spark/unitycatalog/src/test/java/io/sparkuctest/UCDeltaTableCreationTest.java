@@ -852,6 +852,10 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
               .put("delta.lastUpdateVersion", expectedLastUpdateVersion)
               .put("delta.minReaderVersion", "3")
               .put("delta.minWriterVersion", "7")
+              // UC suggests `zstd` as the managed-table Parquet compression codec. Delta now
+              // recognizes `delta.parquet.compression.codec` as a valid config, so the suggestion
+              // passes validation and is persisted (before, it was dropped as an unknown key).
+              .put("delta.parquet.compression.codec", "zstd")
               .put("delta.randomizeFilePrefixes", "true")
               .put(UC_TABLE_ID_KEY, tableInfo.getTableId())
               // User specified custom table property is also sent.
