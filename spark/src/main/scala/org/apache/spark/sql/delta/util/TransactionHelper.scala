@@ -51,6 +51,13 @@ trait TransactionHelper extends DeltaLogging {
   def logPath: Path =
     throw new UnsupportedOperationException("logPath is not implemented for this transaction")
 
+  /**
+   * The path to the Delta table data directory. Not implemented in the base trait; each concrete
+   * transaction supplies it.
+   */
+  def dataPath: Path =
+    throw new UnsupportedOperationException("dataPath is not implemented for this transaction")
+
   def catalogTable: Option[CatalogTable]
   def snapshot: Snapshot
 
