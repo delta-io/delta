@@ -33,7 +33,6 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import io.unitycatalog.client.auth.TokenProvider
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.util.CaseInsensitiveStringMap
 import org.apache.spark.util.Utils
 
 /**
@@ -344,48 +343,35 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
   }
 
   /**
-   * Extracts entries from `ucConfig` whose keys (compared case-insensitively) start with
-   * `prefix`, strips the prefix, and returns the result as a plain [[java.util.Map]].
-   * Uses the case-preserving view of the input when available so the returned map retains
-   * original key casing (e.g. `oauth.clientId` rather than `oauth.clientid`).
-   * Callers decide whether to wrap in [[CaseInsensitiveStringMap]].
+   * Extracts entries from `ucConfig` whose keys start with `prefix`, strips the prefix, and
+   * returns the result as a plain, case-preserved [[java.util.Map]].
    */
   private[coordinatedcommits] def filterByPrefix(
       ucConfig: java.util.Map[String, String],
       prefix: String): java.util.Map[String, String] = {
-    val prefixLower = prefix.toLowerCase(java.util.Locale.ROOT)
-    val sourceEntries = ucConfig match {
-      case cism: CaseInsensitiveStringMap => cism.asCaseSensitiveMap().entrySet()
-      case m => m.entrySet()
-    }
     val result = new java.util.HashMap[String, String]()
-    sourceEntries.forEach { e =>
-      if (e.getKey.toLowerCase(java.util.Locale.ROOT).startsWith(prefixLower)) {
-        result.put(e.getKey.substring(prefixLower.length), e.getValue)
+    ucConfig.entrySet().forEach { e =>
+      if (e.getKey.startsWith(prefix)) {
+        result.put(e.getKey.substring(prefix.length), e.getValue)
       }
     }
     result
   }
 
   /**
-   * Extracts authentication configuration from ucConfig.
+   * Extracts authentication configuration from a case-preserved `ucConfig` map.
    * Prefers `auth.*` keys; falls back to legacy `token` key.
-   *
-   * Returns a [[CaseInsensitiveStringMap]] so that downstream consumers (e.g.
-   * [[TokenProvider.create]]) can look up camelCase keys like `oauth.clientId`
-   * regardless of what casing the source map provides.
    */
   private[coordinatedcommits] def extractAuthConfig(
-      ucConfig: java.util.Map[String, String]): CaseInsensitiveStringMap = {
+      ucConfig: java.util.Map[String, String]): java.util.Map[String, String] = {
     val filtered = filterByPrefix(ucConfig, AUTH_PREFIX)
     if (!filtered.isEmpty) {
-      new CaseInsensitiveStringMap(filtered)
+      filtered
     } else {
       Option(ucConfig.get("token")) match {
         case Some(token) =>
-          new CaseInsensitiveStringMap(
-            java.util.Map.of("type", "static", "token", token))
-        case None => CaseInsensitiveStringMap.empty()
+          java.util.Map.of("type", "static", "token", token)
+        case None => java.util.Collections.emptyMap()
       }
     }
   }
@@ -422,9 +408,9 @@ case class UCCatalogConfig(catalogName: String, ucConfig: Map[String, String]) {
     throw new NoSuchElementException(s"No URI in config for catalog $catalogName"))
 
   /**
-   * Returns the authentication config suitable for [[TokenProvider.create]].
-   * Prefers `auth.*` keys; falls back to legacy `token` key.
+   * Returns the authentication config with original key casing preserved (e.g. `oauth.clientId`).
+   * Prefers `auth.*` keys; falls back to the legacy `token` key.
    */
-  def authConfig: CaseInsensitiveStringMap =
+  def authConfig: java.util.Map[String, String] =
     UCTokenBasedRestClientFactory.extractAuthConfig(ucConfig.asJava)
 }

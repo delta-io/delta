@@ -704,30 +704,24 @@ object UCDeltaCatalogClientImpl extends AbstractDeltaCatalogClientFactory with L
       options: CaseInsensitiveStringMap,
       fallbackLoadTableFunc: Identifier => Table): UCDeltaCatalogClientImpl = {
     // Normalize once at the Spark catalog boundary; downstream code uses a plain map only.
-    val caseSensitiveOptions =
-      new util.HashMap[String, String](options.asCaseSensitiveMap())
+    val optionsMap = new util.HashMap[String, String](options.asCaseSensitiveMap())
 
     // Pre-flight: keep our user-facing errors instead of the factory's less specific ones.
-    if (getIgnoreCase(caseSensitiveOptions, UriKey) == null) {
+    if (optionsMap.get(UriKey) == null) {
       throw new IllegalArgumentException(s"'$UriKey' is required (catalog '$catalogName')")
     }
-    validateAuthConfigured(caseSensitiveOptions, catalogName)
+    validateAuthConfigured(optionsMap, catalogName)
 
-    val merged = new util.HashMap[String, String](caseSensitiveOptions)
+    val merged = new util.HashMap[String, String](optionsMap)
     Seq(
       UCTokenBasedRestClientFactory.RENEW_CREDENTIAL_ENABLED_KEY -> "true",
       UCTokenBasedRestClientFactory.CRED_SCOPED_FS_ENABLED_KEY -> "false"
-    ).foreach { case (k, v) =>
-      if (!containsKeyIgnoreCase(merged, k)) merged.put(k, v)
-    }
-    // `createUCClient` looks up well-known keys with exact `.get(...)`; pin canonical casing
-    // so a user-supplied `URI` / `Token` still resolves after we drop the CISM wrapper.
-    canonicalTopLevelKeys.foreach(canonicalizeKey(merged, _))
+    ).foreach { case (k, v) => if (!merged.containsKey(k)) merged.put(k, v) }
     val ucClient = UCTokenBasedRestClientFactory
       .createUCClient(merged)
       .asInstanceOf[UCDeltaClient]
 
-    val sspEnabled = Option(getIgnoreCase(caseSensitiveOptions, ServerSidePlanningEnabledKey))
+    val sspEnabled = Option(optionsMap.get(ServerSidePlanningEnabledKey))
       .exists(_.equalsIgnoreCase("true"))
     new UCDeltaCatalogClientImpl(catalogName, ucClient, sspEnabled, fallbackLoadTableFunc)
   }
@@ -735,42 +729,6 @@ object UCDeltaCatalogClientImpl extends AbstractDeltaCatalogClientFactory with L
   private val UriKey: String = "uri"
   private val AuthPrefix: String = "auth."
   private val LegacyTokenKey: String = "token"
-
-  /** Keys that downstream `createUCClient` reads via exact, case-sensitive `.get(...)`. */
-  private val canonicalTopLevelKeys: Seq[String] = Seq(
-    UriKey,
-    LegacyTokenKey,
-    UCTokenBasedRestClientFactory.DELTA_REST_API_ENABLED_KEY,
-    UCTokenBasedRestClientFactory.RENEW_CREDENTIAL_ENABLED_KEY,
-    UCTokenBasedRestClientFactory.CRED_SCOPED_FS_ENABLED_KEY,
-    ServerSidePlanningEnabledKey)
-
-  /** Returns the value for `key`, matching case-insensitively on a plain map. */
-  private def getIgnoreCase(map: util.Map[String, String], key: String): String = {
-    if (map.containsKey(key)) {
-      return map.get(key)
-    }
-    val keyLower = key.toLowerCase(java.util.Locale.ROOT)
-    map.asScala.collectFirst {
-      case (k, v) if k.toLowerCase(java.util.Locale.ROOT) == keyLower => v
-    }.orNull
-  }
-
-  private def containsKeyIgnoreCase(map: util.Map[String, String], key: String): Boolean = {
-    if (map.containsKey(key)) {
-      return true
-    }
-    val keyLower = key.toLowerCase(java.util.Locale.ROOT)
-    map.asScala.keys.exists(_.toLowerCase(java.util.Locale.ROOT) == keyLower)
-  }
-
-  /** Writes `canonicalKey` into `map` using the value from any case-variant of that key. */
-  private def canonicalizeKey(map: util.HashMap[String, String], canonicalKey: String): Unit = {
-    val value = getIgnoreCase(map, canonicalKey)
-    if (value != null) {
-      map.put(canonicalKey, value)
-    }
-  }
 
   /**
    * Pre-flight: ensure at least one of `auth.*` or legacy `token` is present, so the user
@@ -780,10 +738,8 @@ object UCDeltaCatalogClientImpl extends AbstractDeltaCatalogClientFactory with L
   private[catalog] def validateAuthConfigured(
       options: util.Map[String, String],
       catalogName: String): Unit = {
-    val authPrefixLower = AuthPrefix.toLowerCase(java.util.Locale.ROOT)
-    val hasAuthPrefix = options.asScala.keys.exists(
-      _.toLowerCase(java.util.Locale.ROOT).startsWith(authPrefixLower))
-    val hasLegacyToken = getIgnoreCase(options, LegacyTokenKey) != null
+    val hasAuthPrefix = options.asScala.keys.exists(_.startsWith(AuthPrefix))
+    val hasLegacyToken = options.get(LegacyTokenKey) != null
     if (!hasAuthPrefix && !hasLegacyToken) {
       throw new IllegalArgumentException(
         s"auth configuration is required (catalog '$catalogName'). " +
