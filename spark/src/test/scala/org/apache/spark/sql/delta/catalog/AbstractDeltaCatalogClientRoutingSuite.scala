@@ -103,6 +103,17 @@ class AbstractDeltaCatalogClientRoutingSuite extends QueryTest with DeltaSQLComm
       s"UC Delta API client should be UCDeltaCatalogClientImpl, was ${client.getClass}")
   }
 
+  test("fromCatalogOptions accepts oddly-cased top-level uri and token keys") {
+    val m = new util.HashMap[String, String]()
+    m.put("URI", "http://uc")
+    m.put("Token", "tok")
+    val result = AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled(
+      "test_cat",
+      new CaseInsensitiveStringMap(m),
+      noFallback)
+    assert(result.isDefined)
+  }
+
   test("AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled returns None when flag is off") {
     val result = AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled(
       "test_cat", options("deltaRestApi.enabled" -> "false"), noFallback)
