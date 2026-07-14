@@ -38,8 +38,8 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
  */
 class TypeWideningInsertSchemaEvolutionBasicSuite
     extends QueryTest
-    with DeltaDMLTestUtils
     with TypeWideningTestMixin
+    with DeltaDMLTestUtilsNameBased
     with TypeWideningInsertSchemaEvolutionBasicTests {
 
   protected override def sparkConf: SparkConf = {
@@ -72,12 +72,12 @@ trait TypeWideningInsertSchemaEvolutionBasicTests
           .format("delta")
           .mode("append")
           .option("mergeSchema", "true")
-          .insertInto(s"delta.`$tempPath`")
+          .insertInto(tableSQLIdentifier)
       }
 
-      assert(readDeltaTable(tempPath).schema("value").dataType === testCase.toType)
+      assert(readDeltaTableByIdentifier().schema("value").dataType === testCase.toType)
       checkAnswerWithTolerance(
-        actualDf = readDeltaTable(tempPath).select("value"),
+        actualDf = readDeltaTableByIdentifier().select("value"),
         expectedDf = testCase.expectedResult.select($"value".cast(testCase.toType)),
         toType = testCase.toType
       )
@@ -98,10 +98,10 @@ trait TypeWideningInsertSchemaEvolutionBasicTests
           .format("delta")
           .mode("append")
           .option("mergeSchema", "true")
-          .insertInto(s"delta.`$tempPath`")
+          .insertInto(tableSQLIdentifier)
       }
 
-      assert(readDeltaTable(tempPath).schema("value").dataType === testCase.fromType)
+      assert(readDeltaTableByIdentifier().schema("value").dataType === testCase.fromType)
     }
   }
 
@@ -119,11 +119,11 @@ trait TypeWideningInsertSchemaEvolutionBasicTests
         .format("delta")
         .mode("append")
         .option("mergeSchema", "true")
-        .insertInto(s"delta.`$tempPath`")
+        .insertInto(tableSQLIdentifier)
       }
     }
 
-    assert(readDeltaTable(tempPath).schema("value").dataType === testCase.fromType)
+    assert(readDeltaTableByIdentifier().schema("value").dataType === testCase.fromType)
     assert(events.exists(event => event.metric == "tahoeEvent" &&
       event.tags.get("opType") == Option("delta.typeWidening.missedAutomaticWidening")))
   }
@@ -139,11 +139,11 @@ trait TypeWideningInsertSchemaEvolutionBasicTests
         .format("delta")
         .mode("append")
         .option("mergeSchema", "true")
-        .insertInto(s"delta.`$tempPath`")
+        .insertInto(tableSQLIdentifier)
       }
     }
 
-    assert(readDeltaTable(tempPath).schema("value").dataType === testCase.toType)
+    assert(readDeltaTableByIdentifier().schema("value").dataType === testCase.toType)
     assert(!events.exists(event => event.metric == "tahoeEvent" &&
       event.tags.get("opType") == Option("delta.typeWidening.missedAutomaticWidening")))
   }
@@ -156,11 +156,11 @@ trait TypeWideningInsertSchemaEvolutionBasicTests
       testCase.additionalValuesDF
         .write
         .mode("append")
-        .insertInto(s"delta.`$tempPath`")
+        .insertInto(tableSQLIdentifier)
 
-      assert(readDeltaTable(tempPath).schema("value").dataType === testCase.toType)
+      assert(readDeltaTableByIdentifier().schema("value").dataType === testCase.toType)
       checkAnswerWithTolerance(
-        actualDf = readDeltaTable(tempPath).select("value"),
+        actualDf = readDeltaTableByIdentifier().select("value"),
         expectedDf = testCase.expectedResult.select($"value".cast(testCase.toType)),
         toType = testCase.toType
       )
@@ -179,36 +179,36 @@ trait TypeWideningInsertSchemaEvolutionBasicTests
       // that the table schema didn't evolve.
       withSQLConf(SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.LEGACY.toString) {
         testCase.additionalValuesDF.write.mode("append")
-          .insertInto(s"delta.`$tempPath`")
-        assert(readDeltaTable(tempPath).schema("value").dataType === testCase.fromType)
+          .insertInto(tableSQLIdentifier)
+        assert(readDeltaTableByIdentifier().schema("value").dataType === testCase.fromType)
       }
     }
   }
 
   test("INSERT - type widening isn't applied when schema evolution is disabled") {
-    sql(s"CREATE TABLE delta.`$tempPath` (a short) USING DELTA")
+    sql(s"CREATE TABLE $tableSQLIdentifier (a short) USING DELTA")
     withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "false") {
       // Insert integer values. This should succeed and downcast the values to short.
-      sql(s"INSERT INTO delta.`$tempPath` VALUES (1), (2)")
-      assert(readDeltaTable(tempPath).schema("a").dataType === ShortType)
-      checkAnswer(readDeltaTable(tempPath),
+      sql(s"INSERT INTO $tableSQLIdentifier VALUES (1), (2)")
+      assert(readDeltaTableByIdentifier().schema("a").dataType === ShortType)
+      checkAnswer(readDeltaTableByIdentifier(),
         Seq(1, 2).toDF("a").select($"a".cast(ShortType)))
     }
 
     // Check that we would actually widen if schema evolution was enabled.
     withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
-      sql(s"INSERT INTO delta.`$tempPath` VALUES (3), (4)")
-      assert(readDeltaTable(tempPath).schema("a").dataType === IntegerType)
-      checkAnswer(readDeltaTable(tempPath), Seq(1, 2, 3, 4).toDF("a"))
+      sql(s"INSERT INTO $tableSQLIdentifier VALUES (3), (4)")
+      assert(readDeltaTableByIdentifier().schema("a").dataType === IntegerType)
+      checkAnswer(readDeltaTableByIdentifier(), Seq(1, 2, 3, 4).toDF("a"))
     }
   }
 
   test("INSERT - type widening isn't applied when it's disabled") {
-    sql(s"CREATE TABLE delta.`$tempPath` (a short) USING DELTA")
-    enableTypeWidening(tempPath, enabled = false)
-    sql(s"INSERT INTO delta.`$tempPath` VALUES (1), (2)")
-    assert(readDeltaTable(tempPath).schema("a").dataType === ShortType)
-    checkAnswer(readDeltaTable(tempPath),
+    sql(s"CREATE TABLE $tableSQLIdentifier (a short) USING DELTA")
+    enableTypeWidening(enabled = false)
+    sql(s"INSERT INTO $tableSQLIdentifier VALUES (1), (2)")
+    assert(readDeltaTableByIdentifier().schema("a").dataType === ShortType)
+    checkAnswer(readDeltaTableByIdentifier(),
       Seq(1, 2).toDF("a").select($"a".cast(ShortType)))
   }
 
@@ -244,27 +244,29 @@ trait TypeWideningInsertSchemaEvolutionBasicTests
     AppendData.byPosition(relation, df.queryExecution.logical)
   }
 
-  test(s"INSERT - fail if type widening gets enabled by a concurrent transaction") {
-    sql(s"CREATE TABLE delta.`$tempPath` (a short) USING DELTA")
-    enableTypeWidening(tempPath, enabled = false)
+  test(s"INSERT - fail if type widening gets enabled by a concurrent transaction",
+      NameBasedAccessIncompatible) {
+    sql(s"CREATE TABLE $tableSQLIdentifier (a short) USING DELTA")
+    enableTypeWidening(enabled = false)
     val insert = createInsertPlan(Seq(1).toDF("a"))
     // Enabling type widening after analysis doesn't impact the insert operation: the data is
     // already cast to conform to the current schema.
-    enableTypeWidening(tempPath, enabled = true)
+    enableTypeWidening(enabled = true)
     DataFrameUtils.ofRows(spark, insert).collect()
-    assert(readDeltaTable(tempPath).schema == new StructType().add("a", ShortType))
-    checkAnswer(readDeltaTable(tempPath), Row(1))
+    assert(readDeltaTableByIdentifier().schema == new StructType().add("a", ShortType))
+    checkAnswer(readDeltaTableByIdentifier(), Row(1))
   }
 
-  test(s"INSERT - fail if type widening gets disabled by a concurrent transaction") {
-    sql(s"CREATE TABLE delta.`$tempPath` (a short) USING DELTA")
+  test(s"INSERT - fail if type widening gets disabled by a concurrent transaction",
+      NameBasedAccessIncompatible) {
+    sql(s"CREATE TABLE $tableSQLIdentifier (a short) USING DELTA")
     val insert = createInsertPlan(Seq(1).toDF("a"))
     // Disabling type widening after analysis results in inserting data with a wider type into the
     // table while type widening is actually disabled during execution. We do actually widen the
     // table schema in that case because `short` and `int` are both stored as INT32 in parquet.
-    enableTypeWidening(tempPath, enabled = false)
+    enableTypeWidening(enabled = false)
     DataFrameUtils.ofRows(spark, insert).collect()
-    assert(readDeltaTable(tempPath).schema == new StructType().add("a", IntegerType))
-    checkAnswer(readDeltaTable(tempPath), Row(1))
+    assert(readDeltaTableByIdentifier().schema == new StructType().add("a", IntegerType))
+    checkAnswer(readDeltaTableByIdentifier(), Row(1))
   }
 }

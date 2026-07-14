@@ -17,7 +17,10 @@
 package io.delta.tables
 
 import io.delta.tables.shared.{
-  DeltaCacheTableTests, DeltaRepeatedAccessRefreshTests, DeltaTempViewStoredPlanRefreshTests}
+  DeltaCacheTableTests,
+  DeltaJoinRefreshTests,
+  DeltaRepeatedAccessRefreshTests,
+  DeltaTempViewStoredPlanRefreshTests}
 
 import org.apache.spark.sql.test.DeltaQueryTest
 
@@ -31,7 +34,10 @@ trait DeltaTableRefreshConnectSuiteBase
   with RemoteSparkSession
   with DeltaRepeatedAccessRefreshTests
   with DeltaCacheTableTests
-  with DeltaTempViewStoredPlanRefreshTests {
+  with DeltaTempViewStoredPlanRefreshTests
+  with DeltaJoinRefreshTests {
+
+  override def isConnect: Boolean = true
 
   // The conf key is a literal because the Spark Connect thin client does not depend on Spark
   // Classic, which is where the Delta SQL configs live, so DeltaSQLConf.V2_ENABLE_MODE.key is

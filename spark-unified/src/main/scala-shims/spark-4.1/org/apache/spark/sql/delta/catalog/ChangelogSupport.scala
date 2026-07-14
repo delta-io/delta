@@ -23,11 +23,11 @@ import org.apache.spark.sql.connector.catalog.TableCatalog
  *
  * <p>The catalog-driven `TableCatalog.loadChangelog` entrypoint and its supporting types
  * (`Changelog`, `ChangelogInfo`, `ChangelogRange`) were introduced in Spark 4.2 via
- * SPARK-56685. They do not exist in Spark 4.0/4.1, so the Auto-CDF wiring is compiled in only
+ * SPARK-56685. They do not exist in Spark 4.0/4.1, so the read-time CDF wiring is compiled in only
  * when building against Spark 4.2 (see `scala-shims/spark-4.2/...ChangelogSupport.scala`).
  *
  * <p>In 4.0/4.1 builds, mixing this empty trait into `DeltaCatalog` is a no-op: there is no
- * `loadChangelog` to override, and downstream Auto-CDF classes (`DeltaChangelog`, etc.) live in
- * version-specific `java-shims/spark-4.2/` dirs and are not present here either.
+ * `loadChangelog` to override, and downstream read-time CDF classes (`DeltaChangelog`, etc.)
+ * live in version-specific `java-shims/spark-4.2/` dirs and are not present here either.
  */
 trait ChangelogSupport extends TableCatalog

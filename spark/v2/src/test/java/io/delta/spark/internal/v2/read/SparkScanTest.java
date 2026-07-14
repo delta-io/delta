@@ -196,7 +196,7 @@ public class SparkScanTest extends DeltaV2TestBase {
     StructType prunedSchema =
         new StructType()
             .add("name", DataTypes.StringType)
-            .add("_metadata", new StructType())
+            .add("_metadata", new StructType().add("file_path", DataTypes.StringType))
             .add("date", DataTypes.StringType)
             .add("city", DataTypes.StringType)
             .add("part", DataTypes.IntegerType);
@@ -538,6 +538,33 @@ public class SparkScanTest extends DeltaV2TestBase {
     return (List<PartitionedFile>) field.get(scan);
   }
 
+  @Test
+  public void testSelectedFilesTracksPlannedAndRuntimeFilteredFiles() throws Exception {
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan = (SparkScan) builder.build();
+
+    List<PartitionedFile> plannedFiles = getPartitionedFiles(scan);
+    List<DeltaScanFile> selectedFiles = scan.getSelectedFiles();
+    assertEquals(plannedFiles.size(), selectedFiles.size());
+    assertEquals(5, selectedFiles.size(), "test table should start with all selected files");
+    assertTrue(
+        selectedFiles.stream().allMatch(file -> file.getPath().contains("city=")),
+        "selected file descriptors should expose Delta-relative AddFile paths");
+    assertTrue(
+        selectedFiles.stream().allMatch(file -> file.getSize() > 0),
+        "selected file descriptors should expose file sizes");
+
+    scan.filter(new Predicate[] {cityPredicate});
+
+    List<PartitionedFile> filteredFiles = getPartitionedFiles(scan);
+    List<DeltaScanFile> filteredSelectedFiles = scan.getSelectedFiles();
+    assertEquals(filteredFiles.size(), filteredSelectedFiles.size());
+    assertEquals(2, filteredSelectedFiles.size(), "city=hz runtime filter should keep two files");
+    assertTrue(
+        filteredSelectedFiles.stream().allMatch(file -> file.getPath().contains("city=hz")),
+        "selected files should be pruned with runtime partition filters");
+  }
+
   private static long getTotalBytes(SparkScan scan) throws Exception {
     scan.estimateStatistics(); // ensurePlanned
     Field field = SparkScan.class.getDeclaredField("totalBytes");
@@ -673,8 +700,10 @@ public class SparkScanTest extends DeltaV2TestBase {
       spark.sql("INSERT INTO " + tblName + " VALUES (1, 'hz')");
 
       // Disable stats collection via session config so the second AddFile has no numRecords.
-      spark.sql("SET spark.databricks.delta.stats.collect=false");
-      spark.sql("INSERT INTO " + tblName + " VALUES (2, 'sh')");
+      withSQLConf(
+          "spark.databricks.delta.stats.collect",
+          "false",
+          () -> spark.sql("INSERT INTO " + tblName + " VALUES (2, 'sh')"));
 
       // Table now has two AddFile entries: one with stats (first insert), one without (second).
       DeltaV2Table mixedStatsTable =
@@ -695,7 +724,6 @@ public class SparkScanTest extends DeltaV2TestBase {
                 "numRows() should be OptionalLong.empty() when row count is unknown");
           });
     } finally {
-      spark.sql("RESET spark.databricks.delta.stats.collect");
       spark.sql("DROP TABLE IF EXISTS " + tblName);
     }
   }
@@ -754,7 +782,7 @@ public class SparkScanTest extends DeltaV2TestBase {
   public void testPruneColumns_cdcRead_filtersCDCColumns() {
     // pruneColumns should filter out partition and CDC columns from the data schema, since
     // partition columns are read separately and CDC columns are injected by CDCReadFunction.
-    // The remaining data columns are honored — pruning a data column ("cnt") shrinks the
+    // The remaining data columns are honored - pruning a data column ("cnt") shrinks the
     // underlying parquet read.
     Map<String, String> cdcOptions = new HashMap<>();
     cdcOptions.put("readChangeFeed", "true");
@@ -1397,8 +1425,10 @@ public class SparkScanTest extends DeltaV2TestBase {
 
       // Disable stats collection so the next AddFile has no numRecords. With one file lacking
       // numRecords, rowCountKnown is false for the whole scan.
-      spark.sql("SET spark.databricks.delta.stats.collect=false");
-      spark.sql(String.format("INSERT INTO %s VALUES (2, 'b')", tblName));
+      withSQLConf(
+          "spark.databricks.delta.stats.collect",
+          "false",
+          () -> spark.sql(String.format("INSERT INTO %s VALUES (2, 'b')", tblName)));
 
       // Inject catalog stats with a distinguishable row count (777) so the fallback is observable.
       CatalogStatistics catalogStats =
@@ -1433,7 +1463,6 @@ public class SparkScanTest extends DeltaV2TestBase {
                 "numRows should come from catalog stats (777) when per-file is unknown");
           });
     } finally {
-      spark.sql("RESET spark.databricks.delta.stats.collect");
       spark.sql("DROP TABLE IF EXISTS " + tblName);
     }
   }
@@ -1543,7 +1572,7 @@ public class SparkScanTest extends DeltaV2TestBase {
         "spark.sql.cbo.enabled",
         "true",
         () -> {
-          // Path-based table — no catalog table, no ANALYZE TABLE stats
+          // Path-based table - no catalog table, no ANALYZE TABLE stats
           Identifier id = Identifier.of(new String[] {"default"}, tblName);
           DeltaV2Table sparkTable = new DeltaV2Table(id, path);
 

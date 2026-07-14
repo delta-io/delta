@@ -20,7 +20,7 @@ import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
-import org.apache.spark.sql.execution.{ColumnarToRowExec, FileSourceScanExec, InputAdapter, SparkPlan}
+import org.apache.spark.sql.execution.{ColumnarToRowExec, FileSourceScanLike, InputAdapter, SparkPlan}
 import org.apache.spark.sql.functions.from_json
 import org.apache.spark.sql.{Column, DataFrame}
 
@@ -75,10 +75,10 @@ trait TestsStatistics  { self: DeltaSQLTestUtils =>
    * A util to match a physical file scan node.
    */
   object FileScanExecNode {
-    def unapply(plan: SparkPlan): Option[FileSourceScanExec] = plan match {
-      case f: FileSourceScanExec => Some(f)
-      case InputAdapter(f: FileSourceScanExec) => Some(f)
-      case ColumnarToRowExec(InputAdapter(f: FileSourceScanExec)) => Some(f)
+    def unapply(plan: SparkPlan): Option[FileSourceScanLike] = plan match {
+      case f: FileSourceScanLike => Some(f)
+      case InputAdapter(f: FileSourceScanLike) => Some(f)
+      case ColumnarToRowExec(InputAdapter(f: FileSourceScanLike)) => Some(f)
       case _ => None
     }
   }

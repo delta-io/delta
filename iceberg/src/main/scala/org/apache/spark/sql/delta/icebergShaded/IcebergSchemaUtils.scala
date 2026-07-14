@@ -21,7 +21,9 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta.{DeltaColumnMapping, SnapshotDescriptor}
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.shims.GeoTypesShim
 import shadedForDelta.org.apache.iceberg.{Schema => IcebergSchema}
+import shadedForDelta.org.apache.iceberg.types.{EdgeAlgorithm => IcebergEdgeAlgorithm}
 import shadedForDelta.org.apache.iceberg.types.{Type => IcebergType, Types => IcebergTypes}
 
 import org.apache.spark.sql.types._
@@ -85,6 +87,8 @@ trait IcebergSchemaUtils extends DeltaLogging {
             DeltaToIcebergConvert.Schema.extractLiteralDefault(f) match {
               case Left(errorMsg) =>
                 throw new UnsupportedOperationException(errorMsg)
+              case Right(Some(defaultLiteral)) =>
+                IcebergTypes.NestedField.from(icebergField).withWriteDefault(defaultLiteral).build()
               case _ => icebergField
             }
           } else {
@@ -122,6 +126,12 @@ trait IcebergSchemaUtils extends DeltaLogging {
           )
         }
 
+      case variantType: VariantType => IcebergTypes.VariantType.get()
+      case dt if GeoTypesShim.isGeometryType(dt) =>
+        IcebergTypes.GeometryType.of(GeoTypesShim.geometryCrs(dt))
+      case dt if GeoTypesShim.isGeographyType(dt) =>
+        val (crs, algorithm) = GeoTypesShim.geographyCrsAndAlgorithm(dt)
+        IcebergTypes.GeographyType.of(crs, IcebergEdgeAlgorithm.fromName(algorithm))
       case atomicType: AtomicType => convertAtomic(atomicType)
 
       case other =>

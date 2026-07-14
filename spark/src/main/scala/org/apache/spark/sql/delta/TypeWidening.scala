@@ -58,9 +58,10 @@ object TypeWidening {
       protocol: Protocol,
       metadata: Metadata,
       otherProtocol: Protocol,
-      otherMetadata: Metadata): Unit = {
+      otherMetadata: Metadata,
+      tableNameOrPath: String): Unit = {
     if (isEnabled(protocol, metadata) != isEnabled(otherProtocol, otherMetadata)) {
-      throw DeltaErrors.metadataChangedException(None)
+      throw DeltaErrors.metadataChangedException(tableNameOrPath, None)
     }
   }
 

@@ -27,6 +27,7 @@ import scala.util.control.NonFatal
 import org.apache.spark.sql.delta.{CommittedTransaction, CurrentTransactionInfo, DeltaErrors, DeltaFileNotFoundException, DeltaFileProviderUtils, DeltaLog, DeltaOperations, DummySnapshot, IcebergCompat, IcebergConstants, Snapshot, SnapshotDescriptor, UniversalFormat, UniversalFormatConverter}
 import org.apache.spark.sql.delta.DeltaOperations.OPTIMIZE_OPERATION_NAME
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
+import org.apache.spark.sql.delta.RowTracking
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, DomainMetadata, FileAction, InMemoryLogReplay, Metadata, Protocol, RemoveFile}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.hooks.IcebergConverterHook
@@ -38,6 +39,7 @@ import io.delta.storage.commit.{CommitFailedException => DeltaCommitFailedExcept
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.Path
 import shadedForDelta.org.apache.iceberg.{Table => IcebergTable, TableProperties}
+import shadedForDelta.org.apache.iceberg.BaseTable
 import shadedForDelta.org.apache.iceberg.exceptions.CommitFailedException
 import shadedForDelta.org.apache.iceberg.hadoop.HadoopTables
 import shadedForDelta.org.apache.iceberg.hive.{HiveCatalog, HiveTableOperations}
@@ -68,6 +70,11 @@ object IcebergConverter {
    * Indicates the base delta commit version # that the conversion started from
    */
   val BASE_DELTA_VERSION_PROPERTY = "base-delta-version"
+  /**
+   * Property to be set in translated Iceberg metadata files.
+   * Indicates the delta highWaterMark # that it corresponds to.
+   */
+  val DELTA_HIGH_WATER_MARK_PROPERTY = "delta-high-water-mark"
 
   def getLastConvertedDeltaVersion(table: Option[IcebergTable]): Option[Long] =
     table.flatMap(_.properties().asScala.get(DELTA_VERSION_PROPERTY)).map(_.toLong)
@@ -369,7 +376,11 @@ class IcebergConverter
         case _ => None
       }
 
+      val rowTrackingJustEnabled =
+        isRowTrackingJustEnabled(
+          snapshotToConvert, prevConvertedSnapshotOpt, lastConvertedIcebergTable)
       val tableOp = (lastDeltaVersionConverted, prevConvertedSnapshotOpt) match {
+        case (Some(_), _) if rowTrackingJustEnabled => REPLACE_TABLE
         case (Some(_), Some(_)) => WRITE_TABLE
         case (Some(_), None) => REPLACE_TABLE
         case (None, None) => CREATE_TABLE
@@ -381,6 +392,18 @@ class IcebergConverter
       )
 
       val convertedCommits: Seq[Option[CommitInfo]] = prevConvertedSnapshotOpt match {
+        // If `rowTrackingBackfillRequired` is enabled, the Row Tracking Backfill command
+        // will first be triggered, adding one or more ROW TRACKING BACKFILL commits
+        // to the table. After backfilling completes, here we must regenerate the entire
+        // Iceberg metadata to keep the snapshot version in sync.
+        case _ if rowTrackingJustEnabled =>
+          val commitInfos = createSnapshotsForReplaceTable(
+            snapshotToConvert, prevConvertedSnapshotOpt, icebergTxn, catalogTable,
+            snapshotToConvert.version, useRowTrackingVersion = true)
+          prevConvertedSnapshotOpt.foreach { prevSnapshot =>
+            icebergTxn.updateTableMetadata(prevSnapshot.metadata)
+          }
+          commitInfos
         case Some(prevSnapshot) =>
           // Read the actions directly from the delta json files.
           // TODO: Run this as a spark job on executors
@@ -496,12 +519,27 @@ class IcebergConverter
       txnInfo: CurrentTransactionInfo,
       deltaAttemptVersion: Long,
       catalogTable: CatalogTable): Snapshot = {
+    val rowTrackingHighWaterMark = if (IcebergCompat.isGeqEnabled(txnInfo.metadata, 3)) {
+      txnInfo.finalActionsToCommit.collectFirst {
+        case RowTrackingMetadataDomain(domain) => domain.rowIdHighWaterMark
+      }.orElse(Some(txnInfo.readRowIdHighWatermark))
+    } else {
+      None
+    }
+    val domainMetadata = if (IcebergCompat.isGeqEnabled(txnInfo.metadata, 3)) {
+      rowTrackingHighWaterMark.map { highWaterMark =>
+        Seq(RowTrackingMetadataDomain(rowIdHighWaterMark = highWaterMark).toDomainMetadata)
+      }
+    } else {
+      None
+    }
 
     new DummySnapshotWithAllFilesSupport(
       deltaLog.logPath,
       deltaLog,
       txnInfo.metadata,
       deltaAttemptVersion,
+      domainMetadata,
       Some(txnInfo.protocol),
       txnInfo,
       catalogTable
@@ -598,6 +636,89 @@ class IcebergConverter
       }
     }
   }
+
+  /**
+   * Returns true iff Row Tracking has just been turned on for this table
+   *
+   * A "just enabled" state is detected when **all** of the following hold:
+   *   1) Row Tracking is enabled on `snapshotToConvert`, and
+   *   2) IcebergCompat V3 is enabled on `snapshotToConvert.metadata`, and
+   *   3) Either:
+   *        - there is no previously converted snapshot (i.e., first time enable icebergCompat), or
+   *        - the last converted Iceberg table exists and its current Iceberg
+   *          format version is <= 2 (i.e., the table was on a lower compat version).
+   */
+  protected def isRowTrackingJustEnabled(
+      snapshotToConvert: Snapshot,
+      prevConvertedSnapshotOpt: Option[Snapshot],
+      lastConvertedIcebergTable: Option[IcebergTable]): Boolean = {
+    val rowTrackingEnabledOnSnapshotToConvert = RowTracking.isEnabled(
+      snapshotToConvert.protocol, snapshotToConvert.metadata)
+    rowTrackingEnabledOnSnapshotToConvert &&
+      IcebergCompat.isGeqEnabled(snapshotToConvert.metadata, 3) &&
+      // Either this is first time to enable Uniform or upgrade from lower version
+      (prevConvertedSnapshotOpt.isEmpty || lastConvertedIcebergTable.exists(
+        _.asInstanceOf[BaseTable].operations().current().formatVersion() <= 2))
+  }
+
+  /**
+   * Replays all AddFile actions from a Delta snapshot into Iceberg by committing
+   * them version by version within a replace table transaction.
+   *
+   * Groups all AddFile actions from snapshotToConvert by commit version and
+   * commits each group to icebergTxn at its respective version. The commit version
+   * is determined either by each file's defaultRowCommitVersion (when
+   * useRowTrackingVersion is true), or by the provided deltaVersion as a fallback.
+   *
+   * @param snapshotToConvert The Delta snapshot whose AddFiles are being replayed
+   * @param prevConvertedSnapshotOpt Optional previous converted Iceberg snapshot
+   * @param icebergTxn The Iceberg conversion transaction
+   * @param catalogTable The catalog table metadata
+   * @param fallbackVersion Fallback Delta version to use when
+   *                        file-level commit versions are missing
+   * @param useRowTrackingVersion Whether to derive commit version from each file's
+   *                              defaultRowCommitVersion (if available)
+   * @return A sequence of optional CommitInfo objects for each replayed commit
+   * @throws IllegalStateException if no actions are found for a commit version
+   */
+  protected def createSnapshotsForReplaceTable(
+      snapshotToConvert: Snapshot,
+      prevConvertedSnapshotOpt: Option[Snapshot],
+      icebergTxn: IcebergConversionTransaction,
+      catalogTable: CatalogTable,
+      fallbackVersion: Long,
+      useRowTrackingVersion: Boolean): Seq[Option[CommitInfo]] = {
+    val versionActionPairs = snapshotToConvert.allFiles.rdd.map { add =>
+      val version = if (useRowTrackingVersion) {
+        add.defaultRowCommitVersion.getOrElse(fallbackVersion)
+      } else {
+        fallbackVersion
+      }
+      val action = add.copy(dataChange = true).wrap.unwrap
+      version -> action
+    }
+    val allVersions = versionActionPairs.keys.distinct().collect().sorted
+    val groupedRdd = versionActionPairs.groupByKey().cache()
+
+    // Process one version at a time
+    val commitInfos = allVersions.toSeq.map { version =>
+      // Turn JSON back into Actions
+      val actionsToAdd: Seq[Action] =
+        groupedRdd
+          .lookup(version)
+          .headOption
+          .map(_.iterator.toSeq)
+          .getOrElse(throw new IllegalStateException(s"No actions found for version $version"))
+      runIcebergConversionForActions(
+        icebergTxn,
+        actionsToAdd,
+        prevConvertedSnapshotOpt,
+        version
+      )
+    }
+    commitInfos
+  }
+
   /**
    * Commit the set of changes into an Iceberg snapshot. Each call to this function will
    * build exactly one Iceberg Snapshot.
@@ -609,12 +730,12 @@ class IcebergConverter
    * not recognized/supported. IcebergConverter will do a re-try with REPLACE TABLE, which
    * collects all valid data files from the target Delta snapshot and commit to Iceberg.
    *
-   * Some Delta operations are known to contain only AddFiles(dataChange=false), intended to
-   * replace/overwrite existing AddFiles. They rely on Delta's dedup in state reconstruction
-   * and cannot be action-to-action translated to Iceberg, which lacks dedup abilities.
-   * We create corresponding RemoveFile entries for the AddFiles so these operations can be
-   * properly translated into [[RewriteFiles]] in Iceberg. These operations are marked as
-   * [[needAutoRewrite]] in the code and the table below.
+   * Some Delta operations only update metadata on existing files. They rely on Delta's
+   * dedup in state reconstruction and cannot be action-to-action translated to Iceberg.
+   * Iceberg lacks dedup abilities. These metadata-only commits are skipped here before
+   * choosing a TransactionHelper. The enclosing transaction still updates table properties
+   * such as delta-version and writes new metadata to keep Iceberg conversion state
+   * in sync.
    *
    * The following table demonstrates how to choose the appropriate TransactionHelper.
    * The conditions can overlap and should be checked in order.
@@ -623,15 +744,25 @@ class IcebergConverter
    * +-------------------+---------------+---------------------+--------------------+
    * |  Create table     |  Any          |   AppendHelper      |  Note 1            |
    * +-------------------+---------------+---------------------+--------------------+
+   * |  Create with DV   |  Any          |   RowDeltaHelper    |                    |
+   * +-------------------+---------------+---------------------+--------------------+
    * |                   |  All          |   AppendHelper      |  INSERT            |
    * |  Add only         +---------------+---------------------+--------------------+
-   * |                   |  None         |   needAutoRewrite   |  Note 2            |
-   * |                   |               |   else              |                    |
-   * |                   |               |       NullHelper    |  Add Tag           |
+   * |                   |  None         |   NullHelper        |  Note 2            |
+   * |                   |               |                     |  Add Tag           |
+   * |                   +---------------+---------------------+--------------------+
+   * |                   |  Some         |   Unsupported       |  (unknown)         |
+   * +-------------------+---------------+---------------------+--------------------+
+   * |  Add only         |  All          |   RowDeltaHelper    |  Smart Clone       |
+   * |  with DV          +---------------+---------------------+--------------------+
+   * |                   |  None         |   same as no dv     |  Note 2            |
    * |                   +---------------+---------------------+--------------------+
    * |                   |  Some         |   Unsupported       |  (unknown)         |
    * +-------------------+---------------+---------------------+--------------------+
    * |  Remove only      |  Any          |   RemoveHelper      |  DELETE            |
+   * +-------------------+---------------+---------------------+--------------------+
+   * |  Remove only      |  Any          |   RowDeltaHelper    |  DELETE            |
+   * |  with DV          |               |                     |                    |
    * +-------------------+---------------+---------------------+--------------------+
    * |                   |  All          |   OverwriteHelper   |  UPDATE            |
    * |  Add + Remove     +---------------+---------------------+--------------------+
@@ -639,9 +770,15 @@ class IcebergConverter
    * |                   +---------------+---------------------+--------------------+
    * |                   |  Some         |   Unsupported       |  (unknown)         |
    * +-------------------+---------------+---------------------+--------------------+
+   * |  Add + Remove     |  All          |   RowDeltaHelper    |  UPDATE            |
+   * |  with DV          +---------------+---------------------+--------------------+
+   * |                   |  None         |   RewriteHelper     |  OPTIMIZE          |
+   * |                   +---------------+---------------------+--------------------+
+   * |                   |  Some         |   Unsupported       |  (unknown)         |
+   * +-------------------+---------------+---------------------+--------------------+
    * Note:
    * 1. We assume a Create/Replace table operation will only contain AddFiles.
-   * 2. DV is allowed but ignored as known operations (ComputeStats) do not touch DV.
+   * 2. DV is allowed but ignored for no-data changes.
    */
   private[delta] def runIcebergConversionForActions(
       icebergTxn: IcebergConversionTransaction,
@@ -663,56 +800,60 @@ class IcebergConverter
         if (addFiles.isEmpty) {
           icebergTxn.getNullHelper
         } else if (addFiles.exists(_.deletionVector != null)) {
-          throw new UnsupportedOperationException("Deletion Vector is not supported")
+          icebergTxn.getRowDeltaHelper
         } else {
           icebergTxn.getAppendOnlyHelper
         }
       case Some(_) =>
-        val addBuffer = new ArrayBuffer[AddFile]()
-        val removeBuffer = new ArrayBuffer[RemoveFile]()
-        // Scan the actions to collect info needed to determine which txnHelper to use
-        object DataChange extends Enumeration {
-          val Empty = Value(0, "Empty")
-          val None = Value(1, "None")
-          val All = Value(2, "All")
-          val Some = Value(3, "Some")
-        }
-        var dataChangeBits = 0
-        var hasDv: Boolean = false
-        val autoRewriteOprs = Set("COMPUTE STATS")
-        var needAutoRewrite = false
+        commitInfo = actionsToCommit.collectFirst { case c: CommitInfo => c }
+        val isComputeStats = commitInfo.exists(_.operation == "COMPUTE STATS")
 
-        actionsToCommit.foreach {
-          case file: FileAction =>
-            addBuffer ++= Option(file.wrap.add)
-            removeBuffer ++= Option(file.wrap.remove)
-            if (file.wrap.add != null || file.wrap.remove != null) {
-              // We only care about data changes in add and remove actions
-              dataChangeBits |= (1 << (if (file.dataChange) 1 else 0))
-            }
-            hasDv |= file.deletionVector != null
-          case c: CommitInfo =>
-            commitInfo = Some(c)
-            needAutoRewrite = autoRewriteOprs.contains(c.operation)
-          case _ => // Ignore other actions
-        }
-        addFiles = addBuffer.toSeq
-        removeFiles = removeBuffer.toSeq
-        val dataChange = DataChange(dataChangeBits)
+        if (isComputeStats
+        ) {
+          icebergTxn.getNullHelper
+        } else {
+          val addBuffer = new ArrayBuffer[AddFile]()
+          val removeBuffer = new ArrayBuffer[RemoveFile]()
+          // Scan the actions to collect info needed to determine which txnHelper to use
+          object DataChange extends Enumeration {
+            val Empty = Value(0, "Empty")
+            val None = Value(1, "None")
+            val All = Value(2, "All")
+            val Some = Value(3, "Some")
+          }
+          var dataChangeBits = 0
+          var hasDv: Boolean = false
 
-        (addFiles.nonEmpty, removeFiles.nonEmpty, dataChange) match {
+          actionsToCommit.foreach {
+            case file: FileAction =>
+              addBuffer ++= Option(file.wrap.add)
+              removeBuffer ++= Option(file.wrap.remove)
+              if (file.wrap.add != null || file.wrap.remove != null) {
+                // We only care about data changes in add and remove actions
+                dataChangeBits |= (1 << (if (file.dataChange) 1 else 0))
+              }
+              hasDv |= file.deletionVector != null
+            case _ => // Ignore other actions
+          }
+          addFiles = addBuffer.toSeq
+          removeFiles = removeBuffer.toSeq
+          val dataChange = DataChange(dataChangeBits)
+
+          (addFiles.nonEmpty, removeFiles.nonEmpty, dataChange) match {
           case (true, false, DataChange.All) if !hasDv =>
             icebergTxn.getAppendOnlyHelper
+          case (true, false, DataChange.All) if hasDv =>
+            icebergTxn.getRowDeltaHelper
           case (true, false, DataChange.None) =>
-            if (!needAutoRewrite) {
-              icebergTxn.getNullHelper // Ignore
-            } else {
-              // Create RemoveFiles to refresh these AddFiles without data change
-              removeFiles = addBuffer.map(_.removeWithTimestamp(dataChange = false)).toSeq
-              icebergTxn.getRewriteHelper
-            }
+            icebergTxn.getNullHelper // Ignore
+          case (false, true, _) if hasDv =>
+            icebergTxn.getRowDeltaHelper
           case (false, true, _) =>
             icebergTxn.getRemoveOnlyHelper
+          case (true, true, DataChange.All) if hasDv =>
+            icebergTxn.getRowDeltaHelper
+          case (true, true, DataChange.None) if hasDv =>
+            icebergTxn.getRewriteHelper
           case (true, true, DataChange.All) if !hasDv =>
             icebergTxn.getOverwriteHelper
           case (true, true, DataChange.None) if !hasDv =>
@@ -742,6 +883,7 @@ class IcebergConverter
                  |hasDv -> ${hasDv.toString}""".stripMargin)
             throw new UnsupportedOperationException(
               "Unsupported combination of actions for incremental conversion.")
+          }
         }
     }
     recordDeltaEvent(
@@ -805,6 +947,7 @@ class DummySnapshotWithAllFilesSupport(
     override val deltaLog: DeltaLog,
     override val metadata: Metadata,
     override val version: Long = -1,
+    val domainMetadataOpt: Option[Seq[DomainMetadata]] = None,
     val protocolOpt: Option[Protocol] = None,
     val txnInfo: CurrentTransactionInfo,
     val catalogTable: CatalogTable)
@@ -812,6 +955,7 @@ class DummySnapshotWithAllFilesSupport(
     logPath,
     deltaLog,
     metadata,
+    domainMetadataOpt,
     protocolOpt
   ) {
   override def allFiles: Dataset[AddFile] = {

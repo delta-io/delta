@@ -169,7 +169,7 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
   def getTimeStampForVersion(deltaTable: String, version: Long): Long = {
     val snapshotToUse = getSnapshotToUse(deltaTable, None)
     FileUtils
-      .listFiles(new File(snapshotToUse.deltaLog.logPath.toUri()), null, true)
+      .listFiles(new File(snapshotToUse.logPath.toUri()), null, true)
       .asScala
       .foreach { f =>
         if (FileNames.isDeltaFile(new Path(f.getName))) {

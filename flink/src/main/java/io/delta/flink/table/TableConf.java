@@ -58,6 +58,17 @@ public class TableConf implements Serializable {
           .defaultValue(true)
           .withDescription("Whether to generate checksum files for commits on this table.");
 
+  /** Source of storage credentials for this table. */
+  public static final ConfigOption<String> CREDENTIALS_SOURCE =
+      ConfigOptions.key("credentials.source")
+          .stringType()
+          .defaultValue("uc")
+          .withDescription(
+              "Source of storage credentials: \"uc\" (default) to fetch temporary credentials from "
+                  + "Unity Catalog, or \"ambient\" to fetch nothing and rely on the runtime "
+                  + "environment (workload identity, instance profile, ADC, or core-site.xml) to "
+                  + "supply them.");
+
   private static final Map<String, String> DEFAULT_CONFS =
       Map.of("delta.feature.v2Checkpoint", "supported");
 
@@ -114,18 +125,26 @@ public class TableConf implements Serializable {
   /**
    * Configuration to be forwarded to the Kernel engine.
    *
-   * <p>This returns the subset of configuration entries that are relevant to engine-side behavior.
-   * If your engine uses different option names, translate them here.
+   * <p>This carries custom options that will be passed to the engine. Currently it includes all
+   * customer-provided file-system options (keys starting with {@code "fs."}, e.g. {@code
+   * fs.s3a.access.key}), which are added to the Hadoop {@code Configuration} used by the engine.
    *
    * @return a map of engine configuration entries
    */
   public Map<String, String> engineConf() {
-    return Map.of();
+    return raw.entrySet().stream()
+        .filter(entry -> entry.getKey().startsWith("fs."))
+        .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
   }
 
   /** @return whether checksum file creation is enabled for this table */
   public boolean isChecksumEnabled() {
     return cfg.get(CHECKSUM_ENABLED);
+  }
+
+  /** @return the storage credential source for this table ("uc" or "ambient") */
+  public String getCredentialSource() {
+    return cfg.get(CREDENTIALS_SOURCE);
   }
 
   /**

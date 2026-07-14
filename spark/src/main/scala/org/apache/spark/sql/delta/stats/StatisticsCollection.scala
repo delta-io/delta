@@ -30,6 +30,7 @@ import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.DeltaColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY
 import org.apache.spark.sql.delta.DeltaOperations.ComputeStats
 import org.apache.spark.sql.delta.OptimisticTransaction
+import org.apache.spark.sql.delta.{VariantShreddingPreviewTableFeature, VariantShreddingTableFeature}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
@@ -132,6 +133,20 @@ trait StatisticsCollection extends DeltaLogging {
   protected def protocol: Protocol
 
   lazy val deletionVectorsSupported = protocol.isFeatureSupported(DeletionVectorsTableFeature)
+
+  lazy val variantShreddingSupported: Boolean =
+    protocol.isFeatureSupported(VariantShreddingTableFeature) ||
+      protocol.isFeatureSupported(VariantShreddingPreviewTableFeature)
+
+  /**
+   * Whether VARIANT columns are eligible for inclusion in the min/max data skipping stats schema.
+   * When [[DeltaSQLConf.GUARD_VARIANT_IN_STATS_SCHEMA]] is enabled (the default), variant columns
+   * are only included when the table supports variant shredding; the conf acts as a kill switch
+   * that, when disabled, restores the prior behavior of including variant columns regardless of
+   * the table's shredding support.
+   */
+  private def variantEligibleForStatsSchema: Boolean =
+    !SQLConf.get.getConf(DeltaSQLConf.GUARD_VARIANT_IN_STATS_SCHEMA) || variantShreddingSupported
 
   private def effectiveSchema: StructType = if (statsColumnSpec.numIndexedColsOpt.isDefined) {
     outputTableStatsSchema
@@ -322,11 +337,38 @@ trait StatisticsCollection extends DeltaLogging {
     // 4) omits metadata in table schema as Delta stats schema does not need the metadata
     def getMinMaxStatsSchema(schema: StructType): Option[StructType] = {
       val fields = schema.fields.flatMap {
+        // Iceberg stats require column IDs so they are propagated to the stats schema.
+        // Fields without column IDs are ignored during Delta stat to Iceberg stat conversion.
+        // As List and Map types are not skipping eligible, we do not need to handle
+        // nested field IDs here.
+        case f@StructField(_, dataType: StructType, _, _) if DeltaColumnMapping.hasColumnId(f) =>
+          getMinMaxStatsSchema(dataType).map { newDataType =>
+            StructField(
+              DeltaColumnMapping.getPhysicalName(f),
+              newDataType,
+              metadata = new MetadataBuilder()
+                .putLong(DeltaColumnMapping.COLUMN_MAPPING_METADATA_ID_KEY,
+                  DeltaColumnMapping.getColumnId(f))
+                .build()
+            )
+          }
+        case f@StructField(_, SkippingEligibleDataType(dataType), _, _)
+            if DeltaColumnMapping.hasColumnId(f) &&
+              (!dataType.isInstanceOf[VariantType] || variantEligibleForStatsSchema) =>
+          Some(StructField(
+            DeltaColumnMapping.getPhysicalName(f),
+            dataType,
+            metadata = new MetadataBuilder()
+              .putLong(DeltaColumnMapping.COLUMN_MAPPING_METADATA_ID_KEY,
+                DeltaColumnMapping.getColumnId(f))
+              .build()
+          ))
         case f@StructField(_, dataType: StructType, _, _) =>
           getMinMaxStatsSchema(dataType).map { newDataType =>
             StructField(DeltaColumnMapping.getPhysicalName(f), newDataType)
           }
-        case f@StructField(_, SkippingEligibleDataType(dataType), _, _) =>
+        case f@StructField(_, SkippingEligibleDataType(dataType), _, _)
+            if !dataType.isInstanceOf[VariantType] || variantEligibleForStatsSchema =>
           Some(StructField(DeltaColumnMapping.getPhysicalName(f), dataType))
         case _ => None
       }
@@ -338,6 +380,30 @@ trait StatisticsCollection extends DeltaLogging {
     // 4) omits metadata in table schema as Delta stats schema does not need the metadata
     def getNullCountSchema(schema: StructType): Option[StructType] = {
       val fields = schema.fields.flatMap {
+        // Iceberg stats require column IDs so they are propagated to the stats schema.
+        // Fields without column IDs are ignored during Delta stat to Iceberg stat conversion.
+        // The Iceberg stats schema does not require nested field IDs for list and map columns
+        // so we do not need to add them here.
+        case f@StructField(_, dataType: StructType, _, _) if DeltaColumnMapping.hasColumnId(f) =>
+          getNullCountSchema(dataType).map { newDataType =>
+            StructField(
+              DeltaColumnMapping.getPhysicalName(f),
+              newDataType,
+              metadata = new MetadataBuilder()
+                .putLong(DeltaColumnMapping.COLUMN_MAPPING_METADATA_ID_KEY,
+                  DeltaColumnMapping.getColumnId(f))
+                .build()
+            )
+          }
+        case f: StructField if DeltaColumnMapping.hasColumnId(f) =>
+          Some(StructField(
+            DeltaColumnMapping.getPhysicalName(f),
+            LongType,
+            metadata = new MetadataBuilder()
+              .putLong(DeltaColumnMapping.COLUMN_MAPPING_METADATA_ID_KEY,
+                DeltaColumnMapping.getColumnId(f))
+              .build()
+          ))
         case f@StructField(_, dataType: StructType, _, _) =>
           getNullCountSchema(dataType).map { newDataType =>
             StructField(DeltaColumnMapping.getPhysicalName(f), newDataType)

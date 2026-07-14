@@ -59,46 +59,55 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
    */
   private void withHistoryTable(String suffix, ThrowingConsumer body) throws Exception {
     String tableName = "dsv2_cdc_catalog_ts_" + suffix + "_" + System.nanoTime();
-    String tablePath = System.getProperty("java.io.tmpdir") + "/" + tableName;
     withTable(
-        tablePath,
-        () ->
-            withTable(
-                new String[] {tableName},
-                () -> {
-                  spark.sql(
-                      String.format(
-                          "CREATE TABLE %s (id BIGINT, name STRING) USING delta LOCATION '%s' TBLPROPERTIES "
-                              + "('delta.enableDeletionVectors'='false', 'delta.enableRowTracking'='true')",
-                          tableName, tablePath));
-                  spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice')", tableName));
-                  spark.sql(String.format("INSERT INTO %s VALUES (2, 'Bob')", tableName));
-                  spark.sql(String.format("INSERT INTO %s VALUES (3, 'Charlie')", tableName));
-                  spark.sql(String.format("INSERT INTO %s VALUES (4, 'Dave')", tableName));
-                  spark.sql(String.format("INSERT INTO %s VALUES (5, 'Eve')", tableName));
-                  // Auto-CDF requires the V2 connector at read time. Writes above run in the
-                  // session-default mode (AUTO → V1 connector for INSERT). The CHANGES read in
-                  // the test body needs STRICT to ensure loadTable returns a V2 DeltaV2Table.
-                  withSQLConf(
-                      "spark.databricks.delta.v2.enableMode",
-                      "STRICT",
-                      () -> body.accept(tableName, tablePath));
-                }));
+        new String[] {tableName},
+        () -> {
+          spark.sql(
+              String.format(
+                  "CREATE TABLE %s (id BIGINT, name STRING) USING delta TBLPROPERTIES "
+                      + "('delta.enableDeletionVectors'='false', 'delta.enableRowTracking'='true')",
+                  tableName));
+          spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice')", tableName));
+          spark.sql(String.format("INSERT INTO %s VALUES (2, 'Bob')", tableName));
+          spark.sql(String.format("INSERT INTO %s VALUES (3, 'Charlie')", tableName));
+          spark.sql(String.format("INSERT INTO %s VALUES (4, 'Dave')", tableName));
+          spark.sql(String.format("INSERT INTO %s VALUES (5, 'Eve')", tableName));
+          // Resolve the managed table's location now, while the session is still in the default
+          // mode. DESCRIBE DETAIL would fail under the STRICT mode set below (the table resolves to
+          // a V2 DeltaV2Table that the v1 command can't address). The location lets commitTimestamp
+          // read commit timestamps through the kernel snapshot manager, mode-independently.
+          String location =
+              spark
+                  .sql("DESCRIBE DETAIL " + tableName)
+                  .select("location")
+                  .head()
+                  .getString(0)
+                  .replaceFirst("^file:/+", "/");
+          // Read-time CDF requires the V2 connector at read time. Writes above run in the
+          // session-default mode (AUTO -> V1 connector for INSERT). The CHANGES read in
+          // the test body needs STRICT to ensure loadTable returns a V2 DeltaV2Table.
+          withSQLConf(
+              "spark.databricks.delta.v2.enableMode",
+              "STRICT",
+              () -> body.accept(tableName, location));
+        });
   }
 
   @FunctionalInterface
   private interface ThrowingConsumer {
-    void accept(String tableName, String tablePath) throws Exception;
+    void accept(String tableName, String tableLocation) throws Exception;
   }
 
   /**
    * Returns the commit timestamp of {@code version}. Resolves the snapshot directly through the
    * kernel snapshot manager, so it works irrespective of the catalog mode flipped on by the test
-   * body (which keeps the catalog in STRICT for the Auto-CDF read path).
+   * body (which keeps the catalog in STRICT for the read path of read-time CDF).
    */
-  private java.sql.Timestamp commitTimestamp(String tablePath, long version) {
+  private java.sql.Timestamp commitTimestamp(String tableLocation, long version) {
+    // Reads through the kernel snapshot manager, so it works inside the STRICT block the test body
+    // runs in. tableLocation is resolved by withHistoryTable before STRICT is set.
     DeltaSnapshotManager snapshotManager =
-        SnapshotManagerFactory.create(tablePath, defaultEngine, Optional.empty());
+        SnapshotManagerFactory.create(tableLocation, defaultEngine, Optional.empty());
     long millis = snapshotManager.loadSnapshotAt(version).getTimestamp(defaultEngine);
     return new java.sql.Timestamp(millis);
   }
@@ -108,9 +117,9 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
    * getActiveCommitAtTime} with inputs that don't coincide with any commit's exact ts, so bounds
    * inclusivity does not change the resolved version.
    */
-  private String betweenCommits(String tablePath, long earlier, long later) {
-    long earlierMs = commitTimestamp(tablePath, earlier).getTime();
-    long laterMs = commitTimestamp(tablePath, later).getTime();
+  private String betweenCommits(String tableLocation, long earlier, long later) {
+    long earlierMs = commitTimestamp(tableLocation, earlier).getTime();
+    long laterMs = commitTimestamp(tableLocation, later).getTime();
     return new java.sql.Timestamp(earlierMs + (laterMs - earlierMs) / 2).toString();
   }
 
@@ -121,63 +130,190 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
   @Test
   public void testSqlAndDataFrameChangesMatchForVersionRange() throws Exception {
     String tableName = "dsv2_cdc_catalog_" + System.nanoTime();
-    String tablePath = System.getProperty("java.io.tmpdir") + "/" + tableName;
 
     withTable(
-        tablePath,
-        () ->
-            withTable(
-                new String[] {tableName},
-                () -> {
-                  spark.sql(
-                      String.format(
-                          "CREATE TABLE %s (id BIGINT, name STRING) USING delta LOCATION '%s' TBLPROPERTIES "
-                              + "('delta.enableDeletionVectors'='false', 'delta.enableRowTracking'='true')",
-                          tableName, tablePath));
-                  spark.sql(
-                      String.format("INSERT INTO %s VALUES (1, 'Alice'), (2, 'Bob')", tableName));
-                  spark.sql(String.format("DELETE FROM %s WHERE id = 1", tableName));
+        new String[] {tableName},
+        () -> {
+          spark.sql(
+              String.format(
+                  "CREATE TABLE %s (id BIGINT, name STRING) USING delta TBLPROPERTIES "
+                      + "('delta.enableDeletionVectors'='false', 'delta.enableRowTracking'='true')",
+                  tableName));
+          spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice'), (2, 'Bob')", tableName));
+          spark.sql(String.format("DELETE FROM %s WHERE id = 1", tableName));
 
-                  // CHANGES read needs the V2 connector; see withHistoryTable for the rationale.
-                  withSQLConf(
-                      "spark.databricks.delta.v2.enableMode",
-                      "STRICT",
-                      () -> {
-                        Dataset<Row> sqlDf =
+          // CHANGES read needs the V2 connector; see withHistoryTable for the rationale.
+          withSQLConf(
+              "spark.databricks.delta.v2.enableMode",
+              "STRICT",
+              () -> {
+                Dataset<Row> sqlDf =
+                    spark
+                        .sql(
+                            String.format(
+                                "SELECT id, name, _change_type, _commit_version "
+                                    + "FROM %s CHANGES FROM VERSION 1 TO VERSION 2",
+                                tableName))
+                        .orderBy("_commit_version", "id", "_change_type", "name");
+
+                Dataset<Row> apiDf =
+                    spark
+                        .read()
+                        .option("startingVersion", "1")
+                        .option("endingVersion", "2")
+                        .changes(tableName)
+                        .select("id", "name", "_change_type", "_commit_version")
+                        .orderBy("_commit_version", "id", "_change_type", "name");
+
+                List<Row> sqlRows = sqlDf.collectAsList();
+                List<Row> apiRows = apiDf.collectAsList();
+                assertFalse(
+                    sqlRows.isEmpty(), "Expected non-empty CDC output for VERSION 1..2 range");
+                assertEquals(
+                    sqlRows, apiRows, "SQL CHANGES and DataFrameReader.changes should match");
+
+                List<String> fieldNames = Arrays.asList(sqlDf.schema().fieldNames());
+                assertTrue(fieldNames.contains("id"));
+                assertTrue(fieldNames.contains("name"));
+                assertTrue(fieldNames.contains("_change_type"));
+                assertTrue(fieldNames.contains("_commit_version"));
+              });
+        });
+  }
+
+  // ===========================================================================================
+  // Connector-mode routing for CHANGES reads
+  // ===========================================================================================
+
+  /**
+   * Auto-CDF only flows through the V2 connector. {@code ChangelogSupport} re-resolves the
+   * table to a {@code DeltaV2Table} for the CHANGES read, so a SQL CHANGES query must succeed
+   * without forcing STRICT mode.
+   */
+  @Test
+  public void testAutoModeRoutesChangesToV2() throws Exception {
+    String tableName = "dsv2_cdc_catalog_auto_" + System.nanoTime();
+
+    withTable(
+        new String[] {tableName},
+        () -> {
+          spark.sql(
+              String.format(
+                  "CREATE TABLE %s (id BIGINT, name STRING) USING delta "
+                      + "TBLPROPERTIES ('delta.enableDeletionVectors'='false', "
+                      + "'delta.enableRowTracking'='true')",
+                  tableName));
+          spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice')", tableName));
+          spark.sql(String.format("INSERT INTO %s VALUES (2, 'Bob')", tableName));
+          spark.sql(String.format("INSERT INTO %s VALUES (3, 'Charlie')", tableName));
+
+          // CREATE/INSERTs above run on the V1 connector under AUTO. The CHANGES read must
+          // still succeed: ChangelogSupport re-resolves the table to the V2 connector.
+          withSQLConf(
+              "spark.databricks.delta.v2.enableMode",
+              "AUTO",
+              () -> {
+                List<Row> rows =
+                    spark
+                        .sql(
+                            String.format(
+                                "SELECT id, name, _change_type "
+                                    + "FROM %s CHANGES FROM VERSION 1 TO VERSION 3",
+                                tableName))
+                        .orderBy("_commit_version", "id")
+                        .collectAsList();
+                assertEquals(
+                    3, rows.size(), "Expected three inserts in the v1..v3 range under AUTO");
+                for (int i = 0; i < 3; i++) {
+                  assertEquals((long) (i + 1), ((Number) rows.get(i).getAs("id")).longValue());
+                  assertEquals("insert", rows.get(i).getAs("_change_type"));
+                }
+              });
+        });
+  }
+
+  /**
+   * STRICT routes every operation to the V2 connector, so loadTable already returns a
+   * {@code DeltaV2Table} and the CHANGES read succeeds without any re-resolution.
+   */
+  @Test
+  public void testStrictModeRoutesChangesToV2() throws Exception {
+    String tableName = "dsv2_cdc_catalog_strict_" + System.nanoTime();
+
+    withTable(
+        new String[] {tableName},
+        () -> {
+          spark.sql(
+              String.format(
+                  "CREATE TABLE %s (id BIGINT, name STRING) USING delta "
+                      + "TBLPROPERTIES ('delta.enableDeletionVectors'='false', "
+                      + "'delta.enableRowTracking'='true')",
+                  tableName));
+          spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice')", tableName));
+          spark.sql(String.format("INSERT INTO %s VALUES (2, 'Bob')", tableName));
+          spark.sql(String.format("INSERT INTO %s VALUES (3, 'Charlie')", tableName));
+
+          withSQLConf(
+              "spark.databricks.delta.v2.enableMode",
+              "STRICT",
+              () -> {
+                List<Row> rows =
+                    spark
+                        .sql(
+                            String.format(
+                                "SELECT id, name, _change_type "
+                                    + "FROM %s CHANGES FROM VERSION 1 TO VERSION 3",
+                                tableName))
+                        .orderBy("_commit_version", "id")
+                        .collectAsList();
+                assertEquals(
+                    3, rows.size(), "Expected three inserts in the v1..v3 range under STRICT");
+                for (int i = 0; i < 3; i++) {
+                  assertEquals((long) (i + 1), ((Number) rows.get(i).getAs("id")).longValue());
+                  assertEquals("insert", rows.get(i).getAs("_change_type"));
+                }
+              });
+        });
+  }
+
+  /**
+   * NONE mode keeps every operation on the V1 connector, so the V2 Auto-CDF path is unavailable.
+   * A CHANGES read must be rejected with {@code DELTA_CHANGELOG_REQUIRES_V2_TABLE}.
+   */
+  @Test
+  public void testNoneModeRejectsChanges() throws Exception {
+    String tableName = "dsv2_cdc_catalog_none_" + System.nanoTime();
+
+    withTable(
+        new String[] {tableName},
+        () -> {
+          spark.sql(
+              String.format(
+                  "CREATE TABLE %s (id BIGINT, name STRING) USING delta "
+                      + "TBLPROPERTIES ('delta.enableDeletionVectors'='false', "
+                      + "'delta.enableRowTracking'='true')",
+                  tableName));
+          spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice')", tableName));
+
+          withSQLConf(
+              "spark.databricks.delta.v2.enableMode",
+              "NONE",
+              () -> {
+                Exception ex =
+                    assertThrows(
+                        Exception.class,
+                        () ->
                             spark
                                 .sql(
                                     String.format(
-                                        "SELECT id, name, _change_type, _commit_version "
-                                            + "FROM %s CHANGES FROM VERSION 1 TO VERSION 2",
+                                        "SELECT * FROM %s CHANGES FROM VERSION 0 TO " + "VERSION 1",
                                         tableName))
-                                .orderBy("_commit_version", "id", "_change_type", "name");
-
-                        Dataset<Row> apiDf =
-                            spark
-                                .read()
-                                .option("startingVersion", "1")
-                                .option("endingVersion", "2")
-                                .changes(tableName)
-                                .select("id", "name", "_change_type", "_commit_version")
-                                .orderBy("_commit_version", "id", "_change_type", "name");
-
-                        List<Row> sqlRows = sqlDf.collectAsList();
-                        List<Row> apiRows = apiDf.collectAsList();
-                        assertFalse(
-                            sqlRows.isEmpty(),
-                            "Expected non-empty CDC output for VERSION 1..2 range");
-                        assertEquals(
-                            sqlRows,
-                            apiRows,
-                            "SQL CHANGES and DataFrameReader.changes should match");
-
-                        List<String> fieldNames = Arrays.asList(sqlDf.schema().fieldNames());
-                        assertTrue(fieldNames.contains("id"));
-                        assertTrue(fieldNames.contains("name"));
-                        assertTrue(fieldNames.contains("_change_type"));
-                        assertTrue(fieldNames.contains("_commit_version"));
-                      });
-                }));
+                                .collectAsList());
+                assertTrue(
+                    ex.getMessage().contains("DELTA_CHANGELOG_REQUIRES_V2_TABLE"),
+                    "Expected V2-connector-required error under NONE, got: " + ex.getMessage());
+              });
+        });
   }
 
   // ===========================================================================================
@@ -190,9 +326,9 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
   public void testTimestampRangeReadsAllChanges() throws Exception {
     withHistoryTable(
         "all",
-        (tableName, tablePath) -> {
-          String startTs = commitTimestamp(tablePath, 0).toString();
-          String endTs = commitTimestamp(tablePath, 5).toString();
+        (tableName, location) -> {
+          String startTs = commitTimestamp(location, 0).toString();
+          String endTs = commitTimestamp(location, 5).toString();
 
           Dataset<Row> changes =
               spark
@@ -216,9 +352,9 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
   public void testTimestampRangePartialMiddleCommit() throws Exception {
     withHistoryTable(
         "partial",
-        (tableName, tablePath) -> {
+        (tableName, location) -> {
           // Both bounds resolve to v3; range = [v3, v3] inclusive.
-          String tsV3 = commitTimestamp(tablePath, 3).toString();
+          String tsV3 = commitTimestamp(location, 3).toString();
           Dataset<Row> changes =
               spark.sql(
                   String.format(
@@ -237,13 +373,13 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
   public void testTimestampRangeBetweenCommitTimestamps() throws Exception {
     withHistoryTable(
         "between",
-        (tableName, tablePath) -> {
+        (tableName, location) -> {
           // Start strictly between v1 and v2: getActiveCommitAtTime returns the latest commit
           // with ts <= start, so start resolves to v1.
           // End strictly between v2 and v3: same rule, end resolves to v2.
           // Range = [v1, v2] = Alice + Bob.
-          String startTs = betweenCommits(tablePath, 1, 2);
-          String endTs = betweenCommits(tablePath, 2, 3);
+          String startTs = betweenCommits(location, 1, 2);
+          String endTs = betweenCommits(location, 2, 3);
 
           Dataset<Row> changes =
               spark
@@ -267,9 +403,9 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
   public void testTimestampRangeExclusiveBoundsSkipBoundaryCommits() throws Exception {
     withHistoryTable(
         "excl",
-        (tableName, tablePath) -> {
-          String tsV1 = commitTimestamp(tablePath, 1).toString();
-          String tsV3 = commitTimestamp(tablePath, 3).toString();
+        (tableName, location) -> {
+          String tsV1 = commitTimestamp(location, 1).toString();
+          String tsV3 = commitTimestamp(location, 3).toString();
 
           // FROM tsV1 EXCLUSIVE bumps start to v2; TO tsV3 EXCLUSIVE drops end to v2.
           // Range = [v2, v2] = only the (2, 'Bob') insert.
@@ -291,9 +427,9 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
   public void testTimestampRangeMixedBoundsStartExclusiveEndInclusive() throws Exception {
     withHistoryTable(
         "mixed_se_ei",
-        (tableName, tablePath) -> {
-          String tsV1 = commitTimestamp(tablePath, 1).toString();
-          String tsV3 = commitTimestamp(tablePath, 3).toString();
+        (tableName, location) -> {
+          String tsV1 = commitTimestamp(location, 1).toString();
+          String tsV3 = commitTimestamp(location, 3).toString();
 
           // FROM tsV1 EXCLUSIVE bumps start to v2; TO tsV3 (default INCLUSIVE) keeps end at v3.
           // Range = [v2, v3] = Bob + Charlie.
@@ -317,9 +453,9 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
   public void testTimestampRangeMixedBoundsStartInclusiveEndExclusive() throws Exception {
     withHistoryTable(
         "mixed_si_ee",
-        (tableName, tablePath) -> {
-          String tsV1 = commitTimestamp(tablePath, 1).toString();
-          String tsV3 = commitTimestamp(tablePath, 3).toString();
+        (tableName, location) -> {
+          String tsV1 = commitTimestamp(location, 1).toString();
+          String tsV3 = commitTimestamp(location, 3).toString();
 
           // FROM tsV1 (default INCLUSIVE) keeps start at v1; TO tsV3 EXCLUSIVE drops end to v2.
           // Range = [v1, v2] = Alice + Bob.
@@ -345,10 +481,10 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
   public void testTimestampRangeOpenEndedReadsToLatest() throws Exception {
     withHistoryTable(
         "open_incl",
-        (tableName, tablePath) -> {
+        (tableName, location) -> {
           // FROM tsV1 (default INCLUSIVE) keeps start at v1; no TO clause = read to latest (v5).
           // Range = [v1, v5] = all five inserts.
-          String tsV1 = commitTimestamp(tablePath, 1).toString();
+          String tsV1 = commitTimestamp(location, 1).toString();
 
           Dataset<Row> changes =
               spark
@@ -370,10 +506,10 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
   public void testTimestampRangeOpenEndedExclusiveStart() throws Exception {
     withHistoryTable(
         "open_excl",
-        (tableName, tablePath) -> {
+        (tableName, location) -> {
           // FROM tsV1 EXCLUSIVE bumps start to v2; no TO clause = read to latest (v5).
           // Range = [v2, v5] = Bob + Charlie + Dave + Eve.
-          String tsV1 = commitTimestamp(tablePath, 1).toString();
+          String tsV1 = commitTimestamp(location, 1).toString();
 
           Dataset<Row> changes =
               spark
@@ -397,10 +533,10 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
   public void testTimestampRangeRejectsEmptyExclusiveRange() throws Exception {
     withHistoryTable(
         "empty_excl",
-        (tableName, tablePath) -> {
+        (tableName, location) -> {
           // Both bounds at tsV3 with EXCL on both sides:
           //   start adjusts to v4, end adjusts to v2 -> start > end -> DELTA_INVALID_CDC_RANGE.
-          String tsV3 = commitTimestamp(tablePath, 3).toString();
+          String tsV3 = commitTimestamp(location, 3).toString();
 
           Exception ex =
               assertThrows(
@@ -425,7 +561,7 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
   public void testTimestampRangeBeforeEarliestCommitFails() throws Exception {
     withHistoryTable(
         "past_ts",
-        (tableName, tablePath) -> {
+        (tableName, location) -> {
           Exception ex =
               assertThrows(
                   Exception.class,
@@ -449,77 +585,67 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
   @Test
   public void testTimestampRangeAfterLatestCommitFails() throws Exception {
     String tableName = "dsv2_cdc_catalog_ts_future_" + System.nanoTime();
-    String tablePath = System.getProperty("java.io.tmpdir") + "/" + tableName;
 
     withTable(
-        tablePath,
-        () ->
-            withTable(
-                new String[] {tableName},
-                () -> {
-                  spark.sql(
-                      String.format(
-                          "CREATE TABLE %s (id BIGINT, name STRING) USING delta LOCATION '%s' TBLPROPERTIES "
-                              + "('delta.enableDeletionVectors'='false', 'delta.enableRowTracking'='true')",
-                          tableName, tablePath));
-                  spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice')", tableName));
+        new String[] {tableName},
+        () -> {
+          spark.sql(
+              String.format(
+                  "CREATE TABLE %s (id BIGINT, name STRING) USING delta TBLPROPERTIES "
+                      + "('delta.enableDeletionVectors'='false', 'delta.enableRowTracking'='true')",
+                  tableName));
+          spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice')", tableName));
 
-                  withSQLConf(
-                      "spark.databricks.delta.v2.enableMode",
-                      "STRICT",
-                      () -> {
-                        Exception ex =
-                            assertThrows(
-                                Exception.class,
-                                () ->
-                                    spark
-                                        .sql(
-                                            String.format(
-                                                "SELECT * FROM %s CHANGES FROM TIMESTAMP "
-                                                    + "'9999-01-01 00:00:00' TO TIMESTAMP "
-                                                    + "'9999-01-02 00:00:00'",
-                                                tableName))
-                                        .collectAsList());
-                        assertTrue(
-                            ex.getMessage().contains("DELTA_TIMESTAMP_GREATER_THAN_COMMIT")
-                                || ex.getMessage().contains("after the latest version")
-                                || ex.getMessage().contains("after the latest available version"),
-                            "Expected timestamp-after-latest error, got: " + ex.getMessage());
-                      });
-                }));
+          withSQLConf(
+              "spark.databricks.delta.v2.enableMode",
+              "STRICT",
+              () -> {
+                Exception ex =
+                    assertThrows(
+                        Exception.class,
+                        () ->
+                            spark
+                                .sql(
+                                    String.format(
+                                        "SELECT * FROM %s CHANGES FROM TIMESTAMP "
+                                            + "'9999-01-01 00:00:00' TO TIMESTAMP "
+                                            + "'9999-01-02 00:00:00'",
+                                        tableName))
+                                .collectAsList());
+                assertTrue(
+                    ex.getMessage().contains("DELTA_TIMESTAMP_GREATER_THAN_COMMIT")
+                        || ex.getMessage().contains("after the latest version")
+                        || ex.getMessage().contains("after the latest available version"),
+                    "Expected timestamp-after-latest error, got: " + ex.getMessage());
+              });
+        });
   }
 
   @Test
   public void testUnboundedBatchChangesIsRejectedForNow() throws Exception {
     String tableName = "dsv2_cdc_catalog_unbounded_" + System.nanoTime();
-    String tablePath = System.getProperty("java.io.tmpdir") + "/" + tableName;
 
     withTable(
-        tablePath,
-        () ->
-            withTable(
-                new String[] {tableName},
-                () -> {
-                  spark.sql(
-                      String.format(
-                          "CREATE TABLE %s (id BIGINT, name STRING) USING delta LOCATION '%s'",
-                          tableName, tablePath));
-                  spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice')", tableName));
+        new String[] {tableName},
+        () -> {
+          spark.sql(
+              String.format("CREATE TABLE %s (id BIGINT, name STRING) USING delta", tableName));
+          spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice')", tableName));
 
-                  withSQLConf(
-                      "spark.databricks.delta.v2.enableMode",
-                      "STRICT",
-                      () -> {
-                        AnalysisException ex =
-                            assertThrows(
-                                AnalysisException.class,
-                                () -> spark.read().changes(tableName).collectAsList());
-                        assertTrue(
-                            ex.getMessage().contains("DELTA_CHANGELOG_UNBOUNDED_RANGE"),
-                            "Expected loadChangelog rejection for unbounded batch range, got: "
-                                + ex.getMessage());
-                      });
-                }));
+          withSQLConf(
+              "spark.databricks.delta.v2.enableMode",
+              "STRICT",
+              () -> {
+                AnalysisException ex =
+                    assertThrows(
+                        AnalysisException.class,
+                        () -> spark.read().changes(tableName).collectAsList());
+                assertTrue(
+                    ex.getMessage().contains("DELTA_CHANGELOG_UNBOUNDED_RANGE"),
+                    "Expected loadChangelog rejection for unbounded batch range, got: "
+                        + ex.getMessage());
+              });
+        });
   }
 
   // ===========================================================================================
@@ -534,42 +660,37 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
   @Test
   public void testChangelogRejectsTableWithoutRowTracking() throws Exception {
     String tableName = "dsv2_cdc_catalog_no_rt_" + System.nanoTime();
-    String tablePath = System.getProperty("java.io.tmpdir") + "/" + tableName;
 
     withTable(
-        tablePath,
-        () ->
-            withTable(
-                new String[] {tableName},
-                () -> {
-                  // Table created without delta.enableRowTracking.
-                  spark.sql(
-                      String.format(
-                          "CREATE TABLE %s (id BIGINT, name STRING) USING delta LOCATION '%s' "
-                              + "TBLPROPERTIES ('delta.enableDeletionVectors'='false')",
-                          tableName, tablePath));
-                  spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice')", tableName));
+        new String[] {tableName},
+        () -> {
+          // Table created without delta.enableRowTracking.
+          spark.sql(
+              String.format(
+                  "CREATE TABLE %s (id BIGINT, name STRING) USING delta "
+                      + "TBLPROPERTIES ('delta.enableDeletionVectors'='false')",
+                  tableName));
+          spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice')", tableName));
 
-                  withSQLConf(
-                      "spark.databricks.delta.v2.enableMode",
-                      "STRICT",
-                      () -> {
-                        Exception ex =
-                            assertThrows(
-                                Exception.class,
-                                () ->
-                                    spark
-                                        .sql(
-                                            String.format(
-                                                "SELECT * FROM %s CHANGES FROM VERSION 0 TO "
-                                                    + "VERSION 1",
-                                                tableName))
-                                        .collectAsList());
-                        assertTrue(
-                            ex.getMessage().contains("DELTA_CHANGELOG_REQUIRES_ROW_TRACKING"),
-                            "Expected row-tracking required error, got: " + ex.getMessage());
-                      });
-                }));
+          withSQLConf(
+              "spark.databricks.delta.v2.enableMode",
+              "STRICT",
+              () -> {
+                Exception ex =
+                    assertThrows(
+                        Exception.class,
+                        () ->
+                            spark
+                                .sql(
+                                    String.format(
+                                        "SELECT * FROM %s CHANGES FROM VERSION 0 TO " + "VERSION 1",
+                                        tableName))
+                                .collectAsList());
+                assertTrue(
+                    ex.getMessage().contains("DELTA_CHANGELOG_REQUIRES_ROW_TRACKING"),
+                    "Expected row-tracking required error, got: " + ex.getMessage());
+              });
+        });
   }
 
   /**
@@ -580,50 +701,45 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
   @Test
   public void testChangelogRejectsRowTrackingDisabledAtEnd() throws Exception {
     String tableName = "dsv2_cdc_catalog_rt_disabled_end_" + System.nanoTime();
-    String tablePath = System.getProperty("java.io.tmpdir") + "/" + tableName;
 
     withTable(
-        tablePath,
-        () ->
-            withTable(
-                new String[] {tableName},
-                () -> {
-                  // v0: CREATE with row tracking enabled.
-                  spark.sql(
-                      String.format(
-                          "CREATE TABLE %s (id BIGINT, name STRING) USING delta LOCATION '%s' "
-                              + "TBLPROPERTIES "
-                              + "('delta.enableDeletionVectors'='false', "
-                              + "'delta.enableRowTracking'='true')",
-                          tableName, tablePath));
-                  // v1: INSERT (row tracking still on).
-                  spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice')", tableName));
-                  // v2: disable row tracking via ALTER TBLPROPERTIES.
-                  spark.sql(
-                      String.format(
-                          "ALTER TABLE %s SET TBLPROPERTIES ('delta.enableRowTracking'='false')",
-                          tableName));
+        new String[] {tableName},
+        () -> {
+          // v0: CREATE with row tracking enabled.
+          spark.sql(
+              String.format(
+                  "CREATE TABLE %s (id BIGINT, name STRING) USING delta "
+                      + "TBLPROPERTIES "
+                      + "('delta.enableDeletionVectors'='false', "
+                      + "'delta.enableRowTracking'='true')",
+                  tableName));
+          // v1: INSERT (row tracking still on).
+          spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice')", tableName));
+          // v2: disable row tracking via ALTER TBLPROPERTIES.
+          spark.sql(
+              String.format(
+                  "ALTER TABLE %s SET TBLPROPERTIES ('delta.enableRowTracking'='false')",
+                  tableName));
 
-                  withSQLConf(
-                      "spark.databricks.delta.v2.enableMode",
-                      "STRICT",
-                      () -> {
-                        Exception ex =
-                            assertThrows(
-                                Exception.class,
-                                () ->
-                                    spark
-                                        .sql(
-                                            String.format(
-                                                "SELECT * FROM %s CHANGES FROM VERSION 0 TO "
-                                                    + "VERSION 2",
-                                                tableName))
-                                        .collectAsList());
-                        assertTrue(
-                            ex.getMessage().contains("DELTA_CHANGELOG_REQUIRES_ROW_TRACKING"),
-                            "Expected eager end-snapshot RT error, got: " + ex.getMessage());
-                      });
-                }));
+          withSQLConf(
+              "spark.databricks.delta.v2.enableMode",
+              "STRICT",
+              () -> {
+                Exception ex =
+                    assertThrows(
+                        Exception.class,
+                        () ->
+                            spark
+                                .sql(
+                                    String.format(
+                                        "SELECT * FROM %s CHANGES FROM VERSION 0 TO " + "VERSION 2",
+                                        tableName))
+                                .collectAsList());
+                assertTrue(
+                    ex.getMessage().contains("DELTA_CHANGELOG_REQUIRES_ROW_TRACKING"),
+                    "Expected eager end-snapshot RT error, got: " + ex.getMessage());
+              });
+        });
   }
 
   /**
@@ -636,105 +752,286 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
   @Test
   public void testChangelogRejectsRowTrackingDisabledMidRange() throws Exception {
     String tableName = "dsv2_cdc_catalog_rt_disabled_mid_" + System.nanoTime();
-    String tablePath = System.getProperty("java.io.tmpdir") + "/" + tableName;
 
     withTable(
-        tablePath,
-        () ->
-            withTable(
-                new String[] {tableName},
-                () -> {
-                  // v0: CREATE with row tracking enabled.
-                  spark.sql(
-                      String.format(
-                          "CREATE TABLE %s (id BIGINT, name STRING) USING delta LOCATION '%s' "
-                              + "TBLPROPERTIES "
-                              + "('delta.enableDeletionVectors'='false', "
-                              + "'delta.enableRowTracking'='true')",
-                          tableName, tablePath));
-                  // v1: INSERT (RT still on).
-                  spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice')", tableName));
-                  // v2: ALTER TBLPROPERTIES sets RT off (Metadata commit inside the range).
-                  spark.sql(
-                      String.format(
-                          "ALTER TABLE %s SET TBLPROPERTIES ('delta.enableRowTracking'='false')",
-                          tableName));
-                  // v3: ALTER TBLPROPERTIES turns RT back on, so the end-snapshot check passes
-                  // and the failure must come from the per-commit loop at v2.
-                  spark.sql(
-                      String.format(
-                          "ALTER TABLE %s SET TBLPROPERTIES ('delta.enableRowTracking'='true')",
-                          tableName));
+        new String[] {tableName},
+        () -> {
+          // v0: CREATE with row tracking enabled.
+          spark.sql(
+              String.format(
+                  "CREATE TABLE %s (id BIGINT, name STRING) USING delta "
+                      + "TBLPROPERTIES "
+                      + "('delta.enableDeletionVectors'='false', "
+                      + "'delta.enableRowTracking'='true')",
+                  tableName));
+          // v1: INSERT (RT still on).
+          spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice')", tableName));
+          // v2: ALTER TBLPROPERTIES sets RT off (Metadata commit inside the range).
+          spark.sql(
+              String.format(
+                  "ALTER TABLE %s SET TBLPROPERTIES ('delta.enableRowTracking'='false')",
+                  tableName));
+          // v3: ALTER TBLPROPERTIES turns RT back on, so the end-snapshot check passes
+          // and the failure must come from the per-commit loop at v2.
+          spark.sql(
+              String.format(
+                  "ALTER TABLE %s SET TBLPROPERTIES ('delta.enableRowTracking'='true')",
+                  tableName));
 
-                  withSQLConf(
-                      "spark.databricks.delta.v2.enableMode",
-                      "STRICT",
-                      () -> {
-                        Exception ex =
-                            assertThrows(
-                                Exception.class,
-                                () ->
-                                    spark
-                                        .sql(
-                                            String.format(
-                                                "SELECT * FROM %s CHANGES FROM VERSION 0 TO "
-                                                    + "VERSION 3",
-                                                tableName))
-                                        .collectAsList());
-                        assertTrue(
-                            ex.getMessage()
-                                .contains("DELTA_CHANGELOG_ROW_TRACKING_DISABLED_IN_RANGE"),
-                            "Expected per-commit mid-range RT error, got: " + ex.getMessage());
-                      });
-                }));
+          withSQLConf(
+              "spark.databricks.delta.v2.enableMode",
+              "STRICT",
+              () -> {
+                Exception ex =
+                    assertThrows(
+                        Exception.class,
+                        () ->
+                            spark
+                                .sql(
+                                    String.format(
+                                        "SELECT * FROM %s CHANGES FROM VERSION 0 TO " + "VERSION 3",
+                                        tableName))
+                                .collectAsList());
+                assertTrue(
+                    ex.getMessage().contains("DELTA_CHANGELOG_ROW_TRACKING_DISABLED_IN_RANGE"),
+                    "Expected per-commit mid-range RT error, got: " + ex.getMessage());
+              });
+        });
   }
 
   /**
-   * A CHANGES read across a range where the table schema evolves mid-range must be rejected with
-   * {@code DELTA_CHANGELOG_SCHEMA_CHANGE_IN_RANGE}.
+   * Row tracking is toggled off and back on entirely BEFORE the requested range. The read range
+   * itself stays row-tracking-enabled, so the out-of-range toggle must not fail the read.
    */
   @Test
-  public void testChangelogRejectsSchemaChangeMidRange() throws Exception {
-    String tableName = "dsv2_cdc_catalog_schema_change_" + System.nanoTime();
-    String tablePath = System.getProperty("java.io.tmpdir") + "/" + tableName;
+  public void testChangelogAllowsRowTrackingToggleBeforeRange() throws Exception {
+    String tableName = "dsv2_cdc_catalog_rt_toggle_before_" + System.nanoTime();
 
     withTable(
-        tablePath,
-        () ->
-            withTable(
-                new String[] {tableName},
-                () -> {
-                  spark.sql(
-                      String.format(
-                          "CREATE TABLE %s (id BIGINT, name STRING) USING delta LOCATION '%s' "
-                              + "TBLPROPERTIES "
-                              + "('delta.enableDeletionVectors'='false', "
-                              + "'delta.enableRowTracking'='true')",
-                          tableName, tablePath));
-                  spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice')", tableName));
-                  // Schema change mid-range: add a column.
-                  spark.sql(String.format("ALTER TABLE %s ADD COLUMN extra STRING", tableName));
-                  spark.sql(String.format("INSERT INTO %s VALUES (2, 'Bob', 'x')", tableName));
+        new String[] {tableName},
+        () -> {
+          // v0: CREATE with row tracking enabled.
+          spark.sql(
+              String.format(
+                  "CREATE TABLE %s (id BIGINT, name STRING) USING delta TBLPROPERTIES "
+                      + "('delta.enableDeletionVectors'='false', 'delta.enableRowTracking'='true')",
+                  tableName));
+          // v1: INSERT (row tracking on).
+          spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice')", tableName));
+          // v2: disable row tracking, v3: re-enable it -- both before the read range.
+          spark.sql(
+              String.format(
+                  "ALTER TABLE %s SET TBLPROPERTIES ('delta.enableRowTracking'='false')",
+                  tableName));
+          spark.sql(
+              String.format(
+                  "ALTER TABLE %s SET TBLPROPERTIES ('delta.enableRowTracking'='true')", tableName));
+          // v4, v5: INSERTs inside the row-tracking-enabled read range.
+          spark.sql(String.format("INSERT INTO %s VALUES (2, 'Bob')", tableName));
+          spark.sql(String.format("INSERT INTO %s VALUES (3, 'Charlie')", tableName));
 
-                  withSQLConf(
-                      "spark.databricks.delta.v2.enableMode",
-                      "STRICT",
-                      () -> {
-                        Exception ex =
-                            assertThrows(
-                                Exception.class,
-                                () ->
-                                    spark
-                                        .sql(
-                                            String.format(
-                                                "SELECT * FROM %s CHANGES FROM VERSION 1 TO "
-                                                    + "VERSION 3",
-                                                tableName))
-                                        .collectAsList());
-                        assertTrue(
-                            ex.getMessage().contains("DELTA_CHANGELOG_SCHEMA_CHANGE_IN_RANGE"),
-                            "Expected schema-change error, got: " + ex.getMessage());
-                      });
-                }));
+          withSQLConf(
+              "spark.databricks.delta.v2.enableMode",
+              "STRICT",
+              () -> {
+                List<Row> rows =
+                    spark
+                        .sql(
+                            String.format(
+                                "SELECT id, name, _change_type FROM %s "
+                                    + "CHANGES FROM VERSION 4 TO VERSION 5",
+                                tableName))
+                        .orderBy("id")
+                        .collectAsList();
+                assertEquals(2, rows.size(), "Expected the two in-range inserts to be returned");
+                assertEquals(2L, rows.get(0).getLong(0), "Expected id of Bob to be 2");
+                assertEquals("Bob", rows.get(0).getString(1), "Expected name to be Bob");
+                assertEquals(3L, rows.get(1).getLong(0), "Expected id of Charlie to be 3");
+                assertEquals("Charlie", rows.get(1).getString(1), "Expected name to be Charlie");
+              });
+        });
+  }
+
+  /**
+   * Row tracking is disabled at a commit AFTER the requested range. The read range stays
+   * row-tracking-enabled, so the later toggle must not fail the read.
+   */
+  @Test
+  public void testChangelogAllowsRowTrackingDisabledAfterRange() throws Exception {
+    String tableName = "dsv2_cdc_catalog_rt_disabled_after_" + System.nanoTime();
+
+    withTable(
+        new String[] {tableName},
+        () -> {
+          // v0: CREATE with row tracking enabled.
+          spark.sql(
+              String.format(
+                  "CREATE TABLE %s (id BIGINT, name STRING) USING delta TBLPROPERTIES "
+                      + "('delta.enableDeletionVectors'='false', 'delta.enableRowTracking'='true')",
+                  tableName));
+          // v1, v2: INSERTs inside the row-tracking-enabled read range.
+          spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice')", tableName));
+          spark.sql(String.format("INSERT INTO %s VALUES (2, 'Bob')", tableName));
+          // v3: disable row tracking after the range.
+          spark.sql(
+              String.format(
+                  "ALTER TABLE %s SET TBLPROPERTIES ('delta.enableRowTracking'='false')",
+                  tableName));
+
+          withSQLConf(
+              "spark.databricks.delta.v2.enableMode",
+              "STRICT",
+              () -> {
+                List<Row> rows =
+                    spark
+                        .sql(
+                            String.format(
+                                "SELECT id, name, _change_type FROM %s "
+                                    + "CHANGES FROM VERSION 1 TO VERSION 2",
+                                tableName))
+                        .orderBy("id")
+                        .collectAsList();
+                assertEquals(2, rows.size(), "Expected the two in-range inserts to be returned");
+                assertEquals(1L, rows.get(0).getLong(0), "Expected id of Alice to be 1");
+                assertEquals("Alice", rows.get(0).getString(1), "Expected name to be Alice");
+                assertEquals(2L, rows.get(1).getLong(0), "Expected id of Bob to be 2");
+                assertEquals("Bob", rows.get(1).getString(1), "Expected name to be Bob");
+              });
+        });
+  }
+
+  /**
+   * A CHANGES read across an additive mid-range schema change (adding a nullable column) is read
+   * compatible and must succeed. Rows from before the change are read with the end schema, leaving
+   * the added column null.
+   */
+  @Test
+  public void testChangelogAllowsAdditiveSchemaChangeMidRange() throws Exception {
+    String tableName = "dsv2_cdc_catalog_schema_change_" + System.nanoTime();
+
+    withTable(
+        new String[] {tableName},
+        () -> {
+          spark.sql(
+              String.format(
+                  "CREATE TABLE %s (id BIGINT, name STRING) USING delta TBLPROPERTIES "
+                      + "('delta.enableDeletionVectors'='false', 'delta.enableRowTracking'='true')",
+                  tableName));
+          spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice')", tableName));
+          // Additive schema change mid-range: add a nullable column.
+          spark.sql(String.format("ALTER TABLE %s ADD COLUMN extra STRING", tableName));
+          spark.sql(String.format("INSERT INTO %s VALUES (2, 'Bob', 'x')", tableName));
+
+          withSQLConf(
+              "spark.databricks.delta.v2.enableMode",
+              "STRICT",
+              () -> {
+                List<Row> rows =
+                    spark
+                        .sql(
+                            String.format(
+                                "SELECT id, name, extra, _change_type FROM %s "
+                                    + "CHANGES FROM VERSION 1 TO VERSION 3",
+                                tableName))
+                        .orderBy("id")
+                        .collectAsList();
+                assertEquals(2, rows.size(), "Additive schema change should not fail the read");
+                assertEquals(1L, rows.get(0).getLong(0), "Expected id of Alice to be 1");
+                assertEquals("Alice", rows.get(0).getString(1), "Expected name to be Alice");
+                assertTrue(rows.get(0).isNullAt(2), "extra is null for the pre-change Alice row");
+                assertEquals(2L, rows.get(1).getLong(0), "Expected id of Bob to be 2");
+                assertEquals("Bob", rows.get(1).getString(1), "Expected name to be Bob");
+                assertEquals("x", rows.get(1).getString(2), "Expected Bob's extra value to be x");
+              });
+        });
+  }
+
+  /**
+   * A non-read-compatible mid-range schema change (dropping a column) must be rejected with {@code
+   * DELTA_CHANGELOG_SCHEMA_CHANGE_IN_RANGE}: the end schema can no longer read the data written
+   * before the drop.
+   */
+  @Test
+  public void testChangelogRejectsIncompatibleSchemaChangeMidRange() throws Exception {
+    String tableName = "dsv2_cdc_catalog_drop_col_" + System.nanoTime();
+
+    withTable(
+        new String[] {tableName},
+        () -> {
+          // Column mapping is required to drop a column.
+          spark.sql(
+              String.format(
+                  "CREATE TABLE %s (id BIGINT, name STRING, extra STRING) USING delta TBLPROPERTIES "
+                      + "('delta.enableDeletionVectors'='false', 'delta.enableRowTracking'='true', "
+                      + "'delta.columnMapping.mode'='name')",
+                  tableName));
+          spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice', 'x')", tableName));
+          // Non-additive schema change mid-range: drop a column.
+          spark.sql(String.format("ALTER TABLE %s DROP COLUMN extra", tableName));
+          spark.sql(String.format("INSERT INTO %s VALUES (2, 'Bob')", tableName));
+
+          withSQLConf(
+              "spark.databricks.delta.v2.enableMode",
+              "STRICT",
+              () -> {
+                Exception ex =
+                    assertThrows(
+                        Exception.class,
+                        () ->
+                            spark
+                                .sql(
+                                    String.format(
+                                        "SELECT * FROM %s CHANGES FROM VERSION 1 TO VERSION 3",
+                                        tableName))
+                                .collectAsList());
+                assertTrue(
+                    ex.getMessage().contains("DELTA_CHANGELOG_SCHEMA_CHANGE_IN_RANGE"),
+                    "Expected schema-change error, got: " + ex.getMessage());
+              });
+        });
+  }
+
+  /**
+   * A type-widening mid-range change (INT to LONG) is a schema change that the changelog read does
+   * not support, so it must be rejected with {@code DELTA_CHANGELOG_SCHEMA_CHANGE_IN_RANGE}. The
+   * check uses SchemaUtils.isReadCompatible, which does not permit type changes.
+   */
+  @Test
+  public void testChangelogRejectsTypeWideningMidRange() throws Exception {
+    String tableName = "dsv2_cdc_catalog_widen_" + System.nanoTime();
+
+    withTable(
+        new String[] {tableName},
+        () -> {
+          spark.sql(
+              String.format(
+                  "CREATE TABLE %s (id BIGINT, val INT) USING delta TBLPROPERTIES "
+                      + "('delta.enableDeletionVectors'='false', 'delta.enableRowTracking'='true', "
+                      + "'delta.enableTypeWidening'='true')",
+                  tableName));
+          spark.sql(String.format("INSERT INTO %s VALUES (1, 10)", tableName)); // v1: val is INT
+          spark.sql(
+              String.format("ALTER TABLE %s ALTER COLUMN val TYPE BIGINT", tableName)); // v2: widen
+          spark.sql(String.format("INSERT INTO %s VALUES (2, 20)", tableName)); // v3: val is LONG
+
+          withSQLConf(
+              "spark.databricks.delta.v2.enableMode",
+              "STRICT",
+              () -> {
+                Exception ex =
+                    assertThrows(
+                        Exception.class,
+                        () ->
+                            spark
+                                .sql(
+                                    String.format(
+                                        "SELECT * FROM %s CHANGES FROM VERSION 1 TO VERSION 3",
+                                        tableName))
+                                .collectAsList());
+                assertTrue(
+                    ex.getMessage().contains("DELTA_CHANGELOG_SCHEMA_CHANGE_IN_RANGE"),
+                    "Expected schema-change error, got: " + ex.getMessage());
+              });
+        });
   }
 }

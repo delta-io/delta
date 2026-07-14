@@ -23,14 +23,17 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.rowtracking.RowTracking;
+import io.delta.spark.internal.v2.exception.TimestampOutOfRangeException;
 import io.delta.spark.internal.v2.read.MetadataEvolutionHandler;
 import io.delta.spark.internal.v2.read.SparkScanBuilder;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
+import io.delta.spark.internal.v2.write.DeltaRowLevelOperationBuilder;
 import io.delta.spark.internal.v2.write.DeltaV2WriteBuilder;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -41,6 +44,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.function.Supplier;
 import org.apache.hadoop.conf.Configuration;
@@ -61,11 +65,14 @@ import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.connector.read.Statistics;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
+import org.apache.spark.sql.connector.write.RowLevelOperationBuilder;
+import org.apache.spark.sql.connector.write.RowLevelOperationInfo;
 import org.apache.spark.sql.connector.write.WriteBuilder;
 import org.apache.spark.sql.delta.DeltaTableUtils;
 import org.apache.spark.sql.delta.RowCommitVersion$;
 import org.apache.spark.sql.delta.RowId$;
 import org.apache.spark.sql.delta.SparkTableShims$;
+import org.apache.spark.sql.delta.catalog.DeltaV2TableMarker;
 import org.apache.spark.sql.delta.commands.cdc.CDCReader;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
@@ -74,9 +81,11 @@ import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
+import scala.jdk.javaapi.CollectionConverters;
 
 /** DataSource V2 Table implementation for Delta Lake using the Delta Kernel API. */
-public class DeltaV2Table implements Table, SupportsRead, SupportsWrite, SupportsMetadataColumns {
+public class DeltaV2Table
+    implements Table, SupportsRead, SupportsWrite, SupportsMetadataColumns, DeltaV2TableMarker {
   private static final String METADATA_COLUMN_NAME = FileFormat$.MODULE$.METADATA_NAME();
   private static final String ROW_ID_METADATA_FIELD_NAME = RowId$.MODULE$.ROW_ID();
   private static final String ROW_COMMIT_VERSION_METADATA_FIELD_NAME =
@@ -120,7 +129,7 @@ public class DeltaV2Table implements Table, SupportsRead, SupportsWrite, Support
    * @throws NullPointerException if identifier or tablePath is null
    */
   public DeltaV2Table(Identifier identifier, String tablePath) {
-    this(identifier, tablePath, Collections.emptyMap(), Optional.empty());
+    this(identifier, tablePath, Collections.emptyMap(), Optional.empty(), OptionalLong.empty());
   }
 
   /**
@@ -132,7 +141,23 @@ public class DeltaV2Table implements Table, SupportsRead, SupportsWrite, Support
    * @throws NullPointerException if identifier or tablePath is null
    */
   public DeltaV2Table(Identifier identifier, String tablePath, Map<String, String> options) {
-    this(identifier, tablePath, options, Optional.empty());
+    this(identifier, tablePath, options, Optional.empty(), OptionalLong.empty());
+  }
+
+  /**
+   * Path-based constructor pinned to an explicit time travel version (if present).
+   *
+   * @param identifier logical table identifier used by Spark's catalog
+   * @param tablePath filesystem path to the Delta table root
+   * @param options table options used to configure the Hadoop conf, table reads and writes
+   * @param timeTravelVersion the table version to pin the initial snapshot to
+   */
+  public DeltaV2Table(
+      Identifier identifier,
+      String tablePath,
+      Map<String, String> options,
+      OptionalLong timeTravelVersion) {
+    this(identifier, tablePath, options, Optional.empty(), timeTravelVersion);
   }
 
   /**
@@ -146,11 +171,28 @@ public class DeltaV2Table implements Table, SupportsRead, SupportsWrite, Support
    */
   public DeltaV2Table(
       Identifier identifier, CatalogTable catalogTable, Map<String, String> options) {
+    this(identifier, catalogTable, options, OptionalLong.empty());
+  }
+
+  /**
+   * Catalog-table constructor pinned to an explicit time travel version (if present).
+   *
+   * @param identifier logical table identifier used by Spark's catalog
+   * @param catalogTable the Spark CatalogTable containing table metadata including location
+   * @param options user-provided options to override catalog properties
+   * @param timeTravelVersion the table version to pin the initial snapshot to
+   */
+  public DeltaV2Table(
+      Identifier identifier,
+      CatalogTable catalogTable,
+      Map<String, String> options,
+      OptionalLong timeTravelVersion) {
     this(
         identifier,
         getDecodedPath(requireNonNull(catalogTable, "catalogTable is null").location()),
         options,
-        Optional.of(catalogTable));
+        Optional.of(catalogTable),
+        timeTravelVersion);
   }
 
   /**
@@ -169,7 +211,8 @@ public class DeltaV2Table implements Table, SupportsRead, SupportsWrite, Support
       Identifier identifier,
       String tablePath,
       Map<String, String> userOptions,
-      Optional<CatalogTable> catalogTable) {
+      Optional<CatalogTable> catalogTable,
+      OptionalLong timeTravelVersion) {
     this.identifier = requireNonNull(identifier, "identifier is null");
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
     this.catalogTable = catalogTable;
@@ -195,8 +238,10 @@ public class DeltaV2Table implements Table, SupportsRead, SupportsWrite, Support
         SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(options));
     this.kernelEngine = DefaultEngine.create(this.hadoopConf);
     this.snapshotManager = SnapshotManagerFactory.create(tablePath, kernelEngine, catalogTable);
-    // Load the initial snapshot through the manager
-    this.initialSnapshot = snapshotManager.loadLatestSnapshot();
+    this.initialSnapshot =
+        timeTravelVersion.isPresent()
+            ? loadSnapshotAtCheckedVersion(snapshotManager, timeTravelVersion.getAsLong())
+            : snapshotManager.loadLatestSnapshot();
 
     this.isCDCRead = CDCReader.isCDCRead(new CaseInsensitiveStringMap(this.options));
 
@@ -278,12 +323,51 @@ public class DeltaV2Table implements Table, SupportsRead, SupportsWrite, Support
   }
 
   /**
-   * Returns the snapshot manager backing this table. Catalog-driven features such as Auto-CDF
+   * Returns the snapshot manager backing this table. Catalog-driven features such as read-time CDF
    * (TableCatalog.loadChangelog) use this to resolve versions, timestamps, and snapshots without
    * having to build their own snapshot manager.
    */
   public DeltaSnapshotManager getSnapshotManager() {
     return snapshotManager;
+  }
+
+  /** Returns a copy of this table pinned to {@code version}. */
+  public DeltaV2Table withVersion(long version) {
+    return catalogTable.isPresent()
+        ? new DeltaV2Table(identifier, catalogTable.get(), options, OptionalLong.of(version))
+        : new DeltaV2Table(identifier, tablePath, options, OptionalLong.of(version));
+  }
+
+  /** Returns a copy of this table pinned to the snapshot active at {@code timestampMicros}. */
+  public DeltaV2Table withTimestamp(long timestampMicros) {
+    return withVersion(resolveTimestampToVersion(snapshotManager, timestampMicros));
+  }
+
+  /**
+   * Resolves a time travel timestamp to the active commit version using the Kernel snapshot
+   * manager.
+   *
+   * <p>This loads the latest snapshot more than once (here and inside the Kernel lookup), make it
+   * share a singular load once the snapshot manager exposes it TODO(#5999).
+   */
+  private static long resolveTimestampToVersion(
+      DeltaSnapshotManager manager, long timestampMicros) {
+    long timeMillis = timestampMicros / 1000;
+    DeltaHistoryManager.Commit commit =
+        manager.getActiveCommitAtTime(
+            timeMillis,
+            /* canReturnLastCommit = */ true,
+            /* mustBeRecreatable = */ true,
+            /* canReturnEarliestCommit = */ true);
+    long latestVersion = manager.loadLatestSnapshot().getVersion();
+    if (commit.getTimestamp() > timeMillis) {
+      // The earliest available commit is younger than the requested time.
+      throw new TimestampOutOfRangeException(timeMillis, commit.getTimestamp(), false);
+    } else if (commit.getVersion() == latestVersion && commit.getTimestamp() < timeMillis) {
+      // The requested time is after the latest commit.
+      throw new TimestampOutOfRangeException(timeMillis, commit.getTimestamp(), true);
+    }
+    return commit.getVersion();
   }
 
   /**
@@ -330,11 +414,28 @@ public class DeltaV2Table implements Table, SupportsRead, SupportsWrite, Support
   }
 
   /**
-   * Exposes row-tracking metadata via a single DSv2 metadata struct column.
+   * Returns the version of the snapshot loaded when this table was constructed, as a String.
    *
-   * <p>This always returns one metadata column named {@code _metadata}. When row tracking is
-   * enabled, the struct contains fields {@code row_id} and {@code row_commit_version}. When row
-   * tracking is disabled, those fields are omitted from the struct.
+   * <p>Add {@code @Override} annotation eventually: TODO(#7128)
+   */
+  public String version() {
+    return Long.toString(initialSnapshot.getVersion());
+  }
+
+  /**
+   * Exposes file-level and row-tracking metadata via a single DSv2 metadata struct column.
+   *
+   * <p>This always returns one metadata column named {@code _metadata}. The struct contains Spark
+   * file-source base metadata fields with the same names and types as {@link
+   * org.apache.spark.sql.execution.datasources.FileFormat#BASE_METADATA_FIELDS} ({@code file_path},
+   * {@code file_name}, {@code file_size}, {@code file_block_start}, {@code file_block_length},
+   * {@code file_modification_time}); when row tracking is enabled, {@code row_id} and {@code
+   * row_commit_version} are appended. Values follow {@link
+   * org.apache.spark.sql.execution.datasources.PartitionedFile} semantics (see {@code
+   * FileFormat.BASE_METADATA_EXTRACTORS}).
+   *
+   * <p>Field order mirrors Spark's canonical {@code BASE_METADATA_FIELDS} for parity with V1 Delta,
+   * but resolution is name-based - order is not load-bearing for correctness.
    */
   @Override
   public MetadataColumn[] metadataColumns() {
@@ -342,12 +443,18 @@ public class DeltaV2Table implements Table, SupportsRead, SupportsWrite, Support
     boolean rowTrackingEnabled =
         RowTracking.isEnabled(snapshotImpl.getProtocol(), snapshotImpl.getMetadata());
 
-    final StructType metadataType =
-        rowTrackingEnabled
-            ? new StructType()
-                .add(ROW_ID_METADATA_FIELD_NAME, DataTypes.LongType, false)
-                .add(ROW_COMMIT_VERSION_METADATA_FIELD_NAME, DataTypes.LongType, false)
-            : new StructType();
+    StructType metadataType = new StructType();
+    for (StructField field :
+        CollectionConverters.asJava(FileFormat$.MODULE$.BASE_METADATA_FIELDS())) {
+      metadataType = metadataType.add(field);
+    }
+    if (rowTrackingEnabled) {
+      metadataType =
+          metadataType
+              .add(ROW_ID_METADATA_FIELD_NAME, DataTypes.LongType, false)
+              .add(ROW_COMMIT_VERSION_METADATA_FIELD_NAME, DataTypes.LongType, false);
+    }
+    final StructType finalMetadataType = metadataType;
 
     MetadataColumn[] columns = new MetadataColumn[1];
     columns[0] =
@@ -359,7 +466,7 @@ public class DeltaV2Table implements Table, SupportsRead, SupportsWrite, Support
 
           @Override
           public DataType dataType() {
-            return metadataType;
+            return finalMetadataType;
           }
 
           @Override
@@ -396,10 +503,29 @@ public class DeltaV2Table implements Table, SupportsRead, SupportsWrite, Support
         merged);
   }
 
+  /**
+   * Validates that {@code version} exists in the Delta log, then loads the snapshot pinned to it.
+   */
+  private static Snapshot loadSnapshotAtCheckedVersion(DeltaSnapshotManager manager, long version) {
+    manager.checkVersionExists(
+        version, /* mustBeRecreatable = */ true, /* allowOutOfRange = */ false);
+    return manager.loadSnapshotAt(version);
+  }
+
   @Override
   public WriteBuilder newWriteBuilder(LogicalWriteInfo info) {
     requireNonNull(info, "write info is null");
     return new DeltaV2WriteBuilder(kernelEngine, tablePath, hadoopConf, initialSnapshot, info);
+  }
+
+  /**
+   * Returns a builder for Delta row-level operations. The builder currently wires Spark planning to
+   * Delta's copy-on-write operation shell; the concrete ReplaceData write path is introduced in a
+   * follow-up PR.
+   */
+  public RowLevelOperationBuilder newRowLevelOperationBuilder(RowLevelOperationInfo info) {
+    requireNonNull(info, "row-level operation info is null");
+    return new DeltaRowLevelOperationBuilder(this, kernelEngine, hadoopConf, initialSnapshot, info);
   }
 
   @Override

@@ -22,6 +22,10 @@ import java.util.concurrent.atomic.AtomicInteger
 import scala.collection.JavaConverters._
 import scala.concurrent.{ExecutionContext, Future}
 
+import org.apache.spark.internal.MDC
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.connector.catalog.{Identifier, Table}
 import org.apache.spark.sql.delta.CommittedTransaction
 import org.apache.spark.sql.delta.catalog.AbstractDeltaCatalogClient
 import org.apache.spark.sql.delta.hooks.PostCommitHook
@@ -30,11 +34,6 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.CatalogTableUtils
 import org.apache.spark.sql.delta.util.threads.DeltaThreadPool
-
-import org.apache.spark.internal.MDC
-import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.connector.catalog.{Identifier, Table}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
@@ -88,7 +87,7 @@ case class UpdateMetricsHook(catalogTable: Option[CatalogTable])
     val committedActions = txn.committedActions
     val committedVersion = txn.committedVersion
     // Read histogram from the CRC only -- avoids triggering state reconstruction.
-    val snapshotHistogram = txn.postCommitSnapshot.checksumOpt.flatMap(_.histogramOpt)
+    val snapshotHistogram = txn.postCommitSnapshot.checksumOpt.flatMap(_.fileSizeHistogram)
     val logPath = txn.deltaLog.logPath
 
     implicit val ec: ExecutionContext =

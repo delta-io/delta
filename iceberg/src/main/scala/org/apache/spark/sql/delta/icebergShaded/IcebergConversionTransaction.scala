@@ -26,7 +26,9 @@ import scala.jdk.OptionConverters._
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{DeltaFileProviderUtils, DummySnapshot, IcebergConstants, NoMapping, Snapshot}
-import org.apache.spark.sql.delta.actions.{AddFile, Metadata, RemoveFile}
+import org.apache.spark.sql.delta.IcebergCompat
+import org.apache.spark.sql.delta.RowId
+import org.apache.spark.sql.delta.actions.{AddFile, FileAction, Metadata, RemoveFile}
 import org.apache.spark.sql.delta.icebergShaded.IcebergTransactionUtils._
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -34,7 +36,7 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.conf.Configuration
-import shadedForDelta.org.apache.iceberg.{AppendFiles, BaseTransaction, DataFile, DeleteFiles, ExpireSnapshots, OverwriteFiles, PartitionSpec, PendingUpdate, RewriteFiles, Schema => IcebergSchema, TableMetadata, Transaction => IcebergTransaction}
+import shadedForDelta.org.apache.iceberg.{AppendFiles, BaseTransaction, DataFile, DeleteFile, DeleteFiles, ExpireSnapshots, OverwriteFiles, PartitionSpec, PendingUpdate, RewriteFiles, RowDelta, Schema => IcebergSchema, TableMetadata, Transaction => IcebergTransaction}
 import shadedForDelta.org.apache.iceberg.MetadataUpdate
 import shadedForDelta.org.apache.iceberg.MetadataUpdate.{AddPartitionSpec, AddSchema}
 import shadedForDelta.org.apache.iceberg.mapping.MappingUtil
@@ -83,6 +85,12 @@ class IcebergConversionTransaction(
       new java.util.ArrayList[MetadataUpdate]()
     ) extends DeltaLogging {
 
+  // Tracks the Delta version of the last commit that produced an Iceberg snapshot.
+  // Updated by TransactionHelper.commit() for non-NullHelper commits. Used to detect
+  // gaps caused by trailing non-data commits (NullHelper) so that
+  // UnityCatalogTableOperations.doCommit can validate the sequence number correctly.
+  private[delta] var lastDataDeltaVersion: Option[Long] = None
+
   ///////////////////////////
   // Nested Helper Classes //
   ///////////////////////////
@@ -96,6 +104,13 @@ class IcebergConversionTransaction(
         logicalToPhysicalPartitionNames,
         statsParser,
         convert.wrappedSnapshot)
+
+    def dvToDeleteFile: DeleteFile =
+      DeltaToIcebergConvert.Action.dvToDeleteFile(
+        addFile,
+        currentPartitionSpec,
+        logicalToPhysicalPartitionNames,
+        postCommitSnapshot)
   }
 
   implicit class RemoveFileConversion(removeFile: RemoveFile) {
@@ -106,6 +121,14 @@ class IcebergConversionTransaction(
         currentPartitionSpec,
         logicalToPhysicalPartitionNames,
         convert.snapshot)
+
+    def dvToDeleteFile: DeleteFile =
+      DeltaToIcebergConvert.Action.dvToDeleteFile(
+        removeFile,
+        currentPartitionSpec,
+        logicalToPhysicalPartitionNames,
+        postCommitSnapshot
+      )
   }
 
   protected abstract class TransactionHelper(protected val impl: PendingUpdate[_]) {
@@ -119,6 +142,11 @@ class IcebergConversionTransaction(
 
     def commit(expectedSequenceNumber: Long): Unit = {
       assert(!committed, "Already committed.")
+      if (IcebergCompat.isGeqEnabled(postCommitSnapshot.metadata, 3)) {
+        // set lastSequenceNumber in TableMetadata to delta version - 1
+        // so iceberg will create snapshot/manifest at the delta version
+        IcebergTransactionUtils.setIcebergTxnLastSequenceNumber(txn, expectedSequenceNumber - 1)
+      }
       impl.commit()
       committed = true
     }
@@ -196,25 +224,89 @@ class IcebergConversionTransaction(
 
     override def opType: String = "rewrite"
 
-    private val addBuffer: mutable.HashSet[DataFile] = new mutable.HashSet[DataFile]
-    private val removeBuffer: mutable.HashSet[DataFile] = new mutable.HashSet[DataFile]
-
     override def add(add: AddFile): Unit = {
       writeSize += add.size
       assert(!add.dataChange, "Rewrite operation should not add data")
-      addBuffer += add.toDataFile
+      rewriter.addFile(add.toDataFile)
+      if (add.deletionVector != null) {
+        rewriter.addFile(add.dvToDeleteFile)
+      }
     }
 
     override def add(remove: RemoveFile): Unit = {
       assert(!remove.dataChange, "Rewrite operation should not add data")
-      removeBuffer += remove.toDataFile
+      rewriter.deleteFile(remove.toDataFile)
+      if (remove.deletionVector != null) {
+        rewriter.deleteFile(remove.dvToDeleteFile)
+      }
     }
 
     override def commit(deltaCommitVersion: Long): Unit = {
-      if (removeBuffer.nonEmpty) {
-        rewriter.rewriteFiles(removeBuffer.asJava, addBuffer.asJava, 0)
-      }
       currentSnapshotId.foreach(rewriter.validateFromSnapshot)
+      super.commit(deltaCommitVersion)
+    }
+  }
+
+  /**
+   * Used for recording FileActions with DVs.
+   *
+   * [[RowDeltaHelper]] could recognize Delta "cancel-out-and-add" operation, e.g., generating a
+   * pair of [[RemoveFile]] and [[AddFile]]s in the same commit, with all other information
+   * identical but different DVs, to achieve the purpose of replacing a DV.
+   * [[RowDeltaHelper]] only write DeleteFile changes to Iceberg, avoid unnecessary
+   * DataFile changes. This is also required because Iceberg [[RowDelta]] does not allow
+   * deleting a DataFile while writing a new DeleteFile pointing to it.
+   */
+  class RowDeltaHelper(rowDelta: RowDelta) extends TransactionHelper(rowDelta) {
+    override def opType: String = "rowDelta"
+
+    private val appearedFileActions = mutable.HashMap[String, FileAction]()
+
+    /**
+     * Match pairs of [[AddFile]]s and [[RemoveFile]]s by path and remove them.
+     */
+    private def record(action: FileAction): Unit =
+      appearedFileActions
+        .get(action.path)
+        .fold(appearedFileActions(action.path) = action)(exist => {
+          if (exist.getClass == action.getClass) {
+            throw new UnsupportedOperationException(
+              "Cannot add or remove the same file more than once")
+          }
+          appearedFileActions.remove(action.path)
+        })
+
+    /**
+     * NOTE: All DV changes should be captured.
+     *       Pairs of AddFile/RemoveFile that could cancel out each other does not need to
+     *       be captured. [[record]] will match the pairs and remove them.
+     *       Those that do not have a match will be captured later in [[commit]].
+     */
+    override def add(addFile: AddFile): Unit = {
+      record(addFile)
+      if (addFile.deletionVector != null) {
+        rowDelta.addDeletes(addFile.dvToDeleteFile)
+      }
+    }
+
+    override def add(removeFile: RemoveFile): Unit = {
+      record(removeFile)
+      if (removeFile.deletionVector != null) {
+        rowDelta.removeDeletes(removeFile.dvToDeleteFile)
+      }
+    }
+
+    /**
+     * Before commiting, we convert and capture the [[FileAction]]s that do not have a match.
+     * These actions are considered not part of a cancel-out-and-add operation and thus should
+     * be captured in the snapshot.
+     */
+    override def commit(deltaCommitVersion: Long): Unit = {
+      appearedFileActions.values.foreach {
+        case add: AddFile => rowDelta.addRows(add.toDataFile)
+        case remove: RemoveFile => rowDelta.removeRows(remove.toDataFile)
+      }
+      currentSnapshotId.foreach(rowDelta.validateFromSnapshot)
       super.commit(deltaCommitVersion)
     }
   }
@@ -239,7 +331,7 @@ class IcebergConversionTransaction(
   // Member variables //
   //////////////////////
 
-  protected val tablePath = postCommitSnapshot.dataPath
+  protected val tablePath = postCommitSnapshot.deltaLog.dataPath
 
   protected val convert = new DeltaToIcebergConverter(postCommitSnapshot, catalogTable)
 
@@ -298,6 +390,12 @@ class IcebergConversionTransaction(
 
   def getRewriteHelper: RewriteHelper = {
     val ret = new RewriteHelper(txn.newRewrite())
+    fileUpdates += ret
+    ret
+  }
+
+  def getRowDeltaHelper: RowDeltaHelper = {
+    val ret = new RowDeltaHelper(txn.newRowDelta())
     fileUpdates += ret
     ret
   }
@@ -416,6 +514,13 @@ class IcebergConversionTransaction(
       case _ =>
         updateTxn.remove(IcebergConverter.BASE_DELTA_VERSION_PROPERTY)
     }
+    if (IcebergCompat.isGeqEnabled(postCommitSnapshot.metadata, 3)) {
+      updateTxn.set(
+        IcebergConverter.DELTA_HIGH_WATER_MARK_PROPERTY,
+        RowId.extractHighWatermark(postCommitSnapshot)
+          .getOrElse(RowId.MISSING_HIGH_WATER_MARK).toString
+      )
+    }
     updateTxn.commit()
 
     // We ensure the iceberg txns are serializable by only allowing them to commit against
@@ -438,6 +543,17 @@ class IcebergConversionTransaction(
       )
     }
     try {
+      // Set last sequence number in iceberg metadata to be same as Delta version, as
+      // some delta operations (eg, schema change, table property change) result in a new
+      // delta version but no new iceberg snapshot. This is needed to ensure the IRC iceberg
+      // writer sends the correct sequence number when it adds new snapshots.
+      if (IcebergCompat.isGeqEnabled(postCommitSnapshot.metadata, 3)) {
+        // Set lastSequenceNumber in TableMetadata to delta version
+        IcebergTransactionUtils.setIcebergTxnLastSequenceNumber(txn, postCommitSnapshot.version)
+        // For non-DBI tables, the post commit snapshot already contains the updated highWaterMark,
+        // so we can directly set it as the Iceberg nextRowId.
+        DeltaToIcebergConvert.RowTracking.setNextRowId(postCommitSnapshot, txn)
+      }
       txn.commitTransaction()
       recordIcebergCommit()
     } catch {

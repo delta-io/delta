@@ -32,6 +32,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils.CheckDeterministicOptions
 import org.apache.spark.sql.delta.util.FileNames
 import io.delta.storage.commit.UpdatedActions
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import io.delta.storage.commit.uniform.UniformMetadata
 import org.apache.hadoop.fs.FileStatus
 
@@ -648,7 +649,8 @@ private[delta] class ConflictChecker(
       if (winningCommitSummary.identityOnlyMetadataUpdate) {
         IdentityColumn.logTransactionAbort(deltaLog)
       }
-      throw DeltaErrors.metadataChangedException(winningCommitSummary.commitInfo)
+      throw DeltaErrors.metadataChangedException(
+        getTableNameOrPath, winningCommitSummary.commitInfo)
     }
   }
 
@@ -666,7 +668,8 @@ private[delta] class ConflictChecker(
    */
   protected def attemptToResolveMetadataConflicts(): Unit = {
     def throwMetadataChangedException(): Unit =
-      throw DeltaErrors.metadataChangedException(winningCommitSummary.commitInfo)
+      throw DeltaErrors.metadataChangedException(
+        getTableNameOrPath, winningCommitSummary.commitInfo)
 
     // If winning commit does not contain metadata update, no conflict.
     if (winningCommitSummary.metadataUpdates.isEmpty) return
@@ -770,8 +773,12 @@ private[delta] class ConflictChecker(
     val ictAllowList =
         InCommitTimestampUtils.TABLE_PROPERTY_KEYS.toSet
 
+    val catalogManagedAllowList =
+        Set(UCCommitCoordinatorClient.UC_TABLE_ID_KEY)
+
     rowTrackingAllowList ++ columnMappingAllowList ++ dvsAllowList
       .++(v2CheckpointAllowList)
+      .++(catalogManagedAllowList)
       .++(ictAllowList)
   }
 
@@ -846,6 +853,10 @@ private[delta] class ConflictChecker(
             value.toBoolean // only allow enabling, not disabling
         case DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.key => isNew
         case DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.key => isNew
+        // Catalog-owned enablement configuration
+        case UCCommitCoordinatorClient.UC_TABLE_ID_KEY
+            if currentTransactionInfo.protocol.isFeatureSupported(CatalogOwnedTableFeature) =>
+          isNew
         case _ => true
       }
     }
@@ -1483,15 +1494,8 @@ private[delta] class ConflictChecker(
     }
   }
 
-  protected def getTableNameOrPath: String = {
-    val tableName = currentTransactionInfo.catalogTable.map(_.qualifiedName)
-      .getOrElse(currentTransactionInfo.metadata.name)
-    if (tableName != null) {
-      tableName
-    } else {
-      s"delta.`${currentTransactionInfo.readSnapshot.dataPath}`"
-    }
-  }
+  protected def getTableNameOrPath: String =
+    currentTransactionInfo.readSnapshot.tableNameOrPath(currentTransactionInfo.catalogTable)
 
   protected def recordTime[T](phase: String)(f: => T): T = {
     val startTimeNs = System.nanoTime()

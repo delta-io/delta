@@ -62,6 +62,7 @@ val parquet4sVersion = "1.9.4"
 val protoVersion = "3.25.1"
 val grpcVersion = "1.62.2"
 val flinkVersion = "2.0.1"
+val gcsConnectorVersion = "4.0.4"
 
 // Optional kernel version override. See `project/KernelVersion.scala` for the
 // resolution rule and `-DkernelVersion=<v>` semantics.
@@ -108,7 +109,9 @@ lazy val commonSettings = Seq(
       Seq(  // For Java 17 +
         "--add-opens=java.base/java.nio=ALL-UNNAMED",
         "--add-opens=java.base/java.lang=ALL-UNNAMED",
+        "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
         "--add-opens=java.base/java.net=ALL-UNNAMED",
+        "--add-opens=java.base/java.util=ALL-UNNAMED",
         "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
         "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
       )
@@ -798,7 +801,7 @@ lazy val contribs = (project in file("contribs"))
 //
 // Override with -DunityCatalogVersion=<anything> for ad-hoc experiments.
 val unityCatalogReleaseVersion: Option[String] = None
-val defaultUnityCatalogReleaseVersion = "0.4.1"
+val defaultUnityCatalogReleaseVersion = "0.5.0"
 val useDefaultUnityCatalogReleaseVersion: Boolean =
   sys.props.getOrElse("useDefaultUnityCatalogReleaseVersion", "false").toBoolean
 val unityCatalogSetupScript = "project/scripts/setup_unitycatalog_main.sh"
@@ -1408,7 +1411,7 @@ lazy val iceberg = (project in file("iceberg"))
           "org.apache.httpcomponents.client5" % "httpclient5" % "5.3.1" % "test",
           "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.11.0" % "provided",
           // For FixedGcsAccessTokenProvider (GCS server-side planning credentials)
-          "com.google.cloud.bigdataoss" % "util-hadoop" % "hadoop3-2.2.26" % "provided"
+          "com.google.cloud.bigdataoss" % "util-hadoop" % gcsConnectorVersion % "provided"
         )
       } else {
         Seq.empty
@@ -1683,7 +1686,12 @@ lazy val flink = (project in file("flink"))
       "dev.failsafe" % "failsafe" % "3.2.0",
       "com.github.ben-manes.caffeine" % "caffeine" % "3.1.8",
       "org.apache.hadoop" % "hadoop-aws" % hadoopVersion,
-      "com.google.cloud.bigdataoss" % "gcs-connector" % "hadoop3-2.2.31" % Provided,
+      "com.google.cloud.bigdataoss" % "gcs-connector" % gcsConnectorVersion % Provided classifier "shaded",
+      // kernel-api uses RoaringBitmap but ships as a shaded fat-jar that excludes it, and the
+      // unmanagedJars trick used above does not propagate kernel-api's managed deps. Declare it
+      // here too -- pinned to the same version kernel-api uses -- so our DV code under
+      // io.delta.flink.kernel.dv compiles against the same library on the classpath.
+      "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
 
       // Test dependencies
       "org.junit.jupiter" % "junit-jupiter-api" % "5.11.4" % "test",

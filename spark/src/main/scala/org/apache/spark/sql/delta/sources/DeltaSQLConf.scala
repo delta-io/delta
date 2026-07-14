@@ -488,6 +488,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_LIMIT_PUSHDOWN_SKIP_NON_DETERMINISTIC_FILTERS =
+    buildConf("stats.limitPushdown.skipNonDeterministicFilters.enabled")
+      .internal()
+      .doc("If true, non-deterministic predicates (e.g. rand()) are not eligible for Delta limit " +
+        "push-down. Such predicates reference no columns, so they would otherwise be treated as " +
+        "partition-only filters, evaluated once per file during limit-based file pruning and " +
+        "again per row at execution, double-filtering the data. When false, restores the legacy " +
+        "(incorrect) behavior of pushing them down.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_MAX_RETRY_COMMIT_ATTEMPTS =
     buildConf("maxCommitAttempts")
       .internal()
@@ -544,6 +555,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .internal()
       .doc("Controls whether test features are enabled in testing mode. " +
         "This config is only used for testing purposes. ")
+      .booleanConf
+      .createWithDefault(true)
+
+  val V4_ADAPTIVE_METADATA_TABLE_PREVIEW_ENABLED =
+    buildConf("adaptiveMetadataTree.preview.enabled")
+      .internal()
+      .doc("When false, the `adaptiveMetadata-preview` reader/writer table feature is not " +
+        "registered in this client's supported-features map. Any attempt to enable the feature " +
+        "on a table is rejected with the standard `unsupported table feature` error, and any " +
+        "table that already has the feature in its protocol fails to be read. Acts as a " +
+        "kill-switch while the feature is in preview.")
       .booleanConf
       .createWithDefault(true)
 
@@ -1910,6 +1932,14 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val STREAMING_TRAILING_COMMIT_VALIDATION =
+    buildConf("streaming.trailingCommitValidation.enabled")
+      .internal()
+      .doc("Whether to validate that trailing commits have not gone missing " +
+        "when reading data for a streaming micro-batch.")
+      .booleanConf
+      .createWithDefault(true)
+
   val LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS =
     buildConf("loadFileSystemConfigsFromDataFrameOptions")
       .internal()
@@ -2215,7 +2245,7 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .internal()
       .doc("If true, allow users to create/upgrade Uniform Iceberg v3 tables.")
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val DELTA_UNIFORM_ICEBERG_GEOSPATIAL_ENABLED =
     buildConf("uniform.iceberg.geospatial.enabled")
@@ -2325,6 +2355,18 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_COLLECT_STATS_SKIP_FLOATING_POINT_FROM_FOOTER =
+    buildConf("collectStats.skipFloatingPointFromFooter")
+      .internal()
+      .doc("If true, footer-based stats collection (CONVERT TO DELTA / CLONE, and ANALYZE TABLE " +
+        "... COMPUTE DELTA STATISTICS) drops float/double min/max for files written by writers " +
+        "that may exclude NaN from footer stats (such as parquet-cpp, Arrow, and pyarrow). Their " +
+        "finite max could otherwise hide a NaN value and make data skipping wrongly skip files " +
+        "that contain one. Stats from parquet-mr (Spark) are kept, since parquet-mr records NaN " +
+        "as the max when present.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_ALTER_TABLE_CHANGE_COLUMN_CHECK_EXPRESSIONS =
     buildConf("alterTable.changeColumn.checkExpressions")
       .internal()
@@ -2409,13 +2451,33 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_GET_CHANGE_LOG_FILES_LOG_GAPS =
+    buildConf("deltaLog.getChangeLogFiles.logGaps")
+      .internal()
+      .doc(
+        """Whether `DeltaLog.getChangeLogFiles` emits a `delta.getChangeLogFiles.versionGap`
+          |usage event when the iterator it returns emits two successive versions that are not
+          |exactly `prev + 1` (a gap).""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_GET_CHANGE_LOG_FILES_FAIL_ON_GAPS_IN_TESTS =
+    buildConf("deltaLog.getChangeLogFiles.failOnGapsInTests")
+      .internal()
+      .doc(
+        """When true, `DeltaLog.getChangeLogFiles` throws on a version gap if we are running in
+          |a test JVM (`DeltaUtils.isTesting`). No-op in production. Used to catch unintentional
+          |gap-producing changes during test runs without affecting prod behaviour.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_CHANGELOG_V2_ENABLED =
     buildConf("changelogV2.enabled")
       .internal()
       .doc(
         """When enabled, the V2 connector's hybrid DeltaCatalog answers
           |CHANGES FROM ... batch queries (TableCatalog.loadChangelog) using the
-          |kernel-based Auto-CDF reader stack. When disabled, the catalog falls back to the
+          |kernel-based read-time CDF reader stack. When disabled, the catalog falls back to the
           |default behavior (UNSUPPORTED_FEATURE.CHANGE_DATA_CAPTURE).""".stripMargin)
       .booleanConf
       .createWithDefault(false)
@@ -2530,9 +2592,11 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
   val DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS =
     buildConf("createDataFrame.dropNullColumns")
       .internal()
-      .doc("Whether to drop columns with NullType in DeltaLog.createDataFrame.")
+      .doc("Whether to drop columns with NullType in DeltaLog.createDataFrame. Defaults to " +
+        "dropping (no NullType column support) on Spark 4.0, which lacks the Parquet read " +
+        "support for materializing NullType columns, and to keeping them on Spark 4.1+.")
       .booleanConf
-      .createWithDefault(true)
+      .createWithDefault(org.apache.spark.SPARK_VERSION.startsWith("4.0"))
 
   val DELTA_STREAMING_SINK_IMPLICIT_CAST_FOR_TYPE_MISMATCH_ONLY =
     buildConf("streaming.sink.implicitCastForTypeMismatchOnly")
@@ -3174,6 +3238,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_SHARING_CDF_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT =
+    buildConf("spark.sql.delta.sharing.cdfStreamingAutoResolveResponseFormat")
+      .doc("When true, auto-resolve the Delta Sharing streaming CDF source format by calling " +
+        "getMetadata on the table and using the server's responded format (parquet or delta). " +
+        "When false, use the responseFormat option from the user. Gates the streaming CDF " +
+        "(readChangeFeed=true) path independently from the non-CDF streaming path controlled " +
+        "by spark.sql.delta.sharing.streamingAutoResolveResponseFormat.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_SHARING_ENABLE_AUTO_RESOLVE_FOR_CDF =
     buildConf("spark.sql.delta.sharing.enableAutoResolveForCdf")
       .doc("When true, Delta Sharing CDF queries without an explicit responseFormat will " +
@@ -3270,6 +3345,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         .stripMargin)
     .booleanConf
     .createWithDefault(true)
+
+  val GUARD_VARIANT_IN_STATS_SCHEMA =
+    buildConf("variantShredding.guardVariantInStatsSchema.enabled")
+      .internal()
+      .doc("When enabled, variant columns are only included in the data skipping stats schema " +
+        "if the table's protocol supports the variantShredding (or variantShredding-preview) " +
+        "table feature. This acts as a kill switch for that gating: when disabled, variant " +
+        "columns are included in the stats schema based solely on the variant data skipping " +
+        "stats config, regardless of the table's shredding support.")
+      .booleanConf
+      .createWithDefault(true)
 
   val PARSE_FOOTER_FOR_VARIANT_DATA_SKIPPING_STATS =
     buildConf("variantShredding.parseFooterForStats")

@@ -27,8 +27,8 @@ import org.apache.spark.sql.delta.Relocated._
 import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.DeltaErrors.{TemporallyUnstableInputException, TimestampEarlierThanCommitRetentionException}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
+import org.apache.spark.sql.delta.catalog.{DeltaTableV2, DeltaV2TableMarker}
 import org.apache.spark.sql.delta.catalog.DeltaCatalogV1
-import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.catalog.IcebergTablePlaceHolder
 import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -84,6 +84,19 @@ class DeltaAnalysis(protected val session: SparkSession)
   extends Rule[LogicalPlan] with AnalysisHelper with DeltaInsertCastSupport {
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperatorsDown {
+    // Intercept SHOW PARTITIONS for Delta tables
+    // Spark's ShowPartitions command requires SUPPORTS_PARTITION_MANAGEMENT capability,
+    // but Delta manages partitions through the transaction log, not the metastore.
+    // We intercept and replace with our custom command that reads from the Delta log.
+    case ShowPartitions(
+        r @ ResolvedTable(_, _, _: DeltaTableV2, _), partSpec, _) =>
+      // DeltaTableV2 does not implement SUPPORTS_PARTITION_MANAGEMENT, so the spec is still
+      // expected to be UnresolvedPartitionSpec here.
+      val partitionSpec = partSpec.collect {
+        case UnresolvedPartitionSpec(spec, _) => spec
+      }.getOrElse(Map.empty[String, String])
+      ShowDeltaPartitionsCommand(r, partitionSpec)
+
     // INSERT INTO by ordinal and df.insertInto()
     case a @ AppendDelta(r, d) if !a.isByName &&
         needsSchemaAdjustmentByOrdinal(d, a.query, r.schema, a.writeOptions) =>
@@ -391,8 +404,10 @@ class DeltaAnalysis(protected val session: SparkSession)
     case stmt: CDCStatementBase if stmt.functionArgs.forall(_.resolved) =>
       stmt.toTableChanges(session)
 
-    case tc: TableChanges if tc.child.resolved => tc.toReadQuery
-
+    case tc: TableChanges if tc.child.resolved &&
+        // Skip CDF over DSv2 table, this will be resolved in [[ResolveTableChangesV2]].
+        !tc.child.exists(DeltaV2TableMarker.isDeltaV2TableRelation) =>
+      tc.toReadQuery
 
     // Here we take advantage of CreateDeltaTableCommand which takes a LogicalPlan for CTAS in order
     // to perform CLONE. We do this by passing the CloneTableCommand as the query in

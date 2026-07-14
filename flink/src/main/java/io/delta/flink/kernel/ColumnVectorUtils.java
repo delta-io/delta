@@ -19,14 +19,76 @@ package io.delta.flink.kernel;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
-import io.delta.kernel.types.BooleanType;
-import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.StructType;
+import io.delta.kernel.types.*;
 import java.util.Optional;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
+/**
+ * Static helpers for Kernel {@link ColumnVector} / {@link ColumnarBatch} / {@link
+ * FilteredColumnarBatch}: typed single-cell read ({@link #get}), batch wrapping ({@link #wrap},
+ * {@link #child}, {@link #notNullAt}), and selection-vector construction ({@link #filter}, {@link
+ * #notNull}).
+ *
+ * <p>The selection-vector convention is {@code true = keep, false = drop} — matches {@code
+ * FilteredColumnarBatch}.
+ */
 public class ColumnVectorUtils {
+
+  /**
+   * Returns the value at {@code rowId} from {@code input} as a plain Java object.
+   *
+   * <p>Mirrors the type coverage of {@link
+   * io.delta.flink.sink.Conversions.DeltaToJava#data(StructType, io.delta.kernel.data.Row, int)} —
+   * only primitive Kernel types are supported. Complex types (struct, array, map) throw {@link
+   * UnsupportedOperationException}; the caller is expected to descend into them explicitly via
+   * {@link ColumnVector#getChild(int)}, {@link ColumnVector#getArray(int)}, or {@link
+   * ColumnVector#getMap(int)}.
+   *
+   * @param input column vector to read from
+   * @param rowId 0-based row index within {@code input}
+   * @return the value at {@code (input, rowId)}; {@code null} if the cell is null
+   * @throws UnsupportedOperationException for complex types
+   */
+  public static Object get(ColumnVector input, int rowId) {
+    if (input.isNullAt(rowId)) {
+      return null;
+    }
+    DataType type = input.getDataType();
+    if (type.equivalent(BooleanType.BOOLEAN)) {
+      return input.getBoolean(rowId);
+    } else if (type.equivalent(ByteType.BYTE)) {
+      return input.getByte(rowId);
+    } else if (type.equivalent(ShortType.SHORT)) {
+      return input.getShort(rowId);
+    } else if (type.equivalent(IntegerType.INTEGER)) {
+      return input.getInt(rowId);
+    } else if (type.equivalent(LongType.LONG)) {
+      return input.getLong(rowId);
+    } else if (type.equivalent(FloatType.FLOAT)) {
+      return input.getFloat(rowId);
+    } else if (type.equivalent(DoubleType.DOUBLE)) {
+      return input.getDouble(rowId);
+    } else if (type.equivalent(StringType.STRING)) {
+      return input.getString(rowId);
+    } else if (type.equivalent(BinaryType.BINARY)) {
+      return input.getBinary(rowId);
+    } else if (type.equivalent(DateType.DATE)) {
+      // Days since 1970-01-01
+      return input.getInt(rowId);
+    } else if (type.equivalent(TimestampType.TIMESTAMP)) {
+      // Microseconds since epoch, UTC
+      return input.getLong(rowId);
+    } else if (type.equivalent(TimestampNTZType.TIMESTAMP_NTZ)) {
+      // Microseconds since epoch, no time zone
+      return input.getLong(rowId);
+    } else if (type instanceof DecimalType) {
+      return input.getDecimal(rowId);
+    } else {
+      // StructType, ArrayType, MapType — caller must navigate these explicitly.
+      throw new UnsupportedOperationException("Unsupported column vector type: " + type);
+    }
+  }
 
   public static FilteredColumnarBatch wrap(ColumnarBatch data) {
     return new FilteredColumnarBatch(data, Optional.empty());

@@ -17,11 +17,19 @@
 package io.delta.flink.sink.sql;
 
 import io.delta.flink.sink.DeltaSinkConf;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 import org.apache.flink.configuration.ConfigOption;
 import org.apache.flink.configuration.ConfigOptions;
 import org.apache.flink.configuration.ReadableConfig;
+import org.apache.flink.table.api.ValidationException;
+import org.apache.flink.table.catalog.Column;
 import org.apache.flink.table.catalog.ResolvedSchema;
+import org.apache.flink.table.catalog.UniqueConstraint;
 import org.apache.flink.table.connector.sink.DynamicTableSink;
 import org.apache.flink.table.factories.DynamicTableSinkFactory;
 import org.apache.flink.table.factories.FactoryUtil;
@@ -63,11 +71,66 @@ public class DeltaDynamicTableSinkFactory implements DynamicTableSinkFactory {
 
     ReadableConfig options = helper.getOptions();
     ResolvedSchema schema = context.getCatalogTable().getResolvedSchema();
+
+    // The Delta sink only writes physical columns. Computed and metadata columns are not
+    // supported: they are silently dropped from the written data, and they shift the ordinals of
+    // the physical columns that the writer (and the upsert primary key) operate on. Reject them
+    // up front rather than produce surprising results.
+    List<String> nonPhysicalColumns =
+        schema.getColumns().stream()
+            .filter(column -> !column.isPhysical())
+            .map(Column::getName)
+            .collect(Collectors.toList());
+    if (!nonPhysicalColumns.isEmpty()) {
+      throw new ValidationException(
+          "The Delta sink does not support computed or metadata columns; all columns must be "
+              + "physical. Offending columns: "
+              + nonPhysicalColumns
+              + ".");
+    }
+
     DataType consumedDataType = schema.toPhysicalRowDataType();
 
     Integer sinkParallelism = options.getOptional(FactoryUtil.SINK_PARALLELISM).orElse(null);
+
+    Map<String, String> resolvedOptions = new HashMap<>(options.toMap());
+    DeltaSinkConf.WriteMode writeMode = options.get(DeltaSinkConf.WRITE_MODE);
+
+    if (writeMode == DeltaSinkConf.WriteMode.UPSERT) {
+      Optional<UniqueConstraint> pkConstraint = schema.getPrimaryKey();
+      if (pkConstraint.isEmpty()) {
+        throw new ValidationException(
+            "write.mode = 'upsert' requires a 'PRIMARY KEY (...) NOT ENFORCED' clause on the "
+                + "table definition.");
+      }
+      // Resolve PK column names to 0-based ordinals against the physical schema. Lower layers
+      // operate on RowData ordinals; doing the lookup here lets us surface "unknown column"
+      // failures as ValidationException at planning time instead of as a writer-construction
+      // RuntimeException at job startup.
+      List<String> physicalNames = schema.getColumnNames();
+      String ordinals =
+          pkConstraint.get().getColumns().stream()
+              .map(
+                  name -> {
+                    int idx = physicalNames.indexOf(name);
+                    if (idx < 0) {
+                      throw new ValidationException(
+                          "Primary-key column '"
+                              + name
+                              + "' does not exist in the table schema "
+                              + physicalNames
+                              + ".");
+                    }
+                    return Integer.toString(idx);
+                  })
+              .collect(Collectors.joining(","));
+      // PRIMARY_KEY is an internal wire-format option carrying the resolved ordinals to
+      // TaskManagers; it is intentionally not in optionalOptions().
+      resolvedOptions.put(DeltaSinkConf.PRIMARY_KEY.key(), ordinals);
+    }
+
     return new DeltaDynamicTableSink(
-        context.getObjectIdentifier(), consumedDataType, sinkParallelism, options.toMap());
+        context.getObjectIdentifier(), consumedDataType, sinkParallelism, resolvedOptions);
   }
 
   public static final String IDENTIFIER = "delta";
@@ -95,6 +158,7 @@ public class DeltaDynamicTableSinkFactory implements DynamicTableSinkFactory {
         DeltaSinkConf.SCHEMA_EVOLUTION_MODE,
         DeltaSinkConf.FILE_ROLLING_STRATEGY,
         DeltaSinkConf.FILE_ROLLING_SIZE,
-        DeltaSinkConf.FILE_ROLLING_COUNT);
+        DeltaSinkConf.FILE_ROLLING_COUNT,
+        DeltaSinkConf.WRITE_MODE);
   }
 }

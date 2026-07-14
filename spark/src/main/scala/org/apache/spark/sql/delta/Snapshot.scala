@@ -67,7 +67,14 @@ trait SnapshotDescriptor extends DeltaLoggingProvider {
 
   def schema: StructType = metadata.schema
 
-  def dataPath: Path
+  def dataPath: Path =
+    throw new UnsupportedOperationException("dataPath is not implemented for this descriptor")
+  def logPath: Path
+  def numDeltaFiles: Long =
+    throw new UnsupportedOperationException("numDeltaFiles is not implemented for this descriptor")
+  def totalDeltaFilesByteSize: Long =
+    throw new UnsupportedOperationException(
+      "totalDeltaFilesByteSize is not implemented for this descriptor")
 
   protected[delta] def numOfFilesIfKnown: Option[Long]
   protected[delta] def sizeInBytesIfKnown: Option[Long]
@@ -123,7 +130,24 @@ class Snapshot(
   // For implicits which re-use Encoder:
   import org.apache.spark.sql.delta.implicits._
 
+  /**
+   * Whether this snapshot is allowed to be constructed without a V1 [[LogSegment]] and [[DeltaLog]]
+   * (i.e. both `logSegment` and `deltaLog` are null). Defaults to false, so every V1 snapshot is
+   * required to be backed by real V1 storage. Only the Kernel-backed [[v2.interop.DeltaV2Snapshot]]
+   * overrides this to true, since the v2 path has no V1 LogSegment/DeltaLog.
+   */
+  protected def allowNullLogSegmentAndDeltaLog: Boolean = false
+
+  // Invariant: a V1 Snapshot must always be constructed with a non-null logSegment and deltaLog.
+  // Only the Kernel-backed DeltaV2Snapshot legitimately has neither and opts out above. This guards
+  // against accidentally constructing a V1 snapshot with null storage (e.g. when v2 is disabled),
+  // which would otherwise surface as a confusing NPE deep in a scan rather than at construction.
+  require(
+    allowNullLogSegmentAndDeltaLog || (logSegment != null && deltaLog != null),
+    "A V1 Snapshot must be constructed with a non-null logSegment and deltaLog.")
+
   override def dataPath: Path = deltaLog.dataPath
+  override def logPath: Path = deltaLog.logPath
 
   protected def spark = SparkSession.active
 
@@ -131,6 +155,16 @@ class Snapshot(
   override val snapshotToScan: Snapshot = this
 
   override def columnMappingMode: DeltaColumnMappingMode = metadata.columnMappingMode
+
+  /**
+   * Returns the catalog-qualified table name when available, falling back to the table's metadata
+   * name and finally to its path. Intended for use in user-facing error messages.
+   */
+  def tableNameOrPath(catalogTable: Option[CatalogTable]): String = {
+    // `metadata.name` might be null, so we wrap it with an Option.
+    Option(catalogTable.map(_.qualifiedName).getOrElse(metadata.name))
+      .getOrElse(s"delta.`$dataPath`")
+  }
 
   /**
    * Returns the timestamp of the latest commit of this snapshot.
@@ -219,8 +253,13 @@ class Snapshot(
    * indeed contains any unbackfilled commits or the LogSegment is just based on an older
    * version.
    */
-  @volatile private var lastKnownBackfilledVersion: Long =
+  // The initial last-known backfilled version comes from this snapshot's LogSegment. `protected`
+  // so a subclass without a V1 LogSegment (e.g. DeltaV2Snapshot) can override it with a sentinel
+  // rather than dereferencing a null `logSegment`.
+  protected def initialLastKnownBackfilledVersion: Long =
     logSegment.lastBackfilledVersionInSegment
+
+  @volatile private var lastKnownBackfilledVersion: Long = initialLastKnownBackfilledVersion
 
   def getLastKnownBackfilledVersion: Long = lastKnownBackfilledVersion
 
@@ -264,11 +303,6 @@ class Snapshot(
   protected[delta] lazy val deltaFileIndexOpt: Option[DeltaLogFileIndex] = {
     assertLogFilesBelongToTable(path, logSegment.deltas)
     DeltaLogFileIndex(DeltaLogFileIndex.COMMIT_FILE_FORMAT, logSegment.deltas)
-  }
-
-  protected lazy val fileIndices: Seq[DeltaLogFileIndex] = {
-    val checkpointFileIndexes = checkpointProvider.allActionsFileIndexes()
-    checkpointFileIndexes ++ deltaFileIndexOpt.toSeq
   }
 
   /**
@@ -327,7 +361,12 @@ class Snapshot(
    *   [[DeltaSQLConf.COORDINATED_COMMITS_IGNORE_MISSING_COORDINATOR_IMPLEMENTATION]] to false.
    * - This must be None when coordinated commits is disabled.
    */
-  val tableCommitCoordinatorClientOpt: Option[TableCommitCoordinatorClient] = {
+  // `protected` so a subclass without a V1 deltaLog (e.g. DeltaV2Snapshot) can override this to
+  // skip the coordinator lookup, which dereferences `deltaLog`, `metadata`, and `protocol`. The
+  // backing `val` initializer runs during the superclass constructor (Scala does not skip an
+  // overridden `val`'s superclass initializer), so the hook is a `def` to dispatch to the subclass
+  // override at construction time.
+  protected def computeTableCommitCoordinatorClientOpt: Option[TableCommitCoordinatorClient] = {
     val failIfImplUnavailable =
       !spark.conf.get(DeltaSQLConf.COORDINATED_COMMITS_IGNORE_MISSING_COORDINATOR_IMPLEMENTATION)
     CoordinatedCommitsUtils.getTableCommitCoordinator(
@@ -337,6 +376,8 @@ class Snapshot(
       failIfImplUnavailable
     )
   }
+  val tableCommitCoordinatorClientOpt: Option[TableCommitCoordinatorClient] =
+    computeTableCommitCoordinatorClientOpt
 
   /**
    * Returns the [[TableCommitCoordinatorClient]] that should be used for any type of mutation
@@ -465,11 +506,9 @@ class Snapshot(
       return protocolMetadataAndIctFromCrc
     }
 
-    val schemaToUse = Action.logSchema(Set("protocol", "metaData", "commitInfo"))
-    val checkpointOpt = checkpointProvider.topLevelFileIndex.map { index =>
-      deltaLog.loadIndex(index, schemaToUse)
-        .withColumn(COMMIT_VERSION_COLUMN, lit(checkpointProvider.version))
-    }
+    val schemaToUse = Snapshot.pAndMQuerySchema
+    val checkpointOpt =
+      checkpointProvider.loadProtocolMetadataActions(spark, deltaLog)
     (checkpointOpt ++ deltaFileIndexOpt.map(deltaLog.loadIndex(_, schemaToUse)).toSeq)
       .reduceOption(_.union(_)).getOrElse(emptyDF)
       .select("protocol", "metaData", "commitInfo.inCommitTimestamp", COMMIT_VERSION_COLUMN)
@@ -555,54 +594,18 @@ class Snapshot(
    * hack.
    */
   protected def loadActions: DataFrame = {
-    if (fileIndices.isEmpty) return emptyDF
-
-    // Augment the schema with a NullType add.stats_parsed column, as a place-holder for
-    // compatibility with the checkpoint parquet. Both deltas and checkpoints generally use this
-    // schema. HOWEVER, IF (and only if) a checkpoint actually exists, AND it provides an
-    // add.stats_parsed column AND it lacks an add.stats column, THEN (and only then) the checkpoint
-    // DF includes the actual add.stats_parsed column -- not a NullType placeholder -- from which we
-    // generate the add_stats_to_use column (add.stats is unused in that case). Meanwhile, JSON
-    // deltas always map add.stats to add_stats_to_use, and always use the placeholder.
+    // The checkpoint contributes its actions as a single DataFrame, already carrying
+    // COMMIT_VERSION_COLUMN and ADD_STATS_TO_USE_COL_NAME and internally normalizing add.stats /
+    // add.stats_parsed. The physical checkpoint layout stays behind
+    // `loadActionsForStateReconstruction`. Meanwhile, JSON deltas always map add.stats to
+    // add_stats_to_use.
     val logSchemaToUse = Action.logSchema
     val jsonStatsCol = col("add.stats")
     val deltas = deltaFileIndexOpt.map(deltaLog.loadIndex(_, logSchemaToUse))
       .map(_.withColumn(ADD_STATS_TO_USE_COL_NAME, jsonStatsCol))
 
-    val checkpointDataframes = checkpointProvider
-      .allActionsFileIndexesAndSchemas(spark, deltaLog)
-      .map { case (index, schema) =>
-        val addSchema = schema("add").dataType.asInstanceOf[StructType]
-        val (checkpointSchemaToUse, checkpointStatsColToUse) =
-          if (addSchema.exists(_.name == "stats_parsed") && !addSchema.exists(_.name == "stats")) {
-            val statsParsedSchema = addSchema("stats_parsed").dataType.asInstanceOf[StructType]
-            val checkpointSchemaToUse =
-              Action.logSchemaWithAddStatsParsed(addSchema("stats_parsed"))
-            val statsCol = col("add.stats_parsed")
-            // Only use EncodeNestedVariantAsZ85String if the schema contains VariantType.
-            // This avoids performance overhead for tables without variant columns.
-            val encodedStatsCol =
-              if (SchemaUtils.checkForVariantTypeColumnsRecursively(statsParsedSchema)) {
-                Column(EncodeNestedVariantAsZ85String(statsCol.expr))
-              } else {
-                statsCol
-              }
-            (
-              checkpointSchemaToUse,
-              to_json(encodedStatsCol)
-            )
-          } else {
-            // Normal (JSON-like) schema suffices
-            (logSchemaToUse, jsonStatsCol)
-          }
-
-        // For schema compat, make sure to discard add.stats_parsed (if present)
-        deltaLog.loadIndex(index, checkpointSchemaToUse)
-          .withColumn(COMMIT_VERSION_COLUMN, lit(checkpointProvider.version))
-          .withColumn(ADD_STATS_TO_USE_COL_NAME, checkpointStatsColToUse)
-          .withColumn("add", col("add").dropFields("stats_parsed"))
-      }
-      (checkpointDataframes ++ deltas).reduce(_.union(_))
+    val checkpointDataframe = checkpointProvider.loadActionsForStateReconstruction(spark, deltaLog)
+    (checkpointDataframe.toSeq ++ deltas).reduceOption(_.union(_)).getOrElse(emptyDF)
   }
 
   /**
@@ -664,8 +667,8 @@ class Snapshot(
     deletedRecordCountsHistogramOpt = checksumOpt.flatMap(_.deletedRecordCountsHistogramOpt)
       .orElse(Option.when(_computedStateTriggered)(deletedRecordCountsHistogramOpt).flatten)
       .filter(_ => deletionVectorsReadableAndHistogramEnabled),
-    histogramOpt = Option.when(fileSizeHistogramEnabled) {
-      checksumOpt.flatMap(_.histogramOpt)
+    fileSizeHistogram = Option.when(fileSizeHistogramEnabled) {
+      checksumOpt.flatMap(_.fileSizeHistogram)
         .orElse(Option.when(_computedStateTriggered)(fileSizeHistogram).flatten)
     }.flatten
   )
@@ -735,29 +738,33 @@ class Snapshot(
   protected def emptyDF: DataFrame =
     spark.createDataFrame(spark.sparkContext.emptyRDD[Row], logSchema)
 
+  // The "Created snapshot" logInfo at the end of this constructor runs eagerly and reads the table
+  // id from the V1 `deltaLog`, which the constructor invariant guarantees is non-null for every V1
+  // snapshot. The Kernel-backed DeltaV2Snapshot has no V1 `deltaLog` and overrides this to report
+  // an empty id.
+  protected def tableId: String = deltaLog.unsafeVolatileTableId
 
+  // These logging methods must NOT read `this.metadata`: they are invoked *during* P&M
+  // reconstruction (e.g. the usage log on the incremental-checksum path) and during snapshot
+  // construction, where reading `metadata` re-enters the `_reconstructedProtocolMetadataAndICT`
+  // lazy val on the same thread and overflows the stack. Use the DeltaLog's cached id instead.
   def logInfo(msg: MessageWithContext): Unit = {
-    val tableId = deltaLog.unsafeVolatileTableId
     super.logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, tableId)}] " + msg)
   }
 
   def logWarning(msg: MessageWithContext): Unit = {
-    val tableId = deltaLog.unsafeVolatileTableId
     super.logWarning(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, tableId)}] " + msg)
   }
 
   def logWarning(msg: MessageWithContext, throwable: Throwable): Unit = {
-    val tableId = deltaLog.unsafeVolatileTableId
     super.logWarning(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, tableId)}] " + msg, throwable)
   }
 
   def logError(msg: MessageWithContext): Unit = {
-    val tableId = deltaLog.unsafeVolatileTableId
     super.logError(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, tableId)}] " + msg)
   }
 
   def logError(msg: MessageWithContext, throwable: Throwable): Unit = {
-    val tableId = deltaLog.unsafeVolatileTableId
     super.logError(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, tableId)}] " + msg, throwable)
   }
 
@@ -773,6 +780,13 @@ object Snapshot extends DeltaLogging {
 
   // Used by [[loadActions]] and [[stateReconstruction]]
   val ADD_STATS_TO_USE_COL_NAME = "add_stats_to_use"
+
+  /**
+   * Schema for the protocol/metadata/in-commit-timestamp query fast path. Shared between
+   * [[CheckpointProvider.loadProtocolMetadataActions]] (checkpoint side) and its callers'
+   * delta-side reads so the two DataFrames can be unioned.
+   */
+  val pAndMQuerySchema: StructType = Action.logSchema(Set("protocol", "metaData", "commitInfo"))
 
   private val defaultNumSnapshotPartitions: Int = 50
 
@@ -903,15 +917,12 @@ object Snapshot extends DeltaLogging {
       spark: SparkSession,
       deltaLog: DeltaLog,
       file: FileStatus): (StructType, Long) = {
-    // Converter used to convert Parquet `MessageType` to Spark SQL `StructType`
-    val converter = new ParquetToSparkSchemaConverter(
-      assumeBinaryIsString = spark.sessionState.conf.isParquetBinaryAsString,
-      assumeInt96IsTimestamp = spark.sessionState.conf.isParquetINT96AsTimestamp)
-
     val conf = deltaLog.newDeltaHadoopConf()
+    // Converter used to convert Parquet `MessageType` to Spark SQL `StructType`
+    val converter = new ParquetToSparkSchemaConverter(spark.sessionState.conf)
 
     val parquetMetadata = {
-      ParquetFileReader.readFooter(deltaLog.newDeltaHadoopConf(), file.getPath)
+      ParquetFileReader.readFooter(conf, file.getPath)
     }
     val rowCount = parquetMetadata.getBlocks.asScala.map(_.getRowCount).sum
 
@@ -939,9 +950,10 @@ object Snapshot extends DeltaLogging {
  *                    to compute the protocol might result in a protocol downgrade for the table.
  */
 class DummySnapshot(
-    val logPath: Path,
+    override val logPath: Path,
     override val deltaLog: DeltaLog,
     override val metadata: Metadata,
+    domainMetadataOpt: Option[Seq[DomainMetadata]] = None,
     protocolOpt: Option[Protocol] = None)
   extends Snapshot(
     path = logPath,
@@ -969,6 +981,7 @@ class DummySnapshot(
   override def protocol: Protocol =
     protocolOpt.getOrElse(Protocol.forNewTable(spark, Some(metadata)))
 
+  override def domainMetadata: Seq[DomainMetadata] = domainMetadataOpt.getOrElse(Seq.empty)
   override protected lazy val computedState: SnapshotState = initialState(metadata, protocol)
   override protected lazy val getInCommitTimestampOpt: Option[Long] = None
   _computedStateTriggered = true

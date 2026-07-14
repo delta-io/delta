@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
+import java.util.Locale
 import java.util.Optional
 
 import scala.collection.JavaConverters._
@@ -101,7 +102,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
         snapshot.metadata.configuration
       TableCommitCoordinatorClient(
         commitCoordinatorClient = cc,
-        logPath = snapshot.deltaLog.logPath,
+        logPath = snapshot.logPath,
         tableConf = tableConf,
         hadoopConf = snapshot.deltaLog.newDeltaHadoopConf(),
         logStore = snapshot.deltaLog.store
@@ -120,7 +121,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
           .map { cc =>
             return Some(TableCommitCoordinatorClient(
               cc,
-              logPath = snapshot.deltaLog.logPath,
+              logPath = snapshot.logPath,
               tableConf = snapshot.metadata.configuration,
               hadoopConf = snapshot.deltaLog.newDeltaHadoopConf(),
               logStore = snapshot.deltaLog.store
@@ -270,6 +271,19 @@ object CatalogOwnedTableUtils extends DeltaLogging {
     }
   }
 
+  private[delta] def verifyCatalogManagedStatusIsSupported(
+      propertyOverrides: Map[String, String]): Unit = {
+    val catalogManagedKey =
+      TableFeatureProtocolUtils.propertyKey(CatalogOwnedTableFeature).toLowerCase(Locale.ROOT)
+    propertyOverrides.foreach { case (key, status) =>
+      if (key.toLowerCase(Locale.ROOT) == catalogManagedKey &&
+          status.toLowerCase(Locale.ROOT) != TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED) {
+        throw DeltaErrors.unsupportedTableFeatureStatusException(
+          feature = CatalogOwnedTableFeature.name, status = status)
+      }
+    }
+  }
+
   /**
    * Validates the Catalog-Owned configurations in explicit command overrides for
    * `AlterTableSetPropertiesDeltaCommand`.
@@ -329,6 +343,13 @@ object CatalogOwnedTableUtils extends DeltaLogging {
           cmd.tablePropertyOverrides)
       case _ => (if (tableExists) "REPLACE" else "CREATE", catalogTableProperties)
     }
+    // Session default table properties (`spark.databricks.delta.properties.defaults.*`) are not
+    // part of `propertyOverrides`; they are merged into the table configuration only later in
+    // [[OptimisticTransaction]]. Merge them in here so that a default requesting CatalogManaged via
+    // the `enabled` status is rejected at creation time instead of silently producing a
+    // table that has the feature in its protocol but is not registered as CatalogManaged in UC.
+    verifyCatalogManagedStatusIsSupported(
+      DeltaConfigs.mergeGlobalConfigs(spark.sessionState.conf, propertyOverrides))
     // We do not allow users to modify [[UCCommitCoordinatorClient.UC_TABLE_ID_KEY]] and
     // [[CatalogOwnedTableFeature.name]] in any explicit overrides for REPLACE command.
     if (tableExists) {
@@ -671,7 +692,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
       commitCoordinator =>
         TableCommitCoordinatorClient(
           commitCoordinator,
-          snapshotDescriptor.deltaLog.logPath,
+          snapshotDescriptor.logPath,
           snapshotDescriptor.metadata.coordinatedCommitsTableConf,
           snapshotDescriptor.deltaLog.newDeltaHadoopConf(),
           snapshotDescriptor.deltaLog.store
