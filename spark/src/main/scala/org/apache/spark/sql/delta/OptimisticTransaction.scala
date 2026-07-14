@@ -296,6 +296,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
   def clock: Clock = deltaLog.clock
 
+  override def logPath: Path = deltaLog.logPath
+
   override def dataPath: Path = deltaLog.dataPath
 
   // This would be a quick operation if we already validated the checksum
@@ -1870,7 +1872,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
         postCommitSnapshot,
         Some(updatedCurrentTransactionInfo))
       logInfo(log"Committed delta #${MDC(DeltaLogKeys.VERSION, commitVersion)} to " +
-        log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)}")
+        log"${MDC(DeltaLogKeys.PATH, logPath)}")
       commitVersion
     } catch {
       case e: DeltaConcurrentModificationException =>
@@ -2297,14 +2299,14 @@ trait OptimisticTransactionImpl extends TransactionHelper
           // FS -> CC conversion
           val (commitCoordinatorName, commitCoordinatorConf) =
             CoordinatedCommitsUtils.getCoordinatedCommitsConfs(finalMetadata)
-          logInfo(log"Table ${MDC(DeltaLogKeys.PATH, deltaLog.logPath)} transitioning from " +
+          logInfo(log"Table ${MDC(DeltaLogKeys.PATH, logPath)} transitioning from " +
             log"file-system based table to coordinated-commits table: " +
             log"[commit-coordinator: ${MDC(DeltaLogKeys.COORDINATOR_NAME, commitCoordinatorName)}" +
             log", conf: ${MDC(DeltaLogKeys.COORDINATOR_CONF, commitCoordinatorConf)}]")
           val tableIdentifierOpt =
             CoordinatedCommitsUtils.toCCTableIdentifier(catalogTable.map(_.identifier))
           newCoordinatedCommitsTableConf = Some(newCommitCoordinatorClient.registerTable(
-            deltaLog.logPath,
+            logPath,
             tableIdentifierOpt,
             readVersion,
             finalMetadata,
@@ -2313,7 +2315,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
           // CC -> FS conversion
           val (newOwnerName, newOwnerConf) =
             CoordinatedCommitsUtils.getCoordinatedCommitsConfs(snapshot.metadata)
-          logInfo(log"Table ${MDC(DeltaLogKeys.PATH, deltaLog.logPath)} transitioning from " +
+          logInfo(log"Table ${MDC(DeltaLogKeys.PATH, logPath)} transitioning from " +
             log"coordinated-commits table to file-system table: " +
             log"[commit-coordinator: ${MDC(DeltaLogKeys.COORDINATOR_NAME, newOwnerName)}, " +
             log"conf: ${MDC(DeltaLogKeys.COORDINATOR_CONF, newOwnerConf)}]")
@@ -2325,7 +2327,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
           // commit-coordinator.
           val (newOwnerName, newOwnerConf) =
             CoordinatedCommitsUtils.getCoordinatedCommitsConfs(finalMetadata)
-          val message = s"Transition of table ${deltaLog.logPath} from one commit-coordinator to" +
+          val message = s"Transition of table ${logPath} from one commit-coordinator to" +
             s" another commit-coordinator is not allowed: [old commit-coordinator: $oldOwnerName," +
             s" new commit-coordinator: $newOwnerName, old commit-coordinator conf: $oldOwnerConf," +
             s" new commit-coordinator conf: $newOwnerConf]."
@@ -2358,7 +2360,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     }
 
     logInfo(log"Committed delta #${MDC(DeltaLogKeys.VERSION, attemptVersion)} to " +
-      log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)}. Wrote " +
+      log"${MDC(DeltaLogKeys.PATH, logPath)}. Wrote " +
       log"${MDC(DeltaLogKeys.NUM_ACTIONS, commitSize.toLong)} actions.")
 
     deltaLog.checkpoint(currentSnapshot, catalogTable)
@@ -2610,7 +2612,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
   private[delta] def isCommitLockEnabled: Boolean = {
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COMMIT_LOCK_ENABLED).getOrElse(
-      deltaLog.store.isPartialWriteVisible(deltaLog.logPath, deltaLog.newDeltaHadoopConf()))
+      deltaLog.store.isPartialWriteVisible(logPath, deltaLog.newDeltaHadoopConf()))
   }
 
   private def lockCommitIfEnabled[T](body: => T): T = {
@@ -2934,7 +2936,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       )
     }
     if (attemptVersion == 0L) {
-      val expectedPathForCommitZero = unsafeDeltaFile(deltaLog.logPath, version = 0L).toUri
+      val expectedPathForCommitZero = unsafeDeltaFile(logPath, version = 0L).toUri
       val actualCommitPath = commitResponse.getCommit.getFileStatus.getPath.toUri
       if (actualCommitPath != expectedPathForCommitZero) {
         throw new IllegalStateException("Expected 0th commit to be written to " +
