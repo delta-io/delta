@@ -113,7 +113,8 @@ class DeltaV2StreamingWrite implements StreamingWrite {
     // Refresh so this epoch commits at latest+1.
     Snapshot latestSnapshot = snapshotManager.loadLatestSnapshot();
 
-    // Fail loudly on a concurrent schema/protocol change.
+    // TODO(#7140): no implicit type cast and mergeSchema. Fail loudly on a concurrent
+    // schema/protocol change.
     assertSchemaAndProtocolUnchanged(latestSnapshot);
 
     // TODO(#7140): no self-scan guard. A stream reading and writing the same table commits
