@@ -153,7 +153,7 @@ private[delta] trait AbstractDeltaCatalogClient {
 private[catalog] trait AbstractDeltaCatalogClientFactory {
   def fromCatalogOptions(
       catalogName: String,
-      options: CaseInsensitiveStringMap,
+      options: util.Map[String, String],
       fallbackLoadTableFunc: Identifier => Table): AbstractDeltaCatalogClient
 }
 
@@ -188,8 +188,9 @@ private[delta] object AbstractDeltaCatalogClient extends Logging {
       catalogName: String,
       options: CaseInsensitiveStringMap,
       fallbackLoadTableFunc: Identifier => Table): Option[AbstractDeltaCatalogClient] = {
+    val optionsMap = new util.HashMap[String, String](options.asCaseSensitiveMap())
     val key = UCTokenBasedRestClientFactory.DELTA_REST_API_ENABLED_KEY
-    if (!options.getBoolean(key, true)) {
+    if (!optionsMap.getOrDefault(key, "true").toBoolean) {
       return None
     }
     val factory = try {
@@ -204,6 +205,6 @@ private[delta] object AbstractDeltaCatalogClient extends Logging {
             "Ensure the implementation JAR is on the classpath, or remove " +
             s"'$key' from the catalog options to fall back to the legacy delegate.", e)
     }
-    Some(factory.fromCatalogOptions(catalogName, options, fallbackLoadTableFunc))
+    Some(factory.fromCatalogOptions(catalogName, optionsMap, fallbackLoadTableFunc))
   }
 }

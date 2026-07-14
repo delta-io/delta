@@ -288,6 +288,7 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
 
   final val URI_KEY = "uri"
   final val AUTH_PREFIX = "auth."
+  final val LEGACY_TOKEN_KEY = "token"
   final val DELTA_REST_API_ENABLED_KEY = "deltaRestApi.enabled"
   final val APP_VERSIONS_PREFIX = "appVersions."
   /** Opt-in: caller wants `UCDeltaTokenBasedRestClient` constructed with credential renewal. */
@@ -343,36 +344,30 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
   }
 
   /**
-   * Extracts entries from `ucConfig` whose keys start with `prefix`, strips the prefix, and
-   * returns the result as a plain, case-preserved [[java.util.Map]].
+   * Extracts entries whose keys start with `prefix`, strips the prefix, and returns a plain map.
    */
-  private[coordinatedcommits] def filterByPrefix(
+  private[delta] def filterByPrefix(
       ucConfig: java.util.Map[String, String],
       prefix: String): java.util.Map[String, String] = {
     val result = new java.util.HashMap[String, String]()
-    ucConfig.entrySet().forEach { e =>
-      if (e.getKey.startsWith(prefix)) {
-        result.put(e.getKey.substring(prefix.length), e.getValue)
+    ucConfig.asScala.foreach { case (k, v) =>
+      if (k.startsWith(prefix)) {
+        result.put(k.substring(prefix.length), v)
       }
     }
     result
   }
 
-  /**
-   * Extracts authentication configuration from a case-preserved `ucConfig` map.
-   * Prefers `auth.*` keys; falls back to legacy `token` key.
-   */
-  private[coordinatedcommits] def extractAuthConfig(
+  /** Extracts auth config for [[TokenProvider.create]]; prefers `auth.*`, else legacy `token`. */
+  private[delta] def extractAuthConfig(
       ucConfig: java.util.Map[String, String]): java.util.Map[String, String] = {
-    val filtered = filterByPrefix(ucConfig, AUTH_PREFIX)
-    if (!filtered.isEmpty) {
-      filtered
+    val auth = filterByPrefix(ucConfig, AUTH_PREFIX)
+    if (!auth.isEmpty) {
+      auth
     } else {
-      Option(ucConfig.get("token")) match {
-        case Some(token) =>
-          java.util.Map.of("type", "static", "token", token)
-        case None => java.util.Collections.emptyMap()
-      }
+      Option(ucConfig.get(LEGACY_TOKEN_KEY))
+        .map(token => java.util.Map.of("type", "static", LEGACY_TOKEN_KEY, token))
+        .getOrElse(java.util.Collections.emptyMap())
     }
   }
 
@@ -382,8 +377,7 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
    */
   private[coordinatedcommits] def extractAppVersions(
       ucConfig: java.util.Map[String, String]): Map[String, String] = {
-    val extra = filterByPrefix(ucConfig, APP_VERSIONS_PREFIX).asScala.toMap
-    defaultAppVersions ++ extra
+    defaultAppVersions ++ filterByPrefix(ucConfig, APP_VERSIONS_PREFIX).asScala
   }
 
   private[coordinatedcommits] def defaultAppVersions: Map[String, String] = {
@@ -404,13 +398,9 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
  */
 case class UCCatalogConfig(catalogName: String, ucConfig: Map[String, String]) {
 
-  def uri: String = ucConfig.getOrElse("uri",
+  def uri: String = ucConfig.getOrElse(UCTokenBasedRestClientFactory.URI_KEY,
     throw new NoSuchElementException(s"No URI in config for catalog $catalogName"))
 
-  /**
-   * Returns the authentication config with original key casing preserved (e.g. `oauth.clientId`).
-   * Prefers `auth.*` keys; falls back to the legacy `token` key.
-   */
   def authConfig: java.util.Map[String, String] =
     UCTokenBasedRestClientFactory.extractAuthConfig(ucConfig.asJava)
 }

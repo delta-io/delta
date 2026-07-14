@@ -56,7 +56,6 @@ import org.apache.spark.sql.delta.IcebergConstants
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.types.{DataType, StructType}
-import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
  * [[AbstractDeltaCatalogClient]] backed by a [[UCDeltaClient]]. Owns all of the catalog-specific
@@ -701,34 +700,25 @@ object UCDeltaCatalogClientImpl extends AbstractDeltaCatalogClientFactory with L
    */
   override def fromCatalogOptions(
       catalogName: String,
-      options: CaseInsensitiveStringMap,
+      options: util.Map[String, String],
       fallbackLoadTableFunc: Identifier => Table): UCDeltaCatalogClientImpl = {
-    // Normalize once at the Spark catalog boundary; downstream code uses a plain map only.
-    val optionsMap = new util.HashMap[String, String](options.asCaseSensitiveMap())
-
-    // Pre-flight: keep our user-facing errors instead of the factory's less specific ones.
-    if (optionsMap.get(UriKey) == null) {
-      throw new IllegalArgumentException(s"'$UriKey' is required (catalog '$catalogName')")
+    if (options.get(UCTokenBasedRestClientFactory.URI_KEY) == null) {
+      throw new IllegalArgumentException(
+        s"'${UCTokenBasedRestClientFactory.URI_KEY}' is required (catalog '$catalogName')")
     }
-    validateAuthConfigured(optionsMap, catalogName)
+    validateAuthConfigured(options, catalogName)
 
-    val merged = new util.HashMap[String, String](optionsMap)
-    Seq(
-      UCTokenBasedRestClientFactory.RENEW_CREDENTIAL_ENABLED_KEY -> "true",
-      UCTokenBasedRestClientFactory.CRED_SCOPED_FS_ENABLED_KEY -> "false"
-    ).foreach { case (k, v) => if (!merged.containsKey(k)) merged.put(k, v) }
+    val optionsMap = new util.HashMap[String, String](options)
+    optionsMap.putIfAbsent(UCTokenBasedRestClientFactory.RENEW_CREDENTIAL_ENABLED_KEY, "true")
+    optionsMap.putIfAbsent(UCTokenBasedRestClientFactory.CRED_SCOPED_FS_ENABLED_KEY, "false")
+
     val ucClient = UCTokenBasedRestClientFactory
-      .createUCClient(merged)
+      .createUCClient(optionsMap)
       .asInstanceOf[UCDeltaClient]
-
-    val sspEnabled = Option(optionsMap.get(ServerSidePlanningEnabledKey))
-      .exists(_.equalsIgnoreCase("true"))
+    val sspEnabled =
+      "true".equalsIgnoreCase(optionsMap.get(ServerSidePlanningEnabledKey))
     new UCDeltaCatalogClientImpl(catalogName, ucClient, sspEnabled, fallbackLoadTableFunc)
   }
-
-  private val UriKey: String = "uri"
-  private val AuthPrefix: String = "auth."
-  private val LegacyTokenKey: String = "token"
 
   /**
    * Pre-flight: ensure at least one of `auth.*` or legacy `token` is present, so the user
@@ -738,13 +728,13 @@ object UCDeltaCatalogClientImpl extends AbstractDeltaCatalogClientFactory with L
   private[catalog] def validateAuthConfigured(
       options: util.Map[String, String],
       catalogName: String): Unit = {
-    val hasAuthPrefix = options.asScala.keys.exists(_.startsWith(AuthPrefix))
-    val hasLegacyToken = options.get(LegacyTokenKey) != null
-    if (!hasAuthPrefix && !hasLegacyToken) {
+    if (UCTokenBasedRestClientFactory.extractAuthConfig(options).isEmpty) {
+      val authPrefix = UCTokenBasedRestClientFactory.AUTH_PREFIX
+      val legacyTokenKey = UCTokenBasedRestClientFactory.LEGACY_TOKEN_KEY
       throw new IllegalArgumentException(
         s"auth configuration is required (catalog '$catalogName'). " +
-          s"Set either '${AuthPrefix}type' (with the corresponding " +
-          s"$AuthPrefix* keys) or the legacy '$LegacyTokenKey' option.")
+          s"Set either '${authPrefix}type' (with the corresponding " +
+          s"$authPrefix* keys) or the legacy '$legacyTokenKey' option.")
     }
   }
 
