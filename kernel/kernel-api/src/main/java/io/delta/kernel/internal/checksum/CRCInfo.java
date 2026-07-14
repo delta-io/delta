@@ -127,6 +127,58 @@ public class CRCInfo {
             fileSizeHistogram));
   }
 
+  /**
+   * Reconstructs a {@link CRCInfo} from a {@link Row} previously produced by {@link #toRow()},
+   * inverting that serialization. Because {@code toRow()} does not carry the version (the version
+   * is derived from the {@code .crc} file name, not the row), the caller supplies it here.
+   *
+   * @param version the table version this checksum represents
+   * @param row a row with the schema {@link #CRC_FILE_SCHEMA}
+   * @return the reconstructed {@link CRCInfo}
+   */
+  public static CRCInfo fromRow(long version, Row row) {
+    requireNonNull(row, "row is null");
+    checkArgument(
+        CRC_FILE_SCHEMA.equals(row.getSchema()),
+        "Expected schema: %s, found: %s",
+        CRC_FILE_SCHEMA,
+        row.getSchema());
+
+    Metadata metadata = Metadata.fromRow(row.getStruct(getSchemaIndex(METADATA)));
+    Protocol protocol = Protocol.fromRow(row.getStruct(getSchemaIndex(PROTOCOL)));
+    long tableSizeBytes = row.getLong(getSchemaIndex(TABLE_SIZE_BYTES));
+    long numFiles = row.getLong(getSchemaIndex(NUM_FILES));
+
+    int txnIdIdx = getSchemaIndex(TXN_ID);
+    Optional<String> txnId =
+        row.isNullAt(txnIdIdx) ? Optional.empty() : Optional.of(row.getString(txnIdIdx));
+
+    int domainMetadataIdx = getSchemaIndex(DOMAIN_METADATA);
+    Optional<Set<DomainMetadata>> domainMetadata =
+        row.isNullAt(domainMetadataIdx)
+            ? Optional.empty()
+            : Optional.of(
+                VectorUtils.<Row>toJavaList(row.getArray(domainMetadataIdx)).stream()
+                    .map(DomainMetadata::fromRow)
+                    .collect(Collectors.toSet()));
+
+    int histogramIdx = getSchemaIndex(FILE_SIZE_HISTOGRAM);
+    Optional<FileSizeHistogram> fileSizeHistogram =
+        row.isNullAt(histogramIdx)
+            ? Optional.empty()
+            : FileSizeHistogram.fromRow(row.getStruct(histogramIdx));
+
+    return new CRCInfo(
+        version,
+        metadata,
+        protocol,
+        tableSizeBytes,
+        numFiles,
+        txnId,
+        domainMetadata,
+        fileSizeHistogram);
+  }
+
   private final long version;
   private final Metadata metadata;
   private final Protocol protocol;
