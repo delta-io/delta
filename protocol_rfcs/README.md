@@ -23,6 +23,7 @@ Here is the history of all the RFCs propose/accepted/rejected since Feb 6, 2024,
 | 2025-03-13    | [checkpoint-protection.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/checkpoint-protection.md)                 | https://github.com/delta-io/delta/issues/4152 | Checkpoint Protection                  |
 | 2025-03-18    | [iceberg-writer-compat-v1.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/iceberg-writer-compat-v1.md)           | https://github.com/delta-io/delta/issues/4284 | IcebergWriterCompatV1                  |
 | 2025-11-20    | [materialize-partition-columns.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/materialize-partition-columns.md)                         | https://github.com/delta-io/delta/issues/5555 | Materialize Partition Columns                      |
+| 2026-07-06    | [file-type.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/file-type.md)                                         | https://github.com/delta-io/delta/issues/7147 | File Data Type                         |
 
 ### Accepted RFCs
 
