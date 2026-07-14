@@ -91,15 +91,14 @@ object ServerSidePlannedTable extends DeltaLogging {
    *
    * @param spark The SparkSession
    * @param ident The table identifier
-   * @param table The loaded table used for the planned table's schema and metadata.
+   * @param table The loaded table, used only to derive planning metadata via
+   *        [[ServerSidePlanningMetadata.fromTable]] (session conf + identifier, not schema/props).
    * @param isUnityCatalog Whether this is a Unity Catalog instance
-   * @param hasCredentials Whether the table has credentials available. The caller computes this
-   *        (via [[hasCredentials]]) from the raw `V1Table` rather than letting this method read it
-   *        off `table`: `table` is a `DeltaTableV2`, whose `properties()` deliberately strips
-   *        `fs.*` storage properties (see `DeltaTableV2.HIDDEN_STORAGE_PROPERTY_PREFIXES`), so the
-   *        `option.fs.*` keys the check looks for never appear on it. We need the `DeltaTableV2`
-   *        here for its schema (a Delta `V1Table`'s metastore schema is empty), but the credential
-   *        check must run against the raw `V1Table`.
+   * @param hasCredentials Whether the table has credentials. Supplied by the caller (computed from
+   *        the raw `V1Table`) so this method never reads it off a `DeltaTableV2` -- see the caller
+   *        in `AbstractDeltaCatalog.loadTable` for why.
+   * @param tableSchema The planned table's schema, supplied by the caller (not read via
+   *        `table.schema()`) so this method never forces a `DeltaTableV2` `_delta_log` read.
    * @return Some(ServerSidePlannedTable) if server-side planning should be used, None otherwise
    */
   def tryCreate(
@@ -107,7 +106,8 @@ object ServerSidePlannedTable extends DeltaLogging {
       ident: Identifier,
       table: Table,
       isUnityCatalog: Boolean,
-      hasCredentials: Boolean): Option[ServerSidePlannedTable] = {
+      hasCredentials: Boolean,
+      tableSchema: StructType): Option[ServerSidePlannedTable] = {
     // Check if we should enable server-side planning (for testing)
     val enableServerSidePlanning = isEnabled(spark)
 
@@ -122,7 +122,7 @@ object ServerSidePlannedTable extends DeltaLogging {
       val metadata = ServerSidePlanningMetadata.fromTable(table, spark, ident, isUnityCatalog)
 
       // Try to create ServerSidePlannedTable with server-side planning
-      val plannedTable = tryCreate(spark, namespace, tableName, table.schema(), metadata)
+      val plannedTable = tryCreate(spark, namespace, tableName, tableSchema, metadata)
       if (plannedTable.isEmpty) {
         logWarning(
           s"Server-side planning not available for catalog ${metadata.catalogName}. " +

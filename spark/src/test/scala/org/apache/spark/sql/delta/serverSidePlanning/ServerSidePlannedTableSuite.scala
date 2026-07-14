@@ -16,14 +16,16 @@
 
 package org.apache.spark.sql.delta.serverSidePlanning
 
-import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
-import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.connector.catalog.{Identifier, V1Table}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import org.apache.spark.sql.sources.{And, EqualTo, Filter, GreaterThan, LessThan}
 import org.apache.hadoop.fs.Path
+
+import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.connector.catalog.{Identifier, V1Table}
+import org.apache.spark.sql.sources.{And, EqualTo, Filter, GreaterThan, LessThan}
+import org.apache.spark.sql.types.StructType
 
 /**
  * Tests for server-side planning with a mock client.
@@ -251,9 +253,9 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
     assert(!ServerSidePlannedTable.hasCredentials(deltaTableV2),
       "Expected DeltaTableV2 to hide fs.* credentials, so hasCredentials must report false")
 
-    // tryCreate builds the planned table from `table` (the DeltaTableV2, for its schema) but the
-    // caller passes it the credential result computed from the raw V1Table. With a real UC
-    // deployment (skipUCRequirementForTests = false) a credentialed table must NOT be routed to SSP.
+    // tryCreate takes the credential result and the schema as explicit inputs (both computed by the
+    // caller from the raw V1Table), so it never reads them off the DeltaTableV2. With a real UC
+    // deployment (skipUCRequirementForTests = false) a credentialed table must NOT use SSP.
     withServerSidePlanningFactory(new TestServerSidePlanningClientFactory()) {
       assert(
         ServerSidePlannedTable.shouldUseServerSidePlanning(
@@ -264,6 +266,65 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
         "A credentialed UC table (creds read from the raw V1Table) must not use server-side " +
           "planning")
     }
+  }
+
+  test("tryCreate builds the planned table from the supplied schema, not table.schema()") {
+    // Regression test: reading DeltaTableV2.schema() (or .properties()) forces an
+    // initialSnapshot / _delta_log read, which fails in the no-credentials SSP fallback case. The
+    // caller must therefore supply the schema, and tryCreate must use it verbatim rather than
+    // calling table.schema(). We assert that by passing a schema that deliberately differs from the
+    // table's own schema and checking the planned table reflects the supplied one.
+    val ident = Identifier.of(Array("test_db"), "shared_test")
+    val ct = spark.sessionState.catalog
+      .getTableMetadata(TableIdentifier("shared_test", Some("test_db")))
+    val v1 = V1Table(ct)
+    val suppliedSchema = new StructType()
+      .add("id", "int")
+      .add("name", "string")
+
+    withServerSidePlanningFactory(new TestServerSidePlanningClientFactory()) {
+      val planned = ServerSidePlannedTable.tryCreate(
+        spark, ident, v1, isUnityCatalog = false,
+        hasCredentials = false,
+        tableSchema = suppliedSchema)
+      assert(planned.isDefined, "Expected SSP to engage in test mode")
+      assert(planned.get.schema() == suppliedSchema,
+        s"Planned table must use the supplied schema; got ${planned.get.schema()}")
+    }
+  }
+
+  test("loadTable schema selection prefers the V1Table schema, falls back only when empty") {
+    // Covers the schema-selection branch in AbstractDeltaCatalog.loadTable:
+    //   val tableSchema = if (v1.schema.nonEmpty) v1.schema else deltaTable.schema()
+    // The UC path (v1.schema populated by the delegate) must use the V1Table schema and never read
+    // DeltaTableV2.schema() (which forces a _delta_log read). Only an empty metastore schema (an
+    // HMS Delta table) falls back to the log-backed DeltaTableV2 schema. An end-to-end loadTable
+    // test of the populated case needs a UC delegate (unavailable in OSS), so we exercise the exact
+    // selection expression against both a populated and an empty V1Table.
+    val baseCt = spark.sessionState.catalog
+      .getTableMetadata(TableIdentifier("shared_test", Some("test_db")))
+    val deltaTable = DeltaTableV2(
+      spark,
+      new Path(baseCt.location),
+      catalogTable = Some(baseCt),
+      tableIdentifier = Some("test_db.shared_test"))
+
+    // Populated V1Table (mirrors what the UC delegate returns): schema is used as-is.
+    val populatedSchema = new StructType().add("id", "int").add("name", "string")
+    val populatedV1 = V1Table(baseCt.copy(schema = populatedSchema))
+    assert(populatedV1.schema.nonEmpty)
+    val selectedForUC =
+      if (populatedV1.schema.nonEmpty) populatedV1.schema else deltaTable.schema()
+    assert(selectedForUC == populatedSchema,
+      s"UC path must use the V1Table schema; got $selectedForUC")
+
+    // Empty V1Table (an HMS Delta table): falls back to the log-backed DeltaTableV2 schema.
+    val emptyV1 = V1Table(baseCt.copy(schema = new StructType()))
+    assert(emptyV1.schema.isEmpty)
+    val selectedForHms =
+      if (emptyV1.schema.nonEmpty) emptyV1.schema else deltaTable.schema()
+    assert(selectedForHms == deltaTable.schema(),
+      s"HMS path must fall back to DeltaTableV2.schema(); got $selectedForHms")
   }
 
   test("ServerSidePlannedTable is read-only") {
