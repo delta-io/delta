@@ -1,5 +1,5 @@
 /*
- * Copyright (2025) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,13 +17,14 @@ package io.delta.spark.internal.v2.write;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.delta.kernel.Operation;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.TableManager;
+import io.delta.kernel.Transaction;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.utils.CloseableIterable;
@@ -40,10 +41,15 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-public class DeltaV2BatchWriteContextTest extends DeltaV2TestBase {
+/**
+ * Unit tests for {@link DeltaV2WriteContext}, the operation-independent base context shared by the
+ * batch and streaming write paths. {@link DeltaV2BatchWriteContextTest} covers the batch subclass;
+ * this exercises the base directly (the streaming path builds a bare {@code DeltaV2WriteContext}).
+ */
+public class DeltaV2WriteContextTest extends DeltaV2TestBase {
 
   @Test
-  public void createInitializesDriverWriteState(@TempDir File tempDir) throws Exception {
+  public void createInitializesOperationIndependentState(@TempDir File tempDir) throws Exception {
     String path = tempDir.getAbsolutePath();
     StructType tableSchema = tableSchema();
     Configuration hadoopConf = spark.sessionState().newHadoopConf();
@@ -51,35 +57,52 @@ public class DeltaV2BatchWriteContextTest extends DeltaV2TestBase {
     createKernelTable(path, tableSchema, engine);
     Snapshot snapshot = TableManager.loadSnapshot(path).build(engine);
 
-    DeltaV2BatchWriteContext context =
-        DeltaV2BatchWriteContext.create(
+    DeltaV2WriteContext context =
+        DeltaV2WriteContext.create(
             engine, hadoopConf, path, snapshot, tableSchema, new TestLogicalWriteInfo(tableSchema));
 
     assertSame(engine, context.getEngine());
-    assertNotNull(context.getTransaction());
-    assertNotNull(context.getSerializedTxnState());
-    assertNotNull(context.getSerializedTxnState().getRow());
     assertNotNull(context.getOutputWriterFactory());
     assertNotNull(context.getSerializableHadoopConf());
     assertNotNull(context.getSerializableHadoopConf().value());
 
+    // dataSchema is wired through unchanged (not re-derived from the snapshot); the (unpartitioned)
+    // table has no partition columns.
     assertArrayEquals(tableSchema.fieldNames(), context.getDataSchema().fieldNames());
     assertEquals(0, context.getPartitionSchema().fields().length);
-    assertEquals(snapshot.getSchema().length(), context.getKernelTableSchema().length());
 
     String sessionTimeZone = spark.sessionState().conf().sessionLocalTimeZone();
     assertEquals(sessionTimeZone, context.getSessionTimeZoneId());
     assertEquals(ZoneId.of(sessionTimeZone), context.getSessionTimeZone());
+  }
 
-    String targetDirectory = context.getTargetDirectory(Collections.emptyMap());
-    assertNotNull(targetDirectory);
-    assertFalse(targetDirectory.isEmpty());
-    assertTrue(targetDirectory.contains(path));
+  @Test
+  public void buildDataWriterFactoryProducesExecutorState(@TempDir File tempDir) throws Exception {
+    String path = tempDir.getAbsolutePath();
+    StructType tableSchema = tableSchema();
+    Configuration hadoopConf = spark.sessionState().newHadoopConf();
+    Engine engine = DefaultEngine.create(hadoopConf);
+    createKernelTable(path, tableSchema, engine);
+    Snapshot snapshot = TableManager.loadSnapshot(path).build(engine);
+
+    DeltaV2WriteContext context =
+        DeltaV2WriteContext.create(
+            engine, hadoopConf, path, snapshot, tableSchema, new TestLogicalWriteInfo(tableSchema));
+
+    // The base is operation-independent: any transaction (here a WRITE txn off the snapshot) can be
+    // turned into the executor-side factory. A real factory with a serialized txn state proves the
+    // shared setup produced usable state.
+    Transaction txn =
+        snapshot
+            .buildUpdateTableTransaction(DeltaV2WriteContext.getEngineInfo(), Operation.WRITE)
+            .build(engine);
+    DeltaV2DataWriterFactory factory = context.buildDataWriterFactory(txn);
+    assertNotNull(factory);
   }
 
   @Test
   public void engineInfoUsesExpectedPrefix() {
-    assertTrue(DeltaV2BatchWriteContext.getEngineInfo().startsWith("Apache-Spark/"));
+    assertTrue(DeltaV2WriteContext.getEngineInfo().startsWith("Apache-Spark/"));
   }
 
   private static void createKernelTable(String path, StructType schema, Engine engine) {

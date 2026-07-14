@@ -21,6 +21,7 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
+import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
@@ -46,6 +47,8 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
   private final String tablePath;
   private final Configuration hadoopConf;
   private final Snapshot initialSnapshot;
+  private final DeltaSnapshotManager snapshotManager;
+  private final StructType dataSchema;
   private final LogicalWriteInfo writeInfo;
 
   /**
@@ -53,6 +56,9 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
    * @param tablePath filesystem path to the Delta table root
    * @param hadoopConf Hadoop configuration (with merged table options)
    * @param initialSnapshot Kernel snapshot loaded at table construction time
+   * @param snapshotManager reloads the latest snapshot; used by the streaming write to build each
+   *     epoch's commit against the current table state (see {@link DeltaV2StreamingWrite})
+   * @param dataSchema the table's data (non-partition) schema, from DeltaV2Table's SchemaProvider
    * @param writeInfo Spark's logical write info (schema, queryId, options)
    */
   public DeltaV2WriteBuilder(
@@ -60,11 +66,15 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
       String tablePath,
       Configuration hadoopConf,
       Snapshot initialSnapshot,
+      DeltaSnapshotManager snapshotManager,
+      StructType dataSchema,
       LogicalWriteInfo writeInfo) {
     this.engine = requireNonNull(engine, "engine is null");
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
     this.hadoopConf = requireNonNull(hadoopConf, "hadoopConf is null");
     this.initialSnapshot = requireNonNull(initialSnapshot, "initialSnapshot is null");
+    this.snapshotManager = requireNonNull(snapshotManager, "snapshotManager is null");
+    this.dataSchema = requireNonNull(dataSchema, "dataSchema is null");
     this.writeInfo = requireNonNull(writeInfo, "writeInfo is null");
   }
 
@@ -85,7 +95,11 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
 
     validateDataSchema(initialSnapshot, writeInfo.schema());
 
-    return new DeltaV2BatchWrite(engine, hadoopConf, tablePath, initialSnapshot, writeInfo);
+    // Returns a mode-dispatching Write: toBatch() -> DeltaV2BatchWrite (batch commit off
+    // initialSnapshot), toStreaming() -> DeltaV2StreamingWrite (per-epoch commit off the latest
+    // snapshot via snapshotManager). Both modes share the executor-side write-state construction.
+    return new DeltaV2Write(
+        engine, hadoopConf, tablePath, initialSnapshot, snapshotManager, dataSchema, writeInfo);
   }
 
   static void validateDataSchema(Snapshot initialSnapshot, StructType dataSchema) {
