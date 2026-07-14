@@ -46,6 +46,7 @@ class DeltaParquetCompressionCodecSuite
 
   private val tablePropertyKey: String = DeltaConfigs.PARQUET_COMPRESSION_CODEC.key
   private val writerOptionKey: String = DeltaOptions.COMPRESSION
+  private val sessionCodecKey: String = "spark.sql.parquet.compression.codec"
 
   /**
    * Reads the compression codecs from all data Parquet files of the given Delta table.
@@ -127,60 +128,103 @@ class DeltaParquetCompressionCodecSuite
     assert(ex.getMessage.contains(tablePropertyKey))
   }
 
-  test("DeltaConfig: fromMetaData returns lowercase regardless of stored case") {
-    val metadata = actions.Metadata(configuration = Map(tablePropertyKey -> "GZIP"))
-    val result = DeltaConfigs.PARQUET_COMPRESSION_CODEC.fromMetaData(metadata)
-    assert(result.contains("gzip"))
+  for {
+    (desc, config, expected) <- Seq(
+      ("returns lowercase regardless of stored case",
+        Map(tablePropertyKey -> "GZIP"), Some("gzip")),
+      ("returns None when the property is absent",
+        Map.empty[String, String], Option.empty[String]))
+  } {
+    test(s"DeltaConfig: fromMetaData $desc") {
+      val metadata = actions.Metadata(configuration = config)
+      assert(DeltaConfigs.PARQUET_COMPRESSION_CODEC.fromMetaData(metadata) == expected)
+    }
   }
 
-  test("DeltaConfig: fromMetaData returns None when property is absent") {
-    val metadata = actions.Metadata(configuration = Map.empty)
-    val result = DeltaConfigs.PARQUET_COMPRESSION_CODEC.fromMetaData(metadata)
-    assert(result.isEmpty)
-  }
+  /**
+   * A single-write data-file compression scenario: configure the table property, session conf,
+   * and/or writer option as specified, append data, then assert the codec(s) of the resulting
+   * data files. These cases are effectively the same test with different parameters, so they are
+   * expressed as data rather than written out one by one.
+   *
+   * @param tableProperty        codec to set via `TBLPROPERTIES` at CREATE time, if any.
+   * @param sessionCodec         value for `spark.sql.parquet.compression.codec`, if any.
+   * @param writerOption         `(key, value)` DataFrame writer option to set, if any.
+   * @param expectedStoredCodec  when set, assert the stored table property equals this value.
+   * @param verifyCodecs         assertion on the set of codecs found across the data files.
+   */
+  private case class DataFileCodecCase(
+      name: String,
+      tableProperty: Option[String] = None,
+      sessionCodec: Option[String] = None,
+      writerOption: Option[(String, String)] = None,
+      expectedStoredCodec: Option[String] = None,
+      verifyCodecs: Set[CompressionCodecName] => Unit)
 
-  for (codec <- Seq("snappy", "gzip", "zstd", "uncompressed", "none", "lz4", "lz4_raw")) {
-    test(s"CREATE TABLE TBLPROPERTIES with codec '$codec' is respected for data files") {
-      withTable("t") {
-        sql(s"""CREATE TABLE t (c0 INT, c1 STRING, c2 TIMESTAMP) USING DELTA
-               |TBLPROPERTIES ('$tablePropertyKey' = '$codec')""".stripMargin)
-        writeDF.mode("append").saveAsTable("t")
-        assert(getProperties("t").get(tablePropertyKey).contains(codec))
-        val codecs = collectCodecsOfDataFiles("t")
-        assert(codecs == Set(expectedCodec(codec)),
-          s"Expected only codec ${expectedCodec(codec)} but got: $codecs")
+  private val dataFileCodecCases: Seq[DataFileCodecCase] = {
+    // Every protocol-defined codec set via the table property is honored for data files.
+    val perProtocolCodec =
+      Seq("snappy", "gzip", "zstd", "uncompressed", "none", "lz4", "lz4_raw").map { codec =>
+        DataFileCodecCase(
+          name = s"table property '$codec' is respected",
+          tableProperty = Some(codec),
+          expectedStoredCodec = Some(codec),
+          verifyCodecs = codecs => assert(codecs == Set(expectedCodec(codec)),
+            s"Expected only codec ${expectedCodec(codec)} but got: $codecs"))
       }
-    }
+    perProtocolCodec ++ Seq(
+      DataFileCodecCase(
+        name = "mixed-case table property is normalized to lowercase when written",
+        tableProperty = Some("GzIp"),
+        verifyCodecs = codecs => assert(codecs == Set(CompressionCodecName.GZIP))),
+      DataFileCodecCase(
+        name = "DataFrame .option('compression', ...) overrides the table property",
+        tableProperty = Some("gzip"),
+        writerOption = Some(writerOptionKey -> "snappy"),
+        verifyCodecs = codecs => assert(codecs == Set(CompressionCodecName.SNAPPY))),
+      DataFileCodecCase(
+        name = "mixed-case DataFrame compression option overrides the table property",
+        tableProperty = Some("gzip"),
+        // Spark normalizes the option key case-insensitively; ensure Delta does too.
+        writerOption = Some("Compression" -> "snappy"),
+        verifyCodecs = codecs => assert(codecs == Set(CompressionCodecName.SNAPPY))),
+      DataFileCodecCase(
+        name = "unset table property falls back to Spark's default behavior",
+        // Spark's default Parquet codec is SNAPPY. We don't hard-code it - just assert that we
+        // don't accidentally write something exotic, and that we get one consistent codec.
+        verifyCodecs = codecs => assert(codecs.size == 1,
+          s"Expected exactly one codec but got: $codecs")),
+      DataFileCodecCase(
+        name = "unset table property honors spark.sql.parquet.compression.codec override",
+        sessionCodec = Some("gzip"),
+        verifyCodecs = codecs => assert(codecs == Set(CompressionCodecName.GZIP),
+          s"Expected GZIP from session conf override but got: $codecs")))
   }
 
-  test("Mixed-case codec is normalized to lowercase when written") {
-    withTable("t") {
-      sql(s"""CREATE TABLE t (c0 INT, c1 STRING, c2 TIMESTAMP) USING DELTA
-             |TBLPROPERTIES ('$tablePropertyKey' = 'GzIp')""".stripMargin)
-      writeDF.mode("append").saveAsTable("t")
-      val codecs = collectCodecsOfDataFiles("t")
-      assert(codecs == Set(CompressionCodecName.GZIP))
-    }
-  }
-
-  test("DataFrame .option('compression', ...) overrides the table property") {
-    withTable("t") {
-      sql(s"""CREATE TABLE t (c0 INT, c1 STRING, c2 TIMESTAMP) USING DELTA
-             |TBLPROPERTIES ('$tablePropertyKey' = 'gzip')""".stripMargin)
-      writeDF.option(writerOptionKey, "snappy").mode("append").saveAsTable("t")
-      val codecs = collectCodecsOfDataFiles("t")
-      assert(codecs == Set(CompressionCodecName.SNAPPY))
-    }
-  }
-
-  test("Mixed-case DataFrame compression option overrides the table property") {
-    withTable("t") {
-      sql(s"""CREATE TABLE t (c0 INT, c1 STRING, c2 TIMESTAMP) USING DELTA
-             |TBLPROPERTIES ('$tablePropertyKey' = 'gzip')""".stripMargin)
-      // Spark normalizes the option key case-insensitively; ensure Delta does too.
-      writeDF.option("Compression", "snappy").mode("append").saveAsTable("t")
-      val codecs = collectCodecsOfDataFiles("t")
-      assert(codecs == Set(CompressionCodecName.SNAPPY))
+  for (testCase <- dataFileCodecCases) {
+    test(s"data files: ${testCase.name}") {
+      def runScenario(): Unit = withTable("t") {
+        val tblProperties = testCase.tableProperty
+          .map(codec => s" TBLPROPERTIES ('$tablePropertyKey' = '$codec')")
+          .getOrElse("")
+        sql(s"CREATE TABLE t (c0 INT, c1 STRING, c2 TIMESTAMP) USING DELTA$tblProperties")
+        if (testCase.tableProperty.isEmpty) {
+          assert(!getProperties("t").contains(tablePropertyKey))
+        }
+        val writer = testCase.writerOption match {
+          case Some((key, value)) => writeDF.option(key, value)
+          case None => writeDF
+        }
+        writer.mode("append").saveAsTable("t")
+        testCase.expectedStoredCodec.foreach { stored =>
+          assert(getProperties("t").get(tablePropertyKey).contains(stored))
+        }
+        testCase.verifyCodecs(collectCodecsOfDataFiles("t"))
+      }
+      testCase.sessionCodec match {
+        case Some(codec) => withSQLConf(sessionCodecKey -> codec)(runScenario())
+        case None => runScenario()
+      }
     }
   }
 
@@ -195,33 +239,6 @@ class DeltaParquetCompressionCodecSuite
       val codecs = collectCodecsOfDataFiles("t")
       assert(codecs == Set(CompressionCodecName.GZIP, CompressionCodecName.SNAPPY),
         s"Expected both GZIP and SNAPPY files but got: $codecs")
-    }
-  }
-
-  test("Unset table property falls back to Spark's default behavior") {
-    withTable("t") {
-      sql(s"""CREATE TABLE t (c0 INT, c1 STRING, c2 TIMESTAMP) USING DELTA""".stripMargin)
-      assert(!getProperties("t").contains(tablePropertyKey))
-      writeDF.mode("append").saveAsTable("t")
-      val codecs = collectCodecsOfDataFiles("t")
-      // Spark's default Parquet codec is SNAPPY. We don't hard-code it - just assert that we
-      // don't accidentally write something exotic, and that we get one consistent codec.
-      assert(codecs.size == 1, s"Expected exactly one codec but got: $codecs")
-    }
-  }
-
-  test("Unset table property falls back to spark.sql.parquet.compression.codec override") {
-    // When the Delta table property is unset, writes should honor the session-level
-    // `spark.sql.parquet.compression.codec` config, including non-default values.
-    withSQLConf("spark.sql.parquet.compression.codec" -> "gzip") {
-      withTable("t") {
-        sql(s"""CREATE TABLE t (c0 INT, c1 STRING, c2 TIMESTAMP) USING DELTA""".stripMargin)
-        assert(!getProperties("t").contains(tablePropertyKey))
-        writeDF.mode("append").saveAsTable("t")
-        val codecs = collectCodecsOfDataFiles("t")
-        assert(codecs == Set(CompressionCodecName.GZIP),
-          s"Expected GZIP from session conf override but got: $codecs")
-      }
     }
   }
 
@@ -244,47 +261,38 @@ class DeltaParquetCompressionCodecSuite
     result.toSeq
   }
 
-  test("V2 checkpoint files honor the codec") {
-    withSQLConf(
-      DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name,
-      DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> V2Checkpoint.Format.PARQUET.name) {
-      withTempDir { dir =>
-        val path = dir.getCanonicalPath
-        sql(s"""CREATE TABLE delta.`$path` (c0 BIGINT) USING delta
-               |TBLPROPERTIES ('$tablePropertyKey' = 'gzip')""".stripMargin)
-        // Generate some commits so the snapshot has content to checkpoint.
-        (1 to 5).foreach { i =>
-          spark.range(i, i + 1).toDF("c0").write.format("delta").mode("append").save(path)
+  // Both classic and V2 Parquet checkpoints must write their Parquet files (top-level manifest
+  // and sidecars) using the table's configured compression codec. The only difference between
+  // the two cases is the checkpoint policy, so they are parameterized over the session confs.
+  for {
+    (checkpointPolicy, extraConfs) <- Seq(
+      "V2" -> Seq(
+        DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name,
+        DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> V2Checkpoint.Format.PARQUET.name),
+      "Classic" -> Seq.empty[(String, String)])
+  } {
+    test(s"$checkpointPolicy checkpoint files honor the codec") {
+      withSQLConf(extraConfs: _*) {
+        withTempDir { dir =>
+          val path = dir.getCanonicalPath
+          sql(s"""CREATE TABLE delta.`$path` (c0 BIGINT) USING delta
+                 |TBLPROPERTIES ('$tablePropertyKey' = 'gzip')""".stripMargin)
+          // Generate some commits so the snapshot has content to checkpoint.
+          (1 to 5).foreach { i =>
+            spark.range(i, i + 1).toDF("c0").write.format("delta").mode("append").save(path)
+          }
+          val log = DeltaLog.forTable(spark, path)
+          log.checkpoint(log.update())
+          val checkpointFiles =
+            listAllCheckpointParquetFiles(log.logPath, log.newDeltaHadoopConf())
+          assert(checkpointFiles.nonEmpty,
+            s"Expected at least one $checkpointPolicy checkpoint parquet file")
+          checkpointFiles.foreach { p =>
+            val codecs = readParquetFileCodecs(p)
+            assert(codecs == Set(CompressionCodecName.GZIP),
+              s"Expected GZIP codec in checkpoint $p but got: $codecs")
+          }
         }
-        val log = DeltaLog.forTable(spark, path)
-        log.checkpoint(log.update())
-        val checkpointFiles = listAllCheckpointParquetFiles(log.logPath, log.newDeltaHadoopConf())
-        assert(checkpointFiles.nonEmpty, "Expected at least one V2 checkpoint parquet file")
-        checkpointFiles.foreach { p =>
-          val codecs = readParquetFileCodecs(p)
-          assert(codecs.nonEmpty && codecs.subsetOf(Set(CompressionCodecName.GZIP)),
-            s"Expected GZIP codec in checkpoint $p but got: $codecs")
-        }
-      }
-    }
-  }
-
-  test("Classic checkpoint files honor the codec") {
-    withTempDir { dir =>
-      val path = dir.getCanonicalPath
-      sql(s"""CREATE TABLE delta.`$path` (c0 BIGINT) USING delta
-             |TBLPROPERTIES ('$tablePropertyKey' = 'gzip')""".stripMargin)
-      (1 to 5).foreach { i =>
-        spark.range(i, i + 1).toDF("c0").write.format("delta").mode("append").save(path)
-      }
-      val log = DeltaLog.forTable(spark, path)
-      log.checkpoint(log.update())
-      val checkpointFiles = listAllCheckpointParquetFiles(log.logPath, log.newDeltaHadoopConf())
-      assert(checkpointFiles.nonEmpty, "Expected at least one classic checkpoint parquet file")
-      checkpointFiles.foreach { p =>
-        val codecs = readParquetFileCodecs(p)
-        assert(codecs == Set(CompressionCodecName.GZIP),
-          s"Expected GZIP codec in checkpoint $p but got: $codecs")
       }
     }
   }
