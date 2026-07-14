@@ -35,10 +35,12 @@ import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
 /**
- * A Spark ScanBuilder implementation that wraps Delta Kernel's ScanBuilder. This allows Spark to
- * use Delta Kernel for reading Delta tables.
+ * Package-private scan builder implementation for Delta's Spark DataSource V2 read path.
+ *
+ * <p>This class must remain package-private so callers outside {@code v2.read} depend only on
+ * Spark's public connector interfaces instead of coupling to Delta's internal V2 implementation.
  */
-public class SparkScanBuilder
+class DeltaV2ScanBuilder
     implements ScanBuilder, SupportsPushDownRequiredColumns, SupportsPushDownFilters {
 
   private io.delta.kernel.ScanBuilder kernelScanBuilder;
@@ -60,7 +62,7 @@ public class SparkScanBuilder
   private Filter[] dataFilters;
 
   /**
-   * Creates a SparkScanBuilder with the given snapshot and configuration.
+   * Creates a DeltaV2ScanBuilder with the given snapshot and configuration.
    *
    * @param tableName the name of the table
    * @param initialSnapshot Snapshot created during connector setup
@@ -71,7 +73,7 @@ public class SparkScanBuilder
    * @param catalogStats optional V2 Statistics converted from catalog stats
    * @param options scan options
    */
-  public SparkScanBuilder(
+  public DeltaV2ScanBuilder(
       String tableName,
       io.delta.kernel.Snapshot initialSnapshot,
       DeltaSnapshotManager snapshotManager,
@@ -174,7 +176,7 @@ public class SparkScanBuilder
 
   @Override
   public org.apache.spark.sql.connector.read.Scan build() {
-    return new SparkScan(
+    return new DeltaV2Scan(
         snapshotManager,
         initialSnapshot,
         tableSchema,

@@ -59,8 +59,13 @@ import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import scala.Option;
 
-/** Spark DSV2 Scan implementation backed by Delta Kernel. */
-public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Filtering {
+/**
+ * Package-private scan implementation for Delta's Spark DataSource V2 read path.
+ *
+ * <p>This class must remain package-private so callers outside {@code v2.read} depend only on
+ * Spark's public connector interfaces instead of coupling to Delta's internal V2 implementation.
+ */
+class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Filtering {
 
   private final DeltaSnapshotManager snapshotManager;
   private final Snapshot initialSnapshot;
@@ -106,7 +111,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
       appliedRuntimePredicates = new HashSet<>();
 
   // TODO(#6743): bundle scan-level schemas into a single ScanSchemaContext.
-  public SparkScan(
+  public DeltaV2Scan(
       DeltaSnapshotManager snapshotManager,
       Snapshot initialSnapshot,
       StructType tableSchema,
@@ -218,7 +223,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   @Override
   public MicroBatchStream toMicroBatchStream(String checkpointLocation) {
     // Loads a fresh snapshot as the baseline for schema change detection and table identity
-    // checks. SparkScan's initialSnapshot is from analysis time and may be stale by stream
+    // checks. DeltaV2Scan's initialSnapshot is from analysis time and may be stale by stream
     // start/restart.
     // Matches V1's DeltaDataSource.createSource() behavior.
     Snapshot latestSnapshot = snapshotManager.loadLatestSnapshot();
@@ -649,7 +654,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     if (o == null || getClass() != o.getClass()) {
       return false;
     }
-    SparkScan that = (SparkScan) o;
+    DeltaV2Scan that = (DeltaV2Scan) o;
     return Objects.equals(initialSnapshot.getPath(), that.initialSnapshot.getPath())
         && initialSnapshot.getVersion() == that.initialSnapshot.getVersion()
         && Objects.equals(dataSchema, that.dataSchema)
