@@ -360,6 +360,56 @@ public class PartitionUtils {
   }
 
   /**
+   * Translates the given logical partition column names to their physical (column-mapping) names.
+   *
+   * <p>For a column-mapped table the on-disk Hive-style partition directory and the {@code AddFile}
+   * partition-value keys are stored under the physical {@code col-<uuid>} names. Callers pass
+   * logical partition column names so this rewrites each to {@link
+   * ColumnMapping#getPhysicalName(StructField)}. Returns the input unchanged when column mapping is
+   * disabled.
+   *
+   * @param logicalSchema the table's logical schema.
+   * @param partitionColNames logical partition column names, in partition order.
+   * @param mode the table's column mapping mode.
+   * @return the physical partition column names, in the same order.
+   */
+  public static List<String> toPhysicalPartitionColNames(
+      StructType logicalSchema,
+      List<String> partitionColNames,
+      ColumnMapping.ColumnMappingMode mode) {
+    if (!ColumnMapping.isColumnMappingModeEnabled(mode)) {
+      return partitionColNames;
+    }
+    return partitionColNames.stream()
+        .map(name -> ColumnMapping.getPhysicalName(logicalSchema.get(name)))
+        .collect(Collectors.toList());
+  }
+
+  /**
+   * Rewrites the keys of a logical-keyed partition-value map to their physical (column mapping)
+   * names. Returns the input unchanged when column mapping is disabled.
+   *
+   * @param logicalSchema the table's logical schema.
+   * @param partitionValues partition values keyed by logical partition column name.
+   * @param mode the table's column mapping mode.
+   * @return partition values keyed by physical partition column name.
+   */
+  public static Map<String, Literal> toPhysicalPartitionValues(
+      StructType logicalSchema,
+      Map<String, Literal> partitionValues,
+      ColumnMapping.ColumnMappingMode mode) {
+    if (!ColumnMapping.isColumnMappingModeEnabled(mode)) {
+      return partitionValues;
+    }
+    Map<String, Literal> physicalValues = new LinkedHashMap<>();
+    for (Map.Entry<String, Literal> entry : partitionValues.entrySet()) {
+      physicalValues.put(
+          ColumnMapping.getPhysicalName(logicalSchema.get(entry.getKey())), entry.getValue());
+    }
+    return physicalValues;
+  }
+
+  /**
    * Get the target directory for writing data for given partition values. Example: Given partition
    * values (part1=1, part2='abc'), the target directory will be for a table rooted at
    * 's3://bucket/table': 's3://bucket/table/part1=1/part2=abc'.
