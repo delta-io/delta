@@ -569,7 +569,7 @@ class SparkVersionsScriptTest:
             if "4.2" in source_build_versions:
                 by_short = {entry["shortVersion"]: entry for entry in data}
                 spark42 = by_short["4.2"]
-                if spark42["sourceBuildDefaultRef"] != "b6bd005ac7549411ec4e7dc944d7a0e19fd56561":
+                if spark42["sourceBuildDefaultRef"] != "da6e110231beea1fa1bd0d259c2b49c7ea4d5085":
                     print("  ✗ Spark 4.2 sourceBuildDefaultRef is not the expected pinned SHA")
                     return False
 

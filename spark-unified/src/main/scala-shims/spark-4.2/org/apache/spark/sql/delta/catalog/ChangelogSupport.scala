@@ -20,10 +20,11 @@ import io.delta.spark.internal.v2.catalog.DeltaV2Table
 import io.delta.spark.internal.v2.read.changelog.DeltaChangelog
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.connector.catalog.{Changelog, ChangelogInfo, Identifier, TableCatalog}
+import org.apache.spark.sql.connector.catalog.{Changelog, ChangelogContext, Identifier, TableCatalog}
 import org.apache.spark.sql.connector.catalog.ChangelogRange.{TimestampRange, UnboundedRange, VersionRange}
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaV2Mode}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
  * Mixed into a [[TableCatalog]] implementation to add read-time CDF support. Provides the
@@ -33,11 +34,12 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
  * mixes this trait in must already be a `TableCatalog`. The trait itself does not provide a
  * `TableCatalog` implementation.
  *
- * <p>The trait is intentionally thin. `loadChangelog` resolves the table via the catalog's own
- * `loadTable`. Read-time CDF only flows through the V2 connector, so in `AUTO`/`STRICT` mode (see
- * [[DeltaV2Mode.shouldRouteChangelogToV2]]) the table is re-resolved to a [[DeltaV2Table]] for the
- * CHANGES read; in `NONE` mode it is rejected. It then resolves the requested [[ChangelogRange]]
- * against the table's snapshot manager, and wraps everything into a [[DeltaChangelog]].
+ * <p>The trait is intentionally thin. `loadChangelog` validates connector-specific options and
+ * resolves the table via the catalog's own `loadTable`. Read-time CDF only flows through the V2
+ * connector, so in `AUTO`/`STRICT` mode (see [[DeltaV2Mode.shouldRouteChangelogToV2]]) the table is
+ * re-resolved to a [[DeltaV2Table]] for the CHANGES read; in `NONE` mode it is rejected. It then
+ * resolves the requested [[ChangelogRange]] against the table's snapshot manager, and wraps
+ * everything into a [[DeltaChangelog]].
  * All connector-level work (loading snapshots, validating row tracking, inspecting metadata
  * actions) is deferred to the read path inside [[DeltaChangelog]].
  *
@@ -47,13 +49,17 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
  */
 trait ChangelogSupport extends TableCatalog {
 
-  override def loadChangelog(ident: Identifier, changelogInfo: ChangelogInfo): Changelog = {
+  override def loadChangelog(
+      ident: Identifier,
+      context: ChangelogContext,
+      options: CaseInsensitiveStringMap): Changelog = {
     val spark = SparkSession.active
     if (!spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CHANGELOG_V2_ENABLED)) {
       // Feature gated off: fall back to the parent's default, which surfaces
       // UNSUPPORTED_FEATURE.CHANGE_DATA_CAPTURE to the user.
-      return super.loadChangelog(ident, changelogInfo)
+      return super.loadChangelog(ident, context, options)
     }
+    rejectUnsupportedOptions(options)
     val routeChangelogToV2 = new DeltaV2Mode(spark.sessionState.conf).shouldRouteChangelogToV2()
     val sparkTable = loadTable(ident) match {
       case st: DeltaV2Table => st
@@ -63,8 +69,24 @@ trait ChangelogSupport extends TableCatalog {
       case other =>
         DeltaErrors.throwChangelogRequiresV2Table(ident.toString, other.getClass.getName)
     }
-    val (startVersion, endVersion) = resolveRange(sparkTable, changelogInfo.range())
+    val (startVersion, endVersion) = resolveRange(sparkTable, context.range())
     new DeltaChangelog(ident.name(), sparkTable, startVersion, endVersion)
+  }
+
+  /**
+   * Rejects options that aren't supported with Delta CDF, even though Spark's CDC implementation
+   * can support these modes. Validating at the catalog boundary covers both Delta's CDF APIs and
+   * Spark's native CHANGES APIs, which pass the original options to `loadChangelog`.
+   */
+  private def rejectUnsupportedOptions(options: CaseInsensitiveStringMap): Unit = {
+    val unsupportedOptions = Seq(
+      "computeUpdates",
+      "deduplicationMode",
+      "startingBoundInclusive",
+      "endingBoundInclusive")
+    unsupportedOptions.foreach { key =>
+      if (options.containsKey(key)) throw DeltaErrors.changelogUnsupportedOption(key)
+    }
   }
 
   /**

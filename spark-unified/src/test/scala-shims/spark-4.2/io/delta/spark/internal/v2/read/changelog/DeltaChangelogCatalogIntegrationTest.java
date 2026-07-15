@@ -181,6 +181,116 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
         });
   }
 
+  /**
+   * Delta's table_changes API always asks Spark to remove carryovers and derive update pre/post
+   * images. This verifies that the context constructed by ResolveTableChangesV2 preserves that
+   * behavior after the Spark API migration from ChangelogInfo to ChangelogContext.
+   */
+  @Test
+  public void testTableChangesComputesUpdates() throws Exception {
+    String tableName = "dsv2_cdc_catalog_update_" + System.nanoTime();
+
+    withTable(
+        new String[] {tableName},
+        () -> {
+          spark.sql(
+              String.format(
+                  "CREATE TABLE %s (id BIGINT, name STRING) USING delta TBLPROPERTIES "
+                      + "('delta.enableDeletionVectors'='false', "
+                      + "'delta.enableRowTracking'='true')",
+                  tableName));
+          spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice')", tableName));
+          spark.sql(String.format("UPDATE %s SET name = 'AliceX' WHERE id = 1", tableName));
+
+          withSQLConf(
+              "spark.databricks.delta.v2.enableMode",
+              "STRICT",
+              () -> {
+                List<Row> rows =
+                    spark
+                        .sql(
+                            String.format(
+                                "SELECT id, name, _change_type, _commit_version "
+                                    + "FROM table_changes('%s', 2, 2)",
+                                tableName))
+                        .collectAsList();
+
+                assertEquals(2, rows.size(), "Expected one preimage and one postimage");
+                assertTrue(
+                    rows.stream()
+                        .anyMatch(
+                            row ->
+                                "update_preimage".equals(row.getAs("_change_type"))
+                                    && "Alice".equals(row.getAs("name"))),
+                    "Expected the original row as update_preimage");
+                assertTrue(
+                    rows.stream()
+                        .anyMatch(
+                            row ->
+                                "update_postimage".equals(row.getAs("_change_type"))
+                                    && "AliceX".equals(row.getAs("name"))),
+                    "Expected the updated row as update_postimage");
+                for (Row row : rows) {
+                  assertEquals(1L, ((Number) row.getAs("id")).longValue());
+                  assertEquals(2L, ((Number) row.getAs("_commit_version")).longValue());
+                }
+              });
+        });
+  }
+
+  /**
+   * Spark now passes the original CHANGES options into TableCatalog.loadChangelog. Validate them
+   * at that catalog boundary so native DataFrameReader.changes calls enforce the same Delta CDF
+   * option policy as table_changes and readChangeFeed.
+   */
+  @Test
+  public void testDataFrameChangesRejectsUnsupportedDeltaOptions() throws Exception {
+    String tableName = "dsv2_cdc_catalog_options_" + System.nanoTime();
+    String[][] unsupportedOptions = {
+      {"computeUpdates", "true"},
+      {"deduplicationMode", "none"},
+      {"startingBoundInclusive", "false"},
+      {"endingBoundInclusive", "false"}
+    };
+
+    withTable(
+        new String[] {tableName},
+        () -> {
+          spark.sql(
+              String.format(
+                  "CREATE TABLE %s (id BIGINT) USING delta TBLPROPERTIES "
+                      + "('delta.enableDeletionVectors'='false', "
+                      + "'delta.enableRowTracking'='true')",
+                  tableName));
+          spark.sql(String.format("INSERT INTO %s VALUES (1)", tableName));
+
+          withSQLConf(
+              "spark.databricks.delta.v2.enableMode",
+              "STRICT",
+              () -> {
+                for (String[] option : unsupportedOptions) {
+                  Exception ex =
+                      assertThrows(
+                          Exception.class,
+                          () ->
+                              spark
+                                  .read()
+                                  .option("startingVersion", "1")
+                                  .option("endingVersion", "1")
+                                  .option(option[0], option[1])
+                                  .changes(tableName)
+                                  .collectAsList());
+                  assertTrue(
+                      ex.getMessage().contains("DELTA_CHANGELOG_UNSUPPORTED_OPTION"),
+                      "Expected unsupported-option error for " + option[0] + ", got: " + ex);
+                  assertTrue(
+                      ex.getMessage().contains(option[0]),
+                      "Expected error to identify option " + option[0] + ", got: " + ex);
+                }
+              });
+        });
+  }
+
   // ===========================================================================================
   // Connector-mode routing for CHANGES reads
   // ===========================================================================================
