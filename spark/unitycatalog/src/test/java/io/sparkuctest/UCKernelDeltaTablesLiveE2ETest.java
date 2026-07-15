@@ -72,10 +72,6 @@ import org.junit.jupiter.api.Test;
  * UCCatalogManagedCommitter} against a <b>real</b> Unity Catalog server over the Delta-Tables API,
  * covering create, ALTER, insert + read-back, and clustered create.
  *
- * <p>Runs against the in-process UC server started by {@link UnityCatalogSupport} by default (no
- * env flag needed). To run against a remote server instead, set {@code UC_REMOTE=true UC_URI=...
- * UC_TOKEN=... UC_CATALOG_NAME=... UC_SCHEMA_NAME=...} (see {@link UnityCatalogSupport}).
- *
  * <p>This exercises Kernel APIs but lives under {@code spark/unitycatalog} because booting the
  * in-process UC server (and its {@link UnityCatalogSupport} harness) needs the coherent Jackson +
  * server dependency stack the Spark UC module already provides; standing that stack up under {@code
@@ -222,10 +218,8 @@ public class UCKernelDeltaTablesLiveE2ETest extends UnityCatalogSupport {
     TableInfo tableInfo = tablesApi.getTable(fullName, false, false);
     Map<String, String> serverProps = tableInfo.getProperties();
     assertThat(serverProps).containsEntry("delta.feature.clustering", "supported");
-    // The clusteringColumns value is a column-mapped physical reference, so assert presence only.
     assertThat(serverProps).containsKey("clusteringColumns");
 
-    // (b) Kernel snapshot: clustering columns resolved from the clustering domain metadata.
     Snapshot snapshot = loadAtVersion(catalogClient, engine, table, 0L);
     Optional<List<Column>> clusteringColumns =
         ((SnapshotImpl) snapshot).getPhysicalClusteringColumns();
@@ -244,7 +238,6 @@ public class UCKernelDeltaTablesLiveE2ETest extends UnityCatalogSupport {
         .build(engine)
         .commit(engine, CloseableIterable.emptyIterable());
 
-    // Reload at the new version and assert the property is present.
     Snapshot v1 = loadAtVersion(catalogClient, engine, table, 1L);
     assertThat(v1.getVersion()).isEqualTo(1L);
     assertThat(v1.getTableProperties()).containsEntry("user.key", "user-value");

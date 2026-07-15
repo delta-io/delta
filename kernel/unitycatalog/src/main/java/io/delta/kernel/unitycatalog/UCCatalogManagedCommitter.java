@@ -42,6 +42,7 @@ import io.delta.storage.commit.TableIdentifier;
 import io.delta.storage.commit.actions.AbstractDomainMetadata;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorException;
+import io.delta.storage.commit.uccommitcoordinator.UCDeltaClient;
 import io.delta.storage.commit.uniform.UniformMetadata;
 import java.io.IOException;
 import java.util.Collections;
@@ -330,9 +331,25 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
    */
   private void finalizeTableInCatalog(CommitMetadata commitMetadata) throws CommitFailedException {
     final UCTableIdentifier tableIdentifier = ucTableIdentifier.get();
-    final Map<String, String> ucProps = UnityCatalogUtils.getPropertiesForCreate(commitMetadata);
     final List<UCClient.ColumnDef> columns =
         UnityCatalogUtils.toColumnDefs(commitMetadata.getEffectiveMetadata().getSchema());
+
+    // The Delta-Tables API has structured fields for the last-commit timestamp and domain metadata
+    // (clustering, row tracking), so it takes metadata.configuration as properties.
+    final Map<String, String> effectiveConfiguration =
+        commitMetadata.getEffectiveMetadata().getConfiguration();
+    final Map<String, String> ucTableProperties =
+        ucClient instanceof UCDeltaClient
+            ? (effectiveConfiguration != null ? effectiveConfiguration : Collections.emptyMap())
+            : UnityCatalogUtils.getPropertiesForCreate(commitMetadata);
+    checkState(
+        commitMetadata.getCommitInfo().getInCommitTimestamp().isPresent(),
+        "InCommitTimestamp must be present for version 0 catalog-managed table creation");
+    final long lastCommitTimestampMs = commitMetadata.getCommitInfo().getInCommitTimestamp().get();
+    final List<AbstractDomainMetadata> domainMetadatas =
+        commitMetadata.getCommitDomainMetadatas().stream()
+            .map(DomainMetadataAdapter::new)
+            .collect(Collectors.toList());
 
     try {
       logger.info("[{}] Finalizing table creation in Unity Catalog", ucTableId);
@@ -343,7 +360,9 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
           tablePath.toUri().toString(),
           columns,
           new ProtocolAdapter(commitMetadata.getEffectiveProtocol()),
-          ucProps);
+          ucTableProperties,
+          lastCommitTimestampMs,
+          domainMetadatas);
       logger.info(
           "[{}] Finalized table creation in Unity Catalog as {}.{}.{}",
           ucTableId,

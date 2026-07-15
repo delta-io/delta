@@ -108,11 +108,6 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   private static final int HTTP_CONFLICT = 409;
   private static final int HTTP_NOT_FOUND = 404;
 
-  private static final String MIN_READER_VERSION_KEY = "delta.minReaderVersion";
-  private static final String MIN_WRITER_VERSION_KEY = "delta.minWriterVersion";
-  private static final String FEATURE_PREFIX = "delta.feature.";
-  private static final String LAST_COMMIT_TIMESTAMP_KEY = "delta.lastCommitTimestamp";
-
   private DeltaTablesApi deltaTablesApi;
   private MetastoresApi metastoresApi;
   private final ApiClient apiClient;
@@ -407,7 +402,9 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       String storageLocation,
       List<ColumnDef> columns,
       AbstractProtocol protocol,
-      Map<String, String> properties) throws CommitFailedException {
+      Map<String, String> properties,
+      long lastCommitTimestampMs,
+      List<AbstractDomainMetadata> domainMetadata) throws CommitFailedException {
     ensureOpen();
     Objects.requireNonNull(tableName, "tableName must not be null");
     Objects.requireNonNull(catalogName, "catalogName must not be null");
@@ -416,24 +413,32 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     Objects.requireNonNull(columns, "columns must not be null");
     Objects.requireNonNull(protocol, "protocol must not be null");
     Objects.requireNonNull(properties, "properties must not be null");
-
-    // The Delta-Tables API carries the last-commit timestamp as a structured field. Callers flatten
-    // it into properties, so lift it out into the request field and drop it from properties.
-    Map<String, String> remainingProperties = withoutProtocolProperties(properties);
-    String lastCommitTimestamp = remainingProperties.remove(LAST_COMMIT_TIMESTAMP_KEY);
+    Objects.requireNonNull(domainMetadata, "domainMetadata must not be null");
 
     DeltaCreateTableRequest sdkRequest = new DeltaCreateTableRequest()
         .name(tableName)
         .location(storageLocation)
         .tableType(DeltaTableType.MANAGED)
         .protocol(toSDKDeltaProtocol(protocol))
-        .properties(remainingProperties);
-    if (lastCommitTimestamp != null) {
-      sdkRequest.lastCommitTimestampMs(parseTimestampToEpochMs(lastCommitTimestamp));
-    }
+        .properties(properties)
+        .lastCommitTimestampMs(lastCommitTimestampMs);
 
     if (!columns.isEmpty()) {
       sdkRequest.columns(UCDeltaSchemaConverter.toUCStructType(columns));
+    }
+
+    try {
+      DeltaDomainMetadataUpdates updates = toSDKDomainMetadataUpdates(domainMetadata);
+      if (updates != null) {
+        sdkRequest.domainMetadata(updates);
+      }
+    } catch (IOException e) {
+      throw new CommitFailedException(
+          false /* retryable */,
+          false /* conflict */,
+          String.format("Failed to convert domain metadata for table %s.%s.%s: %s",
+              catalogName, schemaName, tableName, e.getMessage()),
+          e);
     }
 
     try {
@@ -541,8 +546,8 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       if (partitionColumns != null && !partitionColumns.isEmpty()) {
         sdkRequest.partitionColumns(partitionColumns);
       }
-      Map<String, String> configuration = withoutProtocolProperties(metadata.getConfiguration());
-      if (!configuration.isEmpty()) {
+      Map<String, String> configuration = metadata.getConfiguration();
+      if (configuration != null && !configuration.isEmpty()) {
         sdkRequest.properties(configuration);
       }
       DeltaDomainMetadataUpdates updates = toSDKDomainMetadataUpdates(domainMetadata);
@@ -913,8 +918,14 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
           .comment(newMetadata.getDescription()));
     }
 
-    Map<String, String> oldConfig = withoutProtocolProperties(oldMetadata.getConfiguration());
-    Map<String, String> newConfig = withoutProtocolProperties(newMetadata.getConfiguration());
+    Map<String, String> oldConfig =
+        oldMetadata.getConfiguration() == null
+            ? Collections.emptyMap()
+            : oldMetadata.getConfiguration();
+    Map<String, String> newConfig =
+        newMetadata.getConfiguration() == null
+            ? Collections.emptyMap()
+            : newMetadata.getConfiguration();
 
     if (!Objects.equals(oldConfig, newConfig)) {
       Map<String, String> toSet = new LinkedHashMap<>();
@@ -941,30 +952,6 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
             .removals(toRemove));
       }
     }
-  }
-
-  /**
-   * Returns a copy of {@code config} without protocol-derived properties
-   * ({@code delta.minReaderVersion}, {@code delta.minWriterVersion}, {@code delta.feature.*}).
-   * These describe the protocol, which the Delta-Tables API carries in its structured protocol
-   * field, so they must not be duplicated as table properties on the wire.
-   */
-  private static Map<String, String> withoutProtocolProperties(Map<String, String> config) {
-    Map<String, String> filtered = new LinkedHashMap<>();
-    if (config == null || config.isEmpty()) {
-      return filtered;
-    }
-    for (Map.Entry<String, String> entry : config.entrySet()) {
-      String key = entry.getKey();
-      boolean isProtocolProperty =
-          key.equals(MIN_READER_VERSION_KEY)
-              || key.equals(MIN_WRITER_VERSION_KEY)
-              || key.startsWith(FEATURE_PREFIX);
-      if (!isProtocolProperty) {
-        filtered.put(key, entry.getValue());
-      }
-    }
-    return filtered;
   }
 
   // ===========================

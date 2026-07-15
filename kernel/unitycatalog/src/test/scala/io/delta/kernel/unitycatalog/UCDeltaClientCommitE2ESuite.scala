@@ -141,11 +141,10 @@ class UCDeltaClientCommitE2ESuite
 
       val readProtocol = protocolWithCatalogManagedSupport
       val readMetadata = basicPartitionedMetadata
-      val newMetadata = readMetadata.withMergedConfiguration(
-        Map(
-          "foo" -> "bar",
-          "delta.minReaderVersion" -> "3",
-          "delta.feature.deletionVectors" -> "supported").asJava)
+      // Kernel keeps protocol-derived keys (delta.minReaderVersion / delta.feature.*) out of
+      // metadata.configuration -- they live on the protocol action -- so the config diff carries
+      // only real user properties. Protocol changes travel via the structured set-protocol update.
+      val newMetadata = readMetadata.withMergedConfiguration(Map("foo" -> "bar").asJava)
 
       val commitMetadata = createCommitMetadata(
         version = 1,
@@ -179,24 +178,19 @@ class UCDeltaClientCommitE2ESuite
       assert(updateActions.contains("add-commit"), s"expected add-commit update: $body")
       assert(updateActions.contains("set-properties"), s"expected set-properties update: $body")
 
-      // set-properties carries the real table property but no protocol-derived properties.
+      // set-properties carries the metadata.configuration diff verbatim (no stripping); protocol
+      // changes are conveyed separately via a set-protocol update, not as properties.
       val setProps = updates
         .elements()
         .asScala
         .find(_.get("action").asText() == "set-properties")
         .map(_.get("updates"))
         .getOrElse(fail(s"missing set-properties updates map: $body"))
-      val propKeys = setProps.fieldNames().asScala.toSet
-      assert(propKeys.contains("foo"), s"expected real property 'foo': $body")
-      assert(
-        !propKeys.contains("delta.minReaderVersion"),
-        s"minReaderVersion must be stripped: $body")
-      assert(
-        !propKeys.contains("delta.minWriterVersion"),
-        s"minWriterVersion must be stripped: $body")
-      assert(
-        !propKeys.exists(_.startsWith("delta.feature.")),
-        s"delta.feature.* must be stripped: $body")
+      // Exactly the config diff, nothing else: guards against protocol-derived or other keys
+      // leaking into the property bag on the wire.
+      val actualProps =
+        setProps.fields().asScala.map(e => e.getKey -> e.getValue.asText()).toMap
+      assert(actualProps === Map("foo" -> "bar"), s"expected only 'foo' -> 'bar': $body")
     }
   }
 

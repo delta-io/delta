@@ -970,7 +970,9 @@ private abstract class ThrowingUCDeltaClient extends UCDeltaClient {
       storageLocation: String,
       columns: util.List[UCClient.ColumnDef],
       protocol: AbstractProtocol,
-      properties: util.Map[String, String]): Unit =
+      properties: util.Map[String, String],
+      lastCommitTimestampMs: Long,
+      domainMetadata: util.List[AbstractDomainMetadata]): Unit =
     throw new UnsupportedOperationException
   override def reportMetrics(
       tableId: String,

@@ -152,7 +152,9 @@ object InMemoryUCClient {
       storageLocation: String,
       columns: java.util.List[UCClient.ColumnDef],
       protocol: AbstractProtocol,
-      properties: java.util.Map[String, String])
+      properties: java.util.Map[String, String],
+      lastCommitTimestampMs: Long,
+      domainMetadata: java.util.List[AbstractDomainMetadata])
 }
 
 /**
@@ -261,7 +263,9 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       storageLocation: String,
       columns: java.util.List[UCClient.ColumnDef],
       protocol: AbstractProtocol,
-      properties: java.util.Map[String, String]): Unit = {
+      properties: java.util.Map[String, String],
+      lastCommitTimestampMs: Long,
+      domainMetadata: java.util.List[AbstractDomainMetadata]): Unit = {
     forceThrowInFinalizeCreateMethod()
     lastFinalizeCreateRecord = Some(InMemoryUCClient.FinalizeCreateRecord(
       tableName,
@@ -270,7 +274,9 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       storageLocation,
       columns,
       protocol,
-      properties))
+      properties,
+      lastCommitTimestampMs,
+      domainMetadata))
     val fqn = s"$catalogName.$schemaName.$tableName"
     Option(tables.putIfAbsent(fqn, TableData.afterCreate()))
       .foreach(_ => throw new IllegalArgumentException(s"$fqn already exists"))

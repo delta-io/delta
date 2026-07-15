@@ -397,7 +397,8 @@ class UCTokenBasedRestClientSuite
 
     withClient { client =>
       client.finalizeCreate("t", "cat", "sch", "s3://bucket/tbl",
-        Collections.emptyList(), createProtocol(3, 7), props)
+        Collections.emptyList(), createProtocol(3, 7), props,
+        0L, Collections.emptyList[AbstractDomainMetadata]())
     }
 
     val json = objectMapper.readTree(capturedBody)

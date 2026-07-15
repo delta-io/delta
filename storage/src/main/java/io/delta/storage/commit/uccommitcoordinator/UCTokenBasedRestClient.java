@@ -382,7 +382,9 @@ public class UCTokenBasedRestClient implements UCClient {
       String storageLocation,
       List<UCClient.ColumnDef> columns,
       AbstractProtocol protocol,
-      Map<String, String> properties) throws CommitFailedException {
+      Map<String, String> properties,
+      long lastCommitTimestampMs,
+      List<AbstractDomainMetadata> domainMetadata) throws CommitFailedException {
     ensureOpen();
     Objects.requireNonNull(tableName, "tableName must not be null.");
     Objects.requireNonNull(catalogName, "catalogName must not be null.");

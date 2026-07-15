@@ -108,7 +108,9 @@ class InMemoryUCClient(
       storageLocation: String,
       columns: java.util.List[UCClient.ColumnDef],
       protocol: AbstractProtocol,
-      properties: java.util.Map[String, String]): Unit = {}
+      properties: java.util.Map[String, String],
+      lastCommitTimestampMs: Long,
+      domainMetadata: java.util.List[AbstractDomainMetadata]): Unit = {}
 
   override def close(): Unit = {}
 }
