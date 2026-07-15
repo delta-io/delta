@@ -157,6 +157,16 @@ class Snapshot(
   override def columnMappingMode: DeltaColumnMappingMode = metadata.columnMappingMode
 
   /**
+   * Returns the catalog-qualified table name when available, falling back to the table's metadata
+   * name and finally to its path. Intended for use in user-facing error messages.
+   */
+  def tableNameOrPath(catalogTable: Option[CatalogTable]): String = {
+    // `metadata.name` might be null, so we wrap it with an Option.
+    Option(catalogTable.map(_.qualifiedName).getOrElse(metadata.name))
+      .getOrElse(s"delta.`$dataPath`")
+  }
+
+  /**
    * Returns the timestamp of the latest commit of this snapshot.
    * For an uninitialized snapshot, this returns -1.
    *
@@ -293,11 +303,6 @@ class Snapshot(
   protected[delta] lazy val deltaFileIndexOpt: Option[DeltaLogFileIndex] = {
     assertLogFilesBelongToTable(path, logSegment.deltas)
     DeltaLogFileIndex(DeltaLogFileIndex.COMMIT_FILE_FORMAT, logSegment.deltas)
-  }
-
-  protected lazy val fileIndices: Seq[DeltaLogFileIndex] = {
-    val checkpointFileIndexes = checkpointProvider.allActionsFileIndexes()
-    checkpointFileIndexes ++ deltaFileIndexOpt.toSeq
   }
 
   /**
@@ -501,11 +506,9 @@ class Snapshot(
       return protocolMetadataAndIctFromCrc
     }
 
-    val schemaToUse = Action.logSchema(Set("protocol", "metaData", "commitInfo"))
-    val checkpointOpt = checkpointProvider.topLevelFileIndex.map { index =>
-      deltaLog.loadIndex(index, schemaToUse)
-        .withColumn(COMMIT_VERSION_COLUMN, lit(checkpointProvider.version))
-    }
+    val schemaToUse = Snapshot.pAndMQuerySchema
+    val checkpointOpt =
+      checkpointProvider.loadProtocolMetadataActions(spark, deltaLog)
     (checkpointOpt ++ deltaFileIndexOpt.map(deltaLog.loadIndex(_, schemaToUse)).toSeq)
       .reduceOption(_.union(_)).getOrElse(emptyDF)
       .select("protocol", "metaData", "commitInfo.inCommitTimestamp", COMMIT_VERSION_COLUMN)
@@ -591,54 +594,18 @@ class Snapshot(
    * hack.
    */
   protected def loadActions: DataFrame = {
-    if (fileIndices.isEmpty) return emptyDF
-
-    // Augment the schema with a NullType add.stats_parsed column, as a place-holder for
-    // compatibility with the checkpoint parquet. Both deltas and checkpoints generally use this
-    // schema. HOWEVER, IF (and only if) a checkpoint actually exists, AND it provides an
-    // add.stats_parsed column AND it lacks an add.stats column, THEN (and only then) the checkpoint
-    // DF includes the actual add.stats_parsed column -- not a NullType placeholder -- from which we
-    // generate the add_stats_to_use column (add.stats is unused in that case). Meanwhile, JSON
-    // deltas always map add.stats to add_stats_to_use, and always use the placeholder.
+    // The checkpoint contributes its actions as a single DataFrame, already carrying
+    // COMMIT_VERSION_COLUMN and ADD_STATS_TO_USE_COL_NAME and internally normalizing add.stats /
+    // add.stats_parsed. The physical checkpoint layout stays behind
+    // `loadActionsForStateReconstruction`. Meanwhile, JSON deltas always map add.stats to
+    // add_stats_to_use.
     val logSchemaToUse = Action.logSchema
     val jsonStatsCol = col("add.stats")
     val deltas = deltaFileIndexOpt.map(deltaLog.loadIndex(_, logSchemaToUse))
       .map(_.withColumn(ADD_STATS_TO_USE_COL_NAME, jsonStatsCol))
 
-    val checkpointDataframes = checkpointProvider
-      .allActionsFileIndexesAndSchemas(spark, deltaLog)
-      .map { case (index, schema) =>
-        val addSchema = schema("add").dataType.asInstanceOf[StructType]
-        val (checkpointSchemaToUse, checkpointStatsColToUse) =
-          if (addSchema.exists(_.name == "stats_parsed") && !addSchema.exists(_.name == "stats")) {
-            val statsParsedSchema = addSchema("stats_parsed").dataType.asInstanceOf[StructType]
-            val checkpointSchemaToUse =
-              Action.logSchemaWithAddStatsParsed(addSchema("stats_parsed"))
-            val statsCol = col("add.stats_parsed")
-            // Only use EncodeNestedVariantAsZ85String if the schema contains VariantType.
-            // This avoids performance overhead for tables without variant columns.
-            val encodedStatsCol =
-              if (SchemaUtils.checkForVariantTypeColumnsRecursively(statsParsedSchema)) {
-                Column(EncodeNestedVariantAsZ85String(statsCol.expr))
-              } else {
-                statsCol
-              }
-            (
-              checkpointSchemaToUse,
-              to_json(encodedStatsCol)
-            )
-          } else {
-            // Normal (JSON-like) schema suffices
-            (logSchemaToUse, jsonStatsCol)
-          }
-
-        // For schema compat, make sure to discard add.stats_parsed (if present)
-        deltaLog.loadIndex(index, checkpointSchemaToUse)
-          .withColumn(COMMIT_VERSION_COLUMN, lit(checkpointProvider.version))
-          .withColumn(ADD_STATS_TO_USE_COL_NAME, checkpointStatsColToUse)
-          .withColumn("add", col("add").dropFields("stats_parsed"))
-      }
-      (checkpointDataframes ++ deltas).reduce(_.union(_))
+    val checkpointDataframe = checkpointProvider.loadActionsForStateReconstruction(spark, deltaLog)
+    (checkpointDataframe.toSeq ++ deltas).reduceOption(_.union(_)).getOrElse(emptyDF)
   }
 
   /**
@@ -813,6 +780,13 @@ object Snapshot extends DeltaLogging {
 
   // Used by [[loadActions]] and [[stateReconstruction]]
   val ADD_STATS_TO_USE_COL_NAME = "add_stats_to_use"
+
+  /**
+   * Schema for the protocol/metadata/in-commit-timestamp query fast path. Shared between
+   * [[CheckpointProvider.loadProtocolMetadataActions]] (checkpoint side) and its callers'
+   * delta-side reads so the two DataFrames can be unioned.
+   */
+  val pAndMQuerySchema: StructType = Action.logSchema(Set("protocol", "metaData", "commitInfo"))
 
   private val defaultNumSnapshotPartitions: Int = 50
 

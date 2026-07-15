@@ -316,6 +316,22 @@ class OptimisticTransactionSuite
     }
   }
 
+  test("logPath resolves to deltaLog.logPath") {
+    withTempDir { tempDir =>
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      val txn = log.startTransaction()
+      assert(txn.logPath === log.logPath)
+    }
+  }
+
+  test("dataPath resolves to deltaLog.dataPath") {
+    withTempDir { tempDir =>
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      val txn = log.startTransaction()
+      assert(txn.dataPath === log.dataPath)
+    }
+  }
+
   test("enabling Coordinated Commits on an existing table should create commit dir") {
     withTempDir { tempDir =>
       val log = DeltaLog.forTable(spark, new Path(tempDir.getAbsolutePath))

@@ -56,7 +56,6 @@ import org.apache.spark.sql.delta.IcebergConstants
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.types.{DataType, StructType}
-import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
  * [[AbstractDeltaCatalogClient]] backed by a [[UCDeltaClient]]. Owns all of the catalog-specific
@@ -701,32 +700,25 @@ object UCDeltaCatalogClientImpl extends AbstractDeltaCatalogClientFactory with L
    */
   override def fromCatalogOptions(
       catalogName: String,
-      options: CaseInsensitiveStringMap,
+      options: util.Map[String, String],
       fallbackLoadTableFunc: Identifier => Table): UCDeltaCatalogClientImpl = {
-    // Pre-flight: keep our user-facing errors instead of the factory's less specific ones.
-    if (options.get(UriKey) == null) {
-      throw new IllegalArgumentException(s"'$UriKey' is required (catalog '$catalogName')")
+    if (options.get(UCTokenBasedRestClientFactory.URI_KEY) == null) {
+      throw new IllegalArgumentException(
+        s"'${UCTokenBasedRestClientFactory.URI_KEY}' is required (catalog '$catalogName')")
     }
     validateAuthConfigured(options, catalogName)
 
-    // `asCaseSensitiveMap()` preserves the user's original key case; `containsKey` is
-    // case-insensitive so defaults don't create duplicate keys.
-    val merged = new java.util.HashMap[String, String](options.asCaseSensitiveMap())
-    Seq(
-      UCTokenBasedRestClientFactory.RENEW_CREDENTIAL_ENABLED_KEY -> "true",
-      UCTokenBasedRestClientFactory.CRED_SCOPED_FS_ENABLED_KEY -> "false"
-    ).foreach { case (k, v) => if (!options.containsKey(k)) merged.put(k, v) }
-    val ucClient = UCTokenBasedRestClientFactory
-      .createUCClient(new CaseInsensitiveStringMap(merged))
-      .asInstanceOf[UCDeltaClient]
+    val optionsMap = new util.HashMap[String, String](options)
+    optionsMap.putIfAbsent(UCTokenBasedRestClientFactory.RENEW_CREDENTIAL_ENABLED_KEY, "true")
+    optionsMap.putIfAbsent(UCTokenBasedRestClientFactory.CRED_SCOPED_FS_ENABLED_KEY, "false")
 
-    val sspEnabled = options.getBoolean(ServerSidePlanningEnabledKey, false)
+    val ucClient = UCTokenBasedRestClientFactory
+      .createUCClient(optionsMap)
+      .asInstanceOf[UCDeltaClient]
+    val sspEnabled =
+      optionsMap.getOrDefault(ServerSidePlanningEnabledKey, "false").toBoolean
     new UCDeltaCatalogClientImpl(catalogName, ucClient, sspEnabled, fallbackLoadTableFunc)
   }
-
-  private val UriKey: String = "uri"
-  private val AuthPrefix: String = "auth."
-  private val LegacyTokenKey: String = "token"
 
   /**
    * Pre-flight: ensure at least one of `auth.*` or legacy `token` is present, so the user
@@ -734,15 +726,15 @@ object UCDeltaCatalogClientImpl extends AbstractDeltaCatalogClientFactory with L
    * `TokenProvider.create` is handed an empty config.
    */
   private[catalog] def validateAuthConfigured(
-      options: CaseInsensitiveStringMap,
+      options: util.Map[String, String],
       catalogName: String): Unit = {
-    val hasAuthPrefix = options.entrySet().asScala.exists(_.getKey.startsWith(AuthPrefix))
-    val hasLegacyToken = options.get(LegacyTokenKey) != null
-    if (!hasAuthPrefix && !hasLegacyToken) {
+    if (UCTokenBasedRestClientFactory.extractAuthConfig(options).isEmpty) {
+      val authPrefix = UCTokenBasedRestClientFactory.AUTH_PREFIX
+      val legacyTokenKey = UCTokenBasedRestClientFactory.LEGACY_TOKEN_KEY
       throw new IllegalArgumentException(
         s"auth configuration is required (catalog '$catalogName'). " +
-          s"Set either '${AuthPrefix}type' (with the corresponding " +
-          s"$AuthPrefix* keys) or the legacy '$LegacyTokenKey' option.")
+          s"Set either '${authPrefix}type' (with the corresponding " +
+          s"$authPrefix* keys) or the legacy '$legacyTokenKey' option.")
     }
   }
 

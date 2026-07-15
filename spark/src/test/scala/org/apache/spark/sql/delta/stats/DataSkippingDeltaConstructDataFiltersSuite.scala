@@ -73,11 +73,6 @@ class DataSkippingDeltaConstructDataFiltersSuite
   }
 
   test("Verify areAllLeavesLiteral can't be recursively called b/c it can cause stack overflow") {
-    val dataFilterBuilder = new DataFiltersBuilder(
-      spark,
-      DeltaDataSkippingType.dataSkippingOnlyV1,
-      getStatsColumnOpt = _ => None)
-
     // Create a deeply nested Alias expression: Alias(Alias(Alias(...), "name3"), "name2"), "name1")
     val depth = 100000 // Deep enough to cause stack overflow with default JVM stack size
     var nestedExpr: Expression = Literal.create("foo", StringType)
@@ -85,7 +80,7 @@ class DataSkippingDeltaConstructDataFiltersSuite
       nestedExpr = Alias(nestedExpr, s"name$i")()
     }
 
-    assert(dataFilterBuilder.areAllLeavesLiteral(nestedExpr))
+    assert(DataFiltersBuilder.areAllLeavesLiteral(nestedExpr))
 
     // This should cause a StackOverflowError when areAllLeavesLiteral is called recursively
     def areAllLeavesLiteral(e: Expression): Boolean = e match {

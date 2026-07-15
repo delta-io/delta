@@ -42,7 +42,7 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-public class SparkScanBuilderTest extends DeltaV2TestBase {
+public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
 
   @Test
   public void testBuild_returnsScanWithExpectedSchema(@TempDir File tempDir) {
@@ -71,8 +71,8 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
               DataTypes.createStructField("name", DataTypes.StringType, true),
               DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)
             });
-    SparkScanBuilder builder =
-        new SparkScanBuilder(
+    DeltaV2ScanBuilder builder =
+        new DeltaV2ScanBuilder(
             tableName,
             snapshot,
             snapshotManager,
@@ -92,7 +92,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
     builder.pruneColumns(expectedSparkSchema);
     Scan scan = builder.build();
 
-    assertTrue(scan instanceof SparkScan);
+    assertTrue(scan instanceof DeltaV2Scan);
     assertEquals(expectedSparkSchema, scan.readSchema());
   }
 
@@ -123,8 +123,8 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
               DataTypes.createStructField("name", DataTypes.StringType, true),
               DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)
             });
-    SparkScanBuilder builder =
-        new SparkScanBuilder(
+    DeltaV2ScanBuilder builder =
+        new DeltaV2ScanBuilder(
             tableName,
             snapshot,
             snapshotManager,
@@ -150,8 +150,8 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
     }
   }
 
-  private StructType getRequiredDataSchema(SparkScanBuilder builder) throws Exception {
-    Field field = SparkScanBuilder.class.getDeclaredField("requiredDataSchema");
+  private StructType getRequiredDataSchema(DeltaV2ScanBuilder builder) throws Exception {
+    Field field = DeltaV2ScanBuilder.class.getDeclaredField("requiredDataSchema");
     field.setAccessible(true);
     return (StructType) field.get(builder);
   }
@@ -183,8 +183,8 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
               DataTypes.createStructField("name", DataTypes.StringType, true),
               DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)
             });
-    SparkScanBuilder builder =
-        new SparkScanBuilder(
+    DeltaV2ScanBuilder builder =
+        new DeltaV2ScanBuilder(
             tableName,
             snapshot,
             snapshotManager,
@@ -206,7 +206,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
 
   @Test
   public void testPushFilters_singleSupportedDataFilter(@TempDir File tempDir) throws Exception {
-    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+    DeltaV2ScanBuilder builder = createTestScanBuilder(tempDir);
 
     checkSupportsPushDownFilters(
         builder,
@@ -226,7 +226,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
 
   @Test
   public void testPushFilters_singleUnsupportedDataFilter(@TempDir File tempDir) throws Exception {
-    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+    DeltaV2ScanBuilder builder = createTestScanBuilder(tempDir);
 
     checkSupportsPushDownFilters(
         builder,
@@ -244,7 +244,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
   @Test
   public void testPushFilters_singleSupportedDataFilter_StringStartsWith(@TempDir File tempDir)
       throws Exception {
-    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+    DeltaV2ScanBuilder builder = createTestScanBuilder(tempDir);
 
     checkSupportsPushDownFilters(
         builder,
@@ -267,7 +267,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
 
   @Test
   public void testPushFilters_multiSupportedDataFilters(@TempDir File tempDir) throws Exception {
-    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+    DeltaV2ScanBuilder builder = createTestScanBuilder(tempDir);
 
     checkSupportsPushDownFilters(
         builder,
@@ -296,7 +296,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
   @Test
   public void testPushFilters_mixedSupportedAndUnsupportedDataFilters(@TempDir File tempDir)
       throws Exception {
-    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+    DeltaV2ScanBuilder builder = createTestScanBuilder(tempDir);
 
     checkSupportsPushDownFilters(
         builder,
@@ -320,7 +320,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
   @Test
   public void testPushFilters_singleSupportedPartitionFilter(@TempDir File tempDir)
       throws Exception {
-    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+    DeltaV2ScanBuilder builder = createTestScanBuilder(tempDir);
 
     checkSupportsPushDownFilters(
         builder,
@@ -341,7 +341,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
   @Test
   public void testPushFilters_singleUnsupportedPartitionFilter(@TempDir File tempDir)
       throws Exception {
-    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+    DeltaV2ScanBuilder builder = createTestScanBuilder(tempDir);
 
     checkSupportsPushDownFilters(
         builder,
@@ -363,7 +363,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
   @Test
   public void testPushFilters_multiSupportedPartitionFilters(@TempDir File tempDir)
       throws Exception {
-    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+    DeltaV2ScanBuilder builder = createTestScanBuilder(tempDir);
 
     checkSupportsPushDownFilters(
         builder,
@@ -392,7 +392,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
   @Test
   public void testPushFilters_mixedSupportedAndUnsupportedPartitionFilters(@TempDir File tempDir)
       throws Exception {
-    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+    DeltaV2ScanBuilder builder = createTestScanBuilder(tempDir);
 
     checkSupportsPushDownFilters(
         builder,
@@ -422,7 +422,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
 
   @Test
   public void testPushFilters_mixedFilters(@TempDir File tempDir) throws Exception {
-    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+    DeltaV2ScanBuilder builder = createTestScanBuilder(tempDir);
 
     checkSupportsPushDownFilters(
         builder,
@@ -469,7 +469,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
 
   @Test
   public void testPushFilters_ORFilters(@TempDir File tempDir) throws Exception {
-    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+    DeltaV2ScanBuilder builder = createTestScanBuilder(tempDir);
 
     checkSupportsPushDownFilters(
         builder,
@@ -501,7 +501,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
   @Test
   public void testPushFilters_ORSupportedAndUnsupportedDataFilters(@TempDir File tempDir)
       throws Exception {
-    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+    DeltaV2ScanBuilder builder = createTestScanBuilder(tempDir);
 
     // OR(supported, unsupported) cannot be partially pushed: if one branch is unsupported,
     // the whole OR must remain for post-scan evaluation and nothing is pushed to the kernel.
@@ -524,7 +524,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
   @Test
   public void testPushFilters_ORSupportedDataAndPartitionFilters(@TempDir File tempDir)
       throws Exception {
-    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+    DeltaV2ScanBuilder builder = createTestScanBuilder(tempDir);
 
     checkSupportsPushDownFilters(
         builder,
@@ -568,7 +568,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
    */
   @Test
   public void testPushFilters_mixedORandAND(@TempDir File tempDir) throws Exception {
-    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+    DeltaV2ScanBuilder builder = createTestScanBuilder(tempDir);
 
     checkSupportsPushDownFilters(
         builder,
@@ -617,7 +617,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
 
   @Test
   public void testPushFilters_NOTFilters(@TempDir File tempDir) throws Exception {
-    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+    DeltaV2ScanBuilder builder = createTestScanBuilder(tempDir);
 
     checkSupportsPushDownFilters(
         builder,
@@ -641,7 +641,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
   @Test
   public void testPushFilters_NOTSupportedDataANDSupportedPartitionFilters(@TempDir File tempDir)
       throws Exception {
-    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+    DeltaV2ScanBuilder builder = createTestScanBuilder(tempDir);
 
     checkSupportsPushDownFilters(
         builder,
@@ -685,7 +685,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
   @Test
   public void testPushFilters_NOTSupportedDataANDUnsupportedDataFilters(@TempDir File tempDir)
       throws Exception {
-    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+    DeltaV2ScanBuilder builder = createTestScanBuilder(tempDir);
 
     checkSupportsPushDownFilters(
         builder,
@@ -706,7 +706,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
   @Test
   public void testPushFilters_NOTSupportedDataORSupportedPartitionFilters(@TempDir File tempDir)
       throws Exception {
-    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+    DeltaV2ScanBuilder builder = createTestScanBuilder(tempDir);
 
     checkSupportsPushDownFilters(
         builder,
@@ -744,7 +744,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
   @Test
   public void testPushFilters_NOTSupportedDataORUnsupportedDataFilters(@TempDir File tempDir)
       throws Exception {
-    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+    DeltaV2ScanBuilder builder = createTestScanBuilder(tempDir);
 
     // NOT(OR(supported, unsupported)): the OR branch contains an unsupported filter
     // (StringEndsWith),
@@ -768,7 +768,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
   }
 
   private void checkSupportsPushDownFilters(
-      SparkScanBuilder builder,
+      DeltaV2ScanBuilder builder,
       Filter[] inputFilters,
       Filter[] expectedPostScanFilters,
       Filter[] expectedPushedFilters,
@@ -800,7 +800,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
     assertEquals(expectedKernelScanBuilderPredicate, predicateOpt);
   }
 
-  private SparkScanBuilder createTestScanBuilder(File tempDir) {
+  private DeltaV2ScanBuilder createTestScanBuilder(File tempDir) {
     StructType dataSchema =
         DataTypes.createStructType(
             new StructField[] {
@@ -827,7 +827,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
    */
   @Test
   public void testPushFilters_decimalWideningEndToEnd(@TempDir File tempDir) throws Exception {
-    SparkScanBuilder builder = createDecimalTestScanBuilder(tempDir);
+    DeltaV2ScanBuilder builder = createDecimalTestScanBuilder(tempDir);
 
     // price = 100.00 where literal is Decimal(5,2) and column is Decimal(7,2)
     Filter[] sparkFilter = new Filter[] {new EqualTo("price", new BigDecimal("100.00"))};
@@ -852,7 +852,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
   @Test
   public void testPushFilters_decimalRejectionPartialPushDown(@TempDir File tempDir)
       throws Exception {
-    SparkScanBuilder builder = createDecimalTestScanBuilder(tempDir);
+    DeltaV2ScanBuilder builder = createDecimalTestScanBuilder(tempDir);
 
     // AND(price > 99.999, price < 200.00): left side has scale=3 exceeding column's scale=2
     Filter[] sparkFilter =
@@ -875,7 +875,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
         Optional.of(kernelPredicate)); // expected kernelScanBuilder.predicate
   }
 
-  private SparkScanBuilder createDecimalTestScanBuilder(File tempDir) {
+  private DeltaV2ScanBuilder createDecimalTestScanBuilder(File tempDir) {
     StructType dataSchema =
         DataTypes.createStructType(
             new StructField[] {
@@ -896,11 +896,11 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
   }
 
   /**
-   * Shared helper for creating a SparkScanBuilder with the given schemas. Both
+   * Shared helper for creating a DeltaV2ScanBuilder with the given schemas. Both
    * createTestScanBuilder and createDecimalTestScanBuilder delegate to this method to avoid
    * duplicating snapshot loading and builder instantiation logic.
    */
-  private SparkScanBuilder createScanBuilder(
+  private DeltaV2ScanBuilder createScanBuilder(
       File tempDir, StructType dataSchema, StructType partitionSchema, StructType tableSchema) {
     String path = tempDir.getAbsolutePath();
     String tableName = String.format("test_%d", System.currentTimeMillis());
@@ -922,7 +922,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf());
     Snapshot snapshot = snapshotManager.loadLatestSnapshot();
-    return new SparkScanBuilder(
+    return new DeltaV2ScanBuilder(
         tableName,
         snapshot,
         snapshotManager,
@@ -933,24 +933,24 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
         CaseInsensitiveStringMap.empty());
   }
 
-  private Predicate[] getPushedKernelPredicates(SparkScanBuilder builder) throws Exception {
+  private Predicate[] getPushedKernelPredicates(DeltaV2ScanBuilder builder) throws Exception {
     // TODO: replace reflection with other testing manners, possibly Mockito ArgumentCaptor
-    Field field = SparkScanBuilder.class.getDeclaredField("pushedKernelPredicates");
+    Field field = DeltaV2ScanBuilder.class.getDeclaredField("pushedKernelPredicates");
     field.setAccessible(true);
     return (Predicate[]) field.get(builder);
   }
 
-  private Filter[] getDataFilters(SparkScanBuilder builder) throws Exception {
+  private Filter[] getDataFilters(DeltaV2ScanBuilder builder) throws Exception {
     // TODO: replace reflection with other testing manners, possibly Mockito ArgumentCaptor
-    Field field = SparkScanBuilder.class.getDeclaredField("dataFilters");
+    Field field = DeltaV2ScanBuilder.class.getDeclaredField("dataFilters");
     field.setAccessible(true);
     return (Filter[]) field.get(builder);
   }
 
-  private Optional<Predicate> getKernelScanBuilderPredicate(SparkScanBuilder builder)
+  private Optional<Predicate> getKernelScanBuilderPredicate(DeltaV2ScanBuilder builder)
       throws Exception {
     // TODO: replace reflection with other testing manners, possibly Mockito ArgumentCaptor
-    Field field = SparkScanBuilder.class.getDeclaredField("kernelScanBuilder");
+    Field field = DeltaV2ScanBuilder.class.getDeclaredField("kernelScanBuilder");
     field.setAccessible(true);
     Object kernelScanBuilder = field.get(builder);
 

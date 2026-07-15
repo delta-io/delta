@@ -159,11 +159,6 @@ public class GenericColumnVector implements ColumnVector {
   }
 
   private Object extractChildValue(Object element, int ordinal, DataType childDatatype) {
-    // A null element is a null struct value; all of its children are therefore null. This mirrors
-    // the batch-backed column vectors, whose getChild tolerates null parent rows.
-    if (element == null) {
-      return null;
-    }
     checkArgument(element instanceof Row);
     Row row = (Row) element;
 

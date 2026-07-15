@@ -15,19 +15,46 @@
  */
 package io.delta.spark.internal.v2.read;
 
+import io.delta.kernel.Snapshot;
+import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
+import java.util.Optional;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
+import org.apache.spark.sql.connector.read.ScanBuilder;
+import org.apache.spark.sql.connector.read.Statistics;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
+import org.apache.spark.sql.types.StructType;
+import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import scala.Function1;
 import scala.collection.Iterator;
 
-/** Public factory methods for Delta's package-private Spark DataSource V2 read internals. */
-public final class DeltaV2Reads {
+/** Public factory methods for Delta's package-private Spark DataSource V2 scan internals. */
+public final class DeltaV2ScanUtils {
 
-  private DeltaV2Reads() {}
+  private DeltaV2ScanUtils() {}
 
   public static PartitionReaderFactory newReaderFactory(
       Function1<PartitionedFile, Iterator<InternalRow>> readFunc, boolean supportsColumnar) {
     return new DeltaV2ReaderFactory(readFunc, supportsColumnar);
+  }
+
+  public static ScanBuilder newScanBuilder(
+      String tableName,
+      Snapshot initialSnapshot,
+      DeltaSnapshotManager snapshotManager,
+      StructType dataSchema,
+      StructType partitionSchema,
+      StructType tableSchema,
+      Optional<Statistics> catalogStats,
+      CaseInsensitiveStringMap options) {
+    return new DeltaV2ScanBuilder(
+        tableName,
+        initialSnapshot,
+        snapshotManager,
+        dataSchema,
+        partitionSchema,
+        tableSchema,
+        catalogStats,
+        options);
   }
 }

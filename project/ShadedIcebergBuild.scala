@@ -71,6 +71,8 @@ object ShadedIcebergBuild {
    * Here's an overview:
    *  PartitionSpec: sets checkConflicts to false to honor field ID assigned by Delta
    *  HiveCatalog, HiveTableOperations: allow metadataUpdates to overwrite schema and partition spec
+   *  Delegates: does not suppress the explicit first_row_id on added DataFiles, so UniForm can
+   *    preserve Delta row IDs (baseRowId) as Iceberg first_row_id.
    */
   def updateMergeStrategy(prev: String => MergeStrategy): String => MergeStrategy = {
     case PathList("shadedForDelta", "org", "apache", "iceberg", s)
@@ -78,6 +80,9 @@ object ShadedIcebergBuild {
       MergeStrategy.first
     case PathList("shadedForDelta", "org", "apache", "iceberg", s)
       if s.matches("MetadataUpdate(\\$.*)?\\.class") =>
+      MergeStrategy.first
+    case PathList("shadedForDelta", "org", "apache", "iceberg", s)
+      if s.matches("Delegates(\\$.*)?\\.class") =>
       MergeStrategy.first
     case PathList("shadedForDelta", "org", "apache", "iceberg", "PartitionSpec$Builder.class") =>
       MergeStrategy.first

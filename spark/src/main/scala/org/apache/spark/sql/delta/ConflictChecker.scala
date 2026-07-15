@@ -649,7 +649,8 @@ private[delta] class ConflictChecker(
       if (winningCommitSummary.identityOnlyMetadataUpdate) {
         IdentityColumn.logTransactionAbort(deltaLog)
       }
-      throw DeltaErrors.metadataChangedException(winningCommitSummary.commitInfo)
+      throw DeltaErrors.metadataChangedException(
+        getTableNameOrPath, winningCommitSummary.commitInfo)
     }
   }
 
@@ -667,7 +668,8 @@ private[delta] class ConflictChecker(
    */
   protected def attemptToResolveMetadataConflicts(): Unit = {
     def throwMetadataChangedException(): Unit =
-      throw DeltaErrors.metadataChangedException(winningCommitSummary.commitInfo)
+      throw DeltaErrors.metadataChangedException(
+        getTableNameOrPath, winningCommitSummary.commitInfo)
 
     // If winning commit does not contain metadata update, no conflict.
     if (winningCommitSummary.metadataUpdates.isEmpty) return
@@ -1492,15 +1494,8 @@ private[delta] class ConflictChecker(
     }
   }
 
-  protected def getTableNameOrPath: String = {
-    val tableName = currentTransactionInfo.catalogTable.map(_.qualifiedName)
-      .getOrElse(currentTransactionInfo.metadata.name)
-    if (tableName != null) {
-      tableName
-    } else {
-      s"delta.`${currentTransactionInfo.readSnapshot.dataPath}`"
-    }
-  }
+  protected def getTableNameOrPath: String =
+    currentTransactionInfo.readSnapshot.tableNameOrPath(currentTransactionInfo.catalogTable)
 
   protected def recordTime[T](phase: String)(f: => T): T = {
     val startTimeNs = System.nanoTime()

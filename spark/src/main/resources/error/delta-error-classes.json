@@ -311,7 +311,7 @@
   },
   "DELTA_CANNOT_SET_LOCATION_MULTIPLE_TIMES" : {
     "message" : [
-      "Can't set location multiple times. Found <location>"
+      "Can't set location multiple times. Found locations: <locations>."
     ],
     "sqlState" : "XXKDS"
   },
@@ -2059,7 +2059,7 @@
   },
   "DELTA_METADATA_CHANGED" : {
     "message" : [
-      "MetadataChangedException: The metadata of the Delta table has been changed by a concurrent update. Please try the operation again.<conflictingCommit>\nRefer to <docLink> for more details."
+      "MetadataChangedException: The metadata of the Delta table <tableName> has been changed by a concurrent update. Please try the operation again.<conflictingCommit>\nRefer to <docLink> for more details."
     ],
     "sqlState" : "2D521"
   },
@@ -2135,17 +2135,9 @@
   },
   "DELTA_MISSING_FILES_UNEXPECTED_VERSION" : {
     "message" : [
-      "The stream from your Delta table was expecting process data from version <startVersion>,",
-      "but the earliest available version in the _delta_log directory is <earliestVersion>. The files",
-      "in the transaction log may have been deleted due to log cleanup. In order to avoid losing",
-      "data, we recommend that you restart your stream with a new checkpoint location and to",
-      "increase your delta.logRetentionDuration setting, if you have explicitly set it below 30",
-      "days.",
-      "If you would like to ignore the missed data and continue your stream from where it left",
-      "off, you can set the .option(\"<option>\", \"false\") as part",
-      "of your readStream statement."
+      "Delta stream cannot resume from version <startVersion>; transaction log starts at <earliestVersion>. Log files may have been deleted by log retention. Restart the stream with a new checkpoint location and consider increasing delta.logRetentionDuration. To skip missing data instead, set .option(\"<option>\", \"false\")."
     ],
-    "sqlState" : "XXKDS"
+    "sqlState" : "42K03"
   },
   "DELTA_MISSING_ICEBERG_CLASS" : {
     "message" : [
@@ -2932,11 +2924,9 @@
   },
   "DELTA_STREAMING_TRAILING_COMMIT_MISSING" : {
     "message" : [
-      "The connector discovered commits up to version <expectedVersion>, but when reading the",
-      "data, commits after version <seenVersion> are missing. The trailing commit files may",
-      "have been deleted or be transiently invisible in the _delta_log directory."
+      "Delta stream detected commits up to version <expectedVersion> but files after version <seenVersion> are missing from the transaction log."
     ],
-    "sqlState" : "XXKDS"
+    "sqlState" : "42K03"
   },
   "DELTA_TABLE_ALREADY_CONTAINS_CDC_COLUMNS" : {
     "message" : [
