@@ -65,7 +65,7 @@ class DeltaV2ScanBuilder
   private Filter[] pushedSparkFilters;
   private Filter[] dataFilters;
   // Tracks whether any filter still needs to be applied after the scan.
-  private boolean hasPOstScanResidualFilters = false;
+  private boolean hasPostScanResidualFilters = false;
   private OptionalInt pushedLimit = OptionalInt.empty();
 
   /**
@@ -176,7 +176,7 @@ class DeltaV2ScanBuilder
     Filter[] postScan = postScanFilters.toArray(new Filter[0]);
     // ScanBuilder mutations can be cumulative, so a later pushFilters call should not make an
     // earlier residual safe to ignore.
-    this.hasPOstScanResidualFilters |= postScan.length > 0;
+    this.hasPostScanResidualFilters |= postScan.length > 0;
     return postScan;
   }
 
@@ -215,7 +215,7 @@ class DeltaV2ScanBuilder
     // matches PhysicalOperation(_, Nil, sHolder). Retain this defensive check for direct callers
     // that may invoke the ScanBuilder methods in a different order.
     OptionalInt effectiveLimit =
-        hasPOstScanResidualFilters ? OptionalInt.empty() : this.pushedLimit;
+        hasPostScanResidualFilters ? OptionalInt.empty() : this.pushedLimit;
 
     return new DeltaV2Scan(
         snapshotManager,
