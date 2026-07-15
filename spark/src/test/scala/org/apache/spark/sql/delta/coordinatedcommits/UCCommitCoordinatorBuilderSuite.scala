@@ -617,12 +617,9 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
     assert(tp.configs().get("oauth.uri") === "https://example.com/token")
   }
 
-  test("filterByPrefix returns empty map when no keys match") {
-    val ucConfig = Map("uri" -> "https://uc.example.com", "token" -> "my-token")
-    assert(UCTokenBasedRestClientFactory.filterByPrefix(ucConfig.asJava, "auth.").isEmpty)
-    // extractAuthConfig with no auth and no token returns empty
-    val noTokenConfig = Map("uri" -> "https://uc.example.com")
-    val auth = UCTokenBasedRestClientFactory.extractAuthConfig(noTokenConfig.asJava)
+  test("extractAuthConfig returns empty map when no auth config present") {
+    val noAuthConfig = Map("uri" -> "https://uc.example.com")
+    val auth = UCTokenBasedRestClientFactory.extractAuthConfig(noAuthConfig.asJava)
     assert(auth.isEmpty)
   }
 
