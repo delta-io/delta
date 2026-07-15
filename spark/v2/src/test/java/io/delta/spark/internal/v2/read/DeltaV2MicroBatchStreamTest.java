@@ -363,7 +363,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     }
     deltaChanges.close();
 
-    // dsv2 DeltaV2MicroBatchStream
+    // Delta V2 micro-batch stream
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, hadoopConf);
@@ -541,7 +541,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     }
     deltaChanges.close();
 
-    // dsv2 DeltaV2MicroBatchStream
+    // Delta V2 micro-batch stream
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, hadoopConf);
@@ -724,7 +724,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
     }
     deltaChanges.close();
 
-    // Test DSv2 DeltaV2MicroBatchStream
+    // Test Delta V2 micro-batch stream
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, hadoopConf);
@@ -893,7 +893,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
             },
             String.format("DSv1 should throw on REMOVE for scenario: %s", testDescription));
 
-    // Test DSv2 DeltaV2MicroBatchStream
+    // Test Delta V2 micro-batch stream
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, hadoopConf);
@@ -2823,7 +2823,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
       DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
 
-      // Create DSv2 DeltaV2MicroBatchStream
+      // Create Delta V2 micro-batch stream
       Configuration hadoopConf = new Configuration();
       PathBasedSnapshotManager snapshotManager =
           new PathBasedSnapshotManager(testTablePath, hadoopConf);
@@ -2944,7 +2944,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       }
       deltaChanges.close();
 
-      // Test DSv2 DeltaV2MicroBatchStream
+      // Test Delta V2 micro-batch stream
       Configuration hadoopConf = new Configuration();
       PathBasedSnapshotManager snapshotManager =
           new PathBasedSnapshotManager(testTablePath, hadoopConf);
@@ -3000,7 +3000,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
       DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
 
-      // Create DSv2 DeltaV2MicroBatchStream
+      // Create Delta V2 micro-batch stream
       Configuration hadoopConf = new Configuration();
       PathBasedSnapshotManager snapshotManager =
           new PathBasedSnapshotManager(testTablePath, hadoopConf);
@@ -3109,7 +3109,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
       DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
       DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
 
-      // Create DSv2 DeltaV2MicroBatchStream
+      // Create Delta V2 micro-batch stream
       Configuration hadoopConf = new Configuration();
       PathBasedSnapshotManager snapshotManager =
           new PathBasedSnapshotManager(testTablePath, hadoopConf);
@@ -3241,7 +3241,7 @@ public class DeltaV2MicroBatchStreamTest extends DeltaV2TestBase {
             element ->
                 element.toString().contains("checkReadIncompatibleSchemaChangeOnStreamStartOnce"));
 
-    // Test DSv2 DeltaV2MicroBatchStream
+    // Test Delta V2 micro-batch stream
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager =
         new PathBasedSnapshotManager(testTablePath, hadoopConf);

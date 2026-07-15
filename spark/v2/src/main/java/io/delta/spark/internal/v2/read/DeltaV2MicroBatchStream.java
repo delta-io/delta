@@ -831,7 +831,7 @@ class DeltaV2MicroBatchStream
           new DeltaTimeTravelSpec(
                   /* timestamp= */ options.startingTimestamp().map(Literal$.MODULE$::apply),
                   /* version= */ Option.empty(),
-                  /* creationSource= */ Some.apply("sparkMicroBatchStream"),
+                  /* creationSource= */ Some.apply("deltaV2MicroBatchStream"),
                   /* enforceRetention= */ true)
               .getTimestamp(spark.sessionState().conf());
       long startingVersion =

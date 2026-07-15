@@ -157,7 +157,7 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
   }
 
   @Test
-  public void testToMicroBatchStream_returnsSparkMicroBatchStream(@TempDir File tempDir) {
+  public void testToMicroBatchStream_returnsDeltaV2MicroBatchStream(@TempDir File tempDir) {
     String path = tempDir.getAbsolutePath();
     String tableName = "microbatch_test";
     spark.sql(
