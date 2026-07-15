@@ -31,11 +31,14 @@ import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch;
 import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.internal.util.Utils;
+import io.delta.kernel.transaction.CreateTableTransactionBuilder;
+import io.delta.kernel.transaction.DataLayoutSpec;
 import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
@@ -46,10 +49,12 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.DataFileStatus;
 import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaTokenBasedRestClient;
+import io.unitycatalog.client.api.TablesApi;
 import io.unitycatalog.client.auth.TokenProvider;
 import io.unitycatalog.client.delta.api.DeltaTablesApi;
 import io.unitycatalog.client.delta.model.DeltaCreateStagingTableRequest;
 import io.unitycatalog.client.delta.model.DeltaStagingTableResponse;
+import io.unitycatalog.client.model.TableInfo;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -65,11 +70,16 @@ import org.junit.jupiter.api.Test;
 /**
  * End-to-end test that drives the kernel {@link UCCatalogManagedClient} / {@code
  * UCCatalogManagedCommitter} against a <b>real</b> Unity Catalog server over the Delta-Tables API,
- * covering create, ALTER, and insert + read-back.
+ * covering create, ALTER, insert + read-back, and clustered create.
  *
  * <p>Runs against the in-process UC server started by {@link UnityCatalogSupport} by default (no
  * env flag needed). To run against a remote server instead, set {@code UC_REMOTE=true UC_URI=...
  * UC_TOKEN=... UC_CATALOG_NAME=... UC_SCHEMA_NAME=...} (see {@link UnityCatalogSupport}).
+ *
+ * <p>This exercises Kernel APIs but lives under {@code spark/unitycatalog} because booting the
+ * in-process UC server (and its {@link UnityCatalogSupport} harness) needs the coherent Jackson +
+ * server dependency stack the Spark UC module already provides; standing that stack up under {@code
+ * kernel/unitycatalog} pulls conflicting transitive Jackson versions that crash server startup.
  */
 public class UCKernelDeltaTablesLiveE2ETest extends UnityCatalogSupport {
 
@@ -91,6 +101,28 @@ public class UCKernelDeltaTablesLiveE2ETest extends UnityCatalogSupport {
   @AfterEach
   public void restoreS3CredentialCheck() {
     S3CredentialFileSystem.credentialCheckEnabled = priorCredentialCheckEnabled;
+  }
+
+  private UnityCatalogInfo uc;
+  private Engine engine;
+  private UCDeltaTokenBasedRestClient deltaClient;
+  private UCCatalogManagedClient catalogClient;
+
+  @BeforeEach
+  public void setUpCatalogClients() {
+    uc = unityCatalogInfo();
+    engine = newEngine();
+    deltaClient = newDeltaClient(uc);
+    catalogClient = new UCCatalogManagedClient(deltaClient);
+  }
+
+  @AfterEach
+  public void closeCatalogClients() throws Exception {
+    // UCCatalogManagedClient does not own the underlying UCClient, so only the REST client is
+    // released here.
+    if (deltaClient != null) {
+      deltaClient.close();
+    }
   }
 
   private static final String ENGINE_INFO = "kernel-uc-live-e2e";
@@ -152,48 +184,70 @@ public class UCKernelDeltaTablesLiveE2ETest extends UnityCatalogSupport {
    */
   @Test
   public void createTable_sendsStructuredProtocol_andRoundTrips() throws Exception {
-    UnityCatalogInfo uc = unityCatalogInfo();
-    Engine engine = newEngine();
+    CreatedTable table = createManagedTable(uc, engine, catalogClient);
 
-    try (UCDeltaTokenBasedRestClient deltaClient = newDeltaClient(uc)) {
-      UCCatalogManagedClient catalogClient = new UCCatalogManagedClient(deltaClient);
-      CreatedTable table = createManagedTable(uc, engine, catalogClient);
+    Snapshot snapshot = loadAtVersion(catalogClient, engine, table, 0L);
+    assertThat(snapshot.getVersion()).isEqualTo(0L);
+    assertThat(snapshot.getSchema().fieldNames())
+        .containsExactlyElementsOf(TEST_SCHEMA.fieldNames());
 
-      Snapshot snapshot = loadAtVersion(catalogClient, engine, table, 0L);
-      assertThat(snapshot.getVersion()).isEqualTo(0L);
-      assertThat(snapshot.getSchema().fieldNames())
-          .containsExactlyElementsOf(TEST_SCHEMA.fieldNames());
+    Protocol protocol = ((SnapshotImpl) snapshot).getProtocol();
+    assertThat(protocol.getMinReaderVersion()).isGreaterThanOrEqualTo(3);
+    assertThat(protocol.getMinWriterVersion()).isGreaterThanOrEqualTo(7);
+    assertThat(protocol.getWriterFeatures()).contains("catalogManaged");
 
-      Protocol protocol = ((SnapshotImpl) snapshot).getProtocol();
-      assertThat(protocol.getMinReaderVersion()).isGreaterThanOrEqualTo(3);
-      assertThat(protocol.getMinWriterVersion()).isGreaterThanOrEqualTo(7);
-      assertThat(protocol.getWriterFeatures()).contains("catalogManaged");
+    assertThat(snapshot.getTableProperties()).containsAllEntriesOf(table.requiredProperties);
+  }
 
-      assertThat(snapshot.getTableProperties()).containsAllEntriesOf(table.requiredProperties);
-    }
+  /**
+   * Creates a clustered table through the kernel committer path and asserts clustering round-trips
+   * on both surfaces: (a) the catalog's raw property bag returned by the server, which carries
+   * {@code clusteringColumns} plus {@code delta.feature.clustering}; and (b) the kernel snapshot,
+   * whose clustering columns come from the clustering domain metadata in the log.
+   */
+  @Test
+  public void createClusteredTable_roundTripsClusteringColumns() throws Exception {
+    CreatedTable table =
+        createManagedTable(
+            uc, engine, catalogClient, DataLayoutSpec.clustered(List.of(new Column("id"))));
+
+    // (a) Raw catalog properties as persisted by the server.
+    TablesApi tablesApi = new TablesApi(uc.createApiClient());
+    String fullName =
+        String.format(
+            "%s.%s.%s",
+            table.identifier.getCatalogName(),
+            table.identifier.getSchemaName(),
+            table.identifier.getTableName());
+    TableInfo tableInfo = tablesApi.getTable(fullName, false, false);
+    Map<String, String> serverProps = tableInfo.getProperties();
+    assertThat(serverProps).containsEntry("delta.feature.clustering", "supported");
+    // The clusteringColumns value is a column-mapped physical reference, so assert presence only.
+    assertThat(serverProps).containsKey("clusteringColumns");
+
+    // (b) Kernel snapshot: clustering columns resolved from the clustering domain metadata.
+    Snapshot snapshot = loadAtVersion(catalogClient, engine, table, 0L);
+    Optional<List<Column>> clusteringColumns =
+        ((SnapshotImpl) snapshot).getPhysicalClusteringColumns();
+    assertThat(clusteringColumns).isPresent();
+    assertThat(clusteringColumns.get()).hasSize(1);
   }
 
   @Test
   public void alterTable_setTableProperty_roundTripsThroughUpdateTable() throws Exception {
-    UnityCatalogInfo uc = unityCatalogInfo();
-    Engine engine = newEngine();
+    CreatedTable table = createManagedTable(uc, engine, catalogClient);
 
-    try (UCDeltaTokenBasedRestClient deltaClient = newDeltaClient(uc)) {
-      UCCatalogManagedClient catalogClient = new UCCatalogManagedClient(deltaClient);
-      CreatedTable table = createManagedTable(uc, engine, catalogClient);
+    // ALTER: set a user table property on the v0 table via the update-table (V1+) path.
+    Snapshot v0 = loadAtVersion(catalogClient, engine, table, 0L);
+    v0.buildUpdateTableTransaction(ENGINE_INFO, Operation.MANUAL_UPDATE)
+        .withTablePropertiesAdded(Map.of("user.key", "user-value"))
+        .build(engine)
+        .commit(engine, CloseableIterable.emptyIterable());
 
-      // ALTER: set a user table property on the v0 table via the update-table (V1+) path.
-      Snapshot v0 = loadAtVersion(catalogClient, engine, table, 0L);
-      v0.buildUpdateTableTransaction(ENGINE_INFO, Operation.MANUAL_UPDATE)
-          .withTablePropertiesAdded(Map.of("user.key", "user-value"))
-          .build(engine)
-          .commit(engine, CloseableIterable.emptyIterable());
-
-      // Reload at the new version and assert the property is present.
-      Snapshot v1 = loadAtVersion(catalogClient, engine, table, 1L);
-      assertThat(v1.getVersion()).isEqualTo(1L);
-      assertThat(v1.getTableProperties()).containsEntry("user.key", "user-value");
-    }
+    // Reload at the new version and assert the property is present.
+    Snapshot v1 = loadAtVersion(catalogClient, engine, table, 1L);
+    assertThat(v1.getVersion()).isEqualTo(1L);
+    assertThat(v1.getTableProperties()).containsEntry("user.key", "user-value");
   }
 
   /** Holds the identifiers of a table created via {@link #createManagedTable}. */
@@ -221,6 +275,20 @@ public class UCKernelDeltaTablesLiveE2ETest extends UnityCatalogSupport {
    */
   private CreatedTable createManagedTable(
       UnityCatalogInfo uc, Engine engine, UCCatalogManagedClient catalogClient) throws Exception {
+    return createManagedTable(uc, engine, catalogClient, null);
+  }
+
+  /**
+   * Reserves a staging table and runs the kernel create-table transaction. When {@code dataLayout}
+   * is non-null it is applied to the create transaction (e.g. clustering), so the write and the
+   * Delta-Tables finalize carry the layout.
+   */
+  private CreatedTable createManagedTable(
+      UnityCatalogInfo uc,
+      Engine engine,
+      UCCatalogManagedClient catalogClient,
+      DataLayoutSpec dataLayout)
+      throws Exception {
     String tableName = "kernel_e2e_" + UUID.randomUUID().toString().replace("-", "");
     UCTableIdentifier identifier =
         new UCTableIdentifier(uc.catalogName(), uc.schemaName(), tableName);
@@ -239,11 +307,14 @@ public class UCKernelDeltaTablesLiveE2ETest extends UnityCatalogSupport {
     // Honor the server's required protocol/properties from the staging response (the OSS server
     // requires catalog-managed tables to carry features/properties beyond the defaults that
     // buildCreateTableTransaction sets).
-    catalogClient
-        .buildCreateTableTransaction(ucTableId, tablePath, TEST_SCHEMA, ENGINE_INFO, identifier)
-        .withTableProperties(requiredFeatureProperties(staging))
-        .build(engine)
-        .commit(engine, CloseableIterable.emptyIterable());
+    CreateTableTransactionBuilder createBuilder =
+        catalogClient
+            .buildCreateTableTransaction(ucTableId, tablePath, TEST_SCHEMA, ENGINE_INFO, identifier)
+            .withTableProperties(requiredFeatureProperties(staging));
+    if (dataLayout != null) {
+      createBuilder = createBuilder.withDataLayoutSpec(dataLayout);
+    }
+    createBuilder.build(engine).commit(engine, CloseableIterable.emptyIterable());
 
     // The server's required *properties* (as opposed to required features, which land in the
     // protocol) persist verbatim into table metadata, so tests can assert they round-tripped.
@@ -266,22 +337,16 @@ public class UCKernelDeltaTablesLiveE2ETest extends UnityCatalogSupport {
 
   @Test
   public void insertData_thenReadBack_roundTripsThroughUpdateTable() throws Exception {
-    UnityCatalogInfo uc = unityCatalogInfo();
-    Engine engine = newEngine();
+    CreatedTable table = createManagedTable(uc, engine, catalogClient);
 
-    try (UCDeltaTokenBasedRestClient deltaClient = newDeltaClient(uc)) {
-      UCCatalogManagedClient catalogClient = new UCCatalogManagedClient(deltaClient);
-      CreatedTable table = createManagedTable(uc, engine, catalogClient);
+    // INSERT: append 3 rows to the v0 table through the update-table (V1+) commit path.
+    Snapshot v0 = loadAtVersion(catalogClient, engine, table, 0L);
+    insertRows(engine, v0, 3);
 
-      // INSERT: append 3 rows to the v0 table through the update-table (V1+) commit path.
-      Snapshot v0 = loadAtVersion(catalogClient, engine, table, 0L);
-      insertRows(engine, v0, 3);
-
-      // READ: reload at the new version and scan the data back, asserting the exact rows written.
-      Snapshot v1 = loadAtVersion(catalogClient, engine, table, 1L);
-      assertThat(v1.getVersion()).isEqualTo(1L);
-      assertThat(readRows(engine, v1)).containsExactlyInAnyOrder("0=row-0", "1=row-1", "2=row-2");
-    }
+    // READ: reload at the new version and scan the data back, asserting the exact rows written.
+    Snapshot v1 = loadAtVersion(catalogClient, engine, table, 1L);
+    assertThat(v1.getVersion()).isEqualTo(1L);
+    assertThat(readRows(engine, v1)).containsExactlyInAnyOrder("0=row-0", "1=row-1", "2=row-2");
   }
 
   /** Appends {@code rowCount} rows of test data to {@code snapshot} via a WRITE transaction. */
