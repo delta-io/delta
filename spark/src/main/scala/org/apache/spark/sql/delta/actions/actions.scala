@@ -39,6 +39,7 @@ import org.apache.spark.sql.delta.util.PartitionUtils
 import com.fasterxml.jackson.annotation._
 import com.fasterxml.jackson.annotation.JsonInclude.Include
 import com.fasterxml.jackson.core.{JsonGenerator, JsonParser}
+import com.fasterxml.jackson.core.`type`.TypeReference
 import com.fasterxml.jackson.databind._
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
 import com.fasterxml.jackson.databind.node.ObjectNode
@@ -909,6 +910,7 @@ case class AddFile(
     modificationTime: Long,
     override val dataChange: Boolean,
     override val stats: String = null,
+    @JsonDeserialize(using = classOf[NullPreservingStringMapDeserializer])
     override val tags: Map[String, String] = null,
     override val deletionVector: DeletionVectorDescriptor = null,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
@@ -1146,9 +1148,11 @@ case class RemoveFile(
     deletionTimestamp: Option[Long],
     override val dataChange: Boolean = true,
     extendedFileMetadata: Option[Boolean] = None,
+    @JsonDeserialize(using = classOf[NullPreservingStringMapDeserializer])
     partitionValues: Map[String, String] = null,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     size: Option[Long] = None,
+    @JsonDeserialize(using = classOf[NullPreservingStringMapDeserializer])
     override val tags: Map[String, String] = null,
     override val deletionVector: DeletionVectorDescriptor = null,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
@@ -1206,6 +1210,7 @@ case class AddCDCFile(
     @JsonInclude(JsonInclude.Include.ALWAYS)
     partitionValues: Map[String, String],
     size: Long,
+    @JsonDeserialize(using = classOf[NullPreservingStringMapDeserializer])
     override val tags: Map[String, String] = null,
     override val stats: String = null) extends FileAction with HasNumRecords {
   override val dataChange = false
@@ -1658,6 +1663,7 @@ case class SidecarFile(
     path: String,
     sizeInBytes: Long,
     modificationTime: Long,
+    @JsonDeserialize(using = classOf[NullPreservingStringMapDeserializer])
     tags: Map[String, String] = null,
     // Applicable only for AMT checkpoint sidecars.
     // Sidecars corresponding to V2Checkpoints do not have concept of sidecarType.
@@ -1697,6 +1703,7 @@ object SidecarFile {
  */
 case class CheckpointMetadata(
     version: Long,
+    @JsonDeserialize(using = classOf[NullPreservingStringMapDeserializer])
     tags: Map[String, String] = null)
   extends CheckpointOnlyAction {
 
@@ -1892,6 +1899,13 @@ class JsonMapDeserializer extends JsonDeserializer[Map[String, String]] {
     val map = ctxt.readValue(jp, classOf[Map[String, Any]])
     map.mapValues(JsonUtils.toJson(_)).toMap
   }
+}
+
+class NullPreservingStringMapDeserializer extends JsonDeserializer[Map[String, String]] {
+  override def deserialize(
+      jp: JsonParser,
+      ctxt: DeserializationContext): Map[String, String] =
+    jp.readValueAs(new TypeReference[Map[String, String]] {})
 }
 
 /**
