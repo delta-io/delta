@@ -291,15 +291,16 @@ object SparkVersionSpec {
     jacksonVersion = "2.18.2"
   )
 
-  private val spark42Preview = SparkVersionSpec(
-    fullVersion = "4.2.0-preview5",
+  private val spark42 = SparkVersionSpec(
+    fullVersion = "4.2.0",
     targetJvm = "17",
     additionalSourceDir = Some("scala-shims/spark-4.2"),
     supportIceberg = false,
     supportHudi = false,
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,
-    jacksonVersion = "2.18.2"
+    jacksonVersion = "2.21.2",
+    jacksonAnnotationsVersion = Some("2.21")
   )
 
   /** Default Spark version */
@@ -309,7 +310,7 @@ object SparkVersionSpec {
   val MASTER: Option[SparkVersionSpec] = None
 
   /** All supported Spark versions - internal use only */
-  val ALL_SPECS = Seq(spark40, spark41, spark42Preview)
+  val ALL_SPECS = Seq(spark40, spark41, spark42)
 }
 
 /** See docs on top of this file */

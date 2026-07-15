@@ -927,7 +927,15 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     }
 
     // Verify basic table properties
-    assertThat(describeResult.get("Name")).isEqualTo(fullTableName);
+    if (sparkVersion().startsWith("4.2")) {
+      // Spark 4.2 reports V2 identifiers as structured rows instead of a single `Name` row.
+      assertThat(describeResult.get("Catalog")).isEqualTo(catalogName);
+      assertThat(describeResult.get("Namespace")).isEqualTo(schemaName);
+      assertThat(describeResult.get("Database")).isEqualTo(schemaName);
+      assertThat(describeResult.get("Table")).isEqualTo(parseTableName(fullTableName));
+    } else {
+      assertThat(describeResult.get("Name")).isEqualTo(fullTableName);
+    }
     assertThat(describeResult.get("Type")).isEqualTo(tableType.name());
     assertThat(describeResult.get("Provider")).isEqualToIgnoringCase("delta");
     assertThat(describeResult.get("Is_managed_location"))

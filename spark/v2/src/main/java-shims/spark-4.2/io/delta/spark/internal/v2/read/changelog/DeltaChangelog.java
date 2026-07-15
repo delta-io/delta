@@ -67,7 +67,7 @@ public class DeltaChangelog implements Changelog {
             .add("_commit_version", DataTypes.LongType, false)
             .add("_commit_timestamp", DataTypes.TimestampType, false);
 
-    return CatalogV2Util.structTypeToV2Columns(cdcSchema);
+    return CatalogV2Util.structTypeToV2Columns(cdcSchema, true);
   }
 
   // TODO: optimise to false when deletion vectors are guaranteed enabled across the entire

@@ -162,6 +162,14 @@ def resolveSparkVersion(deltaVersion: String): String = {
   else lookupSparkVersion.apply(getMajorMinor(deltaVersion))
 }
 
+// Keep the example and UC classpaths aligned with the selected Spark release.
+def resolveJacksonVersions(sparkVersion: String): (String, String) = {
+  getMajorMinor(sparkVersion) match {
+    case (4, minor) if minor >= 2 => ("2.21.2", "2.21")
+    case _ => (jacksonVersion, jacksonVersion)
+  }
+}
+
 // The OSS Unity Catalog project publishes one Spark connector artifact per Spark major.minor
 // (e.g. unitycatalog-spark_4.1_2.13) and, unlike delta-spark, has no unsuffixed backward-compat
 // variant. So its suffix must track the resolved Spark version -- matching what
@@ -241,15 +249,18 @@ lazy val root = (project in file("."))
         ExclusionRule(organization = "com.fasterxml.jackson.dataformat")
       )
     ),
-    dependencyOverrides ++= Seq(
-      "com.fasterxml.jackson.core" % "jackson-core" % jacksonVersion,
-      "com.fasterxml.jackson.core" % "jackson-annotations" % jacksonVersion,
-      "com.fasterxml.jackson.core" % "jackson-databind" % jacksonVersion,
-      "com.fasterxml.jackson.module" %% "jackson-module-scala" % jacksonVersion,
-      "com.fasterxml.jackson.dataformat" % "jackson-dataformat-yaml" % jacksonVersion,
-      "com.fasterxml.jackson.datatype" % "jackson-datatype-jsr310" % jacksonVersion,
-      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % jacksonVersion
-    ),
+    dependencyOverrides ++= {
+      val (jacksonVersion, jacksonAnnotationsVersion) =
+        resolveJacksonVersions(resolveSparkVersion(getDeltaVersion.value))
+      Seq(
+        "com.fasterxml.jackson.core" % "jackson-core" % jacksonVersion,
+        "com.fasterxml.jackson.core" % "jackson-annotations" % jacksonAnnotationsVersion,
+        "com.fasterxml.jackson.core" % "jackson-databind" % jacksonVersion,
+        "com.fasterxml.jackson.module" %% "jackson-module-scala" % jacksonVersion,
+        "com.fasterxml.jackson.dataformat" % "jackson-dataformat-yaml" % jacksonVersion,
+        "com.fasterxml.jackson.datatype" % "jackson-datatype-jsr310" % jacksonVersion,
+        "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % jacksonVersion)
+    },
     extraMavenRepo,
     resolvers += Resolver.mavenLocal,
     scalacOptions ++= Seq(

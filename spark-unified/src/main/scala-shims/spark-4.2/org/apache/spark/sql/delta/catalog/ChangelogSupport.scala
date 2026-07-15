@@ -20,10 +20,11 @@ import io.delta.spark.internal.v2.catalog.DeltaV2Table
 import io.delta.spark.internal.v2.read.changelog.DeltaChangelog
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.connector.catalog.{Changelog, ChangelogInfo, Identifier, TableCatalog}
+import org.apache.spark.sql.connector.catalog.{Changelog, ChangelogContext, Identifier, TableCatalog}
 import org.apache.spark.sql.connector.catalog.ChangelogRange.{TimestampRange, UnboundedRange, VersionRange}
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaV2Mode}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
  * Mixed into a [[TableCatalog]] implementation to add read-time CDF support. Provides the
@@ -47,12 +48,15 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
  */
 trait ChangelogSupport extends TableCatalog {
 
-  override def loadChangelog(ident: Identifier, changelogInfo: ChangelogInfo): Changelog = {
+  override def loadChangelog(
+      ident: Identifier,
+      context: ChangelogContext,
+      options: CaseInsensitiveStringMap): Changelog = {
     val spark = SparkSession.active
     if (!spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CHANGELOG_V2_ENABLED)) {
       // Feature gated off: fall back to the parent's default, which surfaces
       // UNSUPPORTED_FEATURE.CHANGE_DATA_CAPTURE to the user.
-      return super.loadChangelog(ident, changelogInfo)
+      return super.loadChangelog(ident, context, options)
     }
     val routeChangelogToV2 = new DeltaV2Mode(spark.sessionState.conf).shouldRouteChangelogToV2()
     val sparkTable = loadTable(ident) match {
@@ -63,7 +67,7 @@ trait ChangelogSupport extends TableCatalog {
       case other =>
         DeltaErrors.throwChangelogRequiresV2Table(ident.toString, other.getClass.getName)
     }
-    val (startVersion, endVersion) = resolveRange(sparkTable, changelogInfo.range())
+    val (startVersion, endVersion) = resolveRange(sparkTable, context.range())
     new DeltaChangelog(ident.name(), sparkTable, startVersion, endVersion)
   }
 

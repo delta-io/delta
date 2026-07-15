@@ -108,7 +108,7 @@ class SparkVersionSpec:
 SPARK_VERSIONS: Dict[str, SparkVersionSpec] = {
     "4.0.1": SparkVersionSpec(suffix="_4.0", support_iceberg=True, support_hudi=True),
     "4.1.0": SparkVersionSpec(suffix="_4.1", support_iceberg=True, support_hudi=False),
-    "4.2.0-preview5": SparkVersionSpec(suffix="_4.2", support_iceberg=False, support_hudi=False)
+    "4.2.0": SparkVersionSpec(suffix="_4.2", support_iceberg=False, support_hudi=False)
 }
 
 # The default Spark version

@@ -32,6 +32,7 @@ import io.delta.spark.internal.v2.read.MetadataEvolutionHandler;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
+import io.delta.spark.internal.v2.utils.CatalogV2UtilShims;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import io.delta.spark.internal.v2.write.DeltaRowLevelOperationBuilder;
 import io.delta.spark.internal.v2.write.DeltaV2WriteBuilder;
@@ -51,7 +52,6 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
-import org.apache.spark.sql.connector.catalog.CatalogV2Util;
 import org.apache.spark.sql.connector.catalog.Column;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.MetadataColumn;
@@ -395,7 +395,7 @@ public class DeltaV2Table
 
   @Override
   public Column[] columns() {
-    return CatalogV2Util.structTypeToV2Columns(schema());
+    return CatalogV2UtilShims.structTypeToV2Columns(schema());
   }
 
   @Override

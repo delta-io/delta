@@ -19,10 +19,10 @@ package io.delta.internal
 import io.delta.spark.internal.v2.catalog.DeltaV2Table
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.analysis.ChangelogInfoUtils
+import org.apache.spark.sql.catalyst.analysis.ChangelogContextUtils
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule
-import org.apache.spark.sql.connector.catalog.{ChangelogInfo, Identifier}
+import org.apache.spark.sql.connector.catalog.{ChangelogContext, Identifier}
 import org.apache.spark.sql.delta.{DeltaErrors, TableChanges}
 import org.apache.spark.sql.delta.catalog.{ChangelogSupport, DeltaV2TableMarker}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -74,18 +74,18 @@ class ResolveTableChangesV2(session: SparkSession) extends Rule[LogicalPlan] {
       ident: Identifier,
       options: CaseInsensitiveStringMap): LogicalPlan = {
     rejectUnsupportedOptions(options)
-    // We can use [[ChangelogInfoUtils.fromOptions]] directly here because Spark's CDC options
-    // match Delta's CDF options, e.p. startingVersion, endingVersion.
-    val baseInfo = ChangelogInfoUtils.fromOptions(
+    // We can use [[ChangelogContextUtils.fromOptions]] directly here because Spark's CDC options
+    // match Delta's CDF options, e.g. startingVersion, endingVersion.
+    val baseContext = ChangelogContextUtils.fromOptions(
       options,
       session.sessionState.conf.sessionLocalTimeZone)
-    val info = new ChangelogInfo(
-      baseInfo.range(),
-      ChangelogInfo.DeduplicationMode.DROP_CARRYOVERS,
+    val context = new ChangelogContext(
+      baseContext.range(),
+      ChangelogContext.DeduplicationMode.DROP_CARRYOVERS,
       /* computeUpdates = */ true)
-    val changelog = catalog.loadChangelog(ident, info)
+    val changelog = catalog.loadChangelog(ident, context, options)
     DataSourceV2Relation.create(
-      ChangelogTable(changelog, info), Some(catalog), Some(ident), options)
+      ChangelogTable(changelog, context), Some(catalog), Some(ident), options)
   }
 
   /**
