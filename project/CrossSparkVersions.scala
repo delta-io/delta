@@ -220,6 +220,7 @@ case class SparkVersionSpec(
   antlr4Version: String,
   additionalJavaOptions: Seq[String] = Seq.empty,
   jacksonVersion: String = "2.15.2",
+  jacksonAnnotationsVersion: Option[String] = None,
   additionalResolvers: Seq[Resolver] = Seq.empty
 ) {
   /** Returns the Spark short version (e.g., "3.5", "4.0") */
@@ -294,7 +295,8 @@ object SparkVersionSpec {
     supportHudi = false,
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,
-    jacksonVersion = "2.18.2"
+    jacksonVersion = "2.21.2",
+    jacksonAnnotationsVersion = Some("2.21")
   )
 
   /** Default Spark version */
@@ -412,13 +414,14 @@ object CrossSparkVersions extends AutoPlugin {
     val jacksonOverrides = Seq(
       dependencyOverrides ++= {
         val sparkVer = sparkVersionKey.value
-        val jacksonVer = SparkVersionSpec.ALL_SPECS.find(_.fullVersion == sparkVer)
+        val selectedSpec = SparkVersionSpec.ALL_SPECS.find(_.fullVersion == sparkVer)
           .getOrElse(throw new IllegalArgumentException(s"Unknown Spark version: $sparkVer"))
-          .jacksonVersion
+        val jacksonVer = selectedSpec.jacksonVersion
         Seq(
           "com.fasterxml.jackson.core" % "jackson-databind" % jacksonVer,
           "com.fasterxml.jackson.core" % "jackson-core" % jacksonVer,
-          "com.fasterxml.jackson.core" % "jackson-annotations" % jacksonVer,
+          "com.fasterxml.jackson.core" % "jackson-annotations" %
+            selectedSpec.jacksonAnnotationsVersion.getOrElse(jacksonVer),
           "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % jacksonVer,
           "com.fasterxml.jackson.module" %% "jackson-module-scala" % jacksonVer
         )
