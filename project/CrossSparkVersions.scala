@@ -220,6 +220,7 @@ case class SparkVersionSpec(
   antlr4Version: String,
   additionalJavaOptions: Seq[String] = Seq.empty,
   jacksonVersion: String = "2.15.2",
+  jacksonAnnotationsVersion: Option[String] = None,
   additionalResolvers: Seq[Resolver] = Seq.empty
 ) {
   /** Returns the Spark short version (e.g., "3.5", "4.0") */
@@ -237,6 +238,10 @@ case class SparkVersionSpec(
 
   /** Returns log4j config file */
   def log4jConfig: String = "log4j2.properties"
+
+  /** Jackson annotations stopped publishing patch-versioned artifacts in the 2.20 line. */
+  def effectiveJacksonAnnotationsVersion: String =
+    jacksonAnnotationsVersion.getOrElse(jacksonVersion)
 
   /** Whether this is an unreleased snapshot or master version */
   def isSnapshot: Boolean = isMaster || fullVersion.contains("SNAPSHOT")
@@ -412,13 +417,14 @@ object CrossSparkVersions extends AutoPlugin {
     val jacksonOverrides = Seq(
       dependencyOverrides ++= {
         val sparkVer = sparkVersionKey.value
-        val jacksonVer = SparkVersionSpec.ALL_SPECS.find(_.fullVersion == sparkVer)
+        val selectedSpec = SparkVersionSpec.ALL_SPECS.find(_.fullVersion == sparkVer)
           .getOrElse(throw new IllegalArgumentException(s"Unknown Spark version: $sparkVer"))
-          .jacksonVersion
+        val jacksonVer = selectedSpec.jacksonVersion
         Seq(
           "com.fasterxml.jackson.core" % "jackson-databind" % jacksonVer,
           "com.fasterxml.jackson.core" % "jackson-core" % jacksonVer,
-          "com.fasterxml.jackson.core" % "jackson-annotations" % jacksonVer,
+          "com.fasterxml.jackson.core" % "jackson-annotations" %
+            selectedSpec.effectiveJacksonAnnotationsVersion,
           "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % jacksonVer,
           "com.fasterxml.jackson.module" %% "jackson-module-scala" % jacksonVer
         )

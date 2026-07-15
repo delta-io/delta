@@ -839,7 +839,9 @@ def isAtLeastVersion(current: String, target: String): Boolean = {
     .forall { case (a, b) => a >= b }
 }
 
-val sparkUnityCatalogJacksonVersion = "2.15.4" // We are using Spark 4.0's Jackson version 2.15.x, to override Unity Catalog 0.3.0's version 2.18.x
+val sparkUnityCatalogJacksonVersion = CrossSparkVersions.getSparkVersionSpec().jacksonVersion
+val sparkUnityCatalogJacksonAnnotationsVersion =
+  CrossSparkVersions.getSparkVersionSpec().effectiveJacksonAnnotationsVersion
 
 // Publishes the pinned UC jars to ~/.ivy2/local if they're not already cached there. Hooked
 // into `update` on the UC-dependent projects below, so plain `sbt testOnly ...` on a clean
@@ -867,12 +869,12 @@ def publishPinnedUnityCatalog(log: sbt.util.Logger, canary: java.io.File): Unit 
   val procLogger = ProcessLogger(
     line => log.info(s"[UC setup] $line"),
     line => log.warn(s"[UC setup] $line"))
-  // SPARK_VERSION tells the script which Spark variant to build (forwarded to UC's sbt as
-  // -DsparkVersion).
+  val sparkSpec = CrossSparkVersions.getSparkVersionSpec()
   val exit = Process(
     Seq("bash", unityCatalogSetupScript),
     None,
-    "SPARK_VERSION" -> CrossSparkVersions.getSparkVersionSpec().shortVersion).!(procLogger)
+    "SPARK_VERSION" -> sparkSpec.shortVersion,
+    "SPARK_ARTIFACT_VERSION" -> sparkSpec.fullVersion).!(procLogger)
   if (exit != 0) {
     sys.error(
       s"[UC] $unityCatalogSetupScript exited with code $exit. Run it manually to see full output.")
@@ -939,7 +941,8 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
     // This overrides Jackson from Unity Catalog's transitive dependencies (e.g., Armeria)
     dependencyOverrides ++= Seq(
       "com.fasterxml.jackson.core" % "jackson-core" % sparkUnityCatalogJacksonVersion,
-      "com.fasterxml.jackson.core" % "jackson-annotations" % sparkUnityCatalogJacksonVersion,
+      "com.fasterxml.jackson.core" % "jackson-annotations" %
+        sparkUnityCatalogJacksonAnnotationsVersion,
       "com.fasterxml.jackson.core" % "jackson-databind" % sparkUnityCatalogJacksonVersion,
       "com.fasterxml.jackson.module" %% "jackson-module-scala" % sparkUnityCatalogJacksonVersion,
       "com.fasterxml.jackson.dataformat" % "jackson-dataformat-yaml" % sparkUnityCatalogJacksonVersion,
@@ -958,7 +961,7 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
       "org.projectlombok" % "lombok" % "1.18.34" % "test",
 
       // Unity Catalog dependencies - per-Spark-version artifact (unitycatalog-spark_4.X_2.13).
-      // Exclude Jackson to use Spark's Jackson 2.15.x
+      // Exclude Jackson to use the selected Spark release's Jackson version.
       "io.unitycatalog" %% s"unitycatalog-spark_${CrossSparkVersions.getSparkVersionSpec().shortVersion}" % unityCatalogVersion % "test" excludeAll(
         ExclusionRule(organization = "com.fasterxml.jackson.core"),
         ExclusionRule(organization = "com.fasterxml.jackson.module"),

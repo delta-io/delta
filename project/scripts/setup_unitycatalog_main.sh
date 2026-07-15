@@ -63,6 +63,8 @@
 #                 CrossSparkVersions when invoking the script; matrix CI workflows set it from
 #                 `matrix.spark_version`. Workflows that don't care which Spark variant UC builds
 #                 (kernel/flink/etc.) inherit the in-script fallback below.
+#   SPARK_ARTIFACT_VERSION
+#                 Exact Spark artifact UC should compile against (for example, 4.2.0).
 #
 # Modes of operation:
 #   1. Pinned SHA (default, PR CI): UC_REF defaults to UC_PIN_SHA, version is computed as
@@ -83,7 +85,7 @@ set -euo pipefail
 # The pin. Bump both lines together if UC's version.sbt changed at the new SHA. build.sbt's
 # `unityCatalogVersion` is obtained by running this script with `--print-version`, so these two
 # values are the single source of truth.
-UC_PIN_SHA=0f1445227bd251b386420c90136515daefa4e03d
+UC_PIN_SHA=a68cbc5ce92e1bd022977851e6ad4e6b795567a9
 UC_BASE_VERSION=0.5.0-SNAPSHOT
 # ---------------------------------------------------------------------------------------------
 
@@ -92,6 +94,7 @@ UC_REPO="${UC_REPO:-https://github.com/unitycatalog/unitycatalog.git}"
 UC_REF="${UC_REF:-$UC_PIN_SHA}"
 UC_FORCE="${UC_FORCE:-0}"
 SPARK_VERSION="${SPARK_VERSION:-4.1}"
+SPARK_ARTIFACT_VERSION="${SPARK_ARTIFACT_VERSION:-}"
 DELTA_RELEASE_MODE="${DELTA_RELEASE_MODE:-0}"
 
 # Compose version coordinate. When UC_VERSION is set from env, use it verbatim (no SHA suffix).
@@ -198,6 +201,11 @@ fi
 # coordinate. Applied as a persistent setting so it sticks across the two sbt invocations below.
 SET_VERSION_CMD="set ThisBuild / version := \"$UC_VERSION\""
 
+SPARK_ARTIFACT_VERSION_ARGS=()
+if [[ -n "$SPARK_ARTIFACT_VERSION" ]]; then
+  SPARK_ARTIFACT_VERSION_ARGS+=("-DsparkArtifactVersion=$SPARK_ARTIFACT_VERSION")
+fi
+
 # Force publishLocal / publishM2 to overwrite existing artifacts. UC artifacts at the same
 # coordinate can be left behind from a prior run (e.g. cross-Spark publish re-invokes this
 # script for a different sparkVersion while client/server/hadoop are already in ~/.ivy2/local
@@ -240,6 +248,7 @@ echo ">>> Publishing UC spark connector for Spark $SPARK_VERSION"
 for attempt in 1 2 3; do
   if ./build/sbt \
     -DsparkVersion="$SPARK_VERSION" \
+    "${SPARK_ARTIFACT_VERSION_ARGS[@]}" \
     -DskipDeltaSpark=true \
     "$SET_VERSION_CMD" \
     "${SET_OVERWRITE_CMDS[@]}" \
