@@ -401,22 +401,44 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
       String schemaName,
       String storageLocation,
       List<ColumnDef> columns,
-      Map<String, String> properties) throws CommitFailedException {
+      AbstractProtocol protocol,
+      Map<String, String> properties,
+      long lastCommitTimestampMs,
+      List<AbstractDomainMetadata> domainMetadata) throws CommitFailedException {
     ensureOpen();
     Objects.requireNonNull(tableName, "tableName must not be null");
     Objects.requireNonNull(catalogName, "catalogName must not be null");
     Objects.requireNonNull(schemaName, "schemaName must not be null");
     Objects.requireNonNull(storageLocation, "storageLocation must not be null");
     Objects.requireNonNull(columns, "columns must not be null");
+    Objects.requireNonNull(protocol, "protocol must not be null");
     Objects.requireNonNull(properties, "properties must not be null");
+    Objects.requireNonNull(domainMetadata, "domainMetadata must not be null");
 
     DeltaCreateTableRequest sdkRequest = new DeltaCreateTableRequest()
         .name(tableName)
         .location(storageLocation)
-        .properties(properties);
+        .tableType(DeltaTableType.MANAGED)
+        .protocol(toSDKDeltaProtocol(protocol))
+        .properties(properties)
+        .lastCommitTimestampMs(lastCommitTimestampMs);
 
     if (!columns.isEmpty()) {
       sdkRequest.columns(UCDeltaSchemaConverter.toUCStructType(columns));
+    }
+
+    try {
+      DeltaDomainMetadataUpdates updates = toSDKDomainMetadataUpdates(domainMetadata);
+      if (updates != null) {
+        sdkRequest.domainMetadata(updates);
+      }
+    } catch (IOException e) {
+      throw new CommitFailedException(
+          false /* retryable */,
+          false /* conflict */,
+          String.format("Failed to convert domain metadata for table %s.%s.%s: %s",
+              catalogName, schemaName, tableName, e.getMessage()),
+          e);
     }
 
     try {
@@ -896,10 +918,8 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
           .comment(newMetadata.getDescription()));
     }
 
-    Map<String, String> oldConfig = oldMetadata.getConfiguration() != null
-        ? oldMetadata.getConfiguration() : Collections.emptyMap();
-    Map<String, String> newConfig = newMetadata.getConfiguration() != null
-        ? newMetadata.getConfiguration() : Collections.emptyMap();
+    Map<String, String> oldConfig = oldMetadata.getConfiguration();
+    Map<String, String> newConfig = newMetadata.getConfiguration();
 
     if (!Objects.equals(oldConfig, newConfig)) {
       Map<String, String> toSet = new LinkedHashMap<>();

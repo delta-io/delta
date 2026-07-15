@@ -25,7 +25,7 @@ import scala.collection.mutable.ArrayBuffer
 import io.delta.kernel.commit.{CommitFailedException, CommitMetadata}
 import io.delta.kernel.commit.CommitMetadata.CommitType
 import io.delta.kernel.data.Row
-import io.delta.kernel.internal.actions.{Metadata, Protocol}
+import io.delta.kernel.internal.actions.{DomainMetadata, Metadata, Protocol}
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.util.{Tuple2 => KernelTuple2}
 import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils, TestFixtures, VectorTestUtils}
@@ -244,6 +244,52 @@ class UCCatalogManagedCommitterSuite
       assert(latestProtocol.getReaderFeatures === protocolUpgrade.getReaderFeatures)
       assert(latestProtocol.getWriterFeatures === protocolUpgrade.getWriterFeatures)
       assert(latestMetadata.getConfiguration === metadataUpgrade.getConfiguration)
+    }
+  }
+
+  test("CATALOG_WRITE: read-side (old) P&M and domain metadata are forwarded to UC client") {
+    withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
+      // ===== GIVEN =====
+      val ucClient = new InMemoryUCClient("ucMetastoreId")
+      ucClient.insertTableDataAfterCreate(testUcTableId)
+      val committer = new UCCatalogManagedCommitter(ucClient, testUcTableId, tablePath)
+
+      val readProtocol = protocolWithCatalogManagedSupport
+      val readMetadata = basicPartitionedMetadata
+      val newProtocol = readProtocol.withFeature(TableFeatures.DELETION_VECTORS_RW_FEATURE)
+      val newMetadata = readMetadata.withMergedConfiguration(Map("foo" -> "bar").asJava)
+      val liveDomain = new DomainMetadata("delta.clustering", """{"a":1}""", false)
+      val removedDomain = new DomainMetadata("delta.rowTracking", """{"b":2}""", true)
+
+      val commitMetadata = createCommitMetadata(
+        version = 1,
+        logPath = logPath,
+        commitDomainMetadatas = List(liveDomain, removedDomain),
+        readPandMOpt =
+          Optional.of(new KernelTuple2[Protocol, Metadata](readProtocol, readMetadata)),
+        newProtocolOpt = Optional.of(newProtocol),
+        newMetadataOpt = Optional.of(newMetadata))
+
+      // ===== WHEN =====
+      committer.commit(defaultEngine, emptyActionsIterator, commitMetadata)
+
+      // ===== THEN =====
+      // The committer must forward the read-side (old) P&M so the UCDeltaClient can diff
+      // old-vs-new, and forward the transaction's domain metadata. (The UCClient ignores these;
+      // asserting they arrive guards the committer's forwarding, not the UCClient's behavior.)
+      val tableData = ucClient.getTablesCopy.get(testUcTableId).get
+      assert(tableData.getLastOldProtocolOpt.isDefined, "old protocol should be forwarded")
+      assert(tableData.getLastOldMetadataOpt.isDefined, "old metadata should be forwarded")
+      assert(
+        tableData.getLastOldProtocolOpt.get.getReaderFeatures === readProtocol.getReaderFeatures)
+      assert(
+        tableData.getLastOldMetadataOpt.get.getConfiguration === readMetadata.getConfiguration)
+      val forwardedDomains = tableData.getLastDomainMetadatas
+        .map(dm => (dm.getDomain, dm.getConfiguration, dm.isRemoved))
+      assert(
+        forwardedDomains === Seq(
+          ("delta.clustering", """{"a":1}""", false),
+          ("delta.rowTracking", """{"b":2}""", true)))
     }
   }
 
