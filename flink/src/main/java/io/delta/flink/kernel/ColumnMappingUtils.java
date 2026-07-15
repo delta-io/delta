@@ -32,13 +32,10 @@ public final class ColumnMappingUtils {
    * Convert a (logical) schema into its physical schema by renaming every field to its physical
    * name.
    *
-   * <p>Under Delta column mapping the {@link StructField#getName() field name} stays the logical
-   * name while the physical name lives in the field metadata under {@link
-   * ColumnMapping#COLUMN_MAPPING_PHYSICAL_NAME_KEY}. Several Kernel APIs — notably {@code
-   * DataFileStatistics.serializeAsJson}/{@code deserializeFromJson} and the Parquet read schema —
-   * key on {@code field.getName()} and expect the names to already be physical. This method
-   * produces such a schema: each field is renamed to its physical name when the metadata is
-   * present, recursing into nested struct/array/map types.
+   * <p>Several Kernel APIs — {@code DataFileStatistics.serializeAsJson}/{@code deserializeFromJson}
+   * and the Parquet read schema expect the names to already be physical. This method produces such
+   * a schema: each field is renamed to its physical name when the metadata is present, recursing
+   * into nested struct/array/map types.
    *
    * <p>For tables without column mapping (mode {@code NONE}) the fields carry no physical-name
    * metadata, so the schema is returned effectively unchanged (logical name == physical name).
