@@ -14,6 +14,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalInt;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.catalyst.TableIdentifier;
 import org.apache.spark.sql.catalyst.catalog.CatalogColumnStat;
@@ -1851,5 +1852,173 @@ public class DeltaV2ScanTest extends DeltaV2TestBase {
       b.$plus$eq(new scala.Tuple2<>(keys[i], values[i]));
     }
     return (scala.collection.immutable.Map<String, CatalogColumnStat>) b.result();
+  }
+
+  // Limit Pushdown Tests
+
+  @Test
+  public void testLimitPushdown_descriptionIncludesLimit() {
+    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    builder.pushLimit(10);
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    assertTrue(
+        scan.description().contains("PushedLimit: 10"),
+        "description should include the pushed limit");
+  }
+
+  @Test
+  public void testLimitPushdown_descriptionOmitsLimitWhenAbsent() {
+    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    assertFalse(
+        scan.description().contains("PushedLimit"),
+        "description should not mention PushedLimit when no limit is pushed");
+  }
+
+  @Test
+  public void testLimitPushdown_equalHashCodeWithSameLimit() {
+    DeltaV2Scan scan1 = buildScanWithLimit(10);
+    DeltaV2Scan scan2 = buildScanWithLimit(10);
+    assertEquals(scan1, scan2);
+    assertEquals(scan1.hashCode(), scan2.hashCode());
+  }
+
+  @Test
+  public void testLimitPushdown_notEqualWithDifferentLimit() {
+    DeltaV2Scan scan1 = buildScanWithLimit(5);
+    DeltaV2Scan scan2 = buildScanWithLimit(100);
+    assertNotEquals(scan1, scan2);
+    assertNotEquals(scan1.hashCode(), scan2.hashCode());
+  }
+
+  @Test
+  public void testLimitPushdown_notEqualWithAndWithoutLimit() {
+    DeltaV2Scan withoutLimit =
+        (DeltaV2Scan) ((DeltaV2ScanBuilder) table.newScanBuilder(options)).build();
+    DeltaV2Scan withLimit = buildScanWithLimit(10);
+    assertNotEquals(withoutLimit, withLimit);
+    assertNotEquals(withoutLimit.hashCode(), withLimit.hashCode());
+  }
+
+  @Test
+  public void testLimitPushdown_noLimitPlansAllFiles() throws Exception {
+    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    // The shared partitioned test table has 5 single-row files.
+    assertEquals(
+        5, getPartitionedFiles(scan).size(), "all files should be planned without a limit");
+  }
+
+  @Test
+  public void testLimitPushdown_limit0PlansNoFiles() throws Exception {
+    DeltaV2Scan scan = buildScanWithLimit(0);
+    assertEquals(0, getPartitionedFiles(scan).size(), "LIMIT 0 should plan zero files");
+    assertEquals(0, getTotalBytes(scan), "LIMIT 0 should read zero bytes");
+    assertEquals(0, getEstimatedSizeInBytes(scan), "LIMIT 0 should estimate zero size");
+  }
+
+  @Test
+  public void testLimitPushdown_prunesFilesForSmallLimit() throws Exception {
+    // The partitioned test table has 5 one-row files. LIMIT 1 needs exactly one.
+    DeltaV2Scan scan = buildScanWithLimit(1);
+    List<PartitionedFile> files = getPartitionedFiles(scan);
+    assertEquals(1, files.size(), "LIMIT 1 over single-row files should plan exactly one file");
+
+    DeltaV2Scan unlimited =
+        (DeltaV2Scan) ((DeltaV2ScanBuilder) table.newScanBuilder(options)).build();
+    assertTrue(
+        getTotalBytes(scan) <= getTotalBytes(unlimited),
+        "planned bytes with a limit should not exceed the full-scan bytes");
+  }
+
+  @Test
+  public void testLimitPushdown_getterReflectsBuilder() {
+    assertEquals(OptionalInt.of(7), buildScanWithLimit(7).getPushedLimit());
+    DeltaV2Scan noLimit =
+        (DeltaV2Scan) ((DeltaV2ScanBuilder) table.newScanBuilder(options)).build();
+    assertEquals(OptionalInt.empty(), noLimit.getPushedLimit());
+  }
+
+  @Test
+  public void testLimitPushdown_limit0ReportsZeroNumRowsNotStaleCatalog(@TempDir File tempDir)
+      throws Exception {
+    // The LIMIT 0 short-circuit reads no files. Under CBO with catalog stats present, numRows()
+    // must report 0 (the scan logically returns zero rows), NOT the stale table-level catalog
+    // count. This adds regression guard for the short-circuit setting rowCountKnown/totalRows.
+    String path = tempDir.getAbsolutePath();
+    String tblName = "stats_limit0_numrows";
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'", tblName, path));
+    spark.sql(String.format("INSERT INTO %s VALUES (1, 'a'), (2, 'b'), (3, 'c')", tblName));
+
+    // Catalog stats claim 999 rows - distinguishable from the correct LIMIT 0 answer of 0.
+    CatalogStatistics catalogStats =
+        new CatalogStatistics(
+            scala.math.BigInt.apply(1024L),
+            scala.Option.apply(scala.math.BigInt.apply(999L)),
+            buildColStatsMap(new String[] {}, new CatalogColumnStat[] {}));
+    CatalogTable catalogTable = injectCatalogStats(tblName, catalogStats);
+
+    withSQLConf(
+        "spark.sql.cbo.enabled",
+        "true",
+        () -> {
+          Identifier id = Identifier.of(new String[] {"default"}, tblName);
+          DeltaV2Table sparkTable = new DeltaV2Table(id, catalogTable, Collections.emptyMap());
+          DeltaV2ScanBuilder builder =
+              (DeltaV2ScanBuilder)
+                  sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
+          builder.pushLimit(0);
+          DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+
+          assertTrue(isRowCountKnown(scan), "LIMIT 0 under CBO should mark the row count known");
+          Statistics stats = scan.estimateStatistics();
+          assertTrue(stats.numRows().isPresent(), "numRows should be present under CBO");
+          assertEquals(
+              0L,
+              stats.numRows().getAsLong(),
+              "LIMIT 0 must report 0 rows, not the stale catalog count (999)");
+          assertEquals(
+              0L, getTotalBytes(scan), "LIMIT 0 should read zero bytes even with catalog stats");
+        });
+  }
+
+  @Test
+  public void testLimitPushdown_missingNumRecordsPlansAllFiles(@TempDir File tempDir)
+      throws Exception {
+    String path = tempDir.getAbsolutePath();
+    String tblName = "limit_missing_numrecords";
+    try {
+      spark.sql(String.format("CREATE TABLE %s (id INT) USING delta LOCATION '%s'", tblName, path));
+      withSQLConf(
+          "spark.databricks.delta.stats.collect",
+          "false",
+          () -> {
+            // Separate appends create two files, neither with numRecords in its AddFile action.
+            spark.sql(String.format("INSERT INTO %s VALUES (1)", tblName));
+            spark.sql(String.format("INSERT INTO %s VALUES (2)", tblName));
+          });
+
+      DeltaV2Table tableWithoutStats =
+          new DeltaV2Table(
+              Identifier.of(new String[] {"spark_catalog", "default"}, tblName), path, options);
+      DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) tableWithoutStats.newScanBuilder(options);
+      assertTrue(builder.pushLimit(1));
+      DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+
+      assertEquals(
+          2,
+          getPartitionedFiles(scan).size(),
+          "Files without numRecords must not count toward the limit; all must be planned");
+    } finally {
+      spark.sql("DROP TABLE IF EXISTS " + tblName);
+    }
+  }
+
+  private DeltaV2Scan buildScanWithLimit(int limit) {
+    DeltaV2ScanBuilder builder = (DeltaV2ScanBuilder) table.newScanBuilder(options);
+    builder.pushLimit(limit);
+    return (DeltaV2Scan) builder.build();
   }
 }

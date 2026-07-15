@@ -28,6 +28,7 @@ import java.util.stream.Collectors;
 import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.connector.read.Statistics;
 import org.apache.spark.sql.connector.read.SupportsPushDownFilters;
+import org.apache.spark.sql.connector.read.SupportsPushDownLimit;
 import org.apache.spark.sql.connector.read.SupportsPushDownRequiredColumns;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.StructField;
@@ -41,7 +42,10 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
  * Spark's public connector interfaces instead of coupling to Delta's internal V2 implementation.
  */
 class DeltaV2ScanBuilder
-    implements ScanBuilder, SupportsPushDownRequiredColumns, SupportsPushDownFilters {
+    implements ScanBuilder,
+        SupportsPushDownRequiredColumns,
+        SupportsPushDownFilters,
+        SupportsPushDownLimit {
 
   private io.delta.kernel.ScanBuilder kernelScanBuilder;
   private final Snapshot initialSnapshot;
@@ -60,6 +64,9 @@ class DeltaV2ScanBuilder
   private Predicate[] pushedKernelPredicates;
   private Filter[] pushedSparkFilters;
   private Filter[] dataFilters;
+  // Tracks whether any filter still needs to be applied after the scan.
+  private boolean hasPOstScanResidualFilters = false;
+  private OptionalInt pushedLimit = OptionalInt.empty();
 
   /**
    * Creates a DeltaV2ScanBuilder with the given snapshot and configuration.
@@ -166,7 +173,11 @@ class DeltaV2ScanBuilder
       this.kernelScanBuilder = this.kernelScanBuilder.withFilter(kernelAnd.get());
     }
     this.dataFilters = dataFilterList.toArray(new Filter[0]);
-    return postScanFilters.toArray(new Filter[0]);
+    Filter[] postScan = postScanFilters.toArray(new Filter[0]);
+    // ScanBuilder mutations can be cumulative, so a later pushFilters call should not make an
+    // earlier residual safe to ignore.
+    this.hasPOstScanResidualFilters |= postScan.length > 0;
+    return postScan;
   }
 
   @Override
@@ -174,8 +185,38 @@ class DeltaV2ScanBuilder
     return this.pushedSparkFilters;
   }
 
+  /**
+   * Accepts a LIMIT hint from Spark's optimizer.
+   *
+   * <p>Always returns {@code true}: the connector treats the limit as a best-effort hint, using
+   * per-file {@code numRecords} statistics to stop adding files to the scan plan once enough rows
+   * have been accumulated (see {@link DeltaV2Scan}). Because pruning happens at file granularity,
+   * the planned scan may still return more rows than requested (for example, a single file with
+   * 1,000 rows for LIMIT 5), so {@link #isPartiallyPushed()} is left at its default of {@code true}
+   * and Spark keeps its limit operators as a backstop.
+   *
+   * @param limit the row limit requested by Spark which must be non-negative.
+   */
+  @Override
+  public boolean pushLimit(int limit) {
+    if (limit < 0) {
+      throw new IllegalArgumentException("Pushed limit must be non-negative, but got: " + limit);
+    }
+    this.pushedLimit = OptionalInt.of(limit);
+    return true;
+  }
+
+  // isPartiallyPushed() intentionally uses the interface default (true). Because pruning happens at
+  // file granularity, the scan may produce more rows than requested, so Spark must reapply LIMIT.
+
   @Override
   public org.apache.spark.sql.connector.read.Scan build() {
+    // Spark's V2ScanRelationPushDown only pushes a limit when no post-scan residual remains. It
+    // matches PhysicalOperation(_, Nil, sHolder). Retain this defensive check for direct callers
+    // that may invoke the ScanBuilder methods in a different order.
+    OptionalInt effectiveLimit =
+        hasPOstScanResidualFilters ? OptionalInt.empty() : this.pushedLimit;
+
     return new DeltaV2Scan(
         snapshotManager,
         initialSnapshot,
@@ -187,7 +228,8 @@ class DeltaV2ScanBuilder
         dataFilters,
         kernelScanBuilder.build(),
         catalogStats,
-        options);
+        options,
+        effectiveLimit);
   }
 
   CaseInsensitiveStringMap getOptions() {
@@ -200,5 +242,9 @@ class DeltaV2ScanBuilder
 
   StructType getPartitionSchema() {
     return partitionSchema;
+  }
+
+  OptionalInt getPushedLimit() {
+    return pushedLimit;
   }
 }
