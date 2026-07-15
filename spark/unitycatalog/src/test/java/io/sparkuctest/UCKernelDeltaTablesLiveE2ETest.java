@@ -48,12 +48,11 @@ import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.DataFileStatus;
 import io.delta.kernel.utils.FileStatus;
+import io.delta.storage.commit.TableIdentifier;
+import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels;
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaTokenBasedRestClient;
 import io.unitycatalog.client.api.TablesApi;
 import io.unitycatalog.client.auth.TokenProvider;
-import io.unitycatalog.client.delta.api.DeltaTablesApi;
-import io.unitycatalog.client.delta.model.DeltaCreateStagingTableRequest;
-import io.unitycatalog.client.delta.model.DeltaStagingTableResponse;
 import io.unitycatalog.client.model.TableInfo;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -61,6 +60,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.apache.hadoop.conf.Configuration;
 import org.junit.jupiter.api.AfterEach;
@@ -84,30 +84,13 @@ public class UCKernelDeltaTablesLiveE2ETest extends UnityCatalogSupport {
     return AuthMode.STATIC;
   }
 
-  // The server vends s3://<fake-bucket>/... locations backed by local files, which the test's
-  // S3CredentialFileSystem maps to local paths.
-  private boolean priorCredentialCheckEnabled;
-
-  @BeforeEach
-  public void disableS3CredentialCheck() {
-    priorCredentialCheckEnabled = S3CredentialFileSystem.credentialCheckEnabled;
-    S3CredentialFileSystem.credentialCheckEnabled = false;
-  }
-
-  @AfterEach
-  public void restoreS3CredentialCheck() {
-    S3CredentialFileSystem.credentialCheckEnabled = priorCredentialCheckEnabled;
-  }
-
   private UnityCatalogInfo uc;
-  private Engine engine;
   private UCDeltaTokenBasedRestClient deltaClient;
   private UCCatalogManagedClient catalogClient;
 
   @BeforeEach
   public void setUpCatalogClients() {
     uc = unityCatalogInfo();
-    engine = newEngine();
     deltaClient = newDeltaClient(uc);
     catalogClient = new UCCatalogManagedClient(deltaClient);
   }
@@ -133,9 +116,17 @@ public class UCKernelDeltaTablesLiveE2ETest extends UnityCatalogSupport {
   }
 
   private Engine newEngine() {
-    // Route the s3 scheme through the test's S3CredentialFileSystem.
+    return newEngine(Collections.emptyMap());
+  }
+
+  /**
+   * Builds an engine whose Hadoop config routes {@code s3://} through the test's {@link
+   * S3CredentialFileSystem} and carries {@code storageProperties} (UC-vended credentials).
+   */
+  private Engine newEngine(Map<String, String> storageProperties) {
     Configuration conf = new Configuration();
     conf.set("fs.s3.impl", S3CredentialFileSystem.class.getName());
+    storageProperties.forEach(conf::set);
     return DefaultEngine.create(conf);
   }
 
@@ -146,17 +137,11 @@ public class UCKernelDeltaTablesLiveE2ETest extends UnityCatalogSupport {
    * delta.feature.<name>=supported}, and the server's advertised required properties are applied
    * verbatim.
    */
-  private Map<String, String> requiredFeatureProperties(DeltaStagingTableResponse staging) {
+  private Map<String, String> requiredFeatureProperties(UCDeltaModels.StagingTableInfo staging) {
     Map<String, String> props = new HashMap<>();
     if (staging.getRequiredProtocol() != null) {
-      List<String> reader =
-          staging.getRequiredProtocol().getReaderFeatures() == null
-              ? Collections.emptyList()
-              : staging.getRequiredProtocol().getReaderFeatures();
-      List<String> writer =
-          staging.getRequiredProtocol().getWriterFeatures() == null
-              ? Collections.emptyList()
-              : staging.getRequiredProtocol().getWriterFeatures();
+      Set<String> reader = staging.getRequiredProtocol().getReaderFeatures();
+      Set<String> writer = staging.getRequiredProtocol().getWriterFeatures();
       for (String feature : reader) {
         props.put("delta.feature." + feature, "supported");
       }
@@ -180,9 +165,9 @@ public class UCKernelDeltaTablesLiveE2ETest extends UnityCatalogSupport {
    */
   @Test
   public void createTable_sendsStructuredProtocol_andRoundTrips() throws Exception {
-    CreatedTable table = createManagedTable(uc, engine, catalogClient);
+    CreatedTable table = createManagedTable(uc, catalogClient);
 
-    Snapshot snapshot = loadAtVersion(catalogClient, engine, table, 0L);
+    Snapshot snapshot = loadAtVersion(catalogClient, table, 0L);
     assertThat(snapshot.getVersion()).isEqualTo(0L);
     assertThat(snapshot.getSchema().fieldNames())
         .containsExactlyElementsOf(TEST_SCHEMA.fieldNames());
@@ -204,8 +189,7 @@ public class UCKernelDeltaTablesLiveE2ETest extends UnityCatalogSupport {
   @Test
   public void createClusteredTable_roundTripsClusteringColumns() throws Exception {
     CreatedTable table =
-        createManagedTable(
-            uc, engine, catalogClient, DataLayoutSpec.clustered(List.of(new Column("id"))));
+        createManagedTable(uc, catalogClient, DataLayoutSpec.clustered(List.of(new Column("id"))));
 
     // (a) Raw catalog properties as persisted by the server.
     TablesApi tablesApi = new TablesApi(uc.createApiClient());
@@ -220,7 +204,7 @@ public class UCKernelDeltaTablesLiveE2ETest extends UnityCatalogSupport {
     assertThat(serverProps).containsEntry("delta.feature.clustering", "supported");
     assertThat(serverProps).containsKey("clusteringColumns");
 
-    Snapshot snapshot = loadAtVersion(catalogClient, engine, table, 0L);
+    Snapshot snapshot = loadAtVersion(catalogClient, table, 0L);
     Optional<List<Column>> clusteringColumns =
         ((SnapshotImpl) snapshot).getPhysicalClusteringColumns();
     assertThat(clusteringColumns).isPresent();
@@ -229,16 +213,18 @@ public class UCKernelDeltaTablesLiveE2ETest extends UnityCatalogSupport {
 
   @Test
   public void alterTable_setTableProperty_roundTripsThroughUpdateTable() throws Exception {
-    CreatedTable table = createManagedTable(uc, engine, catalogClient);
+    CreatedTable table = createManagedTable(uc, catalogClient);
 
-    // ALTER: set a user table property on the v0 table via the update-table (V1+) path.
-    Snapshot v0 = loadAtVersion(catalogClient, engine, table, 0L);
+    // ALTER: set a user table property on the v0 table via the update-table (V1+) path, using an
+    // engine configured with the vended storage credentials so the write is credential-checked.
+    Engine engine = newEngine(table.storageProperties);
+    Snapshot v0 = loadAtVersion(catalogClient, table, 0L);
     v0.buildUpdateTableTransaction(ENGINE_INFO, Operation.MANUAL_UPDATE)
         .withTablePropertiesAdded(Map.of("user.key", "user-value"))
         .build(engine)
         .commit(engine, CloseableIterable.emptyIterable());
 
-    Snapshot v1 = loadAtVersion(catalogClient, engine, table, 1L);
+    Snapshot v1 = loadAtVersion(catalogClient, table, 1L);
     assertThat(v1.getVersion()).isEqualTo(1L);
     assertThat(v1.getTableProperties()).containsEntry("user.key", "user-value");
   }
@@ -249,16 +235,20 @@ public class UCKernelDeltaTablesLiveE2ETest extends UnityCatalogSupport {
     final String tablePath;
     final UCTableIdentifier identifier;
     final Map<String, String> requiredProperties;
+    // UC-vended storage credentials from the staging response
+    final Map<String, String> storageProperties;
 
     CreatedTable(
         String ucTableId,
         String tablePath,
         UCTableIdentifier identifier,
-        Map<String, String> requiredProperties) {
+        Map<String, String> requiredProperties,
+        Map<String, String> storageProperties) {
       this.ucTableId = ucTableId;
       this.tablePath = tablePath;
       this.identifier = identifier;
       this.requiredProperties = requiredProperties;
+      this.storageProperties = storageProperties;
     }
   }
 
@@ -266,9 +256,9 @@ public class UCKernelDeltaTablesLiveE2ETest extends UnityCatalogSupport {
    * Reserves a staging table and runs the kernel create-table transaction (writes 000.json + the
    * Delta-Tables createTable finalize), honoring the server's required protocol/properties.
    */
-  private CreatedTable createManagedTable(
-      UnityCatalogInfo uc, Engine engine, UCCatalogManagedClient catalogClient) throws Exception {
-    return createManagedTable(uc, engine, catalogClient, null);
+  private CreatedTable createManagedTable(UnityCatalogInfo uc, UCCatalogManagedClient catalogClient)
+      throws Exception {
+    return createManagedTable(uc, catalogClient, null);
   }
 
   /**
@@ -277,25 +267,22 @@ public class UCKernelDeltaTablesLiveE2ETest extends UnityCatalogSupport {
    * Delta-Tables finalize carry the layout.
    */
   private CreatedTable createManagedTable(
-      UnityCatalogInfo uc,
-      Engine engine,
-      UCCatalogManagedClient catalogClient,
-      DataLayoutSpec dataLayout)
+      UnityCatalogInfo uc, UCCatalogManagedClient catalogClient, DataLayoutSpec dataLayout)
       throws Exception {
     String tableName = "kernel_e2e_" + UUID.randomUUID().toString().replace("-", "");
     UCTableIdentifier identifier =
         new UCTableIdentifier(uc.catalogName(), uc.schemaName(), tableName);
 
-    // Reserve a staging table via the Delta-Tables API to obtain the UC table id + storage
-    // location. (The legacy TablesApi staging endpoint is disabled in Delta-API-only mode.)
-    DeltaTablesApi deltaTablesApi = new DeltaTablesApi(uc.createApiClient());
-    DeltaStagingTableResponse staging =
-        deltaTablesApi.createStagingTable(
-            uc.catalogName(),
-            uc.schemaName(),
-            new DeltaCreateStagingTableRequest().name(tableName));
+    // Reserve a staging table to obtain the UC table id, storage location, and vended storage
+    // credentials. (The legacy TablesApi staging endpoint is disabled in Delta-API-only mode.)
+    UCDeltaModels.StagingTableInfo staging =
+        deltaClient.createStagingTable(
+            new TableIdentifier(uc.catalogName(), uc.schemaName(), tableName));
     String ucTableId = staging.getTableId().toString();
     String tablePath = staging.getLocation();
+    Map<String, String> storageProperties = staging.getStorageProperties();
+
+    Engine engine = newEngine(storageProperties);
 
     // Honor the server's required protocol/properties from the staging response (the OSS server
     // requires catalog-managed tables to carry features/properties beyond the defaults that
@@ -313,12 +300,14 @@ public class UCKernelDeltaTablesLiveE2ETest extends UnityCatalogSupport {
     // protocol) persist verbatim into table metadata, so tests can assert they round-tripped.
     Map<String, String> requiredProperties =
         staging.getRequiredProperties() == null ? Map.of() : staging.getRequiredProperties();
-    return new CreatedTable(ucTableId, tablePath, identifier, requiredProperties);
+    return new CreatedTable(
+        ucTableId, tablePath, identifier, requiredProperties, storageProperties);
   }
 
   /** Loads {@code table} at a specific version through the catalog client. */
   private Snapshot loadAtVersion(
-      UCCatalogManagedClient catalogClient, Engine engine, CreatedTable table, long version) {
+      UCCatalogManagedClient catalogClient, CreatedTable table, long version) throws Exception {
+    Engine engine = newEngine(table.storageProperties);
     return catalogClient.loadSnapshot(
         engine,
         table.ucTableId,
@@ -330,14 +319,15 @@ public class UCKernelDeltaTablesLiveE2ETest extends UnityCatalogSupport {
 
   @Test
   public void insertData_thenReadBack_roundTripsThroughUpdateTable() throws Exception {
-    CreatedTable table = createManagedTable(uc, engine, catalogClient);
+    CreatedTable table = createManagedTable(uc, catalogClient);
 
     // INSERT: append 3 rows to the v0 table through the update-table (V1+) commit path.
-    Snapshot v0 = loadAtVersion(catalogClient, engine, table, 0L);
+    Engine engine = newEngine(table.storageProperties);
+    Snapshot v0 = loadAtVersion(catalogClient, table, 0L);
     insertRows(engine, v0, 3);
 
     // READ: reload at the new version and scan the data back, asserting the exact rows written.
-    Snapshot v1 = loadAtVersion(catalogClient, engine, table, 1L);
+    Snapshot v1 = loadAtVersion(catalogClient, table, 1L);
     assertThat(v1.getVersion()).isEqualTo(1L);
     assertThat(readRows(engine, v1)).containsExactlyInAnyOrder("0=row-0", "1=row-1", "2=row-2");
   }

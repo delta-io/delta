@@ -918,14 +918,8 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
           .comment(newMetadata.getDescription()));
     }
 
-    Map<String, String> oldConfig =
-        oldMetadata.getConfiguration() == null
-            ? Collections.emptyMap()
-            : oldMetadata.getConfiguration();
-    Map<String, String> newConfig =
-        newMetadata.getConfiguration() == null
-            ? Collections.emptyMap()
-            : newMetadata.getConfiguration();
+    Map<String, String> oldConfig = oldMetadata.getConfiguration();
+    Map<String, String> newConfig = newMetadata.getConfiguration();
 
     if (!Objects.equals(oldConfig, newConfig)) {
       Map<String, String> toSet = new LinkedHashMap<>();

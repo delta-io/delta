@@ -336,11 +336,9 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
 
     // The Delta-Tables API has structured fields for the last-commit timestamp and domain metadata
     // (clustering, row tracking), so it takes metadata.configuration as properties.
-    final Map<String, String> effectiveConfiguration =
-        commitMetadata.getEffectiveMetadata().getConfiguration();
     final Map<String, String> ucTableProperties =
         ucClient instanceof UCDeltaClient
-            ? (effectiveConfiguration != null ? effectiveConfiguration : Collections.emptyMap())
+            ? commitMetadata.getEffectiveMetadata().getConfiguration()
             : UnityCatalogUtils.getPropertiesForCreate(commitMetadata);
     checkState(
         commitMetadata.getCommitInfo().getInCommitTimestamp().isPresent(),
