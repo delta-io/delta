@@ -87,13 +87,19 @@ jobs:
           uv python install 3.10
           uv venv .venv --python 3.10
           # Install hash-verified locked dependencies (see .github/ci-requirements/spark-python/)
-          if [[ "${{ matrix.spark_version }}" == "4.0" ]]; then
-            uv pip install --python .venv/bin/python --require-hashes -r .github/ci-requirements/spark-python/spark4.0.lock
-          else
-            uv pip install --python .venv/bin/python --require-hashes -r .github/ci-requirements/spark-python/spark4.1.lock
-          fi
+          case "${{ matrix.spark_version }}" in
+            4.0) LOCK_FILE=spark4.0.lock ;;
+            4.1) LOCK_FILE=spark4.1.lock ;;
+            4.2) LOCK_FILE=spark4.2.lock ;;
+            *) echo "Unsupported Spark version: ${{ matrix.spark_version }}" >&2; exit 1 ;;
+          esac
+          uv pip install --python .venv/bin/python --require-hashes \
+            -r ".github/ci-requirements/spark-python/$LOCK_FILE"
           # pyspark installed with --no-deps: its only transitive dep (py4j) is in the lock file
-          uv pip install --python .venv/bin/python --no-deps pyspark==${{ steps.spark-details.outputs.spark_full_version }}
+          # Allow only the exact, explicitly selected Spark releases past the dependency-lock cutoff.
+          UV_EXCLUDE_NEWER="2026-07-15T00:00:00Z" \
+            uv pip install --python .venv/bin/python --no-deps \
+              pyspark==${{ steps.spark-details.outputs.spark_full_version }}
       - name: Run Python tests
         # when changing TEST_PARALLELISM_COUNT make sure to also change it in spark_test.yaml
         run: |
