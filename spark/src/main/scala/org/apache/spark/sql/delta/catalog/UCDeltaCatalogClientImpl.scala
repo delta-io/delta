@@ -708,13 +708,10 @@ object UCDeltaCatalogClientImpl extends AbstractDeltaCatalogClientFactory with L
     }
     validateAuthConfigured(options, catalogName)
 
-    val optionsMap = new util.HashMap[String, String](options)
-    optionsMap.putIfAbsent(UCConfigUtils.DELTA_REST_API_ENABLED_KEY, "true")
-
     val ucClient = UCTokenBasedRestClientFactory
-      .createUCClient(optionsMap)
+      .createUCClient(options)
       .asInstanceOf[UCDeltaClient]
-    val sspEnabled = UCConfigUtils.parseBoolean(optionsMap, ServerSidePlanningEnabledKey, false)
+    val sspEnabled = UCConfigUtils.parseBoolean(options, ServerSidePlanningEnabledKey, false)
     new UCDeltaCatalogClientImpl(catalogName, ucClient, sspEnabled, fallbackLoadTableFunc)
   }
 

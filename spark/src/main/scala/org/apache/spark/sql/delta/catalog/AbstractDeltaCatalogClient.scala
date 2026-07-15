@@ -189,7 +189,6 @@ private[delta] object AbstractDeltaCatalogClient extends Logging {
       options: CaseInsensitiveStringMap,
       fallbackLoadTableFunc: Identifier => Table): Option[AbstractDeltaCatalogClient] = {
     val optionsMap = options.asCaseSensitiveMap()
-    val key = UCConfigUtils.DELTA_REST_API_ENABLED_KEY
     if (!UCConfigUtils.isDeltaRestApiEnabled(optionsMap)) {
       return None
     }
@@ -200,6 +199,7 @@ private[delta] object AbstractDeltaCatalogClient extends Logging {
       cls.getField("MODULE$").get(null).asInstanceOf[AbstractDeltaCatalogClientFactory]
     } catch {
       case e: Exception =>
+        val key = UCConfigUtils.DELTA_REST_API_ENABLED_KEY
         throw new IllegalStateException(
           s"Failed to load $UC_DELTA_CATALOG_CLIENT_IMPL_CLASS_NAME though '$key' is true. " +
             "Ensure the implementation JAR is on the classpath, or remove " +

@@ -318,19 +318,9 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
 
   private def createDefaultClient(ucConfig: java.util.Map[String, String]): UCClient = {
     val uri = UCConfigUtils.extractUri(ucConfig)
-    val tokenProvider = TokenProvider.create(extractAuthConfig(ucConfig))
+    val tokenProvider = TokenProvider.create(UCConfigUtils.extractAuthConfig(ucConfig))
     val appVersions = extractAppVersions(ucConfig)
     new UCTokenBasedRestClient(uri, tokenProvider, appVersions.asJava)
-  }
-
-  /**
-   * Extracts authentication configuration from ucConfig, preserving the original key casing (e.g.
-   * `oauth.clientId`) so [[TokenProvider.create]] can look them up. Prefers `auth.*` keys; falls
-   * back to the legacy `token` key.
-   */
-  private[coordinatedcommits] def extractAuthConfig(
-      ucConfig: java.util.Map[String, String]): java.util.Map[String, String] = {
-    UCConfigUtils.extractCaseSensitiveAuthConfig(ucConfig)
   }
 
   /**
@@ -370,5 +360,5 @@ case class UCCatalogConfig(catalogName: String, ucConfig: Map[String, String]) {
    * looks up camelCase keys exactly. Prefers `auth.*` keys; falls back to the legacy `token` key.
    */
   def authConfig: java.util.Map[String, String] =
-    UCConfigUtils.extractCaseSensitiveAuthConfig(ucConfig.asJava)
+    UCConfigUtils.extractAuthConfig(ucConfig.asJava)
 }

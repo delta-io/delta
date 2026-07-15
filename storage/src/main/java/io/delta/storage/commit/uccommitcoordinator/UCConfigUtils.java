@@ -58,22 +58,19 @@ public final class UCConfigUtils {
   }
 
   /**
-   * Extracts authentication configuration from a flat ucConfig map, preserving the original key
-   * casing (e.g. {@code oauth.clientId}). Prefers {@code auth.*} keys; falls back to the legacy
-   * {@code token} key.
-   *
-   * <p>Keys are matched case-sensitively against the {@code auth.} prefix, consistent with the rest
-   * of the UC Delta catalog client path. The {@code auth.} prefix is stripped while the suffix
-   * casing is preserved so downstream lookups (e.g. {@code oauth.clientId}) match exactly.
+   * Extracts authentication configuration from a flat ucConfig map. The {@code auth.} prefix is
+   * stripped while the suffix (e.g. {@code oauth.clientId}) is preserved so downstream lookups
+   * match exactly. Prefers {@code auth.*} keys; falls back to the legacy {@code token} key.
    *
    * @param ucConfig the flat configuration map.
    * @return a map suitable for {@code TokenProvider.create}, with the {@code auth.} prefix stripped.
    */
-  public static Map<String, String> extractCaseSensitiveAuthConfig(Map<String, String> ucConfig) {
+  public static Map<String, String> extractAuthConfig(Map<String, String> ucConfig) {
     Map<String, String> authConfig = new LinkedHashMap<>();
     for (Map.Entry<String, String> entry : ucConfig.entrySet()) {
-      if (entry.getKey().startsWith(AUTH_PREFIX)) {
-        authConfig.put(entry.getKey().substring(AUTH_PREFIX.length()), entry.getValue());
+      String key = entry.getKey();
+      if (key.startsWith(AUTH_PREFIX)) {
+        authConfig.put(key.substring(AUTH_PREFIX.length()), entry.getValue());
       }
     }
     if (!authConfig.isEmpty()) {
@@ -88,7 +85,7 @@ public final class UCConfigUtils {
 
   /**
    * Returns {@code true} if the ucConfig contains any authentication configuration
-   * ({@code auth.*} keys or legacy {@code token} key). Keys are matched case-sensitively.
+   * ({@code auth.*} keys or legacy {@code token} key).
    */
   public static boolean hasAuthConfig(Map<String, String> ucConfig) {
     for (String key : ucConfig.keySet()) {
@@ -100,8 +97,7 @@ public final class UCConfigUtils {
   }
 
   /**
-   * Extracts {@code appVersions.*} entries from a flat ucConfig map, stripping the prefix. Keys are
-   * matched case-sensitively.
+   * Extracts {@code appVersions.*} entries from a flat ucConfig map, stripping the prefix.
    *
    * @param ucConfig the flat configuration map.
    * @return a map of application name to version string.
@@ -109,8 +105,9 @@ public final class UCConfigUtils {
   public static Map<String, String> extractAppVersions(Map<String, String> ucConfig) {
     Map<String, String> versions = new LinkedHashMap<>();
     for (Map.Entry<String, String> entry : ucConfig.entrySet()) {
-      if (entry.getKey().startsWith(APP_VERSIONS_PREFIX)) {
-        versions.put(entry.getKey().substring(APP_VERSIONS_PREFIX.length()), entry.getValue());
+      String key = entry.getKey();
+      if (key.startsWith(APP_VERSIONS_PREFIX)) {
+        versions.put(key.substring(APP_VERSIONS_PREFIX.length()), entry.getValue());
       }
     }
     return versions;

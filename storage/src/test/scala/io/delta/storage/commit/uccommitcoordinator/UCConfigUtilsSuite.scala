@@ -37,8 +37,8 @@ class UCConfigUtilsSuite extends AnyFunSuite {
     assert(e.getMessage.contains("uri"))
   }
 
-  test("extractCaseSensitiveAuthConfig prefers auth.* and preserves camelCase keys") {
-    val auth = UCConfigUtils.extractCaseSensitiveAuthConfig(config(
+  test("extractAuthConfig prefers auth.* and preserves camelCase keys") {
+    val auth = UCConfigUtils.extractAuthConfig(config(
       "uri" -> "https://uc.example.com",
       "auth.type" -> "oauth",
       "auth.oauth.clientId" -> "id",
@@ -50,16 +50,16 @@ class UCConfigUtilsSuite extends AnyFunSuite {
     assert(!auth.containsKey("token"))
   }
 
-  test("extractCaseSensitiveAuthConfig falls back to legacy token") {
-    val auth = UCConfigUtils.extractCaseSensitiveAuthConfig(config(
+  test("extractAuthConfig falls back to legacy token") {
+    val auth = UCConfigUtils.extractAuthConfig(config(
       "uri" -> "https://uc.example.com",
       "token" -> "my-token"))
     assert(auth.get("type") === "static")
     assert(auth.get("token") === "my-token")
   }
 
-  test("extractCaseSensitiveAuthConfig returns empty when no auth is present") {
-    assert(UCConfigUtils.extractCaseSensitiveAuthConfig(
+  test("extractAuthConfig returns empty when no auth is present") {
+    assert(UCConfigUtils.extractAuthConfig(
       config("uri" -> "https://uc.example.com")).isEmpty)
   }
 
@@ -107,7 +107,7 @@ class UCConfigUtilsSuite extends AnyFunSuite {
 
   test("prefix matching is case-sensitive") {
     assert(!UCConfigUtils.hasAuthConfig(config("Auth.type" -> "static")))
-    assert(UCConfigUtils.extractCaseSensitiveAuthConfig(config("AUTH.token" -> "t")).isEmpty)
+    assert(UCConfigUtils.extractAuthConfig(config("AUTH.token" -> "t")).isEmpty)
     assert(UCConfigUtils.extractAppVersions(config("AppVersions.Kernel" -> "0.7.0")).isEmpty)
   }
 }

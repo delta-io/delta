@@ -20,7 +20,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.unitycatalog.UCTableIdentifier
 import io.delta.spark.internal.v2.snapshot.unitycatalog.UCTableInfo
-import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCommitCoordinatorClient}
+import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCommitCoordinatorClient, UCConfigUtils}
 import io.unitycatalog.client.auth.TokenProvider
 import org.mockito.{Mock, Mockito}
 import org.mockito.ArgumentMatchers.{any, eq => meq}
@@ -466,7 +466,7 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
       "auth.type" -> "static",
       "auth.token" -> "new-token"
     )
-    val auth = UCTokenBasedRestClientFactory.extractAuthConfig(ucConfig.asJava)
+    val auth = UCConfigUtils.extractAuthConfig(ucConfig.asJava)
     assert(auth.get("type") == "static")
     assert(auth.get("token") == "new-token")
   }
@@ -476,7 +476,7 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
       "uri" -> "https://test.com",
       "token" -> "legacy-token"
     )
-    val auth = UCTokenBasedRestClientFactory.extractAuthConfig(ucConfig.asJava)
+    val auth = UCConfigUtils.extractAuthConfig(ucConfig.asJava)
     assert(auth.get("type") == "static")
     assert(auth.get("token") == "legacy-token")
   }
@@ -547,7 +547,7 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
     ucConfig.put("auth.oauth.clientSecret", "test-secret")
     ucConfig.put("auth.oauth.uri", "https://example.com/token")
     ucConfig.put("uri", "https://uc.example.com")
-    val auth = UCTokenBasedRestClientFactory.extractAuthConfig(ucConfig)
+    val auth = UCConfigUtils.extractAuthConfig(ucConfig)
     assert(auth.get("oauth.clientId") === "test-id")
     assert(auth.get("oauth.clientSecret") === "test-secret")
     val tp = TokenProvider.create(auth)
@@ -560,7 +560,7 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
   test("extractAuthConfig with static token produces valid TokenProvider") {
     // Sub-case 1: legacy token key
     val legacyConfig = Map("token" -> "my-token", "uri" -> "https://uc.example.com")
-    val legacyAuth = UCTokenBasedRestClientFactory.extractAuthConfig(legacyConfig.asJava)
+    val legacyAuth = UCConfigUtils.extractAuthConfig(legacyConfig.asJava)
     val tp1 = TokenProvider.create(legacyAuth)
     assert(tp1.accessToken() === "my-token")
 
@@ -569,7 +569,7 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
       "auth.type" -> "static",
       "auth.token" -> "explicit-token"
     ).asJava
-    val explicitAuth = UCTokenBasedRestClientFactory.extractAuthConfig(explicitConfig)
+    val explicitAuth = UCConfigUtils.extractAuthConfig(explicitConfig)
     val tp2 = TokenProvider.create(explicitAuth)
     assert(tp2.accessToken() === "explicit-token")
   }
@@ -597,7 +597,7 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
     originalConfig.put("auth.oauth.clientSecret", "test-secret")
     originalConfig.put("auth.oauth.uri", "https://example.com/token")
 
-    val authMap = UCTokenBasedRestClientFactory.extractAuthConfig(originalConfig)
+    val authMap = UCConfigUtils.extractAuthConfig(originalConfig)
 
     val tableInfo = new UCTableInfo(
       "table-id",
@@ -607,7 +607,7 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
       authMap)
     val roundTrippedConfig = tableInfo.toUcConfig()
 
-    val roundTrippedAuth = UCTokenBasedRestClientFactory.extractAuthConfig(roundTrippedConfig)
+    val roundTrippedAuth = UCConfigUtils.extractAuthConfig(roundTrippedConfig)
 
     // 5. Verify TokenProvider can be created (proves round-trip preserves values)
     val tp = TokenProvider.create(roundTrippedAuth)
@@ -619,7 +619,7 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
 
   test("extractAuthConfig returns empty map when no auth config present") {
     val noAuthConfig = Map("uri" -> "https://uc.example.com")
-    val auth = UCTokenBasedRestClientFactory.extractAuthConfig(noAuthConfig.asJava)
+    val auth = UCConfigUtils.extractAuthConfig(noAuthConfig.asJava)
     assert(auth.isEmpty)
   }
 

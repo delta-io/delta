@@ -140,7 +140,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
 
     String baseUri = UCConfigUtils.extractUri(ucConfig);
     TokenProvider tokenProvider =
-        TokenProvider.create(UCConfigUtils.extractCaseSensitiveAuthConfig(ucConfig));
+        TokenProvider.create(UCConfigUtils.extractAuthConfig(ucConfig));
     Map<String, String> appVersions = UCConfigUtils.extractAppVersions(ucConfig);
 
     ApiClientBuilder builder = ApiClientBuilder.create()
