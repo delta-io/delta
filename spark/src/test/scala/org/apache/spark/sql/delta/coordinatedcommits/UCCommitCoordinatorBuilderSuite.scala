@@ -28,7 +28,6 @@ import org.mockito.Mockito.{mock, never, times, verify, when}
 
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSession {
 

@@ -716,7 +716,7 @@ object UCDeltaCatalogClientImpl extends AbstractDeltaCatalogClientFactory with L
       .createUCClient(optionsMap)
       .asInstanceOf[UCDeltaClient]
     val sspEnabled =
-      "true".equalsIgnoreCase(optionsMap.get(ServerSidePlanningEnabledKey))
+      optionsMap.getOrDefault(ServerSidePlanningEnabledKey, "false").toBoolean
     new UCDeltaCatalogClientImpl(catalogName, ucClient, sspEnabled, fallbackLoadTableFunc)
   }
 
