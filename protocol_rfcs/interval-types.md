@@ -4,7 +4,7 @@
 This protocol change adds support for interval types (as defined [here](https://spark.apache.org/docs/latest/sql-ref-datatypes.html)). It consists of two changes to the protocol:
 
 - One new reader/writer table feature
-- Two new primitive types (year-month and day-second)
+- Two distinct new primitive types (year-month and day-second)
 
 --------
 
@@ -12,10 +12,12 @@ This protocol change adds support for interval types (as defined [here](https://
 
 # Interval Types Table Feature
 
-This table feature (`intervalTypes`) adds the year-month and day-second [interval types](https://spark.apache.org/docs/latest/sql-ref-datatypes.html) from ANSI SQL:
+This table feature (`intervalTypes`) adds two distinct Delta logical types, one for each [ANSI SQL interval type](https://spark.apache.org/docs/latest/sql-ref-datatypes.html) family:
 
 1. **interval year to month**: A signed number of months, e.g. `INTERVAL '1-6' YEAR TO MONTH` represents 18 (1 year + 6 months = 18 months).
 2. **interval day to second**: A signed number of microseconds, e.g. `INTERVAL '1 12:24:36.000022' DAY TO SECOND` represents 131,076,000,022 (1 day + 12 hours + 24 minutes + 36 seconds + 22 microseconds = 86,400,000,000 + 43,200,000,000 + 1,440,000,000 + 36,000,000 + 22 = 131,076,000,022).
+
+These are separate logical types with different units and physical encodings, rather than parameters of a single interval type. Each supported interval type-name spelling described below resolves to exactly one of these two logical types.
 
 To support this feature:
 - The table must be on Reader Version 3 and Writer Version 7.
@@ -23,14 +25,16 @@ To support this feature:
 
 ## Type Definitions
 
-In the schema, interval types are serialized in `Metadata.schemaString` (case-sensitive) as
+Interval type names in `Metadata.schemaString` are case-sensitive. The canonical type-name strings are:
 
 - `interval year to month`
 - `interval day to second`
 
-Intervals have two families: year-month (made up of the fields `year` and `month`) and day-second (made up of the fields `day`, `hour`, `minute`, and `second`). `interval year to month` and `interval day to second` are the canonical type-name strings for these two families.
+Intervals have two families: year-month (made up of the fields `year` and `month`) and day-second (made up of the fields `day`, `hour`, `minute`, and `second`).
 
 ANSI SQL also permits narrowed spellings that denote the same two families: for year-month, `interval year` and `interval month`; for day-second, `interval day`, `interval hour`, `interval minute`, `interval second`, and any `<start> to <end>` range over the ordered fields `day`, `hour`, `minute`, `second` (e.g. `interval day to minute`, `interval hour to second`). A spelling is not valid if it is multi-family — that is, it combines fields from both families (for example, `interval month to second`). A spelling is also not valid if its fields are in the wrong order, going from a shorter unit to a longer one (for example, `interval second to day` or `interval month to year`).
+
+Both the canonical names and all valid narrowed spellings listed above are permitted in `Metadata.schemaString`. Readers must accept every permitted spelling, while writers must always serialize the corresponding canonical name.
 
 Regardless of which spelling is used, the stored value is the same: every year-month spelling stores a signed count of months, and every day-second spelling stores a signed count of microseconds. The spelling affects only how a value is displayed, not how it is stored.
 
