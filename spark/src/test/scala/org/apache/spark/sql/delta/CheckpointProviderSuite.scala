@@ -70,9 +70,14 @@ class CheckpointProviderSuite
           .underlyingCheckpointProvider
           .asInstanceOf[V2CheckpointProvider]
 
-        // Check whether these checkpoints are equivalent after being loaded
-        assert(compatCheckpoint.sidecarFiles.toSet === origCheckpoint.sidecarFiles.toSet)
-        assert(compatCheckpoint.checkpointMetadata === origCheckpoint.checkpointMetadata)
+        // Normalize null tags so reconstructed sidecars and metadata compare equal to freshly
+        // constructed instances that default to empty maps after the Jackson upgrade.
+        assert(compatCheckpoint.sidecarFiles
+          .map(f => f.copy(tags = Option(f.tags).getOrElse(Map.empty))).toSet ===
+          origCheckpoint.sidecarFiles.toSet)
+        assert(compatCheckpoint.checkpointMetadata.copy(tags =
+          Option(compatCheckpoint.checkpointMetadata.tags).getOrElse(Map.empty)) ===
+          origCheckpoint.checkpointMetadata)
 
         val compatDf =
             deltaLog.loadIndex(compatCheckpoint.topLevelFileIndex.get, Action.logSchema)

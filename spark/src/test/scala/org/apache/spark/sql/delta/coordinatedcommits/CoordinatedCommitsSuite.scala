@@ -1067,7 +1067,7 @@ abstract class CommitCoordinatorSuiteBase
         assert(log.unsafeVolatileSnapshot.metadata === newMetadata2)
         // State reconstruction should give correct results
         var expectedFileNames = Set("1", "2", "post-upgrade-file")
-        assert(log.unsafeVolatileSnapshot.allFiles.collect().toSet ===
+        assert(log.unsafeVolatileSnapshot.allFiles.map(_.withNormalizedTags).collect().toSet ===
           expectedFileNames.map(name => createTestAddFile(name, dataChange = false)))
         // commit-coordinator should not be invoked for commit API.
         // Register table API should not be called until the end
@@ -1099,7 +1099,7 @@ abstract class CommitCoordinatorSuiteBase
         assert(log.unsafeVolatileSnapshot.metadata.coordinatedCommitsCoordinatorConf === Map.empty)
         assert(log.unsafeVolatileSnapshot.metadata.coordinatedCommitsTableConf === Map.empty)
         expectedFileNames = Set("1", "2", "post-upgrade-file", "upgrade-2-file")
-        assert(log.unsafeVolatileSnapshot.allFiles.collect().toSet ===
+        assert(log.unsafeVolatileSnapshot.allFiles.map(_.withNormalizedTags).collect().toSet ===
           expectedFileNames.map(name => createTestAddFile(name, dataChange = false)))
         assert(Seq(cs1, cs2).map(_.numCommitsCalled.get) == Seq(3, 0))
         assert(Seq(cs1, cs2).map(_.numRegisterTableCalled.get) == Seq(1, 1))
@@ -1112,7 +1112,7 @@ abstract class CommitCoordinatorSuiteBase
         // Make 1 more commit, this should go to new owner
         log.startTransaction().commitManually(newMetadata3, createTestAddFile("4"))
         expectedFileNames = Set("1", "2", "post-upgrade-file", "upgrade-2-file", "4")
-        assert(log.unsafeVolatileSnapshot.allFiles.collect().toSet ===
+        assert(log.unsafeVolatileSnapshot.allFiles.map(_.withNormalizedTags).collect().toSet ===
           expectedFileNames.map(name => createTestAddFile(name, dataChange = false)))
         assert(Seq(cs1, cs2).map(_.numCommitsCalled.get) == Seq(3, 1))
         assert(Seq(cs1, cs2).map(_.numRegisterTableCalled.get) == Seq(1, 1))

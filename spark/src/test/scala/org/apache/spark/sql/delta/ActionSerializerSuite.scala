@@ -100,7 +100,11 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
         stats = null,
         tags = Map.empty)
     assert(action2 === Action.fromJson(json2))
-    assert(action2.json === json2.replaceAll("\\s", ""))
+    val expectedJson =
+      """{"add":{""" +
+        """"path":"a",""" +
+        """"partitionValues":{},"size":1,"modificationTime":2,"dataChange":false}}"""
+    assert(action2.json === expectedJson)
   }
 
   // This is the same test as "removefile" in OSS, but due to a Jackson library upgrade the behavior
@@ -111,12 +115,30 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
     val removeJson = RemoveFile("a", Some(2L)).json
     assert(removeJson.contains(""""deletionTimestamp":2"""))
     assert(!removeJson.contains("""delTimestamp"""))
+    assert(!removeJson.contains("""partitionValues"""))
     val json1 = """{"remove":{"path":"a","deletionTimestamp":2,"dataChange":true}}"""
     val json2 = """{"remove":{"path":"a","dataChange":false}}"""
     val json4 = """{"remove":{"path":"a","deletionTimestamp":5}}"""
-    assert(Action.fromJson(json1) === RemoveFile("a", Some(2L), dataChange = true))
-    assert(Action.fromJson(json2) === RemoveFile("a", None, dataChange = false))
-    assert(Action.fromJson(json4) === RemoveFile("a", Some(5L), dataChange = true))
+    assert(normalizeActionCollections(Action.fromJson(json1)) ===
+      normalizeActionCollections(RemoveFile("a", Some(2L), dataChange = true)))
+    assert(normalizeActionCollections(Action.fromJson(json2)) ===
+      normalizeActionCollections(RemoveFile("a", None, dataChange = false)))
+    assert(normalizeActionCollections(Action.fromJson(json4)) ===
+      normalizeActionCollections(RemoveFile("a", Some(5L), dataChange = true)))
+  }
+
+  test("RemoveFile preserves empty partition values with extended metadata") {
+    val remove = AddFile(
+      path = "a",
+      partitionValues = Map.empty,
+      size = 1,
+      modificationTime = 2,
+      dataChange = true).removeWithTimestamp(timestamp = 3)
+
+    assert(remove.json ===
+      """{"remove":{"path":"a","deletionTimestamp":3,"dataChange":true,""" +
+        """"extendedFileMetadata":true,"partitionValues":{},"size":1}}""")
+    assert(Action.fromJson(remove.json) === remove)
   }
 
   roundTripCompare("SetTransaction",
@@ -544,7 +566,6 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
         |"modificationTime":1,
         |"dataChange":true,
         |"stats":"{\"numRecords\":3}",
-        |"tags":{},
         |"deletionVector":{
         |"storageType":"p",
         |"pathOrInlineDv":"/test.dv",
@@ -601,14 +622,15 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
     )
 
     assert(m1.json === """{"checkpointMetadata":{"version":1}}""")
-    assert(m2.json === """{"checkpointMetadata":{"version":1,"tags":{}}}""")
+    assert(m2.json === """{"checkpointMetadata":{"version":1}}""")
     assert(m3.json ===
       """{"checkpointMetadata":{"version":1,""" +
         """"tags":{"k1":"v1","schema":"{\"type\":\"struct\",\"fields\":[]}"}}}""")
 
-    Seq(m1, m2, m3).foreach { metadata =>
-      assert(metadata === JsonUtils.fromJson[SingleAction](metadata.json).unwrap)
-    }
+    // Jackson 2.19+ deserializes null collection values as empty collections.
+    assert(m2 === JsonUtils.fromJson[SingleAction](m1.json).unwrap)
+    assert(m2 === JsonUtils.fromJson[SingleAction](m2.json).unwrap)
+    assert(m3 === JsonUtils.fromJson[SingleAction](m3.json).unwrap)
   }
 
   test("SidecarFile - serialize/deserialize") {
@@ -622,15 +644,15 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
     assert(f1.json ===
       """{"sidecar":{"path":"/t1/p1","sizeInBytes":1,"modificationTime":3}}""")
     assert(f2.json ===
-      """{"sidecar":{"path":"/t1/p1","sizeInBytes":1,""" +
-        """"modificationTime":3,"tags":{}}}""")
+      """{"sidecar":{"path":"/t1/p1","sizeInBytes":1,"modificationTime":3}}""")
     assert(f3.json ===
       """{"sidecar":{"path":"/t1/p1","sizeInBytes":1,"modificationTime":3,""" +
         """"tags":{"k1":"v1","schema":"{\"type\":\"struct\",\"fields\":[]}"}}}""".stripMargin)
 
-    Seq(f1, f2, f3).foreach { file =>
-      assert(file === JsonUtils.fromJson[SingleAction](file.json).unwrap)
-    }
+    // Jackson 2.19+ deserializes null collection values as empty collections.
+    assert(f2 === JsonUtils.fromJson[SingleAction](f1.json).unwrap)
+    assert(f2 === JsonUtils.fromJson[SingleAction](f2.json).unwrap)
+    assert(f3 === JsonUtils.fromJson[SingleAction](f3.json).unwrap)
   }
 
   testActionSerDe(
@@ -855,8 +877,15 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       val asJson = actions.map(_.json)
       val asObjects = asJson.map(Action.fromJson)
 
-      assert(actions === asObjects)
+      assert(actions.map(normalizeActionCollections) === asObjects.map(normalizeActionCollections))
     }
+  }
+
+  private def normalizeActionCollections(action: Action): Action = action match {
+    case remove: RemoveFile
+        if remove.partitionValues == null && !remove.extendedFileMetadata.contains(true) =>
+      remove.copy(partitionValues = Map.empty)
+    case other => other
   }
 
   /** Test serialization/deserialization of [[Action]] by doing an actual commit */
