@@ -10,7 +10,7 @@ The script automatically generates the JSON file if it doesn't exist.
 Usage:
     # Get all Spark versions as JSON array
     python project/scripts/get_spark_version_info.py --all-spark-versions
-    # Output: ["4.0", "4.1"] or ["master", "4.0"] if master is present
+    # Output: ["4.0", "4.1"] (source-built commit targets are excluded by default)
 
     # Get only released Spark versions (no snapshots)
     python project/scripts/get_spark_version_info.py --released-spark-versions
@@ -20,6 +20,9 @@ Usage:
     python project/scripts/get_spark_version_info.py --get-field 4.0 targetJvm
     python project/scripts/get_spark_version_info.py --get-field master targetJvm
     # Output: "17"
+
+    # Include source-built Spark commit targets in matrix output
+    python project/scripts/get_spark_version_info.py --all-spark-versions --include-source-built
 """
 
 import argparse
@@ -76,7 +79,7 @@ def main():
     parser.add_argument(
         "--all-spark-versions",
         action="store_true",
-        help="Output all Spark versions as JSON array (e.g., [\"4.0\", \"4.1\"] or [\"master\", \"4.0\"])"
+        help="Output CI Spark versions as JSON array (source-built commit targets excluded by default)"
     )
     parser.add_argument(
         "--released-spark-versions",
@@ -88,6 +91,11 @@ def main():
         nargs=2,
         metavar=("SPARK_VERSION", "FIELD"),
         help="Get a specific field for a Spark version (e.g., --get-field 4.0 targetJvm or --get-field master targetJvm)"
+    )
+    parser.add_argument(
+        "--include-source-built",
+        action="store_true",
+        help="Include Spark targets that require -DsparkCommit in matrix output"
     )
 
     args = parser.parse_args()
@@ -104,6 +112,8 @@ def main():
             # For master version, use "master"; for others, use short version
             matrix_versions = []
             for v in versions:
+                if v.get("requiresSparkCommit", False) and not args.include_source_built:
+                    continue
                 if v.get("isMaster", False):
                     matrix_versions.append("master")
                 else:
@@ -116,7 +126,10 @@ def main():
             pre_release_markers = ("-SNAPSHOT", "-preview")
             matrix_versions = []
             for v in versions:
-                if not any(m in v["fullVersion"] for m in pre_release_markers):
+                if (
+                    not any(m in v["fullVersion"] for m in pre_release_markers)
+                    and not v.get("requiresSparkCommit", False)
+                ):
                     matrix_versions.append(v["shortVersion"])
             print(json.dumps(matrix_versions))
 

@@ -1,0 +1,60 @@
+name: "Delta Spark Commit"
+
+on:
+  workflow_dispatch:
+    inputs:
+      spark-commit:
+        description: "Apache Spark commit SHA to build locally"
+        required: true
+        type: string
+      spark-version:
+        description: "Spark compatibility line used for Delta shims"
+        required: true
+        default: "4.2"
+        type: string
+      test-command:
+        description: "SBT command to run after publishing Spark"
+        required: true
+        default: "spark/compile"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: "Delta against Spark ${{ inputs.spark-commit }}"
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          distribution: "zulu"
+          java-version: "17"
+
+      - name: Cache Scala, SBT, and Maven
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2
+            ~/.cache/coursier
+            ~/.m2/repository
+          key: delta-spark-commit-${{ inputs.spark-commit }}
+
+      - name: Build Spark commit locally
+        id: spark-build
+        env:
+          SPARK_COMMIT: ${{ inputs.spark-commit }}
+          SPARK_VERSION: ${{ inputs.spark-version }}
+        run: bash project/scripts/build_spark_from_source.sh
+
+      - name: Run Delta build
+        run: |
+          build/sbt \
+            -DsparkVersion=${{ inputs.spark-version }} \
+            -DsparkCommit=${{ inputs.spark-commit }} \
+            -DsparkArtifactVersion=${{ steps.spark-build.outputs.SPARK_ARTIFACT_VERSION }} \
+            "${{ inputs.test-command }}"
