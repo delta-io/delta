@@ -346,7 +346,7 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
   /**
    * Extracts entries whose keys start with `prefix`, strips the prefix, and returns a plain map.
    */
-  private[delta] def filterByPrefix(
+  private[coordinatedcommits] def filterByPrefix(
       ucConfig: java.util.Map[String, String],
       prefix: String): java.util.Map[String, String] = {
     val result = new java.util.HashMap[String, String]()
