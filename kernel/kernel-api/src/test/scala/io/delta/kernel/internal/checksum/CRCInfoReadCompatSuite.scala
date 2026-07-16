@@ -112,6 +112,10 @@ class CRCInfoReadCompatSuite extends AnyFunSuite with VectorTestUtils {
               CRC_FILE_SCHEMA.get("inCommitTimestampOpt").getDataType)
           case "setTransactions" => nullColumnVector(
               CRC_FILE_SCHEMA.get("setTransactions").getDataType)
+          case "numDeletedRecordsOpt" => nullColumnVector(
+              CRC_FILE_SCHEMA.get("numDeletedRecordsOpt").getDataType)
+          case "numDeletionVectorsOpt" => nullColumnVector(
+              CRC_FILE_SCHEMA.get("numDeletionVectorsOpt").getDataType)
           case "fileSizeHistogram" => histogramColumnVector(fileSizeHistogram)
           case "histogramOpt" => histogramColumnVector(histogramOpt)
           case _ =>
@@ -213,6 +217,10 @@ class CRCInfoReadCompatSuite extends AnyFunSuite with VectorTestUtils {
               CRC_FILE_SCHEMA.get("inCommitTimestampOpt").getDataType)
           case "setTransactions" => nullColumnVector(
               CRC_FILE_SCHEMA.get("setTransactions").getDataType)
+          case "numDeletedRecordsOpt" => nullColumnVector(
+              CRC_FILE_SCHEMA.get("numDeletedRecordsOpt").getDataType)
+          case "numDeletionVectorsOpt" => nullColumnVector(
+              CRC_FILE_SCHEMA.get("numDeletionVectorsOpt").getDataType)
           case "fileSizeHistogram" => histogramColumnVector(None)
           case _ =>
             throw new IllegalArgumentException(s"Unknown field: $fieldName")
@@ -246,6 +254,10 @@ class CRCInfoReadCompatSuite extends AnyFunSuite with VectorTestUtils {
           case "inCommitTimestampOpt" => longVector(Seq(1749830855993L))
           case "setTransactions" =>
             nullColumnVector(CRC_FILE_SCHEMA.get("setTransactions").getDataType)
+          case "numDeletedRecordsOpt" =>
+            nullColumnVector(CRC_FILE_SCHEMA.get("numDeletedRecordsOpt").getDataType)
+          case "numDeletionVectorsOpt" =>
+            nullColumnVector(CRC_FILE_SCHEMA.get("numDeletionVectorsOpt").getDataType)
           case "fileSizeHistogram" => histogramColumnVector(None)
           case _ => throw new IllegalArgumentException(s"Unknown field: $fieldName")
         }
@@ -276,7 +288,9 @@ class CRCInfoReadCompatSuite extends AnyFunSuite with VectorTestUtils {
       Optional.empty(),
       Optional.empty(),
       /* inCommitTimestamp */ Optional.of(java.lang.Long.valueOf(1749830871085L)),
-      /* setTransactions */ Optional.empty())
+      /* setTransactions */ Optional.empty(),
+      /* numDeletedRecords */ Optional.empty(),
+      /* numDeletionVectors */ Optional.empty())
     val row = original.toRow()
     val ictIdx = CRC_FILE_SCHEMA.indexOf("inCommitTimestampOpt")
     assert(!row.isNullAt(ictIdx))
@@ -336,7 +350,9 @@ class CRCInfoReadCompatSuite extends AnyFunSuite with VectorTestUtils {
       Optional.empty(),
       Optional.empty(),
       /* inCommitTimestamp */ Optional.empty(),
-      /* setTransactions */ Optional.of(txns))
+      /* setTransactions */ Optional.of(txns),
+      /* numDeletedRecords */ Optional.empty(),
+      /* numDeletionVectors */ Optional.empty())
     val row = original.toRow()
     val idx = CRC_FILE_SCHEMA.indexOf("setTransactions")
     assert(!row.isNullAt(idx))
@@ -371,8 +387,69 @@ class CRCInfoReadCompatSuite extends AnyFunSuite with VectorTestUtils {
         Optional.empty(),
         Optional.empty(),
         /* inCommitTimestamp */ Optional.empty(),
-        Optional.of(dupes))
+        /* setTransactions */ Optional.of(dupes),
+        /* numDeletedRecords */ Optional.empty(),
+        /* numDeletionVectors */ Optional.empty())
     }
     assert(ex.getMessage.contains("unique per appId"))
+  }
+
+  test("DV metrics are empty when the columns are null (older .crc / non-DV table)") {
+    val batch = buildBatch(CRC_FILE_READ_SCHEMA, fileSizeHistogram = None, histogramOpt = None)
+    val crcInfo = CRCInfo.fromColumnarBatch(1L, batch, 0, "test.crc")
+    assert(crcInfo.isPresent)
+    assert(!crcInfo.get().getNumDeletedRecords.isPresent)
+    assert(!crcInfo.get().getNumDeletionVectors.isPresent)
+  }
+
+  test("toRow serializes DV metrics when present and leaves them null when absent") {
+    val withDv = new CRCInfo(
+      3L,
+      testMetadata,
+      testProtocol,
+      1000L,
+      10L,
+      Optional.empty(),
+      Optional.empty(),
+      Optional.empty(),
+      /* inCommitTimestamp */ Optional.empty(),
+      /* setTransactions */ Optional.empty(),
+      /* numDeletedRecords */ Optional.of(java.lang.Long.valueOf(42L)),
+      /* numDeletionVectors */ Optional.of(java.lang.Long.valueOf(3L)))
+    val row = withDv.toRow()
+    assert(row.getLong(CRC_FILE_SCHEMA.indexOf("numDeletedRecordsOpt")) === 42L)
+    assert(row.getLong(CRC_FILE_SCHEMA.indexOf("numDeletionVectorsOpt")) === 3L)
+
+    val withoutDv = new CRCInfo(
+      4L,
+      testMetadata,
+      testProtocol,
+      1000L,
+      10L,
+      Optional.empty(),
+      Optional.empty(),
+      Optional.empty())
+    val row2 = withoutDv.toRow()
+    assert(row2.isNullAt(CRC_FILE_SCHEMA.indexOf("numDeletedRecordsOpt")))
+    assert(row2.isNullAt(CRC_FILE_SCHEMA.indexOf("numDeletionVectorsOpt")))
+  }
+
+  test("constructor rejects DV metrics that are not both-present-or-both-absent") {
+    val ex = intercept[IllegalArgumentException] {
+      new CRCInfo(
+        5L,
+        testMetadata,
+        testProtocol,
+        1000L,
+        10L,
+        Optional.empty(),
+        Optional.empty(),
+        Optional.empty(),
+        /* inCommitTimestamp */ Optional.empty(),
+        /* setTransactions */ Optional.empty(),
+        /* numDeletedRecords */ Optional.of(java.lang.Long.valueOf(1L)),
+        /* numDeletionVectors */ Optional.empty())
+    }
+    assert(ex.getMessage.contains("both be present or both absent"))
   }
 }

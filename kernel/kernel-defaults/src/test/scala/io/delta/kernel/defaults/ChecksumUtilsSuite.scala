@@ -317,6 +317,38 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
     }
   }
 
+  test("computeChecksum populates deletion-vector metrics after a DELETE on a DV table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create a deletion-vectors-enabled table via Spark and delete some rows, producing DVs.
+      spark.sql(
+        s"CREATE TABLE delta.`$tablePath` (id LONG) USING DELTA " +
+          "TBLPROPERTIES ('delta.enableDeletionVectors' = 'true')")
+      spark.range(0, 10).write.format("delta").mode("append").save(tablePath)
+      spark.sql(s"DELETE FROM delta.`$tablePath` WHERE id < 3")
+
+      val snapshot = Table.forPath(engine, tablePath)
+        .getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      val crcInfo = ChecksumUtils.computeChecksum(engine, snapshot.getLogSegment)
+
+      // DV metrics are present (DV-capable table) and reflect the delete.
+      assert(crcInfo.getNumDeletionVectors.isPresent)
+      assert(crcInfo.getNumDeletedRecords.isPresent)
+      assert(crcInfo.getNumDeletionVectors.get() >= 1L)
+      assert(crcInfo.getNumDeletedRecords.get() === 3L)
+    }
+  }
+
+  test("computeChecksum leaves deletion-vector metrics absent for a non-DV table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      initialTestTable(tablePath, engine)
+      val snapshot = Table.forPath(engine, tablePath)
+        .getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      val crcInfo = ChecksumUtils.computeChecksum(engine, snapshot.getLogSegment)
+      assert(!crcInfo.getNumDeletionVectors.isPresent)
+      assert(!crcInfo.getNumDeletedRecords.isPresent)
+    }
+  }
+
   test("computeChecksum returns the existing CRCInfo as-is for an already-checksummed " +
     "version, without recomputation") {
     withTempDirAndEngine { (tablePath, engine) =>

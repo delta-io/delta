@@ -131,6 +131,8 @@ class CRCInfoFromRowSuite extends AnyFunSuite {
       Optional.empty(),
       Optional.empty(),
       Optional.of(java.lang.Long.valueOf(1749830855993L)),
+      Optional.empty(),
+      Optional.empty(),
       Optional.empty()))
   }
 
@@ -147,7 +149,9 @@ class CRCInfoFromRowSuite extends AnyFunSuite {
       Optional.empty(),
       Optional.of(util.Arrays.asList(
         new SetTransaction("app1", 5L, Optional.of(java.lang.Long.valueOf(100L))),
-        new SetTransaction("app2", 9L, Optional.empty())))))
+        new SetTransaction("app2", 9L, Optional.empty()))),
+      Optional.empty(),
+      Optional.empty()))
   }
 
   test("round-trips with all optional fields present") {
@@ -162,7 +166,9 @@ class CRCInfoFromRowSuite extends AnyFunSuite {
       Optional.of(createTestHistogram(fileCount = 50)),
       Optional.of(java.lang.Long.valueOf(1749830871085L)),
       Optional.of(util.Arrays.asList(
-        new SetTransaction("app1", 5L, Optional.of(java.lang.Long.valueOf(100L)))))))
+        new SetTransaction("app1", 5L, Optional.of(java.lang.Long.valueOf(100L))))),
+      Optional.of(java.lang.Long.valueOf(7L)),
+      Optional.of(java.lang.Long.valueOf(2L))))
   }
 
   test("preserves the supplied version, independent of the row (toRow omits version)") {
