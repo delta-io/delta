@@ -16,7 +16,13 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.actions.AddFile
+import java.util.UUID
+
+import scala.util.Try
+
+import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor}
+import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
+import org.apache.hadoop.fs.Path
 
 /**
  * One entry in any AMT manifest file (leaf or root).
@@ -42,13 +48,13 @@ import org.apache.spark.sql.delta.actions.AddFile
  *                      for tables written by both Delta and Iceberg.
  * @param column_files Per-column file entries; only content_type in {0,3}.
  */
-case class AmtSingleAction(
+case class AMTSingleAction(
     content_type: Int,                          // ID: 134, required.
     format_version: Int,                        // ID: 157, required.
     location: String,                           // ID: 100, required.
     file_format: String,                        // ID: 101, required ("parquet" for now).
     tracking: Tracking,                         // ID: 147, required.
-    deletion_vector: Option[DeletionVector],    // ID: 148, optional (only when content_type=0).
+    deletion_vector: Option[DeletionVector], // ID: 148, optional (only when content_type=0).
     spec_id: Option[Int],                       // ID: 141, optional.
     partition: Partition,                       // ID: 102, required.
     sort_order_id: Option[Int],                 // ID: 140, optional (only when content_type=0).
@@ -60,15 +66,15 @@ case class AmtSingleAction(
     split_offsets: Option[Seq[Long]],           // ID: 132, optional.
     column_files: Option[Seq[ColumnFile]] // ID: TBD (content_type in {0,3}).
 ) {
-  AmtSingleAction.validate(this)
+  AMTSingleAction.validate(this)
 
   /**
-   * Returns the strongly-typed [[AmtAction]] view of this row. The `.get` calls are
-   * safe because [[AmtSingleAction.validate]] (run at construction) guarantees the required
+   * Returns the strongly-typed [[AMTAction]] view of this row. The `.get` calls are
+   * safe because [[AMTSingleAction.validate]] (run at construction) guarantees the required
    * fields are present for each kind.
    */
-  def unwrap: AmtAction = content_type match {
-    case AmtSingleAction.ContentType.Type.Data =>
+  def unwrap: AMTAction = content_type match {
+    case AMTSingleAction.ContentType.Type.Data =>
       DataEntry(
         location = location,
         file_format = file_format,
@@ -84,7 +90,7 @@ case class AmtSingleAction(
         split_offsets = split_offsets,
         column_files = column_files,
         format_version = format_version)
-    case AmtSingleAction.ContentType.Type.DataManifest =>
+    case AMTSingleAction.ContentType.Type.DataManifest =>
       DataManifestEntry(
         location = location,
         file_format = file_format,
@@ -104,7 +110,7 @@ case class AmtSingleAction(
   }
 }
 
-object AmtSingleAction {
+object AMTSingleAction {
 
   /**
    * Content-type metadata. The integer codes live in the nested [[ContentType.Type]]
@@ -141,7 +147,7 @@ object AmtSingleAction {
    *   - tracking.sequence_number == tracking.file_sequence_number when
    *     content_type == DATA_MANIFEST (3) and both are set.
    */
-  def validate(action: AmtSingleAction): Unit = {
+  def validate(action: AMTSingleAction): Unit = {
     require(ContentType.all.contains(action.content_type),
       s"Unsupported content_type: ${action.content_type}.")
     require(Option(action.file_format).forall(_ == FileFormatParquet),
@@ -167,25 +173,25 @@ object AmtSingleAction {
     }
   }
 
-  /** Creates [[AmtSingleAction]] from AddFile. */
-  def fromAddFile(add: AddFile, tracking: Tracking): AmtSingleAction =
-    DataEntry.fromAddFile(add, tracking).wrap
+  /** Creates [[AMTSingleAction]] from AddFile. */
+  def fromAddFile(add: AddFile, tracking: Tracking, tableRoot: Path): AMTSingleAction =
+    DataEntry.fromAddFile(add, tracking, tableRoot).wrap
 }
 
 /**
- * Strongly-typed, in-memory view of an [[AmtSingleAction]], one case class per
- * `content_type` kind. Only [[AmtSingleAction]] is persisted; [[wrap]] flattens a
- * kind back to it and [[AmtSingleAction.unwrap]] recovers it.
+ * Strongly-typed, in-memory view of an [[AMTSingleAction]], one case class per
+ * `content_type` kind. Only [[AMTSingleAction]] is persisted; [[wrap]] flattens a
+ * kind back to it and [[AMTSingleAction.unwrap]] recovers it.
  */
-sealed trait AmtAction {
+sealed trait AMTAction {
   /** The `content_type` discriminator this kind maps to. */
   protected def content_type: Int
 
-  require(AmtSingleAction.ContentType.all.contains(content_type),
+  require(AMTSingleAction.ContentType.all.contains(content_type),
     s"Unsupported content_type: $content_type.")
 
-  /** Flatten this typed view back into the on-disk [[AmtSingleAction]] row. */
-  def wrap: AmtSingleAction
+  /** Flatten this typed view back into the on-disk [[AMTSingleAction]] row. */
+  def wrap: AMTSingleAction
 }
 
 /**
@@ -222,12 +228,12 @@ case class DataEntry(
     key_metadata: Option[Array[Byte]] = None,
     split_offsets: Option[Seq[Long]] = None,
     column_files: Option[Seq[ColumnFile]] = None,
-    format_version: Int = AmtSingleAction.FormatVersionV4)
-  extends AmtAction {
+    format_version: Int = AMTSingleAction.FormatVersionV4)
+  extends AMTAction {
 
-  override protected def content_type: Int = AmtSingleAction.ContentType.Type.Data
+  override protected def content_type: Int = AMTSingleAction.ContentType.Type.Data
 
-  override def wrap: AmtSingleAction = AmtSingleAction(
+  override def wrap: AMTSingleAction = AMTSingleAction(
     content_type = content_type,
     format_version = format_version,
     location = location,
@@ -248,10 +254,10 @@ case class DataEntry(
 
 object DataEntry {
   /** Creates [[DataEntry]] from AddFile. */
-  def fromAddFile(add: AddFile, tracking: Tracking): DataEntry =
+  def fromAddFile(add: AddFile, tracking: Tracking, tableRoot: Path): DataEntry =
     DataEntry(
       location = add.path,
-      file_format = AmtSingleAction.FileFormatParquet,
+      file_format = AMTSingleAction.FileFormatParquet,
       tracking = tracking,
       // Iceberg field 103 is the physical record count of the file, not the live/logical
       // count after deletes; throw rather than guess when the AddFile carries no stats.
@@ -260,7 +266,8 @@ object DataEntry {
           s"Cannot build AMT entry: AddFile has no record count (missing stats): ${add.path}.")),
       file_size_in_bytes = add.size,
       partition = Partition(Option(add.partitionValues).filter(_.nonEmpty)),
-      deletion_vector = None,
+      deletion_vector =
+        Option(add.deletionVector).map(DeletionVector.fromDescriptor(_, tableRoot)),
       content_stats = None)
 }
 
@@ -296,12 +303,12 @@ case class DataManifestEntry(
     key_metadata: Option[Array[Byte]] = None,
     split_offsets: Option[Seq[Long]] = None,
     column_files: Option[Seq[ColumnFile]] = None,
-    format_version: Int = AmtSingleAction.FormatVersionV4)
-  extends AmtAction {
+    format_version: Int = AMTSingleAction.FormatVersionV4)
+  extends AMTAction {
 
-  override protected def content_type: Int = AmtSingleAction.ContentType.Type.DataManifest
+  override protected def content_type: Int = AMTSingleAction.ContentType.Type.DataManifest
 
-  override def wrap: AmtSingleAction = AmtSingleAction(
+  override def wrap: AMTSingleAction = AMTSingleAction(
     content_type = content_type,
     format_version = format_version,
     location = location,
@@ -321,7 +328,7 @@ case class DataManifestEntry(
 }
 
 /**
- * Inheritance / lineage envelope on every [[AmtSingleAction]]. Matches the
+ * Inheritance / lineage envelope on every [[AMTSingleAction]]. Matches the
  * `tracking` struct in the V4 spec (field IDs in comments).
  *
  * @param status Entry status (0=existing, 1=added, 2=deleted, 3=replaced, 4=modified).
@@ -368,7 +375,7 @@ object Tracking {
 }
 
 /**
- * Partition-values carrier for [[AmtSingleAction]] (Iceberg V4 `partition`, field 102).
+ * Partition-values carrier for [[AMTSingleAction]] (Iceberg V4 `partition`, field 102).
  *
  * Iceberg models `partition` as a per-table dynamic struct (one typed field per
  * partition column); that shape cannot be expressed statically here, so this PR carries
@@ -382,11 +389,11 @@ object Tracking {
 case class Partition(values: Option[Map[String, String]] = None)
 
 /**
- * Pointer to a deletion-vector blob.
+ * Pointer to a deletion-vector blob, mirroring the Iceberg V4 `deletion_vector` struct.
  *
- * @param location File path holding the DV blob.
- * @param offset Byte offset of the DV blob within the DV blob file.
- * @param size_in_bytes Size of the DV blob in bytes.
+ * @param location Absolute path of the file holding the DV blob.
+ * @param offset Byte offset where the DV content starts within that file.
+ * @param size_in_bytes Total on-disk DV size = raw bitmap + length + checksum framing.
  * @param cardinality Number of positions the DV marks deleted.
  */
 case class DeletionVector(
@@ -394,6 +401,68 @@ case class DeletionVector(
     offset: Long,             // ID: 144, required.
     size_in_bytes: Long,      // ID: 145, required.
     cardinality: Long)        // ID: 156, required.
+
+object DeletionVector {
+
+  /** Maps a Delta on-disk [[DeletionVectorDescriptor]] onto the AMT sub-struct; rejects inline. */
+  def fromDescriptor(dv: DeletionVectorDescriptor, tableRoot: Path): DeletionVector = {
+    require(dv.isOnDisk,
+      s"AMT tables only support on-disk deletion vectors; got storageType=${dv.storageType}.")
+    val offset = dv.offset.getOrElse(
+      throw new IllegalArgumentException(
+        s"On-disk deletion vector is missing an offset: ${dv.pathOrInlineDv}."))
+    DeletionVector(
+      location = dv.absolutePath(tableRoot).toString,
+      offset = offset.toLong,
+      size_in_bytes = DeletionVectorStore.getTotalSizeOfDVFieldsInFile(dv.sizeInBytes).toLong,
+      cardinality = dv.cardinality)
+  }
+
+  /** Rebuilds the Delta [[DeletionVectorDescriptor]] from the AMT sub-struct. */
+  def toDescriptor(dv: DeletionVector, tableRoot: Path): DeletionVectorDescriptor = {
+    val rawSize = dv.size_in_bytes.toInt -
+      (DeletionVectorStore.getTotalSizeOfDVFieldsInFile(0))
+    recoverRelativeUuid(dv.location, tableRoot) match {
+      case Some((id, randomPrefix)) =>
+        DeletionVectorDescriptor.onDiskWithRelativePath(
+          id = id,
+          randomPrefix = randomPrefix,
+          sizeInBytes = rawSize,
+          cardinality = dv.cardinality,
+          offset = Some(dv.offset.toInt))
+      case None =>
+        DeletionVectorDescriptor.onDiskWithAbsolutePath(
+          path = dv.location,
+          sizeInBytes = rawSize,
+          cardinality = dv.cardinality,
+          offset = Some(dv.offset.toInt))
+    }
+  }
+
+  /**
+   * If `location` is a Delta-written DV blob under `tableRoot` (a `deletion_vector_<uuid>.bin` file
+   * directly under it or under one random-prefix directory), returns its UUID and prefix so the `u`
+   * descriptor can be rebuilt; None otherwise (treated as an absolute `p`).
+   */
+  private def recoverRelativeUuid(location: String, tableRoot: Path): Option[(UUID, String)] = {
+    val path = new Path(location)
+    val parent = path.getParent
+    val uuid =
+      Try(DeletionVectorDescriptor.getUUIDFromDeletionVectorFileName(path.getName)).toOption
+    val rootStr = tableRoot.toString
+    uuid.flatMap { id =>
+      if (parent.toString == rootStr) {
+        // <tableRoot>/deletion_vector_<uuid>.bin -- no random prefix.
+        Some((id, ""))
+      } else if (parent.getParent.toString == rootStr) {
+        // <tableRoot>/<prefix>/deletion_vector_<uuid>.bin -- one random-prefix directory.
+        Some((id, parent.getName))
+      } else {
+        None
+      }
+    }
+  }
+}
 
 /**
  * Statistics + inline manifest DV for a `content_type == DATA_MANIFEST (3)` root entry.
@@ -437,7 +506,7 @@ case class ManifestInfo(
  * The single nullable `raw_stats` field is deliberate: an empty case class encodes to an
  * empty Parquet group, which the Parquet data source rejects
  * (`EMPTY_SCHEMA_NOT_SUPPORTED_FOR_DATASOURCE`). One nullable column keeps
- * `AmtSingleAction` Parquet-writable without committing to the final stats shape; M1
+ * `AMTSingleAction` Parquet-writable without committing to the final stats shape; M1
  * writers leave it `None`.
  *
  *
@@ -451,7 +520,7 @@ case class ContentStats(raw_stats: Option[Array[Byte]] = None)
  * The single nullable `location` field is deliberate: an empty case class encodes to an
  * empty Parquet group, which the Parquet data source rejects
  * (`EMPTY_SCHEMA_NOT_SUPPORTED_FOR_DATASOURCE`). One nullable column keeps
- * `AmtSingleAction` Parquet-writable without committing to the final per-column-file
+ * `AMTSingleAction` Parquet-writable without committing to the final per-column-file
  * shape; M1 writers leave `column_files` `None`.
  *
  *
