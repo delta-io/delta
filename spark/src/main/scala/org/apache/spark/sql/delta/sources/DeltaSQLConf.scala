@@ -499,6 +499,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_IS_PREDICATE_PARTITION_COLUMNS_ONLY_STRICT =
+    buildConf("isPredicatePartitionColumnsOnlyStrict.enabled")
+      .internal()
+      .doc("When true, callers that opt in use the strict predicate classification API " +
+        "(isPredicatePartitionColumnsOnlyStrict, isPredicateMetadataOnlyStrict, " +
+        "splitMetadataAndDataPredicatesStrict). Non-deterministic predicates are not pushed as " +
+        "partition filters. When false, uses legacy isPredicatePartitionColumnsOnly (vacuously " +
+        "true for columnless predicates such as rand()).")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_MAX_RETRY_COMMIT_ATTEMPTS =
     buildConf("maxCommitAttempts")
       .internal()

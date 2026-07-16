@@ -166,6 +166,7 @@ public class UCCatalogManagedClient {
                                             engine,
                                             ucTableId,
                                             tablePath,
+                                            ucTableIdentifier,
                                             logData,
                                             maxUcTableVersion));
                         snapshotBuilder =
@@ -174,7 +175,9 @@ public class UCCatalogManagedClient {
 
                       Snapshot snapshot =
                           snapshotBuilder
-                              .withCommitter(createUCCommitter(ucClient, ucTableId, tablePath))
+                              .withCommitter(
+                                  createUCCommitter(
+                                      ucClient, ucTableId, tablePath, ucTableIdentifier))
                               .withLogData(logData)
                               .withMaxCatalogVersion(maxUcTableVersion)
                               .build(engine);
@@ -243,8 +246,7 @@ public class UCCatalogManagedClient {
     Objects.requireNonNull(ucTableIdentifier, "ucTableIdentifier is null");
 
     return TableManager.buildCreateTableTransaction(tablePath, schema, engineInfo)
-        .withCommitter(
-            new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath, ucTableIdentifier))
+        .withCommitter(createUCCommitter(ucClient, ucTableId, tablePath, ucTableIdentifier))
         .withTableProperties(getRequiredTablePropertiesForCreate(ucTableId));
   }
 
@@ -334,7 +336,7 @@ public class UCCatalogManagedClient {
         new Lazy<>(
             () ->
                 loadLatestSnapshotForTimestampResolution(
-                    engine, ucTableId, tablePath, logData, ucTableVersion));
+                    engine, ucTableId, tablePath, ucTableIdentifier, logData, ucTableVersion));
 
     return timeUncheckedOperation(
         logger,
@@ -384,6 +386,17 @@ public class UCCatalogManagedClient {
    */
   protected Committer createUCCommitter(UCClient ucClient, String ucTableId, String tablePath) {
     return new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath);
+  }
+
+  /**
+   * Creates a UC committer that carries the three-part {@link UCTableIdentifier}.
+   *
+   * <p>The identifier is required by the UCDeltaClient, whose {@code commit} needs the {@code
+   * catalog.schema.table} name. The UCClient ignores it.
+   */
+  protected Committer createUCCommitter(
+      UCClient ucClient, String ucTableId, String tablePath, UCTableIdentifier ucTableIdentifier) {
+    return new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath, ucTableIdentifier);
   }
 
   ////////////////////
@@ -555,6 +568,7 @@ public class UCCatalogManagedClient {
       Engine engine,
       String ucTableId,
       String tablePath,
+      UCTableIdentifier ucTableIdentifier,
       List<ParsedLogData> logData,
       long ucTableVersion) {
     // TODO: We can remove timeUncheckedOperation when the commitRange code integrates with metrics
@@ -564,7 +578,7 @@ public class UCCatalogManagedClient {
         ucTableId,
         () ->
             TableManager.loadSnapshot(tablePath)
-                .withCommitter(new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath))
+                .withCommitter(createUCCommitter(ucClient, ucTableId, tablePath, ucTableIdentifier))
                 .withLogData(logData)
                 .withMaxCatalogVersion(ucTableVersion)
                 .build(engine));
