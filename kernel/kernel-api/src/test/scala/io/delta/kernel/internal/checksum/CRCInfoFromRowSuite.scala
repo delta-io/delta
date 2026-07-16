@@ -130,7 +130,8 @@ class CRCInfoFromRowSuite extends AnyFunSuite {
       Optional.empty(),
       Optional.empty(),
       Optional.empty(),
-      Optional.of(java.lang.Long.valueOf(1749830855993L))))
+      Optional.of(java.lang.Long.valueOf(1749830855993L)),
+      Optional.empty()))
   }
 
   test("round-trips with all optional fields present") {
@@ -143,7 +144,8 @@ class CRCInfoFromRowSuite extends AnyFunSuite {
       Optional.of("txn-xyz"),
       Optional.of(domainMetadataSet("delta.clustering" -> "{\"cols\":[\"c1\"]}")),
       Optional.of(createTestHistogram(fileCount = 50)),
-      Optional.of(java.lang.Long.valueOf(1749830871085L))))
+      Optional.of(java.lang.Long.valueOf(1749830871085L)),
+      Optional.empty()))
   }
 
   test("preserves the supplied version, independent of the row (toRow omits version)") {

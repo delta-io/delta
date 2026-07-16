@@ -24,6 +24,7 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.actions.SetTransaction;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.data.StructRow;
 import io.delta.kernel.internal.stats.FileSizeHistogram;
@@ -52,6 +53,7 @@ public class CRCInfo {
   private static final String DOMAIN_METADATA = "domainMetadata";
   private static final String FILE_SIZE_HISTOGRAM = "fileSizeHistogram";
   private static final String IN_COMMIT_TIMESTAMP = "inCommitTimestampOpt";
+  private static final String SET_TRANSACTIONS = "setTransactions";
   private static final String HISTOGRAM_OPT = "histogramOpt";
 
   public static final StructType CRC_FILE_SCHEMA =
@@ -65,7 +67,11 @@ public class CRCInfo {
           .add(TXN_ID, StringType.STRING, /*nullable*/ true)
           .add(DOMAIN_METADATA, new ArrayType(DomainMetadata.FULL_SCHEMA, false), /*nullable*/ true)
           .add(FILE_SIZE_HISTOGRAM, FileSizeHistogram.FULL_SCHEMA, /*nullable*/ true)
-          .add(IN_COMMIT_TIMESTAMP, LongType.LONG, /*nullable*/ true);
+          .add(IN_COMMIT_TIMESTAMP, LongType.LONG, /*nullable*/ true)
+          .add(
+              SET_TRANSACTIONS,
+              new ArrayType(SetTransaction.FULL_SCHEMA, false),
+              /*nullable*/ true);
 
   // Used by ChecksumReader to support reading CRC files with the legacy "histogramOpt" field.
   public static final StructType CRC_FILE_READ_SCHEMA =
@@ -117,6 +123,14 @@ public class CRCInfo {
         inCommitTimestampVector.isNullAt(rowId)
             ? Optional.empty()
             : Optional.of(inCommitTimestampVector.getLong(rowId));
+    ColumnVector setTransactionsVector = batch.getColumnVector(getSchemaIndex(SET_TRANSACTIONS));
+    Optional<List<SetTransaction>> setTransactions =
+        setTransactionsVector.isNullAt(rowId)
+            ? Optional.empty()
+            : Optional.of(
+                VectorUtils.<Row>toJavaList(setTransactionsVector.getArray(rowId)).stream()
+                    .map(SetTransaction::fromRow)
+                    .collect(Collectors.toList()));
 
     // protocol and metadata are nullable per fromColumnVector's implementation.
     if (protocol == null || metadata == null) {
@@ -133,7 +147,8 @@ public class CRCInfo {
             txnId,
             domainMetadata,
             fileSizeHistogram,
-            inCommitTimestamp));
+            inCommitTimestamp,
+            setTransactions));
   }
 
   /**
@@ -197,6 +212,15 @@ public class CRCInfo {
             ? Optional.empty()
             : Optional.of(row.getLong(inCommitTimestampIdx));
 
+    int setTransactionsIdx = getSchemaIndex(SET_TRANSACTIONS);
+    Optional<List<SetTransaction>> setTransactions =
+        row.isNullAt(setTransactionsIdx)
+            ? Optional.empty()
+            : Optional.of(
+                VectorUtils.<Row>toJavaList(row.getArray(setTransactionsIdx)).stream()
+                    .map(SetTransaction::fromRow)
+                    .collect(Collectors.toList()));
+
     return new CRCInfo(
         version,
         metadata,
@@ -206,7 +230,8 @@ public class CRCInfo {
         txnId,
         domainMetadata,
         fileSizeHistogram,
-        inCommitTimestamp);
+        inCommitTimestamp,
+        setTransactions);
   }
 
   private final long version;
@@ -218,6 +243,7 @@ public class CRCInfo {
   private final Optional<Set<DomainMetadata>> domainMetadata;
   private final Optional<FileSizeHistogram> fileSizeHistogram;
   private final Optional<Long> inCommitTimestamp;
+  private final Optional<List<SetTransaction>> setTransactions;
 
   public CRCInfo(
       long version,
@@ -237,7 +263,8 @@ public class CRCInfo {
         txnId,
         domainMetadata,
         fileSizeHistogram,
-        Optional.empty() /* inCommitTimestamp */);
+        Optional.empty() /* inCommitTimestamp */,
+        Optional.empty() /* setTransactions */);
   }
 
   public CRCInfo(
@@ -249,7 +276,8 @@ public class CRCInfo {
       Optional<String> txnId,
       Optional<Set<DomainMetadata>> domainMetadata,
       Optional<FileSizeHistogram> fileSizeHistogram,
-      Optional<Long> inCommitTimestamp) {
+      Optional<Long> inCommitTimestamp,
+      Optional<List<SetTransaction>> setTransactions) {
     checkArgument(tableSizeBytes >= 0);
     checkArgument(numFiles >= 0);
     // Live Domain Metadata actions at this version, excluding tombstones.
@@ -272,6 +300,17 @@ public class CRCInfo {
     this.txnId = requireNonNull(txnId);
     this.fileSizeHistogram = requireNonNull(fileSizeHistogram);
     this.inCommitTimestamp = requireNonNull(inCommitTimestamp);
+    this.setTransactions = requireNonNull(setTransactions);
+    setTransactions.ifPresent(
+        txns -> {
+          Set<String> appIds = new HashSet<>();
+          txns.forEach(
+              txn ->
+                  checkArgument(
+                      appIds.add(txn.getAppId()),
+                      "SetTransactions in CRC must be unique per appId, found duplicate: %s",
+                      txn.getAppId()));
+        });
   }
 
   /** Used by callers to supply an ICT that cannot be derived from the file actions alone. */
@@ -285,7 +324,8 @@ public class CRCInfo {
         txnId,
         domainMetadata,
         fileSizeHistogram,
-        inCommitTimestamp);
+        inCommitTimestamp,
+        setTransactions);
   }
 
   /** The version of the Delta table that this CRCInfo represents. */
@@ -322,6 +362,10 @@ public class CRCInfo {
   /** The {@link FileSizeHistogram} stored in this CRCInfo. */
   public Optional<FileSizeHistogram> getFileSizeHistogram() {
     return fileSizeHistogram;
+  }
+
+  public Optional<List<SetTransaction>> getSetTransactions() {
+    return setTransactions;
   }
 
   /**
@@ -363,6 +407,13 @@ public class CRCInfo {
         fileSizeHistogram ->
             values.put(getSchemaIndex(FILE_SIZE_HISTOGRAM), fileSizeHistogram.toRow()));
     inCommitTimestamp.ifPresent(ict -> values.put(getSchemaIndex(IN_COMMIT_TIMESTAMP), ict));
+    setTransactions.ifPresent(
+        txns ->
+            values.put(
+                getSchemaIndex(SET_TRANSACTIONS),
+                VectorUtils.buildArrayValue(
+                    txns.stream().map(SetTransaction::toRow).collect(Collectors.toList()),
+                    SetTransaction.FULL_SCHEMA)));
     return new GenericRow(CRC_FILE_SCHEMA, values);
   }
 
@@ -377,7 +428,8 @@ public class CRCInfo {
         txnId,
         domainMetadata,
         fileSizeHistogram,
-        inCommitTimestamp);
+        inCommitTimestamp,
+        setTransactions);
   }
 
   @Override
@@ -394,7 +446,8 @@ public class CRCInfo {
         && txnId.equals(other.txnId)
         && domainMetadata.equals(other.domainMetadata)
         && fileSizeHistogram.equals(other.fileSizeHistogram)
-        && inCommitTimestamp.equals(other.inCommitTimestamp);
+        && inCommitTimestamp.equals(other.inCommitTimestamp)
+        && setTransactions.equals(other.setTransactions);
   }
 
   private static int getSchemaIndex(String fieldName) {

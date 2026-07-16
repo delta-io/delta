@@ -117,6 +117,50 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
     }
   }
 
+  test("computeChecksum captures setTransactions from the log (full replay path)") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      initialTestTable(tablePath, engine)
+
+      val snapshot1 = Table.forPath(
+        engine,
+        tablePath).getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
+      val crcInfo = ChecksumUtils.computeChecksum(engine, snapshot1.getLogSegment)
+
+      assert(crcInfo.getSetTransactions.isPresent)
+      val appIds = crcInfo.getSetTransactions.get().asScala.map(_.getAppId)
+      assert(appIds.size === appIds.distinct.size)
+    }
+  }
+
+  test("computeChecksum carries setTransactions forward across an incremental commit") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      initialTestTable(tablePath, engine)
+
+      val snapshot1 = Table.forPath(
+        engine,
+        tablePath).getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
+      ChecksumUtils.computeStateAndWriteChecksum(engine, snapshot1.getLogSegment)
+      val txnsV1 = ChecksumUtils.computeChecksum(engine, snapshot1.getLogSegment).getSetTransactions
+
+      appendData(
+        engine,
+        tablePath,
+        isNewTable = false,
+        data = Seq(Map.empty[String, Literal] -> dataBatches1))
+      val snapshot2 = Table.forPath(
+        engine,
+        tablePath).getSnapshotAsOfVersion(engine, 2).asInstanceOf[SnapshotImpl]
+      val crcV2 = ChecksumUtils.computeChecksum(engine, snapshot2.getLogSegment)
+
+      // setTransactions is maintained incrementally and remains present + unique per appId.
+      assert(crcV2.getVersion === 2)
+      assert(crcV2.getSetTransactions.isPresent)
+      assert(txnsV1.isPresent)
+      val v2AppIds = crcV2.getSetTransactions.get().asScala.map(_.getAppId).toSet
+      assert(txnsV1.get().asScala.map(_.getAppId).toSet.subsetOf(v2AppIds))
+    }
+  }
+
   test("computeChecksum returns the existing CRCInfo as-is for an already-checksummed " +
     "version, without recomputation") {
     withTempDirAndEngine { (tablePath, engine) =>
