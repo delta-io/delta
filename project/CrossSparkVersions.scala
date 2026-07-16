@@ -642,6 +642,74 @@ object CrossSparkVersions extends AutoPlugin {
       }
       state
     },
+    commands += Command.command("checkShimDirsReferenced") { state =>
+      // Guard against orphaned shim directories: every `*-shims/spark-*` directory on disk must
+      // be referenced by some SparkVersionSpec.additionalSourceDirs entry, otherwise its files
+      // would silently never be compiled for any Spark version. Run in CI so a build change that
+      // drops a directory reference (or a new directory added without wiring) fails fast.
+      //
+      // Every additionalSourceDirs entry is expected to be of the form `<scala|java>-shims/spark-*`
+      // (see the SparkVersionSpec definitions), so the trailing path segment is the version token
+      // (e.g. "spark-4.0", "spark-4.1-4.2") that we match against the on-disk directory names.
+      val declaredTokens = SparkVersionSpec.ALL_SPECS
+        .flatMap(_.additionalSourceDirs)
+        .map(_.split("/").last) // "scala-shims/spark-4.0" -> "spark-4.0"
+        .toSet
+
+      // Collect every version directory directly under any `scala-shims`/`java-shims` directory.
+      // We walk the whole repo (not a hardcoded module list) on purpose: a shim directory added
+      // under a brand-new module must be caught too. `target` and `.git` are pruned since they can
+      // hold copied/compiled shim paths that would produce false positives.
+      def findShimVersionDirs(dir: File): Seq[File] = {
+        Option(dir.listFiles()).getOrElse(Array.empty).toSeq.filter(_.isDirectory).flatMap { d =>
+          d.getName match {
+            case "target" | ".git" => Nil
+            case "scala-shims" | "java-shims" =>
+              Option(d.listFiles()).getOrElse(Array.empty).toSeq.filter(_.isDirectory)
+            case _ => findShimVersionDirs(d)
+          }
+        }
+      }
+
+      val shimDirs = findShimVersionDirs(new File("."))
+      val onDiskTokens = shimDirs.map(_.getName).toSet
+
+      // (a) On-disk directory whose token is not wired into any spec: its files never compile.
+      val orphaned = shimDirs
+        .filterNot(d => declaredTokens.contains(d.getName))
+        .map(_.getPath)
+        .sorted
+
+      // (b) Declared token with no directory on disk: a stale/typo'd additionalSourceDirs entry.
+      val danglingDeclared = (declaredTokens -- onDiskTokens).toSeq.sorted
+
+      val orphanedError =
+        if (orphaned.isEmpty) None
+        else Some(
+          "Shim directories not referenced by any SparkVersionSpec.additionalSourceDirs " +
+            "(their files would never be compiled):\n" +
+            orphaned.map("  " + _).mkString("\n") +
+            "\nAdd the directory to a spec's additionalSourceDirs in " +
+            "project/CrossSparkVersions.scala, or remove the unused directory.")
+      val danglingError =
+        if (danglingDeclared.isEmpty) None
+        else Some(
+          "additionalSourceDirs reference version tokens with no directory on disk " +
+            "(stale or misspelled entries):\n" +
+            danglingDeclared.map("  " + _).mkString("\n"))
+      val errors = Seq(orphanedError, danglingError).flatten
+
+      if (errors.nonEmpty) {
+        sys.error(
+          errors.mkString("\n\n") +
+            s"\n\nDeclared version tokens: ${declaredTokens.toSeq.sorted.mkString(", ")}")
+      } else {
+        println(
+          s"[info] All ${shimDirs.size} shim directories are referenced in the build " +
+            s"(tokens: ${declaredTokens.toSeq.sorted.mkString(", ")}).")
+        state
+      }
+    },
     commands += Command.command("exportSparkVersionsJson") { state =>
       // Export Spark version information as JSON for use by CI/CD and other tools
       import java.io.{File, PrintWriter}
