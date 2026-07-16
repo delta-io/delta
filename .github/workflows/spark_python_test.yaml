@@ -33,7 +33,8 @@ jobs:
         id: generate
         run: |
           # Get only released versions (exclude snapshots)
-          SPARK_VERSIONS=$(python3 project/scripts/get_spark_version_info.py --released-spark-versions)
+          # Exclude Spark 4.2 until pyspark==4.2.0 is published to PyPI.
+          SPARK_VERSIONS=$(python3 project/scripts/get_spark_version_info.py --released-spark-versions | jq -c '[.[] | select(. != "4.2")]')
           echo "spark_versions=$SPARK_VERSIONS" >> $GITHUB_OUTPUT
           echo "Generated released Spark versions: $SPARK_VERSIONS"
 
