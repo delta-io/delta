@@ -331,6 +331,16 @@ public class DeltaV2Table extends DeltaV2TableShims
     return snapshotManager;
   }
 
+  /** The table protocol from the initial snapshot. */
+  protected AbstractProtocol protocol() {
+    return new KernelProtocolAdapter(((SnapshotImpl) initialSnapshot).getProtocol());
+  }
+
+  /** The table metadata from the initial snapshot. */
+  protected AbstractMetadata metadata() {
+    return new KernelMetadataAdapter(((SnapshotImpl) initialSnapshot).getMetadata());
+  }
+
   /** Returns a copy of this table pinned to {@code version}. */
   public DeltaV2Table withVersion(long version) {
     return catalogTable.isPresent()
@@ -411,16 +421,6 @@ public class DeltaV2Table extends DeltaV2TableShims
   @Override
   public Set<TableCapability> capabilities() {
     return CAPABILITIES;
-  }
-
-  /** The table protocol from the initial snapshot. */
-  protected AbstractProtocol protocol() {
-    return new KernelProtocolAdapter(((SnapshotImpl) initialSnapshot).getProtocol());
-  }
-
-  /** The table metadata from the initial snapshot. */
-  protected AbstractMetadata metadata() {
-    return new KernelMetadataAdapter(((SnapshotImpl) initialSnapshot).getMetadata());
   }
 
   /**
