@@ -32,6 +32,7 @@ import io.delta.spark.internal.v2.read.MetadataEvolutionHandler;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
+import io.delta.spark.internal.v2.utils.ColumnV2Utils;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import io.delta.spark.internal.v2.write.DeltaRowLevelOperationBuilder;
 import io.delta.spark.internal.v2.write.DeltaV2WriteBuilder;
@@ -40,6 +41,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -68,6 +70,7 @@ import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.RowLevelOperationBuilder;
 import org.apache.spark.sql.connector.write.RowLevelOperationInfo;
 import org.apache.spark.sql.connector.write.WriteBuilder;
+import org.apache.spark.sql.delta.DeltaColumnMapping$;
 import org.apache.spark.sql.delta.DeltaTableUtils;
 import org.apache.spark.sql.delta.RowCommitVersion$;
 import org.apache.spark.sql.delta.RowId$;
@@ -395,7 +398,28 @@ public class DeltaV2Table
 
   @Override
   public Column[] columns() {
-    return CatalogV2Util.structTypeToV2Columns(schema());
+    Column[] mappedColumns = schemaProvider.getColumns();
+    if (!isCDCRead) {
+      return mappedColumns;
+    }
+
+    Map<String, Column> mappedByName = new LinkedHashMap<>();
+    for (Column column : mappedColumns) {
+      mappedByName.put(column.name(), column);
+    }
+
+    List<Column> result = new ArrayList<>();
+    for (StructField field : schema().fields()) {
+      Column mapped = mappedByName.get(field.name());
+      if (mapped != null) {
+        result.add(mapped);
+      } else {
+        Column[] synthetic =
+            CatalogV2Util.structTypeToV2Columns(new StructType(new StructField[] {field}));
+        result.add(synthetic[0]);
+      }
+    }
+    return result.toArray(new Column[0]);
   }
 
   @Override
@@ -594,6 +618,7 @@ public class DeltaV2Table
     private StructType dataSchema;
     private StructType partitionSchema;
     private Transform[] partitionTransforms;
+    private Column[] columns;
 
     SchemaProvider(SparkSession sparkSession, StructType rawSchema, List<String> partColNames) {
       this.sparkSession = sparkSession;
@@ -645,6 +670,19 @@ public class DeltaV2Table
       this.partitionTransforms =
           partColNames.stream().map(Expressions::identity).toArray(Transform[]::new);
 
+      List<Column> v2Columns = new ArrayList<>();
+      for (StructField publicField : publicSchema.fields()) {
+        StructField rawField = fieldMap.get(publicField.name());
+        String columnId = null;
+        if (rawField != null && DeltaColumnMapping$.MODULE$.hasColumnId(rawField)) {
+          columnId = String.valueOf(DeltaColumnMapping$.MODULE$.getColumnId(rawField));
+        }
+        v2Columns.add(
+            ColumnV2Utils.createColumn(
+                publicField.name(), publicField.dataType(), publicField.nullable(), columnId));
+      }
+      this.columns = v2Columns.toArray(new Column[0]);
+
       this.initialized = true;
     }
 
@@ -671,6 +709,10 @@ public class DeltaV2Table
 
     Transform[] getPartitionTransforms() {
       return withInit(() -> partitionTransforms);
+    }
+
+    Column[] getColumns() {
+      return withInit(() -> columns);
     }
   }
 }
