@@ -34,6 +34,8 @@ import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.metrics.LogReplayReport;
+import io.delta.kernel.internal.metrics.LogReplayTelemetry;
 import io.delta.kernel.internal.metrics.ScanMetrics;
 import io.delta.kernel.internal.replay.LogReplayUtils.UniqueFileActionTuple;
 import io.delta.kernel.internal.util.Utils;
@@ -78,8 +80,19 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
    */
   private ScanMetrics metrics;
 
+  private final Optional<LogReplayTelemetry> logReplayTelemetry;
+
   ActiveAddFilesIterator(
       Engine engine, CloseableIterator<ActionWrapper> iter, Path tableRoot, ScanMetrics metrics) {
+    this(engine, iter, tableRoot, metrics, Optional.empty() /* logReplayTelemetry */);
+  }
+
+  ActiveAddFilesIterator(
+      Engine engine,
+      CloseableIterator<ActionWrapper> iter,
+      Path tableRoot,
+      ScanMetrics metrics,
+      Optional<LogReplayTelemetry> logReplayTelemetry) {
     this.engine = engine;
     this.tableRoot = tableRoot;
     this.iter = iter;
@@ -87,6 +100,7 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
     this.addFilesFromJson = new HashSet<>();
     this.next = Optional.empty();
     this.metrics = metrics;
+    this.logReplayTelemetry = logReplayTelemetry;
   }
 
   @Override
@@ -94,10 +108,20 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
     if (closed) {
       throw new IllegalStateException("Can't call `hasNext` on a closed iterator.");
     }
-    if (!next.isPresent()) {
-      prepareNext();
+    try {
+      if (!next.isPresent()) {
+        prepareNext();
+      }
+      if (!next.isPresent()) {
+        logReplayTelemetry.ifPresent(
+            telemetry -> telemetry.reportFinal(LogReplayReport.Outcome.SUCCESS));
+      }
+      return next.isPresent();
+    } catch (Exception e) {
+      logReplayTelemetry.ifPresent(
+          telemetry -> telemetry.reportFinal(LogReplayReport.Outcome.FAILURE));
+      throw e;
     }
-    return next.isPresent();
   }
 
   @Override
@@ -121,6 +145,8 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
     closed = true;
     Utils.closeCloseables(iter);
 
+    // An early close is an incomplete replay. Keep the preflight-only telemetry outcome rather
+    // than emitting a final success or failure event.
     // Log the metrics of the log replay of actions that are consumed so far. If the iterator
     // is closed before consuming all the actions, the metrics will be partial.
     logger.info("Active add file finding log replay metrics: {}", metrics);

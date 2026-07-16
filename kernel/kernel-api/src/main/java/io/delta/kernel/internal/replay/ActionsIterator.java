@@ -28,9 +28,9 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.engine.FileReadResult;
 import io.delta.kernel.expressions.*;
-import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checkpoints.SidecarFile;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.metrics.LogReplayTelemetry;
 import io.delta.kernel.internal.util.*;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
@@ -39,7 +39,6 @@ import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.io.UncheckedIOException;
 import java.util.*;
-import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -60,14 +59,11 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
 
   private final Optional<Predicate> checkpointPredicate;
 
-  /**
-   * Linked list of iterator files (commit files and/or checkpoint files) {@link LinkedList} to
-   * allow removing the head of the list and also to peek at the head of the list. The {@link
-   * Iterator} doesn't provide a way to peek.
-   *
-   * <p>Each of these files return an iterator of {@link ColumnarBatch} containing the actions
-   */
-  private final LinkedList<DeltaLogFile> filesList;
+  /** Classified top-level replay files, selected once for this iterator. */
+  private final List<DeltaLogFile> topLevelFiles;
+
+  private int nextTopLevelFileIndex;
+  private final Deque<DeltaLogFile> sidecarFiles;
 
   /** Schema used for reading delta files. */
   private final StructType deltaReadSchema;
@@ -82,15 +78,14 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
 
   /**
    * The current (ColumnarBatch, isFromCheckpoint) tuple. Whenever this iterator is exhausted, we
-   * will try and fetch the next one from the `filesList`.
+   * will try and fetch the next replay file.
    *
    * <p>If it is ever empty, that means there are no more batches to produce.
    */
   private Optional<CloseableIterator<ActionWrapper>> actionsIter;
 
   private final Optional<PaginationContext> paginationContextOpt;
-  private long numCheckpointFilesSkipped = 0;
-  private long numSidecarFilesSkipped = 0;
+  private final Optional<LogReplayTelemetry> logReplayTelemetry;
   private boolean closed;
 
   public ActionsIterator(
@@ -104,7 +99,8 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
         deltaReadSchema,
         deltaReadSchema,
         checkpointPredicate,
-        Optional.empty() /* paginationContextOpt */);
+        Optional.empty() /* paginationContextOpt */,
+        Optional.empty() /* logReplayTelemetry */);
   }
 
   public ActionsIterator(
@@ -114,19 +110,104 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
       StructType checkpointReadSchema,
       Optional<Predicate> checkpointPredicate,
       Optional<PaginationContext> paginationContextOpt) {
+    this(
+        engine,
+        files,
+        deltaReadSchema,
+        checkpointReadSchema,
+        checkpointPredicate,
+        paginationContextOpt,
+        Optional.empty() /* logReplayTelemetry */);
+  }
+
+  public ActionsIterator(
+      Engine engine,
+      List<FileStatus> files,
+      StructType deltaReadSchema,
+      StructType checkpointReadSchema,
+      Optional<Predicate> checkpointPredicate,
+      Optional<PaginationContext> paginationContextOpt,
+      Optional<LogReplayTelemetry> logReplayTelemetry) {
+    this(
+        engine,
+        selectFilesForReplay(files, paginationContextOpt),
+        deltaReadSchema,
+        checkpointReadSchema,
+        checkpointPredicate,
+        paginationContextOpt,
+        logReplayTelemetry);
+  }
+
+  /**
+   * Creates an iterator from replay files that have already been selected for the supplied
+   * pagination context.
+   *
+   * <p>The returned selection is also suitable for log-replay preflight aggregation. Keeping the
+   * classified {@link DeltaLogFile} instances avoids duplicate O(N) status/path classification.
+   */
+  public static ActionsIterator fromSelectedReplayFiles(
+      Engine engine,
+      SelectedReplayFiles selectedReplayFiles,
+      StructType deltaReadSchema,
+      StructType checkpointReadSchema,
+      Optional<Predicate> checkpointPredicate,
+      Optional<PaginationContext> paginationContextOpt,
+      Optional<LogReplayTelemetry> logReplayTelemetry) {
+    return new ActionsIterator(
+        engine,
+        selectedReplayFiles,
+        deltaReadSchema,
+        checkpointReadSchema,
+        checkpointPredicate,
+        paginationContextOpt,
+        logReplayTelemetry);
+  }
+
+  private ActionsIterator(
+      Engine engine,
+      SelectedReplayFiles selectedReplayFiles,
+      StructType deltaReadSchema,
+      StructType checkpointReadSchema,
+      Optional<Predicate> checkpointPredicate,
+      Optional<PaginationContext> paginationContextOpt,
+      Optional<LogReplayTelemetry> logReplayTelemetry) {
     this.engine = engine;
     this.checkpointPredicate = checkpointPredicate;
-    this.filesList = new LinkedList<>();
+    this.topLevelFiles = selectedReplayFiles.getFiles();
+    this.nextTopLevelFileIndex = 0;
+    this.sidecarFiles = new ArrayDeque<>();
     this.paginationContextOpt = paginationContextOpt;
-    this.filesList.addAll(
-        files.stream()
-            .map(DeltaLogFile::forFileStatus)
-            .filter(this::paginatedFilter)
-            .collect(Collectors.toList()));
+    this.logReplayTelemetry = logReplayTelemetry;
     this.deltaReadSchema = deltaReadSchema;
     this.checkpointReadSchema = checkpointReadSchema;
     this.actionsIter = Optional.empty();
     this.schemaContainsAddOrRemoveFiles = LogReplay.containsAddOrRemoveFileActions(deltaReadSchema);
+  }
+
+  /** Selects and classifies top-level replay files without filesystem I/O. */
+  public static SelectedReplayFiles selectFilesForReplay(
+      List<FileStatus> files, Optional<PaginationContext> paginationContextOpt) {
+    List<DeltaLogFile> selectedFiles = new ArrayList<>();
+    for (FileStatus fileStatus : files) {
+      DeltaLogFile logFile = DeltaLogFile.forFileStatus(fileStatus);
+      if (shouldIncludeTopLevelFile(logFile, paginationContextOpt)) {
+        selectedFiles.add(logFile);
+      }
+    }
+    return new SelectedReplayFiles(selectedFiles);
+  }
+
+  /** One classified, pagination-selected top-level replay representation. */
+  public static final class SelectedReplayFiles {
+    private final List<DeltaLogFile> files;
+
+    private SelectedReplayFiles(List<DeltaLogFile> files) {
+      this.files = files;
+    }
+
+    public List<DeltaLogFile> getFiles() {
+      return files;
+    }
   }
 
   /**
@@ -156,10 +237,8 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
    * @param nextLogFile the log file to evaluate
    * @return {@code true} to include the file; {@code false} to skip it
    */
-  @VisibleForTesting
-  // TODO: verify numCheckpointFilesSkipped is correct in E2E test
-  // TODO: add unit test for this method
-  public boolean paginatedFilter(DeltaLogFile nextLogFile) {
+  private static boolean shouldIncludeTopLevelFile(
+      DeltaLogFile nextLogFile, Optional<PaginationContext> paginationContextOpt) {
     Objects.requireNonNull(paginationContextOpt);
     // Pagination isn't enabled.
     if (!paginationContextOpt.isPresent()) return true;
@@ -181,7 +260,6 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
       case MULTIPART_CHECKPOINT:
         if (isFullyConsumedFile(nextFilePath, lastReadLogFilePathOpt.get())) {
           logger.info("Pagination: skip reading multi-part checkpoint file {}", nextFilePath);
-          numCheckpointFilesSkipped++;
           return false;
         } else {
           return true;
@@ -198,7 +276,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
    * Returns true if the given file was already fully consumed in a previous page that ends at
    * lastReadLogFilePath.
    */
-  private boolean isFullyConsumedFile(String filePath, String lastReadLogFilePath) {
+  private static boolean isFullyConsumedFile(String filePath, String lastReadLogFilePath) {
     // Files are sorted in reverse lexicographic order.so if `filePath` is *greater* than
     // `lastReadLogFilePath`,
     // it actually comes before lastReadLogFilePath in the log stream, meaning we have already
@@ -256,7 +334,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
 
   /**
    * If the current `actionsIter` has no more elements, this function finds the next non-empty file
-   * in `filesList` and uses it to set `actionsIter`.
+   * in the replay sequence and uses it to set `actionsIter`.
    */
   private void tryEnsureNextActionsIterIsReady() {
     if (actionsIter.isPresent()) {
@@ -273,7 +351,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     }
 
     // Search for the next non-empty file and use that iter
-    while (!filesList.isEmpty()) {
+    while (hasNextReplayFile()) {
       actionsIter = Optional.of(getNextActionsIter());
 
       if (actionsIter.get().hasNext()) {
@@ -409,7 +487,6 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
               "Pagination: skip reading sidecar file: index={}, path={}",
               sidecarIndexInV2Manifest,
               sidecarFile.getPath());
-          numSidecarFilesSkipped++;
           continue;
         }
       }
@@ -420,11 +497,9 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
               sidecarFile.getSizeInBytes(),
               sidecarFile.getModificationTime());
 
-      filesList.add(DeltaLogFile.ofSideCar(sideCarFileStatus, checkpointVersion));
-    }
-
-    if (paginationContextOpt.isPresent()) {
-      logger.info("Pagination: number of sidecar files skipped is {}", numSidecarFilesSkipped);
+      logReplayTelemetry.ifPresent(
+          telemetry -> telemetry.recordSidecar(sideCarFileStatus, checkpointVersion));
+      sidecarFiles.add(DeltaLogFile.ofSideCar(sideCarFileStatus, checkpointVersion));
     }
 
     // Delete SidecarFile actions from the schema.
@@ -432,13 +507,13 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
   }
 
   /**
-   * Get the next file from `filesList` (.json or .checkpoint.parquet) read it + inject the
-   * `isFromCheckpoint` information.
+   * Get the next replay file (.json or .checkpoint.parquet) and inject the `isFromCheckpoint`
+   * information.
    *
-   * <p>Requires that `filesList.isEmpty` is false.
+   * <p>Requires that a replay file is available.
    */
   private CloseableIterator<ActionWrapper> getNextActionsIter() {
-    final DeltaLogFile nextLogFile = filesList.pop();
+    final DeltaLogFile nextLogFile = pollNextReplayFile();
     final FileStatus nextFile = nextLogFile.getFile();
     final Path nextFilePath = new Path(nextFile.getPath());
     final String fileName = nextFilePath.getName();
@@ -496,6 +571,24 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     } catch (IOException ex) {
       throw new UncheckedIOException(ex);
     }
+  }
+
+  private boolean hasNextReplayFile() {
+    return nextTopLevelFileIndex < topLevelFiles.size() || !sidecarFiles.isEmpty();
+  }
+
+  private DeltaLogFile peekNextReplayFile() {
+    if (nextTopLevelFileIndex < topLevelFiles.size()) {
+      return topLevelFiles.get(nextTopLevelFileIndex);
+    }
+    return sidecarFiles.peek();
+  }
+
+  private DeltaLogFile pollNextReplayFile() {
+    if (nextTopLevelFileIndex < topLevelFiles.size()) {
+      return topLevelFiles.get(nextTopLevelFileIndex++);
+    }
+    return sidecarFiles.remove();
   }
 
   private CloseableIterator<ActionWrapper> readCommitOrCompactionFile(
@@ -606,12 +699,12 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     // Sidecar or multipart checkpoint types are the only files that can have multiple parts.
     if (deltaLogFile.getLogType() == SIDECAR || deltaLogFile.getLogType() == MULTIPART_CHECKPOINT) {
 
-      DeltaLogFile peek = filesList.peek();
+      DeltaLogFile peek = peekNextReplayFile();
       while (peek != null
           && deltaLogFile.getLogType() == peek.getLogType()
           && deltaLogFile.getVersion() == peek.getVersion()) {
-        checkpointFiles.add(filesList.pop().getFile());
-        peek = filesList.peek();
+        checkpointFiles.add(pollNextReplayFile().getFile());
+        peek = peekNextReplayFile();
       }
     }
 

@@ -154,6 +154,7 @@ public class ScanImpl implements Scan {
     boolean shouldReadStats = hasDataSkippingFilter || includeStats;
     logger.info("Generated data skipping filter = {}", dataSkippingFilter);
 
+    boolean logReplayMetricsEnabled = engine.isLogReplayMetricsEnabled();
     Timer.Timed planningDuration = scanMetrics.totalPlanningTimer.start();
     // ScanReportReporter stores the current context and can be invoked (in the future) with
     // `reportError` or `reportSuccess` to stop the planning duration timer and push a report to
@@ -191,7 +192,9 @@ public class ScanImpl implements Scan {
                           rewritePartitionPredicateOnCheckpointFileSchema(
                               predicate, partitionColToStructFieldMap.get())),
               scanMetrics,
-              paginationContextOpt);
+              paginationContextOpt,
+              logReplayMetricsEnabled,
+              snapshotReport.getReportUUID());
 
       // Apply partition pruning
       scanFileIter = applyPartitionPruning(engine, scanFileIter);

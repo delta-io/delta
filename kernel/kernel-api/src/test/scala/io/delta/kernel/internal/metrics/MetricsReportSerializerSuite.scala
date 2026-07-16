@@ -20,8 +20,11 @@ import java.util.{Collections, Optional, UUID}
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.expressions.{Column, Literal, Predicate}
+import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.metrics.{ScanReport, SnapshotReport, TransactionReport}
 import io.delta.kernel.types.{FieldMetadata, IntegerType, StringType, StructType}
+import io.delta.kernel.utils.FileStatus
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -350,4 +353,67 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
       Optional.empty())
     testScanReport(scanReport2)
   }
+
+  test("LogReplayReport is bounded and distinguishes unknown file sizes") {
+    val logPath = new Path("/table/_delta_log")
+    val logReplayId = UUID.randomUUID()
+    val snapshotReportUUID = UUID.randomUUID()
+    val selectedFiles = Seq(
+      FileStatus.of(FileNames.checkpointFileSingular(logPath, 10).toString, 8, 0),
+      FileStatus.of(FileNames.logCompactionPath(logPath, 11, 12).toString, 2, 0),
+      FileStatus.of(FileNames.deltaFile(logPath, 12)))
+    val builder = new LogReplayReport.Builder(
+      selectedFiles.asJava,
+      Optional.of(10L),
+      logReplayId,
+      "/table",
+      12L,
+      snapshotReportUUID)
+
+    val preflight = builder.build(LogReplayReport.Phase.PREFLIGHT, null)
+    assert(preflight.getLogReplayId == logReplayId)
+    assert(preflight.getOperationType == "LogReplay")
+    assert(preflight.getTablePath == "/table")
+    assert(preflight.getTableVersion == 12L)
+    assert(preflight.getSnapshotReportUUID == snapshotReportUUID)
+    assert(preflight.getDeltaArtifacts.getCount == 1)
+    assert(preflight.getDeltaArtifacts.getKnownSizeCount == 0)
+    assert(preflight.getDeltaArtifacts.getUnknownSizeCount == 1)
+    assert(preflight.getDeltaArtifacts.getTotalKnownSizeInBytes == 0)
+    assert(preflight.getDeltaArtifacts.getMinKnownSizeInBytes == null)
+    assert(preflight.getCheckpointArtifacts.getKnownSizeCount == 1)
+    assert(preflight.getV2CheckpointManifestFormat.isEmpty)
+
+    builder.recordSidecar("sidecars/sensitive-sidecar.parquet", 10, 6)
+    val finalReport = builder.build(LogReplayReport.Phase.FINAL, LogReplayReport.Outcome.SUCCESS)
+    assert(finalReport.getSidecarArtifacts.getKnownSizeCount == 1)
+    assert(finalReport.getSidecarArtifacts.getTotalKnownSizeInBytes == 6)
+    assert(finalReport.getReportUUID != preflight.getReportUUID)
+    assert(finalReport.toJson.contains("\"operationType\":\"LogReplay\""))
+    assert(finalReport.toJson.contains(s"\"reportUUID\":\"${finalReport.getReportUUID}\""))
+    assert(finalReport.toJson.contains("\"phase\":\"FINAL\""))
+    assert(finalReport.toJson.contains("\"outcome\":\"SUCCESS\""))
+    assert(!finalReport.toJson.contains("00000000000000000010.checkpoint.parquet"))
+    assert(!finalReport.toJson.contains("sensitive-sidecar.parquet"))
+  }
+
+  test("LogReplayReport uses standard deviation in bytes") {
+    val logPath = new Path("/table/_delta_log")
+    val selectedFiles = Seq(
+      FileStatus.of(FileNames.deltaFile(logPath, 1), 2, 0),
+      FileStatus.of(FileNames.deltaFile(logPath, 2), 6, 0))
+    val report = new LogReplayReport.Builder(selectedFiles.asJava, Optional.empty())
+      .build(LogReplayReport.Phase.PREFLIGHT, null)
+
+    assert(report.getDeltaArtifacts.getSizeStandardDeviationInBytes == 2.0)
+  }
+
+  test("FileStatus equality distinguishes known and synthetic sizes") {
+    val knownZeroSize = FileStatus.of("/table/_delta_log/00000000000000000000.json", 0, 0)
+    val syntheticUnknownSize = FileStatus.of("/table/_delta_log/00000000000000000000.json")
+
+    assert(knownZeroSize != syntheticUnknownSize)
+    assert(knownZeroSize.hashCode != syntheticUnknownSize.hashCode)
+  }
+
 }

@@ -24,10 +24,16 @@ import org.apache.hadoop.conf.Configuration;
 
 /** Default implementation of {@link Engine} based on Hadoop APIs. */
 public class DefaultEngine implements Engine {
+  private static final String LOG_REPLAY_METRICS_ENABLED_CONF =
+      "delta.kernel.default.log-replay.metrics.enabled";
+
   private final FileIO fileIO;
+  private final boolean logReplayMetricsEnabled;
 
   protected DefaultEngine(FileIO fileIO) {
     this.fileIO = fileIO;
+    this.logReplayMetricsEnabled =
+        fileIO.getConf(LOG_REPLAY_METRICS_ENABLED_CONF).map(Boolean::parseBoolean).orElse(false);
   }
 
   @Override
@@ -54,6 +60,11 @@ public class DefaultEngine implements Engine {
   public List<MetricsReporter> getMetricsReporters() {
     return Collections.singletonList(new LoggingMetricsReporter());
   };
+
+  @Override
+  public boolean isLogReplayMetricsEnabled() {
+    return logReplayMetricsEnabled;
+  }
 
   /**
    * Create an instance of {@link DefaultEngine}.

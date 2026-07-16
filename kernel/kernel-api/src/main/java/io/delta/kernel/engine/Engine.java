@@ -61,4 +61,14 @@ public interface Engine {
   default List<MetricsReporter> getMetricsReporters() {
     return Collections.emptyList();
   };
+
+  /**
+   * Whether to emit internal transaction-log replay metrics.
+   *
+   * <p>This capability defaults to disabled so existing engine implementations retain their
+   * existing behavior.
+   */
+  default boolean isLogReplayMetricsEnabled() {
+    return false;
+  }
 }

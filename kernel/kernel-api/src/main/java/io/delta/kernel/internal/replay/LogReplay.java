@@ -26,6 +26,7 @@ import io.delta.kernel.internal.checkpoints.SidecarFile;
 import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
+import io.delta.kernel.internal.metrics.LogReplayTelemetry;
 import io.delta.kernel.internal.metrics.ScanMetrics;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.util.DomainMetadataUtils;
@@ -205,19 +206,51 @@ public class LogReplay {
       boolean shouldReadStats,
       Optional<Predicate> checkpointPredicate,
       ScanMetrics scanMetrics,
-      Optional<PaginationContext> paginationContextOpt) {
+      Optional<PaginationContext> paginationContextOpt,
+      boolean logReplayMetricsEnabled,
+      UUID snapshotReportUUID) {
     // We do not need to look at any `remove` files from the checkpoints. Skip the column to save
     // I/O. Note that we are still going to process the row groups. Adds and removes are randomly
     // scattered through checkpoint part files, so row group push down is unlikely to be useful.
+    LogSegment logSegment = getLogSegment();
+    List<FileStatus> replayFiles = getLogReplayFiles(logSegment);
+    if (!logReplayMetricsEnabled) {
+      final CloseableIterator<ActionWrapper> addRemoveIter =
+          new ActionsIterator(
+              engine,
+              replayFiles,
+              getAddRemoveReadSchema(shouldReadStats),
+              getAddReadSchema(shouldReadStats),
+              checkpointPredicate,
+              paginationContextOpt,
+              Optional.empty() /* logReplayTelemetry */);
+      return new ActiveAddFilesIterator(
+          engine, addRemoveIter, dataPath, scanMetrics, Optional.empty() /* logReplayTelemetry */);
+    }
+
+    ActionsIterator.SelectedReplayFiles selectedReplayFiles =
+        ActionsIterator.selectFilesForReplay(replayFiles, paginationContextOpt);
+    Optional<LogReplayTelemetry> telemetry =
+        Optional.of(
+            new LogReplayTelemetry(
+                engine,
+                selectedReplayFiles,
+                logSegment.getCheckpointVersionOpt(),
+                dataPath.toString(),
+                logSegment.getVersion(),
+                snapshotReportUUID));
+    telemetry.ifPresent(LogReplayTelemetry::reportPreflight);
+
     final CloseableIterator<ActionWrapper> addRemoveIter =
-        new ActionsIterator(
+        ActionsIterator.fromSelectedReplayFiles(
             engine,
-            getLogReplayFiles(getLogSegment()),
+            selectedReplayFiles,
             getAddRemoveReadSchema(shouldReadStats),
             getAddReadSchema(shouldReadStats),
             checkpointPredicate,
-            paginationContextOpt);
-    return new ActiveAddFilesIterator(engine, addRemoveIter, dataPath, scanMetrics);
+            paginationContextOpt,
+            telemetry);
+    return new ActiveAddFilesIterator(engine, addRemoveIter, dataPath, scanMetrics, telemetry);
   }
 
   public LogSegment getLogSegment() {

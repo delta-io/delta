@@ -16,21 +16,26 @@
 package io.delta.kernel.internal.replay
 
 import java.io.{InterruptedIOException, UncheckedIOException}
-import java.util.{Collections, Optional}
+import java.lang.{Long => JLong}
+import java.util.{Arrays, Collections, Optional}
 
 import scala.collection.JavaConverters._
+import scala.collection.mutable.ArrayBuffer
 
+import io.delta.kernel.Meta
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector, Row}
 import io.delta.kernel.engine._
 import io.delta.kernel.expressions.Predicate
-import io.delta.kernel.test.BaseMockJsonHandler
-import io.delta.kernel.test.MockEngineUtils
-import io.delta.kernel.types.StructType
+import io.delta.kernel.internal.checkpoints.SidecarFile
+import io.delta.kernel.internal.metrics.{LogReplayReport, LogReplayTelemetry}
+import io.delta.kernel.metrics.MetricsReport
+import io.delta.kernel.test.{BaseMockJsonHandler, MockEngineUtils, VectorTestUtils}
+import io.delta.kernel.types.{DataType, StructType}
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 
 import org.scalatest.funsuite.AnyFunSuite
 
-class ActionsIteratorSuite extends AnyFunSuite with MockEngineUtils {
+class ActionsIteratorSuite extends AnyFunSuite with MockEngineUtils with VectorTestUtils {
 
   /**
    * Test for ActionsIterator resource leak fix validation
@@ -124,5 +129,155 @@ class ActionsIteratorSuite extends AnyFunSuite with MockEngineUtils {
       // Clear the interrupt flag so it doesn't leak into subsequent tests.
       Thread.interrupted()
     }
+  }
+
+  test("preflight telemetry is reported before the first JSON replay read") {
+    val reports = ArrayBuffer.empty[MetricsReport]
+    var preflightReportedBeforeRead = false
+    val engine = new Engine {
+      override def getExpressionHandler: ExpressionHandler = null
+      override def getJsonHandler: JsonHandler = new BaseMockJsonHandler {
+        override def readJsonFiles(
+            fileIter: CloseableIterator[FileStatus],
+            physicalSchema: StructType,
+            predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
+          preflightReportedBeforeRead = reports.exists {
+            case report: LogReplayReport => report.getPhase == LogReplayReport.Phase.PREFLIGHT
+            case _ => false
+          }
+          new CloseableIterator[ColumnarBatch] {
+            override def hasNext: Boolean = false
+            override def next(): ColumnarBatch = throw new NoSuchElementException()
+            override def close(): Unit = {}
+          }
+        }
+      }
+      override def getFileSystemClient: FileSystemClient = null
+      override def getParquetHandler: ParquetHandler = null
+      override def getMetricsReporters: java.util.List[MetricsReporter] =
+        Collections.singletonList(new MetricsReporter {
+          override def report(report: MetricsReport): Unit = reports += report
+        })
+    }
+    val telemetry = new LogReplayTelemetry(
+      engine,
+      ActionsIterator.selectFilesForReplay(Collections.emptyList(), Optional.empty()),
+      Optional.empty(),
+      "/table",
+      0L,
+      java.util.UUID.randomUUID())
+    telemetry.reportPreflight()
+    val actionsIterator = new ActionsIterator(
+      engine,
+      Collections.singletonList(FileStatus.of("/table/_delta_log/00000000000000000000.json")),
+      new StructType(),
+      Optional.empty[Predicate]())
+
+    actionsIterator.hasNext()
+
+    assert(preflightReportedBeforeRead)
+  }
+
+  test("continuation telemetry excludes consumed multipart checkpoints and V2 sidecars") {
+    val reports = ArrayBuffer.empty[MetricsReport]
+    val engine = new Engine {
+      override def getExpressionHandler: ExpressionHandler = null
+      override def getJsonHandler: JsonHandler = null
+      override def getFileSystemClient: FileSystemClient = null
+      override def getParquetHandler: ParquetHandler = null
+      override def getMetricsReporters: java.util.List[MetricsReporter] =
+        Collections.singletonList(new MetricsReporter {
+          override def report(report: MetricsReport): Unit = reports += report
+        })
+    }
+    val consumedCheckpoint = FileStatus.of(
+      "/table/_delta_log/00000000000000000010.checkpoint.0000000003.0000000003.parquet",
+      30L,
+      1L)
+    val resumedCheckpoint = FileStatus.of(
+      "/table/_delta_log/00000000000000000010.checkpoint.0000000002.0000000003.parquet",
+      20L,
+      1L)
+    val v2Manifest = FileStatus.of(
+      "/table/_delta_log/00000000000000000010.checkpoint.uuid.parquet",
+      40L,
+      1L)
+    val paginationContext = PaginationContext.forPageWithPageToken(
+      "/table",
+      10L,
+      1,
+      1,
+      100L,
+      new PageToken(
+        resumedCheckpoint.getPath,
+        0L,
+        Optional.of(1L),
+        Meta.KERNEL_VERSION,
+        "/table",
+        10L,
+        1,
+        1))
+    val selectedTopLevelFiles = ActionsIterator.selectFilesForReplay(
+      Arrays.asList(consumedCheckpoint, resumedCheckpoint, v2Manifest),
+      Optional.of(paginationContext))
+    assert(selectedTopLevelFiles.getFiles.asScala.map(_.getFile) ==
+      Seq(resumedCheckpoint, v2Manifest))
+    val telemetry = new LogReplayTelemetry(
+      engine,
+      selectedTopLevelFiles,
+      Optional.of(10L),
+      "/table",
+      10L,
+      java.util.UUID.randomUUID())
+    val sidecarPaths = Seq("first.parquet", "second.parquet", "third.parquet")
+    val sidecarVector = new ColumnVector {
+      private val children = Seq(
+        stringVector(sidecarPaths),
+        longVector(Seq(10L, 20L, 30L).map(JLong.valueOf)),
+        longVector(Seq(100L, 200L, 300L).map(JLong.valueOf)))
+
+      override def getDataType: DataType = SidecarFile.READ_SCHEMA
+      override def getSize: Int = sidecarPaths.size
+      override def close(): Unit = {}
+      override def isNullAt(rowId: Int): Boolean = false
+      override def getChild(ordinal: Int): ColumnVector = children(ordinal)
+    }
+    val manifestBatch = new ColumnarBatch {
+      private val schema =
+        new StructType().add(LogReplay.SIDECAR_FIELD_NAME, SidecarFile.READ_SCHEMA)
+
+      override def getSchema: StructType = schema
+      override def getColumnVector(ordinal: Int): ColumnVector = sidecarVector
+      override def getSize: Int = sidecarPaths.size
+      override def withDeletedColumnAt(ordinal: Int): ColumnarBatch = this
+    }
+    val iterator = new ActionsIterator(
+      engine,
+      Collections.emptyList(),
+      new StructType(),
+      new StructType(),
+      Optional.empty(),
+      Optional.of(paginationContext),
+      Optional.of(telemetry))
+
+    telemetry.reportPreflight()
+    iterator.extractSidecarsFromBatch(
+      FileStatus.of("/table/_delta_log/00000000000000000010.checkpoint.parquet", 1L, 1L),
+      10L,
+      manifestBatch)
+    telemetry.reportFinal(LogReplayReport.Outcome.SUCCESS)
+
+    val logReplayReports = reports.collect { case report: LogReplayReport => report }
+    assert(logReplayReports.map(_.getPhase) == Seq(
+      LogReplayReport.Phase.PREFLIGHT,
+      LogReplayReport.Phase.FINAL))
+    logReplayReports.foreach { report =>
+      assert(report.getCheckpointArtifacts.getCount == 2L)
+      assert(report.getCheckpointArtifacts.getKnownSizeCount == 2L)
+      assert(report.getCheckpointArtifacts.getTotalKnownSizeInBytes == 60L)
+    }
+    assert(logReplayReports.head.getSidecarArtifacts.getCount == 0L)
+    assert(logReplayReports.last.getSidecarArtifacts.getCount == 2)
+    assert(logReplayReports.last.getSidecarArtifacts.getTotalKnownSizeInBytes == 50L)
   }
 }

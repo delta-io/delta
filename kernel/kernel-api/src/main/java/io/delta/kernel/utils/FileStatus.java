@@ -39,7 +39,7 @@ public class FileStatus {
    * @param modificationTime Modification time of the file in epoch millis
    */
   public static FileStatus of(String path, long size, long modificationTime) {
-    return new FileStatus(path, size, modificationTime);
+    return new FileStatus(path, size, modificationTime, true /* sizeKnown */);
   }
 
   //////////////////////////////////
@@ -49,12 +49,18 @@ public class FileStatus {
   private final String path;
   private final long size;
   private final long modificationTime;
+  private final boolean sizeKnown;
 
   // TODO add further documentation about the expected format for modificationTime?
   protected FileStatus(String path, long size, long modificationTime) {
+    this(path, size, modificationTime, true /* sizeKnown */);
+  }
+
+  protected FileStatus(String path, long size, long modificationTime, boolean sizeKnown) {
     this.path = Objects.requireNonNull(path, "path is null");
     this.size = size; // TODO: validation
     this.modificationTime = modificationTime; // TODO: validation
+    this.sizeKnown = sizeKnown;
   }
 
   /**
@@ -76,6 +82,16 @@ public class FileStatus {
   }
 
   /**
+   * Returns whether this status has a size provided by the file system.
+   *
+   * <p>{@link #of(String)} creates a synthetic status with an unknown size. Its zero value must not
+   * be treated as the size of a real zero-byte file.
+   */
+  public boolean isSizeKnown() {
+    return sizeKnown;
+  }
+
+  /**
    * Get the modification time of the file in epoch millis.
    *
    * @return Modification time in epoch millis
@@ -91,13 +107,17 @@ public class FileStatus {
   }
 
   /**
-   * Create a {@link FileStatus} with the given path with size and modification time set to 0.
+   * Creates a synthetic {@link FileStatus} with an unknown size and modification time.
+   *
+   * <p>The zero-valued size is a placeholder, not a known zero-byte size. Accordingly, {@link
+   * #isSizeKnown()} returns false and this status is intentionally unequal to a {@link FileStatus}
+   * created with {@link #of(String, long, long)} using the same path and a known zero-byte size.
    *
    * @param path Fully qualified file path.
    * @return {@link FileStatus} object
    */
   public static FileStatus of(String path) {
-    return new FileStatus(path, 0 /* size */, 0 /* modTime */);
+    return new FileStatus(path, 0 /* size */, 0 /* modTime */, false /* sizeKnown */);
   }
 
   @Override
@@ -111,11 +131,12 @@ public class FileStatus {
     FileStatus that = (FileStatus) o;
     return Objects.equals(this.path, that.path)
         && Objects.equals(this.size, that.size)
-        && Objects.equals(this.modificationTime, that.modificationTime);
+        && Objects.equals(this.modificationTime, that.modificationTime)
+        && this.sizeKnown == that.sizeKnown;
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(path, size, modificationTime);
+    return Objects.hash(path, size, modificationTime, sizeKnown);
   }
 }
