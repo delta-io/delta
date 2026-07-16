@@ -185,8 +185,9 @@ fi
 # Sanity-check UC_BASE_VERSION against what UC actually declares at this commit. If they drift
 # (someone bumped UC_PIN_SHA across a UC version.sbt change without also bumping
 # UC_BASE_VERSION), the Ivy coordinate wouldn't match what sbt publishes - fail loudly instead of
-# silently producing unresolvable coordinates. Skip in release mode (the caller owns the version).
-if [[ "$DELTA_RELEASE_MODE" != "1" ]]; then
+# silently producing unresolvable coordinates. Skip in release mode and temporary ref-override
+# testing, where the explicit UC_VERSION is the coordinate under test.
+if [[ "$DELTA_RELEASE_MODE" != "1" && ( "$UC_REF" == "$UC_PIN_SHA" || "$UC_REF" == "main" ) ]]; then
   ACTUAL_BASE=$(grep 'ThisBuild / version' version.sbt | sed 's/.*:= *"\(.*\)"/\1/')
   if [[ "$ACTUAL_BASE" != "$UC_BASE_VERSION" ]]; then
     echo "ERROR: UC at $UC_REF has version.sbt '$ACTUAL_BASE', but this script pins UC_BASE_VERSION='$UC_BASE_VERSION'." >&2
