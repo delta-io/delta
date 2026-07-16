@@ -110,7 +110,7 @@ public class CRCInfo {
                     .map(row -> DomainMetadata.fromRow((StructRow) row))
                     .collect(Collectors.toSet()));
 
-    //  protocol and metadata are nullable per fromColumnVector's implementation.
+    // protocol and metadata are nullable per fromColumnVector's implementation
     if (protocol == null || metadata == null) {
       logger.warn("Invalid checksum file missing protocol and/or metadata: {}", crcFilePath);
       return Optional.empty();
@@ -135,6 +135,9 @@ public class CRCInfo {
    * @param version the table version this checksum represents
    * @param row a row with the schema {@link #CRC_FILE_SCHEMA}
    * @return the reconstructed {@link CRCInfo}
+   * @throws IllegalArgumentException if {@code row}'s schema is not {@link #CRC_FILE_SCHEMA}, or if
+   *     any required field ({@code metadata}, {@code protocol}, {@code tableSizeBytes}, {@code
+   *     numFiles}) is null
    */
   public static CRCInfo fromRow(long version, Row row) {
     requireNonNull(row, "row is null");
@@ -144,10 +147,21 @@ public class CRCInfo {
         CRC_FILE_SCHEMA,
         row.getSchema());
 
-    Metadata metadata = Metadata.fromRow(row.getStruct(getSchemaIndex(METADATA)));
-    Protocol protocol = Protocol.fromRow(row.getStruct(getSchemaIndex(PROTOCOL)));
-    long tableSizeBytes = row.getLong(getSchemaIndex(TABLE_SIZE_BYTES));
-    long numFiles = row.getLong(getSchemaIndex(NUM_FILES));
+    // Required fields
+    int metadataIdx = getSchemaIndex(METADATA);
+    int protocolIdx = getSchemaIndex(PROTOCOL);
+    int tableSizeBytesIdx = getSchemaIndex(TABLE_SIZE_BYTES);
+    int numFilesIdx = getSchemaIndex(NUM_FILES);
+    Metadata metadata =
+        Metadata.fromRow(
+            InternalUtils.requireNonNull(row, metadataIdx, METADATA).getStruct(metadataIdx));
+    Protocol protocol =
+        Protocol.fromRow(
+            InternalUtils.requireNonNull(row, protocolIdx, PROTOCOL).getStruct(protocolIdx));
+    long tableSizeBytes =
+        InternalUtils.requireNonNull(row, tableSizeBytesIdx, TABLE_SIZE_BYTES)
+            .getLong(tableSizeBytesIdx);
+    long numFiles = InternalUtils.requireNonNull(row, numFilesIdx, NUM_FILES).getLong(numFilesIdx);
 
     int txnIdIdx = getSchemaIndex(TXN_ID);
     Optional<String> txnId =

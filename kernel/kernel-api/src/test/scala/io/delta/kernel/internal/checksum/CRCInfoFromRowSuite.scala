@@ -20,6 +20,7 @@ import java.util.{Collections, Optional}
 
 import io.delta.kernel.data.Row
 import io.delta.kernel.internal.actions.{DomainMetadata, Format, Metadata, Protocol}
+import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.stats.FileSizeHistogram
 import io.delta.kernel.internal.types.DataTypeJsonSerDe
 import io.delta.kernel.internal.util.VectorUtils.{buildArrayValue, stringStringMapValue}
@@ -155,5 +156,66 @@ class CRCInfoFromRowSuite extends AnyFunSuite {
       CRCInfo.fromRow(1L, wrongRow)
     }
     assert(ex.getMessage.contains("Expected schema"))
+  }
+
+  test("multiple domainMetadata entries round-trip as a set (order-independent)") {
+    val entries = domainMetadataSet(
+      "delta.rowTracking" -> "{\"hwm\":42}",
+      "delta.clustering" -> "{\"cols\":[\"c1\"]}",
+      "d3" -> "{}")
+    val crcInfo = new CRCInfo(
+      15L,
+      testMetadata,
+      testProtocol,
+      7000L,
+      70L,
+      Optional.empty(),
+      Optional.of(entries),
+      Optional.empty())
+    val reconstructed = CRCInfo.fromRow(crcInfo.getVersion, crcInfo.toRow())
+    assert(reconstructed === crcInfo)
+    // The array in the row is reassembled into a Set, so all entries survive regardless of order.
+    assert(reconstructed.getDomainMetadata.isPresent)
+    assert(reconstructed.getDomainMetadata.get === entries)
+    assert(reconstructed.getDomainMetadata.get.size === 3)
+  }
+
+  // A row with CRC_FILE_SCHEMA whose fields come from `values`. Any field absent from the map reads
+  // back as null.
+  private def crcRow(values: util.Map[Integer, Object]): Row =
+    new GenericRow(CRCInfo.CRC_FILE_SCHEMA, values)
+
+  private def idx(field: String): Integer = Int.box(CRCInfo.CRC_FILE_SCHEMA.indexOf(field))
+
+  /** A value map with every required field of CRC_FILE_SCHEMA populated. */
+  private def requiredValues(): util.HashMap[Integer, Object] = {
+    val values = new util.HashMap[Integer, Object]()
+    values.put(idx("tableSizeBytes"), Long.box(1000L))
+    values.put(idx("numFiles"), Long.box(10L))
+    values.put(idx("numMetadata"), Long.box(1L))
+    values.put(idx("numProtocol"), Long.box(1L))
+    values.put(idx("metadata"), testMetadata.toRow())
+    values.put(idx("protocol"), testProtocol.toRow())
+    values
+  }
+
+  Seq("metadata", "protocol", "tableSizeBytes", "numFiles").foreach { field =>
+    test(s"throws when required field '$field' is null") {
+      val values = requiredValues()
+      values.remove(idx(field))
+      val ex = intercept[IllegalArgumentException] {
+        CRCInfo.fromRow(1L, crcRow(values))
+      }
+      assert(ex.getMessage.contains(field))
+    }
+  }
+
+  test("throws on a fully-null row (all fields null)") {
+    // Schema matches CRC_FILE_SCHEMA, but every value is absent -> null. fromRow must reject it
+    val ex = intercept[IllegalArgumentException] {
+      CRCInfo.fromRow(1L, crcRow(new util.HashMap[Integer, Object]()))
+    }
+    // The first required field
+    assert(ex.getMessage.contains("metadata"))
   }
 }
