@@ -37,6 +37,7 @@ import org.apache.spark.sql.delta.DeltaGeoSpatial
 import org.apache.spark.sql.delta.DeltaOperations.{ChangeColumn, ChangeColumns, CreateTable, Operation, ReplaceColumns, ReplaceTable, UpdateSchema}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.amt.AMTWriteHelper
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -2657,6 +2658,11 @@ trait OptimisticTransactionImpl extends TransactionHelper
           val (postCommitSnapshot, committedTransactionInfo) = if (!shouldCheckForConflicts) {
             doCommit(commitVersion, updatedCurrentTransactionInfo, attemptNumber, isolationLevel)
           } else recordDeltaOperation(deltaLog, "delta.commit.retry") {
+            // The [[CurrentTransactionInfo]] might keep on getting updated while resolving
+            // conflicts against the already committed concurrent transactions. This can happen
+            // when we resolve conflicts against no-data-change transaction - we might map our
+            // readFiles or we might rollback the no-data-change transaction and update our actions
+            // that we want to commit.
             val (newCommitVersion, newCurrentTransactionInfo) = checkForConflicts(
               commitVersion, updatedCurrentTransactionInfo, attemptNumber, isolationLevel)
             commitVersion = newCommitVersion
@@ -2739,7 +2745,16 @@ trait OptimisticTransactionImpl extends TransactionHelper
         }
         updatedInfo
       }.getOrElse(currentTransactionInfo)
-    val actions = updatedCurrentTransactionInfo.finalActionsToCommit
+    val baseActions = updatedCurrentTransactionInfo.finalActionsToCommit
+    val amtCheckpointOpt = AMTWriteHelper.maybeCreateInlineAMTCheckpoint(
+      spark = spark,
+      deltaLog = deltaLog,
+      readSnapshot = snapshot,
+      attemptVersion = attemptVersion,
+      protocol = updatedCurrentTransactionInfo.protocol,
+      metadata = updatedCurrentTransactionInfo.metadata,
+      commitActions = updatedCurrentTransactionInfo.actions)
+    val actions = baseActions ++ amtCheckpointOpt.toSeq
     logInfo(
       log"Attempting to commit version ${MDC(DeltaLogKeys.VERSION, attemptVersion)} with " +
       log"${MDC(DeltaLogKeys.NUM_ACTIONS, actions.size.toLong)} actions with " +
@@ -2771,12 +2786,14 @@ trait OptimisticTransactionImpl extends TransactionHelper
     commitEndNano = System.nanoTime()
 
     executionObserver.beginPostCommit()
+    val catalogTableForPostCommitSnapshot = catalogTable
     val postCommitSnapshot = deltaLog.updateAfterCommit(
       attemptVersion,
       commit,
       newChecksumOpt,
       preCommitLogSegment,
-      catalogTable)
+      catalogTableForPostCommitSnapshot,
+      amtCheckpointOpt = amtCheckpointOpt)
     val postCommitReconstructionTime = System.nanoTime()
     needsCheckpoint = isCheckpointNeeded(attemptVersion, postCommitSnapshot)
     val commitStatsComputer = new CommitStatsComputer()

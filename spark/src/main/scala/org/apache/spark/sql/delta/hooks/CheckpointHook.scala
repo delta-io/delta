@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.hooks
 
-import org.apache.spark.sql.delta.CommittedTransaction
+import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CommittedTransaction}
 
 import org.apache.spark.sql.SparkSession
 
@@ -26,6 +26,10 @@ object CheckpointHook extends PostCommitHook {
 
   override def run(spark: SparkSession, txn: CommittedTransaction): Unit = {
     if (!txn.needsCheckpoint) return
+
+    // AMT tables carry their checkpoint as an inline action in the commit json file.
+    // So exit checkpoint hook early.
+    if (txn.postCommitSnapshot.protocol.isFeatureSupported(AdaptiveMetadataTableFeature)) return
 
     // Since the postCommitSnapshot isn't guaranteed to match committedVersion, we have to
     // explicitly checkpoint the snapshot at the committedVersion.
