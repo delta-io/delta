@@ -235,8 +235,8 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
 
     val fileSizeHistogramResolved =
       if (fileSizeHistogramEnabled) {
-        checksum.histogramOpt match {
-          case Some(_) => checksum.histogramOpt
+        checksum.fileSizeHistogram match {
+          case Some(_) => checksum.fileSizeHistogram
           case None => return None
         }
       } else {
