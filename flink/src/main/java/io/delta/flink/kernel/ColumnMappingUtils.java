@@ -45,6 +45,12 @@ public final class ColumnMappingUtils {
    * @return a schema whose field names are the physical names
    */
   public static StructType toPhysicalSchema(StructType schema) {
+    // Only build a new schema when column mapping is actually in use. For tables without column
+    // mapping (mode NONE) no field carries the physical-name metadata, so the logical schema is
+    // already the physical schema and can be returned unchanged.
+    if (!hasColumnMapping(schema)) {
+      return schema;
+    }
     StructType physical = new StructType();
     for (StructField field : schema.fields()) {
       physical =
@@ -56,6 +62,19 @@ public final class ColumnMappingUtils {
                   field.getMetadata()));
     }
     return physical;
+  }
+
+  /**
+   * Returns true if the schema carries column-mapping physical-name metadata. The metadata is
+   * assigned all-or-nothing across the schema, so it is enough to inspect the first field.
+   */
+  private static boolean hasColumnMapping(StructType schema) {
+    return !schema.fields().isEmpty()
+        && schema
+            .fields()
+            .get(0)
+            .getMetadata()
+            .contains(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY);
   }
 
   private static DataType toPhysicalType(DataType dataType) {

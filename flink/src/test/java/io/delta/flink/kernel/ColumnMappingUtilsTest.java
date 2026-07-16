@@ -17,6 +17,8 @@
 package io.delta.flink.kernel;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertSame;
 
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.types.ArrayType;
@@ -36,14 +38,34 @@ class ColumnMappingUtilsTest {
   }
 
   @Test
-  void noColumnMapping_returnsNamesUnchanged() {
+  void noColumnMapping_returnsSchemaUnchanged() {
     StructType schema =
         new StructType().add("id", IntegerType.INTEGER).add("name", StringType.STRING);
 
     StructType physical = ColumnMappingUtils.toPhysicalSchema(schema);
 
-    assertEquals("id", physical.fields().get(0).getName());
-    assertEquals("name", physical.fields().get(1).getName());
+    // No physical-name metadata: the original schema instance is returned untouched, no rebuild.
+    assertSame(schema, physical);
+  }
+
+  @Test
+  void emptySchema_returnsSchemaUnchanged() {
+    StructType schema = new StructType();
+
+    StructType physical = ColumnMappingUtils.toPhysicalSchema(schema);
+
+    assertSame(schema, physical);
+  }
+
+  @Test
+  void columnMapping_buildsNewSchema() {
+    StructType schema = new StructType().add("id", IntegerType.INTEGER, physicalName("col-aaaa"));
+
+    StructType physical = ColumnMappingUtils.toPhysicalSchema(schema);
+
+    // Column mapping present: a new physical schema is built rather than returning the input.
+    assertNotSame(schema, physical);
+    assertEquals("col-aaaa", physical.fields().get(0).getName());
   }
 
   @Test
