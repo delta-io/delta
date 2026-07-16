@@ -170,14 +170,18 @@ trait DeltaJoinRefreshTests
               condition = "AMBIGUOUS_COLUMN_OR_FIELD")
         }
       } else {
-        v2EnableMode match {
-          case "STRICT" =>
-            // Column mapping is not fully supported in V2 STRICT yet, and df1 is pinned, so the
-            // join returns no rows. TODO: once [[DeltaV2Table]] implements [[Table.version]],
-            // Spark refreshes and raises an analysis exception on the incompatible column drop
-            // (like AUTO).
-            checkAnswer(selfJoinDF, Seq.empty)
-          case "AUTO" =>
+        (v2EnableMode, sparkVersionBucket) match {
+          case ("STRICT", "4.0") =>
+            // Today 4.0 STRICT pins df1 to its analysis snapshot, so the external column drop is
+            // invisible to df1 and the join executes against the pinned rows.
+            checkAnswer(selfJoinDF, Seq(Row(1, 100, 1)))
+          case ("STRICT", _) =>
+            // 4.1+ STRICT reads unpartitioned column mapping tables, so df1 refreshes and detects
+            // the incompatible column drop, raising an analysis exception.
+            checkError(
+              exception = intercept[SparkThrowable] { selfJoinDF.collect() },
+              condition = "INCOMPATIBLE_TABLE_CHANGE_AFTER_ANALYSIS.COLUMNS_MISMATCH")
+          case ("AUTO", _) =>
             checkError(
               exception = intercept[SparkThrowable] { selfJoinDF.collect() },
               condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS")
@@ -246,16 +250,21 @@ trait DeltaJoinRefreshTests
                 condition = "AMBIGUOUS_COLUMN_OR_FIELD")
           }
         } else {
-          v2EnableMode match {
-            case "STRICT" =>
-              // Column mapping is not fully supported in V2 STRICT yet, and df1 is pinned, so the
-              // join returns no rows. TODO: once [[DeltaV2Table]] implements [[Table.version]] and
-              // exposes column ids, Spark 4.1 refreshes and picks up the new schema for the
-              // same-type re-add (scenario 5, one joined row), while the different-type re-add
-              // (scenario 6) raises an analysis exception; Spark 4.2+ raises an analysis exception
-              // for both, since the re-added column gets a fresh column id.
-              checkAnswer(selfJoinDF, Seq.empty)
-            case "AUTO" =>
+          (v2EnableMode, scenario, sparkVersionBucket) match {
+            case ("STRICT", _, "4.0") =>
+              // Today 4.0 STRICT pins df1 to its analysis snapshot, so the external drop and re-add
+              // is invisible to df1. df2 reads the re-added column and the pinned rows join.
+              checkAnswer(selfJoinDF, Seq(Row(1, 100, 1, null)))
+            case ("STRICT", 5, _) =>
+              // 4.1+ STRICT refreshes and picks up the new schema for the same-type column re-add.
+              checkAnswer(selfJoinDF, Seq(Row(1, null, 1, null)))
+            case ("STRICT", _, _) =>
+              // 4.1+ STRICT: re-adding the column with a different type is an incompatible change,
+              // so df1 detects it after analysis and raises.
+              checkError(
+                exception = intercept[SparkThrowable] { selfJoinDF.collect() },
+                condition = "INCOMPATIBLE_TABLE_CHANGE_AFTER_ANALYSIS.COLUMNS_MISMATCH")
+            case ("AUTO", _, _) =>
               checkError(
                 exception = intercept[SparkThrowable] { selfJoinDF.collect() },
                 condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS")

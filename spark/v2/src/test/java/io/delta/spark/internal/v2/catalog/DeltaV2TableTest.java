@@ -560,7 +560,7 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
   }
 
   @Test
-  public void testWriteBuilderRejectsColumnMappedTable(@TempDir File tempDir) {
+  public void testWriteBuilderAcceptsColumnMappedTable(@TempDir File tempDir) {
     String path = tempDir.getAbsolutePath();
     spark.sql(
         String.format(
@@ -591,16 +591,11 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
           }
         };
 
-    UnsupportedOperationException e =
-        assertThrows(
-            UnsupportedOperationException.class, () -> table.newWriteBuilder(writeInfo).build());
-    assertTrue(
-        e.getMessage().contains("not supported on column-mapped"),
-        "exception message should mention column-mapped; was: " + e.getMessage());
+    assertNotNull(table.newWriteBuilder(writeInfo).build());
   }
 
   @Test
-  public void testWriteBuilderRejectsIdMappedTable(@TempDir File tempDir) {
+  public void testWriteBuilderAcceptsIdMappedTable(@TempDir File tempDir) {
     String path = tempDir.getAbsolutePath();
     spark.sql(
         String.format(
@@ -631,12 +626,7 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
           }
         };
 
-    UnsupportedOperationException e =
-        assertThrows(
-            UnsupportedOperationException.class, () -> table.newWriteBuilder(writeInfo).build());
-    assertTrue(
-        e.getMessage().contains("not supported on column-mapped"),
-        "exception message should mention column-mapped; was: " + e.getMessage());
+    assertNotNull(table.newWriteBuilder(writeInfo).build());
   }
 
   @Test
