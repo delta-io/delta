@@ -1560,18 +1560,35 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
             expected.map(_.toLong).toDF())
         }
       }
-      assert(intercept[StreamingQueryException] {
-        testStartingTimestamp("2020-07-15 00:10:01")
-      }.getMessage.contains("The provided timestamp (2020-07-15 00:10:01.0) " +
-        "is after the latest version"))
-      assert(intercept[StreamingQueryException] {
-        testStartingTimestamp("2020-07-16")
-      }.getMessage.contains("The provided timestamp (2020-07-16 00:00:00.0) " +
-        "is after the latest version"))
-      assert(intercept[StreamingQueryException] {
-        testStartingTimestamp("i am not a timestamp")
-      }.getMessage.contains("The provided timestamp ('i am not a timestamp') " +
-        "cannot be converted to a valid timestamp"))
+      checkError(
+        intercept[StreamingQueryException] {
+          testStartingTimestamp("2020-07-15 00:10:01")
+        }.getCause.asInstanceOf[SparkThrowable],
+        "DELTA_TIMESTAMP_GREATER_THAN_COMMIT",
+        Some("42816"),
+        parameters = Map(
+          "providedTimestamp" -> "2020-07-15 00:10:01\\.0",
+          "lastCommitTimestamp" -> ".*",
+          "maximumTimestamp" -> ".*"),
+        matchPVals = true)
+      checkError(
+        intercept[StreamingQueryException] {
+          testStartingTimestamp("2020-07-16")
+        }.getCause.asInstanceOf[SparkThrowable],
+        "DELTA_TIMESTAMP_GREATER_THAN_COMMIT",
+        Some("42816"),
+        parameters = Map(
+          "providedTimestamp" -> "2020-07-16 00:00:00\\.0",
+          "lastCommitTimestamp" -> ".*",
+          "maximumTimestamp" -> ".*"),
+        matchPVals = true)
+      checkError(
+        intercept[StreamingQueryException] {
+          testStartingTimestamp("i am not a timestamp")
+        }.getCause.asInstanceOf[SparkThrowable],
+        "DELTA_TIMESTAMP_INVALID",
+        "42816",
+        parameters = Map("expr" -> "'i am not a timestamp'"))
 
       // With non-strict parsing this produces null when casted to a timestamp and then parses
       // to 1970-01-01 (unix time 0).
