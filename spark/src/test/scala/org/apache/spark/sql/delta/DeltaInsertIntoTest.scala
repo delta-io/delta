@@ -416,7 +416,7 @@ trait DeltaInsertIntoTest
   }
 
   /** Collects all the types of insert previously defined. */
-  protected lazy val allInsertTypes: Set[Insert] = Set(
+  protected def allInsertTypes: Set[Insert] = Set(
         SQLInsertOverwriteReplaceWhere,
         SQLInsertOverwritePartitionByPosition,
         SQLInsertOverwritePartitionColList,
