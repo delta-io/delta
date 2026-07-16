@@ -15,11 +15,13 @@
  */
 package io.delta.spark.internal.v2.utils;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Optional;
 import scala.Option;
 import scala.Tuple2;
+import scala.collection.JavaConverters;
 import scala.collection.immutable.Map$;
 import scala.collection.mutable.Builder;
 import scala.jdk.javaapi.CollectionConverters;
@@ -49,6 +51,10 @@ public final class ScalaUtils {
       return Collections.emptyMap();
     }
     return CollectionConverters.asJava(scalaMap);
+  }
+
+  public static <T> scala.collection.immutable.List<T> toScalaList(T[] values) {
+    return JavaConverters.asScalaBuffer(Arrays.asList(values)).toList();
   }
 
   /**

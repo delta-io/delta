@@ -1516,7 +1516,7 @@ trait DeltaErrorsSuiteBase
       }
       checkError(e, "DELTA_TIMESTAMP_GREATER_THAN_COMMIT", "42816", Map(
         "providedTimestamp" -> "2022-02-28 10:30:00.0",
-        "tableName" -> "2022-02-28 10:00:00.0",
+        "lastCommitTimestamp" -> "2022-02-28 10:00:00.0",
         "maximumTimestamp" -> "2022-02-28 10:00:00"))
     }
     {
