@@ -34,18 +34,18 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
  * mixes this trait in must already be a `TableCatalog`. The trait itself does not provide a
  * `TableCatalog` implementation.
  *
- * <p>The trait is intentionally thin. `loadChangelog` validates connector-specific options and
- * resolves the table via the catalog's own `loadTable`. Read-time CDF only flows through the V2
- * connector, so in `AUTO`/`STRICT` mode (see [[DeltaV2Mode.shouldRouteChangelogToV2]]) the table is
- * re-resolved to a [[DeltaV2Table]] for the CHANGES read; in `NONE` mode it is rejected. It then
- * resolves the requested [[ChangelogRange]] against the table's snapshot manager, and wraps
- * everything into a [[DeltaChangelog]].
+ * <p>The trait is intentionally thin. `loadChangelog` resolves the table via the catalog's own
+ * `loadTable`. Read-time CDF only flows through the V2 connector, so in `AUTO`/`STRICT` mode (see
+ * [[DeltaV2Mode.shouldRouteChangelogToV2]]) the table is re-resolved to a [[DeltaV2Table]] for the
+ * CHANGES read; in `NONE` mode it is rejected. It then resolves the requested [[ChangelogRange]]
+ * against the table's snapshot manager, and wraps everything into a [[DeltaChangelog]].
  * All connector-level work (loading snapshots, validating row tracking, inspecting metadata
  * actions) is deferred to the read path inside [[DeltaChangelog]].
  *
  * <p>The whole entry point is gated by [[DeltaSQLConf.DELTA_CHANGELOG_V2_ENABLED]] (default
- * `false`). When the flag is off the trait delegates to the parent `loadChangelog` default,
- * which surfaces `UNSUPPORTED_FEATURE.CHANGE_DATA_CAPTURE`.
+ * `false`). When the flag is off the trait follows the parent `loadChangelog` contract and throws
+ * `UnsupportedOperationException`, which the Spark analyzer surfaces as
+ * `UNSUPPORTED_FEATURE.CHANGE_DATA_CAPTURE`.
  */
 trait ChangelogSupport extends TableCatalog {
 
@@ -55,11 +55,12 @@ trait ChangelogSupport extends TableCatalog {
       options: CaseInsensitiveStringMap): Changelog = {
     val spark = SparkSession.active
     if (!spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CHANGELOG_V2_ENABLED)) {
-      // Feature gated off: fall back to the parent's default, which surfaces
-      // UNSUPPORTED_FEATURE.CHANGE_DATA_CAPTURE to the user.
-      return super.loadChangelog(ident, context, options)
+      // Calling the Java interface default through a Scala trait-super bridge produces an
+      // AbstractMethodError. Throw the same exception as TableCatalog's default implementation;
+      // Spark's analyzer translates it to UNSUPPORTED_FEATURE.CHANGE_DATA_CAPTURE.
+      throw new UnsupportedOperationException(
+        s"${name()} does not support Change Data Capture (CDC)")
     }
-    rejectUnsupportedOptions(options)
     val routeChangelogToV2 = new DeltaV2Mode(spark.sessionState.conf).shouldRouteChangelogToV2()
     val sparkTable = loadTable(ident) match {
       case st: DeltaV2Table => st
@@ -71,22 +72,6 @@ trait ChangelogSupport extends TableCatalog {
     }
     val (startVersion, endVersion) = resolveRange(sparkTable, context.range())
     new DeltaChangelog(ident.name(), sparkTable, startVersion, endVersion)
-  }
-
-  /**
-   * Rejects options that aren't supported with Delta CDF, even though Spark's CDC implementation
-   * can support these modes. Validating at the catalog boundary covers both Delta's CDF APIs and
-   * Spark's native CHANGES APIs, which pass the original options to `loadChangelog`.
-   */
-  private def rejectUnsupportedOptions(options: CaseInsensitiveStringMap): Unit = {
-    val unsupportedOptions = Seq(
-      "computeUpdates",
-      "deduplicationMode",
-      "startingBoundInclusive",
-      "endingBoundInclusive")
-    unsupportedOptions.foreach { key =>
-      if (options.containsKey(key)) throw DeltaErrors.changelogUnsupportedOption(key)
-    }
   }
 
   /**

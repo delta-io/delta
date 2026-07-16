@@ -238,14 +238,90 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
         });
   }
 
-  /**
-   * Spark now passes the original CHANGES options into TableCatalog.loadChangelog. Validate them
-   * at that catalog boundary so native DataFrameReader.changes calls enforce the same Delta CDF
-   * option policy as table_changes and readChangeFeed.
-   */
+  /** Spark's native changes API retains its standard processing options at the catalog boundary. */
   @Test
-  public void testDataFrameChangesRejectsUnsupportedDeltaOptions() throws Exception {
-    String tableName = "dsv2_cdc_catalog_options_" + System.nanoTime();
+  public void testDataFrameChangesHonorsSparkProcessingOptions() throws Exception {
+    String tableName = "dsv2_cdc_catalog_native_options_" + System.nanoTime();
+
+    withTable(
+        new String[] {tableName},
+        () -> {
+          spark.sql(
+              String.format(
+                  "CREATE TABLE %s (id BIGINT, name STRING) USING delta TBLPROPERTIES "
+                      + "('delta.enableDeletionVectors'='false', "
+                      + "'delta.enableRowTracking'='true')",
+                  tableName));
+          spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice')", tableName));
+          spark.sql(String.format("UPDATE %s SET name = 'AliceX' WHERE id = 1", tableName));
+          spark.sql(String.format("DELETE FROM %s WHERE id = 1", tableName));
+
+          withSQLConf(
+              "spark.databricks.delta.v2.enableMode",
+              "STRICT",
+              () -> {
+                List<Row> updateRows =
+                    spark
+                        .read()
+                        .option("startingVersion", "1")
+                        .option("endingVersion", "2")
+                        .option("startingBoundInclusive", "false")
+                        .option("computeUpdates", "true")
+                        .changes(tableName)
+                        .select("id", "name", "_change_type", "_commit_version")
+                        .collectAsList();
+
+                assertEquals(2, updateRows.size(), "Expected only the v2 update after v1");
+                assertTrue(
+                    updateRows.stream()
+                        .anyMatch(
+                            row ->
+                                "update_preimage".equals(row.getAs("_change_type"))
+                                    && "Alice".equals(row.getAs("name"))),
+                    "Expected Spark to derive the update preimage");
+                assertTrue(
+                    updateRows.stream()
+                        .anyMatch(
+                            row ->
+                                "update_postimage".equals(row.getAs("_change_type"))
+                                    && "AliceX".equals(row.getAs("name"))),
+                    "Expected Spark to derive the update postimage");
+                for (Row row : updateRows) {
+                  assertEquals(2L, ((Number) row.getAs("_commit_version")).longValue());
+                }
+
+                List<Row> endingExclusiveRows =
+                    spark
+                        .read()
+                        .option("startingVersion", "1")
+                        .option("endingVersion", "2")
+                        .option("endingBoundInclusive", "false")
+                        .changes(tableName)
+                        .select("id", "name", "_change_type", "_commit_version")
+                        .collectAsList();
+                assertEquals(1, endingExclusiveRows.size(), "Expected only the v1 insert");
+                Row insert = endingExclusiveRows.get(0);
+                assertEquals("Alice", insert.getAs("name"));
+                assertEquals("insert", insert.getAs("_change_type"));
+                assertEquals(1L, ((Number) insert.getAs("_commit_version")).longValue());
+
+                List<Row> netRows =
+                    spark
+                        .read()
+                        .option("startingVersion", "1")
+                        .option("endingVersion", "3")
+                        .option("deduplicationMode", "netChanges")
+                        .changes(tableName)
+                        .collectAsList();
+                assertTrue(netRows.isEmpty(), "Insert then delete should have no net change");
+              });
+        });
+  }
+
+  /** Delta's existing readChangeFeed API keeps rejecting caller-selected processing modes. */
+  @Test
+  public void testReadChangeFeedRejectsSparkProcessingOptions() throws Exception {
+    String tableName = "dsv2_cdc_catalog_delta_options_" + System.nanoTime();
     String[][] unsupportedOptions = {
       {"computeUpdates", "true"},
       {"deduplicationMode", "none"},
@@ -275,10 +351,12 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
                           () ->
                               spark
                                   .read()
+                                  .format("delta")
+                                  .option("readChangeFeed", "true")
                                   .option("startingVersion", "1")
                                   .option("endingVersion", "1")
                                   .option(option[0], option[1])
-                                  .changes(tableName)
+                                  .table(tableName)
                                   .collectAsList());
                   assertTrue(
                       ex.getMessage().contains("DELTA_CHANGELOG_UNSUPPORTED_OPTION"),
@@ -288,6 +366,48 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
                       "Expected error to identify option " + option[0] + ", got: " + ex);
                 }
               });
+        });
+  }
+
+  /** The disabled feature gate preserves Spark's error before interpreting native options. */
+  @Test
+  public void testFeatureGateDisabledTakesPrecedenceOverNativeOptions() throws Exception {
+    String tableName = "dsv2_cdc_catalog_gate_" + System.nanoTime();
+
+    withTable(
+        new String[] {tableName},
+        () -> {
+          spark.sql(
+              String.format(
+                  "CREATE TABLE %s (id BIGINT) USING delta TBLPROPERTIES "
+                      + "('delta.enableDeletionVectors'='false', "
+                      + "'delta.enableRowTracking'='true')",
+                  tableName));
+          spark.sql(String.format("INSERT INTO %s VALUES (1)", tableName));
+
+          withSQLConf(
+              "spark.databricks.delta.v2.enableMode",
+              "STRICT",
+              () ->
+                  withSQLConf(
+                      "spark.databricks.delta.changelogV2.enabled",
+                      "false",
+                      () -> {
+                        Exception ex =
+                            assertThrows(
+                                Exception.class,
+                                () ->
+                                    spark
+                                        .read()
+                                        .option("startingVersion", "1")
+                                        .option("endingVersion", "1")
+                                        .option("computeUpdates", "true")
+                                        .changes(tableName)
+                                        .collectAsList());
+                        assertTrue(
+                            ex.getMessage().contains("UNSUPPORTED_FEATURE.CHANGE_DATA_CAPTURE"),
+                            "Expected the disabled-gate error, got: " + ex);
+                      }));
         });
   }
 

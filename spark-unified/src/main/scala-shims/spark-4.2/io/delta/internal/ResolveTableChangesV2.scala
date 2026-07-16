@@ -23,7 +23,7 @@ import org.apache.spark.sql.catalyst.analysis.ChangelogContextUtils
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.connector.catalog.{ChangelogContext, Identifier}
-import org.apache.spark.sql.delta.TableChanges
+import org.apache.spark.sql.delta.{DeltaErrors, TableChanges}
 import org.apache.spark.sql.delta.catalog.{ChangelogSupport, DeltaV2TableMarker}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -73,6 +73,7 @@ class ResolveTableChangesV2(session: SparkSession) extends Rule[LogicalPlan] {
       catalog: ChangelogSupport,
       ident: Identifier,
       options: CaseInsensitiveStringMap): LogicalPlan = {
+    rejectUnsupportedOptions(options)
     // We can use [[ChangelogContextUtils.fromOptions]] directly here because Spark's CDC options
     // match Delta's CDF options, e.g. startingVersion, endingVersion.
     val baseContext = ChangelogContextUtils.fromOptions(
@@ -85,5 +86,20 @@ class ResolveTableChangesV2(session: SparkSession) extends Rule[LogicalPlan] {
     val changelog = catalog.loadChangelog(ident, context, options)
     DataSourceV2Relation.create(
       ChangelogTable(changelog, context), Some(catalog), Some(ident), options)
+  }
+
+  /**
+   * Rejects Spark processing options that conflict with the fixed semantics of Delta's existing
+   * CDF APIs. Spark's native CHANGES APIs bypass this bridge and retain support for these options.
+   */
+  private def rejectUnsupportedOptions(options: CaseInsensitiveStringMap): Unit = {
+    val unsupportedOptions = Seq(
+      "computeUpdates",
+      "deduplicationMode",
+      "startingBoundInclusive",
+      "endingBoundInclusive")
+    unsupportedOptions.foreach { key =>
+      if (options.containsKey(key)) throw DeltaErrors.changelogUnsupportedOption(key)
+    }
   }
 }
