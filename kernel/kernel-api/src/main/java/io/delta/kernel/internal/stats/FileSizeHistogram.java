@@ -63,17 +63,17 @@ public class FileSizeHistogram {
   }
 
   /** Creates a FileSizeHistogram from a {@link Row} with the schema {@link #FULL_SCHEMA}. */
-  public static Optional<FileSizeHistogram> fromRow(Row row) {
-    if (row == null) {
-      return Optional.empty();
-    }
+  public static FileSizeHistogram fromRow(Row row) {
+    requireNonNull(row);
     checkArgument(
         FULL_SCHEMA.equals(row.getSchema()),
         "Expected schema: %s, found: %s",
         FULL_SCHEMA,
         row.getSchema());
     return fromColumnVector(
-        VectorUtils.buildColumnVector(Collections.singletonList(row), FULL_SCHEMA), /* rowId */ 0);
+            VectorUtils.buildColumnVector(Collections.singletonList(row), FULL_SCHEMA),
+            /* rowId */ 0)
+        .get();
   }
 
   /** Creates a FileSizeHistogram from a column vector. */

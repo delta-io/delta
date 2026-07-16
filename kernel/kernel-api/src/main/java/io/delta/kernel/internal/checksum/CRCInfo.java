@@ -180,7 +180,7 @@ public class CRCInfo {
     Optional<FileSizeHistogram> fileSizeHistogram =
         row.isNullAt(histogramIdx)
             ? Optional.empty()
-            : FileSizeHistogram.fromRow(row.getStruct(histogramIdx));
+            : Optional.of(FileSizeHistogram.fromRow(row.getStruct(histogramIdx)));
 
     return new CRCInfo(
         version,
