@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.v2.interop.{AbstractMetadata, AbstractProtocol}
 
 import org.apache.spark.sql.catalyst.expressions.Cast
 import org.apache.spark.sql.functions.{col, lit}
@@ -29,7 +30,7 @@ object TypeWidening {
   /**
    * Returns whether the protocol version supports the Type Widening table feature.
    */
-  def isSupported(protocol: Protocol): Boolean =
+  def isSupported(protocol: AbstractProtocol): Boolean =
     Seq(TypeWideningPreviewTableFeature, TypeWideningTableFeature)
       .exists(protocol.isFeatureSupported)
 
@@ -39,8 +40,8 @@ object TypeWidening {
    * not. When Type Widening is enabled, the type of existing columns or fields can be widened
    * using ALTER TABLE CHANGE COLUMN.
    */
-  def isEnabled(protocol: Protocol, metadata: Metadata): Boolean = {
-    val isEnabled = DeltaConfigs.ENABLE_TYPE_WIDENING.fromMetaData(metadata)
+  def isEnabled(protocol: AbstractProtocol, metadata: AbstractMetadata): Boolean = {
+    val isEnabled = DeltaConfigs.ENABLE_TYPE_WIDENING.fromMap(metadata.configuration)
     if (isEnabled && !isSupported(protocol)) {
       throw new IllegalStateException(
         s"Table property '${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' is " +
