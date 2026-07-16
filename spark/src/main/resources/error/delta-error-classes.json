@@ -3020,8 +3020,7 @@
   },
   "DELTA_TIMESTAMP_GREATER_THAN_COMMIT" : {
     "message" : [
-      "The provided timestamp (<providedTimestamp>) is after the latest version available to this",
-      "table (<tableName>). Please use a timestamp before or at <maximumTimestamp>."
+      "Timestamp <providedTimestamp> is after the table's latest version (<lastCommitTimestamp>). Use a timestamp at or before <maximumTimestamp>."
     ],
     "sqlState" : "42816"
   },
