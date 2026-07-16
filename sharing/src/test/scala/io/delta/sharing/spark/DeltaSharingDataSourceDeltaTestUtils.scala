@@ -359,12 +359,17 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
       inlineDvFormat: Option[RoaringBitmapArrayFormat.Value] = None,
       assertMultipleDvsInOneFile: Boolean = false,
       reverseFileOrder: Boolean = false,
-      limitHint: Option[Long] = None): Unit = {
+      limitHint: Option[Long] = None,
+      snapshotVersion: Option[Long] = None): Unit = {
     val lines = Seq.newBuilder[String]
     var totalSize = 0L
 
-    // To prepare faked delta sharing responses with needed files for DeltaSharingClient.
-    val snapshotToUse = getSnapshotToUse(deltaTable, versionAsOf)
+    // To prepare faked delta sharing responses with needed files for DeltaSharingClient. The block
+    // is keyed by versionAsOf/timestampAsOf, but the snapshot whose data it serves can be pinned
+    // independently via snapshotVersion -- so a timestampAsOf-keyed block can serve an older
+    // version's snapshot (the server returns that version's files/metadata at the timestamp),
+    // which versionAsOf alone cannot express since getSnapshotToUse maps a timestamp to latest.
+    val snapshotToUse = getSnapshotToUse(deltaTable, snapshotVersion.orElse(versionAsOf))
     val fileActionsArrayBuffer = ArrayBuffer[model.DeltaSharingFileAction]()
     val dvPathToCount = scala.collection.mutable.Map[String, Int]()
     var numRecords = 0L
