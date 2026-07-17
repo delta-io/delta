@@ -52,7 +52,6 @@ import io.delta.storage.commit.TableIdentifier;
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels;
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaTokenBasedRestClient;
 import io.unitycatalog.client.api.TablesApi;
-import io.unitycatalog.client.auth.TokenProvider;
 import io.unitycatalog.client.model.TableInfo;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -110,9 +109,12 @@ public class UCKernelDeltaTablesLiveE2ETest extends UnityCatalogSupport {
       new StructType().add("id", IntegerType.INTEGER).add("name", StringType.STRING);
 
   private UCDeltaTokenBasedRestClient newDeltaClient(UnityCatalogInfo uc) {
-    Map<String, String> authConfig = Map.of("type", "static", "token", uc.serverToken());
-    TokenProvider tokenProvider = TokenProvider.create(authConfig);
-    return new UCDeltaTokenBasedRestClient(uc.serverUri(), tokenProvider, Collections.emptyMap());
+    Map<String, String> ucConfig =
+        Map.of(
+            "uri", uc.serverUri(),
+            "auth.type", "static",
+            "auth.token", uc.serverToken());
+    return new UCDeltaTokenBasedRestClient(ucConfig, null);
   }
 
   private Engine newEngine() {

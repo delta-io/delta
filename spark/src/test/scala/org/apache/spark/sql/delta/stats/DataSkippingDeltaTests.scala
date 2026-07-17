@@ -31,7 +31,6 @@ import org.apache.commons.io.FileUtils
 import org.scalatest.GivenWhenThen
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.SparkConf
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.QueryPlanningTracker
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -73,6 +72,172 @@ trait DataSkippingDeltaTestsBase extends QueryTest
       super.test(testName + " - old behavior with DataFrame schema", testTags: _*) {
         withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS_USING_TABLE_SCHEMA.key -> "false") {
           testFun
+        }
+      }
+    }
+  }
+
+  protected def parse(deltaLog: DeltaLog, predicate: String): Seq[Expression] =
+    super.parse(spark, deltaLog, predicate)
+
+  protected def filesRead(
+      deltaLog: DeltaLog,
+      predicate: String,
+      checkEmptyUnusedFilters: Boolean = false): Int =
+    super.filesRead(spark, deltaLog, predicate, checkEmptyUnusedFilters)
+
+  protected def getFilesRead(
+      deltaLog: DeltaLog,
+      predicate: String,
+      checkEmptyUnusedFilters: Boolean = false): Seq[AddFile] =
+    super.getFilesRead(spark, deltaLog, predicate, checkEmptyUnusedFilters)
+
+  protected def checkResultsWithPartitions(
+    tableName: String,
+    predicate: String,
+    expResults: Seq[(String, String)],
+    expNumPartitions: Int,
+    expNumFiles: Long): Unit = {
+    require(!tableName.contains("/"), s"expected a table name, got a path: $tableName")
+    Given(predicate)
+    val df = spark.read.table(tableName).where(predicate)
+    checkAnswer(df, expResults.toDF())
+
+    val files = getFilesRead(DeltaLog.forTable(spark, TableIdentifier(tableName)), predicate)
+    assert(files.size == expNumFiles, "# files incorrect:\n\t" + files.mkString("\n\t"))
+
+    val partitionValues = files.map(_.partitionValues).distinct
+    assert(partitionValues.size == expNumPartitions,
+      "# partitions incorrect:\n\t" + partitionValues.mkString("\n\t"))
+  }
+
+  protected def getStatsDf(deltaLog: DeltaLog, columns: Column*): DataFrame = {
+    deltaLog.snapshot.withStats.select("stats.*").select(columns: _*)
+  }
+
+  protected def expectedStatsForFile(index: Int, colName: String, deltaLog: DeltaLog): String = {
+    if (deltaLog.unsafeVolatileSnapshot.protocol.isFeatureSupported(DeletionVectorsTableFeature)) {
+      s"""{"numRecords":1,"minValues":{"$colName":$index},"maxValues":{"$colName":$index},""" +
+        s""""nullCount":{"$colName":0},"tightBounds":true}""".stripMargin
+    } else {
+      s"""{"numRecords":1,"minValues":{"$colName":$index},"maxValues":{"$colName":$index},""" +
+        s""""nullCount":{"$colName":0}}""".stripMargin
+    }
+  }
+
+  protected def failPretty(error: String, predicate: String, data: String) = {
+    fail(
+      s"""$error
+         |
+         |== Data ==
+         |$data
+       """.stripMargin)
+  }
+
+  protected def setNumIndexedColumns(tableName: String, numIndexedCols: Int): Unit = {
+    require(!tableName.contains("/"), s"expected a table name, got a path: $tableName")
+    sql(s"""
+          |ALTER TABLE $tableName
+          |SET TBLPROPERTIES (
+          |  'delta.dataSkippingNumIndexedCols' = '$numIndexedCols'
+          |)""".stripMargin)
+  }
+
+  protected def setDeltaStatsColumns(tableName: String, deltaStatsColumns: String): Unit = {
+    require(!tableName.contains("/"), s"expected a table name, got a path: $tableName")
+    sql(s"""
+           |ALTER TABLE $tableName
+           |SET TBLPROPERTIES (
+           |  'delta.dataSkippingStatsColumns' = '$deltaStatsColumns'
+           |)""".stripMargin)
+  }
+
+  protected def checkSkipping(
+      log: DeltaLog,
+      hits: Seq[String],
+      misses: Seq[String],
+      data: String,
+      checkEmptyUnusedFiltersForHits: Boolean): Unit = {
+    hits.foreach { predicate =>
+      Given(predicate)
+      if (filesRead(log, predicate, checkEmptyUnusedFiltersForHits) == 0) {
+        failPretty(s"Expected hit but got miss for $predicate", predicate, data)
+      }
+    }
+
+    misses.foreach { predicate =>
+      Given(predicate)
+      if (filesRead(log, predicate) != 0) {
+        failPretty(s"Expected miss but got hit for $predicate", predicate, data)
+      }
+    }
+    val schemaDiff = SchemaUtils.reportDifferences(
+      log.snapshot.statsSchema.asNullable,
+      log.snapshot.statsSchema)
+    if (schemaDiff.nonEmpty) {
+      fail(s"The stats schema should be nullable. Differences:\n${schemaDiff.mkString("\n")}")
+    }
+  }
+  protected def getDataSkippingConfs(
+      indexedCols: Int,
+      deltaStatsColNamesOpt: Option[String]): TraversableOnce[(String, String)] = {
+    val numIndexedColsConfOpt = Option(indexedCols)
+      .filter(_ != defaultNumIndexedCols)
+      .map(DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.defaultTablePropertyKey -> _.toString)
+    val indexedColNamesConfOpt = deltaStatsColNamesOpt
+      .map(DeltaConfigs.DATA_SKIPPING_STATS_COLUMNS.defaultTablePropertyKey -> _)
+    numIndexedColsConfOpt ++ indexedColNamesConfOpt
+  }
+
+  protected def testSkipping(
+      name: String,
+      data: String,
+      schema: StructType = null,
+      hits: Seq[String],
+      misses: Seq[String],
+      sqlConfs: Seq[(String, String)] = Nil,
+      indexedCols: Int = defaultNumIndexedCols,
+      deltaStatsColNamesOpt: Option[String] = None,
+      checkEmptyUnusedFiltersForHits: Boolean = false,
+      exceptionOpt: Option[Throwable] = None): Unit = {
+    test(s"data skipping by stats - $name") {
+      val allSQLConfs = sqlConfs ++ getDataSkippingConfs(indexedCols, deltaStatsColNamesOpt)
+      withSQLConf(allSQLConfs: _*) {
+        val jsonRecords = data.split("\n").toSeq
+        val reader = spark.read
+        if (schema != null) { reader.schema(schema) }
+        val df = reader.json(jsonRecords.toDS())
+
+        val tableName = "data_skipping_by_stats_test"
+        withTable(tableName) {
+          df.coalesce(1).write.format("delta").saveAsTable(tableName)
+          val r = DeltaLog.forTable(spark, TableIdentifier(tableName))
+
+          exceptionOpt.map { exception =>
+            val except = intercept[Throwable] {
+              deltaStatsColNamesOpt.foreach { deltaStatsColNames =>
+                setDeltaStatsColumns(tableName, deltaStatsColNames)
+                df.coalesce(1).write.format("delta").mode("overwrite").saveAsTable(tableName)
+                if (indexedCols != defaultNumIndexedCols) {
+                  setNumIndexedColumns(tableName, indexedCols)
+                  df.coalesce(1).write.format("delta").mode("overwrite").saveAsTable(tableName)
+                }
+                checkSkipping(r, hits, misses, data, checkEmptyUnusedFiltersForHits)
+              }
+            }
+            assert(except.getClass == exception.getClass &&
+              except.getMessage.contains(exception.getMessage))
+          }.getOrElse {
+            if (indexedCols != defaultNumIndexedCols) {
+              setNumIndexedColumns(tableName, indexedCols)
+              df.coalesce(1).write.format("delta").mode("overwrite").saveAsTable(tableName)
+            }
+            deltaStatsColNamesOpt.foreach { deltaStatsColNames =>
+              setDeltaStatsColumns(tableName, deltaStatsColNames)
+              df.coalesce(1).write.format("delta").mode("overwrite").saveAsTable(tableName)
+            }
+            checkSkipping(r, hits, misses, data, checkEmptyUnusedFiltersForHits)
+          }
         }
       }
     }
@@ -2043,16 +2208,6 @@ trait DataSkippingDeltaTestsBase extends QueryTest
     }
   }
 
-  protected def expectedStatsForFile(index: Int, colName: String, deltaLog: DeltaLog): String = {
-    if (deltaLog.unsafeVolatileSnapshot.protocol.isFeatureSupported(DeletionVectorsTableFeature)) {
-      s"""{"numRecords":1,"minValues":{"$colName":$index},"maxValues":{"$colName":$index},""" +
-        s""""nullCount":{"$colName":0},"tightBounds":true}""".stripMargin
-    } else {
-      s"""{"numRecords":1,"minValues":{"$colName":$index},"maxValues":{"$colName":$index},""" +
-        s""""nullCount":{"$colName":0}}""".stripMargin
-    }
-  }
-
   test("data skipping get specific files with Stats API") {
     val t = "ds_get_specific_files_stats_api"
     withTable(t) {
@@ -2206,165 +2361,10 @@ trait DataSkippingDeltaTestsBase extends QueryTest
     }
   }
 
-  protected def parse(deltaLog: DeltaLog, predicate: String): Seq[Expression] =
-    super.parse(spark, deltaLog, predicate)
-
-  protected def filesRead(
-      deltaLog: DeltaLog,
-      predicate: String,
-      checkEmptyUnusedFilters: Boolean = false): Int =
-    super.filesRead(spark, deltaLog, predicate, checkEmptyUnusedFilters)
-
-  protected def getFilesRead(
-      deltaLog: DeltaLog,
-      predicate: String,
-      checkEmptyUnusedFilters: Boolean = false): Seq[AddFile] =
-    super.getFilesRead(spark, deltaLog, predicate, checkEmptyUnusedFilters)
-
-  protected def checkResultsWithPartitions(
-    tableName: String,
-    predicate: String,
-    expResults: Seq[(String, String)],
-    expNumPartitions: Int,
-    expNumFiles: Long): Unit = {
-    require(!tableName.contains("/"), s"expected a table name, got a path: $tableName")
-    Given(predicate)
-    val df = spark.read.table(tableName).where(predicate)
-    checkAnswer(df, expResults.toDF())
-
-    val files = getFilesRead(DeltaLog.forTable(spark, TableIdentifier(tableName)), predicate)
-    assert(files.size == expNumFiles, "# files incorrect:\n\t" + files.mkString("\n\t"))
-
-    val partitionValues = files.map(_.partitionValues).distinct
-    assert(partitionValues.size == expNumPartitions,
-      "# partitions incorrect:\n\t" + partitionValues.mkString("\n\t"))
-  }
-
-  protected def getStatsDf(deltaLog: DeltaLog, columns: Column*): DataFrame = {
-    deltaLog.snapshot.withStats.select("stats.*").select(columns: _*)
-  }
-
-  protected def failPretty(error: String, predicate: String, data: String) = {
-    fail(
-      s"""$error
-         |
-         |== Data ==
-         |$data
-       """.stripMargin)
-  }
-
-  protected def setNumIndexedColumns(tableName: String, numIndexedCols: Int): Unit = {
-    require(!tableName.contains("/"), s"expected a table name, got a path: $tableName")
-    sql(s"""
-          |ALTER TABLE $tableName
-          |SET TBLPROPERTIES (
-          |  'delta.dataSkippingNumIndexedCols' = '$numIndexedCols'
-          |)""".stripMargin)
-  }
-
-  protected def setDeltaStatsColumns(tableName: String, deltaStatsColumns: String): Unit = {
-    require(!tableName.contains("/"), s"expected a table name, got a path: $tableName")
-    sql(s"""
-           |ALTER TABLE $tableName
-           |SET TBLPROPERTIES (
-           |  'delta.dataSkippingStatsColumns' = '$deltaStatsColumns'
-           |)""".stripMargin)
-  }
-
   private def isFullScan(report: ScanReport): Boolean = {
     report.size("scanned").bytesCompressed === report.size("total").bytesCompressed
   }
 
-  protected def checkSkipping(
-      log: DeltaLog,
-      hits: Seq[String],
-      misses: Seq[String],
-      data: String,
-      checkEmptyUnusedFiltersForHits: Boolean): Unit = {
-    hits.foreach { predicate =>
-      Given(predicate)
-      if (filesRead(log, predicate, checkEmptyUnusedFiltersForHits) == 0) {
-        failPretty(s"Expected hit but got miss for $predicate", predicate, data)
-      }
-    }
-
-    misses.foreach { predicate =>
-      Given(predicate)
-      if (filesRead(log, predicate) != 0) {
-        failPretty(s"Expected miss but got hit for $predicate", predicate, data)
-      }
-    }
-    val schemaDiff = SchemaUtils.reportDifferences(
-      log.snapshot.statsSchema.asNullable,
-      log.snapshot.statsSchema)
-    if (schemaDiff.nonEmpty) {
-      fail(s"The stats schema should be nullable. Differences:\n${schemaDiff.mkString("\n")}")
-    }
-  }
-  protected def getDataSkippingConfs(
-      indexedCols: Int,
-      deltaStatsColNamesOpt: Option[String]): TraversableOnce[(String, String)] = {
-    val numIndexedColsConfOpt = Option(indexedCols)
-      .filter(_ != defaultNumIndexedCols)
-      .map(DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.defaultTablePropertyKey -> _.toString)
-    val indexedColNamesConfOpt = deltaStatsColNamesOpt
-      .map(DeltaConfigs.DATA_SKIPPING_STATS_COLUMNS.defaultTablePropertyKey -> _)
-    numIndexedColsConfOpt ++ indexedColNamesConfOpt
-  }
-
-  protected def testSkipping(
-      name: String,
-      data: String,
-      schema: StructType = null,
-      hits: Seq[String],
-      misses: Seq[String],
-      sqlConfs: Seq[(String, String)] = Nil,
-      indexedCols: Int = defaultNumIndexedCols,
-      deltaStatsColNamesOpt: Option[String] = None,
-      checkEmptyUnusedFiltersForHits: Boolean = false,
-      exceptionOpt: Option[Throwable] = None): Unit = {
-    test(s"data skipping by stats - $name") {
-      val allSQLConfs = sqlConfs ++ getDataSkippingConfs(indexedCols, deltaStatsColNamesOpt)
-      withSQLConf(allSQLConfs: _*) {
-        val jsonRecords = data.split("\n").toSeq
-        val reader = spark.read
-        if (schema != null) { reader.schema(schema) }
-        val df = reader.json(jsonRecords.toDS())
-
-        val tableName = "data_skipping_by_stats_test"
-        withTable(tableName) {
-          df.coalesce(1).write.format("delta").saveAsTable(tableName)
-          val r = DeltaLog.forTable(spark, TableIdentifier(tableName))
-
-          exceptionOpt.map { exception =>
-            val except = intercept[Throwable] {
-              deltaStatsColNamesOpt.foreach { deltaStatsColNames =>
-                setDeltaStatsColumns(tableName, deltaStatsColNames)
-                df.coalesce(1).write.format("delta").mode("overwrite").saveAsTable(tableName)
-                if (indexedCols != defaultNumIndexedCols) {
-                  setNumIndexedColumns(tableName, indexedCols)
-                  df.coalesce(1).write.format("delta").mode("overwrite").saveAsTable(tableName)
-                }
-                checkSkipping(r, hits, misses, data, checkEmptyUnusedFiltersForHits)
-              }
-            }
-            assert(except.getClass == exception.getClass &&
-              except.getMessage.contains(exception.getMessage))
-          }.getOrElse {
-            if (indexedCols != defaultNumIndexedCols) {
-              setNumIndexedColumns(tableName, indexedCols)
-              df.coalesce(1).write.format("delta").mode("overwrite").saveAsTable(tableName)
-            }
-            deltaStatsColNamesOpt.foreach { deltaStatsColNames =>
-              setDeltaStatsColumns(tableName, deltaStatsColNames)
-              df.coalesce(1).write.format("delta").mode("overwrite").saveAsTable(tableName)
-            }
-            checkSkipping(r, hits, misses, data, checkEmptyUnusedFiltersForHits)
-          }
-        }
-      }
-    }
-  }
 }
 
 trait DataSkippingDeltaTests extends DataSkippingDeltaTestsBase
@@ -2411,76 +2411,3 @@ trait DataSkippingDeltaV1Tests
   }
 }
 
-/**
- * Used to disable the tests with the old stats collection behavior on long-running suites to
- * avoid time-out
- * TODO(lin): remove this after we remove the DELTA_COLLECT_STATS_USING_TABLE_SCHEMA flag
- */
-trait DataSkippingDisableOldStatsSchema extends DataSkippingDeltaTestsBase {
-
-  protected override def test(testName: String, testTags: org.scalatest.Tag*)
-                             (testFun: => Any)
-                             (implicit pos: org.scalactic.source.Position): Unit = {
-    // Adding the null check in case tableSchemaOnlyTag has not been initialized in base traits
-    val newTestTags = if (tableSchemaOnlyTag == null) testTags else tableSchemaOnlyTag +: testTags
-    super.test(testName, newTestTags: _*)(testFun)(pos)
-  }
-}
-
-/** DataSkipping tests under id column mapping */
-trait DataSkippingDeltaIdColumnMapping extends DataSkippingDeltaTestsBase
-  with DeltaColumnMappingTestUtils {
-
-  override def expectedStatsForFile(index: Int, colName: String, deltaLog: DeltaLog): String = {
-    val x = colName.phy(deltaLog)
-    if (deltaLog.unsafeVolatileSnapshot.protocol.isFeatureSupported(DeletionVectorsTableFeature)) {
-      s"""{"numRecords":1,"minValues":{"$x":$index},"maxValues":{"$x":$index},""" +
-        s""""nullCount":{"$x":0},"tightBounds":true}""".stripMargin
-    } else {
-      s"""{"numRecords":1,"minValues":{"$x":$index},"maxValues":{"$x":$index},""" +
-        s""""nullCount":{"$x":0}}""".stripMargin
-    }
-  }
-}
-
-trait DataSkippingDeltaTestV1ColumnMappingMode extends DataSkippingDeltaIdColumnMapping {
-  override protected def getStatsDf(deltaLog: DeltaLog, columns: Column*): DataFrame = {
-    deltaLog.snapshot.withStats.select("stats.*")
-      .select(convertToPhysicalColumns(columns, deltaLog): _*)
-  }
-}
-
-/**
- * V1 name-column-mapping additionally runs the full test body (the id-mode variant runs only the
- * selected subset). `runAllTests` is declared on [[DeltaColumnMappingSelectedTestMixin]], which
- * `DeltaColumnMappingEnableNameMode` brings in.
- */
-trait DataSkippingDeltaV1NameColumnMappingMode
-  extends DataSkippingDeltaTestV1ColumnMappingMode
-  with DeltaColumnMappingEnableNameMode {
-  override protected def runAllTests: Boolean = true
-}
-
-/** Writes V2 checkpoints with a JSON top-level file. */
-trait DataSkippingCheckpointV2Json extends DataSkippingDeltaTestsBase {
-  override protected def sparkConf: SparkConf = {
-    super.sparkConf.setAll(
-      Seq(
-        DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name,
-        DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> V2Checkpoint.Format.JSON.name
-      )
-    )
-  }
-}
-
-/** Writes V2 checkpoints with a Parquet top-level file. */
-trait DataSkippingCheckpointV2Parquet extends DataSkippingDeltaTestsBase {
-  override protected def sparkConf: SparkConf = {
-    super.sparkConf.setAll(
-      Seq(
-        DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name,
-        DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> V2Checkpoint.Format.PARQUET.name
-      )
-    )
-  }
-}

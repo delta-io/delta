@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CommitStats, Commit
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, DomainMetadata, FileAction, Metadata, Protocol, RemoveFile, SetTransaction}
+import org.apache.spark.sql.delta.amt.AMTWriteMetrics
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -32,7 +33,6 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.{FileSizeHistogram, FileSizeHistogramUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
-import org.apache.hadoop.fs.Path
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
@@ -43,21 +43,6 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
  */
 trait TransactionHelper extends DeltaLogging {
   def deltaLog: DeltaLog
-
-  /**
-   * The path to the Delta log directory. Not implemented in the base trait; each concrete
-   * transaction supplies it.
-   */
-  def logPath: Path =
-    throw new UnsupportedOperationException("logPath is not implemented for this transaction")
-
-  /**
-   * The path to the Delta table data directory. Not implemented in the base trait; each concrete
-   * transaction supplies it.
-   */
-  def dataPath: Path =
-    throw new UnsupportedOperationException("dataPath is not implemented for this transaction")
-
   def catalogTable: Option[CatalogTable]
   def snapshot: Snapshot
 
@@ -199,7 +184,7 @@ trait TransactionHelper extends DeltaLogging {
         case _ =>
           throw new IllegalStateException(
             "Unexpected state found when trying " +
-            s"to generate CoordinatedCommitsStats for table ${logPath}. " +
+            s"to generate CoordinatedCommitsStats for table ${deltaLog.logPath}. " +
             s"$readSnapshotTableCommitCoordinatorClientOpt, " +
             s"$metadata, $snapshot, $catalogTable")
       }
@@ -380,7 +365,8 @@ trait TransactionHelper extends DeltaLogging {
         isolationLevel: IsolationLevel,
         fileSizeHistogramOpt: Option[FileSizeHistogram],
         commitInfoOpt: Option[CommitInfo],
-        commitSizeBytes: Long): Unit = {
+        commitSizeBytes: Long,
+        amtWriteMetricsOpt: Option[AMTWriteMetrics] = None): Unit = {
       assertStateBeforeFinalization()
 
       val doCollectCommitStats =
@@ -425,7 +411,8 @@ trait TransactionHelper extends DeltaLogging {
         addFilesHistogram = addFilesHistogram.map(FileSizeHistogramUtils.compress),
         removeFilesHistogram = removeFilesHistogram.map(FileSizeHistogramUtils.compress),
         numOfDomainMetadatas = numOfDomainMetadatas,
-        txnId = Some(txnId))
+        txnId = Some(txnId),
+        amtWriteMetrics = amtWriteMetricsOpt)
       recordDeltaEvent(deltaLog, DeltaLogging.DELTA_COMMIT_STATS_OPTYPE, data = stats)
     }
 
