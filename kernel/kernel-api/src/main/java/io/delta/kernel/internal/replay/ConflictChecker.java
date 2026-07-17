@@ -33,6 +33,7 @@ import io.delta.kernel.exceptions.ConcurrentWriteException;
 import io.delta.kernel.internal.*;
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.DomainMetadata;
+import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.actions.SetTransaction;
 import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.internal.checksum.ChecksumReader;
@@ -51,8 +52,13 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * Class containing the conflict resolution logic when writing to a Delta table.
  *
- * <p>Currently, the support is to allow blind appends. Later on this can be extended to add support
- * for read-after-write scenarios.
+ * <p>Kernel's built-in conflict resolution fully supports only blind-append transactions.
+ *
+ * <p>For non-blind-append transactions, Kernel currently detects only delete-delete conflicts,
+ * where both the winning transaction and the transaction being rebased remove the same data file.
+ * Kernel does not detect other conflicts involving concurrent data-file modifications. Connectors
+ * issuing non-blind-append transactions are responsible for detecting or avoiding other
+ * concurrent-modification conflicts.
  */
 public class ConflictChecker {
   private static final int PROTOCOL_ORDINAL = CONFLICT_RESOLUTION_SCHEMA.indexOf("protocol");
@@ -61,6 +67,10 @@ public class ConflictChecker {
   private static final int COMMITINFO_ORDINAL = CONFLICT_RESOLUTION_SCHEMA.indexOf("commitInfo");
   private static final int DOMAIN_METADATA_ORDINAL =
       CONFLICT_RESOLUTION_SCHEMA.indexOf("domainMetadata");
+  private static final int REMOVE_ORDINAL = CONFLICT_RESOLUTION_SCHEMA.indexOf("remove");
+  // "path" ordinal within RemoveFile.FULL_SCHEMA; shared by winning removes (column vector) and
+  // this transaction's removes (SingleAction "remove" struct).
+  private static final int REMOVE_PATH_ORDINAL = RemoveFile.FULL_SCHEMA.indexOf("path");
 
   // Snapshot of the table read by the transaction that encountered the conflict
   // (a.k.a the losing transaction)
@@ -74,6 +84,9 @@ public class ConflictChecker {
 
   // Helper states during conflict resolution
   private Optional<Long> lastWinningRowIdHighWatermark = Optional.empty();
+  // Paths of data files this (losing) transaction removes; used to detect delete-vs-delete
+  // conflicts against the winning transactions.
+  private Set<String> attemptRemovedFilePaths = Collections.emptySet();
 
   private ConflictChecker(
       Optional<SnapshotImpl> snapshotOpt,
@@ -127,6 +140,10 @@ public class ConflictChecker {
     // no winning commits. why did we get the transaction conflict?
     checkState(!winningCommits.isEmpty(), "No winning commits found.");
 
+    // Collect the data files removed by this (losing) transaction so we can detect delete-vs-delete
+    // conflicts against the winning transactions below.
+    this.attemptRemovedFilePaths = collectAttemptRemovedFilePaths();
+
     FileStatus lastWinningTxn = winningCommits.get(winningCommits.size() - 1);
     long lastWinningVersion = FileNames.deltaVersion(lastWinningTxn.getPath());
     // Read the actions from the winning commits
@@ -147,6 +164,7 @@ public class ConflictChecker {
             handleMetadata(batch.getColumnVector(METADATA_ORDINAL));
             handleTxn(batch.getColumnVector(TXN_ORDINAL));
             handleDomainMetadata(batch.getColumnVector(DOMAIN_METADATA_ORDINAL));
+            handleRemovedFiles(batch.getColumnVector(REMOVE_ORDINAL));
           });
     } catch (IOException ioe) {
       throw new UncheckedIOException("Error reading actions from winning commits.", ioe);
@@ -365,6 +383,49 @@ public class ConflictChecker {
             }
           }
         });
+  }
+
+  /**
+   * Detects delete-vs-delete conflicts. If a winning transaction removed a data file that this
+   * (losing) transaction also removes, both commits operate on the same physical file. Because log
+   * replay keys active files by (path, deletionVectorId), letting both through would leave two
+   * active entries for the same path -- duplicated data, or lost deletes when the two carry
+   * different deletion vectors (e.g. concurrent merge-on-read or copy-on-write updates). Fail with
+   * a retryable {@link ConcurrentWriteException} so the caller can recompute against the winning
+   * state and retry.
+   *
+   * @param removeVector remove-file rows from the winning transactions
+   */
+  private void handleRemovedFiles(ColumnVector removeVector) {
+    if (attemptRemovedFilePaths.isEmpty()) {
+      return; // e.g. blind appends -- this txn removes nothing, so it cannot delete-conflict.
+    }
+    ColumnVector pathVector = removeVector.getChild(REMOVE_PATH_ORDINAL);
+    for (int rowId = 0; rowId < removeVector.getSize(); rowId++) {
+      if (removeVector.isNullAt(rowId)) {
+        continue;
+      }
+      String winningRemovedPath = pathVector.getString(rowId);
+      if (attemptRemovedFilePaths.contains(winningRemovedPath)) {
+        throw DeltaErrors.concurrentDeleteDeleteException(winningRemovedPath, attemptVersion);
+      }
+    }
+  }
+
+  /** Collect the paths of all data files removed by this (losing) transaction. */
+  private Set<String> collectAttemptRemovedFilePaths() {
+    Set<String> removedPaths = new HashSet<>();
+    try (CloseableIterator<Row> actions = attemptDataActions.iterator()) {
+      while (actions.hasNext()) {
+        Row action = actions.next();
+        if (!action.isNullAt(REMOVE_FILE_ORDINAL)) {
+          removedPaths.add(action.getStruct(REMOVE_FILE_ORDINAL).getString(REMOVE_PATH_ORDINAL));
+        }
+      }
+    } catch (IOException ioe) {
+      throw new UncheckedIOException("Error reading data actions of the current transaction.", ioe);
+    }
+    return removedPaths;
   }
 
   private List<FileStatus> getWinningCommitFiles(Engine engine) {

@@ -499,6 +499,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_IS_PREDICATE_PARTITION_COLUMNS_ONLY_STRICT =
+    buildConf("isPredicatePartitionColumnsOnlyStrict.enabled")
+      .internal()
+      .doc("When true, callers that opt in use the strict predicate classification API " +
+        "(isPredicatePartitionColumnsOnlyStrict, isPredicateMetadataOnlyStrict, " +
+        "splitMetadataAndDataPredicatesStrict). Non-deterministic predicates are not pushed as " +
+        "partition filters. When false, uses legacy isPredicatePartitionColumnsOnly (vacuously " +
+        "true for columnless predicates such as rand()).")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_MAX_RETRY_COMMIT_ATTEMPTS =
     buildConf("maxCommitAttempts")
       .internal()
@@ -568,6 +579,14 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         "kill-switch while the feature is in preview.")
       .booleanConf
       .createWithDefault(true)
+
+  val AMT_ENTRIES_PER_LEAF =
+    buildConf("amt.entriesPerLeaf")
+      .internal()
+      .doc("Maximum number of content entries packed into a single AMT manifest leaf.")
+      .intConf
+      .checkValue(_ > 0, "entriesPerLeaf must be positive.")
+      .createWithDefault(50000)
 
   val UNSUPPORTED_TESTING_FEATURES_ENABLED =
     buildConf("tableFeatures.dev.unsupportedTableFeatures.enabled")
@@ -2245,7 +2264,7 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .internal()
       .doc("If true, allow users to create/upgrade Uniform Iceberg v3 tables.")
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val DELTA_UNIFORM_ICEBERG_GEOSPATIAL_ENABLED =
     buildConf("uniform.iceberg.geospatial.enabled")
@@ -3345,6 +3364,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         .stripMargin)
     .booleanConf
     .createWithDefault(true)
+
+  val GUARD_VARIANT_IN_STATS_SCHEMA =
+    buildConf("variantShredding.guardVariantInStatsSchema.enabled")
+      .internal()
+      .doc("When enabled, variant columns are only included in the data skipping stats schema " +
+        "if the table's protocol supports the variantShredding (or variantShredding-preview) " +
+        "table feature. This acts as a kill switch for that gating: when disabled, variant " +
+        "columns are included in the stats schema based solely on the variant data skipping " +
+        "stats config, regardless of the table's shredding support.")
+      .booleanConf
+      .createWithDefault(true)
 
   val PARSE_FOOTER_FOR_VARIANT_DATA_SKIPPING_STATS =
     buildConf("variantShredding.parseFooterForStats")

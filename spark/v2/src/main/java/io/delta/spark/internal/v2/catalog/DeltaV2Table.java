@@ -23,10 +23,14 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.rowtracking.RowTracking;
+import io.delta.spark.internal.v2.adapters.KernelMetadataAdapter;
+import io.delta.spark.internal.v2.adapters.KernelProtocolAdapter;
+import io.delta.spark.internal.v2.exception.TimestampOutOfRangeException;
+import io.delta.spark.internal.v2.read.DeltaV2ScanUtils;
 import io.delta.spark.internal.v2.read.MetadataEvolutionHandler;
-import io.delta.spark.internal.v2.read.SparkScanBuilder;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
@@ -69,10 +73,11 @@ import org.apache.spark.sql.connector.write.WriteBuilder;
 import org.apache.spark.sql.delta.DeltaTableUtils;
 import org.apache.spark.sql.delta.RowCommitVersion$;
 import org.apache.spark.sql.delta.RowId$;
-import org.apache.spark.sql.delta.SparkTableShims$;
 import org.apache.spark.sql.delta.catalog.DeltaV2TableMarker;
 import org.apache.spark.sql.delta.commands.cdc.CDCReader;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
+import org.apache.spark.sql.delta.v2.interop.AbstractMetadata;
+import org.apache.spark.sql.delta.v2.interop.AbstractProtocol;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.DataTypes;
@@ -82,7 +87,7 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import scala.jdk.javaapi.CollectionConverters;
 
 /** DataSource V2 Table implementation for Delta Lake using the Delta Kernel API. */
-public class DeltaV2Table
+public class DeltaV2Table extends DeltaV2TableShims
     implements Table, SupportsRead, SupportsWrite, SupportsMetadataColumns, DeltaV2TableMarker {
   private static final String METADATA_COLUMN_NAME = FileFormat$.MODULE$.METADATA_NAME();
   private static final String ROW_ID_METADATA_FIELD_NAME = RowId$.MODULE$.ROW_ID();
@@ -96,12 +101,9 @@ public class DeltaV2Table
         EnumSet.of(
             TableCapability.BATCH_READ,
             TableCapability.MICRO_BATCH_READ,
-            TableCapability.BATCH_WRITE);
-    scala.Option<TableCapability> schemaEvolution =
-        SparkTableShims$.MODULE$.schemaEvolutionCapability();
-    if (schemaEvolution.isDefined()) {
-      caps.add(schemaEvolution.get());
-    }
+            TableCapability.BATCH_WRITE,
+            TableCapability.STREAMING_WRITE);
+    DeltaV2TableShims.schemaEvolutionCapability().ifPresent(caps::add);
     return Collections.unmodifiableSet(caps);
   }
 
@@ -329,11 +331,53 @@ public class DeltaV2Table
     return snapshotManager;
   }
 
+  /** The table protocol from the initial snapshot. */
+  protected AbstractProtocol protocol() {
+    return new KernelProtocolAdapter(((SnapshotImpl) initialSnapshot).getProtocol());
+  }
+
+  /** The table metadata from the initial snapshot. */
+  protected AbstractMetadata metadata() {
+    return new KernelMetadataAdapter(((SnapshotImpl) initialSnapshot).getMetadata());
+  }
+
   /** Returns a copy of this table pinned to {@code version}. */
   public DeltaV2Table withVersion(long version) {
     return catalogTable.isPresent()
         ? new DeltaV2Table(identifier, catalogTable.get(), options, OptionalLong.of(version))
         : new DeltaV2Table(identifier, tablePath, options, OptionalLong.of(version));
+  }
+
+  /** Returns a copy of this table pinned to the snapshot active at {@code timestampMicros}. */
+  public DeltaV2Table withTimestamp(long timestampMicros) {
+    return withVersion(resolveTimestampToVersion(snapshotManager, timestampMicros));
+  }
+
+  /**
+   * Resolves a time travel timestamp to the active commit version using the Kernel snapshot
+   * manager.
+   *
+   * <p>This loads the latest snapshot more than once (here and inside the Kernel lookup), make it
+   * share a singular load once the snapshot manager exposes it TODO(#5999).
+   */
+  private static long resolveTimestampToVersion(
+      DeltaSnapshotManager manager, long timestampMicros) {
+    long timeMillis = timestampMicros / 1000;
+    DeltaHistoryManager.Commit commit =
+        manager.getActiveCommitAtTime(
+            timeMillis,
+            /* canReturnLastCommit = */ true,
+            /* mustBeRecreatable = */ true,
+            /* canReturnEarliestCommit = */ true);
+    long latestVersion = manager.loadLatestSnapshot().getVersion();
+    if (commit.getTimestamp() > timeMillis) {
+      // The earliest available commit is younger than the requested time.
+      throw new TimestampOutOfRangeException(timeMillis, commit.getTimestamp(), false);
+    } else if (commit.getVersion() == latestVersion && commit.getTimestamp() < timeMillis) {
+      // The requested time is after the latest commit.
+      throw new TimestampOutOfRangeException(timeMillis, commit.getTimestamp(), true);
+    }
+    return commit.getVersion();
   }
 
   /**
@@ -458,7 +502,7 @@ public class DeltaV2Table
                         stats,
                         schemaProvider.getDataSchema(),
                         schemaProvider.getPartitionSchema()));
-    return new SparkScanBuilder(
+    return DeltaV2ScanUtils.newScanBuilder(
         name(),
         initialSnapshot,
         snapshotManager,
@@ -481,7 +525,14 @@ public class DeltaV2Table
   @Override
   public WriteBuilder newWriteBuilder(LogicalWriteInfo info) {
     requireNonNull(info, "write info is null");
-    return new DeltaV2WriteBuilder(kernelEngine, tablePath, hadoopConf, initialSnapshot, info);
+    return new DeltaV2WriteBuilder(
+        kernelEngine,
+        tablePath,
+        hadoopConf,
+        initialSnapshot,
+        snapshotManager,
+        schemaProvider.getDataSchema(),
+        info);
   }
 
   /**

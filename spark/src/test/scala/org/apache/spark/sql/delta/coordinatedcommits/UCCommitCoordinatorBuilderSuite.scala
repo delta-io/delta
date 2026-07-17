@@ -20,7 +20,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.unitycatalog.UCTableIdentifier
 import io.delta.spark.internal.v2.snapshot.unitycatalog.UCTableInfo
-import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCommitCoordinatorClient}
+import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCommitCoordinatorClient, UCConfigUtils}
 import io.unitycatalog.client.auth.TokenProvider
 import org.mockito.{Mock, Mockito}
 import org.mockito.ArgumentMatchers.{any, eq => meq}
@@ -28,7 +28,6 @@ import org.mockito.Mockito.{mock, never, times, verify, when}
 
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSession {
 
@@ -467,7 +466,7 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
       "auth.type" -> "static",
       "auth.token" -> "new-token"
     )
-    val auth = UCTokenBasedRestClientFactory.extractAuthConfig(ucConfig.asJava)
+    val auth = UCConfigUtils.extractAuthConfig(ucConfig.asJava)
     assert(auth.get("type") == "static")
     assert(auth.get("token") == "new-token")
   }
@@ -477,7 +476,7 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
       "uri" -> "https://test.com",
       "token" -> "legacy-token"
     )
-    val auth = UCTokenBasedRestClientFactory.extractAuthConfig(ucConfig.asJava)
+    val auth = UCConfigUtils.extractAuthConfig(ucConfig.asJava)
     assert(auth.get("type") == "static")
     assert(auth.get("token") == "legacy-token")
   }
@@ -541,22 +540,16 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
     assert(exception.getMessage.contains("not found"))
   }
 
-  test("extractAuthConfig with OAuth through CaseInsensitiveStringMap preserves keys and " +
-      "produces valid TokenProvider") {
-    val ucConfig = new CaseInsensitiveStringMap(Map(
-      "auth.type" -> "oauth",
-      "auth.oauth.clientId" -> "test-id",
-      "auth.oauth.clientSecret" -> "test-secret",
-      "auth.oauth.uri" -> "https://example.com/token",
-      "uri" -> "https://uc.example.com"
-    ).asJava)
-    val auth = UCTokenBasedRestClientFactory.extractAuthConfig(ucConfig)
-    // Key casing preservation (asCaseSensitiveMap proves original case is retained)
-    assert(auth.asCaseSensitiveMap().get("oauth.clientId") === "test-id")
-    assert(auth.asCaseSensitiveMap().get("oauth.clientSecret") === "test-secret")
-    // Case-insensitive access also works
-    assert(auth.get("oauth.CLIENTID") === "test-id")
-    // TokenProvider creation
+  test("extractAuthConfig with OAuth preserves camelCase keys and produces valid TokenProvider") {
+    val ucConfig = new java.util.HashMap[String, String]()
+    ucConfig.put("auth.type", "oauth")
+    ucConfig.put("auth.oauth.clientId", "test-id")
+    ucConfig.put("auth.oauth.clientSecret", "test-secret")
+    ucConfig.put("auth.oauth.uri", "https://example.com/token")
+    ucConfig.put("uri", "https://uc.example.com")
+    val auth = UCConfigUtils.extractAuthConfig(ucConfig)
+    assert(auth.get("oauth.clientId") === "test-id")
+    assert(auth.get("oauth.clientSecret") === "test-secret")
     val tp = TokenProvider.create(auth)
     assert(tp != null)
     assert(tp.configs().get("type") === "oauth")
@@ -567,26 +560,26 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
   test("extractAuthConfig with static token produces valid TokenProvider") {
     // Sub-case 1: legacy token key
     val legacyConfig = Map("token" -> "my-token", "uri" -> "https://uc.example.com")
-    val legacyAuth = UCTokenBasedRestClientFactory.extractAuthConfig(legacyConfig.asJava)
+    val legacyAuth = UCConfigUtils.extractAuthConfig(legacyConfig.asJava)
     val tp1 = TokenProvider.create(legacyAuth)
     assert(tp1.accessToken() === "my-token")
 
     // Sub-case 2: explicit auth.type=static
-    val explicitConfig = new CaseInsensitiveStringMap(Map(
+    val explicitConfig = Map(
       "auth.type" -> "static",
       "auth.token" -> "explicit-token"
-    ).asJava)
-    val explicitAuth = UCTokenBasedRestClientFactory.extractAuthConfig(explicitConfig)
+    ).asJava
+    val explicitAuth = UCConfigUtils.extractAuthConfig(explicitConfig)
     val tp2 = TokenProvider.create(explicitAuth)
     assert(tp2.accessToken() === "explicit-token")
   }
 
   test("extractAppVersions preserves key casing and includes defaults") {
-    val ucConfig = new CaseInsensitiveStringMap(Map(
+    val ucConfig = Map(
       "appVersions.CustomEngine" -> "1.0",
       "appVersions.MyLib" -> "2.0",
       "uri" -> "https://uc.example.com"
-    ).asJava)
+    ).asJava
     val versions = UCTokenBasedRestClientFactory.extractAppVersions(ucConfig)
     assert(versions("CustomEngine") === "1.0")
     assert(versions("MyLib") === "2.0")
@@ -597,29 +590,24 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
   }
 
   test("OAuth round-trip through real UCTableInfo.toUcConfig produces valid TokenProvider") {
-    // 1. Start with camelCase OAuth config in a CaseInsensitiveStringMap
-    val originalConfig = new CaseInsensitiveStringMap(Map(
-      "uri" -> "https://uc.example.com",
-      "auth.type" -> "oauth",
-      "auth.oauth.clientId" -> "test-id",
-      "auth.oauth.clientSecret" -> "test-secret",
-      "auth.oauth.uri" -> "https://example.com/token"
-    ).asJava)
+    val originalConfig = new java.util.HashMap[String, String]()
+    originalConfig.put("uri", "https://uc.example.com")
+    originalConfig.put("auth.type", "oauth")
+    originalConfig.put("auth.oauth.clientId", "test-id")
+    originalConfig.put("auth.oauth.clientSecret", "test-secret")
+    originalConfig.put("auth.oauth.uri", "https://example.com/token")
 
-    // 2. Extract auth config (what UCTableInfo stores)
-    val authMap = UCTokenBasedRestClientFactory.extractAuthConfig(originalConfig)
+    val authMap = UCConfigUtils.extractAuthConfig(originalConfig)
 
-    // 3. Build UCTableInfo and call toUcConfig() to re-prefix auth keys
     val tableInfo = new UCTableInfo(
       "table-id",
       "/path",
       new UCTableIdentifier("cat", "schema", "table"),
       "https://uc.example.com",
       authMap)
-    val roundTrippedConfig = new CaseInsensitiveStringMap(tableInfo.toUcConfig())
+    val roundTrippedConfig = tableInfo.toUcConfig()
 
-    // 4. Feed back through extractAuthConfig (as createUCClient would)
-    val roundTrippedAuth = UCTokenBasedRestClientFactory.extractAuthConfig(roundTrippedConfig)
+    val roundTrippedAuth = UCConfigUtils.extractAuthConfig(roundTrippedConfig)
 
     // 5. Verify TokenProvider can be created (proves round-trip preserves values)
     val tp = TokenProvider.create(roundTrippedAuth)
@@ -629,12 +617,9 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
     assert(tp.configs().get("oauth.uri") === "https://example.com/token")
   }
 
-  test("filterByPrefix returns empty map when no keys match") {
-    val ucConfig = Map("uri" -> "https://uc.example.com", "token" -> "my-token")
-    assert(UCTokenBasedRestClientFactory.filterByPrefix(ucConfig.asJava, "auth.").isEmpty)
-    // extractAuthConfig with no auth and no token returns empty
-    val noTokenConfig = Map("uri" -> "https://uc.example.com")
-    val auth = UCTokenBasedRestClientFactory.extractAuthConfig(noTokenConfig.asJava)
+  test("extractAuthConfig returns empty map when no auth config present") {
+    val noAuthConfig = Map("uri" -> "https://uc.example.com")
+    val auth = UCConfigUtils.extractAuthConfig(noAuthConfig.asJava)
     assert(auth.isEmpty)
   }
 

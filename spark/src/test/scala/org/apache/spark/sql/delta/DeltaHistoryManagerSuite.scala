@@ -376,7 +376,7 @@ trait DeltaTimeTravelTests extends QueryTest
         sqlState = "42816",
         parameters = Map(
           "providedTimestamp" -> "2018-10-24 14:24:18.0",
-          "tableName" -> "2018-10-24 14:14:18.0",
+          "lastCommitTimestamp" -> "2018-10-24 14:14:18.0",
           "maximumTimestamp" -> "2018-10-24 14:14:18")
       )
 
@@ -389,7 +389,7 @@ trait DeltaTimeTravelTests extends QueryTest
         sqlState = "42816",
         parameters = Map(
           "providedTimestamp" -> "2018-10-24 14:24:18.0",
-          "tableName" -> "2018-10-24 14:14:18.0",
+          "lastCommitTimestamp" -> "2018-10-24 14:14:18.0",
           "maximumTimestamp" -> "2018-10-24 14:14:18")
       )
 

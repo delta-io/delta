@@ -36,7 +36,7 @@ import scala.runtime.AbstractFunction1;
 
 /**
  * Reorders a Parquet reader's {@code readDataSchema ++ partitionSchema} output into the DDL field
- * order declared by {@link SparkScan#readSchema()}.
+ * order declared by {@link DeltaV2Scan#readSchema()}.
  */
 public class ColumnReorderReadFunction
     extends AbstractFunction1<PartitionedFile, Iterator<InternalRow>> implements Serializable {

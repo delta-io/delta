@@ -48,9 +48,12 @@ crossScalaVersions := Nil
 
 val internalModuleNames = settingKey[Set[String]]("Internal module artifact names to exclude from POM")
 
-// Spark version to delta-spark and its dependent modules
+// Spark compatibility version to delta-spark and its dependent modules.
+// This is also a marker used by CrossSparkVersions.runOnlyForReleasableSparkModules.
 // For more information see CrossSparkVersions.scala
-val sparkVersion = settingKey[String]("Spark version")
+val sparkVersion = settingKey[String]("Spark compatibility version").withRank(KeyRanks.Invisible)
+val sparkArtifactVersion = settingKey[String]("Spark Maven artifact version")
+ThisBuild / sparkArtifactVersion := CrossSparkVersions.getSparkArtifactVersion()
 
 // Dependent library versions
 val defaultSparkVersion = SparkVersionSpec.DEFAULT.fullVersion // Spark version to use for testing in non-delta-spark related modules
@@ -109,7 +112,9 @@ lazy val commonSettings = Seq(
       Seq(  // For Java 17 +
         "--add-opens=java.base/java.nio=ALL-UNNAMED",
         "--add-opens=java.base/java.lang=ALL-UNNAMED",
+        "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
         "--add-opens=java.base/java.net=ALL-UNNAMED",
+        "--add-opens=java.base/java.util=ALL-UNNAMED",
         "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
         "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
       )
@@ -185,7 +190,7 @@ lazy val connectCommon = (project in file("spark-connect/common"))
       "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
       "javax.annotation" % "javax.annotation-api" % "1.3.2",
 
-      "org.apache.spark" %% "spark-connect-common" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-connect-common" % sparkArtifactVersion.value % "provided",
     ),
     PB.protocVersion := protoVersion,
     Compile / PB.targets := Seq(
@@ -210,11 +215,11 @@ lazy val connectClient = (project in file("spark-connect/client"))
     },
     libraryDependencies ++= Seq(
       "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
-      "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-connect-client-jvm" % sparkArtifactVersion.value % "provided",
 
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-      "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "test" classifier "tests"
+      "org.apache.spark" %% "spark-connect-client-jvm" % sparkArtifactVersion.value % "test" classifier "tests"
     ),
     (Test / javaOptions) += {
       // Create a (mini) Spark Distribution based on the server classpath.
@@ -276,17 +281,17 @@ lazy val connectServer = (project in file("spark-connect/server"))
     libraryDependencies ++= Seq(
       "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
 
-      "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",
-      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
-      "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
-      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
-      "org.apache.spark" %% "spark-connect" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-hive" % sparkArtifactVersion.value % "provided",
+      "org.apache.spark" %% "spark-sql" % sparkArtifactVersion.value % "provided",
+      "org.apache.spark" %% "spark-core" % sparkArtifactVersion.value % "provided",
+      "org.apache.spark" %% "spark-catalyst" % sparkArtifactVersion.value % "provided",
+      "org.apache.spark" %% "spark-connect" % sparkArtifactVersion.value % "provided",
 
-      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
-      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
-      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
-      "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
-      "org.apache.spark" %% "spark-connect" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-catalyst" % sparkArtifactVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkArtifactVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % sparkArtifactVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-hive" % sparkArtifactVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-connect" % sparkArtifactVersion.value % "test" classifier "tests",
     ),
     excludeDependencies ++= Seq(
       // Exclude connect common because a properly shaded version of it is included in the
@@ -346,10 +351,10 @@ lazy val sparkV1 = (project in file("spark"))
 
     libraryDependencies ++= Seq(
       // Adding test classifier seems to break transitive resolution of the core dependencies
-      "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",
-      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
-      "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
-      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-hive" % sparkArtifactVersion.value % "provided",
+      "org.apache.spark" %% "spark-sql" % sparkArtifactVersion.value % "provided",
+      "org.apache.spark" %% "spark-core" % sparkArtifactVersion.value % "provided",
+      "org.apache.spark" %% "spark-catalyst" % sparkArtifactVersion.value % "provided",
       // For DynamoDBCommitStore
       "com.amazonaws" % "aws-java-sdk" % "1.12.262" % "provided",
 
@@ -358,10 +363,10 @@ lazy val sparkV1 = (project in file("spark"))
       "org.scalatestplus" %% "scalacheck-1-15" % "3.2.9.0" % "test",
       "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
-      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
-      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
-      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
-      "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-catalyst" % sparkArtifactVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkArtifactVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % sparkArtifactVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-hive" % sparkArtifactVersion.value % "test" classifier "tests",
       "org.mockito" % "mockito-inline" % "4.11.0" % "test",
     ),
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
@@ -512,9 +517,9 @@ lazy val sparkV2 = {
 
       Test / javaOptions ++= Seq("-ea"),
       libraryDependencies ++= Seq(
-        "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
-        "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
-        "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
+        "org.apache.spark" %% "spark-sql" % sparkArtifactVersion.value % "provided",
+        "org.apache.spark" %% "spark-core" % sparkArtifactVersion.value % "provided",
+        "org.apache.spark" %% "spark-catalyst" % sparkArtifactVersion.value % "provided",
 
         // Test dependencies
         "org.junit.jupiter" % "junit-jupiter-api" % "5.11.4" % "test",
@@ -522,9 +527,9 @@ lazy val sparkV2 = {
         "org.junit.jupiter" % "junit-jupiter-params" % "5.11.4" % "test",
         "com.github.sbt.junit" % "jupiter-interface" % "0.17.0" % "test",
         // Spark test classes for Scala/Java test utilities
-        "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
-        "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
-        "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
+        "org.apache.spark" %% "spark-catalyst" % sparkArtifactVersion.value % "test" classifier "tests",
+        "org.apache.spark" %% "spark-core" % sparkArtifactVersion.value % "test" classifier "tests",
+        "org.apache.spark" %% "spark-sql" % sparkArtifactVersion.value % "test" classifier "tests",
         // ScalaTest for test utilities (needed by Spark test classes)
         "org.scalatest" %% "scalatest" % scalaTestVersion % "test"
       ),
@@ -560,9 +565,8 @@ lazy val spark = (project in file("spark-unified"))
       val sparkDir = (sparkV1 / baseDirectory).value
       val unifiedDir = baseDirectory.value
       // Every supported Spark version sets additionalSourceDir, see SparkVersionSpec.ALL_SPECS.
-      val shimDir = unifiedDir / "src" / "test" / SparkVersionSpec.ALL_SPECS
-        .find(_.fullVersion == sparkVersion.value)
-        .flatMap(_.additionalSourceDir)
+      val shimDir = unifiedDir / "src" / "test" / CrossSparkVersions.getSparkVersionSpec()
+        .additionalSourceDir
         .get
       Seq(
         sparkDir / "src" / "test" / "scala",
@@ -675,10 +679,10 @@ lazy val spark = (project in file("spark-unified"))
     },
 
     libraryDependencies ++= Seq(
-      "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",
-      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
-      "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
-      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-hive" % sparkArtifactVersion.value % "provided",
+      "org.apache.spark" %% "spark-sql" % sparkArtifactVersion.value % "provided",
+      "org.apache.spark" %% "spark-core" % sparkArtifactVersion.value % "provided",
+      "org.apache.spark" %% "spark-catalyst" % sparkArtifactVersion.value % "provided",
       "com.amazonaws" % "aws-java-sdk" % "1.12.262" % "provided",
 
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
@@ -689,10 +693,10 @@ lazy val spark = (project in file("spark-unified"))
       "org.junit.jupiter" % "junit-jupiter-engine" % "5.11.4" % "test",
       "org.junit.jupiter" % "junit-jupiter-params" % "5.11.4" % "test",
       "com.github.sbt.junit" % "jupiter-interface" % "0.17.0" % "test",
-      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
-      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
-      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
-      "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-catalyst" % sparkArtifactVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkArtifactVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % sparkArtifactVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-hive" % sparkArtifactVersion.value % "test" classifier "tests",
       "org.mockito" % "mockito-inline" % "4.11.0" % "test",
     ),
 
@@ -971,9 +975,9 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
       ),
 
       // Spark test dependencies
-      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test",
-      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test",
-      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test",
+      "org.apache.spark" %% "spark-sql" % sparkArtifactVersion.value % "test",
+      "org.apache.spark" %% "spark-catalyst" % sparkArtifactVersion.value % "test",
+      "org.apache.spark" %% "spark-core" % sparkArtifactVersion.value % "test",
     ),
 
     // Conditionally add hadoop-aws dependency only when UC_REMOTE=true
@@ -1016,7 +1020,7 @@ lazy val sharing = (project in file("sharing"))
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
-      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-sql" % sparkArtifactVersion.value % "provided",
 
       "io.delta" %% "delta-sharing-client" % "1.4.0",
 
@@ -1025,10 +1029,10 @@ lazy val sharing = (project in file("sharing"))
       "org.scalatestplus" %% "scalacheck-1-15" % "3.2.9.0" % "test",
       "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
-      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
-      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
-      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
-      "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-catalyst" % sparkArtifactVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkArtifactVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % sparkArtifactVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-hive" % sparkArtifactVersion.value % "test" classifier "tests",
     ),
     TestParallelization.settings
   ).configureUnidoc()
@@ -1580,7 +1584,7 @@ lazy val hudi = (project in file("hudi"))
             ExclusionRule(organization = "org.apache.hadoop"),
             ExclusionRule(organization = "org.apache.zookeeper"),
           ),
-          "org.apache.spark" %% "spark-avro" % sparkVersion.value % "test" excludeAll ExclusionRule(organization = "org.apache.hadoop"),
+          "org.apache.spark" %% "spark-avro" % sparkArtifactVersion.value % "test" excludeAll ExclusionRule(organization = "org.apache.hadoop"),
           "org.apache.parquet" % "parquet-avro" % "1.16.0" % "compile"
         )
       } else {

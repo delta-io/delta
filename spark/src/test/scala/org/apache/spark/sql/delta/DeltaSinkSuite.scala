@@ -136,17 +136,20 @@ class DeltaSinkSuite
       withSinkTarget { (target, checkpointDir) =>
         val inputData = MemoryStream[Int]
         val df = inputData.toDF()
-        val query = startStream(
+        def startAppendQuery(): StreamingQuery = startStream(
           df.writeStream
             .option("checkpointLocation", checkpointDir.getCanonicalPath)
             .format("delta"),
           target)
+        // `var` so the restart phase below can swap in a fresh query on the same checkpoint while
+        // the `finally` still stops whichever query is currently running.
+        var query = startAppendQuery()
         val log = deltaLogForTarget(target)
         try {
           inputData.addData(1)
           query.processAllAvailable()
 
-          val outputDf = readTarget(target)
+          def outputDf: DataFrame = readTarget(target)
           checkDatasetUnorderly(outputDf.as[Int], 1)
           assert(log.update().transactions.head == (query.id.toString -> 0L))
 
@@ -161,6 +164,28 @@ class DeltaSinkSuite
 
           checkDatasetUnorderly(outputDf.as[Int], 1, 2, 3)
           assert(log.update().transactions.head == (query.id.toString -> 2L))
+
+          // Restart the query from the same checkpoint. This exercises the sink's exactly-once
+          // recovery: the restarted query resumes from the checkpoint's committed offset, so the
+          // already-committed batches (1, 2, 3) must NOT be re-appended, and the streaming
+          // transaction id (appId = query.id) is preserved across the restart.
+          val queryId = query.id
+          query.stop()
+          query = startAppendQuery()
+          query.processAllAvailable()
+
+          // No data was reprocessed: the target still holds exactly the pre-restart rows, the
+          // stable query id is retained, and the last committed batch id is unchanged.
+          checkDatasetUnorderly(outputDf.as[Int], 1, 2, 3)
+          assert(query.id == queryId)
+          assert(log.update().transactions.head == (queryId.toString -> 2L))
+
+          // New data after the restart continues with the next batch id and appends correctly.
+          inputData.addData(4)
+          query.processAllAvailable()
+
+          checkDatasetUnorderly(outputDf.as[Int], 1, 2, 3, 4)
+          assert(log.update().transactions.head == (queryId.toString -> 3L))
         } finally {
           query.stop()
         }

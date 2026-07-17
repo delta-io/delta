@@ -1187,7 +1187,15 @@ class InCommitTimestampSuite
           catalogTableOpt = None,
           canReturnLastCommit = false)
       }
-      assert(e.getMessage.contains("The provided timestamp") && e.getMessage.contains("is after"))
+      checkError(
+        e,
+        "DELTA_TIMESTAMP_GREATER_THAN_COMMIT",
+        Some("42816"),
+        parameters = Map(
+          "providedTimestamp" -> ".*",
+          "lastCommitTimestamp" -> ".*",
+          "maximumTimestamp" -> ".*"),
+        matchPVals = true)
     }
   }
 

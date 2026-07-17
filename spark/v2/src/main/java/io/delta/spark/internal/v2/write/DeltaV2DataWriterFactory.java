@@ -20,15 +20,20 @@ import java.io.Serializable;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.connector.write.DataWriter;
 import org.apache.spark.sql.connector.write.DataWriterFactory;
+import org.apache.spark.sql.connector.write.streaming.StreamingDataWriterFactory;
 import org.apache.spark.sql.execution.datasources.OutputWriterFactory;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.util.SerializableConfiguration;
 
 /**
  * Serializable factory sent to executors to create {@link DeltaV2DataWriter} instances. Carries the
- * serialized Hadoop config and Kernel transaction state needed by each writer.
+ * serialized Hadoop config and Kernel transaction state needed by each writer. Serves both batch
+ * and streaming writes -- the {@link DeltaV2DataWriter} is epoch-agnostic, so the streaming
+ * overload ignores {@code epochId} (the epoch only scopes the driver-side commit, not the per-task
+ * write).
  */
-class DeltaV2DataWriterFactory implements DataWriterFactory, Serializable {
+class DeltaV2DataWriterFactory
+    implements DataWriterFactory, StreamingDataWriterFactory, Serializable {
 
   private final String targetDirectory;
   private final SerializableConfiguration hadoopConf;
@@ -59,5 +64,10 @@ class DeltaV2DataWriterFactory implements DataWriterFactory, Serializable {
         outputWriterFactory,
         partitionId,
         taskId);
+  }
+
+  @Override
+  public DataWriter<InternalRow> createWriter(int partitionId, long taskId, long epochId) {
+    return createWriter(partitionId, taskId);
   }
 }

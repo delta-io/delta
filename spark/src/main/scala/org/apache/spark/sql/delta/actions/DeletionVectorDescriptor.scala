@@ -383,6 +383,15 @@ object DeletionVectorDescriptor {
   def assembleDeletionVectorFileName(id: UUID): String =
     s"${DELETION_VECTOR_FILE_NAME_CORE}_${id}.bin"
 
+  /**
+   * Parse the UUID from a deletion vector file name. This throws an IllegalArgumentException
+   * if the file name does not contain a valid UUID.
+   */
+  def getUUIDFromDeletionVectorFileName(fileName: String): UUID = {
+    val uuidString = fileName.stripPrefix(s"${DELETION_VECTOR_FILE_NAME_CORE}_").stripSuffix(".bin")
+    UUID.fromString(uuidString)
+  }
+
   /** Descriptor for an empty stored bitmap. */
   val EMPTY: DeletionVectorDescriptor = DeletionVectorDescriptor(
     storageType = INLINE_DV_MARKER,
