@@ -120,6 +120,19 @@ class CRCInfoFromRowSuite extends AnyFunSuite {
       Optional.of(createTestHistogram(fileCount = 40))))
   }
 
+  test("round-trips with inCommitTimestamp present") {
+    assertRoundTrips(new CRCInfo(
+      12L,
+      testMetadata,
+      testProtocol,
+      4500L,
+      45L,
+      Optional.empty(),
+      Optional.empty(),
+      Optional.empty(),
+      Optional.of(java.lang.Long.valueOf(1749830855993L))))
+  }
+
   test("round-trips with all optional fields present") {
     assertRoundTrips(new CRCInfo(
       13L,
@@ -129,7 +142,8 @@ class CRCInfoFromRowSuite extends AnyFunSuite {
       50L,
       Optional.of("txn-xyz"),
       Optional.of(domainMetadataSet("delta.clustering" -> "{\"cols\":[\"c1\"]}")),
-      Optional.of(createTestHistogram(fileCount = 50))))
+      Optional.of(createTestHistogram(fileCount = 50)),
+      Optional.of(java.lang.Long.valueOf(1749830871085L))))
   }
 
   test("preserves the supplied version, independent of the row (toRow omits version)") {
