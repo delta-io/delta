@@ -221,7 +221,7 @@ class UpdateMetricsHookSuite extends QueryTest
         isBlindAppend = Some(true),
         operationMetrics = Some(Map("numOutputRows" -> "50")),
         userMetadata = None, tags = None, engineInfo = None,
-        txnId = None)
+        txnId = None, lastManifestCommit = None)
       val txn = makeTxn(deltaLog, ct, Seq(commitInfo, addFile))
       UpdateMetricsHook(Some(ct)).run(spark, txn)
       assert(UpdateMetricsHook.awaitCompletion(10000),
