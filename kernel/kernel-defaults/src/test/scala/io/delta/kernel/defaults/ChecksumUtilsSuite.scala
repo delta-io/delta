@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 package io.delta.kernel.defaults
+import java.util.Optional
+
 import scala.collection.immutable.Seq
 import scala.jdk.CollectionConverters._
 
@@ -87,6 +89,31 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
       // The writing counterpart still persists an equivalent, valid checksum.
       ChecksumUtils.computeStateAndWriteChecksum(engine, snapshot1.getLogSegment)
       verifyChecksumForSnapshot(snapshot1)
+    }
+  }
+
+  test("withInCommitTimestamp stamps a caller-supplied ICT onto a computed CRCInfo") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      initialTestTable(tablePath, engine)
+
+      val snapshot1 = Table.forPath(
+        engine,
+        tablePath).getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
+
+      // computeChecksum derives from file actions, so ICT is absent (not derivable from replay).
+      val crcInfo = ChecksumUtils.computeChecksum(engine, snapshot1.getLogSegment)
+      assert(!crcInfo.getInCommitTimestamp.isPresent)
+
+      // A caller holding the commit's CommitInfo stamps the ICT on; all other fields are preserved.
+      val ict = java.lang.Long.valueOf(1749830855993L)
+      val withIct = crcInfo.withInCommitTimestamp(Optional.of(ict))
+      assert(withIct.getInCommitTimestamp === Optional.of(ict))
+      assert(withIct.getVersion === crcInfo.getVersion)
+      assert(withIct.getNumFiles === crcInfo.getNumFiles)
+      assert(withIct.getTableSizeBytes === crcInfo.getTableSizeBytes)
+      assert(withIct.getMetadata === crcInfo.getMetadata)
+      assert(withIct.getProtocol === crcInfo.getProtocol)
+      assert(withIct.getDomainMetadata === crcInfo.getDomainMetadata)
     }
   }
 

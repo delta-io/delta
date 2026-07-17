@@ -58,10 +58,12 @@ class ResolveTableChangesV2(session: SparkSession) extends Rule[LogicalPlan] {
         }
 
       // `.option("readChangeFeed", "true").table(name)` where the catalog returned DeltaV2Table
-      // (no `TableChanges` wrapper -- the relation flows straight into the query).
-      case DataSourceV2RelationShim(_: DeltaV2Table,
-      _, Some(catalog: ChangelogSupport), Some(ident), options)
+      // (no `TableChanges` wrapper -- the relation flows straight into the query). Check for a
+      // `timeTravelSpec` to see if this is a time travel query.
+      case DataSourceV2Relation(_: DeltaV2Table,
+      _, Some(catalog: ChangelogSupport), Some(ident), options, timeTravelSpec)
         if CDCReader.isCDCRead(options) =>
+        rejectTimeTravelWithCDF(timeTravelSpec.isDefined)
         buildChangelogRelation(catalog, ident, options)
     }
   }
@@ -100,6 +102,15 @@ class ResolveTableChangesV2(session: SparkSession) extends Rule[LogicalPlan] {
       "endingBoundInclusive")
     unsupportedOptions.foreach { key =>
       if (options.containsKey(key)) throw DeltaErrors.changelogUnsupportedOption(key)
+    }
+  }
+
+  /**
+   * Block combining a CDF read with a time travel pin.
+   */
+  private def rejectTimeTravelWithCDF(hasTimeTravelSpec: Boolean): Unit = {
+    if (hasTimeTravelSpec) {
+      throw DeltaErrors.timeTravelNotSupportedException
     }
   }
 }

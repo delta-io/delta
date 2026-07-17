@@ -108,6 +108,8 @@ class CRCInfoReadCompatSuite extends AnyFunSuite with VectorTestUtils {
           case "txnId" => stringVector(Seq(null))
           case "domainMetadata" => nullColumnVector(
               CRC_FILE_SCHEMA.get("domainMetadata").getDataType)
+          case "inCommitTimestampOpt" => nullColumnVector(
+              CRC_FILE_SCHEMA.get("inCommitTimestampOpt").getDataType)
           case "fileSizeHistogram" => histogramColumnVector(fileSizeHistogram)
           case "histogramOpt" => histogramColumnVector(histogramOpt)
           case _ =>
@@ -205,6 +207,8 @@ class CRCInfoReadCompatSuite extends AnyFunSuite with VectorTestUtils {
           case "txnId" => stringVector(Seq(null))
           case "domainMetadata" => nullColumnVector(
               CRC_FILE_SCHEMA.get("domainMetadata").getDataType)
+          case "inCommitTimestampOpt" => nullColumnVector(
+              CRC_FILE_SCHEMA.get("inCommitTimestampOpt").getDataType)
           case "fileSizeHistogram" => histogramColumnVector(None)
           case _ =>
             throw new IllegalArgumentException(s"Unknown field: $fieldName")
@@ -215,5 +219,92 @@ class CRCInfoReadCompatSuite extends AnyFunSuite with VectorTestUtils {
     val crcInfo = CRCInfo.fromColumnarBatch(1L, batch, 0, "test.crc")
     assert(crcInfo.isPresent)
     assert(!crcInfo.get().getFileSizeHistogram.isPresent)
+  }
+
+  test("reads inCommitTimestamp when present") {
+    val batch = new ColumnarBatch {
+      override def getSchema: StructType = CRC_FILE_SCHEMA
+      override def getSize: Int = 1
+      override def getColumnVector(ordinal: Int): ColumnVector = {
+        val fieldName = CRC_FILE_SCHEMA.at(ordinal).getName
+        fieldName match {
+          case "tableSizeBytes" => longVector(Seq(1000L))
+          case "numFiles" => longVector(Seq(10L))
+          case "numMetadata" => longVector(Seq(1L))
+          case "numProtocol" => longVector(Seq(1L))
+          case "metadata" =>
+            new GenericColumnVector(util.Arrays.asList(testMetadata.toRow()), Metadata.FULL_SCHEMA)
+          case "protocol" =>
+            new GenericColumnVector(util.Arrays.asList(testProtocol.toRow()), Protocol.FULL_SCHEMA)
+          case "txnId" => stringVector(Seq(null))
+          case "domainMetadata" =>
+            nullColumnVector(CRC_FILE_SCHEMA.get("domainMetadata").getDataType)
+          case "inCommitTimestampOpt" => longVector(Seq(1749830855993L))
+          case "fileSizeHistogram" => histogramColumnVector(None)
+          case _ => throw new IllegalArgumentException(s"Unknown field: $fieldName")
+        }
+      }
+    }
+
+    val crcInfo = CRCInfo.fromColumnarBatch(1L, batch, 0, "test.crc")
+    assert(crcInfo.isPresent)
+    assert(
+      crcInfo.get().getInCommitTimestamp === Optional.of(java.lang.Long.valueOf(1749830855993L)))
+  }
+
+  test("inCommitTimestamp is empty when the column is null (older .crc files)") {
+    val batch = buildBatch(CRC_FILE_READ_SCHEMA, fileSizeHistogram = None, histogramOpt = None)
+    val crcInfo = CRCInfo.fromColumnarBatch(1L, batch, 0, "test.crc")
+    assert(crcInfo.isPresent)
+    assert(!crcInfo.get().getInCommitTimestamp.isPresent)
+  }
+
+  test("toRow serializes inCommitTimestamp into the CRC_FILE_SCHEMA column") {
+    val original = new CRCInfo(
+      7L,
+      testMetadata,
+      testProtocol,
+      2000L,
+      20L,
+      Optional.empty(),
+      Optional.empty(),
+      Optional.empty(),
+      /* inCommitTimestamp */ Optional.of(java.lang.Long.valueOf(1749830871085L)))
+    val row = original.toRow()
+    val ictIdx = CRC_FILE_SCHEMA.indexOf("inCommitTimestampOpt")
+    assert(!row.isNullAt(ictIdx))
+    assert(row.getLong(ictIdx) === 1749830871085L)
+  }
+
+  test("toRow leaves inCommitTimestamp column null when absent") {
+    val original = new CRCInfo(
+      8L,
+      testMetadata,
+      testProtocol,
+      2100L,
+      21L,
+      Optional.empty(),
+      Optional.empty(),
+      Optional.empty())
+    val row = original.toRow()
+    assert(row.isNullAt(CRC_FILE_SCHEMA.indexOf("inCommitTimestampOpt")))
+  }
+
+  test("withInCommitTimestamp stamps the ICT onto an existing CRCInfo") {
+    val base = new CRCInfo(
+      9L,
+      testMetadata,
+      testProtocol,
+      3000L,
+      30L,
+      Optional.empty(),
+      Optional.empty(),
+      Optional.empty())
+    assert(!base.getInCommitTimestamp.isPresent)
+    val stamped = base.withInCommitTimestamp(Optional.of(java.lang.Long.valueOf(1700000000000L)))
+    assert(stamped.getInCommitTimestamp === Optional.of(java.lang.Long.valueOf(1700000000000L)))
+    assert(stamped.getVersion === base.getVersion)
+    assert(stamped.getTableSizeBytes === base.getTableSizeBytes)
+    assert(stamped.getNumFiles === base.getNumFiles)
   }
 }
