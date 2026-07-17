@@ -110,7 +110,7 @@ public class CRCInfo {
                     .map(row -> DomainMetadata.fromRow((StructRow) row))
                     .collect(Collectors.toSet()));
 
-    // protocol and metadata are nullable per fromColumnVector's implementation
+    // protocol and metadata are nullable per fromColumnVector's implementation.
     if (protocol == null || metadata == null) {
       logger.warn("Invalid checksum file missing protocol and/or metadata: {}", crcFilePath);
       return Optional.empty();
