@@ -18,9 +18,11 @@ package org.apache.spark.sql.delta.amt
 
 import java.io.File
 
-import org.apache.spark.sql.delta.DeltaLog
+import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
+import org.apache.spark.sql.delta.{CommitStats, DeltaLog}
 import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.JsonUtils
 
 class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
 
@@ -94,6 +96,45 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       // Two live AddFiles, one per leaf -> two leaves, one root.
       assert(leafFiles(path).size == 2, s"Expected 2 leaves, got ${leafFiles(path).size}.")
       assert(rootFiles(path).size == 1)
+    }
+  }
+
+  /** Parses the `delta.commit.stats` [[CommitStats]] logged for `version`, or fails. */
+  private def commitStatsAt(f: => Unit, version: Long): CommitStats = {
+    Log4jUsageLogger.track(f)
+      .filter(e => e.metric == MetricDefinitions.EVENT_TAHOE.name &&
+        e.tags.get("opType").contains("delta.commit.stats"))
+      .map(e => JsonUtils.fromJson[CommitStats](e.blob))
+      .find(_.commitVersion == version)
+      .getOrElse(fail(s"No commit stats logged for version $version."))
+  }
+
+  test("commit stats carry AMT write metrics when an AMT is emitted") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      createAMTTable(path, checkpointInterval = 2)
+      sql(s"INSERT INTO delta.`$path` VALUES (1)") // v1: below the interval, no AMT.
+
+      // v2 hits the interval boundary and emits an AMT; capture that commit's stats.
+      val commitStats = commitStatsAt(sql(s"INSERT INTO delta.`$path` VALUES (2)"), version = 2)
+
+      val metrics = commitStats.amtWriteMetrics
+        .getOrElse(fail("Commit stats should carry AMT write metrics when an AMT is emitted."))
+      assert(metrics.attempts.size == 1, s"Expected one AMT write attempt, got ${metrics.attempts}")
+      assert(metrics.attempts.head.trigger == AmtTrigger.CheckpointInterval.toString)
+      assert(metrics.attempts.head.materializeDurationMs >= 0L)
+    }
+  }
+
+  test("commit stats carry no AMT write metrics when no AMT is emitted") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      createAMTTable(path, checkpointInterval = 100) // interval far away, so v1 emits no AMT.
+
+      val commitStats = commitStatsAt(sql(s"INSERT INTO delta.`$path` VALUES (1)"), version = 1)
+
+      assert(commitStats.amtWriteMetrics.isEmpty,
+        "Commit stats must not carry AMT write metrics when no AMT is emitted.")
     }
   }
 }

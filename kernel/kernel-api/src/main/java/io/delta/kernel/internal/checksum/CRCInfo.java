@@ -110,7 +110,7 @@ public class CRCInfo {
                     .map(row -> DomainMetadata.fromRow((StructRow) row))
                     .collect(Collectors.toSet()));
 
-    //  protocol and metadata are nullable per fromColumnVector's implementation.
+    // protocol and metadata are nullable per fromColumnVector's implementation.
     if (protocol == null || metadata == null) {
       logger.warn("Invalid checksum file missing protocol and/or metadata: {}", crcFilePath);
       return Optional.empty();
@@ -125,6 +125,72 @@ public class CRCInfo {
             txnId,
             domainMetadata,
             fileSizeHistogram));
+  }
+
+  /**
+   * Reconstructs a {@link CRCInfo} from a {@link Row} previously produced by {@link #toRow()},
+   * inverting that serialization. Because {@code toRow()} does not carry the version (the version
+   * is derived from the {@code .crc} file name, not the row), the caller supplies it here.
+   *
+   * @param version the table version this checksum represents
+   * @param row a row with the schema {@link #CRC_FILE_SCHEMA}
+   * @return the reconstructed {@link CRCInfo}
+   * @throws IllegalArgumentException if {@code row}'s schema is not {@link #CRC_FILE_SCHEMA}, or if
+   *     any required field ({@code metadata}, {@code protocol}, {@code tableSizeBytes}, {@code
+   *     numFiles}) is null
+   */
+  public static CRCInfo fromRow(long version, Row row) {
+    requireNonNull(row, "row is null");
+    checkArgument(
+        CRC_FILE_SCHEMA.equals(row.getSchema()),
+        "Expected schema: %s, found: %s",
+        CRC_FILE_SCHEMA,
+        row.getSchema());
+
+    // Required fields
+    int metadataIdx = getSchemaIndex(METADATA);
+    int protocolIdx = getSchemaIndex(PROTOCOL);
+    int tableSizeBytesIdx = getSchemaIndex(TABLE_SIZE_BYTES);
+    int numFilesIdx = getSchemaIndex(NUM_FILES);
+    Metadata metadata =
+        Metadata.fromRow(
+            InternalUtils.requireNonNull(row, metadataIdx, METADATA).getStruct(metadataIdx));
+    Protocol protocol =
+        Protocol.fromRow(
+            InternalUtils.requireNonNull(row, protocolIdx, PROTOCOL).getStruct(protocolIdx));
+    long tableSizeBytes =
+        InternalUtils.requireNonNull(row, tableSizeBytesIdx, TABLE_SIZE_BYTES)
+            .getLong(tableSizeBytesIdx);
+    long numFiles = InternalUtils.requireNonNull(row, numFilesIdx, NUM_FILES).getLong(numFilesIdx);
+
+    int txnIdIdx = getSchemaIndex(TXN_ID);
+    Optional<String> txnId =
+        row.isNullAt(txnIdIdx) ? Optional.empty() : Optional.of(row.getString(txnIdIdx));
+
+    int domainMetadataIdx = getSchemaIndex(DOMAIN_METADATA);
+    Optional<Set<DomainMetadata>> domainMetadata =
+        row.isNullAt(domainMetadataIdx)
+            ? Optional.empty()
+            : Optional.of(
+                VectorUtils.<Row>toJavaList(row.getArray(domainMetadataIdx)).stream()
+                    .map(DomainMetadata::fromRow)
+                    .collect(Collectors.toSet()));
+
+    int histogramIdx = getSchemaIndex(FILE_SIZE_HISTOGRAM);
+    Optional<FileSizeHistogram> fileSizeHistogram =
+        row.isNullAt(histogramIdx)
+            ? Optional.empty()
+            : Optional.of(FileSizeHistogram.fromRow(row.getStruct(histogramIdx)));
+
+    return new CRCInfo(
+        version,
+        metadata,
+        protocol,
+        tableSizeBytes,
+        numFiles,
+        txnId,
+        domainMetadata,
+        fileSizeHistogram);
   }
 
   private final long version;

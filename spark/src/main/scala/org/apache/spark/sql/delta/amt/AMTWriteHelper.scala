@@ -16,7 +16,9 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, Checkpoints, DeltaLog, Snapshot}
+import java.util.concurrent.TimeUnit.NANOSECONDS
+
+import org.apache.spark.sql.delta.{Checkpoints, Snapshot}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, Checkpoint, ContentRoot, InMemoryLogReplay, Metadata, Protocol}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
@@ -29,66 +31,46 @@ import org.apache.spark.sql.SparkSession
 object AMTWriteHelper {
 
   /**
-   * Builds the inline AMT [[Checkpoint]] action for the commit at `attemptVersion`, or `None` when
-   * [[shouldCreateInlineAMTCheckpoint]] is false. When emitting, materializes a manifest tree under
-   * `<table>/metadata/` from the post-commit live file set and returns a Checkpoint pointing at the
-   * tree's root, plus the post-commit non-file state (protocol, metadata, domain metadata, set
-   * transactions) carried inline.
-   *
-   * @param readSnapshot the transaction's read snapshot, used to derive the post-commit state.
-   * @param commitActions the commit's non-CommitInfo actions (AddFile, RemoveFile, DomainMetadata,
-   *                      SetTransaction, ...).
+   * Materializes the full live file set into a fresh manifest tree and builds the inline Checkpoint
+   * action, returning the write result plus its metrics.
    */
-  def maybeCreateInlineAMTCheckpoint(
+  def writeFullMaterialization(
       spark: SparkSession,
-      deltaLog: DeltaLog,
       readSnapshot: Snapshot,
-      attemptVersion: Long,
-      protocol: Protocol,
-      metadata: Metadata,
-      commitActions: Seq[Action]): Option[Checkpoint] = {
-    if (!shouldCreateInlineAMTCheckpoint(
-        spark, deltaLog, attemptVersion, protocol, metadata)) {
-      return None
-    }
-    val postCommitState = computePostCommitState(readSnapshot, commitActions)
+      commitVersion: Long,
+      actionsToCommit: Seq[Action],
+      postCommitProtocol: Protocol,
+      postCommitMetadata: Metadata,
+      trigger: AmtTrigger): (AMTWriteResult, SingleAMTWriteMetrics) = {
+    val deltaLog = readSnapshot.deltaLog
+    val startNanos = System.nanoTime()
+    val postCommitState = computePostCommitState(readSnapshot, actionsToCommit)
     val hadoopConf = deltaLog.newDeltaHadoopConf()
-    val entriesPerLeaf =
-      spark.sessionState.conf.getConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF)
-    val contentRoot = writeManifestTree(
+    val entriesPerLeaf = spark.sessionState.conf.getConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF)
+    val (contentRoot, leaves) = writeManifestTree(
       spark = spark,
       hadoopConf = hadoopConf,
       tableRoot = deltaLog.dataPath,
       useRename = deltaLog.store.isPartialWriteVisible(deltaLog.logPath, hadoopConf),
       liveAddFiles = postCommitState.allFiles,
       entriesPerLeaf = entriesPerLeaf)
-    Some(Checkpoint(
-      version = attemptVersion,
+    val checkpoint = Checkpoint(
+      version = commitVersion,
       contentRoot = contentRoot,
-      protocol = protocol,
-      metaData = metadata,
+      protocol = postCommitProtocol,
+      metaData = postCommitMetadata,
       domainMetadata = postCommitState.getDomainMetadatas.toSeq,
       txns = postCommitState.getTransactions.toSeq,
-      sidecars = Seq.empty))
-  }
-
-  /**
-   * Returns true iff the in-flight commit at `commitVersion` should embed an inline
-   * `adaptiveMetadata-preview` (AMT) checkpoint action.
-   */
-  private def shouldCreateInlineAMTCheckpoint(
-      spark: SparkSession,
-      deltaLog: DeltaLog,
-      commitVersion: Long,
-      protocol: Protocol,
-      metadata: Metadata): Boolean = {
-    if (commitVersion <= 0) return false
-    if (!spark.sessionState.conf
-        .getConf(DeltaSQLConf.V4_ADAPTIVE_METADATA_TABLE_PREVIEW_ENABLED)) {
-      return false
-    }
-    if (!protocol.isFeatureSupported(AdaptiveMetadataTableFeature)) return false
-    commitVersion % deltaLog.checkpointInterval(metadata) == 0
+      sidecars = Seq.empty)
+    val result = AMTWriteResult(
+      contentRootVersion = commitVersion,
+      checkpoint = checkpoint,
+      leaves = leaves,
+      includeActionsInCommitJson = true)
+    val singleMetric = SingleAMTWriteMetrics(
+      trigger = trigger.toString,
+      materializeDurationMs = NANOSECONDS.toMillis(System.nanoTime() - startNanos))
+    (result, singleMetric)
   }
 
   // Post-commit table state = the read snapshot's state with this commit's actions applied,
@@ -118,7 +100,7 @@ object AMTWriteHelper {
       tableRoot: Path,
       useRename: Boolean,
       liveAddFiles: Seq[AddFile],
-      entriesPerLeaf: Int): ContentRoot = {
+      entriesPerLeaf: Int): (ContentRoot, Seq[AMTCheckpointProvider.LeafInfo]) = {
     require(entriesPerLeaf > 0, "entriesPerLeaf must be positive.")
 
     val fs = tableRoot.getFileSystem(hadoopConf)
@@ -140,7 +122,14 @@ object AMTWriteHelper {
       writeLeaf(spark, fs, hadoopConf, tableRoot, metadataDir, useRename, batch)
     }
 
-    writeRoot(spark, fs, hadoopConf, metadataDir, useRename, leafPointers)
+    val contentRoot = writeRoot(spark, fs, hadoopConf, metadataDir, useRename, leafPointers)
+    val leafInfos = leafPointers.map { leaf =>
+      AMTCheckpointProvider.LeafInfo(
+        path = leaf.path,
+        sizeInBytes = leaf.sizeInBytes,
+        numEntries = leaf.manifestInfo.added_files_count.toLong)
+    }
+    (contentRoot, leafInfos)
   }
 
   /**
