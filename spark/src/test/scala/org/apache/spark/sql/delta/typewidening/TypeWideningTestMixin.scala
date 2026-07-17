@@ -16,6 +16,9 @@
 
 package org.apache.spark.sql.delta.typewidening
 
+import java.io.File
+import java.util.UUID
+
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{RemoveFile, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
@@ -32,6 +35,7 @@ import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.internal.{LegacyBehaviorPolicy, SQLConf}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
+import org.apache.spark.util.Utils
 
 /**
  * Test mixin that enables type widening by default for all tests in the suite.
@@ -152,6 +156,30 @@ trait TypeWideningDSv2TestMixin
   extends TypeWideningTestMixin
     with DeltaDSv2TestMixin
     with DeltaDMLTestUtilsNameBased { self: QueryTest =>
+
+  private var testTableName = "test_delta_table"
+  private var testTablePaths = List.empty[File]
+
+  override protected def beforeEach(): Unit = {
+    // A failed V2 write may leave a canceled task running briefly after the write returns. Give
+    // every test its own managed-table path so a late orphan file cannot affect the next test.
+    testTableName = s"test_delta_table_${UUID.randomUUID().toString.replace('-', '_')}"
+    val path = spark.sessionState.catalog.defaultTablePath(tableIdentifier).getPath
+    testTablePaths ::= new File(path)
+    super.beforeEach()
+  }
+
+  override protected def tableSQLIdentifier: String = testTableName
+
+  override protected def afterAll(): Unit = {
+    try {
+      super.afterAll()
+    } finally {
+      // `super.afterAll()` stops the shared Spark context, so canceled tasks can no longer
+      // recreate files while this final cleanup runs.
+      testTablePaths.foreach(Utils.deleteRecursively)
+    }
+  }
 
   protected override def sparkConf: SparkConf = {
     super.sparkConf.set(DeltaSQLConf.V2_ENABLE_MODE.key, "AUTO")
