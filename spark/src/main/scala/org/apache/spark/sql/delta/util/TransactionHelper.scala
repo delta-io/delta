@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CommitStats, Commit
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, DomainMetadata, FileAction, Metadata, Protocol, RemoveFile, SetTransaction}
+import org.apache.spark.sql.delta.amt.AMTWriteMetrics
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -380,7 +381,8 @@ trait TransactionHelper extends DeltaLogging {
         isolationLevel: IsolationLevel,
         fileSizeHistogramOpt: Option[FileSizeHistogram],
         commitInfoOpt: Option[CommitInfo],
-        commitSizeBytes: Long): Unit = {
+        commitSizeBytes: Long,
+        amtWriteMetricsOpt: Option[AMTWriteMetrics] = None): Unit = {
       assertStateBeforeFinalization()
 
       val doCollectCommitStats =
@@ -425,7 +427,8 @@ trait TransactionHelper extends DeltaLogging {
         addFilesHistogram = addFilesHistogram.map(FileSizeHistogramUtils.compress),
         removeFilesHistogram = removeFilesHistogram.map(FileSizeHistogramUtils.compress),
         numOfDomainMetadatas = numOfDomainMetadatas,
-        txnId = Some(txnId))
+        txnId = Some(txnId),
+        amtWriteMetrics = amtWriteMetricsOpt)
       recordDeltaEvent(deltaLog, DeltaLogging.DELTA_COMMIT_STATS_OPTYPE, data = stats)
     }
 
