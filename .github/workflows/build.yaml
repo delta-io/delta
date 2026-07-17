@@ -49,8 +49,10 @@ jobs:
       - name: Set up pinned Unity Catalog for each released Spark version
         run: |
           for sv in $(python3 project/scripts/get_spark_version_info.py --released-spark-versions | jq -r '.[]'); do
-            echo "::group::Set up pinned UC for Spark $sv"
-            SPARK_VERSION="$sv" bash project/scripts/setup_unitycatalog_main.sh
+            full_version=$(python3 project/scripts/get_spark_version_info.py --get-field "$sv" fullVersion | jq -r)
+            echo "::group::Set up pinned UC for Spark $full_version"
+            SPARK_VERSION="$sv" SPARK_ARTIFACT_VERSION="$full_version" \
+              bash project/scripts/setup_unitycatalog_main.sh
             echo "::endgroup::"
           done
 

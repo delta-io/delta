@@ -52,8 +52,8 @@ runs:
         SCALA_VERSION: ${{ inputs.scala }}
         SPARK_VERSION: ${{ inputs.spark-version }}
         NUM_SHARDS: ${{ inputs.num-shards }}
-        # SPARK_COMMIT / SPARK_ARTIFACT_VERSION are inherited from GITHUB_ENV (set by
-        # prepare-spark-env for source-build rows; unset for published rows).
+        # SPARK_ARTIFACT_VERSION is inherited from GITHUB_ENV for every row; SPARK_COMMIT is
+        # additionally set by prepare-spark-env for source-build rows.
       run: |
         TEST_PARALLELISM_COUNT=4 python3 run-tests.py --group spark --shard ${{ inputs.shard }} --spark-version ${{ inputs.spark-version }}
 
