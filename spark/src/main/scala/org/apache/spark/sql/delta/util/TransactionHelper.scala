@@ -48,6 +48,9 @@ trait TransactionHelper extends DeltaLogging {
   /** The path to the Delta table data directory. */
   def dataPath: Path
 
+  /** The path to the Delta log directory. */
+  def logPath: Path
+
   def catalogTable: Option[CatalogTable]
   def snapshot: Snapshot
 
@@ -189,7 +192,7 @@ trait TransactionHelper extends DeltaLogging {
         case _ =>
           throw new IllegalStateException(
             "Unexpected state found when trying " +
-            s"to generate CoordinatedCommitsStats for table ${deltaLog.logPath}. " +
+            s"to generate CoordinatedCommitsStats for table ${logPath}. " +
             s"$readSnapshotTableCommitCoordinatorClientOpt, " +
             s"$metadata, $snapshot, $catalogTable")
       }
