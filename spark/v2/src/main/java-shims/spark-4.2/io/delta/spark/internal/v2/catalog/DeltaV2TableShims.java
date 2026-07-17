@@ -22,9 +22,12 @@ import org.apache.spark.sql.delta.v2.interop.AbstractProtocol;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
 import java.util.Optional;
 import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.connector.catalog.CatalogV2Util;
+import org.apache.spark.sql.connector.catalog.Column;
 import org.apache.spark.sql.connector.catalog.SupportsSchemaEvolution;
 import org.apache.spark.sql.connector.catalog.TableCapability;
 import org.apache.spark.sql.connector.catalog.TableChange;
+import org.apache.spark.sql.types.StructType;
 
 /**
  * Shim to build the DSv2 Delta table connector against different Spark versions.
@@ -32,6 +35,11 @@ import org.apache.spark.sql.connector.catalog.TableChange;
  * - Schema evolution support in DSV2 (add columns, change type) was added in Spark 4.2.
  */
 public abstract class DeltaV2TableShims implements SupportsSchemaEvolution {
+
+  /** Convert a Spark schema to DSv2 columns while preserving field IDs. */
+  public static Column[] structTypeToV2Columns(StructType schema) {
+    return CatalogV2Util.structTypeToV2Columns(schema, true);
+  }
 
   /** Implemented in DeltaV2Table to provide access to the table protocol/metadata. */
   protected abstract AbstractProtocol protocol();
