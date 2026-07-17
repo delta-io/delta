@@ -17,7 +17,10 @@
 package org.apache.spark.sql.delta.catalog;
 
 import io.delta.spark.internal.v2.catalog.DeltaV2Table;
+import io.delta.spark.internal.v2.exception.TimestampOutOfRangeException;
+import io.delta.spark.internal.v2.exception.VersionNotFoundException;
 import org.apache.spark.sql.delta.DeltaV2Mode;
+import org.apache.spark.sql.delta.v2.interop.DeltaV2ErrorInterop$;
 import java.util.HashMap;
 import java.util.function.Supplier;
 import org.apache.hadoop.fs.Path;
@@ -103,6 +106,62 @@ public class DeltaCatalog extends AbstractDeltaCatalog implements ChangelogSuppo
         // delta.`/path/to/table`, where ident.name() is `/path/to/table`
         () -> new DeltaV2Table(ident, ident.name()),
         () -> super.loadPathTable(ident));
+  }
+
+  /**
+   * Loads a Delta table pinned to a specific version.
+   *
+   * <p>Routing logic based on {@link DeltaV2Mode}:
+   * <ul>
+   *   <li>V2 connector: pins a {@link DeltaV2Table}</li>
+   *   <li>V1 connector (default): delegates to the {@code AbstractDeltaCatalog} time travel path</li>
+   * </ul>
+   *
+   * @param ident The identifier of the table in the catalog.
+   * @param version The table version to load.
+   * @return Table instance pinned to {@code version}.
+   */
+  @Override
+  public Table loadTable(Identifier ident, String version) {
+    Table table = loadTable(ident);
+    if (table instanceof DeltaV2Table) {
+      try {
+        return ((DeltaV2Table) table).withVersion(Long.parseLong(version));
+      } catch (VersionNotFoundException e) {
+        // throwAsDeltaError always throws; the trailing throw is unreachable but satisfies javac.
+        DeltaV2ErrorInterop$.MODULE$.throwAsDeltaError(e);
+        throw new IllegalStateException("unreachable");
+      }
+    }
+    return super.loadTable(ident, version);
+  }
+
+  /**
+   * Loads a Delta table pinned to the snapshot active at a specific timestamp.
+   *
+   * <p>Routing logic based on {@link DeltaV2Mode}:
+   * <ul>
+   *   <li>V2 connector: pins a {@link DeltaV2Table}.</li>
+   *   <li>V1 connector (default): delegates to the {@code AbstractDeltaCatalog} time travel path</li>
+   * </ul>
+   *
+   * @param ident The identifier of the table in the catalog.
+   * @param timestamp The timestamp to load the table at, in microseconds since the epoch.
+   * @return Table instance pinned to the snapshot active at {@code timestamp}.
+   */
+  @Override
+  public Table loadTable(Identifier ident, long timestamp) {
+    Table table = loadTable(ident);
+    if (table instanceof DeltaV2Table) {
+      try {
+        return ((DeltaV2Table) table).withTimestamp(timestamp);
+      } catch (TimestampOutOfRangeException e) {
+        // throwAsDeltaError always throws; the trailing throw is unreachable but satisfies javac.
+        DeltaV2ErrorInterop$.MODULE$.throwAsDeltaError(e);
+        throw new IllegalStateException("unreachable");
+      }
+    }
+    return super.loadTable(ident, timestamp);
   }
 
   /**
