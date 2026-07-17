@@ -89,13 +89,22 @@ trait TypeWideningTestMixin
    * doesn't get automatically widened. Depending on the data, the write may succeed or overflow.
    */
   protected def mayOverflow(write: => Unit): Unit = {
+    val allowedConditions = Set(
+      "CAST_OVERFLOW_IN_TABLE_INSERT",
+      "CAST_OVERFLOW",
+      "DELTA_CAST_OVERFLOW_IN_TABLE_WRITE")
+
+    def isAllowedOverflow(error: Throwable): Boolean = error match {
+      case e: SparkThrowable if allowedConditions.contains(e.getCondition) => true
+      case e if e.getCause != null && (e.getCause ne e) => isAllowedOverflow(e.getCause)
+      case _ => false
+    }
+
     try {
       write
     } catch {
-      case e: ArithmeticException with SparkThrowable if Set(
-          "CAST_OVERFLOW_IN_TABLE_INSERT",
-          "CAST_OVERFLOW",
-          "DELTA_CAST_OVERFLOW_IN_TABLE_WRITE").contains(e.getCondition) =>
+      // Spark may report the arithmetic error directly or wrap it in TASK_WRITE_FAILED.
+      case e: Exception if isAllowedOverflow(e) =>
     }
   }
 
