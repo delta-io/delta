@@ -18,7 +18,7 @@ package io.delta.kernel.unitycatalog
 
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
-import java.util.{Collections, Optional}
+import java.util.Optional
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
@@ -32,7 +32,6 @@ import io.delta.storage.commit.uccommitcoordinator.UCDeltaTokenBasedRestClient
 
 import com.fasterxml.jackson.databind.{JsonNode, ObjectMapper}
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
-import io.unitycatalog.client.auth.TokenProvider
 import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach}
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -95,8 +94,11 @@ class UCDeltaClientCommitE2ESuite
   override def beforeEach(): Unit = {
     super.beforeEach()
     requests.synchronized { requests.clear() }
-    deltaClient =
-      new UCDeltaTokenBasedRestClient(serverUri, tokenProvider(), Collections.emptyMap())
+    val ucConfig = Map(
+      "uri" -> serverUri,
+      "auth.type" -> "static",
+      "auth.token" -> "mock-token").asJava
+    deltaClient = new UCDeltaTokenBasedRestClient(ucConfig, null)
   }
 
   override def afterEach(): Unit = {
@@ -110,12 +112,6 @@ class UCDeltaClientCommitE2ESuite
       s""""columns":{"type":"struct","fields":[]},"properties":{},""" +
       s""""partition-columns":[],"created-time":1000},""" +
       s""""commits":[],"latest-table-version":0}"""
-
-  private def tokenProvider(): TokenProvider = new TokenProvider {
-    override def accessToken(): String = "mock-token"
-    override def initialize(configs: java.util.Map[String, String]): Unit = {}
-    override def configs(): java.util.Map[String, String] = Collections.emptyMap()
-  }
 
   private val jsonMapper = new ObjectMapper()
 
