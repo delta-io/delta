@@ -63,6 +63,11 @@
 #                 CrossSparkVersions when invoking the script; matrix CI workflows set it from
 #                 `matrix.spark_version`. Workflows that don't care which Spark variant UC builds
 #                 (kernel/flink/etc.) inherit the in-script fallback below.
+#   SPARK_ARTIFACT_VERSION
+#                 exact Spark Maven version UC should compile against. Published rows use a release
+#                 such as 4.2.0; source-build rows use a commit-qualified version such as
+#                 4.3.0-<sha>-SNAPSHOT. When set, the pinned UC checkout's matching Spark metadata
+#                 entry is rewritten before sbt loads it. When unset, UC's pinned metadata is used.
 #
 # Modes of operation:
 #   1. Pinned SHA (default, PR CI): UC_REF defaults to UC_PIN_SHA, version is computed as
@@ -92,7 +97,21 @@ UC_REPO="${UC_REPO:-https://github.com/unitycatalog/unitycatalog.git}"
 UC_REF="${UC_REF:-$UC_PIN_SHA}"
 UC_FORCE="${UC_FORCE:-0}"
 SPARK_VERSION="${SPARK_VERSION:-4.1}"
+SPARK_ARTIFACT_VERSION="${SPARK_ARTIFACT_VERSION:-}"
 DELTA_RELEASE_MODE="${DELTA_RELEASE_MODE:-0}"
+
+# The short version selects UC's shim directory and artifact suffix; the exact version selects
+# the Spark dependency. Derive the short form from the exact artifact for a future `master` row.
+SPARK_MAJOR_MINOR="$SPARK_VERSION"
+if [[ -n "$SPARK_ARTIFACT_VERSION" ]]; then
+  if [[ "$SPARK_ARTIFACT_VERSION" =~ ^([0-9]+\.[0-9]+)\. ]]; then
+    SPARK_MAJOR_MINOR="${BASH_REMATCH[1]}"
+  else
+    echo "ERROR: SPARK_ARTIFACT_VERSION='$SPARK_ARTIFACT_VERSION' has no major.minor prefix." >&2
+    exit 1
+  fi
+fi
+SPARK_BUILD_VERSION="${SPARK_ARTIFACT_VERSION:-$SPARK_VERSION}"
 
 # Compose version coordinate. When UC_VERSION is set from env, use it verbatim (no SHA suffix).
 # Otherwise compute from UC_BASE_VERSION + abbreviated ref.
@@ -116,31 +135,36 @@ fi
 # ~/.ivy2/local, mvn (kernel-examples integration tests) resolves from ~/.m2/repository. If any
 # is missing in either layout we must re-publish.
 # UC publishes its Spark connector under a per-Spark-version coordinate
-# (unitycatalog-spark_${SPARK_VERSION}_2.13). The suffix tracks SPARK_VERSION so the
+# (unitycatalog-spark_${SPARK_MAJOR_MINOR}_2.13). The suffix tracks the selected Spark line so the
 # canary check matches whatever variant we tell UC to build below.
 IVY_LOCAL="$HOME/.ivy2/local/io.unitycatalog"
 IVY_CANARY_CLIENT="$IVY_LOCAL/unitycatalog-client/$UC_VERSION/ivys/ivy.xml"
 IVY_CANARY_SERVER="$IVY_LOCAL/unitycatalog-server/$UC_VERSION/ivys/ivy.xml"
-UC_SPARK_ARTIFACT="unitycatalog-spark_${SPARK_VERSION}_2.13"
+UC_SPARK_ARTIFACT="unitycatalog-spark_${SPARK_MAJOR_MINOR}_2.13"
 IVY_CANARY_SPARK="$IVY_LOCAL/$UC_SPARK_ARTIFACT/$UC_VERSION/ivys/ivy.xml"
 IVY_CANARY_HADOOP="$IVY_LOCAL/unitycatalog-hadoop/$UC_VERSION/ivys/ivy.xml"
+IVY_SPARK_BUILD_MARKER="$IVY_LOCAL/$UC_SPARK_ARTIFACT/$UC_VERSION/.spark-build-version"
 M2_LOCAL="$HOME/.m2/repository/io/unitycatalog"
 M2_CANARY_CLIENT="$M2_LOCAL/unitycatalog-client/$UC_VERSION/unitycatalog-client-$UC_VERSION.pom"
 M2_CANARY_SERVER="$M2_LOCAL/unitycatalog-server/$UC_VERSION/unitycatalog-server-$UC_VERSION.pom"
 M2_CANARY_SPARK="$M2_LOCAL/$UC_SPARK_ARTIFACT/$UC_VERSION/$UC_SPARK_ARTIFACT-$UC_VERSION.pom"
 M2_CANARY_HADOOP="$M2_LOCAL/unitycatalog-hadoop/$UC_VERSION/unitycatalog-hadoop-$UC_VERSION.pom"
+M2_SPARK_BUILD_MARKER="$M2_LOCAL/$UC_SPARK_ARTIFACT/$UC_VERSION/.spark-build-version"
 ALL_CANARIES=("$IVY_CANARY_CLIENT" "$IVY_CANARY_SERVER" "$IVY_CANARY_SPARK" "$IVY_CANARY_HADOOP"
-              "$M2_CANARY_CLIENT" "$M2_CANARY_SERVER" "$M2_CANARY_SPARK" "$M2_CANARY_HADOOP")
+              "$M2_CANARY_CLIENT" "$M2_CANARY_SERVER" "$M2_CANARY_SPARK" "$M2_CANARY_HADOOP"
+              "$IVY_SPARK_BUILD_MARKER" "$M2_SPARK_BUILD_MARKER")
 
 all_canaries_present() {
   for c in "${ALL_CANARIES[@]}"; do
     [[ -f "$c" ]] || return 1
   done
+  [[ "$(< "$IVY_SPARK_BUILD_MARKER")" == "$SPARK_BUILD_VERSION" ]] || return 1
+  [[ "$(< "$M2_SPARK_BUILD_MARKER")" == "$SPARK_BUILD_VERSION" ]] || return 1
   return 0
 }
 
 if [[ "$UC_FORCE" != "1" ]] && all_canaries_present; then
-  echo ">>> UC $UC_VERSION already published to ~/.ivy2/local; skipping."
+  echo ">>> UC $UC_VERSION already published for Spark $SPARK_BUILD_VERSION; skipping."
   echo ">>> (Set UC_FORCE=1 to rebuild anyway.)"
   exit 0
 fi
@@ -179,6 +203,40 @@ else
   # refs/tags/ entry in a fresh init'd repo, so `git checkout <tag>` fails.
   # FETCH_HEAD works uniformly for branches, tags, and SHAs.
   git checkout --quiet FETCH_HEAD
+fi
+
+# UC's pinned metadata still names the Spark preview that was current at this commit. CI supplies
+# the exact active artifact so the connector bytecode is compiled against the same Spark that runs
+# Delta. This also supports future source rows, whose Maven versions include the resolved commit.
+if [[ -n "$SPARK_ARTIFACT_VERSION" ]]; then
+  echo ">>> Configuring UC Spark $SPARK_MAJOR_MINOR variant for $SPARK_ARTIFACT_VERSION"
+  python3 - "$SPARK_MAJOR_MINOR" "$SPARK_ARTIFACT_VERSION" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+short_version, artifact_version = sys.argv[1:]
+metadata_path = Path("project/spark-versions.json")
+metadata = json.loads(metadata_path.read_text())
+
+def major_minor(version):
+    return ".".join(version.split(".")[:2])
+
+matches = [
+    entry for entry in metadata["versions"]
+    if major_minor(entry["version"]) == short_version
+]
+if len(matches) != 1:
+    raise SystemExit(
+        f"Expected one UC Spark {short_version} metadata entry, found {len(matches)}"
+    )
+
+old_version = matches[0]["version"]
+matches[0]["version"] = artifact_version
+if metadata["default"] == old_version:
+    metadata["default"] = artifact_version
+metadata_path.write_text(json.dumps(metadata, indent=2) + "\n")
+PY
 fi
 
 # Sanity-check UC_BASE_VERSION against what UC actually declares at this commit. If they drift
@@ -234,12 +292,12 @@ fi
   hadoop/publishLocal \
   hadoop/publishM2
 
-# Publish the Spark connector for the caller's Spark version. Each CI matrix cell passes its own
-# SPARK_VERSION; when auto-triggered by ensurePinnedUnityCatalog (no env), defaults above.
-echo ">>> Publishing UC spark connector for Spark $SPARK_VERSION"
+# Publish the Spark connector for the caller's Spark version. CI and Delta's automatic bootstrap
+# pass both the compatibility line and exact artifact; standalone callers can use the defaults.
+echo ">>> Publishing UC spark connector for Spark $SPARK_BUILD_VERSION"
 for attempt in 1 2 3; do
   if ./build/sbt \
-    -DsparkVersion="$SPARK_VERSION" \
+    -DsparkVersion="$SPARK_BUILD_VERSION" \
     -DskipDeltaSpark=true \
     "$SET_VERSION_CMD" \
     "${SET_OVERWRITE_CMDS[@]}" \
@@ -249,12 +307,17 @@ for attempt in 1 2 3; do
     break
   fi
   if [[ "$attempt" -eq 3 ]]; then
-    echo ">>> spark/publishM2 (Spark $SPARK_VERSION) failed after 3 attempts"
+    echo ">>> spark/publishM2 (Spark $SPARK_BUILD_VERSION) failed after 3 attempts"
     exit 1
   fi
-  echo ">>> spark/publishM2 (Spark $SPARK_VERSION) failed on attempt $attempt; retrying..."
+  echo ">>> spark/publishM2 (Spark $SPARK_BUILD_VERSION) failed on attempt $attempt; retrying..."
   sleep 5
 done
+
+# The UC coordinate and Spark suffix do not encode the exact Spark artifact. Persist a marker in
+# both cached layouts so a stale connector cannot satisfy the idempotence check after a ref change.
+printf '%s\n' "$SPARK_BUILD_VERSION" > "$IVY_SPARK_BUILD_MARKER"
+printf '%s\n' "$SPARK_BUILD_VERSION" > "$M2_SPARK_BUILD_MARKER"
 
 echo ">>> Verifying published artifacts"
 for c in "${ALL_CANARIES[@]}"; do

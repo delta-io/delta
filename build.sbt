@@ -869,12 +869,13 @@ def publishPinnedUnityCatalog(log: sbt.util.Logger, canary: java.io.File): Unit 
   val procLogger = ProcessLogger(
     line => log.info(s"[UC setup] $line"),
     line => log.warn(s"[UC setup] $line"))
-  // SPARK_VERSION tells the script which Spark variant to build (forwarded to UC's sbt as
-  // -DsparkVersion).
+  // SPARK_VERSION selects UC's shim/artifact suffix. SPARK_ARTIFACT_VERSION selects the exact
+  // Spark dependency, including a commit-qualified Maven version for source-build rows.
   val exit = Process(
     Seq("bash", unityCatalogSetupScript),
     None,
-    "SPARK_VERSION" -> CrossSparkVersions.getSparkVersionSpec().shortVersion).!(procLogger)
+    "SPARK_VERSION" -> CrossSparkVersions.getSparkVersionSpec().shortVersion,
+    "SPARK_ARTIFACT_VERSION" -> CrossSparkVersions.getSparkArtifactVersion()).!(procLogger)
   if (exit != 0) {
     sys.error(
       s"[UC] $unityCatalogSetupScript exited with code $exit. Run it manually to see full output.")
@@ -907,7 +908,13 @@ Global / ensurePinnedUnityCatalog := {
     val m2Canary = home / ".m2" / "repository" / "io" / "unitycatalog" /
       sparkArtifact / unityCatalogVersion /
       s"$sparkArtifact-$unityCatalogVersion.pom"
-    if (!ivy2Canary.exists || !m2Canary.exists) {
+    val expectedSparkBuildVersion = CrossSparkVersions.getSparkArtifactVersion()
+    val ivy2SparkBuildMarker = ivy2Canary.getParentFile.getParentFile / ".spark-build-version"
+    val m2SparkBuildMarker = m2Canary.getParentFile / ".spark-build-version"
+    def markerMatches(marker: java.io.File): Boolean =
+      marker.exists && IO.read(marker).trim == expectedSparkBuildVersion
+    if (!ivy2Canary.exists || !m2Canary.exists ||
+        !markerMatches(ivy2SparkBuildMarker) || !markerMatches(m2SparkBuildMarker)) {
       publishPinnedUnityCatalog(log, ivy2Canary)
     }
   }
