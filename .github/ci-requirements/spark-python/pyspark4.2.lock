@@ -1,4 +1,0 @@
-# PySpark 4.2.0 was uploaded after the workflow's global UV_EXCLUDE_NEWER cutoff.
-# Keep this post-cutoff exception constrained to the exact published sdist and SHA-256.
-pyspark @ https://files.pythonhosted.org/packages/c3/33/c987434f5d50aa802779a004ca0fd45ee4350caab50554ad7283d5a22b50/pyspark-4.2.0.tar.gz \
-    --hash=sha256:5ad689d53570ee1674193fd4f9bda065f0db3be9363a27d2a3406cc457b70b61

@@ -93,11 +93,11 @@ jobs:
             uv pip install --python .venv/bin/python --require-hashes -r .github/ci-requirements/spark-python/spark4.1.lock
           fi
           # pyspark installed with --no-deps: its only transitive dep (py4j) is in the lock file.
-          # Spark 4.2.0 was published after UV_EXCLUDE_NEWER, so install its exact hash-pinned
-          # sdist while keeping the global package-date lockdown for every other dependency.
+          # Spark 4.2 needs PyArrow 18 for Spark Connect, and PySpark 4.2.0 was published after
+          # UV_EXCLUDE_NEWER. Install exact hash-pinned overrides while keeping the global cutoff.
           if [[ "${{ matrix.spark_version }}" == "4.2" ]]; then
             uv pip install --python .venv/bin/python --no-deps --require-hashes \
-              -r .github/ci-requirements/spark-python/pyspark4.2.lock
+              -r .github/ci-requirements/spark-python/spark4.2-overrides.lock
           else
             uv pip install --python .venv/bin/python --no-deps pyspark==${{ steps.spark-details.outputs.spark_full_version }}
           fi
