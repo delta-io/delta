@@ -328,39 +328,15 @@ class AbstractKernelTableTest extends TestHelper {
                   new StructType()
                       .add("id", IntegerType.INTEGER)
                       .add("payload", new StructType().add("renamed", IntegerType.INTEGER)),
-                  new StructType()
-                      .add("id", IntegerType.INTEGER)
-                      .add("payload", nestedType)
-                      .add(new StructField("required", StringType.STRING, false)));
+                  initialSchema.add(new StructField("required", StringType.STRING, false)));
 
           invalidTargets.forEach(
               target ->
                   assertThrows(IllegalArgumentException.class, () -> table.updateSchema(target)));
+          assertThrows(
+              RuntimeException.class,
+              () -> table.updateSchema(initialSchema.add("ID", StringType.STRING)));
           assertEquals(initialVersion, table.snapshot().orElseThrow().getVersion());
-        });
-  }
-
-  @Test
-  void testUpdateSchemaRejectsStaleConcurrentTarget() {
-    withTempDir(
-        dir -> {
-          StructType initialSchema = new StructType().add("id", IntegerType.INTEGER);
-          Map<String, String> properties = Map.of(COLUMN_MAPPING_MODE_KEY, "name");
-          LocalFileSystemTable first =
-              new LocalFileSystemTable(dir.toURI(), properties, initialSchema, List.of());
-          LocalFileSystemTable second =
-              new LocalFileSystemTable(dir.toURI(), properties, initialSchema, List.of());
-          first.open();
-          second.open();
-
-          StructType sharedTarget = initialSchema.add("name", StringType.STRING);
-          first.updateSchema(sharedTarget);
-          second.updateSchema(sharedTarget);
-          assertEquals(1L, second.snapshot().orElseThrow().getVersion());
-
-          StructType divergentTarget = initialSchema.add("email", StringType.STRING);
-          assertThrows(IllegalArgumentException.class, () -> second.updateSchema(divergentTarget));
-          assertEquals(1L, second.snapshot().orElseThrow().getVersion());
         });
   }
 

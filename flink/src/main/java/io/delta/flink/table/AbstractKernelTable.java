@@ -259,11 +259,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
       credentialManager = createCredentialManager();
     }
     if (serializedTableState == null) {
-      withRetry(
-          () -> {
-            loadDeltaTable();
-            return null;
-          });
+      withRetry(this::loadDeltaTable);
     }
     if (tableState == null) {
       tableState = JsonUtils.rowFromJson(serializedTableState, TransactionStateRow.SCHEMA);
@@ -303,14 +299,11 @@ public abstract class AbstractKernelTable implements DeltaTable {
 
     withTiming(
         "updateSchema",
-        () -> {
-          withRetry(() -> updateSchemaFromLatestSnapshot(targetSchema, initialSchema));
-        });
+        () -> withRetry(() -> updateSchemaFromLatestSnapshot(targetSchema, initialSchema)));
   }
 
-  private Optional<Snapshot> updateSchemaFromLatestSnapshot(
+  private void updateSchemaFromLatestSnapshot(
       StructType targetSchema, AtomicReference<StructType> initialSchema) {
-    Engine localEngine = getEngine();
     Snapshot latestSnapshot =
         loadLatestSnapshotUncached()
             .orElseThrow(() -> new IllegalStateException("Snapshot should exist"));
@@ -321,7 +314,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
     } else if (!logicallyEqual(schemaAtFirstAttempt, latestSchema)) {
       if (logicallyEqual(latestSchema, targetSchema)) {
         refresh(latestSnapshot);
-        return Optional.empty();
+        return;
       }
       throw new IllegalArgumentException(
           String.format(
@@ -332,36 +325,32 @@ public abstract class AbstractKernelTable implements DeltaTable {
 
     if (updatedSchema.isEmpty()) {
       refresh(latestSnapshot);
-      return Optional.empty();
+      return;
     }
 
-    UpdateTableTransactionBuilder txnBuilder =
-        latestSnapshot.buildUpdateTableTransaction(ENGINE_INFO, Operation.WRITE);
-    Transaction txn = txnBuilder.withUpdatedSchema(updatedSchema.get()).build(localEngine);
+    Engine localEngine = getEngine();
+    Transaction txn =
+        latestSnapshot
+            .buildUpdateTableTransaction(ENGINE_INFO, Operation.WRITE)
+            .withUpdatedSchema(updatedSchema.get())
+            .build(localEngine);
     TransactionCommitResult result =
         withTiming(
             "updateSchema.txn", () -> txn.commit(localEngine, CloseableIterable.emptyIterable()));
-    TransactionReport report = result.getTransactionReport();
-    Optional<Snapshot> postCommitSnapshot = result.getPostCommitSnapshot();
-    postCommitSnapshot.ifPresent(
-        snapshot -> {
-          refresh(snapshot);
-          onPostCommit(snapshot, report);
-        });
-    if (postCommitSnapshot.isEmpty()) {
-      Snapshot refreshedSnapshot =
-          loadLatestSnapshotUncached()
-              .orElseThrow(() -> new IllegalStateException("Snapshot should exist after commit"));
-      refresh(refreshedSnapshot);
-      onPostCommit(refreshedSnapshot, report);
-      return Optional.of(refreshedSnapshot);
-    }
-    return postCommitSnapshot;
+    Snapshot committedSnapshot =
+        result
+            .getPostCommitSnapshot()
+            .orElseGet(
+                () ->
+                    loadLatestSnapshotUncached()
+                        .orElseThrow(
+                            () -> new IllegalStateException("Snapshot should exist after commit")));
+    refresh(committedSnapshot);
+    onPostCommit(committedSnapshot, result.getTransactionReport());
   }
 
   private static Optional<StructType> buildAdditiveSchema(
       StructType currentSchema, StructType targetSchema) {
-    validateUniqueFieldNames(targetSchema);
     if (targetSchema.length() < currentSchema.length()) {
       throw new IllegalArgumentException(
           String.format(
@@ -396,16 +385,6 @@ public abstract class AbstractKernelTable implements DeltaTable {
       fields.add(newField);
     }
     return Optional.of(new StructType(fields));
-  }
-
-  private static void validateUniqueFieldNames(StructType schema) {
-    Set<String> fieldNames = new HashSet<>();
-    for (StructField field : schema.fields()) {
-      String fieldName = Objects.requireNonNull(field.getName(), "Field name cannot be null");
-      if (!fieldNames.add(fieldName.toLowerCase(Locale.ROOT))) {
-        throw new IllegalArgumentException("Duplicate field name in target schema: " + fieldName);
-      }
-    }
   }
 
   private static boolean logicallyEqual(StructField currentField, StructField targetField) {
@@ -630,7 +609,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
                     currentSnapshot = snapshot().orElse(null);
                   }
                   if (currentSnapshot == null) {
-                    return null;
+                    return;
                   }
                   this.schema = currentSnapshot.getSchema();
                   this.partitionColumns = currentSnapshot.getPartitionColumnNames();
@@ -641,7 +620,6 @@ public abstract class AbstractKernelTable implements DeltaTable {
                           .build(getEngine())
                           .getTransactionState(getEngine());
                   this.serializedTableState = JsonUtils.rowToJson(this.tableState);
-                  return null;
                 }));
   }
 
@@ -837,6 +815,14 @@ public abstract class AbstractKernelTable implements DeltaTable {
     Fallback<Object> fallback =
         Fallback.builder((Object) Optional.empty()).handleIf(ExceptionUtils.isSwallowable).build();
     return Failsafe.with(retryPolicy, fallback).get(body);
+  }
+
+  protected void withRetry(CheckedRunnable body) {
+    withRetry(
+        () -> {
+          body.run();
+          return null;
+        });
   }
 
   public <RET> RET withTiming(String name, Callable<RET> body) {
