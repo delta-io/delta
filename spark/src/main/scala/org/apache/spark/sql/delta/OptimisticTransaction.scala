@@ -299,6 +299,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
   def clock: Clock = deltaLog.clock
 
+  override def dataPath: Path = deltaLog.dataPath
+
   // This would be a quick operation if we already validated the checksum
   // Otherwise, we should at least perform the validation here.
   // NOTE: When incremental commits are enabled, skip validation unless it was specifically
@@ -644,7 +646,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     if (!identityColumnAllowed &&
         ColumnWithDefaultExprUtils.hasIdentityColumn(newMetadataTmp.schema)) {
       throw DeltaErrors.unsupportedWriterTableFeaturesInTableException(
-        deltaLog.dataPath.toString, Seq(IdentityColumnsTableFeature.name))
+        dataPath.toString, Seq(IdentityColumnsTableFeature.name))
     }
 
     val protocolBeforeUpdate = protocol
@@ -1674,9 +1676,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
     // If this transaction commits to the redirect destination location, then there is no
     // need to validate the subsequent no-redirect rules.
     val configuration = deltaLog.newDeltaHadoopConf()
-    val dataPath = snapshot.dataPath.toUri.getPath
+    val tableDataPath = dataPath.toUri.getPath
     val catalog = spark.sessionState.catalog
-    val isRedirectDest = redirectConfig.spec.isRedirectDest(catalog, configuration, dataPath)
+    val isRedirectDest = redirectConfig.spec.isRedirectDest(catalog, configuration, tableDataPath)
     if (isRedirectDest) return
     // Find all rules that match with the current application name.
     // If appName is not present, its no-redirect-rule are included.
@@ -2774,7 +2776,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
     if (readVersion > -1 && metadata.id != snapshot.metadata.id) {
       val msg = s"Change in the table id detected in txn. Table id for txn on table at " +
-        s"${deltaLog.dataPath} was ${snapshot.metadata.id} when the txn was created and " +
+        s"${dataPath} was ${snapshot.metadata.id} when the txn was created and " +
         s"is now changed to ${metadata.id}."
       logWarning(msg)
       recordDeltaEvent(deltaLog, "delta.metadataCheck.commit", data = Map(
