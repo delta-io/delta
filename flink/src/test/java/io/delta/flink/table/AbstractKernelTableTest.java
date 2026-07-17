@@ -218,25 +218,17 @@ class AbstractKernelTableTest extends TestHelper {
   @Test
   void testUpdateSchemaPreservesAndAssignsColumnMappingMetadata() {
     StructType initialSchema = new StructType().add("id", IntegerType.INTEGER);
-    FieldMetadata suppliedMappingMetadata =
-        FieldMetadata.builder()
-            .putLong(COLUMN_MAPPING_ID_KEY, 999L)
-            .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, "caller-physical-name")
-            .putFieldMetadata(COLUMN_MAPPING_NESTED_IDS_KEY, FieldMetadata.empty())
-            .putLong(PARQUET_FIELD_ID_KEY, 999L)
-            .putFieldMetadata(PARQUET_FIELD_NESTED_IDS_METADATA_KEY, FieldMetadata.empty())
-            .putString("user.metadata", "preserved")
-            .build();
+    FieldMetadata userMetadata =
+        FieldMetadata.builder().putString("user.metadata", "preserved").build();
     StructType nestedType =
-        new StructType()
-            .add(new StructField("city", StringType.STRING, true, suppliedMappingMetadata));
+        new StructType().add(new StructField("city", StringType.STRING, true, userMetadata));
     StructType targetSchema =
         new StructType()
             // Deliberately omit existing mapping metadata. The table snapshot remains
             // authoritative.
             .add("id", IntegerType.INTEGER)
-            .add(new StructField("name", StringType.STRING, true, suppliedMappingMetadata))
-            .add(new StructField("address", nestedType, true, suppliedMappingMetadata));
+            .add(new StructField("name", StringType.STRING, true, userMetadata))
+            .add(new StructField("address", nestedType, true, userMetadata));
 
     withTestTable(
         initialSchema,
@@ -260,22 +252,56 @@ class AbstractKernelTableTest extends TestHelper {
               updatedSchema.at(0).getMetadata().getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY));
 
           StructField name = updatedSchema.at(1);
-          assertNotEquals(999L, name.getMetadata().getLong(COLUMN_MAPPING_ID_KEY));
-          assertNotEquals(
-              "caller-physical-name",
-              name.getMetadata().getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY));
+          assertNotNull(name.getMetadata().getLong(COLUMN_MAPPING_ID_KEY));
+          assertNotNull(name.getMetadata().getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY));
           assertFalse(name.getMetadata().contains(PARQUET_FIELD_ID_KEY));
           assertFalse(name.getMetadata().contains(PARQUET_FIELD_NESTED_IDS_METADATA_KEY));
           assertEquals("preserved", name.getMetadata().getString("user.metadata"));
 
           StructField nestedCity = ((StructType) updatedSchema.at(2).getDataType()).at(0);
-          assertNotEquals(999L, nestedCity.getMetadata().getLong(COLUMN_MAPPING_ID_KEY));
-          assertNotEquals(
-              "caller-physical-name",
-              nestedCity.getMetadata().getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY));
+          assertNotNull(nestedCity.getMetadata().getLong(COLUMN_MAPPING_ID_KEY));
+          assertNotNull(nestedCity.getMetadata().getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY));
+          assertEquals("preserved", nestedCity.getMetadata().getString("user.metadata"));
 
           table.updateSchema(targetSchema);
           assertEquals(oldVersion + 1, table.snapshot().orElseThrow().getVersion());
+        });
+  }
+
+  @Test
+  void testUpdateSchemaRejectsCallerSuppliedColumnMappingMetadata() {
+    StructType initialSchema = new StructType().add("id", IntegerType.INTEGER);
+    FieldMetadata suppliedMappingMetadata =
+        FieldMetadata.builder()
+            .putLong(COLUMN_MAPPING_ID_KEY, 999L)
+            .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, "caller-physical-name")
+            .putFieldMetadata(COLUMN_MAPPING_NESTED_IDS_KEY, FieldMetadata.empty())
+            .putLong(PARQUET_FIELD_ID_KEY, 999L)
+            .putFieldMetadata(PARQUET_FIELD_NESTED_IDS_METADATA_KEY, FieldMetadata.empty())
+            .build();
+    StructType topLevelMetadataTarget =
+        initialSchema.add(
+            new StructField("name", StringType.STRING, true, suppliedMappingMetadata));
+    StructType nestedMetadataTarget =
+        initialSchema.add(
+            new StructField(
+                "address",
+                new StructType()
+                    .add(new StructField("city", StringType.STRING, true, suppliedMappingMetadata)),
+                true));
+
+    withTestTable(
+        initialSchema,
+        Collections.emptyList(),
+        Map.of(COLUMN_MAPPING_MODE_KEY, "name"),
+        table -> {
+          long initialVersion = table.snapshot().orElseThrow().getVersion();
+          for (StructType target : List.of(topLevelMetadataTarget, nestedMetadataTarget)) {
+            IllegalArgumentException error =
+                assertThrows(IllegalArgumentException.class, () -> table.updateSchema(target));
+            assertTrue(error.getMessage().contains("Kernel-managed metadata"));
+          }
+          assertEquals(initialVersion, table.snapshot().orElseThrow().getVersion());
         });
   }
 
