@@ -14,13 +14,19 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta
+package io.delta.spark.internal.v2.catalog;
 
-import org.apache.spark.sql.connector.catalog.TableCapability
+import java.util.Optional;
+import org.apache.spark.sql.connector.catalog.TableCapability;
 
-/** Shim to build [[DeltaV2Table]] against different Spark versions. */
-object SparkTableShims {
-  // Capability [[TableCapability.AUTOMATIC_SCHEMA_EVOLUTION]] is available in Spark 4.1, but
-  // schema evolution isn't properly supported yet in MERGE/INSERT there so ignore it.
-  val schemaEvolutionCapability: Option[TableCapability] = None
+/**
+ * Shim to build the DSv2 Delta table connector against different Spark versions.
+ * This is the shim for Spark 4.1.
+ */
+public abstract class DeltaV2TableShims {
+
+  /** No schema evolution capability in DSv2 before Spark 4.2. */
+  public static Optional<TableCapability> schemaEvolutionCapability() {
+    return Optional.empty();
+  }
 }

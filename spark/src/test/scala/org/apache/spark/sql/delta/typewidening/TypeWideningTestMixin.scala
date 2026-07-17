@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import com.google.common.math.DoubleMath
 
-import org.apache.spark.SparkConf
+import org.apache.spark.{SparkConf, SparkThrowable}
 import org.apache.spark.sql.{DataFrame, Encoder, QueryTest}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.functions.col
@@ -80,6 +80,21 @@ trait TypeWideningTestMixin
     TypeWidening.isEnabled(snapshot.protocol, snapshot.metadata)
   }
 
+  /**
+   * Runs `write`, tolerating a cast overflow failure. Used in tests that want to check that column
+   * doesn't get automatically widened. Depending on the data, the write may succeed or overflow.
+   */
+  protected def mayOverflow(write: => Unit): Unit = {
+    try {
+      write
+    } catch {
+      case e: ArithmeticException with SparkThrowable if Set(
+          "CAST_OVERFLOW_IN_TABLE_INSERT",
+          "CAST_OVERFLOW",
+          "DELTA_CAST_OVERFLOW_IN_TABLE_WRITE").contains(e.getCondition) =>
+    }
+  }
+
   /** Short-hand to create type widening metadata for struct fields. */
   protected def typeWideningMetadata(
       from: AtomicType,
@@ -126,6 +141,20 @@ trait TypeWideningTestMixin
     } else {
       checkAnswer(actualDf, expectedDf)
     }
+  }
+}
+
+/**
+ * Mixin for type widening test suites that run against the DSv2 Delta connector.
+ * Use name-based access as path-based isn't well-supported in DSv2.
+ */
+trait TypeWideningDSv2TestMixin
+  extends TypeWideningTestMixin
+    with DeltaDSv2TestMixin
+    with DeltaDMLTestUtilsNameBased { self: QueryTest =>
+
+  protected override def sparkConf: SparkConf = {
+    super.sparkConf.set(DeltaSQLConf.V2_ENABLE_MODE.key, "AUTO")
   }
 }
 

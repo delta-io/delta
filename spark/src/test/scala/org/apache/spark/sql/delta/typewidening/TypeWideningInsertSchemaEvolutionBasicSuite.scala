@@ -39,7 +39,18 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
 class TypeWideningInsertSchemaEvolutionBasicSuite
     extends QueryTest
     with TypeWideningTestMixin
-    with DeltaDMLTestUtilsNameBased
+    with TypeWideningInsertSchemaEvolutionBasicTests {
+
+  protected override def sparkConf: SparkConf = {
+    super.sparkConf
+      .set(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true")
+  }
+}
+
+/** Runs the type widening INSERT schema evolution tests against DSv2. */
+class TypeWideningInsertSchemaEvolutionBasicDSv2Suite
+    extends QueryTest
+    with TypeWideningDSv2TestMixin
     with TypeWideningInsertSchemaEvolutionBasicTests {
 
   protected override def sparkConf: SparkConf = {
@@ -91,35 +102,38 @@ trait TypeWideningInsertSchemaEvolutionBasicTests
       s"${testCase.fromType.sql} -> ${testCase.toType.sql}") {
       append(testCase.initialValuesDF)
 
-      withSQLConf(SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.LEGACY.toString,
-        DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING.key -> "never") {
-        testCase.additionalValuesDF
-          .write
-          .format("delta")
-          .mode("append")
-          .option("mergeSchema", "true")
-          .insertInto(tableSQLIdentifier)
+      withSQLConf(DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING.key -> "never") {
+        mayOverflow {
+          testCase.additionalValuesDF
+            .write
+            .format("delta")
+            .mode("append")
+            .option("mergeSchema", "true")
+            .insertInto(tableSQLIdentifier)
+        }
       }
 
       assert(readDeltaTableByIdentifier().schema("value").dataType === testCase.fromType)
     }
   }
 
-  test(s"INSERT - logs for missed opportunity for conversion") {
+  test(s"INSERT - logs for missed opportunity for conversion",
+      DSv2TemporarilyIncompatible("no usage logs on the DSv2 write path")) {
     val testCase = restrictedAutomaticWideningTestCases.head
 
     append(testCase.initialValuesDF)
 
+
     val events = Log4jUsageLogger.track {
-      withSQLConf(
-          SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.LEGACY.toString,
-          DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING.key -> "same_family_type") {
-        testCase.additionalValuesDF
-        .write
-        .format("delta")
-        .mode("append")
-        .option("mergeSchema", "true")
-        .insertInto(tableSQLIdentifier)
+      withSQLConf(DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING.key -> "same_family_type") {
+        mayOverflow {
+          testCase.additionalValuesDF
+            .write
+            .format("delta")
+            .mode("append")
+            .option("mergeSchema", "true")
+            .insertInto(tableSQLIdentifier)
+        }
       }
     }
 
@@ -128,18 +142,19 @@ trait TypeWideningInsertSchemaEvolutionBasicTests
       event.tags.get("opType") == Option("delta.typeWidening.missedAutomaticWidening")))
   }
 
-  test(s"INSERT - no logs for lack of missed opportunity for conversion") {
+  test(s"INSERT - no logs for lack of missed opportunity for conversion",
+      DSv2TemporarilyIncompatible("usage logging differs on the DSv2 write path")) {
     val testCase = supportedTestCases.head
     append(testCase.initialValuesDF)
 
     val events = Log4jUsageLogger.track {
-      withSQLConf(SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.LEGACY.toString) {
+      mayOverflow {
         testCase.additionalValuesDF
-        .write
-        .format("delta")
-        .mode("append")
-        .option("mergeSchema", "true")
-        .insertInto(tableSQLIdentifier)
+          .write
+          .format("delta")
+          .mode("append")
+          .option("mergeSchema", "true")
+          .insertInto(tableSQLIdentifier)
       }
     }
 
@@ -174,14 +189,13 @@ trait TypeWideningInsertSchemaEvolutionBasicTests
       s"${testCase.fromType.sql} -> ${testCase.toType.sql}") {
       append(testCase.initialValuesDF)
       // Test cases for some of the unsupported type changes may overflow while others only have
-      // values that can be implicitly cast to the narrower type - e.g. double ->float.
-      // We set storeAssignmentPolicy to LEGACY to ignore overflows, this test only ensures
-      // that the table schema didn't evolve.
-      withSQLConf(SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.LEGACY.toString) {
+      // values that can be implicitly cast to the narrower type - e.g. double -> float. The write
+      // either succeeds or overflows; this test only ensures that the table schema didn't evolve.
+      mayOverflow {
         testCase.additionalValuesDF.write.mode("append")
           .insertInto(tableSQLIdentifier)
-        assert(readDeltaTableByIdentifier().schema("value").dataType === testCase.fromType)
       }
+      assert(readDeltaTableByIdentifier().schema("value").dataType === testCase.fromType)
     }
   }
 

@@ -1027,5 +1027,9 @@ trait DeltaDMLTestUtilsNameBased extends DeltaDMLTestUtils {
   override protected def dropTable(): Unit = {
     spark.sql(s"DROP TABLE IF EXISTS $tableSQLIdentifier")
     DeltaLog.clearCache()
+    // Delete any leftover files so each test starts from a clean slate. `defaultTablePath` does
+    // not require the table to still exist.
+    val leftoverPath = spark.sessionState.catalog.defaultTablePath(tableIdentifier).getPath
+    Utils.deleteRecursively(new File(leftoverPath))
   }
 }

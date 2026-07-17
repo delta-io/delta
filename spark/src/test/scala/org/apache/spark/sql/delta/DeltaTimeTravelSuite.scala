@@ -252,7 +252,7 @@ class DeltaTimeTravelSuite extends QueryTest
         sqlState = "42816",
         parameters = Map(
           "providedTimestamp" -> "2018-10-24 17:34:18.0",
-          "tableName" -> "2018-10-24 17:14:18.0",
+          "lastCommitTimestamp" -> "2018-10-24 17:14:18.0",
           "maximumTimestamp" -> "2018-10-24 17:14:18")
       )
       assert(history.getActiveCommitAtTime(start + 180.minutes, true).version === 9)
@@ -573,7 +573,7 @@ class DeltaTimeTravelSuite extends QueryTest
         sqlState = "42816",
         parameters = Map(
           "providedTimestamp" -> "2018-10-24 14:24:18.0",
-          "tableName" -> "2018-10-24 14:14:18.0",
+          "lastCommitTimestamp" -> "2018-10-24 14:14:18.0",
           "maximumTimestamp" -> "2018-10-24 14:14:18")
       )
 
@@ -587,7 +587,7 @@ class DeltaTimeTravelSuite extends QueryTest
         sqlState = "42816",
         parameters = Map(
           "providedTimestamp" -> "2018-10-24 14:24:18.0",
-          "tableName" -> "2018-10-24 14:14:18.0",
+          "lastCommitTimestamp" -> "2018-10-24 14:14:18.0",
           "maximumTimestamp" -> "2018-10-24 14:14:18")
       )
 
@@ -855,7 +855,7 @@ class DeltaTimeTravelSuite extends QueryTest
           sqlState = "42816",
           parameters = Map(
             "providedTimestamp" -> s"$timeAfterVersion2",
-            "tableName" -> s"$timeAtVersion1",
+            "lastCommitTimestamp" -> s"$timeAtVersion1",
             "maximumTimestamp" -> s"${timeAtVersion1.replaceFirst("\\.\\d+$", "")}") // exclude ms
         )
       }

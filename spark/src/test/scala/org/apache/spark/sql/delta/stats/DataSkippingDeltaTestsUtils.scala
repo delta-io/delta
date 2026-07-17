@@ -16,12 +16,20 @@
 
 package org.apache.spark.sql.delta.stats
 
-import org.apache.spark.sql.delta.DeltaLog
-import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, Metadata}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.SparkConf
+import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal, PredicateHelper}
 import org.apache.spark.sql.catalyst.plans.logical.Filter
+import org.apache.spark.sql.execution.RDDScanExec
+import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types._
+import org.apache.spark.util.Utils
 
 trait DataSkippingDeltaTestsUtils extends PredicateHelper {
   protected def parse(
@@ -86,5 +94,79 @@ trait DataSkippingDeltaTestsUtils extends PredicateHelper {
     assert(res.scanned.bytesCompressed.get == res.files.map(_.size).sum)
     assert(!checkEmptyUnusedFilters || res.unusedFilters.isEmpty)
     res.files
+  }
+}
+
+/**
+ * Used to disable the tests with the old stats collection behavior on long-running suites to
+ * avoid time-out
+ * TODO(lin): remove this after we remove the DELTA_COLLECT_STATS_USING_TABLE_SCHEMA flag
+ */
+trait DataSkippingDisableOldStatsSchema extends DataSkippingDeltaTestsBase {
+
+  protected override def test(testName: String, testTags: org.scalatest.Tag*)
+                             (testFun: => Any)
+                             (implicit pos: org.scalactic.source.Position): Unit = {
+    // Adding the null check in case tableSchemaOnlyTag has not been initialized in base traits
+    val newTestTags = if (tableSchemaOnlyTag == null) testTags else tableSchemaOnlyTag +: testTags
+    super.test(testName, newTestTags: _*)(testFun)(pos)
+  }
+}
+
+/** DataSkipping tests under id column mapping */
+trait DataSkippingDeltaIdColumnMapping extends DataSkippingDeltaTestsBase
+  with DeltaColumnMappingTestUtils {
+
+  override def expectedStatsForFile(index: Int, colName: String, deltaLog: DeltaLog): String = {
+    val x = colName.phy(deltaLog)
+    if (deltaLog.unsafeVolatileSnapshot.protocol.isFeatureSupported(DeletionVectorsTableFeature)) {
+      s"""{"numRecords":1,"minValues":{"$x":$index},"maxValues":{"$x":$index},""" +
+        s""""nullCount":{"$x":0},"tightBounds":true}""".stripMargin
+    } else {
+      s"""{"numRecords":1,"minValues":{"$x":$index},"maxValues":{"$x":$index},""" +
+        s""""nullCount":{"$x":0}}""".stripMargin
+    }
+  }
+}
+
+trait DataSkippingDeltaTestV1ColumnMappingMode extends DataSkippingDeltaIdColumnMapping {
+  override protected def getStatsDf(deltaLog: DeltaLog, columns: Column*): DataFrame = {
+    deltaLog.snapshot.withStats.select("stats.*")
+      .select(convertToPhysicalColumns(columns, deltaLog): _*)
+  }
+}
+
+/**
+ * V1 name-column-mapping additionally runs the full test body (the id-mode variant runs only the
+ * selected subset). `runAllTests` is declared on [[DeltaColumnMappingSelectedTestMixin]], which
+ * `DeltaColumnMappingEnableNameMode` brings in.
+ */
+trait DataSkippingDeltaV1NameColumnMappingMode
+  extends DataSkippingDeltaTestV1ColumnMappingMode
+  with DeltaColumnMappingEnableNameMode {
+  override protected def runAllTests: Boolean = true
+}
+
+/** Writes V2 checkpoints with a JSON top-level file. */
+trait DataSkippingCheckpointV2Json extends DataSkippingDeltaTestsBase {
+  override protected def sparkConf: SparkConf = {
+    super.sparkConf.setAll(
+      Seq(
+        DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name,
+        DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> V2Checkpoint.Format.JSON.name
+      )
+    )
+  }
+}
+
+/** Writes V2 checkpoints with a Parquet top-level file. */
+trait DataSkippingCheckpointV2Parquet extends DataSkippingDeltaTestsBase {
+  override protected def sparkConf: SparkConf = {
+    super.sparkConf.setAll(
+      Seq(
+        DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name,
+        DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> V2Checkpoint.Format.PARQUET.name
+      )
+    )
   }
 }
