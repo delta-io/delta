@@ -44,6 +44,7 @@ import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.data.TransactionStateRow;
+import io.delta.kernel.internal.util.SchemaIterable;
 import io.delta.kernel.metrics.TransactionReport;
 import io.delta.kernel.transaction.CreateTableTransactionBuilder;
 import io.delta.kernel.transaction.DataLayoutSpec;
@@ -374,7 +375,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
         throw new IllegalArgumentException(
             String.format("New column '%s' must be nullable", newField.getName()));
       }
-      validateNoGeneratedColumnMappingMetadata(newField, newField.getName());
+      validateNoGeneratedColumnMappingMetadata(newField);
       fields.add(newField);
     }
     return Optional.of(new StructType(fields));
@@ -425,34 +426,17 @@ public abstract class AbstractKernelTable implements DeltaTable {
     return currentType.equals(targetType);
   }
 
-  private static void validateNoGeneratedColumnMappingMetadata(
-      StructField field, String fieldPath) {
-    for (String metadataKey : GENERATED_COLUMN_MAPPING_METADATA_KEYS) {
-      if (field.getMetadata().contains(metadataKey)) {
-        throw new IllegalArgumentException(
-            String.format(
-                "New column '%s' contains Kernel-managed metadata '%s'; remove it and let Delta "
-                    + "Kernel assign column mapping metadata",
-                fieldPath, metadataKey));
+  private static void validateNoGeneratedColumnMappingMetadata(StructField field) {
+    for (SchemaIterable.SchemaElement element : new SchemaIterable(new StructType().add(field))) {
+      for (String metadataKey : GENERATED_COLUMN_MAPPING_METADATA_KEYS) {
+        if (element.getField().getMetadata().contains(metadataKey)) {
+          throw new IllegalArgumentException(
+              String.format(
+                  "New column '%s' contains Kernel-managed metadata '%s'; remove it and let Delta "
+                      + "Kernel assign column mapping metadata",
+                  element.getNamePath(), metadataKey));
+        }
       }
-    }
-
-    DataType dataType = field.getDataType();
-    if (dataType instanceof StructType) {
-      for (StructField nestedField : ((StructType) dataType).fields()) {
-        validateNoGeneratedColumnMappingMetadata(
-            nestedField, fieldPath + "." + nestedField.getName());
-      }
-    } else if (dataType instanceof ArrayType) {
-      StructField elementField = ((ArrayType) dataType).getElementField();
-      validateNoGeneratedColumnMappingMetadata(
-          elementField, fieldPath + "." + elementField.getName());
-    } else if (dataType instanceof MapType) {
-      MapType map = (MapType) dataType;
-      validateNoGeneratedColumnMappingMetadata(
-          map.getKeyField(), fieldPath + "." + map.getKeyField().getName());
-      validateNoGeneratedColumnMappingMetadata(
-          map.getValueField(), fieldPath + "." + map.getValueField().getName());
     }
   }
 
