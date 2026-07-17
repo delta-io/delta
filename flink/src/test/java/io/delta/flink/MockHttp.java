@@ -20,6 +20,7 @@ import static com.github.tomakehurst.wiremock.client.WireMock.*;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
+import com.github.tomakehurst.wiremock.matching.RequestPatternBuilder;
 import dev.failsafe.function.CheckedConsumer;
 import java.net.URI;
 import java.util.HashMap;
@@ -52,6 +53,9 @@ public class MockHttp {
                 + "\"latest-table-version\": 1230}",
             tableId));
     stubs.put("/api/2.1/unity-catalog/delta/preview/metrics", "");
+    stubs.put(
+        "/api/2.1/unity-catalog/delta/v1/catalogs/.*/schemas/.*/tables/.*",
+        deltaTableResponse(tableId, tablePath, 0L));
 
     Map<String, String> errors =
         Map.of(
@@ -74,6 +78,16 @@ public class MockHttp {
         "{\"commits\": [], \"latest_table_version\": 1230}");
     stubs.put("/api/2.1/unity-catalog/delta/preview/metrics", "");
     return new MockHttp(stubs, Map.of());
+  }
+
+  private static String deltaTableResponse(String tableId, String tablePath, long version) {
+    return String.format(
+        "{\"metadata\":{\"table-uuid\":\"%s\",\"data-source-format\":\"DELTA\","
+            + "\"table-type\":\"MANAGED\",\"location\":\"%s\","
+            + "\"columns\":{\"type\":\"struct\",\"fields\":[]},\"properties\":{},"
+            + "\"partition-columns\":[],\"created-time\":1000},\"commits\":[],"
+            + "\"latest-table-version\":%d}",
+        tableId, tablePath, version);
   }
 
   private final WireMockServer wireMockServer;
@@ -109,5 +123,9 @@ public class MockHttp {
 
   public int port() {
     return this.wireMockServer.port();
+  }
+
+  public void verify(RequestPatternBuilder requestPattern) {
+    wireMockServer.verify(requestPattern);
   }
 }

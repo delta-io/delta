@@ -16,6 +16,11 @@
 
 package io.delta.flink.table;
 
+import static io.delta.kernel.internal.util.ColumnMapping.COLUMN_MAPPING_ID_KEY;
+import static io.delta.kernel.internal.util.ColumnMapping.COLUMN_MAPPING_NESTED_IDS_KEY;
+import static io.delta.kernel.internal.util.ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY;
+import static io.delta.kernel.internal.util.ColumnMapping.PARQUET_FIELD_ID_KEY;
+import static io.delta.kernel.internal.util.ColumnMapping.PARQUET_FIELD_NESTED_IDS_METADATA_KEY;
 import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 
 import dev.failsafe.Failsafe;
@@ -43,6 +48,11 @@ import io.delta.kernel.metrics.TransactionReport;
 import io.delta.kernel.transaction.CreateTableTransactionBuilder;
 import io.delta.kernel.transaction.DataLayoutSpec;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
+import io.delta.kernel.types.ArrayType;
+import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.FieldMetadata;
+import io.delta.kernel.types.MapType;
+import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
@@ -53,7 +63,7 @@ import java.net.URISyntaxException;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.*;
-import java.util.function.Function;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.conf.Configuration;
@@ -80,6 +90,13 @@ public abstract class AbstractKernelTable implements DeltaTable {
 
   protected static String ENGINE_INFO = "DeltaSink";
   protected static Logger LOG = LoggerFactory.getLogger(AbstractKernelTable.class);
+  private static final Set<String> GENERATED_COLUMN_MAPPING_METADATA_KEYS =
+      Set.of(
+          COLUMN_MAPPING_ID_KEY,
+          COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+          COLUMN_MAPPING_NESTED_IDS_KEY,
+          PARQUET_FIELD_ID_KEY,
+          PARQUET_FIELD_NESTED_IDS_METADATA_KEY);
 
   /**
    * Normalizes the given URI string to a canonical form. The normalization includes:
@@ -271,6 +288,195 @@ public abstract class AbstractKernelTable implements DeltaTable {
   }
 
   @Override
+  public void updateSchema(StructType targetSchema) {
+    Objects.requireNonNull(targetSchema, "targetSchema cannot be null");
+    if (refreshThreadPool == null) {
+      throw new IllegalStateException("DeltaTable must be opened before updating its schema");
+    }
+    AtomicReference<StructType> initialSchema = new AtomicReference<>();
+
+    withTiming(
+        "updateSchema",
+        () -> {
+          withRetry(() -> updateSchemaFromLatestSnapshot(targetSchema, initialSchema));
+        });
+  }
+
+  private Optional<Snapshot> updateSchemaFromLatestSnapshot(
+      StructType targetSchema, AtomicReference<StructType> initialSchema) {
+    Engine localEngine = getEngine();
+    Snapshot latestSnapshot =
+        loadLatestSnapshotUncached()
+            .orElseThrow(() -> new IllegalStateException("Snapshot should exist"));
+    StructType latestSchema = latestSnapshot.getSchema();
+    StructType schemaAtFirstAttempt = initialSchema.get();
+    if (schemaAtFirstAttempt == null) {
+      initialSchema.set(latestSchema);
+    } else if (!logicallyEqual(schemaAtFirstAttempt, latestSchema)) {
+      if (logicallyEqual(latestSchema, targetSchema)) {
+        refresh(latestSnapshot);
+        return Optional.empty();
+      }
+      throw new IllegalArgumentException(
+          String.format(
+              "Target schema is stale: table schema changed concurrently from %s to %s",
+              schemaAtFirstAttempt, latestSchema));
+    }
+    Optional<StructType> updatedSchema = buildAdditiveSchema(latestSchema, targetSchema);
+
+    if (updatedSchema.isEmpty()) {
+      refresh(latestSnapshot);
+      return Optional.empty();
+    }
+
+    UpdateTableTransactionBuilder txnBuilder =
+        latestSnapshot.buildUpdateTableTransaction(ENGINE_INFO, Operation.WRITE);
+    Transaction txn = txnBuilder.withUpdatedSchema(updatedSchema.get()).build(localEngine);
+    TransactionCommitResult result =
+        withTiming(
+            "updateSchema.txn", () -> txn.commit(localEngine, CloseableIterable.emptyIterable()));
+    TransactionReport report = result.getTransactionReport();
+    Optional<Snapshot> postCommitSnapshot = result.getPostCommitSnapshot();
+    postCommitSnapshot.ifPresent(
+        snapshot -> {
+          refresh(snapshot);
+          onPostCommit(snapshot, report);
+        });
+    if (postCommitSnapshot.isEmpty()) {
+      Snapshot refreshedSnapshot =
+          loadLatestSnapshotUncached()
+              .orElseThrow(() -> new IllegalStateException("Snapshot should exist after commit"));
+      refresh(refreshedSnapshot);
+      onPostCommit(refreshedSnapshot, report);
+      return Optional.of(refreshedSnapshot);
+    }
+    return postCommitSnapshot;
+  }
+
+  private static Optional<StructType> buildAdditiveSchema(
+      StructType currentSchema, StructType targetSchema) {
+    validateUniqueFieldNames(targetSchema);
+    if (targetSchema.length() < currentSchema.length()) {
+      throw new IllegalArgumentException(
+          String.format(
+              "Target schema is stale: current schema has %d fields but target schema has %d",
+              currentSchema.length(), targetSchema.length()));
+    }
+
+    for (int ordinal = 0; ordinal < currentSchema.length(); ordinal++) {
+      StructField currentField = currentSchema.at(ordinal);
+      StructField targetField = targetSchema.at(ordinal);
+      if (!logicallyEqual(currentField, targetField)) {
+        throw new IllegalArgumentException(
+            String.format(
+                "Unsupported schema change at ordinal %d. Current field: %s; target field: %s. "
+                    + "Only nullable top-level columns appended to the schema are supported",
+                ordinal, currentField, targetField));
+      }
+    }
+
+    if (targetSchema.length() == currentSchema.length()) {
+      return Optional.empty();
+    }
+
+    List<StructField> fields = new ArrayList<>(currentSchema.fields());
+    for (int ordinal = currentSchema.length(); ordinal < targetSchema.length(); ordinal++) {
+      StructField newField = targetSchema.at(ordinal);
+      if (!newField.isNullable()) {
+        throw new IllegalArgumentException(
+            String.format("New column '%s' must be nullable", newField.getName()));
+      }
+      fields.add(stripGeneratedColumnMappingMetadata(newField));
+    }
+    return Optional.of(new StructType(fields));
+  }
+
+  private static void validateUniqueFieldNames(StructType schema) {
+    Set<String> fieldNames = new HashSet<>();
+    for (StructField field : schema.fields()) {
+      String fieldName = Objects.requireNonNull(field.getName(), "Field name cannot be null");
+      if (!fieldNames.add(fieldName.toLowerCase(Locale.ROOT))) {
+        throw new IllegalArgumentException("Duplicate field name in target schema: " + fieldName);
+      }
+    }
+  }
+
+  private static boolean logicallyEqual(StructField currentField, StructField targetField) {
+    return currentField.getName().equals(targetField.getName())
+        && currentField.isNullable() == targetField.isNullable()
+        && logicallyEqual(currentField.getDataType(), targetField.getDataType());
+  }
+
+  private static boolean logicallyEqual(StructType currentSchema, StructType targetSchema) {
+    if (currentSchema.length() != targetSchema.length()) {
+      return false;
+    }
+    for (int ordinal = 0; ordinal < currentSchema.length(); ordinal++) {
+      if (!logicallyEqual(currentSchema.at(ordinal), targetSchema.at(ordinal))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private static boolean logicallyEqual(DataType currentType, DataType targetType) {
+    if (currentType instanceof StructType && targetType instanceof StructType) {
+      StructType currentStruct = (StructType) currentType;
+      StructType targetStruct = (StructType) targetType;
+      if (currentStruct.length() != targetStruct.length()) {
+        return false;
+      }
+      for (int ordinal = 0; ordinal < currentStruct.length(); ordinal++) {
+        if (!logicallyEqual(currentStruct.at(ordinal), targetStruct.at(ordinal))) {
+          return false;
+        }
+      }
+      return true;
+    }
+    if (currentType instanceof ArrayType && targetType instanceof ArrayType) {
+      return logicallyEqual(
+          ((ArrayType) currentType).getElementField(), ((ArrayType) targetType).getElementField());
+    }
+    if (currentType instanceof MapType && targetType instanceof MapType) {
+      MapType currentMap = (MapType) currentType;
+      MapType targetMap = (MapType) targetType;
+      return logicallyEqual(currentMap.getKeyField(), targetMap.getKeyField())
+          && logicallyEqual(currentMap.getValueField(), targetMap.getValueField());
+    }
+    return currentType.equals(targetType);
+  }
+
+  private static StructField stripGeneratedColumnMappingMetadata(StructField field) {
+    FieldMetadata.Builder metadata = FieldMetadata.builder().fromMetadata(field.getMetadata());
+    GENERATED_COLUMN_MAPPING_METADATA_KEYS.forEach(metadata::remove);
+    return field
+        .withDataType(stripGeneratedColumnMappingMetadata(field.getDataType()))
+        .withNewMetadata(metadata.build());
+  }
+
+  private static DataType stripGeneratedColumnMappingMetadata(DataType dataType) {
+    if (dataType instanceof StructType) {
+      List<StructField> fields =
+          ((StructType) dataType)
+              .fields().stream()
+                  .map(AbstractKernelTable::stripGeneratedColumnMappingMetadata)
+                  .collect(Collectors.toList());
+      return new StructType(fields);
+    }
+    if (dataType instanceof ArrayType) {
+      return new ArrayType(
+          stripGeneratedColumnMappingMetadata(((ArrayType) dataType).getElementField()));
+    }
+    if (dataType instanceof MapType) {
+      MapType map = (MapType) dataType;
+      return new MapType(
+          stripGeneratedColumnMappingMetadata(map.getKeyField()),
+          stripGeneratedColumnMappingMetadata(map.getValueField()));
+    }
+    return dataType;
+  }
+
+  @Override
   public Optional<Snapshot> commit(
       CloseableIterable<Row> actions, String appId, long txnId, Map<String, String> properties) {
     return withTiming(
@@ -279,7 +485,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
             withRetry(
                 () -> {
                   Engine localEngine = getEngine();
-                  Optional<Snapshot> snapshotOpt = snapshot();
+                  Optional<Snapshot> snapshotOpt = snapshotForCommit();
                   if (snapshotOpt.isEmpty()) {
                     throw new IllegalStateException("Snapshot should exist");
                   }
@@ -352,22 +558,28 @@ public abstract class AbstractKernelTable implements DeltaTable {
    * @return loaded snapshot, null if the table does not exist
    */
   protected Optional<Snapshot> snapshot() {
-    Function<String, Optional<Snapshot>> body =
-        (key) -> {
-          try {
-            return withTiming(
-                "loadLatestSnapshot",
-                () -> Optional.of(refreshThreadPool.submit(this::loadLatestSnapshot).get()));
-          } catch (Exception e) {
-            if (ExceptionUtils.isTableNotFound.test(e)) {
-              return Optional.empty();
-            }
-            throw ExceptionUtils.wrap(e);
-          }
-        };
     String path = tablePath.toString();
     LOG.debug("Loading snapshot for path {}", path);
-    return cacheManager.get(path, this::versionExists, body);
+    return cacheManager.get(path, this::versionExists, ignored -> loadLatestSnapshotUncached());
+  }
+
+  /** Loads the latest snapshot without consulting or updating the connector snapshot cache. */
+  protected Optional<Snapshot> loadLatestSnapshotUncached() {
+    try {
+      return withTiming(
+          "loadLatestSnapshot",
+          () -> Optional.of(refreshThreadPool.submit(this::loadLatestSnapshot).get()));
+    } catch (Exception e) {
+      if (ExceptionUtils.isTableNotFound.test(e)) {
+        return Optional.empty();
+      }
+      throw ExceptionUtils.wrap(e);
+    }
+  }
+
+  /** Returns the snapshot used to build a mutating transaction. */
+  protected Optional<Snapshot> snapshotForCommit() {
+    return snapshot();
   }
 
   /**

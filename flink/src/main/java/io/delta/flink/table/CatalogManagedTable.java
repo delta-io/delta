@@ -156,6 +156,13 @@ public class CatalogManagedTable extends AbstractKernelTable {
   }
 
   @Override
+  protected Optional<Snapshot> snapshotForCommit() {
+    // A snapshot created by the legacy staging-table flow has no three-part table identifier.
+    // Reload through UCCatalogManagedClient so Delta-Tables commits always get that identifier.
+    return loadLatestSnapshotUncached();
+  }
+
+  @Override
   public Optional<Snapshot> commit(
       CloseableIterable<Row> actions, String appId, long txnId, Map<String, String> properties) {
     // TODO remove this when CatalogManaged client supports update properties.
