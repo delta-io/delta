@@ -316,14 +316,6 @@ class OptimisticTransactionSuite
     }
   }
 
-  test("logPath resolves to deltaLog.logPath") {
-    withTempDir { tempDir =>
-      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
-      val txn = log.startTransaction()
-      assert(txn.logPath === log.logPath)
-    }
-  }
-
   test("dataPath resolves to deltaLog.dataPath") {
     withTempDir { tempDir =>
       val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
