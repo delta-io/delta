@@ -443,8 +443,8 @@ public class DeltaSinkTest extends TestHelper {
               ((HadoopTable) sink1.getTable()).getTablePath().toString());
         });
     withTempDir(
-        dir ->
-            MockHttp.withMock(
+          dir ->
+              MockHttp.withMock(
                 MockHttp.forNewUCTable(UUID.randomUUID().toString(), dir.getAbsolutePath()),
                 mockHttp -> {
                   DeltaSink sink2 =

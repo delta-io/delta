@@ -93,6 +93,29 @@ public interface DeltaTable extends Serializable, AutoCloseable {
   void open();
 
   /**
+   * Updates this table to the requested complete schema.
+   *
+   * <p>This operation currently supports adding nullable top-level columns at the end of the schema
+   * only. Every existing column must appear in {@code targetSchema} at the same ordinal with the
+   * same name, data type, and nullability. Renames, drops, reorders, type changes, changes to
+   * nested fields, and required new columns are rejected.
+   *
+   * <p>Existing field metadata is always preserved from the latest table snapshot. Column-mapping
+   * metadata supplied on new fields is discarded so Delta Kernel can assign column IDs and physical
+   * names. The target table must already support schema evolution, including any required table
+   * features such as column mapping.
+   *
+   * <p>The table must be {@link #open() opened} before this method is called. The call is
+   * synchronous and refreshes this instance after a successful commit. Supplying the current schema
+   * is a no-op.
+   *
+   * @param targetSchema complete desired table schema
+   * @throws IllegalArgumentException if the target is stale or contains an unsupported change
+   * @throws IllegalStateException if this table has not been opened
+   */
+  void updateSchema(StructType targetSchema);
+
+  /**
    * Commits a new version to the table by applying the provided Delta actions.
    *
    * <p>Actions may include (but are not limited to):
