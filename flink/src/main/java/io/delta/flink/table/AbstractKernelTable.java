@@ -50,7 +50,6 @@ import io.delta.kernel.transaction.DataLayoutSpec;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.FieldMetadata;
 import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
@@ -386,7 +385,8 @@ public abstract class AbstractKernelTable implements DeltaTable {
         throw new IllegalArgumentException(
             String.format("New column '%s' must be nullable", newField.getName()));
       }
-      fields.add(stripGeneratedColumnMappingMetadata(newField));
+      validateNoGeneratedColumnMappingMetadata(newField, newField.getName());
+      fields.add(newField);
     }
     return Optional.of(new StructType(fields));
   }
@@ -446,34 +446,35 @@ public abstract class AbstractKernelTable implements DeltaTable {
     return currentType.equals(targetType);
   }
 
-  private static StructField stripGeneratedColumnMappingMetadata(StructField field) {
-    FieldMetadata.Builder metadata = FieldMetadata.builder().fromMetadata(field.getMetadata());
-    GENERATED_COLUMN_MAPPING_METADATA_KEYS.forEach(metadata::remove);
-    return field
-        .withDataType(stripGeneratedColumnMappingMetadata(field.getDataType()))
-        .withNewMetadata(metadata.build());
-  }
+  private static void validateNoGeneratedColumnMappingMetadata(
+      StructField field, String fieldPath) {
+    for (String metadataKey : GENERATED_COLUMN_MAPPING_METADATA_KEYS) {
+      if (field.getMetadata().contains(metadataKey)) {
+        throw new IllegalArgumentException(
+            String.format(
+                "New column '%s' contains Kernel-managed metadata '%s'; remove it and let Delta "
+                    + "Kernel assign column mapping metadata",
+                fieldPath, metadataKey));
+      }
+    }
 
-  private static DataType stripGeneratedColumnMappingMetadata(DataType dataType) {
+    DataType dataType = field.getDataType();
     if (dataType instanceof StructType) {
-      List<StructField> fields =
-          ((StructType) dataType)
-              .fields().stream()
-                  .map(AbstractKernelTable::stripGeneratedColumnMappingMetadata)
-                  .collect(Collectors.toList());
-      return new StructType(fields);
-    }
-    if (dataType instanceof ArrayType) {
-      return new ArrayType(
-          stripGeneratedColumnMappingMetadata(((ArrayType) dataType).getElementField()));
-    }
-    if (dataType instanceof MapType) {
+      for (StructField nestedField : ((StructType) dataType).fields()) {
+        validateNoGeneratedColumnMappingMetadata(
+            nestedField, fieldPath + "." + nestedField.getName());
+      }
+    } else if (dataType instanceof ArrayType) {
+      StructField elementField = ((ArrayType) dataType).getElementField();
+      validateNoGeneratedColumnMappingMetadata(
+          elementField, fieldPath + "." + elementField.getName());
+    } else if (dataType instanceof MapType) {
       MapType map = (MapType) dataType;
-      return new MapType(
-          stripGeneratedColumnMappingMetadata(map.getKeyField()),
-          stripGeneratedColumnMappingMetadata(map.getValueField()));
+      validateNoGeneratedColumnMappingMetadata(
+          map.getKeyField(), fieldPath + "." + map.getKeyField().getName());
+      validateNoGeneratedColumnMappingMetadata(
+          map.getValueField(), fieldPath + "." + map.getValueField().getName());
     }
-    return dataType;
   }
 
   @Override
