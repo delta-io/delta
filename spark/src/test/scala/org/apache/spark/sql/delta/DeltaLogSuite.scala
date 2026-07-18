@@ -251,7 +251,8 @@ class DeltaLogSuite extends QueryTest
         log.store.write(
           FileNames.unsafeDeltaFile(log.logPath, 0L),
           Iterator(Action.supportedProtocolVersion(
-            featuresToExclude = Seq(CatalogOwnedTableFeature)), Metadata(), add)
+            featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature)),
+            Metadata(), add)
             .map(a => JsonUtils.toJson(a.wrap)),
           overwrite = false,
           log.newDeltaHadoopConf())
@@ -281,7 +282,8 @@ class DeltaLogSuite extends QueryTest
         log.store.write(
           FileNames.unsafeDeltaFile(log.logPath, 0L),
           Iterator(Action.supportedProtocolVersion(
-            featuresToExclude = Seq(CatalogOwnedTableFeature)), Metadata(), add)
+            featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature)),
+            Metadata(), add)
             .map(a => JsonUtils.toJson(a.wrap)),
           overwrite = false,
           log.newDeltaHadoopConf())

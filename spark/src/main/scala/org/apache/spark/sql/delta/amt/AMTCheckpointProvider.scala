@@ -104,7 +104,9 @@ final class AMTCheckpointProvider(
         modificationTime = 0L,
         dataChange = false,
         stats = stats,
-        deletionVector = dv)
+        deletionVector = dv,
+        baseRowId = entry.tracking.first_row_id,
+        defaultRowCommitVersion = entry.tracking.sequence_number)
       SingleAction(add = add)
     }
     val nonFileActions =

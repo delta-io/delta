@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.amt
 import java.io.File
 
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
-import org.apache.spark.sql.delta.{CommitStats, DeltaLog}
+import org.apache.spark.sql.delta.CommitStats
 import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -27,13 +27,14 @@ import org.apache.spark.sql.delta.util.JsonUtils
 class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
 
   test("inline emission embeds a Checkpoint action in the same commit at the interval boundary") {
-    withTempDir { dir =>
-      val path = dir.getCanonicalPath
-      createAMTTable(path, checkpointInterval = 2)
-      sql(s"INSERT INTO delta.`$path` VALUES (1)") // v1: not an interval boundary.
-      sql(s"INSERT INTO delta.`$path` VALUES (2)") // v2: interval boundary -> emit.
+    withTable("amt_inline_emit") {
+      val name = "amt_inline_emit"
+      createAMTTable(name, checkpointInterval = 2)
+      sql(s"INSERT INTO $name VALUES (1)") // v1: not an interval boundary.
+      sql(s"INSERT INTO $name VALUES (2)") // v2: interval boundary -> emit.
 
-      val deltaLog = DeltaLog.forTable(spark, path)
+      val deltaLog = deltaLogForName(name)
+      val path = tablePath(name)
       val snapshot = deltaLog.update()
       assert(snapshot.version == 2, "No follow-up commit: emission rides in the v2 commit itself.")
 
@@ -56,15 +57,16 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
   }
 
   test("no emission on a vanilla (non-AMT) table") {
-    withTempDir { dir =>
-      val path = dir.getCanonicalPath
+    withTable("amt_vanilla") {
+      val name = "amt_vanilla"
       sql(
-        s"""CREATE TABLE delta.`$path` (id INT) USING DELTA
+        s"""CREATE TABLE $name (id INT) USING DELTA
            |TBLPROPERTIES ('delta.checkpointInterval' = '2')""".stripMargin)
-      sql(s"INSERT INTO delta.`$path` VALUES (1)")
-      sql(s"INSERT INTO delta.`$path` VALUES (2)") // interval boundary, but no AMT feature.
+      sql(s"INSERT INTO $name VALUES (1)")
+      sql(s"INSERT INTO $name VALUES (2)") // interval boundary, but no AMT feature.
 
-      val deltaLog = DeltaLog.forTable(spark, path)
+      val deltaLog = deltaLogForName(name)
+      val path = tablePath(name)
       assert(rootFiles(path).isEmpty && leafFiles(path).isEmpty,
         "No AMT artifacts on a vanilla table.")
       assert(checkpointsAt(deltaLog, 2).isEmpty, "No Checkpoint action on a vanilla table.")
@@ -73,26 +75,28 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
   }
 
   test("no emission on a non-interval commit") {
-    withTempDir { dir =>
-      val path = dir.getCanonicalPath
-      createAMTTable(path, checkpointInterval = 10) // interval far from the versions we write.
-      sql(s"INSERT INTO delta.`$path` VALUES (1)") // v1: 1 % 10 != 0.
+    withTable("amt_non_interval") {
+      val name = "amt_non_interval"
+      createAMTTable(name, checkpointInterval = 10) // interval far from the versions we write.
+      sql(s"INSERT INTO $name VALUES (1)") // v1: 1 % 10 != 0.
 
-      val deltaLog = DeltaLog.forTable(spark, path)
+      val deltaLog = deltaLogForName(name)
       assert(checkpointsAt(deltaLog, 1).isEmpty, "v1 is not an interval boundary; no emission.")
-      assert(rootFiles(path).isEmpty, "No manifest tree written off an interval boundary.")
+      assert(rootFiles(tablePath(name)).isEmpty,
+        "No manifest tree written off an interval boundary.")
       assert(amtProvider(deltaLog.update()).isEmpty)
     }
   }
 
   test("leaf cardinality respects AMT_ENTRIES_PER_LEAF") {
-    withTempDir { dir =>
-      val path = dir.getCanonicalPath
-      createAMTTable(path, checkpointInterval = 2)
+    withTable("amt_entries_per_leaf") {
+      val name = "amt_entries_per_leaf"
+      createAMTTable(name, checkpointInterval = 2)
       withSQLConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "1") {
-        sql(s"INSERT INTO delta.`$path` VALUES (1)") // v1: one data file.
-        sql(s"INSERT INTO delta.`$path` VALUES (2)") // v2: one more data file -> 2 live files.
+        sql(s"INSERT INTO $name VALUES (1)") // v1: one data file.
+        sql(s"INSERT INTO $name VALUES (2)") // v2: one more data file -> 2 live files.
       }
+      val path = tablePath(name)
       // Two live AddFiles, one per leaf -> two leaves, one root.
       assert(leafFiles(path).size == 2, s"Expected 2 leaves, got ${leafFiles(path).size}.")
       assert(rootFiles(path).size == 1)
@@ -110,13 +114,13 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
   }
 
   test("commit stats carry AMT write metrics when an AMT is emitted") {
-    withTempDir { dir =>
-      val path = dir.getCanonicalPath
-      createAMTTable(path, checkpointInterval = 2)
-      sql(s"INSERT INTO delta.`$path` VALUES (1)") // v1: below the interval, no AMT.
+    withTable("amt_commit_stats") {
+      val name = "amt_commit_stats"
+      createAMTTable(name, checkpointInterval = 2)
+      sql(s"INSERT INTO $name VALUES (1)") // v1: below the interval, no AMT.
 
       // v2 hits the interval boundary and emits an AMT; capture that commit's stats.
-      val commitStats = commitStatsAt(sql(s"INSERT INTO delta.`$path` VALUES (2)"), version = 2)
+      val commitStats = commitStatsAt(sql(s"INSERT INTO $name VALUES (2)"), version = 2)
 
       val metrics = commitStats.amtWriteMetrics
         .getOrElse(fail("Commit stats should carry AMT write metrics when an AMT is emitted."))
@@ -127,11 +131,11 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
   }
 
   test("commit stats carry no AMT write metrics when no AMT is emitted") {
-    withTempDir { dir =>
-      val path = dir.getCanonicalPath
-      createAMTTable(path, checkpointInterval = 100) // interval far away, so v1 emits no AMT.
+    withTable("amt_no_commit_stats") {
+      val name = "amt_no_commit_stats"
+      createAMTTable(name, checkpointInterval = 100) // interval far away, so v1 emits no AMT.
 
-      val commitStats = commitStatsAt(sql(s"INSERT INTO delta.`$path` VALUES (1)"), version = 1)
+      val commitStats = commitStatsAt(sql(s"INSERT INTO $name VALUES (1)"), version = 1)
 
       assert(commitStats.amtWriteMetrics.isEmpty,
         "Commit stats must not carry AMT write metrics when no AMT is emitted.")
