@@ -551,10 +551,21 @@ trait Checkpoints extends DeltaLogging {
   }
 
   /** Returns the last complete checkpoint in the delta log directory (if any) */
-  private def findLastCompleteCheckpoint(): Option[CheckpointInstance] = {
+  private def findLastCompleteCheckpoint(): Option[CheckpointInstance] =
+    findLastCompleteCheckpoint(startVersion = 0L)
+
+  /**
+   * Returns the last complete checkpoint at or after `startVersion` by listing the delta log
+   * directory forward from that version. Unlike [[findLastCompleteCheckpointBefore]], which lists
+   * backward from an upper bound, this lists forward from a floor and returns the newest complete
+   * checkpoint found. `startVersion` is only a listing optimization (e.g. a `_last_checkpoint`
+   * hint used as a floor): if no complete checkpoint exists at or after it, the result is None and
+   * the caller is expected to fall back to a full listing from version 0.
+   */
+  private[delta] def findLastCompleteCheckpoint(startVersion: Long): Option[CheckpointInstance] = {
     val hadoopConf = newDeltaHadoopConf()
     val listingResult = store
-      .listFrom(listingPrefix(logPath, 0L), hadoopConf)
+      .listFrom(listingPrefix(logPath, math.max(0L, startVersion)), hadoopConf)
       // Checkpoint files of 0 size are invalid but Spark will ignore them silently when
       // reading such files, hence we drop them so that we never pick up such checkpoints.
       .collect { case CheckpointFile(file, _) if file.getLen != 0 => file }
