@@ -30,7 +30,9 @@ import io.delta.kernel.internal.replay.ActionsIterator;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.stats.FileSizeHistogram;
+import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.internal.util.IntervalParserUtils;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
@@ -68,6 +70,15 @@ public class ChecksumUtils {
    * reconstruction. The default mirrors Delta-Spark's {@code setTransactionsInCrc.maxAllowed}.
    */
   public static final long DEFAULT_SET_TRANSACTIONS_IN_CRC_THRESHOLD = 100L;
+
+  /**
+   * Table property that bounds how long {@link SetTransaction} actions are retained. When it is
+   * set, Delta considers transaction identifiers older than a wall-clock cutoff expired. The full
+   * replay path filters expired transactions and the incremental path omits the field entirely
+   * (mirroring Delta-Spark logic).
+   */
+  private static final String SET_TRANSACTION_RETENTION_DURATION_KEY =
+      "delta.setTransactionRetentionDuration";
 
   private static final Set<String> INCREMENTAL_SUPPORTED_OPS =
       Collections.unmodifiableSet(
@@ -110,6 +121,11 @@ public class ChecksumUtils {
    */
   public static void computeStateAndWriteChecksum(Engine engine, LogSegment logSegmentAtVersion)
       throws IOException {
+    computeStateAndWriteChecksum(engine, logSegmentAtVersion, System::currentTimeMillis);
+  }
+
+  public static void computeStateAndWriteChecksum(
+      Engine engine, LogSegment logSegmentAtVersion, Clock clock) throws IOException {
     requireNonNull(engine);
     requireNonNull(logSegmentAtVersion);
 
@@ -125,7 +141,7 @@ public class ChecksumUtils {
       return;
     }
 
-    CRCInfo crcInfo = computeChecksum(engine, logSegmentAtVersion);
+    CRCInfo crcInfo = computeChecksum(engine, logSegmentAtVersion, clock);
     ChecksumWriter checksumWriter = new ChecksumWriter(logSegmentAtVersion.getLogPath());
     checksumWriter.writeCheckSum(engine, crcInfo);
   }
@@ -156,6 +172,16 @@ public class ChecksumUtils {
    */
   public static CRCInfo computeChecksum(Engine engine, LogSegment logSegmentAtVersion)
       throws IOException {
+    return computeChecksum(engine, logSegmentAtVersion, System::currentTimeMillis);
+  }
+
+  /**
+   * Variant of {@link #computeChecksum(Engine, LogSegment)} that takes an explicit {@link Clock}.
+   * The clock supplies "now" for the {@code delta.setTransactionRetentionDuration} cutoff applied
+   * by the full-replay path; it is only consulted when that property is set.
+   */
+  public static CRCInfo computeChecksum(Engine engine, LogSegment logSegmentAtVersion, Clock clock)
+      throws IOException {
     requireNonNull(engine);
     requireNonNull(logSegmentAtVersion);
 
@@ -180,7 +206,7 @@ public class ChecksumUtils {
     // Use incrementally built CRC if available, otherwise do full log replay
     return incrementallyBuiltCrc.isPresent()
         ? incrementallyBuiltCrc.get()
-        : buildCrcInfoWithFullLogReplay(engine, logSegmentAtVersion);
+        : buildCrcInfoWithFullLogReplay(engine, logSegmentAtVersion, clock);
   }
 
   /**
@@ -210,7 +236,7 @@ public class ChecksumUtils {
    * @return The complete CRC info
    */
   private static CRCInfo buildCrcInfoWithFullLogReplay(
-      Engine engine, LogSegment logSegmentAtVersion) throws IOException {
+      Engine engine, LogSegment logSegmentAtVersion, Clock clock) throws IOException {
 
     StateTracker state = new StateTracker();
     state.collectSetTransactions = true;
@@ -279,7 +305,7 @@ public class ChecksumUtils {
         Optional.of(finalDomainMetadata),
         Optional.of(state.addedFileSizeHistogram),
         Optional.empty() /* inCommitTimestamp */,
-        state.collectedSetTransactions());
+        filterExpiredSetTransactions(state.collectedSetTransactions(), finalMetadata, clock));
   }
 
   /**
@@ -443,11 +469,19 @@ public class ChecksumUtils {
             .getFileSizeHistogram()
             .map(h -> state.addedFileSizeHistogram.plus(h).minus(state.removedFileSizeHistogram));
 
+    Metadata finalMetadata = state.metadataFromLog.orElseGet(lastSeenCrcInfo::getMetadata);
+
+    // Omit setTransactions on incremental path since it cannot maintain the wall-clock retention
+    // filter deterministically
+    Optional<List<SetTransaction>> incrementalSetTransactions =
+        isSetTransactionRetentionConfigured(finalMetadata)
+            ? Optional.empty()
+            : state.collectedSetTransactions();
     // Build and return the new CRC info
     return Optional.of(
         new CRCInfo(
             logSegment.getVersion(),
-            state.metadataFromLog.orElseGet(lastSeenCrcInfo::getMetadata),
+            finalMetadata,
             state.protocolFromLog.orElseGet(lastSeenCrcInfo::getProtocol),
             state.tableSizeByte.longValue() + lastSeenCrcInfo.getTableSizeBytes(),
             state.fileCount.longValue() + lastSeenCrcInfo.getNumFiles(),
@@ -455,7 +489,7 @@ public class ChecksumUtils {
             finalDomainMetadata,
             finalHistogram,
             Optional.empty() /* inCommitTimestamp */,
-            state.collectedSetTransactions()));
+            incrementalSetTransactions));
   }
 
   /** Processes an add file record and updates the state tracker. */
@@ -489,6 +523,35 @@ public class ChecksumUtils {
     if (state.collectSetTransactions && !txnVector.isNullAt(rowId)) {
       state.recordSetTransaction(SetTransaction.fromColumnVector(txnVector, rowId));
     }
+  }
+
+  private static boolean isSetTransactionRetentionConfigured(Metadata metadata) {
+    return metadata.getConfiguration().containsKey(SET_TRANSACTION_RETENTION_DURATION_KEY);
+  }
+
+  /**
+   * Applies {@code delta.setTransactionRetentionDuration} to the setTransactions gathered by a full
+   * log replay. A transaction is retained only when its {@code lastUpdated} is strictly newer than
+   * the retention cutoff.
+   *
+   * @param collected the setTransactions gathered during a full replay
+   * @param metadata the effective table metadata at the checksum version
+   * @param clock the clock supplying "now" for the retention cutoff
+   * @return the retention-filtered setTransactions (unchanged when retention is unset)
+   */
+  private static Optional<List<SetTransaction>> filterExpiredSetTransactions(
+      Optional<List<SetTransaction>> collected, Metadata metadata, Clock clock) {
+    if (!isSetTransactionRetentionConfigured(metadata) || !collected.isPresent()) {
+      return collected;
+    }
+    long cutoff =
+        clock.getTimeMillis()
+            - IntervalParserUtils.safeParseIntervalAsMillis(
+                metadata.getConfiguration().get(SET_TRANSACTION_RETENTION_DURATION_KEY));
+    return Optional.of(
+        collected.get().stream()
+            .filter(txn -> txn.getLastUpdated().map(updated -> updated > cutoff).orElse(false))
+            .collect(Collectors.toList()));
   }
 
   /** Processes a metadata record and updates the state tracker. */

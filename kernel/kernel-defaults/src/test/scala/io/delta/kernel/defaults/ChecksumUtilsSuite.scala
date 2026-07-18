@@ -161,6 +161,85 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
     }
   }
 
+  private def logSegmentAtLatest(
+      tablePath: String,
+      engine: Engine): io.delta.kernel.internal.snapshot.LogSegment = {
+    val version = Table.forPath(engine, tablePath).getLatestSnapshot(engine).getVersion()
+    Table.forPath(engine, tablePath)
+      .getSnapshotAsOfVersion(engine, version).asInstanceOf[SnapshotImpl].getLogSegment
+  }
+
+  // Writes one idempotent Spark append (producing a SetTransaction with a real-clock lastUpdated)
+  // to a table configured with delta.setTransactionRetentionDuration. Remove crc files so kernel
+  // recomputes from the log.
+  private def retentionTable(
+      tablePath: String,
+      engine: Engine,
+      retention: String): (io.delta.kernel.internal.snapshot.LogSegment, String) = {
+    val appId = "retention-app"
+    spark.sql(
+      s"CREATE TABLE delta.`$tablePath` (id LONG) USING delta " +
+        s"TBLPROPERTIES ('delta.setTransactionRetentionDuration' = '$retention')")
+    spark.range(end = 5).write.format("delta")
+      .option("txnAppId", appId)
+      .option("txnVersion", 1)
+      .mode("append").save(tablePath)
+    val version = Table.forPath(engine, tablePath).getLatestSnapshot(engine).getVersion()
+    deleteChecksumFileForTableUsingHadoopFs(tablePath.stripPrefix("file:"), (0 to version.toInt))
+    (logSegmentAtLatest(tablePath, engine), appId)
+  }
+
+  test("computeChecksum (full replay) retains setTransactions newer than the retention cutoff") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val (logSegment, appId) = retentionTable(tablePath, engine, retention = "interval 30 days")
+
+      // Write is well within a 30-day retention window.
+      val clock = new ManualClock(System.currentTimeMillis() + 1000L)
+      val crcInfo = ChecksumUtils.computeChecksum(engine, logSegment, clock)
+
+      assert(crcInfo.getSetTransactions.isPresent)
+      assert(crcInfo.getSetTransactions.get().asScala.map(_.getAppId).contains(appId))
+    }
+  }
+
+  test("computeChecksum (full replay) drops setTransactions older than the retention cutoff") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val (logSegment, appId) = retentionTable(tablePath, engine, retention = "interval 1 hours")
+
+      // Test is a year in the future, so a 1-hour retention window has long since expired.
+      val oneYearMillis = 365L * 24 * 60 * 60 * 1000
+      val clock = new ManualClock(System.currentTimeMillis() + oneYearMillis)
+      val crcInfo = ChecksumUtils.computeChecksum(engine, logSegment, clock)
+
+      // Field is present but the expired transaction is filtered.
+      assert(crcInfo.getSetTransactions.isPresent)
+      assert(!crcInfo.getSetTransactions.get().asScala.map(_.getAppId).contains(appId))
+    }
+  }
+
+  test("computeChecksum (incremental) omits setTransactions when retention is configured") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val (logSegment0, appId) = retentionTable(tablePath, engine, retention = "interval 30 days")
+      ChecksumUtils.computeStateAndWriteChecksum(engine, logSegment0)
+
+      val seedCrc = ChecksumUtils.computeChecksum(engine, logSegment0)
+      assert(seedCrc.getSetTransactions.isPresent)
+      assert(seedCrc.getSetTransactions.get().asScala.map(_.getAppId).contains(appId))
+
+      spark.range(5, 10).write.format("delta")
+        .option("txnAppId", "retention-app-2")
+        .option("txnVersion", 1)
+        .mode("append").save(tablePath)
+      val version = Table.forPath(engine, tablePath).getLatestSnapshot(engine).getVersion()
+      deleteChecksumFileForTableUsingHadoopFs(tablePath.stripPrefix("file:"), Seq(version.toInt))
+
+      val crcInfo = ChecksumUtils.computeChecksum(engine, logSegmentAtLatest(tablePath, engine))
+
+      // Incremental path omits the field entirely.
+      assert(!crcInfo.getSetTransactions.isPresent)
+    }
+  }
+
   test("computeChecksum returns the existing CRCInfo as-is for an already-checksummed " +
     "version, without recomputation") {
     withTempDirAndEngine { (tablePath, engine) =>

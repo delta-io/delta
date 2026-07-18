@@ -19,7 +19,7 @@ import java.util
 import java.util.{Collections, Optional}
 
 import io.delta.kernel.data.Row
-import io.delta.kernel.internal.actions.{DomainMetadata, Format, Metadata, Protocol}
+import io.delta.kernel.internal.actions.{DomainMetadata, Format, Metadata, Protocol, SetTransaction}
 import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.stats.FileSizeHistogram
 import io.delta.kernel.internal.types.DataTypeJsonSerDe
@@ -134,6 +134,22 @@ class CRCInfoFromRowSuite extends AnyFunSuite {
       Optional.empty()))
   }
 
+  test("round-trips with setTransactions present") {
+    assertRoundTrips(new CRCInfo(
+      14L,
+      testMetadata,
+      testProtocol,
+      4800L,
+      48L,
+      Optional.empty(),
+      Optional.empty(),
+      Optional.empty(),
+      Optional.empty(),
+      Optional.of(util.Arrays.asList(
+        new SetTransaction("app1", 5L, Optional.of(java.lang.Long.valueOf(100L))),
+        new SetTransaction("app2", 9L, Optional.empty())))))
+  }
+
   test("round-trips with all optional fields present") {
     assertRoundTrips(new CRCInfo(
       13L,
@@ -145,7 +161,8 @@ class CRCInfoFromRowSuite extends AnyFunSuite {
       Optional.of(domainMetadataSet("delta.clustering" -> "{\"cols\":[\"c1\"]}")),
       Optional.of(createTestHistogram(fileCount = 50)),
       Optional.of(java.lang.Long.valueOf(1749830871085L)),
-      Optional.empty()))
+      Optional.of(util.Arrays.asList(
+        new SetTransaction("app1", 5L, Optional.of(java.lang.Long.valueOf(100L)))))))
   }
 
   test("preserves the supplied version, independent of the row (toRow omits version)") {
