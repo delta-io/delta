@@ -18,9 +18,6 @@ The script will:
 """
 
 import json
-import contextlib
-import importlib.util
-import io
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -111,7 +108,7 @@ class SparkVersionSpec:
 SPARK_VERSIONS: Dict[str, SparkVersionSpec] = {
     "4.0.1": SparkVersionSpec(suffix="_4.0", support_iceberg=True, support_hudi=True),
     "4.1.0": SparkVersionSpec(suffix="_4.1", support_iceberg=True, support_hudi=False),
-    "4.2.0-SNAPSHOT": SparkVersionSpec(suffix="_4.2", support_iceberg=False, support_hudi=False)
+    "4.2.0-preview5": SparkVersionSpec(suffix="_4.2", support_iceberg=False, support_hudi=False)
 }
 
 # The default Spark version
@@ -406,10 +403,7 @@ class SparkVersionsScriptTest:
                 return False
 
             # Validate each entry has required fields
-            required_fields = [
-                "fullVersion", "shortVersion", "isMaster", "isDefault", "targetJvm",
-                "packageSuffix", "sourceBuildDefaultRef"
-            ]
+            required_fields = ["fullVersion", "shortVersion", "isMaster", "isDefault", "targetJvm", "packageSuffix"]
             for idx, entry in enumerate(data):
                 for field in required_fields:
                     if field not in entry:
@@ -419,9 +413,7 @@ class SparkVersionsScriptTest:
                 # Validate field types
                 if not isinstance(entry["fullVersion"], str) or not isinstance(entry["shortVersion"], str) or \
                    not isinstance(entry["isMaster"], bool) or not isinstance(entry["isDefault"], bool) or \
-                   not isinstance(entry["targetJvm"], str) or not isinstance(entry["packageSuffix"], str) or \
-                   not (entry["sourceBuildDefaultRef"] is None or
-                        isinstance(entry["sourceBuildDefaultRef"], str)):
+                   not isinstance(entry["targetJvm"], str) or not isinstance(entry["packageSuffix"], str):
                     print(f"  ✗ Entry {idx}: Invalid field types")
                     return False
 
@@ -531,240 +523,6 @@ class SparkVersionsScriptTest:
             print(f"  ✗ Failed: {e}")
             return False
 
-    def test_source_build_spark_versions(self) -> bool:
-        """Test source-build Spark versions for the non-blocking source Spark lane."""
-        if not self.ensure_json_exists():
-            return False
-
-        try:
-            result = subprocess.run(
-                ["python3", str(self.script_path), "--source-build-spark-versions"],
-                cwd=self.delta_root,
-                capture_output=True,
-                text=True,
-                check=True
-            )
-
-            source_build_versions = json.loads(result.stdout.strip())
-            if not isinstance(source_build_versions, list):
-                print("  ✗ Must output a JSON array")
-                return False
-
-            if not all(isinstance(v, str) for v in source_build_versions):
-                print("  ✗ All entries must be strings")
-                return False
-
-            with open(self.json_path, 'r') as f:
-                data = json.load(f)
-
-            expected = [
-                "master" if entry["isMaster"] else entry["shortVersion"]
-                for entry in data
-                if entry.get("sourceBuildDefaultRef")
-            ]
-            if source_build_versions != expected:
-                print(f"  ✗ Expected {expected}, got {source_build_versions}")
-                return False
-
-            if "4.2" in source_build_versions:
-                by_short = {entry["shortVersion"]: entry for entry in data}
-                spark42 = by_short["4.2"]
-                if spark42["sourceBuildDefaultRef"] != "b6bd005ac7549411ec4e7dc944d7a0e19fd56561":
-                    print("  ✗ Spark 4.2 sourceBuildDefaultRef is not the expected pinned SHA")
-                    return False
-
-            print(f"  ✓ --source-build-spark-versions (non-blocking lane metadata): {source_build_versions}")
-            return True
-
-        except (subprocess.CalledProcessError, json.JSONDecodeError) as e:
-            print(f"  ✗ Failed: {e}")
-            return False
-
-    def test_non_source_build_spark_versions(self) -> bool:
-        """Test published Spark versions exclude non-blocking source-build versions."""
-        if not self.ensure_json_exists():
-            return False
-
-        try:
-            result = subprocess.run(
-                ["python3", str(self.script_path), "--non-source-build-spark-versions"],
-                cwd=self.delta_root,
-                capture_output=True,
-                text=True,
-                check=True
-            )
-
-            non_source_build_versions = json.loads(result.stdout.strip())
-            if not isinstance(non_source_build_versions, list):
-                print("  ✗ Must output a JSON array")
-                return False
-
-            if not all(isinstance(v, str) for v in non_source_build_versions):
-                print("  ✗ All entries must be strings")
-                return False
-
-            with open(self.json_path, 'r') as f:
-                data = json.load(f)
-
-            expected = [
-                "master" if entry["isMaster"] else entry["shortVersion"]
-                for entry in data
-                if not entry.get("sourceBuildDefaultRef")
-            ]
-            if non_source_build_versions != expected:
-                print(f"  ✗ Expected {expected}, got {non_source_build_versions}")
-                return False
-
-            if "4.2" in non_source_build_versions:
-                print("  ✗ Spark 4.2 should be handled by the non-blocking source-build lane")
-                return False
-
-            print(f"  ✓ --non-source-build-spark-versions: {non_source_build_versions}")
-            return True
-
-        except (subprocess.CalledProcessError, json.JSONDecodeError) as e:
-            print(f"  ✗ Failed: {e}")
-            return False
-
-    def test_resolve_source_build(self) -> bool:
-        """Test source-build resolution without fetching Spark from Git."""
-        if not self.ensure_json_exists():
-            return False
-
-        fake_sha = "b6bd005ac7549411ec4e7dc944d7a0e19fd56561"
-        try:
-            spec = importlib.util.spec_from_file_location("get_spark_version_info", self.script_path)
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            module.resolve_spark_sha = lambda spark_repo, spark_ref, spark_dir: fake_sha
-
-            previous_argv = sys.argv
-            output = io.StringIO()
-            try:
-                sys.argv = [
-                    str(self.script_path),
-                    "--resolve-source-build",
-                    "--spark-version",
-                    "4.2",
-                ]
-                with contextlib.redirect_stdout(output):
-                    module.main()
-            finally:
-                sys.argv = previous_argv
-
-            values = {}
-            for line in output.getvalue().splitlines():
-                if "=" in line:
-                    key, value = line.split("=", 1)
-                    values[key] = value
-
-            expected = {
-                "spark_version": "4.2",
-                "spark_sha": fake_sha,
-                "artifact_base_version": "4.2.0",
-                "spark_artifact_version": "4.2.0-b6bd005ac754-SNAPSHOT",
-            }
-            for key, expected_value in expected.items():
-                if values.get(key) != expected_value:
-                    print(f"  ✗ {key}: expected {expected_value}, got {values.get(key)}")
-                    return False
-
-            if "cache_key" not in values:
-                print("  ✗ --resolve-source-build did not emit cache_key")
-                return False
-            if not values["cache_key"].startswith("spark-m2-ubuntu-24.04-scala-2.13-4.2-4.2.0-"):
-                print(f"  ✗ unexpected cache_key: {values['cache_key']}")
-                return False
-
-            print("  ✓ --resolve-source-build: emitted expected non-blocking source-build metadata")
-            return True
-
-        except Exception as e:
-            print(f"  ✗ Failed: {e}")
-            return False
-
-    def test_resolve_source_build_cache_key(self) -> bool:
-        """Test that compute_spark_m2_cache_key is exact and SHA/build-script sensitive."""
-        fake_sha = "b6bd005ac7549411ec4e7dc944d7a0e19fd56561"
-        build_script = self.delta_root / "project" / "scripts" / "build_spark.sh"
-        try:
-            spec = importlib.util.spec_from_file_location("get_spark_version_info", self.script_path)
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-
-            cache_key = module.compute_spark_m2_cache_key(
-                "ubuntu-24.04", "4.2", "4.2.0", fake_sha, build_script
-            )
-            if not cache_key.startswith("spark-m2-ubuntu-24.04-scala-2.13-4.2-4.2.0-"):
-                print(f"  ✗ unexpected cache_key prefix: {cache_key}")
-                return False
-            if fake_sha not in cache_key:
-                print("  ✗ cache_key should include the resolved Spark SHA")
-                return False
-
-            # Deterministic for the same inputs.
-            again = module.compute_spark_m2_cache_key(
-                "ubuntu-24.04", "4.2", "4.2.0", fake_sha, build_script
-            )
-            if cache_key != again:
-                print("  ✗ cache_key should be deterministic for the same inputs")
-                return False
-
-            # Changes when the Spark SHA changes.
-            other = module.compute_spark_m2_cache_key(
-                "ubuntu-24.04", "4.2", "4.2.0", "deadbeef" * 5, build_script
-            )
-            if other == cache_key:
-                print("  ✗ cache_key should change when the Spark SHA changes")
-                return False
-
-            print("  ✓ compute_spark_m2_cache_key: exact and SHA-sensitive for non-blocking source-build metadata")
-            return True
-
-        except Exception as e:
-            print(f"  ✗ Failed: {e}")
-            return False
-
-    def test_source_build_artifact_version_format(self) -> bool:
-        """Test source-built Spark artifact version formatting from the shared helper."""
-        fake_sha = "b6bd005ac7549411ec4e7dc944d7a0e19fd56561"
-        try:
-            spec = importlib.util.spec_from_file_location("get_spark_version_info", self.script_path)
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-
-            artifact_version = module.compute_spark_artifact_version("4.2.0", fake_sha)
-            expected = "4.2.0-b6bd005ac754-SNAPSHOT"
-            if artifact_version != expected:
-                print(f"  ✗ artifact version: expected {expected}, got {artifact_version}")
-                return False
-
-            result = subprocess.run(
-                [
-                    "python3",
-                    str(self.script_path),
-                    "--format-source-build-artifact-version",
-                    "--artifact-base-version",
-                    "4.2.0",
-                    "--spark-sha",
-                    fake_sha,
-                ],
-                cwd=self.delta_root,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            if result.stdout.strip() != expected:
-                print(f"  ✗ CLI artifact version: expected {expected}, got {result.stdout.strip()}")
-                return False
-
-            print("  ✓ source-built artifact version formatting: shared helper")
-            return True
-
-        except Exception as e:
-            print(f"  ✗ Failed: {e}")
-            return False
-
     def test_get_field(self) -> bool:
         """Test that --get-field works for various version formats."""
         if not self.ensure_json_exists():
@@ -780,11 +538,6 @@ class SparkVersionsScriptTest:
                 # Test short version and full version
                 test_cases.append((entry["shortVersion"], "targetJvm", entry["targetJvm"]))
                 test_cases.append((entry["fullVersion"], "fullVersion", entry["fullVersion"]))
-                test_cases.append((
-                    entry["shortVersion"],
-                    "sourceBuildDefaultRef",
-                    entry["sourceBuildDefaultRef"]
-                ))
                 
                 # Test "master" if applicable
                 if entry["isMaster"]:
@@ -835,12 +588,7 @@ def main():
         script_test1_passed = script_test.test_json_format()
         script_test2_passed = script_test.test_all_spark_versions()
         script_test3_passed = script_test.test_released_spark_versions()
-        script_test4_passed = script_test.test_source_build_spark_versions()
-        script_test5_passed = script_test.test_non_source_build_spark_versions()
-        script_test6_passed = script_test.test_resolve_source_build()
-        script_test6b_passed = script_test.test_resolve_source_build_cache_key()
-        script_test6c_passed = script_test.test_source_build_artifact_version_format()
-        script_test7_passed = script_test.test_get_field()
+        script_test4_passed = script_test.test_get_field()
 
         # Test cross-Spark build workflow
         print("\n" + "="*70)
@@ -862,12 +610,7 @@ def main():
         print(f"  JSON Format:                            {'✓ PASSED' if script_test1_passed else '✗ FAILED'}")
         print(f"  All Spark Versions Output:              {'✓ PASSED' if script_test2_passed else '✗ FAILED'}")
         print(f"  Released Spark Versions Output:         {'✓ PASSED' if script_test3_passed else '✗ FAILED'}")
-        print(f"  Source-Build Versions (non-blocking): {'✓ PASSED' if script_test4_passed else '✗ FAILED'}")
-        print(f"  Non-Source-Build Spark Versions Output: {'✓ PASSED' if script_test5_passed else '✗ FAILED'}")
-        print(f"  Source-Build Resolve (non-blocking):  {'✓ PASSED' if script_test6_passed else '✗ FAILED'}")
-        print(f"  Source-Build Cache Key (non-block):   {'✓ PASSED' if script_test6b_passed else '✗ FAILED'}")
-        print(f"  Source-Build Artifact Version:          {'✓ PASSED' if script_test6c_passed else '✗ FAILED'}")
-        print(f"  Get Field Functionality:                {'✓ PASSED' if script_test7_passed else '✗ FAILED'}")
+        print(f"  Get Field Functionality:                {'✓ PASSED' if script_test4_passed else '✗ FAILED'}")
         print("\nPart 2: Cross-Spark Build Tests")
         print(f"  Default publishM2 (with suffix):        {'✓ PASSED' if build_test1_passed else '✗ FAILED'}")
         print(f"  skipSparkSuffix (backward compat):      {'✓ PASSED' if build_test2_passed else '✗ FAILED'}")
@@ -876,8 +619,6 @@ def main():
 
         all_tests_passed = (
             script_test1_passed and script_test2_passed and script_test3_passed and script_test4_passed and
-            script_test5_passed and script_test6_passed and script_test6b_passed and
-            script_test6c_passed and script_test7_passed and
             build_test1_passed and build_test2_passed and build_test3_passed
         )
 
