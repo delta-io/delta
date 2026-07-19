@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
+import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.test.SharedSparkSession
@@ -430,14 +430,8 @@ class DeltaV2CDFSuite
     withTable(tbl) {
       createRowTrackingTable(tbl)
       withStrictV2 {
-        // In V2 mode, the catalog returns DeltaV2Table from `loadTable(ident)`. The
-        // time-travel overload `loadTable(ident, version)` falls through to the parent
-        // `TableCatalog` default after `AbstractDeltaCatalog.loadTableWithTimeTravel` sees the
-        // non-DeltaTableV2 case, which throws Spark's `UNSUPPORTED_FEATURE.TIME_TRAVEL`. This
-        // also blocks `readChangeFeed` + `versionAsOf` -- the combination never reaches our
-        // V2 CDC rule.
         checkError(
-          intercept[AnalysisException] {
+          intercept[DeltaAnalysisException] {
             spark.read.format("delta")
               .option("readChangeFeed", "true")
               .option("startingVersion", "1")
@@ -446,8 +440,7 @@ class DeltaV2CDFSuite
               .table(tbl)
               .collect()
           },
-          "UNSUPPORTED_FEATURE.TIME_TRAVEL",
-          parameters = Map("relationId" -> s"`spark_catalog`.`default`.`$tbl`"))
+          "DELTA_UNSUPPORTED_TIME_TRAVEL_VIEWS")
       }
     }
   }
