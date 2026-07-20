@@ -963,7 +963,11 @@ class DummySnapshotWithAllFilesSupport(
       import org.apache.spark.sql.delta.implicits._
       val replay = new InMemoryLogReplay(None, None)
       val baseVersion = version - 1
-      if (baseVersion < 0) { // No prior commit exists
+      // Post-commit conversion passes the committed snapshot as readSnapshot and all active files
+      // as finalActionsToCommit, so it must not replay the base snapshot.
+      val finalActionsContainAllFiles =
+        txnInfo.readSnapshot.version == version
+      if (baseVersion < 0 || finalActionsContainAllFiles) { // No prior commit is needed
         replay.append(0, txnInfo.finalActionsToCommit.iterator)
       } else { // construct allFiles from baseSnapshot
         val baseSnapshot = baseVersion match {
