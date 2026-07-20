@@ -318,7 +318,7 @@ object SparkVersionSpec {
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,
     jacksonVersion = "2.18.2",
-    sourceBuildDefaultRef = Some("b6bd005ac7549411ec4e7dc944d7a0e19fd56561")
+    sourceBuildDefaultRef = Some("da6e110231beea1fa1bd0d259c2b49c7ea4d5085")
   )
 
   /** Default Spark version */
