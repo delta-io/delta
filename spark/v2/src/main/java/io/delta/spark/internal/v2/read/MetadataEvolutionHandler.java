@@ -505,7 +505,7 @@ public class MetadataEvolutionHandler {
    * <p>The persisted metadata is the source of truth for the analyzed schema. With {@code
    * mergeConsecutiveSchemaChanges=true}, the merger folds consecutive metadata-only commits and
    * writes the merged entry back to the durable schema log; the execution-time {@link
-   * SparkMicroBatchStream} then re-reads the same merged entry via {@link
+   * DeltaV2MicroBatchStream} then re-reads the same merged entry via {@link
    * DeltaSourceMetadataTrackingLog#getCurrentTrackedMetadata}.
    */
   public static Optional<PersistedMetadata> getPersistedMetadataForMicroBatchStream(
@@ -722,7 +722,7 @@ public class MetadataEvolutionHandler {
     try (CloseableIterator<CommitActions> commitsIter =
         // Always include CDC: the merger must stop on any file action
         StreamingHelper.getCommitActionsFromRangeUnsafe(
-            engine, commitRange, tablePath, SparkMicroBatchStream.CDC_ACTION_SET)) {
+            engine, commitRange, tablePath, DeltaV2MicroBatchStream.CDC_ACTION_SET)) {
       while (commitsIter.hasNext()) {
         try (CommitActions commit = commitsIter.next()) {
           long version = commit.getVersion();

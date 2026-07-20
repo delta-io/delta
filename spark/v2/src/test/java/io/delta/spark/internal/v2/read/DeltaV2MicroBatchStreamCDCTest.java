@@ -57,8 +57,8 @@ import scala.collection.JavaConverters;
 import scala.collection.immutable.Map$;
 import scala.collection.immutable.Seq;
 
-/** Tests for SparkMicroBatchStream CDC (Change Data Capture) support and DSv1/DSv2 parity. */
-public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
+/** Tests for DeltaV2MicroBatchStream CDC (Change Data Capture) support and DSv1/DSv2 parity. */
+class DeltaV2MicroBatchStreamCDCTest extends DeltaV2TestBase {
 
   // TODO(cdf3): Add test for CDF enabled in initial snapshot but disabled in a later commit.
 
@@ -71,7 +71,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
 
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
-    SparkMicroBatchStream stream =
+    DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
 
     RuntimeException exception =
@@ -108,7 +108,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
 
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
-    SparkMicroBatchStream stream =
+    DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
 
     long initVersion = snapshotManager.loadLatestSnapshot().getVersion();
@@ -128,7 +128,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
 
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
-    SparkMicroBatchStream stream =
+    DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
 
     // Init snapshot has CDF=on (v3), but startVersion=0 had CDF=off. The check must use the
@@ -150,7 +150,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
 
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
-    SparkMicroBatchStream stream =
+    DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
     long latestVersion = snapshotManager.loadLatestSnapshot().getVersion();
 
@@ -159,7 +159,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
     assertDoesNotThrow(() -> stream.validateCDFEnabledOnTable(latestVersion + 1));
   }
 
-  private static final SparkMicroBatchStreamTest.ScenarioSetup CDC_TWO_INSERT_SETUP =
+  private static final DeltaV2MicroBatchStreamTest.ScenarioSetup CDC_TWO_INSERT_SETUP =
       (tableName, tempDir) -> {
         sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2')", tableName);
         sql("INSERT INTO %s VALUES (3, 'User3')", tableName);
@@ -179,13 +179,13 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
             noMaxBytes),
         Arguments.of(
             "Empty table (no data files)",
-            (SparkMicroBatchStreamTest.ScenarioSetup) (t, d) -> {},
+            (DeltaV2MicroBatchStreamTest.ScenarioSetup) (t, d) -> {},
             /* isInitialSnapshot= */ true,
             noMaxFiles,
             noMaxBytes),
         Arguments.of(
             "Multiple inserts (5 versions)",
-            (SparkMicroBatchStreamTest.ScenarioSetup)
+            (DeltaV2MicroBatchStreamTest.ScenarioSetup)
                 (t, d) -> {
                   for (int i = 1; i <= 5; i++) {
                     sql("INSERT INTO %s VALUES (%d, 'V%d')", t, i, i);
@@ -231,7 +231,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
   @MethodSource("cdcFileChangesParameters")
   public void testGetFileChangesForCDC(
       String testDescription,
-      SparkMicroBatchStreamTest.ScenarioSetup setup,
+      DeltaV2MicroBatchStreamTest.ScenarioSetup setup,
       boolean isInitialSnapshot,
       Optional<Integer> maxFiles,
       Optional<Long> maxBytes,
@@ -267,7 +267,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
     // DSv2
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
-    SparkMicroBatchStream stream =
+    DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
     List<IndexedFile> dsv2Files = new ArrayList<>();
     try (CloseableIterator<IndexedFile> iter =
@@ -283,7 +283,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
     if (isInitialSnapshot) {
       assertCDCFileChangesMatch(dsv1Files, dsv2Files);
     } else {
-      SparkMicroBatchStreamTest.compareFileChanges(dsv1Files, dsv2Files);
+      DeltaV2MicroBatchStreamTest.compareFileChanges(dsv1Files, dsv2Files);
     }
   }
 
@@ -322,7 +322,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
             /* isInitialSnapshot= */ false,
             /* maxFiles= */ Optional.empty(),
             /* maxBytes= */ Optional.empty());
-    SparkMicroBatchStreamTest.compareFileChanges(dsv1Unlimited, dsv2Unlimited);
+    DeltaV2MicroBatchStreamTest.compareFileChanges(dsv1Unlimited, dsv2Unlimited);
 
     Set<Long> unlimitedVersions = new HashSet<>();
     for (IndexedFile f : dsv2Unlimited) {
@@ -350,7 +350,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
             /* isInitialSnapshot= */ false,
             /* maxFiles= */ Optional.of(1),
             /* maxBytes= */ Optional.empty());
-    SparkMicroBatchStreamTest.compareFileChanges(dsv1Limited, dsv2Limited);
+    DeltaV2MicroBatchStreamTest.compareFileChanges(dsv1Limited, dsv2Limited);
 
     Set<Long> limitedVersions = new HashSet<>();
     for (IndexedFile f : dsv2Limited) {
@@ -413,7 +413,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
             /* isInitialSnapshot= */ false,
             /* maxFiles= */ Optional.of(1),
             /* maxBytes= */ Optional.empty());
-    SparkMicroBatchStreamTest.compareFileChanges(dsv1Call1, dsv2Call1);
+    DeltaV2MicroBatchStreamTest.compareFileChanges(dsv1Call1, dsv2Call1);
 
     // Verify no END sentinel in partial result
     boolean dsv2HasEnd =
@@ -479,7 +479,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
             /* isInitialSnapshot= */ false,
             /* maxFiles= */ Optional.empty(),
             /* maxBytes= */ Optional.of(maxBytes));
-    SparkMicroBatchStreamTest.compareFileChanges(dsv1Files, dsv2Files);
+    DeltaV2MicroBatchStreamTest.compareFileChanges(dsv1Files, dsv2Files);
 
     long v2DataFiles =
         dsv2Files.stream().filter(f -> f.getVersion() == 2 && f.hasFileAction()).count();
@@ -511,7 +511,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
     sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2')", tableName);
 
     long commitVersion = 2;
-    SparkMicroBatchStream stream = createStream(tablePath);
+    DeltaV2MicroBatchStream stream = createStream(tablePath);
     CommitActions commit = getCommitActions(tablePath, commitVersion);
 
     List<IndexedFile> files;
@@ -557,7 +557,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
     sql("DELETE FROM %s WHERE id = 1", tableName);
 
     long commitVersion = 3;
-    SparkMicroBatchStream stream = createStream(tablePath);
+    DeltaV2MicroBatchStream stream = createStream(tablePath);
     CommitActions commit = getCommitActions(tablePath, commitVersion);
 
     List<IndexedFile> files;
@@ -603,7 +603,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
     long commitVersion = 3;
     writeSyntheticNoopMergeCommit(tablePath, commitVersion);
 
-    SparkMicroBatchStream stream = createStream(tablePath);
+    DeltaV2MicroBatchStream stream = createStream(tablePath);
 
     // Verify the commit has file actions (the synthetic commit has Add + Remove).
     CommitActions rawCommit = getCommitActions(tablePath, commitVersion);
@@ -684,7 +684,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
             /* isInitialSnapshot= */ false,
             /* maxFiles= */ Optional.empty(),
             /* maxBytes= */ Optional.empty());
-    SparkMicroBatchStreamTest.compareFileChanges(dsv1Files, dsv2Files);
+    DeltaV2MicroBatchStreamTest.compareFileChanges(dsv1Files, dsv2Files);
 
     // Verify ordering: RemoveFile (delete) before AddFile (insert) in delta log
     List<IndexedFile> dataFiles = new ArrayList<>();
@@ -711,7 +711,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
     sql("INSERT INTO %s VALUES (1, 'User1')", tableName);
 
     long commitVersion = 2;
-    SparkMicroBatchStream stream = createStream(tablePath);
+    DeltaV2MicroBatchStream stream = createStream(tablePath);
     CommitActions commit = getCommitActions(tablePath, commitVersion);
 
     DeltaSourceOffset endOffset =
@@ -830,7 +830,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
     sql("ALTER TABLE %s ADD COLUMNS (c3 INT)", tableName); // v3 metadata-only
 
     String schemaLogPath = new File(tempDir, "schema_log").getAbsolutePath();
-    SparkMicroBatchStream stream =
+    DeltaV2MicroBatchStream stream =
         createStreamWithSeededTrackingLog(tablePath, schemaLogPath, /* seededVersion= */ 2L);
 
     long commitVersion = 3L;
@@ -889,7 +889,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
     sql("INSERT INTO %s VALUES (2, 'b', 99)", tableName); // v4 post-barrier
 
     String schemaLogPath = new File(tempDir, "schema_log").getAbsolutePath();
-    SparkMicroBatchStream stream =
+    DeltaV2MicroBatchStream stream =
         createStreamWithSeededTrackingLog(tablePath, schemaLogPath, /* seededVersion= */ 2L);
 
     // Drive the stream from v2 (inclusive). Expected output structure:
@@ -942,7 +942,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
         tableName); // v3 protocol-only
 
     String schemaLogPath = new File(tempDir, "schema_log").getAbsolutePath();
-    SparkMicroBatchStream stream =
+    DeltaV2MicroBatchStream stream =
         createStreamWithSeededTrackingLog(tablePath, schemaLogPath, /* seededVersion= */ 2L);
 
     long commitVersion = 3L;
@@ -985,7 +985,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
     sql("ALTER TABLE %s ADD COLUMNS (c3 INT)", tableName); // v3 metadata-only
 
     String schemaLogPath = new File(tempDir, "schema_log").getAbsolutePath();
-    SparkMicroBatchStream stream =
+    DeltaV2MicroBatchStream stream =
         createStreamWithSeededTrackingLog(tablePath, schemaLogPath, /* seededVersion= */ 2L);
 
     long commitVersion = 3L;
@@ -1022,7 +1022,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
    * {@code seededVersion}. {@code mergeConsecutiveSchemaChanges=false} so the merger doesn't fold
    * later metadata into the seeded entry — useful when the test wants a specific divergence point.
    */
-  private SparkMicroBatchStream createStreamWithSeededTrackingLog(
+  private DeltaV2MicroBatchStream createStreamWithSeededTrackingLog(
       String tablePath, String schemaLogPath, long seededVersion) {
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
@@ -1064,7 +1064,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
     StructType tableSchema =
         io.delta.spark.internal.v2.utils.SchemaUtils.convertKernelSchemaToSparkSchema(
             seededSnapshot.getSchema());
-    return new SparkMicroBatchStream(
+    return new DeltaV2MicroBatchStream(
         snapshotManager,
         latestSnapshot,
         hadoopConf,
@@ -1124,7 +1124,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
       throws Exception {
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
-    SparkMicroBatchStream stream =
+    DeltaV2MicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
     List<IndexedFile> files = new ArrayList<>();
     try (CloseableIterator<IndexedFile> iter =
@@ -1180,13 +1180,13 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
         /* filters= */ emptySeq);
   }
 
-  private SparkMicroBatchStream createTestStreamWithDefaults(
+  private DeltaV2MicroBatchStream createTestStreamWithDefaults(
       PathBasedSnapshotManager snapshotManager, Configuration hadoopConf, DeltaOptions options) {
     io.delta.kernel.Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     StructType tableSchema =
         io.delta.spark.internal.v2.utils.SchemaUtils.convertKernelSchemaToSparkSchema(
             snapshot.getSchema());
-    return new SparkMicroBatchStream(
+    return new DeltaV2MicroBatchStream(
         snapshotManager,
         snapshot,
         hadoopConf,
@@ -1203,7 +1203,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
         /* metadataPath= */ "");
   }
 
-  private SparkMicroBatchStream createStream(String tablePath) {
+  private DeltaV2MicroBatchStream createStream(String tablePath) {
     Configuration hadoopConf = new Configuration();
     PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
     return createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
@@ -1351,7 +1351,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(tablePath));
     deltaLog.update(false, Option.empty(), Option.empty());
 
-    SparkMicroBatchStream stream = createStream(tablePath);
+    DeltaV2MicroBatchStream stream = createStream(tablePath);
     CommitActions commit = getCommitActions(tablePath, commitVersion);
 
     List<IndexedFile> files;
@@ -1445,7 +1445,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
     createEmptyTestTable(tablePath, tableName);
     sql("INSERT INTO %s VALUES (1, 'A')", tableName);
 
-    SparkMicroBatchStream stream = createStream(tablePath);
+    DeltaV2MicroBatchStream stream = createStream(tablePath);
 
     // Simulate a "Some+None" DV-diff result: the CDCDataFile is from fromDVDiff but the backing
     // AddFile has NO deletion vector (restore case). hasDeletionVector() returns false.
@@ -1497,7 +1497,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
 
   private void assertCDCFileChangesMatch(
       List<org.apache.spark.sql.delta.sources.IndexedFile> dsv1Files, List<IndexedFile> dsv2Files) {
-    SparkMicroBatchStreamTest.compareFileChanges(dsv1Files, dsv2Files);
+    DeltaV2MicroBatchStreamTest.compareFileChanges(dsv1Files, dsv2Files);
 
     // CDC metadata (only on DSv2 data files, not sentinels)
     for (int i = 0; i < dsv2Files.size(); i++) {
