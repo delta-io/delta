@@ -86,6 +86,8 @@ jobs:
       # sparkUnityCatalog; publish the pinned UC build locally before sbt runs.
       - name: Set up pinned Unity Catalog
         uses: ./.github/actions/setup-unitycatalog
+        env:
+          SPARK_ARTIFACT_VERSION: ${{ steps.spark-details.outputs.spark_full_version }}
       - name: Run Delta Spark Local Publishing and Examples Compilation
         # examples/scala/build.sbt will compile against the local Delta release version (e.g. 3.2.0-SNAPSHOT).
         # Thus, we need to publishM2 first so those jars are locally accessible.

@@ -1,13 +1,11 @@
 name: "V2 Changelog Tests (Spark 4.2)"
 
-# Runs only the V2 changelog tests against Spark 4.2-preview4. Scope is
+# Runs only the V2 changelog tests against the released Spark 4.2.0. Scope is
 # narrowly the tests under io.delta.spark.internal.v2.read.changelog.*
 # in spark-unified/test, which is what PR #6830 (test classpath fix) and
 # PR #6832 (DV support) actually exercise. The full Delta test suite
-# against Spark 4.2 is run by spark_test.yaml as a matrix lane with
-# continue-on-error: true, and includes pre-existing UC connector
-# incompatibilities (UCProxy bytecode against Spark 4.0's
-# CatalogStorageFormat.copy) that are not in scope for these PRs.
+# against released Spark 4.2 is run by spark_test.yaml as a blocking
+# published-artifact matrix lane.
 #
 # This workflow exists on the fork-CI branches only and is meant as
 # proof that the changelog tests pass against a real Spark 4.2 release.
@@ -32,6 +30,7 @@ jobs:
     env:
       SCALA_VERSION: "2.13.16"
       SPARK_VERSION: "4.2"
+      SPARK_ARTIFACT_VERSION: "4.2.0"
     steps:
       - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
       - name: install java

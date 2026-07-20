@@ -17,13 +17,21 @@
 package io.delta.spark.internal.v2.catalog;
 
 import java.util.Optional;
+import org.apache.spark.sql.connector.catalog.CatalogV2Util;
+import org.apache.spark.sql.connector.catalog.Column;
 import org.apache.spark.sql.connector.catalog.TableCapability;
+import org.apache.spark.sql.types.StructType;
 
 /**
  * Shim to build the DSv2 Delta table connector against different Spark versions.
  * This is the shim for Spark 4.0.
  */
 public abstract class DeltaV2TableShims {
+
+  /** Convert a Spark schema to DSv2 columns using the Spark 4.0 API. */
+  public static Column[] structTypeToV2Columns(StructType schema) {
+    return CatalogV2Util.structTypeToV2Columns(schema);
+  }
 
   /** No schema evolution capability in DSv2 before Spark 4.2. */
   public static Optional<TableCapability> schemaEvolutionCapability() {

@@ -98,7 +98,7 @@ object SparkMimaExcludes {
       ProblemFilters.exclude[MissingTypesProblem]("io.delta.exceptions.*"),
 
       // Changes in 4.2.0
-      // MDC and logBasedOnLevel were removed from Spark's Logging trait in Spark 4.2.0-SNAPSHOT
+      // MDC and logBasedOnLevel were removed from Spark's Logging trait in Spark 4.2.0
       ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaMergeBuilder.MDC"),
       ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaMergeBuilder.logBasedOnLevel")
 

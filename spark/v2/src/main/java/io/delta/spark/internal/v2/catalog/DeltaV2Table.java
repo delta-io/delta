@@ -53,7 +53,6 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
-import org.apache.spark.sql.connector.catalog.CatalogV2Util;
 import org.apache.spark.sql.connector.catalog.Column;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.MetadataColumn;
@@ -404,7 +403,7 @@ public class DeltaV2Table extends DeltaV2TableShims
 
   @Override
   public Column[] columns() {
-    return CatalogV2Util.structTypeToV2Columns(schema());
+    return DeltaV2TableShims.structTypeToV2Columns(schema());
   }
 
   @Override

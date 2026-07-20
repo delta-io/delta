@@ -2,11 +2,11 @@ name: "Set up pinned Unity Catalog build"
 description: >-
   Publishes Unity Catalog jars from the commit pinned in project/scripts/setup_unitycatalog_main.sh
   (the UC_PIN_SHA= line) to the runner's local Ivy / Maven caches, using GitHub Actions cache so the
-  slow UC build only runs the first time a pin is seen. Reads SPARK_VERSION (Spark major.minor
-  short form) from the calling job's env to pick the Spark variant UC builds against; matrix
-  workflows set this from `matrix.spark_version`, other workflows leave it unset and inherit the
-  script's default. The cache key reflects SPARK_VERSION literally - workflows that share the
-  default share one cache entry under an empty `spark-` segment.
+  slow UC build only runs the first time a pin and Spark artifact are seen. Reads SPARK_VERSION
+  (Spark major.minor short form) and optional SPARK_ARTIFACT_VERSION (the exact published or
+  commit-qualified Maven version) from the calling job's env. Matrix workflows set both; other
+  workflows leave them unset and inherit the script's default. The cache key includes both values
+  so UC bytecode compiled against one Spark artifact cannot be restored for another.
 
 runs:
   using: "composite"
@@ -20,11 +20,18 @@ runs:
           ~/.ivy2/local
           ~/.m2/repository/io/unitycatalog
         # Cache key hashes the setup script (so any script change invalidates) and includes the
-        # Spark short version (so 4.0 and 4.1 don't fight over a single shared cache entry).
-        key: uc-jars-${{ runner.os }}-spark${{ env.SPARK_VERSION }}-${{ hashFiles('project/scripts/setup_unitycatalog_main.sh') }}
+        # Spark variant plus exact artifact version. The latter changes with a source-build SHA.
+        key: uc-jars-${{ runner.os }}-spark${{ env.SPARK_VERSION }}-${{ env.SPARK_ARTIFACT_VERSION }}-${{ hashFiles('project/scripts/setup_unitycatalog_main.sh') }}
     - name: Build Unity Catalog from pinned SHA
       shell: bash
-      run: bash project/scripts/setup_unitycatalog_main.sh
+      run: |
+        # The broader SBT cache is restored before this action and may contain UC jars built by
+        # an older setup. On an exact UC-cache miss, force a rebuild instead of accepting those
+        # stale canaries. A cache hit is still verified by the script's Spark-build marker.
+        if [[ "${{ steps.uc-cache.outputs.cache-hit }}" != "true" ]]; then
+          export UC_FORCE=1
+        fi
+        bash project/scripts/setup_unitycatalog_main.sh
     - name: Save pinned UC cache
       # Only attempt a save when the restore missed. When multiple parallel matrix jobs all see
       # a cache miss (first CI run after a pin bump), only the first to reach this step wins the
@@ -37,4 +44,4 @@ runs:
         path: |
           ~/.ivy2/local
           ~/.m2/repository/io/unitycatalog
-        key: uc-jars-${{ runner.os }}-spark${{ env.SPARK_VERSION }}-${{ hashFiles('project/scripts/setup_unitycatalog_main.sh') }}
+        key: uc-jars-${{ runner.os }}-spark${{ env.SPARK_VERSION }}-${{ env.SPARK_ARTIFACT_VERSION }}-${{ hashFiles('project/scripts/setup_unitycatalog_main.sh') }}

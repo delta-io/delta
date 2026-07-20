@@ -1,0 +1,12 @@
+# Spark 4.2 Python overrides for packages not covered by the shared Spark 4.1 lock.
+# PySpark 4.2.0 was uploaded after UV_EXCLUDE_NEWER, so pin its exact published sdist.
+pyspark @ https://files.pythonhosted.org/packages/c3/33/c987434f5d50aa802779a004ca0fd45ee4350caab50554ad7283d5a22b50/pyspark-4.2.0.tar.gz \
+    --hash=sha256:5ad689d53570ee1674193fd4f9bda065f0db3be9363a27d2a3406cc457b70b61
+
+# Spark Connect in PySpark 4.2 requires PyArrow 18 or newer. Pin the Python 3.10 Linux wheel.
+pyarrow @ https://files.pythonhosted.org/packages/8a/77/4b3fab91a30e19e233e738d0c5eca5a8f6dd05758bc349a2ca262c65de79/pyarrow-18.1.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl \
+    --hash=sha256:c0a03da7f2758645d17b7b4f83c8bffeae5bbb7f974523fe901f36288d2eab71
+
+# PySpark 4.2's generated Spark Connect code requires the Protobuf 6.33.5 runtime.
+protobuf @ https://files.pythonhosted.org/packages/9b/53/a9443aa3ca9ba8724fdfa02dd1887c1bcd8e89556b715cfbacca6b63dbec/protobuf-6.33.5-cp39-abi3-manylinux2014_x86_64.whl \
+    --hash=sha256:cbf16ba3350fb7b889fca858fb215967792dc125b35c7976ca4818bee3521cf0

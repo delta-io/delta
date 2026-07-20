@@ -19,11 +19,11 @@ on:
 # Every PR runs:
 # 1. generate-matrix: split Spark versions (from CrossSparkVersions.scala) into published
 #    vs source-build lists.
-# 2. prepare_spark_source_cache: for each source-build Spark version, build Spark once and
+# 2. prepare_spark_source_cache: for each configured source-build Spark version, build Spark once and
 #    save the Maven cache (via the prepare-spark-env action with build-on-miss). This job is
 #    non-blocking; any source Spark build/cache failure is reported through source_spark_test.
-# 3. test: published Spark shards (4.0/4.1) without waiting on step 2.
-# 4. source_spark_test: source-built Spark shards (4.2 today) after step 2. It still runs if
+# 3. test: published Spark shards without waiting on step 2.
+# 4. source_spark_test: configured source-built Spark shards after step 2. It still runs if
 #    prepare_spark_source_cache fails, so the source-built Spark signal stays non-blocking.
 #
 # test and source_spark_test share two composite actions:
@@ -70,6 +70,7 @@ jobs:
     name: "Prepare Spark ${{ matrix.spark_version }} source cache"
     runs-on: ubuntu-24.04
     needs: generate-matrix
+    if: ${{ needs.generate-matrix.outputs.source_build_spark_versions != '[]' }}
     # Source-built Spark tracks unreleased APIs. Keep the producer non-blocking too,
     # otherwise a checkout/build/cache-save failure blocks the whole workflow before
     # source_spark_test can surface the same signal.
@@ -118,14 +119,14 @@ jobs:
           # Important: This must be the same as the length of shards in matrix
           num-shards: '8'
 
-  # Validates source-built Spark for every PR using the SHA in this branch's metadata.
+  # Validates each configured source-built Spark line using the SHA in branch metadata.
   source_spark_test:
     name: "DS Source Spark ${{ matrix.spark_version }}, Scala ${{ matrix.scala }}, Shard ${{ matrix.shard }}"
     runs-on: ubuntu-24.04
     needs: [generate-matrix, prepare_spark_source_cache]
     # Run even if the non-blocking prepare job failed. If no cache was produced, each
     # shard fails during restore/verification under this already non-blocking job.
-    if: ${{ always() && needs.generate-matrix.result == 'success' }}
+    if: ${{ always() && needs.generate-matrix.result == 'success' && needs.generate-matrix.outputs.source_build_spark_versions != '[]' }}
     # Source-built Spark lanes track unreleased Spark APIs and remain non-blocking
     # while still producing a full pass/fail signal for every PR.
     continue-on-error: true
