@@ -90,7 +90,7 @@ jobs:
           if [[ "${{ matrix.spark_version }}" == "4.0" ]]; then
             uv pip install --python .venv/bin/python --require-hashes -r .github/ci-requirements/spark-python/spark4.0.lock
           else
-            uv pip install --python .venv/bin/python --require-hashes -r .github/ci-requirements/spark-python/spark4.1.lock
+            uv pip install --python .venv/bin/python --require-hashes -r .github/ci-requirements/spark-python/spark4.1+.lock
           fi
           # pyspark installed with --no-deps: its only transitive dep (py4j) is in the lock file
           uv pip install --python .venv/bin/python --no-deps pyspark==${{ steps.spark-details.outputs.spark_full_version }}

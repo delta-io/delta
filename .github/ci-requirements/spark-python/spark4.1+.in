@@ -6,8 +6,8 @@
 #     --python-version 3.10 \
 #     --python-platform linux \
 #     --generate-hashes \
-#     -o spark4.1.lock \
-#     spark4.1.in
+#     -o spark4.1+.lock \
+#     spark4.1+.in
 #
 # NOTE: pyspark is NOT included — it's installed separately in the workflow
 # because its version is dynamically resolved from the build matrix.
