@@ -434,6 +434,18 @@ object SuiteGeneratorConfig {
         TestConfig(
           "UpdateCDCTests" :: Nil,
           List(List(Dims.UPDATE_SQL, Dims.NAME_BASED, Dims.ROW_TRACKING_ON, Dims.CHANGELOG_V2_CDC))
+        ),
+        TestConfig(
+          "DeleteCDCTableWithDVsTests" :: Nil,
+          List(List(
+            Dims.DELETE_SQL, Dims.NAME_BASED, Dims.DELETE_WITH_DVS, Dims.ROW_TRACKING_ON,
+            Dims.CHANGELOG_V2_CDC))
+        ),
+        TestConfig(
+          "UpdateCDCWithDeletionVectorsTests" :: Nil,
+          List(List(
+            Dims.UPDATE_SQL, Dims.NAME_BASED, Dims.UPDATE_DVS, Dims.ROW_TRACKING_ON,
+            Dims.CHANGELOG_V2_CDC))
         )
       )
     ),
@@ -461,7 +473,8 @@ object SuiteGeneratorConfig {
       case "UpdateSQLWithDeletionVectorsTests" =>
         !mixins.contains(Dims.UPDATE_DVS.traitName)
       case "UpdateCDCWithDeletionVectorsTests" =>
-        !List(Dims.UPDATE_DVS, Dims.CDC).map(_.traitName).forall(mixins.contains)
+        !mixins.contains(Dims.UPDATE_DVS.traitName) ||
+        !(mixins.contains(Dims.CDC.traitName) || mixins.contains(Dims.CHANGELOG_V2_CDC.traitName))
       case "RowTrackingDeleteDvBase" => !mixins.contains(Dims.PERSISTENT_DV_ON.traitName)
       case _ => false
     }

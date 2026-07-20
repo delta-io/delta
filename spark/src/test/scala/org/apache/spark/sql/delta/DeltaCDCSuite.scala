@@ -1161,7 +1161,7 @@ class DeltaCDCScalaSuite extends DeltaCDCSuiteBase {
 trait ChangelogV2CdcReadMixin extends DeltaCDCSuiteBase {
   override protected def sparkConf: SparkConf = super.sparkConf
   .set("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-  .set("spark.databricks.delta.changelogV2.enabled", "true")
+  .set(DeltaSQLConf.DELTA_CHANGELOG_V2_ENABLED.key, "true")
   // The V2 changelog read path requires row tracking (DELTA_CHANGELOG_REQUIRES_ROW_TRACKING).
   .set(DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey, "true")
 
@@ -1194,7 +1194,7 @@ trait ChangelogV2CdcReadMixin extends DeltaCDCSuiteBase {
         case Unbounded => ""
       }
 
-      withSQLConf("spark.databricks.delta.v2.enableMode" -> "STRICT") {
+      withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "STRICT") {
         tblId match {
         case _: TableName =>
           spark.sql(s"SELECT * FROM ${tblId.id} CHANGES $startClause $endClause").drop("_metadata")
