@@ -34,7 +34,7 @@ import org.apache.spark.sql.delta.storage.{ClosableIterator, SupportsRewinding}
 import org.apache.spark.sql.delta.storage.ClosableIterator._
 import org.apache.spark.sql.delta.util.{DateTimeUtils, TimestampFormatter}
 import org.apache.spark.sql.util.ScalaExtensions._
-import org.apache.hadoop.fs.{FileStatus, Path}
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{DataFrame, SparkSession}
@@ -809,11 +809,12 @@ case class DeltaSource(
       //    in that case, we need to recompute the start snapshot and evolve the schema if needed
       require(options.failOnDataLoss || !trackingMetadataChange,
         "Using schema from schema tracking log cannot tolerate missing commit files.")
-      deltaLog.getChangeLogFiles(
+      deltaLog.getChangesIterator(
         startVersion, catalogTableOpt, options.failOnDataLoss).flatMapWithClose {
-        case (version, filestatus) =>
+        commit =>
+          val version = commit.version
           // First pass reads the whole commit and closes the iterator.
-          val iter = DeltaSource.createRewindableActionIterator(spark, deltaLog, filestatus)
+          val iter = DeltaSource.createRewindableActionIterator(spark, commit)
           val (shouldSkipCommit, metadataOpt, protocolOpt) = iter
             .processAndClose { actionsIter =>
               validateCommitAndDecideSkipping(
@@ -1520,35 +1521,13 @@ object DeltaSource extends DeltaLogging {
   }
 
   /**
-   * Read an [[ClosableIterator]] of Delta actions from file status, considering memory constraints
+   * Read an [[ClosableIterator]] of Delta actions from a commit, considering memory constraints.
    */
   def createRewindableActionIterator(
       spark: SparkSession,
-      deltaLog: DeltaLog,
-      fileStatus: FileStatus): ClosableIterator[Action] with SupportsRewinding[Action] = {
+      commit: SingleCommit): ClosableIterator[Action] with SupportsRewinding[Action] = {
     val threshold = spark.sessionState.conf.getConf(DeltaSQLConf.LOG_SIZE_IN_MEMORY_THRESHOLD)
-    lazy val actions =
-      deltaLog.store.read(fileStatus, deltaLog.newDeltaHadoopConf()).map(Action.fromJson)
-    // Return a new [[CloseableIterator]] over the commit. If the commit is smaller than the
-    // threshold, we will read it into memory once and iterate over that every time.
-    // Otherwise, we read it again every time.
-    val shouldLoadIntoMemory = fileStatus.getLen < threshold
-    def createClosableIterator(): ClosableIterator[Action] = if (shouldLoadIntoMemory) {
-      // Reuse in the memory actions
-      actions.toIterator.toClosable
-    } else {
-      deltaLog.store.readAsIterator(fileStatus, deltaLog.newDeltaHadoopConf())
-        .withClose {
-          _.map(Action.fromJson)
-        }
-    }
-    new ClosableIterator[Action] with SupportsRewinding[Action] {
-      var delegatedIterator: ClosableIterator[Action] = createClosableIterator()
-      override def hasNext: Boolean = delegatedIterator.hasNext
-      override def next(): Action = delegatedIterator.next()
-      override def close(): Unit = delegatedIterator.close()
-      override def rewind(): Unit = delegatedIterator = createClosableIterator()
-    }
+    commit.getActionsIterator(threshold)
   }
 
   /**
