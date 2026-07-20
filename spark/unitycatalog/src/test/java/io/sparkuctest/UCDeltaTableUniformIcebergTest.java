@@ -16,6 +16,10 @@
 
 package io.sparkuctest;
 
+import com.databricks.spark.util.Log4jUsageLogger;
+import com.databricks.spark.util.UsageRecord;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.unitycatalog.client.delta.api.DeltaTablesApi;
 import io.unitycatalog.client.delta.model.DeltaLoadTableResponse;
 import java.time.Instant;
@@ -24,16 +28,25 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.hadoop.HadoopTables;
+import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
+import org.apache.spark.sql.delta.DeltaLog;
+import org.apache.spark.sql.delta.DeltaOperations;
+import org.apache.spark.sql.delta.DeltaTestUtils;
+import org.apache.spark.sql.delta.OptimisticTransaction;
+import org.apache.spark.sql.delta.Snapshot;
+import org.apache.spark.sql.delta.actions.Action;
 import org.apache.spark.sql.delta.catalog.DeltaTableV2;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
+import scala.Option;
 import scala.collection.JavaConverters;
+import scala.runtime.AbstractFunction0;
+import scala.runtime.BoxedUnit;
 
 /** Integration test that verifies UniForm Iceberg behaviors */
 public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseTest {
@@ -79,16 +92,20 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
    * credentials from the table's catalog storage properties.
    */
   private Configuration buildTestHadoopConf(String fullTableName) throws Exception {
-    String[] parts = fullTableName.split("\\.");
-    TableCatalog catalog = (TableCatalog) spark().sessionState().catalogManager().catalog(parts[0]);
-    DeltaTableV2 table =
-        (DeltaTableV2) catalog.loadTable(Identifier.of(new String[] {parts[1]}, parts[2]));
+    DeltaTableV2 table = loadDeltaTableV2(fullTableName);
     Configuration conf = spark().sessionState().newHadoopConf();
     if (table.catalogTable().isDefined()) {
       JavaConverters.mapAsJavaMap(table.catalogTable().get().storage().properties())
           .forEach(conf::set);
     }
     return conf;
+  }
+
+  /** Loads the {@link DeltaTableV2} for a fully-qualified UC table via the V2 catalog. */
+  private DeltaTableV2 loadDeltaTableV2(String fullTableName) throws Exception {
+    String[] parts = fullTableName.split("\\.");
+    TableCatalog catalog = (TableCatalog) spark().sessionState().catalogManager().catalog(parts[0]);
+    return (DeltaTableV2) catalog.loadTable(Identifier.of(new String[] {parts[1]}, parts[2]));
   }
 
   /**
@@ -230,6 +247,138 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
     }
   }
 
+  /**
+   * Verifies that {@code RESTORE TABLE} (which internally uses {@code commitLarge}) produces an
+   * incremental Iceberg conversion on the UC REST path.
+   *
+   * <p>The test writes two versions, then restores to version 1. At restore time the current
+   * snapshot already carries Iceberg metadata (from the version-2 conversion), so {@code
+   * commitLarge} performs an incremental conversion and the Iceberg snapshot chain is preserved.
+   */
+  @Test
+  public void uniformIcebergCommitLargeConversion() throws Exception {
+    Assumptions.assumeTrue(
+        Boolean.getBoolean("supportIceberg"),
+        "Skipping: Iceberg support not available for this Spark version");
+    withNewTable(
+        "uniform_iceberg_restore",
+        "id INT, data STRING",
+        null,
+        TableType.MANAGED,
+        UNIFORM_TABLE_PROPS,
+        fullTableName -> {
+          // Write 1 — incremental from delta v0 (CREATE TABLE); this INSERT writes data files, so
+          // an Iceberg snapshot exists.
+          sql("INSERT INTO %s VALUES (1, 'a')", fullTableName);
+          assertNoUniformPropsOnServer(fullTableName);
+          IcebergMeta meta1 = verifyIncrementalUniForm(fullTableName, 1L, 0L, -1L);
+
+          // Write 2 — regular incremental conversion
+          sql("INSERT INTO %s VALUES (2, 'b')", fullTableName);
+          assertNoUniformPropsOnServer(fullTableName);
+          IcebergMeta meta2 =
+              verifyIncrementalUniForm(fullTableName, 2L, 1L, meta1.currentSnapshotId);
+
+          // RESTORE to version 1 → commitLarge, incremental.
+          // INSERT did not change schema or configuration, so RESTORE passes the UC-managed
+          // metadata guard. readSnapshot (v2) carries Iceberg metadata → incremental.
+          sql("RESTORE TABLE %s TO VERSION AS OF 1", fullTableName);
+          assertNoUniformPropsOnServer(fullTableName);
+          long restoreVersion = currentVersion(fullTableName);
+          verifyIncrementalUniForm(fullTableName, restoreVersion, 2L, meta2.currentSnapshotId);
+        });
+  }
+
+  /**
+   * Verifies that conflict resolution on the UC REST path refreshes the transaction's {@code
+   * catalogTable} with fresh UniForm metadata, so the retry performs a minimal incremental Iceberg
+   * conversion instead of re-converting from a stale base version.
+   *
+   * <p>Scenario:
+   *
+   * <ul>
+   *   <li>v1: {@code INSERT} — atomic Iceberg conversion at v1.
+   *   <li>Start a transaction pinned to the v1 snapshot and v1 catalog table.
+   *   <li>v2: a concurrent {@code INSERT} lands — the "winning" commit. The pinned transaction's
+   *       snapshot and Iceberg catalog are now stale.
+   *   <li>Commit the pinned transaction: it conflicts with v2, and during conflict resolution
+   *       {@code getCommits} returns v2's UniformMetadata, refreshing the catalog table to {@code
+   *       convertedDeltaVersion=2}. The retry then converts only v3 ({@code fromVersion=3,
+   *       toVersion=3}).
+   * </ul>
+   *
+   * <p>Two {@code delta.iceberg.conversion.deltaCommitRange} events are emitted: the failed first
+   * attempt (stale v1 base) and the successful retry (fresh v2 base). Without the refresh, the
+   * retry would still use the stale v1 base and report {@code fromVersion=2}.
+   */
+  @Test
+  public void uniformIcebergConflictResolutionRefreshesCatalog() throws Exception {
+    Assumptions.assumeTrue(
+        Boolean.getBoolean("supportIceberg"),
+        "Skipping: Iceberg support not available for this Spark version");
+    withNewTable(
+        "uniform_iceberg_conflict",
+        "id INT",
+        null,
+        TableType.MANAGED,
+        UNIFORM_TABLE_PROPS,
+        fullTableName -> {
+          // v1: insert row 1 — triggers atomic Iceberg conversion at v1.
+          sql("INSERT INTO %s VALUES (1)", fullTableName);
+
+          // Pin a transaction to the v1 snapshot and v1 catalog table.
+          DeltaTableV2 table = loadDeltaTableV2(fullTableName);
+          DeltaLog deltaLog = table.deltaLog();
+          Snapshot v1Snapshot = table.update();
+          Option<CatalogTable> v1CatalogTable = table.catalogTable();
+          OptimisticTransaction txn =
+              deltaLog.startTransaction(v1CatalogTable, Option.apply(v1Snapshot));
+
+          // v2: concurrent insert — the "winning" commit that makes the pinned txn stale.
+          sql("INSERT INTO %s VALUES (2)", fullTableName);
+
+          // Commit the pinned txn: conflicts with v2, then retries as v3. Conflict resolution
+          // refreshes the catalog with v2's UniformMetadata (convertedDeltaVersion=2), so the retry
+          // converts only v3 incrementally.
+          scala.collection.immutable.Seq<Action> noActions =
+              JavaConverters.asScalaBuffer(java.util.Collections.<Action>emptyList()).toList();
+          List<UsageRecord> events =
+              JavaConverters.seqAsJavaList(
+                  Log4jUsageLogger.track(
+                      new AbstractFunction0<BoxedUnit>() {
+                        @Override
+                        public BoxedUnit apply() {
+                          txn.commit(noActions, DeltaOperations.ManualUpdate$.MODULE$);
+                          return BoxedUnit.UNIT;
+                        }
+                      }));
+
+          long latestVersion = table.update().version();
+          List<UsageRecord> rangeEvents =
+              scala.collection.JavaConverters.seqAsJavaList(
+                  DeltaTestUtils.filterUsageRecords(
+                      JavaConverters.asScalaBuffer(events).toSeq(),
+                      "delta.iceberg.conversion.deltaCommitRange"));
+          Assertions.assertEquals(
+              2, rangeEvents.size(), "Expected 2 deltaCommitRange events (failed attempt + retry)");
+
+          // The retry (last event) must use the refreshed v2 base, converting only v3.
+          ObjectMapper mapper = new ObjectMapper();
+          JsonNode retry = mapper.readTree(rangeEvents.get(rangeEvents.size() - 1).blob());
+          Assertions.assertEquals(
+              latestVersion,
+              retry.get("fromVersion").asLong(),
+              "Retry must convert from the refreshed v2 base (fromVersion="
+                  + latestVersion
+                  + "); a stale v1 base would give "
+                  + (latestVersion - 1));
+          Assertions.assertEquals(
+              latestVersion,
+              retry.get("toVersion").asLong(),
+              "Retry must convert up to the latest version");
+        });
+  }
+
   // ---------- Iceberg metadata reading ----------
 
   private static final class IcebergMeta {
@@ -286,7 +435,7 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
 
     Map<String, String> properties = new HashMap<>(table.properties());
 
-    Snapshot current = table.currentSnapshot();
+    org.apache.iceberg.Snapshot current = table.currentSnapshot();
     long currentSnapshotId = current != null ? current.snapshotId() : -1L;
     long parentSnapshotId =
         (current != null && current.parentId() != null) ? current.parentId() : -1L;

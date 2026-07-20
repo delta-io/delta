@@ -425,6 +425,18 @@ object TableFeature {
         TestFeatureWithTransitiveDependency,
         TestWriterFeatureWithTransitiveDependency)
     }
+    val adaptiveMetadataFeatureEnabled =
+      try {
+        SparkSession
+          .getActiveSession
+          .map(_.conf.get(DeltaSQLConf.V4_ADAPTIVE_METADATA_TABLE_PREVIEW_ENABLED))
+          .getOrElse(false)
+      } catch {
+        case _ => false
+      }
+    if (adaptiveMetadataFeatureEnabled) {
+      features += AdaptiveMetadataTableFeature
+    }
     val featureMap = features.map(f => f.name.toLowerCase(Locale.ROOT) -> f).toMap
     require(features.size == featureMap.size, "Lowercase feature names must not duplicate.")
     featureMap
@@ -905,6 +917,25 @@ object DeletionVectorsTableFeature
 
   override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
     DeletionVectorsPreDowngradeCommand(table)
+}
+
+object AdaptiveMetadataTableFeature
+  extends ReaderWriterFeature(name = "adaptiveMetadata-preview") {
+
+  // The [[AdaptiveMetadataTableFeature]] relies on the following features:
+  //  - catalogManaged: adaptive metadata tables are catalog managed (CCv2) only.
+  //  - rowTracking: stable row identity is required by the adaptive metadata layout.
+  //  - domainMetadata: listed explicitly even though rowTracking already requires it.
+  //  - deletionVectors: deletes are expressed as DVs rather than file rewrites.
+  //  - columnMapping: Iceberg v4 manifests reference columns by field ID, so column mapping
+  //    must be present. Note that presence alone is not enough; `id` mode is enforced separately
+  //    in [[OptimisticTransaction.scala]].
+  override def requiredFeatures: Set[TableFeature] = Set(
+    CatalogOwnedTableFeature,
+    RowTrackingFeature,
+    DomainMetadataTableFeature,
+    DeletionVectorsTableFeature,
+    ColumnMappingTableFeature)
 }
 
 object RowTrackingFeature extends WriterFeature(name = "rowTracking")

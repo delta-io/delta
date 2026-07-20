@@ -18,6 +18,7 @@ package io.sparkuctest;
 
 import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
 
+import io.delta.storage.commit.uccommitcoordinator.UCConfigUtils;
 import io.unitycatalog.client.api.TablesApi;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
@@ -38,7 +39,6 @@ import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.delta.catalog.UCDeltaCatalogClientImpl;
-import org.apache.spark.sql.delta.coordinatedcommits.UCTokenBasedRestClientFactory;
 import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
@@ -165,18 +165,27 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     // Set the catalog specific configs.
     UnityCatalogInfo uc = unityCatalogInfo();
     String catalogName = uc.catalogName();
+    String catalogPrefix = "spark.sql.catalog." + catalogName;
     conf =
-        conf.set("spark.sql.catalog." + catalogName, "io.unitycatalog.spark.UCSingleCatalog")
-            .set("spark.sql.catalog." + catalogName + ".uri", uc.serverUri())
-            .set("spark.sql.catalog." + catalogName + ".token", uc.serverToken());
+        conf.set(catalogPrefix, "io.unitycatalog.spark.UCSingleCatalog")
+            .set(catalogPrefix + ".uri", uc.serverUri());
+    if (uc.oauthTokenUri() != null) {
+      // OAuth client-credentials: the connector fetches a token from the OAuth token endpoint
+      // (uc.oauthTokenUri(): the local broker, or a real IdP for remote runs) and sends it as a
+      // Bearer. No static `.token` is set.
+      conf =
+          conf.set(catalogPrefix + ".auth.type", "oauth")
+              .set(catalogPrefix + ".auth.oauth.uri", uc.oauthTokenUri())
+              .set(catalogPrefix + ".auth.oauth.clientId", uc.oauthClientId())
+              .set(catalogPrefix + ".auth.oauth.clientSecret", uc.oauthClientSecret());
+    } else {
+      conf = conf.set(catalogPrefix + ".token", uc.serverToken());
+    }
     if (!useDeltaRestApiForTests()) {
       // Default is true. Tests can opt out.
       conf =
           conf.set(
-              "spark.sql.catalog."
-                  + catalogName
-                  + "."
-                  + UCTokenBasedRestClientFactory.DELTA_REST_API_ENABLED_KEY(),
+              "spark.sql.catalog." + catalogName + "." + UCConfigUtils.DELTA_REST_API_ENABLED_KEY,
               "false");
     }
     return conf;

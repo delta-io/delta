@@ -293,19 +293,13 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
         fileIndex: FileIndexType): Boolean = {
       val partitionColumns = getPartitionColumns(fileIndex)
       import DeltaTableUtils._
-      // Gate for the LIMIT file-pruning path. Only consulted in DeltaTableScan.unapply when
-      // matching LocalLimit + PhysicalOperation; if true, prepareDeltaScan calls
-      // filesForScan(limit, filters) (PrepareDeltaScan.filesForScan ->
-      // DataSkippingReader.filesForScan(limit, partitionFilters)), which applies filters during
-      // file listing and caps files at ~limit via pruneFilesByLimit. optimizeGeneratedColumns
-      // then swaps in PreparedDeltaFileIndex but leaves Filter nodes in the plan.
-      //
-      // A non-deterministic predicate (e.g. rand() > 0.5) references no columns, so
-      // isPredicatePartitionColumnsOnly is vacuously true and would enter that path. rand() is
-      // then evaluated during file listing (withStats.where) and again at execution (Filter in
-      // the plan), with independent random outcomes each time. The no-limit path
-      // (filesForScan(filters) -> filesForScanImpl) already drops non-deterministic filters
-      // from file skipping; exclude them here so we fall back to that path.
+      // Guards the LIMIT file-pruning path: when this returns true, the scan applies filters
+      // during file listing and caps the result at ~limit before the residual Filter runs at
+      // execution. This is only safe for deterministic partition filters -- a non-deterministic
+      // predicate like rand() > 0.5 references no columns, so isPredicatePartitionColumnsOnly is
+      // vacuously true for it, letting it slip onto this path and get evaluated twice (once per
+      // file, once per row), double-filtering the data. We exclude non-deterministic predicates
+      // here to avoid that.
       val skipNonDeterministicFilters =
         spark.conf.get(DeltaSQLConf.DELTA_LIMIT_PUSHDOWN_SKIP_NON_DETERMINISTIC_FILTERS)
       filters.forall { expr =>

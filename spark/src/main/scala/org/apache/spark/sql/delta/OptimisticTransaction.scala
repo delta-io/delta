@@ -37,6 +37,7 @@ import org.apache.spark.sql.delta.DeltaGeoSpatial
 import org.apache.spark.sql.delta.DeltaOperations.{ChangeColumn, ChangeColumns, CreateTable, Operation, ReplaceColumns, ReplaceTable, UpdateSchema}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.amt.{AMTCheckpointProvider, AMTWriteMetrics, AMTWriterManager}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -134,7 +135,9 @@ case class CommitStats(
   addFilesHistogram: Option[FileSizeHistogram] = None,
   removeFilesHistogram: Option[FileSizeHistogram] = None,
   numOfDomainMetadatas: Long = 0,
-  txnId: Option[String] = None
+  txnId: Option[String] = None,
+  /** Metrics for the inline AMT (Adaptive Metadata Tree) write, if this commit emitted one. */
+  amtWriteMetrics: Option[AMTWriteMetrics] = None
 )
 
 /**
@@ -295,6 +298,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
     spark.conf.get(DeltaSQLConf.FORCED_CHECKSUM_VALIDATION_MIN_TIME_INTERVAL_MINUTES)
 
   def clock: Clock = deltaLog.clock
+
+  override def dataPath: Path = deltaLog.dataPath
 
   // This would be a quick operation if we already validated the checksum
   // Otherwise, we should at least perform the validation here.
@@ -641,10 +646,12 @@ trait OptimisticTransactionImpl extends TransactionHelper
     if (!identityColumnAllowed &&
         ColumnWithDefaultExprUtils.hasIdentityColumn(newMetadataTmp.schema)) {
       throw DeltaErrors.unsupportedWriterTableFeaturesInTableException(
-        deltaLog.dataPath.toString, Seq(IdentityColumnsTableFeature.name))
+        dataPath.toString, Seq(IdentityColumnsTableFeature.name))
     }
 
     val protocolBeforeUpdate = protocol
+    newMetadataTmp = enableAdaptiveMetadataDependentFeatures(newMetadataTmp)
+
     // `readVersion == -1` indicates the current transaction is reading from a snapshot
     // where the table has not existed yet.
     // `isCreatingNewTable` will be true for commands like REPLACE and CREATE,
@@ -1045,6 +1052,60 @@ trait OptimisticTransactionImpl extends TransactionHelper
     } else {
       metadata
     }
+  }
+
+  /**
+   * Enable the dependencies of the [[AdaptiveMetadataTableFeature]] in the metadata.
+   * [[AdaptiveMetadataTableFeature.requiredFeatures]] only guarantees these features are present
+   * in the protocol (supported); several of them additionally need a metadata flag to be truly
+   * enabled(rowTracking, deletionVectors) or a specific configuration (column mapping `id` mode).
+   */
+  private def enableAdaptiveMetadataDependentFeatures(metadata: Metadata): Metadata = {
+    val adaptiveMetadataEnabled =
+      protocol.isFeatureSupported(AdaptiveMetadataTableFeature) ||
+        TableFeatureProtocolUtils.isFeatureSupportedInTableConfigs(
+          metadata.configuration, AdaptiveMetadataTableFeature)
+    if (!adaptiveMetadataEnabled) {
+      return metadata
+    }
+
+    val existingTableHasAdaptiveMetadata =
+      snapshot.protocol.isFeatureSupported(AdaptiveMetadataTableFeature)
+    if (!isCreatingNewTable && !existingTableHasAdaptiveMetadata) {
+      throw DeltaErrors.adaptiveMetadataUpgradeNotSupported(AdaptiveMetadataTableFeature.name)
+    }
+
+    // rowTracking / deletionVectors: these dependencies must be enabled via their metadata flag.
+    // If the flag is not set, auto-enable it. If it is explicitly set to `false`, the user is
+    // asking for behavior that conflicts with the feature's requirement, so fail rather than
+    // silently overriding.
+    val flagEnablements = Seq(
+      DeltaConfigs.ROW_TRACKING_ENABLED.key,
+      DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key)
+      .flatMap { key =>
+        metadata.configuration.get(key) match {
+          case None => Some(key -> "true")
+          case Some(v) if v.toBoolean => None
+          case Some(v) =>
+            throw DeltaErrors.adaptiveMetadataRequiresDependentFeatureEnabled(
+              AdaptiveMetadataTableFeature.name, key, v)
+        }
+      }
+    var updatedConfig = metadata.configuration ++ flagEnablements
+
+    // columnMapping: the feature requires `id` mode.
+    //  - New table, mode unspecified: auto-set `id`.
+    //  - Otherwise (e.g. an explicit mode was requested at CREATE) the resulting mode must be `id`,
+    //    else fail.
+    val modeExplicitlySet = metadata.configuration.contains(DeltaConfigs.COLUMN_MAPPING_MODE.key)
+    if (!modeExplicitlySet && isCreatingNewTable) {
+      updatedConfig += (DeltaConfigs.COLUMN_MAPPING_MODE.key -> IdMapping.name)
+    } else if (metadata.columnMappingMode != IdMapping) {
+      throw DeltaErrors.adaptiveMetadataRequiresColumnMappingIdMode(
+        AdaptiveMetadataTableFeature.name, metadata.columnMappingMode.name)
+    }
+
+    metadata.copy(configuration = updatedConfig)
   }
 
   private def setNewProtocolWithFeaturesEnabledByMetadata(metadata: Metadata): Unit = {
@@ -1671,9 +1732,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
     // If this transaction commits to the redirect destination location, then there is no
     // need to validate the subsequent no-redirect rules.
     val configuration = deltaLog.newDeltaHadoopConf()
-    val dataPath = snapshot.dataPath.toUri.getPath
+    val tableDataPath = dataPath.toUri.getPath
     val catalog = spark.sessionState.catalog
-    val isRedirectDest = redirectConfig.spec.isRedirectDest(catalog, configuration, dataPath)
+    val isRedirectDest = redirectConfig.spec.isRedirectDest(catalog, configuration, tableDataPath)
     if (isRedirectDest) return
     // Find all rules that match with the current application name.
     // If appName is not present, its no-redirect-rule are included.
@@ -1828,6 +1889,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
           case other => other
         }
       }
+      val preCommitLatestAMTCheckpointOpt = snapshot.checkpointProvider match {
+        case amt: AMTCheckpointProvider => Some(amt.checkpointAction)
+        case _ => None
+      }
       val currentTransactionInfo = CurrentTransactionInfo(
         txnId = txnId,
         readPredicates = readPredicates.asScala.toVector,
@@ -1842,7 +1907,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
         readRowIdHighWatermark = readRowIdHighWatermark,
         catalogTable = catalogTable,
         domainMetadata = domainMetadata,
-        op = op)
+        op = op,
+        preCommitLatestAMTCheckpointOpt = preCommitLatestAMTCheckpointOpt)
 
       // Register post-commit hooks if any
       lazy val hasFileActions = preparedActions.exists {
@@ -2639,6 +2705,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     lockCommitIfEnabled {
       var commitVersion = attemptVersion
       var updatedCurrentTransactionInfo = currentTransactionInfo
+      val amtWriterManager = new AMTWriterManager(snapshot, currentTransactionInfo.op)
       val isFsToCcCommit =
         snapshot.metadata.coordinatedCommitsCoordinatorName.isEmpty &&
           metadata.coordinatedCommitsCoordinatorName.nonEmpty
@@ -2651,13 +2718,22 @@ trait OptimisticTransactionImpl extends TransactionHelper
       for (attemptNumber <- 0 to maxRetryAttempts) {
         try {
           val (postCommitSnapshot, committedTransactionInfo) = if (!shouldCheckForConflicts) {
-            doCommit(commitVersion, updatedCurrentTransactionInfo, attemptNumber, isolationLevel)
+            doCommit(
+              commitVersion, updatedCurrentTransactionInfo, attemptNumber, isolationLevel,
+              amtWriterManager)
           } else recordDeltaOperation(deltaLog, "delta.commit.retry") {
+            // The [[CurrentTransactionInfo]] might keep on getting updated while resolving
+            // conflicts against the already committed concurrent transactions. This can happen
+            // when we resolve conflicts against no-data-change transaction - we might map our
+            // readFiles or we might rollback the no-data-change transaction and update our actions
+            // that we want to commit.
             val (newCommitVersion, newCurrentTransactionInfo) = checkForConflicts(
               commitVersion, updatedCurrentTransactionInfo, attemptNumber, isolationLevel)
             commitVersion = newCommitVersion
             updatedCurrentTransactionInfo = newCurrentTransactionInfo
-            doCommit(commitVersion, updatedCurrentTransactionInfo, attemptNumber, isolationLevel)
+            doCommit(
+              commitVersion, updatedCurrentTransactionInfo, attemptNumber, isolationLevel,
+              amtWriterManager)
           }
           return (commitVersion, postCommitSnapshot, updatedCurrentTransactionInfo)
         } catch {
@@ -2705,13 +2781,15 @@ trait OptimisticTransactionImpl extends TransactionHelper
    * Commit `actions` using `attemptVersion` version number. Throws a FileAlreadyExistsException
    * if any conflicts are detected.
    *
+   * @param amtWriterManager the AMT writer for this commit, shared across all attempts.
    * @return the post-commit snapshot and transaction info used by the successful commit.
    */
   protected def doCommit(
       attemptVersion: Long,
       currentTransactionInfo: CurrentTransactionInfo,
       attemptNumber: Int,
-      isolationLevel: IsolationLevel): (Snapshot, CurrentTransactionInfo) = {
+      isolationLevel: IsolationLevel,
+      amtWriterManager: AMTWriterManager): (Snapshot, CurrentTransactionInfo) = {
     val targetCatalogTable = catalogTable
     // If the table requires atomic Iceberg metadata generation
     // , generate iceberg metadata and update the transaction info.
@@ -2735,7 +2813,18 @@ trait OptimisticTransactionImpl extends TransactionHelper
         }
         updatedInfo
       }.getOrElse(currentTransactionInfo)
-    val actions = updatedCurrentTransactionInfo.finalActionsToCommit
+    val baseActions = updatedCurrentTransactionInfo.finalActionsToCommit
+    val amtWriteResultOpt = amtWriterManager.writeAMT(
+      commitVersion = attemptVersion,
+      currentTransactionInfo = updatedCurrentTransactionInfo,
+      preCommitLogSegment = preCommitLogSegment)
+    val actions = amtWriteResultOpt match {
+      case Some(result) if !result.includeActionsInCommitJson =>
+        throw new UnsupportedOperationException(
+          "Omitting file actions from the commit JSON is not yet supported.")
+      case Some(result) => baseActions :+ result.checkpoint
+      case None => baseActions
+    }
     logInfo(
       log"Attempting to commit version ${MDC(DeltaLogKeys.VERSION, attemptVersion)} with " +
       log"${MDC(DeltaLogKeys.NUM_ACTIONS, actions.size.toLong)} actions with " +
@@ -2743,7 +2832,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
     if (readVersion > -1 && metadata.id != snapshot.metadata.id) {
       val msg = s"Change in the table id detected in txn. Table id for txn on table at " +
-        s"${deltaLog.dataPath} was ${snapshot.metadata.id} when the txn was created and " +
+        s"${dataPath} was ${snapshot.metadata.id} when the txn was created and " +
         s"is now changed to ${metadata.id}."
       logWarning(msg)
       recordDeltaEvent(deltaLog, "delta.metadataCheck.commit", data = Map(
@@ -2767,12 +2856,14 @@ trait OptimisticTransactionImpl extends TransactionHelper
     commitEndNano = System.nanoTime()
 
     executionObserver.beginPostCommit()
+    val catalogTableForPostCommitSnapshot = catalogTable
     val postCommitSnapshot = deltaLog.updateAfterCommit(
       attemptVersion,
       commit,
       newChecksumOpt,
       preCommitLogSegment,
-      catalogTable)
+      catalogTableForPostCommitSnapshot,
+      amtCheckpointOpt = amtWriteResultOpt.map(_.checkpoint))
     val postCommitReconstructionTime = System.nanoTime()
     needsCheckpoint = isCheckpointNeeded(attemptVersion, postCommitSnapshot)
     val commitStatsComputer = new CommitStatsComputer()
@@ -2797,7 +2888,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
       // because it can trigger full state reconstruction.
       fileSizeHistogramOpt = postCommitSnapshot.checksumOpt.flatMap(_.fileSizeHistogram),
       commitInfoOpt = currentTransactionInfo.commitInfo,
-      commitSizeBytes = commitSizeBytes
+      commitSizeBytes = commitSizeBytes,
+      amtWriteMetricsOpt = Option.when(amtWriterManager.metrics.attempts.nonEmpty)(
+        amtWriterManager.metrics)
     )
 
     (postCommitSnapshot, committedTransactionInfo)

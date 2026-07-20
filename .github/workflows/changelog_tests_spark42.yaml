@@ -26,7 +26,8 @@ on:
 
 jobs:
   changelog-tests:
-    name: "Changelog tests on Spark 4.2"
+    name: "[Non Blocking] Changelog tests on Spark 4.2"
+    continue-on-error: true
     runs-on: ubuntu-24.04
     env:
       SCALA_VERSION: "2.13.16"

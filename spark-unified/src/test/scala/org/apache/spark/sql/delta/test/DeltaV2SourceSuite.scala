@@ -145,6 +145,7 @@ object DeltaV2SourceSuite {
     "deltaSourceIgnoreDeleteError contains removeFile, version, tablePath",
     "deltaSourceIgnoreChangesError contains changeInfo, version, tablePath",
     "excludeRegex throws good error on bad regex pattern",
+    "Delta sources should verify the protocol reader version",
 
     // ========== Misc tests ==========
     "a fast writer should not starve a Delta source",
@@ -179,12 +180,23 @@ object DeltaV2SourceSuite {
     // V2 only tolerates missing start versions with failOnDataLoss=false; mid-log gaps still
     // throw InvalidTableException because non-contiguous versions are not a log-retention scenario.
     "incremental: commit file gap between versions, failOnDataLoss=false succeeds",
+    // These tests directly use DeltaSource, not applicable to the v2 path.
+    "fail on missing trailing commit - trailing commit disappears between latestOffset and" +
+      " getBatch readChangeFeed=true midVersionEndOffset=true",
+    "fail on missing trailing commit - trailing commit disappears between latestOffset and" +
+      " getBatch readChangeFeed=true midVersionEndOffset=false",
+    "fail on missing trailing commit - trailing commit disappears between latestOffset and" +
+      " getBatch readChangeFeed=false midVersionEndOffset=true",
+    "fail on missing trailing commit - trailing commit disappears between latestOffset and" +
+      " getBatch readChangeFeed=false midVersionEndOffset=false",
+    "fail on missing trailing commit - empty batch from startIndex >= endIndex is not a" +
+      " false positive readChangeFeed=true",
+    "fail on missing trailing commit - empty batch from startIndex >= endIndex is not a" +
+      " false positive readChangeFeed=false",
 
     // === Misc ===
     // TODO(#5900): fix exception mismatch
     "no schema should throw an exception",
-    // TODO(#5900): fix exception mismatch
-    "Delta sources should verify the protocol reader version",
     // TODO(#5895): gracefully handle corrupt checkpoint
     "start from corrupt checkpoint",
 

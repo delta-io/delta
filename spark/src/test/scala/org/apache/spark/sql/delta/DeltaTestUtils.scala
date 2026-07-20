@@ -50,7 +50,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.util.{quietly, FailFastMode}
-import org.apache.spark.sql.execution.{FileSourceScanExec, QueryExecution, RDDScanExec, SparkPlan, WholeStageCodegenExec}
+import org.apache.spark.sql.execution.{FileSourceScanLike, QueryExecution, RDDScanExec, SparkPlan, WholeStageCodegenExec}
 import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
@@ -59,6 +59,12 @@ import org.apache.spark.util.{ManualClock, SystemClock, Utils}
 
 object DeltaTestUtilsBase {
   final val BOOLEAN_DOMAIN: Seq[Boolean] = Seq(true, false)
+
+  /**
+   * Whether the running Spark version supports NullType (VOID) columns in Delta tables.
+   * Used to gate NullType tests so they run on Spark 4.1+ and are skipped on Spark 4.0.
+   */
+  def nullTypeColumnsSupported: Boolean = !org.apache.spark.SPARK_VERSION.startsWith("4.0")
 }
 
 trait CDCTestMixin extends SharedSparkSession {
@@ -258,7 +264,7 @@ trait DeltaTestUtilsBase {
           hash.collectLeaves().size == 2 &&
             hash.collectLeaves()
               .forall { s =>
-                s.isInstanceOf[FileSourceScanExec] ||
+                s.isInstanceOf[FileSourceScanLike] ||
                   s.isInstanceOf[RDDScanExec]
               }
         case _ => false
@@ -384,6 +390,7 @@ trait DeltaCheckpointTestUtils
     val fileActionsFileIndex = ci.format match {
       case CheckpointInstance.Format.V2 =>
         val incompleteCheckpointProvider = ci.getCheckpointProvider(log, allCheckpointFiles)
+          .asInstanceOf[FileBasedUninitializedCheckpointProvider]
         val df = log.loadIndex(incompleteCheckpointProvider.topLevelFileIndex.get, Action.logSchema)
         val sidecarFileStatuses = df.as[SingleAction].collect().map(_.unwrap).collect {
           case sf: SidecarFile => sf
@@ -1020,5 +1027,9 @@ trait DeltaDMLTestUtilsNameBased extends DeltaDMLTestUtils {
   override protected def dropTable(): Unit = {
     spark.sql(s"DROP TABLE IF EXISTS $tableSQLIdentifier")
     DeltaLog.clearCache()
+    // Delete any leftover files so each test starts from a clean slate. `defaultTablePath` does
+    // not require the table to still exist.
+    val leftoverPath = spark.sessionState.catalog.defaultTablePath(tableIdentifier).getPath
+    Utils.deleteRecursively(new File(leftoverPath))
   }
 }

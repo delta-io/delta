@@ -506,6 +506,31 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
   }
 
   @Test
+  public void testVersionReturnsSnapshotVersion(@TempDir File tempDir) {
+    String path = tempDir.getAbsolutePath();
+    spark.sql(String.format("CREATE TABLE test_version (id INT) USING delta LOCATION '%s'", path));
+
+    Identifier identifier = Identifier.of(new String[] {"default"}, "test_version");
+
+    // CREATE commit produces version 0.
+    DeltaV2Table tableAtV0 = new DeltaV2Table(identifier, path);
+    assertEquals(
+        "0", tableAtV0.version(), "version() should report the snapshot version as a String");
+
+    // Table loaded after an insert pins the newer snapshot.
+    spark.sql("INSERT INTO test_version VALUES (1)");
+    DeltaV2Table tableAtV1 = new DeltaV2Table(identifier, path);
+    assertEquals(
+        "1", tableAtV1.version(), "version() should reflect the snapshot loaded at construction");
+
+    // Earlier instance still reports the version it was constructed at.
+    assertEquals(
+        "0",
+        tableAtV0.version(),
+        "version() should remain pinned to the construction-time snapshot");
+  }
+
+  @Test
   public void testNewWriteBuilderReturnsWriteBuilder(@TempDir File tempDir) throws Exception {
     String path = tempDir.getAbsolutePath();
     spark.sql(
@@ -901,5 +926,98 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
               "Schema tracking location is not supported for Delta streaming source",
               ex.getMessage());
         });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Time travel: withVersion(long)
+  // ---------------------------------------------------------------------------
+
+  /** withVersion(N) returns a copy pinned to the snapshot at version N. */
+  @Test
+  public void testWithVersionPinsToHistoricalSnapshot(@TempDir File tempDir) {
+    String path = tempDir.getAbsolutePath();
+    spark.sql(
+        String.format("CREATE TABLE test_with_version (id INT) USING delta LOCATION '%s'", path));
+    spark.sql("ALTER TABLE test_with_version ADD COLUMNS (name STRING)");
+
+    Identifier identifier = Identifier.of(new String[] {"default"}, "test_with_version");
+    DeltaV2Table latest = new DeltaV2Table(identifier, path);
+    assertEquals(2, latest.schema().fields().length);
+
+    // withVersion(0) pins to the historical snapshot.
+    DeltaV2Table pinned = latest.withVersion(0L);
+    assertEquals(1, pinned.schema().fields().length, "pinned table should see the v0 schema");
+    assertEquals("id", pinned.schema().fields()[0].name());
+
+    // The original table is unaffected.
+    assertEquals(2, latest.schema().fields().length);
+    assertNotEquals(latest, pinned);
+  }
+
+  /** withVersion fails when the requested version is out of range. */
+  @Test
+  public void testWithVersionRejectsOutOfRangeVersion(@TempDir File tempDir) {
+    String path = tempDir.getAbsolutePath();
+    spark.sql(
+        String.format(
+            "CREATE TABLE test_with_version_oor (id INT) USING delta LOCATION '%s'", path));
+
+    Identifier identifier = Identifier.of(new String[] {"default"}, "test_with_version_oor");
+    DeltaV2Table table = new DeltaV2Table(identifier, path);
+
+    assertThrows(RuntimeException.class, () -> table.withVersion(5L));
+    assertThrows(RuntimeException.class, () -> table.withVersion(-1L));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Time travel: withTimestamp(long)
+  // ---------------------------------------------------------------------------
+
+  /** withTimestamp(t) resolves to the commit active at t and pins to that snapshot. */
+  @Test
+  public void testWithTimestampPinsToHistoricalSnapshot(@TempDir File tempDir) {
+    String path = tempDir.getAbsolutePath();
+    spark.sql(
+        String.format("CREATE TABLE test_with_timestamp (id INT) USING delta LOCATION '%s'", path));
+    spark.sql("ALTER TABLE test_with_timestamp ADD COLUMNS (name STRING)");
+
+    Identifier identifier = Identifier.of(new String[] {"default"}, "test_with_timestamp");
+    DeltaV2Table latest = new DeltaV2Table(identifier, path);
+    assertEquals(2, latest.schema().fields().length);
+
+    // The timestamp of the v0 commit resolves back to v0.
+    long v0Micros =
+        spark
+                .sql("DESCRIBE HISTORY test_with_timestamp")
+                .filter("version = 0")
+                .select("timestamp")
+                .head()
+                .getTimestamp(0)
+                .getTime()
+            * 1000L;
+
+    DeltaV2Table pinned = latest.withTimestamp(v0Micros);
+    assertEquals(1, pinned.schema().fields().length, "pinned table should see the v0 schema");
+    assertEquals("id", pinned.schema().fields()[0].name());
+
+    // The original table is unaffected.
+    assertEquals(2, latest.schema().fields().length);
+    assertNotEquals(latest, pinned);
+  }
+
+  /** withTimestamp fails when the requested timestamp is out of range. */
+  @Test
+  public void testWithTimestampRejectsOutOfRangeTimestamp(@TempDir File tempDir) {
+    String path = tempDir.getAbsolutePath();
+    spark.sql(
+        String.format(
+            "CREATE TABLE test_with_timestamp_oor (id INT) USING delta LOCATION '%s'", path));
+
+    Identifier identifier = Identifier.of(new String[] {"default"}, "test_with_timestamp_oor");
+    DeltaV2Table table = new DeltaV2Table(identifier, path);
+
+    long farFutureMicros = (System.currentTimeMillis() + 365L * 24 * 60 * 60 * 1000) * 1000L;
+    assertThrows(RuntimeException.class, () -> table.withTimestamp(farFutureMicros));
+    assertThrows(RuntimeException.class, () -> table.withTimestamp(0L));
   }
 }

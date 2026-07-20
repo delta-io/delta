@@ -48,8 +48,8 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
-/** A set of tests which we can open source after Spark 3.0 is released. */
-trait DeltaTimeTravelTests extends QueryTest
+/** Helper methods for Delta time travel tests, without test registrations. */
+trait DeltaTimeTravelTestHelpers extends QueryTest
     with SharedSparkSession
     with GivenWhenThen
     with DeltaSQLCommandTest
@@ -157,6 +157,10 @@ trait DeltaTimeTravelTests extends QueryTest
   protected implicit def longToTimestampExpr(value: Long): String = {
     s"cast($value / 1000 as timestamp)"
   }
+}
+
+/** Delta time travel tests, built on the shared [[DeltaTimeTravelTestHelpers]]. */
+trait DeltaTimeTravelTests extends DeltaTimeTravelTestHelpers {
 
   import testImplicits._
 
@@ -376,7 +380,7 @@ trait DeltaTimeTravelTests extends QueryTest
         sqlState = "42816",
         parameters = Map(
           "providedTimestamp" -> "2018-10-24 14:24:18.0",
-          "tableName" -> "2018-10-24 14:14:18.0",
+          "lastCommitTimestamp" -> "2018-10-24 14:14:18.0",
           "maximumTimestamp" -> "2018-10-24 14:14:18")
       )
 
@@ -389,7 +393,7 @@ trait DeltaTimeTravelTests extends QueryTest
         sqlState = "42816",
         parameters = Map(
           "providedTimestamp" -> "2018-10-24 14:24:18.0",
-          "tableName" -> "2018-10-24 14:14:18.0",
+          "lastCommitTimestamp" -> "2018-10-24 14:14:18.0",
           "maximumTimestamp" -> "2018-10-24 14:14:18")
       )
 

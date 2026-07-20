@@ -89,6 +89,9 @@ public class ChecksumUtils {
    *   <li>Domain metadata information
    * </ul>
    *
+   * <p>If a checksum file already exists for exactly this version, the existing {@link CRCInfo} is
+   * returned as-is.
+   *
    * <p>Note: For very large tables, this operation may be expensive as it requires scanning the
    * table state to compute statistics.
    *
@@ -113,10 +116,48 @@ public class ChecksumUtils {
       return;
     }
 
+    CRCInfo crcInfo = computeChecksum(engine, logSegmentAtVersion);
+    ChecksumWriter checksumWriter = new ChecksumWriter(logSegmentAtVersion.getLogPath());
+    checksumWriter.writeCheckSum(engine, crcInfo);
+  }
+
+  /**
+   * Computes the state of a Delta table at the provided snapshot's version.
+   *
+   * <p>The checksum contains table statistics including:
+   *
+   * <ul>
+   *   <li>Total table size in bytes
+   *   <li>Total number of files
+   *   <li>File size histogram
+   *   <li>Domain metadata information
+   * </ul>
+   *
+   * <p>Note: For very large tables, this operation may be expensive as it requires scanning the
+   * table state to compute statistics.
+   *
+   * <p>The returned {@link CRCInfo} does not carry an in-commit timestamp, which is not derivable
+   * from the file actions this replay reads. A caller that holds the commit's {@code CommitInfo}
+   * can inject it via {@link CRCInfo#withInCommitTimestamp(Optional)}.
+   *
+   * @param engine The Engine instance used to access the underlying storage
+   * @param logSegmentAtVersion The LogSegment instance of the table at a specific version
+   * @return The computed CRC info for the table at the given version
+   * @throws IOException If an I/O error occurs during checksum computation
+   */
+  public static CRCInfo computeChecksum(Engine engine, LogSegment logSegmentAtVersion)
+      throws IOException {
+    requireNonNull(engine);
+    requireNonNull(logSegmentAtVersion);
+
     Optional<CRCInfo> lastSeenCrcInfo =
         logSegmentAtVersion
             .getLastSeenChecksum()
             .flatMap(file -> ChecksumReader.tryReadChecksumFile(engine, file));
+    if (lastSeenCrcInfo.isPresent()
+        && lastSeenCrcInfo.get().getVersion() == logSegmentAtVersion.getVersion()) {
+      return lastSeenCrcInfo.get();
+    }
     // Try to build CRC incrementally if possible
     Optional<CRCInfo> incrementallyBuiltCrc =
         lastSeenCrcInfo.isPresent()
@@ -128,13 +169,9 @@ public class ChecksumUtils {
             : Optional.empty();
 
     // Use incrementally built CRC if available, otherwise do full log replay
-    CRCInfo crcInfo =
-        incrementallyBuiltCrc.isPresent()
-            ? incrementallyBuiltCrc.get()
-            : buildCrcInfoWithFullLogReplay(engine, logSegmentAtVersion);
-
-    ChecksumWriter checksumWriter = new ChecksumWriter(logSegmentAtVersion.getLogPath());
-    checksumWriter.writeCheckSum(engine, crcInfo);
+    return incrementallyBuiltCrc.isPresent()
+        ? incrementallyBuiltCrc.get()
+        : buildCrcInfoWithFullLogReplay(engine, logSegmentAtVersion);
   }
 
   /**

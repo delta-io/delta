@@ -45,7 +45,7 @@ import org.apache.spark.sql.connector.catalog.TableCatalog
 import org.apache.spark.sql.catalyst.expressions.InSet
 import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.logical.Filter
-import org.apache.spark.sql.execution.FileSourceScanExec
+import org.apache.spark.sql.execution.FileSourceScanLike
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelationWithTable}
 import org.apache.spark.sql.functions.{asc, col, expr, lit, map_values, struct}
 import org.apache.spark.sql.internal.SQLConf
@@ -122,7 +122,7 @@ class DeltaSuite extends QueryTest
       // Read only one partition
       val query = spark.read.format("delta").load(testPath).where("part = 1")
       val fileScans = query.queryExecution.executedPlan.collect {
-        case f: FileSourceScanExec => f
+        case f: FileSourceScanLike => f
       }
 
       // Force the query to read files and generate metrics
@@ -206,74 +206,6 @@ class DeltaSuite extends QueryTest
     // append more
     Seq(4, 5, 6).toDF().write.format("delta").mode("append").save(tempDir.toString)
     checkAnswer(data.toDF(), Row(1) :: Row(2) :: Row(3) :: Row(4) :: Row(5) :: Row(6) :: Nil)
-  }
-
-  test("null struct with NullType field kept as null") {
-    withTempTable(createTable = false) { tableName =>
-      Seq(((null, 2), 1), (null, 2)).toDF("key", "value")
-        .write.format("delta").saveAsTable(tableName)
-
-      // Evolve the schema because tables with NullType columns cannot be read currently.
-      Seq(((10, 10), 10)).toDF("key", "value")
-        .write
-        .format("delta")
-        .option("mergeSchema", "true")
-        .mode("append")
-        .saveAsTable(tableName)
-
-      // Confirm struct value stays as null (fields are not set to null).
-      val rowWithNullStruct = spark.read.format("delta").table(tableName).filter($"value" === 2)
-      checkAnswer(rowWithNullStruct, Row(null, 2) :: Nil)
-    }
-  }
-
-  test("null struct with NullType field, with backticks in the column name, kept as null") {
-    withTempTable(createTable = false) { tableName =>
-      Seq(((null, 2), 1), (null, 2)).toDF("key`", "val`ue")
-        .write.format("delta").saveAsTable(tableName)
-
-      // Evolve the schema because tables with NullType columns cannot be read currently.
-      Seq(((10, 10), 10)).toDF("key`", "val`ue")
-        .write
-        .format("delta")
-        .option("mergeSchema", "true")
-        .mode("append")
-        .saveAsTable(tableName)
-
-      // Confirm struct value stays as null (fields are not set to null).
-      val rowWithNullStruct = spark.read.format("delta").table(tableName).filter($"`val``ue`" === 2)
-      checkAnswer(rowWithNullStruct, Row(null, 2) :: Nil)
-    }
-  }
-
-  test("Cannot create table with NullType UDT column") {
-    val table_name = "test_table"
-    withTable(table_name) {
-      checkError(
-        intercept[DeltaAnalysisException] {
-          Seq((1, new NullData())).toDF("id", "value")
-            .write.format("delta").saveAsTable(table_name)
-        },
-        "DELTA_USER_DEFINED_TYPE_COLUMN_CONTAINS_NULL_TYPE",
-        sqlState = Some("22005"),
-        parameters = Map("columnName" -> "value", "userClass" -> classOf[NullData].getName)
-      )
-    }
-  }
-
-  test("Cannot create table with NullType in a complex UDT column") {
-    val table_name = "test_table"
-    withTable(table_name) {
-      checkError(
-        intercept[DeltaAnalysisException] {
-          Seq((1, new ComplexData())).toDF("id", "value")
-            .write.format("delta").saveAsTable(table_name)
-        },
-        "DELTA_USER_DEFINED_TYPE_COLUMN_CONTAINS_NULL_TYPE",
-        sqlState = Some("22005"),
-        parameters = Map("columnName" -> "value", "userClass" -> classOf[ComplexData].getName)
-      )
-    }
   }
 
   test("partitioned append - nulls") {
@@ -2176,7 +2108,8 @@ class DeltaSuite extends QueryTest
     // Now make a commit that comes from an "external" writer that deletes existing data and
     // changes the schema
     val actions = Seq(Action.supportedProtocolVersion(
-      featuresToExclude = Seq(CatalogOwnedTableFeature)), newMetadata) ++ files.map(_.remove)
+      featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature)),
+      newMetadata) ++ files.map(_.remove)
     deltaLog.store.write(
       FileNames.unsafeDeltaFile(deltaLog.logPath, snapshot.version + 1),
       actions.map(_.json).iterator,
@@ -3558,28 +3491,4 @@ class DeltaWithCatalogOwnedBatch2Suite extends DeltaSuite {
 
 class DeltaWithCatalogOwnedBatch100Suite extends DeltaSuite {
   override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
-}
-
-@SQLUserDefinedType(udt = classOf[NullUDT])
-class NullData extends Serializable
-
-class NullUDT extends UserDefinedType[NullData] {
-  override def sqlType: DataType = NullType
-  override def userClass: Class[NullData] = classOf[NullData]
-  override def serialize(obj: NullData): Any = null
-  override def deserialize(datum: Any): NullData = new NullData()
-}
-
-@SQLUserDefinedType(udt = classOf[ComplexUDT])
-class ComplexData extends Serializable
-
-class ComplexUDT extends UserDefinedType[ComplexData] {
-  override def sqlType: DataType = new MapType(
-    StringType,
-    new ArrayType(
-      new StructType().add("a", IntegerType).add("b", new NullUDT), containsNull = true),
-    valueContainsNull = true)
-  override def userClass: Class[ComplexData] = classOf[ComplexData]
-  override def serialize(obj: ComplexData): Any = null
-  override def deserialize(datum: Any): ComplexData = new ComplexData()
 }

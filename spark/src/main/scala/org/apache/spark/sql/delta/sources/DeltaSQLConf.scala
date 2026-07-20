@@ -499,6 +499,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_IS_PREDICATE_PARTITION_COLUMNS_ONLY_STRICT =
+    buildConf("isPredicatePartitionColumnsOnlyStrict.enabled")
+      .internal()
+      .doc("When true, callers that opt in use the strict predicate classification API " +
+        "(isPredicatePartitionColumnsOnlyStrict, isPredicateMetadataOnlyStrict, " +
+        "splitMetadataAndDataPredicatesStrict). Non-deterministic predicates are not pushed as " +
+        "partition filters. When false, uses legacy isPredicatePartitionColumnsOnly (vacuously " +
+        "true for columnless predicates such as rand()).")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_MAX_RETRY_COMMIT_ATTEMPTS =
     buildConf("maxCommitAttempts")
       .internal()
@@ -557,6 +568,25 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         "This config is only used for testing purposes. ")
       .booleanConf
       .createWithDefault(true)
+
+  val V4_ADAPTIVE_METADATA_TABLE_PREVIEW_ENABLED =
+    buildConf("adaptiveMetadataTree.preview.enabled")
+      .internal()
+      .doc("When false, the `adaptiveMetadata-preview` reader/writer table feature is not " +
+        "registered in this client's supported-features map. Any attempt to enable the feature " +
+        "on a table is rejected with the standard `unsupported table feature` error, and any " +
+        "table that already has the feature in its protocol fails to be read. Acts as a " +
+        "kill-switch while the feature is in preview.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val AMT_ENTRIES_PER_LEAF =
+    buildConf("amt.entriesPerLeaf")
+      .internal()
+      .doc("Maximum number of content entries packed into a single AMT manifest leaf.")
+      .intConf
+      .checkValue(_ > 0, "entriesPerLeaf must be positive.")
+      .createWithDefault(50000)
 
   val UNSUPPORTED_TESTING_FEATURES_ENABLED =
     buildConf("tableFeatures.dev.unsupportedTableFeatures.enabled")
@@ -1921,6 +1951,14 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val STREAMING_TRAILING_COMMIT_VALIDATION =
+    buildConf("streaming.trailingCommitValidation.enabled")
+      .internal()
+      .doc("Whether to validate that trailing commits have not gone missing " +
+        "when reading data for a streaming micro-batch.")
+      .booleanConf
+      .createWithDefault(true)
+
   val LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS =
     buildConf("loadFileSystemConfigsFromDataFrameOptions")
       .internal()
@@ -2226,7 +2264,7 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .internal()
       .doc("If true, allow users to create/upgrade Uniform Iceberg v3 tables.")
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val DELTA_UNIFORM_ICEBERG_GEOSPATIAL_ENABLED =
     buildConf("uniform.iceberg.geospatial.enabled")
@@ -2335,6 +2373,18 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       )
       .booleanConf
       .createWithDefault(false)
+
+  val DELTA_COLLECT_STATS_SKIP_FLOATING_POINT_FROM_FOOTER =
+    buildConf("collectStats.skipFloatingPointFromFooter")
+      .internal()
+      .doc("If true, footer-based stats collection (CONVERT TO DELTA / CLONE, and ANALYZE TABLE " +
+        "... COMPUTE DELTA STATISTICS) drops float/double min/max for files written by writers " +
+        "that may exclude NaN from footer stats (such as parquet-cpp, Arrow, and pyarrow). Their " +
+        "finite max could otherwise hide a NaN value and make data skipping wrongly skip files " +
+        "that contain one. Stats from parquet-mr (Spark) are kept, since parquet-mr records NaN " +
+        "as the max when present.")
+      .booleanConf
+      .createWithDefault(true)
 
   val DELTA_ALTER_TABLE_CHANGE_COLUMN_CHECK_EXPRESSIONS =
     buildConf("alterTable.changeColumn.checkExpressions")
@@ -2446,7 +2496,7 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .doc(
         """When enabled, the V2 connector's hybrid DeltaCatalog answers
           |CHANGES FROM ... batch queries (TableCatalog.loadChangelog) using the
-          |kernel-based Auto-CDF reader stack. When disabled, the catalog falls back to the
+          |kernel-based read-time CDF reader stack. When disabled, the catalog falls back to the
           |default behavior (UNSUPPORTED_FEATURE.CHANGE_DATA_CAPTURE).""".stripMargin)
       .booleanConf
       .createWithDefault(false)
@@ -2561,9 +2611,11 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
   val DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS =
     buildConf("createDataFrame.dropNullColumns")
       .internal()
-      .doc("Whether to drop columns with NullType in DeltaLog.createDataFrame.")
+      .doc("Whether to drop columns with NullType in DeltaLog.createDataFrame. Defaults to " +
+        "dropping (no NullType column support) on Spark 4.0, which lacks the Parquet read " +
+        "support for materializing NullType columns, and to keeping them on Spark 4.1+.")
       .booleanConf
-      .createWithDefault(true)
+      .createWithDefault(org.apache.spark.SPARK_VERSION.startsWith("4.0"))
 
   val DELTA_STREAMING_SINK_IMPLICIT_CAST_FOR_TYPE_MISMATCH_ONLY =
     buildConf("streaming.sink.implicitCastForTypeMismatchOnly")
@@ -3312,6 +3364,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         .stripMargin)
     .booleanConf
     .createWithDefault(true)
+
+  val GUARD_VARIANT_IN_STATS_SCHEMA =
+    buildConf("variantShredding.guardVariantInStatsSchema.enabled")
+      .internal()
+      .doc("When enabled, variant columns are only included in the data skipping stats schema " +
+        "if the table's protocol supports the variantShredding (or variantShredding-preview) " +
+        "table feature. This acts as a kill switch for that gating: when disabled, variant " +
+        "columns are included in the stats schema based solely on the variant data skipping " +
+        "stats config, regardless of the table's shredding support.")
+      .booleanConf
+      .createWithDefault(true)
 
   val PARSE_FOOTER_FOR_VARIANT_DATA_SKIPPING_STATS =
     buildConf("variantShredding.parseFooterForStats")

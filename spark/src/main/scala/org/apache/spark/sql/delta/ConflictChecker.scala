@@ -68,7 +68,8 @@ private[delta] case class CurrentTransactionInfo(
     val readRowIdHighWatermark: Long,
     val catalogTable: Option[CatalogTable],
     val domainMetadata: Seq[DomainMetadata],
-    val op: DeltaOperations.Operation
+    val op: DeltaOperations.Operation,
+    val preCommitLatestAMTCheckpointOpt: Option[Checkpoint] = None
     , val convertedIcebergMetadata: Option[UniformMetadata] = None
  ) {
 
@@ -165,6 +166,8 @@ private[delta] class WinningCommitSummary(
     commitInfo.exists(_.operation == ROW_TRACKING_UNBACKFILL_OPERATION_NAME)
   val removedFiles: Seq[RemoveFile] = actions.collect { case a: RemoveFile => a }
   val addedFiles: Seq[AddFile] = actions.collect { case a: AddFile => a }
+  // The inline AMT (Adaptive Metadata Tree) checkpoint this winning commit emitted, if any.
+  val amtCheckpoint: Option[Checkpoint] = actions.collectFirst { case a: Checkpoint => a }
   // This is used in resolveRowTrackingBackfillConflicts.
   lazy val addedFilePathToActionMap: Map[String, AddFile] =
     addedFiles.map(af => (af.path, af)).toMap
@@ -305,6 +308,13 @@ private[delta] class ConflictChecker(
     checkForDeletedFilesAgainstCurrentTxnReadFiles()
     checkForDeletedFilesAgainstCurrentTxnDeletedFiles()
     resolveTimestampOrderingConflicts()
+
+    // If the winning commit emitted an inline AMT checkpoint, it is now the latest checkpoint
+    // before the next commit attempt.
+    winningCommitSummary.amtCheckpoint.foreach { checkpoint =>
+      currentTransactionInfo =
+        currentTransactionInfo.copy(preCommitLatestAMTCheckpointOpt = Some(checkpoint))
+    }
 
     logMetrics()
     currentTransactionInfo
@@ -649,7 +659,8 @@ private[delta] class ConflictChecker(
       if (winningCommitSummary.identityOnlyMetadataUpdate) {
         IdentityColumn.logTransactionAbort(deltaLog)
       }
-      throw DeltaErrors.metadataChangedException(winningCommitSummary.commitInfo)
+      throw DeltaErrors.metadataChangedException(
+        getTableNameOrPath, winningCommitSummary.commitInfo)
     }
   }
 
@@ -667,7 +678,8 @@ private[delta] class ConflictChecker(
    */
   protected def attemptToResolveMetadataConflicts(): Unit = {
     def throwMetadataChangedException(): Unit =
-      throw DeltaErrors.metadataChangedException(winningCommitSummary.commitInfo)
+      throw DeltaErrors.metadataChangedException(
+        getTableNameOrPath, winningCommitSummary.commitInfo)
 
     // If winning commit does not contain metadata update, no conflict.
     if (winningCommitSummary.metadataUpdates.isEmpty) return
@@ -1492,15 +1504,8 @@ private[delta] class ConflictChecker(
     }
   }
 
-  protected def getTableNameOrPath: String = {
-    val tableName = currentTransactionInfo.catalogTable.map(_.qualifiedName)
-      .getOrElse(currentTransactionInfo.metadata.name)
-    if (tableName != null) {
-      tableName
-    } else {
-      s"delta.`${currentTransactionInfo.readSnapshot.dataPath}`"
-    }
-  }
+  protected def getTableNameOrPath: String =
+    currentTransactionInfo.readSnapshot.tableNameOrPath(currentTransactionInfo.catalogTable)
 
   protected def recordTime[T](phase: String)(f: => T): T = {
     val startTimeNs = System.nanoTime()

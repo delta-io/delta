@@ -51,6 +51,7 @@ public class CRCInfo {
   private static final String TXN_ID = "txnId";
   private static final String DOMAIN_METADATA = "domainMetadata";
   private static final String FILE_SIZE_HISTOGRAM = "fileSizeHistogram";
+  private static final String IN_COMMIT_TIMESTAMP = "inCommitTimestampOpt";
   private static final String HISTOGRAM_OPT = "histogramOpt";
 
   public static final StructType CRC_FILE_SCHEMA =
@@ -63,7 +64,8 @@ public class CRCInfo {
           .add(PROTOCOL, Protocol.FULL_SCHEMA)
           .add(TXN_ID, StringType.STRING, /*nullable*/ true)
           .add(DOMAIN_METADATA, new ArrayType(DomainMetadata.FULL_SCHEMA, false), /*nullable*/ true)
-          .add(FILE_SIZE_HISTOGRAM, FileSizeHistogram.FULL_SCHEMA, /*nullable*/ true);
+          .add(FILE_SIZE_HISTOGRAM, FileSizeHistogram.FULL_SCHEMA, /*nullable*/ true)
+          .add(IN_COMMIT_TIMESTAMP, LongType.LONG, /*nullable*/ true);
 
   // Used by ChecksumReader to support reading CRC files with the legacy "histogramOpt" field.
   public static final StructType CRC_FILE_READ_SCHEMA =
@@ -109,8 +111,14 @@ public class CRCInfo {
                 VectorUtils.toJavaList(domainMetadataVector.getArray(rowId)).stream()
                     .map(row -> DomainMetadata.fromRow((StructRow) row))
                     .collect(Collectors.toSet()));
+    ColumnVector inCommitTimestampVector =
+        batch.getColumnVector(getSchemaIndex(IN_COMMIT_TIMESTAMP));
+    Optional<Long> inCommitTimestamp =
+        inCommitTimestampVector.isNullAt(rowId)
+            ? Optional.empty()
+            : Optional.of(inCommitTimestampVector.getLong(rowId));
 
-    //  protocol and metadata are nullable per fromColumnVector's implementation.
+    // protocol and metadata are nullable per fromColumnVector's implementation.
     if (protocol == null || metadata == null) {
       logger.warn("Invalid checksum file missing protocol and/or metadata: {}", crcFilePath);
       return Optional.empty();
@@ -124,7 +132,81 @@ public class CRCInfo {
             numFiles,
             txnId,
             domainMetadata,
-            fileSizeHistogram));
+            fileSizeHistogram,
+            inCommitTimestamp));
+  }
+
+  /**
+   * Reconstructs a {@link CRCInfo} from a {@link Row} previously produced by {@link #toRow()},
+   * inverting that serialization. Because {@code toRow()} does not carry the version (the version
+   * is derived from the {@code .crc} file name, not the row), the caller supplies it here.
+   *
+   * @param version the table version this checksum represents
+   * @param row a row with the schema {@link #CRC_FILE_SCHEMA}
+   * @return the reconstructed {@link CRCInfo}
+   * @throws IllegalArgumentException if {@code row}'s schema is not {@link #CRC_FILE_SCHEMA}, or if
+   *     any required field ({@code metadata}, {@code protocol}, {@code tableSizeBytes}, {@code
+   *     numFiles}) is null
+   */
+  public static CRCInfo fromRow(long version, Row row) {
+    requireNonNull(row, "row is null");
+    checkArgument(
+        CRC_FILE_SCHEMA.equals(row.getSchema()),
+        "Expected schema: %s, found: %s",
+        CRC_FILE_SCHEMA,
+        row.getSchema());
+
+    // Required fields
+    int metadataIdx = getSchemaIndex(METADATA);
+    int protocolIdx = getSchemaIndex(PROTOCOL);
+    int tableSizeBytesIdx = getSchemaIndex(TABLE_SIZE_BYTES);
+    int numFilesIdx = getSchemaIndex(NUM_FILES);
+    Metadata metadata =
+        Metadata.fromRow(
+            InternalUtils.requireNonNull(row, metadataIdx, METADATA).getStruct(metadataIdx));
+    Protocol protocol =
+        Protocol.fromRow(
+            InternalUtils.requireNonNull(row, protocolIdx, PROTOCOL).getStruct(protocolIdx));
+    long tableSizeBytes =
+        InternalUtils.requireNonNull(row, tableSizeBytesIdx, TABLE_SIZE_BYTES)
+            .getLong(tableSizeBytesIdx);
+    long numFiles = InternalUtils.requireNonNull(row, numFilesIdx, NUM_FILES).getLong(numFilesIdx);
+
+    int txnIdIdx = getSchemaIndex(TXN_ID);
+    Optional<String> txnId =
+        row.isNullAt(txnIdIdx) ? Optional.empty() : Optional.of(row.getString(txnIdIdx));
+
+    int domainMetadataIdx = getSchemaIndex(DOMAIN_METADATA);
+    Optional<Set<DomainMetadata>> domainMetadata =
+        row.isNullAt(domainMetadataIdx)
+            ? Optional.empty()
+            : Optional.of(
+                VectorUtils.<Row>toJavaList(row.getArray(domainMetadataIdx)).stream()
+                    .map(DomainMetadata::fromRow)
+                    .collect(Collectors.toSet()));
+
+    int histogramIdx = getSchemaIndex(FILE_SIZE_HISTOGRAM);
+    Optional<FileSizeHistogram> fileSizeHistogram =
+        row.isNullAt(histogramIdx)
+            ? Optional.empty()
+            : Optional.of(FileSizeHistogram.fromRow(row.getStruct(histogramIdx)));
+
+    int inCommitTimestampIdx = getSchemaIndex(IN_COMMIT_TIMESTAMP);
+    Optional<Long> inCommitTimestamp =
+        row.isNullAt(inCommitTimestampIdx)
+            ? Optional.empty()
+            : Optional.of(row.getLong(inCommitTimestampIdx));
+
+    return new CRCInfo(
+        version,
+        metadata,
+        protocol,
+        tableSizeBytes,
+        numFiles,
+        txnId,
+        domainMetadata,
+        fileSizeHistogram,
+        inCommitTimestamp);
   }
 
   private final long version;
@@ -135,6 +217,7 @@ public class CRCInfo {
   private final Optional<String> txnId;
   private final Optional<Set<DomainMetadata>> domainMetadata;
   private final Optional<FileSizeHistogram> fileSizeHistogram;
+  private final Optional<Long> inCommitTimestamp;
 
   public CRCInfo(
       long version,
@@ -145,6 +228,28 @@ public class CRCInfo {
       Optional<String> txnId,
       Optional<Set<DomainMetadata>> domainMetadata,
       Optional<FileSizeHistogram> fileSizeHistogram) {
+    this(
+        version,
+        metadata,
+        protocol,
+        tableSizeBytes,
+        numFiles,
+        txnId,
+        domainMetadata,
+        fileSizeHistogram,
+        Optional.empty() /* inCommitTimestamp */);
+  }
+
+  public CRCInfo(
+      long version,
+      Metadata metadata,
+      Protocol protocol,
+      long tableSizeBytes,
+      long numFiles,
+      Optional<String> txnId,
+      Optional<Set<DomainMetadata>> domainMetadata,
+      Optional<FileSizeHistogram> fileSizeHistogram,
+      Optional<Long> inCommitTimestamp) {
     checkArgument(tableSizeBytes >= 0);
     checkArgument(numFiles >= 0);
     // Live Domain Metadata actions at this version, excluding tombstones.
@@ -166,6 +271,21 @@ public class CRCInfo {
     this.numFiles = numFiles;
     this.txnId = requireNonNull(txnId);
     this.fileSizeHistogram = requireNonNull(fileSizeHistogram);
+    this.inCommitTimestamp = requireNonNull(inCommitTimestamp);
+  }
+
+  /** Used by callers to supply an ICT that cannot be derived from the file actions alone. */
+  public CRCInfo withInCommitTimestamp(Optional<Long> inCommitTimestamp) {
+    return new CRCInfo(
+        version,
+        metadata,
+        protocol,
+        tableSizeBytes,
+        numFiles,
+        txnId,
+        domainMetadata,
+        fileSizeHistogram,
+        inCommitTimestamp);
   }
 
   /** The version of the Delta table that this CRCInfo represents. */
@@ -205,6 +325,15 @@ public class CRCInfo {
   }
 
   /**
+   * The in-commit timestamp of the commit at this version, if the table has the inCommitTimestamp
+   * feature enabled. Empty otherwise, or when read from a checksum file written before this field
+   * existed.
+   */
+  public Optional<Long> getInCommitTimestamp() {
+    return inCommitTimestamp;
+  }
+
+  /**
    * Encode as a {@link Row} object with the schema {@link CRCInfo#CRC_FILE_SCHEMA}.
    *
    * @return {@link Row} object with the schema {@link CRCInfo#CRC_FILE_SCHEMA}
@@ -233,6 +362,7 @@ public class CRCInfo {
     fileSizeHistogram.ifPresent(
         fileSizeHistogram ->
             values.put(getSchemaIndex(FILE_SIZE_HISTOGRAM), fileSizeHistogram.toRow()));
+    inCommitTimestamp.ifPresent(ict -> values.put(getSchemaIndex(IN_COMMIT_TIMESTAMP), ict));
     return new GenericRow(CRC_FILE_SCHEMA, values);
   }
 
@@ -246,7 +376,8 @@ public class CRCInfo {
         numFiles,
         txnId,
         domainMetadata,
-        fileSizeHistogram);
+        fileSizeHistogram,
+        inCommitTimestamp);
   }
 
   @Override
@@ -262,7 +393,8 @@ public class CRCInfo {
         && protocol.equals(other.protocol)
         && txnId.equals(other.txnId)
         && domainMetadata.equals(other.domainMetadata)
-        && fileSizeHistogram.equals(other.fileSizeHistogram);
+        && fileSizeHistogram.equals(other.fileSizeHistogram)
+        && inCommitTimestamp.equals(other.inCommitTimestamp);
   }
 
   private static int getSchemaIndex(String fieldName) {

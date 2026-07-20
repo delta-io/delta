@@ -23,7 +23,7 @@ import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 /**
- * Integration tests for Auto-CDF / DSv2 changelog with Deletion Vectors (DVs) that are NOT
+ * Integration tests for read-time CDF / DSv2 changelog with Deletion Vectors (DVs) that are NOT
  * covered by parameterized DV-on/off variants of
  * {@link DeltaChangelogDirectBatchExecutionTest}. The parameterized tests already cover the
  * basic single-file DELETE and UPDATE; this file holds scenarios that need DV-specific table

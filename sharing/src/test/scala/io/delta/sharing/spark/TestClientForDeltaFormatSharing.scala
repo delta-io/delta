@@ -114,7 +114,8 @@ private[spark] class TestClientForDeltaFormatSharing(
     while (iterator.hasNext) {
       linesBuilder += iterator.next()
     }
-    if (table.name.contains("shared_parquet_table") &&
+    if ((table.name.contains("shared_parquet_table") ||
+        isParquetPinnedVersion(table, versionAsOf)) &&
       responseFormat.contains(DeltaSharingRestClient.RESPONSE_FORMAT_PARQUET)) {
       val lines = linesBuilder.result()
       val protocol = JsonUtils.fromJson[SingleAction](lines(0)).protocol
@@ -188,7 +189,8 @@ private[spark] class TestClientForDeltaFormatSharing(
     while (iterator.hasNext) {
       linesBuilder += iterator.next()
     }
-    if (table.name.contains("shared_parquet_table") &&
+    if ((table.name.contains("shared_parquet_table") ||
+        isParquetPinnedVersion(table, versionAsOf)) &&
       responseFormat.contains(DeltaSharingRestClient.RESPONSE_FORMAT_PARQUET)) {
       val lines = linesBuilder.result()
       val protocol = JsonUtils.fromJson[SingleAction](lines(0)).protocol
@@ -367,6 +369,20 @@ object TestClientForDeltaFormatSharing {
   val requestedFormat = scala.collection.mutable.Map[String, String]()
   val jsonPredicateHints = scala.collection.mutable.Map[String, String]()
   @volatile var lastCallerOrg: String = ""
+
+  // Tables (by name) whose format is parquet only AT a specific versionAsOf, delta otherwise.
+  // Lets a test model a share that is delta at latest but parquet at a pinned version -- which the
+  // name-based parquet detection cannot express on its own. Empty by default (no effect).
+  val parquetOnlyAtVersion = scala.collection.mutable.Map[String, Long]()
+
+  def clearParquetOnlyAtVersion(): Unit = parquetOnlyAtVersion.clear()
+
+  /** True if `table` responds parquet for this `versionAsOf`, per [[parquetOnlyAtVersion]]. */
+  private def isParquetPinnedVersion(table: Table, versionAsOf: Option[Long]): Boolean =
+    (parquetOnlyAtVersion.get(table.name), versionAsOf) match {
+      case (Some(pinned), Some(requested)) => pinned == requested
+      case _ => false
+    }
 
   // Captures (tableName, queryType, fileIdHash) for each getFiles call.
   val fileIdHashHistory = scala.collection.mutable.ArrayBuffer[(String, String, Option[String])]()

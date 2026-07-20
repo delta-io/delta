@@ -211,7 +211,8 @@ object UniversalFormat extends DeltaLogging {
         Option[DeltaOperations.Operation],
         Seq[Action]) => (Option[Protocol], Option[Metadata])] = Seq(
       IcebergCompatV1.enforceInvariantsAndDependencies,
-      IcebergCompatV2.enforceInvariantsAndDependencies
+      IcebergCompatV2.enforceInvariantsAndDependencies,
+      IcebergCompatV3.enforceInvariantsAndDependencies
     )
     compatChecks.foreach { compatCheck =>
       val updates = compatCheck(

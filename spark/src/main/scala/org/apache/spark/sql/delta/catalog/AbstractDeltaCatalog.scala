@@ -187,6 +187,10 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       case TableCatalog.PROP_COMMENT => false
       case TableCatalog.PROP_OWNER => false
       case TableCatalog.PROP_EXTERNAL => false
+      // `is_managed_location` is a reserved v2 catalog property used only to signal that the
+      // table location is system-generated (see `isManagedLocation` below). It is not a real
+      // Delta table property, so filter it out to avoid leaking it into the table metadata.
+      case TableCatalog.PROP_IS_MANAGED_LOCATION => false
       case "path" => false
       case "option.path" => false
       case _ => true
@@ -374,13 +378,40 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         .map(_.loadTable(ident))
         .getOrElse(super.loadTable(ident))
 
-      ServerSidePlannedTable.tryCreate(spark, ident, table, isUnityCatalog).foreach { sspt =>
-        return sspt
-      }
-
       table match {
         case v1: V1Table if DeltaTableUtils.isDeltaTable(v1.catalogTable) =>
-          loadCatalogTable(ident, v1.catalogTable)
+          // Server-side planning only applies to Delta tables. Attempt it here, inside the
+          // Delta-`V1Table` branch, rather than on every loaded table: a non-Delta table or a
+          // catalog-specific shape (e.g. Unity Catalog's `MetadataTable` wrapping a `ViewInfo`
+          // for a metric view) must flow through the `case o => o` fallthrough unchanged so the
+          // resolver can route it correctly. Capturing those in `ServerSidePlannedTable.tryCreate`
+          // would short-circuit view loading.
+          //
+          // Gate on the cheap config flag so the SSP-off path stays the lazy `loadCatalogTable`.
+          //
+          // SSP is the fallback for tables with *no* vended credentials, so for the case it
+          // targets -- a credential-less UC table -- we must not force a `_delta_log` read while
+          // deciding to use it. Both inputs to `tryCreate` are therefore sourced from the raw
+          // `V1Table`, which needs no such read:
+          //   - credentials: read from the `V1Table`'s `option.fs.*` properties. (A `DeltaTableV2`
+          //     both strips `fs.*` and forces `initialSnapshot` via `properties()`.)
+          //   - schema: use the `V1Table` schema, which the delegate (UC) already populates.
+          //     Only fall back to `DeltaTableV2.schema()` when it is empty -- an HMS Delta table,
+          //     whose schema lives solely in the log, so the log is the last-resort schema source
+          //     and the read is unavoidable rather than a bet on credentials being present. (This
+          //     HMS case has credentials in practice, so the read succeeds; the "no `_delta_log`
+          //     read" guarantee holds for the credential-less UC case, not universally.)
+          if (ServerSidePlannedTable.isEnabled(spark)) {
+            val deltaTable = loadCatalogTable(ident, v1.catalogTable)
+            val tableSchema = if (v1.schema.nonEmpty) v1.schema else deltaTable.schema()
+            ServerSidePlannedTable
+              .tryCreate(spark, ident, deltaTable, isUnityCatalog,
+                hasCredentials = ServerSidePlannedTable.hasCredentials(v1),
+                tableSchema = tableSchema)
+              .getOrElse(deltaTable)
+          } else {
+            loadCatalogTable(ident, v1.catalogTable)
+          }
         case o => o
       }
     } catch {

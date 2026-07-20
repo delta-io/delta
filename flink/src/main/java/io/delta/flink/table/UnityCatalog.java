@@ -455,7 +455,7 @@ public class UnityCatalog implements DeltaCatalog {
           } else if (credentials.getGcpOauthToken() != null) {
             result.put("fs.gs.auth.type", "ACCESS_TOKEN_PROVIDER");
             result.put(
-                "fs.gs.auth.access.token.provider.impl",
+                "fs.gs.auth.access.token.provider",
                 "io.delta.flink.table.FixedGcsAccessTokenProvider");
             result.put(GCP_OAUTH_TOKEN_KEY, credentials.getGcpOauthToken().getOauthToken());
           } else if (credentials.getAzureUserDelegationSas() != null) {

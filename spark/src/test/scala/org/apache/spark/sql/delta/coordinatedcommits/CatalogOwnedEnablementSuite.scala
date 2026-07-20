@@ -336,6 +336,23 @@ class CatalogOwnedEnablementSuite
     }
   }
 
+  test("CatalogManaged feature status must be 'supported': CREATE TABLE with 'enabled' " +
+      "is rejected") {
+    val tableName = "catalog_managed_create_enabled"
+    withTable(tableName) {
+      val error = interceptWithUnwrapping[DeltaTableFeatureException] {
+        createTable(tableName, properties = Map(
+          s"delta.feature.${CatalogOwnedTableFeature.name}" -> "enabled"))
+      }
+      checkError(
+        error,
+        "DELTA_UNSUPPORTED_FEATURE_STATUS",
+        parameters = Map(
+          "feature" -> CatalogOwnedTableFeature.name,
+          "status" -> "enabled"))
+    }
+  }
+
   test("ALTER TABLE should be blocked if attempts to downgrade Catalog-Owned") {
     withRandomTable(createCatalogOwnedTableAtInit = true)  { tableName =>
       val error = intercept[DeltaTableFeatureException] {

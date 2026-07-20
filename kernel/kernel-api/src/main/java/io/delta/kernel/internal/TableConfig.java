@@ -73,6 +73,33 @@ public class TableConfig<T> {
           "needs to be a string and one of 'classic' or 'v2'.",
           true);
 
+  /**
+   * Whether to write per-file statistics as a struct column in checkpoint files. Recognized so
+   * connectors can set it (e.g. {@code v2Checkpoint} tables require it), but Kernel does not yet
+   * act on it when writing checkpoints.
+   */
+  public static final TableConfig<Boolean> CHECKPOINT_WRITE_STATS_AS_STRUCT =
+      new TableConfig<>(
+          "delta.checkpoint.writeStatsAsStruct",
+          "false",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
+
+  /**
+   * Whether to write per-file statistics as JSON in checkpoint files. Recognized so connectors can
+   * set it, but Kernel does not yet act on it when writing checkpoints.
+   */
+  public static final TableConfig<Boolean> CHECKPOINT_WRITE_STATS_AS_JSON =
+      new TableConfig<>(
+          "delta.checkpoint.writeStatsAsJson",
+          "true",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
+
   /** Whether commands modifying this Delta table are allowed to create new deletion vectors. */
   public static final TableConfig<Boolean> DELETION_VECTORS_CREATION_ENABLED =
       new TableConfig<>(
@@ -460,6 +487,8 @@ public class TableConfig<T> {
 
               // The below configs do not yet have their behavior correctly implemented in Kernel.
               addConfig(this, DATA_SKIPPING_STATS_COLUMNS);
+              addConfig(this, CHECKPOINT_WRITE_STATS_AS_STRUCT);
+              addConfig(this, CHECKPOINT_WRITE_STATS_AS_JSON);
             }
           });
 
