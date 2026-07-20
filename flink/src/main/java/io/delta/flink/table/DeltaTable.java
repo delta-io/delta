@@ -100,10 +100,10 @@ public interface DeltaTable extends Serializable, AutoCloseable {
    * same name, data type, and nullability. Renames, drops, reorders, type changes, changes to
    * nested fields, and required new columns are rejected.
    *
-   * <p>Existing field metadata is always preserved from the latest table snapshot. New fields must
-   * not contain Delta or Parquet column-mapping metadata; Delta Kernel assigns their column IDs and
-   * physical names. The target table must already support schema evolution, including any required
-   * table features such as column mapping.
+   * <p>Existing field metadata is always preserved from the latest table snapshot. New field
+   * metadata is passed to Delta Kernel for validation; missing column IDs and physical names are
+   * assigned by Kernel. The target table must already support schema evolution, including any
+   * required table features such as column mapping.
    *
    * <p>The table must be {@link #open() opened} before this method is called. The call is
    * synchronous and refreshes this instance after a successful commit. Supplying the current schema

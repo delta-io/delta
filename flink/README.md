@@ -313,12 +313,10 @@ try (DeltaTable table = new TableBuilder()
 the same names, types, and nullability. Only nullable top-level fields appended to the schema are
 supported. Repeating the same target is a no-op. The table must already have column mapping
 enabled; the connector does not enable it automatically. Delta Kernel assigns column IDs and
-physical names for new fields.
+physical names when they are not provided and validates provided field metadata.
 
-Automatic evolution is not currently supported. A future job-start reconciliation can pass the
-sink schema to the same API before writers create Parquet files. Runtime evolution additionally
-requires a dynamic sink or schema-change event carrying the complete schema; it cannot be inferred
-from ordinary `RowData` values.
+Automatic evolution is not currently supported. Call `updateSchema` before writers create Parquet
+files for the expanded schema.
 
 ---
 

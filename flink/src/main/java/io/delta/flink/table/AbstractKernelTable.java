@@ -16,11 +16,6 @@
 
 package io.delta.flink.table;
 
-import static io.delta.kernel.internal.util.ColumnMapping.COLUMN_MAPPING_ID_KEY;
-import static io.delta.kernel.internal.util.ColumnMapping.COLUMN_MAPPING_NESTED_IDS_KEY;
-import static io.delta.kernel.internal.util.ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY;
-import static io.delta.kernel.internal.util.ColumnMapping.PARQUET_FIELD_ID_KEY;
-import static io.delta.kernel.internal.util.ColumnMapping.PARQUET_FIELD_NESTED_IDS_METADATA_KEY;
 import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 
 import dev.failsafe.Failsafe;
@@ -44,7 +39,6 @@ import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.data.TransactionStateRow;
-import io.delta.kernel.internal.util.SchemaIterable;
 import io.delta.kernel.metrics.TransactionReport;
 import io.delta.kernel.transaction.CreateTableTransactionBuilder;
 import io.delta.kernel.transaction.DataLayoutSpec;
@@ -90,13 +84,6 @@ public abstract class AbstractKernelTable implements DeltaTable {
 
   protected static String ENGINE_INFO = "DeltaSink";
   protected static Logger LOG = LoggerFactory.getLogger(AbstractKernelTable.class);
-  private static final Set<String> GENERATED_COLUMN_MAPPING_METADATA_KEYS =
-      Set.of(
-          COLUMN_MAPPING_ID_KEY,
-          COLUMN_MAPPING_PHYSICAL_NAME_KEY,
-          COLUMN_MAPPING_NESTED_IDS_KEY,
-          PARQUET_FIELD_ID_KEY,
-          PARQUET_FIELD_NESTED_IDS_METADATA_KEY);
 
   /**
    * Normalizes the given URI string to a canonical form. The normalization includes:
@@ -305,11 +292,8 @@ public abstract class AbstractKernelTable implements DeltaTable {
     StructType schemaAtFirstAttempt = initialSchema.get();
     if (schemaAtFirstAttempt == null) {
       initialSchema.set(latestSchema);
-    } else if (!logicallyEqual(schemaAtFirstAttempt, latestSchema)) {
-      if (logicallyEqual(latestSchema, targetSchema)) {
-        refresh(latestSnapshot);
-        return;
-      }
+    } else if (!logicallyEqual(schemaAtFirstAttempt, latestSchema)
+        && !logicallyEqual(latestSchema, targetSchema)) {
       throw new IllegalArgumentException(
           String.format(
               "Target schema is stale: table schema changed concurrently from %s to %s",
@@ -369,13 +353,12 @@ public abstract class AbstractKernelTable implements DeltaTable {
     }
 
     List<StructField> fields = new ArrayList<>(currentSchema.fields());
-    for (int ordinal = currentSchema.length(); ordinal < targetSchema.length(); ordinal++) {
-      StructField newField = targetSchema.at(ordinal);
+    for (StructField newField :
+        targetSchema.fields().subList(currentSchema.length(), targetSchema.length())) {
       if (!newField.isNullable()) {
         throw new IllegalArgumentException(
             String.format("New column '%s' must be nullable", newField.getName()));
       }
-      validateNoGeneratedColumnMappingMetadata(newField);
       fields.add(newField);
     }
     return Optional.of(new StructType(fields));
@@ -385,18 +368,6 @@ public abstract class AbstractKernelTable implements DeltaTable {
     return currentField.getName().equals(targetField.getName())
         && currentField.isNullable() == targetField.isNullable()
         && logicallyEqual(currentField.getDataType(), targetField.getDataType());
-  }
-
-  private static boolean logicallyEqual(StructType currentSchema, StructType targetSchema) {
-    if (currentSchema.length() != targetSchema.length()) {
-      return false;
-    }
-    for (int ordinal = 0; ordinal < currentSchema.length(); ordinal++) {
-      if (!logicallyEqual(currentSchema.at(ordinal), targetSchema.at(ordinal))) {
-        return false;
-      }
-    }
-    return true;
   }
 
   private static boolean logicallyEqual(DataType currentType, DataType targetType) {
@@ -424,20 +395,6 @@ public abstract class AbstractKernelTable implements DeltaTable {
           && logicallyEqual(currentMap.getValueField(), targetMap.getValueField());
     }
     return currentType.equals(targetType);
-  }
-
-  private static void validateNoGeneratedColumnMappingMetadata(StructField field) {
-    for (SchemaIterable.SchemaElement element : new SchemaIterable(new StructType().add(field))) {
-      for (String metadataKey : GENERATED_COLUMN_MAPPING_METADATA_KEYS) {
-        if (element.getField().getMetadata().contains(metadataKey)) {
-          throw new IllegalArgumentException(
-              String.format(
-                  "New column '%s' contains Kernel-managed metadata '%s'; remove it and let Delta "
-                      + "Kernel assign column mapping metadata",
-                  element.getNamePath(), metadataKey));
-        }
-      }
-    }
   }
 
   @Override

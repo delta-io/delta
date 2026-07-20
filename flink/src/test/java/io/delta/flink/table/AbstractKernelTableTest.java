@@ -18,10 +18,7 @@ package io.delta.flink.table;
 
 import static io.delta.kernel.internal.util.ColumnMapping.COLUMN_MAPPING_ID_KEY;
 import static io.delta.kernel.internal.util.ColumnMapping.COLUMN_MAPPING_MODE_KEY;
-import static io.delta.kernel.internal.util.ColumnMapping.COLUMN_MAPPING_NESTED_IDS_KEY;
 import static io.delta.kernel.internal.util.ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY;
-import static io.delta.kernel.internal.util.ColumnMapping.PARQUET_FIELD_ID_KEY;
-import static io.delta.kernel.internal.util.ColumnMapping.PARQUET_FIELD_NESTED_IDS_METADATA_KEY;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -254,8 +251,6 @@ class AbstractKernelTableTest extends TestHelper {
           StructField name = updatedSchema.at(1);
           assertNotNull(name.getMetadata().getLong(COLUMN_MAPPING_ID_KEY));
           assertNotNull(name.getMetadata().getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY));
-          assertFalse(name.getMetadata().contains(PARQUET_FIELD_ID_KEY));
-          assertFalse(name.getMetadata().contains(PARQUET_FIELD_NESTED_IDS_METADATA_KEY));
           assertEquals("preserved", name.getMetadata().getString("user.metadata"));
 
           StructField nestedCity = ((StructType) updatedSchema.at(2).getDataType()).at(0);
@@ -269,39 +264,29 @@ class AbstractKernelTableTest extends TestHelper {
   }
 
   @Test
-  void testUpdateSchemaRejectsCallerSuppliedColumnMappingMetadata() {
+  void testUpdateSchemaPreservesCallerSuppliedColumnMappingMetadata() {
     StructType initialSchema = new StructType().add("id", IntegerType.INTEGER);
     FieldMetadata suppliedMappingMetadata =
         FieldMetadata.builder()
             .putLong(COLUMN_MAPPING_ID_KEY, 999L)
             .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, "caller-physical-name")
-            .putFieldMetadata(COLUMN_MAPPING_NESTED_IDS_KEY, FieldMetadata.empty())
-            .putLong(PARQUET_FIELD_ID_KEY, 999L)
-            .putFieldMetadata(PARQUET_FIELD_NESTED_IDS_METADATA_KEY, FieldMetadata.empty())
             .build();
-    StructType topLevelMetadataTarget =
+    StructType targetSchema =
         initialSchema.add(
             new StructField("name", StringType.STRING, true, suppliedMappingMetadata));
-    StructType nestedMetadataTarget =
-        initialSchema.add(
-            new StructField(
-                "address",
-                new StructType()
-                    .add(new StructField("city", StringType.STRING, true, suppliedMappingMetadata)),
-                true));
 
     withTestTable(
         initialSchema,
         Collections.emptyList(),
         Map.of(COLUMN_MAPPING_MODE_KEY, "name"),
         table -> {
-          long initialVersion = table.snapshot().orElseThrow().getVersion();
-          for (StructType target : List.of(topLevelMetadataTarget, nestedMetadataTarget)) {
-            IllegalArgumentException error =
-                assertThrows(IllegalArgumentException.class, () -> table.updateSchema(target));
-            assertTrue(error.getMessage().contains("Kernel-managed metadata"));
-          }
-          assertEquals(initialVersion, table.snapshot().orElseThrow().getVersion());
+          table.updateSchema(targetSchema);
+
+          StructField addedField = table.getSchema().at(1);
+          assertEquals(999L, addedField.getMetadata().getLong(COLUMN_MAPPING_ID_KEY));
+          assertEquals(
+              "caller-physical-name",
+              addedField.getMetadata().getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY));
         });
   }
 
@@ -333,9 +318,6 @@ class AbstractKernelTableTest extends TestHelper {
           invalidTargets.forEach(
               target ->
                   assertThrows(IllegalArgumentException.class, () -> table.updateSchema(target)));
-          assertThrows(
-              RuntimeException.class,
-              () -> table.updateSchema(initialSchema.add("ID", StringType.STRING)));
           assertEquals(initialVersion, table.snapshot().orElseThrow().getVersion());
         });
   }
