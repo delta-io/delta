@@ -27,7 +27,7 @@ import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, Del
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.test.shims.StreamingTestShims.{MemoryStream, MicroBatchExecution, StreamingQueryWrapper}
-import io.delta.tables.DeltaTable
+import io.delta.tables.{DeltaTable => IODeltaTable}
 import org.apache.commons.io.FileUtils
 import org.scalatest.time.SpanSugar._
 
@@ -127,9 +127,9 @@ class DeltaSinkSuite
     else DeltaLog.forTable(spark, target)
 
   /** Resolve the [[DeltaTable]] for `target`, by name (DSv2) or path. */
-  protected def deltaTableForTarget(target: String): DeltaTable =
-    if (useDsv2) DeltaTable.forName(spark, target)
-    else DeltaTable.forPath(spark, target)
+  protected def deltaTableForTarget(target: String): IODeltaTable =
+    if (useDsv2) IODeltaTable.forName(spark, target)
+    else IODeltaTable.forPath(spark, target)
 
   test("append mode") {
     failAfter(streamingTimeout) {
@@ -736,7 +736,7 @@ class DeltaSinkSuite
       target: String,
       columns: Seq[StructField]
   ): Unit = {
-    val builder = DeltaTable.create(spark)
+    val builder = IODeltaTable.create(spark)
     if (useDsv2) builder.tableName(target) else builder.location(target)
     columns.foreach(builder.addColumn)
     builder.execute()
@@ -747,8 +747,8 @@ class DeltaSinkSuite
     failAfter(streamingTimeout) {
       withSinkTarget { (target, checkpointDir) =>
         val columns = Seq(
-          DeltaTable.columnBuilder(spark, "id").dataType("int").build(),
-          DeltaTable.columnBuilder(spark, "v")
+          IODeltaTable.columnBuilder(spark, "id").dataType("int").build(),
+          IODeltaTable.columnBuilder(spark, "v")
             .dataType("void")
             .nullable(true)
             .generatedAlwaysAs("null")
@@ -783,8 +783,8 @@ class DeltaSinkSuite
     failAfter(streamingTimeout) {
       withSinkTarget { (target, checkpointDir) =>
         val columns = Seq(
-          DeltaTable.columnBuilder(spark, "id").dataType("int").build(),
-          DeltaTable.columnBuilder(spark, "v")
+          IODeltaTable.columnBuilder(spark, "id").dataType("int").build(),
+          IODeltaTable.columnBuilder(spark, "v")
             .dataType("void")
             .nullable(true)
             .build()
@@ -815,8 +815,8 @@ class DeltaSinkSuite
     failAfter(streamingTimeout) {
       withSinkTarget { (target, checkpointDir) =>
         val columns = Seq(
-          DeltaTable.columnBuilder(spark, "id").dataType("int").build(),
-          DeltaTable.columnBuilder(spark, "value")
+          IODeltaTable.columnBuilder(spark, "id").dataType("int").build(),
+          IODeltaTable.columnBuilder(spark, "value")
             .dataType("int")
             .nullable(true)
             .build()
