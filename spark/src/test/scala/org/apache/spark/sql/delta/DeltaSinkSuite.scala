@@ -726,6 +726,126 @@ class DeltaSinkSuite
     }
   }
 
+  /**
+   * Create a Delta table with the given `columns` at the sink `target`, so a
+   * test can stream into a preexisting table. `target` is a table name when
+   * [[useDsv2]] is set and a filesystem path otherwise, matching how
+   * [[withSinkTarget]] hands it out.
+   */
+  private def createPreexistingTableAtSinkTarget(
+      target: String,
+      columns: Seq[StructField]
+  ): Unit = {
+    val builder = DeltaTable.create(spark)
+    if (useDsv2) builder.tableName(target) else builder.location(target)
+    columns.foreach(builder.addColumn)
+    builder.execute()
+  }
+
+  test("DeltaSink rejects streaming write to table with generated void column") {
+    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
+    failAfter(streamingTimeout) {
+      withSinkTarget { (target, checkpointDir) =>
+        val columns = Seq(
+          DeltaTable.columnBuilder(spark, "id").dataType("int").build(),
+          DeltaTable.columnBuilder(spark, "v")
+            .dataType("void")
+            .nullable(true)
+            .generatedAlwaysAs("null")
+            .build()
+        )
+        createPreexistingTableAtSinkTarget(target, columns)
+
+        val inputData = MemoryStream[Int]
+        val dsWriter = inputData
+          .toDF()
+          .toDF("id")
+          .writeStream
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .format("delta")
+
+        val wrapperException = intercept[StreamingQueryException] {
+          val q = startStream(dsWriter, target)
+          inputData.addData(1)
+          q.processAllAvailable()
+        }
+        assert(wrapperException.cause.isInstanceOf[AnalysisException])
+        checkError(
+          wrapperException.cause.asInstanceOf[AnalysisException],
+          "DELTA_NULL_SCHEMA_IN_STREAMING_WRITE"
+        )
+      }
+    }
+  }
+
+  test("DeltaSink allows streaming write to table with non-generated void column") {
+    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
+    failAfter(streamingTimeout) {
+      withSinkTarget { (target, checkpointDir) =>
+        val columns = Seq(
+          DeltaTable.columnBuilder(spark, "id").dataType("int").build(),
+          DeltaTable.columnBuilder(spark, "v")
+            .dataType("void")
+            .nullable(true)
+            .build()
+        )
+        createPreexistingTableAtSinkTarget(target, columns)
+
+        val inputData = MemoryStream[Int]
+        val dsWriter = inputData
+          .toDF()
+          .toDF("id")
+          .writeStream
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .format("delta")
+
+        val q = startStream(dsWriter, target)
+        try {
+          inputData.addData(1)
+          q.processAllAvailable()
+          checkAnswer(readTarget(target), Row(1, null))
+        } finally {
+          q.stop()
+        }
+      }
+    }
+  }
+
+  test("DeltaSink rejects streaming write with NullType column in batch schema") {
+    failAfter(streamingTimeout) {
+      withSinkTarget { (target, checkpointDir) =>
+        val columns = Seq(
+          DeltaTable.columnBuilder(spark, "id").dataType("int").build(),
+          DeltaTable.columnBuilder(spark, "value")
+            .dataType("int")
+            .nullable(true)
+            .build()
+        )
+        createPreexistingTableAtSinkTarget(target, columns)
+
+        val inputData = MemoryStream[Int]
+        val dsWriter = inputData
+          .toDF()
+          .toDF("id")
+          .withColumn("value", lit(null).cast(NullType))
+          .writeStream
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .format("delta")
+
+        val wrapperException = intercept[StreamingQueryException] {
+          val q = startStream(dsWriter, target)
+          inputData.addData(1)
+          q.processAllAvailable()
+        }
+        assert(wrapperException.cause.isInstanceOf[AnalysisException])
+        checkError(
+          wrapperException.cause.asInstanceOf[AnalysisException],
+          "DELTA_NULL_SCHEMA_IN_STREAMING_WRITE"
+        )
+      }
+    }
+  }
+
   test("DeltaSink rejects DataFrame with UDT containing NullType") {
     failAfter(streamingTimeout) {
       withSinkTarget { (target, checkpointDir) =>
