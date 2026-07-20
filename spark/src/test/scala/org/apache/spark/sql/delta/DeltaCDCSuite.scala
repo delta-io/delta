@@ -1171,7 +1171,7 @@ trait ChangelogV2CdcReadMixin extends DeltaCDCSuiteBase {
     end: Boundary,
     schemaMode: Option[DeltaBatchCDFSchemaMode] = Some(BatchCDFSchemaLegacy),
     readerOptions: Map[String, String] = Map.empty): DataFrame = {
-      if(schemaMode.isDefined){
+      if (schemaMode.isDefined) {
         var result: DataFrame = null
         withSQLConf(DeltaSQLConf.DELTA_CDF_DEFAULT_SCHEMA_MODE_FOR_COLUMN_MAPPING_TABLE.key ->
         schemaMode.get.name) {
