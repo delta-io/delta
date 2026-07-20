@@ -27,7 +27,7 @@ import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, Del
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.test.shims.StreamingTestShims.{MemoryStream, MicroBatchExecution, StreamingQueryWrapper}
-import io.delta.tables.DeltaTable
+import io.delta.tables.{DeltaTable => IODeltaTable}
 import org.apache.commons.io.FileUtils
 import org.scalatest.time.SpanSugar._
 
@@ -127,9 +127,9 @@ class DeltaSinkSuite
     else DeltaLog.forTable(spark, target)
 
   /** Resolve the [[DeltaTable]] for `target`, by name (DSv2) or path. */
-  protected def deltaTableForTarget(target: String): DeltaTable =
-    if (useDsv2) DeltaTable.forName(spark, target)
-    else DeltaTable.forPath(spark, target)
+  protected def deltaTableForTarget(target: String): IODeltaTable =
+    if (useDsv2) IODeltaTable.forName(spark, target)
+    else IODeltaTable.forPath(spark, target)
 
   test("append mode") {
     failAfter(streamingTimeout) {
@@ -723,6 +723,126 @@ class DeltaSinkSuite
       // Test that deltaLog is NOT initialized after constructor
       assert(!isDeltaLogInitialized(deltaSink),
         "deltaLog should not be initialized after constructor")
+    }
+  }
+
+  /**
+   * Create a Delta table with the given `columns` at the sink `target`, so a
+   * test can stream into a preexisting table. `target` is a table name when
+   * [[useDsv2]] is set and a filesystem path otherwise, matching how
+   * [[withSinkTarget]] hands it out.
+   */
+  private def createPreexistingTableAtSinkTarget(
+      target: String,
+      columns: Seq[StructField]
+  ): Unit = {
+    val builder = IODeltaTable.create(spark)
+    if (useDsv2) builder.tableName(target) else builder.location(target)
+    columns.foreach(builder.addColumn)
+    builder.execute()
+  }
+
+  test("DeltaSink rejects streaming write to table with generated void column") {
+    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
+    failAfter(streamingTimeout) {
+      withSinkTarget { (target, checkpointDir) =>
+        val columns = Seq(
+          IODeltaTable.columnBuilder(spark, "id").dataType("int").build(),
+          IODeltaTable.columnBuilder(spark, "v")
+            .dataType("void")
+            .nullable(true)
+            .generatedAlwaysAs("null")
+            .build()
+        )
+        createPreexistingTableAtSinkTarget(target, columns)
+
+        val inputData = MemoryStream[Int]
+        val dsWriter = inputData
+          .toDF()
+          .toDF("id")
+          .writeStream
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .format("delta")
+
+        val wrapperException = intercept[StreamingQueryException] {
+          val q = startStream(dsWriter, target)
+          inputData.addData(1)
+          q.processAllAvailable()
+        }
+        assert(wrapperException.cause.isInstanceOf[AnalysisException])
+        checkError(
+          wrapperException.cause.asInstanceOf[AnalysisException],
+          "DELTA_NULL_SCHEMA_IN_STREAMING_WRITE"
+        )
+      }
+    }
+  }
+
+  test("DeltaSink allows streaming write to table with non-generated void column") {
+    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
+    failAfter(streamingTimeout) {
+      withSinkTarget { (target, checkpointDir) =>
+        val columns = Seq(
+          IODeltaTable.columnBuilder(spark, "id").dataType("int").build(),
+          IODeltaTable.columnBuilder(spark, "v")
+            .dataType("void")
+            .nullable(true)
+            .build()
+        )
+        createPreexistingTableAtSinkTarget(target, columns)
+
+        val inputData = MemoryStream[Int]
+        val dsWriter = inputData
+          .toDF()
+          .toDF("id")
+          .writeStream
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .format("delta")
+
+        val q = startStream(dsWriter, target)
+        try {
+          inputData.addData(1)
+          q.processAllAvailable()
+          checkAnswer(readTarget(target), Row(1, null))
+        } finally {
+          q.stop()
+        }
+      }
+    }
+  }
+
+  test("DeltaSink rejects streaming write with NullType column in batch schema") {
+    failAfter(streamingTimeout) {
+      withSinkTarget { (target, checkpointDir) =>
+        val columns = Seq(
+          IODeltaTable.columnBuilder(spark, "id").dataType("int").build(),
+          IODeltaTable.columnBuilder(spark, "value")
+            .dataType("int")
+            .nullable(true)
+            .build()
+        )
+        createPreexistingTableAtSinkTarget(target, columns)
+
+        val inputData = MemoryStream[Int]
+        val dsWriter = inputData
+          .toDF()
+          .toDF("id")
+          .withColumn("value", lit(null).cast(NullType))
+          .writeStream
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .format("delta")
+
+        val wrapperException = intercept[StreamingQueryException] {
+          val q = startStream(dsWriter, target)
+          inputData.addData(1)
+          q.processAllAvailable()
+        }
+        assert(wrapperException.cause.isInstanceOf[AnalysisException])
+        checkError(
+          wrapperException.cause.asInstanceOf[AnalysisException],
+          "DELTA_NULL_SCHEMA_IN_STREAMING_WRITE"
+        )
+      }
     }
   }
 
