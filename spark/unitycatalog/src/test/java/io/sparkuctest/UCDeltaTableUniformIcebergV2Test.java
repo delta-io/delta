@@ -20,19 +20,9 @@ import com.databricks.spark.util.Log4jUsageLogger;
 import com.databricks.spark.util.UsageRecord;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.unitycatalog.client.delta.api.DeltaTablesApi;
-import io.unitycatalog.client.delta.model.DeltaLoadTableResponse;
-import java.time.Instant;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Properties;
-import org.apache.hadoop.conf.Configuration;
-import org.apache.iceberg.Table;
-import org.apache.iceberg.hadoop.HadoopTables;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
-import org.apache.spark.sql.connector.catalog.Identifier;
-import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.delta.DeltaOperations;
 import org.apache.spark.sql.delta.DeltaTestUtils;
@@ -48,12 +38,17 @@ import scala.collection.JavaConverters;
 import scala.runtime.AbstractFunction0;
 import scala.runtime.BoxedUnit;
 
-/** Integration test that verifies UniForm Iceberg behaviors */
-public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseTest {
+/** Integration tests for Iceberg V2 metadata on UC managed Delta tables. */
+public class UCDeltaTableUniformIcebergV2Test extends UCDeltaTableUniformIcebergTestBase {
 
   @Override
-  protected boolean useDeltaRestApiForTests() {
-    return true;
+  protected int icebergCompatVersion() {
+    return 2;
+  }
+
+  @Override
+  protected String additionalUniformTableProperties() {
+    return "'delta.enableDeletionVectors'='false'";
   }
 
   @Override
@@ -61,103 +56,6 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
     Properties props = super.serverProperties();
     props.setProperty("server.managed-table.uniform-iceberg-v2.allow-missing-dv", "true");
     return props;
-  }
-
-  private static final String UNIFORM_TABLE_PROPS =
-      "'delta.universalFormat.enabledFormats'='iceberg', "
-          + "'delta.columnMapping.mode'='name', "
-          + "'delta.enableIcebergCompatV2'='true', "
-          + "'delta.enableDeletionVectors'='false'";
-
-  /**
-   * Asserts that none of the in-memory-only {@code deltaUniformIceberg.*} keys are present in the
-   * table's server-side properties. These keys are populated transiently in {@code
-   * catalogTable.storage.properties} from the {@code DeltaLoadTableResponse.uniform} field and must
-   * never be written back to the UC catalog.
-   */
-  private void assertNoUniformPropsOnServer(String fullTableName) throws Exception {
-    String[] parts = fullTableName.split("\\.");
-    DeltaTablesApi deltaApi = new DeltaTablesApi(unityCatalogInfo().createApiClient());
-    DeltaLoadTableResponse resp = deltaApi.loadTable(parts[0], parts[1], parts[2]);
-    for (String key : resp.getMetadata().getProperties().keySet()) {
-      Assertions.assertFalse(
-          key.startsWith("deltaUniformIceberg."),
-          "Server-side table properties must not contain in-memory-only key: " + key);
-    }
-  }
-
-  /**
-   * Builds a Hadoop {@link Configuration} seeded from the Spark session (which registers {@link
-   * S3CredentialFileSystem} as {@code fs.s3.impl}) and enriched with the UC-vended storage
-   * credentials from the table's catalog storage properties.
-   */
-  private Configuration buildTestHadoopConf(String fullTableName) throws Exception {
-    DeltaTableV2 table = loadDeltaTableV2(fullTableName);
-    Configuration conf = spark().sessionState().newHadoopConf();
-    if (table.catalogTable().isDefined()) {
-      JavaConverters.mapAsJavaMap(table.catalogTable().get().storage().properties())
-          .forEach(conf::set);
-    }
-    return conf;
-  }
-
-  /** Loads the {@link DeltaTableV2} for a fully-qualified UC table via the V2 catalog. */
-  private DeltaTableV2 loadDeltaTableV2(String fullTableName) throws Exception {
-    String[] parts = fullTableName.split("\\.");
-    TableCatalog catalog = (TableCatalog) spark().sessionState().catalogManager().catalog(parts[0]);
-    return (DeltaTableV2) catalog.loadTable(Identifier.of(new String[] {parts[1]}, parts[2]));
-  }
-
-  /**
-   * Verifies a non-incremental UniForm Iceberg conversion: converted {@code delta-version} matches
-   * the expected version and {@code base-delta-version} is absent.
-   *
-   * @param expectSnapshot whether to assert that an Iceberg current snapshot exists. Pass {@code
-   *     true} for CTAS or any write that produces data files (snapshot must exist); pass {@code
-   *     false} for an empty {@code CREATE TABLE} where the initial Iceberg state has no snapshot.
-   */
-  private IcebergMeta verifyNonIncrementalUniForm(
-      String fullTableName, long expectedDeltaVersion, boolean expectSnapshot) throws Exception {
-    IcebergMeta meta = verifyUCMetadataAndReadIceberg(fullTableName, expectedDeltaVersion);
-    Assertions.assertEquals(
-        String.valueOf(expectedDeltaVersion),
-        meta.properties.get("delta-version"),
-        "delta-version mismatch after non-incremental conversion");
-    Assertions.assertNull(
-        meta.properties.get("base-delta-version"),
-        "Non-incremental conversion must not set base-delta-version");
-    if (expectSnapshot) {
-      Assertions.assertTrue(
-          meta.currentSnapshotId != -1L, "Iceberg snapshot should exist after conversion");
-    }
-    return meta;
-  }
-
-  /**
-   * Verifies an incremental UniForm Iceberg conversion: converted {@code delta-version} matches,
-   * {@code base-delta-version} equals {@code expectedBaseDeltaVersion}, and the Iceberg snapshot
-   * chain is preserved ({@code currentSnapshotParentId} equals {@code expectedParentSnapshotId}).
-   */
-  private IcebergMeta verifyIncrementalUniForm(
-      String fullTableName,
-      long expectedDeltaVersion,
-      long expectedBaseDeltaVersion,
-      long expectedParentSnapshotId)
-      throws Exception {
-    IcebergMeta meta = verifyUCMetadataAndReadIceberg(fullTableName, expectedDeltaVersion);
-    Assertions.assertEquals(
-        String.valueOf(expectedDeltaVersion),
-        meta.properties.get("delta-version"),
-        "delta-version mismatch after incremental conversion");
-    Assertions.assertEquals(
-        String.valueOf(expectedBaseDeltaVersion),
-        meta.properties.get("base-delta-version"),
-        "Incremental conversion: base-delta-version should equal prior converted version");
-    Assertions.assertEquals(
-        expectedParentSnapshotId,
-        meta.currentSnapshotParentId,
-        "Iceberg snapshot chain must be preserved: parent snapshot ID mismatch");
-    return meta;
   }
 
   /**
@@ -184,7 +82,7 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
         "id INT, data STRING",
         null,
         TableType.MANAGED,
-        UNIFORM_TABLE_PROPS,
+        uniformTableProperties(),
         fullTableName -> {
           // CREATE TABLE atomically generates a full Iceberg conversion at delta version 0.
           // The empty table has no data files, so no Iceberg snapshot exists yet.
@@ -228,7 +126,7 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
           "CREATE TABLE %s USING DELTA"
               + " TBLPROPERTIES ('delta.feature.catalogManaged'='supported', %s)"
               + " AS SELECT 1 AS id, 'a' AS data",
-          fullTableName, UNIFORM_TABLE_PROPS);
+          fullTableName, uniformTableProperties());
 
       // CTAS writes data at delta v0, so the initial Iceberg conversion has a snapshot.
       check(fullTableName, List.of(row("1", "a")));
@@ -265,7 +163,7 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
         "id INT, data STRING",
         null,
         TableType.MANAGED,
-        UNIFORM_TABLE_PROPS,
+        uniformTableProperties(),
         fullTableName -> {
           // Write 1 — incremental from delta v0 (CREATE TABLE); this INSERT writes data files, so
           // an Iceberg snapshot exists.
@@ -321,7 +219,7 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
         "id INT",
         null,
         TableType.MANAGED,
-        UNIFORM_TABLE_PROPS,
+        uniformTableProperties(),
         fullTableName -> {
           // v1: insert row 1 — triggers atomic Iceberg conversion at v1.
           sql("INSERT INTO %s VALUES (1)", fullTableName);
@@ -377,69 +275,5 @@ public class UCDeltaTableUniformIcebergTest extends UCDeltaTableIntegrationBaseT
               retry.get("toVersion").asLong(),
               "Retry must convert up to the latest version");
         });
-  }
-
-  // ---------- Iceberg metadata reading ----------
-
-  private static final class IcebergMeta {
-    final Map<String, String> properties;
-    final long currentSnapshotId;
-    final long currentSnapshotParentId;
-
-    IcebergMeta(
-        Map<String, String> properties, long currentSnapshotId, long currentSnapshotParentId) {
-      this.properties = properties;
-      this.currentSnapshotId = currentSnapshotId;
-      this.currentSnapshotParentId = currentSnapshotParentId;
-    }
-  }
-
-  private IcebergMeta verifyUCMetadataAndReadIceberg(
-      String fullTableName, long expectedConvertedDeltaVersion) throws Exception {
-    String icebergMetadataPath =
-        verifyUCMetadataAndFetchIcebergPath(fullTableName, expectedConvertedDeltaVersion);
-    Configuration conf = buildTestHadoopConf(fullTableName);
-    return readIcebergMetaViaHadoopTables(icebergMetadataPath, conf);
-  }
-
-  /**
-   * Calls {@code loadTable} on the Delta REST API, validates the uniform fields in the response,
-   * and returns the Iceberg metadata JSON file path for the given table.
-   *
-   * @param expectedConvertedDeltaVersion the Delta version the server should report as converted
-   */
-  private String verifyUCMetadataAndFetchIcebergPath(
-      String fullTableName, long expectedConvertedDeltaVersion) throws Exception {
-    String[] parts = fullTableName.split("\\.");
-    DeltaTablesApi deltaApi = new DeltaTablesApi(unityCatalogInfo().createApiClient());
-    DeltaLoadTableResponse resp = deltaApi.loadTable(parts[0], parts[1], parts[2]);
-    if (resp.getUniform() == null || resp.getUniform().getIceberg() == null) {
-      throw new IllegalStateException("No Iceberg metadata found for table: " + fullTableName);
-    }
-    var iceberg = resp.getUniform().getIceberg();
-    Assertions.assertEquals(
-        expectedConvertedDeltaVersion,
-        iceberg.getConvertedDeltaVersion().longValue(),
-        "loadTable response convertedDeltaVersion mismatch");
-    Assertions.assertNotNull(
-        iceberg.getConvertedDeltaTimestamp(), "loadTable response convertedDeltaTimestamp is null");
-    // Validate timestamp is a valid epoch-millis value by parsing it as an Instant.
-    Instant.ofEpochMilli(iceberg.getConvertedDeltaTimestamp());
-    return iceberg.getMetadataLocation();
-  }
-
-  private IcebergMeta readIcebergMetaViaHadoopTables(String icebergMetadataPath, Configuration conf)
-      throws Exception {
-    HadoopTables tables = new HadoopTables(conf);
-    Table table = tables.load(icebergMetadataPath);
-
-    Map<String, String> properties = new HashMap<>(table.properties());
-
-    org.apache.iceberg.Snapshot current = table.currentSnapshot();
-    long currentSnapshotId = current != null ? current.snapshotId() : -1L;
-    long parentSnapshotId =
-        (current != null && current.parentId() != null) ? current.parentId() : -1L;
-
-    return new IcebergMeta(properties, currentSnapshotId, parentSnapshotId);
   }
 }
