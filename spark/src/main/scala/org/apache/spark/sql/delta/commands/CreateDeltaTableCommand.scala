@@ -387,8 +387,7 @@ case class CreateDeltaTableCommand(
         // which starts from 1
         val createOp = DeltaOperations.CreateTable(txn.metadata, isManagedTable, asSelect = false,
           clusterBy = ClusteredTableUtils.getLogicalClusteringColumnNames(
-            txn, taggedCommitData.actions),
-          clusterByAuto = ClusteredTableUtils.getClusterByAutoInfo(taggedCommitData.actions)
+            txn, taggedCommitData.actions)
         )
 
         val isCatalogOwnedEnabled = CatalogOwnedTableUtils.shouldEnableCatalogOwned(
