@@ -1158,6 +1158,63 @@ class DeltaCDCScalaSuite extends DeltaCDCSuiteBase {
 
 }
 
+trait ChangelogV2CdcReadMixin extends DeltaCDCSuiteBase {
+  override protected def sparkConf: SparkConf = super.sparkConf
+  .set("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+  .set("spark.databricks.delta.changelogV2.enabled", "true")
+  // The V2 changelog read path requires row tracking (DELTA_CHANGELOG_REQUIRES_ROW_TRACKING).
+  .set(DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey, "true")
+
+  override def cdcRead(
+    tblId: TblId,
+    start: Boundary,
+    end: Boundary,
+    schemaMode: Option[DeltaBatchCDFSchemaMode] = Some(BatchCDFSchemaLegacy),
+    readerOptions: Map[String, String] = Map.empty): DataFrame = {
+      if(schemaMode.isDefined){
+        var result: DataFrame = null
+        withSQLConf(DeltaSQLConf.DELTA_CDF_DEFAULT_SCHEMA_MODE_FOR_COLUMN_MAPPING_TABLE.key ->
+        schemaMode.get.name) {
+          result = cdcRead(tblId, start, end, None, readerOptions)
+        }
+      return result
+      }
+
+      val startClause: String = start match {
+        case sv: StartingVersion => s"FROM VERSION ${sv.value}"
+        case st: StartingTimestamp => s"FROM TIMESTAMP '${st.value}'"
+        case Unbounded =>
+          // changesClause requires a starting boundary; unbounded start is streaming-only.
+          throw new UnsupportedOperationException(
+            "V2 changelog batch read requires a starting boundary")
+      }
+      val endClause: String = end match {
+        case ev: EndingVersion => s"TO VERSION ${ev.value}"
+        case et: EndingTimestamp => s"TO TIMESTAMP '${et.value}'"
+        case Unbounded => ""
+      }
+
+      withSQLConf("spark.databricks.delta.v2.enableMode" -> "STRICT") {
+        tblId match {
+        case _: TableName =>
+          spark.sql(s"SELECT * FROM ${tblId.id} CHANGES $startClause $endClause").drop("_metadata")
+        case _: TablePath =>
+          val tempName = s"v2cdc_temp_${System.nanoTime()}"
+          spark.sql(s"CREATE TABLE $tempName USING delta LOCATION '${tblId.id}'")
+          try {
+            spark.sql(s"SELECT * FROM $tempName CHANGES $startClause $endClause")
+              .drop("_metadata")
+          } finally {
+            spark.sql(s"DROP TABLE IF EXISTS $tempName")
+          }
+        case _ => throw new IllegalArgumentException("No table name or path provided")
+        }
+      }
+
+  }
+}
+class DeltaCDCScalaChangelogV2Suite extends DeltaCDCScalaSuite with ChangelogV2CdcReadMixin
+
 class DeltaCDCScalaWithDeletionVectorsSuite extends DeltaCDCScalaSuite
   with DeletionVectorsTestUtils {
   override def beforeAll(): Unit = {

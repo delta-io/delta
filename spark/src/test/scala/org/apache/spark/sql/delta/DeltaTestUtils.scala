@@ -80,6 +80,35 @@ trait CDCTestMixin extends SharedSparkSession {
   }
 }
 
+trait ChangelogV2CDCUtilMixin extends CDCTestMixin {
+  override protected def sparkConf: SparkConf = super.sparkConf
+    .set("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+    .set(DeltaSQLConf.DELTA_CHANGELOG_V2_ENABLED.key, "true")
+    .set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "false")
+
+  override def computeCDC(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      startVersion: Long,
+      endVersion: Long,
+      predicates: Seq[Expression] = Seq.empty): DataFrame = {
+    withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "STRICT") {
+      val tablePath = deltaLog.dataPath.toString
+      val tempName = s"v2cdc_temp_${System.nanoTime()}"
+      spark.sql(s"CREATE TABLE $tempName USING delta LOCATION '$tablePath'")
+      try {
+        spark.sql(
+          s"SELECT * FROM $tempName " +
+            s"CHANGES FROM VERSION $startVersion TO VERSION $endVersion " +
+            s"WITH (computeUpdates = 'true')")
+          .drop("_metadata")
+      } finally {
+        spark.sql(s"DROP TABLE IF EXISTS $tempName")
+      }
+    }
+  }
+}
+
 trait DeltaTestUtilsBase {
   import DeltaTestUtils.TableIdentifierOrPath
 
