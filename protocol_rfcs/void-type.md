@@ -66,7 +66,13 @@ A `void` column in any other position is non-structural: it can be omitted and d
 
 When Void Type is supported (when the `writerFeatures` field of a table's `protocol` action contains `materializedVoidType`), writers:
 - must write the table's structural `void` columns to data files (see [Structural void columns](#structural-void-columns)); and
-- should omit any non-structural `void` column from data files.
+- should omit any non-structural `void` column from data files, unless another supported table feature requires that column to be materialized.
+
+###### Interaction with Materialize Partition Columns
+
+The `materializePartitionColumns` writer feature does not by itself permit materializing a `void` column. When `materializePartitionColumns` is supported but `materializedVoidType` is not, writers must omit `void` partition columns while materializing the table's other partition columns. This exception does not relax the restrictions in [Void columns without the table feature](#void-columns-without-the-table-feature): writers must still reject an operation that would write new data files when the table schema independently requires structural `void` columns, such as when all table columns are `void`.
+
+When both `materializePartitionColumns` and `materializedVoidType` are supported, writers must materialize every `void` partition column. This requirement takes precedence over the recommendation to omit non-structural `void` columns.
 
 ###### Reader Requirements for Void Type
 
@@ -81,7 +87,7 @@ Because clients that do not support the feature cannot read `UNKNOWN` columns, r
 - must ensure that the table schema does not require the feature - it must contain none of the shapes in [Structural void columns](#structural-void-columns); and
 - must ensure that no data file reachable by the table (including via time travel within the retained history) contains a column stored as `UNKNOWN`. This may require rewriting existing data files and/or truncating the table history so that every `void` column is represented by omission.
 
-After the feature is removed, the table reverts to representing `void` columns only by omission, and operations that would write new data files must again be rejected when the table schema contains a shape that requires the feature.
+After the feature is removed, the table reverts to representing `void` columns only by omission, and operations that would write new data files must again be rejected when the table schema contains a shape that requires the feature. The `materializePartitionColumns` feature may remain supported; it no longer requires `void` partition columns to be materialized, so writers must omit those columns from newly written data files.
 
 > ***Add the following `void` row to the [Delta Data Type to Parquet Type Mappings](/PROTOCOL.md#delta-data-type-to-parquet-type-mappings) table and replace the existing note that `void` columns are not stored in Parquet files with the paragraph below:***
 
@@ -89,4 +95,4 @@ Delta Type Name | Parquet Physical Type | Parquet Logical Type
 -|-|-
 void (when materialized)| Implementation-defined | `UNKNOWN`
 
-When a `void` column is materialized, it must use the mapping above and the table must support `materializedVoidType`. Otherwise, the `void` column is omitted from the Parquet file.
+When a `void` column is materialized, it must use the `UNKNOWN` logical type and the table must support `materializedVoidType`. Otherwise, the `void` column is omitted from the Parquet file.
