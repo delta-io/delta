@@ -656,12 +656,9 @@ class SparkVersionsScriptTest:
             module.resolve_spark_sha = lambda spark_repo, spark_ref, spark_dir: mock_resolved_sha
             module.load_spark_versions = lambda json_path, repo_root: [source_entry]
 
-            spark_version = (
-                "master" if source_entry["isMaster"] else source_entry["shortVersion"]
-            )
-            artifact_base_version = module.strip_suffix(
-                source_entry["fullVersion"], "-SNAPSHOT"
-            )
+            spark_version = "99.0"
+            expected_artifact_base_version = "99.0.0"
+            expected_spark_artifact_version = "99.0.0-aaaaaaaaaaaa-SNAPSHOT"
 
             previous_argv = sys.argv
             output = io.StringIO()
@@ -687,10 +684,8 @@ class SparkVersionsScriptTest:
                 "spark_version": spark_version,
                 "source_ref": mock_source_ref,
                 "spark_sha": mock_resolved_sha,
-                "artifact_base_version": artifact_base_version,
-                "spark_artifact_version": module.compute_spark_artifact_version(
-                    artifact_base_version, mock_resolved_sha
-                ),
+                "artifact_base_version": expected_artifact_base_version,
+                "spark_artifact_version": expected_spark_artifact_version,
             }
             for key, expected_value in expected.items():
                 if values.get(key) != expected_value:
@@ -702,7 +697,7 @@ class SparkVersionsScriptTest:
                 return False
             expected_cache_prefix = (
                 "spark-m2-ubuntu-24.04-scala-2.13-"
-                f"{spark_version}-{artifact_base_version}-"
+                f"{spark_version}-{expected_artifact_base_version}-"
             )
             if not values["cache_key"].startswith(expected_cache_prefix):
                 print(f"  ✗ unexpected cache_key: {values['cache_key']}")

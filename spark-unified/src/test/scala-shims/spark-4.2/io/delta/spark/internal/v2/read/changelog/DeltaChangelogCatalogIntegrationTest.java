@@ -181,11 +181,7 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
         });
   }
 
-  /**
-   * Delta's table_changes API always asks Spark to remove carryovers and derive update pre/post
-   * images. This verifies that the context constructed by ResolveTableChangesV2 preserves that
-   * behavior after the Spark API migration from ChangelogInfo to ChangelogContext.
-   */
+  /** Delta's table_changes API always asks Spark to derive update pre/post images. */
   @Test
   public void testTableChangesComputesUpdates() throws Exception {
     String tableName = "dsv2_cdc_catalog_update_" + System.nanoTime();
@@ -230,6 +226,69 @@ public class DeltaChangelogCatalogIntegrationTest extends DeltaChangelogTestBase
                                 "update_postimage".equals(row.getAs("_change_type"))
                                     && "AliceX".equals(row.getAs("name"))),
                     "Expected the updated row as update_postimage");
+                for (Row row : rows) {
+                  assertEquals(1L, ((Number) row.getAs("id")).longValue());
+                  assertEquals(2L, ((Number) row.getAs("_commit_version")).longValue());
+                }
+              });
+        });
+  }
+
+  /**
+   * Delta's table_changes API always asks Spark to remove carryovers. Updating one row rewrites a
+   * base file that also contains an unchanged row; only the changed row should be returned.
+   */
+  @Test
+  public void testTableChangesDropsCarryovers() throws Exception {
+    String tableName = "dsv2_cdc_catalog_carryovers_" + System.nanoTime();
+
+    withTable(
+        new String[] {tableName},
+        () -> {
+          spark.sql(
+              String.format(
+                  "CREATE TABLE %s (id BIGINT, name STRING) USING delta TBLPROPERTIES "
+                      + "('delta.enableDeletionVectors'='false', "
+                      + "'delta.enableRowTracking'='true')",
+                  tableName));
+          // A single INSERT creates the multi-row base file needed to expose carryovers.
+          spark.sql(
+              String.format(
+                  "INSERT INTO %s VALUES (1, 'Alice'), (2, 'Bob')", tableName));
+          spark.sql(String.format("UPDATE %s SET name = 'AliceX' WHERE id = 1", tableName));
+
+          withSQLConf(
+              "spark.databricks.delta.v2.enableMode",
+              "STRICT",
+              () -> {
+                List<Row> rows =
+                    spark
+                        .sql(
+                            String.format(
+                                "SELECT id, name, _change_type, _commit_version "
+                                    + "FROM table_changes('%s', 2, 2)",
+                                tableName))
+                        .collectAsList();
+
+                assertEquals(2, rows.size(), "Expected only the changed row's update images");
+                assertTrue(
+                    rows.stream()
+                        .anyMatch(
+                            row ->
+                                "update_preimage".equals(row.getAs("_change_type"))
+                                    && "Alice".equals(row.getAs("name"))),
+                    "Expected the original row as update_preimage");
+                assertTrue(
+                    rows.stream()
+                        .anyMatch(
+                            row ->
+                                "update_postimage".equals(row.getAs("_change_type"))
+                                    && "AliceX".equals(row.getAs("name"))),
+                    "Expected the updated row as update_postimage");
+                assertFalse(
+                    rows.stream()
+                        .anyMatch(row -> ((Number) row.getAs("id")).longValue() == 2L),
+                    "Expected the unchanged row to be removed as a carryover");
                 for (Row row : rows) {
                   assertEquals(1L, ((Number) row.getAs("id")).longValue());
                   assertEquals(2L, ((Number) row.getAs("_commit_version")).longValue());
