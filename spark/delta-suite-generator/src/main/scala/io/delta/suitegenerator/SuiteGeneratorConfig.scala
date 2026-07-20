@@ -424,15 +424,16 @@ object SuiteGeneratorConfig {
       ),
       testConfigs = List(
         TestConfig(
-          List("DeleteCDCTests"),
-          List(
-            List(
-              Dims.DELETE_SQL,
-              Dims.NAME_BASED,
-              Dims.ROW_TRACKING_ON,
-              Dims.CHANGELOG_V2_CDC
-            )
-          )
+          "DeleteCDCTests" :: Nil,
+          List(List(Dims.DELETE_SQL, Dims.NAME_BASED, Dims.ROW_TRACKING_ON, Dims.CHANGELOG_V2_CDC))
+        ),
+        TestConfig(
+          "MergeCDCTests" :: Nil,
+          List(List(Dims.MERGE_SQL, Dims.NAME_BASED, Dims.ROW_TRACKING_ON, Dims.CHANGELOG_V2_CDC))
+        ),
+        TestConfig(
+          "UpdateCDCTests" :: Nil,
+          List(List(Dims.UPDATE_SQL, Dims.NAME_BASED, Dims.ROW_TRACKING_ON, Dims.CHANGELOG_V2_CDC))
         )
       )
     ),
