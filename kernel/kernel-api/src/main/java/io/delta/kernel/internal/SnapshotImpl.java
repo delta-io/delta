@@ -419,6 +419,7 @@ public class SnapshotImpl implements Snapshot {
   }
 
   /** Returns the crc info for the current snapshot if the checksum file is read */
+  @Override
   public Optional<CRCInfo> getCurrentCrcInfo() {
     return logReplay.getCrcInfoAtSnapshotVersion();
   }
