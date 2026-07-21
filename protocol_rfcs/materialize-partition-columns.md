@@ -36,11 +36,9 @@ When this feature is supported, partition columns are physically written to Parq
 When supported:
  - When the writer feature `materializePartitionColumns` is set in the protocol, writers must materialize partition columns into any newly created data file, except that:
    - when a partition column is `void` and `materializedVoidType` is not supported, writers must omit that partition column; and
-   - when a partition column is `void` and `materializedVoidType` is supported, writers must materialize that partition column using the representation defined by the [Void Type](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#void-type) feature.
+   - when a partition column is `void` and `materializedVoidType` is supported, writers must materialize that partition column.
 
-   This exception does not allow a writer to write data for a schema that independently requires `materializedVoidType`, such as a table whose columns are all `void`. This requirement otherwise mimics the partition column materialization requirement from [IcebergCompatV1](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#iceberg-compatibility-v1)
-and
-[IcebergCompatV2](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#iceberg-compatibility-v2). As such, the `materializePartitionColumns` feature can be seen as a subset of the requirements imposed by those features, providing the partition column materialization guarantee independently without requiring full
+For schemas supported by [IcebergCompatV1](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#iceberg-compatibility-v1) and [IcebergCompatV2](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#iceberg-compatibility-v2), this mirrors their requirement to materialize partition columns. Those features do not allow `void`, so the exception above does not apply to them. As such, the `materializePartitionColumns` feature can be seen as a subset of the requirements imposed by those features, providing the partition column materialization guarantee independently without requiring full
   Iceberg compatibility.
  - When the writer feature `materializePartitionColumns` is not set in the table protocol, writers are not required to write partition columns to data files. Note that other features might still require materialization of partition values, such as [IcebergCompatV1](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#iceberg-compatibility-v1)
 
