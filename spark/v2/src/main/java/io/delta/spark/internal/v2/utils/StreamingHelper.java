@@ -19,6 +19,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
 
 import io.delta.kernel.CommitActions;
+import io.delta.kernel.CommitRange;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
@@ -30,7 +31,6 @@ import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.actions.RemoveFile;
-import io.delta.kernel.internal.commitrange.CommitRangeImpl;
 import io.delta.kernel.internal.data.StructRow;
 import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.utils.CloseableIterator;
@@ -190,7 +190,7 @@ public class StreamingHelper {
   // no-Snapshot overload added alongside this comment makes this helper obsolete.
   public static CloseableIterator<CommitActions> getCommitActionsFromRangeUnsafe(
       Engine engine,
-      CommitRangeImpl commitRange,
+      CommitRange commitRange,
       String tablePath,
       Set<DeltaLogActionUtils.DeltaAction> actionSet) {
     return DeltaLogActionUtils.getActionsFromCommitFilesWithProtocolValidation(
@@ -288,8 +288,7 @@ public class StreamingHelper {
       String tablePath,
       DeltaLogActionUtils.DeltaAction actionType,
       RowExtractor<T> extractor) {
-    CommitRangeImpl commitRange =
-        (CommitRangeImpl) snapshotManager.getTableChanges(engine, startVersion, endVersionOpt);
+    CommitRange commitRange = snapshotManager.getTableChanges(engine, startVersion, endVersionOpt);
     // LinkedHashMap to preserve insertion order
     Map<Long, T> versionToAction = new LinkedHashMap<>();
 

@@ -17,7 +17,6 @@ package io.delta.spark.internal.v2.utils;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.MapValue;
-import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.actions.Metadata;
@@ -83,9 +82,8 @@ public class PartitionUtils {
    * format is Parquet.
    */
   public static boolean tableSupportsDeletionVectors(Snapshot snapshot) {
-    SnapshotImpl snapshotImpl = (SnapshotImpl) snapshot;
-    Protocol protocol = snapshotImpl.getProtocol();
-    Metadata metadata = snapshotImpl.getMetadata();
+    Protocol protocol = snapshot.getProtocol();
+    Metadata metadata = snapshot.getMetadata();
     return protocol.supportsFeature(TableFeatures.DELETION_VECTORS_RW_FEATURE)
         && "parquet".equalsIgnoreCase(metadata.getFormat().getProvider());
   }
@@ -347,11 +345,10 @@ public class PartitionUtils {
       Configuration hadoopConf,
       SQLConf sqlConf,
       boolean isWriteTimeCDCRead) {
-    SnapshotImpl snapshotImpl = (SnapshotImpl) snapshot;
     // Use Path.toString() instead of toUri().toString() to avoid URL encoding issues.
     // toUri().toString() encodes special characters (e.g., space -> %20), which causes
     // DV file path resolution failures.
-    String tablePath = snapshotImpl.getDataPath().toString();
+    String tablePath = snapshot.getDataPath().toString();
 
     // Preserve the caller-provided readDataSchema (pre-DV/RT/CDC augmentation) for the final
     // column-reorder wrapper below.
@@ -387,7 +384,7 @@ public class PartitionUtils {
     // and the per-field MetadataValueSetterBuilder array used to materialise values per row.
     Optional<MetadataStructSchemaContext> metadataSchemaContext =
         MetadataStructSchemaContext.forSchema(
-            readDataSchema, partitionSchema, deltaFormat, snapshotImpl.getMetadata());
+            readDataSchema, partitionSchema, deltaFormat, snapshot.getMetadata());
     if (metadataSchemaContext.isPresent()) {
       readDataSchema = metadataSchemaContext.get().getParquetReadSchema();
     }
@@ -474,7 +471,7 @@ public class PartitionUtils {
    * Creates a {@link DeltaParquetFileFormatV2} from a snapshot. Shared between the read path
    * ({@link #createDeltaParquetReaderFactory}) and the write path (BatchWrite).
    *
-   * @param snapshot the Delta table snapshot (must be a SnapshotImpl)
+   * @param snapshot the Delta table snapshot
    * @param tablePath the table root path
    * @param optimizationsEnabled whether to enable file splitting and predicate pushdown
    * @param useMetadataRowIndex explicit control over _metadata.row_index for DV filtering
@@ -494,10 +491,9 @@ public class PartitionUtils {
       boolean optimizationsEnabled,
       Option<Boolean> useMetadataRowIndex,
       boolean isCDCRead) {
-    SnapshotImpl snapshotImpl = (SnapshotImpl) snapshot;
     return new DeltaParquetFileFormatV2(
-        snapshotImpl.getProtocol(),
-        snapshotImpl.getMetadata(),
+        snapshot.getProtocol(),
+        snapshot.getMetadata(),
         /* nullableRowTrackingConstantFields */ false,
         /* nullableRowTrackingGeneratedFields */ false,
         optimizationsEnabled,

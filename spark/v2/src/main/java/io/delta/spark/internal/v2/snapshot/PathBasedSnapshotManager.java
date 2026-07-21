@@ -114,7 +114,7 @@ public class PathBasedSnapshotManager implements DeltaSnapshotManager {
   @Override
   public void checkVersionExists(long version, boolean mustBeRecreatable, boolean allowOutOfRange)
       throws VersionNotFoundException {
-    SnapshotImpl snapshot = (SnapshotImpl) loadLatestSnapshot();
+    Snapshot snapshot = loadLatestSnapshot();
     long earliest =
         mustBeRecreatable
             ? DeltaHistoryManager.getEarliestRecreatableCommit(
