@@ -19,7 +19,6 @@ package io.delta.flink.sink.mergestrategy;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 
-import io.delta.flink.kernel.ColumnMappingUtils;
 import io.delta.flink.kernel.dv.BinDVAccess;
 import io.delta.flink.kernel.dv.DVAccess;
 import io.delta.flink.kernel.dv.RoaringBitmapArray;
@@ -118,25 +117,23 @@ public class MoRUpsert extends Upsert {
     final Row removeAction =
         SingleAction.createRemoveFileSingleAction(
             sourceAddFile.toRemoveFileRow(true /* dataChange */, Optional.empty()));
-    // Stats are keyed by physical column names, so convert before serializing them onto the
-    // AddFile.
+    // Stats are keyed by physical column names, so use the physical schema when serializing them
+    // onto the AddFile.
     final Row addAction =
         SingleAction.createAddFileSingleAction(
-            addFileRowWithNewDv(ColumnMappingUtils.toPhysicalSchema(schema), sourceAddFile, newDv));
+            addFileRowWithNewDv(table.getPhysicalSchema(), sourceAddFile, newDv));
     return toCloseableIterator(Arrays.asList(removeAction, addAction).iterator());
   }
 
   @Override
   public Row markRemovesOnStaged(DeltaTable table, Row stagedAddFile, Set<Integer> positions) {
     AbstractKernelTable kernelTable = (AbstractKernelTable) table;
-    StructType schema = kernelTable.getSchema();
     String tableRoot = kernelTable.getTablePath().toString();
     RoaringBitmapArray bitmap = new RoaringBitmapArray();
     bitmap.addAll(positions);
     DeletionVectorDescriptor dvDesc = dvAccess.store(kernelTable.getEngine(), tableRoot, bitmap);
     AddFile oldAddFile = new AddFile(stagedAddFile.getStruct(SingleAction.ADD_FILE_ORDINAL));
-    Row newAddFileRow =
-        addFileRowWithNewDv(ColumnMappingUtils.toPhysicalSchema(schema), oldAddFile, dvDesc);
+    Row newAddFileRow = addFileRowWithNewDv(kernelTable.getPhysicalSchema(), oldAddFile, dvDesc);
     return SingleAction.createAddFileSingleAction(newAddFileRow);
   }
 

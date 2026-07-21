@@ -207,6 +207,16 @@ public abstract class AbstractKernelTable implements DeltaTable {
     return schema;
   }
 
+  /**
+   * Returns the physical schema of the table, i.e. the logical schema with each field renamed to
+   * its physical name according to the table's column mapping mode. The schema is produced by
+   * Kernel from the transaction state, so it honors the actual column mapping mode (including id
+   * mode metadata) instead of re-deriving the mapping in the connector.
+   */
+  public StructType getPhysicalSchema() {
+    return TransactionStateRow.getPhysicalSchema(tableState);
+  }
+
   @Override
   public List<String> getPartitionColumns() {
     return partitionColumns;
