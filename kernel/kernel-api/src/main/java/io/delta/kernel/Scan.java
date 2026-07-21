@@ -116,8 +116,8 @@ public interface Scan {
    * skipping); callers must not rely on their presence.
    *
    * @param engine {@link Engine} instance to use in Delta Kernel.
-   * @param includeStats whether to guarantee the JSON file statistics are included in the
-   *     scan-file rows.
+   * @param includeStats whether to guarantee the JSON file statistics are included in the scan-file
+   *     rows.
    * @return iterator of {@link FilteredColumnarBatch}s, one selected row per scan file, with the
    *     schema described in {@link #getScanFiles(Engine)} (plus {@code stats} when {@code
    *     includeStats} is {@code true}).
@@ -125,6 +125,10 @@ public interface Scan {
    */
   default CloseableIterator<FilteredColumnarBatch> getScanFiles(
       Engine engine, boolean includeStats) {
+    if (includeStats) {
+      throw new UnsupportedOperationException(
+          "getScanFiles(Engine, boolean) with includeStats=true is not implemented for this Scan");
+    }
     return getScanFiles(engine);
   }
 
