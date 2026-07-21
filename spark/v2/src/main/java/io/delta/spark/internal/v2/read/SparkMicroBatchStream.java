@@ -46,7 +46,6 @@ import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.adapters.KernelMetadataAdapter;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
-import io.delta.spark.internal.v2.utils.KernelUnsupportedFeatureTranslator;
 import io.delta.spark.internal.v2.utils.PartitionUtils;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
@@ -77,7 +76,6 @@ import org.apache.spark.sql.delta.DeltaErrors;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.delta.DeltaStartingVersion;
 import org.apache.spark.sql.delta.DeltaTimeTravelSpec;
-import org.apache.spark.sql.delta.DeltaUnsupportedTableFeatureException;
 import org.apache.spark.sql.delta.StartingVersion;
 import org.apache.spark.sql.delta.StartingVersionLatest$;
 import org.apache.spark.sql.delta.TypeWidening;
@@ -904,8 +902,8 @@ public class SparkMicroBatchStream
       // requirement was for the commit to exist
       snapshotManager.loadSnapshotAt(version);
       return true;
-    } catch (DeltaUnsupportedTableFeatureException e) {
-      // Unsupported reader feature: fail loud with the Delta error class.
+    } catch (UnsupportedTableFeatureException e) {
+      // Re-throw fatal unsupported table feature exceptions
       throw e;
     } catch (Exception e) {
       // Suppress non-fatal exceptions
@@ -1483,18 +1481,6 @@ public class SparkMicroBatchStream
       }
     } catch (IOException e) {
       throw new RuntimeException("Failed to process commit at version " + version, e);
-    } catch (RuntimeException e) {
-      // Kernel validates each commit's protocol while materializing its actions in
-      // commit.getActions(); an unsupported reader feature surfaces here as a Kernel
-      // UnsupportedTableFeatureException wrapped in a RuntimeException by Kernel's action
-      // iterator. Unwrap and translate it into Delta's DeltaUnsupportedTableFeatureException so the
-      // failure carries the DELTA_UNSUPPORTED_FEATURES_FOR_READ error class; rethrow anything else.
-      UnsupportedTableFeatureException unsupported =
-          KernelUnsupportedFeatureTranslator.findUnsupportedTableFeatureCause(e);
-      if (unsupported != null) {
-        throw KernelUnsupportedFeatureTranslator.toUnsupportedReaderFeatureException(unsupported);
-      }
-      throw e;
     }
 
     if (removeFileActionPath != null) {
