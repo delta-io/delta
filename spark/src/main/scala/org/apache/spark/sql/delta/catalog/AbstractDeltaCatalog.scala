@@ -516,6 +516,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     DeltaTableV2(spark, new Path(ident.name()))
   }
 
+
   private def getProvider(properties: util.Map[String, String]): String = {
     Option(properties.get("provider"))
       .getOrElse(spark.sessionState.conf.getConf(SQLConf.DEFAULT_DATA_SOURCE_NAME))
