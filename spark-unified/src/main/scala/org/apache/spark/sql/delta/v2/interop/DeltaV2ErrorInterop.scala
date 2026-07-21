@@ -20,7 +20,7 @@ import java.sql.Timestamp
 
 import org.apache.spark.sql.delta.{DeltaErrors, VersionNotFoundException => V1VersionNotFoundException}
 import org.apache.spark.sql.delta.util.{DateTimeUtils, TimestampFormatter}
-import io.delta.spark.internal.v2.exception.{TimestampOutOfRangeException, VersionNotFoundException}
+import io.delta.spark.internal.v2.exception.{TableNotFoundException, TimestampOutOfRangeException, VersionNotFoundException}
 
 import org.apache.spark.sql.internal.SQLConf
 
@@ -48,4 +48,7 @@ object DeltaV2ErrorInterop {
 
   def throwAsDeltaError(e: VersionNotFoundException): Nothing =
     throw V1VersionNotFoundException(e.getUserVersion, e.getEarliest, e.getLatest)
+
+  def throwAsDeltaError(e: TableNotFoundException): Nothing =
+    throw DeltaErrors.pathNotExistsException(e.getTablePath)
 }

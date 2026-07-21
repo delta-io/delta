@@ -32,6 +32,8 @@ import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.parser.ParseException
+import org.apache.spark.sql.execution.FileSourceScanExec
+import org.apache.spark.sql.execution.datasources.v2.BatchScanExec
 
 /**
  * DSv2 parity tests for time travel queries exercising the STRICT-mode Kernel-backed connector
@@ -496,6 +498,406 @@ class DeltaHistoryManagerV2Suite extends DeltaTimeTravelTestHelpers {
         } finally {
           q.stop()
         }
+      }
+    }
+  }
+
+  test("SQL path-based VERSION AS OF returns the historical snapshot") {
+    withTempDir { dir =>
+      val tbl = "delta_tt_v2_path"
+      val path = dir.getCanonicalPath
+      withTable(tbl) {
+        val start = System.currentTimeMillis() - 5.days.toMillis
+        inV1 { generateCommitsAtPath(tbl, path, start, start + 20.minutes) }
+
+        checkAnswer(
+          sql(s"SELECT * FROM delta.`$path` FOR VERSION AS OF 0"), spark.range(0, 10).toDF())
+        checkAnswer(
+          sql(s"SELECT * FROM delta.`$path` VERSION AS OF 1"), spark.range(0, 20).toDF())
+      }
+    }
+  }
+
+  test("SQL path-based VERSION AS OF past the latest version fails with DELTA_VERSION_NOT_FOUND") {
+    withTempDir { dir =>
+      val tbl = "delta_tt_v2_path_notfound"
+      val path = dir.getCanonicalPath
+      withTable(tbl) {
+        val start = System.currentTimeMillis() - 5.days.toMillis
+        inV1 { generateCommitsAtPath(tbl, path, start, start + 20.minutes) }
+
+        val ex = intercept[VersionNotFoundException] {
+          sql(s"SELECT * FROM delta.`$path` FOR VERSION AS OF 2").collect()
+        }
+        checkError(
+          ex,
+          "DELTA_VERSION_NOT_FOUND",
+          sqlState = "22003",
+          parameters = Map("userVersion" -> "2", "earliest" -> "0", "latest" -> "1"))
+      }
+    }
+  }
+
+  test("SQL path-based VERSION AS OF across multiple versions in one query (relation caching)") {
+    withTempDir { dir =>
+      val tbl = "delta_tt_v2_path_cache"
+      val path = dir.getCanonicalPath
+      withTable(tbl) {
+        inV1 {
+          sql(s"CREATE TABLE $tbl USING delta LOCATION '$path' AS SELECT 1 AS c")
+          sql(s"INSERT INTO $tbl SELECT 2 AS c")
+        }
+        checkAnswer(
+          sql(s"SELECT * FROM delta.`$path` VERSION AS OF '0' " +
+            s"UNION ALL SELECT * FROM delta.`$path` VERSION AS OF '1'"),
+          Row(1) :: Row(1) :: Row(2) :: Nil)
+      }
+    }
+  }
+
+  test("SQL path-based VERSION AS OF reflects historical column defaults") {
+    withTempDir { dir =>
+      val tbl = "delta_tt_v2_path_defaults"
+      val path = dir.getCanonicalPath
+      withTable(tbl) {
+        inV1 {
+          sql(s"CREATE TABLE $tbl(id long) USING delta LOCATION '$path' " +
+            "TBLPROPERTIES('delta.feature.allowColumnDefaults' = 'enabled')")
+          sql(s"INSERT INTO $tbl SELECT default")
+          sql(s"ALTER TABLE $tbl ALTER COLUMN id SET DEFAULT 42")
+          sql(s"INSERT INTO $tbl SELECT default")
+        }
+        checkAnswer(sql(s"SELECT * FROM delta.`$path` FOR VERSION AS OF 0"), Seq.empty[Row])
+        checkAnswer(sql(s"SELECT * FROM delta.`$path` FOR VERSION AS OF 1"), Seq(Row(null)))
+        checkAnswer(sql(s"SELECT * FROM delta.`$path`"), Seq(Row(null), Row(42L)))
+      }
+    }
+  }
+
+  test("SQL path-based VERSION AS OF below the earliest recreatable commit fails") {
+    withTempDir { dir =>
+      val tbl = "delta_tt_v2_path_recreatable"
+      val path = dir.getCanonicalPath
+      withTable(tbl) {
+        val start = System.currentTimeMillis() - 5.days.toMillis
+        inV1 {
+          // v0, v1, v2. Checkpoint at v2, then delete v0's commit file
+          generateCommitsAtPath(tbl, path, start, start + 20.minutes, start + 40.minutes)
+          val deltaLog = DeltaLog.forTable(spark, path)
+          deltaLog.checkpoint(deltaLog.update())
+          new File(FileNames.unsafeDeltaFile(deltaLog.logPath, 0).toUri).delete()
+        }
+
+        val ex = intercept[VersionNotFoundException] {
+          sql(s"SELECT * FROM delta.`$path` VERSION AS OF 1").collect()
+        }
+        checkError(
+          ex,
+          "DELTA_VERSION_NOT_FOUND",
+          sqlState = "22003",
+          parameters = Map("userVersion" -> "1", "earliest" -> "2", "latest" -> "2"))
+      }
+    }
+  }
+
+  test("SQL path-based VERSION AS OF a negative version is rejected by the parser") {
+    withTempDir { dir =>
+      val tbl = "delta_tt_v2_path_negative"
+      val path = dir.getCanonicalPath
+      withTable(tbl) {
+        inV1 { generateCommitsAtPath(tbl, path, System.currentTimeMillis() - 5.days.toMillis) }
+        intercept[ParseException] {
+          sql(s"SELECT * FROM delta.`$path` VERSION AS OF -1").collect()
+        }
+      }
+    }
+  }
+
+  test("SQL path-based VERSION AS OF on a non-existent path fails with DELTA_PATH_DOES_NOT_EXIST") {
+    withTempDir { dir =>
+      val path = new File(dir, "does_not_exist").getCanonicalPath
+      val ex = intercept[AnalysisException] {
+        sql(s"SELECT * FROM delta.`$path` VERSION AS OF 0").collect()
+      }
+      assert(ex.getCondition === "DELTA_PATH_DOES_NOT_EXIST")
+      assert(ex.getMessage.contains(path))
+    }
+  }
+
+  test("SQL path-based VERSION AS OF reflects the historical schema before a column was added") {
+    withTempDir { dir =>
+      val tbl = "delta_tt_v2_path_schema"
+      val path = dir.getCanonicalPath
+      withTable(tbl) {
+        inV1 {
+          sql(s"CREATE TABLE $tbl (id INT) USING delta LOCATION '$path'") // v0
+          sql(s"INSERT INTO $tbl VALUES (1)")                             // v1
+          sql(s"ALTER TABLE $tbl ADD COLUMNS (name STRING)")              // v2
+          sql(s"INSERT INTO $tbl VALUES (2, 'b')")                        // v3
+        }
+        val atV1 = sql(s"SELECT * FROM delta.`$path` VERSION AS OF 1")
+        assert(atV1.schema.fieldNames.toSeq === Seq("id"))
+        checkAnswer(atV1, Row(1))
+        assert(sql(s"SELECT * FROM delta.`$path`").schema.fieldNames.toSeq === Seq("id", "name"))
+        checkAnswer(sql(s"SELECT * FROM delta.`$path`"), Row(1, null) :: Row(2, "b") :: Nil)
+      }
+    }
+  }
+
+  test("SQL path-based VERSION AS OF after VACUUM removed the data files fails") {
+    withTempDir { dir =>
+      val tbl = "delta_tt_v2_path_vacuum"
+      val path = dir.getCanonicalPath
+      withTable(tbl) {
+        val start = System.currentTimeMillis() - 5.days.toMillis
+        inV1 {
+          generateCommitsAtPath(tbl, path, start, start + 20.minutes)  // v0, v1
+          sql(s"OPTIMIZE delta.`$path`")  // the v0/v1 data files become unreferenced
+          withSQLConf("spark.databricks.delta.retentionDurationCheck.enabled" -> "false") {
+            sql(s"VACUUM delta.`$path` RETAIN 0 HOURS")
+          }
+        }
+        val ex = intercept[Exception] {
+          sql(s"SELECT * FROM delta.`$path` VERSION AS OF 0").collect()
+        }
+        val causes = Iterator.iterate(ex: Throwable)(_.getCause).takeWhile(_ != null).toList
+        assert(
+          causes.exists { c =>
+            c.isInstanceOf[FileNotFoundException] || c.isInstanceOf[IOException]
+          },
+          "expected a missing-data-file read failure, got:\n" +
+            causes.map(c => s"  [${c.getClass.getName}] ${c.getMessage}").mkString("\n"))
+      }
+    }
+  }
+
+  test("SQL path-based TIMESTAMP AS OF resolves to the commit active at that time") {
+    withTempDir { dir =>
+      val tbl = "delta_tt_v2_path_ts"
+      val path = dir.getCanonicalPath
+      withTable(tbl) {
+        val start = System.currentTimeMillis() - 5.days.toMillis
+        inV1 { generateCommitsAtPath(tbl, path, start, start + 20.minutes, start + 40.minutes) }
+
+        val q = s"delta.`$path`"
+        // A string-literal timestamp is required.
+        def countAsOf(millis: Long): DataFrame =
+          sql(s"SELECT count(*) FROM ${timestampAsOf(q, s"'${timestampString(millis)}'")}")
+        // A timestamp between commits resolves to the commit active at that time.
+        checkAnswer(countAsOf(start + 10.minutes), Row(10L))
+        checkAnswer(countAsOf(start + 30.minutes), Row(20L))
+        // Exact commit timestamps resolve to that commit.
+        checkAnswer(countAsOf(start), Row(10L))
+        checkAnswer(countAsOf(start + 20.minutes), Row(20L))
+      }
+    }
+  }
+
+  test("SQL path-based TIMESTAMP AS OF after the latest commit fails " +
+      "with DELTA_TIMESTAMP_GREATER_THAN_COMMIT") {
+    withTempDir { dir =>
+      val tbl = "delta_tt_v2_path_ts_err"
+      val path = dir.getCanonicalPath
+      withTable(tbl) {
+        val start = 1540415658000L
+        inV1 { generateCommitsAtPath(tbl, path, start) }
+
+        val ts = Seq(new Timestamp(start + 10.minutes)).toDF("ts")
+          .select($"ts".cast("string")).as[String].collect().map(i => s"'$i'")
+
+        val ex = intercept[DeltaErrors.TemporallyUnstableInputException] {
+          sql(s"SELECT count(*) FROM ${timestampAsOf(s"delta.`$path`", ts(0))}").collect()
+        }
+        checkError(
+          ex,
+          "DELTA_TIMESTAMP_GREATER_THAN_COMMIT",
+          sqlState = "42816",
+          parameters = Map(
+            "providedTimestamp" -> "2018-10-24 14:24:18.0",
+            "lastCommitTimestamp" -> "2018-10-24 14:14:18.0",
+            "maximumTimestamp" -> "2018-10-24 14:14:18"))
+      }
+    }
+  }
+
+  test("SQL path-based TIMESTAMP AS OF before the earliest recreatable commit fails") {
+    withTempDir { dir =>
+      val tbl = "delta_tt_v2_path_ts_recreatable"
+      val path = dir.getCanonicalPath
+      withTable(tbl) {
+        val start = System.currentTimeMillis() - 5.days.toMillis
+        inV1 {
+          // v0, v1, v2. Checkpoint at v2, then delete v0's commit file.
+          generateCommitsAtPath(tbl, path, start, start + 20.minutes, start + 40.minutes)
+          val deltaLog = DeltaLog.forTable(spark, path)
+          deltaLog.checkpoint(deltaLog.update())
+          new File(FileNames.unsafeDeltaFile(deltaLog.logPath, 0).toUri).delete()
+        }
+
+        val ts = Seq(new Timestamp(start)).toDF("ts")
+          .select($"ts".cast("string")).as[String].head()
+        val ex = intercept[DeltaErrors.TimestampEarlierThanCommitRetentionException] {
+          sql(s"SELECT * FROM ${timestampAsOf(s"delta.`$path`", s"'$ts'")}").collect()
+        }
+        assert(ex.getCondition === "DELTA_TIMESTAMP_EARLIER_THAN_COMMIT_RETENTION")
+        assert(ex.getSqlState === "42816")
+      }
+    }
+  }
+
+  test("SQL path-based TIMESTAMP AS OF reflects the historical schema before a column was added") {
+    withTempDir { dir =>
+      val tbl = "delta_tt_v2_path_ts_schema"
+      val path = dir.getCanonicalPath
+      val start = System.currentTimeMillis() - 5.days.toMillis
+      withTable(tbl) {
+        inV1 {
+          sql(s"CREATE TABLE $tbl (id INT) USING delta LOCATION '$path'") // v0
+          sql(s"INSERT INTO $tbl VALUES (1)")                             // v1
+          sql(s"ALTER TABLE $tbl ADD COLUMNS (name STRING)")              // v2
+          sql(s"INSERT INTO $tbl VALUES (2, 'b')")                        // v3
+          // Pin deterministic commit timestamps.
+          val deltaLog = DeltaLog.forTable(spark, path)
+          Seq(0L, 1L, 2L, 3L).foreach { v =>
+            modifyCommitTimestamp(deltaLog, v, start + v * 20.minutes)
+          }
+        }
+
+        val ts = Seq(new Timestamp(start + 30.minutes)).toDF("ts")
+          .select($"ts".cast("string")).as[String].head()
+        val atV1 = sql(s"SELECT * FROM ${timestampAsOf(s"delta.`$path`", s"'$ts'")}")
+        assert(atV1.schema.fieldNames.toSeq === Seq("id"))
+        checkAnswer(atV1, Row(1))
+        assert(sql(s"SELECT * FROM delta.`$path`").schema.fieldNames.toSeq === Seq("id", "name"))
+      }
+    }
+  }
+
+  test("SQL path-based TIMESTAMP AS OF rejects a non-literal timestamp expression") {
+    withTempDir { dir =>
+      val tbl = "delta_tt_v2_path_ts_expr"
+      val path = dir.getCanonicalPath
+      withTable(tbl) {
+        val ts = inV1 {
+          spark.range(10).write.format("delta").option("path", path).saveAsTable(tbl)
+          sql(s"DESCRIBE HISTORY delta.`$path`").select("timestamp").head().getTimestamp(0)
+        }
+        val ex = intercept[AnalysisException] {
+          sql(s"SELECT count(*) FROM delta.`$path` TIMESTAMP AS OF " +
+            s"coalesce(CAST ('$ts' AS TIMESTAMP), current_date())").collect()
+        }
+        assert(ex.getCondition === "UNSUPPORTED_DATASOURCE_FOR_DIRECT_QUERY")
+      }
+    }
+  }
+
+  test("SQL path-based time travel resolves through the native V2 connector (BatchScan)") {
+    withTempDir { dir =>
+      val tbl = "delta_tt_v2_path_planshape"
+      val path = dir.getCanonicalPath
+      withTable(tbl) {
+        val start = System.currentTimeMillis() - 5.days.toMillis
+        inV1 { generateCommitsAtPath(tbl, path, start, start + 20.minutes) }
+
+        val plan = sql(s"SELECT * FROM delta.`$path` VERSION AS OF 0").queryExecution.executedPlan
+        assert(
+          plan.collectFirst { case b: BatchScanExec => b }.isDefined,
+          "expected a native DSv2 BatchScan (not a V1 FileSourceScanExec), got:\n" + plan)
+        assert(
+          plan.collectFirst { case f: FileSourceScanExec => f }.isEmpty,
+          "unexpected V1 FileSourceScanExec in the plan:\n" + plan)
+      }
+    }
+  }
+
+  test("SQL path @-syntax VERSION returns the historical snapshot") {
+    withTempDir { dir =>
+      val tbl = "delta_tt_v2_at_ver"
+      val path = dir.getCanonicalPath
+      withTable(tbl) {
+        val start = System.currentTimeMillis() - 5.days.toMillis
+        inV1 { generateCommitsAtPath(tbl, path, start, start + 20.minutes) }
+
+        checkAnswer(
+          sql(s"SELECT * FROM delta.`${identifierWithVersion(path, 0)}`"),
+          spark.range(0, 10).toDF())
+        checkAnswer(
+          sql(s"SELECT * FROM delta.`${identifierWithVersion(path, 1)}`"),
+          spark.range(0, 20).toDF())
+      }
+    }
+  }
+
+  test("SQL path @-syntax VERSION past the latest version fails with DELTA_VERSION_NOT_FOUND") {
+    withTempDir { dir =>
+      val tbl = "delta_tt_v2_at_ver_notfound"
+      val path = dir.getCanonicalPath
+      withTable(tbl) {
+        val start = System.currentTimeMillis() - 5.days.toMillis
+        inV1 { generateCommitsAtPath(tbl, path, start, start + 20.minutes) }
+
+        val ex = intercept[VersionNotFoundException] {
+          sql(s"SELECT * FROM delta.`${identifierWithVersion(path, 2)}`").collect()
+        }
+        checkError(
+          ex,
+          "DELTA_VERSION_NOT_FOUND",
+          sqlState = "22003",
+          parameters = Map("userVersion" -> "2", "earliest" -> "0", "latest" -> "1"))
+      }
+    }
+  }
+
+  test("SQL path @-syntax TIMESTAMP resolves to the commit active at that time") {
+    withTempDir { dir =>
+      val tbl = "delta_tt_v2_at_ts"
+      val path = dir.getCanonicalPath
+      withTable(tbl) {
+        val start = System.currentTimeMillis() - 5.days.toMillis
+        inV1 { generateCommitsAtPath(tbl, path, start, start + 20.minutes, start + 40.minutes) }
+
+        // A timestamp between commits resolves to the commit active at that time.
+        checkAnswer(
+          sql(s"SELECT count(*) FROM delta.`${identifierWithTimestamp(path, start + 10.minutes)}`"),
+          Row(10L))
+        checkAnswer(
+          sql(s"SELECT count(*) FROM delta.`${identifierWithTimestamp(path, start + 30.minutes)}`"),
+          Row(20L))
+      }
+    }
+  }
+
+  test("SQL path @-syntax does not time travel a valid path whose name contains @vN") {
+    withTempDir { dir =>
+      // A real directory literally named `base@v0` which contains the table.
+      val path = new File(dir, "base@v0").getCanonicalPath
+      val tbl = "delta_tt_v2_at_literal"
+      withTable(tbl) {
+        inV1 { generateCommitsAtPath(tbl, path, System.currentTimeMillis() - 5.days.toMillis) }
+        inV1 { spark.range(10, 20).write.format("delta").mode("append").save(path) }
+
+        checkAnswer(
+          sql(s"SELECT * FROM delta.`$path`"), spark.range(0, 20).toDF())
+      }
+    }
+  }
+
+  test("SQL path @-syntax resolves through the native V2 connector (BatchScan)") {
+    withTempDir { dir =>
+      val tbl = "delta_tt_v2_at_planshape"
+      val path = dir.getCanonicalPath
+      withTable(tbl) {
+        val start = System.currentTimeMillis() - 5.days.toMillis
+        inV1 { generateCommitsAtPath(tbl, path, start, start + 20.minutes) }
+
+        val plan = sql(s"SELECT * FROM delta.`${identifierWithVersion(path, 0)}`")
+          .queryExecution.executedPlan
+        assert(
+          plan.collectFirst { case b: BatchScanExec => b }.isDefined,
+          "expected a native DSv2 BatchScan (not a V1 FileSourceScanExec), got:\n" + plan)
+        assert(
+          plan.collectFirst { case f: FileSourceScanExec => f }.isEmpty,
+          "unexpected V1 FileSourceScanExec in the plan:\n" + plan)
       }
     }
   }
