@@ -1,6 +1,6 @@
 name: "V2 Changelog Tests (Spark 4.2)"
 
-# Runs only the V2 changelog tests against Spark 4.2-preview4. Scope is
+# Runs only the V2 changelog tests against the released Spark 4.2. Scope is
 # narrowly the tests under io.delta.spark.internal.v2.read.changelog.*
 # in spark-unified/test, which is what PR #6830 (test classpath fix) and
 # PR #6832 (DV support) actually exercise. The full Delta test suite
@@ -38,8 +38,6 @@ jobs:
         uses: ./.github/actions/prepare-spark-env
         with:
           spark-version: "4.2"
-          use-spark-source-cache: "true"
-          build-on-miss: "true"
       - name: Restore SBT cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
