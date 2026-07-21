@@ -349,6 +349,38 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
     }
   }
 
+  test("computeChecksum falls back to full replay when the base CRC omits DV metrics on a " +
+    "DV-enabled table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // DV-enabled table with two deletes at two versions (5 total deleted records).
+      spark.sql(
+        s"CREATE TABLE delta.`$tablePath` (id LONG) USING DELTA " +
+          "TBLPROPERTIES ('delta.enableDeletionVectors' = 'true')")
+      spark.range(0, 10).write.format("delta").mode("append").save(tablePath)
+      spark.sql(s"DELETE FROM delta.`$tablePath` WHERE id < 3")
+      spark.sql(s"DELETE FROM delta.`$tablePath` WHERE id >= 8")
+
+      deleteChecksumFileForTableUsingHadoopFs(tablePath, 0 to 3)
+      val snapshot2 = Table.forPath(engine, tablePath)
+        .getSnapshotAsOfVersion(engine, 2).asInstanceOf[SnapshotImpl]
+      ChecksumUtils.computeStateAndWriteChecksum(engine, snapshot2.getLogSegment)
+
+      // Simulate a base CRC that never captured DV metrics.
+      rewriteChecksumFileToExcludeDvMetrics(engine, tablePath, 2)
+
+      // computeChecksum at v3 finds the stripped v2 CRC as its base. Fall back to full replay.
+      val snapshot3 = Table.forPath(engine, tablePath)
+        .getSnapshotAsOfVersion(engine, 3).asInstanceOf[SnapshotImpl]
+      val crcInfo = ChecksumUtils.computeChecksum(engine, snapshot3.getLogSegment)
+
+      assert(crcInfo.getVersion === 3)
+      assert(crcInfo.getNumDeletedRecords.isPresent)
+      assert(crcInfo.getNumDeletionVectors.isPresent)
+      assert(crcInfo.getNumDeletedRecords.get() === 5L)
+      assert(crcInfo.getNumDeletionVectors.get() >= 1L)
+    }
+  }
+
   test("computeChecksum returns the existing CRCInfo as-is for an already-checksummed " +
     "version, without recomputation") {
     withTempDirAndEngine { (tablePath, engine) =>

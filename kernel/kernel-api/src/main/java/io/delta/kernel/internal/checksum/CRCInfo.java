@@ -71,9 +71,7 @@ public class CRCInfo {
           .add(FILE_SIZE_HISTOGRAM, FileSizeHistogram.FULL_SCHEMA, /*nullable*/ true)
           .add(IN_COMMIT_TIMESTAMP, LongType.LONG, /*nullable*/ true)
           .add(
-              SET_TRANSACTIONS,
-              new ArrayType(SetTransaction.FULL_SCHEMA, false),
-              /*nullable*/ true)
+              SET_TRANSACTIONS, new ArrayType(SetTransaction.FULL_SCHEMA, false), /*nullable*/ true)
           .add(NUM_DELETED_RECORDS_OPT, LongType.LONG, /*nullable*/ true)
           .add(NUM_DELETION_VECTORS_OPT, LongType.LONG, /*nullable*/ true);
 
