@@ -34,7 +34,7 @@ import org.apache.spark.sql.{DataFrame, Row}
 
 /**
  * Verifies that a single stream's schema tracking log is interchangeable between the V1 (legacy
- * DeltaSource) and V2 (Kernel-based SparkMicroBatchStream) connectors. Each test alternates the
+ * DeltaSource) and V2 (Kernel-based DeltaV2MicroBatchStream) connectors. Each test alternates the
  * connector across stream restarts that share the same checkpoint and schema location, exercising
  * schema log initialization, non-additive evolution, and additive-then-non-additive sequences.
  */

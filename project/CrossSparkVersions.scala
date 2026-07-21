@@ -213,7 +213,14 @@ import Unidoc._
  *
  * @param fullVersion The full Spark version (e.g., "3.5.7", "4.0.2-SNAPSHOT")
  * @param targetJvm Target JVM version (e.g., "11", "17")
- * @param additionalSourceDir Optional version-specific source directory suffix (e.g., "scala-spark-3.5")
+ * @param additionalSourceDirs Shim source directory suffixes compiled for this Spark version, in
+ *                             any order. These include the version's private shim dir (e.g.
+ *                             "scala-shims/spark-4.1") and any cross-version shim dirs shared with
+ *                             adjacent versions (e.g. "scala-shims/spark-4.0-4.1"). A file in a
+ *                             shared dir is compiled for every version that lists it, so identical
+ *                             shims are written once instead of copied per version. Non-existent
+ *                             dirs are ignored by sbt, so listing a dir a module doesn't use is
+ *                             harmless.
  * @param antlr4Version ANTLR version to use (e.g., "4.9.3", "4.13.1")
  * @param additionalJavaOptions Additional JVM options for tests (e.g., Java 17 --add-opens flags)
  * @param sourceBuildDefaultRef Default Spark source ref for source-built CI/cache workflows.
@@ -222,7 +229,7 @@ import Unidoc._
 case class SparkVersionSpec(
   fullVersion: String,
   targetJvm: String,
-  additionalSourceDir: Option[String] = None,
+  additionalSourceDirs: Seq[String] = Seq.empty,
   supportIceberg: Boolean,
   supportHudi: Boolean = true,
   antlr4Version: String,
@@ -280,7 +287,7 @@ object SparkVersionSpec {
   private val spark40 = SparkVersionSpec(
     fullVersion = "4.0.1",
     targetJvm = "17",
-    additionalSourceDir = Some("scala-shims/spark-4.0"),
+    additionalSourceDirs = Seq("scala-shims/spark-4.0", "scala-shims/spark-4.0-4.1"),
     supportIceberg = true,
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,
@@ -290,7 +297,8 @@ object SparkVersionSpec {
   private val spark41 = SparkVersionSpec(
     fullVersion = "4.1.0",
     targetJvm = "17",
-    additionalSourceDir = Some("scala-shims/spark-4.1"),
+    additionalSourceDirs =
+      Seq("scala-shims/spark-4.1", "scala-shims/spark-4.0-4.1", "scala-shims/spark-4.1-4.2"),
     supportIceberg = true,
     supportHudi = false,
     antlr4Version = "4.13.1",
@@ -304,13 +312,13 @@ object SparkVersionSpec {
   private val spark42Snapshot = SparkVersionSpec(
     fullVersion = "4.2.0-SNAPSHOT",
     targetJvm = "17",
-    additionalSourceDir = Some("scala-shims/spark-4.2"),
+    additionalSourceDirs = Seq("scala-shims/spark-4.2", "scala-shims/spark-4.1-4.2"),
     supportIceberg = false,
     supportHudi = false,
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,
     jacksonVersion = "2.18.2",
-    sourceBuildDefaultRef = Some("b6bd005ac7549411ec4e7dc944d7a0e19fd56561")
+    sourceBuildDefaultRef = Some("da6e110231beea1fa1bd0d259c2b49c7ea4d5085")
   )
 
   /** Default Spark version */
@@ -444,15 +452,20 @@ object CrossSparkVersions extends AutoPlugin {
       Test / javaOptions ++= (Seq(s"-Dlog4j.configurationFile=${spec.log4jConfig}") ++ spec.additionalJavaOptions)
     )
 
-    val additionalSourceDirSettings = spec.additionalSourceDir.map { dir =>
-      // Add both scala-shims and java-shims directories
+    // Add a shim directory's scala-shims and java-shims variants to both Compile and Test.
+    // sbt ignores non-existent source directories, so a module that has no files under a given
+    // dir is unaffected.
+    def shimDirSettings(dir: String): Seq[Setting[_]] = {
       val javaShimsDir = dir.replace("scala-shims", "java-shims")
       Seq(
         Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / dir,
         Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / javaShimsDir,
         Test / unmanagedSourceDirectories += (Test / baseDirectory).value / "src" / "test" / dir
       )
-    }.getOrElse(Seq.empty)
+    }
+
+    // The version-specific shim dir plus any cross-version shared shim dirs (e.g. spark-4.1-4.2).
+    val additionalSourceDirSettings = spec.additionalSourceDirs.flatMap(shimDirSettings)
 
     val conditionalSettings = Seq(
       if (spec.exportJars) Seq(exportJars := true) else Nil,

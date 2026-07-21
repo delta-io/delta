@@ -28,6 +28,7 @@ import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.spark.internal.v2.adapters.KernelMetadataAdapter;
 import io.delta.spark.internal.v2.adapters.KernelProtocolAdapter;
+import io.delta.spark.internal.v2.exception.TableNotFoundException;
 import io.delta.spark.internal.v2.exception.TimestampOutOfRangeException;
 import io.delta.spark.internal.v2.read.DeltaV2ScanUtils;
 import io.delta.spark.internal.v2.read.MetadataEvolutionHandler;
@@ -238,10 +239,15 @@ public class DeltaV2Table extends DeltaV2TableShims
         SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(options));
     this.kernelEngine = DefaultEngine.create(this.hadoopConf);
     this.snapshotManager = SnapshotManagerFactory.create(tablePath, kernelEngine, catalogTable);
-    this.initialSnapshot =
-        timeTravelVersion.isPresent()
-            ? loadSnapshotAtCheckedVersion(snapshotManager, timeTravelVersion.getAsLong())
-            : snapshotManager.loadLatestSnapshot();
+    try {
+      this.initialSnapshot =
+          timeTravelVersion.isPresent()
+              ? loadSnapshotAtCheckedVersion(snapshotManager, timeTravelVersion.getAsLong())
+              : snapshotManager.loadLatestSnapshot();
+    } catch (io.delta.kernel.exceptions.TableNotFoundException e) {
+      // Rethrow as the Delta-module wrapper so catalog/interop layer never names a Kernel type.
+      throw new TableNotFoundException(tablePath);
+    }
 
     this.isCDCRead = CDCReader.isCDCRead(new CaseInsensitiveStringMap(this.options));
 

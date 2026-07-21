@@ -22,23 +22,34 @@ import java.io.File
 import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, DeltaLog, Snapshot}
 import org.apache.spark.sql.delta.actions.{Action, Checkpoint}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.FileNames
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.col
-import org.apache.spark.sql.test.SharedSparkSession
 
 /**
  * Shared fixtures for AMT (`adaptiveMetadata-preview`) test suites: table creation, manifest-tree
  * file lookups, and typed access to the snapshot's [[AMTCheckpointProvider]].
+ *
+ * AMT requires the `catalogManaged` feature, so tables must be catalog-managed and accessed by
+ * name (path-based access is blocked). This mixes in [[CatalogOwnedTestBaseSuite]] to register an
+ * in-memory commit coordinator and creates/accesses tables by name.
  */
 trait AMTCheckpointTestBase
   extends QueryTest
-  with SharedSparkSession
+  with CatalogOwnedTestBaseSuite
   with DeltaSQLCommandTest {
+
+  // Register the in-memory commit coordinator so catalog-managed AMT tables can be created locally.
+  // Backfill batch size 1 so every commit is backfilled to a standard NNN.json immediately (rather
+  // than staying as a UUID-named staged commit); the suites read commit actions via
+  // `deltaLog.getChanges`, which only sees backfilled deltas.
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 
   override protected def sparkConf: SparkConf = super.sparkConf
     .set(DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_ENABLED.key, "false")
@@ -50,12 +61,20 @@ trait AMTCheckpointTestBase
       case _ => None
     }
 
-  protected def createAMTTable(path: String, checkpointInterval: Int = 2): Unit = {
+  /** The [[DeltaLog]] for a catalog-managed table accessed by name. */
+  protected def deltaLogForName(tableName: String): DeltaLog =
+    DeltaLog.forTable(spark, new TableIdentifier(tableName))
+
+  /** The physical data path of a catalog-managed table accessed by name. */
+  protected def tablePath(tableName: String): String =
+    new File(deltaLogForName(tableName).dataPath.toUri).getCanonicalPath
+
+  protected def createAMTTable(tableName: String, checkpointInterval: Int = 2): Unit = {
     sql(
-      s"""CREATE TABLE delta.`$path` (id INT) USING DELTA
+      s"""CREATE TABLE $tableName (id INT) USING DELTA
          |TBLPROPERTIES (
          |  '${propertyKey(AdaptiveMetadataTableFeature)}' = '$FEATURE_PROP_SUPPORTED',
-         |  'delta.columnMapping.mode' = 'name',
+         |  'delta.columnMapping.mode' = 'id',
          |  'delta.enableDeletionVectors' = 'true',
          |  'delta.checkpointInterval' = '$checkpointInterval')""".stripMargin)
   }
