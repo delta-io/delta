@@ -25,7 +25,6 @@ import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
-import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.statistics.SnapshotStatistics;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
@@ -124,21 +123,6 @@ public interface Snapshot {
 
   /** @return statistics about this snapshot */
   SnapshotStatistics getStatistics();
-
-  /**
-   * Returns the checksum ({@code CRC}) information for this snapshot if it was loaded from a
-   * checksum file, otherwise empty.
-   *
-   * <p>The default implementation returns {@link Optional#empty()}; implementations backed by a
-   * checksum file override it to return the loaded {@link CRCInfo}.
-   *
-   * @return the {@link CRCInfo} for this snapshot, or empty if no checksum was loaded
-   * @since 4.4.0
-   */
-  // TODO: expose a public checksum-info type; CRCInfo is currently an internal type.
-  default Optional<CRCInfo> getCurrentCrcInfo() {
-    return Optional.empty();
-  }
 
   /**
    * Returns the table protocol at this snapshot.
