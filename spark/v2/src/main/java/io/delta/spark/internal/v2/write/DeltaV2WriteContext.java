@@ -131,9 +131,6 @@ class DeltaV2WriteContext {
       StructType dataSchema,
       LogicalWriteInfo writeInfo) {
     this.engine = engine;
-    // dataSchema is wired in from DeltaV2Table's SchemaProvider (which already split off the
-    // partition columns) rather than re-derived here, so the schema split lives in one place.
-    this.dataSchema = dataSchema;
 
     this.kernelTableSchema = initialSnapshot.getSchema();
     StructType tableSchema = SchemaUtils.convertKernelSchemaToSparkSchema(kernelTableSchema);
@@ -169,12 +166,14 @@ class DeltaV2WriteContext {
             /* optimizationsEnabled */ true,
             /* useMetadataRowIndex */ Option.empty(),
             /* isCDCRead */ false);
-    verifySchemaForWrite(format, dataSchema);
-    org.apache.spark.sql.execution.datasources.DataSourceUtils.checkFieldNames(format, dataSchema);
+    this.dataSchema = format.prepareSchemaForWrite(dataSchema);
+    verifySchemaForWrite(format, this.dataSchema);
+    org.apache.spark.sql.execution.datasources.DataSourceUtils.checkFieldNames(
+        format, this.dataSchema);
     Map<String, String> options = writeInfo.options().asCaseSensitiveMap();
     scala.collection.immutable.Map<String, String> scalaOpts =
         ScalaUtils.toScalaMap(options != null ? options : Collections.emptyMap());
-    this.outputWriterFactory = format.prepareWrite(session, job, scalaOpts, dataSchema);
+    this.outputWriterFactory = format.prepareWrite(session, job, scalaOpts, this.dataSchema);
     this.serializableHadoopConf = new SerializableConfiguration(job.getConfiguration());
   }
 
