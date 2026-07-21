@@ -86,12 +86,9 @@ jobs:
         run: |
           uv python install 3.10
           uv venv .venv --python 3.10
-          # Install hash-verified locked dependencies (see .github/ci-requirements/spark-python/)
-          if [[ "${{ matrix.spark_version }}" == "4.0" ]]; then
-            uv pip install --python .venv/bin/python --require-hashes -r .github/ci-requirements/spark-python/spark4.0.lock
-          else
-            uv pip install --python .venv/bin/python --require-hashes -r .github/ci-requirements/spark-python/spark4.1+.lock
-          fi
+          # Install hash-verified locked dependencies, one lock file per Spark version
+          # (see .github/ci-requirements/spark-python/).
+          uv pip install --python .venv/bin/python --require-hashes -r .github/ci-requirements/spark-python/spark${{ matrix.spark_version }}.lock
           # pyspark installed with --no-deps: its only transitive dep (py4j) is in the lock file
           uv pip install --python .venv/bin/python --no-deps pyspark==${{ steps.spark-details.outputs.spark_full_version }}
       - name: Run Python tests
