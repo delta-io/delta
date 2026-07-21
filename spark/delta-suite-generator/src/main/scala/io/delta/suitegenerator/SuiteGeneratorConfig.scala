@@ -448,7 +448,7 @@ object SuiteGeneratorConfig {
             Dims.CHANGELOG_V2_CDC))
         )
       )
-    ),
+    )
     // scalastyle:on line.size.limit
   )
 
