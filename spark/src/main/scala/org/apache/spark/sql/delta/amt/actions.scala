@@ -21,6 +21,7 @@ import java.util.UUID
 import scala.util.Try
 
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor}
+import org.apache.spark.sql.delta.stats.DeltaStatistics
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import org.apache.hadoop.fs.Path
 
@@ -250,6 +251,23 @@ case class DataEntry(
     key_metadata = key_metadata,
     split_offsets = split_offsets,
     column_files = column_files)
+
+  def toAddFile(tableRoot: Path): AddFile = {
+    val dv = deletion_vector.map(DeletionVector.toDescriptor(_, tableRoot)).orNull
+    // `record_count` (Iceberg field 103) and the Delta `numRecords` statistic are both the physical
+    // row count (total records in the file, including DV-deleted rows), so store it directly.
+    val stats = s"""{"${DeltaStatistics.NUM_RECORDS}":$record_count}"""
+    AddFile(
+      path = location,
+      partitionValues = partition.values.getOrElse(Map.empty),
+      size = file_size_in_bytes,
+      modificationTime = 0L,
+      dataChange = false,
+      stats = stats,
+      deletionVector = dv,
+      baseRowId = tracking.first_row_id,
+      defaultRowCommitVersion = tracking.sequence_number)
+  }
 }
 
 object DataEntry {
