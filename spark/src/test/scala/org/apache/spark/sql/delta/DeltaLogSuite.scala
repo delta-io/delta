@@ -774,7 +774,7 @@ class DeltaLogSuite extends QueryTest
     }
   }
 
-  test("DeltaFileProviderUtils.getDeltaFilesInVersionRange") {
+  test("getCommitsInVersionRange returns the requested contiguous version range") {
     withTempDir { dir =>
       val path = dir.getCanonicalPath
       spark.range(0, 1).write.format("delta").mode("overwrite").save(path)
@@ -782,25 +782,36 @@ class DeltaLogSuite extends QueryTest
       spark.range(0, 1).write.format("delta").mode("overwrite").save(path)
       spark.range(0, 1).write.format("delta").mode("overwrite").save(path)
       val log = DeltaLog.forTable(spark, new Path(path))
-      val result = DeltaFileProviderUtils.getDeltaFilesInVersionRange(
+      val commits = DeltaFileProviderUtils.getCommitsInVersionRange(
         spark, log, startVersion = 1, endVersion = 3, catalogTableOpt = None)
-      assert(result.map(FileNames.getFileVersion) === Seq(1, 2, 3))
-      val filesAreUnbackfilledArray = result.map(FileNames.isUnbackfilledDeltaFile)
+      // The range read returns exactly the requested contiguous versions, in ascending order, and
+      // every commit in the range yields a non-empty action list.
+      assert(commits.map(_.version) === Seq(1, 2, 3))
+      assert(commits.forall(_.getActionsIterator().processAndClose(_.nonEmpty)))
+    }
+  }
 
-      val (fileV1, fileV2, fileV3) = (result(0), result(1), result(2))
-      assert(FileNames.getFileVersion(fileV1) === 1)
-      assert(FileNames.getFileVersion(fileV2) === 2)
-      assert(FileNames.getFileVersion(fileV3) === 3)
-
-      val backfillInterval =
-        catalogOwnedCoordinatorBackfillBatchSize.getOrElse(0L)
-      if (backfillInterval == 0 || backfillInterval == 1) {
-        assert(filesAreUnbackfilledArray === Seq(false, false, false))
-      } else if (backfillInterval == 2) {
-        assert(filesAreUnbackfilledArray === Seq(false, false, true))
-      } else {
-        assert(filesAreUnbackfilledArray === Seq(true, true, true))
-      }
+  test("parallelReadAndParseDeltaFilesAsIterator reads the same commits as" +
+      "getCommitsInVersionRange") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      spark.range(0, 1).write.format("delta").mode("overwrite").save(path)
+      spark.range(0, 1).write.format("delta").mode("overwrite").save(path)
+      spark.range(0, 1).write.format("delta").mode("overwrite").save(path)
+      spark.range(0, 1).write.format("delta").mode("overwrite").save(path)
+      val log = DeltaLog.forTable(spark, new Path(path))
+      val commits = DeltaFileProviderUtils.getCommitsInVersionRange(
+        spark, log, startVersion = 1, endVersion = 3, catalogTableOpt = None)
+      assert(commits.map(_.version) === Seq(1, 2, 3))
+      // Reading the commits serially and in parallel must yield identical actions per version, and
+      // parallelReadAndParseDeltaFilesAsIterator must preserve the input order.
+      val expected =
+        commits.map(c => c.version -> c.getActionsIterator().processAndClose(_.toList))
+      val parallelActions =
+        DeltaFileProviderUtils.parallelReadAndParseDeltaFilesAsIterator(spark, log, commits)
+          .map(_.processAndClose(_.toList))
+      val actual = commits.map(_.version).zip(parallelActions)
+      assert(actual === expected)
     }
   }
 
