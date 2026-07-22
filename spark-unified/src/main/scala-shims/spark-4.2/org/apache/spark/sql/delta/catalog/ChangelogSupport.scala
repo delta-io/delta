@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.catalog
 
 import io.delta.spark.internal.v2.catalog.DeltaV2Table
-import io.delta.spark.internal.v2.read.changelog.DeltaChangelog
+import io.delta.spark.internal.v2.read.changelog.DeltaV2ChangeLog
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.connector.catalog.{Changelog, ChangelogContext, Identifier, TableCatalog}
@@ -38,9 +38,9 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
  * `loadTable`. Read-time CDF only flows through the V2 connector, so in `AUTO`/`STRICT` mode (see
  * [[DeltaV2Mode.shouldRouteChangelogToV2]]) the table is re-resolved to a [[DeltaV2Table]] for the
  * CHANGES read; in `NONE` mode it is rejected. It then resolves the requested [[ChangelogRange]]
- * against the table's snapshot manager, and wraps everything into a [[DeltaChangelog]].
+ * against the table's snapshot manager, and wraps everything into a [[DeltaV2ChangeLog]].
  * All connector-level work (loading snapshots, validating row tracking, inspecting metadata
- * actions) is deferred to the read path inside [[DeltaChangelog]].
+ * actions) is deferred to the read path inside [[DeltaV2ChangeLog]].
  *
  * <p>The whole entry point is gated by [[DeltaSQLConf.DELTA_CHANGELOG_V2_ENABLED]] (default
  * `false`). When the flag is off the trait follows the parent `loadChangelog` contract and throws
@@ -62,7 +62,7 @@ trait ChangelogSupport extends TableCatalog {
         s"${name()} does not support Change Data Capture (CDC)")
     }
     val routeChangelogToV2 = new DeltaV2Mode(spark.sessionState.conf).shouldRouteChangelogToV2()
-    val sparkTable = loadTable(ident) match {
+    val deltaV2Table = loadTable(ident) match {
       case st: DeltaV2Table => st
       // Read-time CDF is V2-only. Re-resolve to V2.
       case v1: DeltaTableV2 if routeChangelogToV2 =>
@@ -70,8 +70,8 @@ trait ChangelogSupport extends TableCatalog {
       case other =>
         DeltaErrors.throwChangelogRequiresV2Table(ident.toString, other.getClass.getName)
     }
-    val (startVersion, endVersion) = resolveRange(sparkTable, context.range())
-    new DeltaChangelog(ident.name(), sparkTable, startVersion, endVersion)
+    val (startVersion, endVersion) = resolveRange(deltaV2Table, context.range())
+    new DeltaV2ChangeLog(ident.name(), deltaV2Table, startVersion, endVersion)
   }
 
   /**
@@ -96,9 +96,9 @@ trait ChangelogSupport extends TableCatalog {
    * subtracts 1) and are validated. `UnboundedRange` is rejected on batch reads.
    */
   private def resolveRange(
-      sparkTable: DeltaV2Table,
+      deltaV2Table: DeltaV2Table,
       range: org.apache.spark.sql.connector.catalog.ChangelogRange): (Long, Long) = {
-    val snapshotManager = sparkTable.getSnapshotManager
+    val snapshotManager = deltaV2Table.getSnapshotManager
     val latestVersion = snapshotManager.loadLatestSnapshot().getVersion
     range match {
       case vr: VersionRange =>
