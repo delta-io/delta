@@ -47,7 +47,7 @@ public final class DeltaV2ScanUtils {
       StructType tableSchema,
       Optional<Statistics> catalogStats,
       CaseInsensitiveStringMap options) {
-    return new DeltaV2ScanBuilder(
+    return DeltaV2ScanBuilder.create(
         tableName,
         initialSnapshot,
         snapshotManager,
