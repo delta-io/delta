@@ -31,7 +31,7 @@ import io.delta.kernel.types.{StringType, StructType}
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
 
 import org.apache.spark.sql.delta.DeltaLog
-import org.apache.spark.sql.delta.actions.CommitInfo
+import org.apache.spark.sql.delta.actions.{CommitInfo, SetTransaction}
 
 import org.apache.hadoop.fs.Path
 import org.scalatest.funsuite.AnyFunSuite
@@ -117,18 +117,59 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
     }
   }
 
+  /** Commits an idempotent (txnAppId/txnVersion) append via the kernel write path. */
+  private def commitTxn(
+      tablePath: String,
+      engine: Engine,
+      appId: String,
+      txnVersion: Long): Unit = {
+    val txn = getUpdateTxn(engine, tablePath, txnId = Some((appId, txnVersion)))
+    commitAppendData(engine, txn, Seq(Map.empty[String, Literal] -> dataBatches1))
+  }
+
   test("computeChecksum captures setTransactions from the log (full replay path)") {
     withTempDirAndEngine { (tablePath, engine) =>
-      initialTestTable(tablePath, engine)
+      // No .crc is written by the kernel write path, so computeChecksum takes the full-replay path.
+      createEmptyTable(engine, tablePath, testSchema, clock = new ManualClock(0))
+      commitTxn(tablePath, engine, "app-1", 1)
+      commitTxn(tablePath, engine, "app-1", 2) // supersedes app-1@1
+      commitTxn(tablePath, engine, "app-2", 5)
 
-      val snapshot1 = Table.forPath(
-        engine,
-        tablePath).getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
-      val crcInfo = ChecksumUtils.computeChecksum(engine, snapshot1.getLogSegment)
+      val crcInfo = ChecksumUtils.computeChecksum(engine, logSegmentAtLatest(tablePath, engine))
 
+      // The field is captured with real content, one entry per appId, and for a repeated appId
+      // the newest version wins (app-1 -> 2, not 1).
       assert(crcInfo.getSetTransactions.isPresent)
-      val appIds = crcInfo.getSetTransactions.get().asScala.map(_.getAppId)
-      assert(appIds.size === appIds.distinct.size)
+      val byAppId =
+        crcInfo.getSetTransactions.get().asScala.map(t => t.getAppId -> t.getVersion).toMap
+      assert(byAppId === Map("app-1" -> 2L, "app-2" -> 5L))
+    }
+  }
+
+  test("computeChecksum (incremental) keeps the newest SetTransaction version per appId") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(engine, tablePath, testSchema, clock = new ManualClock(0))
+      commitTxn(tablePath, engine, "app-1", 1)
+      commitTxn(tablePath, engine, "app-2", 7)
+
+      // Seed a base .crc that carries {app-1@1, app-2@7} (full replay, since no prior .crc exists).
+      val seedSegment = logSegmentAtLatest(tablePath, engine)
+      ChecksumUtils.computeStateAndWriteChecksum(engine, seedSegment)
+      val seedCrc = ChecksumUtils.computeChecksum(engine, seedSegment)
+      assert(seedCrc.getSetTransactions.isPresent)
+      assert(seedCrc.getSetTransactions.get().asScala.map(t => t.getAppId -> t.getVersion).toMap
+        === Map("app-1" -> 1L, "app-2" -> 7L))
+
+      // A new commit supersedes app-1 and leaves app-2 untouched. The base .crc makes computeChecksum
+      // build incrementally, folding the new commit's txn over the base transactions.
+      commitTxn(tablePath, engine, "app-1", 2)
+      val crcInfo = ChecksumUtils.computeChecksum(engine, logSegmentAtLatest(tablePath, engine))
+
+      // Newest version wins for the superseded appId; the untouched appId is carried from the base.
+      assert(crcInfo.getSetTransactions.isPresent)
+      val byAppId =
+        crcInfo.getSetTransactions.get().asScala.map(t => t.getAppId -> t.getVersion).toMap
+      assert(byAppId === Map("app-1" -> 2L, "app-2" -> 7L))
     }
   }
 
@@ -214,6 +255,45 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
       // Field is present but the expired transaction is filtered.
       assert(crcInfo.getSetTransactions.isPresent)
       assert(!crcInfo.getSetTransactions.get().asScala.map(_.getAppId).contains(appId))
+    }
+  }
+
+  test("computeChecksum (full replay) applies retention before the .crc threshold " +
+    "so expired appIds do not evict the live set") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // The threshold bounds LIVE appIds; adding expired ones on top must not trip abandonment.
+      val threshold = ChecksumUtils.DEFAULT_SET_TRANSACTIONS_IN_CRC_THRESHOLD.toInt
+      val base = 1000000000000L // fixed epoch millis; avoids wall-clock flakiness
+      val expiredUpdated = base - (2L * 60 * 60 * 1000) // 2h before base (outside a 1h window)
+
+      spark.sql(
+        s"CREATE TABLE delta.`$tablePath` (id LONG) USING delta " +
+          "TBLPROPERTIES ('delta.setTransactionRetentionDuration' = 'interval 1 hours')")
+
+      // Exactly `threshold` live txns plus a handful of expired ones, in a single commit.
+      val liveTxns = (0 until threshold).map(i =>
+        SetTransaction(s"live-$i", version = 1L, lastUpdated = Some(base)))
+      val expiredTxns = (0 until 5).map(i =>
+        SetTransaction(s"expired-$i", version = 1L, lastUpdated = Some(expiredUpdated)))
+      DeltaLog.forTable(spark, tablePath).startTransaction()
+        .commitManuallyWithValidation((liveTxns ++ expiredTxns): _*)
+
+      val version = Table.forPath(engine, tablePath).getLatestSnapshot(engine).getVersion()
+      deleteChecksumFileForTableUsingHadoopFs(tablePath.stripPrefix("file:"), (0 to version.toInt))
+
+      // "now" == base, so the cutoff is base - 1h: live txns (base) survive, expired (base - 2h) drop.
+      val crcInfo =
+        ChecksumUtils.computeChecksum(
+          engine,
+          logSegmentAtLatest(tablePath, engine),
+          new ManualClock(base))
+
+      // The field is present with exactly the `threshold` live appIds: the expired ones neither
+      // appear nor push the live count over the threshold (the pre-fix bug cleared the whole map).
+      assert(crcInfo.getSetTransactions.isPresent)
+      val appIds = crcInfo.getSetTransactions.get().asScala.map(_.getAppId).toSet
+      assert(appIds.size === threshold)
+      assert(appIds.forall(_.startsWith("live-")))
     }
   }
 

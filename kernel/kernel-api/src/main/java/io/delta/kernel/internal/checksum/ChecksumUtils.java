@@ -240,6 +240,11 @@ public class ChecksumUtils {
 
     StateTracker state = new StateTracker();
     state.collectSetTransactions = true;
+    // Collect every appId first; the .crc-size threshold is applied only after retention filtering
+    // (see filterAndBoundSetTransactions) so expired appIds do not consume the threshold budget.
+    // This adds no asymptotic memory over the replay itself: CreateCheckpointIterator already holds
+    // one entry per appId to dedup the txn column.
+    state.abandonAboveThreshold = false;
 
     // Process logs and update state
     try (CreateCheckpointIterator checkpointIterator =
@@ -305,7 +310,11 @@ public class ChecksumUtils {
         Optional.of(finalDomainMetadata),
         Optional.of(state.addedFileSizeHistogram),
         Optional.empty() /* inCommitTimestamp */,
-        filterExpiredSetTransactions(state.collectedSetTransactions(), finalMetadata, clock));
+        filterAndBoundSetTransactions(
+            state.collectedSetTransactions(),
+            finalMetadata,
+            clock,
+            state.setTransactionsThreshold));
   }
 
   /**
@@ -530,28 +539,49 @@ public class ChecksumUtils {
   }
 
   /**
-   * Applies {@code delta.setTransactionRetentionDuration} to the setTransactions gathered by a full
-   * log replay. A transaction is retained only when its {@code lastUpdated} is strictly newer than
-   * the retention cutoff.
+   * Finalizes the setTransactions gathered by a full log replay: first drops expired transactions
+   * per {@code delta.setTransactionRetentionDuration}, then bounds the surviving (live) set by the
+   * {@code .crc}-size threshold.
+   *
+   * <p>Retention is applied <em>before</em> the threshold check so that expired appIds do not
+   * consume the threshold budget — a table with {@code threshold} live appIds plus any number of
+   * expired ones still stores its live transactions. This mirrors Delta-Spark, where {@code
+   * InMemoryLogReplay.getTransactions} filters expired transactions and {@code
+   * setTransactionsInCrc.maxAllowed} then bounds the live result.
+   *
+   * <p>A transaction is retained only when its {@code lastUpdated} is strictly newer than the
+   * retention cutoff; transactions without a {@code lastUpdated} are dropped when retention is
+   * configured (matching Delta-Spark). When the live count exceeds the threshold the field is left
+   * absent so readers fall back to state reconstruction.
    *
    * @param collected the setTransactions gathered during a full replay
    * @param metadata the effective table metadata at the checksum version
    * @param clock the clock supplying "now" for the retention cutoff
-   * @return the retention-filtered setTransactions (unchanged when retention is unset)
+   * @param threshold the maximum number of live appIds storable in the {@code .crc}
+   * @return the retention-filtered setTransactions, or empty if the live set exceeds the threshold
    */
-  private static Optional<List<SetTransaction>> filterExpiredSetTransactions(
-      Optional<List<SetTransaction>> collected, Metadata metadata, Clock clock) {
-    if (!isSetTransactionRetentionConfigured(metadata) || !collected.isPresent()) {
+  private static Optional<List<SetTransaction>> filterAndBoundSetTransactions(
+      Optional<List<SetTransaction>> collected, Metadata metadata, Clock clock, long threshold) {
+    if (!collected.isPresent()) {
       return collected;
     }
-    long cutoff =
-        clock.getTimeMillis()
-            - IntervalParserUtils.safeParseIntervalAsMillis(
-                metadata.getConfiguration().get(SET_TRANSACTION_RETENTION_DURATION_KEY));
-    return Optional.of(
-        collected.get().stream()
-            .filter(txn -> txn.getLastUpdated().map(updated -> updated > cutoff).orElse(false))
-            .collect(Collectors.toList()));
+    List<SetTransaction> live = collected.get();
+    if (isSetTransactionRetentionConfigured(metadata)) {
+      long cutoff =
+          clock.getTimeMillis()
+              - IntervalParserUtils.safeParseIntervalAsMillis(
+                  metadata.getConfiguration().get(SET_TRANSACTION_RETENTION_DURATION_KEY));
+      live =
+          collected.get().stream()
+              .filter(txn -> txn.getLastUpdated().map(updated -> updated > cutoff).orElse(false))
+              .collect(Collectors.toList());
+    }
+    // Bound the live set only after expiry filtering, mirroring the abandonment check in
+    // StateTracker.recordSetTransaction (strictly-greater-than the threshold).
+    if (live.size() > threshold) {
+      return Optional.empty();
+    }
+    return Optional.of(live);
   }
 
   /** Processes a metadata record and updates the state tracker. */
@@ -593,6 +623,11 @@ public class ChecksumUtils {
     final Map<String, SetTransaction> setTransactionsByAppId = new LinkedHashMap<>();
     boolean collectSetTransactions = false;
     long setTransactionsThreshold = DEFAULT_SET_TRANSACTIONS_IN_CRC_THRESHOLD;
+    // When true, collection is abandoned (and the map cleared) as soon as the distinct-appId count
+    // exceeds the threshold. The full-replay path disables this so it can collect every appId and
+    // apply the threshold only after retention filtering (so expired appIds don't consume the
+    // budget); the incremental path leaves it on.
+    boolean abandonAboveThreshold = true;
 
     /** Records a SetTransaction if collecting and its appId is not already seen. */
     void recordSetTransaction(SetTransaction txn) {
@@ -601,7 +636,7 @@ public class ChecksumUtils {
       }
       if (!setTransactionsByAppId.containsKey(txn.getAppId())) {
         setTransactionsByAppId.put(txn.getAppId(), txn);
-        if (setTransactionsByAppId.size() > setTransactionsThreshold) {
+        if (abandonAboveThreshold && setTransactionsByAppId.size() > setTransactionsThreshold) {
           collectSetTransactions = false;
           setTransactionsByAppId.clear();
         }
