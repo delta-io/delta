@@ -43,7 +43,7 @@ These restrictions are stated in terms of the **table schema**, not the schema o
 
 ##### Void Type table feature
 
-The `materializedVoidType` table feature lifts the restrictions above by allowing the affected schema shapes. The `void` columns that cannot be omitted - the **structural** `void` columns - are instead stored using the Parquet `UNKNOWN` logical type. A `void` partition column is never structural and should be omitted.
+The `materializedVoidType` table feature lifts the restrictions above by allowing the affected schema shapes. Only `void` columns that cannot be omitted - the **structural** `void` columns - should be materialized. A materialized `void` column must use the Parquet `UNKNOWN` logical type. A `void` partition column is never structural and should be omitted.
 
 To support this feature:
 - The table must be on Reader Version 3 and Writer Version 7.
@@ -56,16 +56,16 @@ The feature has a dual purpose:
 
 ###### Structural void columns
 
-A `void` column is **structural** when it cannot be omitted because omitting it would leave an enclosing `struct`, `array`, or `map` (or the table) with nothing written to the data file. This arises only in the schema shapes listed in [Void columns without the table feature](#void-columns-without-the-table-feature):
-- a `void` used directly as an `array` element or `map` key or value (at any nesting level) is structural and must be stored as `UNKNOWN`;
-- for a `struct` whose fields are all `void`, the writer must choose at least one of its `void` fields as structural and store it as `UNKNOWN`; and
-- for a table whose non-partition columns are all `void`, the writer must choose at least one non-partition `void` column as structural and store it as `UNKNOWN`.
+A `void` column is **structural** when it cannot be omitted because omitting it would leave an enclosing `struct`, `array`, or `map` (or the table) with nothing written to the data file. Every structural `void` column must be stored as `UNKNOWN`. Structural `void` columns arise only in the schema shapes listed in [Void columns without the table feature](#void-columns-without-the-table-feature):
+- a `void` used directly as an `array` element or `map` key or value (at any nesting level) is structural;
+- for a `struct` whose fields are all `void`, the writer must choose at least one of its `void` fields as structural; and
+- for a table whose non-partition columns are all `void`, the writer must choose at least one non-partition `void` column as structural.
 
 A `void` column in any other position is non-structural: it can be omitted and does not require the feature. A schema that contains one of the shapes above is said to **require** the `materializedVoidType` feature.
 
 ###### Writer Requirements for Void Type
 
-When Void Type is supported (when the `writerFeatures` field of a table's `protocol` action contains `materializedVoidType`), writers:
+When materialized Void Type is supported (when the `writerFeatures` field of a table's `protocol` action contains `materializedVoidType`), writers:
 - must write the table's structural `void` columns to data files (see [Structural void columns](#structural-void-columns)); and
 - should omit any non-structural `void` column from data files, regardless of any other supported table feature or table property.
 
@@ -82,7 +82,7 @@ When Void Type is supported (when the `readerFeatures` field of a table's `proto
 
 ###### Removing the Void Type feature
 
-Because clients that do not support the feature cannot read `UNKNOWN` columns, removing `materializedVoidType` requires that the table no longer depend on the `UNKNOWN` representation. In the version that removes `materializedVoidType` from the `writerFeatures` and `readerFeatures` fields of the table's `protocol` action, writers:
+Because clients that do not support the feature are not guaranteed to be able to read `UNKNOWN` columns, removing `materializedVoidType` requires that the table no longer depend on the `UNKNOWN` representation. In the version that removes `materializedVoidType` from the `writerFeatures` and `readerFeatures` fields of the table's `protocol` action, writers:
 - must ensure that the table schema does not require the feature - it must contain none of the shapes in [Structural void columns](#structural-void-columns); and
 - must ensure that no data file reachable by the table (including via time travel within the retained history) contains a column stored as `UNKNOWN`. This may require rewriting existing data files and/or truncating the table history so that every `void` column is represented by omission.
 
