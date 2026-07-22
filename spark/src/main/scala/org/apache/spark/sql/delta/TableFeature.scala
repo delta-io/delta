@@ -1486,13 +1486,11 @@ object CheckpointProtectionTableFeature
       catalogTableOpt: Option[CatalogTable],
       toVersion: Long): Boolean = {
     deltaLog
-      .getChangeLogFiles(
+      .getChangesIterator(
         startVersion = 0,
         endVersion = toVersion,
         catalogTableOpt = catalogTableOpt,
         failOnDataLoss = false)
-      .map { case (_, file) => file }
-      .filter(FileNames.isDeltaFile)
       .take(1).isEmpty
   }
 
