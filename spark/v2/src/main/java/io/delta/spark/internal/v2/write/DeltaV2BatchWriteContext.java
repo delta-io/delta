@@ -45,9 +45,10 @@ class DeltaV2BatchWriteContext extends DeltaV2WriteContext {
       String tablePath,
       Snapshot initialSnapshot,
       StructType dataSchema,
+      StructType partitionSchema,
       LogicalWriteInfo writeInfo) {
     return new DeltaV2BatchWriteContext(
-        engine, hadoopConf, tablePath, initialSnapshot, dataSchema, writeInfo);
+        engine, hadoopConf, tablePath, initialSnapshot, dataSchema, partitionSchema, writeInfo);
   }
 
   private DeltaV2BatchWriteContext(
@@ -56,8 +57,9 @@ class DeltaV2BatchWriteContext extends DeltaV2WriteContext {
       String tablePath,
       Snapshot initialSnapshot,
       StructType dataSchema,
+      StructType partitionSchema,
       LogicalWriteInfo writeInfo) {
-    super(engine, hadoopConf, tablePath, initialSnapshot, dataSchema, writeInfo);
+    super(engine, hadoopConf, tablePath, initialSnapshot, dataSchema, partitionSchema, writeInfo);
     this.transaction =
         initialSnapshot
             .buildUpdateTableTransaction(getEngineInfo(), Operation.WRITE)
