@@ -21,6 +21,7 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.util.Utils;
+import io.delta.kernel.statistics.DataFileStatistics;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.DataFileStatus;
 import io.delta.spark.internal.v2.utils.SerializableKernelRowWrapper;
@@ -139,12 +140,21 @@ class DeltaV2DataWriter implements DataWriter<InternalRow> {
 
     FileSystem fs = outputPath.getFileSystem(conf);
     FileStatus fileStatus = fs.getFileStatus(outputPath);
+    // Populate numRecords so AddFile.stats is non-null: metadata-only count(*) and
+    // IcebergCompat V2/V3 validation require it. Column min/max/null stats are not collected here.
+    DataFileStatistics stats =
+        new DataFileStatistics(
+            rowCount,
+            Collections.emptyMap(),
+            Collections.emptyMap(),
+            Collections.emptyMap(),
+            Optional.empty());
     DataFileStatus dataFileStatus =
         new DataFileStatus(
             outputPath.toString(),
             fileStatus.getLen(),
             fileStatus.getModificationTime(),
-            Optional.empty());
+            Optional.of(stats));
 
     CloseableIterator<DataFileStatus> dataFilesIter =
         Utils.toCloseableIterator(Collections.singletonList(dataFileStatus).iterator());

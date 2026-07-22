@@ -26,7 +26,7 @@ import scala.util.control.NonFatal
 
 import io.delta.storage.commit.{TableIdentifier => StorageTableIdentifier}
 import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractProtocol}
-import io.delta.storage.commit.uccommitcoordinator.{UCDeltaClient, UCDeltaModels}
+import io.delta.storage.commit.uccommitcoordinator.{UCConfigUtils, UCDeltaClient, UCDeltaModels}
 import io.delta.storage.commit.uniform.{UniformMetadata => StorageUniformMetadata}
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaModels.TableInfo
@@ -695,28 +695,23 @@ object UCDeltaCatalogClientImpl extends AbstractDeltaCatalogClientFactory with L
    * Builds a [[UCDeltaCatalogClientImpl]] from catalog options. The `deltaRestApi.enabled` gate
    * is the caller's responsibility ([[AbstractDeltaCatalogClient.fromCatalogOptionsIfEnabled]]).
    * `fallbackLoadTableFunc` is invoked when UC reports `UnsupportedTableFormatException`. UC client
-   * construction is delegated to [[UCTokenBasedRestClientFactory]] with `renewCredential.enabled`
-   * defaulted to `true` and `credScopedFs.enabled` defaulted to `false` when not set.
+   * construction is delegated to [[UCTokenBasedRestClientFactory]]; credential-related defaults
+   * (`renewCredential.enabled`, `credScopedFs.enabled`) are applied by the client itself.
    */
   override def fromCatalogOptions(
       catalogName: String,
       options: util.Map[String, String],
       fallbackLoadTableFunc: Identifier => Table): UCDeltaCatalogClientImpl = {
-    if (options.get(UCTokenBasedRestClientFactory.URI_KEY) == null) {
+    if (options.get(UCConfigUtils.URI_KEY) == null) {
       throw new IllegalArgumentException(
-        s"'${UCTokenBasedRestClientFactory.URI_KEY}' is required (catalog '$catalogName')")
+        s"'${UCConfigUtils.URI_KEY}' is required (catalog '$catalogName')")
     }
     validateAuthConfigured(options, catalogName)
 
-    val optionsMap = new util.HashMap[String, String](options)
-    optionsMap.putIfAbsent(UCTokenBasedRestClientFactory.RENEW_CREDENTIAL_ENABLED_KEY, "true")
-    optionsMap.putIfAbsent(UCTokenBasedRestClientFactory.CRED_SCOPED_FS_ENABLED_KEY, "false")
-
     val ucClient = UCTokenBasedRestClientFactory
-      .createUCClient(optionsMap)
+      .createUCClient(options)
       .asInstanceOf[UCDeltaClient]
-    val sspEnabled =
-      optionsMap.getOrDefault(ServerSidePlanningEnabledKey, "false").toBoolean
+    val sspEnabled = UCConfigUtils.parseBoolean(options, ServerSidePlanningEnabledKey, false)
     new UCDeltaCatalogClientImpl(catalogName, ucClient, sspEnabled, fallbackLoadTableFunc)
   }
 
@@ -728,9 +723,9 @@ object UCDeltaCatalogClientImpl extends AbstractDeltaCatalogClientFactory with L
   private[catalog] def validateAuthConfigured(
       options: util.Map[String, String],
       catalogName: String): Unit = {
-    if (UCTokenBasedRestClientFactory.extractAuthConfig(options).isEmpty) {
-      val authPrefix = UCTokenBasedRestClientFactory.AUTH_PREFIX
-      val legacyTokenKey = UCTokenBasedRestClientFactory.LEGACY_TOKEN_KEY
+    if (!UCConfigUtils.hasAuthConfig(options)) {
+      val authPrefix = UCConfigUtils.AUTH_PREFIX
+      val legacyTokenKey = UCConfigUtils.LEGACY_TOKEN_KEY
       throw new IllegalArgumentException(
         s"auth configuration is required (catalog '$catalogName'). " +
           s"Set either '${authPrefix}type' (with the corresponding " +

@@ -459,10 +459,7 @@ lazy val sparkV1Filtered = (project in file("spark-v1-filtered"))
 
       // Filter out DeltaLog, Snapshot, OptimisticTransaction, and actions.scala classes
       v1Mappings.filterNot { case (file, path) =>
-        path.contains("org/apache/spark/sql/delta/DeltaLog") ||
-        path.contains("org/apache/spark/sql/delta/Snapshot") ||
-        path.contains("org/apache/spark/sql/delta/OptimisticTransaction") ||
-        path.contains("org/apache/spark/sql/delta/actions/actions")
+        path.contains("org/apache/spark/sql/delta/DeltaLog")
       }
     },
   )
@@ -559,22 +556,21 @@ lazy val spark = (project in file("spark-unified"))
     Test / baseDirectory := (sparkV1 / baseDirectory).value,
 
     // Test sources from spark/ directory (sparkV1's directory) AND spark-unified's own directory,
-    // plus the version-specific shim directory (e.g. `src/test/scala-shims/spark-4.2`).
+    // plus this version's shim directories (e.g. `src/test/scala-shims/spark-4.2` and any
+    // cross-version shared dir like `src/test/scala-shims/spark-4.1-4.2`).
     // MUST be set BEFORE crossSparkSettings() to avoid overwriting version-specific directories.
     Test / unmanagedSourceDirectories := {
       val sparkDir = (sparkV1 / baseDirectory).value
       val unifiedDir = baseDirectory.value
-      // Every supported Spark version sets additionalSourceDir, see SparkVersionSpec.ALL_SPECS.
-      val shimDir = unifiedDir / "src" / "test" / CrossSparkVersions.getSparkVersionSpec()
-        .additionalSourceDir
-        .get
+      val shimDirs = CrossSparkVersions.getSparkVersionSpec()
+        .additionalSourceDirs
+        .map(dir => unifiedDir / "src" / "test" / dir)
       Seq(
         sparkDir / "src" / "test" / "scala",
         sparkDir / "src" / "test" / "java",
         unifiedDir / "src" / "test" / "scala",
-        unifiedDir / "src" / "test" / "java",
-        shimDir
-      )
+        unifiedDir / "src" / "test" / "java"
+      ) ++ shimDirs
     },
     Test / unmanagedResourceDirectories := Seq(
       (sparkV1 / baseDirectory).value / "src" / "test" / "resources",

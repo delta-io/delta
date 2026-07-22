@@ -17,6 +17,7 @@ package io.delta.spark.internal.v2.read;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.kernel.Snapshot;
@@ -31,6 +32,7 @@ import java.math.BigDecimal;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
@@ -157,7 +159,7 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
   }
 
   @Test
-  public void testToMicroBatchStream_returnsSparkMicroBatchStream(@TempDir File tempDir) {
+  public void testToMicroBatchStream_returnsDeltaV2MicroBatchStream(@TempDir File tempDir) {
     String path = tempDir.getAbsolutePath();
     String tableName = "microbatch_test";
     spark.sql(
@@ -200,8 +202,8 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
 
     assertNotNull(microBatchStream, "MicroBatchStream should not be null");
     assertTrue(
-        microBatchStream instanceof SparkMicroBatchStream,
-        "MicroBatchStream should be an instance of SparkMicroBatchStream");
+        microBatchStream instanceof DeltaV2MicroBatchStream,
+        "MicroBatchStream should be an instance of DeltaV2MicroBatchStream");
   }
 
   @Test
@@ -962,5 +964,127 @@ public class DeltaV2ScanBuilderTest extends DeltaV2TestBase {
     }
     Optional<?> opt = (Optional<?>) raw;
     return opt.map(Predicate.class::cast);
+  }
+
+  // Limit Pushdown Tests
+
+  @Test
+  public void testPushLimit_nonNegativeAccepted(@TempDir File tempDir) {
+    DeltaV2ScanBuilder builder = createTestScanBuilder(tempDir);
+    assertTrue(builder.pushLimit(10), "A non-negative limit should be accepted as a hint");
+  }
+
+  @Test
+  public void testPushLimit_isPartiallyPushedIsTrue(@TempDir File tempDir) {
+    DeltaV2ScanBuilder builder = createTestScanBuilder(tempDir);
+    builder.pushLimit(10);
+    // The pushdown is partial because pruning stops only at file boundaries, so the selected files
+    // may produce more than the requested number of rows. Keep the default true so Spark retains
+    // the LIMIT and trims the final result to exactly N rows.
+    assertTrue(builder.isPartiallyPushed(), "isPartiallyPushed should return true");
+  }
+
+  @Test
+  public void testPushLimit_propagatedToScan(@TempDir File tempDir) {
+    DeltaV2ScanBuilder builder = createTestScanBuilder(tempDir);
+    builder.pushLimit(42);
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    assertEquals(OptionalInt.of(42), scan.getPushedLimit());
+  }
+
+  @Test
+  public void testPushLimit_absentByDefault(@TempDir File tempDir) {
+    DeltaV2ScanBuilder builder = createTestScanBuilder(tempDir);
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    assertEquals(OptionalInt.empty(), scan.getPushedLimit());
+  }
+
+  @Test
+  public void testPushLimit_lastValueWins(@TempDir File tempDir) {
+    DeltaV2ScanBuilder builder = createTestScanBuilder(tempDir);
+    builder.pushLimit(10);
+    builder.pushLimit(20);
+    assertEquals(OptionalInt.of(20), builder.getPushedLimit());
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    assertEquals(OptionalInt.of(20), scan.getPushedLimit());
+  }
+
+  @Test
+  public void testPushLimit_negativeRejected(@TempDir File tempDir) {
+    DeltaV2ScanBuilder builder = createTestScanBuilder(tempDir);
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> builder.pushLimit(-1),
+        "A negative pushed limit should be rejected");
+  }
+
+  @Test
+  public void testPushLimit_clearedWhenDataFiltersPresent(@TempDir File tempDir) throws Exception {
+    DeltaV2ScanBuilder builder = createTestScanBuilder(tempDir);
+    // A data filter (on a non-partition column) becomes a post-scan residual.
+    builder.pushFilters(new Filter[] {new org.apache.spark.sql.sources.EqualTo("name", "x")});
+    builder.pushLimit(10);
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    assertEquals(
+        OptionalInt.empty(),
+        scan.getPushedLimit(),
+        "Pushed limit must be cleared when data filters would leave a post-scan residual");
+  }
+
+  @Test
+  public void testPushLimit_clearedWhenUnsupportedPartitionFilterLeavesResidual(
+      @TempDir File tempDir) throws Exception {
+    // StringEndsWith is not convertible to a kernel predicate, so even on a partition column
+    // (dep_id) it stays as a post-scan residual - but it is NOT a data filter (dep_id is a
+    // partition column). This is the case a data filters only check would miss: the residual
+    // exists, so the limit must still be cleared to mirror Spark's PhysicalOperation(_, Nil, _)
+    // gate.
+    DeltaV2ScanBuilder builder = createTestScanBuilder(tempDir);
+    Filter[] residual =
+        builder.pushFilters(
+            new Filter[] {new org.apache.spark.sql.sources.StringEndsWith("dep_id", "1")});
+    assertEquals(1, residual.length, "unsupported partition filter should be a post-scan residual");
+    assertEquals(0, getDataFilters(builder).length, "the residual must not be a data filter");
+
+    builder.pushLimit(10);
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    assertEquals(
+        OptionalInt.empty(),
+        scan.getPushedLimit(),
+        "Pushed limit must be cleared for any post-scan residual, not only data filters");
+  }
+
+  @Test
+  public void testPushLimit_remainsClearedAfterLaterEmptyPushFilters(@TempDir File tempDir) {
+    DeltaV2ScanBuilder builder = createTestScanBuilder(tempDir);
+    Filter[] residual =
+        builder.pushFilters(
+            new Filter[] {new org.apache.spark.sql.sources.StringEndsWith("dep_id", "1")});
+    assertEquals(1, residual.length);
+
+    // ScanBuilder state is cumulative. A later empty call cannot retract the residual Spark must
+    // still evaluate from the earlier call, so it must not make limit pruning safe again.
+    assertEquals(0, builder.pushFilters(new Filter[0]).length);
+    assertTrue(builder.pushLimit(10));
+    assertEquals(OptionalInt.empty(), ((DeltaV2Scan) builder.build()).getPushedLimit());
+  }
+
+  @Test
+  public void testPushLimit_keptWhenFullyPushedPartitionFilterLeavesNoResidual(
+      @TempDir File tempDir) throws Exception {
+    // A fully-converted partition filter (EqualTo on dep_id) is used for partition pruning and
+    // leaves NO post-scan residual, so the pushed limit is safe to keep - matching Spark, which
+    // still offers pushLimit in this shape.
+    DeltaV2ScanBuilder builder = createTestScanBuilder(tempDir);
+    Filter[] residual =
+        builder.pushFilters(new Filter[] {new org.apache.spark.sql.sources.EqualTo("dep_id", 1)});
+    assertEquals(0, residual.length, "fully-pushed partition filter should leave no residual");
+
+    builder.pushLimit(10);
+    DeltaV2Scan scan = (DeltaV2Scan) builder.build();
+    assertEquals(
+        OptionalInt.of(10),
+        scan.getPushedLimit(),
+        "Pushed limit must be kept when a partition filter leaves no post-scan residual");
   }
 }

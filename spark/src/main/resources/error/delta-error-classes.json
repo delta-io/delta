@@ -11,6 +11,24 @@
     ],
     "sqlState" : "0B000"
   },
+  "DELTA_ADAPTIVE_METADATA_REQUIRES_COLUMN_MAPPING_ID_MODE" : {
+    "message" : [
+      "The table feature '<feature>' requires column mapping mode 'id', but the table property '<prop>' is set to '<mode>'. Recreate the table with '<prop>' = 'id', or omit the property to have it set automatically."
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_ADAPTIVE_METADATA_REQUIRES_DEPENDENT_FEATURE_ENABLED" : {
+    "message" : [
+      "The table feature '<feature>' requires the table property '<prop>' to be enabled, but it is explicitly set to '<value>'. Set '<prop>' = 'true', or omit the property to have it enabled automatically."
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_ADAPTIVE_METADATA_UPGRADE_NOT_SUPPORTED" : {
+    "message" : [
+      "Enabling the table feature '<feature>' on an existing table is not supported. Please create a new table with the feature enabled instead."
+    ],
+    "sqlState" : "0A000"
+  },
   "DELTA_ADDING_COLUMN_WITH_INTERNAL_NAME_FAILED" : {
     "message" : [
       "Failed to add column <colName> because the name is reserved."
@@ -3020,8 +3038,7 @@
   },
   "DELTA_TIMESTAMP_GREATER_THAN_COMMIT" : {
     "message" : [
-      "The provided timestamp (<providedTimestamp>) is after the latest version available to this",
-      "table (<tableName>). Please use a timestamp before or at <maximumTimestamp>."
+      "Timestamp <providedTimestamp> is after the table's latest version (<lastCommitTimestamp>). Use a timestamp at or before <maximumTimestamp>."
     ],
     "sqlState" : "42816"
   },

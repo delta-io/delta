@@ -118,27 +118,30 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   private final boolean credentialScopedFsEnabled;
   private final Supplier<Configuration> hadoopConfSupplier;
 
-  public UCDeltaTokenBasedRestClient(
-      String baseUri,
-      TokenProvider tokenProvider,
-      Map<String, String> appVersions) {
-    this(baseUri, tokenProvider, appVersions, false, false, null);
-  }
-
   /**
+   * Creates an instance by parsing all configuration from a flat config map.
+   * Recognised keys:
+   * <ul>
+   *   <li>{@code uri} (required) -- the UC server endpoint.</li>
+   *   <li>{@code auth.*} / {@code token} (legacy) -- authentication parameters.</li>
+   *   <li>{@code appVersions.*} -- caller-supplied version entries.</li>
+   *   <li>{@code renewCredential.enabled} -- enable credential renewal (default true).</li>
+   *   <li>{@code credScopedFs.enabled} -- enable credential-scoped FS (default true).</li>
+   * </ul>
+   *
+   * @param ucConfig the unified configuration map with all keys.
    * @param hadoopConfSupplier called once per request so engine-level changes are picked up;
    *                           {@code null} defaults to {@code () -> new Configuration()}.
    */
   public UCDeltaTokenBasedRestClient(
-      String baseUri,
-      TokenProvider tokenProvider,
-      Map<String, String> appVersions,
-      boolean credentialRenewalEnabled,
-      boolean credentialScopedFsEnabled,
+      Map<String, String> ucConfig,
       Supplier<Configuration> hadoopConfSupplier) {
-    Objects.requireNonNull(baseUri, "baseUri must not be null");
-    Objects.requireNonNull(tokenProvider, "tokenProvider must not be null");
-    Objects.requireNonNull(appVersions, "appVersions must not be null");
+    Objects.requireNonNull(ucConfig, "ucConfig must not be null");
+
+    String baseUri = UCConfigUtils.extractUri(ucConfig);
+    TokenProvider tokenProvider =
+        TokenProvider.create(UCConfigUtils.extractAuthConfig(ucConfig));
+    Map<String, String> appVersions = UCConfigUtils.extractAppVersions(ucConfig);
 
     ApiClientBuilder builder = ApiClientBuilder.create()
         .uri(baseUri)
@@ -156,36 +159,9 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     this.baseUri = baseUri;
     this.tokenProvider = tokenProvider;
     this.appVersions = appVersions;
-    this.credentialRenewalEnabled = credentialRenewalEnabled;
-    this.credentialScopedFsEnabled = credentialScopedFsEnabled;
+    this.credentialRenewalEnabled = UCConfigUtils.isCredentialRenewalEnabled(ucConfig);
+    this.credentialScopedFsEnabled = UCConfigUtils.isCredentialScopedFsEnabled(ucConfig);
     this.hadoopConfSupplier = hadoopConfSupplier != null ? hadoopConfSupplier : Configuration::new;
-  }
-
-  /**
-   * Factory for callers that can't depend on {@code io.unitycatalog.client} directly: pass
-   * a flat {@code authConfigs} map ({@code type} + provider-specific keys) and the factory
-   * constructs the {@link TokenProvider} internally.
-   */
-  public static UCDeltaTokenBasedRestClient create(
-      String baseUri,
-      Map<String, String> authConfigs,
-      Map<String, String> appVersions,
-      boolean credentialRenewalEnabled,
-      boolean credentialScopedFsEnabled,
-      Supplier<Configuration> hadoopConfSupplier) {
-    Objects.requireNonNull(authConfigs, "authConfigs must not be null");
-    if (authConfigs.isEmpty()) {
-      throw new IllegalArgumentException(
-          "authConfigs must not be empty; expected at least a 'type' key plus the keys " +
-              "required by that TokenProvider type.");
-    }
-    return new UCDeltaTokenBasedRestClient(
-        baseUri,
-        TokenProvider.create(authConfigs),
-        appVersions,
-        credentialRenewalEnabled,
-        credentialScopedFsEnabled,
-        hadoopConfSupplier);
   }
 
   /** Fresh builder per call: scheme depends on the table's location, hadoopConf is live. */

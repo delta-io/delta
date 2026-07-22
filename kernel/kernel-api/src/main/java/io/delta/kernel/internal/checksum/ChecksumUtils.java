@@ -136,6 +136,10 @@ public class ChecksumUtils {
    * <p>Note: For very large tables, this operation may be expensive as it requires scanning the
    * table state to compute statistics.
    *
+   * <p>The returned {@link CRCInfo} does not carry an in-commit timestamp, which is not derivable
+   * from the file actions this replay reads. A caller that holds the commit's {@code CommitInfo}
+   * can inject it via {@link CRCInfo#withInCommitTimestamp(Optional)}.
+   *
    * @param engine The Engine instance used to access the underlying storage
    * @param logSegmentAtVersion The LogSegment instance of the table at a specific version
    * @return The computed CRC info for the table at the given version

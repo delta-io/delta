@@ -1381,6 +1381,7 @@ trait CommitMarker {
  * @param engineInfo The information for the engine that makes the commit.
  *                   If a commit is made by Delta Lake 1.1.0 or above, it will be
  *                   `Apache-Spark/x.y.z Delta-Lake/x.y.z`.
+ * @param lastManifestCommit Info of the last AMT manifest commit up to this version.
  */
 case class CommitInfo(
     // The commit version should be left unfilled during commit(). When reading a delta file, we can
@@ -1407,7 +1408,8 @@ case class CommitInfo(
     userMetadata: Option[String],
     tags: Option[Map[String, String]],
     engineInfo: Option[String],
-    txnId: Option[String])
+    txnId: Option[String],
+    lastManifestCommit: Option[LastManifestCommit])
   extends Action with CommitMarker with SparkAbstractCommitInfo with StorageAbstractCommitInfo {
   override def wrap: SingleAction = SingleAction(commitInfo = this)
 
@@ -1464,7 +1466,7 @@ object NotebookInfo {
 object CommitInfo {
   def empty(version: Option[Long] = None): CommitInfo = {
     CommitInfo(version, None, null, None, None, null, null, None, None,
-      None, None, None, None, None, None, None, None, None)
+      None, None, None, None, None, None, None, None, None, None)
   }
 
   // scalastyle:off argcount
@@ -1524,7 +1526,8 @@ object CommitInfo {
       userMetadata,
       tags,
       getEngineInfo,
-      txnId)
+      txnId,
+      lastManifestCommit = None)
   }
   // scalastyle:on argcount
 
@@ -1643,6 +1646,17 @@ case class Checkpoint(
 
   override def wrap: SingleAction = SingleAction(checkpoint = this)
 }
+
+/**
+ * Info of last AMT manifest commit. Persisted in every [[CommitInfo]] and [[VersionChecksum]]
+ * as the source-of-truth of the last manifest commit up to the current commit version.
+ *
+ * @param version version of the manifest commit
+ * @param contentRootVersion version of the content root recorded in the manifest commit
+ */
+case class LastManifestCommit(
+    version: Long,
+    contentRootVersion: Long)
 
 /**
  * An [[Action]] containing the information about a sidecar file.

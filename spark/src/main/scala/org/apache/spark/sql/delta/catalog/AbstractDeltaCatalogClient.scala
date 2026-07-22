@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.catalog
 
+import io.delta.storage.commit.uccommitcoordinator.UCConfigUtils
 import io.delta.storage.commit.uniform.UniformMetadata
 
 import java.util
@@ -24,7 +25,6 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.connector.catalog.{Identifier, Table}
 import org.apache.spark.sql.delta.actions.{Action, DomainMetadata, Metadata, Protocol}
-import org.apache.spark.sql.delta.coordinatedcommits.UCTokenBasedRestClientFactory
 import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
@@ -189,8 +189,7 @@ private[delta] object AbstractDeltaCatalogClient extends Logging {
       options: CaseInsensitiveStringMap,
       fallbackLoadTableFunc: Identifier => Table): Option[AbstractDeltaCatalogClient] = {
     val optionsMap = options.asCaseSensitiveMap()
-    val key = UCTokenBasedRestClientFactory.DELTA_REST_API_ENABLED_KEY
-    if (!optionsMap.getOrDefault(key, "true").toBoolean) {
+    if (!UCConfigUtils.isDeltaRestApiEnabled(optionsMap)) {
       return None
     }
     val factory = try {
@@ -200,6 +199,7 @@ private[delta] object AbstractDeltaCatalogClient extends Logging {
       cls.getField("MODULE$").get(null).asInstanceOf[AbstractDeltaCatalogClientFactory]
     } catch {
       case e: Exception =>
+        val key = UCConfigUtils.DELTA_REST_API_ENABLED_KEY
         throw new IllegalStateException(
           s"Failed to load $UC_DELTA_CATALOG_CLIENT_IMPL_CLASS_NAME though '$key' is true. " +
             "Ensure the implementation JAR is on the classpath, or remove " +

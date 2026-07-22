@@ -25,6 +25,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.ScanImpl;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
@@ -85,6 +86,8 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
   private final Configuration hadoopConf;
   private final boolean isCDCRead;
   private final CaseInsensitiveStringMap options;
+  // Empty means no limit pushdown from Spark.
+  private final OptionalInt pushedLimit;
   private final scala.collection.immutable.Map<String, String> scalaOptions;
   private final SQLConf sqlConf;
   private final DeltaOptions deltaOptions;
@@ -122,7 +125,8 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
       Filter[] dataFilters,
       io.delta.kernel.Scan kernelScan,
       Optional<Statistics> catalogStats,
-      CaseInsensitiveStringMap options) {
+      CaseInsensitiveStringMap options,
+      OptionalInt pushedLimit) {
 
     this.snapshotManager = Objects.requireNonNull(snapshotManager, "snapshotManager is null");
     this.initialSnapshot = Objects.requireNonNull(initialSnapshot, "initialSnapshot is null");
@@ -137,6 +141,7 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
     this.kernelScan = Objects.requireNonNull(kernelScan, "kernelScan is null");
     this.catalogStats = Objects.requireNonNull(catalogStats, "catalogStats is null");
     this.options = Objects.requireNonNull(options, "options is null");
+    this.pushedLimit = Objects.requireNonNull(pushedLimit, "pushedLimit is null");
     this.scalaOptions = ScalaUtils.toScalaMap(options);
     this.hadoopConf = SparkSession.active().sessionState().newHadoopConfWithOptions(scalaOptions);
     this.sqlConf = SQLConf.get();
@@ -242,7 +247,7 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
             Option.apply(checkpointLocation),
             /* mergeConsecutiveSchemaChanges= */ false);
 
-    return new SparkMicroBatchStream(
+    return new DeltaV2MicroBatchStream(
         snapshotManager,
         latestSnapshot,
         hadoopConf,
@@ -267,7 +272,12 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
             .collect(Collectors.joining(", "));
     final String data =
         Arrays.stream(dataFilters).map(Object::toString).collect(Collectors.joining(", "));
-    return String.format(Locale.ROOT, "PushedFilters: [%s], DataFilters: [%s]", pushed, data);
+    final StringBuilder description =
+        new StringBuilder(
+            String.format(Locale.ROOT, "PushedFilters: [%s], DataFilters: [%s]", pushed, data));
+    pushedLimit.ifPresent(
+        limit -> description.append(String.format(Locale.ROOT, ", PushedLimit: %d", limit)));
+    return description.toString();
   }
 
   @Override
@@ -433,68 +443,123 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
   /**
    * Plan the files to scan by materializing {@link PartitionedFile}s and aggregating size stats.
    * Ensures all iterators are closed to avoid resource leaks.
+   *
+   * <p>When a limit is pushed (via {@link SupportsPushDownLimit}), per-file {@code numRecords}
+   * (minus deletion-vector cardinality) are used to stop adding files once enough logical rows have
+   * been accumulated to satisfy the limit. Files that lack statistics are added but do not count
+   * toward the limit.
    */
   private void planScanFiles() {
+    // Short-circuit LIMIT 0. When plan stats are enabled, mark the row count as known because it is
+    // derived directly from the limit, rather than falling back to catalog stats.
+    if (isLimitPushed() && pushedLimit.getAsInt() == 0) {
+      estimatedSizeInBytes = 0;
+      rowCountKnown = arePlanStatsEnabled();
+      totalRows = 0;
+      return;
+    }
+
     final Engine tableEngine = DefaultEngine.create(hadoopConf);
     final String tablePath = getTablePath();
+
     // TODO: Promote getScanFiles(Engine, boolean includeStats) to the public Scan interface to
     // avoid coupling to the kernel-internal ScanImpl class. Until that API is available, this
     // instanceof check is the only way to request per-file statistics from the kernel.
     //
-    // Parse stats JSON when both of:
+    // Read per-file stats JSON when either:
     //  - the optimizer will use numRows (CBO or planStats enabled), matching V1's behavior
-    //    (LogicalRelation.computeStats())
-    //  - the kernel scan is ScanImpl (the only path that supports includeStats)
-    final boolean includeStats = kernelScan instanceof ScanImpl && arePlanStatsEnabled();
-    final Iterator<FilteredColumnarBatch> scanFileBatches;
+    //    (LogicalRelation.computeStats()), or
+    //  - a limit is pushed, in which case we need numRecords to decide when to stop planning.
+    // Both require the kernel scan to be a ScanImpl (the only path that supports includeStats).
+    final boolean scanIsStatsCapable = kernelScan instanceof ScanImpl;
+    final boolean includeStats = scanIsStatsCapable && (arePlanStatsEnabled() || isLimitPushed());
+    final CloseableIterator<FilteredColumnarBatch> scanFileBatches;
     if (includeStats) {
       scanFileBatches = ((ScanImpl) kernelScan).getScanFiles(tableEngine, true /* includeStats */);
-      rowCountKnown = true; // assume all files have stats; set to false on first miss
+      // Only participate in CBO numRows reporting when the optimizer actually consumes it, matching
+      // V1's LogicalRelation.computeStats() gate. A limit alone forces stats to be read (for
+      // termination via logicalRowCount) but must not start surfacing numRows when CBO is off.
+      rowCountKnown = arePlanStatsEnabled(); // assume all files have stats; cleared on first miss
     } else {
       rowCountKnown = false;
       scanFileBatches = kernelScan.getScanFiles(tableEngine);
     }
 
-    final String[] locations = new String[0];
-    final scala.collection.immutable.Map<String, Object> otherConstantMetadataColumnValues =
-        scala.collection.immutable.Map$.MODULE$.empty();
+    // Tracks logical (surviving) rows accumulated so far for limit pushdown. This differs from
+    // totalRows, which is the physical numRecords sum used for CBO and stops being tracked once any
+    // file lacks stats. accumulatedLimitRows always drives limit termination when a limit is
+    // pushed.
+    long accumulatedLimitRows = 0L;
+    try (scanFileBatches) {
+      // Check the limit before hasNext() to avoid any unnecessary kernel iterator I/O.
+      while (!isLimitReached(accumulatedLimitRows) && scanFileBatches.hasNext()) {
+        final FilteredColumnarBatch batch = scanFileBatches.next();
 
-    while (scanFileBatches.hasNext()) {
-      final FilteredColumnarBatch batch = scanFileBatches.next();
+        try (CloseableIterator<Row> addFileRowIter = batch.getRows()) {
+          while (!isLimitReached(accumulatedLimitRows) && addFileRowIter.hasNext()) {
+            final Row row = addFileRowIter.next();
+            final AddFile addFile = new AddFile(row.getStruct(0));
 
-      try (CloseableIterator<Row> addFileRowIter = batch.getRows()) {
-        while (addFileRowIter.hasNext()) {
-          final Row row = addFileRowIter.next();
-          final AddFile addFile = new AddFile(row.getStruct(0));
+            final PartitionedFile partitionedFile =
+                PartitionUtils.buildPartitionedFile(addFile, partitionSchema, tablePath, zoneId);
 
-          final PartitionedFile partitionedFile =
-              PartitionUtils.buildPartitionedFile(addFile, partitionSchema, tablePath, zoneId);
+            totalBytes += addFile.getSize();
+            partitionedFiles.add(partitionedFile);
+            selectedFiles.add(new DeltaScanFile(addFile));
 
-          totalBytes += addFile.getSize();
-          partitionedFiles.add(partitionedFile);
-          selectedFiles.add(new DeltaScanFile(addFile));
+            Optional<Long> numRecords =
+                rowCountKnown || isLimitPushed() ? addFile.getNumRecords() : Optional.empty();
+            if (rowCountKnown) {
+              if (numRecords.isPresent()) {
+                totalRows += numRecords.get();
+                perFileRowCounts.add(numRecords.get());
+              } else {
+                // This file has no numRecords — row count is unknowable for the whole scan.
+                // Clear partial state and stop accumulating for all subsequent files.
+                rowCountKnown = false;
+                totalRows = 0;
+                perFileRowCounts.clear();
+              }
+            }
 
-          if (rowCountKnown) {
-            Optional<Long> numRecords = addFile.getNumRecords();
-            if (numRecords.isPresent()) {
-              totalRows += numRecords.get();
-              perFileRowCounts.add(numRecords.get());
-            } else {
-              // This file has no numRecords — row count is unknowable for the whole scan.
-              // Clear partial state and stop accumulating for all subsequent files.
-              rowCountKnown = false;
-              totalRows = 0;
-              perFileRowCounts.clear();
+            if (isLimitPushed()) {
+              accumulatedLimitRows += logicalRowCount(addFile, numRecords);
             }
           }
         }
-      } catch (IOException e) {
-        throw new RuntimeException(e);
       }
+    } catch (IOException e) {
+      throw new RuntimeException(e);
     }
 
     // Pre-compute estimated size accounting for column projection
     estimatedSizeInBytes = computeEstimatedSizeWithColumnProjection(totalBytes);
+  }
+
+  /** Returns true iff a limit was pushed down from Spark. */
+  private boolean isLimitPushed() {
+    return pushedLimit.isPresent();
+  }
+
+  /**
+   * Returns true iff a limit is pushed and the accumulated logical row count already satisfies it.
+   */
+  private boolean isLimitReached(long accumulatedLimitRows) {
+    return isLimitPushed() && accumulatedLimitRows >= pushedLimit.getAsInt();
+  }
+
+  /**
+   * Returns the surviving row count contributed by a file toward a pushed limit: the physical
+   * {@code numRecords} minus deletion-vector cardinality. Returns 0 when statistics are missing, so
+   * a file without stats is planned but never counted toward the limit.
+   */
+  private static long logicalRowCount(AddFile addFile, Optional<Long> numRecords) {
+    if (!numRecords.isPresent()) {
+      return 0L;
+    }
+    long dvCardinality =
+        addFile.getDeletionVector().map(DeletionVectorDescriptor::getCardinality).orElse(0L);
+    return Math.max(0L, numRecords.get() - dvCardinality);
   }
 
   /**
@@ -594,6 +659,11 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
     return hadoopConf;
   }
 
+  /** Returns the limit pushed down from Spark, if any. Package-private for testing. */
+  OptionalInt getPushedLimit() {
+    return pushedLimit;
+  }
+
   @Override
   public NamedReference[] filterAttributes() {
     return Arrays.stream(partitionSchema.fields())
@@ -603,6 +673,18 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
 
   @Override
   public void filter(org.apache.spark.sql.connector.expressions.filter.Predicate[] predicates) {
+    // Spark currently invokes this method for DynamicPruningExpression predicates. These normally
+    // come from join dynamic partition pruning, but group-based row-level operations can also use
+    // them to select the file groups that must be rewritten. Delta advertises only partition
+    // columns through filterAttributes(), so accepted predicates prune the already-planned file
+    // list by partition value.
+    //
+    // Runtime pruning happens after planScanFiles(), so combining it with a pushed limit would be
+    // unsafe: limit planning could stop before files that survive the runtime predicate, and this
+    // method can only remove planned files. Current Spark plan shapes prevent that combination.
+    // Join DPP places a Join between the Limit and the scan. Group-based row-level operations do
+    // not place a direct Limit over the scan, so neither shape matches Spark's
+    // PhysicalOperation(_, Nil, scanBuilderHolder) limit pushdown gate.
 
     // Try to convert runtime predicates to catalyst expressions, then create predicate evaluators
     // Only track predicates that successfully convert to evaluators
@@ -665,6 +747,7 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
         // ignoring kernelScan because it is derived from Snapshot which is created from tablePath,
         // with pushed down filters that are also recorded in `pushedToKernelFilters`
         && Objects.equals(options, that.options)
+        && Objects.equals(pushedLimit, that.pushedLimit)
         && Objects.equals(appliedRuntimePredicates, that.appliedRuntimePredicates)
         && Objects.equals(catalogStats, that.catalogStats);
   }
@@ -679,6 +762,7 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
         partitionSchema,
         readDataSchema,
         options,
+        pushedLimit,
         appliedRuntimePredicates,
         pushedToKernelFiltersSet,
         dataFiltersSet);

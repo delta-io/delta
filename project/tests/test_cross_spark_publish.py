@@ -21,6 +21,7 @@ import json
 import contextlib
 import importlib.util
 import io
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -566,11 +567,14 @@ class SparkVersionsScriptTest:
                 print(f"  ✗ Expected {expected}, got {source_build_versions}")
                 return False
 
-            if "4.2" in source_build_versions:
-                by_short = {entry["shortVersion"]: entry for entry in data}
-                spark42 = by_short["4.2"]
-                if spark42["sourceBuildDefaultRef"] != "b6bd005ac7549411ec4e7dc944d7a0e19fd56561":
-                    print("  ✗ Spark 4.2 sourceBuildDefaultRef is not the expected pinned SHA")
+            source_build_entries = [entry for entry in data if entry.get("sourceBuildDefaultRef")]
+            for entry in source_build_entries:
+                source_ref = entry["sourceBuildDefaultRef"]
+                if not re.fullmatch(r"[0-9a-f]{7,40}", source_ref):
+                    print(
+                        f"  ✗ {entry['shortVersion']} sourceBuildDefaultRef is not a valid "
+                        f"Git SHA: {source_ref}"
+                    )
                     return False
 
             print(f"  ✓ --source-build-spark-versions (non-blocking lane metadata): {source_build_versions}")
@@ -615,8 +619,17 @@ class SparkVersionsScriptTest:
                 print(f"  ✗ Expected {expected}, got {non_source_build_versions}")
                 return False
 
-            if "4.2" in non_source_build_versions:
-                print("  ✗ Spark 4.2 should be handled by the non-blocking source-build lane")
+            source_build_versions = {
+                "master" if entry["isMaster"] else entry["shortVersion"]
+                for entry in data
+                if entry.get("sourceBuildDefaultRef")
+            }
+            overlap = source_build_versions.intersection(non_source_build_versions)
+            if overlap:
+                print(
+                    "  ✗ Source-build versions also appeared in the published lane: "
+                    f"{sorted(overlap)}"
+                )
                 return False
 
             print(f"  ✓ --non-source-build-spark-versions: {non_source_build_versions}")
@@ -627,16 +640,25 @@ class SparkVersionsScriptTest:
             return False
 
     def test_resolve_source_build(self) -> bool:
-        """Test source-build resolution without fetching Spark from Git."""
-        if not self.ensure_json_exists():
-            return False
-
-        fake_sha = "b6bd005ac7549411ec4e7dc944d7a0e19fd56561"
+        """Test source-build resolution with synthetic metadata and no Git fetch."""
+        mock_source_ref = "test-source-ref"
+        mock_resolved_sha = "a" * 40
+        source_entry = {
+            "fullVersion": "99.0.0-SNAPSHOT",
+            "shortVersion": "99.0",
+            "isMaster": False,
+            "sourceBuildDefaultRef": mock_source_ref,
+        }
         try:
             spec = importlib.util.spec_from_file_location("get_spark_version_info", self.script_path)
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
-            module.resolve_spark_sha = lambda spark_repo, spark_ref, spark_dir: fake_sha
+            module.resolve_spark_sha = lambda spark_repo, spark_ref, spark_dir: mock_resolved_sha
+            module.load_spark_versions = lambda json_path, repo_root: [source_entry]
+
+            spark_version = "99.0"
+            expected_artifact_base_version = "99.0.0"
+            expected_spark_artifact_version = "99.0.0-aaaaaaaaaaaa-SNAPSHOT"
 
             previous_argv = sys.argv
             output = io.StringIO()
@@ -645,7 +667,7 @@ class SparkVersionsScriptTest:
                     str(self.script_path),
                     "--resolve-source-build",
                     "--spark-version",
-                    "4.2",
+                    spark_version,
                 ]
                 with contextlib.redirect_stdout(output):
                     module.main()
@@ -659,10 +681,11 @@ class SparkVersionsScriptTest:
                     values[key] = value
 
             expected = {
-                "spark_version": "4.2",
-                "spark_sha": fake_sha,
-                "artifact_base_version": "4.2.0",
-                "spark_artifact_version": "4.2.0-b6bd005ac754-SNAPSHOT",
+                "spark_version": spark_version,
+                "source_ref": mock_source_ref,
+                "spark_sha": mock_resolved_sha,
+                "artifact_base_version": expected_artifact_base_version,
+                "spark_artifact_version": expected_spark_artifact_version,
             }
             for key, expected_value in expected.items():
                 if values.get(key) != expected_value:
@@ -672,11 +695,15 @@ class SparkVersionsScriptTest:
             if "cache_key" not in values:
                 print("  ✗ --resolve-source-build did not emit cache_key")
                 return False
-            if not values["cache_key"].startswith("spark-m2-ubuntu-24.04-scala-2.13-4.2-4.2.0-"):
+            expected_cache_prefix = (
+                "spark-m2-ubuntu-24.04-scala-2.13-"
+                f"{spark_version}-{expected_artifact_base_version}-"
+            )
+            if not values["cache_key"].startswith(expected_cache_prefix):
                 print(f"  ✗ unexpected cache_key: {values['cache_key']}")
                 return False
 
-            print("  ✓ --resolve-source-build: emitted expected non-blocking source-build metadata")
+            print("  ✓ --resolve-source-build: emitted expected synthetic source-build metadata")
             return True
 
         except Exception as e:

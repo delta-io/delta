@@ -22,6 +22,7 @@ import java.util.Locale
 import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.v2.interop.AbstractProtocol
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils.quoteIdentifier
@@ -77,7 +78,7 @@ import org.apache.spark.sql.types.{Metadata => FieldMetadata}
  */
 object GeneratedColumn extends DeltaLogging with AnalysisHelper {
 
-  def satisfyGeneratedColumnProtocol(protocol: Protocol): Boolean =
+  def satisfyGeneratedColumnProtocol(protocol: AbstractProtocol): Boolean =
     protocol.isFeatureSupported(GeneratedColumnsTableFeature)
 
   /**
@@ -117,6 +118,19 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
       snapshot.metadata.schema.partition(isGeneratedColumn)._1
     } else {
       Nil
+    }
+  }
+
+  /**
+   * Returns whether the table has a generated column that has a NullType data type.
+   *
+   * @param protocol the table protocol.
+   * @param schema the table schema.
+   * @return whether the table has a generated column that has a NullType data type.
+   */
+  def hasGeneratedNullTypeColumn(protocol: Protocol, schema: StructType): Boolean = {
+    schema.exists { f =>
+      isGeneratedColumn(protocol, f) && f.dataType.isInstanceOf[NullType]
     }
   }
 

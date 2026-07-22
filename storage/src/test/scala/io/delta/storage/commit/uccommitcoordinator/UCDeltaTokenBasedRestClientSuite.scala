@@ -28,7 +28,6 @@ import io.delta.storage.commit.{Commit, CommitFailedException, TableIdentifier}
 import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.exceptions.NoSuchTableException
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
-import io.unitycatalog.client.auth.TokenProvider
 
 import org.apache.hadoop.fs.{FileStatus, Path}
 import org.apache.http.HttpStatus
@@ -118,15 +117,16 @@ class UCDeltaTokenBasedRestClientSuite
     exchange.getResponseBody.close()
   }
 
-  private def tokenProvider(): TokenProvider = new TokenProvider {
-    override def accessToken(): String = "mock-token"
-    override def initialize(configs: java.util.Map[String, String]): Unit = {}
-    override def configs(): java.util.Map[String, String] = Collections.emptyMap()
+  private def clientConfig: java.util.Map[String, String] = {
+    val config = new java.util.LinkedHashMap[String, String]()
+    config.put("uri", serverUri)
+    config.put("auth.type", "static")
+    config.put("auth.token", "mock-token")
+    config
   }
 
   private def withClient(fn: UCDeltaTokenBasedRestClient => Unit): Unit = {
-    val client = new UCDeltaTokenBasedRestClient(
-      serverUri, tokenProvider(), Collections.emptyMap())
+    val client = new UCDeltaTokenBasedRestClient(clientConfig, null)
     try fn(client) finally client.close()
   }
 
@@ -188,13 +188,13 @@ class UCDeltaTokenBasedRestClientSuite
 
   test("constructor validates required parameters") {
     intercept[NullPointerException] {
-      new UCDeltaTokenBasedRestClient(null, tokenProvider(), Collections.emptyMap())
+      new UCDeltaTokenBasedRestClient(null, null)
     }
-    intercept[NullPointerException] {
-      new UCDeltaTokenBasedRestClient(serverUri, null, Collections.emptyMap())
-    }
-    intercept[NullPointerException] {
-      new UCDeltaTokenBasedRestClient(serverUri, tokenProvider(), null)
+    intercept[IllegalArgumentException] {
+      val noUri = new java.util.LinkedHashMap[String, String]()
+      noUri.put("auth.type", "static")
+      noUri.put("auth.token", "mock-token")
+      new UCDeltaTokenBasedRestClient(noUri, null)
     }
   }
 
@@ -1023,8 +1023,7 @@ class UCDeltaTokenBasedRestClientSuite
   // --------------- close / ensureOpen ---------------
 
   test("operations after close throw IllegalStateException") {
-    val client = new UCDeltaTokenBasedRestClient(
-      serverUri, tokenProvider(), Collections.emptyMap())
+    val client = new UCDeltaTokenBasedRestClient(clientConfig, null)
     client.close()
     intercept[IllegalStateException] { client.getMetastoreId() }
     intercept[IllegalStateException] {
