@@ -16,6 +16,8 @@
 package io.delta.spark.internal.v2.read;
 
 import io.delta.kernel.CommitActions;
+import io.delta.kernel.CommitRange;
+import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
@@ -24,7 +26,6 @@ import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.checksum.CRCInfo;
-import io.delta.kernel.internal.commitrange.CommitRangeImpl;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.replay.LogReplay;
@@ -340,7 +341,7 @@ public class MetadataEvolutionHandler {
       metadata = validated.metadata;
       protocol = validated.protocol;
     } else {
-      SnapshotImpl snapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(batchStartVersion);
+      Snapshot snapshot = snapshotManager.loadSnapshotAt(batchStartVersion);
       version = snapshot.getVersion();
       metadata = snapshot.getMetadata();
       protocol = snapshot.getProtocol();
@@ -429,7 +430,7 @@ public class MetadataEvolutionHandler {
       long startVersion, long endVersion) {
     List<Metadata> metadataChanges =
         new ArrayList<>(collectMetadataActions(startVersion, endVersion).values());
-    SnapshotImpl startSnapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(startVersion);
+    Snapshot startSnapshot = snapshotManager.loadSnapshotAt(startVersion);
     Metadata startMetadata = startSnapshot.getMetadata();
 
     // Try to find rename or drop columns in between, or nullability/datatype changes by using
@@ -510,7 +511,7 @@ public class MetadataEvolutionHandler {
    */
   public static Optional<PersistedMetadata> getPersistedMetadataForMicroBatchStream(
       SparkSession spark,
-      SnapshotImpl snapshot,
+      Snapshot snapshot,
       Map<String, String> options,
       DeltaSnapshotManager snapshotManager,
       Engine engine) {
@@ -663,7 +664,7 @@ public class MetadataEvolutionHandler {
    */
   public static Option<DeltaSourceMetadataTrackingLog> getMetadataTrackingLogForMicroBatchStream(
       SparkSession spark,
-      SnapshotImpl snapshot,
+      Snapshot snapshot,
       Map<String, String> options,
       DeltaSnapshotManager snapshotManager,
       Engine engine,
@@ -715,9 +716,8 @@ public class MetadataEvolutionHandler {
     Metadata mergedMetadata = null;
     Protocol mergedProtocol = null;
 
-    CommitRangeImpl commitRange =
-        (CommitRangeImpl)
-            snapshotManager.getTableChanges(engine, currentMetadataVersion, Optional.empty());
+    CommitRange commitRange =
+        snapshotManager.getTableChanges(engine, currentMetadataVersion, Optional.empty());
 
     try (CloseableIterator<CommitActions> commitsIter =
         // Always include CDC: the merger must stop on any file action

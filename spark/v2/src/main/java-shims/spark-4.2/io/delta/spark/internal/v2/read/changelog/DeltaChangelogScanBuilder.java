@@ -4,7 +4,6 @@ import io.delta.kernel.CommitRange;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.spark.internal.v2.catalog.DeltaV2Table;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
@@ -55,14 +54,12 @@ public class DeltaChangelogScanBuilder implements ScanBuilder {
     // but the start does not, the toggle happened within the range -- emit
     // DELTA_CHANGELOG_ROW_TRACKING_DISABLED_IN_RANGE with the offending start version.
     Snapshot startSnapshot = snapshotManager.loadSnapshotAt(startVersion);
-    SnapshotImpl startSnapshotImpl = (SnapshotImpl) startSnapshot;
     Snapshot endSnapshot = snapshotManager.loadSnapshotAt(endVersion);
-    SnapshotImpl endSnapshotImpl = (SnapshotImpl) endSnapshot;
     StructType endSchema = SchemaUtils.convertKernelSchemaToSparkSchema(endSnapshot.getSchema());
-    if (!RowTracking.isEnabled(endSnapshotImpl.getProtocol(), endSnapshotImpl.getMetadata())) {
+    if (!RowTracking.isEnabled(endSnapshot.getProtocol(), endSnapshot.getMetadata())) {
       DeltaErrors.throwChangelogRequiresRowTracking(sparkTable.name());
     }
-    if (!RowTracking.isEnabled(startSnapshotImpl.getProtocol(), startSnapshotImpl.getMetadata())) {
+    if (!RowTracking.isEnabled(startSnapshot.getProtocol(), startSnapshot.getMetadata())) {
       DeltaErrors.throwChangelogRowTrackingDisabledInRange(startVersion);
     }
 

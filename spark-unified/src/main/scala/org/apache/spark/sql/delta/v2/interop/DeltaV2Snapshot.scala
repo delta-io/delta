@@ -33,9 +33,9 @@ import org.apache.spark.sql.delta.actions.{
 import org.apache.spark.sql.delta.coordinatedcommits.TableCommitCoordinatorClient
 import org.apache.spark.sql.delta.stats.{DeltaStatsColumnSpec, StatisticsCollection}
 import org.apache.hadoop.fs.Path
+import io.delta.kernel.{Snapshot => KernelSnapshot}
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.internal.{SnapshotImpl => KernelSnapshot}
 
 import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
 
@@ -49,10 +49,10 @@ import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
  * reconstruction (`stateDF` etc.) is not wired to Kernel yet and throws.
  */
 private[v2] class DeltaV2Snapshot(
-    // Typed as the internal SnapshotImpl (aliased KernelSnapshot), not the public Kernel
-    // `Snapshot` interface: the decoded data path is only exposed on SnapshotImpl in the
-    // OSS-published Kernel. The public io.delta.kernel.Snapshot has no `getDataPath`, and its
-    // `getPath` is URL-encoded, which breaks Hadoop `Path` for table roots containing spaces.
+    // Typed as the public Kernel `Snapshot` interface (aliased KernelSnapshot). The runtime
+    // instance is a SnapshotImpl, whose `getDataPath` override returns the decoded data path; the
+    // interface default would instead return the URL-encoded `getPath`, which breaks Hadoop `Path`
+    // for table roots containing spaces. So the table root is read via `getDataPath` below.
     kernelSnapshot: KernelSnapshot,
     sparkSession: SparkSession,
     // Kernel engine for reading scan files and the commit timestamp -- owned and passed by the

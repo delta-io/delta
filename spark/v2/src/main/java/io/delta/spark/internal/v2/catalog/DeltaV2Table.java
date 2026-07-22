@@ -24,7 +24,6 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
-import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.spark.internal.v2.adapters.KernelMetadataAdapter;
 import io.delta.spark.internal.v2.adapters.KernelProtocolAdapter;
@@ -253,11 +252,7 @@ public class DeltaV2Table extends DeltaV2TableShims
 
     Optional<PersistedMetadata> persistedMetadata =
         MetadataEvolutionHandler.getPersistedMetadataForMicroBatchStream(
-            SparkSession.active(),
-            (SnapshotImpl) initialSnapshot,
-            options,
-            snapshotManager,
-            kernelEngine);
+            SparkSession.active(), initialSnapshot, options, snapshotManager, kernelEngine);
 
     StructType rawSchema;
     List<String> partitionColumnNames;
@@ -339,12 +334,12 @@ public class DeltaV2Table extends DeltaV2TableShims
 
   /** The table protocol from the initial snapshot. */
   protected AbstractProtocol protocol() {
-    return new KernelProtocolAdapter(((SnapshotImpl) initialSnapshot).getProtocol());
+    return new KernelProtocolAdapter(initialSnapshot.getProtocol());
   }
 
   /** The table metadata from the initial snapshot. */
   protected AbstractMetadata metadata() {
-    return new KernelMetadataAdapter(((SnapshotImpl) initialSnapshot).getMetadata());
+    return new KernelMetadataAdapter(initialSnapshot.getMetadata());
   }
 
   /** Returns a copy of this table pinned to {@code version}. */
@@ -455,9 +450,8 @@ public class DeltaV2Table extends DeltaV2TableShims
    */
   @Override
   public MetadataColumn[] metadataColumns() {
-    SnapshotImpl snapshotImpl = (SnapshotImpl) initialSnapshot;
     boolean rowTrackingEnabled =
-        RowTracking.isEnabled(snapshotImpl.getProtocol(), snapshotImpl.getMetadata());
+        RowTracking.isEnabled(initialSnapshot.getProtocol(), initialSnapshot.getMetadata());
 
     StructType metadataType = new StructType();
     for (StructField field :

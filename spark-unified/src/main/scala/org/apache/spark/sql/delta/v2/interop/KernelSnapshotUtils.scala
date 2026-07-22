@@ -24,9 +24,9 @@ import org.apache.spark.sql.delta.actions.{
   DeletionVectorDescriptor => V1DeletionVectorDescriptor
 }
 import org.apache.spark.sql.delta.implicits._
+import io.delta.kernel.Snapshot
 import io.delta.kernel.data.MapValue
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.internal.{ScanImpl, SnapshotImpl}
 import io.delta.kernel.internal.actions.{AddFile => KernelAddFile}
 
 import org.apache.spark.sql.{Dataset, SparkSession}
@@ -48,7 +48,7 @@ private[delta] object KernelSnapshotUtils {
    * The Engine reads the file metadata from Kernel.
    */
   def buildAllFiles(
-      kernelSnapshot: SnapshotImpl,
+      kernelSnapshot: Snapshot,
       spark: SparkSession,
       engine: Engine): Dataset[AddFile] = {
     spark.createDataset(collectV1AddFiles(kernelSnapshot, engine))
@@ -61,9 +61,9 @@ private[delta] object KernelSnapshotUtils {
    * are available. Kernel returns the files in batches, and this method collects them.
    */
   private def collectV1AddFiles(
-      kernelSnapshot: SnapshotImpl,
+      kernelSnapshot: Snapshot,
       engine: Engine): Seq[AddFile] = {
-    val scan = kernelSnapshot.getScanBuilder.build().asInstanceOf[ScanImpl]
+    val scan = kernelSnapshot.getScanBuilder.build()
     val scanFileBatches = scan.getScanFiles(engine, true /* includeStats */)
     try {
       val files = ArrayBuffer.empty[AddFile]
