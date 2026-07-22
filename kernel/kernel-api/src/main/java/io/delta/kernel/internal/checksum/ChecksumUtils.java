@@ -23,6 +23,7 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.ActionWrapper;
@@ -32,7 +33,6 @@ import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.stats.FileSizeHistogram;
 import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.internal.util.FileNames;
-import io.delta.kernel.internal.util.IntervalParserUtils;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
@@ -65,20 +65,9 @@ public class ChecksumUtils {
 
   /**
    * The live {@link SetTransaction} list ({@link CRCInfo#getSetTransactions()}) is stored in the
-   * checksum only when the table has at most this many distinct appIds, to bound the size of the
-   * {@code .crc} file. Above this count the field is left absent and readers fall back to state
-   * reconstruction. The default mirrors Delta-Spark's {@code setTransactionsInCrc.maxAllowed}.
+   * checksum only when the table has at most this many distinct appIds.
    */
   public static final long DEFAULT_SET_TRANSACTIONS_IN_CRC_THRESHOLD = 100L;
-
-  /**
-   * Table property that bounds how long {@link SetTransaction} actions are retained. When it is
-   * set, Delta considers transaction identifiers older than a wall-clock cutoff expired. The full
-   * replay path filters expired transactions and the incremental path omits the field entirely
-   * (mirroring Delta-Spark logic).
-   */
-  private static final String SET_TRANSACTION_RETENTION_DURATION_KEY =
-      "delta.setTransactionRetentionDuration";
 
   private static final Set<String> INCREMENTAL_SUPPORTED_OPS =
       Collections.unmodifiableSet(
@@ -240,10 +229,8 @@ public class ChecksumUtils {
 
     StateTracker state = new StateTracker();
     state.collectSetTransactions = true;
-    // Collect every appId first; the .crc-size threshold is applied only after retention filtering
-    // (see filterAndBoundSetTransactions) so expired appIds do not consume the threshold budget.
-    // This adds no asymptotic memory over the replay itself: CreateCheckpointIterator already holds
-    // one entry per appId to dedup the txn column.
+    // Make the full-replay path collect every appId so retention filtering runs first. This
+    // prevents expired appIds from being counted towards the threshold.
     state.abandonAboveThreshold = false;
 
     // Process logs and update state
@@ -535,7 +522,7 @@ public class ChecksumUtils {
   }
 
   private static boolean isSetTransactionRetentionConfigured(Metadata metadata) {
-    return metadata.getConfiguration().containsKey(SET_TRANSACTION_RETENTION_DURATION_KEY);
+    return TableConfig.SET_TRANSACTION_RETENTION.fromMetadata(metadata).isPresent();
   }
 
   /**
@@ -544,15 +531,7 @@ public class ChecksumUtils {
    * {@code .crc}-size threshold.
    *
    * <p>Retention is applied <em>before</em> the threshold check so that expired appIds do not
-   * consume the threshold budget — a table with {@code threshold} live appIds plus any number of
-   * expired ones still stores its live transactions. This mirrors Delta-Spark, where {@code
-   * InMemoryLogReplay.getTransactions} filters expired transactions and {@code
-   * setTransactionsInCrc.maxAllowed} then bounds the live result.
-   *
-   * <p>A transaction is retained only when its {@code lastUpdated} is strictly newer than the
-   * retention cutoff; transactions without a {@code lastUpdated} are dropped when retention is
-   * configured (matching Delta-Spark). When the live count exceeds the threshold the field is left
-   * absent so readers fall back to state reconstruction.
+   * consume the threshold budget.
    *
    * @param collected the setTransactions gathered during a full replay
    * @param metadata the effective table metadata at the checksum version
@@ -566,18 +545,15 @@ public class ChecksumUtils {
       return collected;
     }
     List<SetTransaction> live = collected.get();
-    if (isSetTransactionRetentionConfigured(metadata)) {
-      long cutoff =
-          clock.getTimeMillis()
-              - IntervalParserUtils.safeParseIntervalAsMillis(
-                  metadata.getConfiguration().get(SET_TRANSACTION_RETENTION_DURATION_KEY));
+    Optional<Long> retentionMillis = TableConfig.SET_TRANSACTION_RETENTION.fromMetadata(metadata);
+    if (retentionMillis.isPresent()) {
+      long cutoff = clock.getTimeMillis() - retentionMillis.get();
       live =
           collected.get().stream()
               .filter(txn -> txn.getLastUpdated().map(updated -> updated > cutoff).orElse(false))
               .collect(Collectors.toList());
     }
-    // Bound the live set only after expiry filtering, mirroring the abandonment check in
-    // StateTracker.recordSetTransaction (strictly-greater-than the threshold).
+
     if (live.size() > threshold) {
       return Optional.empty();
     }
@@ -623,10 +599,8 @@ public class ChecksumUtils {
     final Map<String, SetTransaction> setTransactionsByAppId = new LinkedHashMap<>();
     boolean collectSetTransactions = false;
     long setTransactionsThreshold = DEFAULT_SET_TRANSACTIONS_IN_CRC_THRESHOLD;
-    // When true, collection is abandoned (and the map cleared) as soon as the distinct-appId count
-    // exceeds the threshold. The full-replay path disables this so it can collect every appId and
-    // apply the threshold only after retention filtering (so expired appIds don't consume the
-    // budget); the incremental path leaves it on.
+    // When true, abandon collection once the distinct-appId count exceeds the threshold. The
+    // full-replay path disables this so retention filtering runs before the threshold check.
     boolean abandonAboveThreshold = true;
 
     /** Records a SetTransaction if collecting and its appId is not already seen. */

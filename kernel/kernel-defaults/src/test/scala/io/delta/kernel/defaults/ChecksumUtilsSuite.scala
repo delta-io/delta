@@ -137,8 +137,7 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
 
       val crcInfo = ChecksumUtils.computeChecksum(engine, logSegmentAtLatest(tablePath, engine))
 
-      // The field is captured with real content, one entry per appId, and for a repeated appId
-      // the newest version wins (app-1 -> 2, not 1).
+      // The newest version wins for a repeated appId (app-1 -> 2, not 1).
       assert(crcInfo.getSetTransactions.isPresent)
       val byAppId =
         crcInfo.getSetTransactions.get().asScala.map(t => t.getAppId -> t.getVersion).toMap
@@ -160,8 +159,8 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
       assert(seedCrc.getSetTransactions.get().asScala.map(t => t.getAppId -> t.getVersion).toMap
         === Map("app-1" -> 1L, "app-2" -> 7L))
 
-      // A new commit supersedes app-1 and leaves app-2 untouched. The base .crc makes computeChecksum
-      // build incrementally, folding the new commit's txn over the base transactions.
+      // A new commit supersedes app-1 and leaves app-2 untouched. The base .crc makes
+      // computeChecksum build incrementally, folding the new commit's txn over the base txns.
       commitTxn(tablePath, engine, "app-1", 2)
       val crcInfo = ChecksumUtils.computeChecksum(engine, logSegmentAtLatest(tablePath, engine))
 
@@ -261,16 +260,15 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
   test("computeChecksum (full replay) applies retention before the .crc threshold " +
     "so expired appIds do not evict the live set") {
     withTempDirAndEngine { (tablePath, engine) =>
-      // The threshold bounds LIVE appIds; adding expired ones on top must not trip abandonment.
       val threshold = ChecksumUtils.DEFAULT_SET_TRANSACTIONS_IN_CRC_THRESHOLD.toInt
-      val base = 1000000000000L // fixed epoch millis; avoids wall-clock flakiness
+      val base = 1000000000000L
       val expiredUpdated = base - (2L * 60 * 60 * 1000) // 2h before base (outside a 1h window)
 
       spark.sql(
         s"CREATE TABLE delta.`$tablePath` (id LONG) USING delta " +
           "TBLPROPERTIES ('delta.setTransactionRetentionDuration' = 'interval 1 hours')")
 
-      // Exactly `threshold` live txns plus a handful of expired ones, in a single commit.
+      // Add live up to exactly the threshold and expired ones after that.
       val liveTxns = (0 until threshold).map(i =>
         SetTransaction(s"live-$i", version = 1L, lastUpdated = Some(base)))
       val expiredTxns = (0 until 5).map(i =>
@@ -281,15 +279,14 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
       val version = Table.forPath(engine, tablePath).getLatestSnapshot(engine).getVersion()
       deleteChecksumFileForTableUsingHadoopFs(tablePath.stripPrefix("file:"), (0 to version.toInt))
 
-      // "now" == base, so the cutoff is base - 1h: live txns (base) survive, expired (base - 2h) drop.
+      // "now" == base, so cutoff is base - 1h: live txns (base) survive, expired (base - 2h) drop.
       val crcInfo =
         ChecksumUtils.computeChecksum(
           engine,
           logSegmentAtLatest(tablePath, engine),
           new ManualClock(base))
 
-      // The field is present with exactly the `threshold` live appIds: the expired ones neither
-      // appear nor push the live count over the threshold (the pre-fix bug cleared the whole map).
+      // The field is present with exactly the `threshold` live appIds.
       assert(crcInfo.getSetTransactions.isPresent)
       val appIds = crcInfo.getSetTransactions.get().asScala.map(_.getAppId).toSet
       assert(appIds.size === threshold)
