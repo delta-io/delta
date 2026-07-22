@@ -27,8 +27,7 @@ import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
 import io.delta.kernel.unitycatalog.UCTableIdentifier;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
-import io.delta.storage.commit.uccommitcoordinator.UCTokenBasedRestClient;
-import io.unitycatalog.client.auth.TokenProvider;
+import io.delta.storage.commit.uccommitcoordinator.UCDeltaTokenBasedRestClient;
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
@@ -36,6 +35,7 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.apache.flink.util.Preconditions;
+import org.apache.hadoop.conf.Configuration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -44,9 +44,14 @@ import org.slf4j.LoggerFactory;
  * catalog. It supports:
  *
  * <ul>
- *   <li>loading existing tables from a catalog via the UC Open API, and
+ *   <li>loading existing tables from a catalog via the UC Delta-Tables API, and
  *   <li>committing table changes back to the CCv2 catalog.
  * </ul>
+ *
+ * <p>Snapshot loading and commit coordination go through the UC Delta-Tables API (via {@link
+ * UCDeltaTokenBasedRestClient}). Table creation, lookup, and credential vending are still served by
+ * the {@link UnityCatalog} catalog over the classic UC table APIs, so the backing UC server must
+ * expose both surfaces.
  */
 public class CatalogManagedTable extends AbstractKernelTable {
 
@@ -125,14 +130,11 @@ public class CatalogManagedTable extends AbstractKernelTable {
   @Override
   public void open() {
     if (ucClient == null) {
-      Map<String, String> tokenProviderConf =
-          UnityCatalog.buildTokenProviderConf(
-              authMode, token, oauthUri, oauthClientId, oauthClientSecret);
+      Map<String, String> ucConfig =
+          UnityCatalog.buildUcConfig(
+              endpoint, authMode, token, oauthUri, oauthClientId, oauthClientSecret);
       ucClient =
-          new UCTokenBasedRestClient(
-              endpoint.toString(),
-              TokenProvider.create(tokenProviderConf),
-              VersionHelper.appVersions());
+          new UCDeltaTokenBasedRestClient(ucConfig, /* hadoopConfSupplier = */ Configuration::new);
     }
     if (catalogManagedClient == null) {
       catalogManagedClient = new UCCatalogManagedClient(ucClient);
