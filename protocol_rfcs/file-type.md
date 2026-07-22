@@ -55,15 +55,15 @@ To support this feature:
 The `file` data type is represented in Parquet as a group annotated with the Parquet `FILE` logical type, as specified in [apache/parquet-format#585](https://github.com/apache/parquet-format/pull/585).
 The group may contain the following fields, identified by name (matched case-sensitively, not by field order). Field IDs, if they exist, may also be used for projection. Every field is optional both in the schema and in the data: a writer may omit any field from the group definition, and any field that is present has repetition type `OPTIONAL`. A group need only define the fields it uses (for example, an inline-only column may define just `inline`, and a whole-file external reference may define just `path`).
 
-A field is *set* when it is present in the group and its value is non-null (and, for string fields, non-empty). A field is *not set* when it is absent from the group, or is present but null or empty.
+A field is *set* when it is present in the group and its value is non-null (and, for string fields, non-empty). A field is *not set* when it is absent from the group, or is present but null or empty. (Implementations are not expected to treat empty strings as null.)
 
 Struct field name | Parquet primitive type | Description
 -|-|-
-path | binary (`STRING`) | An opaque location string for an external file (for example, `s3://bucket/file.jpg`). No encoding (such as URI encoding) is applied on top of the user-provided value. If `path` is not set, the value refers to the current file (a self-reference).
-offset | int64 | The start of the byte range within the referenced data. If not set, readers must treat it as 0; if set and non-zero, readers must seek to this offset. `offset` must be set for a self-reference (`path` not set), and is optional for an external reference.
+path | binary (`STRING`) | A URI-reference as defined by [RFC 3986](https://datatracker.ietf.org/doc/html/rfc3986), which may be absolute or relative (for example, `s3://bucket/file.jpg`). No additional encoding (such as URI encoding) is applied on top of the user-provided value. If `path` is not set, the value refers to the current file (a self-reference).
+offset | int64 | The start of the byte range within the referenced data. Must not be negative. If not set, readers must treat it as 0; if set and non-zero, readers must seek to this offset. `offset` must be set for a self-reference (`path` not set), and is optional for an external reference.
 size | int64 | The byte length of the referenced data. Must be zero or a positive integer if set; 0 indicates empty referenced data. `size` must be set whenever `offset` is set. It may be omitted only for a whole-file external reference (`path` set, `offset` not set), in which case the range runs to the end of the referenced file.
-content_type | binary (`STRING`) | The media type (MIME type) of the resolved bytes, for example `image/png`.
-checksum | binary (`STRING`) | A self-describing integrity token for the resolved bytes, of the form `<algorithm>:base64(<digest bytes>)` (see [Checksum](#checksum)).
+content_type | binary (`STRING`) | The media type (MIME type), as defined by [RFC 2046](https://datatracker.ietf.org/doc/html/rfc2046), of the resolved bytes, for example `image/png`. When not set, the type may be assumed to be `application/octet-stream`.
+checksum | binary (`STRING`) | A self-describing integrity token for the resolved bytes, of the form `<algorithm>:<digest>` (see [Checksum](#checksum)).
 inline | binary | The referenced bytes stored inline in the value. If `inline` is set, it supplies the bytes and any locator fields (`path`, `offset`, `size`) that are set are provenance only.
 
 A value resolves to bytes determined by `inline` / `path` / `offset` / `size`; `content_type` and `checksum` are metadata describing whatever is resolved. The resolution rules are given in [Byte Resolution](#byte-resolution).
@@ -92,15 +92,19 @@ optional group inline_file (FILE) {
 
 ### Checksum
 
-The `checksum` field is a self-describing token of the form `<algorithm>:base64(<digest bytes>)`. It generalizes the storage-system eTag. Readers should ignore unknown algorithms. The recognized algorithms are:
+The `checksum` field is a self-describing token of the form `<algorithm>:<digest>`, where `<digest>` is encoded according to the `Encoding` column below. It generalizes the storage-system eTag. Readers should ignore unknown algorithms. The recognized algorithms are:
 
-Algorithm | Notes
--|-
-`ETAG` | The object-store eTag — equality-only, not recomputable.
-`MD5` | The usual S3/HTTP eTag and Content-MD5.
-`CRC32` | Parquet's page-checksum algorithm (gzip/zlib).
-`CRC32C` | Common in object stores, hardware-accelerated.
-`SHA-256` | For example, S3 additional checksums.
+Algorithm | Encoding | Notes
+-|-|-
+`ETAG` | opaque | The object-store eTag, not recomputable.
+`MD5` | lowercase hex | As defined in [RFC 6151](https://datatracker.ietf.org/doc/html/rfc6151), represented as 32 hex characters.
+`CRC32` | lowercase hex | As defined in [RFC 3385](https://datatracker.ietf.org/doc/html/rfc3385), represented as 8 hex characters.
+`CRC32C` | lowercase hex | As defined in [RFC 9260](https://datatracker.ietf.org/doc/html/rfc9260), represented as 8 hex characters.
+`SHA-256` | lowercase hex | As defined in [RFC 6234](https://datatracker.ietf.org/doc/html/rfc6234), represented as 64 hex characters.
+
+The `<digest>` encodings are:
+- **lowercase hex**: the digest bytes rendered as lowercase hexadecimal, two characters per byte and no separators (for example, `MD5:d41d8cd98f00b204e9800998ecf8427e`).
+- **opaque**: the token supplied verbatim by the object store, used only for equality comparison and not otherwise interpreted.
 
 `checksum` applies to the resolved bytes, except for `ETAG`, which is the object-store eTag for the whole file referenced by `path`.
 
@@ -130,7 +134,7 @@ When File type is supported (`writerFeatures` field of a table's `protocol` acti
 - must write a column of type `file` to Parquet as a group annotated with the Parquet `FILE` logical type, whose fields are drawn from the set `path`, `offset`, `size`, `content_type`, `checksum`, and `inline`, with the Parquet primitive types described in [File data in Parquet](#file-data-in-parquet). The group need only define the fields it uses; any field it does define must be optional.
 - must not rename the fields within a `FILE`-annotated group; the field names above are normative.
 - must write every value so that it resolves to a referent according to [Byte Resolution](#byte-resolution). In particular, `size` must be set whenever `offset` is set, and a self-reference (`path` not set) must set `offset` (and therefore `size`). A value that does not resolve to any referent is invalid and must be represented as a column null instead.
-- must, when writing a `checksum`, use the `<algorithm>:base64(<digest bytes>)` form with one of the recognized algorithms in [Checksum](#checksum).
+- must, when writing a `checksum`, use the `<algorithm>:<digest>` form with one of the recognized algorithms and its digest encoding in [Checksum](#checksum).
 - must store additional metadata about a file (for example, a modification timestamp) adjacent to the `file` column, not inside the `FILE`-annotated group.
 
 ## Reader Requirements for File Data Type
