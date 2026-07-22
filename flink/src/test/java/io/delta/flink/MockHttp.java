@@ -38,6 +38,8 @@ public class MockHttp {
       "/api/2.1/unity-catalog/delta/v1/catalogs/[^/]+/schemas/[^/]+/staging-tables$";
   private static final String DELTA_STAGING_CREDENTIALS_PATH =
       "/api/2.1/unity-catalog/delta/v1/staging-tables/[^/]+/credentials$";
+  private static final String DELTA_METRICS_PATH =
+      "/api/2.1/unity-catalog/delta/v1/catalogs/[^/]+/schemas/[^/]+/tables/[^/]+/metrics$";
 
   private static String loadTableJson(String tableId, String tablePath) {
     return String.format(
@@ -61,7 +63,7 @@ public class MockHttp {
     Map<String, String> stubs = new HashMap<>();
     stubs.put(DELTA_CREDENTIALS_PATH, "{}");
     stubs.put(DELTA_STAGING_CREDENTIALS_PATH, "{}");
-    stubs.put("/api/2.1/unity-catalog/delta/preview/metrics", "");
+    stubs.put(DELTA_METRICS_PATH, "{}");
     MockHttp mock = new MockHttp(stubs, Map.of());
 
     String scenario = "table-lifecycle";
@@ -112,7 +114,7 @@ public class MockHttp {
     stubs.put(
         "/api/2.1/unity-catalog/delta/preview/commits",
         "{\"commits\": [], \"latest_table_version\": 1230}");
-    stubs.put("/api/2.1/unity-catalog/delta/preview/metrics", "");
+    stubs.put(DELTA_METRICS_PATH, "{}");
     return new MockHttp(stubs, Map.of());
   }
 
