@@ -53,8 +53,10 @@ import scala.Tuple2;
  * whose schema or row-tracking state is not stable. {@link #createReaderFactory()} wraps the Parquet
  * reader with {@link CDCPartitionReaderFactory} to append the CDC tail columns ({@code _change_type},
  * {@code _commit_version}, {@code _commit_timestamp}).
+ *
+ * <p>Package privacy prevents callers from coupling to Delta's internal V2 implementation.
  */
-public class DeltaChangelogBatch implements Batch {
+class DeltaV2ChangeLogBatch implements Batch {
   private static final Set<DeltaLogActionUtils.DeltaAction> CHANGELOG_ACTION_SET =
       Set.of(
           DeltaLogActionUtils.DeltaAction.ADD,
@@ -69,7 +71,7 @@ public class DeltaChangelogBatch implements Batch {
   private final Snapshot snapshot;
   private final Configuration hadoopConf;
 
-  public DeltaChangelogBatch(
+  DeltaV2ChangeLogBatch(
       CommitRange commitRange,
       Engine engine,
       StructType endDataSchema,
@@ -150,7 +152,7 @@ public class DeltaChangelogBatch implements Batch {
                         deletionVectorBase64));
               }
               // Validate Metadata actions: schema and row-tracking config must match the
-              // end-version baseline established by DeltaChangelogScanBuilder. Mid-range
+              // end-version baseline established by DeltaV2ChangeLogScanBuilder. Mid-range
               // schema evolution or row-tracking-toggle would silently corrupt downstream
               // CDC post-processing (row identity / column mapping drift).
               Optional<Metadata> metadataOpt = StreamingHelper.getMetadata(batch, rowId);
@@ -237,7 +239,8 @@ public class DeltaChangelogBatch implements Batch {
   public PartitionReaderFactory createReaderFactory() {
     StructType partitionSchema = new StructType();
     StructType readDataSchema =
-        endDataSchema.add(DeltaChangelog.METADATA_COLUMN, DeltaChangelog.METADATA_STRUCT, false);
+        endDataSchema.add(
+            DeltaV2ChangeLog.METADATA_COLUMN, DeltaV2ChangeLog.METADATA_STRUCT, false);
     Filter[] dataFilters = new Filter[0];
     scala.collection.immutable.Map<String, String> scalaOptions =
         scala.collection.immutable.Map$.MODULE$.empty();

@@ -267,7 +267,7 @@ class DeltaV2CDFSuite
   }
 
   // TODO: Re-enable once the V2 read-time CDF path applies deletion vectors. Today
-  // DeltaChangelogBatch reads whole data files and ignores DVs, and DeltaChangelog always
+  // The read-time CDF path reads whole data files and ignores DVs, and it always
   // reports containsCarryoverRows=true, so a DV-based DELETE (which references the same file
   // with a DV rather than rewriting it) cancels out as a carry-over and the deleted row is
   // never surfaced. Labeling also depends on the post-processing missing from 4.2.0-preview5.

@@ -25,14 +25,14 @@ import org.junit.jupiter.api.Test;
 /**
  * Integration tests for read-time CDF / DSv2 changelog with Deletion Vectors (DVs) that are NOT
  * covered by parameterized DV-on/off variants of
- * {@link DeltaChangelogDirectBatchExecutionTest}. The parameterized tests already cover the
+ * {@link DeltaV2ChangeLogDirectBatchExecutionTest}. The parameterized tests already cover the
  * basic single-file DELETE and UPDATE; this file holds scenarios that need DV-specific table
  * shape (multi-file, multi-commit).
  *
  * <p>Correctness relies on Catalyst post-processing (Phase 1 carry-over removal via
  * {@code row_commit_version} comparison, Phase 2 net-changes matrix).
  */
-public class DeltaChangelogDvTest extends DeltaChangelogTestBase {
+class DeltaV2ChangeLogDvTest extends DeltaV2ChangeLogTestBase {
 
   // ===========================================================================================
   // Fixtures

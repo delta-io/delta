@@ -20,16 +20,24 @@ import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
-public class DeltaChangelogScanBuilder implements ScanBuilder {
+/**
+ * Package-private scan builder for Delta's V2 changelog read path.
+ *
+ * <p>Package privacy prevents callers from coupling to Delta's internal V2 implementation.
+ */
+class DeltaV2ChangeLogScanBuilder implements ScanBuilder {
 
-  private final DeltaV2Table sparkTable;
+  private final DeltaV2Table deltaV2Table;
   private final long startVersion;
   private final long endVersion;
   private final CaseInsensitiveStringMap options;
 
-  public DeltaChangelogScanBuilder(
-      DeltaV2Table sparkTable, long startVersion, long endVersion, CaseInsensitiveStringMap options) {
-    this.sparkTable = sparkTable;
+  DeltaV2ChangeLogScanBuilder(
+      DeltaV2Table deltaV2Table,
+      long startVersion,
+      long endVersion,
+      CaseInsensitiveStringMap options) {
+    this.deltaV2Table = deltaV2Table;
     this.startVersion = startVersion;
     this.endVersion = endVersion;
     this.options = options;
@@ -41,11 +49,11 @@ public class DeltaChangelogScanBuilder implements ScanBuilder {
         Objects.requireNonNull(
             SparkSession.active().sparkContext().hadoopConfiguration(), "hadoopConf is null");
     Engine engine = DefaultEngine.create(hadoopConf);
-    DeltaSnapshotManager snapshotManager = sparkTable.getSnapshotManager();
+    DeltaSnapshotManager snapshotManager = deltaV2Table.getSnapshotManager();
     CommitRange commitRange =
         snapshotManager.getTableChanges(engine, startVersion, Optional.of(endVersion));
     // Boundary checks: both endpoints must already carry the schema + RT state that
-    // DeltaChangelogBatch will validate each in-range Metadata action against. Without these,
+    // DeltaV2ChangeLogBatch will validate each in-range Metadata action against. Without these,
     // an RT-disabled boundary with no in-range toggle commit would surface as a raw
     // IllegalStateException "missing baseRowId" downstream.
     //
@@ -60,7 +68,7 @@ public class DeltaChangelogScanBuilder implements ScanBuilder {
     SnapshotImpl endSnapshotImpl = (SnapshotImpl) endSnapshot;
     StructType endSchema = SchemaUtils.convertKernelSchemaToSparkSchema(endSnapshot.getSchema());
     if (!RowTracking.isEnabled(endSnapshotImpl.getProtocol(), endSnapshotImpl.getMetadata())) {
-      DeltaErrors.throwChangelogRequiresRowTracking(sparkTable.name());
+      DeltaErrors.throwChangelogRequiresRowTracking(deltaV2Table.name());
     }
     if (!RowTracking.isEnabled(startSnapshotImpl.getProtocol(), startSnapshotImpl.getMetadata())) {
       DeltaErrors.throwChangelogRowTrackingDisabledInRange(startVersion);
@@ -68,11 +76,11 @@ public class DeltaChangelogScanBuilder implements ScanBuilder {
 
     StructType cdcSchema =
         endSchema
-            .add(DeltaChangelog.METADATA_COLUMN, DeltaChangelog.METADATA_STRUCT, false)
+            .add(DeltaV2ChangeLog.METADATA_COLUMN, DeltaV2ChangeLog.METADATA_STRUCT, false)
             .add("_change_type", DataTypes.StringType, false)
             .add("_commit_version", DataTypes.LongType, false)
             .add("_commit_timestamp", DataTypes.TimestampType, false);
-    return new DeltaChangelogScan(
+    return new DeltaV2ChangeLogScan(
         cdcSchema,
         commitRange,
         engine,

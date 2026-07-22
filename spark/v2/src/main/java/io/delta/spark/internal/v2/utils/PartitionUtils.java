@@ -359,9 +359,8 @@ public class PartitionUtils {
 
     // For write-time CDF reads (streaming with readChangeFeed=true), build the schema context
     // and augment readDataSchema with CDC tail columns before DV wrapping so that DV column
-    // indices account for them. Read-time CDF (via DeltaChangelogBatch) does not go
-    // through this path: DeltaChangelogBatch's outer CDCPartitionReaderFactory injects the
-    // tail columns as per-partition constants instead.
+    // indices account for them. Read-time CDF (Auto-CDF) does not go through this path: its
+    // partition reader factory injects the tail columns as per-partition constants instead.
     Optional<CDCSchemaContext> cdcSchemaContext =
         isWriteTimeCDCRead
             ? Optional.of(new CDCSchemaContext(readDataSchema, partitionSchema))
