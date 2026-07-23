@@ -432,8 +432,7 @@ class PartitionUtilsSuite extends AnyFunSuite {
 
   Seq(
     "1970-01-01 00:00:00.123456Z",
-    "2024-01-01T10:00:00"
-  ).foreach { badValue =>
+    "2024-01-01T10:00:00").foreach { badValue =>
     test(s"tryParseTimestamp rejects mixed-format input: $badValue") {
       intercept[IllegalStateException] {
         PartitionUtils.tryParseTimestamp(badValue)
