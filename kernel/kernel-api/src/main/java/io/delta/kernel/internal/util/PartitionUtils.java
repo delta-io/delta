@@ -45,6 +45,8 @@ import java.util.stream.Collectors;
 public class PartitionUtils {
   private static final DateTimeFormatter PARTITION_TIMESTAMP_FORMATTER =
       DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
+  private static final DateTimeFormatter PARTITION_TIMESTAMP_UTC_FORMATTER =
+      DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSSSS'Z'").withZone(ZoneOffset.UTC);
 
   private PartitionUtils() {}
 
@@ -556,7 +558,14 @@ public class PartitionUtils {
     } else if (dataType instanceof DateType) {
       int daysSinceEpochUTC = (int) value;
       return LocalDate.ofEpochDay(daysSinceEpochUTC).toString();
-    } else if (dataType instanceof TimestampType || dataType instanceof TimestampNTZType) {
+    } else if (dataType instanceof TimestampType) {
+      long microsSinceEpochUTC = (long) value;
+      Instant instant =
+          Instant.ofEpochSecond(
+              Math.floorDiv(microsSinceEpochUTC, 1_000_000L),
+              Math.floorMod(microsSinceEpochUTC, 1_000_000L) * 1_000L);
+      return PARTITION_TIMESTAMP_UTC_FORMATTER.format(instant);
+    } else if (dataType instanceof TimestampNTZType) {
       long microsSinceEpochUTC = (long) value;
       long seconds = microsSinceEpochUTC / 1_000_000;
       int microsOfSecond = (int) (microsSinceEpochUTC % 1_000_000);
