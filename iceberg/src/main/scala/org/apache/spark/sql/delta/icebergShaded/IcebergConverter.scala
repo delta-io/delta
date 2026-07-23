@@ -412,7 +412,7 @@ class IcebergConverter
               snapshotToConvert.version - 1
             case _ => snapshotToConvert.version
           }
-          val deltaFiles = DeltaFileProviderUtils.getDeltaFilesInVersionRange(
+          val commits = DeltaFileProviderUtils.getCommitsInVersionRange(
             spark = spark,
             deltaLog = log,
             startVersion = prevSnapshot.version + 1,
@@ -425,19 +425,19 @@ class IcebergConverter
             data = Map(
               "fromVersion" -> (prevSnapshot.version + 1),
               "toVersion" -> snapshotToConvert.version,
-              "numDeltaFiles" -> deltaFiles.length
+              "numDeltaFiles" -> commits.length
             )
           )
 
-          val actionsToConvert = DeltaFileProviderUtils.parallelReadAndParseDeltaFilesAsIterator(
-            log, spark, deltaFiles)
+          val actionIterators =
+            DeltaFileProviderUtils.parallelReadAndParseDeltaFilesAsIterator(spark, log, commits)
           var deltaVersion = prevSnapshot.version
-          val commitInfos = actionsToConvert.map { actionsIter =>
+          val commitInfos = actionIterators.map { actionsIter =>
             try {
               deltaVersion += 1
               runIcebergConversionForActions(
                 icebergTxn,
-                actionsIter.map(Action.fromJson).toSeq,
+                actionsIter.toSeq,
                 prevConvertedSnapshotOpt,
                 deltaVersion)
             } finally {
