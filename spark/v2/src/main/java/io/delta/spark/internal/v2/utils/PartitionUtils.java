@@ -17,12 +17,14 @@ package io.delta.spark.internal.v2.utils;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.MapValue;
+import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
+import io.delta.kernel.types.DataType;
 import io.delta.spark.internal.v2.read.ColumnReorderReadFunction;
 import io.delta.spark.internal.v2.read.DeltaParquetFileFormatV2;
 import io.delta.spark.internal.v2.read.DeltaV2ScanUtils;
@@ -35,8 +37,10 @@ import io.delta.spark.internal.v2.read.metadata.MetadataStructSchemaContext;
 import java.time.ZoneId;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import org.apache.hadoop.conf.Configuration;
@@ -61,9 +65,22 @@ import org.apache.spark.sql.execution.datasources.PartitioningUtils;
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
+import org.apache.spark.sql.types.BinaryType;
+import org.apache.spark.sql.types.BooleanType;
+import org.apache.spark.sql.types.ByteType;
+import org.apache.spark.sql.types.DateType;
+import org.apache.spark.sql.types.Decimal;
+import org.apache.spark.sql.types.DecimalType;
+import org.apache.spark.sql.types.DoubleType;
+import org.apache.spark.sql.types.FloatType;
+import org.apache.spark.sql.types.IntegerType;
+import org.apache.spark.sql.types.LongType;
+import org.apache.spark.sql.types.ShortType;
 import org.apache.spark.sql.types.StringType;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
+import org.apache.spark.sql.types.TimestampNTZType;
+import org.apache.spark.sql.types.TimestampType;
 import org.apache.spark.unsafe.types.UTF8String;
 import scala.Function1;
 import scala.Option;
@@ -183,6 +200,133 @@ public class PartitionUtils {
       }
     }
     return new GenericInternalRow(values);
+  }
+
+  /**
+   * Build the typed Kernel {@link Literal} map (logical column name -> value) for the partition
+   * columns of {@code row}, as required by {@code Transaction.getWriteContext}. Insertion order
+   * follows {@code partitionSchema}.
+   *
+   * <p>TODO(#7140): key by physical name to support column mapping (safe today as build() rejects
+   * column-mapped tables).
+   *
+   * @param row the full write row Spark hands the writer
+   * @param partitionSchema the partition columns (in partition order)
+   * @param partitionOrdinals the ordinal of each partition column within {@code row}, parallel to
+   *     {@code partitionSchema}
+   */
+  public static Map<String, Literal> buildPartitionLiterals(
+      InternalRow row, StructType partitionSchema, int[] partitionOrdinals) {
+    final StructField[] fields = partitionSchema.fields();
+    assert partitionOrdinals.length == fields.length
+        : String.format(
+            java.util.Locale.ROOT,
+            "Partition ordinals size %d != partition columns size %d",
+            partitionOrdinals.length,
+            fields.length);
+    final Map<String, Literal> literals = new LinkedHashMap<>();
+    for (int i = 0; i < partitionOrdinals.length; i++) {
+      final StructField field = fields[i];
+      literals.put(
+          field.name(),
+          convertRowValueToKernelLiteral(row, partitionOrdinals[i], field.dataType()));
+    }
+    return literals;
+  }
+
+  /**
+   * Extract the partition-column values of {@code row} (in {@code partitionSchema} order) for
+   * detecting a partition boundary, compared with {@link #partitionValuesEqual}. Keyed on the
+   * decoded {@link Literal#getValue()}, not the {@link Literal}: kernel {@code Literal.equals}
+   * compares {@code byte[]} by identity, so binary values need {@code deepEquals} instead.
+   */
+  public static Object[] extractPartitionValues(
+      InternalRow row, StructType partitionSchema, int[] partitionOrdinals) {
+    final StructField[] fields = partitionSchema.fields();
+    assert partitionOrdinals.length == fields.length
+        : String.format(
+            java.util.Locale.ROOT,
+            "Partition ordinals size %d != partition columns size %d",
+            partitionOrdinals.length,
+            fields.length);
+    final Object[] values = new Object[partitionOrdinals.length];
+    for (int i = 0; i < partitionOrdinals.length; i++) {
+      final Literal literal =
+          convertRowValueToKernelLiteral(row, partitionOrdinals[i], fields[i].dataType());
+      values[i] = literal.getValue();
+    }
+    return values;
+  }
+
+  /**
+   * Compare two partition-value arrays from {@link #extractPartitionValues}. Uses {@link
+   * Objects#deepEquals} so {@code byte[]} (binary partition columns) compare by content, not
+   * identity.
+   */
+  public static boolean partitionValuesEqual(Object[] a, Object[] b) {
+    if (a == b) {
+      return true;
+    }
+    if (a == null || b == null || a.length != b.length) {
+      return false;
+    }
+    for (int i = 0; i < a.length; i++) {
+      if (!Objects.deepEquals(a[i], b[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Build the Kernel {@link Literal} for a partition-column value in {@code row}; a null value
+   * becomes {@code Literal.ofNull(kernelType)}. See also {@code
+   * ExpressionUtils.convertValueToKernelLiteral} (the value-based, read-side counterpart).
+   */
+  private static Literal convertRowValueToKernelLiteral(
+      InternalRow row, int ordinal, org.apache.spark.sql.types.DataType type) {
+    if (row.isNullAt(ordinal)) {
+      final DataType kernelType = SchemaUtils.convertSparkDataTypeToKernelDataType(type);
+      return Literal.ofNull(kernelType);
+    }
+    if (type instanceof IntegerType) {
+      return Literal.ofInt(row.getInt(ordinal));
+    } else if (type instanceof DateType) {
+      return Literal.ofDate(row.getInt(ordinal));
+    } else if (type instanceof LongType) {
+      return Literal.ofLong(row.getLong(ordinal));
+    } else if (type instanceof TimestampType) {
+      // TODO(#7140): Kernel logs timestamp partition values in plain session-tz form, not V1's
+      // UTC-normalized ISO-8601, so the two engines diverge for timestamp-partitioned tables.
+      return Literal.ofTimestamp(row.getLong(ordinal));
+    } else if (type instanceof TimestampNTZType) {
+      return Literal.ofTimestampNtz(row.getLong(ordinal));
+    } else if (type instanceof ShortType) {
+      return Literal.ofShort(row.getShort(ordinal));
+    } else if (type instanceof ByteType) {
+      return Literal.ofByte(row.getByte(ordinal));
+    } else if (type instanceof BooleanType) {
+      return Literal.ofBoolean(row.getBoolean(ordinal));
+    } else if (type instanceof FloatType) {
+      return Literal.ofFloat(row.getFloat(ordinal));
+    } else if (type instanceof DoubleType) {
+      return Literal.ofDouble(row.getDouble(ordinal));
+    } else if (type instanceof StringType) {
+      // Empty string maps to null, as V1 does (Empty2Null), so "" and null share a partition.
+      final String str = row.getUTF8String(ordinal).toString();
+      if (str.isEmpty()) {
+        return Literal.ofNull(SchemaUtils.convertSparkDataTypeToKernelDataType(type));
+      }
+      return Literal.ofString(str);
+    } else if (type instanceof BinaryType) {
+      return Literal.ofBinary(row.getBinary(ordinal));
+    } else if (type instanceof DecimalType) {
+      final DecimalType dt = (DecimalType) type;
+      final Decimal decimal = row.getDecimal(ordinal, dt.precision(), dt.scale());
+      return Literal.ofDecimal(decimal.toJavaBigDecimal(), dt.precision(), dt.scale());
+    }
+    throw new UnsupportedOperationException(
+        "Unsupported partition column type for DSv2 write: " + type.catalogString());
   }
 
   /**

@@ -25,8 +25,14 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.spark.sql.connector.distributions.Distribution;
+import org.apache.spark.sql.connector.distributions.Distributions;
+import org.apache.spark.sql.connector.expressions.Expressions;
+import org.apache.spark.sql.connector.expressions.SortDirection;
+import org.apache.spark.sql.connector.expressions.SortOrder;
 import org.apache.spark.sql.connector.write.BatchWrite;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
+import org.apache.spark.sql.connector.write.RequiresDistributionAndOrdering;
 import org.apache.spark.sql.connector.write.Write;
 import org.apache.spark.sql.connector.write.streaming.StreamingWrite;
 import org.apache.spark.sql.delta.DeltaOptions;
@@ -47,8 +53,12 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
  *
  * <p>Only append is supported: the builder advertises no overwrite capability, so Spark does not
  * route overwrite, truncate, Complete, or Update here.
+ *
+ * <p><b>Partitioned writes:</b> implements {@link RequiresDistributionAndOrdering} to request Spark
+ * to perform a local sort of rows by the partition columns, so each partition's rows reach {@link
+ * DeltaV2DataWriter} contiguously. An unpartitioned table requests no ordering.
  */
-class DeltaV2Write implements Write {
+class DeltaV2Write implements Write, RequiresDistributionAndOrdering {
 
   // Streaming-write options the sink does not honor; rejected rather than silently ignored.
   // DeltaV2WriteTest asserts over this exact list instead of a drifting copy. Referencing the
@@ -72,6 +82,7 @@ class DeltaV2Write implements Write {
   private final Snapshot initialSnapshot;
   private final DeltaSnapshotManager snapshotManager;
   private final StructType dataSchema;
+  private final StructType partitionSchema;
   private final String queryId;
   private final LogicalWriteInfo writeInfo;
 
@@ -80,6 +91,8 @@ class DeltaV2Write implements Write {
    *     streaming guard's schema/protocol baseline)
    * @param snapshotManager reloads the latest snapshot per epoch on the streaming path; unused by
    *     the batch path (a single commit off {@code initialSnapshot})
+   * @param dataSchema the non-partition columns (the Parquet file body)
+   * @param partitionSchema the partition columns in partition order (empty when unpartitioned)
    */
   DeltaV2Write(
       Engine engine,
@@ -88,6 +101,7 @@ class DeltaV2Write implements Write {
       Snapshot initialSnapshot,
       DeltaSnapshotManager snapshotManager,
       StructType dataSchema,
+      StructType partitionSchema,
       LogicalWriteInfo writeInfo) {
     this.engine = requireNonNull(engine, "engine is null");
     this.hadoopConf = requireNonNull(hadoopConf, "hadoopConf is null");
@@ -95,23 +109,9 @@ class DeltaV2Write implements Write {
     this.initialSnapshot = requireNonNull(initialSnapshot, "initialSnapshot is null");
     this.snapshotManager = requireNonNull(snapshotManager, "snapshotManager is null");
     this.dataSchema = requireNonNull(dataSchema, "dataSchema is null");
+    this.partitionSchema = requireNonNull(partitionSchema, "partitionSchema is null");
     this.writeInfo = requireNonNull(writeInfo, "writeInfo is null");
     this.queryId = requireNonNull(writeInfo.queryId(), "queryId is null");
-    rejectPartitionedTable();
-  }
-
-  /**
-   * Rejects partitioned tables (batch and streaming). The write always targets the table root with
-   * empty partition values, so a partitioned target would misplace every file -- silent corruption.
-   */
-  private void rejectPartitionedTable() {
-    List<String> partitionColumns = initialSnapshot.getPartitionColumnNames();
-    if (!partitionColumns.isEmpty()) {
-      throw new UnsupportedOperationException(
-          "DSv2 writes to Delta do not support partitioned tables (partition columns: "
-              + partitionColumns
-              + "). Use the V1 write path (format(\"delta\")) instead.");
-    }
   }
 
   /**
@@ -127,7 +127,7 @@ class DeltaV2Write implements Write {
     // The batch path builds its own driver-side context (DeltaV2BatchWriteContext) and commits a
     // single transaction off initialSnapshot.
     return new DeltaV2BatchWrite(
-        engine, hadoopConf, tablePath, initialSnapshot, dataSchema, writeInfo);
+        engine, hadoopConf, tablePath, initialSnapshot, dataSchema, partitionSchema, writeInfo);
   }
 
   @Override
@@ -138,9 +138,31 @@ class DeltaV2Write implements Write {
     // produce the executor write state -- the same setup the batch path uses, no duplication.
     DeltaV2WriteContext context =
         DeltaV2WriteContext.create(
-            engine, hadoopConf, tablePath, initialSnapshot, dataSchema, writeInfo);
+            engine, hadoopConf, tablePath, initialSnapshot, dataSchema, partitionSchema, writeInfo);
     return new DeltaV2StreamingWrite(
         engine, initialSnapshot, snapshotManager, queryId, context::buildDataWriterFactory);
+  }
+
+  /**
+   * No distribution: we do not repartition the input, matching V1's default sink.
+   *
+   * <p>TODO(#7140): support optimized write (V1's {@code optimizeWrite}) to consolidate small
+   * files.
+   */
+  @Override
+  public Distribution requiredDistribution() {
+    return Distributions.unspecified();
+  }
+
+  /**
+   * Sorts by the partition columns so each partition's rows are contiguous (empty when
+   * unpartitioned).
+   */
+  @Override
+  public SortOrder[] requiredOrdering() {
+    return Arrays.stream(partitionSchema.fields())
+        .map(f -> Expressions.sort(Expressions.column(f.name()), SortDirection.ASCENDING))
+        .toArray(SortOrder[]::new);
   }
 
   /**
