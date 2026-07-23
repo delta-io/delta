@@ -224,7 +224,8 @@ private[spark] class TestClientForDeltaFormatSharing(
       table: Table,
       startingVersion: Long,
       endingVersion: Option[Long],
-      fileIdHash: Option[String]
+      fileIdHash: Option[String],
+      includeHistoricalProtocol: Boolean = false
   ): DeltaTableFiles = {
     assert(
       endingVersion.isDefined,
@@ -267,7 +268,8 @@ private[spark] class TestClientForDeltaFormatSharing(
       table: Table,
       cdfOptions: Map[String, String],
       includeHistoricalMetadata: Boolean,
-      fileIdHash: Option[String]
+      fileIdHash: Option[String],
+      includeHistoricalProtocol: Boolean = false
   ): DeltaTableFiles = {
     val suffix = cdfOptions
       .get(DeltaSharingOptions.CDF_START_VERSION)
