@@ -45,19 +45,19 @@ This design enables:
 
 | Field Name | Data Type | Description |
 | - | - | - |
-| <ins>backReference</ins> | <ins>Struct</ins> | <ins>Reference to the existing entry in the metadata tree that this add supersedes (e.g., stats backfill, DV update). Null when the file has no entry in the tree. Contains `manifest` (String) and `pos` (Long). See [Backreferences](#backreferences).</ins> |
+| <ins>backReference</ins> | <ins>Struct</ins> | <ins>Reference to the existing leaf-manifest entry that this add supersedes (e.g., stats backfill, DV update). Null when the file has no leaf-manifest entry to supersede — either it has no entry in the tree, or its entry is inline in the root manifest. Contains `manifest` (String) and `pos` (Long). See [Backreferences](#backreferences).</ins> |
 
 ### Remove File
 
 > ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#remove-file)***
 
-<ins>When the `adaptiveMetadata` table feature is enabled, the `remove` action must include a `backReference`, set `extendedFileMetadata` to true, and have a null `deletionTimestamp`:</ins>
+<ins>When the `adaptiveMetadata` table feature is enabled, the `remove` action must include a `backReference` when the file's entry lives in a leaf manifest, set `extendedFileMetadata` to true, and have a null `deletionTimestamp`:</ins>
 
 | Field Name | Data Type | Description |
 | - | - | - |
 | <ins>deletionTimestamp</ins> | <ins>Long</ins> | <ins>Must be null. Metadata cleanup uses tree reachability instead of timestamp-based expiration.</ins> |
 | <ins>extendedFileMetadata</ins> | <ins>Boolean</ins> | <ins>Must be true. `partitionValues`, `size`, and `tags` are always present on the `remove`.</ins> |
-| <ins>backReference</ins> | <ins>Struct</ins> | <ins>Required reference to the file's location in the metadata tree. Contains `manifest` (String) and `pos` (Long). See [Backreferences](#backreferences).</ins> |
+| <ins>backReference</ins> | <ins>Struct</ins> | <ins>Reference to the file's entry in a leaf manifest. Null when the file has no leaf-manifest entry — either it has no entry in the tree, or its entry is inline in the root manifest. Contains `manifest` (String) and `pos` (Long). See [Backreferences](#backreferences).</ins> |
 | <ins>stats</ins> | <ins>String</ins> | <ins>Must be present. Statistics of the removed file, with `numRecords` required at minimum; column statistics are included when recorded for the file. Copied from the matching `add.stats`, or converted from the file's tree entry (`record_count`, `content_stats`).</ins> |
 
 <ins>`remove` actions are transient. During log replay a `remove` cancels the matching `add` (or, via its `backReference`, marks the corresponding tree entry deleted) and is then discarded. Removes are **not** retained as tombstones in checkpoints or in the reconstructed table state. There is no timestamp-based tombstone expiration; physical file cleanup is driven by tree reachability (see [Metadata Cleanup](#metadata-cleanup)).</ins>
@@ -207,7 +207,9 @@ For both user domain metadata and `txns`, inline and sidecar storage may coexist
 
 ## Backreferences
 
-When `adaptiveMetadata` is enabled, `remove` and `add` actions carry a `backReference` field that identifies where the file's existing entry is located in the metadata tree. A backreference is non-null when the file has a live entry in a manifest, and null when the file has no manifest entry (it exists only in the Delta log).
+When `adaptiveMetadata` is enabled, `remove` and `add` actions carry a `backReference` field that identifies where the file's existing entry is located in the metadata tree. Backreferences are only needed to locate entries in **leaf** manifests: leaf manifests are not read exhaustively on every commit, so a writer needs the (manifest, position) pair to find and supersede a leaf entry without scanning the leaves. Entries inline in the root manifest never carry a backreference.
+
+A backreference is therefore non-null only when the file has a live entry in a leaf manifest. It is null when the file has no manifest entry (it exists only in the Delta log) or when its entry is inline in the root manifest.
 
 A backreference is meaningful only relative to the tree it was computed from, identified by that tree's `contentRoot.version`. A commit's backreferences are valid only if they target the current `contentRoot.version`; if a concurrent manifest commit has advanced the tree (e.g., compaction moved entries between manifests), they are stale and must be recomputed against the new tree before the commit can proceed (see [Conflict Resolution](#conflict-resolution)).
 
