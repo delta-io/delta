@@ -865,8 +865,12 @@ class IcebergConverter
               targetSnapshot,
               "delta.iceberg.conversion.unsupportedActions",
               data = Map(
-                "version" -> targetSnapshot.version,
-                "commitInfo" -> commitInfo.map(_.operation).getOrElse(""),
+                // The latest snapshot version targeted by this conversion.
+                "latestVersion" -> targetSnapshot.version,
+                // The Delta version of the specific commit that failed to convert. This is the
+                // commit currently being translated, not the latest snapshot being synced.
+                "offendingVersion" -> deltaVersion,
+                "operation" -> commitInfo.map(_.operation).getOrElse(""),
                 "hasAdd" -> addFiles.nonEmpty.toString,
                 "hasRemove" -> removeFiles.nonEmpty.toString,
                 "dataChange" -> dataChange.toString,
@@ -875,8 +879,9 @@ class IcebergConverter
             )
             logError(
               s"""Unsupported combination of actions for incremental conversion. Context:
-                 |version -> ${targetSnapshot.version},
-                 |commitInfo -> ${commitInfo.map(_.operation).getOrElse("")},
+                 |latestVersion -> ${targetSnapshot.version},
+                 |offendingVersion -> $deltaVersion,
+                 |operation -> ${commitInfo.map(_.operation).getOrElse("")},
                  |hasAdd -> ${addFiles.nonEmpty.toString},
                  |hasRemove -> ${removeFiles.nonEmpty.toString},
                  |dataChange -> ${dataChange.toString},
@@ -890,8 +895,11 @@ class IcebergConverter
       targetSnapshot,
       "delta.iceberg.conversion.convertActions",
       data = Map(
-        "version" -> targetSnapshot.version,
-        "commitInfo" -> commitInfo.map(_.operation).getOrElse(""),
+        // The latest snapshot version targeted by this conversion.
+        "latestVersion" -> targetSnapshot.version,
+        // The Delta version of the commit that was converted in this call.
+        "version" -> deltaVersion,
+        "operation" -> commitInfo.map(_.operation).getOrElse(""),
         "txnHelper" -> txnHelper.getClass.getSimpleName
       )
     )
