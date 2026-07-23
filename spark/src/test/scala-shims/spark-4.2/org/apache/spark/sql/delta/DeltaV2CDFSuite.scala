@@ -157,17 +157,13 @@ class DeltaV2CDFSuite
     }
   }
 
-  // TODO: Re-enable when Spark 4.2 is out. 4.2.0-preview5 doesn't yet contain post-processing
-  // for CDC in Spark that labels update pre/post images.
-  ignore("UPDATE: preimage/postimage pair emitted") {
+  test("UPDATE: preimage/postimage pair emitted") {
     val tbl = "rt_cdf_update"
     withTable(tbl) {
       createRowTrackingTable(tbl)
       sql(s"UPDATE $tbl SET name = 'Robert' WHERE id = 2") // v4
       withStrictV2 {
-        val res = sql(
-          s"SELECT id, name, _change_type FROM table_changes('$tbl', 4, 4)")
-          .orderBy("id", "_change_type")
+        val res = sql(s"SELECT id, name, _change_type FROM table_changes('$tbl', 4, 4)")
         checkAnswer(
           res,
           Row(2L, "Bob", "update_preimage") ::
@@ -208,9 +204,7 @@ class DeltaV2CDFSuite
     }
   }
 
-  // TODO: Re-enable when Spark 4.2 is out. 4.2.0-preview5 doesn't yet contain post-processing
-  // for CDC in Spark that labels update pre/post images.
-  ignore("MERGE: insert/update/delete in one commit each surface with the right change_type") {
+  test("MERGE: insert/update/delete in one commit each surface with the right change_type") {
     val src = "rt_cdf_merge_src"
     val tgt = "rt_cdf_merge_tgt"
     withTable(src, tgt) {
@@ -225,9 +219,7 @@ class DeltaV2CDFSuite
            |WHEN NOT MATCHED THEN INSERT (id, name) VALUES (s.id, s.name)""".stripMargin) // v4
 
       withStrictV2 {
-        val res = sql(
-          s"SELECT id, name, _change_type FROM table_changes('$tgt', 4, 4)")
-          .orderBy("id", "_change_type")
+        val res = sql(s"SELECT id, name, _change_type FROM table_changes('$tgt', 4, 4)")
         checkAnswer(
           res,
           Row(2L, "Bob", "update_preimage") ::
@@ -238,10 +230,7 @@ class DeltaV2CDFSuite
     }
   }
 
-  // TODO: Re-enable when Spark 4.2 is out. 4.2.0-preview5 doesn't yet contain post-processing
-  // for CDC in Spark that drops carry-over rows / labels update pre/post images, both of which
-  // a multi-row base file rewritten by repeated DMLs relies on.
-  ignore("repeated DMLs touching the same base file diff to per-row changes") {
+  test("repeated DMLs touching the same base file diff to per-row changes") {
     val tbl = "rt_cdf_repeated_dml"
     withTable(tbl) {
       sql(
@@ -266,12 +255,7 @@ class DeltaV2CDFSuite
     }
   }
 
-  // TODO: Re-enable once the V2 read-time CDF path applies deletion vectors. Today
-  // DeltaChangelogBatch reads whole data files and ignores DVs, and DeltaChangelog always
-  // reports containsCarryoverRows=true, so a DV-based DELETE (which references the same file
-  // with a DV rather than rewriting it) cancels out as a carry-over and the deleted row is
-  // never surfaced. Labeling also depends on the post-processing missing from 4.2.0-preview5.
-  ignore("deletion vectors: a DV-based DELETE surfaces the deleted row") {
+  test("deletion vectors: a DV-based DELETE surfaces the deleted row") {
     val tbl = "rt_cdf_dv_delete"
     withTable(tbl) {
       sql(
@@ -290,9 +274,7 @@ class DeltaV2CDFSuite
     }
   }
 
-  // TODO: Re-enable when Spark 4.2 is out. 4.2.0-preview5 doesn't yet contain post-processing
-  // for CDC in Spark that labels update pre/post images.
-  ignore("V2 mode with delta.enableChangeDataFeed=true also routes through the V2 reader") {
+  test("V2 mode with delta.enableChangeDataFeed=true also routes through the V2 reader") {
     val tbl = "rt_cdf_v2_cdf_on"
     withTable(tbl) {
       sql(
@@ -305,7 +287,6 @@ class DeltaV2CDFSuite
       sql(s"UPDATE $tbl SET name = 'b' WHERE id = 2")    // v2
       withStrictV2 {
         val res = sql(s"SELECT id, name, _change_type FROM table_changes('$tbl', 2, 2)")
-          .orderBy("id", "_change_type")
         checkAnswer(
           res,
           Row(2L, "B", "update_preimage") ::

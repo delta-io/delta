@@ -1,4 +1,4 @@
-# Requirements for spark_python_test.yaml — Spark 4.1 variant
+# Requirements for spark_python_test.yaml — Spark 4.2 variant
 # Python: 3.10
 #
 # To regenerate the lock file:
@@ -6,8 +6,8 @@
 #     --python-version 3.10 \
 #     --python-platform linux \
 #     --generate-hashes \
-#     -o spark4.1.lock \
-#     spark4.1.in
+#     -o spark4.2.lock \
+#     spark4.2.in
 #
 # NOTE: pyspark is NOT included — it's installed separately in the workflow
 # because its version is dynamically resolved from the build matrix.
@@ -34,18 +34,19 @@ pypandoc==1.3.3
 
 # Data / analytics
 pandas==2.2.0
-pyarrow==15.0.0
+pyarrow==18.0.0
 numpy==1.22.4
 
 # PySpark transitive dependency (installed via --no-deps, so we lock py4j here)
 py4j==0.10.9.9
 
-# gRPC / protobuf (Spark Connect — Spark 4.1)
-# From https://github.com/apache/spark/blob/branch-4.1/dev/requirements.txt
+# gRPC / protobuf (Spark Connect — Spark 4.2)
+# From https://github.com/apache/spark/blob/branch-4.2/dev/requirements.txt
+# Spark 4.2 generated Connect protos require protobuf runtime >= 6.33.5.
 grpcio==1.76.0
 grpcio-status==1.76.0
 googleapis-common-protos==1.71.0
-protobuf==6.33.0
+protobuf==6.33.5
 zstandard==0.25.0
 googleapis-common-protos-stubs==2.2.0
 grpc-stubs==1.24.11
