@@ -16,8 +16,8 @@ The `file` data type is the Delta mapping of the Parquet `FILE` logical type pro
 This feature enables support for the `file` data type, which stores a reference to a range of bytes.
 A `file` value resolves to bytes that are located in one of three ways:
 - **inline** — the bytes are stored directly in the value,
-- **self-reference** — the bytes are stored within the same data file that holds this `file` value, addressed by a byte range (`offset` / `size`) with no `path`. The bytes are written between column chunks and are not otherwise referenced by the Parquet footer, so a reader locates them within the current file rather than opening an external one. See [Byte Resolution](#byte-resolution).
-- **external** — the bytes are stored in a separate file at a given `path`.
+- **self-reference** — the bytes are stored within the same data file that holds this `file` value, addressed by a byte range (`offset` / `size`) with no `uri`. The bytes are written between column chunks and are not otherwise referenced by the Parquet footer, so a reader locates them within the current file rather than opening an external one. See [Byte Resolution](#byte-resolution).
+- **external** — the bytes are stored in a separate file at a given `uri`.
 
 The schema serialization method is described in [Schema Serialization Format](#schema-serialization-format), and the physical encoding is described in [File data in Parquet](#file-data-in-parquet).
 
@@ -53,26 +53,26 @@ To support this feature:
 ## File data in Parquet
 
 The `file` data type is represented in Parquet as a group annotated with the Parquet `FILE` logical type, as specified in [apache/parquet-format#585](https://github.com/apache/parquet-format/pull/585).
-The group may contain the following fields, identified by name (matched case-sensitively, not by field order). Field IDs, if they exist, may also be used for projection. Every field is optional both in the schema and in the data: a writer may omit any field from the group definition, and any field that is present has repetition type `OPTIONAL`. A group need only define the fields it uses (for example, an inline-only column may define just `inline`, and a whole-file external reference may define just `path`).
+The group may contain the following fields, identified by name (matched case-sensitively, not by field order). Field IDs, if they exist, may also be used for projection. Every field is optional both in the schema and in the data: a writer may omit any field from the group definition, and any field that is present has repetition type `OPTIONAL`. A group need only define the fields it uses (for example, an inline-only column may define just `inline`, and a whole-file external reference may define just `uri`).
 
 A field is *set* when it is present in the group and its value is non-null (and, for string fields, non-empty). A field is *not set* when it is absent from the group, or is present but null or empty. (Implementations are not expected to treat empty strings as null.)
 
 Struct field name | Parquet primitive type | Description
 -|-|-
-path | binary (`STRING`) | A URI-reference as defined by [RFC 3986](https://datatracker.ietf.org/doc/html/rfc3986), which may be absolute or relative (for example, `s3://bucket/file.jpg`). No additional encoding (such as URI encoding) is applied on top of the user-provided value. If `path` is not set, the value refers to the current file (a self-reference).
-offset | int64 | The start of the byte range within the referenced data. Must not be negative. If not set, readers must treat it as 0; if set and non-zero, readers must seek to this offset. `offset` must be set for a self-reference (`path` not set), and is optional for an external reference.
-size | int64 | The byte length of the referenced data. Must be zero or a positive integer if set; 0 indicates empty referenced data. `size` must be set whenever `offset` is set. It may be omitted only for a whole-file external reference (`path` set, `offset` not set), in which case the range runs to the end of the referenced file.
+uri | binary (`STRING`) | A URI-reference as defined by [RFC 3986](https://datatracker.ietf.org/doc/html/rfc3986), which may be absolute or relative (for example, `s3://bucket/file.jpg`). No additional encoding (such as URI encoding) is applied on top of the user-provided value. If `uri` is not set, the value refers to the current file (a self-reference).
+offset | int64 | The start of the byte range within the referenced data. Must not be negative. If not set, readers must treat it as 0; if set and non-zero, readers must seek to this offset. `offset` must be set for a self-reference (`uri` not set), and is optional for an external reference.
+size | int64 | The byte length of the referenced data. Must be zero or a positive integer if set; 0 indicates empty referenced data. `size` must be set whenever `offset` is set. It may be omitted only for a whole-file external reference (`uri` set, `offset` not set), in which case the range runs to the end of the referenced file.
 content_type | binary (`STRING`) | The media type (MIME type), as defined by [RFC 2046](https://datatracker.ietf.org/doc/html/rfc2046), of the resolved bytes, for example `image/png`. When not set, the type may be assumed to be `application/octet-stream`.
 checksum | binary (`STRING`) | A self-describing integrity token for the resolved bytes, of the form `<algorithm>:<digest>` (see [Checksum](#checksum)).
-inline | binary | The referenced bytes stored inline in the value. If `inline` is set, it supplies the bytes and any locator fields (`path`, `offset`, `size`) that are set are provenance only.
+inline | binary | The referenced bytes stored inline in the value. If `inline` is set, it supplies the bytes and any locator fields (`uri`, `offset`, `size`) that are set are provenance only.
 
-A value resolves to bytes determined by `inline` / `path` / `offset` / `size`; `content_type` and `checksum` are metadata describing whatever is resolved. The resolution rules are given in [Byte Resolution](#byte-resolution).
+A value resolves to bytes determined by `inline` / `uri` / `offset` / `size`; `content_type` and `checksum` are metadata describing whatever is resolved. The resolution rules are given in [Byte Resolution](#byte-resolution).
 
 Because every field is optional, a group need only define the fields it uses. An example group that defines all fields:
 
 ```
 optional group profile_image (FILE) {
-  optional binary path (STRING);
+  optional binary uri (STRING);
   optional int64 offset;
   optional int64 size;
   optional binary content_type (STRING);
@@ -106,34 +106,34 @@ The `<digest>` encodings are:
 - **lowercase hex**: the digest bytes rendered as lowercase hexadecimal, two characters per byte and no separators (for example, `MD5:d41d8cd98f00b204e9800998ecf8427e`).
 - **opaque**: the token supplied verbatim by the object store, used only for equality comparison and not otherwise interpreted.
 
-`checksum` applies to the resolved bytes, except for `ETAG`, which is the object-store eTag for the whole file referenced by `path`.
+`checksum` applies to the resolved bytes, except for `ETAG`, which is the object-store eTag for the whole file referenced by `uri`.
 
 ### Byte Resolution
 
-A value resolves to bytes based on which of `inline`, `path`, `offset`, and `size` are set. `size` must be set whenever `offset` is set, so every offset-based read carries an explicit `size`; `size` may be omitted only for a whole-file external reference.
+A value resolves to bytes based on which of `inline`, `uri`, `offset`, and `size` are set. `size` must be set whenever `offset` is set, so every offset-based read carries an explicit `size`; `size` may be omitted only for a whole-file external reference.
 
-`inline` | `path` | `offset` | `size` | Resolves to
+`inline` | `uri` | `offset` | `size` | Resolves to
 :-:|:-:|:-:|:-:|-
 set | – | – | – | The `inline` bytes.
-– | set | – | – | The whole external file at `path`.
-– | set | – | set | External `path`, `[0, size)`.
-– | set | set | set | External `path`, `[offset, offset + size)`.
+– | set | – | – | The whole external file at `uri`.
+– | set | – | set | External `uri`, `[0, size)`.
+– | set | set | set | External `uri`, `[offset, offset + size)`.
 – | – | set | set | This file, `[offset, offset + size)` (self-reference).
 – | set | set | – | Invalid (`offset` set without `size`).
 – | – | set | – | Invalid (`offset` set without `size`).
-– | – | – | set | Invalid (`size` set without `path` or `offset`).
+– | – | – | set | Invalid (`size` set without `uri` or `offset`).
 – | – | – | – | Nothing — invalid (use column nullability for a null value).
 
-A self-reference points within the same Parquet data file using `offset` and `size` (both required); the bytes are written between column chunks and are not otherwise referenced by the footer. A self-reference is the *absence* of `path`, never an absolute path back to the current file, so a data file containing self-references is renamed or relocated as a single unit.
+A self-reference points within the same Parquet data file using `offset` and `size` (both required); the bytes are written between column chunks and are not otherwise referenced by the footer. A self-reference is the *absence* of `uri`, never an absolute path back to the current file, so a data file containing self-references is renamed or relocated as a single unit.
 
-The referenced bytes (both `inline` and self-reference regions) are compressed with the same `CompressionCodec` as the one configured for the `inline` column; `size` is therefore the length of the compressed region on disk. External referents (`path` set) are opaque to Parquet and stored as-is.
+The referenced bytes (both `inline` and self-reference regions) are compressed with the same `CompressionCodec` as the one configured for the `inline` column; `size` is therefore the length of the compressed region on disk. External referents (`uri` set) are opaque to Parquet and stored as-is.
 
 ## Writer Requirements for File Data Type
 
 When File type is supported (`writerFeatures` field of a table's `protocol` action contains `fileType`), writers:
-- must write a column of type `file` to Parquet as a group annotated with the Parquet `FILE` logical type, whose fields are drawn from the set `path`, `offset`, `size`, `content_type`, `checksum`, and `inline`, with the Parquet primitive types described in [File data in Parquet](#file-data-in-parquet). The group need only define the fields it uses; any field it does define must be optional.
+- must write a column of type `file` to Parquet as a group annotated with the Parquet `FILE` logical type, whose fields are drawn from the set `uri`, `offset`, `size`, `content_type`, `checksum`, and `inline`, with the Parquet primitive types described in [File data in Parquet](#file-data-in-parquet). The group need only define the fields it uses; any field it does define must be optional.
 - must not rename the fields within a `FILE`-annotated group; the field names above are normative.
-- must write every value so that it resolves to a referent according to [Byte Resolution](#byte-resolution). In particular, `size` must be set whenever `offset` is set, and a self-reference (`path` not set) must set `offset` (and therefore `size`). A value that does not resolve to any referent is invalid and must be represented as a column null instead.
+- must write every value so that it resolves to a referent according to [Byte Resolution](#byte-resolution). In particular, `size` must be set whenever `offset` is set, and a self-reference (`uri` not set) must set `offset` (and therefore `size`). A value that does not resolve to any referent is invalid and must be represented as a column null instead.
 - must, when writing a `checksum`, use the `<algorithm>:<digest>` form with one of the recognized algorithms and its digest encoding in [Checksum](#checksum).
 - must store additional metadata about a file (for example, a modification timestamp) adjacent to the `file` column, not inside the `FILE`-annotated group.
 
@@ -142,7 +142,7 @@ When File type is supported (`writerFeatures` field of a table's `protocol` acti
 When File type is supported (`readerFeatures` field of a table's `protocol` action contains `fileType`), readers:
 - must recognize and tolerate a `file` data type in a Delta schema.
 - must use the correct physical schema (a Parquet `FILE`-annotated group with the optional fields described in [File data in Parquet](#file-data-in-parquet)) when reading a `file` data type from a file.
-- must resolve each value to bytes according to [Byte Resolution](#byte-resolution), including the self-reference case (locating the bytes within the same data file when `path` is absent).
+- must resolve each value to bytes according to [Byte Resolution](#byte-resolution), including the self-reference case (locating the bytes within the same data file when `uri` is absent).
 - may return a `null` `file` value for a row whose reference is invalid (does not resolve to any referent per [Byte Resolution](#byte-resolution)).
 - must make the column available to the engine:
     - [Recommended] Expose and interpret the group as a single `file` value, resolving inline, self-reference, and external bytes on access.
@@ -165,10 +165,10 @@ Change Data Feed | **Supported:** A table using the `file` data type is allowed 
 A `file` value is physically a group of leaf fields (see [File data in Parquet](#file-data-in-parquet)), and Delta's [Per-file Statistics](#per-file-statistics) are already encoded mirroring the schema of the data, descending into nested fields. Statistics for a `file` column follow that same per-leaf model, with one exception for the `inline` field:
 
 - The `nullCount` statistic is collected for the `file` column itself (whether the whole `file` value is null), following the standard nested-field statistics encoding.
-- `minValues` and `maxValues` are collected per leaf field, for the comparable leaf fields only: `path` (STRING), `offset` (INT64), `size` (INT64), `content_type` (STRING), and `checksum` (STRING). These follow the standard rules for their respective types (for example, STRING leaves such as `path` are truncated to a fixed prefix length, as with any string column).
+- `minValues` and `maxValues` are collected per leaf field, for the comparable leaf fields only: `uri` (STRING), `offset` (INT64), `size` (INT64), `content_type` (STRING), and `checksum` (STRING). These follow the standard rules for their respective types (for example, STRING leaves such as `uri` are truncated to a fixed prefix length, as with any string column).
 - `minValues` and `maxValues` are **not** collected for the `inline` field, because it is binary content for which min/max provides no data-skipping value and may be large.
 
-Collecting `minValues` / `maxValues` on `path` in particular enables data skipping on file-inventory and manifest tables that filter by path (for example, an object-store prefix).
+Collecting `minValues` / `maxValues` on `uri` in particular enables data skipping on file-inventory and manifest tables that filter by URI (for example, an object-store prefix).
 
 The set of columns for which statistics are collected is otherwise governed by the table's existing statistics configuration (for example, the number of indexed columns).
 
