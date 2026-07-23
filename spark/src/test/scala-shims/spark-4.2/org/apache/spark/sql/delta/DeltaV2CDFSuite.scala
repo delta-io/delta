@@ -163,10 +163,7 @@ class DeltaV2CDFSuite
       createRowTrackingTable(tbl)
       sql(s"UPDATE $tbl SET name = 'Robert' WHERE id = 2") // v4
       withStrictV2 {
-        val res = sql(
-          s"""SELECT id, name, _change_type
-             |FROM table_changes('$tbl', 4, 4)
-             |ORDER BY id, _change_type DESC""".stripMargin)
+        val res = sql(s"SELECT id, name, _change_type FROM table_changes('$tbl', 4, 4)")
         checkAnswer(
           res,
           Row(2L, "Bob", "update_preimage") ::
@@ -222,10 +219,7 @@ class DeltaV2CDFSuite
            |WHEN NOT MATCHED THEN INSERT (id, name) VALUES (s.id, s.name)""".stripMargin) // v4
 
       withStrictV2 {
-        val res = sql(
-          s"""SELECT id, name, _change_type
-             |FROM table_changes('$tgt', 4, 4)
-             |ORDER BY id, _change_type DESC""".stripMargin)
+        val res = sql(s"SELECT id, name, _change_type FROM table_changes('$tgt', 4, 4)")
         checkAnswer(
           res,
           Row(2L, "Bob", "update_preimage") ::
@@ -292,10 +286,7 @@ class DeltaV2CDFSuite
       sql(s"INSERT INTO $tbl VALUES (1, 'A'), (2, 'B')") // v1
       sql(s"UPDATE $tbl SET name = 'b' WHERE id = 2")    // v2
       withStrictV2 {
-        val res = sql(
-          s"""SELECT id, name, _change_type
-             |FROM table_changes('$tbl', 2, 2)
-             |ORDER BY id, _change_type DESC""".stripMargin)
+        val res = sql(s"SELECT id, name, _change_type FROM table_changes('$tbl', 2, 2)")
         checkAnswer(
           res,
           Row(2L, "B", "update_preimage") ::
