@@ -55,6 +55,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchNamespaceException, NoSuchTableException, UnresolvedAttribute, UnresolvedFieldName, UnresolvedFieldPosition}
 import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable, CatalogTableType, CatalogUtils, SessionCatalog}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, QualifiedColType, QualifiedColTypeShims, SyncIdentity}
+import org.apache.spark.sql.catalyst.util.{GeneratedColumn => SparkGeneratedColumn}
 import org.apache.spark.sql.connector.catalog.{DelegatingCatalogExtension, Identifier, StagedTable, StagingTableCatalog, SupportsWrite, Table, TableCapability, TableCatalog, TableCatalogCapability, TableChange, V1Table}
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.catalog.TableChange._
@@ -63,7 +64,7 @@ import org.apache.spark.sql.connector.write.{LogicalWriteInfo, SupportsTruncate,
 import org.apache.spark.sql.execution.datasources.{DataSource, PartitioningUtils}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.InsertableRelation
-import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
+import org.apache.spark.sql.types.{IntegerType, MetadataBuilder, StructField, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 
@@ -123,6 +124,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
   override def capabilities(): util.Set[TableCatalogCapability] = {
     val capabilities = new util.HashSet[TableCatalogCapability](super.capabilities())
     capabilities.add(TableCatalogCapability.SUPPORT_COLUMN_DEFAULT_VALUE)
+    capabilities.add(TableCatalogCapability.SUPPORTS_CREATE_TABLE_WITH_GENERATED_COLUMNS)
     capabilities
   }
 
@@ -141,6 +143,23 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       spark.conf.set(
         DeltaSQLConf.DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40.key, "true")
     }
+  }
+
+  /** Converts Spark's generated-column metadata key into the key persisted by Delta. */
+  private def convertGeneratedColumnMetadata(schema: StructType): StructType = {
+    StructType(schema.fields.map { field =>
+      if (field.metadata.contains(SparkGeneratedColumn.GENERATION_EXPRESSION_METADATA_KEY)) {
+        val expression = field.metadata.getString(
+          SparkGeneratedColumn.GENERATION_EXPRESSION_METADATA_KEY)
+        field.copy(metadata = new MetadataBuilder()
+          .withMetadata(field.metadata)
+          .remove(SparkGeneratedColumn.GENERATION_EXPRESSION_METADATA_KEY)
+          .putString(DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY, expression)
+          .build())
+      } else {
+        field
+      }
+    })
   }
 
   /**
@@ -203,7 +222,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         throw DeltaErrors.identityColumnPartitionNotSupported(colName)
       }
     }
-    var newSchema = schema
+    var newSchema = convertGeneratedColumnMetadata(schema)
     var newPartitionColumns = partitionColumns
     var newBucketSpec = maybeBucketSpec
     val conf = spark.sessionState.conf
