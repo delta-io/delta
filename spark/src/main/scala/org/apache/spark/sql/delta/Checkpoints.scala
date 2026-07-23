@@ -52,8 +52,8 @@ import org.apache.spark.sql.delta.expressions.DecodeNestedZ85EncodedVariant
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.shims.VariantShreddingShims
 import org.apache.spark.sql.execution.SQLExecution
+import org.apache.spark.sql.execution.datasources.{OutputWriter, OutputWriterFactory}
 import org.apache.spark.sql.execution.datasources.FileFormat
-import org.apache.spark.sql.execution.datasources.OutputWriter
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.functions.{coalesce, col, struct, when}
 import org.apache.spark.sql.internal.SQLConf
@@ -785,7 +785,7 @@ object Checkpoints
         val actualNumParts = Option(TaskContext.get()).map(_.numPartitions())
           .getOrElse(numParts)
         val partition = TaskContext.getPartitionId()
-        val (writtenPath, finalPath) = Checkpoints.getCheckpointWritePath(
+        val (writePath, finalPath) = Checkpoints.getCheckpointWritePath(
           serConf.value,
           logSparkPath.toPath,
           version,
@@ -793,56 +793,22 @@ object Checkpoints
           partition,
           useRename,
           v2CheckpointEnabled)
-        val fs = writtenPath.getFileSystem(serConf.value)
-        val writeAction = () => {
-          try {
-            val writer = factory.newInstance(
-              writtenPath.toString,
-              schema,
-              new TaskAttemptContextImpl(
-                new JobConf(serConf.value),
-                new TaskAttemptID("", 0, TaskType.REDUCE, 0, 0)))
-
+        val status = writeSingleFileOnExecutor(
+          conf = serConf.value,
+          factory = factory,
+          schema = schema,
+          writePath = writePath,
+          finalPath = finalPath,
+          useRename = useRename,
+          partition = partition,
+          expectedNumParts = actualNumParts,
+          runWriteInNewThreadOnGCS = true) { writer =>
             iter.foreach { row =>
               checkpointRowCount.add(1)
               writer.write(row)
-            }
-            // Note: `writer.close()` is not put in a `finally` clause because we don't want to
-            // close it when an exception happens. Closing the file would flush the content to the
-            // storage and create an incomplete file. A concurrent reader might see it and fail.
-            // This would leak resources but we don't have a way to abort the storage request here.
-            writer.close()
-          } catch {
-            case e: org.apache.hadoop.fs.FileAlreadyExistsException if !useRename =>
-              if (fs.exists(writtenPath)) {
-                // The file has been written by a zombie task. We can just use this checkpoint file
-                // rather than failing a Delta commit.
-              } else {
-                throw e
-              }
           }
         }
-        if (isGCSPath(serConf.value, writtenPath)) {
-          // GCS may upload an incomplete file when the current thread is interrupted, hence we move
-          // the write to a new thread so that the write cannot be interrupted.
-          // TODO Remove this hack when the GCS Hadoop connector fixes the issue.
-          DeltaFileOperations.runInNewThread("delta-gcs-checkpoint-write") {
-            writeAction()
-          }
-        } else {
-          writeAction()
-        }
-        if (useRename) {
-          renameAndCleanupTempPartFile(writtenPath, finalPath, fs)
-        }
-        val finalPathFileStatus = try {
-          fs.getFileStatus(finalPath)
-        } catch {
-          case _: FileNotFoundException if useRename =>
-            throw DeltaErrors.failOnCheckpointRename(writtenPath, finalPath)
-        }
-
-        Iterator(SerializableFileStatus.fromStatus(finalPathFileStatus))
+        Iterator(status)
       }.collect()
 
     val finalCheckpointFiles = SQLExecution.withNewExecutionId(qe, Some("Delta checkpoint")) {
@@ -1115,51 +1081,106 @@ object Checkpoints
         } else {
           finalPath
         }
-
-        val fs = writePath.getFileSystem(serConf.value)
-
-        val attemptId = 0
-        val taskAttemptContext = new TaskAttemptContextImpl(
-          new JobConf(serConf.value),
-          new TaskAttemptID("", 0, TaskType.REDUCE, partition, attemptId))
-
-        var writerOpt: Option[OutputWriter] = None
-
-        try {
-          writerOpt = Some(factory.newInstance(
-            writePath.toString,
-            schema,
-            taskAttemptContext))
-
-          val writer = writerOpt.get
-          iter.foreach { row =>
-            writer.write(row)
+        val status = writeSingleFileOnExecutor(
+          conf = serConf.value,
+          factory = factory,
+          schema = schema,
+          writePath = writePath,
+          finalPath = finalPath,
+          useRename = useRename,
+          partition = partition,
+          expectedNumParts = 1) { writer =>
+            iter.foreach(writer.write)
           }
-          // Note: `writer.close()` is not put in a `finally` clause because we don't want to
-          // close it when an exception happens. Closing the file would flush the content to the
-          // storage and create an incomplete file. A concurrent reader might see it and fail.
-          // This would leak resources but we don't have a way to abort the storage request here.
-          writer.close()
-        } catch {
-          case _: org.apache.hadoop.fs.FileAlreadyExistsException
-            if !useRename && fs.exists(writePath) =>
-          // Reuse the file already written by a zombie task (see the method note).
-          case t: Throwable =>
-            throw t
-        }
-        if (useRename) {
-          renameAndCleanupTempPartFile(writePath, finalPath, fs)
-        }
-        val finalPathFileStatus = try {
-          fs.getFileStatus(finalPath)
-        } catch {
-          case _: FileNotFoundException if useRename =>
-            throw DeltaErrors.failOnCheckpointRename(writePath, finalPath)
-        }
-        Iterator(SerializableFileStatus.fromStatus(finalPathFileStatus))
+        Iterator(status)
       }.collect()
     schema
   }
+
+  // scalastyle:off argcount
+  /**
+   * Shared executor-side kernel that writes a single parquet file atomically.
+   *
+   * MUST run inside a Spark task (executor).
+   *
+   * @param conf      The deserialized executor-side Hadoop configuration (e.g. `serConf.value`).
+   * @param factory   The parquet `OutputWriterFactory` built on the driver.
+   * @param schema    The on-disk schema passed to `factory.newInstance`.
+   * @param writePath The temp path when `useRename`, else `finalPath`.
+   * @param finalPath The final path of the parquet file.
+   * @param useRename Write to a temp path first, then atomic-rename to `finalPath`.
+   * @param partition The partition id (used for the task attempt id and profiling label).
+   * @param expectedNumParts The expected partition count; a mismatch with the task's actual
+   *                  partition count is logged as a warning.
+   * @param runWriteInNewThreadOnGCS When the target is a GCS path, run the write (create/write/
+   *                  close) in a fresh thread so it cannot be interrupted -- GCS may upload an
+   *                  incomplete file when the writing thread is interrupted.
+   * @param writeRows The only behavioral seam: writes the partition's rows into the writer.
+   * @return The [[SerializableFileStatus]] of the final file
+   */
+  private[delta] def writeSingleFileOnExecutor(
+      conf: Configuration,
+      factory: OutputWriterFactory,
+      schema: StructType,
+      writePath: Path,
+      finalPath: Path,
+      useRename: Boolean,
+      partition: Int,
+      expectedNumParts: Int,
+      runWriteInNewThreadOnGCS: Boolean = false
+    )(writeRows: OutputWriter => Unit): SerializableFileStatus = {
+
+    val fs = writePath.getFileSystem(conf)
+    val attemptId = 0
+    val taskAttemptContext = new TaskAttemptContextImpl(
+      new JobConf(conf),
+      new TaskAttemptID("", 0, TaskType.REDUCE, partition, attemptId))
+
+    var writerOpt: Option[OutputWriter] = None
+
+    val writeAction = () => try {
+      writerOpt = Some(factory.newInstance(
+        writePath.toString,
+        schema,
+        taskAttemptContext))
+
+      val writer = writerOpt.get
+      writeRows(writer)
+      // Note: `writer.close()` is not put in a `finally` clause because we don't want to
+      // close it when an exception happens. Closing the file would flush the content to the
+      // storage and create an incomplete file. A concurrent reader might see it and fail.
+      // This would leak resources but we don't have a way to abort the storage request here.
+      writer.close()
+    } catch {
+      case _: org.apache.hadoop.fs.FileAlreadyExistsException
+          if !useRename && fs.exists(writePath) =>
+        // The file has been written by a zombie task. We can just use this file rather than
+        // failing the write.
+      case t: Throwable =>
+        throw t
+    }
+    if (runWriteInNewThreadOnGCS && isGCSPath(conf, writePath)) {
+      // GCS may upload an incomplete file when the current thread is interrupted, hence we move
+      // the write to a new thread so that the write cannot be interrupted.
+      // TODO Remove this hack when the GCS Hadoop connector fixes the issue.
+      DeltaFileOperations.runInNewThread("delta-gcs-checkpoint-write") {
+        writeAction()
+      }
+    } else {
+      writeAction()
+    }
+    if (useRename) {
+      renameAndCleanupTempPartFile(writePath, finalPath, fs)
+    }
+    val finalPathFileStatus = try {
+      fs.getFileStatus(finalPath)
+    } catch {
+      case _: FileNotFoundException if useRename =>
+        throw DeltaErrors.failOnCheckpointRename(writePath, finalPath)
+    }
+    SerializableFileStatus.fromStatus(finalPathFileStatus)
+  }
+  // scalastyle:on argcount
 
   /** Bounds the size of a [[LastCheckpointV2]] by removing any oversized optional fields */
   def trimLastCheckpointV2(

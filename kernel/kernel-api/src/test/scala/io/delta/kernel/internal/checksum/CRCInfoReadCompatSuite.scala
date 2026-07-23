@@ -21,7 +21,7 @@ import java.util.{Collections, Optional}
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector, Row}
-import io.delta.kernel.internal.actions.{DomainMetadata, Format, Metadata, Protocol}
+import io.delta.kernel.internal.actions.{DomainMetadata, Format, Metadata, Protocol, SetTransaction}
 import io.delta.kernel.internal.checksum.CRCInfo.{CRC_FILE_READ_SCHEMA, CRC_FILE_SCHEMA}
 import io.delta.kernel.internal.data.GenericColumnVector
 import io.delta.kernel.internal.stats.FileSizeHistogram
@@ -110,6 +110,8 @@ class CRCInfoReadCompatSuite extends AnyFunSuite with VectorTestUtils {
               CRC_FILE_SCHEMA.get("domainMetadata").getDataType)
           case "inCommitTimestampOpt" => nullColumnVector(
               CRC_FILE_SCHEMA.get("inCommitTimestampOpt").getDataType)
+          case "setTransactions" => nullColumnVector(
+              CRC_FILE_SCHEMA.get("setTransactions").getDataType)
           case "fileSizeHistogram" => histogramColumnVector(fileSizeHistogram)
           case "histogramOpt" => histogramColumnVector(histogramOpt)
           case _ =>
@@ -209,6 +211,8 @@ class CRCInfoReadCompatSuite extends AnyFunSuite with VectorTestUtils {
               CRC_FILE_SCHEMA.get("domainMetadata").getDataType)
           case "inCommitTimestampOpt" => nullColumnVector(
               CRC_FILE_SCHEMA.get("inCommitTimestampOpt").getDataType)
+          case "setTransactions" => nullColumnVector(
+              CRC_FILE_SCHEMA.get("setTransactions").getDataType)
           case "fileSizeHistogram" => histogramColumnVector(None)
           case _ =>
             throw new IllegalArgumentException(s"Unknown field: $fieldName")
@@ -240,6 +244,8 @@ class CRCInfoReadCompatSuite extends AnyFunSuite with VectorTestUtils {
           case "domainMetadata" =>
             nullColumnVector(CRC_FILE_SCHEMA.get("domainMetadata").getDataType)
           case "inCommitTimestampOpt" => longVector(Seq(1749830855993L))
+          case "setTransactions" =>
+            nullColumnVector(CRC_FILE_SCHEMA.get("setTransactions").getDataType)
           case "fileSizeHistogram" => histogramColumnVector(None)
           case _ => throw new IllegalArgumentException(s"Unknown field: $fieldName")
         }
@@ -269,7 +275,8 @@ class CRCInfoReadCompatSuite extends AnyFunSuite with VectorTestUtils {
       Optional.empty(),
       Optional.empty(),
       Optional.empty(),
-      /* inCommitTimestamp */ Optional.of(java.lang.Long.valueOf(1749830871085L)))
+      /* inCommitTimestamp */ Optional.of(java.lang.Long.valueOf(1749830871085L)),
+      /* setTransactions */ Optional.empty())
     val row = original.toRow()
     val ictIdx = CRC_FILE_SCHEMA.indexOf("inCommitTimestampOpt")
     assert(!row.isNullAt(ictIdx))
@@ -306,5 +313,66 @@ class CRCInfoReadCompatSuite extends AnyFunSuite with VectorTestUtils {
     assert(stamped.getVersion === base.getVersion)
     assert(stamped.getTableSizeBytes === base.getTableSizeBytes)
     assert(stamped.getNumFiles === base.getNumFiles)
+  }
+
+  test("setTransactions is empty when the column is null (older .crc / large txn set)") {
+    val batch = buildBatch(CRC_FILE_READ_SCHEMA, fileSizeHistogram = None, histogramOpt = None)
+    val crcInfo = CRCInfo.fromColumnarBatch(1L, batch, 0, "test.crc")
+    assert(crcInfo.isPresent)
+    assert(!crcInfo.get().getSetTransactions.isPresent)
+  }
+
+  test("toRow serializes setTransactions into the setTransactions array column") {
+    val txns = java.util.Arrays.asList(
+      new SetTransaction("app1", 5L, Optional.of(java.lang.Long.valueOf(100L))),
+      new SetTransaction("app2", 9L, Optional.empty()))
+    val original = new CRCInfo(
+      3L,
+      testMetadata,
+      testProtocol,
+      1000L,
+      10L,
+      Optional.empty(),
+      Optional.empty(),
+      Optional.empty(),
+      /* inCommitTimestamp */ Optional.empty(),
+      /* setTransactions */ Optional.of(txns))
+    val row = original.toRow()
+    val idx = CRC_FILE_SCHEMA.indexOf("setTransactions")
+    assert(!row.isNullAt(idx))
+    assert(row.getArray(idx).getSize === 2)
+  }
+
+  test("toRow leaves setTransactions column null when absent") {
+    val original = new CRCInfo(
+      4L,
+      testMetadata,
+      testProtocol,
+      1000L,
+      10L,
+      Optional.empty(),
+      Optional.empty(),
+      Optional.empty())
+    assert(original.toRow().isNullAt(CRC_FILE_SCHEMA.indexOf("setTransactions")))
+  }
+
+  test("constructor rejects setTransactions with a duplicate appId") {
+    val dupes = java.util.Arrays.asList(
+      new SetTransaction("app1", 5L, Optional.empty()),
+      new SetTransaction("app1", 6L, Optional.empty()))
+    val ex = intercept[IllegalArgumentException] {
+      new CRCInfo(
+        5L,
+        testMetadata,
+        testProtocol,
+        1000L,
+        10L,
+        Optional.empty(),
+        Optional.empty(),
+        Optional.empty(),
+        /* inCommitTimestamp */ Optional.empty(),
+        Optional.of(dupes))
+    }
+    assert(ex.getMessage.contains("unique per appId"))
   }
 }

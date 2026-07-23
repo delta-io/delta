@@ -459,10 +459,7 @@ lazy val sparkV1Filtered = (project in file("spark-v1-filtered"))
 
       // Filter out DeltaLog, Snapshot, OptimisticTransaction, and actions.scala classes
       v1Mappings.filterNot { case (file, path) =>
-        path.contains("org/apache/spark/sql/delta/DeltaLog") ||
-        path.contains("org/apache/spark/sql/delta/Snapshot") ||
-        path.contains("org/apache/spark/sql/delta/OptimisticTransaction") ||
-        path.contains("org/apache/spark/sql/delta/actions/actions")
+        path.contains("org/apache/spark/sql/delta/DeltaLog")
       }
     },
   )
@@ -1021,7 +1018,7 @@ lazy val sharing = (project in file("sharing"))
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % sparkArtifactVersion.value % "provided",
 
-      "io.delta" %% "delta-sharing-client" % "1.4.0",
+      "io.delta" %% "delta-sharing-client" % "1.4.1",
 
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",

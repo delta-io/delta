@@ -134,7 +134,7 @@ The `adaptiveMetadata` table feature is supported when:
 - The feature `adaptiveMetadata` exists in the table `protocol`'s `readerFeatures` and `writerFeatures`.
 
 Required table features that must also be enabled:
-- `columnMapping` (`id` mode): Stable column identification across schema evolution
+- `columnMapping` (`name` or `id` mode): Stable column identification across schema evolution. Both modes assign a stable field ID (`delta.columnMapping.id`) to every schema field, which is all the metadata tree relies on. The mode only governs how columns are resolved inside data files; manifests are always written with Parquet `field_id` metadata and resolved by field ID, independent of the table's mode (see [Content Entry Schema](#content-entry-schema)).
 - `rowTracking`: Manifest entries natively carry row-tracking fields (`first_row_id`, `sequence_number`); see [Row Tracking Compatibility](#row-tracking-compatibility)
 - `domainMetadata`: Storing feature-specific metadata
 - `deletionVectors`: Deletes are represented as deletion vectors, not by rewriting files
@@ -428,7 +428,7 @@ If any child entry is missing a stats field, the aggregate for that field must b
 
 Delta `add` actions carry statistics as a JSON `stats` string (`numRecords`, `nullCount`, `minValues`, `maxValues`, `tightBounds`), keyed by physical column name. Manifest entries carry the same information as `content_stats`, keyed by column-mapping field ID and stored in each field's type. A live file's stats exist as `add.stats` while it is only in the Delta log, and as `content_stats` once it is folded into the tree — never both. Readers must treat the two representations as equivalent for data skipping. `remove` actions carry a copy of the removed file's stats so that log replay can prune them (see [Remove File](#remove-file)).
 
-When folding a log `add` into a manifest, writers convert `add.stats` to `content_stats` as follows. Field IDs are resolved via `columnMapping` (a required dependent feature), and `minValues`/`maxValues` are converted from their JSON representation to the field's typed value.
+When folding a log `add` into a manifest, writers convert `add.stats` to `content_stats` as follows. Field IDs are the schema's column mapping IDs (`delta.columnMapping.id`), which are assigned in both `name` and `id` mode: the stats key (a physical column name) is matched to the schema field with that `delta.columnMapping.physicalName`, and that field's ID keys the stats struct. `minValues`/`maxValues` are converted from their JSON representation to the field's typed value.
 
 | Delta `add.stats` | V4 `content_stats` |
 |-------------------|--------------------|

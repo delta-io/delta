@@ -476,7 +476,14 @@ public class PartitionUtils {
         () -> DeltaErrorsInternal.invalidTimestampFormatForPartitionValue(partitionValue));
   }
 
-  protected static Literal literalForPartitionValue(DataType dataType, String partitionValue) {
+  /**
+   * Create a Literal object for the given partition value and data type.
+   *
+   * @param dataType The data type of the partition value.
+   * @param partitionValue The partition value to create the Literal object for.
+   * @return The Literal object for the given partition value and data type.
+   */
+  public static Literal literalForPartitionValue(DataType dataType, String partitionValue) {
     if (partitionValue == null) {
       return Literal.ofNull(dataType);
     }
