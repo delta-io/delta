@@ -97,9 +97,9 @@ The `checksum` field is a self-describing token of the form `<algorithm>:<digest
 Algorithm | Encoding | Notes
 -|-|-
 `ETAG` | opaque | The object-store eTag, not recomputable.
-`MD5` | lowercase hex | As defined in [RFC 6151](https://datatracker.ietf.org/doc/html/rfc6151), represented as 32 hex characters.
-`CRC32` | lowercase hex | As defined in [RFC 3385](https://datatracker.ietf.org/doc/html/rfc3385), represented as 8 hex characters.
-`CRC32C` | lowercase hex | As defined in [RFC 9260](https://datatracker.ietf.org/doc/html/rfc9260), represented as 8 hex characters.
+`MD5` | lowercase hex | As defined in [RFC 1321](https://datatracker.ietf.org/doc/html/rfc1321), represented as 32 hex characters.
+`CRC32` | lowercase hex | As defined in [RFC 2083](https://datatracker.ietf.org/doc/html/rfc2083), represented as 8 hex characters.
+`CRC32C` | lowercase hex | As defined in [RFC 3385](https://datatracker.ietf.org/doc/html/rfc3385), represented as 8 hex characters.
 `SHA-256` | lowercase hex | As defined in [RFC 6234](https://datatracker.ietf.org/doc/html/rfc6234), represented as 64 hex characters.
 
 The `<digest>` encodings are:
@@ -143,6 +143,7 @@ When File type is supported (`readerFeatures` field of a table's `protocol` acti
 - must recognize and tolerate a `file` data type in a Delta schema.
 - must use the correct physical schema (a Parquet `FILE`-annotated group with the optional fields described in [File data in Parquet](#file-data-in-parquet)) when reading a `file` data type from a file.
 - must resolve each value to bytes according to [Byte Resolution](#byte-resolution), including the self-reference case (locating the bytes within the same data file when `path` is absent).
+- may return a `null` `file` value for a row whose reference is invalid (does not resolve to any referent per [Byte Resolution](#byte-resolution)).
 - must make the column available to the engine:
     - [Recommended] Expose and interpret the group as a single `file` value, resolving inline, self-reference, and external bytes on access.
     - [Alternate] Expose the raw physical group (the set of present fields), for example if the engine does not natively support the `file` type.
