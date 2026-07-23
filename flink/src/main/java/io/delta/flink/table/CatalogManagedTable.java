@@ -156,13 +156,6 @@ public class CatalogManagedTable extends AbstractKernelTable {
   }
 
   @Override
-  protected Optional<Snapshot> snapshotForCommit() {
-    // A snapshot created by the legacy staging-table flow has no three-part table identifier.
-    // Reload through UCCatalogManagedClient so Delta-Tables commits always get that identifier.
-    return loadLatestSnapshotUncached();
-  }
-
-  @Override
   public Optional<Snapshot> commit(
       CloseableIterable<Row> actions, String appId, long txnId, Map<String, String> properties) {
     // TODO remove this when CatalogManaged client supports update properties.
@@ -178,6 +171,8 @@ public class CatalogManagedTable extends AbstractKernelTable {
   protected void createDeltaTable() {
     conf.update(Map.of(UC_TABLE_ID_KEY, tableUUID));
     super.createDeltaTable();
+    // The legacy staging transaction produces a snapshot without the three-part UC identifier.
+    reloadSnapshot();
   }
 
   @Override

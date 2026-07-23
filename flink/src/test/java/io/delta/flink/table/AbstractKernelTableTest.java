@@ -69,6 +69,7 @@ class AbstractKernelTableTest extends TestHelper {
         URI tablePath, Map<String, String> conf, StructType schema, CyclicBarrier snapshotBarrier) {
       super(tablePath, conf, schema, List.of());
       this.snapshotBarrier = snapshotBarrier;
+      setCacheManager(new SnapshotCacheManager.NoCacheManager());
     }
 
     void blockNextSnapshot() {
@@ -76,8 +77,8 @@ class AbstractKernelTableTest extends TestHelper {
     }
 
     @Override
-    protected Optional<Snapshot> loadLatestSnapshotUncached() {
-      Optional<Snapshot> snapshot = super.loadLatestSnapshotUncached();
+    protected Snapshot loadLatestSnapshot() {
+      Snapshot snapshot = super.loadLatestSnapshot();
       if (blockNextSnapshot.compareAndSet(true, false)) {
         try {
           snapshotBarrier.await(30, TimeUnit.SECONDS);

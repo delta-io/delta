@@ -43,10 +43,6 @@ import io.delta.kernel.metrics.TransactionReport;
 import io.delta.kernel.transaction.CreateTableTransactionBuilder;
 import io.delta.kernel.transaction.DataLayoutSpec;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
-import io.delta.kernel.types.ArrayType;
-import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.MapType;
-import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
@@ -58,6 +54,7 @@ import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.conf.Configuration;
@@ -240,7 +237,11 @@ public abstract class AbstractKernelTable implements DeltaTable {
       credentialManager = createCredentialManager();
     }
     if (serializedTableState == null) {
-      withRetry(this::loadDeltaTable);
+      withRetry(
+          () -> {
+            loadDeltaTable();
+            return null;
+          });
     }
     if (tableState == null) {
       tableState = JsonUtils.rowFromJson(serializedTableState, TransactionStateRow.SCHEMA);
@@ -270,8 +271,8 @@ public abstract class AbstractKernelTable implements DeltaTable {
     refresh(null);
   }
 
-  @Override
-  public void updateSchema(StructType targetSchema) {
+  /** Internal primitive for committing an append-only schema update. */
+  final void updateSchema(StructType targetSchema) {
     Objects.requireNonNull(targetSchema, "targetSchema cannot be null");
     if (refreshThreadPool == null) {
       throw new IllegalStateException("DeltaTable must be opened before updating its schema");
@@ -280,26 +281,31 @@ public abstract class AbstractKernelTable implements DeltaTable {
 
     withTiming(
         "updateSchema",
-        () -> withRetry(() -> updateSchemaFromLatestSnapshot(targetSchema, initialSchema)));
+        () ->
+            withRetry(
+                () -> {
+                  updateSchemaFromLatestSnapshot(targetSchema, initialSchema);
+                  return null;
+                }));
   }
 
   private void updateSchemaFromLatestSnapshot(
       StructType targetSchema, AtomicReference<StructType> initialSchema) {
     Snapshot latestSnapshot =
-        loadLatestSnapshotUncached()
-            .orElseThrow(() -> new IllegalStateException("Snapshot should exist"));
+        snapshot().orElseThrow(() -> new IllegalStateException("Snapshot should exist"));
     StructType latestSchema = latestSnapshot.getSchema();
     StructType schemaAtFirstAttempt = initialSchema.get();
     if (schemaAtFirstAttempt == null) {
       initialSchema.set(latestSchema);
-    } else if (!logicallyEqual(schemaAtFirstAttempt, latestSchema)
-        && !logicallyEqual(latestSchema, targetSchema)) {
+    } else if (!SchemaEvolutionUtils.logicallyEqual(schemaAtFirstAttempt, latestSchema)
+        && !SchemaEvolutionUtils.logicallyEqual(latestSchema, targetSchema)) {
       throw new IllegalArgumentException(
           String.format(
               "Target schema is stale: table schema changed concurrently from %s to %s",
               schemaAtFirstAttempt, latestSchema));
     }
-    Optional<StructType> updatedSchema = buildAdditiveSchema(latestSchema, targetSchema);
+    Optional<StructType> updatedSchema =
+        SchemaEvolutionUtils.buildAdditiveSchema(latestSchema, targetSchema);
 
     if (updatedSchema.isEmpty()) {
       refresh(latestSnapshot);
@@ -320,81 +326,11 @@ public abstract class AbstractKernelTable implements DeltaTable {
             .getPostCommitSnapshot()
             .orElseGet(
                 () ->
-                    loadLatestSnapshotUncached()
+                    snapshot()
                         .orElseThrow(
                             () -> new IllegalStateException("Snapshot should exist after commit")));
     refresh(committedSnapshot);
     onPostCommit(committedSnapshot, result.getTransactionReport());
-  }
-
-  private static Optional<StructType> buildAdditiveSchema(
-      StructType currentSchema, StructType targetSchema) {
-    if (targetSchema.length() < currentSchema.length()) {
-      throw new IllegalArgumentException(
-          String.format(
-              "Target schema is stale: current schema has %d fields but target schema has %d",
-              currentSchema.length(), targetSchema.length()));
-    }
-
-    for (int ordinal = 0; ordinal < currentSchema.length(); ordinal++) {
-      StructField currentField = currentSchema.at(ordinal);
-      StructField targetField = targetSchema.at(ordinal);
-      if (!logicallyEqual(currentField, targetField)) {
-        throw new IllegalArgumentException(
-            String.format(
-                "Unsupported schema change at ordinal %d. Current field: %s; target field: %s. "
-                    + "Only nullable top-level columns appended to the schema are supported",
-                ordinal, currentField, targetField));
-      }
-    }
-
-    if (targetSchema.length() == currentSchema.length()) {
-      return Optional.empty();
-    }
-
-    List<StructField> fields = new ArrayList<>(currentSchema.fields());
-    for (StructField newField :
-        targetSchema.fields().subList(currentSchema.length(), targetSchema.length())) {
-      if (!newField.isNullable()) {
-        throw new IllegalArgumentException(
-            String.format("New column '%s' must be nullable", newField.getName()));
-      }
-      fields.add(newField);
-    }
-    return Optional.of(new StructType(fields));
-  }
-
-  private static boolean logicallyEqual(StructField currentField, StructField targetField) {
-    return currentField.getName().equals(targetField.getName())
-        && currentField.isNullable() == targetField.isNullable()
-        && logicallyEqual(currentField.getDataType(), targetField.getDataType());
-  }
-
-  private static boolean logicallyEqual(DataType currentType, DataType targetType) {
-    if (currentType instanceof StructType && targetType instanceof StructType) {
-      StructType currentStruct = (StructType) currentType;
-      StructType targetStruct = (StructType) targetType;
-      if (currentStruct.length() != targetStruct.length()) {
-        return false;
-      }
-      for (int ordinal = 0; ordinal < currentStruct.length(); ordinal++) {
-        if (!logicallyEqual(currentStruct.at(ordinal), targetStruct.at(ordinal))) {
-          return false;
-        }
-      }
-      return true;
-    }
-    if (currentType instanceof ArrayType && targetType instanceof ArrayType) {
-      return logicallyEqual(
-          ((ArrayType) currentType).getElementField(), ((ArrayType) targetType).getElementField());
-    }
-    if (currentType instanceof MapType && targetType instanceof MapType) {
-      MapType currentMap = (MapType) currentType;
-      MapType targetMap = (MapType) targetType;
-      return logicallyEqual(currentMap.getKeyField(), targetMap.getKeyField())
-          && logicallyEqual(currentMap.getValueField(), targetMap.getValueField());
-    }
-    return currentType.equals(targetType);
   }
 
   @Override
@@ -406,7 +342,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
             withRetry(
                 () -> {
                   Engine localEngine = getEngine();
-                  Optional<Snapshot> snapshotOpt = snapshotForCommit();
+                  Optional<Snapshot> snapshotOpt = snapshot();
                   if (snapshotOpt.isEmpty()) {
                     throw new IllegalStateException("Snapshot should exist");
                   }
@@ -479,28 +415,22 @@ public abstract class AbstractKernelTable implements DeltaTable {
    * @return loaded snapshot, null if the table does not exist
    */
   protected Optional<Snapshot> snapshot() {
+    Function<String, Optional<Snapshot>> body =
+        (key) -> {
+          try {
+            return withTiming(
+                "loadLatestSnapshot",
+                () -> Optional.of(refreshThreadPool.submit(this::loadLatestSnapshot).get()));
+          } catch (Exception e) {
+            if (ExceptionUtils.isTableNotFound.test(e)) {
+              return Optional.empty();
+            }
+            throw ExceptionUtils.wrap(e);
+          }
+        };
     String path = tablePath.toString();
     LOG.debug("Loading snapshot for path {}", path);
-    return cacheManager.get(path, this::versionExists, ignored -> loadLatestSnapshotUncached());
-  }
-
-  /** Loads the latest snapshot without consulting or updating the connector snapshot cache. */
-  protected Optional<Snapshot> loadLatestSnapshotUncached() {
-    try {
-      return withTiming(
-          "loadLatestSnapshot",
-          () -> Optional.of(refreshThreadPool.submit(this::loadLatestSnapshot).get()));
-    } catch (Exception e) {
-      if (ExceptionUtils.isTableNotFound.test(e)) {
-        return Optional.empty();
-      }
-      throw ExceptionUtils.wrap(e);
-    }
-  }
-
-  /** Returns the snapshot used to build a mutating transaction. */
-  protected Optional<Snapshot> snapshotForCommit() {
-    return snapshot();
+    return cacheManager.get(path, this::versionExists, body);
   }
 
   /**
@@ -543,7 +473,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
                     currentSnapshot = snapshot().orElse(null);
                   }
                   if (currentSnapshot == null) {
-                    return;
+                    return null;
                   }
                   this.schema = currentSnapshot.getSchema();
                   this.partitionColumns = currentSnapshot.getPartitionColumnNames();
@@ -554,6 +484,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
                           .build(getEngine())
                           .getTransactionState(getEngine());
                   this.serializedTableState = JsonUtils.rowToJson(this.tableState);
+                  return null;
                 }));
   }
 
@@ -774,14 +705,6 @@ public abstract class AbstractKernelTable implements DeltaTable {
     Fallback<Object> fallback =
         Fallback.builder((Object) Optional.empty()).handleIf(ExceptionUtils.isSwallowable).build();
     return Failsafe.with(retryPolicy, fallback).get(body);
-  }
-
-  protected void withRetry(CheckedRunnable body) {
-    withRetry(
-        () -> {
-          body.run();
-          return null;
-        });
   }
 
   public <RET> RET withTiming(String name, Callable<RET> body) {

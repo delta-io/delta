@@ -45,17 +45,11 @@ public class MockHttp {
     stubs.put("/api/2.1/unity-catalog/tables", "{}"); // For write
     stubs.put("/api/2.1/unity-catalog/temporary-table-credentials", "{}");
     // UC Delta-Tables API: getCommits loads the table (GET) and commit updates it (POST) on the
-    // same path. getCommits validates that metadata.table-uuid matches the requested table id.
+    // same path.
     stubs.put(
         "/api/2.1/unity-catalog/delta/v1/catalogs/.*/schemas/.*/tables/[^/]+$",
-        String.format(
-            "{\"metadata\": {\"table-uuid\": \"%s\"}, \"commits\": [], "
-                + "\"latest-table-version\": 1230}",
-            tableId));
-    stubs.put("/api/2.1/unity-catalog/delta/preview/metrics", "");
-    stubs.put(
-        "/api/2.1/unity-catalog/delta/v1/catalogs/.*/schemas/.*/tables/.*",
         deltaTableResponse(tableId, tablePath, 0L));
+    stubs.put("/api/2.1/unity-catalog/delta/preview/metrics", "");
 
     Map<String, String> errors =
         Map.of(
