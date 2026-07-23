@@ -459,10 +459,7 @@ lazy val sparkV1Filtered = (project in file("spark-v1-filtered"))
 
       // Filter out DeltaLog, Snapshot, OptimisticTransaction, and actions.scala classes
       v1Mappings.filterNot { case (file, path) =>
-        path.contains("org/apache/spark/sql/delta/DeltaLog") ||
-        path.contains("org/apache/spark/sql/delta/Snapshot") ||
-        path.contains("org/apache/spark/sql/delta/OptimisticTransaction") ||
-        path.contains("org/apache/spark/sql/delta/actions/actions")
+        path.contains("org/apache/spark/sql/delta/DeltaLog")
       }
     },
   )

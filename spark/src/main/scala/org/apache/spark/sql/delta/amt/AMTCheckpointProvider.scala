@@ -18,11 +18,10 @@ package org.apache.spark.sql.delta.amt
 
 import org.apache.spark.sql.delta.{CheckpointPolicy, CheckpointProvider, DeltaLog, DeltaLogFileIndex, Snapshot}
 import org.apache.spark.sql.delta.DeltaLogFileIndex.COMMIT_VERSION_COLUMN
-import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint, ContentRoot, SingleAction}
-import org.apache.spark.sql.delta.stats.DeltaStatistics
+import org.apache.spark.sql.delta.actions.{Checkpoint, ContentRoot, SingleAction}
 import org.apache.hadoop.fs.{FileStatus, Path}
 
-import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
 import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.types.StructType
 
@@ -83,43 +82,51 @@ final class AMTCheckpointProvider(
 
   override def loadActionsForStateReconstruction(
       spark: SparkSession, deltaLog: DeltaLog): Option[DataFrame] = {
-    val tableRoot = deltaLog.dataPath
-    val dataEntries = if (leaves.isEmpty) {
-      Seq.empty
-    } else {
-      AMTCheckpointProvider
-        .readAMTEntries(spark, deltaLog, leaves.map(l => new Path(l.path)))
-        .filter(_.content_type == AMTSingleAction.ContentType.Type.Data)
-    }
-    val addActions = dataEntries.map { entry =>
-      val dv = entry.deletion_vector.map(DeletionVector.toDescriptor(_, tableRoot)).orNull
-      // `record_count` (Iceberg field 103) and the Delta `numRecords` statistic are both the
-      // physical row count (total records in the file, including DV-deleted rows), so store it
-      // directly.
-      val stats = s"""{"${DeltaStatistics.NUM_RECORDS}":${entry.record_count}}"""
-      val add = AddFile(
-        path = entry.location,
-        partitionValues = entry.partition.values.getOrElse(Map.empty),
-        size = entry.file_size_in_bytes,
-        modificationTime = 0L,
-        dataChange = false,
-        stats = stats,
-        deletionVector = dv,
-        baseRowId = entry.tracking.first_row_id,
-        defaultRowCommitVersion = entry.tracking.sequence_number)
-      SingleAction(add = add)
-    }
-    val nonFileActions =
-      Seq(
-        SingleAction(protocol = checkpointAction.protocol),
-        SingleAction(metaData = checkpointAction.metaData)) ++
-      checkpointAction.domainMetadata.map(dm => SingleAction(domainMetadata = dm)) ++
-      checkpointAction.txns.map(txn => SingleAction(txn = txn))
-    import org.apache.spark.sql.delta.implicits._
-    val df = spark.createDataset(addActions ++ nonFileActions).toDF()
+    val df = allActions(spark, deltaLog).toDF()
       .withColumn(COMMIT_VERSION_COLUMN, lit(version))
       .withColumn(Snapshot.ADD_STATS_TO_USE_COL_NAME, col("add.stats"))
     Some(df)
+  }
+  /**
+   * The full action set of this checkpoint as a distributed [[Dataset]] of [[SingleAction]]: the
+   * live file `AddFile`s reconstructed from the AMT(root + leaves), unioned with the inline
+   * non-content actions (protocol, metadata, domain metadata, txns) built on the driver.
+   *
+   * Note: Iceberg metadata inheritance (manifest entries inheriting fields such as partition
+   * values, sequence numbers, or snapshot id from the parent manifest) is not supported yet;
+   * entries are read as fully materialized rows.
+   */
+  private def allActions(spark: SparkSession, deltaLog: DeltaLog): Dataset[SingleAction] = {
+    import org.apache.spark.sql.delta.implicits._
+    val nonFileActions = spark.createDataset(nonContentSingleActions)
+    liveAddSingleActions(spark, deltaLog).union(nonFileActions)
+  }
+
+  /** The inline, non-content actions carried directly on the [[Checkpoint]] action. */
+  private def nonContentSingleActions: Seq[SingleAction] =
+    Seq(
+      SingleAction(protocol = checkpointAction.protocol),
+      SingleAction(metaData = checkpointAction.metaData)) ++
+    checkpointAction.domainMetadata.map(dm => SingleAction(domainMetadata = dm)) ++
+    checkpointAction.txns.map(txn => SingleAction(txn = txn))
+
+  /**
+   * Reconstructs the live-file AddFile actions from the AMT as a [[Dataset]].
+   */
+  private def liveAddSingleActions(
+      spark: SparkSession, deltaLog: DeltaLog): Dataset[SingleAction] = {
+    import org.apache.spark.sql.delta.implicits._
+    val tableRoot = deltaLog.dataPath
+    val paths = new Path(contentRoot.path) +: leaves.map(l => new Path(l.path))
+    AMTCheckpointProvider.loadEntries(spark, deltaLog, paths)
+      .where(col("content_type") === lit(AMTSingleAction.ContentType.Type.Data))
+      .map { entry =>
+        entry.unwrap match {
+          case data: DataEntry => SingleAction(add = data.toAddFile(tableRoot))
+          case other => throw new IllegalStateException(
+            s"Expected a DATA entry after filtering, got ${other.getClass.getSimpleName}.")
+        }
+      }
   }
 }
 
@@ -148,7 +155,10 @@ object AMTCheckpointProvider {
       spark: SparkSession,
       deltaLog: DeltaLog,
       checkpoint: Checkpoint): AMTCheckpointProvider = {
-    val leaves = readAMTEntries(spark, deltaLog, Seq(new Path(checkpoint.contentRoot.path)))
+    // The root manifest is small (one row per leaf), so collect it to the driver to enumerate the
+    // leaf pointers.
+    val rootPath = new Path(checkpoint.contentRoot.path)
+    val leaves = loadEntries(spark, deltaLog, Seq(rootPath)).collect().toSeq
       .filter(_.content_type == AMTSingleAction.ContentType.Type.DataManifest)
       .map(row => LeafInfo(
         path = row.location,
@@ -158,18 +168,15 @@ object AMTCheckpointProvider {
   }
 
   /**
-   * Reads AMT manifest parquet files (root or leaves) into [[AMTSingleAction]] rows. Uses
-   * `deltaLog.loadIndex` rather than `spark.read.parquet`: these files live under the table root,
-   * so a path-based parquet read would trip Delta's table-root format check.
+   * Reads AMT manifest parquet files (root or leaves) into a [[Dataset]] of
+   * [[AMTSingleAction]].
    */
-  private def readAMTEntries(
-      spark: SparkSession, deltaLog: DeltaLog, paths: Seq[Path]): Seq[AMTSingleAction] = {
+  private def loadEntries(
+      spark: SparkSession, deltaLog: DeltaLog, paths: Seq[Path]): Dataset[AMTSingleAction] = {
     import org.apache.spark.sql.delta.implicits._
     val fs = paths.head.getFileSystem(deltaLog.newDeltaHadoopConf())
     val index = DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, fs, paths)
     deltaLog.loadIndex(index, spark.emptyDataset[AMTSingleAction].schema)
       .as[AMTSingleAction]
-      .collect()
-      .toSeq
   }
 }

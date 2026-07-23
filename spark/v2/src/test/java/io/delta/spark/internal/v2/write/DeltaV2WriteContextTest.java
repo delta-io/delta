@@ -59,7 +59,13 @@ public class DeltaV2WriteContextTest extends DeltaV2TestBase {
 
     DeltaV2WriteContext context =
         DeltaV2WriteContext.create(
-            engine, hadoopConf, path, snapshot, tableSchema, new TestLogicalWriteInfo(tableSchema));
+            engine,
+            hadoopConf,
+            path,
+            snapshot,
+            tableSchema,
+            new StructType(),
+            new TestLogicalWriteInfo(tableSchema));
 
     assertSame(engine, context.getEngine());
     assertNotNull(context.getOutputWriterFactory());
@@ -87,7 +93,13 @@ public class DeltaV2WriteContextTest extends DeltaV2TestBase {
 
     DeltaV2WriteContext context =
         DeltaV2WriteContext.create(
-            engine, hadoopConf, path, snapshot, tableSchema, new TestLogicalWriteInfo(tableSchema));
+            engine,
+            hadoopConf,
+            path,
+            snapshot,
+            tableSchema,
+            new StructType(),
+            new TestLogicalWriteInfo(tableSchema));
 
     // The base is operation-independent: any transaction (here a WRITE txn off the snapshot) can be
     // turned into the executor-side factory. A real factory with a serialized txn state proves the
@@ -98,6 +110,77 @@ public class DeltaV2WriteContextTest extends DeltaV2TestBase {
             .build(engine);
     DeltaV2DataWriterFactory factory = context.buildDataWriterFactory(txn);
     assertNotNull(factory);
+  }
+
+  @Test
+  public void wiredPartitionSchemaIsPreserved(@TempDir File tempDir) throws Exception {
+    // Table (value INT) partitioned by (part STRING). The data / partition schema split is wired in
+    // from DeltaV2Table's SchemaProvider; the context preserves it rather than re-deriving.
+    String path = tempDir.getAbsolutePath();
+    spark.sql(
+        String.format(
+            "CREATE TABLE part_ctx (value INT, part STRING) USING delta PARTITIONED BY (part) "
+                + "LOCATION '%s'",
+            path));
+    StructType fullSchema =
+        new StructType().add("value", DataTypes.IntegerType).add("part", DataTypes.StringType);
+    StructType dataSchema = new StructType().add("value", DataTypes.IntegerType);
+    StructType partitionSchema = new StructType().add("part", DataTypes.StringType);
+
+    Configuration hadoopConf = spark.sessionState().newHadoopConf();
+    Engine engine = DefaultEngine.create(hadoopConf);
+    Snapshot snapshot = TableManager.loadSnapshot(path).build(engine);
+
+    DeltaV2WriteContext context =
+        DeltaV2WriteContext.create(
+            engine,
+            hadoopConf,
+            path,
+            snapshot,
+            dataSchema,
+            partitionSchema,
+            new TestLogicalWriteInfo(fullSchema));
+
+    assertArrayEquals(dataSchema.fieldNames(), context.getDataSchema().fieldNames());
+    assertArrayEquals(partitionSchema.fieldNames(), context.getPartitionSchema().fieldNames());
+  }
+
+  @Test
+  public void buildDataWriterFactoryResolvesColumnsCaseInsensitively(@TempDir File tempDir)
+      throws Exception {
+    // Table (value INT) partitioned by (part STRING), but the incoming write schema uses a
+    // different case for both columns. Column resolution must be case-insensitive (matching
+    // validateDataSchema) so the writer factory builds instead of throwing on exact-case lookup.
+    String path = tempDir.getAbsolutePath();
+    spark.sql(
+        String.format(
+            "CREATE TABLE part_ci (value INT, part STRING) USING delta PARTITIONED BY (part) "
+                + "LOCATION '%s'",
+            path));
+    StructType mixedCaseWriteSchema =
+        new StructType().add("VALUE", DataTypes.IntegerType).add("PART", DataTypes.StringType);
+    StructType dataSchema = new StructType().add("value", DataTypes.IntegerType);
+    StructType partitionSchema = new StructType().add("part", DataTypes.StringType);
+
+    Configuration hadoopConf = spark.sessionState().newHadoopConf();
+    Engine engine = DefaultEngine.create(hadoopConf);
+    Snapshot snapshot = TableManager.loadSnapshot(path).build(engine);
+
+    DeltaV2WriteContext context =
+        DeltaV2WriteContext.create(
+            engine,
+            hadoopConf,
+            path,
+            snapshot,
+            dataSchema,
+            partitionSchema,
+            new TestLogicalWriteInfo(mixedCaseWriteSchema));
+
+    Transaction txn =
+        snapshot
+            .buildUpdateTableTransaction(DeltaV2WriteContext.getEngineInfo(), Operation.WRITE)
+            .build(engine);
+    assertNotNull(context.buildDataWriterFactory(txn));
   }
 
   @Test

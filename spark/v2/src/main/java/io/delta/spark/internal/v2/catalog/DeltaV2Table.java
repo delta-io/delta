@@ -538,6 +538,7 @@ public class DeltaV2Table extends DeltaV2TableShims
         initialSnapshot,
         snapshotManager,
         schemaProvider.getDataSchema(),
+        schemaProvider.getPartitionSchema(),
         info);
   }
 

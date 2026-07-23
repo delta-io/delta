@@ -22,18 +22,20 @@ import io.delta.kernel.engine.Engine;
 import io.delta.spark.internal.v2.read.DeltaParquetFileFormatV2;
 import io.delta.spark.internal.v2.utils.PartitionUtils;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
-import io.delta.spark.internal.v2.utils.SchemaUtils;
 import io.delta.spark.internal.v2.utils.SerializableKernelRowWrapper;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.time.ZoneId;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.execution.datasources.OutputWriterFactory;
+import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.util.SerializableConfiguration;
 import scala.Option;
@@ -62,7 +64,14 @@ class DeltaV2WriteContext {
 
   private final Engine engine;
   private final StructType dataSchema;
+  // Logical (pre-column-mapping) data schema. Column ordinals are matched against writeSchema by
+  // logical name, so with column mapping this must stay logical even though dataSchema is physical
+  // (via prepareSchemaForWrite) for the Parquet writer.
+  private final StructType logicalDataSchema;
   private final StructType partitionSchema;
+  // The full incoming write-row schema (data + partition columns), used to compute the ordinals of
+  // the data / partition columns within each row for the executor writer.
+  private final StructType writeSchema;
   private final io.delta.kernel.types.StructType kernelTableSchema;
   private final OutputWriterFactory outputWriterFactory;
   private final SerializableConfiguration serializableHadoopConf;
@@ -74,9 +83,10 @@ class DeltaV2WriteContext {
       String tablePath,
       Snapshot initialSnapshot,
       StructType dataSchema,
+      StructType partitionSchema,
       LogicalWriteInfo writeInfo) {
     return new DeltaV2WriteContext(
-        engine, hadoopConf, tablePath, initialSnapshot, dataSchema, writeInfo);
+        engine, hadoopConf, tablePath, initialSnapshot, dataSchema, partitionSchema, writeInfo);
   }
 
   private static void verifySchemaForWrite(DeltaParquetFileFormatV2 format, StructType dataSchema) {
@@ -129,20 +139,10 @@ class DeltaV2WriteContext {
       String tablePath,
       Snapshot initialSnapshot,
       StructType dataSchema,
+      StructType partitionSchema,
       LogicalWriteInfo writeInfo) {
     this.engine = engine;
-
     this.kernelTableSchema = initialSnapshot.getSchema();
-    StructType tableSchema = SchemaUtils.convertKernelSchemaToSparkSchema(kernelTableSchema);
-    java.util.Set<String> partitionCols =
-        new java.util.HashSet<>(initialSnapshot.getPartitionColumnNames());
-    this.partitionSchema =
-        partitionCols.isEmpty()
-            ? new StructType()
-            : new StructType(
-                java.util.Arrays.stream(tableSchema.fields())
-                    .filter(field -> partitionCols.contains(field.name()))
-                    .toArray(org.apache.spark.sql.types.StructField[]::new));
 
     SparkSession session =
         SparkSession.getActiveSession()
@@ -166,7 +166,10 @@ class DeltaV2WriteContext {
             /* optimizationsEnabled */ true,
             /* useMetadataRowIndex */ Option.empty(),
             /* isCDCRead */ false);
+    this.logicalDataSchema = dataSchema;
     this.dataSchema = format.prepareSchemaForWrite(dataSchema);
+    this.partitionSchema = partitionSchema;
+    this.writeSchema = writeInfo.schema();
     verifySchemaForWrite(format, this.dataSchema);
     org.apache.spark.sql.execution.datasources.DataSourceUtils.checkFieldNames(
         format, this.dataSchema);
@@ -189,16 +192,46 @@ class DeltaV2WriteContext {
   DeltaV2DataWriterFactory buildDataWriterFactory(Transaction transaction) {
     Row txnState = transaction.getTransactionState(engine);
     SerializableKernelRowWrapper serializedTxnState = new SerializableKernelRowWrapper(txnState);
-    // TODO(#7140): pass real partitionValues to support partitioned writes.
-    String targetDirectory =
-        Transaction.getWriteContext(engine, txnState, /* partitionValues */ Collections.emptyMap())
-            .getTargetDirectory();
+
+    // Ordinals of the partition/data columns within the full incoming write row (writeSchema).
+    // The per-partition target directory is not computed here (it depends on each row's partition
+    // values); the executor writer derives it via Transaction.getWriteContext.
+    // Match by logical name: writeSchema and partitionSchema carry logical names, so dataSchema
+    // (physical under column mapping, via prepareSchemaForWrite) cannot be used here. The physical
+    // dataSchema has the same field order, so the ordinals apply to it unchanged on the executor.
+    int[] dataOrdinals = ordinalsOf(writeSchema, logicalDataSchema);
+    int[] partitionOrdinals = ordinalsOf(writeSchema, partitionSchema);
+
     return new DeltaV2DataWriterFactory(
-        targetDirectory,
         serializableHadoopConf,
         serializedTxnState,
         dataSchema,
+        partitionSchema,
+        dataOrdinals,
+        partitionOrdinals,
         outputWriterFactory);
+  }
+
+  /**
+   * Ordinals of {@code subSchema}'s fields within {@code fullSchema}, by name, in subSchema order.
+   * Case-insensitive to match {@code validateDataSchema} (which merges with caseSensitive=false).
+   */
+  private static int[] ordinalsOf(StructType fullSchema, StructType subSchema) {
+    Map<String, Integer> ordinalByLowerName = new HashMap<>();
+    StructField[] fullFields = fullSchema.fields();
+    for (int i = 0; i < fullFields.length; i++) {
+      ordinalByLowerName.put(fullFields[i].name().toLowerCase(Locale.ROOT), i);
+    }
+    int[] ordinals = new int[subSchema.fields().length];
+    for (int i = 0; i < ordinals.length; i++) {
+      String name = subSchema.fields()[i].name();
+      Integer ordinal = ordinalByLowerName.get(name.toLowerCase(Locale.ROOT));
+      if (ordinal == null) {
+        throw new IllegalArgumentException("Column " + name + " not found in write schema");
+      }
+      ordinals[i] = ordinal;
+    }
+    return ordinals;
   }
 
   Engine getEngine() {
