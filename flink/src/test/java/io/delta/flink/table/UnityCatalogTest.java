@@ -24,6 +24,7 @@ import io.delta.flink.TestHelper;
 import io.delta.kernel.types.*;
 import io.delta.kernel.unitycatalog.UCTableIdentifier;
 import java.net.URI;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -101,6 +102,34 @@ class UnityCatalogTest extends TestHelper {
 
           assertEquals("ak", credentials.get("fs.s3a.init.access.key"));
           mockHttp.verifyCredentialRequests(2);
+        });
+  }
+
+  @Test
+  void testCreateTableDescriptorIncludesStagingProperties() {
+    withTempDir(
+        dir -> {
+          String tableName = "main.default.tbl";
+          String uuid = UUID.randomUUID().toString();
+          MockHttp.withMock(
+              MockHttp.forNewUCTable(uuid, dir.getAbsolutePath()),
+              mockHttp -> {
+                UnityCatalog uc = new UnityCatalog("main", mockHttp.uri(), "");
+                uc.open();
+
+                uc.createTable(
+                    tableName,
+                    new StructType().add("id", IntegerType.INTEGER),
+                    List.of(),
+                    Map.of(),
+                    descriptor -> {
+                      assertEquals(uuid, descriptor.getUuid());
+                      assertEquals(Map.of(), descriptor.getStorageProperties());
+                      assertEquals(
+                          "true",
+                          descriptor.getRequiredProperties().get("delta.enableDeletionVectors"));
+                    });
+              });
         });
   }
 }

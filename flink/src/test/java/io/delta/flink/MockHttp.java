@@ -32,6 +32,12 @@ public class MockHttp {
       "/api/2.1/unity-catalog/delta/v1/catalogs/[^/]+/schemas/[^/]+/tables/[^/]+$";
   private static final String DELTA_CREDENTIALS_PATH =
       "/api/2.1/unity-catalog/delta/v1/catalogs/[^/]+/schemas/[^/]+/tables/[^/]+/credentials$";
+  private static final String DELTA_CREATE_TABLE_PATH =
+      "/api/2.1/unity-catalog/delta/v1/catalogs/[^/]+/schemas/[^/]+/tables$";
+  private static final String DELTA_STAGING_TABLE_PATH =
+      "/api/2.1/unity-catalog/delta/v1/catalogs/[^/]+/schemas/[^/]+/staging-tables$";
+  private static final String DELTA_STAGING_CREDENTIALS_PATH =
+      "/api/2.1/unity-catalog/delta/v1/staging-tables/[^/]+/credentials$";
 
   private static String loadTableJson(String tableId, String tablePath) {
     return String.format(
@@ -53,12 +59,8 @@ public class MockHttp {
 
   public static MockHttp forNewUCTable(String tableId, String tablePath) {
     Map<String, String> stubs = new HashMap<>();
-    stubs.put(
-        "/api/2.1/unity-catalog/staging-tables",
-        String.format("{\"id\": \"%s\", \"staging_location\":\"%s\"}", tableId, tablePath));
-    stubs.put("/api/2.1/unity-catalog/tables", "{}"); // For write
-    stubs.put("/api/2.1/unity-catalog/temporary-table-credentials", "{}");
     stubs.put(DELTA_CREDENTIALS_PATH, "{}");
+    stubs.put(DELTA_STAGING_CREDENTIALS_PATH, "{}");
     stubs.put("/api/2.1/unity-catalog/delta/preview/metrics", "");
     MockHttp mock = new MockHttp(stubs, Map.of());
 
@@ -69,12 +71,22 @@ public class MockHttp {
             .whenScenarioStateIs(Scenario.STARTED)
             .willReturn(notFound()));
     mock.wireMockServer.stubFor(
-        post(urlPathMatching("/api/2.1/unity-catalog/staging-tables"))
+        post(urlPathMatching(DELTA_STAGING_TABLE_PATH))
             .inScenario(scenario)
             .willReturn(
                 okJson(
                     String.format(
-                        "{\"id\": \"%s\", \"staging_location\":\"%s\"}", tableId, tablePath)))
+                        "{\"table-id\": \"%s\", \"table-type\": \"MANAGED\", \"location\": \"%s\", "
+                            + "\"required-protocol\": {\"min-reader-version\": 3, "
+                            + "\"min-writer-version\": 7, \"reader-features\": [\"deletionVectors\"], "
+                            + "\"writer-features\": [\"deletionVectors\"]}, "
+                            + "\"required-properties\": {\"delta.enableDeletionVectors\": \"true\", "
+                            + "\"io.unitycatalog.tableId\": \"%s\"}}",
+                        tableId, tablePath, tableId))));
+    mock.wireMockServer.stubFor(
+        post(urlPathMatching(DELTA_CREATE_TABLE_PATH))
+            .inScenario(scenario)
+            .willReturn(okJson(loadTableJson(tableId, tablePath)))
             .willSetStateTo("created"));
     mock.wireMockServer.stubFor(
         get(urlPathMatching(DELTA_TABLES_PATH))
@@ -160,5 +172,13 @@ public class MockHttp {
 
   public void verifyCredentialRequests(int count) {
     wireMockServer.verify(count, getRequestedFor(urlPathMatching(DELTA_CREDENTIALS_PATH)));
+  }
+
+  public void verifyStagingCredentialRequests(int count) {
+    wireMockServer.verify(count, getRequestedFor(urlPathMatching(DELTA_STAGING_CREDENTIALS_PATH)));
+  }
+
+  public void verifyPostRequest(String path) {
+    this.wireMockServer.verify(1, postRequestedFor(urlPathEqualTo(path)));
   }
 }
