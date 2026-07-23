@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.delta.flink.table.CatalogManagedTable;
 import io.delta.flink.table.DataColumnVectorView;
+import io.delta.flink.table.SchemaUpdateTestUtils;
 import io.delta.flink.table.UnityCatalog;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.FilteredColumnarBatch;
@@ -175,7 +176,7 @@ public class CatalogManagedTableIntTest extends IntTestBase {
         new CatalogManagedTable(
             catalog, TEST_TABLE_NAME, Collections.emptyMap(), catalogEndpoint, catalogToken)) {
       table.open();
-      table.updateSchema(targetSchema);
+      SchemaUpdateTestUtils.updateSchema(table, targetSchema);
 
       assertEquals(targetSchema.fieldNames(), table.getSchema().fieldNames());
       assertEquals(

@@ -294,30 +294,6 @@ Instead:
 
 If an unsupported schema change is detected, the sink will fail the job.
 
-### Manual Schema Updates
-
-Use `DeltaTable.updateSchema` to add columns before starting a sink that writes the expanded
-schema:
-
-```java
-try (DeltaTable table = new TableBuilder()
-    .withTablePath("/path/to/delta/table")
-    .build()) {
-  table.open();
-  StructType targetSchema = table.getSchema().add("new_column", StringType.STRING);
-  table.updateSchema(targetSchema);
-}
-```
-
-`targetSchema` is the complete desired schema. Existing fields must remain in the same order with
-the same names, types, and nullability. Only nullable top-level fields appended to the schema are
-supported. Repeating the same target is a no-op. The table must already have column mapping
-enabled; the connector does not enable it automatically. Delta Kernel assigns column IDs and
-physical names when they are not provided and validates provided field metadata.
-
-Automatic evolution is not currently supported. Call `updateSchema` before writers create Parquet
-files for the expanded schema.
-
 ---
 
 ## 7. Security & Credentials
