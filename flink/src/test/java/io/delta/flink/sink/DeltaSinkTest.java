@@ -445,7 +445,7 @@ public class DeltaSinkTest extends TestHelper {
     withTempDir(
         dir ->
             MockHttp.withMock(
-                MockHttp.forNewUCTable("123", dir.getAbsolutePath()),
+                MockHttp.forNewUCTable(UUID.randomUUID().toString(), dir.getAbsolutePath()),
                 mockHttp -> {
                   DeltaSink sink2 =
                       DeltaSink.builder()

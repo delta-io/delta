@@ -461,6 +461,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
       info = catalog.getTable(tableId);
       tableUUID = info.uuid;
       tablePath = normalize(info.tablePath);
+      credentialManager.initializeCredentials(info.getStorageProperties());
     } catch (ExceptionUtils.ResourceNotFoundException notFound) {
       catalog.createTable(
           tableId,
@@ -532,7 +533,6 @@ public abstract class AbstractKernelTable implements DeltaTable {
     this.conf.engineConf().forEach(conf::set);
     Map<String, String> creds = this.credentialManager.getCredentials();
     creds.forEach(conf::set);
-    applyAzureSasTokenIfPresent(conf, creds);
 
     // Explicitly load external conf files
     // TODO this is because Flink does not auto load this file in Docker
@@ -574,40 +574,13 @@ public abstract class AbstractKernelTable implements DeltaTable {
     return Map.of();
   }
 
-  /**
-   * Remaps the generic Azure SAS token key to an account-scoped key derived from the table path.
-   * Azure ABFS requires the SAS token to be configured per storage account, e.g., {@code
-   * fs.azure.sas.fixed.token.<account>.dfs.core.windows.net}.
-   */
-  private void applyAzureSasTokenIfPresent(Configuration conf, Map<String, String> creds) {
-    String sasToken = creds.get(UnityCatalog.AZURE_SAS_TOKEN_KEY);
-    if (sasToken == null || tablePath == null) {
-      return;
-    }
-    String host = tablePath.getHost();
-    if (host != null && host.endsWith(".dfs.core.windows.net")) {
-      conf.set("fs.azure.account.auth.type." + host, "SAS");
-      conf.set("fs.azure.sas.fixed.token." + host, sasToken);
-    }
-  }
-
   private CredentialManager createCredentialManager() {
-    String source = this.conf.getCredentialSource();
-    if (source.equalsIgnoreCase("ambient")) {
+    if (!conf.shouldFetchCredentialsFromCatalog()) {
       // Do not fetch credentials from Unity Catalog; rely on the ambient environment
       // (workload identity, instance profile, ADC, or core-site.xml) to supply them.
       return new CredentialManager.AmbientCredentialManager();
-    } else if (source.equalsIgnoreCase("uc")) {
-      return new CredentialManager(
-          () -> catalog.getCredentials(this.getTableUUID()), this::refreshCredential);
-    } else {
-      throw new IllegalArgumentException(
-          "Unsupported "
-              + TableConf.CREDENTIALS_SOURCE.key()
-              + " '"
-              + source
-              + "'. Supported values: 'uc' (default), 'ambient'.");
     }
+    return new CredentialManager(() -> catalog.getCredentials(tableId), this::refreshCredential);
   }
 
   /**
