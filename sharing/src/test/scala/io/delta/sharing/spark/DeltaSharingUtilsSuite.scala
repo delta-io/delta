@@ -150,7 +150,8 @@ class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
       table: Table,
       startingVersion: Long,
       endingVersion: Option[Long],
-      fileIdHash: Option[String]
+      fileIdHash: Option[String],
+      includeHistoricalProtocol: Boolean = false
     ): DeltaTableFiles = {
       val file = getAddFileStr()
       val dv = getDeletionVectorStr()
@@ -165,7 +166,8 @@ class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
       table: Table,
       cdfOptions: Map[String, String],
       includeHistoricalMetadata: Boolean,
-      fileIdHash: Option[String]): DeltaTableFiles = {
+      fileIdHash: Option[String],
+      includeHistoricalProtocol: Boolean = false): DeltaTableFiles = {
       val file = getAddFileStr()
       val dv = getDeletionVectorStr()
       val cdc = getCdcStr()
