@@ -188,6 +188,29 @@ public class TableConfig<T> {
               + "and years are not accepted. You may specify '365 days' for a year instead.",
           true /* editable */);
 
+  /**
+   * This table property is used to track the retention duration for {@link
+   * io.delta.kernel.internal.actions.SetTransaction} actions (transaction identifiers). When set,
+   * the checksum's {@code setTransactions} drop entries whose {@code lastUpdated} is older than the
+   * current time minus this duration (entries without a {@code lastUpdated} are also dropped).
+   *
+   * <p>This is currently read-only from Kernel's perspective: it is intentionally not registered in
+   * {@link #VALID_PROPERTIES}, so a Kernel writer attempting to set it is rejected. Kernel only
+   * honors it while computing a checksum ({@code ChecksumUtils.computeChecksum}). Unlike
+   * Delta-Spark it does not expire transactions during general snapshot/state reconstruction, so we
+   * do not yet expose it as a settable property. Reading the value from metadata written by another
+   * engine (e.g. Delta-Spark) does not depend on that registration.
+   */
+  public static final TableConfig<Optional<Long>> SET_TRANSACTION_RETENTION =
+      new TableConfig<>(
+          "delta.setTransactionRetentionDuration",
+          null, // no default: absence means retention is unbounded (opt-in).
+          v -> Optional.ofNullable(v).map(IntervalParserUtils::safeParseIntervalAsMillis),
+          value -> true,
+          "needs to be provided as a calendar interval such as '2 weeks'. Months "
+              + "and years are not accepted. You may specify '365 days' for a year instead.",
+          true /* editable */);
+
   /** Whether to clean up expired checkpoints and delta logs. */
   public static final TableConfig<Boolean> EXPIRED_LOG_CLEANUP_ENABLED =
       new TableConfig<>(

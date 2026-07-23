@@ -136,7 +136,7 @@ public class TableImpl implements Table {
   public void checksum(Engine engine, long version) throws TableNotFoundException, IOException {
     final LogSegment logSegmentAtVersion =
         snapshotManager.getLogSegmentForVersion(engine, Optional.of(version));
-    ChecksumUtils.computeStateAndWriteChecksum(engine, logSegmentAtVersion);
+    ChecksumUtils.computeStateAndWriteChecksum(engine, logSegmentAtVersion, clock);
   }
 
   @Override

@@ -23,6 +23,7 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.ActionWrapper;
@@ -30,6 +31,7 @@ import io.delta.kernel.internal.replay.ActionsIterator;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.stats.FileSizeHistogram;
+import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
@@ -55,10 +57,17 @@ public class ChecksumUtils {
   private static final int ADD_INDEX = CHECKPOINT_SCHEMA.indexOf("add");
   private static final int REMOVE_INDEX = CHECKPOINT_SCHEMA.indexOf("remove");
   private static final int DOMAIN_METADATA_INDEX = CHECKPOINT_SCHEMA.indexOf("domainMetadata");
+  private static final int TXN_INDEX = CHECKPOINT_SCHEMA.indexOf("txn");
   private static final int ADD_SIZE_INDEX = AddFile.FULL_SCHEMA.indexOf("size");
   private static final int REMOVE_SIZE_INDEX = RemoveFile.FULL_SCHEMA.indexOf("size");
   // commitInfo is appended after CHECKPOINT_SCHEMA in incremental read
   private static final int COMMIT_INFO_INDEX = CHECKPOINT_SCHEMA.length();
+
+  /**
+   * The live {@link SetTransaction} list ({@link CRCInfo#getSetTransactions()}) is stored in the
+   * checksum only when the table has at most this many distinct appIds.
+   */
+  public static final long DEFAULT_SET_TRANSACTIONS_IN_CRC_THRESHOLD = 100L;
 
   private static final Set<String> INCREMENTAL_SUPPORTED_OPS =
       Collections.unmodifiableSet(
@@ -101,6 +110,11 @@ public class ChecksumUtils {
    */
   public static void computeStateAndWriteChecksum(Engine engine, LogSegment logSegmentAtVersion)
       throws IOException {
+    computeStateAndWriteChecksum(engine, logSegmentAtVersion, System::currentTimeMillis);
+  }
+
+  public static void computeStateAndWriteChecksum(
+      Engine engine, LogSegment logSegmentAtVersion, Clock clock) throws IOException {
     requireNonNull(engine);
     requireNonNull(logSegmentAtVersion);
 
@@ -116,7 +130,7 @@ public class ChecksumUtils {
       return;
     }
 
-    CRCInfo crcInfo = computeChecksum(engine, logSegmentAtVersion);
+    CRCInfo crcInfo = computeChecksum(engine, logSegmentAtVersion, clock);
     ChecksumWriter checksumWriter = new ChecksumWriter(logSegmentAtVersion.getLogPath());
     checksumWriter.writeCheckSum(engine, crcInfo);
   }
@@ -147,6 +161,16 @@ public class ChecksumUtils {
    */
   public static CRCInfo computeChecksum(Engine engine, LogSegment logSegmentAtVersion)
       throws IOException {
+    return computeChecksum(engine, logSegmentAtVersion, System::currentTimeMillis);
+  }
+
+  /**
+   * Variant of {@link #computeChecksum(Engine, LogSegment)} that takes an explicit {@link Clock}.
+   * The clock supplies "now" for the {@code delta.setTransactionRetentionDuration} cutoff applied
+   * by the full-replay path; it is only consulted when that property is set.
+   */
+  public static CRCInfo computeChecksum(Engine engine, LogSegment logSegmentAtVersion, Clock clock)
+      throws IOException {
     requireNonNull(engine);
     requireNonNull(logSegmentAtVersion);
 
@@ -171,7 +195,7 @@ public class ChecksumUtils {
     // Use incrementally built CRC if available, otherwise do full log replay
     return incrementallyBuiltCrc.isPresent()
         ? incrementallyBuiltCrc.get()
-        : buildCrcInfoWithFullLogReplay(engine, logSegmentAtVersion);
+        : buildCrcInfoWithFullLogReplay(engine, logSegmentAtVersion, clock);
   }
 
   /**
@@ -201,9 +225,13 @@ public class ChecksumUtils {
    * @return The complete CRC info
    */
   private static CRCInfo buildCrcInfoWithFullLogReplay(
-      Engine engine, LogSegment logSegmentAtVersion) throws IOException {
+      Engine engine, LogSegment logSegmentAtVersion, Clock clock) throws IOException {
 
     StateTracker state = new StateTracker();
+    state.collectSetTransactions = true;
+    // Make the full-replay path collect every appId so retention filtering runs first. This
+    // prevents expired appIds from being counted towards the threshold.
+    state.abandonAboveThreshold = false;
 
     // Process logs and update state
     try (CreateCheckpointIterator checkpointIterator =
@@ -223,6 +251,7 @@ public class ChecksumUtils {
         ColumnVector removeVector = batch.getColumnVector(REMOVE_INDEX);
         ColumnVector addVector = batch.getColumnVector(ADD_INDEX);
         ColumnVector domainMetadataVector = batch.getColumnVector(DOMAIN_METADATA_INDEX);
+        ColumnVector txnVector = batch.getColumnVector(TXN_INDEX);
         // Process all selected rows in a single pass for optimal performance
         for (int i = 0; i < rowCount; i++) {
           // Fields referenced in the lambda should be effectively final.
@@ -239,11 +268,12 @@ public class ChecksumUtils {
               removeVector.isNullAt(i),
               "unexpected remove row found when "
                   + "setting minFileRetentionTimestampMillis to infinite future");
-          // Step 2: Process add files, domain metadata, metadata, and protocol
+          // Step 2: Process add files, domain metadata, metadata, protocol, and transactions
           processAddRecord(addVector, state, i);
           processDomainMetadataRecord(domainMetadataVector, state, i);
           processMetadataRecord(metadataVector, state, i);
           processProtocolRecord(protocolVector, state, i);
+          processTxnRecord(txnVector, state, i);
         }
       }
     }
@@ -265,7 +295,13 @@ public class ChecksumUtils {
         state.fileCount.longValue(),
         Optional.empty(),
         Optional.of(finalDomainMetadata),
-        Optional.of(state.addedFileSizeHistogram));
+        Optional.of(state.addedFileSizeHistogram),
+        Optional.empty() /* inCommitTimestamp */,
+        filterAndBoundSetTransactions(
+            state.collectedSetTransactions(),
+            finalMetadata,
+            clock,
+            state.setTransactionsThreshold));
   }
 
   /**
@@ -302,6 +338,8 @@ public class ChecksumUtils {
 
     // Initialize state tracking
     StateTracker state = new StateTracker();
+    // Maintain setTransactions incrementally only when the base CRC carries the list.
+    state.collectSetTransactions = lastSeenCrcInfo.getSetTransactions().isPresent();
 
     // TODO: use compacted logs.
     List<FileStatus> deltaFiles =
@@ -333,6 +371,7 @@ public class ChecksumUtils {
         ColumnVector metadataVector = batch.getColumnVector(METADATA_INDEX);
         ColumnVector protocolVector = batch.getColumnVector(PROTOCOL_INDEX);
         ColumnVector domainMetadataVector = batch.getColumnVector(DOMAIN_METADATA_INDEX);
+        ColumnVector txnVector = batch.getColumnVector(TXN_INDEX);
         ColumnVector commitInfoVector = batch.getColumnVector(COMMIT_INFO_INDEX);
 
         for (int i = 0; i < rowCount; i++) {
@@ -389,13 +428,18 @@ public class ChecksumUtils {
             state.fileCount.decrement();
           }
 
-          // Process domain metadata, protocol, and metadata
+          // Process domain metadata, protocol, metadata, and transactions
           processDomainMetadataRecord(domainMetadataVector, state, i);
           processMetadataRecord(metadataVector, state, i);
           processProtocolRecord(protocolVector, state, i);
+          processTxnRecord(txnVector, state, i);
         }
       }
     }
+
+    lastSeenCrcInfo
+        .getSetTransactions()
+        .ifPresent(txns -> txns.forEach(state::recordSetTransaction));
 
     // Merge with existing domain metadata if available
     Optional<Set<DomainMetadata>> finalDomainMetadata;
@@ -421,17 +465,27 @@ public class ChecksumUtils {
             .getFileSizeHistogram()
             .map(h -> state.addedFileSizeHistogram.plus(h).minus(state.removedFileSizeHistogram));
 
+    Metadata finalMetadata = state.metadataFromLog.orElseGet(lastSeenCrcInfo::getMetadata);
+
+    // Omit setTransactions on incremental path since it cannot maintain the wall-clock retention
+    // filter deterministically
+    Optional<List<SetTransaction>> incrementalSetTransactions =
+        isSetTransactionRetentionConfigured(finalMetadata)
+            ? Optional.empty()
+            : state.collectedSetTransactions();
     // Build and return the new CRC info
     return Optional.of(
         new CRCInfo(
             logSegment.getVersion(),
-            state.metadataFromLog.orElseGet(lastSeenCrcInfo::getMetadata),
+            finalMetadata,
             state.protocolFromLog.orElseGet(lastSeenCrcInfo::getProtocol),
             state.tableSizeByte.longValue() + lastSeenCrcInfo.getTableSizeBytes(),
             state.fileCount.longValue() + lastSeenCrcInfo.getNumFiles(),
             Optional.empty(),
             finalDomainMetadata,
-            finalHistogram));
+            finalHistogram,
+            Optional.empty() /* inCommitTimestamp */,
+            incrementalSetTransactions));
   }
 
   /** Processes an add file record and updates the state tracker. */
@@ -458,6 +512,52 @@ public class ChecksumUtils {
         state.domainMetadataMap.put(domainMetadata.getDomain(), domainMetadata);
       }
     }
+  }
+
+  /** Processes a SetTransaction (txn) record and updates the state tracker. */
+  private static void processTxnRecord(ColumnVector txnVector, StateTracker state, int rowId) {
+    if (state.collectSetTransactions && !txnVector.isNullAt(rowId)) {
+      state.recordSetTransaction(SetTransaction.fromColumnVector(txnVector, rowId));
+    }
+  }
+
+  private static boolean isSetTransactionRetentionConfigured(Metadata metadata) {
+    return TableConfig.SET_TRANSACTION_RETENTION.fromMetadata(metadata).isPresent();
+  }
+
+  /**
+   * Finalizes the setTransactions gathered by a full log replay: first drops expired transactions
+   * per {@code delta.setTransactionRetentionDuration}, then bounds the surviving (live) set by the
+   * {@code .crc}-size threshold.
+   *
+   * <p>Retention is applied <em>before</em> the threshold check so that expired appIds do not
+   * consume the threshold budget.
+   *
+   * @param collected the setTransactions gathered during a full replay
+   * @param metadata the effective table metadata at the checksum version
+   * @param clock the clock supplying "now" for the retention cutoff
+   * @param threshold the maximum number of live appIds storable in the {@code .crc}
+   * @return the retention-filtered setTransactions, or empty if the live set exceeds the threshold
+   */
+  private static Optional<List<SetTransaction>> filterAndBoundSetTransactions(
+      Optional<List<SetTransaction>> collected, Metadata metadata, Clock clock, long threshold) {
+    if (!collected.isPresent()) {
+      return collected;
+    }
+    List<SetTransaction> live = collected.get();
+    Optional<Long> retentionMillis = TableConfig.SET_TRANSACTION_RETENTION.fromMetadata(metadata);
+    if (retentionMillis.isPresent()) {
+      long cutoff = clock.getTimeMillis() - retentionMillis.get();
+      live =
+          collected.get().stream()
+              .filter(txn -> txn.getLastUpdated().map(updated -> updated > cutoff).orElse(false))
+              .collect(Collectors.toList());
+    }
+
+    if (live.size() > threshold) {
+      return Optional.empty();
+    }
+    return Optional.of(live);
   }
 
   /** Processes a metadata record and updates the state tracker. */
@@ -496,6 +596,33 @@ public class ChecksumUtils {
     FileSizeHistogram addedFileSizeHistogram = FileSizeHistogram.createDefaultHistogram();
     FileSizeHistogram removedFileSizeHistogram = FileSizeHistogram.createDefaultHistogram();
     Map<String, DomainMetadata> domainMetadataMap = new HashMap<>();
+    final Map<String, SetTransaction> setTransactionsByAppId = new LinkedHashMap<>();
+    boolean collectSetTransactions = false;
+    long setTransactionsThreshold = DEFAULT_SET_TRANSACTIONS_IN_CRC_THRESHOLD;
+    // When true, abandon collection once the distinct-appId count exceeds the threshold. The
+    // full-replay path disables this so retention filtering runs before the threshold check.
+    boolean abandonAboveThreshold = true;
+
+    /** Records a SetTransaction if collecting and its appId is not already seen. */
+    void recordSetTransaction(SetTransaction txn) {
+      if (!collectSetTransactions) {
+        return;
+      }
+      if (!setTransactionsByAppId.containsKey(txn.getAppId())) {
+        setTransactionsByAppId.put(txn.getAppId(), txn);
+        if (abandonAboveThreshold && setTransactionsByAppId.size() > setTransactionsThreshold) {
+          collectSetTransactions = false;
+          setTransactionsByAppId.clear();
+        }
+      }
+    }
+
+    /** The collected setTransactions, or empty if collection was disabled or exceeded threshold. */
+    Optional<List<SetTransaction>> collectedSetTransactions() {
+      return collectSetTransactions
+          ? Optional.of(new ArrayList<>(setTransactionsByAppId.values()))
+          : Optional.empty();
+    }
   }
 
   private static void validateDeltaContinuity(List<FileStatus> deltas, long checksumVersion) {
