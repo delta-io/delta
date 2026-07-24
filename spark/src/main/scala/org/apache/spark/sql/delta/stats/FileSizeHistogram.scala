@@ -68,6 +68,29 @@ case class FileSizeHistogram(
       totalBytes(index) -= fileSize
     }
   }
+
+  /**
+   * Number of files whose size is strictly less than `threshold`.
+   *
+   * A bin contributes fully when its upper boundary is `<= threshold`, i.e. every file in the bin
+   * is guaranteed to be smaller than `threshold`. A bin whose lower boundary is below `threshold`
+   * but whose upper boundary exceeds it is conservatively excluded, because individual file sizes
+   * within the bin are unknown and may straddle the threshold. The last bin's upper boundary is
+   * `Long.MaxValue`.
+   */
+  def smallFileCount(threshold: Long): Long = {
+    var total = 0L
+    var i = 0
+    val n = sortedBinBoundaries.length
+    while (i < n) {
+      val binUpperBoundary = if (i + 1 < n) sortedBinBoundaries(i + 1) else Long.MaxValue
+      if (binUpperBoundary <= threshold) {
+        total += fileCounts(i)
+      }
+      i += 1
+    }
+    total
+  }
 }
 
 private[delta] object FileSizeHistogram {
