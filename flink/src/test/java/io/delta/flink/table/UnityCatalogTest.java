@@ -24,6 +24,8 @@ import io.delta.flink.TestHelper;
 import io.delta.kernel.types.*;
 import io.delta.kernel.unitycatalog.UCTableIdentifier;
 import java.net.URI;
+import java.util.Map;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 /** JUnit 6 test suite for UnityCatalog. */
@@ -56,17 +58,49 @@ class UnityCatalogTest extends TestHelper {
   @Test
   void testGetTable() {
     withTempDir(
-        dir ->
-            MockHttp.withMock(
-                MockHttp.forExistingUCTable(dir.getAbsolutePath()),
-                mockHttp -> {
-                  UnityCatalog uc = new UnityCatalog("main", mockHttp.uri(), "");
-                  uc.open();
+        dir -> {
+          String tableId = UUID.randomUUID().toString();
+          MockHttp.withMock(
+              MockHttp.forExistingUCTable(tableId, dir.getAbsolutePath()),
+              mockHttp -> {
+                UnityCatalog uc =
+                    new UnityCatalog(
+                        "main", mockHttp.uri(), "", /* credentialVendingEnabled = */ false);
+                uc.open();
 
-                  DeltaCatalog.TableDescriptor tableDescriptor = uc.getTable("dummy");
-                  assertEquals(
-                      AbstractKernelTable.normalize(URI.create(dir.getAbsolutePath())),
-                      tableDescriptor.tablePath);
-                }));
+                DeltaCatalog.TableDescriptor tableDescriptor = uc.getTable("main.default.dummy");
+                assertEquals(tableId, tableDescriptor.uuid);
+                assertEquals(
+                    AbstractKernelTable.normalize(URI.create(dir.getAbsolutePath())),
+                    tableDescriptor.tablePath);
+                mockHttp.verifyCredentialRequests(0);
+              });
+        });
+  }
+
+  @Test
+  void testGetCredentials() {
+    String tableId = UUID.randomUUID().toString();
+    String credentialsResponse =
+        "{\"storage-credentials\":[{\"prefix\":\"s3://bucket/table\","
+            + "\"operation\":\"READ_WRITE\",\"expiration-time-ms\":4102444800000,"
+            + "\"config\":{\"s3.access-key-id\":\"ak\","
+            + "\"s3.secret-access-key\":\"sk\",\"s3.session-token\":\"st\"}}]}";
+
+    MockHttp.withMock(
+        MockHttp.forExistingUCTable(tableId, "s3://bucket/table", credentialsResponse),
+        mockHttp -> {
+          UnityCatalog uc = new UnityCatalog("main", mockHttp.uri(), "");
+          uc.open();
+
+          DeltaCatalog.TableDescriptor table = uc.getTable("main.default.dummy");
+          assertEquals("ak", table.getStorageProperties().get("fs.s3a.init.access.key"));
+          mockHttp.verifyCredentialRequests(1);
+
+          Map<String, String> credentials = uc.getCredentials("main.default.dummy");
+
+          assertEquals("ak", credentials.get("fs.s3a.init.access.key"));
+          mockHttp.verifyCredentialRequests(2);
+        });
   }
 }
