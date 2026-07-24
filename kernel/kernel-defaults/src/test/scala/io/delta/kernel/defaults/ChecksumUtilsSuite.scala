@@ -25,7 +25,7 @@ import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.internal.{SnapshotImpl, TableImpl}
-import io.delta.kernel.internal.checksum.ChecksumUtils
+import io.delta.kernel.internal.checksum.{ChecksumUtils, CRCInfo}
 import io.delta.kernel.internal.util.ManualClock
 import io.delta.kernel.types.{StringType, StructType}
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
@@ -378,6 +378,149 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
       assert(crcInfo.getNumDeletionVectors.isPresent)
       assert(crcInfo.getNumDeletedRecords.get() === 5L)
       assert(crcInfo.getNumDeletionVectors.get() >= 1L)
+    }
+  }
+
+  test("computeChecksum populates allFiles for a small table (full replay path)") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      initialTestTable(tablePath, engine)
+
+      val snapshot1 = Table.forPath(
+        engine,
+        tablePath).getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
+      val crcInfo = ChecksumUtils.computeChecksum(engine, snapshot1.getLogSegment)
+
+      assert(crcInfo.getAllFiles.isPresent)
+      assert(crcInfo.getAllFiles.get().size() === crcInfo.getNumFiles)
+      assert(crcInfo.getNumFiles > 0)
+    }
+  }
+
+  test("computeChecksum omits allFiles once the file count exceeds the threshold") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      initialTestTable(tablePath, engine)
+
+      // Append until the table has more than DEFAULT_ALL_FILES_IN_CRC_THRESHOLD (20) files.
+      var version = 1L
+      var crossedThreshold = false
+      var iterations = 0L
+      while (!crossedThreshold && iterations < CRCInfo.DEFAULT_ALL_FILES_IN_CRC_THRESHOLD + 1) {
+        val snapshot = Table.forPath(
+          engine,
+          tablePath).getSnapshotAsOfVersion(engine, version).asInstanceOf[SnapshotImpl]
+        val crc = ChecksumUtils.computeChecksum(engine, snapshot.getLogSegment)
+        if (crc.getNumFiles > CRCInfo.DEFAULT_ALL_FILES_IN_CRC_THRESHOLD) {
+          assert(
+            !crc.getAllFiles.isPresent,
+            s"expected allFiles absent at ${crc.getNumFiles} files (> threshold)")
+          crossedThreshold = true
+        } else {
+          assert(
+            crc.getAllFiles.isPresent,
+            s"expected allFiles present at ${crc.getNumFiles} files (<= threshold)")
+          assert(crc.getAllFiles.get().size() === crc.getNumFiles)
+          appendData(
+            engine,
+            tablePath,
+            isNewTable = false,
+            data = Seq(Map.empty[String, Literal] -> dataBatches1))
+          version += 1
+        }
+        iterations += 1
+      }
+      assert(crossedThreshold, "test did not grow the table beyond the allFiles threshold")
+    }
+  }
+
+  test("computeChecksum omits allFiles when collectAllFiles=false") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      initialTestTable(tablePath, engine)
+
+      val snapshot1 = Table.forPath(
+        engine,
+        tablePath).getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
+
+      // Default (true) collects allFiles.
+      val withFiles = ChecksumUtils.computeChecksum(engine, snapshot1.getLogSegment)
+      val collectAllFiles = false
+      val withoutFiles =
+        ChecksumUtils.computeChecksum(engine, snapshot1.getLogSegment, collectAllFiles)
+
+      assert(withFiles.getAllFiles.isPresent)
+      assert(!withoutFiles.getAllFiles.isPresent)
+
+      assert(withoutFiles.getNumFiles === withFiles.getNumFiles)
+      assert(withoutFiles.getTableSizeBytes === withFiles.getTableSizeBytes)
+      assert(withoutFiles.getMetadata === withFiles.getMetadata)
+      assert(withoutFiles.getProtocol === withFiles.getProtocol)
+    }
+  }
+
+  test("computeChecksum maintains allFiles across an incremental commit") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      initialTestTable(tablePath, engine)
+
+      // Persist v1's checksum (with allFiles) so the next computation can build incrementally.
+      val snapshot1 = Table.forPath(
+        engine,
+        tablePath).getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
+      ChecksumUtils.computeStateAndWriteChecksum(engine, snapshot1.getLogSegment)
+      val numFilesV1 = ChecksumUtils.computeChecksum(engine, snapshot1.getLogSegment).getNumFiles
+
+      appendData(
+        engine,
+        tablePath,
+        isNewTable = false,
+        data = Seq(Map.empty[String, Literal] -> dataBatches1))
+      val snapshot2 = Table.forPath(
+        engine,
+        tablePath).getSnapshotAsOfVersion(engine, 2).asInstanceOf[SnapshotImpl]
+      val crcV2 = ChecksumUtils.computeChecksum(engine, snapshot2.getLogSegment)
+
+      // allFiles is carried forward and stays consistent with the file count.
+      assert(crcV2.getVersion === 2)
+      assert(crcV2.getAllFiles.isPresent)
+      assert(crcV2.getAllFiles.get().size() === crcV2.getNumFiles)
+      assert(crcV2.getNumFiles > numFilesV1)
+    }
+  }
+
+  test("computeChecksum (incremental) resolves a file added and removed within the folded range") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // A file that is both added and removed inside the folded delta range exercises the
+      // newest-first ordering of the incremental replay: the range is applied remove-before-add,
+      // so a naive map fold would re-insert the dead file. allFiles must still be correct.
+      spark.sql(
+        s"CREATE TABLE delta.`$tablePath` (id LONG) USING DELTA " +
+          "TBLPROPERTIES ('delta.enableDeletionVectors' = 'false')")
+      spark.range(0, 5).write.format("delta").mode("append").save(tablePath) // v1 -> file A
+
+      // Seed a base .crc at v1 carrying allFiles = {A} (kernel-written so the field is present).
+      // Remove any Spark-written .crc files so the v3 computation folds v2+v3 onto this v1 base
+      // rather than short-circuiting on a newer checksum.
+      deleteChecksumFileForTableUsingHadoopFs(tablePath.stripPrefix("file:"), 0 to 3)
+      val snapshot1 = Table.forPath(engine, tablePath)
+        .getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
+      ChecksumUtils.computeStateAndWriteChecksum(engine, snapshot1.getLogSegment)
+      val baseCrc = ChecksumUtils.computeChecksum(engine, snapshot1.getLogSegment)
+      assert(baseCrc.getAllFiles.isPresent)
+      val numFilesV1 = baseCrc.getNumFiles
+
+      // v2 appends file B; v3 deletes exactly B's rows -> whole-file RemoveFile of B (no DV).
+      spark.range(100, 105).write.format("delta").mode("append").save(tablePath) // v2 -> file B
+      spark.sql(s"DELETE FROM delta.`$tablePath` WHERE id >= 100") // v3 -> removes file B
+      deleteChecksumFileForTableUsingHadoopFs(tablePath.stripPrefix("file:"), 2 to 3)
+
+      val snapshot3 = Table.forPath(engine, tablePath)
+        .getSnapshotAsOfVersion(engine, 3).asInstanceOf[SnapshotImpl]
+      val crcV3 = ChecksumUtils.computeChecksum(engine, snapshot3.getLogSegment)
+
+      // B was added (v2) then removed (v3) within the range, so the table is back to just {A}.
+      // allFiles must be present and consistent -- not dropped by the size guard from a stale B.
+      assert(crcV3.getVersion === 3)
+      assert(crcV3.getNumFiles === numFilesV1)
+      assert(crcV3.getAllFiles.isPresent)
+      assert(crcV3.getAllFiles.get().size() === crcV3.getNumFiles)
     }
   }
 

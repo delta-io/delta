@@ -25,6 +25,7 @@ import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.*;
+import io.delta.kernel.internal.data.StructRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.ActionWrapper;
 import io.delta.kernel.internal.replay.ActionsIterator;
@@ -102,6 +103,7 @@ public class ChecksumUtils {
    *   <li>File size histogram
    *   <li>Domain metadata information
    *   <li>Deletion-vector metrics
+   *   <li>Add file list (optional)
    * </ul>
    *
    * <p>If a checksum file already exists for exactly this version, the existing {@link CRCInfo} is
@@ -152,6 +154,7 @@ public class ChecksumUtils {
    *   <li>File size histogram
    *   <li>Domain metadata information
    *   <li>Deletion-vector metrics
+   *   <li>Add file list (optional)
    * </ul>
    *
    * <p>Note: For very large tables, this operation may be expensive as it requires scanning the
@@ -160,6 +163,10 @@ public class ChecksumUtils {
    * <p>The returned {@link CRCInfo} does not carry an in-commit timestamp, which is not derivable
    * from the file actions this replay reads. A caller that holds the commit's {@code CommitInfo}
    * can inject it via {@link CRCInfo#withInCommitTimestamp(Optional)}.
+   *
+   * <p>The full list of {@link CRCInfo#getAllFiles() allFiles} is collected when the table is
+   * within {@link CRCInfo#DEFAULT_ALL_FILES_IN_CRC_THRESHOLD}; use {@link #computeChecksum(Engine,
+   * LogSegment, boolean)} to disable that collection.
    *
    * @param engine The Engine instance used to access the underlying storage
    * @param logSegmentAtVersion The LogSegment instance of the table at a specific version
@@ -177,6 +184,26 @@ public class ChecksumUtils {
    * by the full-replay path; it is only consulted when that property is set.
    */
   public static CRCInfo computeChecksum(Engine engine, LogSegment logSegmentAtVersion, Clock clock)
+      throws IOException {
+    return computeChecksum(engine, logSegmentAtVersion, clock, /* collectAllFiles */ true);
+  }
+
+  /**
+   * Computes the state of a Delta table at the provided snapshot's version, optionally collecting
+   * the full {@link AddFile} list.
+   */
+  public static CRCInfo computeChecksum(
+      Engine engine, LogSegment logSegmentAtVersion, boolean collectAllFiles) throws IOException {
+    return computeChecksum(engine, logSegmentAtVersion, System::currentTimeMillis, collectAllFiles);
+  }
+
+  /**
+   * Computes the state of a Delta table at the provided snapshot's version, taking both an explicit
+   * {@link Clock} (for the {@code delta.setTransactionRetentionDuration} cutoff) and a flag
+   * controlling whether the full {@link AddFile} list is collected.
+   */
+  public static CRCInfo computeChecksum(
+      Engine engine, LogSegment logSegmentAtVersion, Clock clock, boolean collectAllFiles)
       throws IOException {
     requireNonNull(engine);
     requireNonNull(logSegmentAtVersion);
@@ -196,13 +223,14 @@ public class ChecksumUtils {
                 lastSeenCrcInfo.get(),
                 engine,
                 logSegmentAtVersion,
-                /* canBuildWithOnlyRequiredFields */ false)
+                /* canBuildWithOnlyRequiredFields */ false,
+                collectAllFiles)
             : Optional.empty();
 
     // Use incrementally built CRC if available, otherwise do full log replay
     return incrementallyBuiltCrc.isPresent()
         ? incrementallyBuiltCrc.get()
-        : buildCrcInfoWithFullLogReplay(engine, logSegmentAtVersion, clock);
+        : buildCrcInfoWithFullLogReplay(engine, logSegmentAtVersion, clock, collectAllFiles);
   }
 
   /**
@@ -220,7 +248,11 @@ public class ChecksumUtils {
       Engine engine, LogSegment logSegment, Optional<CRCInfo> lastSeenCrcInfo) throws IOException {
     return lastSeenCrcInfo.isPresent()
         ? buildCrcInfoIncrementally(
-            lastSeenCrcInfo.get(), engine, logSegment, /* canBuildWithOnlyRequiredFields */ true)
+            lastSeenCrcInfo.get(),
+            engine,
+            logSegment,
+            /* canBuildWithOnlyRequiredFields */ true,
+            /* collectAllFiles */ true)
         : Optional.empty();
   }
 
@@ -229,16 +261,20 @@ public class ChecksumUtils {
    *
    * @param engine The engine instance
    * @param logSegmentAtVersion The log segment at the target version
+   * @param collectAllFiles whether to collect the full {@link AddFile} list (up to the threshold)
    * @return The complete CRC info
    */
   private static CRCInfo buildCrcInfoWithFullLogReplay(
-      Engine engine, LogSegment logSegmentAtVersion, Clock clock) throws IOException {
+      Engine engine, LogSegment logSegmentAtVersion, Clock clock, boolean collectAllFiles)
+      throws IOException {
 
     StateTracker state = new StateTracker();
     state.collectSetTransactions = true;
     // Make the full-replay path collect every appId so retention filtering runs first. This
     // prevents expired appIds from being counted towards the threshold.
     state.abandonAboveThreshold = false;
+    // Collect the full AddFile list up to the threshold; abandoned automatically if exceeded.
+    state.collectAllFiles = collectAllFiles;
 
     // Process logs and update state
     try (CreateCheckpointIterator checkpointIterator =
@@ -310,7 +346,8 @@ public class ChecksumUtils {
         filterAndBoundSetTransactions(
             state.collectedSetTransactions(), finalMetadata, clock, state.setTransactionsThreshold),
         dvMetrics.numDeletedRecords,
-        dvMetrics.numDeletionVectors);
+        dvMetrics.numDeletionVectors,
+        state.collectedAllFiles());
   }
 
   /**
@@ -322,13 +359,16 @@ public class ChecksumUtils {
    * @param logSegment The log segment to process
    * @param canBuildWithOnlyRequiredFields If true, allows building CRC with only required fields.
    *     Tolerates missing optional fields.
+   * @param collectAllFiles If true, maintain the full {@link AddFile} list ({@link
+   *     CRCInfo#getAllFiles()}) when the base CRC carries it; if false, leave it absent.
    * @return Optional containing the new CRC info, or empty if fallback is needed
    */
   private static Optional<CRCInfo> buildCrcInfoIncrementally(
       CRCInfo lastSeenCrcInfo,
       Engine engine,
       LogSegment logSegment,
-      boolean canBuildWithOnlyRequiredFields)
+      boolean canBuildWithOnlyRequiredFields,
+      boolean collectAllFiles)
       throws IOException {
     long startTime = System.currentTimeMillis();
     if (!canBuildWithOnlyRequiredFields && !lastSeenCrcInfo.getDomainMetadata().isPresent()) {
@@ -368,6 +408,16 @@ public class ChecksumUtils {
     // Obtain deletion-vector metrics from the base CRC to allow incremental folding.
     lastSeenCrcInfo.getNumDeletionVectors().ifPresent(n -> state.numDeletionVectors.add(n));
     lastSeenCrcInfo.getNumDeletedRecords().ifPresent(n -> state.numDeletedRecords.add(n));
+    // Incrementally update allFiles only when the base CRC already has it.
+    if (collectAllFiles) {
+      lastSeenCrcInfo
+          .getAllFiles()
+          .ifPresent(
+              baseFiles -> {
+                state.collectAllFiles = true;
+                baseFiles.forEach(f -> state.addFilesByIdentity.put(FileIdentity.of(f), f));
+              });
+    }
 
     // TODO: use compacted logs.
     List<FileStatus> deltaFiles =
@@ -456,6 +506,12 @@ public class ChecksumUtils {
             state.fileCount.decrement();
             // Subtract the removed file's deletion-vector metrics.
             applyDeletionVectorMetrics(removeVector, REMOVE_DV_INDEX, state, i, DvDelta.REMOVE);
+
+            if (state.collectAllFiles) {
+              RemoveFile removeFile = new RemoveFile(StructRow.fromStructVector(removeVector, i));
+              state.removeAddFile(
+                  FileIdentity.of(removeFile.getPath(), removeFile.getDeletionVector()));
+            }
           }
 
           // Process domain metadata, protocol, metadata, and transactions
@@ -507,6 +563,12 @@ public class ChecksumUtils {
     // Omit DV stats if the seed is unreliable (base CRC lacked DV metrics on a DV-enabled table).
     DvMetrics finalDvMetrics = dvMetricsFor(finalProtocol, state, dvSeedReliable);
 
+    long finalNumFiles = state.fileCount.longValue() + lastSeenCrcInfo.getNumFiles();
+    // Only keep the incrementally-maintained allFiles if it stayed consistent with the computed
+    // file count. Else drop it.
+    Optional<List<AddFile>> finalAllFiles =
+        state.collectedAllFiles().filter(files -> files.size() == finalNumFiles);
+
     // Build and return the new CRC info
     return Optional.of(
         new CRCInfo(
@@ -514,14 +576,15 @@ public class ChecksumUtils {
             finalMetadata,
             finalProtocol,
             state.tableSizeByte.longValue() + lastSeenCrcInfo.getTableSizeBytes(),
-            state.fileCount.longValue() + lastSeenCrcInfo.getNumFiles(),
+            finalNumFiles,
             Optional.empty(),
             finalDomainMetadata,
             finalHistogram,
             Optional.empty() /* inCommitTimestamp */,
             incrementalSetTransactions,
             finalDvMetrics.numDeletedRecords,
-            finalDvMetrics.numDeletionVectors));
+            finalDvMetrics.numDeletionVectors,
+            finalAllFiles));
   }
 
   /** Processes an add file record and updates the state tracker. */
@@ -537,6 +600,10 @@ public class ChecksumUtils {
       state.addedFileSizeHistogram.insert(fileSize);
       state.fileCount.increment();
       applyDeletionVectorMetrics(addVector, ADD_DV_INDEX, state, rowId, DvDelta.ADD);
+
+      if (state.collectAllFiles) {
+        state.recordAddFile(new AddFile(StructRow.fromStructVector(addVector, rowId)));
+      }
     }
   }
 
@@ -643,6 +710,17 @@ public class ChecksumUtils {
     // Deletion-vector metrics 2 fields.
     LongAdder numDeletionVectors = new LongAdder();
     LongAdder numDeletedRecords = new LongAdder();
+    // AllFiles keyed on (path, dvId)
+    final Map<FileIdentity, AddFile> addFilesByIdentity = new LinkedHashMap<>();
+    // Identities whose action has already been applied during this computation. The incremental
+    // path replays the delta range newest-commit-first, so the FIRST action seen for an identity
+    // is authoritative and any older add/remove for the same identity must be ignored -- otherwise
+    // a file added and removed within the range (in either order) is mis-resolved, since a plain
+    // map put/remove carries no happens-before info under reverse iteration. In the full-replay
+    // path each live identity is seen once, so this guard is a no-op there.
+    final Set<FileIdentity> seenIdentities = new HashSet<>();
+    boolean collectAllFiles = false;
+    long allFilesThreshold = CRCInfo.DEFAULT_ALL_FILES_IN_CRC_THRESHOLD;
 
     /** Records a SetTransaction if collecting and its appId is not already seen. */
     void recordSetTransaction(SetTransaction txn) {
@@ -663,6 +741,85 @@ public class ChecksumUtils {
       return collectSetTransactions
           ? Optional.of(new ArrayList<>(setTransactionsByAppId.values()))
           : Optional.empty();
+    }
+
+    /** Records a live AddFile if collecting, unless a newer action for its identity was seen. */
+    void recordAddFile(AddFile addFile) {
+      if (!collectAllFiles) {
+        return;
+      }
+      FileIdentity identity = FileIdentity.of(addFile);
+      // Newest-first: skip if this identity was already resolved by a later commit's action.
+      if (!seenIdentities.add(identity)) {
+        return;
+      }
+      addFilesByIdentity.put(identity, addFile);
+      if (addFilesByIdentity.size() > allFilesThreshold) {
+        collectAllFiles = false;
+        addFilesByIdentity.clear();
+        seenIdentities.clear();
+      }
+    }
+
+    /** Removes a live AddFile by (path, dv) identity if collecting. */
+    void removeAddFile(FileIdentity identity) {
+      if (!collectAllFiles) {
+        return;
+      }
+      // Newest-first: a remove that was superseded by a later add for the same identity (already
+      // seen) must not delete that add's entry.
+      if (!seenIdentities.add(identity)) {
+        return;
+      }
+      addFilesByIdentity.remove(identity);
+    }
+
+    /** The collected allFiles list, or empty if collection was disabled or exceeded threshold. */
+    Optional<List<AddFile>> collectedAllFiles() {
+      return collectAllFiles
+          ? Optional.of(new ArrayList<>(addFilesByIdentity.values()))
+          : Optional.empty();
+    }
+  }
+
+  /**
+   * Identity of a file action for allFiles bookkeeping: its path together with its deletion-vector
+   * unique id (empty when the file has no DV). Two actions match iff both agree, so an
+   * add-with-new-DV and a remove-of-the-old-file for the same path are distinct entries.
+   *
+   * <p>TODO: Refactor to Record type if Java 16
+   */
+  private static final class FileIdentity {
+    private final String path;
+    private final Optional<String> dvId;
+
+    private FileIdentity(String path, Optional<String> dvId) {
+      this.path = path;
+      this.dvId = dvId;
+    }
+
+    static FileIdentity of(AddFile addFile) {
+      return new FileIdentity(
+          addFile.getPath(),
+          addFile.getDeletionVector().map(DeletionVectorDescriptor::getUniqueId));
+    }
+
+    static FileIdentity of(String path, Optional<DeletionVectorDescriptor> dv) {
+      return new FileIdentity(path, dv.map(DeletionVectorDescriptor::getUniqueId));
+    }
+
+    @Override
+    public boolean equals(Object o) {
+      if (!(o instanceof FileIdentity)) {
+        return false;
+      }
+      FileIdentity other = (FileIdentity) o;
+      return path.equals(other.path) && dvId.equals(other.dvId);
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(path, dvId);
     }
   }
 
