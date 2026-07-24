@@ -21,6 +21,7 @@ import static java.util.Collections.singletonMap;
 
 import io.delta.kernel.data.Row;
 import io.delta.kernel.exceptions.InvalidConfigurationValueException;
+import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
@@ -234,6 +235,42 @@ public class ColumnMapping {
     }
   }
 
+  /**
+   * Validates that column IDs and physical names are unique across the entire schema, and that
+   * maxColumnId is at least as large as the maximum column ID in the schema.
+   *
+   * <p>The Delta protocol requires globally unique physical names and unique column IDs with
+   * monotonically increasing maxColumnId. This is a last-defense safety check on the commit path to
+   * prevent corrupted metadata from being written, analogous to Spark's
+   * checkColumnIdAndPhysicalNameAssignments() in DeltaColumnMapping.scala.
+   *
+   * @param metadata The metadata to validate
+   */
+  public static void checkColumnIdAndPhysicalNameAssignments(Metadata metadata) {
+    ColumnMappingMode mode = getColumnMappingMode(metadata.getConfiguration());
+    if (mode == ColumnMappingMode.NONE) {
+      return;
+    }
+
+    StructType schema = metadata.getSchema();
+    Set<Integer> columnIds = new HashSet<>();
+    Set<String> physicalNames = new HashSet<>();
+    validateColumnMappingUniqueness(schema, "", columnIds, physicalNames);
+
+    // Validate maxColumnId >= max field ID in schema
+    int maxColumnId =
+        Integer.parseInt(
+            metadata.getConfiguration().getOrDefault(COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "0"));
+    int fieldMaxId = findMaxColumnId(schema);
+    if (maxColumnId < fieldMaxId) {
+      throw new KernelException(
+          String.format(
+              "delta.columnMapping.maxColumnId (%d) is less than the max column ID "
+                  + "in the schema (%d)",
+              maxColumnId, fieldMaxId));
+    }
+  }
+
   ////////////////////////////
   // Private Helper Methods //
   ////////////////////////////
@@ -288,6 +325,48 @@ public class ColumnMapping {
     }
 
     return new Tuple2<>(new Column(outputNameParts.toArray(new String[0])), currentType);
+  }
+
+  /**
+   * Recursively validates that all column IDs and physical names in the schema are unique. Column
+   * IDs must be globally unique. Physical names must be unique within their full path context
+   * (i.e., sibling fields at the same nesting level cannot share physical names).
+   */
+  private static void validateColumnMappingUniqueness(
+      DataType dataType, String parentPath, Set<Integer> columnIds, Set<String> physicalNames) {
+    if (dataType instanceof StructType) {
+      StructType structType = (StructType) dataType;
+      for (StructField field : structType.fields()) {
+        int columnId = getColumnId(field);
+        if (!columnIds.add(columnId)) {
+          throw new KernelException(
+              String.format(
+                  "Duplicate column mapping ID %d found in the schema at field '%s'",
+                  columnId, field.getName()));
+        }
+        String physicalName = getPhysicalName(field);
+        String fullPhysicalPath =
+            parentPath.isEmpty() ? physicalName : parentPath + "." + physicalName;
+        if (!physicalNames.add(fullPhysicalPath)) {
+          throw new KernelException(
+              String.format(
+                  "Duplicate physical name '%s' found in the schema at field '%s'",
+                  fullPhysicalPath, field.getName()));
+        }
+        validateColumnMappingUniqueness(
+            field.getDataType(), fullPhysicalPath, columnIds, physicalNames);
+      }
+    } else if (dataType instanceof ArrayType) {
+      ArrayType arrayType = (ArrayType) dataType;
+      validateColumnMappingUniqueness(
+          arrayType.getElementType(), parentPath + ".element", columnIds, physicalNames);
+    } else if (dataType instanceof MapType) {
+      MapType mapType = (MapType) dataType;
+      validateColumnMappingUniqueness(
+          mapType.getKeyType(), parentPath + ".key", columnIds, physicalNames);
+      validateColumnMappingUniqueness(
+          mapType.getValueType(), parentPath + ".value", columnIds, physicalNames);
+    }
   }
 
   /** Visible for testing */
