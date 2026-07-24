@@ -399,8 +399,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
   protected var commitInfo: CommitInfo = _
   def getCommitInfo: CommitInfo = commitInfo
 
-  /** Whether the txn should trigger a checkpoint after the commit */
-  private[delta] var needsCheckpoint = false
+  /** The log-maintenance work this txn decided after committing. */
+  private[delta] var maintenanceOperation: MaintenanceOperation = MaintenanceOperation()
 
   // Whether this transaction is creating a new table.
   private var isCreatingNewTable: Boolean = false
@@ -2867,7 +2867,19 @@ trait OptimisticTransactionImpl extends TransactionHelper
       catalogTableForPostCommitSnapshot,
       amtCheckpointOpt = amtWriteResultOpt.map(_.checkpoint))
     val postCommitReconstructionTime = System.nanoTime()
-    needsCheckpoint = isCheckpointNeeded(attemptVersion, postCommitSnapshot)
+    maintenanceOperation = if (
+        !postCommitSnapshot.protocol.isFeatureSupported(AdaptiveMetadataTableFeature)) {
+      MaintenanceOperation(
+        shouldCheckpoint = isCheckpointNeeded(attemptVersion, postCommitSnapshot))
+    } else if (amtWriteResultOpt.isEmpty) {
+      // The AMT writer did not write inline, so schedule a follow-up OPTIMIZE CHECKPOINT commit
+      // (issued by the post-commit checkpoint hook)
+      // if needed.
+      amtWriterManager.planMaintenance(attemptVersion, postCommitSnapshot)
+    } else {
+      // The AMT was written inline with this commit; no follow-up maintenance is needed.
+      MaintenanceOperation()
+    }
     val commitStatsComputer = new CommitStatsComputer()
     // Add to commit stats and consume the returned iterator.
     commitStatsComputer.addToCommitStats(actions.toIterator).foreach(_ => ())
@@ -2884,7 +2896,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       stateReconstructionDurationMs =
         NANOSECONDS.toMillis(postCommitReconstructionTime - commitEndNano),
       postCommitSnapshot = postCommitSnapshot,
-      computedNeedsCheckpoint = needsCheckpoint,
+      computedNeedsCheckpoint = maintenanceOperation.shouldCheckpoint,
       isolationLevel = isolationLevel,
       // We don't use postCommitSnapshot.fileSizeHistogram here
       // because it can trigger full state reconstruction.
@@ -3217,7 +3229,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       postCommitSnapshot = postCommitSnapshot,
       postCommitHooks = postCommitHooks.toSeq,
       txnExecutionTimeMs = txnExecutionTimeMs.get,
-      needsCheckpoint = needsCheckpoint,
+      maintenanceOperation = maintenanceOperation,
       partitionsAddedToOpt = partitionsAddedToOpt,
       isBlindAppend = isBlindAppend
     ))

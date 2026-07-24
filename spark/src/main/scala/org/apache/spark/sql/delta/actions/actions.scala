@@ -1575,10 +1575,52 @@ sealed trait CheckpointOnlyAction extends Action
  *
  * @param path        root manifest path, relative to the table root.
  * @param sizeInBytes size of the root manifest file in bytes.
+ * @param tags        additional metadata about the AMT. See [[ContentRoot.Tags]] for known keys.
  */
 case class ContentRoot(
     path: String,
-    sizeInBytes: Long)
+    sizeInBytes: Long,
+    tags: Map[String, String] = null) {
+
+  private def tag(key: ContentRoot.Tags.KeyType): Option[String] =
+    Option(tags).flatMap(_.get(key.name))
+
+  /** Whether this manifest tree was built incrementally, if recorded. */
+  def isIncremental: Option[Boolean] = tag(ContentRoot.Tags.IS_INCREMENTAL).map(_.toBoolean)
+
+  /** The version of the most recent full (non-incremental) manifest rewrite, if recorded. */
+  def lastManifestCommitWithFullRewrite: Option[Long] =
+    tag(ContentRoot.Tags.LAST_MANIFEST_COMMIT_WITH_FULL_REWRITE).map(_.toLong)
+}
+
+object ContentRoot {
+
+  def apply(
+      path: String,
+      sizeInBytes: Long,
+      isIncremental: Boolean,
+      lastManifestCommitWithFullRewrite: Long): ContentRoot = {
+    ContentRoot(
+      path = path,
+      sizeInBytes = sizeInBytes,
+      tags = Map(
+        Tags.IS_INCREMENTAL.name -> isIncremental.toString,
+        Tags.LAST_MANIFEST_COMMIT_WITH_FULL_REWRITE.name ->
+          lastManifestCommitWithFullRewrite.toString
+      )
+    )
+  }
+
+  object Tags {
+    sealed abstract class KeyType(val name: String)
+
+    /** Whether the tree was built incrementally (`"true"`/`"false"`). */
+    object IS_INCREMENTAL extends KeyType("isIncremental")
+    /** The version of the most recent full (non-incremental) manifest rewrite. */
+    object LAST_MANIFEST_COMMIT_WITH_FULL_REWRITE
+      extends KeyType("lastManifestCommitWithFullRewrite")
+  }
+}
 
 /**
  * Closed set of values for [[SidecarFile.sidecarType]] under the `adaptiveMetadata-preview`

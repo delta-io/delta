@@ -79,6 +79,40 @@ trait AMTCheckpointTestBase
          |  'delta.checkpointInterval' = '$checkpointInterval')""".stripMargin)
   }
 
+  /**
+   * How an AMT is emitted for a triggering commit. In [[AMTWriteMode.Inline]] the manifest tree
+   * rides in the business commit itself; in [[AMTWriteMode.Deferred]] a follow-up OPTIMIZE
+   * CHECKPOINT commit (issued by the post-commit hook) lands it one version later.
+   */
+  protected sealed trait AMTWriteMode {
+    /** Number of extra commits the AMT emission adds after a triggering business commit. */
+    def followUpCommits: Int
+  }
+  protected object AMTWriteMode {
+    case object Inline extends AMTWriteMode { val followUpCommits = 0 }
+    case object Deferred extends AMTWriteMode { val followUpCommits = 1 }
+  }
+
+  /**
+   * Registers a test in both AMT write modes. The body runs once with inline writes forced (a low
+   * action-count threshold) and once with the default deferred follow-up-commit path, so behavior
+   * is covered in both. The body receives the active [[AMTWriteMode]] for any version-relative
+   * assertions.
+   */
+  protected def testInlineAndDeferred(testName: String)(body: AMTWriteMode => Unit): Unit = {
+    test(s"$testName (inline)") {
+      withSQLConf(
+          DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT.key
+            -> "1") {
+        body(AMTWriteMode.Inline)
+      }
+    }
+    test(s"$testName (deferred)") {
+      // Default threshold (Long.MaxValue) keeps business commits from writing inline.
+      body(AMTWriteMode.Deferred)
+    }
+  }
+
   /** True iff `name` looks like an AMT leaf parquet file. */
   protected def isLeafFileName(name: String): Boolean =
     name.startsWith("leaf-") && name.endsWith(".parquet")

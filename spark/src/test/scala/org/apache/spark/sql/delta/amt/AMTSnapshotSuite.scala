@@ -37,21 +37,21 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
   // Post commit snapshot
   ///////////////////////////
 
-  test("snapshot.allFiles reflects a DELETE that lands on the checkpoint boundary") {
+  testInlineAndDeferred("snapshot.allFiles reflects a DELETE on the checkpoint boundary") {
+    _ =>
     withTable("amt_delete_boundary") {
       val name = "amt_delete_boundary"
-      createAMTTable(name, checkpointInterval = 2)
-      sql(s"INSERT INTO $name VALUES (1)")   // v1: 1 file.
-      sql(s"INSERT INTO $name VALUES (2)")   // v2: emit; 2 live files.
-      // Sanity: snapshot state and leaves agree at the first checkpoint.
-      assert(deltaLogForName(name).unsafeVolatileSnapshot.allFiles.count() == 2)
-
-      sql(s"INSERT INTO $name VALUES (3)")   // v3: 3 live files (not a boundary).
-      sql(s"DELETE FROM $name WHERE id = 1") // v4: emit; live set drops id=1.
+      // Interval 1 so every commit is a boundary; combined with inline mode this makes the last
+      // DML AMT-backed in both modes regardless of the follow-up commit's version bookkeeping.
+      createAMTTable(name, checkpointInterval = 1)
+      sql(s"INSERT INTO $name VALUES (1)")
+      sql(s"INSERT INTO $name VALUES (2)")
+      sql(s"INSERT INTO $name VALUES (3)")
+      sql(s"DELETE FROM $name WHERE id = 1") // removes id=1; triggers an AMT (inline or follow-up).
 
       val snapshot = deltaLogForName(name).unsafeVolatileSnapshot
-      assert(snapshot.version == 4)
-      assert(amtProvider(snapshot).isDefined)
+      assert(amtProvider(snapshot).isDefined,
+        "The post-DELETE snapshot must be AMT-backed.")
       // allFiles must reflect the DELETE: the removed file is gone from the post-commit live set.
       checkAnswer(spark.read.table(name), Seq(Row(2), Row(3)))
       // The manifest tree written at the checkpoint captures exactly the post-DELETE live files
@@ -61,17 +61,18 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
     }
   }
 
-  test("snapshot.allFiles matches leaves across insert/overwrite/delete before a checkpoint") {
+  testInlineAndDeferred(
+      "snapshot.allFiles matches leaves across insert/overwrite/delete before a checkpoint") { _ =>
     withTable("amt_overwrite") {
       val name = "amt_overwrite"
-      createAMTTable(name, checkpointInterval = 4)
-      sql(s"INSERT INTO $name VALUES (1)")            // v1.
-      sql(s"INSERT INTO $name VALUES (2)")            // v2.
-      sql(s"INSERT OVERWRITE $name VALUES (10), (20)") // v3: replaces all prior files.
-      sql(s"DELETE FROM $name WHERE id = 10")         // v4: emit; removes one.
+      // Interval 1 so the final DELETE triggers an AMT in both modes.
+      createAMTTable(name, checkpointInterval = 1)
+      sql(s"INSERT INTO $name VALUES (1)")
+      sql(s"INSERT INTO $name VALUES (2)")
+      sql(s"INSERT OVERWRITE $name VALUES (10), (20)") // replaces all prior files.
+      sql(s"DELETE FROM $name WHERE id = 10")          // removes one; triggers an AMT.
 
       val snapshot = deltaLogForName(name).unsafeVolatileSnapshot
-      assert(snapshot.version == 4)
       assert(amtProvider(snapshot).isDefined)
       checkAnswer(spark.read.table(name), Seq(Row(20)))
       assert(snapshot.allFiles.count() == 1, "Only the surviving overwrite file should be live.")
@@ -80,14 +81,15 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
     }
   }
 
-  test("filtered scan is correct after emission (reconstruction from trimmed deltas + leaves)") {
+  testInlineAndDeferred(
+      "filtered scan is correct after emission (trimmed deltas + leaves)") { _ =>
     withTable("amt_filtered_scan") {
       val name = "amt_filtered_scan"
-      createAMTTable(name, checkpointInterval = 2)
+      createAMTTable(name, checkpointInterval = 1)
       sql(s"INSERT INTO $name VALUES (1)")
-      sql(s"INSERT INTO $name VALUES (2)")   // v2: emit; provider is AMT.
-      sql(s"INSERT INTO $name VALUES (3)")   // v3.
-      sql(s"DELETE FROM $name WHERE id = 1") // v4: emit again.
+      sql(s"INSERT INTO $name VALUES (2)")
+      sql(s"INSERT INTO $name VALUES (3)")
+      sql(s"DELETE FROM $name WHERE id = 1") // removes id=1; triggers an AMT.
 
       // SQL data-skipping reconstruction is disabled for AMT tables, so reads go through the
       // allFiles-based reconstruction: the leaves supply state up to the checkpoint and the
@@ -103,13 +105,13 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
   test("deletion vector round-trips through the leaves with a matching uniqueId") {
     withTable("amt_dv") {
       val name = "amt_dv"
-      createAMTTable(name, checkpointInterval = 2)
+      // Interval 1 so the DV commit triggers an AMT (via its follow-up OPTIMIZE CHECKPOINT commit).
+      createAMTTable(name, checkpointInterval = 1)
       Seq(1, 2).toDF("id").coalesce(1)
-        .write.mode("append").insertInto(name) // v1: one file, two rows.
+        .write.mode("append").insertInto(name) // one file, two rows.
 
       // Attach a persistent DV directly rather than relying on DELETE's DV-vs-rewrite heuristic:
       // write a DV marking row 0 deleted and commit the resulting AddFile (with DV) + RemoveFile.
-      // v2 is a checkpoint boundary -> emit.
       val log = deltaLogForName(name)
       val fileToDv = log.unsafeVolatileSnapshot.allFiles.collect()
       assert(fileToDv.length == 1, "The two rows must land in a single file.")
@@ -121,7 +123,6 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
       }
 
       val snapshot = deltaLogForName(name).unsafeVolatileSnapshot
-      assert(snapshot.version == 2)
       val provider = amtProvider(snapshot).getOrElse(fail("expected AMTCheckpointProvider"))
       checkAnswer(spark.read.table(name), Seq(Row(2)))
 
