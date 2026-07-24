@@ -16,13 +16,21 @@
 package io.delta.kernel.defaults.internal.parquet
 
 import java.math.BigDecimal
-import java.util.TimeZone
+import java.nio.file.{Files, Paths}
+import java.util.{Optional, TimeZone}
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 import io.delta.golden.GoldenTableUtils.{goldenTableFile, goldenTablePath}
+import io.delta.kernel.defaults.engine.fileio.{FileIO, InputFile, OutputFile, SeekableInputStream}
+import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
 import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestRow}
+import io.delta.kernel.expressions.Literal.ofLong
+import io.delta.kernel.expressions.Predicate
 import io.delta.kernel.test.VectorTestUtils
 import io.delta.kernel.types._
-import io.delta.kernel.utils.MetadataColumnTestUtils
+import io.delta.kernel.utils.{CloseableIterator, MetadataColumnTestUtils}
+import io.delta.kernel.utils.{FileStatus => KernelFileStatus}
 
 import org.apache.spark.sql.internal.SQLConf
 import org.scalatest.funsuite.AnyFunSuite
@@ -330,6 +338,41 @@ class ParquetFileReaderSuite extends AnyFunSuite
   }
 
   /////////////////////////////////////////////////////////////////////////////////////////////////
+  // Tests for footer reuse: the footer read up-front to build the filter is reused by the reader //
+  // instead of being read (and parsed) a second time.                                            //
+  /////////////////////////////////////////////////////////////////////////////////////////////////
+
+  test("footer is read only once when reading a Parquet file") {
+    // Multiple row groups + a predicate that prunes some of them exercises the full record-read
+    // loop (row-group iteration, stats filtering and row-index tracking) while still needing only
+    // a single footer read.
+    val filePath = getTestResourceFilePath("parquet/row_index_multiple_row_groups.parquet")
+    val readSchema = new StructType()
+      .add("id", LongType.LONG)
+      .add(ROW_INDEX)
+    val fileStatus = KernelFileStatus.of(
+      filePath,
+      Files.size(Paths.get(filePath)),
+      /* modificationTime = */ 0L)
+
+    // Read once with no predicate and once with a predicate that prunes row groups; the footer
+    // should be read exactly once in both cases.
+    Seq[Optional[Predicate]](
+      Optional.empty(),
+      Optional.of(gt(col("id"), ofLong(5000L)))).foreach { predicate =>
+      val fileIO = new FooterReadCountingFileIO(new HadoopFileIO(configuration))
+      val reader = new ParquetFileReader(fileIO)
+      // Drain the iterator (the implicit `forEach` closes it) so all row groups are read.
+      reader.read(fileStatus, readSchema, predicate).forEach(_ => ())
+
+      assert(
+        fileIO.footerReadCount(filePath) === 1,
+        s"Expected the footer to be read exactly once for predicate=$predicate, " +
+          s"but it was read ${fileIO.footerReadCount(filePath)} times")
+    }
+  }
+
+  /////////////////////////////////////////////////////////////////////////////////////////////////
   // Test compatibility with Parquet legacy format files                                         //
   /////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -385,4 +428,69 @@ class ParquetFileReaderSuite extends AnyFunSuite
       readParquetFilesUsingKernel(parquetFilePath, readSchema), /* actual */
       readParquetFilesUsingSpark(parquetFilePath, readSchema) /* expected */ )
   }
+}
+
+/**
+ * A [[FileIO]] that delegates to an underlying [[FileIO]] but counts how many times the Parquet
+ * footer is read for each file. A footer read is detected by a seek to the footer-length index
+ * (`fileLength - 8`), which is where `parquet-mr` starts reading the footer trailer.
+ */
+class FooterReadCountingFileIO(delegate: FileIO) extends FileIO {
+  private val footerReadCounts = new ConcurrentHashMap[String, AtomicInteger]()
+
+  def footerReadCount(path: String): Int =
+    Option(footerReadCounts.get(path)).map(_.get()).getOrElse(0)
+
+  private def recordFooterRead(path: String): Unit = {
+    footerReadCounts.putIfAbsent(path, new AtomicInteger(0))
+    footerReadCounts.get(path).incrementAndGet()
+  }
+
+  override def newInputFile(path: String, fileSize: Long): InputFile = {
+    val delegateInputFile = delegate.newInputFile(path, fileSize)
+    new InputFile {
+      override def length(): Long = delegateInputFile.length()
+
+      override def path(): String = delegateInputFile.path()
+
+      override def newStream(): SeekableInputStream = {
+        val delegateStream = delegateInputFile.newStream()
+        // `fileLength - 8` == fileLength - MAGIC(4) - FOOTER_LENGTH_SIZE(4), the position
+        // parquet-mr seeks to when it reads the footer.
+        val footerIndex = delegateInputFile.length() - 8
+        new SeekableInputStream {
+          override def getPos(): Long = delegateStream.getPos()
+
+          override def seek(newPos: Long): Unit = {
+            if (newPos == footerIndex) {
+              recordFooterRead(path)
+            }
+            delegateStream.seek(newPos)
+          }
+
+          override def readFully(b: Array[Byte], off: Int, len: Int): Unit =
+            delegateStream.readFully(b, off, len)
+
+          override def read(): Int = delegateStream.read()
+
+          override def read(b: Array[Byte], off: Int, len: Int): Int =
+            delegateStream.read(b, off, len)
+
+          override def close(): Unit = delegateStream.close()
+        }
+      }
+    }
+  }
+
+  // All other operations simply delegate.
+  override def listFrom(filePath: String): CloseableIterator[KernelFileStatus] =
+    delegate.listFrom(filePath)
+  override def getFileStatus(path: String): KernelFileStatus = delegate.getFileStatus(path)
+  override def resolvePath(path: String): String = delegate.resolvePath(path)
+  override def mkdirs(path: String): Boolean = delegate.mkdirs(path)
+  override def newOutputFile(path: String): OutputFile = delegate.newOutputFile(path)
+  override def delete(path: String): Boolean = delegate.delete(path)
+  override def getConf(confKey: String): Optional[String] = delegate.getConf(confKey)
+  override def copyFileAtomically(srcPath: String, destPath: String, overwrite: Boolean): Unit =
+    delegate.copyFileAtomically(srcPath, destPath, overwrite)
 }
