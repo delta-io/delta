@@ -296,8 +296,7 @@ public class PartitionUtils {
     } else if (type instanceof LongType) {
       return Literal.ofLong(row.getLong(ordinal));
     } else if (type instanceof TimestampType) {
-      // TODO(#7140): Kernel logs timestamp partition values in plain session-tz form, not V1's
-      // UTC-normalized ISO-8601, so the two engines diverge for timestamp-partitioned tables.
+      // Kernel serializes TIMESTAMP partition values as UTC ISO-8601, matching V1.
       return Literal.ofTimestamp(row.getLong(ordinal));
     } else if (type instanceof TimestampNTZType) {
       return Literal.ofTimestampNtz(row.getLong(ordinal));
