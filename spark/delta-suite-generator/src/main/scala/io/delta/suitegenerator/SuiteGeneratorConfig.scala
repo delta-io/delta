@@ -155,6 +155,7 @@ object SuiteGeneratorConfig {
       "DataSkippingCheckpointV2", List("Json", "Parquet"), alias = Some("CheckpointV2"))
     val CATALOG_OWNED_BATCH = DimensionWithMultipleValues(
       "WithCatalogOwnedBatch", List("1", "2", "100"))
+    val CHANGELOG_V2_CDC = DimensionMixin("ChangelogV2CDCUtil")
   }
 
   private object Tests {
@@ -412,6 +413,41 @@ object SuiteGeneratorConfig {
           )
         )
       )
+    ),
+    TestGroup(
+      packageName = "readcdcv2",
+      imports = List(
+        importer"org.apache.spark.sql.delta._",
+        importer"org.apache.spark.sql.delta.cdc._",
+        importer"org.apache.spark.sql.delta.rowid._",
+        importer"org.apache.spark.sql.delta.rowtracking._"
+      ),
+      testConfigs = List(
+        TestConfig(
+          List("DeleteCDCTests"),
+          List(List(Dims.DELETE_SQL, Dims.NAME_BASED, Dims.ROW_TRACKING_ON, Dims.CHANGELOG_V2_CDC))
+        ),
+        TestConfig(
+          List("MergeCDCTests"),
+          List(List(Dims.MERGE_SQL, Dims.NAME_BASED, Dims.ROW_TRACKING_ON, Dims.CHANGELOG_V2_CDC))
+        ),
+        TestConfig(
+          List("UpdateCDCTests"),
+          List(List(Dims.UPDATE_SQL, Dims.NAME_BASED, Dims.ROW_TRACKING_ON, Dims.CHANGELOG_V2_CDC))
+        ),
+        TestConfig(
+          List("DeleteCDCTableWithDVsTests"),
+          List(List(
+            Dims.DELETE_SQL, Dims.NAME_BASED, Dims.DELETE_WITH_DVS, Dims.ROW_TRACKING_ON,
+            Dims.CHANGELOG_V2_CDC))
+        ),
+        TestConfig(
+          List("UpdateCDCWithDeletionVectorsTests"),
+          List(List(
+            Dims.UPDATE_SQL, Dims.NAME_BASED, Dims.UPDATE_DVS, Dims.ROW_TRACKING_ON,
+            Dims.CHANGELOG_V2_CDC))
+        )
+      )
     )
     // scalastyle:on line.size.limit
   )
@@ -431,12 +467,14 @@ object SuiteGeneratorConfig {
       case "DeleteTempViewTests" => mixins.contains(Dims.DELETE_SCALA.traitName)
       // The following tests only make sense if the dimension is present
       case "MergeCDCTests" | "UpdateCDCTests" | "DeleteCDCTests" =>
-        !mixins.contains(Dims.CDC.traitName)
+        !mixins.contains(Dims.CDC.traitName) &&
+        !mixins.contains(Dims.CHANGELOG_V2_CDC.traitName)
       case "MergeIntoDVsTests" => !mixins.contains(Dims.MERGE_DVS.traitName)
       case "UpdateSQLWithDeletionVectorsTests" =>
         !mixins.contains(Dims.UPDATE_DVS.traitName)
       case "UpdateCDCWithDeletionVectorsTests" =>
-        !List(Dims.UPDATE_DVS, Dims.CDC).map(_.traitName).forall(mixins.contains)
+        !mixins.contains(Dims.UPDATE_DVS.traitName) ||
+        !(mixins.contains(Dims.CDC.traitName) || mixins.contains(Dims.CHANGELOG_V2_CDC.traitName))
       case "RowTrackingDeleteDvBase" => !mixins.contains(Dims.PERSISTENT_DV_ON.traitName)
       case _ => false
     }
