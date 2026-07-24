@@ -50,6 +50,7 @@ public class UpdateTableTransactionBuilderImpl implements UpdateTableTransaction
   private Optional<StructType> updatedSchemaOpt = Optional.empty();
   private Optional<List<Column>> inputLogicalClusteringColumnsOpt = Optional.empty();
   private Optional<Integer> userProvidedMaxRetries = Optional.empty();
+  private Map<String, String> commitTags = Collections.emptyMap();
 
   /** Number of commits between producing a log compaction file. */
   private int logCompactionInterval = 0;
@@ -126,6 +127,12 @@ public class UpdateTableTransactionBuilderImpl implements UpdateTableTransaction
     return this;
   }
 
+  @Override
+  public UpdateTableTransactionBuilder withCommitTags(Map<String, String> tags) {
+    this.commitTags = Collections.unmodifiableMap(requireNonNull(tags, "tags is null"));
+    return this;
+  }
+
   @VisibleForTesting
   public UpdateTableTransactionBuilder withClock(Clock clock) {
     this.clock = requireNonNull(clock, "clock cannot be null");
@@ -166,7 +173,8 @@ public class UpdateTableTransactionBuilderImpl implements UpdateTableTransaction
         txnMetadata.physicalNewClusteringColumns,
         userProvidedMaxRetries,
         logCompactionInterval,
-        clock);
+        clock,
+        commitTags);
   }
 
   private void validateTablePropertiesAddedRemovedNoOverlap() {
