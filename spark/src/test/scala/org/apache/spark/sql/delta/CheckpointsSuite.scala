@@ -45,7 +45,7 @@ import org.apache.hadoop.util.Progressable
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.functions.{col, lit, when}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
@@ -723,6 +723,43 @@ class CheckpointsSuite
     }
   }
 
+  test("non-AMT tables do not persist backReference in checkpoint or commit JSON") {
+    withClassicCheckpointPolicyForCatalogOwned {
+      withTempDir { tempDir =>
+        val tablePath = tempDir.getAbsolutePath
+        spark.range(end = 10).write.format("delta").mode("overwrite").save(tablePath)
+        sql(s"DELETE FROM delta.`$tablePath` WHERE id < 5")
+
+        val deltaLog = DeltaLog.forTable(spark, tablePath)
+        deltaLog.checkpoint()
+        val version = deltaLog.snapshot.version
+
+        // 1. The classic checkpoint parquet must not carry backReference on add or remove.
+        val checkpointFile =
+          FileNames.checkpointFileSingular(deltaLog.logPath, version).toString
+        val checkpointSchema = spark.read.format("parquet").load(checkpointFile).schema
+        val addFields =
+          checkpointSchema("add").dataType.asInstanceOf[StructType].fieldNames.toSeq
+        val removeFields =
+          checkpointSchema("remove").dataType.asInstanceOf[StructType].fieldNames.toSeq
+        assert(!addFields.contains("backReference"),
+          s"checkpoint add struct must not contain backReference, got: $addFields")
+        assert(!removeFields.contains("backReference"),
+          s"checkpoint remove struct must not contain backReference, got: $removeFields")
+
+        // 2. No commit JSON should mention backReference (null fields are omitted from JSON).
+        val commitProvider = DeltaCommitFileProvider(deltaLog.unsafeVolatileSnapshot)
+        val hadoopConf = deltaLog.newDeltaHadoopConf()
+        (0L to version).foreach { v =>
+          val deltaFile = commitProvider.deltaFile(v)
+          val content = deltaLog.store.read(deltaFile, hadoopConf)
+          assert(!content.exists(_.contains("backReference")),
+            s"commit JSON for version $v must not contain backReference: ${content.mkString("\n")}")
+        }
+      }
+    }
+  }
+
   test("checkpoint with DVs") {
     for (v2Checkpoint <- Seq(true, false))
     withTempDir { tempDir =>
@@ -1049,6 +1086,12 @@ class CheckpointsSuite
 
     val actionsToWrite = Checkpoints
       .buildCheckpoint(actionsDS, snapshot)
+      // buildCheckpoint drops backReference from the on-disk add/remove shape so we need to
+      // re-materialize it as a null column before .as[SingleAction].
+      .withColumn("add", when(col("add.path").isNotNull,
+        col("add").withField("backReference", lit(null).cast(BackReference.STRUCT_TYPE))))
+      .withColumn("remove", when(col("remove.path").isNotNull,
+        col("remove").withField("backReference", lit(null).cast(BackReference.STRUCT_TYPE))))
       .as[SingleAction]
       .collect()
       .toSeq
