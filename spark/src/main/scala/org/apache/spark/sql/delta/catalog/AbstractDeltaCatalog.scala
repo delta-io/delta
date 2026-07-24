@@ -123,6 +123,11 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
   override def capabilities(): util.Set[TableCatalogCapability] = {
     val capabilities = new util.HashSet[TableCatalogCapability](super.capabilities())
     capabilities.add(TableCatalogCapability.SUPPORT_COLUMN_DEFAULT_VALUE)
+    // Lets Spark's SQL parser route `CREATE TABLE t (c BIGINT GENERATED ALWAYS AS IDENTITY ...)`
+    // through this catalog (Spark's `IdentityColumn.validateIdentityColumn` otherwise refuses
+    // without this capability). Delta translates Spark's identity column metadata into Delta's
+    // own keys in `createDeltaTable`.
+    capabilities.add(TableCatalogCapability.SUPPORTS_CREATE_TABLE_WITH_IDENTITY_COLUMNS)
     capabilities
   }
 
@@ -158,7 +163,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
    */
   private def createDeltaTable(
       ident: Identifier,
-      schema: StructType,
+      schemaIn: StructType,
       partitions: Array[Transform],
       allTableProperties: util.Map[String, String],
       writeOptions: Map[String, String],
@@ -166,6 +171,10 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       operation: TableCreationModes.CreationMode
     ): Table = recordFrameProfile(
         "DeltaCatalog", "createDeltaTable") {
+    // Translate Spark 4.0+ identity column metadata (`identity.*`) emitted by the SQL DDL parser
+    // into Delta's internal identity metadata keys (`delta.identity.*`). After this step the rest
+    // of the create/replace pipeline can rely on Delta-native metadata throughout.
+    val schema = IdentityColumn.convertSparkIdentityMetadata(schemaIn)
     // `delta.*` properties carried forward from a catalog-managed REPLACE that this Delta version
     // does not recognize arrive tagged with [[AbstractDeltaCatalogClient.CARRY_FORWARD_PREFIX]].
     // Collect them (prefix stripped) and exclude the tagged entries from `tableProperties` -- the
@@ -539,7 +548,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       properties: util.Map[String, String]): Table = {
     createTable(
       ident,
-      org.apache.spark.sql.connector.catalog.CatalogV2Util.v2ColumnsToStructType(columns),
+      IdentityColumn.columnsToStructTypeWithIdentity(columns),
       partitions,
       properties)
   }
@@ -733,6 +742,17 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
 
   override def stageReplace(
       ident: Identifier,
+      columns: Array[org.apache.spark.sql.connector.catalog.Column],
+      partitions: Array[Transform],
+      properties: util.Map[String, String]): StagedTable =
+    stageReplace(
+      ident,
+      IdentityColumn.columnsToStructTypeWithIdentity(columns),
+      partitions,
+      properties)
+
+  override def stageReplace(
+      ident: Identifier,
       schema: StructType,
       partitions: Array[Transform],
       properties: util.Map[String, String]): StagedTable =
@@ -752,6 +772,17 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         BestEffortStagedTable(ident, table, this)
       }
     }
+
+  override def stageCreateOrReplace(
+      ident: Identifier,
+      columns: Array[org.apache.spark.sql.connector.catalog.Column],
+      partitions: Array[Transform],
+      properties: util.Map[String, String]): StagedTable =
+    stageCreateOrReplace(
+      ident,
+      IdentityColumn.columnsToStructTypeWithIdentity(columns),
+      partitions,
+      properties)
 
   override def stageCreateOrReplace(
       ident: Identifier,
@@ -778,6 +809,17 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         BestEffortStagedTable(ident, table, this)
       }
     }
+
+  override def stageCreate(
+      ident: Identifier,
+      columns: Array[org.apache.spark.sql.connector.catalog.Column],
+      partitions: Array[Transform],
+      properties: util.Map[String, String]): StagedTable =
+    stageCreate(
+      ident,
+      IdentityColumn.columnsToStructTypeWithIdentity(columns),
+      partitions,
+      properties)
 
   override def stageCreate(
       ident: Identifier,
