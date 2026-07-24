@@ -37,7 +37,9 @@ import org.apache.spark.sql.catalyst.planning.PhysicalOperation
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.trees.TreePattern.PROJECT
+import org.apache.spark.sql.connector.catalog.TableCapability
 import org.apache.spark.sql.execution.datasources.{FileIndex, LogicalRelation}
+import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.types.StructType
 
 /**
@@ -196,8 +198,9 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
       val isSubquery = isSubqueryRoot(plan)
       // Should not be applied to DataSourceV2 write plans, because they'll be planned later
       // through a V1 fallback and only that later planning takes place within the transaction.
-      val isDataSourceV2 = plan.isInstanceOf[V2WriteCommand]
-      if (isSubquery || isDataSourceV2) {
+      val targetHasV1Fallback = writeWillFallBackToV1(plan)
+
+      if (isSubquery || targetHasV1Fallback) {
         return plan
       }
 
@@ -209,6 +212,29 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
       prepareDeltaScanWithoutFileSkipping(plan)
     }
     updatedPlan
+  }
+
+  /**
+   * Returns true iff `plan` is a [[V2WriteCommand]] that will be re-planned through Spark's
+   * V1 batch write fallback path. For such plans [[PrepareDeltaScan]] is skipped now so that
+   * the V1 fallback planning (which runs inside the OptimisticTransaction) prepares the
+   * scan instead. For V2 write plans that do NOT fall back to V1 (e.g. noop, Iceberg) we
+   * must run [[PrepareDeltaScan]] now, otherwise the TahoeLogFileIndex will never be
+   * replaced with a PreparedDeltaFileIndex and PreprocessTableWithDVs will fail with
+   * "Cannot work with a non-pinned table snapshot".
+   *
+   * V1 fallback is detected via the V1_BATCH_WRITE table capability, which is the same gate
+   * Spark itself uses in DataSourceV2Strategy: a V2 table advertising this capability is
+   * contractually required to return a V1Write from its WriteBuilder and is routed to V1
+   * write nodes (e.g. AppendDataExecV1).
+   */
+  private def writeWillFallBackToV1(plan: LogicalPlan): Boolean = plan match {
+    case v2: V2WriteCommand => v2.table match {
+      case r: DataSourceV2Relation =>
+        r.table.capabilities().contains(TableCapability.V1_BATCH_WRITE)
+      case _ => false
+    }
+    case _ => false
   }
 
   protected def prepareDeltaScanWithoutFileSkipping(plan: LogicalPlan): LogicalPlan = {
