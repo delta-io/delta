@@ -963,6 +963,26 @@ trait DeltaErrorsBase
     )
   }
 
+  /**
+   * Thrown by ALTER TABLE CHANGE COLUMN TYPE when the requested type change is on the supported
+   * [[TypeWidening.isTypeChangeSupported]] allow-list but the type widening table feature is not
+   * enabled on the target table. The message names the exact table property to set so the user
+   * doesn't need to consult the docs to find the remediation.
+   */
+  def alterColumnTypeWideningNotEnabledException(
+      fieldPath: String,
+      fromType: DataType,
+      toType: DataType,
+      tableName: String): Throwable =
+    new DeltaAnalysisException(
+      errorClass = "DELTA_ALTER_COLUMN_TYPE_WIDENING_NOT_ENABLED",
+      messageParameters = Array(
+        fieldPath,
+        fromType.sql,
+        toType.sql,
+        tableName)
+    )
+
   def alterTableReplaceColumnsException(
       oldSchema: StructType,
       newSchema: StructType,

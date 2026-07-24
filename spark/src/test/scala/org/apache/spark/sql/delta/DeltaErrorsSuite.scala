@@ -909,6 +909,26 @@ trait DeltaErrorsSuiteBase
       )
     }
     {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.alterColumnTypeWideningNotEnabledException(
+          fieldPath = "a.b.c",
+          fromType = IntegerType,
+          toType = LongType,
+          tableName = "spark_catalog.default.t")
+      }
+      checkError(
+        e,
+        "DELTA_ALTER_COLUMN_TYPE_WIDENING_NOT_ENABLED",
+        "0AKDC",
+        Map(
+          "fieldPath" -> "a.b.c",
+          "fromType" -> "INT",
+          "toType" -> "BIGINT",
+          "tableName" -> "spark_catalog.default.t"
+        )
+      )
+    }
+    {
       val s1 = StructType(Seq(StructField("c0", IntegerType)))
       val s2 = StructType(Seq(StructField("c0", StringType)))
       val e = intercept[DeltaAnalysisException] {
