@@ -45,6 +45,8 @@ import java.util.stream.Collectors;
 public class PartitionUtils {
   private static final DateTimeFormatter PARTITION_TIMESTAMP_FORMATTER =
       DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
+  private static final DateTimeFormatter PARTITION_TIMESTAMP_UTC_FORMATTER =
+      DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSSSS'Z'").withZone(ZoneOffset.UTC);
 
   private PartitionUtils() {}
 
@@ -445,9 +447,7 @@ public class PartitionUtils {
    */
   private static Optional<Long> tryParseIsoTimestamp(String value) {
     try {
-      Instant instant = Instant.parse(value);
-      long micros = instant.getEpochSecond() * 1_000_000L + instant.getNano() / 1000L;
-      return Optional.of(micros);
+      return Optional.of(TimestampUtils.toEpochMicros(Instant.parse(value)));
     } catch (DateTimeParseException e) {
       return Optional.empty();
     }
@@ -563,18 +563,12 @@ public class PartitionUtils {
     } else if (dataType instanceof DateType) {
       int daysSinceEpochUTC = (int) value;
       return LocalDate.ofEpochDay(daysSinceEpochUTC).toString();
-    } else if (dataType instanceof TimestampType || dataType instanceof TimestampNTZType) {
-      long microsSinceEpochUTC = (long) value;
-      long seconds = microsSinceEpochUTC / 1_000_000;
-      int microsOfSecond = (int) (microsSinceEpochUTC % 1_000_000);
-      if (microsOfSecond < 0) {
-        // also adjust for negative microsSinceEpochUTC
-        microsOfSecond = 1_000_000 + microsOfSecond;
-      }
-      int nanosOfSecond = microsOfSecond * 1_000;
-      LocalDateTime localDateTime =
-          LocalDateTime.ofEpochSecond(seconds, nanosOfSecond, ZoneOffset.UTC);
-      return localDateTime.format(PARTITION_TIMESTAMP_FORMATTER);
+    } else if (dataType instanceof TimestampType) {
+      Instant instant = TimestampUtils.instantFromEpochMicros((long) value);
+      return PARTITION_TIMESTAMP_UTC_FORMATTER.format(instant);
+    } else if (dataType instanceof TimestampNTZType) {
+      Instant instant = TimestampUtils.instantFromEpochMicros((long) value);
+      return PARTITION_TIMESTAMP_FORMATTER.format(LocalDateTime.ofInstant(instant, ZoneOffset.UTC));
     } else if (dataType instanceof DecimalType) {
       return ((BigDecimal) value).toString();
     } else if (dataType instanceof BinaryType) {

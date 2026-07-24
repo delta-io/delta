@@ -213,11 +213,11 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
   }
 
   /**
-   * DSv2 (Kernel) and DSv1 record the same timestamp partition value differently: V1 uses UTC
-   * ISO-8601, Kernel plain session-local form. Timezone is pinned so the strings are deterministic.
+   * DSv2 (Kernel) and DSv1 both record TIMESTAMP partition values as UTC ISO-8601. Timezone is
+   * pinned so the strings are deterministic.
    */
   @Test
-  public void testCommit_partitioned_timestampPartitionValueDivergesFromV1(@TempDir File tempDir)
+  public void testCommit_partitioned_timestampPartitionValueMatchesV1(@TempDir File tempDir)
       throws Exception {
     withSQLConf(
         "spark.sql.session.timeZone",
@@ -249,9 +249,8 @@ public class DeltaV2BatchWriteTest extends DeltaV2TestBase {
           write.commit(
               new WriterCommitMessage[] {writeFile(write, 1, DateTimeUtils.fromJavaTimestamp(ts))});
 
-          // TODO(#7140): once Kernel aligns with V1, assert the two are equal instead.
           assertEquals("2025-06-15T10:30:00.000000Z", loggedPartitionValue(v1Path, "part"));
-          assertEquals("2025-06-15 10:30:00.000000", loggedPartitionValue(v2Path, "part"));
+          assertEquals("2025-06-15T10:30:00.000000Z", loggedPartitionValue(v2Path, "part"));
         });
   }
 
