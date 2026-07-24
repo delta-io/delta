@@ -593,6 +593,18 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   // Response Conversion Methods
   // ===========================
 
+  private static UCDeltaModels.TableType fromSdkTableType(DeltaTableType tableType) {
+    switch (tableType) {
+      case MANAGED:
+      case MANAGED_SHALLOW_CLONE:
+        return UCDeltaModels.TableType.MANAGED;
+      case EXTERNAL:
+        return UCDeltaModels.TableType.EXTERNAL;
+      default:
+        throw new IllegalArgumentException("Unsupported UC Delta table type: " + tableType);
+    }
+  }
+
   private TableInfo toTableInfo(
       DeltaLoadTableResponse response, String catalog, String schema, String name)
       throws IOException {
@@ -608,8 +620,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     if (m.getTableType() == null) {
       throw new IOException("UC returned null table type for table " + name);
     }
-    UCDeltaModels.TableType tableType =
-        UCDeltaModels.TableType.valueOf(m.getTableType().getValue());
+    UCDeltaModels.TableType tableType = fromSdkTableType(m.getTableType());
     AdaptedTableMetadata adapted = new AdaptedTableMetadata(name, m);
     Optional<UniformMetadata> uniformMetadata =
         toStorageUniformMetadata(response.getUniform());
@@ -671,8 +682,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     }
     UUID tableId = r.getTableId();
     String location = r.getLocation();
-    UCDeltaModels.TableType tableType =
-        UCDeltaModels.TableType.valueOf(r.getTableType().getValue());
+    UCDeltaModels.TableType tableType = fromSdkTableType(r.getTableType());
     Map<String, String> storageProps = fetchStagingCredentials(location, tableId.toString());
     return new UCDeltaModels.StagingTableInfo(
         tableId,

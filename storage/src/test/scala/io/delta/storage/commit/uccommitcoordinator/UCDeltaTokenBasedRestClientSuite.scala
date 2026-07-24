@@ -206,6 +206,16 @@ class UCDeltaTokenBasedRestClientSuite
 
   // --------------- loadTable ---------------
 
+  test("loadTable maps MANAGED_SHALLOW_CLONE to MANAGED") {
+    deltaHandler = (exchange, _) => {
+      sendJson(exchange, HttpStatus.SC_OK, loadTableJson(tableType = "MANAGED_SHALLOW_CLONE"))
+    }
+    withClient { c =>
+      val info = c.loadTable(testIdentifier)
+      assert(info.getTableType === UCDeltaModels.TableType.MANAGED)
+    }
+  }
+
   test("loadTable returns TableInfo with catalog identity and Delta metadata") {
     withClient { c =>
       val info = c.loadTable(testIdentifier)
