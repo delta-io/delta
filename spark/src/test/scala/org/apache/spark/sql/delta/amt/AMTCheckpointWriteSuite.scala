@@ -18,11 +18,14 @@ package org.apache.spark.sql.delta.amt
 
 import java.io.File
 
+// scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
-import org.apache.spark.sql.delta.CommitStats
+import org.apache.spark.sql.delta.{CommitStats, CurrentTransactionInfo, DeltaOperations, Snapshot}
 import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
+
+import org.apache.spark.sql.functions.col
 
 class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
 
@@ -110,6 +113,68 @@ class AMTCheckpointWriteSuite extends AMTCheckpointTestBase {
       // Two live AddFiles, one per leaf -> two leaves, one root.
       assert(leafFiles(path).size == 2, s"Expected 2 leaves, got ${leafFiles(path).size}.")
       assert(rootFiles(path).size == 1)
+    }
+  }
+
+  /**
+   * Rewrites the whole manifest tree of `tableName` from scratch (the OPTIMIZE-checkpoint write
+   * path) and returns the write result plus the read snapshot it rewrote.
+   */
+  private def runFullRewrite(tableName: String): (AMTWriteResult, Snapshot) = {
+    val snapshot = deltaLogForName(tableName).update()
+    val manager = new AMTWriterManager(snapshot, DeltaOperations.OptimizeCheckpoint(
+      incremental = false, triggerName = AMTTriggerMode.CheckpointIntervalFull.name))
+    val txnInfo = new CurrentTransactionInfo(
+      txnId = "txn",
+      readPredicates = Vector.empty,
+      readFiles = Set.empty,
+      readWholeTable = false,
+      readAppIds = Set.empty,
+      metadata = snapshot.metadata,
+      protocol = snapshot.protocol,
+      actions = Seq.empty,
+      readSnapshot = snapshot,
+      commitInfo = None,
+      readRowIdHighWatermark = 0L,
+      catalogTable = None,
+      domainMetadata = Seq.empty,
+      op = DeltaOperations.OptimizeCheckpoint(
+        incremental = false, triggerName = AMTTriggerMode.CheckpointIntervalFull.name))
+    val result = manager.writeAMT(
+      commitVersion = snapshot.version + 1,
+      currentTransactionInfo = txnInfo,
+      preCommitLogSegment = snapshot.logSegment)
+    assert(result.isDefined, "A full rewrite must emit a manifest tree.")
+    (result.get, snapshot)
+  }
+
+  test("full rewrite reconstructs identical table state") {
+    withTable("amt_full_rewrite") {
+      val name = "amt_full_rewrite"
+      createAMTTable(name, checkpointInterval = 100) // Interval far away: no incremental emission.
+      sql(s"INSERT INTO $name VALUES (1)") // v1
+      sql(s"INSERT INTO $name VALUES (2)") // v2
+      sql(s"INSERT INTO $name VALUES (3)") // v3 -- 3 live files.
+
+      // Small leaf size so the rewrite splits the files across multiple leaves.
+      withSQLConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "2") {
+        val (result, snapshot) = runFullRewrite(name)
+        val before = snapshot.allFiles.collect().map(_.path).toSet
+
+        // One root, at least one leaf, and the rewritten tree reconstructs the same file set.
+        val provider =
+          AMTCheckpointProvider.fromCheckpoint(spark, deltaLogForName(name), result.checkpoint)
+        assert(rootFiles(tablePath(name)).size == 1)
+        assert(provider.leaves.nonEmpty)
+        val reconstructed = provider
+          .loadActionsForStateReconstruction(spark, deltaLogForName(name)).get
+          .where(col("add").isNotNull)
+          .select("add.path")
+          .collect()
+          .map(_.getString(0))
+          .toSet
+        assert(reconstructed == before, s"File set changed: before=$before after=$reconstructed")
+      }
     }
   }
 
