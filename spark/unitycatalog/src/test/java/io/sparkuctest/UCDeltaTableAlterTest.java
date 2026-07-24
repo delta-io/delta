@@ -95,6 +95,119 @@ public class UCDeltaTableAlterTest extends UCDeltaTableIntegrationBaseTest {
         });
   }
 
+  // Lock a table down via ALTER SET so further row-removing mutations (DELETE / UPDATE) are
+  // rejected, while INSERT (append) keeps working. The typical flow is "the table is finalized,
+  // lock it"; nobody sets appendOnly at CREATE-time. Verifies that the prop sticks (in UC
+  // metadata + SHOW TBLPROPERTIES) and that Delta enforces it on both a DELETE and an UPDATE,
+  // since both rewrite rows the contract forbids.
+  @Test
+  public void testAlterTableEnableAppendOnlyLocksOutMutations() throws Exception {
+    withNewTable(
+        "alter_enable_append_only_test",
+        "id INT, name STRING",
+        TableType.MANAGED,
+        tableName -> {
+          sql("INSERT INTO %s VALUES (1, 'a')", tableName);
+
+          sql("ALTER TABLE %s SET TBLPROPERTIES ('delta.appendOnly' = 'true')", tableName);
+
+          assertEquals("true", tableProperty(tableName, "delta.appendOnly"));
+          assertEquals(
+              "true",
+              loadTableViaDeltaRest(tableName)
+                  .getMetadata()
+                  .getProperties()
+                  .get("delta.appendOnly"));
+
+          // INSERT still allowed -- appendOnly only blocks operations that remove or rewrite
+          // existing rows.
+          sql("INSERT INTO %s VALUES (2, 'b')", tableName);
+          check(
+              sql("SELECT id, name FROM %s ORDER BY id", tableName),
+              List.of(row("1", "a"), row("2", "b")));
+
+          List<String> appendOnlyErrors =
+              List.of("appendOnly", "append-only", "DELTA_CANNOT_MODIFY_APPEND_ONLY");
+          assertThrowsWithCauseContainingAny(
+              appendOnlyErrors, () -> sql("DELETE FROM %s WHERE id = 1", tableName));
+          assertThrowsWithCauseContainingAny(
+              appendOnlyErrors, () -> sql("UPDATE %s SET name = 'x' WHERE id = 1", tableName));
+        });
+  }
+
+  // VACUUM retention tuning: operators adjust these two durations to balance storage costs
+  // against the time-travel / history-debugging window. Both are string-encoded intervals that
+  // should round-trip through UC's metadata unchanged. The SET path is the entire contract
+  // here -- Delta's enforcement at VACUUM time is covered by Delta's own suite.
+  @Test
+  public void testAlterTableSetVacuumRetentionDurationsUpdatesUcDeltaMetadata() throws Exception {
+    withNewTable(
+        "alter_set_retention_durations_test",
+        "id INT, name STRING",
+        TableType.MANAGED,
+        tableName -> {
+          sql(
+              "ALTER TABLE %s SET TBLPROPERTIES ("
+                  + "'delta.logRetentionDuration' = 'interval 14 days', "
+                  + "'delta.deletedFileRetentionDuration' = 'interval 2 days')",
+              tableName);
+
+          assertEquals("interval 14 days", tableProperty(tableName, "delta.logRetentionDuration"));
+          assertEquals(
+              "interval 2 days", tableProperty(tableName, "delta.deletedFileRetentionDuration"));
+
+          Map<String, String> properties =
+              loadTableViaDeltaRest(tableName).getMetadata().getProperties();
+          assertEquals("interval 14 days", properties.get("delta.logRetentionDuration"));
+          assertEquals("interval 2 days", properties.get("delta.deletedFileRetentionDuration"));
+
+          sql(
+              "ALTER TABLE %s UNSET TBLPROPERTIES ("
+                  + "'delta.logRetentionDuration', 'delta.deletedFileRetentionDuration')",
+              tableName);
+
+          assertNull(tableProperty(tableName, "delta.logRetentionDuration"));
+          assertNull(tableProperty(tableName, "delta.deletedFileRetentionDuration"));
+
+          properties = loadTableViaDeltaRest(tableName).getMetadata().getProperties();
+          assertFalse(properties.containsKey("delta.logRetentionDuration"));
+          assertFalse(properties.containsKey("delta.deletedFileRetentionDuration"));
+        });
+  }
+
+  // Pin current behaviour of ALTER TABLE SET ('delta.enableTypeWidening' = 'true') on a managed
+  // CCv2 Delta table: the SET succeeds, the prop appears in UC metadata, the writer feature
+  // lands in the protocol, and a subsequent ALTER COLUMN ... TYPE widens for real with the new
+  // value round-tripping. If a future change either no-ops this SET or rejects it, every
+  // assertion below flips and forces a review.
+  @Test
+  public void testAlterTableEnableTypeWideningOnManagedCcv2PinsCurrentBehavior() throws Exception {
+    withNewTable(
+        "alter_enable_type_widening_test",
+        "id INT, name STRING",
+        TableType.MANAGED,
+        tableName -> {
+          sql("ALTER TABLE %s SET TBLPROPERTIES ('delta.enableTypeWidening' = 'true')", tableName);
+
+          assertEquals("true", tableProperty(tableName, "delta.enableTypeWidening"));
+          Map<String, String> properties =
+              loadTableViaDeltaRest(tableName).getMetadata().getProperties();
+          assertEquals("true", properties.get("delta.enableTypeWidening"));
+          assertEquals("supported", properties.get("delta.feature.typeWidening"));
+
+          // Confirm the enablement is not a no-op: a subsequent widening ALTER actually works
+          // and a value that overflows INT round-trips. 9223372036854775807 is Long.MAX_VALUE;
+          // it can only be stored once the column has been widened to BIGINT, so a successful
+          // INSERT + SELECT here is direct evidence that the widening took effect.
+          sql("INSERT INTO %s VALUES (1, 'a')", tableName);
+          sql("ALTER TABLE %s ALTER COLUMN id TYPE BIGINT", tableName);
+          sql("INSERT INTO %s VALUES (9223372036854775807, 'b')", tableName);
+          check(
+              sql("SELECT id, name FROM %s ORDER BY id", tableName),
+              List.of(row("1", "a"), row("9223372036854775807", "b")));
+        });
+  }
+
   @Test
   public void testAlterTableProtocolDerivedPropertiesNoOpButCommit() throws Exception {
     withNewTable(
