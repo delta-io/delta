@@ -18,10 +18,14 @@ package io.delta.kernel;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.clustering.ClusteringColumnInfo;
+import io.delta.kernel.commit.Committer;
 import io.delta.kernel.commit.PublishFailedException;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
 import io.delta.kernel.exceptions.KernelException;
+import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.statistics.SnapshotStatistics;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
@@ -119,6 +123,95 @@ public interface Snapshot {
 
   /** @return statistics about this snapshot */
   SnapshotStatistics getStatistics();
+
+  /**
+   * Returns the table protocol at this snapshot.
+   *
+   * <p>The default implementation throws {@link UnsupportedOperationException}; {@link
+   * io.delta.kernel.internal.SnapshotImpl} overrides it.
+   *
+   * @return the {@link Protocol} for this snapshot
+   * @since 4.4.0
+   */
+  // TODO: expose a public protocol type; Protocol is currently an internal type.
+  default Protocol getProtocol() {
+    throw new UnsupportedOperationException("getProtocol() is not implemented for this Snapshot");
+  }
+
+  /**
+   * Returns the table metadata at this snapshot.
+   *
+   * <p>The default implementation throws {@link UnsupportedOperationException}; {@link
+   * io.delta.kernel.internal.SnapshotImpl} overrides it.
+   *
+   * @return the {@link Metadata} for this snapshot
+   * @since 4.4.0
+   */
+  // TODO: expose a public metadata type; Metadata is currently an internal type.
+  default Metadata getMetadata() {
+    throw new UnsupportedOperationException("getMetadata() is not implemented for this Snapshot");
+  }
+
+  /**
+   * Returns the {@link Committer} used to commit transactions against this snapshot's table.
+   *
+   * <p>The default implementation throws {@link UnsupportedOperationException}; {@link
+   * io.delta.kernel.internal.SnapshotImpl} overrides it.
+   *
+   * @return the committer for this snapshot
+   * @since 4.4.0
+   */
+  default Committer getCommitter() {
+    throw new UnsupportedOperationException("getCommitter() is not implemented for this Snapshot");
+  }
+
+  /**
+   * Returns the table data path as a {@link Path}.
+   *
+   * <p>The default implementation wraps {@link #getPath()} in a {@link Path}. {@link
+   * io.delta.kernel.internal.SnapshotImpl} overrides it to return the path used to load the
+   * snapshot (the same value {@link #getPath()} stringifies).
+   *
+   * @return the table data path
+   * @since 4.4.0
+   */
+  // TODO: expose a public path type; Path is currently an internal type.
+  default Path getDataPath() {
+    return new Path(getPath());
+  }
+
+  /**
+   * Returns the path to this table's {@code _delta_log} directory.
+   *
+   * <p>The default implementation returns {@code new Path(getDataPath(), "_delta_log")}; {@link
+   * io.delta.kernel.internal.SnapshotImpl} overrides it to return the path used to load the
+   * snapshot.
+   *
+   * @return the {@code _delta_log} path
+   * @since 4.4.0
+   */
+  // TODO: expose a public path type; Path is currently an internal type.
+  default Path getLogPath() {
+    return new Path(getDataPath(), "_delta_log");
+  }
+
+  /**
+   * Returns the latest transaction version recorded in the Delta log for the given application id,
+   * or empty if none exists.
+   *
+   * <p>The default implementation returns {@link Optional#empty()}; {@link
+   * io.delta.kernel.internal.SnapshotImpl} overrides it to read transaction identifiers from the
+   * log.
+   *
+   * @param engine the engine to use for IO operations
+   * @param applicationId identifier of the application that wrote transaction identifiers into the
+   *     Delta log
+   * @return the last transaction version for {@code applicationId}, or empty if none
+   * @since 4.4.0
+   */
+  default Optional<Long> getLatestTransactionVersion(Engine engine, String applicationId) {
+    return Optional.empty();
+  }
 
   /**
    * Get per-clustering-column descriptors with the physical column reference (as stored in the
