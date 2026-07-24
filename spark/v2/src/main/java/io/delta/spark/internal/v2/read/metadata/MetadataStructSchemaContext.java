@@ -23,6 +23,7 @@ import java.util.Optional;
 import org.apache.spark.sql.delta.DeltaParquetFileFormatBase;
 import org.apache.spark.sql.delta.RowCommitVersion$;
 import org.apache.spark.sql.delta.RowId$;
+import org.apache.spark.sql.catalyst.expressions.MetadataStructFieldWithLogicalName$;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat;
@@ -65,6 +66,21 @@ import scala.collection.immutable.Seq;
  */
 public class MetadataStructSchemaContext implements Serializable {
 
+  /**
+   * The canonical *logical* name of the file-source metadata struct ({@code _metadata}).
+   *
+   * <p>Do NOT use this to find the metadata struct in a read schema by physical field name (e.g.
+   * {@code METADATA_COLUMN_NAME.equals(field.name())}). When a user column named {@code _metadata}
+   * collides with the struct, the struct is physically renamed by prepending underscores until
+   * unique (e.g. {@code __metadata}, or further) while keeping this logical name in its field
+   * metadata, so a physical-name match silently misses it.
+   * Use {@link #isFileSourceMetadataStruct(StructField)} for identification instead.
+   *
+   * <p>It is safe to use directly only as the logical-name constant itself: comparing against a
+   * logical name recovered from field metadata (as {@code isFileSourceMetadataStruct} does), or
+   * when producing / requesting the struct by its canonical name (the struct's physical name equals
+   * this whenever there is no collision).
+   */
   private static final String METADATA_COLUMN_NAME = FileFormat$.MODULE$.METADATA_NAME();
   private static final String ROW_ID_FIELD_NAME = RowId$.MODULE$.ROW_ID();
   private static final String ROW_COMMIT_VERSION_FIELD_NAME =
@@ -114,17 +130,20 @@ public class MetadataStructSchemaContext implements Serializable {
       Metadata tableMetadata) {
     StructField metadataColumn =
         Arrays.stream(readDataSchema.fields())
-            .filter(field -> METADATA_COLUMN_NAME.equals(field.name()))
+            .filter(MetadataStructSchemaContext::isFileSourceMetadataStruct)
             .findFirst()
             .orElse(null);
     if (metadataColumn == null || !(metadataColumn.dataType() instanceof StructType)) {
       return Optional.empty();
     }
     StructType prunedMetadata = (StructType) metadataColumn.dataType();
+    // Exclude the metadata struct from the base schema by its actual physical name, not the logical
+    // `_metadata`: on a collision the struct is renamed (e.g. `__metadata`) and a user column keeps
+    // the physical `_metadata`, so filtering by the logical name would drop the user's column.
     StructType baseSchema =
         new StructType(
             Arrays.stream(readDataSchema.fields())
-                .filter(f -> !METADATA_COLUMN_NAME.equals(f.name()))
+                .filter(f -> !metadataColumn.name().equals(f.name()))
                 .toArray(StructField[]::new));
     return Optional.of(
         new MetadataStructSchemaContext(
@@ -268,6 +287,23 @@ public class MetadataStructSchemaContext implements Serializable {
 
   private static boolean containsField(StructType struct, String name) {
     return Arrays.stream(struct.fields()).anyMatch(field -> name.equals(field.name()));
+  }
+
+  /**
+   * True if {@code field} is the file-source metadata struct (logical name {@code _metadata}),
+   * matched by its Spark metadata-column marker so it is recognized even when renamed to avoid a
+   * collision with a user column of the same name. On collision the physical name gains a leading
+   * underscore repeatedly until it is unique (e.g. {@code __metadata}, or {@code ___metadata} if a
+   * user column {@code __metadata} also exists); the logical name stays {@code _metadata}.
+   *
+   * <p>This is the single identification point for the metadata struct in the DSv2 read path. New
+   * read-path sites that need to locate the struct must call this rather than matching on the
+   * physical field name (see {@link #METADATA_COLUMN_NAME}).
+   */
+  public static boolean isFileSourceMetadataStruct(StructField field) {
+    scala.Option<scala.Tuple2<StructField, String>> matched =
+        MetadataStructFieldWithLogicalName$.MODULE$.unapply(field);
+    return matched.isDefined() && METADATA_COLUMN_NAME.equals(matched.get()._2());
   }
 
   private static Seq<Object> buildRangeOrdinals(int startInclusive, int endExclusive) {

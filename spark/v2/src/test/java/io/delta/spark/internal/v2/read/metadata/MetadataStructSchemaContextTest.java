@@ -15,6 +15,8 @@
  */
 package io.delta.spark.internal.v2.read.metadata;
 
+import static io.delta.spark.internal.v2.read.metadata.MetadataColumnTestUtils.metadataColumnStructField;
+import static io.delta.spark.internal.v2.read.metadata.MetadataColumnTestUtils.renamedMetadataColumnStructField;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -147,6 +149,26 @@ public class MetadataStructSchemaContextTest {
         "Error message should reference row-tracking fallback");
   }
 
+  @Test
+  public void testCollisionRenamedMetadataStructIdentifiedByMarker() {
+    // Metadata struct renamed to physical `__metadata` (logical name still `_metadata`), colliding
+    // with a user `_metadata` column. The struct must be found by marker, not physical name.
+    StructType metadataStruct =
+        new StructType().add(FileFormat$.MODULE$.FILE_PATH(), DataTypes.StringType, true);
+    StructType readSchema =
+        new StructType()
+            .add("id", DataTypes.LongType, false)
+            .add("_metadata", DataTypes.StringType, true)
+            .add(renamedMetadataColumnStructField("__metadata", metadataStruct));
+
+    MetadataStructSchemaContext ctx = forSchema(readSchema, EMPTY_PARTITION_SCHEMA);
+
+    assertArrayEquals(
+        new String[] {FileFormat$.MODULE$.FILE_PATH()}, ctx.getPrunedMetadataStruct().fieldNames());
+    // The renamed struct is excluded from the base schema by physical name; user `_metadata` stays.
+    assertArrayEquals(new String[] {"id", "_metadata"}, ctx.getDataSchema().fieldNames());
+  }
+
   // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
@@ -172,7 +194,7 @@ public class MetadataStructSchemaContextTest {
                   : DataTypes.LongType,
               true);
     }
-    return BASE_TABLE_SCHEMA.add(FileFormat$.MODULE$.METADATA_NAME(), metadataSchema, false);
+    return BASE_TABLE_SCHEMA.add(metadataColumnStructField(metadataSchema));
   }
 
   private static List<Integer> toJavaOrdinals(Seq<Object> ordinals) {

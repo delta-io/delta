@@ -68,6 +68,7 @@ object DeltaV2SourceSuite {
     "can consume new data without update",
     "Delta sources don't write offsets with null json",
     "reading from partitioned table succeeds during restart",
+    "__metadata is reachable when a user _metadata column collides",
 
     // === Schema Evolution ===
     "add column: restarting with new DataFrame should recover",
