@@ -63,6 +63,7 @@ public class MetadataStructReadFunction
     return new MetadataStructReadFunction(baseReadFunc, metadataContext);
   }
 
+
   @Override
   public Iterator<InternalRow> apply(PartitionedFile file) {
     BoundMetadataValueSetter[] bound =

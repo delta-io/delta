@@ -34,6 +34,8 @@ import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorReadFunction
 import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorSchemaContext;
 import io.delta.spark.internal.v2.read.metadata.MetadataStructReadFunction;
 import io.delta.spark.internal.v2.read.metadata.MetadataStructSchemaContext;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.time.ZoneId;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -202,6 +204,20 @@ public class PartitionUtils {
     return new GenericInternalRow(values);
   }
 
+  // Resolve a Delta-log-stored relative path against the table root without re-encoding.
+  // V1 uses the same idiom (see TahoeFileIndex.absolutePath): wrap the child in
+  // `new URI(child)` so the URI ctor accepts the already-encoded form verbatim, then
+  // resolve against the table root.
+  public static Path resolveTableRelativePath(String tablePath, String relativeOrAbsolute) {
+    try {
+      Path child = new Path(new URI(relativeOrAbsolute));
+      return child.isAbsolute() ? child : new Path(new Path(tablePath), child);
+    } catch (URISyntaxException e) {
+      throw new IllegalArgumentException(
+          "Could not parse Delta-log file path as URI: " + relativeOrAbsolute, e);
+    }
+  }
+
   /**
    * Build the typed Kernel {@link Literal} map (logical column name -> value) for the partition
    * columns of {@code row}, as required by {@code Transaction.getWriteContext}. Insertion order
@@ -344,7 +360,7 @@ public class PartitionUtils {
             buildDvMetadataScala(addFile.getDeletionVector()),
             buildRowTrackingMetadata(addFile.getBaseRowId(), addFile.getDefaultRowCommitVersion()));
     return makePartitionedFile(
-        new Path(tablePath, addFile.getPath()).toString(),
+        resolveTableRelativePath(tablePath, addFile.getPath()),
         addFile.getSize(),
         addFile.getModificationTime(),
         getPartitionRow(addFile.getPartitionValues(), partitionSchema, zoneId),
@@ -396,7 +412,7 @@ public class PartitionUtils {
             ? cdcFile.getAddFile().getModificationTime()
             : cdcFile.getCommitTimestamp();
     return makePartitionedFile(
-        new Path(tablePath, cdcFile.getPath()).toString(),
+        resolveTableRelativePath(tablePath, cdcFile.getPath()),
         cdcFile.getFileSize(),
         modificationTime,
         partitionRow,
@@ -404,14 +420,14 @@ public class PartitionUtils {
   }
 
   private static PartitionedFile makePartitionedFile(
-      String path,
+      Path path,
       long size,
       long modificationTime,
       InternalRow partitionRow,
       scala.collection.immutable.Map<String, Object> metadata) {
     return new PartitionedFile(
         partitionRow,
-        SparkPath.fromUrlString(path),
+        SparkPath.fromPath(path),
         /* start= */ 0L,
         /* length= */ size,
         /* preferredLocations= */ new String[0],
