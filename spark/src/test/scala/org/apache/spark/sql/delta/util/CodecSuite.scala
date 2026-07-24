@@ -104,6 +104,13 @@ class CodecSuite extends SparkFunSuite {
   }
   // scalastyle:on nonascii
 
+  test("Reject illegal Z85 input - out-of-range block") {
+    val ex = intercept[IllegalArgumentException] {
+      Codec.Base85Codec.decodeAlignedBytes("#####")
+    }
+    assert(ex.getMessage.contains("Input is not valid Z85"))
+  }
+
   test("base85 codec uuid roundtrips") {
     for ((id, _) <- testUuids) {
       val encodedString = Codec.Base85Codec.encodeUUID(id)
