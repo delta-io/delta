@@ -133,21 +133,39 @@ class AMTWriterManager(
   private def shouldDoInlineIncrementalCheckpoint(actionsToCommit: Seq[Action]): Boolean =
     actionsToCommit.size.toLong >= largeCommitActionsCountThresholdForInlineManifestCommit
 
-  // Materializes the manifest tree for this commit and records its metrics.
+  // Materializes the manifest tree for this commit and records its metrics. An incremental rewrite
+  // packs the post-commit live files into leaves in input order on the driver; a full rewrite
+  // clusters the read snapshot's live files and flushes them into leaves distributed across
+  // executors.
   private def materialize(
       commitVersion: Long,
       currentTransactionInfo: CurrentTransactionInfo,
       incremental: Boolean,
       trigger: String): AMTWriteResult = {
-    val (result, singleMetric) = AMTWriteHelper.writeFullMaterialization(
-      spark = spark,
-      readSnapshot = readSnapshot,
-      commitVersion = commitVersion,
-      actionsToCommit = currentTransactionInfo.actions,
-      postCommitProtocol = currentTransactionInfo.protocol,
-      postCommitMetadata = currentTransactionInfo.metadata,
-      trigger = trigger,
-      incremental = incremental)
+    val (result, singleMetric) =
+      if (incremental) {
+        AMTWriteHelper.writeIncrementalMaterialization(
+          spark = spark,
+          readSnapshot = readSnapshot,
+          commitVersion = commitVersion,
+          actionsToCommit = currentTransactionInfo.actions,
+          postCommitProtocol = currentTransactionInfo.protocol,
+          postCommitMetadata = currentTransactionInfo.metadata,
+          trigger = trigger,
+          incremental = incremental)
+      } else {
+        // A full rewrite re-materializes the whole live file set; the commit carries no actions.
+        assert(currentTransactionInfo.actions.isEmpty,
+          "A full AMT rewrite must carry no actions, got " +
+            s"${currentTransactionInfo.actions.size}.")
+        AMTWriteHelper.writeFullMaterialization(
+          spark = spark,
+          readSnapshot = readSnapshot,
+          commitVersion = commitVersion,
+          postCommitProtocol = currentTransactionInfo.protocol,
+          postCommitMetadata = currentTransactionInfo.metadata,
+          trigger = trigger)
+      }
     metrics.attempts :+= singleMetric
     result
   }
