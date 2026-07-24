@@ -33,6 +33,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.{FileSizeHistogram, FileSizeHistogramUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.internal.MDC
@@ -50,6 +51,9 @@ trait TransactionHelper extends DeltaLogging {
 
   /** The path to the Delta log directory. */
   def logPath: Path
+
+  /** The Hadoop [[Configuration]] used to access the Delta log. */
+  def newDeltaHadoopConf(): Configuration = deltaLog.newDeltaHadoopConf()
 
   def catalogTable: Option[CatalogTable]
   def snapshot: Snapshot
