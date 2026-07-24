@@ -16,21 +16,40 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CurrentTransactionInfo, DeltaErrors, DeltaLog, DeltaOperations, LogSegment, Snapshot}
-import org.apache.spark.sql.delta.actions.{Action, Checkpoint, Metadata, Protocol}
+import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CurrentTransactionInfo, DeltaErrors, DeltaLog, DeltaOperations, LogSegment, MaintenanceOperation, Snapshot}
+import org.apache.spark.sql.delta.actions.{Action, Checkpoint}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.SparkSession
 
-/** What made an AMT write happen. */
-sealed abstract class AmtTrigger(val name: String) {
+/**
+ * Describes a trigger for AMT.
+ *
+ * @param name          stable string recorded in metrics.
+ * @param isIncremental whether the manifest tree is rebuilt incrementally (true) or fully
+ *                      re-materialized from the live file set (false).
+ */
+sealed abstract class AMTTriggerMode(
+    val name: String,
+    val isIncremental: Boolean) {
   override def toString: String = name
 }
 
-object AmtTrigger {
-  /** An OPTIMIZE checkpoint forced a full manifest-tree rewrite. */
-  case object OptimizeCheckpoint extends AmtTrigger("OPTIMIZE_CHECKPOINT")
-  /** Commits since the last AMT reached the table's checkpoint interval. */
-  case object CheckpointInterval extends AmtTrigger("CHECKPOINT_INTERVAL")
+object AMTTriggerMode {
+  /** Commits since the last AMT reached the checkpoint interval: incremental follow-up rewrite. */
+  case object CheckpointIntervalIncremental extends AMTTriggerMode(
+      name = "CHECKPOINT_INTERVAL_INCREMENTAL",
+      isIncremental = true)
+
+  /** Commits since the last full AMT reached the full checkpoint interval: full rewrite. */
+  case object CheckpointIntervalFull extends AMTTriggerMode(
+    name = "CHECKPOINT_INTERVAL_FULL",
+    isIncremental = false)
+
+  /** A large business commit writes its AMT inline: incremental inline rewrite. */
+  case object InlineWithLargeCommitIncremental extends AMTTriggerMode(
+    name = "INLINE_WITH_LARGE_COMMIT_INCREMENTAL",
+    isIncremental = true)
 }
 
 /** Metrics describing an AMT (Adaptive Metadata Tree) write, one entry per attempt. */
@@ -68,7 +87,6 @@ class AMTWriterManager(
   private def deltaLog: DeltaLog = readSnapshot.deltaLog
 
   val metrics = AMTWriteMetrics()
-
   private var lastAMTWriteResultOpt: Option[AMTWriteResult] = None
 
   /**
@@ -88,29 +106,106 @@ class AMTWriterManager(
       throw DeltaErrors.concurrentWriteException(conflictingCommit = None)
     }
     val actionsToCommit = currentTransactionInfo.actions
-    val resultOpt = getAMTTriggerMode(
-      commitVersion, actionsToCommit, preCommitLogSegment, currentTransactionInfo.metadata)
-      .map {
-        case AmtTrigger.OptimizeCheckpoint =>
-          // An OPTIMIZE checkpoint only rewrites the manifest tree; it commits no user actions.
-          assert(actionsToCommit.isEmpty,
-            s"OPTIMIZE checkpoint commit must carry no actions, got ${actionsToCommit.size}.")
-          throw new UnsupportedOperationException(
-            "Full AMT rewrite for OPTIMIZE checkpoints is not yet supported.")
-        case trigger =>
-          val (result, singleMetric) = AMTWriteHelper.writeFullMaterialization(
-            spark = spark,
-            readSnapshot = readSnapshot,
-            commitVersion = commitVersion,
-            actionsToCommit = actionsToCommit,
-            postCommitProtocol = currentTransactionInfo.protocol,
-            postCommitMetadata = currentTransactionInfo.metadata,
-            trigger = trigger)
-          metrics.attempts :+= singleMetric
-          result
-      }
+    val resultOpt = initialOperation match {
+      case optimize: DeltaOperations.OptimizeCheckpoint =>
+        assert(actionsToCommit.isEmpty,
+          s"OPTIMIZE checkpoint commit must carry no actions, got ${actionsToCommit.size}.")
+        Some(materialize(
+          commitVersion, currentTransactionInfo,
+          incremental = optimize.incremental, trigger = optimize.triggerName))
+      case _ if shouldDoInlineIncrementalCheckpoint(actionsToCommit) =>
+        // A large business commit rebuilds its manifest tree inline (incrementally).
+        val mode = AMTTriggerMode.InlineWithLargeCommitIncremental
+        Some(materialize(
+          commitVersion, currentTransactionInfo,
+          incremental = mode.isIncremental, trigger = mode.name))
+      case _ =>
+        None
+    }
     lastAMTWriteResultOpt = resultOpt
     resultOpt
+  }
+
+  /**
+   * Whether this business commit is large enough (by action count) to write its
+   * changed actions as part of new AMT.
+   */
+  private def shouldDoInlineIncrementalCheckpoint(actionsToCommit: Seq[Action]): Boolean =
+    actionsToCommit.size.toLong >= largeCommitActionsCountThresholdForInlineManifestCommit
+
+  // Materializes the manifest tree for this commit and records its metrics.
+  private def materialize(
+      commitVersion: Long,
+      currentTransactionInfo: CurrentTransactionInfo,
+      incremental: Boolean,
+      trigger: String): AMTWriteResult = {
+    val (result, singleMetric) = AMTWriteHelper.writeFullMaterialization(
+      spark = spark,
+      readSnapshot = readSnapshot,
+      commitVersion = commitVersion,
+      actionsToCommit = currentTransactionInfo.actions,
+      postCommitProtocol = currentTransactionInfo.protocol,
+      postCommitMetadata = currentTransactionInfo.metadata,
+      trigger = trigger,
+      incremental = incremental)
+    metrics.attempts :+= singleMetric
+    result
+  }
+
+  /**
+   * The maintenance work a committed transaction should schedule for after it commits.
+   * The maintenance work will be done by CheckpointHook
+   */
+  def planMaintenance(
+      commitVersion: Long,
+      postCommitSnapshot: Snapshot): MaintenanceOperation = {
+    // if the commit itself was to do a checkpoint, don't schedule any maintenance as part
+    // of its post-commit hook.
+    if (!amtEnabled(commitVersion)
+        || initialOperation.isInstanceOf[DeltaOperations.OptimizeCheckpoint]) {
+      return MaintenanceOperation()
+    }
+
+
+    val amtTriggerModeOpt = followUpTriggerMode(commitVersion, postCommitSnapshot)
+    MaintenanceOperation(
+      shouldCheckpoint = amtTriggerModeOpt.isDefined,
+      amtTriggerModeOpt = amtTriggerModeOpt)
+  }
+
+  /** [[AMTTriggerMode]] for a followup AMT Checkpoint commit if any. */
+  private def followUpTriggerMode(
+      commitVersion: Long,
+      postCommitSnapshot: Snapshot): Option[AMTTriggerMode] = {
+    val checkpointInterval = deltaLog.checkpointInterval(postCommitSnapshot.metadata)
+    // -- case-1 --
+    // Assume v0 has an AMT. This is to make sure future AMTs land on even boundaries
+    // e.g. 10/20/30 instead of 9/19/29 (as classic checkpoints do).
+    val lastCheckpointVersion = postCommitSnapshot.logSegment.checkpointProvider.version
+    val lastAMTVersion = math.max(0L, lastCheckpointVersion)
+    val versionDiff = commitVersion - lastAMTVersion
+    // Emit only on the exact interval boundary (versionDiff a positive multiple of the interval),
+    // not >= the interval. This is what CheckpointTrigger does: if v10's follow-up AMT has not
+    // landed yet, a racing v11 still sees lastAMTVersion == 0, but 11 % 10 != 0 so it does not
+    // re-trigger; only v10, v20, ... do.
+    if (versionDiff > 0 && versionDiff % checkpointInterval == 0) {
+      // If checkpointInterval is 200 and fullRewriteCheckpointIntervalMultiplier is 5
+      // Then if 10220 is full tree, then 10420, 10620, 10820, 11020 will be incremental
+      // and then 11220 will be full tree again.
+      val fullRewriteSpan = checkpointInterval.toLong * fullRewriteCheckpointIntervalMultiplier
+      val needsFullRewrite = AMTWriteHelper.previousAMTContentRoot(postCommitSnapshot)
+        .flatMap(_.lastManifestCommitWithFullRewrite)
+        .forall(lastFull => commitVersion - lastFull >= fullRewriteSpan)
+      return Some(
+        if (needsFullRewrite) {
+          AMTTriggerMode.CheckpointIntervalFull
+        } else {
+          AMTTriggerMode.CheckpointIntervalIncremental
+        })
+    }
+
+
+    None
   }
 
   /**
@@ -122,31 +217,11 @@ class AMTWriterManager(
     readSnapshot.protocol.isFeatureSupported(AdaptiveMetadataTableFeature)
   }
 
-  /**
-   * The trigger reason for why an AMT write is needed for this commit, or `None` if AMT write is
-   * not needed.
-   */
-  private def getAMTTriggerMode(
-      commitVersion: Long,
-      actionsToCommit: Seq[Action],
-      preCommitLogSegment: LogSegment,
-      postCommitMetadata: Metadata): Option[AmtTrigger] = {
-    if (!amtEnabled(commitVersion)) return None
-    // -- case-1 --
-    if (initialOperation.isInstanceOf[DeltaOperations.OptimizeCheckpoint]) {
-      return Some(AmtTrigger.OptimizeCheckpoint)
-    }
+  private def largeCommitActionsCountThresholdForInlineManifestCommit: Long =
+    spark.sessionState.conf.getConf(
+      DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT)
 
-    // -- case-2 --
-    // Assume 0 as version -- this is to make sure future AMTs are at even boundaries e.g.
-    // 10/20/30 instead of 9/19/29. (similar logic in checkpoints as well)
-    val lastAMTVersion = math.max(0L, preCommitLogSegment.checkpointProvider.version)
-    val commitsSinceLastAMT = commitVersion - lastAMTVersion
-    if (commitsSinceLastAMT >= deltaLog.checkpointInterval(postCommitMetadata)) {
-      return Some(AmtTrigger.CheckpointInterval)
-    }
-
-
-    None
-  }
+  private def fullRewriteCheckpointIntervalMultiplier: Int =
+    spark.sessionState.conf.getConf(
+      DeltaSQLConf.AMT_FULL_REWRITE_CHECKPOINT_INTERVAL_MULTIPLIER)
 }

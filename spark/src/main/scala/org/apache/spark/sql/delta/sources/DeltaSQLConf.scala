@@ -581,6 +581,27 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValue(_ > 0, "entriesPerLeaf must be positive.")
       .createWithDefault(50000)
 
+  val AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT =
+    buildConf("amt.largeCommitActionsCountThresholdForInlineManifestCommit")
+      .internal()
+      .doc("When a writer commits at least this many actions, its AMT manifest " +
+        "tree is written inline within that commit (the Checkpoint action rides in the same " +
+        "commit JSON) rather than deferred to a follow-up OPTIMIZE CHECKPOINT commit. Defaults " +
+        "to Long.MaxValue, i.e. inline manifest commits are effectively disabled.")
+      .longConf
+      .createWithDefault(Long.MaxValue)
+
+  val AMT_FULL_REWRITE_CHECKPOINT_INTERVAL_MULTIPLIER =
+    buildConf("amt.fullRewriteCheckpointIntervalMultiplier")
+      .internal()
+      .doc("AMT manifest trees are emitted every checkpoint interval. Every Nth of those (N = " +
+        "this multiplier) is a full re-materialization of the live file set; the rest are " +
+        "incremental. A full rewrite happens when the commit version is a multiple of " +
+        "multiplier * checkpoint interval.")
+      .intConf
+      .checkValue(_ > 0, "fullRewriteCheckpointIntervalMultiplier must be positive.")
+      .createWithDefault(5)
+
   val UNSUPPORTED_TESTING_FEATURES_ENABLED =
     buildConf("tableFeatures.dev.unsupportedTableFeatures.enabled")
       .internal()

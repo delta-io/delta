@@ -53,58 +53,28 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
       domainMetadata = Seq.empty,
       op = DeltaOperations.ManualUpdate)
 
-  test("writeAMT throws UnsupportedOperationException for an OPTIMIZE checkpoint operation") {
+  test("writeAMT materializes a tree for an OPTIMIZE checkpoint operation") {
     withTable("amt_optimize_ckpt") {
       val name = "amt_optimize_ckpt"
       createAMTTable(name, checkpointInterval = 2)
       sql(s"INSERT INTO $name VALUES (1)")
 
-      val (manager, snapshot) = managerFor(name, DeltaOperations.OptimizeCheckpoint())
-      val ex = intercept[UnsupportedOperationException] {
-        manager.writeAMT(
-          commitVersion = snapshot.version + 1,
-          currentTransactionInfo = txnInfoFor(snapshot, actions = Seq.empty),
-          preCommitLogSegment = snapshot.logSegment)
-      }
-      assert(ex.getMessage.contains("OPTIMIZE checkpoints"))
+      val (manager, snapshot) = managerFor(name, DeltaOperations.OptimizeCheckpoint(
+        incremental = false, triggerName = AMTTriggerMode.CheckpointIntervalFull.name))
+      val result = manager.writeAMT(
+        commitVersion = snapshot.version + 1,
+        currentTransactionInfo = txnInfoFor(snapshot, actions = Seq.empty),
+        preCommitLogSegment = snapshot.logSegment).getOrElse(
+          fail("OPTIMIZE checkpoint must materialize an AMT."))
+      // The commit carries no user actions, so the tree describes state as of the read version.
+      assert(result.contentRootVersion == snapshot.version)
+      // The metric records the trigger name carried on the operation.
+      assert(manager.metrics.attempts.head.trigger == AMTTriggerMode.CheckpointIntervalFull.name)
     }
   }
 
-  test("emits AMT when commit count since last checkpoint reaches the checkpoint interval") {
-    withTable("amt_count_trigger") {
-      val name = "amt_count_trigger"
-      createAMTTable(name, checkpointInterval = 3)
-      sql(s"INSERT INTO $name VALUES (1)") // v1: 1 commit since genesis, < 3.
-      sql(s"INSERT INTO $name VALUES (2)") // v2: 2 commits since genesis, < 3.
-      sql(s"INSERT INTO $name VALUES (3)") // v3: 3 commits since genesis, >= 3 -> emit.
-
-      val deltaLog = deltaLogForName(name)
-      val path = tablePath(name)
-      assert(checkpointsAt(deltaLog, 1).isEmpty, "v1 is below the interval; no emission.")
-      assert(checkpointsAt(deltaLog, 2).isEmpty, "v2 is below the interval; no emission.")
-      assert(checkpointsAt(deltaLog, 3).size == 1, "v3 reaches the interval; AMT must be emitted.")
-      assert(rootFiles(path).size == 1 && leafFiles(path).nonEmpty,
-        "A manifest tree must be written at the interval boundary.")
-      assert(amtProvider(deltaLog.update()).isDefined)
-    }
-  }
-
-
-  test("does not emit AMT when no trigger fires") {
-    withTable("amt_no_trigger") {
-      val name = "amt_no_trigger"
-      // Interval far away, and a tiny commit stays well below the default size threshold, so
-      // neither the count nor the (edge-only) size trigger fires.
-      createAMTTable(name, checkpointInterval = 1000)
-      sql(s"INSERT INTO $name VALUES (1)")
-
-      val deltaLog = deltaLogForName(name)
-      val path = tablePath(name)
-      assert(checkpointsAt(deltaLog, 1).isEmpty, "No trigger fires; no emission.")
-      assert(rootFiles(path).isEmpty && leafFiles(path).isEmpty, "No manifest tree written.")
-      assert(amtProvider(deltaLog.update()).isEmpty)
-    }
-  }
+  // End-to-end emission-policy scenarios (interval / full-rewrite cadence / size trigger / minor
+  // compaction) live in AMTCheckpointPolicySuite. This suite covers writeAMT's direct behavior.
 
   test("writeAMT hard-fails an AMT table on a conflict-resolution retry") {
     withTable("amt_conflict_fail") {

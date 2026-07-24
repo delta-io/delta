@@ -41,21 +41,41 @@ object AMTWriteHelper {
       actionsToCommit: Seq[Action],
       postCommitProtocol: Protocol,
       postCommitMetadata: Metadata,
-      trigger: AmtTrigger): (AMTWriteResult, SingleAMTWriteMetrics) = {
+      trigger: String,
+      incremental: Boolean): (AMTWriteResult, SingleAMTWriteMetrics) = {
     val deltaLog = readSnapshot.deltaLog
     val startNanos = System.nanoTime()
     val postCommitState = computePostCommitState(readSnapshot, actionsToCommit)
     val hadoopConf = deltaLog.newDeltaHadoopConf()
     val entriesPerLeaf = spark.sessionState.conf.getConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF)
-    val (contentRoot, leaves) = writeManifestTree(
+    val (contentRootBase, leaves) = writeManifestTree(
       spark = spark,
       hadoopConf = hadoopConf,
       tableRoot = deltaLog.dataPath,
       useRename = deltaLog.store.isPartialWriteVisible(deltaLog.logPath, hadoopConf),
       liveAddFiles = postCommitState.allFiles,
       entriesPerLeaf = entriesPerLeaf)
+    val contentStateVersion =
+      if (actionsToCommit.isEmpty) readSnapshot.version else commitVersion
+    // Record how the tree was produced so a reader/maintenance job can tell incremental trees apart
+    // from full re-materializations without inspecting the leaves. A full rewrite resets the
+    // "last full rewrite" marker to this version; an incremental rewrite carries forward the
+    // previous tree's marker.
+    val lastFullRewriteVersion =
+      if (incremental) {
+        previousAMTContentRoot(readSnapshot)
+          .flatMap(_.lastManifestCommitWithFullRewrite)
+          .getOrElse(contentStateVersion)
+      } else {
+        contentStateVersion
+      }
+    val contentRoot = ContentRoot(
+      path = contentRootBase.path,
+      sizeInBytes = contentRootBase.sizeInBytes,
+      isIncremental = incremental,
+      lastManifestCommitWithFullRewrite = lastFullRewriteVersion)
     val checkpoint = Checkpoint(
-      version = commitVersion,
+      version = contentStateVersion,
       contentRoot = contentRoot,
       protocol = postCommitProtocol,
       metaData = postCommitMetadata,
@@ -63,15 +83,23 @@ object AMTWriteHelper {
       txns = postCommitState.getTransactions.toSeq,
       sidecars = Seq.empty)
     val result = AMTWriteResult(
-      contentRootVersion = commitVersion,
+      contentRootVersion = contentStateVersion,
       checkpoint = checkpoint,
       leaves = leaves,
       includeActionsInCommitJson = true)
     val singleMetric = SingleAMTWriteMetrics(
-      trigger = trigger.toString,
+      trigger = trigger,
       materializeDurationMs = NANOSECONDS.toMillis(System.nanoTime() - startNanos))
     (result, singleMetric)
   }
+
+  // The ContentRoot of the AMT tree `snapshot` is already backed by, if any. Used to carry forward
+  // the "last full rewrite" marker across an incremental rewrite and to decide the next trigger.
+  def previousAMTContentRoot(snapshot: Snapshot): Option[ContentRoot] =
+    snapshot.checkpointProvider match {
+      case amt: AMTCheckpointProvider => Some(amt.checkpointAction.contentRoot)
+      case _ => None
+    }
 
   // Post-commit table state = the read snapshot's state with this commit's actions applied,
   // computed via InMemoryLogReplay (the same machinery snapshot state reconstruction uses).
