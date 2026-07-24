@@ -54,8 +54,8 @@ See the [online documentation](https://docs.delta.io/latest/) for the latest rel
 ## API Documentation
 
 * [Scala API docs](https://docs.delta.io/latest/delta-apidoc.html)
-* [Java API docs](https://docs.delta.io/latest/api/java/index.html)
-* [Python API docs](https://docs.delta.io/latest/api/python/index.html)
+* [Java API docs](https://docs.delta.io/latest/api/java/spark/index.html)
+* [Python API docs](https://docs.delta.io/latest/api/python/spark/index.html)
 
 ## Compatibility
 [Delta Standalone](https://docs.delta.io/latest/delta-standalone.html) library is a single-node Java library that can be used to read from and write to Delta tables. Specifically, this library provides APIs to interact with a table’s metadata in the transaction log, implementing the Delta Transaction Log Protocol to achieve the transactional guarantees of the Delta Lake format.
