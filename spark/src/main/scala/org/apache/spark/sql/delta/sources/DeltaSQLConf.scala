@@ -3012,6 +3012,34 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTALOG_MINOR_COMPACTION_USE_FOR_WRITES =
+    buildConf("deltaLog.minorCompaction.useForWrites")
+      .doc(
+        "If true, a post-commit hook will periodically create log compaction files " +
+        "(`<x>.<y>.compacted.json`) that aggregate the actions of a range of commits. " +
+        "Readers that support compacted deltas (see `deltaLog.minorCompaction.useForReads`) " +
+        "can use them to speed up snapshot construction without the cost of a full " +
+        "checkpoint. This is most effective when the checkpoint interval is a multiple of " +
+        "and larger than `delta.logCompactionInterval`. Compaction files are optional " +
+        "and do not require any protocol or table feature upgrade.")
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTALOG_MINOR_COMPACTION_MAX_WINDOW_SIZE =
+    buildConf("deltaLog.minorCompaction.maxWindowSizeBytes")
+      .doc(
+        "The maximum combined size (in bytes) of the commit files in a log compaction window. " +
+        "The log compaction post-commit hook reconciles a window of commits in a single " +
+        "in-memory log replay on the driver, so a window containing very large commits could " +
+        "pressure driver memory. If the combined size of the window's commit files exceeds this " +
+        "threshold, log compaction is skipped for that window; the commits remain available as " +
+        "individual delta files and are subsumed by the next checkpoint. Set to a non-positive " +
+        "value to disable the guard (no size limit).")
+      .internal()
+      .bytesConf(ByteUnit.BYTE)
+      .createWithDefault(1024L * 1024L * 1024L) // 1 GiB
+
   val ICEBERG_MAX_COMMITS_TO_CONVERT = buildConf("iceberg.maxPendingCommits")
     .doc("""
         |The maximum number of pending Delta commits to convert to Iceberg incrementally.

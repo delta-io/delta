@@ -786,6 +786,12 @@ class SnapshotManagementParallelListingSuite extends QueryTest
 
   override protected def sparkConf: SparkConf =
     super.sparkConf.set(logStoreClassConfKey, classOf[CountDownLatchLogStore].getName)
+      // This suite simulates coordinated-commits backfills with a custom commit coordinator and
+      // asserts a precise staged/backfilled listing state. The log-compaction post-commit hook is
+      // on by default and, at the default interval (5), would call `ensureCommitFilesBackfilled`
+      // mid-sequence and perturb that state. Disable the write hook here; compaction writing is
+      // covered by LogCompactionSuite.
+      .set(DeltaSQLConf.DELTALOG_MINOR_COMPACTION_USE_FOR_WRITES.key, "false")
 
   override protected def beforeEach(): Unit = {
     super.beforeEach()
