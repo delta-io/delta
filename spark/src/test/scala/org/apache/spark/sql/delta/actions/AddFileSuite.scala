@@ -20,6 +20,8 @@ import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaRuntimeException
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.util.JsonUtils
+import com.fasterxml.jackson.core.StreamReadConstraints
 
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.catalyst.expressions.{Cast, Literal}
@@ -605,5 +607,32 @@ class AddFileSuite extends SparkFunSuite with SharedSparkSession with DeltaSQLCo
         }
       }
     }
+  }
+
+  test("parsedStatsFields reads stats with a min/max bound longer than the default " +
+    "Jackson string length limit") {
+    // A single string value in the per-file stats (for example a wide string min/max bound)
+    // can exceed Jackson's default maxStringLength (20MB, since Jackson 2.15). The Delta log is
+    // read through JsonUtils.mapper, which lifts this limit, so stats parsing must do the same.
+    val largeBound = "a" * (StreamReadConstraints.DEFAULT_MAX_STRING_LEN + 1)
+
+    val statsNode = JsonUtils.mapper.createObjectNode()
+    statsNode.put("numRecords", 3L)
+    statsNode.put("tightBounds", true)
+    val maxValues = statsNode.putObject("maxValues")
+    maxValues.put("stringCol", largeBound)
+    val stats = JsonUtils.mapper.writeValueAsString(statsNode)
+
+    val file = AddFile(
+      path = "test.parquet",
+      partitionValues = Map.empty,
+      size = 100,
+      modificationTime = 0,
+      dataChange = true,
+      stats = stats)
+
+    assert(file.numLogicalRecords.contains(3L))
+    assert(file.numPhysicalRecords.contains(3L))
+    assert(file.tightBounds.contains(true))
   }
 }
