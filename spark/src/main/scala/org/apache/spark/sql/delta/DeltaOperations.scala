@@ -918,12 +918,15 @@ object DeltaOperations {
    * @param retentionCheckEnabled - whether retention check was enabled for this run of vacuum.
    * @param specifiedRetentionMillis - specified retention interval
    * @param defaultRetentionMillis - default retention period for the table
+   * @param vacuumType - the type of vacuum that was run; for example, "FULL" or "LITE"
    */
   case class VacuumStart(
       retentionCheckEnabled: Boolean,
       specifiedRetentionMillis: Option[Long],
-      defaultRetentionMillis: Long) extends Operation(VacuumStart.OPERATION_NAME) {
+      defaultRetentionMillis: Long,
+      vacuumType: String) extends Operation(VacuumStart.OPERATION_NAME) {
     override val parameters: Map[String, Any] = Map(
+      "typeOfVacuum" -> vacuumType,
       "retentionCheckEnabled" -> retentionCheckEnabled,
       "defaultRetentionMillis" -> defaultRetentionMillis
     ) ++ specifiedRetentionMillis.map("specifiedRetentionMillis" -> _)
@@ -944,9 +947,13 @@ object DeltaOperations {
 
   /**
    * @param status - whether the vacuum operation was successful; either "COMPLETED" or "FAILED"
+   * @param vacuumType - the type of vacuum that was run; for example, "FULL" or "LITE"
    */
-  case class VacuumEnd(status: String) extends Operation(VacuumEnd.OPERATION_NAME) {
+  case class VacuumEnd(
+      status: String,
+      vacuumType: String) extends Operation(VacuumEnd.OPERATION_NAME) {
     override val parameters: Map[String, Any] = Map(
+      "typeOfVacuum" -> vacuumType,
       "status" -> status
     )
 

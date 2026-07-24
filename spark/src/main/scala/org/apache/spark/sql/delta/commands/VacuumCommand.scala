@@ -366,7 +366,8 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
             diffFiles,
             sizeOfDataToDelete,
             retentionMillis,
-            snapshotTombstoneRetentionMillis)
+            snapshotTombstoneRetentionMillis,
+            vacuumType.toString)
 
           val deleteStartTime = System.currentTimeMillis()
           val filesDeleted = try {
@@ -374,7 +375,8 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
               hadoopConf, parallelDeleteEnabled, parallelDeletePartitions)
           } catch {
             case t: Throwable =>
-              logVacuumEnd(spark, table, commandMetrics = commandMetrics)
+              logVacuumEnd(spark, table,
+                commandMetrics = commandMetrics, vacuumType = vacuumType.toString)
               throw t
           }
           val timeTakenForDelete = System.currentTimeMillis() - deleteStartTime
@@ -402,7 +404,8 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
             table,
             commandMetrics = commandMetrics,
             Some(filesDeleted),
-            Some(dirCounts))
+            Some(dirCounts),
+            vacuumType.toString)
 
           LastVacuumInfo.persistLastVacuumInfo(
             LastVacuumInfo(latestCommitVersionOutsideOfRetentionWindowOpt), deltaLog)
@@ -536,7 +539,8 @@ trait VacuumCommandImpl extends DeltaCommand {
       diff: Dataset[String],
       sizeOfDataToDelete: Long,
       specifiedRetentionMillis: Option[Long],
-      defaultRetentionMillis: Long): Unit = {
+      defaultRetentionMillis: Long,
+      vacuumType: String): Unit = {
     val deltaLog = table.deltaLog
     logInfo(
       log"Deleting untracked files and empty directories in " +
@@ -557,11 +561,13 @@ trait VacuumCommandImpl extends DeltaCommand {
       metrics("numFilesToDelete").set(diff.count())
       metrics("sizeOfDataToDelete").set(sizeOfDataToDelete)
       txn.registerSQLMetrics(spark, metrics)
-      val version = txn.commit(actions = Seq(), DeltaOperations.VacuumStart(
-        checkEnabled,
-        specifiedRetentionMillis,
-        defaultRetentionMillis
-      ))
+      val version = txn.commit(
+        actions = Seq(),
+        DeltaOperations.VacuumStart(
+          checkEnabled,
+          specifiedRetentionMillis,
+          defaultRetentionMillis,
+          vacuumType))
       setCommitClock(deltaLog, version)
     }
   }
@@ -581,7 +587,8 @@ trait VacuumCommandImpl extends DeltaCommand {
       table: DeltaTableV2,
       commandMetrics: Map[String, SQLMetric],
       filesDeleted: Option[Long] = None,
-      dirCounts: Option[Long] = None): Unit = {
+      dirCounts: Option[Long] = None,
+      vacuumType: String = "UNKNOWN"): Unit = {
     val deltaLog = table.deltaLog
     if (shouldLogVacuum(spark, table, deltaLog.newDeltaHadoopConf(), deltaLog.dataPath)) {
       val txn = table.startTransaction()
@@ -602,7 +609,8 @@ trait VacuumCommandImpl extends DeltaCommand {
         txn.registerSQLMetrics(spark, metrics)
       }
       val version = txn.commit(actions = Seq(), DeltaOperations.VacuumEnd(
-        status
+        status,
+        vacuumType
       ))
       setCommitClock(deltaLog, version)
     }
