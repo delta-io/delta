@@ -420,7 +420,7 @@ object SuiteGeneratorConfig {
         importer"org.apache.spark.sql.delta._",
         importer"org.apache.spark.sql.delta.cdc._",
         importer"org.apache.spark.sql.delta.rowid._",
-        importer"org.apache.spark.sql.delta.rowtracking._",
+        importer"org.apache.spark.sql.delta.rowtracking._"
       ),
       testConfigs = List(
         TestConfig(

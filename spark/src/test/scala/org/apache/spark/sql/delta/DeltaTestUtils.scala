@@ -81,9 +81,10 @@ trait CDCTestMixin extends SharedSparkSession {
 }
 
 trait ChangelogV2CDCUtilMixin extends CDCTestMixin {
-  override def isWriteCDC: Boolean = false
 
-  override def excluded: Seq[String] = super.excluded ++ Seq(
+  // Tests skipped on the V2 changelog read path. OSS CDCTestMixin has no `excluded` hook, so we
+  // filter by name in a test() override and ignore() the matches.
+  protected def excludedV2Exact: Set[String] = Set(
     // Read-CDF does not write any files.
     "usage metrics",
     // VOID is not a supported Delta data type in the Kernel schema parser. On the V2 changelog
@@ -106,6 +107,15 @@ trait ChangelogV2CDCUtilMixin extends CDCTestMixin {
     // computes changes differently and does not surface those explicit CDC files here.
     "UPDATE with DV write CDC files explicitly"
   )
+
+  override protected def test(testName: String, testTags: org.scalatest.Tag*)(testFun: => Any)(
+      implicit pos: org.scalactic.source.Position): Unit = {
+    if (excludedV2Exact.contains(testName)) {
+      ignore(testName + " (excluded on the V2 changelog read path, see excludedV2Exact)")(testFun)
+    } else {
+      super.test(testName, testTags: _*)(testFun)
+    }
+  }
 
   override protected def sparkConf: SparkConf = super.sparkConf
     .set("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
