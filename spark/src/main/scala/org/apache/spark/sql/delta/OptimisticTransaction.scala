@@ -279,6 +279,21 @@ trait OptimisticTransactionImpl extends TransactionHelper
   with DeltaLoggingProvider {
 
   /**
+   * Whether this transaction may be constructed without a V1 [[DeltaLog]]. Defaults to `false`:
+   * a V1 transaction must always have a real `deltaLog`. Only the Kernel-backed
+   * [[org.apache.spark.sql.delta.v2.interop.DeltaV2OptimisticTransaction]] legitimately
+   * has none and opts in by overriding this.
+   */
+  protected def allowNullDeltaLog: Boolean = false
+
+  // Invariant: a V1 OptimisticTransaction must always be constructed with a non-null deltaLog.
+  // Guards against accidentally constructing one with null deltaLog which would otherwise
+  // surface as a confusing NPE deep in the commit path rather than at construction.
+  require(
+    allowNullDeltaLog || deltaLog != null,
+    "A V1 OptimisticTransaction must be constructed with a non-null deltaLog.")
+
+  /**
    * Recording tags for this transaction, anchored to the read snapshot's `metadata.id`. Lets
    * `recordDeltaEvent(txn, ...)` attribute events to the table being mutated without reaching
    * through `txn.deltaLog`.
@@ -290,8 +305,12 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
   // Intentionally cache the values of these configs to ensure stable commit code path
   // and avoid race conditions between committing and dynamic config changes.
-  protected val incrementalCommitEnabled = deltaLog.incrementalCommitEnabled
-  protected val shouldVerifyIncrementalCommit = deltaLog.shouldVerifyIncrementalCommit
+  // The cached vals are initialized from overridable compute-hooks.
+  protected def computeIncrementalCommitEnabled: Boolean = deltaLog.incrementalCommitEnabled
+  protected def computeShouldVerifyIncrementalCommit: Boolean =
+    deltaLog.shouldVerifyIncrementalCommit
+  protected val incrementalCommitEnabled = computeIncrementalCommitEnabled
+  protected val shouldVerifyIncrementalCommit = computeShouldVerifyIncrementalCommit
   protected val forcedChecksumValidationInterval =
     spark.conf.get(DeltaSQLConf.FORCED_CHECKSUM_VALIDATION_INTERVAL)
   protected val forcedChecksumValidationMinTimeIntervalMinutes =
@@ -302,6 +321,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
   override def dataPath: Path = deltaLog.dataPath
 
   override def logPath: Path = deltaLog.logPath
+
+  override def newDeltaHadoopConf(): Configuration = deltaLog.newDeltaHadoopConf()
 
   // This would be a quick operation if we already validated the checksum
   // Otherwise, we should at least perform the validation here.
@@ -567,11 +588,17 @@ trait OptimisticTransactionImpl extends TransactionHelper
   protected[delta] var isBlindAppend: Boolean = false
 
   /**
+   * The initial value of [[preCommitLogSegment]]. V1 copies the read snapshot's own
+   * [[LogSegment]].
+   */
+  protected def initialPreCommitLogSegment: LogSegment =
+    snapshot.logSegment.copy(checkpointProvider = snapshot.checkpointProvider)
+
+  /**
    * The logSegment of the snapshot prior to the commit.
    * Will be updated only when retrying due to a conflict.
    */
-  private[delta] var preCommitLogSegment: LogSegment =
-    snapshot.logSegment.copy(checkpointProvider = snapshot.checkpointProvider)
+  private[delta] var preCommitLogSegment: LogSegment = initialPreCommitLogSegment
 
   /** The end to end execution time of this transaction. */
   def txnExecutionTimeMs: Option[Long] = if (commitEndNano == -1) {
@@ -1733,7 +1760,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
   ): Unit = {
     // If this transaction commits to the redirect destination location, then there is no
     // need to validate the subsequent no-redirect rules.
-    val configuration = deltaLog.newDeltaHadoopConf()
+    val configuration = newDeltaHadoopConf()
     val tableDataPath = dataPath.toUri.getPath
     val catalog = spark.sessionState.catalog
     val isRedirectDest = redirectConfig.spec.isRedirectDest(catalog, configuration, tableDataPath)
@@ -2249,7 +2276,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
               deltaLog.update(catalogTableOpt = catalogTable))
             val logs = deltaLog.store.readAsIterator(
               fileProvider.deltaFile(attemptVersion),
-              deltaLog.newDeltaHadoopConf())
+              newDeltaHadoopConf())
             try {
               val winningCommitActions = logs.map(Action.fromJson)
               val commitInfo = winningCommitActions.collectFirst { case a: CommitInfo => a }
@@ -2676,7 +2703,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
   private[delta] def isCommitLockEnabled: Boolean = {
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COMMIT_LOCK_ENABLED).getOrElse(
-      deltaLog.store.isPartialWriteVisible(logPath, deltaLog.newDeltaHadoopConf()))
+      deltaLog.store.isPartialWriteVisible(logPath, newDeltaHadoopConf()))
   }
 
   private def lockCommitIfEnabled[T](body: => T): T = {
@@ -3414,5 +3441,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
   // Backfill any unbackfilled commits if coordinated commits are disabled -- in the Optimistic
   // Transaction constructor.
-  CoordinatedCommitsUtils.backfillWhenCoordinatedCommitsDisabled(snapshot)
+  protected def maybeBackfillOnConstruction(): Unit =
+    CoordinatedCommitsUtils.backfillWhenCoordinatedCommitsDisabled(snapshot)
+  maybeBackfillOnConstruction()
 }
