@@ -1379,6 +1379,12 @@ Delta clients would primarily be involved with the second step, but an implement
 to combine the second and third steps so that a single catalog call registers the table as part of
 the table's first commit.
 
+Version 0 must be [published](#publishing-commits) to `_delta_log/00000000000000000000.json` before
+the catalog exposes the table. A catalog must not return version 0 as an unpublished ratified commit.
+This guarantees the `_delta_log` directory is non-empty, which prevents a filesystem-only client from
+listing an empty `_delta_log` and creating a separate table at the same location. Readers can
+therefore rely on `_delta_log/00000000000000000000.json` being present for any catalog-managed table.
+
 As another example, dropping a table can be as simple as removing its name from the catalog (a "soft
 delete"), followed at some later point by a "hard delete" that physically purges the data. The Delta
 client would not be involved at all in this process, because no commits are made to the table.
