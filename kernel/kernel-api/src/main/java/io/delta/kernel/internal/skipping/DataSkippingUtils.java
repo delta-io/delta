@@ -28,6 +28,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.CollationIdentifier;
+import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import java.util.*;
@@ -251,13 +252,13 @@ public class DataSkippingUtils {
           }
         }
         break;
-
       case "=":
       case "<":
       case "<=":
       case ">":
       case ">=":
       case "IS NOT DISTINCT FROM":
+      case "STARTS_WITH":
         Expression left = getLeft(dataFilters);
         Expression right = getRight(dataFilters);
         Optional<CollationIdentifier> collationIdentifier = dataFilters.getCollationIdentifier();
@@ -277,7 +278,11 @@ public class DataSkippingUtils {
             return constructComparatorDataSkippingFilters(
                 dataFilters.getName(), leftCol, rightLit, collationIdentifier, schemaHelper);
           }
-        } else if (right instanceof Column && left instanceof Literal) {
+        } else if (right instanceof Column
+            && left instanceof Literal
+            && REVERSE_COMPARATORS.containsKey(dataFilters.getName().toUpperCase(Locale.ROOT))) {
+          // STARTS_WITH is not commutative, so only reverse operators that have an entry
+          // in REVERSE_COMPARATORS.
           return constructDataSkippingFilter(reverseComparatorFilter(dataFilters), schemaHelper);
         }
         break;
@@ -378,6 +383,26 @@ public class DataSkippingUtils {
                 schemaHelper.getMaxColumn(leftCol, collationIdentifier),
                 rightLit,
                 collationIdentifier));
+        // Match any file whose max is greater than or equal to the prefix.
+        // A file can be skipped if max < prefix, since all values are before the prefix.
+        // STARTS_WITH only applies to string columns and literals, and is only supported
+        // for UTF8_BINARY collation.
+        // TODO: Support non-UTF8_BINARY collations once the default engine supports
+        //  collation-aware expression evaluation.
+      case "STARTS_WITH":
+        if (!(schemaHelper.getColumnDataType(leftCol) instanceof StringType)
+            || !(rightLit.getDataType() instanceof StringType)
+            || (collationIdentifier.isPresent()
+                && !collationIdentifier.get().isSparkUTF8BinaryCollation())) {
+          return Optional.empty();
+        }
+        return Optional.of(
+            constructBinaryDataSkippingPredicate(
+                ">=",
+                schemaHelper.getMaxColumn(leftCol, collationIdentifier),
+                rightLit,
+                collationIdentifier));
+
       case "IS NOT DISTINCT FROM":
         return constructDataSkippingFilter(
             rewriteEqualNullSafe(leftCol, rightLit, collationIdentifier), schemaHelper);
@@ -429,6 +454,28 @@ public class DataSkippingUtils {
         getRight(predicate),
         getLeft(predicate),
         predicate.getCollationIdentifier());
+  }
+
+  /**
+   * Computes the least string that is greater than all strings starting with the given prefix,
+   * under UTF8_BINARY (lexicographic) ordering. Returns {@code Optional.empty()} if no such bound
+   * exists (i.e. the prefix consists entirely of {@code Character.MAX_CODE_POINT}).
+   *
+   * <p>Example: "abc" -> "abd", "ab\uDBFF\uDFFF" -> "ac"
+   */
+  private static Optional<Literal> prefixUtf8BinaryUpperBound(String prefix) {
+    int i = prefix.length();
+    while (i > 0) {
+      int cp = prefix.codePointBefore(i);
+      int cpLen = Character.charCount(cp);
+      if (cp < Character.MAX_CODE_POINT) {
+        return Optional.of(
+            Literal.ofString(
+                prefix.substring(0, i - cpLen) + new String(Character.toChars(cp + 1))));
+      }
+      i -= cpLen;
+    }
+    return Optional.empty();
   }
 
   /** Construct the skipping predicate for a NOT expression child if possible */
@@ -524,6 +571,53 @@ public class DataSkippingUtils {
                     new Predicate(
                         "NOT", rewriteEqualNullSafe(leftColumn, rightLiteral, collationIdentifier)),
                     schemaHelper));
+      case "STARTS_WITH":
+        {
+          // NOT(col STARTS_WITH 'prefix') can skip a file if ALL values start with the
+          // prefix. This holds when min >= prefix AND max < upperBound(prefix).
+          // The keep-file predicate is: min < prefix OR max >= upperBound(prefix).
+          // Only supported for UTF8_BINARY collation.
+          // TODO: Support non-UTF8_BINARY collations once the default engine supports
+          //  collation-aware expression evaluation.
+          Optional<CollationIdentifier> swCollation = childPredicate.getCollationIdentifier();
+          if (swCollation.isPresent() && !swCollation.get().isSparkUTF8BinaryCollation()) {
+            return Optional.empty();
+          }
+
+          Expression swLeft = getLeft(childPredicate);
+          Expression swRight = getRight(childPredicate);
+          if (!(swLeft instanceof Column && swRight instanceof Literal)) {
+            return Optional.empty();
+          }
+          Column leftCol = (Column) swLeft;
+          Literal rightLit = (Literal) swRight;
+          if (!schemaHelper.isSkippingEligibleMinMaxColumn(leftCol)
+              || !(schemaHelper.getColumnDataType(leftCol) instanceof StringType)
+              || !(rightLit.getDataType() instanceof StringType)) {
+            return Optional.empty();
+          }
+
+          String prefix = (String) rightLit.getValue();
+          Optional<Literal> upperBound = prefixUtf8BinaryUpperBound(prefix);
+          if (!upperBound.isPresent()) {
+            // Prefix is all MAX_VALUE chars — can only use one-sided filter.
+            return Optional.of(
+                constructBinaryDataSkippingPredicate(
+                    "<", schemaHelper.getMinColumn(leftCol, swCollation), rightLit, swCollation));
+          }
+
+          // Keep file if: min < prefix OR max >= upperBound
+          return Optional.of(
+              new DataSkippingPredicate(
+                  "OR",
+                  constructBinaryDataSkippingPredicate(
+                      "<", schemaHelper.getMinColumn(leftCol, swCollation), rightLit, swCollation),
+                  constructBinaryDataSkippingPredicate(
+                      ">=",
+                      schemaHelper.getMaxColumn(leftCol, swCollation),
+                      upperBound.get(),
+                      swCollation)));
+        }
       case "NOT":
         // Remove redundant pairs of NOT
         return constructDataSkippingFilter(
