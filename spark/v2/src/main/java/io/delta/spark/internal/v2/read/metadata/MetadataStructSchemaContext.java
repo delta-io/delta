@@ -73,8 +73,8 @@ public class MetadataStructSchemaContext implements Serializable {
    * {@code METADATA_COLUMN_NAME.equals(field.name())}). When a user column named {@code _metadata}
    * collides with the struct, the struct is physically renamed by prepending underscores until
    * unique (e.g. {@code __metadata}, or further) while keeping this logical name in its field
-   * metadata, so a physical-name match silently misses it.
-   * Use {@link #isFileSourceMetadataStruct(StructField)} for identification instead.
+   * metadata, so a physical-name match silently misses it. Use {@link
+   * #isFileSourceMetadataStruct(StructField)} for identification instead.
    *
    * <p>It is safe to use directly only as the logical-name constant itself: comparing against a
    * logical name recovered from field metadata (as {@code isFileSourceMetadataStruct} does), or
@@ -82,6 +82,7 @@ public class MetadataStructSchemaContext implements Serializable {
    * this whenever there is no collision).
    */
   private static final String METADATA_COLUMN_NAME = FileFormat$.MODULE$.METADATA_NAME();
+
   private static final String ROW_ID_FIELD_NAME = RowId$.MODULE$.ROW_ID();
   private static final String ROW_COMMIT_VERSION_FIELD_NAME =
       RowCommitVersion$.MODULE$.METADATA_STRUCT_FIELD_NAME();
