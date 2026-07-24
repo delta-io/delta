@@ -128,6 +128,8 @@ A self-reference points within the same Parquet data file using `offset` and `si
 
 The referenced bytes (both `inline` and self-reference regions) are compressed with the same `CompressionCodec` as the one configured for the `inline` column; `size` is therefore the length of the compressed region on disk. External referents (`uri` set) are opaque to Parquet and stored as-is.
 
+Parquet data files containing self-references must not use Parquet modular encryption: self-referenced byte ranges are not Parquet encryption modules and therefore cannot be encrypted or authenticated independently. Encryption of external files referenced by `uri` is outside the scope of the Parquet format (and thus of this feature).
+
 ## Writer Requirements for File Data Type
 
 When File type is supported (`writerFeatures` field of a table's `protocol` action contains `fileType`), writers:
