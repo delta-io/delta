@@ -30,6 +30,7 @@ import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorSchemaContext;
+import io.delta.spark.internal.v2.read.metadata.MetadataStructSchemaContext;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.utils.PartitionUtils;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
@@ -180,7 +181,7 @@ class DeltaV2Scan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Fi
   public Scan.ColumnarSupportMode columnarSupportMode() {
     boolean metadataColumnRequested =
         Arrays.stream(readDataSchema.fields())
-            .anyMatch(field -> FileFormat$.MODULE$.METADATA_NAME().equals(field.name()));
+            .anyMatch(MetadataStructSchemaContext::isFileSourceMetadataStruct);
     if (metadataColumnRequested) {
       return Scan.ColumnarSupportMode.UNSUPPORTED;
     }
