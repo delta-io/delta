@@ -75,7 +75,6 @@ try:
     print("######## Read old data using time travel ############")
     df = spark.read.format("delta").option("versionAsOf", 0).table(tableName)
     df.show()
-
 finally:
     # cleanup
     spark.sql("DROP TABLE " + tableName)
