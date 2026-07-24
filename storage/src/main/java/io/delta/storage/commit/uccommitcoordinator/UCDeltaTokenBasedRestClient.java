@@ -114,6 +114,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
   private final String baseUri;
   private final TokenProvider tokenProvider;
   private final Map<String, String> appVersions;
+  private final boolean credentialVendingEnabled;
   private final boolean credentialRenewalEnabled;
   private final boolean credentialScopedFsEnabled;
   private final Supplier<Configuration> hadoopConfSupplier;
@@ -125,6 +126,8 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
    *   <li>{@code uri} (required) -- the UC server endpoint.</li>
    *   <li>{@code auth.*} / {@code token} (legacy) -- authentication parameters.</li>
    *   <li>{@code appVersions.*} -- caller-supplied version entries.</li>
+   *   <li>{@code credentialVending.enabled} -- request temporary storage credentials while loading
+   *       or creating tables (default true).</li>
    *   <li>{@code renewCredential.enabled} -- enable credential renewal (default true).</li>
    *   <li>{@code credScopedFs.enabled} -- enable credential-scoped FS (default true).</li>
    * </ul>
@@ -159,6 +162,7 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     this.baseUri = baseUri;
     this.tokenProvider = tokenProvider;
     this.appVersions = appVersions;
+    this.credentialVendingEnabled = UCConfigUtils.isCredentialVendingEnabled(ucConfig);
     this.credentialRenewalEnabled = UCConfigUtils.isCredentialRenewalEnabled(ucConfig);
     this.credentialScopedFsEnabled = UCConfigUtils.isCredentialScopedFsEnabled(ucConfig);
     this.hadoopConfSupplier = hadoopConfSupplier != null ? hadoopConfSupplier : Configuration::new;
@@ -182,6 +186,9 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
 
   private Map<String, String> fetchTableCredentials(
       String catalog, String schema, String table, String location) throws ApiException {
+    if (!credentialVendingEnabled) {
+      return Collections.emptyMap();
+    }
     UCCredentialHadoopConfs.Builder b = newCredBuilder(schemeOf(location));
     try {
       return b.buildForTable(catalog, schema, table, TableOperation.READ_WRITE, location);
@@ -200,6 +207,9 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
    */
   private Map<String, String> fetchStagingCredentials(String location, String tableId)
       throws ApiException {
+    if (!credentialVendingEnabled) {
+      return Collections.emptyMap();
+    }
     try {
       return newCredBuilder(schemeOf(location)).buildForStagingTable(tableId, location);
     } catch (IllegalArgumentException | NullPointerException missingCred) {
