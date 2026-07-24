@@ -31,6 +31,7 @@ import io.delta.kernel.internal.replay.ActionsIterator;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.stats.FileSizeHistogram;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.types.StructType;
@@ -59,7 +60,11 @@ public class ChecksumUtils {
   private static final int DOMAIN_METADATA_INDEX = CHECKPOINT_SCHEMA.indexOf("domainMetadata");
   private static final int TXN_INDEX = CHECKPOINT_SCHEMA.indexOf("txn");
   private static final int ADD_SIZE_INDEX = AddFile.FULL_SCHEMA.indexOf("size");
+  private static final int ADD_DV_INDEX = AddFile.FULL_SCHEMA.indexOf("deletionVector");
   private static final int REMOVE_SIZE_INDEX = RemoveFile.FULL_SCHEMA.indexOf("size");
+  private static final int REMOVE_DV_INDEX = RemoveFile.FULL_SCHEMA.indexOf("deletionVector");
+  private static final int DV_CARDINALITY_INDEX =
+      DeletionVectorDescriptor.READ_SCHEMA.indexOf("cardinality");
   // commitInfo is appended after CHECKPOINT_SCHEMA in incremental read
   private static final int COMMIT_INFO_INDEX = CHECKPOINT_SCHEMA.length();
 
@@ -96,6 +101,7 @@ public class ChecksumUtils {
    *   <li>Total number of files
    *   <li>File size histogram
    *   <li>Domain metadata information
+   *   <li>Deletion-vector metrics
    * </ul>
    *
    * <p>If a checksum file already exists for exactly this version, the existing {@link CRCInfo} is
@@ -145,6 +151,7 @@ public class ChecksumUtils {
    *   <li>Total number of files
    *   <li>File size histogram
    *   <li>Domain metadata information
+   *   <li>Deletion-vector metrics
    * </ul>
    *
    * <p>Note: For very large tables, this operation may be expensive as it requires scanning the
@@ -287,6 +294,9 @@ public class ChecksumUtils {
     // Filter to only non-removed domain metadata
     Set<DomainMetadata> finalDomainMetadata = getNonRemovedDomainMetadata(state);
 
+    // Deletion-vector metrics, present only for DV-capable tables.
+    DvMetrics dvMetrics = dvMetricsFor(finalProtocol, state, /* seedReliable = */ true);
+
     return new CRCInfo(
         logSegmentAtVersion.getVersion(),
         finalMetadata,
@@ -298,10 +308,9 @@ public class ChecksumUtils {
         Optional.of(state.addedFileSizeHistogram),
         Optional.empty() /* inCommitTimestamp */,
         filterAndBoundSetTransactions(
-            state.collectedSetTransactions(),
-            finalMetadata,
-            clock,
-            state.setTransactionsThreshold));
+            state.collectedSetTransactions(), finalMetadata, clock, state.setTransactionsThreshold),
+        dvMetrics.numDeletedRecords,
+        dvMetrics.numDeletionVectors);
   }
 
   /**
@@ -335,11 +344,30 @@ public class ChecksumUtils {
           System.currentTimeMillis() - startTime);
       return Optional.empty();
     }
+    // Deletion-vector metrics can only be folded forward from a trustworthy base. If the base
+    // table is DV-capable but its CRC omitted the DV metrics, seeding from 0 would undercount the
+    // records/vectors already present at the base version. Fall back to full replay in that case.
+    boolean baseSupportsDv =
+        lastSeenCrcInfo.getProtocol().supportsFeature(TableFeatures.DELETION_VECTORS_RW_FEATURE);
+    boolean baseHasDvMetrics =
+        lastSeenCrcInfo.getNumDeletionVectors().isPresent()
+            && lastSeenCrcInfo.getNumDeletedRecords().isPresent();
+    boolean dvSeedReliable = !baseSupportsDv || baseHasDvMetrics;
+    if (!canBuildWithOnlyRequiredFields && !dvSeedReliable) {
+      logger.info(
+          "Falling back to full replay after {}ms: "
+              + "base crc missing deletion-vector metrics on a DV-enabled table.",
+          System.currentTimeMillis() - startTime);
+      return Optional.empty();
+    }
 
     // Initialize state tracking
     StateTracker state = new StateTracker();
     // Maintain setTransactions incrementally only when the base CRC carries the list.
     state.collectSetTransactions = lastSeenCrcInfo.getSetTransactions().isPresent();
+    // Obtain deletion-vector metrics from the base CRC to allow incremental folding.
+    lastSeenCrcInfo.getNumDeletionVectors().ifPresent(n -> state.numDeletionVectors.add(n));
+    lastSeenCrcInfo.getNumDeletedRecords().ifPresent(n -> state.numDeletedRecords.add(n));
 
     // TODO: use compacted logs.
     List<FileStatus> deltaFiles =
@@ -426,6 +454,8 @@ public class ChecksumUtils {
             state.tableSizeByte.add(-fileSize);
             state.removedFileSizeHistogram.insert(fileSize);
             state.fileCount.decrement();
+            // Subtract the removed file's deletion-vector metrics.
+            applyDeletionVectorMetrics(removeVector, REMOVE_DV_INDEX, state, i, DvDelta.REMOVE);
           }
 
           // Process domain metadata, protocol, metadata, and transactions
@@ -466,6 +496,7 @@ public class ChecksumUtils {
             .map(h -> state.addedFileSizeHistogram.plus(h).minus(state.removedFileSizeHistogram));
 
     Metadata finalMetadata = state.metadataFromLog.orElseGet(lastSeenCrcInfo::getMetadata);
+    Protocol finalProtocol = state.protocolFromLog.orElseGet(lastSeenCrcInfo::getProtocol);
 
     // Omit setTransactions on incremental path since it cannot maintain the wall-clock retention
     // filter deterministically
@@ -473,19 +504,24 @@ public class ChecksumUtils {
         isSetTransactionRetentionConfigured(finalMetadata)
             ? Optional.empty()
             : state.collectedSetTransactions();
+    // Omit DV stats if the seed is unreliable (base CRC lacked DV metrics on a DV-enabled table).
+    DvMetrics finalDvMetrics = dvMetricsFor(finalProtocol, state, dvSeedReliable);
+
     // Build and return the new CRC info
     return Optional.of(
         new CRCInfo(
             logSegment.getVersion(),
             finalMetadata,
-            state.protocolFromLog.orElseGet(lastSeenCrcInfo::getProtocol),
+            finalProtocol,
             state.tableSizeByte.longValue() + lastSeenCrcInfo.getTableSizeBytes(),
             state.fileCount.longValue() + lastSeenCrcInfo.getNumFiles(),
             Optional.empty(),
             finalDomainMetadata,
             finalHistogram,
             Optional.empty() /* inCommitTimestamp */,
-            incrementalSetTransactions));
+            incrementalSetTransactions,
+            finalDvMetrics.numDeletedRecords,
+            finalDvMetrics.numDeletionVectors));
   }
 
   /** Processes an add file record and updates the state tracker. */
@@ -500,6 +536,7 @@ public class ChecksumUtils {
       state.tableSizeByte.add(fileSize);
       state.addedFileSizeHistogram.insert(fileSize);
       state.fileCount.increment();
+      applyDeletionVectorMetrics(addVector, ADD_DV_INDEX, state, rowId, DvDelta.ADD);
     }
   }
 
@@ -603,6 +640,10 @@ public class ChecksumUtils {
     // full-replay path disables this so retention filtering runs before the threshold check.
     boolean abandonAboveThreshold = true;
 
+    // Deletion-vector metrics 2 fields.
+    LongAdder numDeletionVectors = new LongAdder();
+    LongAdder numDeletedRecords = new LongAdder();
+
     /** Records a SetTransaction if collecting and its appId is not already seen. */
     void recordSetTransaction(SetTransaction txn) {
       if (!collectSetTransactions) {
@@ -622,6 +663,59 @@ public class ChecksumUtils {
       return collectSetTransactions
           ? Optional.of(new ArrayList<>(setTransactionsByAppId.values()))
           : Optional.empty();
+    }
+  }
+
+  /**
+   * Whether a file action contributes its deletion-vector metrics to the running state (an AddFile)
+   * or retracts them (a RemoveFile).
+   */
+  private enum DvDelta {
+    ADD(1),
+    REMOVE(-1);
+
+    final int sign;
+
+    DvDelta(int sign) {
+      this.sign = sign;
+    }
+  }
+
+  /** Adds (ADD) or removes (REMOVE) an action's deletion-vector metrics from the state. */
+  private static void applyDeletionVectorMetrics(
+      ColumnVector fileVector, int dvChildIndex, StateTracker state, int rowId, DvDelta delta) {
+    ColumnVector dvVector = fileVector.getChild(dvChildIndex);
+    if (dvVector.isNullAt(rowId)) {
+      return;
+    }
+    long cardinality = dvVector.getChild(DV_CARDINALITY_INDEX).getLong(rowId);
+    state.numDeletionVectors.add(delta.sign);
+    state.numDeletedRecords.add(delta.sign * cardinality);
+  }
+
+  /**
+   * The deletion-vector metrics to store. Present ONLY when the resolved protocol supports the
+   * deletion-vectors table feature AND the accumulated state is trustworthy.
+   */
+  private static DvMetrics dvMetricsFor(
+      Protocol protocol, StateTracker state, boolean seedReliable) {
+    boolean dvSupported = protocol.supportsFeature(TableFeatures.DELETION_VECTORS_RW_FEATURE);
+    if (dvSupported && seedReliable) {
+      return new DvMetrics(
+          Optional.of(state.numDeletedRecords.longValue()),
+          Optional.of(state.numDeletionVectors.longValue()));
+    }
+    return new DvMetrics(Optional.empty(), Optional.empty());
+  }
+
+  /** The pair of deletion-vector metrics stored in a {@link CRCInfo}. */
+  private static class DvMetrics {
+    final Optional<Long> numDeletedRecords;
+    final Optional<Long> numDeletionVectors;
+
+    DvMetrics(Optional<Long> numDeletedRecords, Optional<Long> numDeletionVectors) {
+      this.numDeletedRecords = numDeletedRecords;
+      this.numDeletionVectors = numDeletionVectors;
     }
   }
 
