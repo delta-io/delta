@@ -125,6 +125,10 @@ private[v2] class DeltaV2Snapshot(
   // dereference the null deltaLog.
   override def dataPath: Path = path
 
+  // The Delta log directory path, sourced from Kernel (parallels `dataPath`). Overrides the base
+  // SnapshotDescriptor.logPath
+  override def logPath: Path = new Path(kernelSnapshot.getLogPath.toString)
+
 
   // --- SnapshotDescriptor / state surface ----------------------------------------------------
 
