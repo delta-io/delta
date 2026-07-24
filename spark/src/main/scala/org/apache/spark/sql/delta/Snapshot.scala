@@ -564,7 +564,8 @@ class Snapshot(
             col("add.deletionVector"),
             col("add.baseRowId"),
             col("add.defaultRowCommitVersion"),
-            col("add.clusteringProvider")
+            col("add.clusteringProvider"),
+            col("add.backReference")
           )))
         .withColumn("remove", when(
           col("remove.path").isNotNull,

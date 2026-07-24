@@ -18,11 +18,15 @@ package org.apache.spark.sql.delta.amt
 
 import org.apache.spark.sql.delta.{CheckpointPolicy, CheckpointProvider, DeltaLog, DeltaLogFileIndex, Snapshot}
 import org.apache.spark.sql.delta.DeltaLogFileIndex.COMMIT_VERSION_COLUMN
-import org.apache.spark.sql.delta.actions.{Checkpoint, ContentRoot, SingleAction}
+import org.apache.spark.sql.delta.actions.{BackReference, Checkpoint, ContentRoot, SingleAction}
+import org.apache.spark.sql.delta.util.DeltaEncoder
 import org.apache.hadoop.fs.{FileStatus, Path}
 
-import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
-import org.apache.spark.sql.functions.{col, lit}
+import org.apache.spark.paths.SparkPath
+import org.apache.spark.sql.{DataFrame, Dataset, Encoder, SparkSession}
+import org.apache.spark.sql.execution.datasources.FileFormat.{FILE_PATH, METADATA_NAME}
+import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
+import org.apache.spark.sql.functions.{col, lit, struct}
 import org.apache.spark.sql.types.StructType
 
 /**
@@ -118,11 +122,20 @@ final class AMTCheckpointProvider(
     import org.apache.spark.sql.delta.implicits._
     val tableRoot = deltaLog.dataPath
     val paths = new Path(contentRoot.path) +: leaves.map(l => new Path(l.path))
-    AMTCheckpointProvider.loadEntries(spark, deltaLog, paths)
-      .where(col("content_type") === lit(AMTSingleAction.ContentType.Type.Data))
-      .map { entry =>
-        entry.unwrap match {
-          case data: DataEntry => SingleAction(add = data.toAddFile(tableRoot))
+    val encodedRootPath = SparkPath.fromPathString(contentRoot.path).urlEncoded
+    AMTCheckpointProvider.loadEntriesWithLocation(spark, deltaLog, paths)
+      .where(col("entry.content_type") === lit(AMTSingleAction.ContentType.Type.Data))
+      .map { entryWithLoc =>
+        entryWithLoc.entry.unwrap match {
+          case data: DataEntry =>
+            val backReference = if (entryWithLoc.leafPath == encodedRootPath) {
+              None
+            } else {
+              Some(BackReference(
+                SparkPath.fromUrlString(entryWithLoc.leafPath).toPath.toString, entryWithLoc.pos))
+            }
+            val add = data.toAddFile(tableRoot).copy(backReference = backReference)
+            SingleAction(add = add)
           case other => throw new IllegalStateException(
             s"Expected a DATA entry after filtering, got ${other.getClass.getSimpleName}.")
         }
@@ -140,6 +153,20 @@ object AMTCheckpointProvider {
    * @param numEntries  Number of content entries the leaf holds (`record_count`).
    */
   case class LeafInfo(path: String, sizeInBytes: Long, numEntries: Long)
+
+  /**
+   * An [[AMTSingleAction]] entry paired with its physical read location in its manifest parquet.
+   *
+   * @param entry    The manifest content entry.
+   * @param leafPath The URL-encoded absolute path of the manifest parquet the entry was read from
+   *                 (Spark's `_metadata.file_path`).
+   * @param pos      The 0-based position of the entry inside the manifest (Spark's
+   *                 `_metadata.row_index`).
+   */
+  case class AMTDataEntryWithLocation(entry: AMTSingleAction, leafPath: String, pos: Long)
+
+  private lazy val amtDataEntryWithLocationEncoder: Encoder[AMTDataEntryWithLocation] =
+    new DeltaEncoder[AMTDataEntryWithLocation].get
 
   /**
    * Builds a provider from an emitted [[Checkpoint]] action by reading the leaf pointers out of the
@@ -178,5 +205,26 @@ object AMTCheckpointProvider {
     val index = DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, fs, paths)
     deltaLog.loadIndex(index, spark.emptyDataset[AMTSingleAction].schema)
       .as[AMTSingleAction]
+  }
+
+  /**
+   * Like [[loadEntries]], but also captures each row's physical read location.
+   */
+  private def loadEntriesWithLocation(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      paths: Seq[Path]): Dataset[AMTDataEntryWithLocation] = {
+    import org.apache.spark.sql.delta.implicits._
+    implicit val entryLocEncoder: Encoder[AMTDataEntryWithLocation] =
+      amtDataEntryWithLocationEncoder
+    val fs = paths.head.getFileSystem(deltaLog.newDeltaHadoopConf())
+    val index = DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, fs, paths)
+    val amtSchema = spark.emptyDataset[AMTSingleAction].schema
+    deltaLog.loadIndex(index, amtSchema)
+      .select(
+        struct(amtSchema.fieldNames.toIndexedSeq.map(col): _*).as("entry"),
+        col(s"$METADATA_NAME.$FILE_PATH").as("leafPath"),
+        col(s"$METADATA_NAME.${ParquetFileFormat.ROW_INDEX}").as("pos"))
+      .as[AMTDataEntryWithLocation]
   }
 }
