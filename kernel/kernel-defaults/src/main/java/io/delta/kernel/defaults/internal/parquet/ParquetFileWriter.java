@@ -176,11 +176,14 @@ public class ParquetFileWriter {
           return Optional.empty();
         }
 
-        org.apache.parquet.io.OutputFile parquetOutputFile =
+        ParquetIOUtils.ParquetOutputFile parquetOutputFile =
             createParquetOutputFile(generateNextOutputFile(), atomicWrite);
         assert batchWriteSupport != null : "batchWriteSupport is not initialized";
         long currentFileRowCount = 0; // tracks the number of rows written to the current file
-        try (ParquetWriter<Integer> writer = createWriter(parquetOutputFile, batchWriteSupport)) {
+        ParquetWriter<Integer> writer = null;
+        boolean committed = false;
+        try {
+          writer = createWriter(parquetOutputFile, batchWriteSupport);
           boolean maxFileSizeReached;
           do {
             if (consumeNextRow(writer)) {
@@ -193,9 +196,23 @@ public class ParquetFileWriter {
             maxFileSizeReached = !writeAsSingleFile && writer.getDataSize() >= targetMaxFileSize;
             // Keep writing until max file is reached or no more data to write
           } while (!maxFileSizeReached && hasNextRow());
+          committed = true;
         } catch (IOException e) {
           throw new UncheckedIOException(
               "Failed to write the Parquet file: " + parquetOutputFile.getPath(), e);
+        } finally {
+          if (!committed) {
+            // the read failed before completing; abort the write so no partial
+            // file is published in the subsequent close()
+            parquetOutputFile.abort();
+          }
+          if (writer != null) {
+            try {
+              writer.close();
+            } catch (Throwable suppressed) {
+              // Preserve the original failure; the write has already been marked aborted.
+            }
+          }
         }
 
         return Optional.of(

@@ -59,46 +59,74 @@ public class ParquetIOUtils {
   /**
    * Create a Parquet {@link org.apache.parquet.io.OutputFile} from a Kernel's {@link OutputFile}.
    */
-  static org.apache.parquet.io.OutputFile createParquetOutputFile(
+  static ParquetOutputFile createParquetOutputFile(
       OutputFile kernelOutputFile, boolean atomicWrite) {
-    return new org.apache.parquet.io.OutputFile() {
-      @Override
-      public org.apache.parquet.io.PositionOutputStream create(long blockSizeHint)
-          throws IOException {
-        // blockSizeHint is hint used in HDFS compliant file systems. In cloud storage systems
-        // it is irrelevant. So, we ignore it.
-        PositionOutputStream posOutputStream = kernelOutputFile.create(atomicWrite);
-        return new DelegatingPositionOutputStream(posOutputStream) {
-          @Override
-          public long getPos() throws IOException {
-            return posOutputStream.getPos();
-          }
-        };
-      }
+    return new ParquetOutputFile(kernelOutputFile, atomicWrite);
+  }
 
-      @Override
-      public org.apache.parquet.io.PositionOutputStream createOrOverwrite(long blockSizeHint)
-          throws IOException {
-        // In Kernel we never overwrite files, so this method is not used.
-        throw new UnsupportedOperationException("createOrOverwrite is not supported in Kernel");
-      }
+  /**
+   * Parquet {@link org.apache.parquet.io.OutputFile} backed by a Kernel {@link OutputFile}. It
+   * remembers the {@link PositionOutputStream} it hands to the Parquet writer so the in-progress
+   * write can be aborted (via {@link #abort()}) if the row source fails. The subsequent close()
+   * driven by the Parquet writer then discards the write instead of publishing a partial file.
+   */
+  static final class ParquetOutputFile implements org.apache.parquet.io.OutputFile {
+    private final OutputFile kernelOutputFile;
+    private final boolean atomicWrite;
+    private PositionOutputStream stream;
 
-      @Override
-      public boolean supportsBlockSize() {
-        return false;
-      }
+    ParquetOutputFile(OutputFile kernelOutputFile, boolean atomicWrite) {
+      this.kernelOutputFile = kernelOutputFile;
+      this.atomicWrite = atomicWrite;
+    }
 
-      @Override
-      public long defaultBlockSize() {
-        // blockSizeHint is hint used in HDFS compliant file systems. In cloud storage systems
-        // it is irrelevant. So, return some default value.
-        return 128 * 1024 * 1024; // 128MB
-      }
+    @Override
+    public org.apache.parquet.io.PositionOutputStream create(long blockSizeHint)
+        throws IOException {
+      // blockSizeHint is hint used in HDFS compliant file systems. In cloud storage systems
+      // it is irrelevant. So, we ignore it.
+      PositionOutputStream posOutputStream = kernelOutputFile.create(atomicWrite);
+      this.stream = posOutputStream;
+      return new DelegatingPositionOutputStream(posOutputStream) {
+        @Override
+        public long getPos() throws IOException {
+          return posOutputStream.getPos();
+        }
+      };
+    }
 
-      @Override
-      public String getPath() {
-        return kernelOutputFile.path();
+    /**
+     * Abort the in-progress write. The stream is only marked; the Parquet writer's close() then
+     * discards rather than publishes. No-op if no stream has been created yet.
+     */
+    void abort() {
+      if (stream != null) {
+        stream.abort();
       }
-    };
+    }
+
+    @Override
+    public org.apache.parquet.io.PositionOutputStream createOrOverwrite(long blockSizeHint)
+        throws IOException {
+      // In Kernel we never overwrite files, so this method is not used.
+      throw new UnsupportedOperationException("createOrOverwrite is not supported in Kernel");
+    }
+
+    @Override
+    public boolean supportsBlockSize() {
+      return false;
+    }
+
+    @Override
+    public long defaultBlockSize() {
+      // blockSizeHint is hint used in HDFS compliant file systems. In cloud storage systems
+      // it is irrelevant. So, return some default value.
+      return 128 * 1024 * 1024; // 128MB
+    }
+
+    @Override
+    public String getPath() {
+      return kernelOutputFile.path();
+    }
   }
 }
