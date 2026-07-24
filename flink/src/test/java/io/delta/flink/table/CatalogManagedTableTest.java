@@ -16,7 +16,14 @@
 
 package io.delta.flink.table;
 
+import static com.github.tomakehurst.wiremock.client.WireMock.matchingJsonPath;
+import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
+import static com.github.tomakehurst.wiremock.client.WireMock.urlPathMatching;
+import static io.delta.kernel.internal.util.ColumnMapping.COLUMN_MAPPING_ID_KEY;
+import static io.delta.kernel.internal.util.ColumnMapping.COLUMN_MAPPING_MODE_KEY;
+import static io.delta.kernel.internal.util.ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.flink.MockHttp;
@@ -24,7 +31,10 @@ import io.delta.flink.TestHelper;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.types.IntegerType;
+import io.delta.kernel.types.StringType;
+import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
+import io.delta.kernel.utils.CloseableIterable;
 import java.net.URI;
 import java.util.*;
 import org.junit.jupiter.api.Test;
@@ -71,6 +81,18 @@ class CatalogManagedTableTest extends TestHelper {
                                   snapshot
                                       .getProtocol()
                                       .supportsFeature(TableFeatures.getTableFeature(s))));
+
+                  table.commit(
+                      CloseableIterable.emptyIterable(),
+                      "catalog-managed-create-test",
+                      1L,
+                      Map.of());
+                  dummyHttp.verify(
+                      postRequestedFor(
+                              urlPathMatching(
+                                  "/api/2.1/unity-catalog/delta/v1/catalogs/main/schemas/abc/tables/def"))
+                          .withRequestBody(
+                              matchingJsonPath("$.updates[?(@.action == 'add-commit')]")));
                 }
               });
         });
@@ -91,5 +113,46 @@ class CatalogManagedTableTest extends TestHelper {
             "")) {
       checkSerializability(table);
     }
+  }
+
+  @Test
+  void testUpdateSchemaUsesDeltaTablesSetColumns() {
+    withTempDir(
+        dir -> {
+          String uuid = UUID.randomUUID().toString();
+          StructType initialSchema = new StructType().add("id", IntegerType.INTEGER);
+          StructType targetSchema = initialSchema.add("name", StringType.STRING);
+          MockHttp.withMock(
+              MockHttp.forNewUCTable(uuid, dir.getAbsolutePath()),
+              dummyHttp -> {
+                try (CatalogManagedTable table =
+                    new CatalogManagedTable(
+                        new UnityCatalog("main", dummyHttp.uri(), ""),
+                        "main.abc.def",
+                        Map.of(COLUMN_MAPPING_MODE_KEY, "name"),
+                        initialSchema,
+                        List.of(),
+                        dummyHttp.uri(),
+                        "")) {
+                  table.open();
+                  table.updateSchema(targetSchema);
+
+                  assertEquals(List.of("id", "name"), table.getSchema().fieldNames());
+                  StructField addedField = table.getSchema().at(1);
+                  assertNotNull(addedField.getMetadata().getLong(COLUMN_MAPPING_ID_KEY));
+                  assertNotNull(
+                      addedField.getMetadata().getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY));
+
+                  dummyHttp.verify(
+                      postRequestedFor(
+                              urlPathMatching(
+                                  "/api/2.1/unity-catalog/delta/v1/catalogs/main/schemas/abc/tables/def"))
+                          .withRequestBody(
+                              matchingJsonPath("$.updates[?(@.action == 'set-columns')]"))
+                          .withRequestBody(
+                              matchingJsonPath("$.updates[?(@.action == 'add-commit')]")));
+                }
+              });
+        });
   }
 }

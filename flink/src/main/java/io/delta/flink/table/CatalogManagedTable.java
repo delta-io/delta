@@ -171,6 +171,8 @@ public class CatalogManagedTable extends AbstractKernelTable {
   protected void createDeltaTable() {
     conf.update(Map.of(UC_TABLE_ID_KEY, tableUUID));
     super.createDeltaTable();
+    // The legacy staging transaction produces a snapshot without the three-part UC identifier.
+    reloadSnapshot();
   }
 
   @Override

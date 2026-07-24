@@ -53,6 +53,7 @@ import java.net.URISyntaxException;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.apache.commons.lang3.StringUtils;
@@ -268,6 +269,68 @@ public abstract class AbstractKernelTable implements DeltaTable {
   @Override
   public void refresh() {
     refresh(null);
+  }
+
+  /** Internal primitive for committing an append-only schema update. */
+  final void updateSchema(StructType targetSchema) {
+    Objects.requireNonNull(targetSchema, "targetSchema cannot be null");
+    if (refreshThreadPool == null) {
+      throw new IllegalStateException("DeltaTable must be opened before updating its schema");
+    }
+    AtomicReference<StructType> initialSchema = new AtomicReference<>();
+
+    withTiming(
+        "updateSchema",
+        () ->
+            withRetry(
+                () -> {
+                  updateSchemaFromLatestSnapshot(targetSchema, initialSchema);
+                  return null;
+                }));
+  }
+
+  private void updateSchemaFromLatestSnapshot(
+      StructType targetSchema, AtomicReference<StructType> initialSchema) {
+    Snapshot latestSnapshot =
+        snapshot().orElseThrow(() -> new IllegalStateException("Snapshot should exist"));
+    StructType latestSchema = latestSnapshot.getSchema();
+    StructType schemaAtFirstAttempt = initialSchema.get();
+    if (schemaAtFirstAttempt == null) {
+      initialSchema.set(latestSchema);
+    } else if (!SchemaEvolutionUtils.logicallyEqual(schemaAtFirstAttempt, latestSchema)
+        && !SchemaEvolutionUtils.logicallyEqual(latestSchema, targetSchema)) {
+      throw new IllegalArgumentException(
+          String.format(
+              "Target schema is stale: table schema changed concurrently from %s to %s",
+              schemaAtFirstAttempt, latestSchema));
+    }
+    Optional<StructType> updatedSchema =
+        SchemaEvolutionUtils.buildAdditiveSchema(latestSchema, targetSchema);
+
+    if (updatedSchema.isEmpty()) {
+      refresh(latestSnapshot);
+      return;
+    }
+
+    Engine localEngine = getEngine();
+    Transaction txn =
+        latestSnapshot
+            .buildUpdateTableTransaction(ENGINE_INFO, Operation.WRITE)
+            .withUpdatedSchema(updatedSchema.get())
+            .build(localEngine);
+    TransactionCommitResult result =
+        withTiming(
+            "updateSchema.txn", () -> txn.commit(localEngine, CloseableIterable.emptyIterable()));
+    Snapshot committedSnapshot =
+        result
+            .getPostCommitSnapshot()
+            .orElseGet(
+                () ->
+                    snapshot()
+                        .orElseThrow(
+                            () -> new IllegalStateException("Snapshot should exist after commit")));
+    refresh(committedSnapshot);
+    onPostCommit(committedSnapshot, result.getTransactionReport());
   }
 
   @Override
