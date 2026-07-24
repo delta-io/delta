@@ -58,7 +58,7 @@ import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, QualifiedColTyp
 import org.apache.spark.sql.connector.catalog.{DelegatingCatalogExtension, Identifier, StagedTable, StagingTableCatalog, SupportsWrite, Table, TableCapability, TableCatalog, TableCatalogCapability, TableChange, V1Table}
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.catalog.TableChange._
-import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform, Literal, NamedReference, Transform}
+import org.apache.spark.sql.connector.expressions.{ClusterByTransform => SparkClusterByTransform, FieldReference, IdentityTransform, Literal, NamedReference, Transform}
 import org.apache.spark.sql.connector.write.{LogicalWriteInfo, SupportsTruncate, V1Write, WriteBuilder}
 import org.apache.spark.sql.execution.datasources.{DataSource, PartitioningUtils}
 import org.apache.spark.sql.internal.SQLConf
@@ -817,6 +817,15 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       case TempClusterByTransform(columnNames) =>
         if (clusterBySpec.nonEmpty) {
           // Parser guarantees that it only passes down one TempClusterByTransform.
+          throw SparkException.internalError("Cannot have multiple cluster by transforms.")
+        }
+        clusterBySpec = Some(ClusterBySpec(columnNames))
+
+      // Spark 4.0+ DataFrameWriterV2.clusterBy() (PySpark / Scala API) passes Spark's real
+      // ClusterByTransform here instead of Delta's TempClusterByTransform, since OSS Spark now
+      // implements the API natively.
+      case SparkClusterByTransform(columnNames) =>
+        if (clusterBySpec.nonEmpty) {
           throw SparkException.internalError("Cannot have multiple cluster by transforms.")
         }
         clusterBySpec = Some(ClusterBySpec(columnNames))
