@@ -53,7 +53,7 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
       domainMetadata = Seq.empty,
       op = DeltaOperations.ManualUpdate)
 
-  test("writeAMT materializes a tree for an OPTIMIZE checkpoint operation") {
+  test("writeAMT performs a clustered full rewrite for an OPTIMIZE checkpoint operation") {
     withTable("amt_optimize_ckpt") {
       val name = "amt_optimize_ckpt"
       createAMTTable(name, checkpointInterval = 2)
@@ -66,6 +66,9 @@ class AMTWriterManagerSuite extends AMTCheckpointTestBase {
         currentTransactionInfo = txnInfoFor(snapshot, actions = Seq.empty),
         preCommitLogSegment = snapshot.logSegment).getOrElse(
           fail("OPTIMIZE checkpoint must materialize an AMT."))
+      // A full rewrite flushes the live files into freshly clustered leaves via the distributed
+      // write path, so at least one leaf must be written.
+      assert(result.leaves.nonEmpty, "The clustered rewrite must write at least one leaf.")
       // The commit carries no user actions, so the tree describes state as of the read version.
       assert(result.contentRootVersion == snapshot.version)
       // The metric records the trigger name carried on the operation.
