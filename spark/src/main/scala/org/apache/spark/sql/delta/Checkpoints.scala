@@ -1266,7 +1266,7 @@ object Checkpoints
       additionalCols ++= partitionValues
       additionalCols ++= Checkpoints.extractStats(snapshot.statsSchema, "add.stats")
     }
-    state.withColumn("add",
+    val withAdd = state.withColumn("add",
       when(col("add").isNotNull, struct(Seq(
         col("add.path"),
         col("add.partitionValues"),
@@ -1281,6 +1281,27 @@ object Checkpoints
         additionalCols: _*
       ))
     )
+    if (sessionConf.getConf(DeltaSQLConf.CHECKPOINT_DROP_BACK_REFERENCE_ENABLED)) {
+      dropStructField(withAdd, "remove", "backReference")
+    } else {
+      withAdd
+    }
+  }
+
+  /**
+   * Returns `df` with `field` removed from the top-level struct column `column`.
+   */
+  private def dropStructField(df: DataFrame, column: String, field: String): DataFrame = {
+    val structType = df.schema(column).dataType.asInstanceOf[StructType]
+    if (!structType.fieldNames.contains(field)) {
+      df
+    } else {
+      val keptCols = structType.fieldNames.iterator
+        .filterNot(_ == field)
+        .map(name => col(s"$column.$name"))
+        .toSeq
+      df.withColumn(column, when(col(column).isNotNull, struct(keptCols: _*)))
+    }
   }
 
   def shouldWriteStatsAsStruct(conf: SQLConf, snapshot: SnapshotDescriptor): Boolean = {

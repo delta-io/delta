@@ -33,7 +33,7 @@ import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.{DeltaFileOperations, JsonUtils, Utils => DeltaUtils}
+import org.apache.spark.sql.delta.util.{DeltaEncoder, DeltaFileOperations, JsonUtils, Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.PartitionUtils
 import com.fasterxml.jackson.annotation._
@@ -915,7 +915,8 @@ case class AddFile(
     baseRowId: Option[Long] = None,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     defaultRowCommitVersion: Option[Long] = None,
-    clusteringProvider: Option[String] = None
+    clusteringProvider: Option[String] = None,
+    backReference: Option[BackReference] = None
 ) extends FileAction with HasNumRecords {
   require(path.nonEmpty)
 
@@ -935,7 +936,8 @@ case class AddFile(
       deletionVector = deletionVector,
       baseRowId = baseRowId,
       defaultRowCommitVersion = defaultRowCommitVersion,
-      stats = stats
+      stats = stats,
+      backReference = backReference
     )
     // scalastyle:on
   }
@@ -1126,6 +1128,29 @@ object AddFile {
 }
 
 /**
+ * A back reference points a file action at the exact location of its source entry inside a
+ * Adaptive Metadata Tree (AMT) leaf manifest.
+ *
+ * @param manifest The canonical path of the AMT leaf manifest that held the source entry (the leaf
+ *                 DATA_MANIFEST `location`).
+ * @param pos      The 0-based position of the entry within that leaf. This equals the parquet
+ *                 `_metadata.row_index` of the leaf row, which is the same ordinal the MDV bitmap
+ *                 indexes.
+ */
+case class BackReference(
+    manifest: String,
+    pos: Long)
+
+object BackReference {
+
+  final lazy val STRUCT_TYPE: StructType =
+    Action.addFileSchema("backReference").dataType.asInstanceOf[StructType]
+
+  private lazy val _encoder = new DeltaEncoder[BackReference]
+  implicit def encoder: Encoder[BackReference] = _encoder.get
+}
+
+/**
  * Logical removal of a given file from the reservoir. Acts as a tombstone before a file is
  * deleted permanently.
  *
@@ -1155,7 +1180,8 @@ case class RemoveFile(
     baseRowId: Option[Long] = None,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     defaultRowCommitVersion: Option[Long] = None,
-    override val stats: String = null
+    override val stats: String = null,
+    backReference: Option[BackReference] = None
 ) extends FileAction with HasNumRecords {
   override def wrap: SingleAction = SingleAction(remove = this)
 

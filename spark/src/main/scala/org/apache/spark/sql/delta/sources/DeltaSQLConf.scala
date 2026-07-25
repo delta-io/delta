@@ -1483,6 +1483,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createOptional
 
+  val CHECKPOINT_DROP_BACK_REFERENCE_ENABLED =
+    buildConf("checkpoint.dropBackReference.enabled")
+      .internal()
+      .doc("""
+          |When enabled, the Adaptive Metadata Tree `backReference` field is stripped from
+          |the add/remove structs before a classic/V2 checkpoint is written, so that non-AMT
+          |checkpoints stay byte-identical to before the AMT back-reference feature.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val LAST_CHECKPOINT_SIDECARS_THRESHOLD =
     buildConf("lastCheckpoint.sidecars.threshold")
       .internal()
