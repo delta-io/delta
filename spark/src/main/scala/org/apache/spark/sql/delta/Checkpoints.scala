@@ -45,6 +45,7 @@ import org.apache.spark.TaskContext
 import org.apache.spark.internal.MDC
 import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
+import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{Cast, ElementAt, Literal}
@@ -58,8 +59,7 @@ import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.functions.{coalesce, col, struct, when}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.util.SerializableConfiguration
-import org.apache.spark.util.Utils
+import org.apache.spark.util.{LongAccumulator, SerializableConfiguration, Utils}
 
 /**
  * A class to help with comparing checkpoints with each other, where we may have had concurrent
@@ -802,12 +802,9 @@ object Checkpoints
           useRename = useRename,
           partition = partition,
           expectedNumParts = actualNumParts,
-          runWriteInNewThreadOnGCS = true) { writer =>
-            iter.foreach { row =>
-              checkpointRowCount.add(1)
-              writer.write(row)
-          }
-        }
+          rows = iter,
+          rowsWrittenAccumulatorOpt = Some(checkpointRowCount),
+          runWriteInNewThreadOnGCS = true)
         Iterator(status)
       }.collect()
 
@@ -1089,9 +1086,8 @@ object Checkpoints
           finalPath = finalPath,
           useRename = useRename,
           partition = partition,
-          expectedNumParts = 1) { writer =>
-            iter.foreach(writer.write)
-          }
+          expectedNumParts = 1,
+          rows = iter)
         Iterator(status)
       }.collect()
     schema
@@ -1112,10 +1108,11 @@ object Checkpoints
    * @param partition The partition id (used for the task attempt id and profiling label).
    * @param expectedNumParts The expected partition count; a mismatch with the task's actual
    *                  partition count is logged as a warning.
+   * @param rows      The [[InternalRow]]s to write into the file. Consumed exactly once.
+   * @param rowsWrittenAccumulatorOpt Optional accumulator incremented once per written row.
    * @param runWriteInNewThreadOnGCS When the target is a GCS path, run the write (create/write/
    *                  close) in a fresh thread so it cannot be interrupted -- GCS may upload an
    *                  incomplete file when the writing thread is interrupted.
-   * @param writeRows The only behavioral seam: writes the partition's rows into the writer.
    * @return The [[SerializableFileStatus]] of the final file
    */
   private[delta] def writeSingleFileOnExecutor(
@@ -1127,8 +1124,10 @@ object Checkpoints
       useRename: Boolean,
       partition: Int,
       expectedNumParts: Int,
+      rows: Iterator[InternalRow],
+      rowsWrittenAccumulatorOpt: Option[LongAccumulator] = None,
       runWriteInNewThreadOnGCS: Boolean = false
-    )(writeRows: OutputWriter => Unit): SerializableFileStatus = {
+    ): SerializableFileStatus = {
 
     val fs = writePath.getFileSystem(conf)
     val attemptId = 0
@@ -1145,7 +1144,10 @@ object Checkpoints
         taskAttemptContext))
 
       val writer = writerOpt.get
-      writeRows(writer)
+      rows.foreach { row =>
+        rowsWrittenAccumulatorOpt.foreach(_.add(1))
+        writer.write(row)
+      }
       // Note: `writer.close()` is not put in a `finally` clause because we don't want to
       // close it when an exception happens. Closing the file would flush the content to the
       // storage and create an incomplete file. A concurrent reader might see it and fail.
