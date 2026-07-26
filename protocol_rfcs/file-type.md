@@ -5,7 +5,7 @@ This protocol change adds support for the `file` data type.
 The `file` data type stores a reference to a range of bytes that may be located inline in the value, elsewhere within the same data file, or in an external file.
 It is intended for use cases such as file inventories, manifests, and unstructured-data references (for example, images or audio stored in object storage), which are increasingly common with AI/ML workloads.
 
-The `file` data type is the Delta mapping of the Parquet `FILE` logical type proposed in [apache/parquet-format#585](https://github.com/apache/parquet-format/pull/585). This RFC is aligned with that proposal: the physical Parquet representation, the field set, and the byte-resolution rules defined here match the Parquet `FILE` type so that a Delta `file` column round-trips through Parquet without loss.
+The `file` data type is the Delta mapping of the Parquet [`FILE` logical type](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#file) (introduced in [apache/parquet-format#585](https://github.com/apache/parquet-format/pull/585)). This RFC is aligned with that specification: the physical Parquet representation, the field set, and the byte-resolution rules defined here match the Parquet `FILE` type so that a Delta `file` column round-trips through Parquet without loss.
 
 --------
 
@@ -52,7 +52,7 @@ To support this feature:
 
 ## File data in Parquet
 
-The `file` data type is represented in Parquet as a group annotated with the Parquet `FILE` logical type, as specified in [apache/parquet-format#585](https://github.com/apache/parquet-format/pull/585).
+The `file` data type is represented in Parquet as a group annotated with the Parquet `FILE` logical type, as specified in [Parquet LogicalTypes.md](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#file).
 The group may contain the following fields, identified by name (matched case-sensitively, not by field order). Field IDs, if they exist, may also be used for projection. Every field is optional both in the schema and in the data: a writer may omit any field from the group definition, and any field that is present has repetition type `OPTIONAL`. A group need only define the fields it uses (for example, an inline-only column may define just `inline`, and a whole-file external reference may define just `uri`).
 
 A field is *set* when it is present in the group and its value is non-null (and, for string fields, non-empty). A field is *not set* when it is absent from the group, or is present but null or empty. (Implementations are not expected to treat empty strings as null.)
