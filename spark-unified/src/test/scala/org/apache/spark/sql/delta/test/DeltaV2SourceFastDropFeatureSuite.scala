@@ -34,10 +34,11 @@ class DeltaV2SourceFastDropFeatureSuite
   )
 
   override protected def shouldFailTests: Set[String] = Set(
-    // These expect Delta's DeltaUnsupportedTableFeatureException / DELTA_UNSUPPORTED_FEATURES_FOR_READ,
-    // but the DSv2 read path surfaces Kernel's UnsupportedTableFeatureException untranslated, so the
-    // type and error-class assertions don't match. The feature is caught eagerly while building the
-    // snapshot at stream start / startingVersion.
+    // These expect Delta's DeltaUnsupportedTableFeatureException /
+    // DELTA_UNSUPPORTED_FEATURES_FOR_READ, but the DSv2 read path surfaces Kernel's
+    // UnsupportedTableFeatureException untranslated, so the type and error-class assertions don't
+    // match. The feature is caught eagerly while building the snapshot at stream start /
+    // startingVersion.
     "Latest protocol is checked for unsupported features",
     "Protocol is checked when using startingVersion - useStartingTS: false.",
     "Protocol is checked when using startingVersion - useStartingTS: true.",
