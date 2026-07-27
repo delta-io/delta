@@ -37,6 +37,10 @@ import io.delta.sharing.client.model.{
   Table,
   TemporaryCredentials
 }
+import io.delta.sharing.spark.model.{
+  DeltaSharingProtocol,
+  DeltaSharingSingleAction
+}
 
 import org.apache.spark.SparkEnv
 import org.apache.spark.storage.BlockId
@@ -259,7 +263,8 @@ private[spark] class TestClientForDeltaFormatSharing(
     }
     DeltaTableFiles(
       version = getTableVersion(table),
-      lines = linesBuilder.result(),
+      lines = TestClientForDeltaFormatSharing.maybeDropHistoricalProtocols(
+        linesBuilder.result(), includeHistoricalProtocol),
       respondedFormat = DeltaSharingRestClient.RESPONSE_FORMAT_DELTA
     )
   }
@@ -328,7 +333,8 @@ private[spark] class TestClientForDeltaFormatSharing(
     } else {
       DeltaTableFiles(
         version = getTableVersion(table),
-        lines = linesBuilder.result(),
+        lines = TestClientForDeltaFormatSharing.maybeDropHistoricalProtocols(
+          linesBuilder.result(), includeHistoricalProtocol),
         respondedFormat = DeltaSharingRestClient.RESPONSE_FORMAT_DELTA
       )
     }
@@ -346,6 +352,38 @@ private[spark] class TestClientForDeltaFormatSharing(
 }
 
 object TestClientForDeltaFormatSharing {
+  // Mimics a delta-sharing server's handling of includeHistoricalProtocol on a delta-format
+  // response. When the client opts in, the server streams a Protocol for each protocol change in
+  // the range (the mocked lines already contain them). When the client does NOT opt in (or the
+  // server doesn't support it), only the head protocol is returned: this drops every historical
+  // Protocol line except the one at the smallest protocol version, so tests can exercise the
+  // legacy stale-head-protocol behavior.
+  private[spark] def maybeDropHistoricalProtocols(
+      lines: Seq[String],
+      includeHistoricalProtocol: Boolean): Seq[String] = {
+    if (includeHistoricalProtocol) {
+      return lines
+    }
+    val protocolVersions = lines.flatMap { line =>
+      JsonUtils.fromJson[DeltaSharingSingleAction](line).unwrap match {
+        case p: DeltaSharingProtocol if p.version != null => Some(p.version.longValue())
+        case _ => None
+      }
+    }
+    if (protocolVersions.isEmpty) {
+      return lines
+    }
+    val headProtocolVersion = protocolVersions.min
+    lines.filter { line =>
+      JsonUtils.fromJson[DeltaSharingSingleAction](line).unwrap match {
+        // Keep the head protocol and any unversioned protocol; drop later protocol changes.
+        case p: DeltaSharingProtocol =>
+          p.version == null || p.version.longValue() == headProtocolVersion
+        case _ => true
+      }
+    }
+  }
+
   def getBlockId(
       sharedTableName: String,
       queryType: String,
