@@ -285,7 +285,7 @@ The root manifest contains entries of the following types:
 | 134 | `content_type` | Int | Required | All | 0=DATA, 3=DATA_MANIFEST |
 | 100 | `location` | String | Required | All | Path relative to table root (e.g., `metadata/leaf-m1.parquet` or `data/part-00001.parquet`). May be absolute URI. |
 | 101 | `file_format` | String | Required | All | File format name. Delta only supports `parquet`. |
-| 102 | `partition` | Struct | Required | DATA | Partition data tuple. Struct fields are keyed by partition `field-id` (`1000 + i` for the i-th partition column). |
+| 102 | `partition` | Struct | Optional | DATA | Partition data tuple. Struct fields are keyed by partition `field-id` (`1000 + i` for the i-th partition column). |
 | 103 | `record_count` | Long | Required | All | Number of records in the file |
 | 104 | `file_size_in_bytes` | Long | Required | All | Total file size in bytes |
 | 141 | `spec_id` | Int | Optional | All | Partition spec ID used for this entry |
