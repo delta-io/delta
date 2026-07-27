@@ -29,6 +29,7 @@ import org.apache.spark.sql.delta.actions.{
   AddFile,
   DeletionVectorDescriptor,
   Metadata,
+  Protocol,
   RemoveFile
 }
 import org.apache.spark.sql.delta.deletionvectors.{
@@ -483,7 +484,12 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
 
     val deltaLog = DeltaLog.forTable(spark, new TableIdentifier(deltaTable))
     val startingSnapshot = deltaLog.getSnapshotAt(startingVersion)
-    actionLines += DeltaSharingProtocol(deltaProtocol = startingSnapshot.protocol).json
+    // The head protocol is stamped with startingVersion, matching the head metadata, mirroring how
+    // the server stamps the head Protocol for historical-protocol responses.
+    actionLines += DeltaSharingProtocol(
+      deltaProtocol = startingSnapshot.protocol,
+      version = startingVersion
+    ).json
     actionLines += DeltaSharingMetadata(
       deltaMetadata = startingSnapshot.metadata,
       version = startingVersion
@@ -497,13 +503,20 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
         val version = FileNames.getFileVersion(new Path(f.getName))
         if (version >= startingVersion && version <= endingVersion) {
           // protocol/metadata are processed from startingSnapshot, only process versions greater
-          // than startingVersion for real actions and possible metadata changes.
+          // than startingVersion for real actions and possible metadata/protocol changes.
           maxVersion = maxVersion.max(version)
           val timestamp = f.lastModified
 
           FileUtils.readLines(f).asScala.foreach { l =>
             val action = Action.fromJson(l)
             action match {
+              case p: Protocol if version > startingVersion =>
+                // A protocol change committed inside the range (e.g. enabling deletionVectors)
+                // is streamed as its own versioned Protocol, mirroring historical metadata.
+                actionLines += DeltaSharingProtocol(
+                  deltaProtocol = p,
+                  version = version
+                ).json
               case m: Metadata =>
                 actionLines += DeltaSharingMetadata(
                   deltaMetadata = m,
