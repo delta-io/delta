@@ -77,6 +77,13 @@ public class ChecksumUtils {
    */
   public static final long DEFAULT_SET_TRANSACTIONS_IN_CRC_THRESHOLD = 100L;
 
+  /**
+   * Upper bound on the number of distinct file identities the incremental allFiles fold tracks in
+   * its "already seen" set. Unlike the live-file count, this grows with the number of add/remove
+   * actions across the folded range (e.g. many rewrites).
+   */
+  private static final int MAX_SEEN_IDENTITIES = 1000;
+
   private static final Set<String> INCREMENTAL_SUPPORTED_OPS =
       Collections.unmodifiableSet(
           new HashSet<>(
@@ -752,14 +759,12 @@ public class ChecksumUtils {
       }
       UniqueFileActionTuple identity = LogReplayUtils.getUniqueFileAction(addFile);
       // Don't record if a later action for this identity has already been seen.
-      if (!seenIdentities.add(identity)) {
+      if (!markSeen(identity)) {
         return;
       }
       addFilesByIdentity.put(identity, addFile);
       if (addFilesByIdentity.size() > allFilesThreshold) {
-        collectAllFiles = false;
-        addFilesByIdentity.clear();
-        seenIdentities.clear();
+        abandonAllFiles();
       }
     }
 
@@ -769,10 +774,38 @@ public class ChecksumUtils {
         return;
       }
       // A remove that was superseded by a later add must not delete that add's entry.
-      if (!seenIdentities.add(identity)) {
+      if (!markSeen(identity)) {
         return;
       }
       addFilesByIdentity.remove(identity);
+    }
+
+    /**
+     * Records {@code identity} as seen and returns true if it had not been seen before (so the
+     * caller should apply the action). Abandons allFiles collection and returns false if adding it
+     * would push the seen-set past {@link #MAX_SEEN_IDENTITIES}, bounding memory on churn-heavy
+     * ranges.
+     *
+     * <p>Delta files are replayed in reverse version order, so an identity is marked before its
+     * action is applied; the most recent action for a file wins and older duplicates are skipped.
+     */
+    private boolean markSeen(UniqueFileActionTuple identity) {
+      if (seenIdentities.contains(identity)) {
+        return false;
+      }
+      if (seenIdentities.size() >= MAX_SEEN_IDENTITIES) {
+        abandonAllFiles();
+        return false;
+      }
+      seenIdentities.add(identity);
+      return true;
+    }
+
+    /** Stops allFiles collection and releases the memory held for it. */
+    private void abandonAllFiles() {
+      collectAllFiles = false;
+      addFilesByIdentity.clear();
+      seenIdentities.clear();
     }
 
     /** The collected allFiles list, or empty if collection was disabled or exceeded threshold. */
