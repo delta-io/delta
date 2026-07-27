@@ -2903,7 +2903,8 @@ trait DeltaErrorsBase
       commitInfo: Option[CommitInfo],
       tableName: String,
       version: Long,
-      partitionOpt: Option[String]): io.delta.exceptions.ConcurrentAppendException = {
+      partitionOpt: Option[String],
+      additionalHint: String = ""): io.delta.exceptions.ConcurrentAppendException = {
     val operation = commitInfo.map(_.operation).getOrElse("TRANSACTION")
     val docLink = DeltaErrors.generateDocsLink(SparkEnv.get.conf, "/concurrency-control.html")
     val subClass = if (partitionOpt.nonEmpty) {
@@ -2913,9 +2914,10 @@ trait DeltaErrorsBase
     }
     val messageParameters = subClass match {
       case "WITH_PARTITION_HINT" =>
-        Array(operation, tableName, version.toString, partitionOpt.getOrElse(""), docLink)
+        Array(operation, tableName, version.toString, partitionOpt.getOrElse(""), docLink,
+          additionalHint)
       case _ =>
-        Array(operation, tableName, version.toString, docLink)
+        Array(operation, tableName, version.toString, docLink, additionalHint)
     }
     io.delta.exceptions.ConcurrentAppendException(subClass, messageParameters)
   }
@@ -2924,7 +2926,8 @@ trait DeltaErrorsBase
       commitInfo: Option[CommitInfo],
       tableName: String,
       version: Long,
-      partitionOpt: Option[String]): io.delta.exceptions.ConcurrentDeleteReadException = {
+      partitionOpt: Option[String],
+      additionalHint: String = ""): io.delta.exceptions.ConcurrentDeleteReadException = {
     val operation = commitInfo.map(_.operation).getOrElse("TRANSACTION")
     val docLink = DeltaErrors.generateDocsLink(SparkEnv.get.conf, "/concurrency-control.html")
     val subClass = if (partitionOpt.nonEmpty) {
@@ -2934,9 +2937,10 @@ trait DeltaErrorsBase
     }
     val messageParameters = subClass match {
       case "WITH_PARTITION_HINT" =>
-        Array(operation, tableName, version.toString, partitionOpt.getOrElse(""), docLink)
+        Array(operation, tableName, version.toString, partitionOpt.getOrElse(""), docLink,
+          additionalHint)
       case _ =>
-        Array(operation, tableName, version.toString, docLink)
+        Array(operation, tableName, version.toString, docLink, additionalHint)
     }
     io.delta.exceptions.ConcurrentDeleteReadException(subClass, messageParameters)
   }
@@ -2945,7 +2949,8 @@ trait DeltaErrorsBase
       commitInfo: Option[CommitInfo],
       tableName: String,
       version: Long,
-      partitionOpt: Option[String]): io.delta.exceptions.ConcurrentDeleteDeleteException = {
+      partitionOpt: Option[String],
+      additionalHint: String = ""): io.delta.exceptions.ConcurrentDeleteDeleteException = {
     val operation = commitInfo.map(_.operation).getOrElse("TRANSACTION")
     val docLink = DeltaErrors.generateDocsLink(SparkEnv.get.conf, "/concurrency-control.html")
     val subClass = if (partitionOpt.nonEmpty) {
@@ -2955,9 +2960,10 @@ trait DeltaErrorsBase
     }
     val messageParameters = subClass match {
       case "WITH_PARTITION_HINT" =>
-        Array(operation, tableName, version.toString, partitionOpt.getOrElse(""), docLink)
+        Array(operation, tableName, version.toString, partitionOpt.getOrElse(""), docLink,
+          additionalHint)
       case _ =>
-        Array(operation, tableName, version.toString, docLink)
+        Array(operation, tableName, version.toString, docLink, additionalHint)
     }
     io.delta.exceptions.ConcurrentDeleteDeleteException(subClass, messageParameters)
   }

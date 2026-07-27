@@ -724,12 +724,12 @@
     "subClass" : {
       "WITHOUT_HINT" : {
         "message" : [
-          "The concurrent operation modified data that should have been read by this operation. Please retry the operation. Refer to <docLink> for more information."
+          "The concurrent operation modified data that should have been read by this operation. Please retry the operation. Refer to <docLink> for more information.<additionalHint>"
         ]
       },
       "WITH_PARTITION_HINT" : {
         "message" : [
-          "The concurrent operation modified data in the partition <partitionValues> that should have been read by this operation. Please retry the operation. Refer to <docLink> for more information."
+          "The concurrent operation modified data in the partition <partitionValues> that should have been read by this operation. Please retry the operation. Refer to <docLink> for more information.<additionalHint>"
         ]
       }
     },
@@ -742,12 +742,12 @@
     "subClass" : {
       "WITHOUT_HINT" : {
         "message" : [
-          "The concurrent operation deleted data that was read by this operation. Please retry the operation. Refer to <docLink> for more information."
+          "The concurrent operation deleted data that was read by this operation. Please retry the operation. Refer to <docLink> for more information.<additionalHint>"
         ]
       },
       "WITH_PARTITION_HINT" : {
         "message" : [
-          "The concurrent operation deleted data in the partition <partitionValues> that was read by this operation. Please retry the operation. Refer to <docLink> for more information."
+          "The concurrent operation deleted data in the partition <partitionValues> that was read by this operation. Please retry the operation. Refer to <docLink> for more information.<additionalHint>"
         ]
       }
     },
@@ -760,12 +760,12 @@
     "subClass" : {
       "WITHOUT_HINT" : {
         "message" : [
-          "The concurrent operation deleted data that was read by this operation. Please retry the operation. Refer to <docLink> for more information."
+          "The concurrent operation deleted data that was read by this operation. Please retry the operation. Refer to <docLink> for more information.<additionalHint>"
         ]
       },
       "WITH_PARTITION_HINT" : {
         "message" : [
-          "The concurrent operation deleted data in the partition <partitionValues> that was read by this operation. Please retry the operation. Refer to <docLink> for more information."
+          "The concurrent operation deleted data in the partition <partitionValues> that was read by this operation. Please retry the operation. Refer to <docLink> for more information.<additionalHint>"
         ]
       }
     },

@@ -147,7 +147,8 @@ class OptimisticTransactionSuite
       "operation" -> "TRUNCATE",
       "version" -> "1",
       "partitionValues" -> "\\[x=1\\]",
-      "docLink" -> ".*"
+      "docLink" -> ".*",
+      "additionalHint" -> ".*"
     )))
 
   check(
@@ -217,7 +218,8 @@ class OptimisticTransactionSuite
       "operation" -> "TRUNCATE",
       "version" -> "2",
       "partitionValues" -> "\\[x=1\\]",
-      "docLink" -> ".*"
+      "docLink" -> ".*",
+      "additionalHint" -> ".*"
     )))
 
   check(
@@ -794,7 +796,8 @@ class OptimisticTransactionSuite
       "operation" -> "Manual Update",
       "partitionValues" -> s"\\[$partCol=0\\]",
       "version" -> "2",
-      "docLink" -> ".*"
+      "docLink" -> ".*",
+      "additionalHint" -> ".*"
     )
   )
 
@@ -812,7 +815,8 @@ class OptimisticTransactionSuite
       "operation" -> "Manual Update",
       "partitionValues" -> s"\\[$partCol=0\\]",
       "version" -> "2",
-      "docLink" -> ".*"
+      "docLink" -> ".*",
+      "additionalHint" -> ".*"
     )
   )
 

@@ -20,8 +20,9 @@ package org.apache.spark.sql.delta
 import java.util.concurrent.TimeUnit
 
 import scala.collection.mutable
+import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.DeltaOperations.{OP_SET_TBLPROPERTIES, ROW_TRACKING_BACKFILL_OPERATION_NAME, ROW_TRACKING_UNBACKFILL_OPERATION_NAME}
+import org.apache.spark.sql.delta.DeltaOperations.{ROW_TRACKING_BACKFILL_OPERATION_NAME, ROW_TRACKING_UNBACKFILL_OPERATION_NAME}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
@@ -39,7 +40,7 @@ import org.apache.hadoop.fs.FileStatus
 import org.apache.spark.internal.{MDC, MessageWithContext}
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.catalyst.expressions.{Expression, ExpressionSet, Or}
+import org.apache.spark.sql.catalyst.expressions.{Expression, ExpressionSet}
 import org.apache.spark.sql.types.{Metadata => FieldMetadata, MetadataBuilder, StructType}
 
 /**
@@ -232,7 +233,146 @@ private[delta] class ConflictChecker(
 
   protected var currentTransactionInfo: CurrentTransactionInfo = initialCurrentTransactionInfo
 
+  protected var rlcResolvedWinnerAdds: Set[AddFile] = Set.empty
+  protected var rlcResolvedWinnerRemoves: Set[RemoveFile] = Set.empty
+  private var successfulRlcResult: Option[RowLevelConcurrency.RebaseResult] = None
+
   protected def recordSkippedPhase(phase: String): Unit = timingStats += phase -> 0
+
+  protected def checkRowLevelConflicts(): Unit = {
+    val startNs = System.nanoTime()
+    try {
+      val snapshot = currentTransactionInfo.readSnapshot
+      val eligible = RowLevelConcurrency.isCommitEligible(
+        spark,
+        snapshot,
+        currentTransactionInfo.actions)
+
+      if (!eligible) {
+        return
+      }
+
+      val summary = RowLevelConcurrency.wouldResolve(
+        currentTransactionInfo.actions,
+        winningCommitSummary.addedFiles,
+        winningCommitSummary.removedFiles)
+
+      if (summary.candidateFileCount > 0 || summary.skipReasons.nonEmpty) {
+        recordDeltaEvent(
+          deltaLog,
+          opType = RowLevelConcurrency.TELEMETRY_WOULD_RESOLVE,
+          data = Map(
+            "winningCommitVersion" -> winningCommitVersion,
+            "candidateFileCount" -> summary.candidateFileCount,
+            "candidatePaths" -> summary.candidatePaths,
+            "skipReasons" -> summary.skipReasons,
+            "isolationLevel" -> isolationLevel.toString))
+      }
+
+      if (summary.candidateFileCount > 0) {
+        attemptRowLevelConcurrencyRebase()
+      } else if (summary.skipReasons.nonEmpty) {
+        recordDeltaEvent(
+          deltaLog,
+          opType = RowLevelConcurrency.TELEMETRY_ABORTED_SHAPE,
+          data = Map(
+            "winningCommitVersion" -> winningCommitVersion,
+            "skipReasons" -> summary.skipReasons,
+            "isolationLevel" -> isolationLevel.toString))
+      }
+    } catch {
+      case NonFatal(e) =>
+        recordDeltaEvent(
+          deltaLog,
+          opType = RowLevelConcurrency.TELEMETRY_ABORTED_UNEXPECTED,
+          data = Map(
+            "winningCommitVersion" -> winningCommitVersion,
+            "errorClass" -> e.getClass.getName,
+            "errorMessage" -> Option(e.getMessage).getOrElse(""),
+            "isolationLevel" -> isolationLevel.toString))
+    } finally {
+      recordTime(
+        "checkRowLevelConflicts",
+        TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs))
+    }
+  }
+
+  private def attemptRowLevelConcurrencyRebase(): Unit = {
+    val conf = spark.sessionState.conf
+    val deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(
+      conf.getConf(DeltaSQLConf.ROW_LEVEL_CONCURRENCY_MAX_RESOLUTION_TIME_MS))
+    val budgets = RowLevelConcurrency.RebaseBudgets(
+      maxDvBytesPerFile = conf.getConf(
+        DeltaSQLConf.ROW_LEVEL_CONCURRENCY_MAX_DV_BYTES_PER_FILE),
+      maxDvReads = conf.getConf(
+        DeltaSQLConf.ROW_LEVEL_CONCURRENCY_MAX_DV_READS_PER_COMMIT),
+      deadlineNanos = deadlineNanos)
+
+    val result = RowLevelConcurrency.tryRebase(
+      loserActions = currentTransactionInfo.actions,
+      winnerAddedFiles = winningCommitSummary.addedFiles,
+      winnerRemovedFiles = winningCommitSummary.removedFiles,
+      tablePath = deltaLog.dataPath,
+      hadoopConf = deltaLog.newDeltaHadoopConf(),
+      budgets = budgets)
+
+    if (result.status == RowLevelConcurrency.RebaseStatus.Succeeded) {
+      currentTransactionInfo = currentTransactionInfo.copy(
+        actions = result.newActions,
+        readFiles = currentTransactionInfo.readFiles ++ result.resolvedAddFiles)
+      // Only same-path AddFiles have action-level lineage to the rebased files. New-path
+      // additions remain subject to normal Serializable conflict detection because
+      // CommitInfo operation names and metrics are not correctness guarantees.
+      rlcResolvedWinnerAdds = result.resolvedAddFiles.toSet
+      rlcResolvedWinnerRemoves = result.resolvedRemoveFiles.toSet
+      successfulRlcResult = Some(result)
+    } else if (result.failure.nonEmpty) {
+      val opType = result.failure.get match {
+        case RowLevelConcurrency.RebaseFailure.Overlap =>
+          RowLevelConcurrency.TELEMETRY_ABORTED_OVERLAP
+        case RowLevelConcurrency.RebaseFailure.ByteBudgetExceeded |
+             RowLevelConcurrency.RebaseFailure.DvReadBudgetExceeded |
+             RowLevelConcurrency.RebaseFailure.DeadlineExceeded =>
+          RowLevelConcurrency.TELEMETRY_ABORTED_BUDGET
+        case RowLevelConcurrency.RebaseFailure.DecodeFailure =>
+          RowLevelConcurrency.TELEMETRY_ABORTED_DECODE_FAILURE
+        case RowLevelConcurrency.RebaseFailure.DvReadFailure =>
+          RowLevelConcurrency.TELEMETRY_ABORTED_DV_READ_FAILURE
+        case RowLevelConcurrency.RebaseFailure.DvWriteFailure =>
+          RowLevelConcurrency.TELEMETRY_ABORTED_DV_WRITE_FAILURE
+        case _ =>
+          RowLevelConcurrency.TELEMETRY_ABORTED_SHAPE
+      }
+      recordDeltaEvent(
+        deltaLog,
+        opType = opType,
+        data = Map(
+          "winningCommitVersion" -> winningCommitVersion,
+          "failure" -> result.failure.get.name,
+          "numDvFilesRead" -> result.stats.numDvFilesRead,
+          "numDvBytesRead" -> result.stats.numDvBytesRead,
+          "numDvFilesWritten" -> result.stats.numDvFilesWritten,
+          "isolationLevel" -> isolationLevel.toString))
+    }
+  }
+
+  protected def winningChangedDataAddedFilesForConflictCheck(): Seq[AddFile] = {
+    winningCommitSummary.changedDataAddedFiles.filterNot(rlcResolvedWinnerAdds.contains)
+  }
+
+  protected def winningBlindAppendAddedFilesForConflictCheck(): Seq[AddFile] = {
+    winningCommitSummary.blindAppendAddedFiles.filterNot(rlcResolvedWinnerAdds.contains)
+  }
+
+  protected def winningRemovedFilesForConflictCheck(): Seq[RemoveFile] = {
+    winningCommitSummary.removedFiles.filterNot(rlcResolvedWinnerRemoves.contains)
+  }
+
+  protected def rlcEnablementHint(): String = {
+    RowLevelConcurrency.enablementHintIfMissing(
+      currentTransactionInfo.readSnapshot,
+      spark.sessionState.conf)
+  }
 
   /**
    * This function checks conflict of the `initialCurrentTransactionInfo` against the
@@ -241,12 +381,42 @@ private[delta] class ConflictChecker(
    * validates the actions.
    */
   def checkConflictsAndValidateActions(): CurrentTransactionInfo = {
-    val updatedInfo = checkConflicts()
+    try {
+      val updatedInfo = checkConflicts()
 
-    // In case the actions of the current transaction changed, re-run the invariant
-    // checks against the rebased action set.
-    checkInvariants(updatedInfo)
-    updatedInfo
+      // In case the actions of the current transaction changed, re-run the invariant
+      // checks against the rebased action set.
+      checkInvariants(updatedInfo)
+      successfulRlcResult.foreach { result =>
+        recordDeltaEvent(
+          deltaLog,
+          opType = RowLevelConcurrency.TELEMETRY_RESOLVED,
+          data = Map(
+            "winningCommitVersion" -> winningCommitVersion,
+            "resolvedFileCount" -> result.resolvedFileCount,
+            "numDvFilesRead" -> result.stats.numDvFilesRead,
+            "numDvBytesRead" -> result.stats.numDvBytesRead,
+            "numDvFilesWritten" -> result.stats.numDvFilesWritten,
+            "isolationLevel" -> isolationLevel.toString))
+      }
+      updatedInfo
+    } catch {
+      case NonFatal(e) =>
+        successfulRlcResult.foreach { result =>
+          recordDeltaEvent(
+            deltaLog,
+            opType = RowLevelConcurrency.TELEMETRY_ABORTED_AFTER_REBASE,
+            data = Map(
+              "winningCommitVersion" -> winningCommitVersion,
+              "resolvedFileCount" -> result.resolvedFileCount,
+              "numDvFilesRead" -> result.stats.numDvFilesRead,
+              "numDvBytesRead" -> result.stats.numDvBytesRead,
+              "numDvFilesWritten" -> result.stats.numDvFilesWritten,
+              "errorClass" -> e.getClass.getName,
+              "isolationLevel" -> isolationLevel.toString))
+        }
+        throw e
+    }
   }
 
   /**
@@ -294,6 +464,7 @@ private[delta] class ConflictChecker(
 
     resolveRowTrackingBackfillConflicts()
     resolveRowTrackingUnBackfillConflicts()
+    checkRowLevelConflicts()
     // Row Tracking reconciliation. We perform this before the file checks to ensure that
     // no files have duplicate row IDs and avoid interacting with files that don't comply with
     // the protocol.
@@ -1142,9 +1313,10 @@ private[delta] class ConflictChecker(
       // Fail if new files have been added that the txn should have read.
       val addedFilesToCheckForConflicts = isolationLevel match {
         case WriteSerializable if !currentTransactionInfo.metadataChanged =>
-          winningCommitSummary.changedDataAddedFiles // don't conflict with blind appends
+          winningChangedDataAddedFilesForConflictCheck() // don't conflict with blind appends
         case Serializable | WriteSerializable =>
-          winningCommitSummary.changedDataAddedFiles ++ winningCommitSummary.blindAppendAddedFiles
+          winningChangedDataAddedFilesForConflictCheck() ++
+            winningBlindAppendAddedFilesForConflictCheck()
         case SnapshotIsolation =>
           Seq.empty
       }
@@ -1157,7 +1329,8 @@ private[delta] class ConflictChecker(
           winningCommitSummary.commitInfo,
           getTableNameOrPath,
           winningCommitVersion,
-          getPrettyPartitionMessage(fileMatchingPartitionReadPredicates.get.partitionValues))
+          getPrettyPartitionMessage(fileMatchingPartitionReadPredicates.get.partitionValues),
+          additionalHint = rlcEnablementHint())
       }
     }
   }
@@ -1171,7 +1344,7 @@ private[delta] class ConflictChecker(
       // Fail if files have been deleted that the txn read.
       val readFilePaths = currentTransactionInfo.readFiles.map(
         f => f.path -> f.partitionValues).toMap
-      val deleteReadOverlap = winningCommitSummary.removedFiles
+      val deleteReadOverlap = winningRemovedFilesForConflictCheck()
         .find(r => readFilePaths.contains(r.path))
       if (deleteReadOverlap.nonEmpty) {
         val partitionOpt = getPrettyPartitionMessage(readFilePaths(deleteReadOverlap.get.path))
@@ -1179,14 +1352,16 @@ private[delta] class ConflictChecker(
           winningCommitSummary.commitInfo,
           getTableNameOrPath,
           winningCommitVersion,
-          partitionOpt)
+          partitionOpt,
+          additionalHint = rlcEnablementHint())
       }
-      if (winningCommitSummary.removedFiles.nonEmpty && currentTransactionInfo.readWholeTable) {
+      if (winningRemovedFilesForConflictCheck().nonEmpty && currentTransactionInfo.readWholeTable) {
         throw DeltaErrors.concurrentDeleteReadException(
           winningCommitSummary.commitInfo,
           getTableNameOrPath,
           winningCommitVersion,
-          partitionOpt = None)
+          partitionOpt = None,
+          additionalHint = rlcEnablementHint())
       }
     }
   }
@@ -1201,7 +1376,7 @@ private[delta] class ConflictChecker(
       val deletedFilePaths = currentTransactionInfo.actions
         .collect { case r: RemoveFile => r.path -> r.partitionValues }
         .toMap
-      val deleteOverlap = winningCommitSummary.removedFiles
+      val deleteOverlap = winningRemovedFilesForConflictCheck()
         .find(r => deletedFilePaths.contains(r.path))
       if (deleteOverlap.nonEmpty) {
         val partitionOpt = getPrettyPartitionMessage(deletedFilePaths(deleteOverlap.get.path))
@@ -1209,7 +1384,8 @@ private[delta] class ConflictChecker(
           winningCommitSummary.commitInfo,
           getTableNameOrPath,
           winningCommitVersion,
-          partitionOpt)
+          partitionOpt,
+          additionalHint = rlcEnablementHint())
       }
     }
   }

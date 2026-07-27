@@ -3592,6 +3592,57 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .stringConf
       .checkValues(SQLConf.ParquetOutputTimestampType.values.map(_.toString))
       .createWithDefault(SQLConf.ParquetOutputTimestampType.TIMESTAMP_MICROS.toString)
+
+  //////////////////////////////
+  // Row-Level Concurrency (RLC)
+  //////////////////////////////
+
+  val ROW_LEVEL_CONCURRENCY_ENABLED =
+    buildConf("rowLevelConcurrency.enabled")
+      .internal()
+      .doc(
+        """Master switch for row-level concurrency conflict resolution. When enabled,
+          |concurrent DML operations (DELETE/UPDATE/MERGE) that touch disjoint rows in the
+          |same physical file can commit without aborting, provided the table is
+          |RLC-eligible (DVs writable, Row Tracking enabled, unpartitioned, and no
+          |identity columns). Intended as an emergency switch to disable the
+          |feature.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val ROW_LEVEL_CONCURRENCY_MAX_DV_BYTES_PER_FILE =
+    buildConf("rowLevelConcurrency.maxDvBytesPerFile")
+      .internal()
+      .doc(
+        """Maximum serialized size of any Deletion Vector decoded during RLC conflict
+          |resolution. Exceeding the budget aborts the entire winning-commit rebase and
+          |falls back to the default file-level conflict detection.""".stripMargin)
+      .longConf
+      .checkValue(_ > 0, "maxDvBytesPerFile must be positive")
+      .createWithDefault(1048576L) // 1 MiB
+
+  val ROW_LEVEL_CONCURRENCY_MAX_DV_READS_PER_COMMIT =
+    buildConf("rowLevelConcurrency.maxDvReadsPerCommit")
+      .internal()
+      .doc(
+        """Maximum number of distinct external Deletion Vector reads performed while
+          |rebasing one winning commit. Inline DVs and cached duplicate descriptors do not
+          |consume this budget. Exceeding it falls back to default conflict
+          |detection.""".stripMargin)
+      .intConf
+      .checkValue(_ > 0, "maxDvReadsPerCommit must be positive")
+      .createWithDefault(64)
+
+  val ROW_LEVEL_CONCURRENCY_MAX_RESOLUTION_TIME_MS =
+    buildConf("rowLevelConcurrency.maxResolutionTimeMs")
+      .internal()
+      .doc(
+        """Wall-clock budget in milliseconds for rebasing one winning commit. The deadline
+          |is checked before and after DV reads and writes. If exceeded, the entire rebase
+          |falls back to default conflict detection.""".stripMargin)
+      .longConf
+      .checkValue(_ > 0, "maxResolutionTimeMs must be positive")
+      .createWithDefault(2000L)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

@@ -2830,7 +2830,8 @@ trait DeltaErrorsSuiteBase
       checkError(e, "DELTA_CONCURRENT_APPEND.WITHOUT_HINT", "2D521",
         Map(
           "operation" -> "TRANSACTION", "tableName" -> "t", "version" -> "-1",
-          "docLink" -> generateDocsLink("/concurrency-control.html")
+          "docLink" -> generateDocsLink("/concurrency-control.html"),
+          "additionalHint" -> ""
         )
       )
     }
@@ -2842,7 +2843,8 @@ trait DeltaErrorsSuiteBase
       checkError(e, "DELTA_CONCURRENT_APPEND.WITH_PARTITION_HINT", "2D521",
         Map("operation" -> "TRANSACTION", "tableName" -> "t", "version" -> "-1",
           "partitionValues" -> "p1",
-          "docLink" -> generateDocsLink("/concurrency-control.html")))
+          "docLink" -> generateDocsLink("/concurrency-control.html"),
+          "additionalHint" -> ""))
     }
     {
       val e = intercept[io.delta.exceptions.ConcurrentDeleteReadException] {
@@ -2851,7 +2853,8 @@ trait DeltaErrorsSuiteBase
       }
       checkError(e, "DELTA_CONCURRENT_DELETE_READ.WITHOUT_HINT", "2D521",
         Map("operation" -> "TRANSACTION", "tableName" -> "t", "version" -> "-1",
-          "docLink" -> generateDocsLink("/concurrency-control.html")))
+          "docLink" -> generateDocsLink("/concurrency-control.html"),
+          "additionalHint" -> ""))
     }
     {
       val e = intercept[io.delta.exceptions.ConcurrentDeleteReadException] {
@@ -2861,7 +2864,8 @@ trait DeltaErrorsSuiteBase
       checkError(e, "DELTA_CONCURRENT_DELETE_READ.WITH_PARTITION_HINT", "2D521",
         Map("operation" -> "TRANSACTION", "tableName" -> "t", "version" -> "-1",
           "partitionValues" -> "p1",
-          "docLink" -> generateDocsLink("/concurrency-control.html")))
+          "docLink" -> generateDocsLink("/concurrency-control.html"),
+          "additionalHint" -> ""))
     }
     {
       val e = intercept[io.delta.exceptions.ConcurrentDeleteDeleteException] {
@@ -2870,7 +2874,8 @@ trait DeltaErrorsSuiteBase
       }
       checkError(e, "DELTA_CONCURRENT_DELETE_DELETE.WITHOUT_HINT", "2D521",
         Map("operation" -> "TRANSACTION", "tableName" -> "t", "version" -> "-1",
-          "docLink" -> generateDocsLink("/concurrency-control.html")))
+          "docLink" -> generateDocsLink("/concurrency-control.html"),
+          "additionalHint" -> ""))
     }
     {
       val e = intercept[io.delta.exceptions.ConcurrentDeleteDeleteException] {
@@ -2880,7 +2885,8 @@ trait DeltaErrorsSuiteBase
       checkError(e, "DELTA_CONCURRENT_DELETE_DELETE.WITH_PARTITION_HINT", "2D521",
         Map("operation" -> "TRANSACTION", "tableName" -> "t", "version" -> "-1",
           "partitionValues" -> "p1",
-          "docLink" -> generateDocsLink("/concurrency-control.html")))
+          "docLink" -> generateDocsLink("/concurrency-control.html"),
+          "additionalHint" -> ""))
     }
     {
       val e = intercept[io.delta.exceptions.ConcurrentTransactionException] {
