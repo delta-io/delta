@@ -30,6 +30,8 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.ActionWrapper;
 import io.delta.kernel.internal.replay.ActionsIterator;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
+import io.delta.kernel.internal.replay.LogReplayUtils;
+import io.delta.kernel.internal.replay.LogReplayUtils.UniqueFileActionTuple;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.stats.FileSizeHistogram;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
@@ -415,7 +417,8 @@ public class ChecksumUtils {
           .ifPresent(
               baseFiles -> {
                 state.collectAllFiles = true;
-                baseFiles.forEach(f -> state.addFilesByIdentity.put(FileIdentity.of(f), f));
+                baseFiles.forEach(
+                    f -> state.addFilesByIdentity.put(LogReplayUtils.getUniqueFileAction(f), f));
               });
     }
 
@@ -509,8 +512,7 @@ public class ChecksumUtils {
 
             if (state.collectAllFiles) {
               RemoveFile removeFile = new RemoveFile(StructRow.fromStructVector(removeVector, i));
-              state.removeAddFile(
-                  FileIdentity.of(removeFile.getPath(), removeFile.getDeletionVector()));
+              state.removeAddFile(LogReplayUtils.getUniqueFileAction(removeFile));
             }
           }
 
@@ -713,10 +715,12 @@ public class ChecksumUtils {
     LongAdder numDeletionVectors = new LongAdder();
     LongAdder numDeletedRecords = new LongAdder();
 
-    // AddFiles logic.
-    final Map<FileIdentity, AddFile> addFilesByIdentity = new LinkedHashMap<>();
+    // AddFiles logic. Keyed on UniqueFileActionTuple (path URI, deletionVectorId) -- the same
+    // file identity used by log replay -- so an add-with-new-DV and a remove-of-the-old-file for
+    // the same path are distinct entries.
+    final Map<UniqueFileActionTuple, AddFile> addFilesByIdentity = new LinkedHashMap<>();
     // We are iterating in reverse, so we track already seen so most recent actions take precedence.
-    final Set<FileIdentity> seenIdentities = new HashSet<>();
+    final Set<UniqueFileActionTuple> seenIdentities = new HashSet<>();
     boolean collectAllFiles = false;
     long allFilesThreshold = CRCInfo.DEFAULT_ALL_FILES_IN_CRC_THRESHOLD;
 
@@ -746,7 +750,7 @@ public class ChecksumUtils {
       if (!collectAllFiles) {
         return;
       }
-      FileIdentity identity = FileIdentity.of(addFile);
+      UniqueFileActionTuple identity = LogReplayUtils.getUniqueFileAction(addFile);
       // Don't record if a later action for this identity has already been seen.
       if (!seenIdentities.add(identity)) {
         return;
@@ -760,7 +764,7 @@ public class ChecksumUtils {
     }
 
     /** Removes a live AddFile by (path, dv) identity if collecting. */
-    void removeAddFile(FileIdentity identity) {
+    void removeAddFile(UniqueFileActionTuple identity) {
       if (!collectAllFiles) {
         return;
       }
@@ -776,47 +780,6 @@ public class ChecksumUtils {
       return collectAllFiles
           ? Optional.of(new ArrayList<>(addFilesByIdentity.values()))
           : Optional.empty();
-    }
-  }
-
-  /**
-   * Identity of a file action for allFiles bookkeeping: its path together with its deletion-vector
-   * unique id (empty when the file has no DV). Two actions match iff both agree, so an
-   * add-with-new-DV and a remove-of-the-old-file for the same path are distinct entries.
-   *
-   * <p>TODO: Refactor to Record type if Java 16
-   */
-  private static final class FileIdentity {
-    private final String path;
-    private final Optional<String> dvId;
-
-    private FileIdentity(String path, Optional<String> dvId) {
-      this.path = path;
-      this.dvId = dvId;
-    }
-
-    static FileIdentity of(AddFile addFile) {
-      return new FileIdentity(
-          addFile.getPath(),
-          addFile.getDeletionVector().map(DeletionVectorDescriptor::getUniqueId));
-    }
-
-    static FileIdentity of(String path, Optional<DeletionVectorDescriptor> dv) {
-      return new FileIdentity(path, dv.map(DeletionVectorDescriptor::getUniqueId));
-    }
-
-    @Override
-    public boolean equals(Object o) {
-      if (!(o instanceof FileIdentity)) {
-        return false;
-      }
-      FileIdentity other = (FileIdentity) o;
-      return path.equals(other.path) && dvId.equals(other.dvId);
-    }
-
-    @Override
-    public int hashCode() {
-      return Objects.hash(path, dvId);
     }
   }
 
