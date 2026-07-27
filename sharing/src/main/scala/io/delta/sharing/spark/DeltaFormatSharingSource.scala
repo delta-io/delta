@@ -844,18 +844,26 @@ case class DeltaFormatSharingSource(
     } else {
       // If isStartingVersion is false, it means to fetch files for data changes since fromVersion,
       // not including files from previous versions.
+      // includeHistoricalProtocol requests a Protocol action for each protocol change inside the
+      // version range, so a mid-range protocol upgrade (e.g. enabling deletionVectors) is reflected
+      // in the local delta log instead of leaving the client on a stale head protocol. Gated by a
+      // default-off flag; when off the client keeps the legacy single-head-protocol behavior.
+      val includeHistoricalProtocol =
+        sqlConf.getConf(DeltaSQLConf.DELTA_SHARING_STREAMING_ENABLE_HISTORICAL_PROTOCOL)
       val tableFiles = client.getFiles(
         table = table,
         startingVersion = startingOffset.reservoirVersion,
         endingVersion = Some(endingVersionForQuery),
-        fileIdHash = fileIdHash
+        fileIdHash = fileIdHash,
+        includeHistoricalProtocol = includeHistoricalProtocol
       )
       val refreshFunc = DeltaSharingUtils.getRefresherForGetFilesWithStartingVersion(
         client = client,
         table = table,
         startingVersion = startingOffset.reservoirVersion,
         endingVersion = Some(endingVersionForQuery),
-        fileIdHash = fileIdHash
+        fileIdHash = fileIdHash,
+        includeHistoricalProtocol = includeHistoricalProtocol
       )
       logInfo(
         s"Fetched ${tableFiles.lines.size} lines from startingVersion " +
