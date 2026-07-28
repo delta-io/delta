@@ -24,7 +24,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Supplier;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.Path;
 import org.apache.spark.paths.SparkPath;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.expressions.GenericInternalRow;
@@ -346,8 +345,12 @@ public class DeltaChangelogBatch implements Batch {
     public PartitionReader<InternalRow> createReader(InputPartition partition) {
       CDCInputPartition cdcPartition = (CDCInputPartition) partition;
       InternalRow partitionValues = new GenericInternalRow(0);
+      // tablePath (kernel snapshot path) is not URL-encoded while the file path is, so the inline
+      // SparkPath.fromUrlString(new Path(tablePath, filePath).toString()) throws URISyntaxException
+      // on a reserved character (space, '%') in the table path. sparkPathFromRawPath joins the two
+      // with the encoding each part carries, matching V1 TahoeFileIndex.
       SparkPath sparkPath =
-          SparkPath.fromUrlString(new Path(tablePath, cdcPartition.getFilePath()).toString());
+          PartitionUtils.sparkPathFromRawPath(tablePath, cdcPartition.getFilePath());
       scala.collection.immutable.Map<String, Object> constantMetadata =
           (scala.collection.immutable.Map<String, Object>)
               (scala.collection.immutable.Map<?, ?>)

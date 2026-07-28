@@ -56,6 +56,7 @@ public abstract class DeltaChangelogTestBase extends DeltaV2TestBase {
             .config("spark.sql.catalog.dsv2", "io.delta.spark.internal.v2.catalog.TestCatalog")
             .config("spark.sql.catalog.dsv2.base_path", System.getProperty("java.io.tmpdir"))
             .config("spark.databricks.delta.changelogV2.enabled", "true")
+            .config("spark.databricks.delta.testOnly.dataFileNamePrefix", "test%file%prefix-")
             .getOrCreate();
     defaultEngine = DefaultEngine.create(spark.sessionState().newHadoopConf());
   }
