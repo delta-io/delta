@@ -83,8 +83,6 @@ public class ConflictChecker {
   private final List<DomainMetadata> attemptDomainMetadatas;
 
   // Helper states during conflict resolution
-  // Seeded from prior rebase passes so we never regress the watermark when a new winning commit
-  // doesn't carry a row-tracking DomainMetadata action (e.g. a remove-only commit).
   private Optional<Long> lastWinningRowIdHighWatermark;
   // Paths of data files this (losing) transaction removes; used to detect delete-vs-delete
   // conflicts against the winning transactions.
@@ -119,9 +117,8 @@ public class ConflictChecker {
    * @param dataActions {@link CloseableIterable} of data actions that the losing transaction is
    *     trying to commit
    * @param priorWinningRowIdHighWatermark the highest row-ID watermark seen across all previous
-   *     rebase passes. {@code Optional.empty()} on the first conflict. Carried forward so that a
-   *     pass whose winning commits don't include a row-tracking DomainMetadata action (e.g.
-   *     remove-only commits) doesn't silently reset the watermark.
+   *     commit conflict passes. Carried forward so that a pass whose winning commits don't include
+   *     a row-tracking DomainMetadata action don't reset the watermark.
    * @return {@link TransactionRebaseState} that the losing transaction needs to rebase against
    * @throws ConcurrentWriteException if there are logical conflicts between the losing transaction
    *     and the winning transactions that cannot be resolved.

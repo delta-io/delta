@@ -804,18 +804,6 @@ trait AbstractRowTrackingSuite extends AnyFunSuite with ParquetSuiteBase
     // Tests that the row-ID high watermark established in an earlier rebase pass is correctly
     // carried into subsequent passes, so a pass that processes only no-data winning commits
     // (which carry no row-tracking DomainMetadata) doesn't reset the watermark.
-    //
-    //   v0: table created with row tracking  (watermark = MISSING = -1)
-    //   v1: winning txn A adds 100 rows      (watermark = 99, DomainMetadata written)
-    //   v2: winning txn B commits no data    (no DomainMetadata)
-    //   losing txn reads at v0, attempts v1.
-    //     Pass 1: FileAlreadyExistsException; lists from v1 → sees v1+v2,
-    //      watermark=99. Rebases to v3.
-    //     [v3 committed as a side effect inside the handler, no-data, no DomainMetadata]
-    //   losing txn attempts v3.
-    //     Pass 2: FileAlreadyExistsException; lists from v3 → sees v3 only (no DomainMetadata).
-    //       With carry-forward (fix): seeds from stored 99  → baseRowId = 100.
-    //   losing txn attempts v4 → succeeds.
     withTempDirAndEngine { (tablePath, engine) =>
       import java.nio.file.FileAlreadyExistsException
       import io.delta.kernel.defaults.engine.{DefaultEngine, DefaultJsonHandler}
@@ -837,9 +825,7 @@ trait AbstractRowTrackingSuite extends AnyFunSuite with ParquetSuiteBase
       commitTransaction(getUpdateTxn(engine, tablePath), engine, emptyIterable())
       verifyHighWatermark(engine, tablePath, 99)
 
-      // Use a custom engine: write attempts 1 and 2 throw FAEE; attempt 3 succeeds.
-      // On write attempt 2 (after pass-1 rebase to v3), we first commit a real v3 via the
-      // plain engine so that the conflict checker can list and read it.
+      // Use a custom engine: write attempts 1 and 2 throw FAEE; attempt 3 succeeds
       val fileIO = new HadoopFileIO(new Configuration())
       var writeAttempts = 0
       var dataRowCountsPerAttempt = scala.collection.mutable.ArrayBuffer[Int]()

@@ -220,9 +220,6 @@ trait AbstractTransactionCommitLoopSuite extends AnyFunSuite { self: AbstractWri
   }
 
   test("On successive conflicts, each rebase pass reads only new winning commits") {
-    // Regression test: before the fix, getWinningCommitFiles listed from readTableVersion+1 on
-    // every pass, re-reading all prior winning commits. After the fix it lists from
-    // attemptVersion, so each pass reads only the commits that appeared since the last attempt.
     withTempDirAndEngine { (tablePath, engine) =>
       commitTransaction(getCreateTxn(engine, tablePath, testSchema), engine, emptyIterable())
 
@@ -244,9 +241,7 @@ trait AbstractTransactionCommitLoopSuite extends AnyFunSuite { self: AbstractWri
       }
       val trackingFileIO = new TrackingFileIO()
 
-      // The handler throws FAEE for the first two write attempts and succeeds on the third.
-      // On write attempt 2, it first commits a real v2 via the outer `engine` so that the
-      // second conflict-resolution pass can list and read it.
+      // The handler throws FAEE for the first two write attempts and succeeds on the third
       var writeAttempts = 0
       class TrackingEngine extends DefaultEngine(trackingFileIO) {
         override def getJsonHandler: JsonHandler = new DefaultJsonHandler(trackingFileIO) {
@@ -264,7 +259,7 @@ trait AbstractTransactionCommitLoopSuite extends AnyFunSuite { self: AbstractWri
                 data.close()
                 // After pass 1 rebased to v2, commit a real v2 via the plain engine before
                 // throwing, so the second pass's listing from v2 finds a real commit file.
-                appendData(engine, tablePath, data = Seq.empty) // commits real v2
+                appendData(engine, tablePath, data = Seq.empty)
                 throw new FileAlreadyExistsException(filePath)
               case _ =>
                 // Attempt at v3 — write successfully.
@@ -279,12 +274,9 @@ trait AbstractTransactionCommitLoopSuite extends AnyFunSuite { self: AbstractWri
       assert(result.getVersion == 3, s"Expected committed to v3, got v${result.getVersion}")
       assert(result.getTransactionReport.getTransactionMetrics.getNumCommitAttempts == 3)
 
-      // Narrow to the listFrom calls made during conflict resolution (delta log .json files).
-      // These are paths of the form .../NNN.json used as the start of a file listing.
       val conflictListPaths = listFromPaths
         .filter(p => p.contains("_delta_log") && p.endsWith(".json"))
 
-      // There must be at least two conflict-resolution listing calls.
       assert(
         conflictListPaths.length >= 2,
         s"Expected >= 2 conflict-resolution listFrom calls, got: $conflictListPaths")
