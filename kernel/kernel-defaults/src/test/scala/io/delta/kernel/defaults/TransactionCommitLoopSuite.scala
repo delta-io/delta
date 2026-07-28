@@ -287,8 +287,7 @@ trait AbstractTransactionCommitLoopSuite extends AnyFunSuite { self: AbstractWri
       val lastListPath = conflictListPaths.last
       assert(
         !lastListPath.endsWith("001.json"),
-        s"Second conflict resolution listed from $lastListPath — " +
-          s"expected 002.json (the fix for #5018)")
+        s"Second conflict resolution listed from $lastListPath — expected 002.json")
     }
   }
 
