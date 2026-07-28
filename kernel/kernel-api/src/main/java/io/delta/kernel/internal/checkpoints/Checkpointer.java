@@ -293,16 +293,7 @@ public class Checkpointer {
    * Reads {@code _last_checkpoint} and parses it into a fully-typed {@link LastCheckpointInfo}.
    *
    * <p>Unlike {@link #readLastCheckpointFile}, which projects only the classic columnar fields,
-   * this exposes the whole on-disk pointer -- {@code sizeInBytes}, {@code numOfAddFiles}, {@code
-   * checkpointSchema} (as raw JSON), {@code checksum}, and the {@code v2Checkpoint} block -- by
-   * parsing the raw blob returned by {@link #readLastCheckpointSerialized} as a JSON tree. This is
-   * for callers (e.g. the metadata-cache path) that need to mirror those fields; it reuses the same
-   * retry / torn-read handling as the serialized read.
-   *
-   * @return the parsed pointer, or {@link Optional#empty()} when {@code _last_checkpoint} is
-   *     absent.
-   * @throws IllegalArgumentException if the blob is present but not a valid pointer (missing {@code
-   *     version} / {@code size}, or not a JSON object).
+   * this exposes the whole on-disk pointer by parsing the raw blob as a JSON tree.
    */
   public Optional<LastCheckpointInfo> readLastCheckpointInfo(Engine engine) {
     return readLastCheckpointSerialized(engine)

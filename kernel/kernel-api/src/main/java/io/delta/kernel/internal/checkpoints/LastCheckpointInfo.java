@@ -28,27 +28,10 @@ import java.util.Optional;
 
 /**
  * Parsed, typed view of a {@code _last_checkpoint} file.
- *
- * <p>{@link CheckpointMetaData} projects only the classic columnar fields ({@code version}, {@code
- * size}, {@code parts}, {@code tags}) because the columnar JSON reader cannot express the on-disk
- * pointer's optional and recursive fields (notably {@code checkpointSchema}, a schema-of-schema).
- * This type is the counterpart for callers that need the full pointer -- e.g. the SoftStore /
- * metadata-cache path that mirrors these fields into a wire format. It is produced from the raw
- * blob (see {@link LastCheckpointSerialized}) via a plain JSON tree walk, so no field has to be
- * projectable into a fixed columnar schema.
- *
- * <p>The field set mirrors DBR's {@code LastCheckpointInfo} case class one-for-one, except for the
- * Edge-only {@code checkpointFiles} / {@code consecutiveCompactedFiles}, which are not JSON
- * serialized into {@code _last_checkpoint} and so are never present in the blob.
- *
- * <p>{@code checkpointSchema} is deliberately kept as its raw JSON string ({@code StructType.json})
- * rather than decoded into a {@code StructType}: it round-trips losslessly and semantically, and it
- * avoids eagerly decoding a recursive schema-of-schema that most callers relay verbatim. Callers
- * that want the structural type can parse it with {@code DataTypeJsonSerDe.deserializeStructType}.
  */
 public final class LastCheckpointInfo {
 
-  // ----- _last_checkpoint field names (must match DBR LastCheckpointInfo's JSON) -----
+  // ----- _last_checkpoint field names -----
   private static final String VERSION = "version";
   private static final String SIZE = "size";
   private static final String PARTS = "parts";
@@ -60,12 +43,6 @@ public final class LastCheckpointInfo {
 
   /**
    * Parses a {@code _last_checkpoint} JSON blob into a {@link LastCheckpointInfo}.
-   *
-   * @param json the raw {@code _last_checkpoint} contents (see {@link
-   *     LastCheckpointSerialized#json()})
-   * @return the parsed pointer
-   * @throws IllegalArgumentException if the blob is not a JSON object or lacks the required {@code
-   *     version} / {@code size} fields
    */
   public static LastCheckpointInfo fromJson(String json) {
     JsonNode root;
@@ -88,7 +65,7 @@ public final class LastCheckpointInfo {
         optionalInt(root, PARTS),
         optionalLong(root, SIZE_IN_BYTES),
         optionalLong(root, NUM_OF_ADD_FILES),
-        // Keep the schema-of-schema as its raw JSON string; see class doc.
+        // Keep the schema-of-schema as its raw JSON string.
         rawJson(root, CHECKPOINT_SCHEMA),
         optionalString(root, CHECKSUM),
         LastCheckpointV2.fromJsonNode(root.get(V2_CHECKPOINT)));
@@ -142,10 +119,6 @@ public final class LastCheckpointInfo {
     return numOfAddFiles;
   }
 
-  /**
-   * The checkpoint schema as its raw {@code StructType.json} string, or empty when the pointer
-   * omits it. Not decoded into a {@code StructType}; see the class doc for why.
-   */
   public Optional<String> getCheckpointSchemaJson() {
     return checkpointSchemaJson;
   }
@@ -278,7 +251,6 @@ public final class LastCheckpointInfo {
       return modificationTime;
     }
 
-    /** The non-file actions as verbatim per-action JSON objects. See {@link LastCheckpointV2}. */
     public Optional<List<String>> getNonFileActionsJson() {
       return nonFileActionsJson;
     }
@@ -287,11 +259,6 @@ public final class LastCheckpointInfo {
       return sidecarFiles;
     }
 
-    /**
-     * The {@code version} of the {@code checkpointMetadata} action among {@code nonFileActions}, or
-     * empty when the pointer carries no such action. This is the field the metadata-cache path uses
-     * to decide whether a V2 pointer is cacheable.
-     */
     public Optional<Long> getCheckpointMetadataVersion() {
       if (!nonFileActionsJson.isPresent()) {
         return Optional.empty();
