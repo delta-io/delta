@@ -28,10 +28,12 @@ import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.spark.internal.v2.adapters.KernelMetadataAdapter;
 import io.delta.spark.internal.v2.adapters.KernelProtocolAdapter;
+import io.delta.spark.internal.v2.exception.TableNotFoundException;
 import io.delta.spark.internal.v2.exception.TimestampOutOfRangeException;
 import io.delta.spark.internal.v2.read.DeltaV2ScanUtils;
 import io.delta.spark.internal.v2.read.MetadataEvolutionHandler;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
+import io.delta.spark.internal.v2.shims.CatalogV2UtilShims;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
@@ -53,7 +55,6 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
-import org.apache.spark.sql.connector.catalog.CatalogV2Util;
 import org.apache.spark.sql.connector.catalog.Column;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.MetadataColumn;
@@ -238,10 +239,15 @@ public class DeltaV2Table extends DeltaV2TableShims
         SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(options));
     this.kernelEngine = DefaultEngine.create(this.hadoopConf);
     this.snapshotManager = SnapshotManagerFactory.create(tablePath, kernelEngine, catalogTable);
-    this.initialSnapshot =
-        timeTravelVersion.isPresent()
-            ? loadSnapshotAtCheckedVersion(snapshotManager, timeTravelVersion.getAsLong())
-            : snapshotManager.loadLatestSnapshot();
+    try {
+      this.initialSnapshot =
+          timeTravelVersion.isPresent()
+              ? loadSnapshotAtCheckedVersion(snapshotManager, timeTravelVersion.getAsLong())
+              : snapshotManager.loadLatestSnapshot();
+    } catch (io.delta.kernel.exceptions.TableNotFoundException e) {
+      // Rethrow as the Delta-module wrapper so catalog/interop layer never names a Kernel type.
+      throw new TableNotFoundException(tablePath);
+    }
 
     this.isCDCRead = CDCReader.isCDCRead(new CaseInsensitiveStringMap(this.options));
 
@@ -404,7 +410,7 @@ public class DeltaV2Table extends DeltaV2TableShims
 
   @Override
   public Column[] columns() {
-    return CatalogV2Util.structTypeToV2Columns(schema());
+    return CatalogV2UtilShims.structTypeToV2Columns(schema());
   }
 
   @Override
@@ -532,6 +538,7 @@ public class DeltaV2Table extends DeltaV2TableShims
         initialSnapshot,
         snapshotManager,
         schemaProvider.getDataSchema(),
+        schemaProvider.getPartitionSchema(),
         info);
   }
 

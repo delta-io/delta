@@ -117,21 +117,23 @@ public class MoRUpsert extends Upsert {
     final Row removeAction =
         SingleAction.createRemoveFileSingleAction(
             sourceAddFile.toRemoveFileRow(true /* dataChange */, Optional.empty()));
+    // Stats are keyed by physical column names, so use the physical schema when serializing them
+    // onto the AddFile.
     final Row addAction =
-        SingleAction.createAddFileSingleAction(addFileRowWithNewDv(schema, sourceAddFile, newDv));
+        SingleAction.createAddFileSingleAction(
+            addFileRowWithNewDv(table.getPhysicalSchema(), sourceAddFile, newDv));
     return toCloseableIterator(Arrays.asList(removeAction, addAction).iterator());
   }
 
   @Override
   public Row markRemovesOnStaged(DeltaTable table, Row stagedAddFile, Set<Integer> positions) {
     AbstractKernelTable kernelTable = (AbstractKernelTable) table;
-    StructType schema = kernelTable.getSchema();
     String tableRoot = kernelTable.getTablePath().toString();
     RoaringBitmapArray bitmap = new RoaringBitmapArray();
     bitmap.addAll(positions);
     DeletionVectorDescriptor dvDesc = dvAccess.store(kernelTable.getEngine(), tableRoot, bitmap);
     AddFile oldAddFile = new AddFile(stagedAddFile.getStruct(SingleAction.ADD_FILE_ORDINAL));
-    Row newAddFileRow = addFileRowWithNewDv(schema, oldAddFile, dvDesc);
+    Row newAddFileRow = addFileRowWithNewDv(kernelTable.getPhysicalSchema(), oldAddFile, dvDesc);
     return SingleAction.createAddFileSingleAction(newAddFileRow);
   }
 

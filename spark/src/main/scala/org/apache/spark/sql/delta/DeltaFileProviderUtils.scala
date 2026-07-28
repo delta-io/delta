@@ -19,9 +19,6 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.storage.ClosableIterator
-import org.apache.spark.sql.delta.util.FileNames.DeltaFile
-import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.FileStatus
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.InternalRow
@@ -52,26 +49,23 @@ object DeltaFileProviderUtils extends DeltaLogging {
   }
 
   /**
-   * Get the Delta json files present in the delta log in the range [startVersion, endVersion].
-   * Returns the files in sorted order, and throws if any in the range are missing.
+   * List the commits in the version range [startVersion, endVersion] (both inclusive) as
+   * [[SingleCommit]]. Returns in sorted order, and throws if any in the range are missing.
    */
-  def getDeltaFilesInVersionRange(
+  def getCommitsInVersionRange(
       spark: SparkSession,
       deltaLog: DeltaLog,
       startVersion: Long,
       endVersion: Long,
-      catalogTableOpt: Option[CatalogTable]): Seq[FileStatus] = {
-    // Pass `failOnDataLoss = false` as we are doing an explicit validation on the result ourselves
+      catalogTableOpt: Option[CatalogTable]): Seq[SingleCommit] = {
+    // Pass `failOnDataLoss = false` as we do an explicit contiguity validation on the result below
     // to identify that there are no gaps.
-    val result =
-      deltaLog
-        .getChangeLogFiles(startVersion, endVersion, catalogTableOpt, failOnDataLoss = false)
-        .map(_._2)
-        .collect { case DeltaFile(fs, v) => (fs, v) }
-        .toSeq
-    // Verify that we got the entire range requested
-    if (result.size.toLong != endVersion - startVersion + 1) {
-      // [[unsafeVolatileSnapshot]] maybe null, which needs to be explicitly filtered out.
+    val commits = deltaLog
+      .getChangesIterator(startVersion, endVersion, catalogTableOpt, failOnDataLoss = false)
+      .toSeq
+    // Verify that we got the entire range requested.
+    if (commits.size.toLong != endVersion - startVersion + 1) {
+      // [[unsafeVolatileSnapshot]] may be null, which needs to be explicitly filtered out.
       val snapshot = Some(deltaLog.unsafeVolatileSnapshot).filter(_ != null)
       recordDeltaEvent(
         provider = deltaLog,
@@ -91,7 +85,7 @@ object DeltaFileProviderUtils extends DeltaLogging {
         ))
       throw DeltaErrors.deltaVersionsNotContiguousException(
         spark = spark,
-        deltaVersions = result.map(_._2),
+        deltaVersions = commits.map(_.version),
         startVersion = startVersion,
         endVersion = endVersion,
         // Get the latest snapshot version for visibility when throwing the exception,
@@ -99,27 +93,42 @@ object DeltaFileProviderUtils extends DeltaLogging {
         // we just use the latest snapshot version here.
         versionToLoad = snapshot.map(_.version).getOrElse(-1L))
     }
-    result.map(_._1)
+    commits
   }
 
-  /** Helper method to read and parse the delta files parallelly into [[Action]]s. */
+  /**
+   * Parallel-read a set of commits off the driver, returning one lazy [[ClosableIterator]] of
+   * [[Action]]s per commit, in the input order.
+   */
   def parallelReadAndParseDeltaFilesAsIterator(
+      spark: SparkSession,
       deltaLog: DeltaLog,
-      spark: SparkSession,
-      files: Seq[FileStatus]): Seq[ClosableIterator[String]] = {
-    val hadoopConf = deltaLog.newDeltaHadoopConf()
-    parallelReadDeltaFilesBase(spark, files, hadoopConf, { file: FileStatus =>
-      deltaLog.store.readAsIterator(file, hadoopConf)
-    })
-  }
+      commits: Seq[SingleCommit]): Seq[ClosableIterator[Action]] =
+    parallelReadDeltaFiles(spark, deltaLog, commits)(_.getActionsIterator())
 
-  protected def parallelReadDeltaFilesBase[A](
+  /**
+   * Parallel-read a set of commits off the driver, materializing each commit's [[Action]]s into a
+   * [[Seq]], in the input order.
+   */
+  def parallelReadAndParseDeltaFilesAsSeq(
       spark: SparkSession,
-      files: Seq[FileStatus],
-      hadoopConf: Configuration,
-      f: FileStatus => A): Seq[A] = {
-    readThreadPool.parallelMap(spark, files) { file =>
-      f(file)
+      deltaLog: DeltaLog,
+      commits: Seq[SingleCommit]): Seq[Seq[Action]] =
+    parallelReadDeltaFiles(spark, deltaLog, commits) { commit =>
+      commit.getActionsIterator().processAndClose(_.toSeq)
+    }
+
+  /**
+   * Parallel-read a set of commits off the driver, applying `f` to each. The commits are read
+   * concurrently on the driver delta-log thread pool; results are returned in the input order.
+   */
+  protected def parallelReadDeltaFiles[A](
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      commits: Seq[SingleCommit])(f: SingleCommit => A): Seq[A] = {
+    val hadoopConf = deltaLog.newDeltaHadoopConf()
+    readThreadPool.parallelMap(spark, commits) { commit =>
+      f(commit)
     }.toSeq
   }
 }

@@ -125,36 +125,18 @@ trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
   }
 
   /**
-   * Seeds the initial `(1, 100)` row, returning true when the table was seeded. Under STRICT the
-   * DSv2 write path rejects writes to column-mapped tables (master's DeltaV2WriteBuilder guard), so
-   * such a table can never be seeded; in that case assert the rejection (an
-   * UnsupportedOperationException, or its SparkUnsupportedOperationException subclass over Connect)
-   * and return false so the caller skips the scenario body.
+   * Seeds the initial `(1, 100)` row and returns true. The boolean return is retained only so
+   * callers keep their `if (seedInitialRow(...))` shape. The `columnMapping` parameter is likewise
+   * retained for call-site compatibility.
    */
   private def seedInitialRow(columnMapping: Boolean): Boolean = {
-    if (columnMapping && v2EnableMode == "STRICT") {
-      val expectedError = "DSv2 writes are not supported on column-mapped Delta tables"
-      val seedError =
-        try {
-          insertInitialData("t")
-          None
-        } catch {
-          case e: UnsupportedOperationException => Option(e.getMessage)
-        }
-      assert(
-        seedError.exists(_.contains(expectedError)),
-        s"expected '$expectedError', got: $seedError")
-      false
-    } else {
-      insertInitialData("t")
-      true
-    }
+    insertInitialData("t")
+    true
   }
 
   /**
    * Runs `body` against a fresh managed catalog table `t` already holding `(1, 100)`, optionally
-   * enabling column mapping or type widening. Returns without running `body` when STRICT rejects
-   * the seed write to a column-mapped table.
+   * enabling column mapping or type widening.
    */
   protected def withInitialTable(
       columnMapping: Boolean = false,
@@ -171,8 +153,7 @@ trait DeltaTableRefreshSharedBase { self: AnyFunSuite =>
   /**
    * Runs `body` against a fresh external catalog table `t` already holding `(1, 100)`, optionally
    * enabling column mapping or type widening, passing the table's storage path so the body can
-   * stage external commits there before re-reading. Returns without running `body` when STRICT
-   * rejects the seed write to a column-mapped table.
+   * stage external commits there before re-reading.
    */
   protected def withExternalTable(
       columnMapping: Boolean = false,

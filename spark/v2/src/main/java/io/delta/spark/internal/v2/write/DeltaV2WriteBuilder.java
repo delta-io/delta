@@ -49,6 +49,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
   private final Snapshot initialSnapshot;
   private final DeltaSnapshotManager snapshotManager;
   private final StructType dataSchema;
+  private final StructType partitionSchema;
   private final LogicalWriteInfo writeInfo;
 
   /**
@@ -59,6 +60,8 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
    * @param snapshotManager reloads the latest snapshot; used by the streaming write to build each
    *     epoch's commit against the current table state (see {@link DeltaV2StreamingWrite})
    * @param dataSchema the table's data (non-partition) schema, from DeltaV2Table's SchemaProvider
+   * @param partitionSchema the table's partition columns in partition order (empty if
+   *     unpartitioned), from DeltaV2Table's SchemaProvider
    * @param writeInfo Spark's logical write info (schema, queryId, options)
    */
   public DeltaV2WriteBuilder(
@@ -68,6 +71,7 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
       Snapshot initialSnapshot,
       DeltaSnapshotManager snapshotManager,
       StructType dataSchema,
+      StructType partitionSchema,
       LogicalWriteInfo writeInfo) {
     this.engine = requireNonNull(engine, "engine is null");
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
@@ -75,31 +79,40 @@ public class DeltaV2WriteBuilder implements WriteBuilder {
     this.initialSnapshot = requireNonNull(initialSnapshot, "initialSnapshot is null");
     this.snapshotManager = requireNonNull(snapshotManager, "snapshotManager is null");
     this.dataSchema = requireNonNull(dataSchema, "dataSchema is null");
+    this.partitionSchema = requireNonNull(partitionSchema, "partitionSchema is null");
     this.writeInfo = requireNonNull(writeInfo, "writeInfo is null");
   }
 
   @Override
   public Write build() {
-    // Reject writes to column-mapped tables: the V2 write path writes Parquet with logical
-    // column names, but column-mapped tables store data under physical UUID-based names.
-    // The mismatch causes reads to return null for every value.
-    ColumnMappingMode cmMode =
-        ColumnMapping.getColumnMappingMode(initialSnapshot.getTableProperties());
-    if (cmMode != ColumnMappingMode.NONE) {
-      throw new UnsupportedOperationException(
-          "DSv2 writes are not supported on column-mapped Delta tables "
-              + "(delta.columnMapping.mode = "
-              + cmMode.toString()
-              + "). Use the V1 write path (format(\"delta\").write()) instead.");
-    }
-
     validateDataSchema(initialSnapshot, writeInfo.schema());
+
+    // TODO(#7140): support partitioned writes to column-mapped tables. Unpartitioned is supported;
+    // partitioned writes need partition values keyed by physical name, so reject for now.
+    if (!partitionSchema.isEmpty()) {
+      ColumnMappingMode cmMode =
+          ColumnMapping.getColumnMappingMode(initialSnapshot.getTableProperties());
+      if (cmMode != ColumnMappingMode.NONE) {
+        throw new UnsupportedOperationException(
+            "DSv2 partitioned writes are not supported on column-mapped Delta tables "
+                + "(delta.columnMapping.mode = "
+                + cmMode
+                + "). Use the V1 write path (format(\"delta\").write()) instead.");
+      }
+    }
 
     // Returns a mode-dispatching Write: toBatch() -> DeltaV2BatchWrite (batch commit off
     // initialSnapshot), toStreaming() -> DeltaV2StreamingWrite (per-epoch commit off the latest
     // snapshot via snapshotManager). Both modes share the executor-side write-state construction.
     return new DeltaV2Write(
-        engine, hadoopConf, tablePath, initialSnapshot, snapshotManager, dataSchema, writeInfo);
+        engine,
+        hadoopConf,
+        tablePath,
+        initialSnapshot,
+        snapshotManager,
+        dataSchema,
+        partitionSchema,
+        writeInfo);
   }
 
   static void validateDataSchema(Snapshot initialSnapshot, StructType dataSchema) {

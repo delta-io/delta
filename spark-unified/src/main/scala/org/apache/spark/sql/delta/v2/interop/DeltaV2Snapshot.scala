@@ -125,6 +125,10 @@ private[v2] class DeltaV2Snapshot(
   // dereference the null deltaLog.
   override def dataPath: Path = path
 
+  // The Delta log directory path, sourced from Kernel (parallels `dataPath`). Overrides the base
+  // SnapshotDescriptor.logPath
+  override def logPath: Path = new Path(kernelSnapshot.getLogPath.toString)
+
 
   // --- SnapshotDescriptor / state surface ----------------------------------------------------
 
@@ -172,6 +176,9 @@ private[v2] class DeltaV2Snapshot(
   override lazy val statsColumnSpec: DeltaStatsColumnSpec =
     StatisticsCollection.configuredDeltaStatsColumnSpec(metadata)
 
+
+  // --- ValidateChecksum: Kernel has no V1 checksum to validate; no-op ------------------------
+  override def validateChecksum(contextInfo: Map[String, String]): Boolean = true
 
   // --- V1 state-reconstruction paths: not yet used --------------------------------------------
   // The DeltaV2 read path sources its files from Kernel (`allFiles`), not from V1 log-replay state

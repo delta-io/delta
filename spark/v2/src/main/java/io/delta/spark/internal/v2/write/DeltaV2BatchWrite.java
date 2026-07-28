@@ -24,7 +24,6 @@ import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.spark.internal.v2.utils.SerializableKernelRowWrapper;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.connector.write.BatchWrite;
@@ -39,13 +38,14 @@ import org.slf4j.LoggerFactory;
 
 /**
  * BatchWrite for DSv2 batch append using Spark's Parquet path. Creates a Kernel transaction on the
- * driver, obtains the target directory from the Kernel write context, creates a Spark Parquet
- * OutputWriterFactory via the shared {@link PartitionUtils#createDeltaParquetFileFormat} factory,
- * and serializes everything into a {@link DeltaV2DataWriterFactory} for executor transport.
+ * driver (via {@link DeltaV2BatchWriteContext}) and builds the executor write state -- a {@link
+ * DeltaV2DataWriterFactory} -- through the shared {@link
+ * DeltaV2WriteContext#buildDataWriterFactory} so batch and streaming produce the factory the same
+ * way.
  *
  * <p>The {@link Transaction} object lives only on the driver and is never serialized. Executors
- * receive only serializable state: transaction state row, Hadoop conf, OutputWriterFactory, schema,
- * and target directory.
+ * receive only serializable state: transaction state row, Hadoop conf, OutputWriterFactory, and
+ * schema/partition ordinals; the per-partition target directory is derived on the executor.
  */
 class DeltaV2BatchWrite implements Write, BatchWrite {
 
@@ -56,7 +56,6 @@ class DeltaV2BatchWrite implements Write, BatchWrite {
   }
 
   private final DeltaV2BatchWriteContext context;
-  private final String targetDirectory;
 
   DeltaV2BatchWrite(
       Engine engine,
@@ -64,11 +63,11 @@ class DeltaV2BatchWrite implements Write, BatchWrite {
       String tablePath,
       Snapshot initialSnapshot,
       StructType dataSchema,
+      StructType partitionSchema,
       LogicalWriteInfo writeInfo) {
     this.context =
         DeltaV2BatchWriteContext.create(
-            engine, hadoopConf, tablePath, initialSnapshot, dataSchema, writeInfo);
-    this.targetDirectory = context.getTargetDirectory(Collections.emptyMap());
+            engine, hadoopConf, tablePath, initialSnapshot, dataSchema, partitionSchema, writeInfo);
   }
 
   @Override
@@ -78,12 +77,7 @@ class DeltaV2BatchWrite implements Write, BatchWrite {
 
   @Override
   public DataWriterFactory createBatchWriterFactory(PhysicalWriteInfo physicalWriteInfo) {
-    return new DeltaV2DataWriterFactory(
-        targetDirectory,
-        context.getSerializableHadoopConf(),
-        context.getSerializedTxnState(),
-        context.getDataSchema(),
-        context.getOutputWriterFactory());
+    return context.buildDataWriterFactory(context.getTransaction());
   }
 
   @Override
