@@ -25,7 +25,7 @@ import io.delta.kernel.Table
 import io.delta.kernel.data.{FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.defaults.utils.{AbstractWriteUtils, TestRow, WriteUtilsWithV1Builders, WriteUtilsWithV2Builders}
-import io.delta.kernel.engine.Engine
+import io.delta.kernel.engine.{Engine, JsonHandler}
 import io.delta.kernel.exceptions.{ConcurrentWriteException, InvalidTableException, KernelException, MaxCommitRetryLimitReachedException}
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl, TableConfig, TableImpl}
@@ -35,7 +35,7 @@ import io.delta.kernel.internal.rowtracking.MaterializedRowTrackingColumn.{MATER
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.types._
-import io.delta.kernel.utils.{CloseableIterable, MetadataColumnTestUtils}
+import io.delta.kernel.utils.{CloseableIterable, CloseableIterator, MetadataColumnTestUtils}
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 
 import org.apache.spark.sql.delta.DeltaLog
@@ -797,6 +797,95 @@ trait AbstractRowTrackingSuite extends AnyFunSuite with ParquetSuiteBase
       intercept[MaxCommitRetryLimitReachedException] {
         txn1.commit(engine, emptyIterable())
       }
+    }
+  }
+
+  test("Conflict resolution - row ID watermark is carried across multiple rebase passes ") {
+    // Tests that the row-ID high watermark established in an earlier rebase pass is correctly
+    // carried into subsequent passes, so a pass that processes only no-data winning commits
+    // (which carry no row-tracking DomainMetadata) doesn't reset the watermark.
+    //
+    //   v0: table created with row tracking  (watermark = MISSING = -1)
+    //   v1: winning txn A adds 100 rows      (watermark = 99, DomainMetadata written)
+    //   v2: winning txn B commits no data    (no DomainMetadata)
+    //   losing txn reads at v0, attempts v1.
+    //     Pass 1: FileAlreadyExistsException; lists from v1 → sees v1+v2,
+    //      watermark=99. Rebases to v3.
+    //     [v3 committed as a side effect inside the handler, no-data, no DomainMetadata]
+    //   losing txn attempts v3.
+    //     Pass 2: FileAlreadyExistsException; lists from v3 → sees v3 only (no DomainMetadata).
+    //       With carry-forward (fix): seeds from stored 99  → baseRowId = 100.
+    //   losing txn attempts v4 → succeeds.
+    withTempDirAndEngine { (tablePath, engine) =>
+      import java.nio.file.FileAlreadyExistsException
+      import io.delta.kernel.defaults.engine.{DefaultEngine, DefaultJsonHandler}
+      import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
+      import org.apache.hadoop.conf.Configuration
+
+      val schema = new StructType().add("id", LongType.LONG)
+      createTableWithRowTracking(engine, tablePath, schema)
+
+      // Create the losing transaction at v0 (watermark = MISSING).
+      val losingTxn = getUpdateTxn(engine, tablePath, maxRetries = 5)
+
+      // v1: winning txn A adds 100 rows → watermark = 99, DomainMetadata written.
+      val data100 = generateData(schema, Seq.empty, Map.empty, 100, 1)
+      appendData(engine, tablePath, data = prepareDataForCommit(data100))
+      verifyHighWatermark(engine, tablePath, 99)
+
+      // v2: empty commit — no DomainMetadata written.
+      commitTransaction(getUpdateTxn(engine, tablePath), engine, emptyIterable())
+      verifyHighWatermark(engine, tablePath, 99)
+
+      // Use a custom engine: write attempts 1 and 2 throw FAEE; attempt 3 succeeds.
+      // On write attempt 2 (after pass-1 rebase to v3), we first commit a real v3 via the
+      // plain engine so that the conflict checker can list and read it.
+      val fileIO = new HadoopFileIO(new Configuration())
+      var writeAttempts = 0
+      var dataRowCountsPerAttempt = scala.collection.mutable.ArrayBuffer[Int]()
+      class TestEngine extends DefaultEngine(fileIO) {
+        override def getJsonHandler: JsonHandler = new DefaultJsonHandler(fileIO) {
+          override def writeJsonFileAtomically(
+              filePath: String,
+              data: CloseableIterator[Row],
+              overwrite: Boolean): Unit = {
+            writeAttempts += 1
+            writeAttempts match {
+              case 1 =>
+                data.close()
+                // Attempt at v1 — already pre-committed; throw to trigger pass 1.
+                throw new FileAlreadyExistsException(filePath)
+              case 2 =>
+                data.close()
+                // need to commit a real v3 otherwise ConflictChecker won't find anything
+                // and fail
+                commitTransaction(getUpdateTxn(engine, tablePath), engine, emptyIterable())
+                throw new FileAlreadyExistsException(filePath)
+              case _ =>
+                // Attempt at v4 — pass the real data through so AddFile actions are committed.
+                super.writeJsonFileAtomically(
+                  filePath,
+                  data,
+                  overwrite)
+            }
+          }
+        }
+      }
+
+      val testEngine = new TestEngine()
+      val losingData = generateData(schema, Seq.empty, Map.empty, 50, 1)
+      val losingResult = commitAppendData(testEngine, losingTxn, prepareDataForCommit(losingData))
+
+      assert(writeAttempts == 3, s"Expected 3 write attempts, got $writeAttempts")
+      val losingVersion = losingResult.getVersion
+      assert(losingVersion == 4, s"Expected to commit at v4, got v$losingVersion")
+
+      // The 50 rows added by the losing txn must start at baseRowId = 100 (above the watermark
+      // of 99 established by txn A in v1). Without the carry-forward fix, the second rebase
+      // pass would reset the watermark to -1 and assign baseRowId = 0 (collision with v1).
+      verifyBaseRowIDs(engine, tablePath, Seq(0L, 100L)) // v1: 0..99, losing: 100..149
+      verifyDefaultRowCommitVersion(engine, tablePath, Seq(1L, losingVersion))
+      verifyHighWatermark(engine, tablePath, 149)
     }
   }
 
