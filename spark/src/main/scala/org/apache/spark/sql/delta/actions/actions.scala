@@ -1129,11 +1129,12 @@ object AddFile {
 }
 
 /**
- * A back reference points a file action at the exact location of its source entry inside a
+ * A back reference points a file action at the exact location of its source entry inside an
  * Adaptive Metadata Tree (AMT) leaf manifest.
  *
- * @param manifest The canonical path of the AMT leaf manifest that held the source entry (the leaf
- *                 DATA_MANIFEST `location`).
+ * @param manifest The AMT leaf manifest that held the source entry, stored exactly like the leaf's
+ *                 tree `location`: a raw (non-URL-encoded) path relative to the table root. This
+ *                 differs from [[AddFile.path]], which is URL-encoded.
  * @param pos      The 0-based position of the entry within that leaf. This equals the parquet
  *                 `_metadata.row_index` of the leaf row, which is the same ordinal the MDV bitmap
  *                 indexes.
