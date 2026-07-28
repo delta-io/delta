@@ -41,6 +41,7 @@ import io.delta.kernel.types.TimestampNTZType;
 import io.delta.kernel.types.TimestampType;
 import io.delta.kernel.types.VariantType;
 import java.util.stream.Stream;
+import org.apache.spark.SparkException;
 import org.apache.spark.SparkRuntimeException;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.Metadata;
@@ -203,6 +204,19 @@ public class SchemaUtilsTest {
     assertInvalidKernelCollation("ICU.UTF8_LCASE");
   }
 
+  @Test
+  public void testConvertKernelCollationRejectsUnknownName() {
+    SparkException exception =
+        assertThrows(
+            SparkException.class,
+            () ->
+                SchemaUtils.convertKernelDataTypeToSparkDataType(
+                    new StringType("SPARK.UNKNOWN_COLLATION")));
+    assertEquals("COLLATION_INVALID_NAME", exception.getCondition());
+    assertEquals("UNKNOWN_COLLATION", exception.getMessageParameters().get("collationName"));
+    assertEquals("sr_Latn", exception.getMessageParameters().get("proposals"));
+  }
+
   static Stream<Arguments> nullInPrimitiveArraysProvider() {
     return Stream.of(
         Arguments.of(
@@ -284,6 +298,8 @@ public class SchemaUtilsTest {
                 SchemaUtils.convertKernelDataTypeToSparkDataType(
                     new StringType(collationIdentifier)));
     assertEquals("COLLATION_INVALID_NAME", exception.getCondition());
+    assertEquals(collationIdentifier, exception.getMessageParameters().get("collationName"));
+    assertEquals("", exception.getMessageParameters().get("proposals"));
   }
 
   ////////////////////////////////
