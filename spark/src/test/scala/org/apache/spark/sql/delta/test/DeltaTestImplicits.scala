@@ -17,17 +17,24 @@
 package org.apache.spark.sql.delta.test
 
 import java.io.File
+import java.sql.Timestamp
 
-import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransaction, Snapshot}
+import scala.collection.mutable.ArrayBuffer
+
+import org.apache.spark.sql.delta.{AdaptiveMetadataTableFeature, CatalogOwnedTableFeature, DeltaHistoryManager, DeltaLog, OptimisticTransaction, Snapshot, TableFeature}
 import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Operation, Write}
-import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, Protocol}
+import org.apache.spark.sql.delta.SnapshotDescriptor
+import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogTrackedInfo
 import org.apache.spark.sql.delta.coordinatedcommits.TableCommitCoordinatorClient
+import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.hooks.AutoCompact
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import io.delta.storage.commit.{CommitResponse, GetCommitsResponse, UpdatedActions}
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.sql.{SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -65,7 +72,18 @@ object DeltaTestImplicits {
             // If neither metadata nor protocol is explicitly passed, then use default Metadata and
             // with the maximum protocol.
             txn.updateMetadataForNewTable(Metadata())
-            txn.updateProtocol(Action.supportedProtocolVersion())
+            // AdaptiveMetadataTableFeature is WIP. Don't enable it by default in test tables.
+            val featuresToExclude = ArrayBuffer[TableFeature](AdaptiveMetadataTableFeature)
+            val enableCatalogOwnedByDefault = SparkSession.active.conf.getOption(
+              TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature))
+                .contains("supported")
+            if (!enableCatalogOwnedByDefault) {
+              // CatalogOwnedTableFeature is enabled by protocol only without metadata, and should
+              // not be enabled by default.
+              featuresToExclude += CatalogOwnedTableFeature
+            }
+            txn.updateProtocol(
+              Action.supportedProtocolVersion(featuresToExclude = featuresToExclude.toSeq))
         }
         txn.commit(otherActions, op)
       } else {
@@ -93,6 +111,21 @@ object DeltaTestImplicits {
     }
   }
 
+  implicit class DeltaHistoryManagerTestHelper(history: DeltaHistoryManager) {
+    def checkVersionExists(version: Long): Unit = {
+      history.checkVersionExists(version, catalogTableOpt = None)
+    }
+
+    def getActiveCommitAtTime(
+        timestamp: Long,
+        canReturnLastCommit: Boolean): DeltaHistoryManager.Commit = {
+      history.getActiveCommitAtTime(
+        new Timestamp(timestamp),
+        catalogTableOpt = None,
+        canReturnLastCommit)
+    }
+  }
+
   /** Helper class for working with [[TableCommitCoordinatorClient]] */
   implicit class TableCommitCoordinatorClientTestHelper(
       tableCommitCoordinatorClient: TableCommitCoordinatorClient) {
@@ -102,7 +135,7 @@ object DeltaTestImplicits {
         actions: Iterator[String],
         updatedActions: UpdatedActions): CommitResponse = {
       tableCommitCoordinatorClient.commit(
-        commitVersion, actions, updatedActions, tableIdentifierOpt = None)
+        commitVersion, actions, updatedActions, tableIdentifierOpt = None, CatalogTrackedInfo.EMPTY)
     }
 
     def getCommits(
@@ -158,17 +191,49 @@ object DeltaTestImplicits {
     def upgradeProtocol(snapshot: Snapshot, newVersion: Protocol): Unit = {
       deltaLog.upgradeProtocol(None, snapshot, newVersion)
     }
+
+    /**
+     * Test helper method for getChangeLogFiles that provides catalogTableOpt = None
+     * for backward compatibility with existing unit tests.
+     */
+    def getChangeLogFiles(startVersion: Long): Iterator[(Long, FileStatus)] = {
+      deltaLog.getChangeLogFiles(startVersion, catalogTableOpt = None)
+    }
+
+    /**
+     * Test helper method for getChanges that provides catalogTableOpt = None for backward
+     * compatibility with existing unit tests.
+     */
+    def getChanges(
+        startVersion: Long,
+        failOnDataLoss: Boolean = false): Iterator[(Long, Seq[Action])] = {
+      deltaLog.getChanges(startVersion, catalogTableOpt = None, failOnDataLoss)
+    }
   }
 
   implicit class DeltaTableV2ObjectTestHelper(dt: DeltaTableV2.type) {
     /** Convenience overload that omits the cmd arg (which is not helpful in tests). */
     def apply(spark: SparkSession, id: TableIdentifier): DeltaTableV2 =
       dt.apply(spark, id, "test")
+
+    def apply(spark: SparkSession, tableDir: File): DeltaTableV2 =
+      dt.apply(spark, new Path(tableDir.getAbsolutePath))
+
+    def apply(spark: SparkSession, tableDir: File, clock: Clock): DeltaTableV2 = {
+      val tablePath = new Path(tableDir.getAbsolutePath)
+      DeltaTableV2.testOnlyApplyWithCustomDeltaLog(spark, tablePath, clock)
+    }
   }
 
   implicit class DeltaTableV2TestHelper(deltaTable: DeltaTableV2) {
     /** For backward compatibility with existing unit tests */
     def snapshot: Snapshot = deltaTable.initialSnapshot
+  }
+
+  implicit class TahoeLogFileIndexObjectTestHelper(index: TahoeLogFileIndex.type) {
+    def apply(spark: SparkSession, deltaLog: DeltaLog): TahoeLogFileIndex = {
+      index.apply(spark, deltaLog, catalogTableOpt = None)
+    }
   }
 
   implicit class AutoCompactObjectTestHelper(ac: AutoCompact.type) {
@@ -197,6 +262,33 @@ object DeltaTestImplicits {
       fileFilter: AddFile => Boolean = af => true): Unit = {
       StatisticsCollection.recompute(
         spark, deltaLog, catalogTable = None, predicates, fileFilter)
+    }
+  }
+
+  implicit class CDCReaderObjectTestHelper(cdcReader: CDCReader.type) {
+
+    /**
+     * Test helper method for changesToBatchDF that provides catalogTableOpt = None
+     * for backward compatibility with existing unit tests.
+     */
+    def changesToBatchDF(
+        deltaLog: DeltaLog,
+        start: Long,
+        end: Long,
+        spark: SparkSession,
+        readSchemaSnapshot: Option[Snapshot] = None,
+        useCoarseGrainedCDC: Boolean = false,
+        startVersionSnapshot: Option[SnapshotDescriptor] = None
+    ): org.apache.spark.sql.DataFrame = {
+      cdcReader.changesToBatchDF(
+        deltaLog,
+        start,
+        end,
+        spark,
+        catalogTableOpt = None,
+        readSchemaSnapshot,
+        useCoarseGrainedCDC,
+        startVersionSnapshot)
     }
   }
 }

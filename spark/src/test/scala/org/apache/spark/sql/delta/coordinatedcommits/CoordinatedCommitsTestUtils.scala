@@ -16,62 +16,455 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
+import java.io.File
 import java.util.Optional
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
-
 import scala.collection.mutable
 import scala.util.control.NonFatal
-
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaTestUtilsBase}
-import org.apache.spark.sql.delta.DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME
-import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata, Protocol}
-import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CheckpointPolicy, DeltaColumnMappingMode, DeltaConfig, DeltaConfigs, DeltaLog, DeltaTestUtilsBase, DomainMetadataTableFeature, MaterializedRowCommitVersion, MaterializedRowId, RowTrackingFeature, Snapshot, TableFeature}
+import org.apache.spark.sql.delta.DeltaOperations._
+import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils}
 import io.delta.storage.LogStore
-import io.delta.storage.commit.{CommitCoordinatorClient, CommitResponse, GetCommitsResponse => JGetCommitsResponse, TableDescriptor, TableIdentifier, UpdatedActions}
+import io.delta.storage.commit.{CommitCoordinatorClient, CommitResponse, TableDescriptor, TableIdentifier, UpdatedActions, GetCommitsResponse => JGetCommitsResponse}
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.{SparkConf, SparkFunSuite}
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{QueryTest, Row, SparkSession}
+import org.apache.spark.sql.catalyst.{TableIdentifier => CatalystTableIdentifier}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.test.SharedSparkSession
 
-trait CoordinatedCommitsTestUtils
-  extends DeltaTestUtilsBase { self: SparkFunSuite with SharedSparkSession =>
+// This trait is built to serve as a base trait for tests built for both CatalogOwned
+// and commit-coordinators table feature.
+trait CommitCoordinatorUtilBase {
+  /**
+   * Runs a specific test with commit coordinator feature unset.
+   */
+  def testWithDefaultCommitCoordinatorUnset(testName: String)(f: => Unit)
 
-  protected val defaultCommitsCoordinatorName = "tracking-in-memory"
-  protected val defaultCommitsCoordinatorConf = Map("randomConf" -> "randomConfValue")
+  /**
+   * Runs the function `f` with commit coordinator table feature unset.
+   * Any table created in function `f` have CatalogOwned/CoordinatedCommits disabled by default.
+   */
+  def withoutDefaultCCTableFeature(f: => Unit): Unit
 
-  def getCoordinatedCommitsDefaultProperties(withICT: Boolean = false): Map[String, String] = {
-    val coordinatedCommitsConfJson = JsonUtils.toJson(defaultCommitsCoordinatorConf)
-    val properties = Map(
-      DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key -> defaultCommitsCoordinatorName,
-      DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.key -> coordinatedCommitsConfJson,
-      DeltaConfigs.COORDINATED_COMMITS_TABLE_CONF.key -> "{}")
-    if (withICT) {
-      properties + (DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true")
+  /**
+   * Runs the function `f` with commit coordinator table feature set.
+   * Any table created in function `f` have CatalogOwned/CoordinatedCommits enabled by default.`
+   */
+  def withDefaultCCTableFeature(f: => Unit): Unit
+
+  /** Run the test with different backfill batch sizes: 1, 2, 10 */
+  def testWithDifferentBackfillInterval(testName: String)(f: Int => Unit): Unit
+
+  /** Register a builder to the appropriate builder provider. */
+  def registerBuilder(builder: CommitCoordinatorBuilder): Unit
+
+  /** Clear relevant table feature commit coordinator builders that are registered. */
+  def clearBuilders(): Unit
+
+  /** Returns the properties string to be used in the table creation for test. */
+  def propertiesString: String
+
+  /**
+   * Returns true if this test is about CatalogOwned table feature.
+   * Returns false if this test is about CoordinatedCommits tabel feature.
+   */
+  def isCatalogOwnedTest: Boolean
+
+  /** Keeps track of the number of table names pointing to the location. */
+  protected val locRefCount: mutable.Map[String, Int] = mutable.Map.empty
+}
+
+trait CatalogOwnedTestBaseSuite
+  extends SparkFunSuite
+  with DeltaTestUtilsBase
+  with CommitCoordinatorUtilBase
+  with SharedSparkSession {
+
+  val defaultCatalogOwnedFeatureEnabledKey: String =
+    TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature)
+
+  // If this config is not overridden, newly created table is not CatalogOwned by default.
+  def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = None
+
+  def catalogOwnedDefaultCreationEnabledInTests: Boolean =
+    catalogOwnedCoordinatorBackfillBatchSize.nonEmpty
+
+  /**
+   * Returns the commit coordinator client for the specified catalog.
+   *
+   * @param catalogName The name of the catalog to get the commit coordinator client for.
+   * @return The commit coordinator client for the specified catalog.
+   */
+  protected def getCatalogOwnedCommitCoordinatorClient(
+      catalogName: String): CommitCoordinatorClient = {
+    CatalogOwnedCommitCoordinatorProvider.getBuilder(catalogName).getOrElse {
+      throw new IllegalStateException(
+        s"Commit coordinator builder is not available for the specified catalog: $catalogName")
+    }.buildForCatalog(spark, catalogName)
+  }
+
+  override protected def sparkConf: SparkConf = {
+    if (catalogOwnedDefaultCreationEnabledInTests) {
+      super.sparkConf.set(defaultCatalogOwnedFeatureEnabledKey, "supported")
     } else {
-      properties
+      super.sparkConf
     }
   }
 
-  /**
-   * Runs a specific test with coordinated commits default properties unset.
-   * Any table created in this test won't have coordinated commits enabled by default.
-   */
-  def testWithDefaultCommitCoordinatorUnset(testName: String)(f: => Unit): Unit = {
+  override def clearBuilders(): Unit = {
+    CatalogOwnedCommitCoordinatorProvider.clearBuilders()
+  }
+
+  override def propertiesString: String =
+    s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')"
+
+  override protected def beforeEach(): Unit = {
+    super.beforeEach()
+    CatalogOwnedCommitCoordinatorProvider.clearBuilders()
+    catalogOwnedCoordinatorBackfillBatchSize.foreach { batchSize =>
+      CatalogOwnedCommitCoordinatorProvider.registerBuilder(
+        catalogName = CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
+        commitCoordinatorBuilder = TrackingInMemoryCommitCoordinatorBuilder(batchSize)
+      )
+    }
+    DeltaLog.clearCache()
+  }
+
+  override def testWithDefaultCommitCoordinatorUnset(testName: String)(f: => Unit): Unit = {
     test(testName) {
-      withoutCoordinatedCommitsDefaultTableProperties {
+      withoutDefaultCCTableFeature {
         f
       }
     }
   }
 
+  override def withDefaultCCTableFeature(f: => Unit): Unit = {
+    val oldConfig = spark.conf.getOption(defaultCatalogOwnedFeatureEnabledKey)
+    spark.conf.set(defaultCatalogOwnedFeatureEnabledKey, "supported")
+    try { f } finally {
+      if (oldConfig.isDefined) {
+        spark.conf.set(defaultCatalogOwnedFeatureEnabledKey, oldConfig.get)
+      } else {
+        spark.conf.unset(defaultCatalogOwnedFeatureEnabledKey)
+      }
+    }
+  }
+
+  override def withoutDefaultCCTableFeature(f: => Unit): Unit = {
+    val oldConfig = spark.conf.getOption(defaultCatalogOwnedFeatureEnabledKey)
+    spark.conf.unset(defaultCatalogOwnedFeatureEnabledKey)
+    try { f } finally {
+      if (oldConfig.isDefined) {
+        spark.conf.set(defaultCatalogOwnedFeatureEnabledKey, oldConfig.get)
+      }
+    }
+  }
+
+  override def testWithDifferentBackfillInterval(testName: String)(f: Int => Unit): Unit = {
+    Seq(1, 2, 10).foreach { backfillBatchSize =>
+      test(s"$testName [Backfill batch size: $backfillBatchSize]") {
+        CatalogOwnedCommitCoordinatorProvider.clearBuilders()
+        CatalogOwnedCommitCoordinatorProvider.registerBuilder(
+          "spark_catalog", TrackingInMemoryCommitCoordinatorBuilder(batchSize = backfillBatchSize))
+        f(backfillBatchSize)
+      }
+    }
+  }
+
   /**
-   * Runs the function `f` with coordinated commits default properties unset.
-   * Any table created in function `f` won't have coordinated commits enabled by default.
+   * Run the test against a [[TrackingCommitCoordinatorClient]] with backfill batch size =
+   * `batchBackfillSize`
    */
-  def withoutCoordinatedCommitsDefaultTableProperties[T](f: => T): T = {
+  def testWithCatalogOwned(backfillBatchSize: Int)(testName: String)(f: => Unit): Unit = {
+    test(s"$testName [Backfill batch size: $backfillBatchSize]") {
+      CatalogOwnedCommitCoordinatorProvider.clearBuilders()
+      CatalogOwnedCommitCoordinatorProvider.registerBuilder(
+        CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
+        TrackingInMemoryCommitCoordinatorBuilder(batchSize = backfillBatchSize))
+      withDefaultCCTableFeature {
+        f
+      }
+    }
+  }
+
+  override def registerBuilder(builder: CommitCoordinatorBuilder): Unit = {
+    assert(builder.isInstanceOf[CatalogOwnedCommitCoordinatorBuilder],
+      s"builder $builder(${builder.getName}) must be CatalogOwnedCommitCoordinatorBuilder")
+    CatalogOwnedCommitCoordinatorProvider.registerBuilder(
+      "spark_catalog", builder.asInstanceOf[CatalogOwnedCommitCoordinatorBuilder])
+  }
+
+  override def isCatalogOwnedTest: Boolean = true
+
+  def deleteCatalogOwnedTableFromCommitCoordinator(tableName: String): Unit = {
+    val location = try {
+      spark.sql(s"describe detail $tableName")
+        .select("location")
+        .first()
+        .getAs[String](0)
+    } catch {
+      case NonFatal(_) =>
+        // Ignore if the table does not exist/broken.
+        return
+    }
+    deleteCatalogOwnedTableFromCommitCoordinator(path = new Path(location))
+  }
+
+  def deleteCatalogOwnedTableFromCommitCoordinator(path: Path): Unit = {
+    val catalogName = "spark_catalog"
+    val cc = CatalogOwnedCommitCoordinatorProvider.getBuilder(catalogName).getOrElse {
+      throw new IllegalStateException(
+        s"Unable to get CatalogOwnedCommitCoordinatorBuilder for table at path: ${path.toString}")
+    }.buildForCatalog(spark, catalogName)
+
+    assert(
+      cc.isInstanceOf[TrackingCommitCoordinatorClient],
+      s"Please implement delete/drop method for coordinator: ${cc.getClass.getName}")
+
+    val locKey = path.toString.stripPrefix("file:")
+    if (locRefCount.contains(locKey)) {
+      locRefCount(locKey) -= 1
+    }
+    // When we create an external table in a location where some table already existed, two table
+    // names could be pointing to the same location. We should only clean up the table data in the
+    // commit coordinator when the last table name pointing to the location is dropped.
+    if (locRefCount.getOrElse(locKey, 0) == 0) {
+      val logPath = new Path(path, "_delta_log")
+      cc.asInstanceOf[TrackingCommitCoordinatorClient]
+        .delegatingCommitCoordinatorClient
+        .asInstanceOf[InMemoryCommitCoordinator]
+        .dropTable(logPath)
+    }
+    DeltaLog.clearCache()
+  }
+
+  /**
+   * Constructs the specific table properties for Catalog Owned tables.
+   *
+   * @param spark The Spark session.
+   * @param metadata The metadata of the CC table.
+   * @return A map of CC specific table properties.
+   */
+  def constructCatalogOwnedSpecificTableProperties(
+      spark: SparkSession,
+      metadata: Metadata): Map[String, String] = {
+    if (catalogOwnedDefaultCreationEnabledInTests) {
+      val qolConfs = CatalogOwnedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES
+        .collect {
+          case (feature, config, value)
+          => config.key -> value
+        }
+        .toMap
+      // RowTracking specific properties.
+      qolConfs ++ Map(
+        MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP ->
+          metadata.configuration.getOrElse(
+            MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP,
+            fail(s"Failed to get ${MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP}.")
+          ),
+        MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP ->
+          metadata.configuration.getOrElse(
+            MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP,
+            fail(s"Failed to get ${MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP}.")
+          )
+      ) ++
+      Map(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true")
+    } else {
+      Map.empty
+    }
+  }
+
+  /**
+   * Returns the properties that are expected to show up in the table properties of a Delta table
+   * when catalog owned is enabled in tests.
+   */
+  def extractCatalogOwnedSpecificPropertiesIfEnabled(
+      metadata: Metadata): Iterable[(String, String)] = {
+    if (catalogOwnedDefaultCreationEnabledInTests) {
+      val CATALOG_OWNED_TABLE_QOL_PROPERTY_KEYS =
+        CatalogOwnedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES
+          .map { case (_, config, _) => config.key }
+          .filterNot(Set(
+            DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key
+          )) ++
+          Seq(
+            MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP,
+            MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP
+          )
+      CATALOG_OWNED_TABLE_QOL_PROPERTY_KEYS.map { key =>
+        key -> metadata.configuration.getOrElse(key,
+          fail( s"Expected $key to be defined in the table properties"))
+      } ++
+      Option(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true")
+    } else {
+      Seq.empty
+    }
+  }
+
+  protected def withClassicCheckpointPolicyForCatalogOwned(f: => Unit): Unit = {
+    if (catalogOwnedDefaultCreationEnabledInTests) {
+      withSQLConf(
+        DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.Classic.name) {
+        f
+      }
+    } else {
+      f
+    }
+  }
+
+  protected def getDeltaLogWithSnapshot(
+      tableIdentifier: CatalystTableIdentifier): (DeltaLog, Snapshot) = {
+    DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
+  }
+
+  protected def isICTEnabledForNewTablesCatalogOwned: Boolean = {
+    catalogOwnedCoordinatorBackfillBatchSize.nonEmpty ||
+      spark.conf.getOption(
+        DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey).contains("true")
+  }
+
+  protected def validateTableFeatureAndMetadata(
+      tableName: String,
+      tableFeature: TableFeature,
+      tableFeatureShouldPresent: Boolean,
+      metadataShouldPresent: Boolean,
+      config: DeltaConfig[_],
+      targetValue: String): Unit = {
+    val (_, snapshot) = getDeltaLogWithSnapshot(CatalystTableIdentifier(tableName))
+    assert(snapshot.protocol.readerAndWriterFeatureNames.contains(tableFeature.name)
+      === tableFeatureShouldPresent, s"expected table feature " +
+      s"${tableFeature.name} to be ${if (tableFeatureShouldPresent) "present" else "absent"}")
+    val metadataValue: String = if (config.key == DeltaConfigs.COLUMN_MAPPING_MODE.key) {
+      config.fromMetaData(snapshot.metadata).asInstanceOf[DeltaColumnMappingMode].name
+    } else if (config.key == DeltaConfigs.CHECKPOINT_POLICY.key) {
+      config.fromMetaData(snapshot.metadata).asInstanceOf[CheckpointPolicy.Policy].name
+    } else {
+      config.fromMetaData(snapshot.metadata).toString
+    }
+    assert((metadataValue == targetValue) === metadataShouldPresent,
+      s"expected the metadata configuration of ${tableFeature.name} to be " +
+        s"${if (metadataShouldPresent) "present" else "absent"}")
+  }
+
+  protected def validateOnlySpecifiedQoLTableFeaturesAndMetadataPresent(
+      tableName: String,
+      supportedTableFeatures: Set[TableFeature]): Unit = {
+    CatalogOwnedTableUtils.qolTableFeatureAndProperties.foreach {
+      case (t, config, value) =>
+        val isSpecifiedTableFeature = supportedTableFeatures.contains(t)
+        validateTableFeatureAndMetadata(
+          tableName,
+          tableFeature = t,
+          tableFeatureShouldPresent = isSpecifiedTableFeature,
+          metadataShouldPresent = isSpecifiedTableFeature,
+          config,
+          targetValue = value)
+    }
+    validateRowTrackingEnablement(
+      tableName, expected = supportedTableFeatures.contains(RowTrackingFeature))
+  }
+
+  protected def validateRowTrackingEnablement(tableName: String, expected: Boolean): Unit = {
+    // [[DomainMetadataTableFeature]] is a dependent feature of
+    // [[RowTrackingFeature]] and would be enabled at the same time.
+    // Note: [[DomainMetadataTableFeature]] does not have the corresponding metadata.
+    val (_, snapshot) = getDeltaLogWithSnapshot(CatalystTableIdentifier(tableName))
+    if (expected) {
+      // If row tracking is enabled, we expect domain metadata to be added.
+      // But when row tracking is not enabled, other features
+      // such as Iceberg V2 could still add domain metadata.
+      assert(
+        snapshot.protocol.readerAndWriterFeatureNames.contains(DomainMetadataTableFeature.name))
+    }
+    // All [[AddFiles]] should have `baseRowId` properly propagated if RowTracking is enabled.
+    if (expected) {
+      assert(snapshot.allFiles.where(col("baseRowId").isNull).isEmpty)
+    } else {
+      assert(snapshot.allFiles.where(col("baseRowId").isNotNull).isEmpty)
+    }
+  }
+
+  protected def validateQoLFeaturesEnablement(tableName: String, expected: Boolean): Unit = {
+    CatalogOwnedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES.foreach { case (t, config, value) =>
+      validateTableFeatureAndMetadata(
+        tableName,
+        tableFeature = t,
+        tableFeatureShouldPresent = expected,
+        metadataShouldPresent = expected,
+        config,
+        targetValue = value)
+    }
+    sql(s"INSERT INTO $tableName VALUES (3), (4), (5), (6)")
+    QueryTest.checkAnswer(sql(s"SELECT * FROM $tableName"),
+      Seq(Row(1), Row(2), Row(3), Row(4), Row(5), Row(6)))
+    validateRowTrackingEnablement(
+      tableName,
+      expected)
+  }
+
+  /**
+   * Helper function to manually populate `UCCommitCoordinatorClient.UC_TABLE_ID_KEY` in the
+   * latest snapshot's metadata so the table looks as if the UC commit coordinator early path had
+   * populated it. The `tableSource` selects between a path-based table (`Left(tempDir)`) and a
+   * catalog table (`Right(tableName)`).
+   */
+  def addUCTableIdToTable(
+      tableSource: Either[File, String],
+      ucTableId: Option[String] = None): String = {
+    val tableIdToUse = ucTableId.getOrElse(UUID.randomUUID().toString)
+    val (txn, initialSnapshot) = tableSource match {
+      case Left(tempDir) =>
+        val (log, initialSnapshot) = DeltaLog.forTableWithSnapshot(spark, tempDir.getCanonicalPath)
+        (log.startTransaction(), initialSnapshot)
+      case Right(tableName) =>
+        val deltaTable = DeltaTableV2(spark, CatalystTableIdentifier(tableName))
+        val txn = deltaTable.startTransaction()
+        (txn, txn.snapshot)
+    }
+    txn.commitActions(
+      op = ManualUpdate,
+      actions = initialSnapshot.metadata.copy(
+        configuration = initialSnapshot.metadata.configuration ++
+          Map(UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> tableIdToUse)))
+    tableIdToUse
+  }
+}
+
+trait CoordinatedCommitsTestUtils
+  extends DeltaTestUtilsBase
+  with CommitCoordinatorUtilBase { self: SparkFunSuite with SharedSparkSession =>
+
+  protected val defaultCommitsCoordinatorName = "tracking-in-memory"
+  protected val defaultCommitsCoordinatorConf = Map("randomConf" -> "randomConfValue")
+
+  override def testWithDefaultCommitCoordinatorUnset(testName: String)(f: => Unit): Unit = {
+    test(testName) {
+      withoutDefaultCCTableFeature {
+        f
+      }
+    }
+  }
+
+  override def withDefaultCCTableFeature(f: => Unit): Unit = {
+    val confJson = JsonUtils.toJson(defaultCommitsCoordinatorConf)
+    withSQLConf(
+      DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey ->
+        defaultCommitsCoordinatorName,
+      DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.defaultTablePropertyKey -> confJson) {
+      f
+    }
+  }
+
+  override def withoutDefaultCCTableFeature(f: => Unit): Unit = {
     val defaultCoordinatedCommitsConfs = CoordinatedCommitsUtils
       .getDefaultCCConfigurations(spark, withDefaultKey = true)
     defaultCoordinatedCommitsConfs.foreach { case (defaultKey, _) =>
@@ -84,11 +477,6 @@ trait CoordinatedCommitsTestUtils
     }
   }
 
-  /**
-   * Runs the function `f` with coordinated commits default properties set to what is specified.
-   * Any table created in function `f` will have the `commitCoordinator` property set to the
-   * specified `commitCoordinatorName`.
-   */
   def withCustomCoordinatedCommitsTableProperties(
       commitCoordinatorName: String,
       conf: Map[String, String] = Map("randomConf" -> "randomConfValue"))(f: => Unit): Unit = {
@@ -101,8 +489,7 @@ trait CoordinatedCommitsTestUtils
     }
   }
 
-  /** Run the test with different backfill batch sizes: 1, 2, 10 */
-  def testWithDifferentBackfillInterval(testName: String)(f: Int => Unit): Unit = {
+  override def testWithDifferentBackfillInterval(testName: String)(f: Int => Unit): Unit = {
     Seq(1, 2, 10).foreach { backfillBatchSize =>
       test(s"$testName [Backfill batch size: $backfillBatchSize]") {
         CommitCoordinatorProvider.clearNonDefaultBuilders()
@@ -115,25 +502,22 @@ trait CoordinatedCommitsTestUtils
     }
   }
 
-  /**
-   * Run the test against a [[TrackingCommitCoordinatorClient]] with backfill batch size =
-   * `batchBackfillSize`
-   */
-  def testWithCoordinatedCommits(backfillBatchSize: Int)(testName: String)(f: => Unit): Unit = {
-    test(s"$testName [Backfill batch size: $backfillBatchSize]") {
-      CommitCoordinatorProvider.clearNonDefaultBuilders()
-      CommitCoordinatorProvider.registerBuilder(
-        TrackingInMemoryCommitCoordinatorBuilder(backfillBatchSize))
-      val coordinatedCommitsCoordinatorJson = JsonUtils.toJson(defaultCommitsCoordinatorConf)
-      withSQLConf(
-          DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey ->
-            defaultCommitsCoordinatorName,
-          DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.defaultTablePropertyKey ->
-            coordinatedCommitsCoordinatorJson) {
-        f
-      }
-    }
+  override def registerBuilder(builder: CommitCoordinatorBuilder): Unit = {
+    CommitCoordinatorProvider.registerBuilder(builder)
   }
+
+  override def clearBuilders(): Unit = {
+    CommitCoordinatorProvider.clearNonDefaultBuilders()
+  }
+
+  override def propertiesString: String = {
+    val coordinatedCommitsConfJson = JsonUtils.toJson(defaultCommitsCoordinatorConf)
+    s"('${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key}' =" +
+      s"'$defaultCommitsCoordinatorName', " +
+      s"'${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '$coordinatedCommitsConfJson')"
+  }
+
+  override def isCatalogOwnedTest: Boolean = false
 
   /** Run the test with:
    * 1. Without coordinated-commits
@@ -175,13 +559,14 @@ trait CoordinatedCommitsTestUtils
       updatedActions.getOldProtocol
     )
   }
+
 }
 
 case class TrackingInMemoryCommitCoordinatorBuilder(
     batchSize: Long,
     defaultCommitCoordinatorClientOpt: Option[CommitCoordinatorClient] = None,
     defaultCommitCoordinatorName: String = "tracking-in-memory")
-  extends CommitCoordinatorBuilder {
+  extends CatalogOwnedCommitCoordinatorBuilder {
   lazy val trackingInMemoryCommitCoordinatorClient =
     defaultCommitCoordinatorClientOpt.getOrElse {
       new TrackingCommitCoordinatorClient(
@@ -192,15 +577,10 @@ case class TrackingInMemoryCommitCoordinatorBuilder(
   override def build(spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient = {
     trackingInMemoryCommitCoordinatorClient
   }
-}
 
-case class TrackingGenericInMemoryCommitCoordinatorBuilder(
-    builderName: String, realBuilder: CommitCoordinatorBuilder)
-  extends CommitCoordinatorBuilder {
-  override def getName: String = builderName
-
-  override def build(spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient = {
-    new TrackingCommitCoordinatorClient(realBuilder.build(spark, conf))
+  override def buildForCatalog(
+      spark: SparkSession, catalogName: String): CommitCoordinatorClient = {
+    trackingInMemoryCommitCoordinatorClient
   }
 }
 
@@ -327,18 +707,10 @@ trait CoordinatedCommitsBaseSuite
 
   final def coordinatedCommitsEnabledInTests: Boolean = coordinatedCommitsBackfillBatchSize.nonEmpty
 
-  // Keeps track of the number of table names pointing to the location.
-  protected val locRefCount: mutable.Map[String, Int] = mutable.Map.empty
-
   // In case some tests reuse the table path/name with DROP table, this method can be used to
   // clean the table data in the commit coordinator. Note that we should call this before
   // the table actually gets DROP.
   def deleteTableFromCommitCoordinator(tableName: String): Unit = {
-    val cc = CommitCoordinatorProvider.getCommitCoordinatorClient(
-      defaultCommitsCoordinatorName, defaultCommitsCoordinatorConf, spark)
-    assert(
-      cc.isInstanceOf[TrackingCommitCoordinatorClient],
-      s"Please implement delete/drop method for coordinator: ${cc.getClass.getName}")
     val location = try {
       spark.sql(s"describe detail $tableName")
         .select("location")
@@ -349,7 +721,17 @@ trait CoordinatedCommitsBaseSuite
         // Ignore if the table does not exist/broken.
         return
     }
-    val locKey = location.stripPrefix("file:")
+    deleteTableFromCommitCoordinator(new Path(location))
+  }
+
+  def deleteTableFromCommitCoordinator(path: Path): Unit = {
+    val cc = CommitCoordinatorProvider.getCommitCoordinatorClient(
+      defaultCommitsCoordinatorName, defaultCommitsCoordinatorConf, spark)
+    assert(
+      cc.isInstanceOf[TrackingCommitCoordinatorClient],
+      s"Please implement delete/drop method for coordinator: ${cc.getClass.getName}")
+
+    val locKey = path.toString.stripPrefix("file:")
     if (locRefCount.contains(locKey)) {
       locRefCount(locKey) -= 1
     }
@@ -357,11 +739,11 @@ trait CoordinatedCommitsBaseSuite
     // names could be pointing to the same location. We should only clean up the table data in the
     // commit coordinator when the last table name pointing to the location is dropped.
     if (locRefCount.getOrElse(locKey, 0) == 0) {
-      val logPath = location + "/_delta_log"
+      val logPath = new Path(path, "_delta_log")
       cc.asInstanceOf[TrackingCommitCoordinatorClient]
         .delegatingCommitCoordinatorClient
         .asInstanceOf[InMemoryCommitCoordinator]
-        .dropTable(new Path(logPath))
+        .dropTable(logPath)
     }
     DeltaLog.clearCache()
   }
@@ -396,4 +778,16 @@ trait CoordinatedCommitsBaseSuite
       spark.conf.getOption(
         DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey).contains("true")
   }
+}
+
+trait WithCatalogOwnedBatch1 { self: CatalogOwnedTestBaseSuite =>
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+}
+
+trait WithCatalogOwnedBatch2 { self: CatalogOwnedTestBaseSuite =>
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+}
+
+trait WithCatalogOwnedBatch100 { self: CatalogOwnedTestBaseSuite =>
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }

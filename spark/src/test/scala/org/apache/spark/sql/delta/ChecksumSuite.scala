@@ -17,18 +17,21 @@
 package org.apache.spark.sql.delta
 
 import java.io.File
+import java.util.TimeZone
 
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaTestUtils._
+import org.apache.spark.sql.delta.actions.{LastManifestCommit, Metadata, Protocol}
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
-import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.SaveMode
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.test.SharedSparkSession
 
@@ -36,7 +39,9 @@ class ChecksumSuite
   extends QueryTest
   with SharedSparkSession
   with DeltaTestUtilsBase
-  with DeltaSQLCommandTest {
+  with DeltaSQLCommandTest
+  with DeltaSQLTestUtils
+  with CatalogOwnedTestBaseSuite {
 
   override def sparkConf: SparkConf = super.sparkConf
     .set(DeltaSQLConf.INCREMENTAL_COMMIT_FORCE_VERIFY_IN_TESTS, false)
@@ -44,7 +49,9 @@ class ChecksumSuite
   test(s"A Checksum should be written after every commit when " +
     s"${DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key} is true") {
     def testChecksumFile(writeChecksumEnabled: Boolean): Unit = {
-      withTempDir { tempDir =>
+      // Set up the log by explicitly creating the table otherwise we can't
+      // construct the DeltaLog via the table name.
+      withTempTable(createTable = true) { tableName =>
         withSQLConf(
           DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> writeChecksumEnabled.toString) {
           def checksumExists(deltaLog: DeltaLog, version: Long): Boolean = {
@@ -52,13 +59,9 @@ class ChecksumSuite
             checksumFile.exists()
           }
 
-          // Setup the log
-          val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
-          val initialTxn = log.startTransaction()
-          initialTxn.commitManually(createTestAddFile())
-
           // Commit the txn
-          val txn = log.startTransaction()
+          val log = DeltaLog.forTable(spark, TableIdentifier(tableName))
+          val txn = log.startTransaction(log.initialCatalogTable)
           val txnCommitVersion = txn.commit(Seq.empty, DeltaOperations.Truncate())
           assert(checksumExists(log, txnCommitVersion) == writeChecksumEnabled)
         }
@@ -69,16 +72,27 @@ class ChecksumSuite
     testChecksumFile(writeChecksumEnabled = false)
   }
 
+  private def setTimeZone(timeZone: String): Unit = {
+    spark.sql(s"SET spark.sql.session.timeZone = $timeZone")
+    TimeZone.setDefault(TimeZone.getTimeZone(timeZone))
+  }
+
   test("Incremental checksums: post commit snapshot should have a checksum " +
       "without triggering state reconstruction") {
     for (incrementalCommitEnabled <- BOOLEAN_DOMAIN) {
       withSQLConf(
         DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false",
-        DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> incrementalCommitEnabled.toString) {
-        withTempDir { tempDir =>
+        DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> incrementalCommitEnabled.toString,
+        DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_FORCE_VERIFICATION_MODE_FOR_NON_UTC_ENABLED.key ->
+          "false"
+      ) {
+        withTempTable(createTable = false) { tableName =>
+          // Set the timezone to UTC to avoid triggering force verification of all files in CRC
+          // for non utc environments.
+          setTimeZone("UTC")
           val df = spark.range(1)
-          df.write.format("delta").mode("append").save(tempDir.getCanonicalPath)
-          val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+          df.write.format("delta").mode("append").saveAsTable(tableName)
+          val log = DeltaLog.forTable(spark, TableIdentifier(tableName))
           log
             .startTransaction()
             .commit(Seq(createTestAddFile()), DeltaOperations.Write(SaveMode.Append))
@@ -97,7 +111,7 @@ class ChecksumSuite
   }
 
   def testIncrementalChecksumWrites(tableMutationOperation: String => Unit): Unit = {
-    withTempDir { tempDir =>
+    withTempTable(createTable = false) { tableName =>
       withSQLConf(
         DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true",
         DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key ->"true") {
@@ -106,10 +120,10 @@ class ChecksumSuite
           .format("delta")
           .partitionBy("id")
           .mode("append")
-          .save(tempDir.getCanonicalPath)
+          .saveAsTable(tableName)
 
-        tableMutationOperation(tempDir.getCanonicalPath)
-        val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+        tableMutationOperation(tableName)
+        val log = DeltaLog.forTable(spark, TableIdentifier(tableName))
         val checksumOpt = log.snapshot.checksumOpt
         assert(checksumOpt.isDefined)
         val checksum = checksumOpt.get
@@ -120,36 +134,43 @@ class ChecksumSuite
   }
 
   test("Incremental checksums: INSERT") {
-    testIncrementalChecksumWrites { tablePath =>
-      sql(s"INSERT INTO delta.`$tablePath` SELECT *, 1 FROM range(10, 20)")
+    testIncrementalChecksumWrites { tableName =>
+      sql(s"INSERT INTO $tableName SELECT *, 1 FROM range(10, 20)")
     }
   }
 
   test("Incremental checksums: UPDATE") {
-    testIncrementalChecksumWrites { tablePath =>
-      sql(s"UPDATE delta.`$tablePath` SET id2 = id + 1 WHERE id % 2 = 0")
+    testIncrementalChecksumWrites { tableName =>
+      sql(s"UPDATE $tableName SET id2 = id + 1 WHERE id % 2 = 0")
     }
   }
 
   test("Incremental checksums: DELETE") {
-    testIncrementalChecksumWrites { tablePath =>
-      sql(s"DELETE FROM delta.`$tablePath` WHERE id % 2 = 0")
+    testIncrementalChecksumWrites { tableName =>
+      sql(s"DELETE FROM $tableName WHERE id % 2 = 0")
     }
   }
 
   test("Checksum validation should happen on checkpoint") {
     withSQLConf(
       DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true",
-      DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true"
+      DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true",
+      // Disabled for this test because with it enabled, a corrupted Protocol
+      // or Metadata will trigger a failure earlier than the full validation.
+      DeltaSQLConf.USE_PROTOCOL_AND_METADATA_FROM_CHECKSUM_ENABLED.key -> "false"
     ) {
-      withTempDir { tempDir =>
-        spark.range(10).write.format("delta").save(tempDir.getCanonicalPath)
+      withTempTable(createTable = false) { tableName =>
+        spark
+          .range(10)
+          .write
+          .format("delta")
+          .saveAsTable(tableName)
         spark.range(1)
           .write
           .format("delta")
           .mode("append")
-          .save(tempDir.getCanonicalPath)
-        val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+          .saveAsTable(tableName)
+        val log = DeltaLog.forTable(spark, TableIdentifier(tableName))
         val checksumOpt = log.readChecksum(1)
         assert(checksumOpt.isDefined)
         val checksum = checksumOpt.get
@@ -168,7 +189,7 @@ class ChecksumSuite
           Seq(corruptedChecksumJson).toIterator,
           overwrite = true)
         DeltaLog.clearCache()
-        val log2 = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+        val log2 = DeltaLog.forTable(spark, TableIdentifier(tableName))
         val usageLogs = Log4jUsageLogger.track {
           intercept[DeltaIllegalStateException] {
             log2.checkpoint()
@@ -199,9 +220,13 @@ class ChecksumSuite
     withSQLConf(
       DeltaSQLConf.INCREMENTAL_COMMIT_VERIFY.key -> "true",
       DeltaSQLConf.DELTA_CHECKSUM_MISMATCH_IS_FATAL.key -> "false",
-      DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true"
+      DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true",
+      DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_ENABLED.key -> "false",
+      DeltaSQLConf.USE_PROTOCOL_AND_METADATA_FROM_CHECKSUM_ENABLED.key -> "true"
     ) {
-      withTempDir { tempDir =>
+      // Explicitly create the table w/o any AddFile for the subsequent
+      // DeltaLog construction.
+      withTempTable(createTable = true) { tableName =>
         import testImplicits._
         val numAddFiles = 10
 
@@ -217,12 +242,18 @@ class ChecksumSuite
         // 5. Create a new snapshot and manually validate the .crc
 
         val files = (1 to numAddFiles).map(i => createTestAddFile(encodedPath = i.toString))
-        DeltaLog.forTable(spark, tempDir).startTransaction().commitWriteAppend(files: _*)
+        DeltaLog
+          .forTable(spark, TableIdentifier(tableName))
+          .startTransaction()
+          .commitWriteAppend(files: _*)
 
-        val log = DeltaLog.forTable(spark, tempDir)
+        val log = DeltaLog.forTable(spark, TableIdentifier(tableName))
         val txn = log.startTransaction()
         val expected =
-          s"""Table size (bytes) - Expected: ${2*numAddFiles} Computed: $numAddFiles
+          s"""
+             |FileSizeHistogram mismatch in file sizes
+             |FileSizeHistogram mismatch in file counts
+             |Table size (bytes) - Expected: ${2*numAddFiles} Computed: $numAddFiles
              |Number of files - Expected: ${2*numAddFiles} Computed: $numAddFiles
           """.stripMargin.trim
 
@@ -236,4 +267,143 @@ class ChecksumSuite
       }
     }
   }
+
+  test("force checksum validation due to stale checkpoint") {
+    withSQLConf(
+      DeltaSQLConf.INCREMENTAL_COMMIT_VERIFY.key -> "false",
+      // Set this to 0 to ensure that validation is not
+      // skipped due the checkpoint not being old enough
+      DeltaSQLConf.FORCED_CHECKSUM_VALIDATION_MIN_TIME_INTERVAL_MINUTES.key -> "0",
+      DeltaSQLConf.DELTA_CHECKSUM_MISMATCH_IS_FATAL.key -> "true",
+      DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true",
+      DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_ENABLED.key -> "false",
+      DeltaSQLConf.FORCED_CHECKSUM_VALIDATION_INTERVAL.key -> "999"
+    ) {
+      withTempTable(createTable = false) { tableName =>
+        spark
+          .range(4)
+          .write
+          .format("delta")
+          .saveAsTable(tableName)
+        // Create checkpoint at version 0
+        DeltaLog.forTable(spark, TableIdentifier(tableName)).checkpoint()
+        def validateAttemptedTransactionFails: Unit = {
+          DeltaLog.clearCache()
+          val usageLogs = Log4jUsageLogger.track {
+            intercept[DeltaIllegalStateException] {
+              DeltaLog
+              .forTable(spark, TableIdentifier(tableName))
+              .startTransaction()
+            }
+          }
+          val validationFailureLogs = filterUsageRecords(usageLogs, "delta.checksum.invalid")
+          assert(validationFailureLogs.size == 1)
+          validationFailureLogs.foreach { log =>
+            val usageLogBlob = JsonUtils.fromJson[Map[String, Any]](log.blob)
+            val mismatchingFieldsOpt = usageLogBlob.get("mismatchingFields")
+            assert(mismatchingFieldsOpt.isDefined)
+            val mismatchingFieldsSet = mismatchingFieldsOpt.get.asInstanceOf[Seq[String]].toSet
+            val expectedMismatchingFields = Set(
+              "numOfProtocol",
+              "numOfMetadata",
+              "tableSizeBytes",
+              "numFiles"
+            )
+            assert(mismatchingFieldsSet === expectedMismatchingFields)
+          }
+        }
+        // Write 4 commits. Also, corrupt every checksum file.
+        (1 to 4).foreach { version =>
+          spark.range(1)
+            .write
+            .format("delta")
+            .mode("append")
+            .saveAsTable(tableName)
+          // Corrupt the checksum file.
+          val log = DeltaLog
+            .forTable(spark, TableIdentifier(tableName))
+          val checksum = log.readChecksum(version).get
+          val corruptedChecksum = checksum.copy(
+            numProtocol = 2,
+            numMetadata = 2,
+            tableSizeBytes = checksum.tableSizeBytes + 1,
+            numFiles = checksum.numFiles + 1)
+          val corruptedChecksumJson = JsonUtils.toJson(corruptedChecksum)
+          log.store.write(
+            FileNames.checksumFile(log.logPath, version),
+            Seq(corruptedChecksumJson).toIterator,
+            overwrite = true)
+
+          withSQLConf(
+            // Set the forced checksum validation interval to the current version
+            // so that validation is triggered
+            DeltaSQLConf.FORCED_CHECKSUM_VALIDATION_INTERVAL.key -> version.toString
+          ) {
+            validateAttemptedTransactionFails
+          }
+          withSQLConf(
+            // Set the validation interval to a value smaller than the current version
+            // so that validation is triggered
+            DeltaSQLConf.FORCED_CHECKSUM_VALIDATION_INTERVAL.key -> "0"
+          ) {
+            validateAttemptedTransactionFails
+          }
+          withSQLConf(
+            DeltaSQLConf.FORCED_CHECKSUM_VALIDATION_INTERVAL.key -> "0",
+            // Validation should only be triggered if the checkpoint was
+            // created more than 999 minutes ago. Which should not be
+            // the case here.
+            DeltaSQLConf.FORCED_CHECKSUM_VALIDATION_MIN_TIME_INTERVAL_MINUTES.key -> "999"
+          ) {
+            DeltaLog.clearCache()
+            DeltaLog
+              .forTable(spark, TableIdentifier(tableName))
+              .startTransaction()
+          }
+        }
+      }
+    }
+  }
+
+  test("VersionChecksum round-trips lastManifestCommit and omits it when None") {
+    val lmc = LastManifestCommit(contentRootVersion = 41, version = 43)
+    val base = VersionChecksum(
+      txnId = None,
+      tableSizeBytes = 100,
+      numFiles = 1,
+      numDeletedRecordsOpt = None,
+      numDeletionVectorsOpt = None,
+      numMetadata = 1,
+      numProtocol = 1,
+      inCommitTimestampOpt = None,
+      setTransactions = None,
+      domainMetadata = None,
+      metadata = Metadata(),
+      protocol = Protocol(),
+      fileSizeHistogram = None,
+      deletedRecordCountsHistogramOpt = None,
+      allFiles = None,
+      lastManifestCommit = Some(lmc))
+
+    val json = JsonUtils.toJson(base)
+    assert(JsonUtils.fromJson[VersionChecksum](json).lastManifestCommit.contains(lmc))
+
+    // None serializes as absent (mapper uses Include.NON_ABSENT), so existing CRCs stay unchanged.
+    val jsonWithoutLmc = JsonUtils.toJson(base.copy(lastManifestCommit = None))
+    assert(!jsonWithoutLmc.contains("lastManifestCommit"))
+    // A CRC written before this field existed deserializes to None.
+    assert(JsonUtils.fromJson[VersionChecksum](jsonWithoutLmc).lastManifestCommit.isEmpty)
+  }
+}
+
+class ChecksumWithCatalogOwnedBatch1Suite extends ChecksumSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class ChecksumWithCatalogOwnedBatch2Suite extends ChecksumSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+}
+
+class ChecksumWithCatalogOwnedBatch100Suite extends ChecksumSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }

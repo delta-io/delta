@@ -24,7 +24,6 @@ import scala.util.control.NonFatal
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
 import org.apache.spark.sql.delta.DeltaTestUtils._
 import org.apache.spark.sql.delta.commands.merge.{MergeIntoMaterializeSourceError, MergeIntoMaterializeSourceErrorType, MergeIntoMaterializeSourceReason, MergeStats}
-import org.apache.spark.sql.delta.commands.merge.MergeIntoMaterializeSource.mergeMaterializedSourceRddBlockLostErrorRegex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
@@ -44,15 +43,12 @@ import org.apache.spark.sql.types._
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.util.Utils
 
-trait MergeIntoMaterializeSourceTests
+trait MergeIntoMaterializeSourceMixin
     extends QueryTest
     with SharedSparkSession
     with DeltaSQLCommandTest
     with DeltaSQLTestUtils
-    with DeltaTestUtilsBase
-  {
-
-  import testImplicits._
+    with DeltaTestUtilsBase {
 
   override def beforeAll(): Unit = {
     super.beforeAll()
@@ -60,102 +56,8 @@ trait MergeIntoMaterializeSourceTests
     spark.conf.set(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key, "all")
   }
 
-
-  // Test error message that we check if blocks of materialized source RDD were evicted.
-  test("missing RDD blocks error message") {
-    val checkpointedDf = sql("select * from range(10)")
-      .localCheckpoint(eager = false)
-    val rdd = checkpointedDf.queryExecution.analyzed.asInstanceOf[LogicalRDD].rdd
-    checkpointedDf.collect() // trigger lazy materialization
-    rdd.unpersist()
-    val ex = intercept[Exception] {
-      checkpointedDf.collect()
-    }
-    assert(ex.isInstanceOf[SparkException], ex)
-    assert(
-      ex.getMessage().matches(mergeMaterializedSourceRddBlockLostErrorRegex(rdd.id)),
-      s"RDD id ${rdd.id}: Message: ${ex.getMessage}")
-  }
-
-
-
-  for {
-    eager <- BOOLEAN_DOMAIN
-    materialized <- BOOLEAN_DOMAIN
-  }  test(s"merge logs out of disk errors - eager=$eager, materialized=$materialized") {
-    import DeltaSQLConf.MergeMaterializeSource
-    withSQLConf(
-        DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_EAGER.key -> eager.toString,
-        DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key ->
-          (if (materialized) MergeMaterializeSource.AUTO else MergeMaterializeSource.NONE)) {
-      val injectEx = new java.io.IOException("No space left on device")
-      testWithCustomErrorInjected[SparkException](injectEx) { (thrownEx, errorOpt) =>
-        // Compare messages instead of instances, since the equals method for these exceptions
-        // takes more into account.
-        assert(thrownEx.getCause.getMessage === injectEx.getMessage)
-        if (materialized) {
-          assert(errorOpt.isDefined)
-          val error = errorOpt.get
-          assert(error.errorType == MergeIntoMaterializeSourceErrorType.OUT_OF_DISK.toString)
-          assert(error.attempt == 1)
-          val storageLevel = StorageLevel.fromString(
-              spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL))
-          assert(error.materializedSourceRDDStorageLevel == storageLevel.toString)
-        } else {
-          assert(errorOpt.isEmpty)
-        }
-      }
-    }
-  }
-
-  test("merge rethrows arbitrary errors") {
-    val injectEx = new RuntimeException("test")
-    testWithCustomErrorInjected[SparkException](injectEx) { (thrownEx, error) =>
-      // Compare messages instead of instances, since the equals method for these exceptions
-      // takes more into account.
-      assert(thrownEx.getCause.getMessage === injectEx.getMessage)
-      assert(error.isEmpty)
-    }
-  }
-
-  private def testWithCustomErrorInjected[Intercept >: Null <: Exception with AnyRef : ClassTag](
-      inject: Exception)(
-      handle: (Intercept, Option[MergeIntoMaterializeSourceError]) => Unit): Unit = {
-    {
-      val tblName = "target"
-      withTable(tblName) {
-        val targetDF = spark.range(10).toDF("id").withColumn("value", rand())
-        targetDF.write.format("delta").saveAsTable(tblName)
-        spark
-          .range(10)
-          .mapPartitions { x =>
-            throw inject
-            x
-          }
-          .toDF("id")
-          .withColumn("value", rand())
-          .createOrReplaceTempView("s")
-        var thrownException: Intercept = null
-        val events = Log4jUsageLogger
-          .track {
-            thrownException = intercept[Intercept] {
-              sql(s"MERGE INTO $tblName t USING s ON t.id = s.id " +
-                s"WHEN MATCHED THEN DELETE WHEN NOT MATCHED THEN INSERT *")
-            }
-          }
-          .filter { e =>
-            e.metric == MetricDefinitions.EVENT_TAHOE.name &&
-            e.tags.get("opType").contains(MergeIntoMaterializeSourceError.OP_TYPE)
-          }
-        val error = events.headOption
-          .map(e => JsonUtils.fromJson[MergeIntoMaterializeSourceError](e.blob))
-        handle(thrownException, error)
-      }
-    }
-  }
-
   // Runs a merge query with source materialization, while a killer thread tries to unpersist it.
-  private def testMergeMaterializedSourceUnpersist(
+  protected def testMergeMaterializedSourceUnpersist(
       tblName: String, numKills: Int): Seq[UsageRecord] = {
     val maxAttempts = spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_MAX_ATTEMPTS)
 
@@ -255,6 +157,100 @@ trait MergeIntoMaterializeSourceTests
 
     events
   }
+}
+
+trait MergeIntoMaterializeSourceErrorTests extends MergeIntoMaterializeSourceMixin {
+  import testImplicits._
+
+  // Test error message that we check if blocks of materialized source RDD were evicted.
+  test("missing RDD blocks error message") {
+    val checkpointedDf = sql("select * from range(10)")
+      .localCheckpoint(eager = false)
+    val rdd = checkpointedDf.queryExecution.analyzed.asInstanceOf[LogicalRDD].rdd
+    checkpointedDf.collect() // trigger lazy materialization
+    rdd.unpersist()
+    val ex = intercept[Exception] {
+      checkpointedDf.collect()
+    }
+    assert(ex.isInstanceOf[SparkException], ex)
+    val sparkEx = ex.asInstanceOf[SparkException]
+    assert(
+      sparkEx.getErrorClass == "CHECKPOINT_RDD_BLOCK_ID_NOT_FOUND" &&
+        sparkEx.getMessageParameters.get("rddBlockId").contains(s"rdd_${rdd.id}"))
+  }
+
+  for {
+    materialized <- BOOLEAN_DOMAIN
+  } test(s"merge logs out of disk errors - materialized=$materialized") {
+    import DeltaSQLConf.MergeMaterializeSource
+    withSQLConf(
+        DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key ->
+          (if (materialized) MergeMaterializeSource.AUTO else MergeMaterializeSource.NONE)) {
+      val injectEx = new java.io.IOException("No space left on device")
+      testWithCustomErrorInjected[SparkException](injectEx) { (thrownEx, errorOpt) =>
+        // Compare messages instead of instances, since the equals method for these exceptions
+        // takes more into account.
+        assert(thrownEx.getCause.getMessage === injectEx.getMessage)
+        if (materialized) {
+          assert(errorOpt.isDefined)
+          val error = errorOpt.get
+          assert(error.errorType == MergeIntoMaterializeSourceErrorType.OUT_OF_DISK.toString)
+          assert(error.attempt == 1)
+          val storageLevel = StorageLevel.fromString(
+              spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL))
+          assert(error.materializedSourceRDDStorageLevel == storageLevel.toString)
+        } else {
+          assert(errorOpt.isEmpty)
+        }
+      }
+    }
+  }
+
+  test("merge rethrows arbitrary errors") {
+    val injectEx = new RuntimeException("test")
+    testWithCustomErrorInjected[SparkException](injectEx) { (thrownEx, error) =>
+      // Compare messages instead of instances, since the equals method for these exceptions
+      // takes more into account.
+      assert(thrownEx.getCause.getMessage === injectEx.getMessage)
+      assert(error.isEmpty)
+    }
+  }
+
+  private def testWithCustomErrorInjected[Intercept >: Null <: Exception with AnyRef : ClassTag](
+      inject: Exception)(
+      handle: (Intercept, Option[MergeIntoMaterializeSourceError]) => Unit): Unit = {
+    {
+      val tblName = "target"
+      withTable(tblName) {
+        val targetDF = spark.range(10).toDF("id").withColumn("value", rand())
+        targetDF.write.format("delta").saveAsTable(tblName)
+        spark
+          .range(10)
+          .mapPartitions { x =>
+            throw inject
+            x
+          }
+          .toDF("id")
+          .withColumn("value", rand())
+          .createOrReplaceTempView("s")
+        var thrownException: Intercept = null
+        val events = Log4jUsageLogger
+          .track {
+            thrownException = intercept[Intercept] {
+              sql(s"MERGE INTO $tblName t USING s ON t.id = s.id " +
+                s"WHEN MATCHED THEN DELETE WHEN NOT MATCHED THEN INSERT *")
+            }
+          }
+          .filter { e =>
+            e.metric == MetricDefinitions.EVENT_TAHOE.name &&
+            e.tags.get("opType").contains(MergeIntoMaterializeSourceError.OP_TYPE)
+          }
+        val error = events.headOption
+          .map(e => JsonUtils.fromJson[MergeIntoMaterializeSourceError](e.blob))
+        handle(thrownException, error)
+      }
+    }
+  }
 
   private def testMergeMaterializeSourceUnpersistRetries = {
     val maxAttempts = DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_MAX_ATTEMPTS.defaultValue.get
@@ -262,53 +258,50 @@ trait MergeIntoMaterializeSourceTests
 
     // For 1 to maxAttempts - 1 RDD block lost failures, merge should retry and succeed.
     for {
-      eager <- BOOLEAN_DOMAIN
       kills <- 1 to maxAttempts - 1
     } {
-      test(s"materialize source unpersist with $kills kill attempts succeeds - eager=$eager") {
+      test(s"materialize source unpersist with $kills kill attempts succeeds") {
         withTable(tblName) {
-          withSQLConf(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_EAGER.key -> eager.toString) {
-            val allDeltaEvents = testMergeMaterializedSourceUnpersist(tblName, kills)
-            val events =
-              allDeltaEvents.filter(_.tags.get("opType").contains("delta.dml.merge.stats"))
-            assert(events.length == 1, s"allDeltaEvents:\n$allDeltaEvents")
-            val mergeStats = JsonUtils.fromJson[MergeStats](events(0).blob)
-            assert(mergeStats.materializeSourceAttempts.isDefined, s"MergeStats:\n$mergeStats")
-            assert(
-              mergeStats.materializeSourceAttempts.get == kills + 1,
-              s"MergeStats:\n$mergeStats")
+          val allDeltaEvents = testMergeMaterializedSourceUnpersist(tblName, kills)
+          val events =
+            allDeltaEvents.filter(_.tags.get("opType").contains("delta.dml.merge.stats"))
+          assert(events.length == 1, s"allDeltaEvents:\n$allDeltaEvents")
+          val mergeStats = JsonUtils.fromJson[MergeStats](events(0).blob)
+          assert(mergeStats.materializeSourceAttempts.isDefined, s"MergeStats:\n$mergeStats")
+          assert(
+            mergeStats.materializeSourceAttempts.get == kills + 1,
+            s"MergeStats:\n$mergeStats")
 
-            // Check query result after merge
-            val tab = sql(s"select * from $tblName order by id")
-              .collect()
-              .map(row => row.getLong(0))
-              .toSeq
-            assert(tab == (0L until 90L) ++ (100L until 120L))
-          }
+          // Check query result after merge
+          val tab = sql(s"select * from $tblName order by id")
+            .collect()
+            .map(row => row.getLong(0))
+            .toSeq
+          assert(tab == (0L until 90L) ++ (100L until 120L))
         }
       }
     }
 
     // Eventually it should fail after exceeding maximum number of attempts.
-    for (eager <- BOOLEAN_DOMAIN) {
-      test(s"materialize source unpersist with $maxAttempts kill attempts fails - eager=$eager") {
-        withSQLConf(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_EAGER.key -> eager.toString) {
-          withTable(tblName) {
-            val allDeltaEvents = testMergeMaterializedSourceUnpersist(tblName, maxAttempts)
-            val events = allDeltaEvents
-              .filter(_.tags.get("opType").contains(MergeIntoMaterializeSourceError.OP_TYPE))
-            assert(events.length == 1, s"allDeltaEvents:\n$allDeltaEvents")
-            val error = JsonUtils.fromJson[MergeIntoMaterializeSourceError](events(0).blob)
-            assert(error.errorType == MergeIntoMaterializeSourceErrorType.RDD_BLOCK_LOST.toString)
-            assert(error.attempt == maxAttempts)
-          }
-        }
+    test(s"materialize source unpersist with $maxAttempts kill attempts fails") {
+      withTable(tblName) {
+        val allDeltaEvents = testMergeMaterializedSourceUnpersist(tblName, maxAttempts)
+        val events = allDeltaEvents
+          .filter(_.tags.get("opType").contains(MergeIntoMaterializeSourceError.OP_TYPE))
+        assert(events.length == 1, s"allDeltaEvents:\n$allDeltaEvents")
+        val error = JsonUtils.fromJson[MergeIntoMaterializeSourceError](events(0).blob)
+        assert(error.errorType == MergeIntoMaterializeSourceErrorType.RDD_BLOCK_LOST.toString)
+        assert(error.attempt == maxAttempts)
       }
     }
   }
   testMergeMaterializeSourceUnpersistRetries
+}
 
-  def getHints(df: => DataFrame): Seq[(Seq[ResolvedHint], JoinHint)] = {
+trait MergeIntoMaterializeSourceTests extends MergeIntoMaterializeSourceMixin {
+  import testImplicits._
+
+  private def getHints(df: => DataFrame): Seq[(Seq[ResolvedHint], JoinHint)] = {
     val plans = withAllPlansCaptured(spark) {
       df
     }
@@ -356,8 +349,7 @@ trait MergeIntoMaterializeSourceTests
     hints
   }
 
-  for (eager <- BOOLEAN_DOMAIN)
-  test(s"materialize source preserves dataframe hints - eager=$eager") {
+  test(s"materialize source preserves dataframe hints") {
     withTable("A", "B", "T") {
       sql("select id, id as v from range(50000)").write.format("delta").saveAsTable("T")
       sql("select id, id+2 as v from range(10000)").write.format("csv").saveAsTable("A")
@@ -365,7 +357,6 @@ trait MergeIntoMaterializeSourceTests
 
       // Manually added broadcast hint will mess up the expected hints hence disable it
       withSQLConf(
-        DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_EAGER.key -> eager.toString,
         SQLConf.AUTO_BROADCASTJOIN_THRESHOLD.key -> "-1") {
         // Simple BROADCAST hint
         val hSimple = getHints(
@@ -979,12 +970,5 @@ trait MergeIntoMaterializeSourceTests
     assert(stats.materializeSourceReason.isDefined)
     stats.materializeSourceReason.get
   }
-}
-
-// MERGE + materialize
-class MergeIntoMaterializeSourceSuite extends MergeIntoMaterializeSourceTests
-{
-  override protected def sparkConf: SparkConf = super.sparkConf
-    .set(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key, "false")
 }
 

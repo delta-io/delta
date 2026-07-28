@@ -18,8 +18,11 @@ package org.apache.spark.sql.delta.files
 
 import java.util.{Date, UUID}
 
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.DeltaOptions
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
+import org.apache.spark.sql.delta.shims.DataSourceUtilsShims
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileAlreadyExistsException, Path}
 import org.apache.hadoop.mapreduce._
@@ -27,7 +30,7 @@ import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat
 import org.apache.hadoop.mapreduce.task.TaskAttemptContextImpl
 
 import org.apache.spark._
-import org.apache.spark.internal.{LoggingShims, MDC}
+import org.apache.spark.internal.{Logging, MDC}
 import org.apache.spark.internal.io.{FileCommitProtocol, SparkHadoopWriterUtils}
 import org.apache.spark.shuffle.FetchFailedException
 import org.apache.spark.sql.SparkSession
@@ -53,7 +56,7 @@ import org.apache.spark.util.{SerializableConfiguration, Utils}
  *  values to data files. Specifically L123-126, L132, and L140 where it adds option
  *  WRITE_PARTITION_COLUMNS
  */
-object DeltaFileFormatWriter extends LoggingShims {
+object DeltaFileFormatWriter extends Logging {
 
   /**
    * A variable used in tests to check whether the output ordering of the query matches the
@@ -99,6 +102,7 @@ object DeltaFileFormatWriter extends LoggingShims {
     job.setOutputKeyClass(classOf[Void])
     job.setOutputValueClass(classOf[InternalRow])
     FileOutputFormat.setOutputPath(job, new Path(outputSpec.outputPath))
+    DataSourceUtilsShims.mergeWriteOptionsIntoHadoopConf(options, job.getConfiguration)
 
     val partitionSet = AttributeSet(partitionColumns)
     // cleanup the internal metadata information of
@@ -188,7 +192,7 @@ object DeltaFileFormatWriter extends LoggingShims {
     // 1) When the planned write config is disabled.
     // 2) When the concurrent writers are enabled (in this case the required ordering of a
     //    V1 write command will be empty).
-    if (Utils.isTesting) outputOrderingMatched = orderingMatched
+    if (DeltaUtils.isTesting) outputOrderingMatched = orderingMatched
 
     if (writeFilesOpt.isDefined) {
       // build `WriteFilesSpec` for `WriteFiles`
@@ -248,7 +252,7 @@ object DeltaFileFormatWriter extends LoggingShims {
       }
 
       // In testing, this is the only way to get hold of the actually executed plan written to file
-      if (Utils.isTesting) executedPlan = Some(planToExecute)
+      if (DeltaUtils.isTesting) executedPlan = Some(planToExecute)
 
       val rdd = planToExecute.execute()
 
@@ -331,7 +335,7 @@ object DeltaFileFormatWriter extends LoggingShims {
     val description = writeFilesSpec.description
 
     // In testing, this is the only way to get hold of the actually executed plan written to file
-    if (Utils.isTesting) executedPlan = Some(planForWrites)
+    if (DeltaUtils.isTesting) executedPlan = Some(planForWrites)
 
     writeAndCommit(job, description, committer) {
       val rdd = planForWrites.executeWrite(writeFilesSpec)
@@ -427,20 +431,20 @@ object DeltaFileFormatWriter extends LoggingShims {
     val dataWriter =
       if (sparkPartitionId != 0 && !iterator.hasNext) {
         // In case of empty job, leave first partition to save meta for file format like parquet.
-        new EmptyDirectoryDataWriter(description, taskAttemptContext, committer)
+        new DeltaEmptyDirectoryDataWriter(description, taskAttemptContext, committer)
       } else if (description.partitionColumns.isEmpty && description.bucketSpec.isEmpty) {
-        new SingleDirectoryDataWriter(description, taskAttemptContext, committer)
+        new DeltaSingleDirectoryDataWriter(description, taskAttemptContext, committer)
       } else {
         concurrentOutputWriterSpec match {
           case Some(spec) =>
-            new DynamicPartitionDataConcurrentWriter(
+            new DeltaDynamicPartitionDataConcurrentWriter(
               description,
               taskAttemptContext,
               committer,
               spec
             )
           case _ =>
-            new DynamicPartitionDataSingleWriter(description, taskAttemptContext, committer)
+            new DeltaDynamicPartitionDataSingleWriter(description, taskAttemptContext, committer)
         }
       }
 

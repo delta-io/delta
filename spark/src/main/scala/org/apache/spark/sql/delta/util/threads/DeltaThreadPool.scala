@@ -107,7 +107,10 @@ class NonFateSharingFuture[T](pool: DeltaThreadPool)(f: SparkSession => T)
     // Prefer to get a prefetched result from the future, but never fail because of it.
     val futureResult = futureOpt.flatMap { case (ownerSession, future) =>
       try {
-        Some(ThreadUtils.awaitResult(future, timeout))
+        val result = Some(ThreadUtils.awaitResult(future, timeout))
+        // no reason to keep the reference to the calling session anymore
+        futureOpt = Some(null, future)
+        result
       } catch {
         // NOTE: ThreadUtils.awaitResult wraps all non-fatal exceptions other than TimeoutException
         // with SparkException. Meanwhile, Java Future.get only throws four exceptions:

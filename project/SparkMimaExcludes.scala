@@ -24,11 +24,15 @@ object SparkMimaExcludes {
   val ignoredABIProblems = Seq(
       // scalastyle:off line.size.limit
       ProblemFilters.exclude[Problem]("org.*"),
+      ProblemFilters.exclude[Problem]("io.delta.internal.*"),
+      ProblemFilters.exclude[Problem]("io.delta.spark.internal.*"),
       ProblemFilters.exclude[Problem]("io.delta.sql.parser.*"),
       ProblemFilters.exclude[Problem]("io.delta.tables.execution.*"),
       ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.apply"),
+      ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.executeGenerate"),
       ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.executeHistory"),
       ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.executeVacuum"),
+      ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.executeVacuum$default$3"),
       ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.this"),
       ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.deltaLog"),
 
@@ -82,7 +86,21 @@ object SparkMimaExcludes {
 
       // Changes in 1.2.0
       ProblemFilters.exclude[MissingClassProblem]("io.delta.storage.LogStore"),
-      ProblemFilters.exclude[MissingClassProblem]("io.delta.storage.CloseableIterator")
+      ProblemFilters.exclude[MissingClassProblem]("io.delta.storage.CloseableIterator"),
+
+      // Changes in 4.0.0
+      ProblemFilters.exclude[IncompatibleResultTypeProblem]("io.delta.tables.DeltaTable.improveUnsupportedOpError"),
+      ProblemFilters.exclude[IncompatibleResultTypeProblem]("io.delta.tables.DeltaMergeBuilder.improveUnsupportedOpError"),
+      ProblemFilters.exclude[IncompatibleResultTypeProblem]("io.delta.tables.DeltaMergeBuilder.execute"),
+
+      // Changes in 4.1.0
+      // TODO: change in type hierarchy due to removal of DeltaThrowableConditionShim
+      ProblemFilters.exclude[MissingTypesProblem]("io.delta.exceptions.*"),
+
+      // Changes in 4.2.0
+      // MDC and logBasedOnLevel were removed from Spark's Logging trait in Spark 4.2.0-SNAPSHOT
+      ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaMergeBuilder.MDC"),
+      ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaMergeBuilder.logBasedOnLevel")
 
       // scalastyle:on line.size.limit
   )

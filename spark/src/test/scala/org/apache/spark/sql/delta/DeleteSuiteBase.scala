@@ -19,17 +19,18 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
+import org.apache.spark.{SparkThrowable, SparkUnsupportedOperationException}
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
-import org.apache.spark.sql.execution.FileSourceScanExec
+import org.apache.spark.sql.execution.FileSourceScanLike
 import org.apache.spark.sql.functions.{lit, struct}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 
-abstract class DeleteSuiteBase extends QueryTest
+trait DeleteBaseMixin
+  extends QueryTest
   with SharedSparkSession
   with DeltaDMLTestUtils
-  with DeltaTestUtilsForTempViews
-  with DeltaExcludedBySparkVersionTestMixinShims {
+  with DeltaTestUtilsForTempViews {
 
   import testImplicits._
 
@@ -39,9 +40,106 @@ abstract class DeleteSuiteBase extends QueryTest
       condition: Option[String],
       expectedResults: Seq[Row],
       tableName: Option[String] = None): Unit = {
-    executeDelete(target = tableName.getOrElse(s"delta.`$tempPath`"), where = condition.orNull)
-    checkAnswer(readDeltaTable(tempPath), expectedResults)
+    val target = tableName.getOrElse(tableSQLIdentifier)
+    executeDelete(target = target, where = condition.orNull)
+    checkAnswer(readDeltaTableByIdentifier(target), expectedResults)
   }
+
+  protected def testInvalidTempViews(name: String)(
+      text: String,
+      expectedErrorMsgForSQLTempView: String = null,
+      expectedErrorMsgForDataSetTempView: String = null,
+      expectedErrorClassForSQLTempView: String = null,
+      expectedErrorClassForDataSetTempView: String = null): Unit = {
+    testWithTempView(s"test delete on temp view - $name") { isSQLTempView =>
+      withTable("tab") {
+        Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
+        if (isSQLTempView) {
+          sql(s"CREATE TEMP VIEW v AS $text")
+        } else {
+          sql(text).createOrReplaceTempView("v")
+        }
+        val ex = intercept[AnalysisException] {
+          executeDelete(
+            "v",
+            "key >= 1 and value < 3"
+          )
+        }
+        testErrorMessageAndClass(
+          isSQLTempView,
+          ex,
+          expectedErrorMsgForSQLTempView,
+          expectedErrorMsgForDataSetTempView,
+          expectedErrorClassForSQLTempView,
+          expectedErrorClassForDataSetTempView)
+      }
+    }
+  }
+
+  // Need to be able to override this, because it works in some configurations.
+  protected def testSuperSetColsTempView(): Unit = {
+    testInvalidTempViews("superset cols")(
+      text = "SELECT key, value, 1 FROM tab",
+      // The analyzer can't tell whether the table originally had the extra column or not.
+      expectedErrorMsgForSQLTempView = "Can't resolve column 1 in root",
+      expectedErrorMsgForDataSetTempView = "Can't resolve column 1 in root"
+    )
+  }
+
+  protected def testComplexTempViews(name: String)(
+      text: String,
+      expectResult: Seq[Row]): Unit = {
+    testWithTempView(s"test delete on temp view - $name") { isSQLTempView =>
+        withTable("tab") {
+          Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
+          createTempViewFromSelect(text, isSQLTempView)
+          executeDelete(
+            "v",
+            "key >= 1 and value < 3"
+          )
+          checkAnswer(spark.read.format("delta").table("v"), expectResult)
+        }
+    }
+  }
+}
+
+trait DeleteTempViewTests extends DeleteBaseMixin with DeltaDMLTestUtilsPathBased {
+  import testImplicits._
+
+  Seq(true, false).foreach { isPartitioned =>
+    val name = s"test delete on temp view - basic - Partition=$isPartitioned"
+    testWithTempView(name) { isSQLTempView =>
+      val partitions = if (isPartitioned) "key" :: Nil else Nil
+      append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"), partitions)
+      createTempViewFromTable(tableSQLIdentifier, isSQLTempView)
+        checkDelete(
+          condition = Some("key <= 1"),
+          expectedResults = Row(2, 2) :: Nil,
+          tableName = Some("v"))
+    }
+  }
+
+  testInvalidTempViews("subset cols")(
+    text = "SELECT key FROM tab",
+    expectedErrorClassForSQLTempView = "UNRESOLVED_COLUMN.WITH_SUGGESTION",
+    expectedErrorClassForDataSetTempView = "UNRESOLVED_COLUMN.WITH_SUGGESTION"
+  )
+
+  testSuperSetColsTempView()
+
+  testComplexTempViews("nontrivial projection")(
+    text = "SELECT value as key, key as value FROM tab",
+    expectResult = Row(3, 0) :: Nil
+  )
+
+  testComplexTempViews("view with too many internal aliases")(
+    text = "SELECT * FROM (SELECT * FROM tab AS t1) AS t2",
+    expectResult = Row(0, 3) :: Nil
+  )
+}
+
+trait DeleteBaseTests extends DeleteBaseMixin {
+  import testImplicits._
 
   Seq(true, false).foreach { isPartitioned =>
     test(s"basic case - Partition=$isPartitioned") {
@@ -53,7 +151,7 @@ abstract class DeleteSuiteBase extends QueryTest
   }
 
   Seq(true, false).foreach { isPartitioned =>
-    test(s"basic case - delete from a Delta table by path - Partition=$isPartitioned") {
+    test(s"basic case - delete from a Delta table - Partition=$isPartitioned") {
       withTable("deltaTable") {
         val partitions = if (isPartitioned) "key" :: Nil else Nil
         val input = Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value")
@@ -66,37 +164,6 @@ abstract class DeleteSuiteBase extends QueryTest
         checkDelete(Some("value = 2 or key = 1"),
           Row(0, 3) :: Nil)
         checkDelete(Some("key = 0 or value = 99"), Nil)
-      }
-    }
-  }
-
-  Seq(true, false).foreach { isPartitioned =>
-    test(s"basic case - delete from a Delta table by name - Partition=$isPartitioned") {
-      withTable("delta_table") {
-        val partitionByClause = if (isPartitioned) "PARTITIONED BY (key)" else ""
-        sql(
-          s"""
-             |CREATE TABLE delta_table(key INT, value INT)
-             |USING delta
-             |OPTIONS('path'='$tempPath')
-             |$partitionByClause
-           """.stripMargin)
-
-        val input = Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value")
-        append(input)
-
-        checkDelete(Some("value = 4 and key = 3"),
-          Row(2, 2) :: Row(1, 4) :: Row(1, 1) :: Row(0, 3) :: Nil,
-          Some("delta_table"))
-        checkDelete(Some("value = 4 and key = 1"),
-          Row(2, 2) :: Row(1, 1) :: Row(0, 3) :: Nil,
-          Some("delta_table"))
-        checkDelete(Some("value = 2 or key = 1"),
-          Row(0, 3) :: Nil,
-          Some("delta_table"))
-        checkDelete(Some("key = 0 or value = 99"),
-          Nil,
-          Some("delta_table"))
       }
     }
   }
@@ -170,32 +237,83 @@ abstract class DeleteSuiteBase extends QueryTest
     }
   }
 
+  test("basic case with NullType") {
+    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
+    withSQLConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false") {
+      append(Seq((null, 2), (null, 4), (null, 1), (null, 3)).toDF("key", "value"))
+      checkDelete(condition = None, Nil)
+    }
+  }
+
+  test("basic case with condition on NullType") {
+    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
+    withSQLConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false") {
+      append(Seq((null, 2), (null, 4), (null, 1), (null, 3)).toDF("key", "value"))
+      checkDelete(condition = Some("key is null"), Nil)
+    }
+  }
+
+  test("basic case with nested NullType") {
+    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
+    withSQLConf(
+      DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key -> "false"
+    ) {
+      append(Seq(Tuple1((null, 2)), Tuple1((null, 4)), Tuple1(null), Tuple1((null, 1))).toDF("s"))
+      checkDelete(condition = Some("s._1 IS NULL AND s IS NOT NULL"), Row(null) :: Nil)
+    }
+  }
+
   test("Negative case - non-Delta target") {
-    Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value")
-      .write.format("parquet").mode("append").save(tempPath)
-    val e = intercept[DeltaAnalysisException] {
-      executeDelete(target = s"delta.`$tempPath`")
-    }.getMessage
-    assert(e.contains("DELETE destination only supports Delta sources") ||
-      e.contains("is not a Delta table") || e.contains("doesn't exist") ||
-      e.contains("Incompatible format"))
+    writeTable(
+      Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value")
+        .write
+        .mode("overwrite")
+        .format("parquet"),
+      tableSQLIdentifier)
+    intercept[SparkThrowable] {
+      executeDelete(target = tableSQLIdentifier)
+    } match {
+      // Thrown when running with path-based SQL
+      case e: DeltaAnalysisException if e.getCondition == "DELTA_TABLE_NOT_FOUND" =>
+        checkError(e, "DELTA_TABLE_NOT_FOUND",
+          parameters = Map("tableName" -> tableSQLIdentifier.stripPrefix("delta.")))
+      case e: DeltaAnalysisException if e.getCondition == "DELTA_MISSING_TRANSACTION_LOG" =>
+        checkErrorMatchPVals(e, "DELTA_MISSING_TRANSACTION_LOG",
+          parameters = Map("operation" -> "read from", "path" -> ".*", "docLink" -> "https://.*"))
+      // Thrown when running with path-based Scala API
+      case e: DeltaAnalysisException if e.getCondition == "DELTA_MISSING_DELTA_TABLE" =>
+        checkError(e, "DELTA_MISSING_DELTA_TABLE",
+          parameters = Map("tableName" -> tableSQLIdentifier.stripPrefix("delta.")))
+      // Thrown when running with name-based SQL
+      case e: AnalysisException =>
+        checkErrorMatchPVals(e, "UNSUPPORTED_FEATURE.TABLE_OPERATION",
+          parameters = Map(
+            "tableName" -> s".*$tableSQLIdentifier.*",
+            "operation" -> "DELETE"))
+    }
   }
 
   test("Negative case - non-deterministic condition") {
     append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"))
     val e = intercept[AnalysisException] {
-      executeDelete(target = s"delta.`$tempPath`", where = "rand() > 0.5")
+      executeDelete(target = tableSQLIdentifier, where = "rand() > 0.5")
     }.getMessage
     assert(e.contains("nondeterministic expressions are only allowed in") ||
       e.contains("The operator expects a deterministic expression"))
   }
 
-  test("Negative case - DELETE the child directory") {
-    append(Seq((2, 2), (3, 2)).toDF("key", "value"), partitionBy = "key" :: Nil)
-    val e = intercept[AnalysisException] {
-      executeDelete(target = s"delta.`$tempPath/key=2`", where = "value = 2")
-    }.getMessage
-    assert(e.contains("Expect a full scan of Delta sources, but found a partial scan"))
+  test("Negative case - DELETE the child directory",
+      NameBasedAccessIncompatible) {
+    withTempPath { tempDir =>
+      val tempPath = tempDir.getCanonicalPath
+      val df = Seq((2, 2), (3, 2)).toDF("key", "value")
+      df.write.format("delta").partitionBy("key").save(tempPath)
+
+      val e = intercept[AnalysisException] {
+        executeDelete(target = s"delta.`$tempPath/key=2`", where = "value = 2")
+      }.getMessage
+      assert(e.contains("Expect a full scan of Delta sources, but found a partial scan"))
+    }
   }
 
   test("delete cached table by name") {
@@ -210,13 +328,12 @@ abstract class DeleteSuiteBase extends QueryTest
     }
   }
 
-  test("delete cached table by path") {
-    Seq((2, 2), (1, 4)).toDF("key", "value")
-      .write.mode("overwrite").format("delta").save(tempPath)
-    spark.read.format("delta").load(tempPath).cache()
-    spark.read.format("delta").load(tempPath).collect()
-    executeDelete(s"delta.`$tempPath`", where = "key = 2")
-    checkAnswer(spark.read.format("delta").load(tempPath), Row(1, 4) :: Nil)
+  test("delete cached table") {
+    append(Seq((2, 2), (1, 4)).toDF("key", "value"))
+    readDeltaTableByIdentifier().cache()
+    readDeltaTableByIdentifier().collect()
+    executeDelete(tableSQLIdentifier, where = "key = 2")
+    checkAnswer(readDeltaTableByIdentifier(), Row(1, 4) :: Nil)
   }
 
   Seq(true, false).foreach { isPartitioned =>
@@ -289,42 +406,94 @@ abstract class DeleteSuiteBase extends QueryTest
       Row("c", "v") :: Row("d", "vv") :: Nil)
   }
 
-  test("do not support subquery test") {
+  test("do not support non-EXISTS subquery test",
+      DSv2Incompatible("asserts classic Delta DELETE subquery policy")) {
     append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"))
     Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("c", "d").createOrReplaceTempView("source")
 
     // basic subquery
     val e0 = intercept[AnalysisException] {
-      executeDelete(target = s"delta.`$tempPath`", "key < (SELECT max(c) FROM source)")
+      executeDelete(target = tableSQLIdentifier, "key < (SELECT max(c) FROM source)")
     }.getMessage
     assert(e0.contains("Subqueries are not supported"))
 
-    // subquery with EXISTS
-    val e1 = intercept[AnalysisException] {
-      executeDelete(target = s"delta.`$tempPath`", "EXISTS (SELECT max(c) FROM source)")
-    }.getMessage
-    assert(e1.contains("Subqueries are not supported"))
-
-    // subquery with NOT EXISTS
-    val e2 = intercept[AnalysisException] {
-      executeDelete(target = s"delta.`$tempPath`", "NOT EXISTS (SELECT max(c) FROM source)")
-    }.getMessage
-    assert(e2.contains("Subqueries are not supported"))
-
     // subquery with IN
     val e3 = intercept[AnalysisException] {
-      executeDelete(target = s"delta.`$tempPath`", "key IN (SELECT max(c) FROM source)")
+      executeDelete(target = tableSQLIdentifier, "key IN (SELECT max(c) FROM source)")
     }.getMessage
     assert(e3.contains("Subqueries are not supported"))
 
     // subquery with NOT IN
     val e4 = intercept[AnalysisException] {
-      executeDelete(target = s"delta.`$tempPath`", "key NOT IN (SELECT max(c) FROM source)")
+      executeDelete(target = tableSQLIdentifier, "key NOT IN (SELECT max(c) FROM source)")
     }.getMessage
     assert(e4.contains("Subqueries are not supported"))
+
+    // EXISTS mixed with IN: the IN subquery should still be blocked
+    withSQLConf(DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key -> "true") {
+      checkError(
+        intercept[DeltaAnalysisException] {
+          executeDelete(
+            target = tableSQLIdentifier,
+            where = "EXISTS (SELECT 1 FROM source WHERE key = c) AND key IN (SELECT c FROM source)")
+        },
+        condition = "DELTA_UNSUPPORTED_SUBQUERY",
+        sqlState = Some("0AKDC"),
+        parameters = Map("operation" -> "DELETE", "cond" -> ".*"),
+        matchPVals = true)
+    }
   }
 
-  test("schema pruning on data condition") {
+  test("delete with correlated EXISTS subquery") {
+    append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"))
+    Seq((2, 2), (1, 4)).toDF("c", "d").createOrReplaceTempView("source")
+
+    withSQLConf(DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key -> "true") {
+      executeDelete(
+        target = tableSQLIdentifier,
+        where = "EXISTS (SELECT 1 FROM source WHERE key = c)")
+    }
+    checkAnswer(
+      readDeltaTableByIdentifier(tableSQLIdentifier),
+      Row(0, 3) :: Nil)
+  }
+
+  test("delete with correlated NOT EXISTS subquery") {
+    append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"))
+    Seq((2, 2), (1, 4)).toDF("c", "d").createOrReplaceTempView("source")
+
+    withSQLConf(DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key -> "true") {
+      executeDelete(
+        target = tableSQLIdentifier,
+        where = "NOT EXISTS (SELECT 1 FROM source WHERE key = c)")
+    }
+    checkAnswer(
+      readDeltaTableByIdentifier(tableSQLIdentifier),
+      Row(2, 2) :: Row(1, 4) :: Row(1, 1) :: Nil)
+  }
+
+  test("EXISTS subquery kill switch",
+      DSv2Incompatible("asserts classic Delta DELETE subquery policy")) {
+    append(Seq((2, 2), (1, 4)).toDF("key", "value"))
+    Seq((2, 2)).toDF("c", "d").createOrReplaceTempView("source")
+
+    withSQLConf(
+        DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key -> "false") {
+      checkError(
+        intercept[DeltaAnalysisException] {
+          executeDelete(
+            target = tableSQLIdentifier,
+            where = "EXISTS (SELECT 1 FROM source WHERE key = c)")
+        },
+        condition = "DELTA_UNSUPPORTED_SUBQUERY",
+        sqlState = Some("0AKDC"),
+        parameters = Map("operation" -> "DELETE", "cond" -> ".*"),
+        matchPVals = true)
+    }
+  }
+
+  test("schema pruning on data condition",
+      ChecksPhysicalDeltaPlan("checks Delta file-scan schema pruning")) {
     val input = Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value")
     append(input, Nil)
     // Start from a cached snapshot state
@@ -336,7 +505,7 @@ abstract class DeleteSuiteBase extends QueryTest
     }
 
     val scans = executedPlans.flatMap(_.collect {
-      case f: FileSourceScanExec => f
+      case f: FileSourceScanLike => f
     })
 
     // The first scan is for finding files to delete. We only are matching against the key
@@ -346,7 +515,8 @@ abstract class DeleteSuiteBase extends QueryTest
   }
 
 
-  test("nested schema pruning on data condition") {
+  test("nested schema pruning on data condition",
+      ChecksPhysicalDeltaPlan("checks Delta file-scan schema pruning")) {
     val input = Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value")
       .select(struct("key", "value").alias("nested"))
     append(input, Nil)
@@ -359,7 +529,7 @@ abstract class DeleteSuiteBase extends QueryTest
     }
 
     val scans = executedPlans.flatMap(_.collect {
-      case f: FileSourceScanExec => f
+      case f: FileSourceScanLike => f
     })
 
     assert(scans.head.schema == StructType.fromDDL("nested STRUCT<key: int>"))
@@ -373,7 +543,7 @@ abstract class DeleteSuiteBase extends QueryTest
    * @param expectException whether an exception is expected to be thrown
    * @param customErrorRegex customized error regex.
    */
-  def testUnsupportedExpression(
+  private def testUnsupportedExpression(
       function: String,
       functionType: String,
       data: => DataFrame,
@@ -386,9 +556,20 @@ abstract class DeleteSuiteBase extends QueryTest
 
         val expectedErrorRegex = "(?s).*(?i)unsupported.*(?i).*Invalid expressions.*"
 
-        var catchException = true
+        val isInMemoryV2 = this.isInstanceOf[DeltaSQLInMemoryTestUtils]
+        val inMemoryV2ErrorRegex = functionType match {
+          // Each Spark version emits a different error class for unsupported
+          // expressions in DELETE WHERE (named, legacy, or via the "operator"
+          // fallback), so match on the stable human-readable keywords instead.
+          case "Window" => "(?is).*window function.*"
+          case "Aggregate" => "(?is).*aggregate function.*"
+          case "Generate" => "(?is).*more than one row.*"
+        }
+        var catchException = if (isInMemoryV2) expectException else true
 
-        var errorRegex = if (functionType.equals("Generate")) {
+        var errorRegex = if (isInMemoryV2) {
+          inMemoryV2ErrorRegex
+        } else if (functionType.equals("Generate")) {
           ".*Subqueries are not supported in the DELETE.*"
         } else customErrorRegex.getOrElse(expectedErrorRegex)
 
@@ -401,7 +582,8 @@ abstract class DeleteSuiteBase extends QueryTest
           val message = if (e.getCause != null) {
             e.getCause.getMessage
           } else e.getMessage
-          assert(message.matches(errorRegex))
+          assert(message.matches(errorRegex),
+            s"unexpected error in $functionType case: ${e.getClass.getName}: $message")
           checkAnswer(spark.read.format("delta").table("deltaTable"), dataBeforeException)
         } else {
           executeDelete(target = "deltaTable", where = where)
@@ -447,109 +629,23 @@ abstract class DeleteSuiteBase extends QueryTest
       Some(".*More than one row returned by a subquery used as an expression(?s).*")
   )
 
-  Seq(true, false).foreach { isPartitioned =>
-    val name = s"test delete on temp view - basic - Partition=$isPartitioned"
-    testWithTempView(name) { isSQLTempView =>
-      val partitions = if (isPartitioned) "key" :: Nil else Nil
-      append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"), partitions)
-      createTempViewFromTable(s"delta.`$tempPath`", isSQLTempView)
-        checkDelete(
-          condition = Some("key <= 1"),
-          expectedResults = Row(2, 2) :: Nil,
-          tableName = Some("v"))
-    }
-  }
-
-  protected def testInvalidTempViews(name: String)(
-      text: String,
-      expectedErrorMsgForSQLTempView: String = null,
-      expectedErrorMsgForDataSetTempView: String = null,
-      expectedErrorClassForSQLTempView: String = null,
-      expectedErrorClassForDataSetTempView: String = null): Unit = {
-    testWithTempView(s"test delete on temp view - $name") { isSQLTempView =>
-      withTable("tab") {
-        Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
-        if (isSQLTempView) {
-          sql(s"CREATE TEMP VIEW v AS $text")
-        } else {
-          sql(text).createOrReplaceTempView("v")
-        }
-        val ex = intercept[AnalysisException] {
-          executeDelete(
-            "v",
-            "key >= 1 and value < 3"
-          )
-        }
-        testErrorMessageAndClass(
-          isSQLTempView,
-          ex,
-          expectedErrorMsgForSQLTempView,
-          expectedErrorMsgForDataSetTempView,
-          expectedErrorClassForSQLTempView,
-          expectedErrorClassForDataSetTempView)
-      }
-    }
-  }
-  testInvalidTempViews("subset cols")(
-    text = "SELECT key FROM tab",
-    expectedErrorClassForSQLTempView = "UNRESOLVED_COLUMN.WITH_SUGGESTION",
-    expectedErrorClassForDataSetTempView = "UNRESOLVED_COLUMN.WITH_SUGGESTION"
-  )
-
-  // Need to be able to override this, because it works in some configurations.
-  protected def testSuperSetColsTempView(): Unit = {
-    testInvalidTempViews("superset cols")(
-      text = "SELECT key, value, 1 FROM tab",
-      // The analyzer can't tell whether the table originally had the extra column or not.
-      expectedErrorMsgForSQLTempView = "Can't resolve column 1 in root",
-      expectedErrorMsgForDataSetTempView = "Can't resolve column 1 in root"
-    )
-  }
-
-  testSuperSetColsTempView()
-
-  protected def testComplexTempViews(name: String)(
-      text: String,
-      expectResult: Seq[Row]): Unit = {
-    testWithTempView(s"test delete on temp view - $name") { isSQLTempView =>
-        withTable("tab") {
-          Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
-          createTempViewFromSelect(text, isSQLTempView)
-          executeDelete(
-            "v",
-            "key >= 1 and value < 3"
-          )
-          checkAnswer(spark.read.format("delta").table("v"), expectResult)
-        }
-    }
-  }
-
-  testComplexTempViews("nontrivial projection")(
-    text = "SELECT value as key, key as value FROM tab",
-    expectResult = Row(3, 0) :: Nil
-  )
-
-  testComplexTempViews("view with too many internal aliases")(
-    text = "SELECT * FROM (SELECT * FROM tab AS t1) AS t2",
-    expectResult = Row(0, 3) :: Nil
-  )
-
-  testSparkMasterOnly("Variant type") {
+  test("Variant type") {
     val dstDf = sql(
       """SELECT parse_json(cast(id as string)) v, id i
       FROM range(3)""")
     append(dstDf)
 
-    executeDelete(target = s"delta.`$tempPath`", where = "to_json(v) = '1'")
+    executeDelete(target = tableSQLIdentifier, where = "to_json(v) = '1'")
 
-    checkAnswer(readDeltaTable(tempPath).selectExpr("i", "to_json(v)"),
+    checkAnswer(readDeltaTableByIdentifier().selectExpr("i", "to_json(v)"),
       Seq(Row(0, "0"), Row(2, "2")))
   }
 
   test("delete on partitioned table with special chars") {
     val partValue = "part%one"
-    spark.range(0, 3, 1, 1).toDF("key").withColumn("value", lit(partValue))
-      .write.format("delta").partitionBy("value").save(tempPath)
+    append(
+      spark.range(0, 3, 1, 1).toDF("key").withColumn("value", lit(partValue)),
+      partitionBy = Seq("value"))
     checkDelete(
       condition = Some(s"value = '$partValue' and key = 1"),
       expectedResults = Row(0, partValue) :: Row(2, partValue) :: Nil)
@@ -559,5 +655,236 @@ abstract class DeleteSuiteBase extends QueryTest
     checkDelete(
       condition = Some(s"value = '$partValue'"),
       expectedResults = Nil)
+  }
+}
+
+/**
+ * Base mixin for subquery DELETE tests. Provides helpers shared by all subquery test traits.
+ */
+trait DeleteSubqueryBaseMixin extends DeleteBaseMixin {
+  import testImplicits._
+
+  protected def checkDeleteResult(
+      target: Seq[(Any, String)],
+      source: Seq[(Any, String)] = Nil,
+      source2: Seq[(Any, String)] = Nil,
+      deleteWhere: String,
+      expected: Seq[(Any, String)]): Unit = {
+    assert(spark.catalog.tableExists("target"),
+      "Table target must exist. Use testWithPartitioning().")
+    withTempView("source", "source2") {
+      target
+        .map { case (c, t1) => (c.asInstanceOf[Integer], t1) }
+        .toDF("c", "t1")
+        .coalesce(1)
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .saveAsTable("target")
+      if (source.nonEmpty) {
+        source
+          .map { case (c, s1) => (c.asInstanceOf[Integer], s1) }
+          .toDF("c", "s1")
+          .createOrReplaceTempView("source")
+      }
+      if (source2.nonEmpty) {
+        source2
+          .map { case (c, s2) => (c.asInstanceOf[Integer], s2) }
+          .toDF("c", "s2")
+          .createOrReplaceTempView("source2")
+      }
+      withSQLConf(
+        DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key -> "true"
+      ) {
+      executeDelete(target = "target t", where = deleteWhere)
+      }
+      checkAnswer(sqlContext.table("target"), expected.map(t => Row.fromTuple(t)))
+    }
+  }
+
+  protected def testWithPartitioning(name: String)(body: => Unit): Unit = {
+    Seq(true, false).foreach { isPartitioned =>
+      val partSpec = if (isPartitioned) "partitioned by (c)" else ""
+      test(name + s" isPartitioned=$isPartitioned") {
+        withTable("target") {
+          sql(s"CREATE TABLE target(c int, t1 string) USING delta $partSpec")
+          body
+        }
+      }
+    }
+  }
+}
+
+/**
+ * EXISTS/NOT EXISTS subquery tests.
+ */
+trait DeleteSubqueryExistsTests extends DeleteSubqueryBaseMixin {
+  import testImplicits._
+
+  testWithPartitioning("exists/notexists subquery") {
+    checkDeleteResult(
+      target = (3, "a") :: (1, "b") :: Nil,
+      source = (2, "a") :: (1, "b") :: Nil,
+      deleteWhere = "EXISTS (SELECT 1 FROM source WHERE t.c = source.c)",
+      expected = (3, "a") :: Nil)
+
+    checkDeleteResult(
+      target = (3, "a") :: (1, "b") :: Nil,
+      source = (2, "a") :: (1, "b") :: Nil,
+      deleteWhere = "NOT EXISTS (SELECT 1 FROM source WHERE t.c = source.c)",
+      expected = (1, "b") :: Nil)
+
+    checkDeleteResult(
+      target = (3, "a") :: (1, "b") :: (null, "a") :: Nil,
+      source = (null, "a") :: (1, "b") :: Nil,
+      deleteWhere = "EXISTS (SELECT * FROM source WHERE t.c = c)",
+      expected = (3, "a") :: (null, "a") :: Nil)
+
+    checkDeleteResult(
+      target = (3, "a") :: (1, "b") :: (null, "a") :: Nil,
+      source = (null, "a") :: (1, "b") :: Nil,
+      deleteWhere = "NOT EXISTS (SELECT c FROM source WHERE t.c = source.c)",
+      expected = (1, "b") :: Nil)
+
+    // <=>
+    checkDeleteResult(
+      target = (3, "a") :: (1, "b") :: (null, "a") :: Nil,
+      source = (null, "a") :: (1, "b") :: Nil,
+      deleteWhere = "EXISTS (SELECT c FROM source WHERE t.c <=> source.c)",
+      expected = (3, "a") :: Nil)
+
+    checkDeleteResult(
+      target = (3, "a") :: (1, "b") :: (null, "a") :: Nil,
+      source = (null, "a") :: (1, "b") :: Nil,
+      deleteWhere = "NOT EXISTS (SELECT c FROM source WHERE t.c <=> source.c)",
+      expected = (1, "b") :: (null, "a") :: Nil)
+  }
+
+  testWithPartitioning("exists with no matching source rows") {
+    checkDeleteResult(
+      target = (1, "a") :: (2, "b") :: Nil,
+      source = (100, "x") :: Nil,
+      deleteWhere = "EXISTS (SELECT 1 FROM source WHERE t.c = source.c)",
+      expected = (1, "a") :: (2, "b") :: Nil)
+
+    // NOT EXISTS with no matching source rows deletes all rows
+    checkDeleteResult(
+      target = (1, "a") :: (2, "b") :: Nil,
+      source = (100, "x") :: Nil,
+      deleteWhere = "NOT EXISTS (SELECT 1 FROM source WHERE t.c = source.c)",
+      expected = Nil)
+  }
+
+  testWithPartitioning("exists deletes all matching rows") {
+    checkDeleteResult(
+      target = (1, "a") :: (2, "b") :: (3, "c") :: Nil,
+      source = (1, "x") :: (2, "y") :: (3, "z") :: Nil,
+      deleteWhere = "EXISTS (SELECT 1 FROM source WHERE t.c = source.c)",
+      expected = Nil)
+  }
+
+  testWithPartitioning("exists with compound condition") {
+    checkDeleteResult(
+      target = (1, "a") :: (2, "b") :: (3, "c") :: (4, "d") :: Nil,
+      source = (1, "a") :: (2, "x") :: (3, "c") :: Nil,
+      deleteWhere =
+        "EXISTS (SELECT 1 FROM source WHERE t.c = source.c AND t.t1 = source.s1)",
+      expected = (2, "b") :: (4, "d") :: Nil)
+  }
+
+  testWithPartitioning("exists combined with non-subquery predicate") {
+    checkDeleteResult(
+      target = (1, "a") :: (2, "b") :: (3, "a") :: (4, "b") :: Nil,
+      source = (1, "x") :: (3, "y") :: Nil,
+      deleteWhere =
+        "EXISTS (SELECT 1 FROM source WHERE t.c = source.c) AND t1 = 'a'",
+      expected = (2, "b") :: (4, "b") :: Nil)
+  }
+
+  testWithPartitioning("multiple EXISTS subqueries in one condition") {
+    checkDeleteResult(
+      target = (1, "a") :: (2, "b") :: (3, "c") :: (4, "d") :: Nil,
+      source = (1, "x") :: (2, "y") :: Nil,
+      source2 = (2, "y") :: (3, "z") :: Nil,
+      deleteWhere =
+        "EXISTS (SELECT 1 FROM source WHERE t.c = source.c) AND " +
+          "EXISTS (SELECT 1 FROM source2 WHERE t.c = source2.c)",
+      expected = (1, "a") :: (3, "c") :: (4, "d") :: Nil)
+  }
+
+  testWithPartitioning("uncorrelated EXISTS subquery") {
+    checkDeleteResult(
+      target = (1, "a") :: (2, "b") :: (3, "c") :: Nil,
+      source = (99, "x") :: Nil,
+      deleteWhere = "EXISTS (SELECT 1 FROM source)",
+      expected = Nil)
+
+    // Uncorrelated NOT EXISTS with non-empty source deletes nothing
+    checkDeleteResult(
+      target = (1, "a") :: (2, "b") :: (3, "c") :: Nil,
+      source = (99, "x") :: Nil,
+      deleteWhere = "NOT EXISTS (SELECT 1 FROM source)",
+      expected = (1, "a") :: (2, "b") :: (3, "c") :: Nil)
+  }
+
+  testWithPartitioning("NOT EXISTS with empty source deletes all rows") {
+    import testImplicits._
+    Seq((1, "a"), (2, "b"), (3, "c"))
+      .toDF("c", "t1")
+      .coalesce(1)
+      .write
+      .format("delta")
+      .mode("overwrite")
+      .saveAsTable("target")
+    // Create an empty source view with the correct schema
+    Seq.empty[(Int, String)]
+      .toDF("c", "s1")
+      .createOrReplaceTempView("source")
+
+    withSQLConf(
+      DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key -> "true"
+    ) {
+    executeDelete(target = "target t",
+      where = "NOT EXISTS (SELECT 1 FROM source WHERE t.c = source.c)")
+    }
+    checkAnswer(sqlContext.table("target"), Nil)
+  }
+
+  testWithPartitioning("exists with multi-file target") {
+    // Write multiple files to exercise getFileMetadataColumn + distinct()
+    // in the first pass across multiple data files.
+    import testImplicits._
+    (1 to 20)
+      .map(i => (i, s"v$i"))
+      .toDF("c", "t1")
+      .repartition(4)
+      .write
+      .format("delta")
+      .mode("overwrite")
+      .saveAsTable("target")
+    Seq((3, "x"), (7, "y"), (15, "z"))
+      .toDF("c", "s1")
+      .createOrReplaceTempView("source")
+
+    withSQLConf(
+      DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key -> "true"
+    ) {
+    executeDelete(target = "target t",
+      where = "EXISTS (SELECT 1 FROM source WHERE t.c = source.c)")
+    }
+    checkAnswer(
+      sqlContext.table("target").select("c"),
+      (1 to 20).filter(i => i != 3 && i != 7 && i != 15).map(Row(_)))
+  }
+
+  testWithPartitioning("nested EXISTS subquery") {
+    checkDeleteResult(
+      target = (1, "a") :: (2, "b") :: (3, "c") :: Nil,
+      source = (1, "a") :: (2, "b") :: Nil,
+      source2 = (1, "b") :: Nil,
+      deleteWhere =
+        "EXISTS (SELECT 1 FROM source WHERE t.c = source.c AND " +
+          "EXISTS (SELECT 1 FROM source2 WHERE source.c = source2.c))",
+      expected = (2, "b") :: (3, "c") :: Nil)
   }
 }

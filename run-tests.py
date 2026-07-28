@@ -25,7 +25,7 @@ import argparse
 # Define groups of subprojects that can be tested separately from other groups.
 # As of now, we have only defined project groups in the SBT build, so these must match
 # the group names defined in build.sbt.
-valid_project_groups = ["spark", "kernel", "spark-python"]
+valid_project_groups = ["spark", "iceberg", "kernel", "spark-python"]
 
 
 def get_args():
@@ -48,14 +48,35 @@ def get_args():
         required=False,
         default=None,
         help="some shard")
+    parser.add_argument(
+        "--spark-version",
+        required=False,
+        default=None,
+        help="Spark version to use (passed as -DsparkVersion to SBT)")
+    parser.add_argument(
+        "--kernel-version",
+        required=False,
+        default=None,
+        help="Delta Kernel version to use (passed as -DkernelVersion to SBT)")
     return parser.parse_args()
 
 
-def run_sbt_tests(root_dir, test_group, coverage, scala_version=None, shard=None):
+def run_sbt_tests(root_dir, test_group, coverage, scala_version=None, shard=None,
+                  spark_version=None, kernel_version=None):
     print("##### Running SBT tests #####")
+    print(f"[run-tests.py] run_sbt_tests: spark_version={spark_version!r}, "
+          f"kernel_version={kernel_version!r}")
 
     sbt_path = path.join(root_dir, path.join("build", "sbt"))
-    cmd = [sbt_path, "clean"]
+    cmd = [sbt_path]
+
+    # Pass Spark version as system property to SBT (must come before commands)
+    if spark_version:
+        cmd.append(f"-DsparkVersion={spark_version}")
+    if kernel_version:
+        cmd.append(f"-DkernelVersion={kernel_version}")
+
+    cmd.append("clean")
 
     test_cmd = "test"
     if shard:
@@ -73,7 +94,7 @@ def run_sbt_tests(root_dir, test_group, coverage, scala_version=None, shard=None
         cmd += ["+ %s" % test_cmd]  # build/sbt ... "+ project/test" ...
     else:
         # when no scala version is specified, run test with only the specified scala version
-        cmd += ["++ %s" % scala_version, test_cmd]  # build/sbt ... "++ 2.13.13" "project/test" ...
+        cmd += ["++ %s" % scala_version, test_cmd]  # build/sbt ... "++ 2.13.16" "project/test" ...
 
     if coverage:
         cmd += ["coverageAggregate", "coverageOff"]
@@ -86,11 +107,16 @@ def run_sbt_tests(root_dir, test_group, coverage, scala_version=None, shard=None
     cmd += ["-J-Xmx6G"]
     run_cmd(cmd, stream_output=True)
 
-def run_python_tests(root_dir):
+
+def run_python_tests(root_dir, kernel_version=None):
     print("##### Running Python tests #####")
+    print(f"[run-tests.py] run_python_tests: kernel_version={kernel_version!r}")
     python_test_script = path.join(root_dir, path.join("python", "run-tests.py"))
     print("Calling script %s", python_test_script)
-    run_cmd(["python3", python_test_script], env={'DELTA_TESTING': '1'}, stream_output=True)
+    env = {'DELTA_TESTING': '1'}
+    if kernel_version:
+        env['KERNEL_VERSION'] = kernel_version
+    run_cmd(["python3", python_test_script], env=env, stream_output=True)
 
 
 def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):
@@ -190,7 +216,7 @@ def pull_or_build_docker_image(root_dir):
     return test_env_image_tag
 
 
-def run_tests_in_docker(image_tag, test_group):
+def run_tests_in_docker(image_tag, test_group, kernel_version=None):
     """
     Run the necessary tests in a docker container made from the given image.
     It starts the container with the delta repo mounted in it, and then
@@ -209,12 +235,24 @@ def run_tests_in_docker(image_tag, test_group):
     if test_parallelism is not None:
         envs = envs + "-e TEST_PARALLELISM_COUNT=%s " % test_parallelism
 
+    disable_unidoc = os.getenv("DISABLE_UNIDOC")
+    if disable_unidoc is not None:
+        envs = envs + "-e DISABLE_UNIDOC=%s " % disable_unidoc
+
+    extra_maven_repo = os.getenv("EXTRA_MAVEN_REPO")
+    if extra_maven_repo is not None:
+        envs = envs + "-e EXTRA_MAVEN_REPO=%s " % extra_maven_repo
+
     cwd = os.getcwd()
     test_script = os.path.basename(__file__)
 
     test_script_args = ""
     if test_group:
         test_script_args += " --group %s" % test_group
+    if kernel_version:
+        test_script_args += " --kernel-version %s" % kernel_version
+    print(f"[run-tests.py] run_tests_in_docker: forwarding to container: "
+          f"test_group={test_group!r}, kernel_version={kernel_version!r}")
 
     test_run_cmd = "docker run --rm  -v %s:%s -w %s %s %s ./%s %s" % (
         cwd, cwd, cwd, envs, image_tag, test_script, test_script_args
@@ -222,14 +260,58 @@ def run_tests_in_docker(image_tag, test_group):
     run_cmd(test_run_cmd, stream_output=True)
 
 
+def print_configuration(args: argparse.Namespace) -> None:
+    print("=" * 60)
+    print("DELTA LAKE TEST RUNNER CONFIGURATION")
+    print("=" * 60)
+
+    # Print parsed arguments
+    print("-" * 25)
+    print("Command Line Arguments:")
+    print("-" * 25)
+    args_dict = vars(args)
+    for key, value in args_dict.items():
+        if value is not None:
+            print(f"  {key:<12}: {value}")
+        else:
+            print(f"  {key:<12}: <not set>")
+
+    # Print relevant environment variables
+    print("-" * 25)
+    print("Environment Variables:")
+    print("-" * 22)
+    env_vars = [
+        "USE_DOCKER", "SCALA_VERSION", "DISABLE_UNIDOC", "DOCKER_REGISTRY",
+        "NUM_SHARDS", "SHARD_ID", "TEST_PARALLELISM_COUNT", "JENKINS_URL",
+        "SBT_1_5_5_MIRROR_JAR_URL", "DELTA_TESTING", "SBT_OPTS"
+    ]
+
+    for var in env_vars:
+        value = os.getenv(var)
+        if value is not None:
+            print(f"  {var:<22}: {value}")
+        else:
+            print(f"  {var:<22}: <not set>")
+
+    print("=" * 60)
+
+
 if __name__ == "__main__":
     root_dir = os.path.dirname(os.path.abspath(__file__))
     args = get_args()
+
+    print_configuration(args)
+
     if os.getenv("USE_DOCKER") is not None:
         test_env_image_tag = pull_or_build_docker_image(root_dir)
-        run_tests_in_docker(test_env_image_tag, args.group)
+        kernel_version = args.kernel_version or os.getenv("KERNEL_VERSION")
+        run_tests_in_docker(test_env_image_tag, args.group, kernel_version)
     elif args.group == "spark-python":
-        run_python_tests(root_dir)
+        kernel_version = args.kernel_version or os.getenv("KERNEL_VERSION")
+        run_python_tests(root_dir, kernel_version)
     else:
         scala_version = os.getenv("SCALA_VERSION")
-        run_sbt_tests(root_dir, args.group, args.coverage, scala_version, args.shard)
+        spark_version = args.spark_version or os.getenv("SPARK_VERSION")
+        kernel_version = args.kernel_version or os.getenv("KERNEL_VERSION")
+        run_sbt_tests(root_dir, args.group, args.coverage, scala_version, args.shard,
+                      spark_version, kernel_version)

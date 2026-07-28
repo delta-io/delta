@@ -27,11 +27,10 @@ import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterByTransform =
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.hadoop.fs.{FileSystem, Path}
 
-import org.apache.spark.internal.{LoggingShims, MDC}
+import org.apache.spark.internal.{Logging, MDC}
 import org.apache.spark.sql.{Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{NoSuchTableException, UnresolvedLeafNode, UnresolvedTable}
-import org.apache.spark.sql.catalyst.analysis.UnresolvedTableImplicits._
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, SessionCatalog}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.objects.StaticInvoke
@@ -315,6 +314,19 @@ object DeltaTableUtils extends PredicateHelper
   }
 
   /**
+   * Stricter partition-only check for file-listing / RPC pushdown: deterministic and references
+   * only partition columns. Non-deterministic or columnless predicates (e.g. rand() > 0.5) return
+   * false.
+   */
+  def isPredicatePartitionColumnsOnlyStrict(
+      condition: Expression,
+      partitionColumns: Seq[String],
+      spark: SparkSession): Boolean = {
+    condition.deterministic &&
+      isPredicatePartitionColumnsOnly(condition, partitionColumns, spark)
+  }
+
+  /**
    * Partition the given condition into two sequence of conjunctive predicates:
    * - predicates that can be evaluated using metadata only.
    * - other predicates.
@@ -330,6 +342,30 @@ object DeltaTableUtils extends PredicateHelper
     val extraMetadataPredicates =
       if (dataPredicates.nonEmpty) {
         extractMetadataPredicates(dataPredicates.reduce(And), partitionColumns, spark)
+          .map(splitConjunctivePredicates)
+          .getOrElse(Seq.empty)
+      } else {
+        Seq.empty
+      }
+    (metadataPredicates ++ extraMetadataPredicates, dataPredicates)
+  }
+
+  /**
+   * Like [[splitMetadataAndDataPredicates]], but classifies conjuncts with
+   * [[isPredicateMetadataOnlyStrict]] so non-deterministic predicates (e.g. `rand() > 0.5`) are
+   * not treated as partition/metadata-only filters.
+   */
+  def splitMetadataAndDataPredicatesStrict(
+      condition: Expression,
+      partitionColumns: Seq[String],
+      spark: SparkSession): (Seq[Expression], Seq[Expression]) = {
+    val (metadataPredicates, dataPredicates) =
+      splitConjunctivePredicates(condition).partition(
+        isPredicateMetadataOnlyStrict(_, partitionColumns, spark))
+    // Extra metadata predicates that can partially extracted from `dataPredicates`.
+    val extraMetadataPredicates =
+      if (dataPredicates.nonEmpty) {
+        extractMetadataPredicatesStrict(dataPredicates.reduce(And), partitionColumns, spark)
           .map(splitConjunctivePredicates)
           .getOrElse(Seq.empty)
       } else {
@@ -384,6 +420,34 @@ object DeltaTableUtils extends PredicateHelper
   }
 
   /**
+   * Like [[extractMetadataPredicates]], but uses [[isPredicatePartitionColumnsOnlyStrict]].
+   */
+  private def extractMetadataPredicatesStrict(
+      condition: Expression,
+      partitionColumns: Seq[String],
+      spark: SparkSession): Option[Expression] = {
+    condition match {
+      case And(left, right) =>
+        val lhs = extractMetadataPredicatesStrict(left, partitionColumns, spark)
+        val rhs = extractMetadataPredicatesStrict(right, partitionColumns, spark)
+        (lhs.toSeq ++ rhs.toSeq).reduceOption(And)
+
+    case Or(left, right) =>
+      for {
+        lhs <- extractMetadataPredicatesStrict(left, partitionColumns, spark)
+        rhs <- extractMetadataPredicatesStrict(right, partitionColumns, spark)
+      } yield Or(lhs, rhs)
+
+    case other =>
+      if (isPredicatePartitionColumnsOnlyStrict(other, partitionColumns, spark)) {
+        Some(other)
+      } else {
+        None
+      }
+    }
+  }
+
+  /**
    * Check if condition involves a subquery expression.
    */
   def containsSubquery(condition: Expression): Boolean = {
@@ -403,6 +467,17 @@ object DeltaTableUtils extends PredicateHelper
   }
 
   /**
+   * Like [[isPredicateMetadataOnly]], but also requires the predicate to be deterministic.
+   */
+  def isPredicateMetadataOnlyStrict(
+      condition: Expression,
+      partitionColumns: Seq[String],
+      spark: SparkSession): Boolean = {
+    isPredicatePartitionColumnsOnlyStrict(condition, partitionColumns, spark) &&
+      !containsSubquery(condition)
+  }
+
+  /**
    * Replace the file index in a logical plan and return the updated plan.
    * It's a common pattern that, in Delta commands, we use data skipping to determine a subset of
    * files that can be affected by the command, so we replace the whole-table file index in the
@@ -418,6 +493,25 @@ object DeltaTableUtils extends PredicateHelper
     target transform {
       case l @ LogicalRelationWithTable(hfsr: HadoopFsRelation, _) =>
         l.copy(relation = hfsr.copy(location = fileIndex)(hfsr.sparkSession))
+    }
+  }
+
+  /**
+   * Transform the file format in a logical plan and return the updated plan.
+   *
+   * @param target the logical plan in which the file format is replaced.
+   * @param rule   the rule to apply to the file format.
+   */
+  def transformFileFormat(
+      target: LogicalPlan)(
+      rule: PartialFunction[DeltaParquetFileFormat, DeltaParquetFileFormat]): LogicalPlan = {
+    target.transform {
+      case l@LogicalRelationWithTable(hfsr: HadoopFsRelation, _) =>
+        val newFileFormat = hfsr.fileFormat match {
+          case format: DeltaParquetFileFormat =>
+            rule.applyOrElse(format, identity[DeltaParquetFileFormat])
+        }
+        l.copy(relation = hfsr.copy(fileFormat = newFileFormat)(hfsr.sparkSession))
     }
   }
 
@@ -526,15 +620,18 @@ object DeltaTableUtils extends PredicateHelper
   def resolveTimeTravelVersion(
       conf: SQLConf,
       deltaLog: DeltaLog,
+      catalogTableOpt: Option[CatalogTable],
       tt: DeltaTimeTravelSpec,
       canReturnLastCommit: Boolean = false): (Long, String) = {
     if (tt.version.isDefined) {
       val userVersion = tt.version.get
-      deltaLog.history.checkVersionExists(userVersion)
+      deltaLog.history.checkVersionExists(userVersion, catalogTableOpt)
       userVersion -> "version"
     } else {
       val timestamp = tt.getTimestamp(conf)
-      deltaLog.history.getActiveCommitAtTime(timestamp, canReturnLastCommit).version -> "timestamp"
+      val commit =
+        deltaLog.history.getActiveCommitAtTime(timestamp, catalogTableOpt, canReturnLastCommit)
+      commit.version -> "timestamp"
     }
   }
 
@@ -645,6 +742,23 @@ object DeltaTableUtils extends PredicateHelper
     )
   }
 
+  /**
+   * Removes internal Delta metadata from the given schema. This includes tyically metadata used by
+   * reader-writer table features that shouldn't leak outside of the table. Use
+   * [[removeInternalWriterMetadata]] in addition / instead to remove metadata for writer-only table
+   * features.
+   */
+  def removeInternalDeltaMetadata(spark: SparkSession, schema: StructType): StructType = {
+    val cleanedSchema = DeltaColumnMapping.dropColumnMappingMetadata(schema)
+
+    val conf = spark.sessionState.conf
+    if (conf.getConf(DeltaSQLConf.DELTA_TYPE_WIDENING_REMOVE_SCHEMA_METADATA)) {
+      TypeWideningMetadata.removeTypeWideningMetadata(cleanedSchema)._1
+    } else {
+      cleanedSchema
+    }
+  }
+
 }
 
 sealed abstract class UnresolvedPathBasedDeltaTableBase(path: String) extends UnresolvedLeafNode {
@@ -700,14 +814,21 @@ object UnresolvedDeltaPathOrIdentifier {
   def apply(
       path: Option[String],
       tableIdentifier: Option[TableIdentifier],
+      options: Map[String, String],
       cmd: String): LogicalPlan = {
     (path, tableIdentifier) match {
-      case (Some(p), None) => UnresolvedPathBasedDeltaTable(p, Map.empty, cmd)
+      case (Some(p), None) => UnresolvedPathBasedDeltaTable(p, options, cmd)
       case (None, Some(t)) => UnresolvedTable(t.nameParts, cmd)
       case _ => throw new IllegalArgumentException(
         s"Exactly one of path or tableIdentifier must be provided to $cmd")
     }
   }
+
+  def apply(
+      path: Option[String],
+      tableIdentifier: Option[TableIdentifier],
+      cmd: String): LogicalPlan =
+    this(path, tableIdentifier, Map.empty, cmd)
 }
 
 /**
@@ -722,10 +843,11 @@ object UnresolvedPathOrIdentifier {
   def apply(
       path: Option[String],
       tableIdentifier: Option[TableIdentifier],
+      options: Map[String, String],
       cmd: String): LogicalPlan = {
     (path, tableIdentifier) match {
       case (_, Some(t)) => UnresolvedTable(t.nameParts, cmd)
-      case (Some(p), None) => UnresolvedPathBasedTable(p, Map.empty, cmd)
+      case (Some(p), None) => UnresolvedPathBasedTable(p, options, cmd)
       case _ => throw new IllegalArgumentException(
         s"At least one of path or tableIdentifier must be provided to $cmd")
     }

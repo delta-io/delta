@@ -24,8 +24,7 @@ import scala.collection.mutable
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME
 import org.apache.spark.sql.delta.DeltaTestUtils.{verifyBackfilled, verifyUnbackfilled, BOOLEAN_DOMAIN}
-import org.apache.spark.sql.delta.SnapshotManagementSuiteShims._
-import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorBuilder, CommitCoordinatorProvider, CoordinatedCommitsBaseSuite, CoordinatedCommitsUsageLogs, InMemoryCommitCoordinator}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTestBaseSuite, CommitCoordinatorBuilder, CommitCoordinatorProvider, CoordinatedCommitsUsageLogs, InMemoryCommitCoordinator}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.storage.LogStore.logStoreClassConfKey
@@ -47,8 +46,14 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.storage.StorageLevel
 
 class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with SharedSparkSession
-  with DeltaSQLCommandTest with CoordinatedCommitsBaseSuite {
+  with DeltaSQLCommandTest with CatalogOwnedTestBaseSuite {
 
+  protected override def sparkConf = {
+    // Disable loading protocol and metadata from checksum file. Otherwise, creating a Snapshot
+    // won't touch the checkpoint file and we won't be able to retry.
+    super.sparkConf
+      .set(DeltaSQLConf.USE_PROTOCOL_AND_METADATA_FROM_CHECKSUM_ENABLED.key, "false")
+  }
 
   /**
    * Truncate an existing checkpoint file to create a corrupt file.
@@ -87,6 +92,17 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
     assert(deltaFile.delete(), s"Failed to delete $deltaFile")
   }
 
+  private def deleteDeltaJsonFiles(path: String): Unit = {
+    val deltaLogDir = new File(path, "_delta_log")
+    deltaLogDir.listFiles().filter(_.getName.endsWith(".json")).foreach(_.delete())
+    if (catalogOwnedDefaultCreationEnabledInTests) {
+      val stagedCommitsDir = new File(deltaLogDir, "_staged_commits")
+      Option(stagedCommitsDir.listFiles()).getOrElse(Array.empty)
+        .filter(_.getName.endsWith(".json"))
+        .foreach(_.delete())
+    }
+  }
+
   private def deleteCheckpointVersion(path: String, version: Long): Unit = {
     val deltaFile = new File(
       FileNames.checkpointFileSingular(new Path(path, "_delta_log"), version).toString)
@@ -96,11 +112,15 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
 
   private def testWithAndWithoutMultipartCheckpoint(name: String)(f: (Option[Int]) => Unit) = {
     testQuietly(name) {
-      withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "1") {
-        f(Some(1))
-        f(Some(2))
+      // CatalogManaged tables enable V2 checkpoints by default.
+      // These tests intentionally create and mutate classic checkpoint files.
+      withClassicCheckpointPolicyForCatalogOwned {
+        withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "1") {
+          f(Some(1))
+          f(Some(2))
+        }
+        f(None)
       }
-      f(None)
     }
   }
 
@@ -198,7 +218,7 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
           // Guava cache wraps the root cause
           assert(e.isInstanceOf[SparkException] &&
             e.getMessage.contains("0001.checkpoint") &&
-            e.getMessage.contains(SHOULD_NOT_RECOVER_CHECKPOINT_ERROR_MSG))
+            e.getMessage.contains("Encountered error while reading file"))
         }
       }
     }
@@ -255,27 +275,29 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
         val e = intercept[SparkException] { staleLog.update() }
         val version = if (testEmptyCheckpoint) 0 else 1
         assert(e.getMessage.contains(f"$version%020d.checkpoint") &&
-          e.getMessage.contains(SHOULD_NOT_RECOVER_CHECKPOINT_ERROR_MSG))
+          e.getMessage.contains("Encountered error while reading file"))
       }
     }
   }
 
   test("should throw a clear exception when checkpoint exists but its corresponding delta file " +
     "doesn't exist") {
-    withTempDir { tempDir =>
-      val path = tempDir.getCanonicalPath
-      val staleLog = DeltaLog.forTable(spark, path)
-      DeltaLog.clearCache()
+    // This test expects recovery from a classic checkpoint after deleting delta JSON files.
+    withClassicCheckpointPolicyForCatalogOwned {
+      withTempDir { tempDir =>
+        val path = tempDir.getCanonicalPath
+        val staleLog = DeltaLog.forTable(spark, path)
+        DeltaLog.clearCache()
 
-      spark.range(10).write.format("delta").save(path)
-      DeltaLog.forTable(spark, path).checkpoint()
-      // Delete delta files
-      new File(tempDir, "_delta_log").listFiles().filter(_.getName.endsWith(".json"))
-        .foreach(_.delete())
-      val e = intercept[IllegalStateException] {
-        staleLog.update()
+        spark.range(10).write.format("delta").save(path)
+        DeltaLog.forTable(spark, path).checkpoint()
+        // Delete delta files
+        deleteDeltaJsonFiles(path)
+        val e = intercept[IllegalStateException] {
+          staleLog.update()
+        }
+        assert(e.getMessage.contains("Could not find any delta files for version 0"))
       }
-      assert(e.getMessage.contains("Could not find any delta files for version 0"))
     }
   }
 
@@ -296,27 +318,23 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
 
   test("should throw a clear exception when the checkpoint is corrupt " +
     "but could not find any delta files") {
-    withTempDir { tempDir =>
-      val path = tempDir.getCanonicalPath
-      val staleLog = DeltaLog.forTable(spark, path)
-      DeltaLog.clearCache()
+    // This test corrupts a classic checkpoint file directly.
+    withClassicCheckpointPolicyForCatalogOwned {
+      withTempDir { tempDir =>
+        val path = tempDir.getCanonicalPath
+        val staleLog = DeltaLog.forTable(spark, path)
+        DeltaLog.clearCache()
 
-      spark.range(10).write.format("delta").save(path)
-      DeltaLog.forTable(spark, path).checkpoint()
-      // Delete delta files
-      new File(tempDir, "_delta_log").listFiles().filter(_.getName.endsWith(".json"))
-        .foreach(_.delete())
-      if (coordinatedCommitsEnabledInTests) {
-        new File(new File(tempDir, "_delta_log"), "_commits")
-          .listFiles()
-          .filter(_.getName.endsWith(".json"))
-          .foreach(_.delete())
+        spark.range(10).write.format("delta").save(path)
+        DeltaLog.forTable(spark, path).checkpoint()
+        // Delete delta files
+        deleteDeltaJsonFiles(path)
+        makeCorruptCheckpointFile(path, checkpointVersion = 0, shouldBeEmpty = false)
+        val e = intercept[IllegalStateException] {
+          staleLog.update()
+        }
+        assert(e.getMessage.contains("Could not find any delta files for version 0"))
       }
-      makeCorruptCheckpointFile(path, checkpointVersion = 0, shouldBeEmpty = false)
-      val e = intercept[IllegalStateException] {
-        staleLog.update()
-      }
-      assert(e.getMessage.contains("Could not find any delta files for version 0"))
     }
   }
 
@@ -327,57 +345,66 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
       spark,
       versions = Array.empty,
       expectedStartVersion = None,
-      expectedEndVersion = None)
+      expectedEndVersion = None,
+      cachedSnapshot = None)
     // contiguous versions
     verifyDeltaVersions(
       spark,
       versions = Array(1, 2, 3),
       expectedStartVersion = None,
-      expectedEndVersion = None)
+      expectedEndVersion = None,
+      cachedSnapshot = None)
     // contiguous versions with correct `expectedStartVersion` and `expectedStartVersion`
     verifyDeltaVersions(
       spark,
       versions = Array(1, 2, 3),
       expectedStartVersion = None,
-      expectedEndVersion = Some(3))
+      expectedEndVersion = Some(3),
+      cachedSnapshot = None)
     verifyDeltaVersions(
       spark,
       versions = Array(1, 2, 3),
       expectedStartVersion = Some(1),
-      expectedEndVersion = None)
+      expectedEndVersion = None,
+      cachedSnapshot = None)
     verifyDeltaVersions(
       spark,
       versions = Array(1, 2, 3),
       expectedStartVersion = Some(1),
-      expectedEndVersion = Some(3))
+      expectedEndVersion = Some(3),
+      cachedSnapshot = None)
     // `expectedStartVersion` or `expectedEndVersion` doesn't match
     intercept[IllegalArgumentException] {
       verifyDeltaVersions(
         spark,
         versions = Array(1, 2),
         expectedStartVersion = Some(0),
-        expectedEndVersion = None)
+        expectedEndVersion = None,
+        cachedSnapshot = None)
     }
     intercept[IllegalArgumentException] {
       verifyDeltaVersions(
         spark,
         versions = Array(1, 2),
         expectedStartVersion = None,
-        expectedEndVersion = Some(3))
+        expectedEndVersion = Some(3),
+        cachedSnapshot = None)
     }
     intercept[IllegalArgumentException] {
       verifyDeltaVersions(
         spark,
         versions = Array.empty,
         expectedStartVersion = Some(0),
-        expectedEndVersion = None)
+        expectedEndVersion = None,
+        cachedSnapshot = None)
     }
     intercept[IllegalArgumentException] {
       verifyDeltaVersions(
         spark,
         versions = Array.empty,
         expectedStartVersion = None,
-        expectedEndVersion = Some(3))
+        expectedEndVersion = Some(3),
+        cachedSnapshot = None)
     }
     // non contiguous versions
     intercept[IllegalStateException] {
@@ -385,7 +412,8 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
         spark,
         versions = Array(1, 3),
         expectedStartVersion = None,
-        expectedEndVersion = None)
+        expectedEndVersion = None,
+        cachedSnapshot = None)
     }
     // duplicates in versions
     intercept[IllegalStateException] {
@@ -393,7 +421,8 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
         spark,
         versions = Array(1, 2, 2, 3),
         expectedStartVersion = None,
-        expectedEndVersion = None)
+        expectedEndVersion = None,
+        cachedSnapshot = None)
     }
     // unsorted versions
     intercept[IllegalStateException] {
@@ -401,7 +430,96 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
         spark,
         versions = Array(3, 2, 1),
         expectedStartVersion = None,
-        expectedEndVersion = None)
+        expectedEndVersion = None,
+        cachedSnapshot = None)
+    }
+
+    // -----------------------------------------------------
+    // | Usage logs validation for non-contiguous versions |
+    // -----------------------------------------------------
+
+    /**
+     * Helper function to validate the usage log properties for the
+     * given `usageLogs` and `expected*` values.
+     */
+    def validateUsageLogProperties(
+        usageLogs: Seq[UsageRecord],
+        expectedStartVersion: Long,
+        expectedEndVersion: Long,
+        expectedVersionToLoad: Long,
+        expectedLatestSnapshotVersion: Long,
+        expectedLatestCheckpointVersion: Long,
+        shouldChecksumOptPresent: Boolean): Unit = {
+      assert(usageLogs.size == 1)
+      val usageLog = usageLogs.head
+      // `tags.opType` should be "delta.exceptions.deltaVersionsNotContiguous"
+      assert(usageLog.tags.getOrElse("opType", "null") ==
+        "delta.exceptions.deltaVersionsNotContiguous")
+      val blob = JsonUtils.fromJson[Map[String, Any]](usageLog.blob)
+      // `blob` validation
+      assert(blob.get("startVersion").exists(_.toString.toLong == expectedStartVersion))
+      assert(blob.get("endVersion").exists(_.toString.toLong == expectedEndVersion))
+      assert(blob.get("versionToLoad").exists(_.toString.toLong == expectedVersionToLoad))
+      assert(
+        blob.get("unsafeVolatileSnapshot.latestSnapshotVersion").exists(_.toString.toLong ==
+          expectedLatestSnapshotVersion))
+      assert(
+        blob.get("unsafeVolatileSnapshot.latestCheckpointVersion").exists(_.toString.toLong ==
+          expectedLatestCheckpointVersion))
+      // `stackTrace` should contain the entire stack trace,
+      // here we verify the starting of the stack trace.
+      assert(blob.get("stackTrace").exists(_.toString.startsWith(
+          "org.apache.spark.sql.delta.SnapshotManagement$.verifyDeltaVersions")))
+      // Check whether `unsafeVolatileSnapshot.checksumOpt` is present or not
+      assert(blob.contains("unsafeVolatileSnapshot.checksumOpt") == shouldChecksumOptPresent)
+    }
+
+    // 1. Basic usage log validation.
+    val usageLogs = Log4jUsageLogger.track {
+        intercept[IllegalStateException] {
+          verifyDeltaVersions(
+            spark,
+            versions = Array(1, 3),
+            expectedStartVersion = None,
+            expectedEndVersion = None,
+            cachedSnapshot = None)
+        }
+      }.filter(_.metric == "tahoeEvent")
+    validateUsageLogProperties(
+      usageLogs,
+      expectedStartVersion = 1,
+      expectedEndVersion = 3,
+      expectedVersionToLoad = -1,
+      expectedLatestSnapshotVersion = -1,
+      expectedLatestCheckpointVersion = -1,
+      shouldChecksumOptPresent = false)
+
+    // 2. Usage log validation with `expectedStartVersion`, `expectedEndVersion`
+    //    and `cachedSnapshot`.
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      import testImplicits._
+      // Commit 0 - to trigger the initial snapshot construction for version 0
+      Seq(1).toDF().write.format("delta").mode("overwrite").save(path)
+      val snapshot = DeltaLog.forTable(spark, path).update()
+      val usageLogs = Log4jUsageLogger.track {
+        intercept[IllegalStateException] {
+          verifyDeltaVersions(
+            spark,
+            versions = Array(1, 3),
+            expectedStartVersion = Some(1),
+            expectedEndVersion = Some(4),
+            cachedSnapshot = Some(snapshot))
+        }
+      }.filter(_.metric == "tahoeEvent")
+      validateUsageLogProperties(
+        usageLogs,
+        expectedStartVersion = 1,
+        expectedEndVersion = 3,
+        expectedVersionToLoad = 4,
+        expectedLatestSnapshotVersion = 0,
+        expectedLatestCheckpointVersion = -1,
+        shouldChecksumOptPresent = true)
     }
   }
 
@@ -489,15 +607,47 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
         log.getLogSegmentAfterCommit(
           0, None, newLogSegment, commit, None, None, EmptyCheckpointProvider)
       }
-      assert(log.getLogSegmentAfterCommit(
-        log.snapshot.tableCommitCoordinatorClientOpt,
-        catalogTableOpt = None,
-        oldLogSegment.checkpointProvider) === log.snapshot.logSegment)
+      val latestSnapshot = log.update()
+      val versionOneIsBackfilledByCatalogManagedBatch =
+        catalogOwnedCoordinatorBackfillBatchSize.exists(_ <= 1)
+      // This test appends version 1, and CatalogManaged batch sizes above 1 keep it staged.
+      // Without a commit-coordinator client, this path-based refresh lists only filesystem deltas.
+      if (!catalogOwnedDefaultCreationEnabledInTests ||
+          latestSnapshot.tableCommitCoordinatorClientOpt.nonEmpty ||
+          versionOneIsBackfilledByCatalogManagedBatch) {
+        assert(log.getLogSegmentAfterCommit(
+          latestSnapshot.tableCommitCoordinatorClientOpt,
+          catalogTableOpt = None,
+          oldLogSegment.checkpointProvider) === latestSnapshot.logSegment)
+      }
     }
   }
 
   testQuietly("checkpoint/json not found when executor restart " +
     "after expired checkpoints in the snapshot cache are cleaned up") {
+    // This test deletes a classic checkpoint file by version.
+    withClassicCheckpointPolicyForCatalogOwned {
+      withTempDir { tempDir =>
+        // Create checkpoint 1 and 3
+        val path = tempDir.getCanonicalPath
+        spark.range(10).write.format("delta").save(path)
+        spark.range(10).write.format("delta").mode("append").save(path)
+        val deltaLog = DeltaLog.forTable(spark, path)
+        deltaLog.checkpoint()
+        spark.range(10).write.format("delta").mode("append").save(path)
+        spark.range(10).write.format("delta").mode("append").save(path)
+        deltaLog.checkpoint()
+        // simulate checkpoint 1 expires and is cleaned up
+        deleteCheckpointVersion(path, 1)
+        // simulate executor hangs and restart, cache invalidation
+        deltaLog.snapshot.uncache()
+
+        spark.read.format("delta").load(path).collect()
+      }
+    }
+  }
+
+  test("getUpdatedLogSegment without new files returns the original log segment") {
     withTempDir { tempDir =>
       // Create checkpoint 1 and 3
       val path = tempDir.getCanonicalPath
@@ -505,29 +655,51 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
       spark.range(10).write.format("delta").mode("append").save(path)
       val deltaLog = DeltaLog.forTable(spark, path)
       deltaLog.checkpoint()
-      spark.range(10).write.format("delta").mode("append").save(path)
-      spark.range(10).write.format("delta").mode("append").save(path)
-      deltaLog.checkpoint()
-      // simulate checkpoint 1 expires and is cleaned up
-      deleteCheckpointVersion(path, 1)
-      // simulate executor hangs and restart, cache invalidation
-      deltaLog.snapshot.uncache()
+      val snapshot = deltaLog.update()
+      val (updatedLogSegment, _) = deltaLog.getUpdatedLogSegment(
+        snapshot.logSegment,
+        tableCommitCoordinatorClientOpt = None,
+        catalogTableOpt = None
+      )
+      assert(updatedLogSegment === snapshot.logSegment)
+    }
+  }
 
-      spark.read.format("delta").load(path).collect()
+  test("getSnapshotAt uses checkpoint at requested version as listing hint") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      spark.range(10).write.format("delta").save(path)
+      spark.range(10).write.format("delta").mode("append").save(path)
+      spark.range(10).write.format("delta").mode("append").save(path)
+      var (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, path)
+      deltaLog.checkpoint(snapshot)
+      spark.range(10).write.format("delta").mode("append").save(path)
+
+      DeltaLog.clearCache()
+      deltaLog = DeltaLog.forTable(spark, path)
+
+      val usageRecords = DeltaTestUtils.collectUsageLogs("delta.findLastCompleteCheckpointBefore") {
+        assert(deltaLog.getSnapshotAt(2).version == 2)
+      }
+      val checkpointSearchEvent = JsonUtils.fromJson[Map[String, String]](usageRecords.head.blob)
+      assert(checkpointSearchEvent("resultantCheckpointVersion") == "2")
     }
   }
 }
 
-class SnapshotManagementWithCoordinatedCommitsBatch1Suite extends SnapshotManagementSuite {
-  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
+class SnapshotManagementWithCatalogManagedBatch1Suite extends SnapshotManagementSuite {
+
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class SnapshotManagementWithCoordinatedCommitsBatch2Suite extends SnapshotManagementSuite {
-  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(2)
+class SnapshotManagementWithCatalogManagedBatch2Suite extends SnapshotManagementSuite {
+
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
 }
 
-class SnapshotManagementWithCoordinatedCommitsBatch100Suite extends SnapshotManagementSuite {
-  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
+class SnapshotManagementWithCatalogManagedBatch100Suite extends SnapshotManagementSuite {
+
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }
 
 class CountDownLatchLogStore(sparkConf: SparkConf, hadoopConf: Configuration)

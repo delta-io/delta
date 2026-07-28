@@ -20,6 +20,7 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.{QueryTest, Row}
+import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.types._
 
 /**
@@ -28,11 +29,25 @@ import org.apache.spark.sql.types._
 class TypeWideningGeneratedColumnsSuite
   extends QueryTest
     with TypeWideningTestMixin
+    with DeltaDMLTestUtilsNameBased
     with GeneratedColumnTest
     with TypeWideningGeneratedColumnTests
 
 trait TypeWideningGeneratedColumnTests extends GeneratedColumnTest {
   self: QueryTest with TypeWideningTestMixin =>
+  /**
+   * Asserts the error raised when attempting to change the data type of an array element
+   * referenced by the generated column.
+   */
+  protected def checkArrayElementGeneratedColumnError(insert: => Unit): Unit =
+    checkError(
+      intercept[DeltaAnalysisException](insert),
+      "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+      parameters = Map(
+        "columnName" -> "a.element",
+        "columnType" -> "TINYINT",
+        "dataType" -> "INT",
+        "generatedColumns" -> "gen -> hash(a[0])"))
 
   test("generated column with type change") {
     withTable("t") {
@@ -89,6 +104,33 @@ trait TypeWideningGeneratedColumnTests extends GeneratedColumnTest {
       // Changing the type of a.y is allowed since it's not referenced by the CHECK constraint.
       sql("ALTER TABLE t CHANGE COLUMN a.y TYPE SMALLINT")
       checkAnswer(sql("SELECT * FROM t"), Row(Row(2, 3), 1765031574) :: Nil)
+    }
+  }
+
+  test("generated column on arrays and maps with type change") {
+    withTable("t") {
+      createTable(
+        tableName = "t",
+        path = None,
+        schemaString = "a array<struct<f: byte, g: byte>>, gen tinyint",
+        generatedColumns = Map("gen" -> "a[0].f"),
+        partitionColumns = Seq.empty
+      )
+      sql("INSERT INTO t (a) VALUES (array(named_struct('f', 7, 'g', 8)))")
+      checkAnswer(sql("SELECT gen FROM t"), Row(7))
+
+      sql("ALTER TABLE t CHANGE COLUMN a.element.g TYPE SMALLINT")
+      checkError(
+        intercept[DeltaAnalysisException] {
+          sql("ALTER TABLE t CHANGE COLUMN a.element.f TYPE SMALLINT")
+        },
+        "DELTA_GENERATED_COLUMNS_DEPENDENT_COLUMN_CHANGE",
+        parameters = Map(
+          "columnName" -> "a.element.f",
+          "generatedColumns" -> "gen -> a[0].f"
+        ))
+
+      checkAnswer(sql("SELECT gen FROM t"), Row(7))
     }
   }
 
@@ -150,6 +192,31 @@ trait TypeWideningGeneratedColumnTests extends GeneratedColumnTest {
         // the field referenced by the generated column is allowed.
         sql("INSERT INTO t (a) VALUES (named_struct('x', CAST(2 AS byte), 'y', 200))")
         checkAnswer(sql("SELECT gen FROM t"), Seq(Row(1765031574), Row(1765031574)))
+      }
+    }
+  }
+
+  test("generated column on arrays and maps with type evolution") {
+    withTable("t") {
+      createTable(
+        tableName = "t",
+        path = None,
+        schemaString = "a array<byte>, gen INT",
+        generatedColumns = Map("gen" -> "hash(a[0])"),
+        partitionColumns = Seq.empty
+      )
+      sql("INSERT INTO t (a) VALUES (array(2, 3))")
+      checkAnswer(sql("SELECT gen FROM t"), Row(1765031574))
+
+      withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
+        // Insert by name is not supported by type evolution.
+        checkArrayElementGeneratedColumnError {
+          spark.createDataFrame(Seq(Tuple1(Array(200000, 12345))))
+            .toDF("a").withColumn("a", col("a").cast("array<int>"))
+            .write.format("delta").mode("append").saveAsTable("t")
+        }
+
+        checkAnswer(sql("SELECT gen FROM t"), Row(1765031574))
       }
     }
   }

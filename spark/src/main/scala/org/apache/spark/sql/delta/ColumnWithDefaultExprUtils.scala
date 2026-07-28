@@ -18,20 +18,26 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import scala.collection.mutable
+import scala.concurrent.duration
+import scala.util.control.NonFatal
 
+import org.apache.spark.sql.delta.Relocated._
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.constraints.{Constraint, Constraints}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf, DeltaStreamUtils}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf.GeneratedColumnValidateOnWriteMode
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{Column, DataFrame}
 import org.apache.spark.sql.catalyst.expressions.EqualNullSafe
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.catalyst.util.ResolveDefaultColumns._
 import org.apache.spark.sql.execution.QueryExecution
-import org.apache.spark.sql.execution.streaming.IncrementalExecution
 import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
 
 /**
@@ -116,6 +122,41 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
     val constraints = mutable.ArrayBuffer[Constraint]()
     // Column names for which we will track high water marks.
     val track = mutable.Set[String]()
+    val generatedColumnsValidateMode =
+      GeneratedColumnValidateOnWriteMode.fromConf(data.sparkSession.sessionState.conf)
+    generatedColumnsValidateMode match {
+      case GeneratedColumnValidateOnWriteMode.LOG_ONLY |
+           GeneratedColumnValidateOnWriteMode.ASSERT =>
+        try {
+          val startTime = System.nanoTime()
+          GeneratedColumn.validateGeneratedColumns(data.sparkSession, schema)
+          val durationMs =
+            duration.NANOSECONDS.toMillis(System.nanoTime() - startTime)
+          logInfo(
+            log"Validated Generated Column expressions on table " +
+            log"${MDC(DeltaLogKeys.TABLE_ID, deltaLog.unsafeVolatileTableId)} " +
+            log"in ${MDC(DeltaLogKeys.TIME_MS, durationMs)} ms"
+          )
+        } catch {
+          case NonFatal(e) =>
+            val errorClassName = e match {
+              case deltaException: DeltaAnalysisException => deltaException.getErrorClass
+              case _ => e.getClass
+            }
+            recordDeltaEvent(
+              deltaLog,
+              "delta.generatedColumns.writeValidationFailure",
+              data = Map(
+                "errorClassName" -> errorClassName,
+                "errorMessage" -> e.getMessage
+              )
+            )
+            if (generatedColumnsValidateMode == GeneratedColumnValidateOnWriteMode.ASSERT) {
+              throw e
+            }
+        }
+      case GeneratedColumnValidateOnWriteMode.OFF =>
+    }
     var selectExprs = schema.flatMap { f =>
       GeneratedColumn.getGenerationExpression(f) match {
         case Some(expr) if GeneratedColumn.satisfyGeneratedColumnProtocol(protocol) =>

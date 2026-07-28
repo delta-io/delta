@@ -18,6 +18,7 @@ package io.delta.kernel.internal.actions;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.types.StructType;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -32,7 +33,9 @@ public class SingleAction {
           .add("add", AddFile.FULL_SCHEMA)
           .add("remove", RemoveFile.FULL_SCHEMA)
           .add("metaData", Metadata.FULL_SCHEMA)
-          .add("protocol", Protocol.FULL_SCHEMA);
+          .add("protocol", Protocol.FULL_SCHEMA)
+          .add("domainMetadata", DomainMetadata.FULL_SCHEMA);
+
   // Once we start supporting updating CDC or domain metadata enabled tables, we should add the
   // schema for those fields here.
 
@@ -44,11 +47,15 @@ public class SingleAction {
   public static StructType CONFLICT_RESOLUTION_SCHEMA =
       new StructType()
           .add("txn", SetTransaction.FULL_SCHEMA)
-          // .add("add", AddFile.FULL_SCHEMA) // not needed for blind appends
-          // .add("remove", RemoveFile.FULL_SCHEMA) // not needed for blind appends
+          // .add("add", AddFile.FULL_SCHEMA) // not needed: we only detect delete-vs-delete
+          // RemoveFile is needed to detect two transactions concurrently removing (or
+          // DV-updating) the same data file, which would otherwise silently duplicate data.
+          .add("remove", RemoveFile.FULL_SCHEMA)
           .add("metaData", Metadata.FULL_SCHEMA)
           .add("protocol", Protocol.FULL_SCHEMA)
-          .add("commitInfo", CommitInfo.FULL_SCHEMA);
+          .add("commitInfo", CommitInfo.FULL_SCHEMA)
+          .add("domainMetadata", DomainMetadata.FULL_SCHEMA);
+
   // Once we start supporting domain metadata/row tracking enabled tables, we should add the
   // schema for domain metadata fields here.
 
@@ -61,16 +68,18 @@ public class SingleAction {
           .add("metaData", Metadata.FULL_SCHEMA)
           .add("protocol", Protocol.FULL_SCHEMA)
           .add("cdc", new StructType())
-          .add("commitInfo", CommitInfo.FULL_SCHEMA);
+          .add("commitInfo", CommitInfo.FULL_SCHEMA)
+          .add("domainMetadata", DomainMetadata.FULL_SCHEMA);
   // Once we start supporting updating CDC or domain metadata enabled tables, we should add the
   // schema for those fields here.
 
-  private static final int TXN_ORDINAL = FULL_SCHEMA.indexOf("txn");
-  private static final int ADD_FILE_ORDINAL = FULL_SCHEMA.indexOf("add");
-  private static final int REMOVE_FILE_ORDINAL = FULL_SCHEMA.indexOf("remove");
-  private static final int METADATA_ORDINAL = FULL_SCHEMA.indexOf("metaData");
-  private static final int PROTOCOL_ORDINAL = FULL_SCHEMA.indexOf("protocol");
-  private static final int COMMIT_INFO_ORDINAL = FULL_SCHEMA.indexOf("commitInfo");
+  public static final int TXN_ORDINAL = FULL_SCHEMA.indexOf("txn");
+  public static final int ADD_FILE_ORDINAL = FULL_SCHEMA.indexOf("add");
+  public static final int REMOVE_FILE_ORDINAL = FULL_SCHEMA.indexOf("remove");
+  public static final int METADATA_ORDINAL = FULL_SCHEMA.indexOf("metaData");
+  public static final int PROTOCOL_ORDINAL = FULL_SCHEMA.indexOf("protocol");
+  public static final int COMMIT_INFO_ORDINAL = FULL_SCHEMA.indexOf("commitInfo");
+  private static final int DOMAIN_METADATA_ORDINAL = FULL_SCHEMA.indexOf("domainMetadata");
 
   public static Row createAddFileSingleAction(Row addFile) {
     Map<Integer, Object> singleActionValueMap = new HashMap<>();
@@ -100,6 +109,11 @@ public class SingleAction {
     Map<Integer, Object> singleActionValueMap = new HashMap<>();
     singleActionValueMap.put(COMMIT_INFO_ORDINAL, commitInfo);
     return new GenericRow(FULL_SCHEMA, singleActionValueMap);
+  }
+
+  public static Row createDomainMetadataSingleAction(Row domainMetadata) {
+    return new GenericRow(
+        FULL_SCHEMA, Collections.singletonMap(DOMAIN_METADATA_ORDINAL, domainMetadata));
   }
 
   public static Row createTxnSingleAction(Row txn) {

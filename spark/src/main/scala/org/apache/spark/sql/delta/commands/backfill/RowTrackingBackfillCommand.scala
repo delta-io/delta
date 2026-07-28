@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.commands.backfill
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddFile, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 
 import org.apache.spark.sql.{Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
@@ -40,42 +41,32 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 case class RowTrackingBackfillCommand(
     override val deltaLog: DeltaLog,
     override val nameOfTriggeringOperation: String,
-    override val catalogTable: Option[CatalogTable])
+    override val catalogTableOpt: Option[CatalogTable])
   extends BackfillCommand {
 
   override def getBackfillExecutor(
       spark: SparkSession,
-      txn: OptimisticTransaction,
-      fileMaterializationTracker: FileMetadataMaterializationTracker,
-      maxNumBatchesInParallel: Int,
-      backfillStats: BackfillCommandStats): BackfillExecutor = {
-    new RowTrackingBackfillExecutor(
-      spark, txn, fileMaterializationTracker, maxNumBatchesInParallel, backfillStats)
-  }
-
-  override def filesToBackfill(txn: OptimisticTransaction): Dataset[AddFile] =
-    // Get a new snapshot after the protocol upgrade.
-    RowTrackingBackfillExecutor.getCandidateFilesToBackfill(
-      deltaLog.update(catalogTableOpt = catalogTable))
+      deltaLog: DeltaLog,
+      catalogTableOpt: Option[CatalogTable],
+      backfillId: String,
+      backfillStats: BackfillCommandStats): BackfillExecutor =
+    new RowTrackingBackfillExecutor(spark, deltaLog, catalogTableOpt, backfillId, backfillStats)
 
   override def opType: String = "delta.rowTracking.backfill"
-
-  override def constructBatch(files: Seq[AddFile]): BackfillBatch =
-    RowTrackingBackfillBatch(files)
 
  /**
   * Add Row tracking table feature support. This will also upgrade the minWriterVersion if
   * the current protocol cannot support write table feature.
   */
   private def upgradeProtocolIfRequired(): Unit = {
-    val snapshot = deltaLog.update(catalogTableOpt = catalogTable)
+    val snapshot = deltaLog.update(catalogTableOpt = catalogTableOpt)
     if (!snapshot.protocol.isFeatureSupported(RowTrackingFeature)) {
       val minProtocolAllowingWriteTableFeature = Protocol(
         snapshot.protocol.minReaderVersion,
         TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION)
       val newProtocol = snapshot.protocol
         .merge(minProtocolAllowingWriteTableFeature.withFeature(RowTrackingFeature))
-      deltaLog.upgradeProtocol(catalogTable, snapshot, newProtocol)
+      deltaLog.upgradeProtocol(catalogTableOpt, snapshot, newProtocol)
     }
   }
 

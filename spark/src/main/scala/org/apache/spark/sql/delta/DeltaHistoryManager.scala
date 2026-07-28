@@ -40,6 +40,7 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 import org.apache.spark.SparkEnv
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.util.{SerializableConfiguration, ThreadUtils}
 
@@ -68,12 +69,23 @@ class DeltaHistoryManager(
    * Returns the information of the latest `limit` commits made to this table in reverse
    * chronological order.
    */
+  def getHistory(
+      limitOpt: Option[Int],
+      catalogTableOpt: Option[CatalogTable]): Seq[DeltaHistory] = {
+    val snapshot = deltaLog.update(catalogTableOpt = catalogTableOpt)
+    val listStart = limitOpt
+      .map { limit => math.max(snapshot.version - limit + 1, 0) }
+      .getOrElse(getEarliestDeltaFile(deltaLog))
+    getHistory(listStart, end = Some(snapshot.version), catalogTableOpt)
+  }
+
+  /**
+   * Returns the information of the latest `limit` commits made to this table in reverse
+   * chronological order. This version does not take in a catalog table and should only be
+   * used in testing.
+   */
   def getHistory(limitOpt: Option[Int]): Seq[DeltaHistory] = {
-    val snapshot = deltaLog.update()
-    val listStart = limitOpt.map { limit =>
-      math.max(snapshot.version - limit + 1, 0)
-    }.getOrElse(getEarliestDeltaFile(deltaLog))
-    getHistory(listStart, end = Some(snapshot.version))
+    getHistory(limitOpt, catalogTableOpt = None)
   }
 
   /**
@@ -136,10 +148,12 @@ class DeltaHistoryManager(
    * chronological order. If `end` is `None`, we return all commits from start to now.
    * @param start The start of the commit range, inclusive.
    * @param end The end of the commit range, inclusive.
+   * @param catalogTableOpt the catalog table associated with the Delta table.
    */
   def getHistory(
       start: Long,
-      end: Option[Long] = None): Seq[DeltaHistory] = {
+      end: Option[Long],
+      catalogTableOpt: Option[CatalogTable] = None): Seq[DeltaHistory] = {
     val currentSnapshot = deltaLog.unsafeVolatileSnapshot
     val (snapshotNewerThanResolvedEnd, resolvedEnd) = end match {
         case Some(endInclusive) if currentSnapshot.version >= endInclusive =>
@@ -148,7 +162,7 @@ class DeltaHistoryManager(
         case _ =>
           // Either end doesn't exist or the currently cached snapshot isn't new enough to
           // satisfy it.
-          val snapshot = deltaLog.update()
+          val snapshot = deltaLog.update(catalogTableOpt = catalogTableOpt)
           val endInclusive = end.getOrElse(snapshot.version).min(snapshot.version)
           (snapshot, endInclusive)
       }
@@ -197,6 +211,9 @@ class DeltaHistoryManager(
         start,
         Some(end),
         deltaLog.newDeltaHadoopConf())
+      if (commits.isEmpty) {
+        throw DeltaErrors.noHistoryFound(deltaLog.logPath)
+      }
       lastCommitBeforeTimestamp(commits, time).getOrElse(commits.head)
     }
   }
@@ -212,6 +229,7 @@ class DeltaHistoryManager(
    */
   def getActiveCommitAtTime(
       timestamp: Timestamp,
+      catalogTableOpt: Option[CatalogTable],
       canReturnLastCommit: Boolean,
       mustBeRecreatable: Boolean = true,
       canReturnEarliestCommit: Boolean = false): Commit = {
@@ -221,7 +239,7 @@ class DeltaHistoryManager(
     } else {
       getEarliestDeltaFile(deltaLog)
     }
-    val snapshot = deltaLog.update()
+    val snapshot = deltaLog.update(catalogTableOpt = catalogTableOpt)
     val commitFileProvider = DeltaCommitFileProvider(snapshot)
     val latestVersion = snapshot.version
 
@@ -309,8 +327,7 @@ class DeltaHistoryManager(
       throw DeltaErrors.TimestampEarlierThanCommitRetentionException(timestamp, commitTs, tsString)
     } else if (commit.version == latestVersion && !canReturnLastCommit) {
       if (commit.timestamp < time) {
-        throw DeltaErrors.TemporallyUnstableInputException(
-          timestamp, commitTs, tsString, commit.version)
+        throw DeltaErrors.timestampGreaterThanLatestCommit(timestamp, commitTs, tsString)
       }
     }
     commit
@@ -323,6 +340,7 @@ class DeltaHistoryManager(
    */
   def checkVersionExists(
       version: Long,
+      catalogTableOpt: Option[CatalogTable],
       mustBeRecreatable: Boolean = true,
       allowOutOfRange: Boolean = false): Unit = {
     val earliest = if (mustBeRecreatable) {
@@ -330,7 +348,7 @@ class DeltaHistoryManager(
     } else {
       getEarliestDeltaFile(deltaLog)
     }
-    val latest = deltaLog.update().version
+    val latest = deltaLog.update(catalogTableOpt = catalogTableOpt).version
     if (version < earliest || ((version > latest) && !allowOutOfRange)) {
       throw VersionNotFoundException(version, earliest, latest)
     }
@@ -411,6 +429,47 @@ class DeltaHistoryManager(
     } else if (smallestDeltaVersion < Long.MaxValue) {
       throw DeltaErrors.noRecreatableHistoryFound(deltaLog.logPath)
     } else {
+      // For Catalog Owned tables, there are two cases in which a DELTA_NO_COMMITS_FOUND
+      // exception could be thrown:
+      //
+      // 1. If there is no checkpoint or commit 0, and there are only unbackfilled commits
+      //    in the table.
+      //
+      //    In this case, the DELTA_NO_COMMITS_FOUND exception would be incorrect because there
+      //    are commits in the table, we just did not list them when trying to find the earliest
+      //    recreatable commit. Ideally we should throw the above NO_RECREATABLE_HISTORY_FOUND
+      //    exception but that requires an additional lookup of any unbackfilled commits at
+      //    the commit coordinator.
+      //
+      //    It is not worth doing the extra lookup just to throw the correct exception because:
+      //    1) We are already throwing a DELTA_NO_COMMITS_FOUND exception indicating
+      //       a potential problem.
+      //    2) The table must be corrupted already to end up in this scenario.
+      //
+      //    An example delta log structure for this case is shown below:
+      //    ```
+      //      _delta_log/
+      //        [x] 00000000000000000000.json -- Commit 0 has been backfilled but deleted.
+      //        _staged_commits/
+      //          [√] 00000000000000000001.<uuid>.json -- Commit 1 and 2 have *not* been backfilled.
+      //          [√] 00000000000000000002.<uuid>.json
+      //    ```
+      //    For the above table, we will throw DELTA_NO_COMMITS_FOUND exception when commit
+      //    `0.json` has been manually deleted and users are running commands like `versionAsOf 0`
+      //    on the table at the same time.
+      //
+      // 2. It indicates a real NO_RECREATABLE_HISTORY_FOUND exception, if all commits have been
+      //    backfilled, and we still can't find the recreatable commit.
+      //
+      //    An example delta log structure for this case is shown below:
+      //    ```
+      //      _delta_log/
+      //        [x] 00000000000000000000.json -- Commit 0/1/2 have been backfilled but deleted.
+      //        [x] 00000000000000000001.json
+      //        [x] 00000000000000000002.json
+      //        _staged_commits/
+      //          <empty>
+      //    ```
       throw DeltaErrors.noHistoryFound(deltaLog.logPath)
     }
   }
@@ -696,12 +755,19 @@ object DeltaHistoryManager extends DeltaLogging {
           startVersion,
           Some(math.min(startVersion + step, end)),
           conf.value)
-        lastCommitBeforeTimestamp(commits, time).getOrElse(commits.head)
+        if (commits.isEmpty) {
+          None
+        } else {
+          Some(lastCommitBeforeTimestamp(commits, time).getOrElse(commits.head))
+        }
       }
     }.collect()
 
     // Spark should return the commits in increasing order as well
-    val commitList = monotonizeCommitTimestamps(possibleCommits)
+    val commitList = monotonizeCommitTimestamps(possibleCommits.flatten)
+    if (commitList.isEmpty) {
+      throw DeltaErrors.noHistoryFound(new Path(logPath))
+    }
     lastCommitBeforeTimestamp(commitList, time).getOrElse(commitList.head)
   }
 
@@ -784,6 +850,9 @@ object DeltaHistoryManager extends DeltaLogging {
     private val maybeDeleteFiles = new mutable.ArrayBuffer[FileStatus]()
     private var lastFile: FileStatus = _
     private var hasNextCalled: Boolean = false
+    // A map to keep track of multi-part checkpoints.
+    val checkpointMap = new scala.collection.mutable.HashMap[(Long, Int),
+      collection.mutable.Buffer[FileStatus]]()
 
     private def init(): Unit = {
       if (underlying.hasNext) {
@@ -831,12 +900,7 @@ object DeltaHistoryManager extends DeltaLogging {
      */
     private def queueFilesInBuffer(): Unit = {
       var continueBuffering = true
-      while (continueBuffering) {
-        if (!underlying.hasNext) {
-          flushBuffer()
-          return
-        }
-
+      while (continueBuffering && underlying.hasNext) {
         var currentFile = underlying.next()
         require(currentFile != null, "FileStatus iterator returned null")
         if (needsTimeAdjustment(currentFile)) {
@@ -844,10 +908,31 @@ object DeltaHistoryManager extends DeltaLogging {
             currentFile.getLen, currentFile.isDirectory, currentFile.getReplication,
             currentFile.getBlockSize, lastFile.getModificationTime + 1, currentFile.getPath)
           maybeDeleteFiles.append(currentFile)
+        } else if (FileNames.isCheckpointFile(currentFile) && currentFile.getLen > 0) {
+          // Only flush the buffer when we find a checkpoint. This is because we don't want to
+          // delete the delta log files unless we have a checkpoint to ensure that non-expired
+          // subsequent delta logs are valid.
+          val numParts = FileNames.numCheckpointParts(currentFile.getPath)
+
+          if (numParts.isEmpty) { // Single-part or V2
+            flushBuffer()
+            maybeDeleteFiles.append(currentFile)
+            continueBuffering = false
+          } else {
+            // Multi-part checkpoint
+            val mpKey = versionGetter(currentFile.getPath) -> numParts.get
+            val partBuffer = checkpointMap.getOrElse(mpKey, mutable.ArrayBuffer())
+            partBuffer.append(currentFile)
+            checkpointMap.put(mpKey, partBuffer)
+            if (numParts.get == partBuffer.size) {
+              flushBuffer()
+              partBuffer.foreach(f => maybeDeleteFiles.append(f))
+              checkpointMap.remove(mpKey)
+              continueBuffering = false
+            }
+          }
         } else {
-          flushBuffer()
           maybeDeleteFiles.append(currentFile)
-          continueBuffering = false
         }
         lastFile = currentFile
       }
@@ -900,13 +985,15 @@ case class DeltaHistory(
 object DeltaHistory {
   /** Create an instance of [[DeltaHistory]] from [[CommitInfo]] */
   def fromCommitInfo(ci: CommitInfo): DeltaHistory = {
+    val operationParameters =
+      CommitInfo.getLegacyPostDeserializationOperationParameters(ci.operationParameters)
     DeltaHistory(
       version = ci.version,
       timestamp = ci.timestamp,
       userId = ci.userId,
       userName = ci.userName,
       operation = ci.operation,
-      operationParameters = ci.operationParameters,
+      operationParameters = operationParameters,
       job = ci.job,
       notebook = ci.notebook,
       clusterId = ci.clusterId,

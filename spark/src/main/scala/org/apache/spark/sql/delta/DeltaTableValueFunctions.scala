@@ -26,14 +26,15 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaDataSource
 
+import org.apache.spark.SparkException
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.FunctionIdentifier
 import org.apache.spark.sql.catalyst.analysis.{FunctionRegistryBase, NamedRelation, TableFunctionRegistry, UnresolvedLeafNode, UnresolvedRelation}
-import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, ExpressionInfo, StringLiteral}
+import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, ExpressionInfo, Literal, StringLiteral}
 import org.apache.spark.sql.catalyst.plans.logical.{LeafNode, LogicalPlan, UnaryNode}
 import org.apache.spark.sql.connector.catalog.V1Table
 import org.apache.spark.sql.execution.datasources.LogicalRelation
-import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
+import org.apache.spark.sql.execution.datasources.v2.{DataSourceV2Relation, DataSourceV2RelationShim}
 import org.apache.spark.sql.types.{IntegerType, LongType, StringType, TimestampType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
@@ -109,8 +110,17 @@ trait CDCStatementBase extends DeltaTableValueFunction {
   }
 
   protected def getOptions: CaseInsensitiveStringMap = {
-    def toDeltaOption(keyPrefix: String, value: Expression): (String, String) = {
-      val evaluated = DeltaTableValueFunctionsShims.evaluateTimeOption(value)
+    def toDeltaOption(keyPrefix: String, value: Expression, position: Int): (String, String) = {
+      val evaluated = try {
+        val fakePlan = util.AnalysisHelper.FakeLogicalPlan(Seq(value), Nil)
+        val timestampExpression =
+          org.apache.spark.sql.catalyst.optimizer.ComputeCurrentTime(fakePlan).expressions.head
+        timestampExpression.eval().toString
+      } catch {
+        case _: NullPointerException => throw DeltaErrors.nullRangeBoundaryInCDCRead()
+        case e: SparkException if e.getErrorClass == "INTERNAL_ERROR" =>
+          throw DeltaErrors.cdcNonConstantArgument(fnName, keyPrefix, position, value)
+      }
       value.dataType match {
         // We dont need to explicitly handle ShortType as it is parsed as IntegerType.
         case _: IntegerType | LongType => (keyPrefix + "Version") -> evaluated
@@ -126,8 +136,8 @@ trait CDCStatementBase extends DeltaTableValueFunction {
       }
     }
 
-    val startingOption = toDeltaOption("starting", functionArgs(1))
-    val endingOption = functionArgs.drop(2).headOption.map(toDeltaOption("ending", _))
+    val startingOption = toDeltaOption("starting", functionArgs(1), 2)
+    val endingOption = functionArgs.drop(2).headOption.map(toDeltaOption("ending", _, 3))
     val options = Map(DeltaDataSource.CDC_ENABLED_KEY -> "true", startingOption) ++ endingOption
     new CaseInsensitiveStringMap(options.asJava)
   }
@@ -185,7 +195,7 @@ case class TableChanges(
 
   /** Converts the table changes plan to a query over a Delta table */
   def toReadQuery: LogicalPlan = child.transformUp {
-    case DataSourceV2Relation(d: DeltaTableV2, _, _, _, options) =>
+    case DataSourceV2RelationShim(d: DeltaTableV2, _, _, _, options) =>
       // withOptions empties the catalog table stats
       d.withOptions(options.asScala.toMap).toLogicalRelation
     case r: NamedRelation =>

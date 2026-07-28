@@ -39,7 +39,7 @@ public class CoordinatedCommitsUtils {
     private static final String LOG_DIR_NAME = "_delta_log";
 
     /** The subdirectory in which to store the unbackfilled commit files. */
-    private static final String COMMIT_SUBDIR = "_commits";
+    private static final String COMMIT_SUBDIR = "_staged_commits";
 
     /** The configuration key for the coordinated commits owner name. */
     private static final String COORDINATED_COMMITS_COORDINATOR_NAME_KEY =
@@ -56,7 +56,8 @@ public class CoordinatedCommitsUtils {
 
     /**
      * Creates a new unbackfilled delta file path for the given commit version.
-     * The path is of the form `tablePath/_delta_log/_commits/00000000000000000001.uuid.json`.
+     * The path is of the form:
+     * `tablePath/_delta_log/_staged_commits/00000000000000000001.uuid.json`.
      */
     public static Path generateUnbackfilledDeltaFilePath(
             Path logPath,
@@ -102,7 +103,7 @@ public class CoordinatedCommitsUtils {
      *
      * @param logPath The root path of the delta log.
      * @param version The version of the delta file.
-     * @return The path to the un-backfilled delta file: logPath/_commits/version.uuid.json
+     * @return The path to the un-backfilled delta file: logPath/_staged_commits/version.uuid.json
      */
     public static Path getUnbackfilledDeltaFile(
             Path logPath, long version, Optional<String> uuidString) {

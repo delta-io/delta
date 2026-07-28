@@ -23,13 +23,11 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.functions.{col, lit, struct}
 
 trait RowTrackingDeleteTestDimension
   extends QueryTest
   with RowIdTestUtils {
-  protected def deletionVectorEnabled: Boolean = false
-  protected def cdfEnabled: Boolean = false
   val testTableName = "rowIdDeleteTable"
   val initialNumRows = 5000
 
@@ -51,8 +49,12 @@ trait RowTrackingDeleteTestDimension
       }
       val partitionColumnValue = (col("id") / numRowsPerPartition).cast("int")
 
+      val voidCol =
+        if (DeltaTestUtilsBase.nullTypeColumnsSupported) lit(null) else lit(null).cast("int")
       val df = spark.range(0, initialNumRows, 1, expectedNumFiles)
-                    .withColumn("part", partitionColumnValue)
+        .withColumn("void_col", voidCol)
+        .withColumn("struct_col", struct(col("void_col"), col("id")))
+        .withColumn("part", partitionColumnValue)
       if (isPartitioned) {
         df.repartition(numFilesPerPartition)
           .write
@@ -110,9 +112,8 @@ trait RowTrackingDeleteTestDimension
 
   override protected def sparkConf: SparkConf = {
     super.sparkConf
-      .set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, cdfEnabled.toString)
-      .set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey,
-        deletionVectorEnabled.toString)
+      .set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "false")
+      .set(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key, "false")
   }
 }
 
@@ -135,15 +136,18 @@ trait RowTrackingDeleteSuiteBase extends RowTrackingDeleteTestDimension {
     }
   }
 
-  test("Preserving Row Tracking - Subqueries are not supported in DELETE") {
-    withRowIdTestTable(isPartitioned = false) {
-      withTable(subqueryTableName) {
-        createTestTable(subqueryTableName, isPartitioned = false, multipleFilesPerPartition = false)
-        val ex = intercept[AnalysisException] {
+  test("Preserving Row Tracking - DELETE with EXISTS subquery") {
+    withSQLConf(DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key -> "true") {
+      withRowIdTestTable(isPartitioned = false) {
+        // Use a different column name to avoid ambiguous resolution inside EXISTS.
+        sql(
+          s"CREATE TABLE $subqueryTableName USING delta " +
+            s"AS SELECT id AS src_id FROM $testTableName")
+        withTable(subqueryTableName) {
           deleteAndValidateStableRowId(Some(
-            s"id in (SELECT id FROM $subqueryTableName WHERE id = 7 OR id = 11)"))
-        }.getMessage
-        assert(ex.contains("Subqueries are not supported in the DELETE"))
+            s"EXISTS (SELECT 1 FROM $subqueryTableName s " +
+              s"WHERE s.src_id = id AND (s.src_id = 7 OR s.src_id = 11))"))
+        }
       }
     }
   }
@@ -165,7 +169,9 @@ trait RowTrackingDeleteSuiteBase extends RowTrackingDeleteTestDimension {
         // Delete whole table.
         deleteAndValidateStableRowId(whereCondition = None)
 
-        spark.sql(s"INSERT INTO $testTableName VALUES (1, 0), (2, 0), (3, 0), (4, 0)")
+        spark.sql(s"INSERT INTO $testTableName VALUES " +
+          s"(1, null, (null, 1), 0), (2, null, (null, 2), 0), " +
+          s"(3, null, (null, 3), 0), (4, null, (null, 4), 0)")
 
         // The new rows should have new row IDs.
         val actualDF = spark.table(testTableName)
@@ -192,14 +198,20 @@ trait RowTrackingDeleteSuiteBase extends RowTrackingDeleteTestDimension {
               DeltaLog.forTableWithSnapshot(spark, TableIdentifier(testTableName))
             val currentNumFiles = snapshot.allFiles.count()
 
+            val deletionVectorEnabled = spark.conf
+              .getOption(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey)
+              .contains("true")
             val expectedNumFiles = if (deletionVectorEnabled) {
               if (isPartitioned) 100 else 10
             } else {
-              if (isPartitioned) 53 else 1
+              if (isPartitioned) 52 else 1
             }
 
-            assert(currentNumFiles === expectedNumFiles,
-              s"The current num files $currentNumFiles is unexpected for optimized writes")
+            // The optimized-write file count is tuned to the exact (VOID) schema row size.
+            if (DeltaTestUtilsBase.nullTypeColumnsSupported) {
+              assert(currentNumFiles === expectedNumFiles,
+                s"The current num files $currentNumFiles is unexpected for optimized writes")
+            }
           }
         }
       }
@@ -243,14 +255,7 @@ trait RowTrackingDeleteSuiteBase extends RowTrackingDeleteTestDimension {
 
 trait RowTrackingDeleteDvBase
   extends RowTrackingDeleteTestDimension
-  with DeletionVectorsTestUtils {
-
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-    enableDeletionVectorsInNewTables(spark.conf)
-  }
-
-  override protected def deletionVectorEnabled = true
+  with PersistentDVEnabled {
 
   for (isPartitioned <- BOOLEAN_DOMAIN) {
     test(s"DELETE with persistent DVs disabled, isPartitioned=$isPartitioned") {
@@ -263,38 +268,3 @@ trait RowTrackingDeleteDvBase
     }
   }
 }
-
-trait RowTrackingDeleteCDCBase extends RowTrackingDeleteTestDimension {
-  override protected def cdfEnabled = true
-}
-
-// No Column Mapping concrete test suites
-class RowTrackingDeleteSuite extends RowTrackingDeleteSuiteBase
-
-class RowTrackingDeleteDvSuite extends RowTrackingDeleteSuiteBase
-  with RowTrackingDeleteDvBase
-
-class RowTrackingDeleteCDCSuite extends RowTrackingDeleteSuiteBase
-  with RowTrackingDeleteCDCBase
-
-class RowTrackingDeleteCDCDvSuite extends RowTrackingDeleteSuiteBase
-  with RowTrackingDeleteCDCBase
-  with RowTrackingDeleteDvBase
-
-// Name Column Mapping concrete test suites
-class RowTrackingDeleteNameColumnMappingSuite extends RowTrackingDeleteSuiteBase
-  with DeltaColumnMappingEnableNameMode
-
-class RowTrackingDeleteCDCDvNameColumnMappingSuite extends RowTrackingDeleteSuiteBase
-  with RowTrackingDeleteCDCBase
-  with RowTrackingDeleteDvBase
-  with DeltaColumnMappingEnableNameMode
-
-// ID Column Mapping concrete test suites
-class RowTrackingDeleteIdColumnMappingSuite extends RowTrackingDeleteSuiteBase
-  with DeltaColumnMappingEnableIdMode
-
-class RowTrackingDeleteCDCDvIdColumnMappingSuite extends RowTrackingDeleteSuiteBase
-  with RowTrackingDeleteCDCBase
-  with RowTrackingDeleteDvBase
-  with DeltaColumnMappingEnableIdMode

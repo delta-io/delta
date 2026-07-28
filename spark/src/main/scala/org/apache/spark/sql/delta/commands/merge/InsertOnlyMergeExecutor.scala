@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.commands.merge
 
 import org.apache.spark.sql.delta.metric.IncrementMetric
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.MergeIntoCommandBase
 
@@ -90,7 +91,7 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
           deltaTxn,
           dataSkippedFiles.get,
           columnsToDrop = Nil)
-        val targetDF = Dataset.ofRows(spark, targetPlan)
+        val targetDF = DataFrameUtils.ofRows(spark, targetPlan)
         sourceDF.join(targetDF, Column(condition), "leftanti")
       } else {
         sourceDF
@@ -152,7 +153,9 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
     // output df can be generated without CaseWhen.
     if (notMatchedClauses.size == 1) {
       val outputCols = generateOneInsertOutputCols(targetWriteColNames)
-      return preparedSourceDF.select(outputCols: _*)
+      return preparedSourceDF
+        .filter(Column(incrementMetricAndReturnBool("numTargetRowsInserted", valueToReturn = true)))
+        .select(outputCols: _*)
     }
 
     // Precompute conditions in insert clauses and generate source data frame with precomputed
@@ -187,13 +190,8 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
     val outputExprs = notMatchedClauses.head.resolvedActions.map(_.expr)
     assert(outputExprs.nonEmpty)
     // generate the outputDF without `CaseWhen` expressions.
-    outputExprs.zip(targetWriteColNames).zipWithIndex.map { case ((expr, name), i) =>
-      val exprAfterPassthru = if (i == 0) {
-        IncrementMetric(expr, metrics("numTargetRowsInserted"))
-      } else {
-        expr
-      }
-      Column(Alias(exprAfterPassthru, name)())
+    outputExprs.zip(targetWriteColNames).map { case (expr, name) =>
+      Column(Alias(expr, name)())
     }
   }
 

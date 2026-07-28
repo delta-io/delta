@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
+import org.apache.spark.sql.delta.v2.interop.AbstractMetadata
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.json4s.DefaultFormats
 import org.json4s.jackson.JsonMethods._
@@ -36,6 +37,19 @@ import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, QuotingUtils}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{ArrayType, DataType, MapType, Metadata => SparkMetadata, MetadataBuilder, StructField, StructType}
+
+/**
+ * Information regarding a single dropped column.
+ * @param fieldPath The logical path of the dropped column.
+ */
+private[delta] case class DroppedColumn(fieldPath: Seq[String])
+
+/**
+ * Information regarding a single renamed column.
+ * @param fromFieldPath The logical path of the column before the rename.
+ * @param toFieldPath The logical path of the column after the rename.
+ */
+private[delta] case class RenamedColumn(fromFieldPath: Seq[String], toFieldPath: Seq[String])
 
 trait DeltaColumnMappingBase extends DeltaLogging {
   val PARQUET_FIELD_ID_METADATA_KEY = "parquet.field.id"
@@ -174,6 +188,18 @@ trait DeltaColumnMappingBase extends DeltaLogging {
       }
     }
 
+    // If column mapping was disabled, but there was already column mapping in the schema, it is
+    // a result of a bug in the previous version of Delta. This should no longer happen with the
+    // stripping done above. For existing tables with this issue, we should not allow enabling
+    // column mapping, to prevent further corruption.
+    if (spark.conf.get(DeltaSQLConf.
+        DELTA_COLUMN_MAPPING_DISALLOW_ENABLING_WHEN_METADATA_ALREADY_EXISTS)) {
+      if (oldMappingMode == NoMapping && newMappingMode != NoMapping &&
+          schemaHasColumnMappingMetadata(oldMetadata.schema)) {
+        throw DeltaErrors.enablingColumnMappingDisallowedWhenColumnMappingMetadataAlreadyExists()
+      }
+    }
+
     updatedMetadata = updateColumnMappingMetadata(
       oldMetadata, updatedMetadata, isChangingModeOnExistingTable, isOverwriteSchema)
 
@@ -280,17 +306,23 @@ trait DeltaColumnMappingBase extends DeltaLogging {
     }
   }
 
-  /** Set physical name based on field path, skip if field path not found in the map */
+  /**
+   * Set physical name based on field path, skip if field path not found in the map. All comparisons
+   * are case-insensitive.
+   */
   def setPhysicalNames(
       schema: StructType,
       fieldPathToPhysicalName: Map[Seq[String], String]): StructType = {
     if (fieldPathToPhysicalName.isEmpty) {
       schema
     } else {
+      val lowerCasedFieldPathToPhysicalNameMap =
+        fieldPathToPhysicalName.map { case (k, v) => k.map(_.toLowerCase(Locale.ROOT)) -> v }
       SchemaMergingUtils.transformColumns(schema) { (parent, field, _) =>
-        val path = parent :+ field.name
-        if (fieldPathToPhysicalName.contains(path)) {
-          assignPhysicalName(field, fieldPathToPhysicalName(path))
+        // Column comparison is case-insensitive.
+        val path = (parent :+ field.name).map(_.toLowerCase(Locale.ROOT))
+        if (lowerCasedFieldPathToPhysicalNameMap.contains(path)) {
+          assignPhysicalName(field, lowerCasedFieldPathToPhysicalNameMap(path))
         } else {
           field
         }
@@ -394,31 +426,34 @@ trait DeltaColumnMappingBase extends DeltaLogging {
   }
 
   /**
-   * For each column/field in a Metadata's schema, assign id using the current maximum id
-   * as the basis and increment from there, and assign physical name using UUID
-   * @param newMetadata The new metadata to assign Ids and physical names
-   * @param oldMetadata The old metadata
-   * @param isChangingModeOnExistingTable whether this is part of a commit that changes the
-   *                                      mapping mode on a existing table
-   * @return new metadata with Ids and physical names assigned
+   * Core logic for assigning column IDs and physical names to a schema.
+   * Takes [[AbstractMetadata]] (no v1 Metadata dependency) so it can be reused by both v1
+   * and v2 connectors. Bundling schema + configuration on each side avoids the swap footgun
+   * of having two `StructType` and two `Map` parameters next to each other.
+   *
+   * @return (upgradedSchema, maxColumnId) - the schema with IDs/physical names assigned,
+   *         and the final max column ID.
    */
-  def assignColumnIdAndPhysicalName(
-      newMetadata: Metadata,
-      oldMetadata: Metadata,
+  private[delta] def assignColumnIdAndPhysicalNameToSchema(
+      newMetadata: AbstractMetadata,
+      oldMetadata: AbstractMetadata,
       isChangingModeOnExistingTable: Boolean,
-      isOverwritingSchema: Boolean): Metadata = {
-    val rawSchema = newMetadata.schema
-    var maxId = DeltaConfigs.COLUMN_MAPPING_MAX_ID.fromMetaData(newMetadata) max
-                findMaxColumnId(rawSchema)
-    val startId = maxId
-    val newSchema =
-      SchemaMergingUtils.transformColumns(rawSchema)((path, field, _) => {
+      isOverwritingSchema: Boolean): (StructType, Long) = {
+    val newSchema = newMetadata.schema
+    val oldSchema = oldMetadata.schema
+    val newConfiguration = newMetadata.configuration
+    val oldConfiguration = oldMetadata.configuration
+    var maxId = DeltaConfigs.COLUMN_MAPPING_MAX_ID.fromMap(newConfiguration) max
+      DeltaConfigs.COLUMN_MAPPING_MAX_ID.fromMap(oldConfiguration) max
+      findMaxColumnId(newSchema)
+    val resultSchema =
+      SchemaMergingUtils.transformColumns(newSchema)((path, field, _) => {
         val builder = new MetadataBuilder().withMetadata(field.metadata)
 
         lazy val fullName = path :+ field.name
         lazy val existingFieldOpt =
           SchemaUtils.findNestedFieldIgnoreCase(
-            oldMetadata.schema, fullName, includeCollections = true)
+            oldSchema, fullName, includeCollections = true)
         lazy val canReuseColumnMappingMetadataDuringOverwrite = {
           val canReuse =
             isOverwritingSchema &&
@@ -452,12 +487,12 @@ trait DeltaColumnMappingBase extends DeltaLogging {
         if (!hasPhysicalName(field)) {
           val physicalName = if (isChangingModeOnExistingTable) {
             if (existingFieldOpt.isEmpty) {
-              if (oldMetadata.schema.isEmpty) {
+              if (oldSchema.isEmpty) {
                 // We should relax the check for tables that have both an empty schema
                 // and no data. Assumption: no schema => no data
                 generatePhysicalName
               } else throw DeltaErrors.schemaChangeDuringMappingModeChangeNotSupported(
-                oldMetadata.schema, newMetadata.schema)
+                oldSchema, newSchema)
             } else {
               // When changing from NoMapping to NameMapping mode, we directly use old display names
               // as physical names. This is by design: 1) We don't need to rewrite the
@@ -475,14 +510,45 @@ trait DeltaColumnMappingBase extends DeltaLogging {
 
           builder.putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, physicalName)
         }
+
+        // When reusing column mapping metadata during overwrite, also carry over the nested IDs
+        // (used for List/Map/Array element fields in IcebergCompat V2+). Without this,
+        // rewriteFieldIdsForIceberg sees no existing nested IDs and assigns new ones,
+        // causing needless Iceberg field ID churn on schema-unchanged overwrites.
+        if (canReuseColumnMappingMetadataDuringOverwrite &&
+            !hasNestedColumnIds(field) &&
+            existingFieldOpt.exists(hasNestedColumnIds)) {
+          builder.putMetadata(
+            COLUMN_MAPPING_METADATA_NESTED_IDS_KEY,
+            getNestedColumnIds(existingFieldOpt.get))
+        }
+
         field.copy(metadata = builder.build())
       })
-
-    val (finalSchema, newMaxId) = if (IcebergCompatV2.isEnabled(newMetadata)) {
-      rewriteFieldIdsForIceberg(newSchema, maxId)
+    // Starting from IcebergCompatV2, we require writing field-id for List/Map nested fields
+    if (IcebergCompat.anyEnabled(newConfiguration).exists(_.version >= 2)) {
+      rewriteFieldIdsForIceberg(resultSchema, maxId)
     } else {
-      (newSchema, maxId)
+      (resultSchema, maxId)
     }
+  }
+
+  /**
+   * For each column/field in a Metadata's schema, assign id using the current maximum id
+   * as the basis and increment from there, and assign physical name using UUID
+   * @param newMetadata The new metadata to assign Ids and physical names
+   * @param oldMetadata The old metadata
+   * @param isChangingModeOnExistingTable whether this is part of a commit that changes the
+   *                                      mapping mode on a existing table
+   * @return new metadata with Ids and physical names assigned
+   */
+  def assignColumnIdAndPhysicalName(
+      newMetadata: Metadata,
+      oldMetadata: Metadata,
+      isChangingModeOnExistingTable: Boolean,
+      isOverwritingSchema: Boolean): Metadata = {
+    val (finalSchema, newMaxId) = assignColumnIdAndPhysicalNameToSchema(
+      newMetadata, oldMetadata, isChangingModeOnExistingTable, isOverwritingSchema)
 
     newMetadata.copy(
       schemaString = finalSchema.json,
@@ -591,11 +657,8 @@ trait DeltaColumnMappingBase extends DeltaLogging {
    */
   def getPhysicalNameFieldMap(schema: StructType): Map[Seq[String], StructField] = {
     val physicalSchema = renameColumns(schema)
-
     val physicalSchemaFieldPaths = SchemaMergingUtils.explode(physicalSchema).map(_._1)
-
     val originalSchemaFields = SchemaMergingUtils.explode(schema).map(_._2)
-
     physicalSchemaFieldPaths.zip(originalSchemaFields).toMap
   }
 
@@ -612,25 +675,32 @@ trait DeltaColumnMappingBase extends DeltaLogging {
   }
 
   /**
+   * Returns a map from the physical name paths to the logical name paths for the given schema.
+   * The logical name path is the result of splitting a multi-part identifier, and the physical name
+   * path is result of replacing all names in the logical name path with their physical names.
+   */
+  def getPhysicalNameToLogicalNameMap(schema: StructType): Map[Seq[String], Seq[String]] = {
+    getLogicalNameToPhysicalNameMap(schema).map(_.swap)
+  }
+
+  /**
    * Returns true if Column Mapping mode is enabled and the newMetadata's schema, when compared to
    * the currentMetadata's schema, is indicative of a DROP COLUMN operation.
    *
    * We detect DROP COLUMNS by checking if any physical name in `currentSchema` is missing in
    * `newSchema`.
    */
-  def isDropColumnOperation(newMetadata: Metadata, currentMetadata: Metadata): Boolean = {
+  def isDropColumnOperation(
+      newSchema: StructType,
+      currentSchema: StructType,
+      isBothColumnMappingEnabled: Boolean): Boolean = {
 
     // We will need to compare the new schema's physical columns to the current schema's physical
     // columns. So, they both must have column mapping enabled.
-    if (newMetadata.columnMappingMode == NoMapping ||
-      currentMetadata.columnMappingMode == NoMapping) {
+    if (!isBothColumnMappingEnabled) {
       return false
     }
 
-    isDropColumnOperation(newSchema = newMetadata.schema, currentSchema = currentMetadata.schema)
-  }
-
-  def isDropColumnOperation(newSchema: StructType, currentSchema: StructType): Boolean = {
     val newPhysicalToLogicalMap = getPhysicalNameFieldMap(newSchema)
     val currentPhysicalToLogicalMap = getPhysicalNameFieldMap(currentSchema)
 
@@ -641,25 +711,45 @@ trait DeltaColumnMappingBase extends DeltaLogging {
   }
 
   /**
+   * Collects the columns that were dropped between the new schema and the current schema.
+   * @param newSchema The new schema after a potential drop.
+   * @param currentSchema The current schema before the drop.
+   * @return A sequence of column names that were dropped
+   */
+  def collectDroppedColumns(
+      newSchema: StructType,
+      currentSchema: StructType): Seq[DroppedColumn] = {
+    val newPhysicalToLogicalMap = getPhysicalNameToLogicalNameMap(newSchema)
+    val currentPhysicalToLogicalMap = getPhysicalNameToLogicalNameMap(currentSchema)
+
+    // are any of the current physical names missing in the new schema?
+    currentPhysicalToLogicalMap
+      .keySet
+      .diff(newPhysicalToLogicalMap.keySet)
+      .map { droppedPhysicalPath =>
+        DroppedColumn(currentPhysicalToLogicalMap(droppedPhysicalPath))
+      }
+      .toSeq
+  }
+
+  /**
    * Returns true if Column Mapping mode is enabled and the newMetadata's schema, when compared to
    * the currentMetadata's schema, is indicative of a RENAME COLUMN operation.
    *
    * We detect RENAME COLUMNS by checking if any two columns with the same physical name have
    * different logical names
    */
-  def isRenameColumnOperation(newMetadata: Metadata, currentMetadata: Metadata): Boolean = {
+  def isRenameColumnOperation(
+      newSchema: StructType,
+      currentSchema: StructType,
+      isBothColumnMappingEnabled: Boolean): Boolean = {
 
     // We will need to compare the new schema's physical columns to the current schema's physical
     // columns. So, they both must have column mapping enabled.
-    if (newMetadata.columnMappingMode == NoMapping ||
-      currentMetadata.columnMappingMode == NoMapping) {
+    if (!isBothColumnMappingEnabled) {
       return false
     }
 
-    isRenameColumnOperation(newSchema = newMetadata.schema, currentSchema = currentMetadata.schema)
-  }
-
-  def isRenameColumnOperation(newSchema: StructType, currentSchema: StructType): Boolean = {
     val newPhysicalToLogicalMap = getPhysicalNameFieldMap(newSchema)
     val currentPhysicalToLogicalMap = getPhysicalNameFieldMap(currentSchema)
 
@@ -668,6 +758,44 @@ trait DeltaColumnMappingBase extends DeltaLogging {
       .exists { case (physicalPath, field) =>
         newPhysicalToLogicalMap.get(physicalPath).exists(_.name != field.name)
       }
+  }
+
+  /**
+   * Returns true if there is a column mapping schema change (drop/rename) or an incompatible
+   * partition column change between the new and current schemas.
+   */
+  def hasColMappingOrPartitionSchemaChange(
+      newSchema: StructType,
+      currentSchema: StructType,
+      newPartitionColumns: Seq[String],
+      oldPartitionColumns: Seq[String],
+      isBothColumnMappingEnabled: Boolean): Boolean = {
+    isDropColumnOperation(newSchema, currentSchema, isBothColumnMappingEnabled) ||
+      isRenameColumnOperation(newSchema, currentSchema, isBothColumnMappingEnabled) ||
+      !SchemaUtils.isPartitionCompatible(newPartitionColumns, oldPartitionColumns)
+  }
+
+  /**
+   * Collects the column rename operations between the new schema and the current schema.
+   * @param newSchema The new schema after a potential rename.
+   * @param currentSchema The current schema before the rename.
+   * @return A sequence of (oldName, newName) tuples representing the column before and after rename
+   */
+  def collectRenamedColumns(
+      newSchema: StructType,
+      currentSchema: StructType): Seq[RenamedColumn] = {
+    val newPhysicalToLogicalMap = getPhysicalNameToLogicalNameMap(newSchema)
+    val currentPhysicalToLogicalMap = getPhysicalNameToLogicalNameMap(currentSchema)
+
+    // do any two columns with the same physical name have different logical names?
+    currentPhysicalToLogicalMap
+      .flatMap { case (physicalPath, logicalPath) =>
+        newPhysicalToLogicalMap.get(physicalPath).flatMap { newLogicalPath =>
+          if (logicalPath.last != newLogicalPath.last) {
+            Some(RenamedColumn(logicalPath, newLogicalPath))
+          } else None
+        }
+      }.toSet.toSeq
   }
 
   /**
@@ -680,24 +808,28 @@ trait DeltaColumnMappingBase extends DeltaLogging {
    * As of now, `newMetadata` is column mapping read compatible with `oldMetadata` if
    * no rename column or drop column has happened in-between.
    */
-  def hasNoColumnMappingSchemaChanges(newMetadata: Metadata, oldMetadata: Metadata,
+  def hasNoColumnMappingSchemaChanges(
+      newMetadata: AbstractMetadata,
+      oldMetadata: AbstractMetadata,
       allowUnsafeReadOnPartitionChanges: Boolean = false): Boolean = {
-    // Helper function to check no column mapping schema change and no repartition
-    def hasNoColMappingAndRepartitionSchemaChange(
-       newMetadata: Metadata, oldMetadata: Metadata): Boolean = {
-      isRenameColumnOperation(newMetadata, oldMetadata) ||
-        isDropColumnOperation(newMetadata, oldMetadata) ||
-        !SchemaUtils.isPartitionCompatible(
-          // if allow unsafe row read for partition change, ignore the check
-          if (allowUnsafeReadOnPartitionChanges) Seq.empty else newMetadata.partitionColumns,
-          if (allowUnsafeReadOnPartitionChanges) Seq.empty else oldMetadata.partitionColumns)
+    def hasColMappingOrPartitionSchemaChangeByMetadata(
+        newMetadata: AbstractMetadata, oldMetadata: AbstractMetadata): Boolean = {
+      val isBothColumnMappingEnabled =
+        newMetadata.columnMappingMode != NoMapping && oldMetadata.columnMappingMode != NoMapping
+      hasColMappingOrPartitionSchemaChange(
+        newMetadata.schema,
+        oldMetadata.schema,
+        // if allow unsafe row read for partition change, ignore the check
+        if (allowUnsafeReadOnPartitionChanges) Seq.empty else newMetadata.partitionColumns,
+        if (allowUnsafeReadOnPartitionChanges) Seq.empty else oldMetadata.partitionColumns,
+        isBothColumnMappingEnabled)
     }
 
     val (oldMode, newMode) = (oldMetadata.columnMappingMode, newMetadata.columnMappingMode)
     if (oldMode != NoMapping && newMode != NoMapping) {
       require(oldMode == newMode, "changing mode is not supported")
       // Both changes are post column mapping enabled
-      !hasNoColMappingAndRepartitionSchemaChange(newMetadata, oldMetadata)
+      !hasColMappingOrPartitionSchemaChangeByMetadata(newMetadata, oldMetadata)
     } else if (oldMode == NoMapping && newMode != NoMapping) {
       // The old metadata does not have column mapping while the new metadata does, in this case
       // we assume an upgrade has happened in between.
@@ -705,16 +837,23 @@ trait DeltaColumnMappingBase extends DeltaLogging {
       // the new metadata, as the upgrade would use the logical name as the physical name, we could
       // easily capture any difference in the schema using the same is{Drop,Rename}ColumnOperation
       // utils.
-      var upgradedMetadata = assignColumnIdAndPhysicalName(
-        oldMetadata, oldMetadata, isChangingModeOnExistingTable = true, isOverwritingSchema = false
-      )
-      // need to change to a column mapping mode too so the utils below can recognize
-      upgradedMetadata = upgradedMetadata.copy(
-        configuration = upgradedMetadata.configuration ++
-          Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> newMetadata.columnMappingMode.name)
-      )
-      // use the same check
-      !hasNoColMappingAndRepartitionSchemaChange(newMetadata, upgradedMetadata)
+      val (upgradedSchema, upgradedMaxId) = assignColumnIdAndPhysicalNameToSchema(
+        newMetadata = oldMetadata, oldMetadata = oldMetadata,
+        isChangingModeOnExistingTable = true, isOverwritingSchema = false)
+      // Construct an AbstractMetadata with the upgraded schema and the new column mapping mode
+      // so the comparison utils below can recognize column mapping metadata.
+      val upgradedMetadata = new AbstractMetadata {
+        val id: String = oldMetadata.id
+        val name: String = oldMetadata.name
+        val description: String = oldMetadata.description
+        val schema: StructType = upgradedSchema
+        val partitionColumns: Seq[String] = oldMetadata.partitionColumns
+        val configuration: Map[String, String] = oldMetadata.configuration +
+          (DeltaConfigs.COLUMN_MAPPING_MODE.key -> newMetadata.columnMappingMode.name,
+            DeltaConfigs.COLUMN_MAPPING_MAX_ID.key -> upgradedMaxId.toString)
+        val columnMappingMode: DeltaColumnMappingMode = newMetadata.columnMappingMode
+      }
+      !hasColMappingOrPartitionSchemaChangeByMetadata(newMetadata, upgradedMetadata)
     } else {
       // Prohibit reading across a downgrade.
       val isDowngrade = oldMode != NoMapping && newMode == NoMapping
@@ -871,8 +1010,12 @@ case object NameMapping extends DeltaColumnMappingMode {
 }
 
 object DeltaColumnMappingMode {
-  def apply(name: String): DeltaColumnMappingMode = {
-    name.toLowerCase(Locale.ROOT) match {
+  def apply(columnMappingModeString: String): DeltaColumnMappingMode = {
+    val columnMappingModeLowerCaseString =
+      Option(columnMappingModeString)
+        .map(_.toLowerCase(Locale.ROOT))
+        .getOrElse(throw DeltaErrors.unsupportedColumnMappingModeException(columnMappingModeString))
+    columnMappingModeLowerCaseString match {
       case NoMapping.name => NoMapping
       case IdMapping.name => IdMapping
       case NameMapping.name => NameMapping

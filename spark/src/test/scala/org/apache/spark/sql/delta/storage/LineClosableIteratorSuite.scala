@@ -122,6 +122,64 @@ abstract class LineClosableIteratorSuiteBase extends SparkFunSuite {
     iter.close()
     assert(closed == 1)
   }
+
+  test("flatMapWithClose does not open any iterators on creation") {
+    var opened = 0
+    var closed = 0
+    val outerReader = new StringReader("b\na\nr")
+    createIter(outerReader).flatMapWithClose(_ => {
+      val innerReader = new StringReader("f\no\no") {
+        opened += 1
+        override def close(): Unit = {
+          super.close()
+          closed += 1
+        }
+      }
+      createIter(innerReader)
+    })
+    assert(opened == 0)
+    assert(closed == 0)
+  }
+
+  test("flatMapWithClose calls close only for opened iterators") {
+    var opened = 0
+    var closed = 0
+    val outerReader = new StringReader("b\na\nr")
+    val iter = createIter(outerReader).flatMapWithClose(_ => {
+      val innerReader = new StringReader("f\no\no") {
+        opened += 1
+        override def close(): Unit = {
+          super.close()
+          closed += 1
+        }
+      }
+      createIter(innerReader)
+    })
+    assert(iter.take(5).toList == List("f", "o", "o", "f", "o"))
+    iter.close()
+    assert(opened == 2)
+    assert(closed == 2)
+  }
+
+  test("flatMapWithClose calls close only for opened iterators - iter boundary") {
+    var opened = 0
+    var closed = 0
+    val outerReader = new StringReader("b\na\nr")
+    val iter = createIter(outerReader).flatMapWithClose(_ => {
+      val innerReader = new StringReader("f\no\no") {
+        opened += 1
+        override def close(): Unit = {
+          super.close()
+          closed += 1
+        }
+      }
+      createIter(innerReader)
+    })
+    assert(iter.take(3).toList == List("f", "o", "o"))
+    iter.close()
+    assert(opened == 1)
+    assert(closed == 1)
+  }
 }
 
 class InternalLineClosableIteratorSuite extends LineClosableIteratorSuiteBase {

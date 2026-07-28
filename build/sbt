@@ -66,11 +66,27 @@ realpath () {
 )
 }
 
-if [[ "$JENKINS_URL" != "" ]]; then
-  # Make Jenkins use Google Mirror first as Maven Central may ban us
+if [[ -n "$MAVEN_PROXY_URL" ]]; then
+  SBT_REPOSITORIES_CONFIG=$(mktemp)
+  cat > "$SBT_REPOSITORIES_CONFIG" <<EOF
+[repositories]
+  local
+  maven-proxy: $MAVEN_PROXY_URL
+  maven-proxy-ivy: $MAVEN_PROXY_URL, [organization]/[module]/(scala_[scalaVersion]/)(sbt_[sbtVersion]/)[revision]/[type]s/[artifact](-[classifier]).[ext]
+EOF
+else
   SBT_REPOSITORIES_CONFIG="$(dirname "$(realpath "$0")")/sbt-config/repositories"
-  export SBT_OPTS="-Dsbt.override.build.repos=true -Dsbt.repository.config=$SBT_REPOSITORIES_CONFIG"
 fi
+if [[ "${USE_MAVEN_LOCAL_FOR_SOURCE_SPARK:-false}" == "true" ]]; then
+  SBT_REPOSITORIES_WITH_SOURCE_SPARK=$(mktemp)
+  cp "$SBT_REPOSITORIES_CONFIG" "$SBT_REPOSITORIES_WITH_SOURCE_SPARK"
+  SPARK_MAVEN_LOCAL_REPO="${SPARK_MAVEN_LOCAL_REPO:-${HOME}/.m2/repository}"
+  cat >> "$SBT_REPOSITORIES_WITH_SOURCE_SPARK" <<EOF
+  source-built-spark-local: file:///${SPARK_MAVEN_LOCAL_REPO}
+EOF
+  SBT_REPOSITORIES_CONFIG="$SBT_REPOSITORIES_WITH_SOURCE_SPARK"
+fi
+export SBT_OPTS="-Dsbt.override.build.repos=true -Dsbt.repository.config=$SBT_REPOSITORIES_CONFIG"
 
 . "$(dirname "$(realpath "$0")")"/sbt-launch-lib.bash
 

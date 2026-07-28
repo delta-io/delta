@@ -21,7 +21,8 @@ import java.util.UUID
 import scala.collection.generic.Sizing
 
 import org.apache.spark.sql.catalyst.expressions.aggregation.BitmapAggregator
-import org.apache.spark.sql.delta.{DeltaLog, DeltaParquetFileFormat, OptimisticTransaction, Snapshot}
+import org.apache.spark.sql.delta.ClassicColumnConversions._
+import org.apache.spark.sql.delta.{DataFrameUtils, DeltaLog, DeltaParquetFileFormat, OptimisticTransaction, Snapshot}
 import org.apache.spark.sql.delta.DeltaParquetFileFormat._
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, FileAction}
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat, StoredBitmap}
@@ -61,7 +62,7 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
       spark: SparkSession,
       target: LogicalPlan,
       fileIndex: TahoeFileIndex): DataFrame = {
-    Dataset.ofRows(spark, replaceFileIndex(spark, target, fileIndex))
+    DataFrameUtils.ofRows(spark, replaceFileIndex(spark, target, fileIndex))
   }
 
   /**
@@ -191,7 +192,8 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
   def processUnmodifiedData(
       spark: SparkSession,
       touchedFiles: Seq[TouchedFileWithDV],
-      snapshot: Snapshot): (Seq[FileAction], Map[String, Long]) = {
+      snapshot: Snapshot,
+      stringTruncateLength: Int): (Seq[FileAction], Map[String, Long]) = {
     val numModifiedRows = touchedFiles.map(_.numberOfModifiedRows).sum.toLong
     val numRemovedFiles = touchedFiles.count(_.isFullyReplaced()).toLong
 
@@ -206,7 +208,7 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
         updateStats = false
       )}
     val (dvAddFiles, dvRemoveFiles) = dvUpdates.unzip
-    val dvAddFilesWithStats = getActionsWithStats(spark, dvAddFiles, snapshot)
+    val dvAddFilesWithStats = getActionsWithStats(spark, dvAddFiles, snapshot, stringTruncateLength)
 
     var (numDeletionVectorsAdded, numDeletionVectorsRemoved, numDeletionVectorsUpdated) =
       dvUpdates.foldLeft((0L, 0L, 0L)) { case ((added, removed, updated), (addFile, removeFile)) =>
@@ -231,7 +233,8 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
   private def getActionsWithStats(
       spark: SparkSession,
       addFilesWithNewDvs: Seq[AddFile],
-      snapshot: Snapshot): Seq[AddFile] = {
+      snapshot: Snapshot,
+      stringTruncateLength: Int): Seq[AddFile] = {
     import org.apache.spark.sql.delta.implicits._
 
     if (addFilesWithNewDvs.isEmpty) return Seq.empty
@@ -276,6 +279,7 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
           snapshot = snapshot,
           addFiles = filesWithNoStats.toDS(spark),
           numFilesOpt = Some(filesWithNoStats.size),
+          stringTruncateLength = stringTruncateLength,
           setBoundsToWide = true)
           .collect()
           .toSeq
@@ -304,12 +308,13 @@ object DeletionVectorBitmapGenerator {
   final val DELETED_ROW_INDEX_BITMAP = "deletedRowIndexSet"
   final val DELETED_ROW_INDEX_COUNT = "deletedRowIndexCount"
   final val MAX_ROW_INDEX_COL = "maxRowIndexCol"
+  final val FILE_PATH_COL = "dvFilePath"
 
   private class DeletionVectorSet(
     spark: SparkSession,
     target: DataFrame,
     targetDeltaLog: DeltaLog,
-    deltaTxn: OptimisticTransaction) {
+    prefixLen: Int) {
 
     case object CardinalityAndBitmapStruct {
       val name: String = "CardinalityAndBitmapStruct"
@@ -349,7 +354,6 @@ object DeletionVectorBitmapGenerator {
 
     protected def bitmapStorageMapper()
       : Iterator[DeletionVectorData] => Iterator[DeletionVectorResult] = {
-      val prefixLen = DeltaUtils.getRandomPrefixLength(deltaTxn.metadata)
       DeletionVectorWriter.createMapperToStoreDeletionVectors(
         spark,
         targetDeltaLog.newDeltaHadoopConf(),
@@ -370,20 +374,34 @@ object DeletionVectorBitmapGenerator {
       spark: SparkSession,
       target: DataFrame,
       targetDeltaLog: DeltaLog,
-      deltaTxn: OptimisticTransaction): Seq[DeletionVectorResult] = {
-    val rowIndexSet = new DeletionVectorSet(spark, target, targetDeltaLog, deltaTxn)
+      prefixLen: Int): Seq[DeletionVectorResult] = {
+    val rowIndexSet = new DeletionVectorSet(spark, target, targetDeltaLog, prefixLen)
     rowIndexSet.computeResult()
   }
 
+  /**
+   * Build a dataframe to find filtered rows with metadata (e.g., file name, row index and
+   * existing DV) from candidate files for DV update.
+   *
+   * @param sparkSession the active spark session
+   * @param tablePath table path of candidate files, used to absolutize path
+   * @param tableHasDVs whether table has DV enabled
+   * @param targetDf a scan of candidate files, whose attribute reference matches 'condition'
+   * @param candidateFiles candidate files to be scanned, used to get existing DVs.
+   * @param condition filter to be applied, whose attribute reference matches 'targetDf'
+   * @param fileNameColumnOpt optional overwrite of file name column name
+   * @param rowIndexColumnOpt optional overwrite of row index column name
+   * @return a dataframe containing filtered rows with corresponding metadata for DV update.
+   */
   def buildRowIndexSetsForFilesMatchingCondition(
       sparkSession: SparkSession,
-      txn: OptimisticTransaction,
+      tablePath: String,
       tableHasDVs: Boolean,
       targetDf: DataFrame,
       candidateFiles: Seq[AddFile],
       condition: Expression,
-      fileNameColumnOpt: Option[Column] = None,
-      rowIndexColumnOpt: Option[Column] = None): Seq[DeletionVectorResult] = {
+      fileNameColumnOpt: Option[Column],
+      rowIndexColumnOpt: Option[Column]): DataFrame = {
     val useMetadataRowIndexConf = DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX
     val useMetadataRowIndex = sparkSession.sessionState.conf.getConf(useMetadataRowIndexConf)
     val fileNameColumn = fileNameColumnOpt.getOrElse(col(s"${METADATA_NAME}.${FILE_PATH}"))
@@ -399,33 +417,57 @@ object DeletionVectorBitmapGenerator {
       .filter(Column(condition))
       .withColumn(ROW_INDEX_COL, rowIndexColumn)
 
-    val df = if (tableHasDVs) {
+    if (tableHasDVs) {
       // When the table already has DVs, join the `matchedRowDf` above to attach for each matched
       // file its existing DeletionVectorDescriptor
-      val basePath = txn.deltaLog.dataPath.toString
       val filePathToDV = candidateFiles.map { add =>
         val serializedDV = Option(add.deletionVector).map(_.serializeToBase64())
         // Paths in the metadata column are canonicalized. Thus we must canonicalize the DV path.
         FileToDvDescriptor(
-          SparkPath.fromPath(absolutePath(basePath, add.path)).urlEncoded,
+          SparkPath.fromPath(absolutePath(tablePath, add.path)).urlEncoded,
           serializedDV)
       }
       val filePathToDVDf = sparkSession.createDataset(filePathToDV)
+        .withColumnRenamed("path", FILE_PATH_COL)
 
-      val joinExpr = filePathToDVDf("path") === matchedRowsDf(FILE_NAME_COL)
+      val joinExpr = filePathToDVDf(FILE_PATH_COL) === matchedRowsDf(FILE_NAME_COL)
       // Perform leftOuter join to make sure we do not eliminate any rows because of path
       // encoding issues. If there is such an issue we will detect it during the aggregation
       // of the bitmaps.
       val joinedDf = matchedRowsDf.join(filePathToDVDf, joinExpr, "leftOuter")
         .drop(FILE_NAME_COL)
-        .withColumnRenamed("path", FILE_NAME_COL)
+        .withColumnRenamed(FILE_PATH_COL, FILE_NAME_COL)
       joinedDf
     } else {
       // When the table has no DVs, just add a column to indicate that the existing dv is null
       matchedRowsDf.withColumn(FILE_DV_ID_COL, lit(null))
     }
+  }
 
-    DeletionVectorBitmapGenerator.buildDeletionVectors(sparkSession, df, txn.deltaLog, txn)
+  /** The same as above, except it also updates DVs for the table using the dataframe. */
+  def buildRowIndexSetsForFilesMatchingCondition(
+      sparkSession: SparkSession,
+      txn: OptimisticTransaction,
+      tableHasDVs: Boolean,
+      targetDf: DataFrame,
+      candidateFiles: Seq[AddFile],
+      condition: Expression,
+      fileNameColumnOpt: Option[Column] = None,
+      rowIndexColumnOpt: Option[Column] = None): Seq[DeletionVectorResult] = {
+
+    val df = buildRowIndexSetsForFilesMatchingCondition(
+      sparkSession,
+      txn.deltaLog.dataPath.toString,
+      tableHasDVs,
+      targetDf,
+      candidateFiles,
+      condition,
+      fileNameColumnOpt,
+      rowIndexColumnOpt
+    )
+
+    DeletionVectorBitmapGenerator.buildDeletionVectors(
+      sparkSession, df, txn.deltaLog, DeltaUtils.getRandomPrefixLength(txn.metadata))
   }
 }
 
@@ -456,8 +498,29 @@ case class DeletionVectorData(
     deletedRowIndexSet: Array[Byte],
     deletedRowIndexCount: Long) extends Sizing {
 
+  @transient
+  lazy val deletionVectorDescriptor: Option[DeletionVectorDescriptor] = deletionVectorId.map { id =>
+    DeletionVectorDescriptor.deserializeFromBase64(id)
+  }
+
   /** The size of the bitmaps to use in [[BinPackingIterator]]. */
-  override def size: Int = deletedRowIndexSet.length
+  override def size: Int = {
+    val sizeWithoutExistingDV: Int = deletedRowIndexSet.length
+    // Add the size of the existing DV that we will eventually merge with, so that
+    // [[BinPackingIterator]] can get a better estimate. It's an estimate since the
+    // row indices are not merged and serialized. We add the size of the checksum
+    // and the size of the data size, which are fixed sizes added for every DV.
+    val sizeWithDV = sizeWithoutExistingDV +
+      deletionVectorDescriptor.map(_.sizeInBytes).getOrElse(0) +
+      DeletionVectorStore.CHECKSUM_LEN + DeletionVectorStore.DATA_SIZE_LEN
+    // If we have an int overflow, we can end up with a negative size. In that case,
+    // let's return the maximum value of Int and fail later when writing the DV writer.
+    if (sizeWithDV < 0) {
+      Int.MaxValue
+    } else {
+      sizeWithDV
+    }
+  }
 }
 
 object DeletionVectorData {
@@ -659,7 +722,7 @@ object DeletionVectorWriter extends DeltaLogging {
          |It is likely that _metadata.file_path is not encoded by Spark as expected.
          |""".stripMargin)
 
-    val fileDvDescriptor = row.deletionVectorId.map(DeletionVectorDescriptor.deserializeFromBase64)
+    val fileDvDescriptor = row.deletionVectorDescriptor
     val finalDvDescriptor = fileDvDescriptor match {
       case Some(existingDvDescriptor) if row.deletedRowIndexCount > 0 =>
         // Load the existing bit map

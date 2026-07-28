@@ -29,7 +29,6 @@ class DeltaInsertIntoColumnOrderSuite extends DeltaInsertIntoTest {
 
   override def beforeAll(): Unit = {
     super.beforeAll()
-    spark.conf.set(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key, "false")
     spark.conf.set(SQLConf.ANSI_ENABLED.key, "true")
   }
 
@@ -68,8 +67,8 @@ class DeltaInsertIntoColumnOrderSuite extends DeltaInsertIntoTest {
       overwriteWhere = "a" -> 1,
       insertData = TestData("a long, c int, b int", Seq("""{ "a": 1, "c": 4, "b": 5 }""")),
       expectedResult = ExpectedResult.Success(expectedAnswer),
-      // Dataframe insert by name don't support implicit cast, see negative test below.
-      includeInserts = inserts -- insertsByName.intersect(insertsDataframe)
+      // Inserts that don't support implicit cast are failing, these are covered in the test below.
+      includeInserts = inserts -- insertsWithoutImplicitCastSupport
     )
   }
 
@@ -86,7 +85,7 @@ class DeltaInsertIntoColumnOrderSuite extends DeltaInsertIntoTest {
           "currentField" -> "a",
           "updateField" -> "a"
         ))}),
-    includeInserts = insertsByName.intersect(insertsDataframe)
+    includeInserts = insertsWithoutImplicitCastSupport
   )
 
   // Inserting using a different ordering for struct fields is full of surprises...
@@ -123,16 +122,23 @@ class DeltaInsertIntoColumnOrderSuite extends DeltaInsertIntoTest {
   }
 
   for { (inserts: Set[Insert], expectedAnswer) <- Seq(
-    // When there's a type mismatch and an implicit cast is required, then all inserts use position
-    // based resolution for struct fields, except for `INSERT OVERWRITE PARTITION (partition)` which
-    // uses name based resolution, and dataframe inserts by name which don't support implicit cast
-    // and fail - see negative test below.
-    insertsAppend - StreamingInsert ->
+    // When there's a type mismatch and an implicit cast is required, most inserts use position
+    // based resolution for struct fields. `INSERT OVERWRITE PARTITION (partition)`, streaming
+    // insert, and dataframe inserts by name use name based resolution.
+    insertsAppend - StreamingInsert -- (insertsByName.intersect(insertsDataframe)) ->
       TestData("a int, s struct <x int, y: int>",
         Seq("""{ "a": 1, "s": { "x": 2, "y": 3 } }""", """{ "a": 1, "s": { "x": 5, "y": 4 } }""")),
-    insertsOverwrite - SQLInsertOverwritePartitionByPosition ->
+    insertsOverwrite - SQLInsertOverwritePartitionByPosition --
+        (insertsByName.intersect(insertsDataframe)) ->
       TestData("a int, s struct <x int, y: int>", Seq("""{ "a": 1, "s": { "x": 5, "y": 4 } }""")),
-    Set(SQLInsertOverwritePartitionByPosition) ->
+    Set(StreamingInsert) ++
+        (insertsAppend.intersect(insertsByName.intersect(insertsDataframe))
+          -- insertsWithoutImplicitCastSupport) ->
+      TestData("a int, s struct <x int, y: int>",
+        Seq("""{ "a": 1, "s": { "x": 2, "y": 3 } }""", """{ "a": 1, "s": { "x": 4, "y": 5 } }""")),
+    Set(SQLInsertOverwritePartitionByPosition) ++
+        (insertsOverwrite.intersect(insertsByName.intersect(insertsDataframe))
+          -- insertsWithoutImplicitCastSupport) ->
       TestData("a int, s struct <x int, y: int>", Seq("""{ "a": 1, "s": { "x": 4, "y": 5 } }"""))
     )
   } {
@@ -145,7 +151,7 @@ class DeltaInsertIntoColumnOrderSuite extends DeltaInsertIntoTest {
       insertData = TestData("a long, s struct <y int, x: int>",
         Seq("""{ "a": 1, "s": { "y": 5, "x": 4 } }""")),
       expectedResult = ExpectedResult.Success(expectedAnswer),
-      includeInserts = inserts -- insertsDataframe.intersect(insertsByName)
+      includeInserts = inserts
     )
   }
 
@@ -165,6 +171,37 @@ class DeltaInsertIntoColumnOrderSuite extends DeltaInsertIntoTest {
           "currentField" -> "a",
           "updateField" -> "a"
         ))}),
-    includeInserts = insertsDataframe.intersect(insertsByName)
+    includeInserts = insertsWithoutImplicitCastSupport
   )
+
+  for {
+    preserveNullSourceStructs <- BOOLEAN_DOMAIN
+    (inserts: Set[Insert], expectedAnswer) <- Seq(
+      insertsAppend ->
+        TestData("a int, s struct <x int, y: int>",
+          Seq("""{ "a": 1, "s": { "x": 2, "y": 3 } }""", """{ "a": 1, "s": null }""")),
+      insertsOverwrite ->
+        TestData("a int, s struct <x int, y: int>", Seq("""{ "a": 1, "s": null }"""))
+    )
+  } {
+    testInserts(s"null struct with different field order, " +
+        s"preserveNullSourceStructs=$preserveNullSourceStructs")(
+      initialData = TestData(
+        "a int, s struct <x: int, y int>",
+        Seq("""{ "a": 1, "s": { "x": 2, "y": 3 } }""")),
+      partitionBy = Seq("a"),
+      overwriteWhere = "a" -> 1,
+      insertData = TestData("a int, s struct <y int, x: int>", Seq("""{ "a": 1, "s": null }""")),
+      expectedResult = ExpectedResult.Success(expectedAnswer),
+      includeInserts = inserts,
+      confs = Seq(
+        // Implicit casts in streaming writes would cause the `null` struct to be incorrectly
+        // expanded. This conf allows skipping adding casts since there are no actual data type
+        // mismatch.
+        DeltaSQLConf.DELTA_STREAMING_SINK_IMPLICIT_CAST_FOR_TYPE_MISMATCH_ONLY.key -> "true",
+        DeltaSQLConf.DELTA_INSERT_PRESERVE_NULL_SOURCE_STRUCTS.key
+          -> preserveNullSourceStructs.toString
+      )
+    )
+  }
 }

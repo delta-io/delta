@@ -21,21 +21,26 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.function.UnaryOperator.identity;
 import static org.apache.hadoop.shaded.com.google.common.collect.ImmutableMap.toImmutableMap;
 
+import io.delta.kernel.defaults.engine.fileio.InputFile;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
+import io.delta.kernel.internal.util.GeometryUtils;
+import io.delta.kernel.statistics.DataFileStatistics;
 import io.delta.kernel.types.*;
-import io.delta.kernel.utils.DataFileStatistics;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.*;
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.shaded.com.google.common.collect.ImmutableMultimap;
 import org.apache.hadoop.shaded.com.google.common.collect.Multimap;
 import org.apache.parquet.column.statistics.*;
+import org.apache.parquet.column.statistics.geospatial.BoundingBox;
+import org.apache.parquet.column.statistics.geospatial.GeospatialStatistics;
+import org.apache.parquet.format.converter.ParquetMetadataConverter;
 import org.apache.parquet.hadoop.ParquetFileReader;
-import org.apache.parquet.hadoop.metadata.*;
+import org.apache.parquet.hadoop.metadata.BlockMetaData;
+import org.apache.parquet.hadoop.metadata.ColumnChunkMetaData;
+import org.apache.parquet.hadoop.metadata.ParquetMetadata;
 import org.apache.parquet.schema.LogicalTypeAnnotation;
 import org.apache.parquet.schema.LogicalTypeAnnotation.DecimalLogicalTypeAnnotation;
 
@@ -44,20 +49,19 @@ public class ParquetStatsReader {
   /**
    * Read the statistics for the given Parquet file.
    *
-   * @param parquetFilePath The path to the Parquet file.
-   * @param hadoopConf The Hadoop configuration to use for reading the file.
+   * @param kernelInputFile {@link InputFile} representing the Parquet file.
    * @param dataSchema The schema of the Parquet file. Type info is used to decode statistics.
    * @param statsColumns The columns for which statistics should be collected and returned.
    * @return File/column level statistics as {@link DataFileStatistics} instance.
    */
   public static DataFileStatistics readDataFileStatistics(
-      Path parquetFilePath,
-      Configuration hadoopConf,
-      StructType dataSchema,
-      List<Column> statsColumns)
+      InputFile kernelInputFile, StructType dataSchema, List<Column> statsColumns)
       throws IOException {
     // Read the Parquet footer to compute the statistics
-    ParquetMetadata footer = ParquetFileReader.readFooter(hadoopConf, parquetFilePath);
+    org.apache.parquet.io.InputFile parquetFile =
+        ParquetIOUtils.createParquetInputFile(kernelInputFile);
+    ParquetMetadata footer =
+        ParquetFileReader.readFooter(parquetFile, ParquetMetadataConverter.NO_FILTER);
     ImmutableMultimap.Builder<Column, ColumnChunkMetaData> metadataForColumn =
         ImmutableMultimap.builder();
 
@@ -88,6 +92,12 @@ public class ParquetStatsReader {
             .collect(
                 toImmutableMap(identity(), key -> mergeMetadataList(metadataForColumn.get(key))));
 
+    Map<Column, Optional<GeospatialStatistics>> geospatialStatsForColumn =
+        metadataForColumn.keySet().stream()
+            .collect(
+                toImmutableMap(
+                    identity(), key -> mergeGeospatialMetadataList(metadataForColumn.get(key))));
+
     Map<Column, Literal> minValues = new HashMap<>();
     Map<Column, Literal> maxValues = new HashMap<>();
     Map<Column, Long> nullCounts = new HashMap<>();
@@ -109,18 +119,43 @@ public class ParquetStatsReader {
         continue;
       }
 
-      Literal minValue = decodeMinMaxStat(columnType, statistics, true /* decodeMin */);
+      Optional<GeospatialStatistics> geoStats = geospatialStatsForColumn.get(statsColumn);
+      Literal minValue = decodeMinMaxStat(columnType, statistics, geoStats, true);
       minValues.put(statsColumn, minValue);
 
-      Literal maxValue = decodeMinMaxStat(columnType, statistics, false /* decodeMin */);
+      Literal maxValue = decodeMinMaxStat(columnType, statistics, geoStats, false);
       maxValues.put(statsColumn, maxValue);
     }
 
-    return new DataFileStatistics(rowCount, minValues, maxValues, nullCounts);
+    return new DataFileStatistics(rowCount, minValues, maxValues, nullCounts, Optional.empty());
   }
 
   private static Literal decodeMinMaxStat(
-      DataType dataType, Statistics<?> statistics, boolean decodeMin) {
+      DataType dataType,
+      Statistics<?> statistics,
+      Optional<GeospatialStatistics> geoStats,
+      boolean decodeMin) {
+    if (dataType instanceof GeometryType || dataType instanceof GeographyType) {
+      if (geoStats == null || !geoStats.isPresent()) {
+        return null;
+      }
+      BoundingBox bbox = geoStats.get().getBoundingBox();
+      if (bbox == null) {
+        return null;
+      }
+      double x = decodeMin ? bbox.getXMin() : bbox.getXMax();
+      double y = decodeMin ? bbox.getYMin() : bbox.getYMax();
+      OptionalDouble z =
+          bbox.isZValid()
+              ? OptionalDouble.of(decodeMin ? bbox.getZMin() : bbox.getZMax())
+              : OptionalDouble.empty();
+      OptionalDouble m =
+          bbox.isMValid()
+              ? OptionalDouble.of(decodeMin ? bbox.getMMin() : bbox.getMMax())
+              : OptionalDouble.empty();
+      return Literal.ofGeospatialWKT(GeometryUtils.formatPointWKT(x, y, z, m), dataType);
+    }
+
     Object statValue = decodeMin ? statistics.genericGetMin() : statistics.genericGetMax();
     if (statValue == null) {
       return null;
@@ -215,6 +250,26 @@ public class ParquetStatsReader {
             });
   }
 
+  private static Optional<GeospatialStatistics> mergeGeospatialMetadataList(
+      Collection<ColumnChunkMetaData> metadataList) {
+    if (metadataList == null || metadataList.isEmpty()) {
+      return Optional.empty();
+    }
+    GeospatialStatistics merged = null;
+    for (ColumnChunkMetaData chunk : metadataList) {
+      GeospatialStatistics geoStats = chunk.getGeospatialStatistics();
+      if (geoStats == null || !geoStats.isValid()) {
+        return Optional.empty();
+      }
+      if (merged == null) {
+        merged = geoStats.copy();
+      } else {
+        merged.merge(geoStats);
+      }
+    }
+    return Optional.ofNullable(merged);
+  }
+
   private static boolean hasInvalidStatistics(Collection<ColumnChunkMetaData> metadataList) {
     // If any row group does not have stats collected, stats for the file will not be valid
     return metadataList.stream()
@@ -245,7 +300,7 @@ public class ParquetStatsReader {
         || dataType instanceof TimestampType
         || dataType instanceof TimestampNTZType
         || dataType instanceof StringType
-        || dataType instanceof BinaryType;
+        || DataType.isTypeValueBinaryLike(dataType);
   }
 
   private static byte[] getBinaryStat(Statistics<?> statistics, boolean decodeMin) {

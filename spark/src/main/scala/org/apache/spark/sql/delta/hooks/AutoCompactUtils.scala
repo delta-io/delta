@@ -19,7 +19,8 @@ package org.apache.spark.sql.delta.hooks
 import scala.collection.mutable
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransactionImpl, Snapshot}
+import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
+import org.apache.spark.sql.delta.CommittedTransaction
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.sources.DeltaSQLConf._
@@ -135,7 +136,7 @@ object AutoCompactUtils extends DeltaLogging {
       isModifiedPartitionsOnlyAutoCompactEnabled(spark) && reservePartitionEnabled(spark)
     val freePartitions =
       if (shouldReservePartitions) {
-        filterFreePartitions(deltaLog.tableId, partitionsAddedToOpt.get)
+        filterFreePartitions(deltaLog.unsafeVolatileTableId, partitionsAddedToOpt.get)
       } else {
         partitionsAddedToOpt.get
       }
@@ -182,7 +183,8 @@ object AutoCompactUtils extends DeltaLogging {
 
     val numChosenPartitions = finalPartitions.size
     if (shouldReservePartitions) {
-      finalPartitions = tryReservePartitions(deltaLog.tableId, finalPartitions)
+      finalPartitions = tryReservePartitions(
+        deltaLog.unsafeVolatileTableId, finalPartitions)
     }
     // Abort if all chosen partitions were reserved by a concurrent thread.
     if (numChosenPartitions > 0 && finalPartitions.isEmpty) {
@@ -234,7 +236,7 @@ object AutoCompactUtils extends DeltaLogging {
         // files threshold; otherwise, use 0 to indicate that any partition is qualified.
         val minNumFilesPerPartition = if (partitionEarlySkippingEnabled) minNumFiles else 0L
         val pickedPartitions = tablePartitionStats.filterPartitionsWithSmallFiles(
-          deltaLog.tableId,
+          deltaLog.unsafeVolatileTableId,
           freePartitionsAddedTo,
           minNumFilesPerPartition)
         if (pickedPartitions.isEmpty) {
@@ -249,7 +251,7 @@ object AutoCompactUtils extends DeltaLogging {
       } else if (partitionEarlySkippingEnabled) {
         // If only early skipping is enabled, then check whether there is any partition with more
         // files than minNumFiles.
-        val maxNumFiles = tablePartitionStats.maxNumFilesInTable(deltaLog.tableId)
+        val maxNumFiles = tablePartitionStats.maxNumFilesInTable(deltaLog.unsafeVolatileTableId)
         val shouldCompact = maxNumFiles >= minNumFiles
         if (shouldCompact) {
           ChosenPartitionsResult(shouldRunAC = true,
@@ -302,31 +304,28 @@ object AutoCompactUtils extends DeltaLogging {
 
   /**
    * Prepare an [[AutoCompactRequest]] object based on the statistics of partitions inside
-   * `partitionsAddedToOpt`.
+   * `partitionsAddedToOpt` in `txn`.
    *
-   * @param partitionsAddedToOpt The partitions that contain AddFile objects created by parent
-   *                             transaction.
    * @param maxDeletedRowsRatio  If set, signals to Auto Compaction to rewrite files with
    *                             DVs with maxDeletedRowsRatio above this threshold.
    */
   def prepareAutoCompactRequest(
       spark: SparkSession,
-      txn: OptimisticTransactionImpl,
-      postCommitSnapshot: Snapshot,
-      partitionsAddedToOpt: Option[PartitionKeySet],
+      txn: CommittedTransaction,
       opType: String,
       maxDeletedRowsRatio: Option[Double]): AutoCompactRequest = {
+    val partitionsAddedToOpt = txn.partitionsAddedToOpt.map(_.toSet)
     val (needAutoCompact, reservedPartitions) = reserveTablePartitions(
       spark,
       txn.deltaLog,
-      postCommitSnapshot,
+      txn.postCommitSnapshot,
       partitionsAddedToOpt,
       opType,
       maxDeletedRowsRatio)
     AutoCompactRequest(
       needAutoCompact,
       reservedPartitions,
-      createPartitionPredicate(postCommitSnapshot, reservedPartitions))
+      createPartitionPredicate(txn.postCommitSnapshot, reservedPartitions))
   }
 
   /**
@@ -337,9 +336,7 @@ object AutoCompactUtils extends DeltaLogging {
    */
   def isQualifiedForAutoCompact(
       spark: SparkSession,
-      txn: OptimisticTransactionImpl): Boolean = {
-    // If txnExecutionTimeMs is empty, there is no transaction commit.
-    if (txn.txnExecutionTimeMs.isEmpty) return false
+      txn: CommittedTransaction): Boolean = {
     // If modified partitions only mode is not enabled, return true to avoid subsequent checking.
     if (!isModifiedPartitionsOnlyAutoCompactEnabled(spark)) return true
 

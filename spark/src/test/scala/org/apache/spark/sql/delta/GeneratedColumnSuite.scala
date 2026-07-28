@@ -17,42 +17,41 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off typedlit
-// scalastyle:off import.ordering.noEmptyLine
-import java.io.PrintWriter
+import java.sql.{Date, Timestamp}
+import java.util.UUID
 
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
-import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaUtils}
+import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException}
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.sources.DeltaSQLConf.GeneratedColumnValidateOnWriteMode
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import io.delta.tables.DeltaTableBuilder
+import org.apache.spark.sql.delta.test.shims.StreamingTestShims.MemoryStream
+import org.apache.spark.sql.delta.util.FileNames
 
-import org.apache.spark.SparkConf
-import org.apache.spark.sql.{AnalysisException, Column, DataFrame, Dataset, QueryTest, Row}
+import org.apache.spark.SparkException
+import org.apache.spark.sql.{AnalysisException, Column, DataFrame, Dataset, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.expressions.Expression
-import org.apache.spark.sql.catalyst.util.DateTimeUtils.{getZoneId, stringToDate, stringToTimestamp, toJavaDate, toJavaTimestamp}
 import org.apache.spark.sql.catalyst.util.quietly
-import org.apache.spark.sql.execution.streaming.MemoryStream
-
-import org.apache.spark.sql.functions.{current_timestamp, lit, struct, typedLit}
+import org.apache.spark.sql.functions.{lit, make_dt_interval, struct, typedLit}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.{StreamingQueryException, Trigger}
-import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{ArrayType, DataType, DateType, IntegerType, LongType, MetadataBuilder, ShortType, StringType, StructField, StructType, TimestampType}
-import org.apache.spark.unsafe.types.UTF8String
 
 trait GeneratedColumnSuiteBase
-    extends GeneratedColumnTest
-    with DeltaExcludedBySparkVersionTestMixinShims {
+    extends GeneratedColumnTest {
 
   import GeneratedColumn._
   import testImplicits._
+
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    spark.conf.set(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key, "false")
+  }
 
   protected def replaceTable(
       tableName: String,
@@ -75,8 +74,10 @@ trait GeneratedColumnSuiteBase
 
   // Define the information for a default test table used by many tests.
   protected val defaultTestTableSchema =
+    "c0_g void, " +
     "c1 bigint, c2_g bigint, c3_p string, c4_g_p date, c5 timestamp, c6 int, c7_g_p int, c8 date"
   protected val defaultTestTableGeneratedColumns = Map(
+    "c0_g" -> "null",
     "c2_g" -> "c1 + 10",
     "c4_g_p" -> "cast(c5 as date)",
     "c7_g_p" -> "c6 * 10"
@@ -96,17 +97,28 @@ trait GeneratedColumnSuiteBase
   /**
    * @param updateFunc A function that's called with the table information (tableName, path). It
    *                   should execute update operations, and return the expected data after
-   *                   updating.
+   *                   updating. Null value for VOID will be prepended to the returned expected
+   *                   data.
    */
   protected def testTableUpdate(
       testName: String,
       isStreaming: Boolean = false)(updateFunc: (String, String) => Seq[Row]): Unit = {
     def testBody(): Unit = {
+      // The default test table has a Void column.
+      assume(isStreaming || DeltaTestUtilsBase.nullTypeColumnsSupported)
       val table = testName
       withTempDir { path =>
         withTable(table) {
           createDefaultTestTable(tableName = table, path = Some(path.getCanonicalPath))
-          val expected = updateFunc(testName, path.getCanonicalPath)
+          if (isStreaming) {
+            // Streaming writer does not support VOID column, drop it.
+            sql(s"ALTER TABLE $table SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+            sql(s"ALTER TABLE $table DROP COLUMN c0_g")
+          }
+          var expected = updateFunc(testName, path.getCanonicalPath)
+          if (!isStreaming) {
+            expected = expected.map(row => Row.fromSeq(null +: row.toSeq))
+          }
           checkAnswer(sql(s"select * from $table"), expected)
         }
       }
@@ -190,7 +202,7 @@ trait GeneratedColumnSuiteBase
 
   testTableUpdate("insert_into_values_provide_all_columns") { (table, path) =>
     sql(s"INSERT INTO $table VALUES" +
-      s"(1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12')")
+      s"(null, 1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12')")
     Row(1L, 11L, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
       100, 1000, sqlDate("2020-11-12")) :: Nil
   }
@@ -218,7 +230,7 @@ trait GeneratedColumnSuiteBase
 
   testTableUpdate("insert_into_select_provide_all_columns") { (table, path) =>
     sql(s"INSERT INTO $table SELECT " +
-      s"1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
+      s"null, 1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
     Row(1L, 11L, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
       100, 1000, sqlDate("2020-11-12")) :: Nil
   }
@@ -236,14 +248,14 @@ trait GeneratedColumnSuiteBase
 
   testTableUpdate("insert_overwrite_values_provide_all_columns") { (table, path) =>
     sql(s"INSERT OVERWRITE TABLE $table VALUES" +
-      s"(1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12')")
+      s"(null, 1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12')")
     Row(1L, 11L, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
       100, 1000, sqlDate("2020-11-12")) :: Nil
   }
 
   testTableUpdate("insert_overwrite_select_provide_all_columns") { (table, path) =>
     sql(s"INSERT OVERWRITE TABLE $table SELECT " +
-      s"1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
+      s"null, 1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
     Row(1L, 11L, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
       100, 1000, sqlDate("2020-11-12")) :: Nil
   }
@@ -282,14 +294,14 @@ trait GeneratedColumnSuiteBase
 
   testTableUpdateDPO("insert_overwrite_values_provide_all_columns") { (table, path) =>
     sql(s"INSERT OVERWRITE TABLE $table VALUES" +
-      s"(1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12')")
+      s"(null, 1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12')")
     Row(1L, 11L, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
       100, 1000, sqlDate("2020-11-12")) :: Nil
   }
 
   testTableUpdateDPO("insert_overwrite_select_provide_all_columns") { (table, path) =>
     sql(s"INSERT OVERWRITE TABLE $table SELECT " +
-      s"1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
+      s"null, 1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
     Row(1L, 11L, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
       100, 1000, sqlDate("2020-11-12")) :: Nil
   }
@@ -349,7 +361,7 @@ trait GeneratedColumnSuiteBase
 
   testTableUpdate("update_generated_column_with_correct_value") { (table, path) =>
     sql(s"INSERT INTO $table SELECT " +
-      s"1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
+      s"null, 1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
     sql(s"UPDATE $table SET c2_g = 11 WHERE c1 = 1")
     Row(1, 11, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
       100, 1000, sqlDate("2020-11-12")) :: Nil
@@ -357,7 +369,7 @@ trait GeneratedColumnSuiteBase
 
   testTableUpdate("update_generated_column_with_incorrect_value") { (table, path) =>
     sql(s"INSERT INTO $table SELECT " +
-      s"1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
+      s"null, 1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
     val e = intercept[InvariantViolationException] {
       quietly {
         sql(s"UPDATE $table SET c2_g = 12 WHERE c1 = 1")
@@ -371,7 +383,7 @@ trait GeneratedColumnSuiteBase
 
   testTableUpdate("update_source_column_used_by_generated_column") { (table, _) =>
     sql(s"INSERT INTO $table SELECT " +
-      s"1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
+      s"null, 1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
     sql(s"UPDATE $table SET c1 = 2 WHERE c1 = 1")
     Row(2, 12, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
       100, 1000, sqlDate("2020-11-12")) :: Nil
@@ -379,7 +391,7 @@ trait GeneratedColumnSuiteBase
 
   testTableUpdate("update_source_and_generated_columns_with_correct_value") { (table, _) =>
     sql(s"INSERT INTO $table SELECT " +
-      s"1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
+      s"null, 1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
     sql(s"UPDATE $table SET c2_g = 12, c1 = 2 WHERE c1 = 1")
     Row(2, 12, "foo", sqlDate("2020-10-11"), sqlTimestamp("2020-10-11 12:30:30"),
       100, 1000, sqlDate("2020-11-12")) :: Nil
@@ -387,7 +399,7 @@ trait GeneratedColumnSuiteBase
 
   testTableUpdate("update_source_and_generated_columns_with_incorrect_value") { (table, _) =>
     sql(s"INSERT INTO $table SELECT " +
-      s"1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
+      s"null, 1, 11, 'foo', '2020-10-11', '2020-10-11 12:30:30', 100, 1000, '2020-11-12'")
     val e = intercept[InvariantViolationException] {
       quietly {
         sql(s"UPDATE $table SET c2_g = 12, c1 = 3 WHERE c1 = 1")
@@ -609,6 +621,19 @@ trait GeneratedColumnSuiteBase
     }
   }
 
+  test("validateGeneratedColumns: column named as SQL keyword") {
+    // `current_date` in a generation expression is parsed as an UnresolvedAttribute (column
+    // reference), not the CurrentDate() function. So a column literally named `current_date`
+    // can be referenced in a generated column.
+    withTableName("keyword_col_gen") { table =>
+      createTable(
+        table, None, "`current_date` INT, bar INT",
+        Map("bar" -> "`current_date` + 1"), Nil)
+      sql(s"INSERT INTO $table (`current_date`) VALUES (10)")
+      checkAnswer(spark.table(table), Row(10, 11) :: Nil)
+    }
+  }
+
   protected def testTypeMismatch(
       generatedColumnType: DataType,
       generatedColumnNullable: Boolean,
@@ -622,7 +647,7 @@ trait GeneratedColumnSuiteBase
       s"${generatedColumnType.sql} NOT NULL"
     }
     test(s"validateGeneratedColumns: column type ${columnTypeString}" +
-        s" $verb expression type ${generateAsExpression.expr.sql}") {
+        s" $verb expression type $generateAsExpression") {
       val f1 = StructField("nullableIntCol", IntegerType, nullable = true)
       val f2 = withGenerationExpression(
         StructField("genCol", generatedColumnType, nullable = generatedColumnNullable),
@@ -640,7 +665,7 @@ trait GeneratedColumnSuiteBase
           df1.schema.fields.head.dataType.sql
         }
         checkErrorMatchPVals(e,
-          errorClass = "DELTA_GENERATED_COLUMNS_EXPR_TYPE_MISMATCH",
+          "DELTA_GENERATED_COLUMNS_EXPR_TYPE_MISMATCH",
           parameters = Map(
             "columnName" -> "genCol",
             "expressionType" -> s".*${expressionTypeString}.*",
@@ -749,7 +774,7 @@ trait GeneratedColumnSuiteBase
           .write.format("delta").mode("append").saveAsTable(tbl)
       }
       checkError(e,
-        errorClass = "DELTA_NOT_NULL_CONSTRAINT_VIOLATED",
+        "DELTA_NOT_NULL_CONSTRAINT_VIOLATED",
         parameters = Map("columnName" -> "gen"))
 
       // Ensure the result is correct.
@@ -854,7 +879,7 @@ trait GeneratedColumnSuiteBase
     testSchema(Seq(f6, f6x, f8), Set("c6", "c8"))
   }
 
-  test("disallow column type evolution") {
+  test("generated columns - implicit cast preserves column type") {
     withTableName("disallow_column_type_evolution") { table =>
     // "HASH(c1)" returns different results for INT and LONG. For example, "SELECT hash(32767)"
     // returns 1249274084, but "SELECT hash(32767L)" returns -860381306. Hence we should
@@ -863,26 +888,20 @@ trait GeneratedColumnSuiteBase
         Map("c2" -> "HASH(c1)"), Nil)
       val tableSchema = spark.table(table).schema
       Seq(32767).toDF("c1").write.format("delta").mode("append").saveAsTable(table)
-      assert(tableSchema == spark.table(table).schema)
-      // Insert a LONG to `c1` should fail rather than changing the `c1` type to LONG.
-      checkError(
-        intercept[AnalysisException] {
-          Seq(32767.toLong).toDF("c1").write.format("delta").mode("append")
-            .option("mergeSchema", "true")
-            .saveAsTable(table)
-        },
-        "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
-        parameters = Map(
-          "columnName" -> "c1",
-          "columnType" -> "INT",
-          "dataType" -> "BIGINT",
-          "generatedColumns" -> "c2 -> HASH(c1)"
-        ))
-      checkAnswer(spark.table(table), Row(32767, 1249274084) :: Nil)
+      assert(tableSchema === spark.table(table).schema)
+      // With implicit casting, inserting a LONG will cast to INT and succeed
+      Seq(32767.toLong).toDF("c1").write.format("delta").mode("append")
+        .option("mergeSchema", "true")
+        .saveAsTable(table)
+      // Schema should remain unchanged (still INT)
+      assert(tableSchema === spark.table(table).schema)
+      // Both rows should have the same hash since the LONG was cast to INT
+      checkAnswer(spark.table(table),
+        Row(32767, 1249274084) :: Row(32767, 1249274084) :: Nil)
     }
   }
 
-  test("disallow column type evolution - nesting") {
+  test("generated columns - implicit cast preserves column type with nesting") {
     withTableName("disallow_column_type_evolution") { table =>
       createTable(table, None, "a SMALLINT, c1 STRUCT<a: SMALLINT>, c2 INT",
         Map("c2" -> "HASH(a)"), Nil)
@@ -890,7 +909,7 @@ trait GeneratedColumnSuiteBase
       Seq(32767.toShort).toDF("a")
         .selectExpr("a", "named_struct('a', a) as c1")
         .write.format("delta").mode("append").saveAsTable(table)
-      assert(tableSchema == spark.table(table).schema)
+      assert(tableSchema === spark.table(table).schema)
 
       // INSERT an INT to `c1.a` should not fail
       Seq((32767.toShort, 32767)).toDF("a", "c1a")
@@ -899,23 +918,17 @@ trait GeneratedColumnSuiteBase
         .option("mergeSchema", "true")
         .saveAsTable(table)
 
-      // Insert an INT to `a` should fail rather than changing the `a` type to INT
-      checkError(
-        intercept[AnalysisException] {
-          Seq((32767, 32767)).toDF("a", "c1a")
-            .selectExpr("a", "named_struct('a', c1a) as c1")
-            .write.format("delta").mode("append")
-            .option("mergeSchema", "true")
-            .saveAsTable(table)
-        },
-        "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
-        parameters = Map(
-          "columnName" -> "a",
-          "columnType" -> "SMALLINT",
-          "dataType" -> "INT",
-          "generatedColumns" -> "c2 -> HASH(a)"
-        )
-      )
+      // Insert an INT to `a` should succeed - it will cast to SMALLINT
+      Seq((32767, 32767)).toDF("a", "c1a")
+        .selectExpr("a", "named_struct('a', c1a) as c1")
+        .write.format("delta").mode("append")
+        .option("mergeSchema", "true")
+        .saveAsTable(table)
+
+      // Schema should remain unchanged (still SMALLINT)
+      assert(tableSchema === spark.table(table).schema)
+      // Verify all rows were inserted with proper casting
+      assert(spark.table(table).count() === 3)
     }
   }
 
@@ -1169,6 +1182,8 @@ trait GeneratedColumnSuiteBase
   }
 
   test("creating a table with a different schema should fail") {
+    // Uses the default test table schema, which has a Void column.
+    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
     withTempPath { path =>
       // Currently SQL is the only way to define a table using generated columns. So we create a
       // temp table and drop it to get a path for such table.
@@ -1263,6 +1278,18 @@ trait GeneratedColumnSuiteBase
         .collect()
         .toSeq
       assert("foo" :: Nil == comments)
+    }
+  }
+
+  test("generation expression allows timestampdiff & timestampadd") {
+    withTableName("generation_expression_timestamp_diff_add") { tableName =>
+      createTable(
+        tableName,
+        path = None,
+        schemaString = "c1 TIMESTAMP, c2 TIMESTAMP, c3 BIGINT, c4 TIMESTAMP",
+        generatedColumns =
+          Map("c3" -> "timestampdiff(MONTH, c1, c2)", "c4" -> "timestampadd(MONTH, 1, c1)"),
+        partitionColumns = Seq.empty)
     }
   }
 
@@ -1889,10 +1916,134 @@ trait GeneratedColumnSuiteBase
     }
   }
 
+  test("MERGE INSERT with duplicate columns differing only in case") {
+    // Regression test: when the INSERT clause contains columns that differ only in case
+    // (e.g., "c2" and "C2"), the duplicate check should catch them and throw a proper
+    // user-facing error instead of hitting an internal AssertionError in
+    // resolveImplicitColumns.
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(
+          tableName = src,
+          path = None,
+          schemaString = "c1 INT, c2 INT",
+          generatedColumns = Map.empty,
+          partitionColumns = Seq.empty
+        )
+        sql(s"INSERT INTO ${src} VALUES (2, 4)")
+        createTable(
+          tableName = tgt,
+          path = None,
+          schemaString = "c1 INT, c2 INT, c3 INT",
+          generatedColumns = Map("c3" -> "c1 + c2"),
+          partitionColumns = Seq.empty
+        )
+        sql(s"INSERT INTO ${tgt} VALUES (1, 2, 3)")
+
+        val e = intercept[AnalysisException] {
+          sql(s"""
+                 |MERGE INTO ${tgt}
+                 |USING ${src}
+                 |ON ${tgt}.c1 = ${src}.c1
+                 |WHEN NOT MATCHED THEN INSERT (c1, c2, C2)
+                 |VALUES (${src}.c1, ${src}.c2, ${src}.c2)
+                 |""".stripMargin)
+        }
+        assert(e.getMessage.contains("Duplicate column names in INSERT clause"))
+      }
+    }
+  }
+
+  test("MERGE INSERT with case-variant duplicate columns and fix disabled") {
+    // When the safer flag is disabled, case-variant duplicates bypass the duplicate check
+    // and instead trigger the internal AssertionError in resolveImplicitColumns on tables
+    // with generated columns. Kept as an A/B test pinning the prior failure mode.
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(
+          tableName = src,
+          path = None,
+          schemaString = "c1 INT, c2 INT",
+          generatedColumns = Map.empty,
+          partitionColumns = Seq.empty
+        )
+        sql(s"INSERT INTO ${src} VALUES (2, 4)")
+        createTable(
+          tableName = tgt,
+          path = None,
+          schemaString = "c1 INT, c2 INT, c3 INT",
+          generatedColumns = Map("c3" -> "c1 + c2"),
+          partitionColumns = Seq.empty
+        )
+        sql(s"INSERT INTO ${tgt} VALUES (1, 2, 3)")
+
+        withSQLConf(
+          DeltaSQLConf.DELTA_MERGE_INSERT_FIX_CASE_SENSITIVE_DUPLICATE_COLUMNS.key -> "false"
+        ) {
+          val e = intercept[SparkException] {
+            sql(s"""
+                   |MERGE INTO ${tgt}
+                   |USING ${src}
+                   |ON ${tgt}.c1 = ${src}.c1
+                   |WHEN NOT MATCHED THEN INSERT (c1, c2, C2)
+                   |VALUES (${src}.c1, ${src}.c2, ${src}.c2)
+                   |""".stripMargin)
+          }
+          assert(e.getCause.isInstanceOf[AssertionError])
+          assert(e.getCause.getMessage.contains(
+            "Invalid number of columns in INSERT clause"))
+        }
+      }
+    }
+  }
+
+  test("MERGE INSERT case-variant duplicates without generated or identity columns allowed") {
+    // Companion to the previous tests: when the target has no generated or identity columns,
+    // the case-insensitive duplicate check should NOT fire even with the fix enabled, to
+    // match existing behavior (see `MergeIntoSchemaEvolutionSuite: case-insensitive insert`).
+    // Without generated or identity columns `resolveImplicitColumns` early-returns, so the
+    // assertion path is unreachable and `alignedActions` silently absorbs the duplicate.
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(
+          tableName = src,
+          path = None,
+          schemaString = "c1 INT, c2 INT",
+          generatedColumns = Map.empty,
+          partitionColumns = Seq.empty
+        )
+        sql(s"INSERT INTO ${src} VALUES (2, 4)")
+        createTable(
+          tableName = tgt,
+          path = None,
+          schemaString = "c1 INT, c2 INT",
+          generatedColumns = Map.empty,
+          partitionColumns = Seq.empty
+        )
+        sql(s"INSERT INTO ${tgt} VALUES (1, 2)")
+
+        sql(s"""
+               |MERGE INTO ${tgt}
+               |USING ${src}
+               |ON ${tgt}.c1 = ${src}.c1
+               |WHEN NOT MATCHED THEN INSERT (c1, c2, C2)
+               |VALUES (${src}.c1, ${src}.c2, ${src}.c2)
+               |""".stripMargin)
+        checkAnswer(sql(s"SELECT * FROM ${tgt}"), Seq(Row(1, 2), Row(2, 4)))
+      }
+    }
+  }
+
   test("generated columns with cdf") {
     val tableName1 = "gcEnabledCDCOn"
     val tableName2 = "gcEnabledCDCOff"
     withTable(tableName1, tableName2) {
+      def readCdf(startingVersion: Long): DataFrame = {
+        spark.read.format("delta").option("readChangeData", "true")
+          .option("startingVersion", startingVersion)
+          .table(tableName1)
+          .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+      }
 
       createTable(
         tableName1,
@@ -1907,24 +2058,26 @@ trait GeneratedColumnSuiteBase
         )
       )
 
+      checkAnswer(readCdf(startingVersion = 0), Seq())
+
       spark.range(100).repartition(10)
-        .withColumn("timeCol", current_timestamp())
+        .withColumn(
+          "timeCol", lit(sqlTimestamp("1970-01-01 00:00:00")) + make_dt_interval($"id"))
         .write
         .format("delta")
         .mode("append")
         .saveAsTable(tableName1)
 
-      spark.sql(s"DELETE FROM ${tableName1} WHERE id < 3")
+      spark.sql(s"DELETE FROM $tableName1 WHERE id < 3")
 
-      val changeData = spark.read.format("delta").option("readChangeData", "true")
-        .option("startingVersion", "2")
-        .table(tableName1)
-        .select("id", CDCReader.CDC_TYPE_COLUMN_NAME, CDCReader.CDC_COMMIT_VERSION)
-
-      val expected = spark.range(0, 3)
-        .withColumn(CDCReader.CDC_TYPE_COLUMN_NAME, lit("delete"))
-        .withColumn(CDCReader.CDC_COMMIT_VERSION, lit(2))
-      checkAnswer(changeData, expected)
+      checkAnswer(
+        readCdf(startingVersion = 2),
+        Seq(
+          Row(0, sqlTimestamp("1970-01-01 00:00:00"), sqlDate("1970-01-01"), "delete", 2),
+          Row(1, sqlTimestamp("1970-01-02 00:00:00"), sqlDate("1970-01-02"), "delete", 2),
+          Row(2, sqlTimestamp("1970-01-03 00:00:00"), sqlDate("1970-01-03"), "delete", 2)
+        )
+      )
 
       // Now write out the data frame of cdc to another table that has generated columns but not
       // cdc enabled.
@@ -2016,6 +2169,63 @@ trait GeneratedColumnSuiteBase
               "A column, variable, or function parameter with name `c2` cannot be resolved")
           }
         }
+      }
+    }
+  }
+
+  test("generated column metadata is not exposed in schema") {
+    val tableName = "table"
+    withTable(tableName) {
+      createDefaultTestTable(tableName)
+      Seq((1L, "foo", Timestamp.valueOf("2020-10-11 12:30:30"), 100, Date.valueOf("2020-11-12")))
+        .toDF("c1", "c3_p", "c5", "c6", "c8")
+        .write.format("delta").mode("append").saveAsTable(tableName)
+
+      val expectedSchema = StructType.fromDDL(defaultTestTableSchema)
+
+      assert(spark.read.table(tableName).schema === expectedSchema)
+
+      val ttDf = spark.read.option(DeltaOptions.VERSION_AS_OF, 0).table(tableName)
+      assert(ttDf.schema === expectedSchema)
+
+      val cdcDf = spark.read
+        .option(DeltaOptions.CDC_READ_OPTION, true)
+        .option(DeltaOptions.STARTING_VERSION_OPTION, 0)
+        .table(tableName)
+      assert(cdcDf.schema === expectedSchema
+        .add("_change_type", StringType)
+        .add("_commit_version", LongType)
+        .add("_commit_timestamp", TimestampType)
+      )
+
+      assert(spark.readStream.table(tableName).schema === expectedSchema)
+
+      val cdcStreamDf = spark.readStream
+        .option(DeltaOptions.CDC_READ_OPTION, true)
+        .option(DeltaOptions.STARTING_VERSION_OPTION, 0)
+        .table(tableName)
+      assert(cdcStreamDf.schema === expectedSchema
+        .add("_change_type", StringType)
+        .add("_commit_version", LongType)
+        .add("_commit_timestamp", TimestampType)
+      )
+    }
+  }
+
+  test("DML into table with generated column, char column and readSideCharPadding=true") {
+    val tableName = "table"
+    withTable(tableName) {
+      withSQLConf(SQLConf.READ_SIDE_CHAR_PADDING.key -> "true") {
+        createTable(tableName, None, "c1 INT, c2 CHAR(5), c3 INT", Map("c3" -> "c1 + 1"), Nil)
+        spark.sql(
+          s"""
+             |MERGE INTO $tableName AS TARGET
+             |USING (SELECT id as c1, cast(id AS CHAR(5)) as c2 FROM RANGE(10)) AS SOURCE
+             |ON TARGET.c1 = SOURCE.c1
+             |WHEN MATCHED THEN UPDATE SET c1 = SOURCE.c1, c2 = SOURCE.c2
+             |WHEN NOT MATCHED THEN INSERT (c1, c2) VALUES (SOURCE.c1, SOURCE.c2)
+             |""".stripMargin)
+        spark.sql(s"UPDATE $tableName SET c2 = 'upd' WHERE c1 = 1")
       }
     }
   }

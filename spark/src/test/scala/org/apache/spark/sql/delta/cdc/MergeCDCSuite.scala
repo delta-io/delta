@@ -18,37 +18,41 @@ package org.apache.spark.sql.delta.cdc
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{DataFrame, QueryTest}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.lit
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
 
-/**
- * The MergeCDCCoreSuite suite only includes CDC tests defined in this file while MergeCDCSuite
- * runs exhaustive tests from MergeIntoSQLSuite to verify that CDC writing mode doesn't break
- * existing functionality.
- */
-class MergeCDCCoreSuite extends MergeCDCTests
-class MergeCDCSuite extends MergeIntoSQLSuite with MergeCDCTests
+
+trait CDCEnabled extends SharedSparkSession {
+  override protected def sparkConf: SparkConf = super.sparkConf
+    .set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")
+}
+
+trait MergeCDCMixin extends SharedSparkSession
+  with MergeIntoSQLTestUtils
+  with DeltaColumnMappingTestUtils
+  with DeltaSQLCommandTest
+  with MergePersistentDVDisabled
 
 /**
  * Tests for MERGE INTO in CDC output mode.
  *
  */
 trait MergeCDCTests extends QueryTest
-  with MergeIntoSQLTestUtils
-  with DeltaColumnMappingTestUtils
-  with DeltaSQLCommandTest {
-  import testImplicits._
+  with CDCEnabled
+  with MergeCDCMixin
+  with CDCTestMixin {
 
-  override protected def sparkConf: SparkConf = super.sparkConf
-    .set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")
-    .set(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key, "false")
+  import testImplicits._
 
   // scalastyle:off argcount
   /**
@@ -91,7 +95,11 @@ trait MergeCDCTests extends QueryTest
     test(s"merge CDC - $name") {
       withSQLConf(confs: _*) {
         targetTableSchema.foreach { schema =>
-          io.delta.tables.DeltaTable.create(spark).location(tempPath).addColumns(schema).execute()
+          io.delta.tables.DeltaTable.create(spark)
+            .tableName(tableSQLIdentifier)
+            .location(deltaLog.dataPath.toUri.getPath)
+            .addColumns(schema)
+            .execute()
         }
         append(target)
         withTempView("source") {
@@ -99,26 +107,25 @@ trait MergeCDCTests extends QueryTest
 
           if (expectErrorContains != null) {
             val ex = intercept[Exception] {
-              executeMerge(s"delta.`$tempPath` t", "source s", mergeCondition,
+              executeMerge(s"$tableSQLIdentifier t", "source s", mergeCondition,
                 clauses.toSeq: _*)
             }
             assert(ex.getMessage.contains(expectErrorContains))
           } else {
-            executeMerge(s"delta.`$tempPath` t", "source s", mergeCondition,
+            executeMerge(s"$tableSQLIdentifier t", "source s", mergeCondition,
               clauses.toSeq: _*)
             checkAnswer(
-              spark.read.format("delta").load(tempPath),
+              readDeltaTableByIdentifier(),
               expectedTableData)
 
             // Craft expected CDC data
-            val latestVersion = DeltaLog.forTable(spark, tempPath).snapshot.version
+            val latestVersion = deltaLog.snapshot.version
             val expectedCdcData = expectedCdcDataWithoutVersion
               .withColumn(CDCReader.CDC_COMMIT_VERSION, lit(latestVersion))
 
             // The timestamp is nondeterministic so we drop it when comparing results.
             checkAnswer(
-              CDCReader.changesToBatchDF(
-                DeltaLog.forTable(spark, tempPath), latestVersion, latestVersion, spark)
+              computeCDC(spark, deltaLog, latestVersion, latestVersion)
                 .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
               expectedCdcData)
           }
@@ -219,6 +226,45 @@ trait MergeCDCTests extends QueryTest
       .toDF("key", "targetVal", "srcVal", "_change_type"),
     confs = (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true") :: Nil
   )
+
+  if (DeltaTestUtilsBase.nullTypeColumnsSupported) {
+    testMergeCdc("schema evolution from void")(
+      target = ((0, 0, null) :: (1, 10, null) :: (3, 30, null) :: Nil).toDF("key", "n", "text"),
+      source = ((1, 1, "a") :: (2, 2, "b") :: (3, -1, "c") :: Nil).toDF("key", "n", "text"),
+      insert = "*",
+      update = "*",
+      deleteWhen = "s.key = 3",
+      expectedTableData = ((0, 0, null) :: (1, 1, "a") :: (2, 2, "b") :: Nil)
+        .asInstanceOf[Seq[(Int, Int, String)]].toDF(),
+      expectedCdcDataWithoutVersion = (
+          (1, 10, null, "update_preimage") ::
+          (1, 1, "a", "update_postimage") ::
+          (2, 2, "b", "insert") ::
+          (3, 30, null, "delete") :: Nil)
+        .asInstanceOf[List[(Integer, Integer, String, String)]]
+        .toDF("key", "targetVal", "srcVal", "_change_type"),
+      confs = (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true") ::
+        (DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key, "false") :: Nil
+    )
+
+    testMergeCdc("schema evolution from void to struct with void")(
+      target = ((0, 0, null) :: (1, 10, null) :: (3, 30, null) :: Nil).toDF("key", "n", "s"),
+      source = ((1, 1, (1, null)) :: (2, 2, (2, null)) :: (3, -1, (3, null)) :: Nil)
+        .toDF("key", "n", "s"),
+      insert = "*",
+      update = "*",
+      deleteWhen = "s.key = 3",
+      expectedTableData = ((0, 0, null) :: (1, 1, (1, null)) :: (2, 2, (2, null)) :: Nil).toDF(),
+      expectedCdcDataWithoutVersion = (
+          (1, 10, null, "update_preimage") ::
+          (1, 1, (1, null), "update_postimage") ::
+          (2, 2, (2, null), "insert") ::
+          (3, 30, null, "delete") :: Nil)
+        .toDF("key", "targetVal", "srcVal", "_change_type"),
+      confs = (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true") ::
+        (DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key, "false") :: Nil
+    )
+  }
 
   testMergeCdcUnlimitedClauses("schema evolution with non-nullable schema")(
     target = ((0, 0) :: (1, 10) :: (3, 30) :: Nil).toDF("key", "n"),

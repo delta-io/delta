@@ -18,7 +18,8 @@ package org.apache.spark.sql.delta.schema
 
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaAnalysisException, TypeWidening}
+import org.apache.spark.sql.delta.{DeltaAnalysisException, TypeWideningMode}
+import org.apache.spark.sql.delta.shims.GeoTypesShim
 
 import org.apache.spark.sql.catalyst.analysis.{Resolver, TypeCoercion, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.expressions.Literal
@@ -100,13 +101,14 @@ object SchemaMergingUtils {
    * the duplication exists.
    *
    * @param schema the schema to check for duplicates
-   * @param colType column type name, used in an exception message
+   * @param errorSubClass error sub-class for DELTA_DUPLICATE_COLUMNS_FOUND indicating where the
+   *                      duplicate was found (e.g. "METADATA_UPDATE", "TABLE_SCHEMA").
    * @param caseSensitive Whether we should exception if two columns have casing conflicts. This
    *                      should default to false for Delta.
    */
   def checkColumnNameDuplication(
       schema: StructType,
-      colType: String,
+      errorSubClass: String,
       caseSensitive: Boolean = false): Unit = {
     val columnNames = explodeNestedFieldNames(schema)
     // scalastyle:off caselocale
@@ -121,8 +123,8 @@ object SchemaMergingUtils {
         case (x, ys) if ys.length > 1 => s"$x"
       }
       throw new DeltaAnalysisException(
-        errorClass = "DELTA_DUPLICATE_COLUMNS_FOUND",
-        messageParameters = Array(colType, duplicateColumns.mkString(", ")))
+        errorClass = s"DELTA_DUPLICATE_COLUMNS_FOUND.$errorSubClass",
+        messageParameters = Array(duplicateColumns.mkString(", ")))
     }
   }
 
@@ -153,17 +155,18 @@ object SchemaMergingUtils {
       dataSchema: StructType,
       allowImplicitConversions: Boolean = false,
       keepExistingType: Boolean = false,
-      allowTypeWidening: Boolean = false,
+      typeWideningMode: TypeWideningMode = TypeWideningMode.NoTypeWidening,
       caseSensitive: Boolean = false): StructType = {
-    checkColumnNameDuplication(dataSchema, "in the data to save", caseSensitive)
+    checkColumnNameDuplication(dataSchema, "DATA", caseSensitive)
     mergeDataTypes(
       tableSchema,
       dataSchema,
       allowImplicitConversions,
       keepExistingType,
-      allowTypeWidening,
+      typeWideningMode,
       caseSensitive,
-      allowOverride = false
+      allowOverride = false,
+      overrideMetadata = false
     ).asInstanceOf[StructType]
   }
 
@@ -178,18 +181,24 @@ object SchemaMergingUtils {
    *                                 merge will succeed, because once we get to write time Spark SQL
    *                                 will support implicitly converting the int to a string.
    * @param keepExistingType Whether to keep existing types instead of trying to merge types.
+   * @param typeWideningMode Identifies the (current, update) type tuples where `current` can be
+   *                        widened to `update`, in which case `update` is used. See
+   *                        [[TypeWideningMode]].
    * @param caseSensitive Whether we should keep field mapping case-sensitively.
    *                      This should default to false for Delta, which is case insensitive.
    * @param allowOverride Whether to let incoming type override the existing type if unmatched.
+   * @param overrideMetadata Whether to let metadata of new fields override the existing
+   *                         metadata of matching fields
    */
   def mergeDataTypes(
       current: DataType,
       update: DataType,
       allowImplicitConversions: Boolean,
       keepExistingType: Boolean,
-      allowTypeWidening: Boolean,
+      typeWideningMode: TypeWideningMode,
       caseSensitive: Boolean,
-      allowOverride: Boolean): DataType = {
+      allowOverride: Boolean,
+      overrideMetadata: Boolean): DataType = {
     def merge(current: DataType, update: DataType): DataType = {
       (current, update) match {
         case (StructType(currentFields), StructType(updateFields)) =>
@@ -199,11 +208,14 @@ object SchemaMergingUtils {
             updateFieldMap.get(currentField.name) match {
               case Some(updateField) =>
                 try {
+                  val updatedCurrentFieldMetadata =
+                    if (overrideMetadata) updateField.metadata
+                    else currentField.metadata
                   StructField(
                     currentField.name,
                     merge(currentField.dataType, updateField.dataType),
                     currentField.nullable,
-                    currentField.metadata)
+                    updatedCurrentFieldMetadata)
                 } catch {
                   case NonFatal(e) =>
                     throw new DeltaAnalysisException(
@@ -236,9 +248,11 @@ object SchemaMergingUtils {
             merge(currentElementType, updateElementType),
             currentContainsNull)
 
-        // If allowTypeWidening is true and supported, it takes precedence over keepExistingType
-        case (current: AtomicType, update: AtomicType) if allowTypeWidening &&
-          TypeWidening.isTypeChangeSupportedForSchemaEvolution(current, update) => update
+        // If type widening is enabled and the type can be widened, it takes precedence over
+        // keepExistingType.
+        case (current: AtomicType, update: AtomicType)
+          if typeWideningMode.getWidenedType(fromType = current, toType = update).isDefined =>
+            typeWideningMode.getWidenedType(fromType = current, toType = update).get
 
         // Simply keeps the existing type for primitive types
         case (current, _) if keepExistingType => current
@@ -301,7 +315,11 @@ object SchemaMergingUtils {
    * there's no valid cast.
    */
   private def typeForImplicitCast(sourceType: DataType, targetType: DataType): Option[DataType] = {
-    TypeCoercion.implicitCast(Literal.default(sourceType), targetType).map(_.dataType)
+    if (GeoTypesShim.isGeoSpatialType(sourceType) || GeoTypesShim.isGeoSpatialType(targetType)) {
+      None
+    } else {
+      TypeCoercion.implicitCast(Literal.default(sourceType), targetType).map(_.dataType)
+    }
   }
 
   def toFieldMap(
@@ -327,6 +345,11 @@ object SchemaMergingUtils {
       tf: (Seq[String], StructField, Resolver) => StructField): T = {
     def transform[E <: DataType](path: Seq[String], dt: E): E = {
       val newDt = dt match {
+        case s: StructType
+          if org.apache.spark.sql.execution.datasources.VariantMetadata.isVariantStruct(s) =>
+          // A variant struct is logically still a variant, so we should not recurse into its
+          // fields like a normal struct.
+          s
         case StructType(fields) =>
           StructType(fields.map { field =>
             val newField = tf(path, field, DELTA_COL_RESOLVER)

@@ -58,7 +58,7 @@ object GenerateRowIDs extends Rule[LogicalPlan] {
       // Update nullability in the scan `metadataOutput` by updating the delta file format.
       val newFileFormat = baseRelation.fileFormat match {
         case format: DeltaParquetFileFormat =>
-          format.copy(nullableRowTrackingFields = true)
+          format.copy(nullableRowTrackingGeneratedFields = true)
       }
       val newBaseRelation = baseRelation.copy(fileFormat = newFileFormat)(baseRelation.sparkSession)
 

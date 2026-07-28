@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.util.concurrent.CountDownLatch
 
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row, SparkSession}
@@ -68,12 +69,7 @@ class SchemaValidationSuite
     }
   }
 
-  def cloneSession(spark: SparkSession): SparkSession = {
-    val cloneMethod = classOf[SparkSession].getDeclaredMethod("cloneSession")
-    cloneMethod.setAccessible(true)
-    val clonedSession = cloneMethod.invoke(spark).asInstanceOf[SparkSession]
-    clonedSession
-  }
+  def cloneSession(spark: SparkSession): SparkSession = spark.cloneSession()
 
   /**
    * Common base method for both the path based and table name based tests.
@@ -402,10 +398,11 @@ class SchemaValidationSuite
       spark.range(10).write.format("delta").saveAsTable(tblName)
     },
     actionToTest = (spark: SparkSession, tblName: String) => {
-      val e = intercept[AnalysisException] {
+      val e = intercept[DeltaAnalysisException] {
         spark.sql(s"ALTER TABLE `$tblName` ADD COLUMNS (col2 string)")
       }
-      assert(e.getMessage.contains("Found duplicate column(s) in adding columns: col2"))
+      checkError(e, "DELTA_DUPLICATE_COLUMNS_FOUND.ADDING_COLUMNS", "42711",
+        Map("duplicateCols" -> "col2"))
     },
     concurrentChange = (spark: SparkSession, tblName: String) => {
       spark.read.format("delta").table(tblName)

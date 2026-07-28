@@ -18,7 +18,9 @@ package org.apache.spark.sql.delta
 
 import java.util.Date
 
+import org.apache.spark.sql.delta.DeltaTestUtils.modifyCommitTimestamp
 import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTableUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
@@ -99,6 +101,34 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
       sql(prefix + suffix)
     }
   }
+
+  private def testNullRangeBoundary(start: Boundary, end: Boundary): Unit = {
+    test(s"range boundary cannot be null - start=$start end=$end") {
+      val tblName = "tbl"
+      withTable(tblName) {
+        createTblWithThreeVersions(tblName = Some(tblName))
+
+        checkError(intercept[DeltaIllegalArgumentException] {
+          cdcRead(new TableName(tblName), start, end)
+        }, "DELTA_CDC_READ_NULL_RANGE_BOUNDARY")
+      }
+    }
+  }
+
+  for (end <- Seq(
+    Unbounded,
+    EndingVersion("null"),
+    EndingVersion("0"),
+    EndingTimestamp(dateFormat.format(new Date(1)))
+  )) {
+    testNullRangeBoundary(StartingVersion("null"), end)
+  }
+
+  for (start <- Seq(StartingVersion("0"), StartingTimestamp(dateFormat.format(new Date(1))))) {
+    testNullRangeBoundary(start, EndingVersion("null"))
+  }
+
+  testNullRangeBoundary(StartingVersion("CAST(null AS INT)"), Unbounded)
 
   test("select individual column should push down filters") {
     val tblName = "tbl"
@@ -217,6 +247,83 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
     }
   }
 
+  test("negative case - non-constant expressions in version/timestamp argument") {
+    val tbl = "tbl"
+    val otherTbl = "other_tbl"
+    withTempDir { dir =>
+      withTable(tbl, otherTbl) {
+        spark.range(10).write.format("delta").option("path", dir.getAbsolutePath).saveAsTable(tbl)
+        spark.range(5).toDF("version").write.format("delta").saveAsTable(otherTbl)
+
+        // (query, expectedFunctionName, expectedParamName, expectedPos, sqlExprPattern)
+        val testCases = Seq(
+          // Scalar subquery as starting arg
+          (s"SELECT * FROM table_changes('$tbl', (SELECT MAX(version) FROM $otherTbl))",
+            "table_changes", "starting", 2, "scalarsubquery.*"),
+          // Scalar subquery as ending arg
+          (s"SELECT * FROM table_changes('$tbl', 0, (SELECT MAX(version) FROM $otherTbl))",
+            "table_changes", "ending", 3, "scalarsubquery.*"),
+          // Scalar subquery in table_changes_by_path
+          (s"SELECT * FROM table_changes_by_path('${dir.getAbsolutePath}'," +
+            s" (SELECT MAX(version) FROM $otherTbl))",
+            "table_changes_by_path", "starting", 2, "scalarsubquery.*"),
+          // Aggregate expression as starting arg
+          (s"SELECT * FROM table_changes('$tbl', MAX(1))",
+            "table_changes", "starting", 2, ".*[Mm]ax.*"),
+          // Aggregate expression as ending arg
+          (s"SELECT * FROM table_changes('$tbl', 0, MAX(1))",
+            "table_changes", "ending", 3, ".*[Mm]ax.*"),
+          // Aggregate expression in table_changes_by_path
+          (s"SELECT * FROM table_changes_by_path('${dir.getAbsolutePath}', MAX(1))",
+            "table_changes_by_path", "starting", 2, ".*[Mm]ax.*")
+        )
+
+        testCases.foreach { case (q, expectedFn, expectedParam, expectedPos, sqlExprPattern) =>
+          checkErrorMatchPVals(
+            intercept[AnalysisException] { sql(q) },
+            "DELTA_CDC_NON_CONSTANT_ARGUMENT",
+            parameters = Map(
+              "argumentName" -> s"`$expectedParam`",
+              "pos" -> expectedPos.toString,
+              "functionName" -> s"`$expectedFn`",
+              "sqlExpr" -> sqlExprPattern
+            )
+          )
+        }
+      }
+    }
+  }
+
+  test("negative case - table_changes in correlated subquery with OuterReference") {
+    // When table_changes() is used inside a correlated subquery with an expression that
+    // wraps an OuterReference (e.g. `o.version + 0`), the top-level node is not Unevaluable
+    // (Add is evaluable) but its child OuterReference is. The old isInstanceOf[Unevaluable]
+    // check on the top-level expression misses this case and .eval() throws INTERNAL_ERROR.
+    // We instead catch that SparkException and re-throw as DELTA_CDC_NON_CONSTANT_ARGUMENT.
+    val tbl = "tbl"
+    val otherTbl = "other_tbl"
+    withTable(tbl, otherTbl) {
+      spark.range(10).write.format("delta").saveAsTable(tbl)
+      spark.range(5).toDF("version").write.format("delta").saveAsTable(otherTbl)
+
+      val q = s"""
+        SELECT * FROM $otherTbl o WHERE EXISTS (
+          SELECT 1 FROM table_changes('$tbl', o.version + 0)
+        )
+      """
+      checkErrorMatchPVals(
+        intercept[AnalysisException] { sql(q) },
+        "DELTA_CDC_NON_CONSTANT_ARGUMENT",
+        parameters = Map(
+          "argumentName" -> "`starting`",
+          "pos" -> "2",
+          "functionName" -> "`table_changes`",
+          "sqlExpr" -> ".*"
+        )
+      )
+    }
+  }
+
   test("resolve expression for timestamp function") {
     val tbl = "tbl"
     withDefaultTimeZone(UTC) {
@@ -226,9 +333,15 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
         val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tbl))
 
         val currentTime = new Date().getTime
-        modifyDeltaTimestamp(deltaLog, 0, currentTime - 100000)
-        modifyDeltaTimestamp(deltaLog, 1, currentTime)
-        modifyDeltaTimestamp(deltaLog, 2, currentTime + 100000)
+        modifyCommitTimestamp(deltaLog, 0, currentTime - 100000)
+        modifyCommitTimestamp(deltaLog, 1, currentTime)
+        modifyCommitTimestamp(deltaLog, 2, currentTime + 100000)
+
+        // Make sure the snapshot used for the `table_changes` query is updated with the
+        // new timestamps. The ICT changes in un-backfilled commits will not trigger the real
+        // snapshot update, so we need to manually clear the cache and refresh the snapshot
+        // to ensure the new timestamps are used.
+        DeltaLog.clearCache()
 
         val readDf = sql(s"SELECT * FROM table_changes('$tbl', 0, now())")
         checkCDCAnswer(
@@ -302,6 +415,12 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
   }
 
   test("protocol version") {
+    if (catalogOwnedDefaultCreationEnabledInTests) {
+      cancel("This test is intended to test the protocol version of `ChangeDataFeedTableFeature`." +
+        "For CCv1.5 tables, the protocol version has different requirement and we already have " +
+        "the corresponding coverage in `CatalogOwnedEnablementSuite` and " +
+        "`CatalogOwnedPropertyEdgeSuite`.")
+    }
     withTable("tbl") {
       spark.range(10).write.format("delta").saveAsTable("tbl")
       val log = DeltaLog.forTable(spark, TableIdentifier(tableName = "tbl"))
@@ -343,4 +462,16 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
       }
     }
   }
+}
+
+class DeltaCDCSQLWithCatalogOwnedBatch1Suite extends DeltaCDCSQLSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class DeltaCDCSQLWithCatalogOwnedBatch2Suite extends DeltaCDCSQLSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+}
+
+class DeltaCDCSQLWithCatalogOwnedBatch100Suite extends DeltaCDCSQLSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }

@@ -24,36 +24,45 @@ class StringTypeSuite extends AnyFunSuite {
       (
         StringType.STRING,
         StringType.STRING,
-        true
-      ),
+        true),
       (
         StringType.STRING,
         new StringType("sPark.UTF8_bINary"),
-        true
-      ),
+        true),
       (
         StringType.STRING,
         new StringType("SPARK.UTF8_LCASE"),
-        false
-      ),
+        false),
       (
         new StringType("ICU.UNICODE"),
         new StringType("SPARK.UTF8_LCASE"),
-        false
-      ),
+        false),
       (
         new StringType("ICU.UNICODE"),
         new StringType("ICU.UNICODE_CI"),
-        false
-      ),
+        false),
       (
         new StringType("ICU.UNICODE_CI"),
         new StringType("icU.uniCODe_Ci"),
-        true
-      )
-    ).foreach {
+        true)).foreach {
       case (st1, st2, expResult) =>
         assert(st1.equals(st2) == expResult)
     }
+  }
+
+  test("isUTF8BinaryCollated") {
+    assert(StringType.STRING.isUTF8BinaryCollated)
+    assert(new StringType("sPark.UTF8_bINary").isUTF8BinaryCollated)
+    assert(!new StringType("SPARK.UTF8_LCASE").isUTF8BinaryCollated)
+    assert(!new StringType("ICU.UNICODE.72.2").isUTF8BinaryCollated)
+    assert(!new StringType("ICU.UNICODE_CI").isUTF8BinaryCollated)
+  }
+
+  test("toString") {
+    assert(StringType.STRING.toString == "string")
+    assert(new StringType("sPark.UTF8_bINary").toString == "string")
+    assert(new StringType("SPARK.UTF8_LCASE").toString == "string collate UTF8_LCASE")
+    assert(new StringType("ICU.uNICoDE.72.2").toString == "string collate UNICODE")
+    assert(new StringType("ICU.UNICODE_CI").toString == "string collate UNICODE_CI")
   }
 }

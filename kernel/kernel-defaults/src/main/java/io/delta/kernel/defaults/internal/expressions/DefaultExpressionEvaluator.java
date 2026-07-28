@@ -30,6 +30,7 @@ import io.delta.kernel.defaults.internal.data.vector.DefaultBooleanVector;
 import io.delta.kernel.defaults.internal.data.vector.DefaultConstantVector;
 import io.delta.kernel.engine.ExpressionHandler;
 import io.delta.kernel.expressions.*;
+import io.delta.kernel.internal.util.GeometryUtils;
 import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -236,7 +237,7 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
     ExpressionTransformResult visitCoalesce(ScalarExpression coalesce) {
       List<ExpressionTransformResult> children =
           coalesce.getChildren().stream().map(this::visit).collect(Collectors.toList());
-      if (children.size() == 0) {
+      if (children.isEmpty()) {
         throw unsupportedExpressionException(coalesce, "Coalesce requires at least one expression");
       }
       // TODO support least-common-type resolution
@@ -245,14 +246,37 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         throw unsupportedExpressionException(
             coalesce, "Coalesce is only supported for arguments of the same type");
       }
-      // TODO support other data types besides boolean (just needs tests)
-      if (!(children.get(0).outputType instanceof BooleanType)) {
-        throw unsupportedExpressionException(
-            coalesce, "Coalesce is only supported for boolean type expressions");
-      }
       return new ExpressionTransformResult(
           new ScalarExpression(
               "COALESCE", children.stream().map(e -> e.expression).collect(Collectors.toList())),
+          children.get(0).outputType);
+    }
+
+    @Override
+    ExpressionTransformResult visitAdd(ScalarExpression add) {
+      List<ExpressionTransformResult> children =
+          add.getChildren().stream().map(this::visit).collect(Collectors.toList());
+      if (children.size() != 2) {
+        throw unsupportedExpressionException(
+            add, "ADD requires exactly two arguments: left and right operands");
+      }
+      if (!children.get(0).outputType.equivalent(children.get(1).outputType)) {
+        throw unsupportedExpressionException(
+            add, "ADD is only supported for arguments of the same type");
+      }
+      if (!(children.get(0).outputType instanceof ByteType
+          || children.get(0).outputType instanceof ShortType
+          || children.get(0).outputType instanceof IntegerType
+          || children.get(0).outputType instanceof LongType
+          || children.get(0).outputType instanceof FloatType
+          || children.get(0).outputType instanceof DoubleType)) {
+        throw unsupportedExpressionException(
+            add, "ADD is only supported for numeric types: byte, short, int, long, float, double");
+      }
+
+      return new ExpressionTransformResult(
+          new ScalarExpression(
+              "ADD", Arrays.asList(children.get(0).expression, children.get(1).expression)),
           children.get(0).outputType);
     }
 
@@ -287,6 +311,18 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
     }
 
     @Override
+    ExpressionTransformResult visitSubstring(ScalarExpression substring) {
+      List<ExpressionTransformResult> children =
+          substring.getChildren().stream().map(this::visit).collect(toList());
+      ScalarExpression transformedExpression =
+          SubstringEvaluator.validateAndTransform(
+              substring,
+              children.stream().map(e -> e.expression).collect(toList()),
+              children.stream().map(e -> e.outputType).collect(toList()));
+      return new ExpressionTransformResult(transformedExpression, StringType.STRING);
+    }
+
+    @Override
     ExpressionTransformResult visitLike(final Predicate like) {
       List<ExpressionTransformResult> children =
           like.getChildren().stream().map(this::visit).collect(toList());
@@ -297,6 +333,64 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
               children.stream().map(e -> e.outputType).collect(toList()));
 
       return new ExpressionTransformResult(transformedExpression, BooleanType.BOOLEAN);
+    }
+
+    @Override
+    ExpressionTransformResult visitStartsWith(Predicate startsWith) {
+      List<ExpressionTransformResult> children =
+          startsWith.getChildren().stream().map(this::visit).collect(toList());
+      Predicate transformedExpression =
+          StartsWithExpressionEvaluator.validateAndTransform(
+              startsWith,
+              children.stream().map(e -> e.expression).collect(toList()),
+              children.stream().map(e -> e.outputType).collect(toList()));
+      return new ExpressionTransformResult(transformedExpression, BooleanType.BOOLEAN);
+    }
+
+    @Override
+    ExpressionTransformResult visitIn(In in) {
+      ExpressionTransformResult visitedValue = visit(in.getValueExpression());
+      List<ExpressionTransformResult> visitedInList =
+          in.getInListElements().stream().map(this::visit).collect(toList());
+      In transformedExpression =
+          InExpressionEvaluator.validateAndTransform(
+              in,
+              visitedValue.expression,
+              visitedValue.outputType,
+              visitedInList.stream().map(e -> e.expression).collect(toList()),
+              visitedInList.stream().map(e -> e.outputType).collect(toList()));
+      return new ExpressionTransformResult(transformedExpression, BooleanType.BOOLEAN);
+    }
+
+    @Override
+    ExpressionTransformResult visitStGeometryBoxesIntersectOnStats(Predicate predicate) {
+      List<ExpressionTransformResult> children =
+          predicate.getChildren().stream().map(this::visit).collect(Collectors.toList());
+      checkArgument(
+          children.size() == 4,
+          "ST_GEOMETRY_BOXES_INTERSECT_ON_STATS expects 4 children but got %d",
+          children.size());
+      // All 4 children must be GeometryType.
+      // Children 0,1 are stats columns, children 2,3 are query literals.
+      DataType child0Type = children.get(0).outputType;
+      checkArgument(
+          child0Type instanceof GeometryType,
+          "ST_GEOMETRY_BOXES_INTERSECT_ON_STATS child 0 must be " + "geometry type, got %s",
+          child0Type);
+      for (int i = 1; i < 4; i++) {
+        checkArgument(
+            child0Type.equals(children.get(i).outputType),
+            "ST_GEOMETRY_BOXES_INTERSECT_ON_STATS child %d type %s "
+                + "doesn't match child 0 type %s",
+            i,
+            children.get(i).outputType,
+            child0Type);
+      }
+      return new ExpressionTransformResult(
+          new Predicate(
+              "ST_GEOMETRY_BOXES_INTERSECT_ON_STATS",
+              children.stream().map(c -> c.expression).collect(Collectors.toList())),
+          BooleanType.BOOLEAN);
     }
 
     private Predicate validateIsPredicate(
@@ -315,6 +409,20 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
       ExpressionTransformResult rightResult = visit(getRight(predicate));
       Expression left = leftResult.expression;
       Expression right = rightResult.expression;
+
+      if (predicate.getCollationIdentifier().isPresent()) {
+        CollationIdentifier collationIdentifier = predicate.getCollationIdentifier().get();
+        checkIsUTF8BinaryCollation(predicate, collationIdentifier);
+
+        for (DataType dataType : Arrays.asList(leftResult.outputType, rightResult.outputType)) {
+          checkIsStringType(
+              dataType,
+              predicate,
+              format("Predicate %s expects STRING type inputs", predicate.getName()));
+        }
+        return new Predicate(predicate.getName(), left, right, collationIdentifier);
+      }
+
       if (!leftResult.outputType.equivalent(rightResult.outputType)) {
         if (canCastTo(leftResult.outputType, rightResult.outputType)) {
           left = new ImplicitCastExpression(left, rightResult.outputType);
@@ -478,7 +586,9 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
           || dataType instanceof DecimalType
           || dataType instanceof DateType
           || dataType instanceof TimestampType
-          || dataType instanceof TimestampNTZType) {
+          || dataType instanceof TimestampNTZType
+          || dataType instanceof GeometryType
+          || dataType instanceof GeographyType) {
         return new DefaultConstantVector(dataType, input.getSize(), literal.getValue());
       }
 
@@ -566,6 +676,49 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
     }
 
     @Override
+    ColumnVector visitAdd(ScalarExpression add) {
+      List<ColumnVector> childResults =
+          add.getChildren().stream().map(this::visit).collect(toList());
+
+      // NOTE: The current implementation only supports operands of the same type, and it does not
+      // check for overflows (i.e., values will wrap around when overflowing).
+      return DefaultExpressionUtils.arithmeticVector(
+          childResults.get(0),
+          childResults.get(1),
+          new ArithmeticOperator() {
+            @Override
+            public byte apply(byte a, byte b) {
+              return (byte) (a + b);
+            }
+
+            @Override
+            public short apply(short a, short b) {
+              return (short) (a + b);
+            }
+
+            @Override
+            public int apply(int a, int b) {
+              return a + b;
+            }
+
+            @Override
+            public long apply(long a, long b) {
+              return a + b;
+            }
+
+            @Override
+            public float apply(float a, float b) {
+              return a + b;
+            }
+
+            @Override
+            public double apply(double a, double b) {
+              return a + b;
+            }
+          });
+    }
+
+    @Override
     ColumnVector visitTimeAdd(ScalarExpression timeAdd) {
       ColumnVector timestampColumn = visit(timeAdd.getChildren().get(0));
       ColumnVector durationVector = visit(timeAdd.getChildren().get(1));
@@ -604,10 +757,60 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
     }
 
     @Override
+    ColumnVector visitSubstring(ScalarExpression subString) {
+      return SubstringEvaluator.eval(
+          subString.getChildren().stream().map(this::visit).collect(toList()));
+    }
+
+    @Override
     ColumnVector visitLike(final Predicate like) {
       List<Expression> children = like.getChildren();
       return LikeExpressionEvaluator.eval(
           children, children.stream().map(this::visit).collect(toList()));
+    }
+
+    @Override
+    ColumnVector visitStartsWith(Predicate startsWith) {
+      return StartsWithExpressionEvaluator.eval(
+          startsWith.getChildren().stream().map(this::visit).collect(toList()));
+    }
+
+    @Override
+    ColumnVector visitIn(In in) {
+      return InExpressionEvaluator.eval(
+          in.getChildren().stream().map(this::visit).collect(toList()));
+    }
+
+    @Override
+    ColumnVector visitStGeometryBoxesIntersectOnStats(Predicate predicate) {
+      List<Expression> children = predicate.getChildren();
+      ColumnVector leftMin = visit(children.get(0));
+      ColumnVector leftMax = visit(children.get(1));
+      ColumnVector rightMin = visit(children.get(2));
+      ColumnVector rightMax = visit(children.get(3));
+      int numRows = input.getSize();
+      boolean[] result = new boolean[numRows];
+      boolean[] nullability = new boolean[numRows];
+      for (int rowId = 0; rowId < numRows; rowId++) {
+        if (leftMin.isNullAt(rowId)
+            || leftMax.isNullAt(rowId)
+            || rightMin.isNullAt(rowId)
+            || rightMax.isNullAt(rowId)) {
+          nullability[rowId] = true;
+          continue;
+        }
+        double[] lMin = GeometryUtils.parsePointXY(leftMin.getString(rowId));
+        double[] lMax = GeometryUtils.parsePointXY(leftMax.getString(rowId));
+        double[] rMin = GeometryUtils.parsePointXY(rightMin.getString(rowId));
+        double[] rMax = GeometryUtils.parsePointXY(rightMax.getString(rowId));
+        result[rowId] = boxesIntersect(lMin, lMax, rMin, rMax);
+      }
+      return new DefaultBooleanVector(numRows, Optional.of(nullability), result);
+    }
+
+    private static boolean boxesIntersect(
+        double[] lMin, double[] lMax, double[] rMin, double[] rMax) {
+      return lMax[0] >= rMin[0] && rMax[0] >= lMin[0] && lMax[1] >= rMin[1] && rMax[1] >= lMin[1];
     }
 
     /**

@@ -26,16 +26,11 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.{col, lit}
 
 trait RowTrackingMergeSuiteBase extends RowIdTestUtils
+  with DeltaDMLTestUtils
   with MergeHelpers {
   import testImplicits._
 
-  protected def dvsEnabled: Boolean = true
-  protected def cdfEnabled: Boolean = false
-
   protected val SOURCE_TABLE_NAME = "source"
-  protected val TARGET_TABLE_NAME = "target"
-
-  private val MANAGED_TABLE_NAMES = Seq(SOURCE_TABLE_NAME, TARGET_TABLE_NAME)
 
   protected val numRows = 4000
   protected val numUnmatchedRows = 2000
@@ -48,7 +43,7 @@ trait RowTrackingMergeSuiteBase extends RowIdTestUtils
       .write.format("delta").saveAsTable(tableName)
   }
 
-  override protected def beforeAll(): Unit = {
+  override def beforeAll(): Unit = {
     super.beforeAll()
     spark.conf.set(DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey, value = "true")
 
@@ -56,37 +51,26 @@ trait RowTrackingMergeSuiteBase extends RowIdTestUtils
   }
 
   override protected def afterAll(): Unit = {
-    for (table <- MANAGED_TABLE_NAMES) {
-      sql(s"DROP TABLE IF EXISTS $table")
-    }
+    sql(s"DROP TABLE IF EXISTS $SOURCE_TABLE_NAME")
   }
 
   protected def withTestTable(
-      tableName: String,
       partitionedTarget: Boolean,
       lastModifiedVersion: Long = 0L)(f: => Unit): Unit = {
-    withTable(tableName) {
-      val targetCreationDF = spark.range(end = numRows)
-        .toDF("key")
-        .withColumn("stored_id", col("key"))
-        .withColumn("last_modified_version", lit(lastModifiedVersion))
+    val targetCreationDF = spark.range(end = numRows)
+      .toDF("key")
+      .withColumn("stored_id", col("key"))
+      .withColumn("last_modified_version", lit(lastModifiedVersion))
 
-      val clusteredTargetCreationWriter =
-        if (partitionedTarget) {
-          targetCreationDF
-            .withColumn("partition", lit(0))
-            .repartition(numPartitions = 2)
-            .write
-            .partitionBy("partition")
-        } else {
-          targetCreationDF
-            .repartition(numPartitions = 2)
-            .write
-        }
-      clusteredTargetCreationWriter.format("delta").saveAsTable(tableName)
-
-      f
+    if (partitionedTarget) {
+      append(targetCreationDF
+        .withColumn("partition", lit(0))
+        .repartition(numPartitions = 2), Seq("partition"))
+    } else {
+      append(targetCreationDF.repartition(numPartitions = 2))
     }
+
+    f
   }
 
   protected def executeMerge(
@@ -124,17 +108,18 @@ trait RowTrackingMergeSuiteBase extends RowIdTestUtils
    *
    * Tests also include CDF validation, which only works if 'key' is not changed in update clauses.
    */
-  protected def rowTrackingMergeTests(name: String)(
-    partitionedTarget: Boolean = false,
-    targetAsView: Boolean = false,
-    source: Option[String] = None,
-    targetTablePostSetupAction: Option[() => Unit] = None,
-    sqlConfs: Seq[(String, String)] = Seq.empty)(
-    clauses: MergeClause*)(
-    expected: Seq[Row],
-    numFilesAfterMerge: Option[Int] = None): Unit = {
+  protected def rowTrackingMergeTests(
+      name: String)(
+      partitionedTarget: Boolean = false,
+      targetAsView: Boolean = false,
+      source: => Option[String] = None,
+      targetTablePostSetupAction: Option[() => Unit] = None,
+      sqlConfs: Seq[(String, String)] = Seq.empty)(
+      clauses: MergeClause*)(
+      expected: Seq[Row],
+      numFilesAfterMerge: Option[Int] = None): Unit = {
     test(name) {
-      withTestTable(TARGET_TABLE_NAME, partitionedTarget) {
+      withTestTable(partitionedTarget) {
         // Post setup actions can be used to modify the target table, for example by inserting
         // more rows into it.
         targetTablePostSetupAction.foreach(_.apply())
@@ -150,13 +135,12 @@ trait RowTrackingMergeSuiteBase extends RowIdTestUtils
         }
 
         val targetReference = if (targetAsView) {
-          sql(s"CREATE TEMPORARY VIEW target_view AS SELECT * FROM $TARGET_TABLE_NAME")
+          sql(s"CREATE TEMPORARY VIEW target_view AS SELECT * FROM $tableSQLIdentifier")
           "target_view"
         } else {
-          TARGET_TABLE_NAME
+          tableSQLIdentifier
         }
 
-        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(TARGET_TABLE_NAME))
         withSQLConf(sqlConfs: _*) {
           checkRowTrackingMarkedAsPreservedForCommit(deltaLog) {
             checkFileActionInvariantBeforeAndAfterOperation(deltaLog) {
@@ -167,25 +151,38 @@ trait RowTrackingMergeSuiteBase extends RowIdTestUtils
           }
         }
 
-        checkAnswer(sql(s"SELECT key, last_modified_version FROM $TARGET_TABLE_NAME"), expected)
+        checkAnswer(sql(s"SELECT key, last_modified_version FROM $tableSQLIdentifier"), expected)
 
         validateRowIdsPostMerge(preMergeRowIdMapping)
         validateRowCommitVersionsPostMerge()
 
         if (numFilesAfterMerge.isDefined) {
-          assert(targetTableFiles().count() === numFilesAfterMerge.get,
-            s"Expected ${numFilesAfterMerge.get} but got ${targetTableFiles().collect().mkString}")
+          val targetTableFiles = deltaLog.update().allFiles
+          assert(targetTableFiles.count() === numFilesAfterMerge.get,
+            s"Expected ${numFilesAfterMerge.get} but got ${targetTableFiles.collect().mkString}")
         }
 
+        val cdfEnabled = spark.conf
+          .getOption(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey)
+          .contains("true")
         if (cdfEnabled && targetTablePostSetupAction.isEmpty) {
           assert(deltaLog.update().version === 1, "Table has been modified more than once.")
 
+          // The tableIdentifier will be overridden as a path identifier if a class/trait also mixes
+          // in DeltaDMLTestUtilsPathBased. So we need a check to ensure it's a name identifier
+          // before using it to get the catalog table.
+          val catalogTableOpt = if (DeltaTableIdentifier.isDeltaPath(spark, tableIdentifier)) {
+            None
+          } else {
+            Some(spark.sessionState.catalog.getTableMetadata(tableIdentifier))
+          }
           // Only read CDF from version 1 (the version after the MERGE)
           val cdfResult = CDCReader.changesToBatchDF(
               deltaLog,
               start = 1,
               end = 1,
               spark,
+              catalogTableOpt,
               useCoarseGrainedCDC = true)
               .select("stored_id",
                 "key",
@@ -195,13 +192,13 @@ trait RowTrackingMergeSuiteBase extends RowIdTestUtils
 
           val initialTableDf = spark.read.format("delta")
             .option("versionAsOf", 0)
-            .table(TARGET_TABLE_NAME)
+            .table(tableSQLIdentifier)
             .select("*", "_metadata.row_id")
             .alias("initial")
 
           val postMergeTableDf = spark.read.format("delta")
             .option("versionAsOf", 1)
-            .table(TARGET_TABLE_NAME)
+            .table(tableSQLIdentifier)
             .select("*", "_metadata.row_id")
             .alias("postMerge")
 
@@ -276,7 +273,7 @@ trait RowTrackingMergeSuiteBase extends RowIdTestUtils
    * @return A Map of stored_id to row_id before the merge operation.
    */
   protected def getPreMergeRowIdMapping: Map[Long, Long] = {
-    spark.table(TARGET_TABLE_NAME)
+    spark.table(tableSQLIdentifier)
       .select("stored_id", RowId.QUALIFIED_COLUMN_NAME)
       .as[(Long, Long)]
       .collect()
@@ -299,7 +296,7 @@ trait RowTrackingMergeSuiteBase extends RowIdTestUtils
   def validateRowIdsPostMerge(preMergeRowIdMapping: Map[Long, Long]): Unit = {
     val highestRowIdPreMerge = preMergeRowIdMapping.values.max
 
-    val rowsAfterMerge = spark.read.table(TARGET_TABLE_NAME)
+    val rowsAfterMerge = spark.read.table(tableSQLIdentifier)
       .select("stored_id", RowId.QUALIFIED_COLUMN_NAME)
       .as[(Long, Long)]
       .collect()
@@ -331,7 +328,7 @@ trait RowTrackingMergeSuiteBase extends RowIdTestUtils
    * the merge operation.
    */
   def validateRowCommitVersionsPostMerge(): Unit = {
-    val rowsAfterMerge = spark.read.table(TARGET_TABLE_NAME)
+    val rowsAfterMerge = spark.read.table(tableSQLIdentifier)
       .select("stored_id", "last_modified_version", RowCommitVersion.QUALIFIED_COLUMN_NAME)
       .as[(Long, Long, Long)]
       .collect()
@@ -340,11 +337,6 @@ trait RowTrackingMergeSuiteBase extends RowIdTestUtils
       assert(rowCommitVersion === lastModifiedVersion,
         s"row commit version does not match for row with stored_id $storedId")
     }
-  }
-
-  private def targetTableFiles(): Dataset[AddFile] = {
-    val targetTableIdentifier = TableIdentifier(TARGET_TABLE_NAME)
-    DeltaLog.forTableWithSnapshot(spark, targetTableIdentifier)._2.allFiles
   }
 }
 
@@ -392,10 +384,9 @@ trait RowTrackingMergeCommonTests extends RowTrackingMergeSuiteBase {
   rowTrackingMergeTests("UPDATE only with source rows matching multiple target rows")(
     // Duplicate all target rows.
     targetTablePostSetupAction = Some(() => {
-      spark.read.table(TARGET_TABLE_NAME)
+      append(spark.read.table(tableSQLIdentifier)
         .withColumn("stored_id", col("stored_id") + numRows)
-        .withColumn("last_modified_version", lit(1L))
-        .write.mode("append").format("delta").saveAsTable(TARGET_TABLE_NAME) }))(
+        .withColumn("last_modified_version", lit(1L))) }))(
     clauses = update("t.last_modified_version = 2"))(
     // Updated 'key' and 'last_modified_version' for matched rows.
     expected = (0 until numUnmatchedRows).flatMap(id => Seq(Row(id, 0L), Row(id, 1L)))
@@ -405,10 +396,9 @@ trait RowTrackingMergeCommonTests extends RowTrackingMergeSuiteBase {
   rowTrackingMergeTests("DELETE only with source rows matching multiple target rows")(
     // Duplicate all target rows.
     targetTablePostSetupAction = Some(() => {
-      spark.read.table(TARGET_TABLE_NAME)
+      append(spark.read.table(tableSQLIdentifier)
         .withColumn("stored_id", col("stored_id") + numRows)
-        .withColumn("last_modified_version", lit(1L))
-        .write.mode("append").format("delta").saveAsTable(TARGET_TABLE_NAME) }))(
+        .withColumn("last_modified_version", lit(1L))) }))(
     clauses = delete())(
     // Deleted all matches (2 target rows per source row).
     expected = (0 until numUnmatchedRows).flatMap(id => Seq(Row(id, 0L), Row(id, 1L)))
@@ -445,7 +435,8 @@ trait RowTrackingMergeCommonTests extends RowTrackingMergeSuiteBase {
   )
 
   rowTrackingMergeTests("Source and target referencing to the same table")(
-    source = Some(s"(SELECT key, stored_id, 1L as last_modified_version FROM $TARGET_TABLE_NAME)"))(
+    source = Some(
+      s"(SELECT key, stored_id, 1L as last_modified_version FROM $tableSQLIdentifier)"))(
     clauses = update("*"))(
     // All rows updated.
     expected = (0 until numRows).map(Row(_, 1L))
@@ -455,48 +446,42 @@ trait RowTrackingMergeCommonTests extends RowTrackingMergeSuiteBase {
     val numMerges = 5
     require(numMerges <= numUnmatchedRows)
 
-    withTable(TARGET_TABLE_NAME) {
-      // Create the target table using half the rows from the source table.
-      spark.table(SOURCE_TABLE_NAME)
-        .withColumn("last_modified_version", lit(0L))
-        .filter("key % 2 = 0")
-        .repartition(numPartitions = 2)
-        .write
-        .format("delta")
-        .saveAsTable(TARGET_TABLE_NAME)
+    // Create the target table using half the rows from the source table.
+    append(spark.table(SOURCE_TABLE_NAME)
+      .withColumn("last_modified_version", lit(0L))
+      .filter("key % 2 = 0")
+      .repartition(numPartitions = 2))
 
-      val preMergeRowIdMapping = getPreMergeRowIdMapping
+    val preMergeRowIdMapping = getPreMergeRowIdMapping
 
-      // Give the target the same rows as the source table, one row at a time.
-      for (i <- 0 until numMerges) {
-        executeMerge(
-          TARGET_TABLE_NAME,
-          sourceReference = s"(SELECT ${numUnmatchedRows + i} AS key)",
-          clauses =
-            update(s"last_modified_version = ${i + 1}"),
-            insert(s"(key, stored_id, last_modified_version) VALUES (key, key, ${i + 1})"))
-      }
-
-      checkAnswer(sql(s"SELECT key, last_modified_version FROM $TARGET_TABLE_NAME"),
-        // Updated rows.
-        (0 until numMerges).map(i => Row(numUnmatchedRows + i, i + 1))
-          // Untouched rows.
-          ++ (numUnmatchedRows + numMerges + 1).until(numRows + numUnmatchedRows, step = 2)
-            .map(Row(_, 0L))
-      )
-
-      validateRowIdsPostMerge(preMergeRowIdMapping)
-      validateRowCommitVersionsPostMerge()
+    // Give the target the same rows as the source table, one row at a time.
+    for (i <- 0 until numMerges) {
+      executeMerge(
+        tableSQLIdentifier,
+        sourceReference = s"(SELECT ${numUnmatchedRows + i} AS key)",
+        clauses =
+          update(s"last_modified_version = ${i + 1}"),
+          insert(s"(key, stored_id, last_modified_version) VALUES (key, key, ${i + 1})"))
     }
+
+    checkAnswer(sql(s"SELECT key, last_modified_version FROM $tableSQLIdentifier"),
+      // Updated rows.
+      (0 until numMerges).map(i => Row(numUnmatchedRows + i, i + 1))
+        // Untouched rows.
+        ++ (numUnmatchedRows + numMerges + 1).until(numRows + numUnmatchedRows, step = 2)
+          .map(Row(_, 0L))
+    )
+
+    validateRowIdsPostMerge(preMergeRowIdMapping)
+    validateRowCommitVersionsPostMerge()
   }
 
   test("Row tracking marked as not preserved when row tracking disabled") {
     withRowTrackingEnabled(enabled = false) {
-      withTestTable(TARGET_TABLE_NAME, partitionedTarget = false) {
-        val log = DeltaLog.forTable(spark, TableIdentifier(TARGET_TABLE_NAME))
-        assert(!rowTrackingMarkedAsPreservedForCommit(log)(
+      withTestTable(partitionedTarget = false) {
+        assert(!rowTrackingMarkedAsPreservedForCommit(deltaLog)(
           executeMerge(
-            TARGET_TABLE_NAME,
+            tableSQLIdentifier,
             SOURCE_TABLE_NAME,
             clauses = update("*"), insert("*"))))
       }
@@ -504,40 +489,38 @@ trait RowTrackingMergeCommonTests extends RowTrackingMergeSuiteBase {
   }
 
   test("schema evolution, extra nested column in source - update") {
-    withTable(TARGET_TABLE_NAME) {
-      import testImplicits._
-      val targetData = Seq((0L, 0L, 0L, (1, 10)), (1L, 1L, 0L, (2, 2000)))
-        .toDF("key", "stored_id", "last_modified_version", "x")
-        .selectExpr(
-          "key",
-          "stored_id",
-          "last_modified_version",
-          "named_struct('a', x._1, 'c', x._2) as x")
-      targetData.repartition(1).write.format("delta").saveAsTable(TARGET_TABLE_NAME)
+    import testImplicits._
+    val targetData = Seq((0L, 0L, 0L, (1, 10)), (1L, 1L, 0L, (2, 2000)))
+      .toDF("key", "stored_id", "last_modified_version", "x")
+      .selectExpr(
+        "key",
+        "stored_id",
+        "last_modified_version",
+        "named_struct('a', x._1, 'c', x._2) as x")
+    append(targetData.repartition(1))
 
-      val sourceData = Seq((0L, 0L, 1L, (10, 100, 10000)))
-        .toDF("key", "stored_id", "last_modified_version", "x")
-        .selectExpr(
-          "key",
-          "stored_id",
-          "last_modified_version",
-          "named_struct('a', x._1, 'b', x._2, 'c', x._3) as x")
+    val sourceData = Seq((0L, 0L, 1L, (10, 100, 10000)))
+      .toDF("key", "stored_id", "last_modified_version", "x")
+      .selectExpr(
+        "key",
+        "stored_id",
+        "last_modified_version",
+        "named_struct('a', x._1, 'b', x._2, 'c', x._3) as x")
 
-      val preMergeRowIdMapping = getPreMergeRowIdMapping
-      withTempView("src") {
-        sourceData.createOrReplaceTempView("src")
-        withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
-          executeMerge(
-            TARGET_TABLE_NAME,
-            sourceReference = "src",
-            clauses = update("*"))
-        }
+    val preMergeRowIdMapping = getPreMergeRowIdMapping
+    withTempView("src") {
+      sourceData.createOrReplaceTempView("src")
+      withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
+        executeMerge(
+          tableSQLIdentifier,
+          sourceReference = "src",
+          clauses = update("*"))
       }
-      checkAnswer(sql(s"SELECT stored_id, last_modified_version FROM $TARGET_TABLE_NAME"),
-        Seq(Row(0L, 1L), Row(1L, 0L)))
-      validateRowIdsPostMerge(preMergeRowIdMapping)
-      validateRowCommitVersionsPostMerge()
     }
+    checkAnswer(sql(s"SELECT stored_id, last_modified_version FROM $tableSQLIdentifier"),
+      Seq(Row(0L, 1L), Row(1L, 0L)))
+    validateRowIdsPostMerge(preMergeRowIdMapping)
+    validateRowCommitVersionsPostMerge()
   }
 
   test("MERGE preserves Row Tracking on tables enabled using backfill") {
@@ -547,17 +530,16 @@ trait RowTrackingMergeCommonTests extends RowTrackingMergeSuiteBase {
         createSourceTable(SOURCE_TABLE_NAME_FOR_BACKFILL_TEST, lastModifiedVersion = 4L)
 
         withRowTrackingEnabled(enabled = false) {
-          withTestTable(TARGET_TABLE_NAME, partitionedTarget = false, lastModifiedVersion = 2L) {
-            val (log, snapshot) =
-              DeltaLog.forTableWithSnapshot(spark, TableIdentifier(TARGET_TABLE_NAME))
+          withTestTable(partitionedTarget = false, lastModifiedVersion = 2L) {
+            val snapshot = deltaLog.update()
             assert(!RowTracking.isEnabled(snapshot.protocol, snapshot.metadata))
             validateSuccessfulBackfillMetrics(expectedNumSuccessfulBatches = 1) {
-              triggerBackfillOnTestTableUsingAlterTable(TARGET_TABLE_NAME, numRows, log)
+              triggerBackfillOnTestTableUsingAlterTable(tableSQLIdentifier, numRows, deltaLog)
             }
             val preMergeRowIdMapping = getPreMergeRowIdMapping
 
             executeMerge(
-              TARGET_TABLE_NAME,
+              tableSQLIdentifier,
               SOURCE_TABLE_NAME_FOR_BACKFILL_TEST,
               clauses = update("*"), insert("*"))
 
@@ -570,64 +552,11 @@ trait RowTrackingMergeCommonTests extends RowTrackingMergeSuiteBase {
   }
 }
 
-trait RowTrackingMergeDVTests extends RowTrackingMergeSuiteBase
+trait RowTrackingMergeDVMixin extends RowTrackingMergeSuiteBase
   with DeletionVectorsTestUtils {
 
-  override protected def dvsEnabled: Boolean = true
-
-  override protected def beforeAll(): Unit = {
+  override def beforeAll(): Unit = {
     super.beforeAll()
     enableDeletionVectors(spark, delete = true, update = true, merge = true)
   }
 }
-
-trait RowTrackingMergeCDFTests extends RowTrackingMergeSuiteBase {
-
-  override def cdfEnabled: Boolean = true
-
-  override protected def beforeAll(): Unit = {
-    super.beforeAll()
-    spark.conf.set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, value = true)
-  }
-}
-
-trait RowTrackingMergeWithoutDVTests extends RowTrackingMergeCommonTests {
-
-  override protected def dvsEnabled: Boolean = false
-
-  override protected def beforeAll(): Unit = {
-    super.beforeAll()
-    spark.conf.set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey,
-      value = "false")
-    spark.conf.set(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key, value = false)
-  }
-}
-
-class RowTrackingMergeSuite extends RowTrackingMergeCommonTests
-
-class RowTrackingMergeDVSuite extends RowTrackingMergeSuite
-  with RowTrackingMergeDVTests
-
-class RowTrackingMergeCDFSuite extends RowTrackingMergeSuite
-  with RowTrackingMergeCDFTests
-
-class RowTrackingMergeCDFDVSuite extends RowTrackingMergeSuite
-  with RowTrackingMergeDVTests with RowTrackingMergeCDFTests
-
-class RowTrackingMergeWithoutDVSuite extends RowTrackingMergeCommonTests
-  with RowTrackingMergeWithoutDVTests
-
-class RowTrackingMergeWithoutDVCDFSuite extends RowTrackingMergeCommonTests
-  with RowTrackingMergeWithoutDVTests with RowTrackingMergeCDFTests
-
-class RowTrackingMergeColumnNameMappingSuite extends RowTrackingMergeCommonTests
-  with DeltaColumnMappingEnableNameMode
-
-class RowTrackingMergeColumnIdMappingSuite extends RowTrackingMergeCommonTests
-  with DeltaColumnMappingEnableIdMode
-
-class RowTrackingMergeColumnNameMappingCDFDVSuite extends RowTrackingMergeCommonTests
-  with DeltaColumnMappingEnableNameMode with RowTrackingMergeDVTests with RowTrackingMergeCDFTests
-
-class RowTrackingMergeColumnIdMappingCDFDVSuite extends RowTrackingMergeCommonTests
-  with DeltaColumnMappingEnableIdMode with RowTrackingMergeDVTests with RowTrackingMergeCDFTests

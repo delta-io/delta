@@ -20,6 +20,7 @@ import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, Snapshot}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 
+import org.apache.spark.sql.catalyst.expressions.variant.VariantExpressionEvalUtils
 import org.apache.spark.sql.connector.expressions.FieldReference
 import org.apache.spark.sql.types.{DataType, StructType}
 
@@ -40,11 +41,20 @@ object ClusteringColumn {
     val physicalNameParts = logicalNameParts.foldLeft[(DataType, Seq[String])]((schema, Nil)) {
       (partial, namePart) =>
         val (currStructType, currPhysicalNameSeq) = partial
-        val field = currStructType.asInstanceOf[StructType].find(
-          field => resolver(field.name, namePart)) match {
-          case Some(f) => f
-          case None =>
+        val field = currStructType match {
+          case fieldType: StructType =>
+            fieldType.find(field => resolver(field.name, namePart)) match {
+              case Some(f) => f
+              case None =>
+                throw DeltaErrors.columnNotInSchemaException(logicalName, schema)
+            }
+          case _ =>
             throw DeltaErrors.columnNotInSchemaException(logicalName, schema)
+        }
+        // Variant columns cannot be used as clustering columns because they are not orderable.
+        if (VariantExpressionEvalUtils.typeContainsVariant(field.dataType)) {
+          throw DeltaErrors.clusteringColumnUnsupportedDataTypes(
+            s"$logicalName : ${field.dataType.sql}")
         }
         (field.dataType, currPhysicalNameSeq :+ DeltaColumnMapping.getPhysicalName(field))
     }._2

@@ -13,6 +13,8 @@
       - [Sidecar Files](#sidecar-files)
     - [Log Compaction Files](#log-compaction-files)
     - [Last Checkpoint File](#last-checkpoint-file)
+    - [Version Checksum File](#version-checksum-file)
+      - [File Size Histogram Schema](#file-size-histogram-schema)
   - [Actions](#actions)
     - [Change Metadata](#change-metadata)
       - [Format Specification](#format-specification)
@@ -60,7 +62,32 @@
   - [Reader Requirements for Vacuum Protocol Check](#reader-requirements-for-vacuum-protocol-check)
 - [Clustered Table](#clustered-table)
   - [Writer Requirements for Clustered Table](#writer-requirements-for-clustered-table)
-- [Requirements for Writers](#requirements-for-writers)
+- [Variant Data Type](#variant-data-type)
+  - [Variant data in Parquet](#variant-data-in-parquet)
+  - [Writer Requirements for Variant Type](#writer-requirements-for-variant-type)
+  - [Reader Requirements for Variant Data Type](#reader-requirements-for-variant-data-type)
+  - [Compatibility with other Delta Features](#compatibility-with-other-delta-features)
+- [Variant Shredding](#variant-shredding)
+  - [Shredded Variant data in Parquet](#shredded-variant-data-in-parquet)
+  - [Writer Requirements for Variant Shredding](#writer-requirements-for-variant-shredding)
+  - [Reader Requirements for Variant Shredding](#reader-requirements-for-variant-shredding)
+- [Catalog-managed tables](#catalog-managed-tables)
+  - [Terminology: Commits](#terminology-commits)
+  - [Terminology: Delta Client](#terminology-delta-client)
+  - [Terminology: Catalogs](#terminology-catalogs)
+  - [Catalog Responsibilities](#catalog-responsibilities)
+  - [Reading Catalog-managed Tables](#reading-catalog-managed-tables)
+  - [Commit Protocol](#commit-protocol)
+  - [Getting Ratified Commits from the Catalog](#getting-ratified-commits-from-the-catalog)
+  - [Publishing Commits](#publishing-commits)
+  - [Maintenance Operations on Catalog-managed Tables](#maintenance-operations-on-catalog-managed-tables)
+  - [Creating and Dropping Catalog-managed Tables](#creating-and-dropping-catalog-managed-tables)
+  - [Catalog-managed Table Enablement](#catalog-managed-table-enablement)
+  - [Writer Requirements for Catalog-managed tables](#writer-requirements-for-catalog-managed-tables)
+  - [Reader Requirements for Catalog-managed tables](#reader-requirements-for-catalog-managed-tables)
+  - [Table Discovery](#table-discovery)
+  - [Sample Catalog Client API](#sample-catalog-client-api)
+- [Additional Requirements for Writers](#additional-requirements-for-writers)
   - [Creation of New Log Entries](#creation-of-new-log-entries)
   - [Consistency Between Table Metadata and Data Files](#consistency-between-table-metadata-and-data-files)
   - [Delta Log Entries](#delta-log-entries-1)
@@ -86,18 +113,22 @@
   - [Writer Version Requirements](#writer-version-requirements)
 - [Requirements for Readers](#requirements-for-readers)
   - [Reader Version Requirements](#reader-version-requirements)
+- [Table Properties](#table-properties)
 - [Appendix](#appendix)
   - [Valid Feature Names in Table Features](#valid-feature-names-in-table-features)
   - [Deletion Vector Format](#deletion-vector-format)
     - [Deletion Vector File Storage Format](#deletion-vector-file-storage-format)
   - [Per-file Statistics](#per-file-statistics)
+    - [Statistics for Variant Columns](#statistics-for-variant-columns)
   - [Partition Value Serialization](#partition-value-serialization)
   - [Schema Serialization Format](#schema-serialization-format)
     - [Primitive Types](#primitive-types)
+      - [Void Type](#void-type)
     - [Struct Type](#struct-type)
     - [Struct Field](#struct-field)
     - [Array Type](#array-type)
     - [Map Type](#map-type)
+    - [Variant Type](#variant-type)
     - [Column Metadata](#column-metadata)
     - [Example](#example)
   - [Checkpoint Schema](#checkpoint-schema)
@@ -143,17 +174,20 @@ The state of a table at a given version is called a _snapshot_ and is defined by
 ## File Types
 A Delta table is stored within a directory and is composed of the following different types of files.
 
-Here is an example of a Delta table with three entries in the commit log, stored in the directory `mytable`.
+Here is an example of a Delta table with four entries in the commit log, stored in the directory `mytable`.
 ```
-/mytable/_delta_log/00000000000000000000.json
-/mytable/_delta_log/00000000000000000001.json
-/mytable/_delta_log/00000000000000000003.json
-/mytable/_delta_log/00000000000000000003.checkpoint.parquet
+/mytable/_delta_log/00000000000000000042.json
+/mytable/_delta_log/00000000000000000042.checkpoint.parquet
+/mytable/_delta_log/00000000000000000043.json
+/mytable/_delta_log/00000000000000000044.json
+/mytable/_delta_log/00000000000000000045.json
 /mytable/_delta_log/_last_checkpoint
 /mytable/_change_data/cdc-00000-924d9ac7-21a9-4121-b067-a0a6517aa8ed.c000.snappy.parquet
 /mytable/part-00000-3935a07c-416b-4344-ad97-2a38342ee2fc.c000.snappy.parquet
 /mytable/deletion_vector-0c6cbaaf-5e04-4c9d-8959-1088814f58ef.bin
 ```
+
+This example represents a table after [metadata cleanup](#metadata-cleanup) has removed older log entries. The checkpoint at version 42 contains the complete table state, while versions 43-45 are subsequent commits. Each file type is described in the sections below.
 
 ### Data Files
 Data files can be stored in the root directory of the table or in any non-hidden subdirectory (i.e., one whose name does not start with an `_`).
@@ -178,18 +212,55 @@ _change_type|`String`| `insert`, `update_preimage` , `update_postimage`, `delete
 __(1)__ `preimage` is the value before the update, `postimage` is the value after the update.
 
 ### Delta Log Entries
-Delta files are stored as JSON in a directory at the root of the table named `_delta_log`, and together with checkpoints make up the log of all changes that have occurred to a table.
 
-Delta files are the unit of atomicity for a table, and are named using the next available version number, zero-padded to 20 digits.
+Delta Log Entries, also known as Delta files, are JSON files stored in the `_delta_log`
+directory at the root of the table. Together with checkpoints, they make up the log of all changes
+that have occurred to a table. Delta files are the unit of atomicity for a table, and are named
+using the next available version number, zero-padded to 20 digits.
 
 For example:
 
 ```
 ./_delta_log/00000000000000000000.json
 ```
-Delta files use new-line delimited JSON format, where every action is stored as a single line JSON document.
-A delta file, `n.json`, contains an atomic set of [_actions_](#Actions) that should be applied to the previous table state, `n-1.json`, in order to the construct `n`th snapshot of the table.
-An action changes one aspect of the table's state, for example, adding or removing a file.
+
+Delta files use newline-delimited JSON format, where every action is stored as a single-line
+JSON document. A Delta file, corresponding to version `v`, contains an atomic set of
+[_actions_](#actions) that should be applied to the previous table state corresponding to version
+`v-1`, in order to construct the `v`th snapshot of the table. An action changes one aspect of the
+table's state, for example, adding or removing a file.
+
+**Note:** If the [catalogManaged table feature](#catalog-managed-tables) is enabled on the table,
+recently [ratified commits](#ratified-commit) may not yet be published to the `_delta_log` directory as normal Delta
+files - they may be stored directly by the catalog or reside in the `_delta_log/_staged_commits`
+directory. Delta clients must contact the table's managing catalog in order to find the information
+about these [ratified, potentially-unpublished commits](#publishing-commits).
+
+The `_delta_log/_staged_commits` directory is the staging area for [staged](#staged-commit)
+commits. Delta files in this directory have a UUID embedded into them and follow the pattern
+`<version>.<uuid>.json`, where the version corresponds to the proposed commit version, zero-padded
+to 20 digits.
+
+For example:
+
+```
+./_delta_log/_staged_commits/00000000000000000000.3a0d65cd-4056-49b8-937b-95f9e3ee90e5.json
+./_delta_log/_staged_commits/00000000000000000001.7d17ac10-5cc3-401b-bd1a-9c82dd2ea032.json
+./_delta_log/_staged_commits/00000000000000000001.016ae953-37a9-438e-8683-9a9a4a79a395.json
+./_delta_log/_staged_commits/00000000000000000002.3ae45b72-24e1-865a-a211-34987ae02f2a.json
+```
+
+NOTE: The (proposed) version number of a staged commit is authoritative - file
+`00000000000000000100.<uuid>.json` always corresponds to a commit attempt for version 100. Besides
+simplifying implementations, it also acknowledges the fact that commit files cannot safely be reused
+for multiple commit attempts. For example, resolving conflicts in a table with [row
+tracking](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#row-tracking) enabled requires
+rewriting all file actions to update their `baseRowId` field.
+
+The [catalog](#terminology-catalogs) is the source of truth about which staged commit files in
+the `_delta_log/_staged_commits` directory correspond to ratified versions, and Delta clients should
+not attempt to directly interpret the contents of that directory. Refer to
+[catalog-managed tables](#catalog-managed-tables) for more details.
 
 ### Checkpoints
 Checkpoints are also stored in the `_delta_log` directory, and can be created at any time, for any committed version of the table.
@@ -267,7 +338,9 @@ These files reside in the `_delta_log/_sidecars` directory.
 
 ### Log Compaction Files
 
-Log compaction files reside in the `_delta_log` directory. A log compaction file from a start version `x` to an end version `y` will have the following name:
+Log compaction files reside in the `_delta_log` directory. A log compaction
+file from a start version `x` to an end version `y` (`y` must be _greater_ than `x`)
+will have the following name:
 `<x>.<y>.compacted.json`. This contains the aggregated
 actions for commit range `[x, y]`. Similar to commits, each row in the log
 compaction file represents an [action](#actions).
@@ -320,6 +393,98 @@ The last checkpoint file can help reduce the cost of constructing the latest sna
 
 Rather than list the entire directory, readers can locate a recent checkpoint by looking at the `_delta_log/_last_checkpoint` file.
 Due to the zero-padded encoding of the files in the log, the version id of this recent checkpoint can be used on storage systems that support lexicographically-sorted, paginated directory listing to enumerate any delta files or newer checkpoints that comprise more recent versions of the table.
+
+### Version Checksum File
+
+The Delta transaction log must remain an append-only log. To enable the detection of non-compliant modifications to Delta files, writers can optionally emit an auxiliary file with every commit, which contains important information about the state of the table as of that version. This file is referred to as the **Version Checksum** and can be used to validate the integrity of the table.
+
+### Version Checksum File Schema
+
+A Version Checksum file must have the following properties:
+- Be named `{version}.crc` where `version` is zero-padded to 20 digits (e.g., `00000000000000000001.crc`)
+- Be stored directly in the `_delta_log` directory alongside Delta log files
+- Contain exactly one JSON object with the following schema:
+
+Field Name | Data Type | Description | optional/required
+-|-|-|-
+txnId | String | A unique identifier for the transaction that produced this commit. | optional
+tableSizeBytes | Long | Total size of the table in bytes, calculated as the sum of the `size` field of all live `add` actions. | required
+numFiles | Long | Number of live `add` actions in this table version after Action Reconciliation. | required
+numMetadata | Long | Number of `metaData` actions. Must be 1. | required
+numProtocol | Long | Number of `protocol` actions. Must be 1. | required
+inCommitTimestampOpt | Long | The in-commit timestamp of this version. Present if and only if [In-Commit Timestamps](#in-commit-timestamps) are enabled. | optional
+setTransactions | Array[`txn`] | Live [Transaction Identifier](#transaction-identifiers) actions at this version. | optional
+domainMetadata | Array[`domainMetadata`] | Live [Domain Metadata](#domain-metadata) actions at this version, excluding tombstones. | optional
+metadata | Metadata | The table [metadata](#change-metadata) at this version. | required
+protocol | Protocol | The table [protocol](#protocol-evolution) at this version. | required
+fileSizeHistogram | FileSizeHistogram | Size distribution information of files remaining after [Action Reconciliation](#action-reconciliation). See [FileSizeHistogram](#file-size-histogram-schema) for more details. | optional
+allFiles | Array[`add`] | All live [Add File](#add-file-and-remove-file) actions at this version. | optional
+numDeletedRecordsOpt | Long | Number of records deleted through Deletion Vectors in this table version. | optional
+numDeletionVectorsOpt | Long | Number of Deletion Vectors active in this table version. | optional
+deletedRecordCountsHistogramOpt | DeletedRecordCountsHistogram | Distribution of deleted record counts across files. See [this](#deleted-record-counts-histogram-schema) section for more details. | optional
+
+##### File Size Histogram Schema
+
+The `FileSizeHistogram` object represents a histogram tracking file counts and total bytes across different size ranges. It has the following schema:
+
+Field Name | Data Type | Description | optional/required
+-|-|-|-
+sortedBinBoundaries | Array[Long] | A sorted array of bin boundaries where each element represents the start of a bin (inclusive) and the next element represents the end of the bin (exclusive). The first element must be 0. | required
+fileCounts | Array[Long] | Count of files in each bin. Length must match `sortedBinBoundaries`. | required
+totalBytes | Array[Long] | Total bytes of files in each bin. Length must match `sortedBinBoundaries`. | required
+
+Each index `i` in these arrays corresponds to a size range from `sortedBinBoundaries[i]` (inclusive) up to but not including `sortedBinBoundaries[i+1]`. The last bin ends at positive infinity. For example, given boundaries `[0, 1024, 4096]`:
+- Bin 0 contains files of size [0, 1024) bytes
+- Bin 1 contains files of size [1024, 4096) bytes
+- Bin 2 contains files of size [4096, ∞) bytes
+
+The arrays `fileCounts` and `totalBytes` store the number of files and their total size respectively that fall into each bin. This data structure enables efficient analysis of file size distributions in Delta tables.
+
+### Deleted Record Counts Histogram Schema
+
+The `DeletedRecordCountsHistogram` object represents a histogram tracking the distribution of deleted record counts across files in the table. Each bin in the histogram represents a range of deletion counts and stores the number of files having that many deleted records.
+
+Field Name | Data Type | Description | optional/required
+-|-|-|-
+deletedRecordCounts | Array[Long] | Array of size 10 where each element represents the count of files falling into a specific deletion count range. | required
+
+The histogram bins correspond to the following ranges:
+- Bin 0: [0, 0] (files with no deletions)
+- Bin 1: [1, 9] (files with 1-9 deleted records)
+- Bin 2: [10, 99] (files with 10-99 deleted records)
+- Bin 3: [100, 999] (files with 100-999 deleted records) 
+- Bin 4: [1000, 9999] (files with 1,000-9,999 deleted records)
+- Bin 5: [10000, 99999] (files with 10,000-99,999 deleted records)
+- Bin 6: [100000, 999999] (files with 100,000-999,999 deleted records)
+- Bin 7: [1000000, 9999999] (files with 1,000,000-9,999,999 deleted records)
+- Bin 8: [10000000, 2147483646] (files with 10,000,000 to 2147483646 (i.e. Int.MaxValue-1 in Java) deleted records)
+- Bin 9: [2147483647, ∞) (files with 2147483647 or more deleted records)
+
+This histogram allows analyzing the distribution of deleted records across files in a Delta table, which can be useful for monitoring and optimizing deletion patterns.
+
+#### State Validation
+
+Readers can validate table state integrity at a particular version by:
+1. Reading the Version Checksum file for that version
+2. Independently computing the same metrics by performing [Action Reconciliation](#action-reconciliation) on the table state
+3. Comparing the computed values against those recorded in the Version Checksum
+
+If any discrepancy is found between computed and recorded values, the table state at that version should be considered potentially corrupted.
+
+### Writer Requirements
+
+- Writers SHOULD produce a Version Checksum file for each commit
+- Writers MUST ensure all metrics in the Version Checksum accurately reflect table state after Action Reconciliation
+- Writers MUST write the Version Checksum file only after successfully writing the corresponding Delta log entry
+- Writers MUST NOT overwrite existing Version Checksum files
+
+### Reader Requirements
+
+- Readers MAY use Version Checksums to validate table state integrity
+- If performing validation, readers SHOULD verify all required fields match computed values
+- If validation fails, readers SHOULD surface the discrepancy to users via error messaging
+- Readers MUST continue functioning if Version Checksum files are missing
+
 
 ## Actions
 Actions modify the state of the table and they are stored both in delta files and in checkpoints.
@@ -393,7 +558,9 @@ That means specifically that for any commit…
 
  - it is **legal** for the same `path` to occur in an `add` action and a `remove` action, but with two different `dvId`s.
  - it is **legal** for the same `path` to be added and/or removed and also occur in a `cdc` action.
- - it is **illegal** for the same `path` to be occur twice with different `dvId`s within each set of `add` or `remove` actions.
+ - it is **illegal** for the same `path` to occur twice with different `dvId`s within each set of `add` or `remove` actions.
+ - it is **illegal** for a `path` to occur in an `add` action that already occurs with a different `dvId` in the list of `add` actions from the snapshot of the version immediately preceeding the commit, unless the commit also contains a remove for the later combination.
+ - it is **legal** to commit an existing `path` and `dvId` combination again (this allows metadata updates).
 
 The `dataChange` flag on either an `add` or a `remove` can be set to `false` to indicate that an action when combined with other actions in the same atomic version only rearranges existing data or adds new statistics.
 For example, streaming queries that are tailing the transaction log can use this flag to skip actions that would not affect the final results.
@@ -618,6 +785,9 @@ A table that is using table features for both readers and writers:
 ### Commit Provenance Information
 A delta file can optionally contain additional provenance information about what higher-level operation was being performed as well as who executed it.
 
+When the `catalogManaged` table feature is enabled, the `commitInfo` action must have a field
+`txnId` that stores a unique transaction identifier string.
+
 Implementations are free to store any valid JSON-formatted data via the `commitInfo` action.
 
 When [In-Commit Timestamps](#in-commit-timestamps) are enabled, writers are required to include a `commitInfo` action with every commit, which must include the `inCommitTimestamp` field. Also, the `commitInfo` action must be first action in the commit.
@@ -714,12 +884,28 @@ Field Name | Data Type | Description | optional/required
 version|`Long`|The checkpoint version.| required
 tags|`Map[String, String]`|Map containing any additional metadata about the v2 spec checkpoint.| optional
 
+##### Checkpoint Metadata Tags
+
+The following tag keys may be present in the `tags` map. All are optional, so there is no requirement for writers to produce these and readers cannot assume their presence.
+
+Tag Key | Value Type | Description
+-|-|-
+sidecarNumActions|`String` (parseable as `Long`)|The total number of actions stored across all [sidecar files](#sidecar-files) in this checkpoint.
+sidecarSizeInBytes|`String` (parseable as `Long`)|The total size in bytes across all [sidecar files](#sidecar-files) in this checkpoint.
+numOfAddFiles|`String` (parseable as `Long`)|The number of `add` file actions in this checkpoint.
+sidecarFileSchema|`String` (JSON-encoded `StructType`)|The schema of the [sidecar files](#sidecar-files) in this checkpoint. The value is the JSON serialization of the sidecar file's Parquet schema. Readers can use this to avoid reading the Parquet footer of sidecar files to determine their schema.
+
 E.g.
 ```json
 {
   "checkpointMetadata":{
     "version":1,
-    "tags":{}
+    "tags":{
+      "sidecarNumActions":"1234",
+      "sidecarSizeInBytes":"5678",
+      "numOfAddFiles":"42",
+      "sidecarFileSchema":"{\"type\":\"struct\",\"fields\":[{\"name\":\"add\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"path\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{}},{\"name\":\"remove\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"path\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{}}]}"
+    }
   }
 }
 ```
@@ -730,8 +916,8 @@ A given snapshot of the table can be computed by replaying the events committed 
  - A single `protocol` action
  - A single `metaData` action
  - A collection of `txn` actions with unique `appId`s
- - A collection of `domainMetadata` actions with unique `domain`s.
- - A collection of `add` actions with unique `(path, deletionVector.uniqueId)` keys.
+ - A collection of `domainMetadata` actions with unique `domain`s, excluding tombstones (i.e. actions with `removed=true`).
+ - A collection of `add` actions with unique path keys, corresponding to the newest (path, deletionVector.uniqueId) pair encountered for each path.
  - A collection of `remove` actions with unique `(path, deletionVector.uniqueId)` keys. The intersection of the primary keys in the `add` collection and `remove` collection must be empty. That means a logical file cannot exist in both the `remove` and `add` collections at the same time; however, the same *data file* can exist with *different* DVs in the `remove` collection, as logically they represent different content. The `remove` actions act as _tombstones_, and only exist for the benefit of the VACUUM command. Snapshot reads only return `add` actions on the read path.
  
 To achieve the requirements above, related actions from different delta files need to be reconciled with each other:
@@ -740,6 +926,7 @@ To achieve the requirements above, related actions from different delta files ne
  - The latest `metaData` action seen wins
  - For `txn` actions, the latest `version` seen for a given `appId` wins
  - For `domainMetadata`, the latest `domainMetadata` seen for a given `domain` wins. The actions with `removed=true` act as tombstones to suppress earlier versions. Snapshot reads do _not_ return removed `domainMetadata` actions.
+ - For `commitInfo` actions, only the `commitInfo` from the commit at the snapshot version is included in the snapshot. [Checkpoints](#checkpoints) and [log compaction files](#log-compaction-files) do not preserve `commitInfo` actions, so this information must be read from the JSON commit file at the snapshot version.
  - Logical files in a table are identified by their `(path, deletionVector.uniqueId)` primary key. File actions (`add` or `remove`) reference logical files, and a log can contain any number of references to a single file.
  - To replay the log, scan all file actions and keep only the newest reference for each logical file.
  - `add` actions in the result identify logical files currently present in the table (for queries). `remove` actions in the result identify tombstones of logical files no longer present in the table (for VACUUM).
@@ -778,7 +965,10 @@ A feature being supported does not imply that it is active. For example, a table
 A feature is active on a table when it is supported *and* its metadata requirements are satisfied. Each feature defines its own metadata requirements, as stated in the corresponding sections of this document. For example, the Append-only feature is active when the `appendOnly` feature name is present in a `protocol`'s `writerFeatures` *and* a table property `delta.appendOnly` set to `true`.
 
 # Column Mapping
-Delta can use column mapping to avoid any column naming restrictions, and to support the renaming and dropping of columns without having to rewrite all the data. There are two modes of column mapping, by `name` and by `id`. In both modes, every column - nested or leaf - is assigned a unique _physical_ name, and a unique 32-bit integer as an id. The physical name is stored as part of the column metadata with the key `delta.columnMapping.physicalName`. The column id is stored within the metadata with the key `delta.columnMapping.id`.
+Delta can use column mapping to avoid any column naming restrictions, and to support the renaming and dropping of columns without having to rewrite all the data. There are two modes of column mapping, by `name` and by `id`. In both modes, every column - nested or leaf - is assigned a _physical_ name, and a unique 32-bit integer as an id. The physical name is stored as part of the column metadata with the key `delta.columnMapping.physicalName`. The column id is stored within the metadata with the key `delta.columnMapping.id`.
+
+## Field Path
+A _field path_ is the path from the schema root to a [struct field](#struct-field), formed by the ordered sequence of field names along that path. When the path traverses an [Array Type](#array-type) element, or a [Map Type](#map-type) key or value, the path component is `element`, `key`, or `value`, respectively. A _physical field path_ exists only when Column Mapping mode is `id` or `name`; it is formed by replacing each struct field name in a field path with that struct field's physical name. In these modes, a physical field path must be unique across all versions of the table. This supports cheap column deletions in `name` mode.
 
 The column mapping is governed by the table property `delta.columnMapping.mode` being one of `none`, `id`, and `name`. The table property should only be honored if the table's protocol has reader and writer versions and/or table features that support the `columnMapping` table feature. For readers this is Reader Version 2, or Reader Version 3 with the `columnMapping` table feature listed as supported. For writers this is Writer Version 5 or 6, or Writer Version 7 with the `columnMapping` table feature supported.
 
@@ -809,6 +999,7 @@ The following is an example for the column definition of a table that leverages 
     }
   }
 ```
+In this example, the field path of the nested field `d` is `["e", "element", "d"]`, and its physical field path is `["col-5f422f40-de70-45b2-88ab-1d5c90e94db1", "element", "col-a7f4159c-53be-4cb0-b81a-f7e5240cfc49"]`.
 
 ## Writer Requirements for Column Mapping
 In order to support column mapping, writers must:
@@ -819,8 +1010,8 @@ In order to support column mapping, writers must:
      - write a `metaData` action to add the `delta.columnMapping.mode` table property.
  - Write data files by using the _physical name_ that is chosen for each column. The physical name of the column is static and can be different than the _display name_ of the column, which is changeable.
  - Write the 32 bit integer column identifier as part of the `field_id` field of the `SchemaElement` struct in the [Parquet Thrift specification](https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift).
- - Track partition values and column level statistics with the physical name of the column in the transaction log.
- - Assign a globally unique identifier as the physical name for each new column that is added to the schema. This is especially important for supporting cheap column deletions in `name` mode. In addition, column identifiers need to be assigned to each column. The maximum id that is assigned to a column is tracked as the table property `delta.columnMapping.maxColumnId`. This is an internal table property that cannot be configured by users. This value must increase monotonically as new columns are introduced and committed to the table alongside the introduction of the new columns to the schema.
+ - Track partition values, column level statistics, and [clustering column](#clustered-table) names with the physical name of the column in the transaction log.
+ - Assign a physical name for each new column that is added to the schema, and ensure the physical field path of the new column is unique across all versions of the table. In addition, column identifiers need to be assigned to each column. The maximum id that is assigned to a column is tracked as the table property `delta.columnMapping.maxColumnId`. This is an internal table property that cannot be configured by users. This value must increase monotonically as new columns are introduced and committed to the table alongside the introduction of the new columns to the schema.
 
 ## Reader Requirements for Column Mapping
 If the table is on Reader Version 2, or if the table is on Reader Version 3 and the feature `columnMapping` is present in `readerFeatures`, readers and writers must read the table property `delta.columnMapping.mode` and do one of the following.
@@ -849,7 +1040,7 @@ Field Name | Data Type | Description
 -|-|-
 storageType | String | A single character to indicate how to access the DV. Legal options are: `['u', 'i', 'p']`.
 pathOrInlineDv | String | Three format options are currently proposed:<ul><li>If `storageType = 'u'` then  `<random prefix - optional><base85 encoded uuid>`: The deletion vector is stored in a file with a path relative to the data directory of this Delta table, and the  file name can be reconstructed from the UUID. See Derived Fields for how to reconstruct the file name. The random prefix is recovered as the extra characters before the (20 characters fixed length) uuid.</li><li>If `storageType = 'i'` then `<base85 encoded bytes>`: The deletion vector is stored inline in the log. The format used is the `RoaringBitmapArray` format also used when the DV is stored on disk and described in [Deletion Vector Format](#Deletion-Vector-Format).</li><li>If `storageType = 'p'` then `<absolute path>`: The DV is stored in a file with an absolute path given by this path, which has the same format as the `path` field in the `add`/`remove` actions.</li></ul>
-offset | Option[Int] | Start of the data for this DV in number of bytes from the beginning of the file it is stored in. Always `None` (absent in JSON) when `storageType = 'i'`.
+offset | Option[Int] | Start of the data for this DV in number of bytes from the beginning of the file it is stored in. Always `None` (absent in JSON) when `storageType = 'i'`. Interpret as `0` if absent for other `storageType`s.
 sizeInBytes | Int | Size of the serialized DV in bytes (raw data size, i.e. before base85 encoding, if inline).
 cardinality | Long | Number of rows the given DV logically removes from the file.
 
@@ -904,6 +1095,393 @@ If a snapshot contains logical files with records that are invalidated by a DV, 
 ## Writer Requirement for Deletion Vectors
 When adding a logical file with a deletion vector, then that logical file must have correct `numRecords` information for the data file in the `stats` field.
 
+# Catalog-managed tables
+
+With this feature enabled, the [catalog](#terminology-catalogs) that manages the table becomes the
+source of truth for whether a given commit attempt succeeded.
+
+The table feature defines the parts of the [commit protocol](#commit-protocol) that directly impact
+the Delta table (e.g. atomicity requirements, publishing, etc). The Delta client and catalog
+together are responsible for implementing the Delta-specific aspects of commit as defined by this
+spec, but are otherwise free to define their own APIs and protocols for communication with each
+other.
+
+**NOTE**: Filesystem-based access to catalog-managed tables is not supported. Delta clients are
+expected to discover and access catalog-managed tables through the managing catalog, not by direct
+listing in the filesystem. This feature is primarily designed to warn filesystem-based readers that
+might attempt to access a catalog-managed table's storage location without going through the catalog
+first, and to block filesystem-based writers who could otherwise corrupt both the table and the
+catalog by failing to commit through the catalog.
+
+Before we can go into details of this protocol feature, we must first align our terminology.
+
+## Terminology: Commits
+
+A commit is a set of [actions](#actions) that transform a Delta table from version `v - 1` to `v`.
+It contains the same kind of content as is stored in a [Delta file](#delta-log-entries).
+
+A commit may be stored in the file system as a Delta file - either _published_ or _staged_ - or
+stored _inline_ in the managing catalog, using whatever format the catalog prefers.
+
+There are several types of commits:
+
+1. **Proposed commit**:  A commit that a Delta client has proposed for the next version of the
+   table. It could be _staged_ or _inline_. It will either become _ratified_ or be rejected.
+
+2. <a name="staged-commit">**Staged commit**</a>: A commit that is written to disk at
+   `_delta_log/_staged_commits/<v>.<uuid>.json`. It has the same content and format as a published
+   Delta file.
+    - Here, the `uuid` is a random UUID that is generated for each commit and `v` is the version
+      which is proposed to be committed, zero-padded to 20 digits.
+    - The mere existence of a staged commit does not mean that the file has been ratified or even
+      proposed. It might correspond to a failed or in-progress commit attempt.
+    - The catalog is the source of truth around which staged commits are ratified.
+    - The catalog stores only the location, not the content, of a staged (and ratified) commit.
+
+3. <a name="inline-commit">**Inline commit**</a>: A proposed commit that is not written to disk but
+   rather has its content sent to the catalog for the catalog to store directly.
+
+4. <a name="ratified-commit">**Ratified commit**</a>: A proposed commit that a catalog has
+   determined has won the commit at the desired version of the table.
+    - The catalog must store ratified commits (that is, the staged commit's location or the inline
+      commit's content) until they are published to the `_delta_log` directory.
+    - A ratified commit may or may not yet be published.
+    - A ratified commit may or may not even be stored by the catalog at all - the catalog may
+      have just atomically published it to the filesystem directly, relying on PUT-if-absent
+      primitives to facilitate the ratification and publication all in one step.
+
+5. <a name="published-commit">**Published commit**</a>: A ratified commit that has been copied into
+   the `_delta_log` as a normal Delta file, i.e. `_delta_log/<v>.json`.
+    - Here, the `v` is the version which is being committed, zero-padded to 20 digits.
+    - The existence of a `<v>.json` file proves that the corresponding version `v` is ratified,
+      regardless of whether the table is catalog-managed or filesystem-based. The catalog is allowed
+      to return information about published commits, but Delta clients can also use filesystem
+      listing operations to directly discover them.
+    - Published commits do not need to be stored by the catalog.
+
+## Terminology: Delta Client
+
+This is the component that implements support for reading and writing Delta tables, and implements
+the logic required by the `catalogManaged` table feature. Among other things, it
+- triggers the filesystem listing, if needed, to discover published commits
+- generates the commit content (the set of [actions](#actions))
+- works together with the query engine to trigger the commit process and invoke the client-side
+  catalog component with the commit content
+
+The Delta client is also responsible for defining the client-side API that catalogs should target.
+That is, there must be _some_ API that the [catalog client](#catalog-client) can use to communicate
+to the Delta client the subset of catalog-managed information that the Delta client cares about.
+This protocol feature is concerned with what information Delta cares about, but leaves to Delta
+clients the design of the API they use to obtain that information from catalog clients.
+
+## Terminology: Catalogs
+
+1. **Catalog**: A catalog is an entity which manages a Delta table, including its creation, writes,
+   reads, and eventual deletion.
+    - It could be backed by a database, a filesystem, or any other persistence mechanism.
+    - Each catalog has its own spec around how catalog clients should interact with them, and how
+      they perform a commit.
+
+2. <a name="catalog-client">**Catalog Client**</a>: The catalog always has a client-side component
+   which the Delta client interacts with directly. This client-side component has two primary
+   responsibilities:
+    - implement any client-side catalog-specific logic (such as staging or
+      [publishing](#publishing-commits) commits)
+    - communicate with the Catalog Server, if any
+
+3. **Catalog Server**: The catalog may also involve a server-side component which the client-side
+   component would be responsible to communicate with.
+    - This server is responsible for coordinating commits and potentially persisting table metadata
+      and enforcing authorization policies.
+    - Not all catalogs require a server; some may be entirely client-side, e.g. filesystem-backed
+      catalogs, or they may make use of a generic database server and implement all of the catalog's
+      business logic client-side.
+
+**NOTE**: This specification outlines the responsibilities and actions that catalogs must implement.
+This spec does its best not to assume any specific catalog _implementation_, though it does call out
+likely client-side and server-side responsibilities. Nonetheless, what a given catalog does
+client-side or server-side is up to each catalog implementation to decide for itself.
+
+## Catalog Responsibilities
+
+When the `catalogManaged` table feature is enabled, a catalog performs commits to the table on behalf
+of the Delta client.
+
+As stated above, the Delta spec does not mandate any particular client-server design or API for
+catalogs that manage Delta tables. However, the catalog does need to provide certain capabilities
+for reading and writing Delta tables:
+
+- Atomically commit a version `v` with a given set of `actions`. This is explained in detail in the
+  [commit protocol](#commit-protocol) section.
+- Retrieve information about recent ratified commits and the latest ratified version on the table.
+  This is explained in detail in the [Getting Ratified Commits from the Catalog](#getting-ratified-commits-from-the-catalog) section.
+- Though not required, it is encouraged that catalogs also return the latest table-level metadata,
+  such as the latest Protocol and Metadata actions, for the table. This can provide significant
+  performance advantages to conforming Delta clients, who may forgo log replay and instead trust
+  the information provided by the catalog during query planning.
+
+## Reading Catalog-managed Tables
+
+A catalog-managed table can have a mix of (a) published and (b) ratified but non-published commits.
+The catalog is the source of truth for ratified commits. Also recall that ratified commits can be
+[staged commits](#staged-commit) that are persisted to the `_delta_log/_staged_commits` directory,
+or [inline commits](#inline-commit) whose content the catalog stores directly.
+
+For example, suppose the `_delta_log` directory contains the following files:
+
+```
+00000000000000000000.json
+00000000000000000001.json
+00000000000000000002.checkpoint.parquet
+00000000000000000002.json
+00000000000000000003.00000000000000000005.compacted.json
+00000000000000000003.json
+00000000000000000004.json
+00000000000000000005.json
+00000000000000000006.json
+00000000000000000007.json
+_staged_commits/00000000000000000007.016ae953-37a9-438e-8683-9a9a4a79a395.json // ratified and published
+_staged_commits/00000000000000000008.7d17ac10-5cc3-401b-bd1a-9c82dd2ea032.json // ratified
+_staged_commits/00000000000000000008.b91807ba-fe18-488c-a15e-c4807dbd2174.json // rejected
+_staged_commits/00000000000000000010.0f707846-cd18-4e01-b40e-84ee0ae987b0.json // not yet ratified
+_staged_commits/00000000000000000010.7a980438-cb67-4b89-82d2-86f73239b6d6.json // partial file
+```
+
+Further, suppose the catalog stores the following ratified commits:
+```
+{
+  7  -> "00000000000000000007.016ae953-37a9-438e-8683-9a9a4a79a395.json",
+  8  -> "00000000000000000008.7d17ac10-5cc3-401b-bd1a-9c82dd2ea032.json",
+  9  -> <inline commit: content stored by the catalog directly>
+}
+```
+
+Some things to note are:
+- the catalog isn't aware that commit 7 was already published - perhaps the response from the
+  filesystem was dropped
+- commit 9 is an inline commit
+- neither of the two staged commits for version 10 have been ratified
+
+To read such tables, Delta clients must first contact the catalog to get the ratified commits. This
+informs the Delta client of commits [7, 9] as well as the latest ratified version, 9.
+
+If this information is insufficient to construct a complete snapshot of the table, Delta clients
+must LIST the `_delta_log` directory to get information about the published commits. For commits
+that are both returned by the catalog and already published, Delta clients must treat the catalog's
+version as authoritative and read the commit returned by the catalog. Additionally, Delta clients
+must ignore any files with versions greater than the latest ratified commit version returned by the
+catalog.
+
+Combining these two sets of files and commits enables Delta clients to generate a snapshot at the
+latest version of the table.
+
+**NOTE**: This spec prescribes the _minimum_ required interactions between Delta clients and
+catalogs for commits. Catalogs may very well expose APIs and work with Delta clients to be
+informed of other non-commit [file types](#file-types), such as checkpoint, log
+compaction, and version checksum files. This would allow catalogs to return additional
+information to Delta clients during query and scan planning, potentially allowing Delta
+clients to avoid LISTing the filesystem altogether.
+
+## Commit Protocol
+
+To start, Delta Clients send the desired actions to be committed to the client-side component of the
+catalog.
+
+This component then has several options for proposing, ratifying, and publishing the commit,
+detailed below.
+
+- Option 1: Write the actions (likely client-side) to a [staged commit file](#staged-commit) in the
+  `_delta_log/_staged_commits` directory and then ratify the staged commit (likely server-side) by
+  atomically recording (in persistent storage of some kind) that the file corresponds to version `v`.
+- Option 2: Treat this as an [inline commit](#inline-commit) (i.e. likely that the client-side
+  component sends the contents to the server-side component) and atomically record (in persistent
+  storage of some kind) the content of the commit as version `v` of the table.
+- Option 3: Catalog implementations that use PUT-if-absent (client- or server-side) can ratify and
+  publish all-in-one by atomically writing a [published commit file](#published-commit)
+  in the `_delta_log` directory. Note that this commit will be considered to have succeeded as soon
+  as the file becomes visible in the filesystem, regardless of when or whether the catalog is made
+  aware of the successful publish. The catalog does not need to store these files.
+
+A catalog must not ratify version `v` until it has ratified version `v - 1`, and it must ratify
+version `v` at most once.
+
+The catalog must store both flavors of ratified commits (staged or inline) and make them available
+to readers until they are [published](#publishing-commits).
+
+For performance reasons, Delta clients are encouraged to establish an API contract where the catalog
+provides the latest ratified commit information whenever a commit fails due to version conflict.
+
+## Getting Ratified Commits from the Catalog
+
+Even after a commit is ratified, it is not discoverable through filesystem operations until it is
+[published](#publishing-commits).
+
+The catalog-client is responsible to implement an API (defined by the Delta client) that Delta clients can
+use to retrieve the latest ratified commit version (authoritative), as well as the set of ratified
+commits the catalog is still storing for the table. If some commits needed to complete the snapshot
+are not stored by the catalog, as they are already published, Delta clients can issue a filesystem
+LIST operation to retrieve them.
+
+Delta clients must establish an API contract where the catalog provides ratified commit information
+as part of the standard table resolution process performed at query planning time.
+
+## Publishing Commits
+
+Publishing is the process of copying the ratified commit with version `<v>` to
+`_delta_log/<v>.json`. The ratified commit may be a staged commit located in
+`_delta_log/_staged_commits/<v>.<uuid>.json`, or it may be an inline commit whose content the
+catalog stores itself. Because the content of a ratified commit is immutable, it does not matter
+whether the client-side, server-side, or both catalog components initiate publishing.
+
+Implementations are strongly encouraged to publish commits promptly. This reduces the number of
+commits the catalog needs to store internally (and serve up to readers).
+
+Commits must be published _in order_. That is, version `v - 1` must be published _before_ version
+`v`.
+
+**NOTE**: Because commit publishing can happen at any time after the commit succeeds, the file
+modification timestamp of the published file will not accurately reflect the original commit time.
+For this reason, catalog-managed tables must use [in-commit-timestamps](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#in-commit-timestamps)
+to ensure stability of time travel reads. Refer to [Writer Requirements for Catalog-managed Tables](#writer-requirements-for-catalog-managed-tables)
+section for more details.
+
+## Maintenance Operations on Catalog-managed Tables
+
+[Checkpoints](#checkpoints-1) and [Log Compaction Files](#log-compaction-files) can only be created
+for versions that are already published in the `_delta_log`. In other words, in order to checkpoint
+version `v` or produce a log compaction file for commit range `x <= v <= y`, `_delta_log/<v>.json`
+must exist.
+
+Notably, the [Version Checksum File](#version-checksum-file) for version `v` _can_ be created in the
+`_delta_log` even if the commit for version `v` is not published.
+
+By default, maintenance operations are prohibited unless the managing catalog explicitly permits
+the client to run them. The only exceptions are checkpoints, log compaction, and version checksum,
+as they are essential for all basic table operations (e.g. reads and writes) to operate reliably.
+All other maintenance operations such as the following are not allowed by default.
+- [Log and other metadata files clean up](#metadata-cleanup).
+- Data files cleanup, for example VACUUM.
+- Data layout changes, for example OPTIMIZE and REORG.
+
+## Creating and Dropping Catalog-managed Tables
+
+The catalog and query engine ultimately dictate how to create and drop catalog-managed tables.
+
+As one example, table creation often works in three phases:
+
+1. An initial catalog operation to obtain a unique storage location which serves as an unnamed
+   "staging" table
+2. A table operation that physically initializes a new `catalogManaged`-enabled table at the staging
+   location.
+3. A final catalog operation that registers the new table with its intended name.
+
+Delta clients would primarily be involved with the second step, but an implementation could choose
+to combine the second and third steps so that a single catalog call registers the table as part of
+the table's first commit.
+
+As another example, dropping a table can be as simple as removing its name from the catalog (a "soft
+delete"), followed at some later point by a "hard delete" that physically purges the data. The Delta
+client would not be involved at all in this process, because no commits are made to the table.
+
+## Catalog-managed Table Enablement
+
+The `catalogManaged` table feature is supported and active when:
+- The table is on Reader Version 3 and Writer Version 7.
+- The table has a `protocol` action with `readerFeatures` and `writerFeatures` both containing the
+  feature `catalogManaged`.
+
+## Writer Requirements for Catalog-managed tables
+
+When supported and active:
+
+- Writers must discover and access the table using catalog calls, which happens _before_ the table's
+  protocol is known. See [Table Discovery](#table-discovery) for more details.
+- The [in-commit-timestamps](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#in-commit-timestamps)
+  table feature must be supported and active.
+- The `commitInfo` action must also contain a field `txnId` that stores a unique transaction
+  identifier string
+- Writers must follow the catalog's [commit protocol](#commit-protocol) and must not perform
+  ordinary filesystem-based commits against the table.
+- Writers must follow the catalog's [maintenance operation protocol](#maintenance-operations-on-catalog-managed-tables)
+
+## Reader Requirements for Catalog-managed tables
+
+When supported and active:
+
+- Readers must discover the table using catalog calls, which happens before the table's protocol
+  is known. See [Table Discovery](#table-discovery) for more details.
+- Readers must contact the catalog for information about unpublished ratified commits.
+- Readers must follow the rules described in the [Reading Catalog-managed Tables](#reading-catalog-managed-tables)
+  section above. Notably
+  - If the catalog said `v` is the latest version, clients must ignore any later versions that may
+    have been published
+  - When the catalog returns a ratified commit for version `v`, readers must use that
+    catalog-supplied commit and ignore any published Delta file for version `v` that might also be
+    present.
+
+## Table Discovery
+
+The requirements above state that readers and writers must discover and access the table using
+catalog calls, which occurs _before_ the table's protocol is known. This raises an important
+question: how can a client discover a `catalogManaged` Delta table without first knowing that it
+_is_, in fact, `catalogManaged` (according to the protocol)?
+
+To solve this, first note that, in practice, catalog-integrated engines already ask the catalog to
+resolve a table name to its storage location during the name resolution step. This protocol
+therefore encourages that the same name resolution step also indicate whether the table is
+catalog-managed. Surfacing this at the very moment the catalog returns the path imposes no extra
+round-trips, yet it lets the client decide — early and unambiguously — whether to follow the
+`catalogManaged` read and write rules.
+
+## Sample Catalog Client API
+
+The following is an example of a possible API which a Java-based Delta client might require catalog
+implementations to target:
+
+```scala
+
+interface CatalogManagedTable {
+    /**
+     * Commits the given set of `actions` to the given commit `version`.
+     *
+     * @param version The version we want to commit.
+     * @param actions Actions that need to be committed.
+     *
+     * @return CommitResponse which has details around the new committed delta file.
+     */
+    def commit(
+        version: Long,
+        actions: Iterator[String]): CommitResponse
+
+    /**
+     * Retrieves a (possibly empty) suffix of ratified commits in the range [startVersion,
+     * endVersion] for this table.
+     * 
+     * Some of these ratified commits may already have been published. Some of them may be staged,
+     * in which case the staged commit file path is returned; others may be inline, in which case
+     * the inline commit content is returned.
+     * 
+     * The returned commits are sorted in ascending version number and are contiguous.
+     *
+     * If neither start nor end version is specified, the catalog will return all available ratified
+     * commits (possibly empty, if all commits have been published).
+     *
+     * In all cases, the response also includes the table's latest ratified commit version.
+     *
+     * @return GetCommitsResponse which contains an ordered list of ratified commits
+     *         stored by the catalog, as well as table's latest commit version.
+     */
+    def getRatifiedCommits(
+        startVersion: Option[Long],
+        endVersion: Option[Long]): GetCommitsResponse
+}
+```
+
+Note that the above is only one example of a possible Catalog Client API. It is also _NOT_ a catalog
+API (no table discovery, ACL, create/drop, etc). The Delta protocol is agnostic to API details, and
+the API surface Delta clients define should only cover the specific catalog capabilities that Delta
+client needs to correctly read and write catalog-managed tables.
+
 # Iceberg Compatibility V1
 
 This table feature (`icebergCompatV1`) ensures that Delta tables can be converted to Apache Iceberg™ format, though this table feature does not implement or specify that conversion.
@@ -926,6 +1504,7 @@ When supported and active, writers must:
 - Block replacing partitioned tables with a differently-named partition spec
   - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_b INT` must be blocked
   - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_a LONG` is allowed
+- When the [Type Widening](#type-widening) table feature is supported, require that all type changes applied on the table are supported by [Iceberg V2](https://iceberg.apache.org/spec/#schema-evolution), based on the [Type Change Metadata](#type-change-metadata) recorded in the table schema.
 
 # Iceberg Compatibility V2
 
@@ -942,7 +1521,7 @@ This table feature is enabled when the table property `delta.enableIcebergCompat
 
 When this feature is supported and enabled, writers must:
 - Require that Column Mapping be enabled and set to either `name` or `id` mode
-- Require that the nested `element` field of ArrayTypes and the nested `key` and `value` fields of MapTypes be assigned 32 bit integer identifiers. These identifiers must be unique and different from those used in [Column Mapping](#column-mapping), and must be stored in the metadata of their nearest ancestor [StructField](#struct-field) of the Delta table schema. Identifiers belonging to the same `StructField` must be organized as a `Map[String, Long]` and stored in metadata with key `parquet.field.nested.ids`. The keys of the map are "element", "key", or "value", prefixed by the name of the nearest ancestor StructField, separated by dots. The values are the identifiers. The keys for fields in nested arrays or nested maps are prefixed by their parents' key, separated by dots. An [example](#example-of-storing-identifiers-for-nested-fields-in-arraytype-and-maptype) is provided below to demonstrate how the identifiers are stored. These identifiers must be also written to the `field_id` field of the `SchemaElement` struct in the [Parquet Thrift specification](https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift) when writing parquet files.
+- Require that the nested `element` field of ArrayTypes and the nested `key` and `value` fields of MapTypes be assigned 32 bit integer identifiers. These identifiers must be unique and different from those used in [Column Mapping](#column-mapping), and must be stored in the metadata of their nearest ancestor [StructField](#struct-field) of the Delta table schema. Identifiers belonging to the same `StructField` must be organized as a `Map[String, Long]` and stored in metadata with key `delta.columnMapping.nested.ids`. The keys of the map are "element", "key", or "value", prefixed by the physical name of the nearest ancestor StructField, separated by dots. The values are the identifiers. The keys for fields in nested arrays or nested maps are prefixed by their parents' key, separated by dots. An [example](#example-of-storing-identifiers-for-nested-fields-in-arraytype-and-maptype) is provided below to demonstrate how the identifiers are stored. These identifiers must be also written to the `field_id` field of the `SchemaElement` struct in the [Parquet Thrift specification](https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift) when writing parquet files.
 - Require that IcebergCompatV1 is not active, which means either the `icebergCompatV1` table feature is not present in the table protocol or the table property `delta.enableIcebergCompatV1` is not set to `true`
 - Require that Deletion Vectors are not active, which means either the `deletionVectors` table feature is not present in the table protocol or the table property `delta.enableDeletionVectors` is not set to `true`
 - Require that partition column values be materialized when writing Parquet data files
@@ -952,6 +1531,7 @@ When this feature is supported and enabled, writers must:
 - Block replacing partitioned tables with a differently-named partition spec
   - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_b INT` must be blocked
   - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_a LONG` is allowed
+- When the [Type Widening](#type-widening) table feature is supported, require that all type changes applied on the table are supported by [Iceberg V2](https://iceberg.apache.org/spec/#schema-evolution), based on the [Type Change Metadata](#type-change-metadata) recorded in the table schema.
 
 ### Example of storing identifiers for nested fields in ArrayType and MapType
 The following is an example of storing the identifiers for nested fields in `ArrayType` and `MapType`, of a table with the following schema,
@@ -974,9 +1554,11 @@ The identifiers for the nested fields are stored in the metadata as follows:
       }
     },
     "metadata": {
-      "parquet.field.nested.ids": {
-        "col1.element": 100,
-        "col1.element.element": 101
+      "delta.columnMapping.id": 1,
+      "delta.columnMapping.physicalName": "col-aaa",
+      "delta.columnMapping.nested.ids": {
+        "col-aaa.element": 100,
+        "col-aaa.element.element": 101
       }
     }
   },
@@ -991,10 +1573,12 @@ The identifiers for the nested fields are stored in the metadata as follows:
       }
     },
     "metadata": {
-      "parquet.field.nested.ids": {
-        "col2.key": 102,
-        "col2.value": 103,
-        "col2.value.element": 104
+      "delta.columnMapping.id": 2,
+      "delta.columnMapping.physicalName": "col-bbb",
+      "delta.columnMapping.nested.ids": {
+        "col-bbb.key": 102,
+        "col-bbb.value": 103,
+        "col-bbb.value.element": 104
       }
     }
   },
@@ -1013,8 +1597,10 @@ The identifiers for the nested fields are stored in the metadata as follows:
               "elementType": "int"
             },
             "metadata": {
-              "parquet.field.nested.ids": {
-                "subcol1.element": 107
+              "delta.columnMapping.id": 4,
+              "delta.columnMapping.physicalName": "col-ddd",
+              "delta.columnMapping.nested.ids": {
+                "col-ddd.element": 107
               }
             }
           }
@@ -1022,9 +1608,11 @@ The identifiers for the nested fields are stored in the metadata as follows:
       }
     },
     "metadata": {
-      "parquet.field.nested.ids": {
-        "col3.key": 105,
-        "col3.value": 106
+      "delta.columnMapping.id": 3,
+      "delta.columnMapping.physicalName": "col-ccc",
+      "delta.columnMapping.nested.ids": {
+        "col-ccc.key": 105,
+        "col-ccc.value": 106
       }
     }
   }
@@ -1044,7 +1632,7 @@ To support this feature:
 
 When supported:
 - A table could use [uuid-named](#uuid-named-checkpoint) [V2 spec Checkpoints](#v2-spec) which must have [checkpoint metadata](#checkpoint-metadata) and may have [sidecar files](#sidecar-files) OR
-- A table could use [classic](#classic-checkpoint) checkpoints which can be follow [V1](#v1-spec) or [V2](#v2-spec) spec.
+- A table could use [classic](#classic-checkpoint) checkpoints which can follow [V1](#v1-spec) or [V2](#v2-spec) spec.
 - A table must not use [multi-part checkpoints](#multi-part-checkpoint)
 
 # Row Tracking
@@ -1055,16 +1643,19 @@ and Row Commit Versions, which make it possible to check whether two rows with t
 
 Row Tracking is defined to be **supported** or **enabled** on a table as follows:
 - When the feature `rowTracking` exists in the table `protocol`'s `writerFeatures`, then we say that Row Tracking is **supported**.
-  In this situation, writers must assign Row IDs and Commit Versions, but they cannot yet be relied upon to be present in the table.
+  In this situation, writers must assign Row IDs and Commit Versions as long as `delta.rowTrackingSuspended` table property is absent or set to false. However, they cannot yet be relied upon to be present in the table.
   When Row Tracking is supported but not yet enabled writers cannot preserve Row IDs and Commit Versions.
 - When additionally the table property `delta.enableRowTracking` is set to `true`, then we say that Row Tracking is **enabled**.
   In this situation, Row IDs and Row Commit versions can be relied upon to be present in the table for all rows.
   When Row Tracking is enabled writers are expected to preserve Row IDs and Commit Versions.
+- When the table property `delta.rowTrackingSuspended` is set to true, writers should suspend the assignment of Row IDs and Commit Versions.
+  Table property `delta.rowTrackingSuspended` should not be enabled together with table property `delta.enableRowTracking`.
 
 Enablement:
 - The table must be on Writer Version 7.
 - The feature `rowTracking` must exist in the table `protocol`'s `writerFeatures`. The feature `domainMetadata` is required in the table `protocol`'s `writerFeatures`.
 - The table property `delta.enableRowTracking` must be set to `true`.
+- The table property `delta.rowTrackingSuspended` should be absent or set to `false`.
 
 ## Row IDs
 
@@ -1143,21 +1734,23 @@ When Row Tracking is enabled (when the table property `delta.enableRowTracking` 
 
 ## Writer Requirements for Row Tracking
 
-When Row Tracking is supported (when the `writerFeatures` field of a table's `protocol` action contains `rowTracking`), then:
+When Row Tracking is supported (when the `writerFeatures` field of a table's `protocol` action contains `rowTracking`) and Row Tracking is not suspended (when `delta.rowTrackingSuspended` table property is absent or set to false), then:
 - Writers must assign unique fresh Row IDs to all rows that they commit.
   - Writers must set the `baseRowId` field in all `add` actions that they commit so that all default generated Row IDs are unique in the table version.
     Writers must never commit duplicate Row IDs in the table in any version.
   - Writers must set the `baseRowId` field in recommitted and checkpointed `add` actions and `remove` actions to the `baseRowId` value (if present) of the last committed `add` action with the same `path`.
   - Writers must track the high water mark, i.e. the highest fresh row id assigned.
     - The high water mark must be stored in a `domainMetadata` action with `delta.rowTracking` as the `domain`
-      and a `configuration` containing a single key-value pair with `highWaterMark` as the key and the highest assigned fresh row id as the value.
-    - Writers must include a `domainMetadata` for `delta.rowTracking` whenever they assign new fresh Row IDs that are higher than `highWaterMark` value of the current `domainMetadata` for `delta.rowTracking`.
-      The `highWaterMark` value in the `configuration` of this `domainMetadata` action must always be equal to or greater than the highest fresh Row ID committed so far.
+      and a `configuration` containing a single key-value pair with `rowIdHighWaterMark` as the key and the highest assigned fresh row id as the value.
+    - Writers must include a `domainMetadata` for `delta.rowTracking` whenever they assign new fresh Row IDs that are higher than `rowIdHighWaterMark` value of the current `domainMetadata` for `delta.rowTracking`.
+      The `rowIdHighWaterMark` value in the `configuration` of this `domainMetadata` action must always be equal to or greater than the highest fresh Row ID committed so far.
       Writers can either commit this `domainMetadata` in the same commit, or they can reserve the fresh Row IDs in an earlier commit.
     - Writers must set the `baseRowId` field to a value that is higher than the row id high water mark.
 - Writer must assign fresh Row Commit Versions to all rows that they commit.
   - Writers must set the `defaultRowCommitVersion` field in new `add` actions to the version number of the log enty containing the `add` action.
   - Writers must set the `defaultRowCommitVersion` field in recommitted and checkpointed `add` actions and `remove` actions to the `defaultRowCommitVersion` of the last committed `add` action with the same `path`.
+
+On the other hand, when Row Tracking is supported but suspended (table property `delta.rowTrackingSuspended` is set to `true`), writers should not assign the `baseRowId` or the `defaultRowCommitVersion`.
 
 Writers can enable Row Tracking by setting `delta.enableRowTracking` to `true` in the `configuration` of the table's `metaData`.
 This is only allowed if the following requirements are satisfied:
@@ -1170,6 +1763,7 @@ This is only allowed if the following requirements are satisfied:
 - If the `baseRowId` and `defaultRowCommitVersion` fields are not set in some active `add` action in the table, then writers must first commit new `add` actions that set these fields to replace the `add` actions that do not have these fields set.
   This can be done in the commit that sets `delta.enableRowTracking` to `true` or in an earlier commit.
   The assigned `baseRowId` and `defaultRowCommitVersion` values must satisfy the same requirements as when assigning fresh Row IDs and fresh Row Commit Versions respectively.
+Furthermore, writers should also verify table property `delta.rowTrackingSuspended` is absent or set to false before enabling Row Tracking.
 
 When Row Tracking is enabled (when the table property `delta.enableRowTracking` is set to `true`), then:
 - Writers must assign stable Row IDs to all rows.
@@ -1208,7 +1802,7 @@ Writers that do not implement VACUUM do not need to change anything and can safe
 For tables with Vacuum Protocol Check enabled, readers don’t need to understand or change anything new; they just need to acknowledge the feature exists.
 
 Making this feature a ReaderWriter feature (rather than solely a Writer feature) ensures that:
-- Older vacuum implementations, which only performed the Reader protocol check and lacked the Writer protocol check, will begin to fail if the table has `vacuumProtocolCheck` enabled.This change allows future writer features to have greater flexibility and safety in managing files within the table directory, eliminating the risk of older Vacuum implementations (that lack the Writer protocol check) accidentally deleting relevant files.
+- Older vacuum implementations, which only performed the Reader protocol check and lacked the Writer protocol check, will begin to fail if the table has `vacuumProtocolCheck` enabled. This change allows future writer features to have greater flexibility and safety in managing files within the table directory, eliminating the risk of older Vacuum implementations (that lack the Writer protocol check) accidentally deleting relevant files.
 
 # Clustered Table
 
@@ -1237,7 +1831,7 @@ When the Clustered Table is supported (when the `writerFeatures` field of a tabl
   - A clustering implementation is free to add additional information such as adding a new user-controlled metadata domain to keep track of its metadata.
 - Writers must not define clustered and partitioned table at the same time.
 
-The following is an example for the `domainMetadata` action defintion of a table that leverages column mapping.
+The following is an example for the `domainMetadata` action definition of a table that leverages column mapping.
 ```json
 {
   "domainMetadata": {
@@ -1257,13 +1851,138 @@ The example above converts `configuration` field into JSON format, including esc
 }
 ```
 
+
+# Variant Data Type
+
+This feature enables support for the `variant` data type, which stores semi-structured data.
+The schema serialization method is described in [Schema Serialization Format](#schema-serialization-format).
+
+To support this feature:
+- The table must be on Reader Version 3 and Writer Version 7
+- The feature `variantType` must exist in the table `protocol`'s `readerFeatures` and `writerFeatures`.
+- The feature `variantShredding` may also exist in the table `protocol`'s `readerFeatures` and `writerFeatures` (see [Variant Shredding](#variant-shredding)).
+
+## Example JSON-Encoded Delta Table Schema with Variant types
+
+```
+{
+  "type" : "struct",
+  "fields" : [ {
+    "name" : "raw_data",
+    "type" : "variant",
+    "nullable" : true,
+    "metadata" : { }
+  }, {
+    "name" : "variant_array",
+    "type" : {
+      "type" : "array",
+      "elementType" : {
+        "type" : "variant"
+      },
+      "containsNull" : false
+    },
+    "nullable" : false,
+    "metadata" : { }
+  } ]
+}
+```
+
+## Variant data in Parquet
+
+The Variant data type is logically represented as two binary encoded values, according to the [Parquet Variant binary encoding specification](https://github.com/apache/parquet-format/blob/master/VariantEncoding.md).
+The two binary values are named `value` and `metadata`.
+
+In parquet files, Variant can be represented in a "[shredded](https://github.com/apache/parquet-format/blob/master/VariantShredding.md)" format or an "[unshredded](https://github.com/apache/parquet-format/blob/master/VariantEncoding.md)" format. Tables containing "shredded" variants must also support the [Variant Shredding](#variant-shredding) feature.
+
+When writing unshredded Variant data to parquet files, the Variant data is written as a single Parquet struct, with the following fields:
+
+Struct field name | Parquet primitive type | Description
+-|-|-
+value | binary | The binary-encoded Variant value, as described in Variant binary encoding specification.
+metadata | binary | The binary-encoded Variant metadata, as described in Variant binary encoding specification.
+
+The parquet struct must include the two struct fields `value` and `metadata`.
+Supported writers must write the two binary fields, and supported readers must read the two binary fields.
+
+## Writer Requirements for Variant Data Type
+
+When Variant type is supported but Variant shredding is not supported (`writerFeatures` field of a table's `protocol` action contains `variantType` but does not contain `variantShredding`), writers:
+- must write a column of type `variant` to parquet in the "unshredded" representation as a struct containing the fields `value` and `metadata` and storing values that conform to the Variant binary encoding specification.
+
+## Reader Requirements for Variant Data Type
+
+When Variant type is supported but Variant shredding is not supported (`readerFeatures` field of a table's `protocol` action contains `variantType` but does not contain `variantShredding`), readers:
+- must recognize and tolerate a `variant` data type in a Delta schema.
+- must use the correct physical schema (struct-of-binary, with fields `value` and `metadata`) when reading a Variant data type from file.
+- must make the column available to the engine:
+    - [Recommended] Expose and interpret the struct-of-binary as a single Variant field in accordance with the Parquet Variant binary encoding specification.
+    - [Alternate] Expose the raw physical struct-of-binary, e.g. if the engine does not support Variant.
+    - [Alternate] Convert the struct-of-binary to a string, and expose the string representation, e.g. if the engine does not support Variant.
+
+## Compatibility with other Delta Features
+
+Feature | Support for Variant Data Type
+-|-
+Partition Columns | **Supported:** A Variant column is allowed to be a non-partitioned column of a partitioned table. <br/> **Unsupported:** Variant is not a comparable data type, so it cannot be included in a partition column.
+Clustered Tables | **Supported:** A Variant column is allowed to be a non-clustering column of a clustered table. <br/> **Unsupported:** Variant is not a comparable data type, so it cannot be included in a clustering column.
+Delta Column Statistics | **Supported:** A Variant column supports the `nullCount` statistic. <br/> **Conditionally Supported:** A Variant column supports `minValues` and `maxValues` statistics if the table also enables the Variant shredding feature (see [Statistics for Variant Columns](#statistics-for-variant-columns)).
+Generated Columns | **Supported:** A Variant column is allowed to be used as a source in a generated column expression, as long as the Variant type is not the result type of the generated column expression. <br/> **Unsupported:** The Variant data type is not allowed to be the result type of a generated column expression.
+Delta CHECK Constraints | **Supported:** A Variant column is allowed to be used for a CHECK constraint expression.
+Default Column Values | **Supported:** A Variant column is allowed to have a default column value.
+Change Data Feed | **Supported:** A table using the Variant data type is allowed to enable the Delta Change Data Feed.
+
+# Variant Shredding
+
+This feature enables support for shredding of the Variant data type, to store and query Variant data more efficiently.
+Shredding a Variant value takes paths from the Variant value, and stores them as typed columns in the file.
+The shredding does not duplicate data, so if a value is stored in the typed column, it is removed from the Variant binary.
+Storing Variant values as typed columns is faster to access, and enables data skipping with statistics.
+
+The `variantShredding` feature depends on the `variantType` feature. When variant shredding is supported, `variantShredding` and `variantType` must be present in the table `protocol`'s `readerFeatures` and `writerFeatures`.
+
+Tables supporting Variant Shredding may also contain parquet files containing Variants represented in the "unshredded" format, and individual files may freely mix shredded and unshredded Variant columns.
+
+## Enablement
+- The table must be on Reader Version 3 and Writer Version 7.
+- The feature `variantType` must exist in the table `protocol`'s `readerFeatures` and `writerFeatures`.
+- The feature `variantShredding` must exist in the table `protocol`'s `readerFeatures` and `writerFeatures`.
+- The table property `delta.enableVariantShredding` must be set to `true`.
+
+If `delta.enableVariantShredding` is missing or has any value other than `true`, the feature is only supported, not enabled. This means that new files may not be written with shredded variant but existing files in the table may contain shredded variant if the table only supports variant shredding.
+
+## Shredded Variant data in Parquet
+
+Shredded Variant data is stored according to the [Parquet Variant Shredding specification](https://github.com/apache/parquet-format/blob/master/VariantShredding.md).
+The shredded Variant data written to parquet files is written as a single Parquet struct, with the following fields:
+
+Struct field name | Parquet primitive type | Description
+-|-|-
+metadata | binary | (required) The binary-encoded Variant metadata, as described in [Parquet Variant binary encoding](https://github.com/apache/parquet-format/blob/master/VariantEncoding.md)
+value | binary | (optional) The binary-encoded Variant value, as described in Parquet Variant binary encoding.
+typed_value | * | (optional) This can be any Parquet type representing the data stored in the Variant, so long as the shredding scheme adheres to the Parquet Variant Shredding specification.
+
+## Writer Requirements for Variant Shredding
+
+When Variant shredding is enabled (the `delta.enableVariantShredding` table property set to `true` and `variantShredding` is present in the table `protocol`'s `writerFeatures` and `readerFeatures`), writers:
+- can choose to shred a Variant column according to the [Parquet Variant Shredding specification](https://github.com/apache/parquet-format/blob/master/VariantShredding.md). In this case, writers are free to write variant columns in the "unshredded" format in parquet files, or write parquet files containing a mix of shredded and unshredded variant columns.
+
+Writers must ensure the `variantShredding` table feature is present in the table protocol's `writerFeatures` and `readerFeatures` when enabling variant shredding (setting the `delta.enableVariantShredding` table property to `true`). This ensures that `delta.enableVariantShredding = true` implies that the table supports and variant enables shredding.
+
+When Variant shredding is not enabled (the `delta.enableVariantShredding` table property is absent or is set to any value other than `true`),  column of type `variant` must not be written as a shredded Variant, but as an unshredded Variant.
+
+## Reader Requirements for Variant Shredding
+
+When Variant Shredding is supported (`readerFeatures` field of a table's `protocol` action contains `variantShredding`), readers:
+- must recognize and tolerate a `variant` data type in a Delta schema.
+- must recognize and correctly process a parquet schema that is either unshredded (only `metadata` and `value` struct fields) or shredded (`metadata`, optional `value`, and optional `typed_value` struct fields) when reading Variant data from files.
+
 # In-Commit Timestamps
 
 The In-Commit Timestamps writer feature strongly associates a monotonically increasing timestamp with each commit by storing it in the commit's metadata.
 
 Enablement:
 - The table must be on Writer Version 7.
-- The feature `inCommitTimestamps` must exist in the table `protocol`'s `writerFeatures`.
+- The feature `inCommitTimestamp` must exist in the table `protocol`'s `writerFeatures`.
 - The table property `delta.enableInCommitTimestamps` must be set to `true`.
 
 ## Writer Requirements for In-Commit Timestamps
@@ -1291,15 +2010,151 @@ Furthermore, when attempting timestamp-based time travel where table state must 
 1. If `timestamp X` >= `delta.inCommitTimestampEnablementTimestamp`, only table versions >= `delta.inCommitTimestampEnablementVersion` should be considered for the query.
 2. Otherwise, only table versions less than `delta.inCommitTimestampEnablementVersion` should be considered for the query.
 
+# Type Widening
 
-# Requirements for Writers
+The Type Widening feature enables changing the type of a column or field in an existing Delta table to a wider type.
+
+The supported type changes are:
+- Integer widening:
+  - `Byte` -> `Short` -> `Int` -> `Long`
+- Floating-point widening:
+  - `Float` -> `Double`
+  - `Byte`, `Short` or `Int` -> `Double`
+- Date widening:
+  - `Date` -> `Timestamp without timezone`
+- Decimal widening - `p` and `s` denote the decimal precision and scale respectively.
+  - `Decimal(p, s)` -> `Decimal(p + k1, s + k2)` where `k1 >= k2 >= 0`.
+  - `Byte`, `Short` or `Int` -> `Decimal(10 + k1, k2)` where `k1 >= k2 >= 0`.
+  - `Long` -> `Decimal(20 + k1, k2)` where `k1 >= k2 >= 0`.
+
+Note: changing a `void` column to another type does not require the Type Widening feature; see [Void Type](#void-type).
+
+To support this feature:
+- The table must be on Reader version 3 and Writer Version 7.
+- The feature `typeWidening` must exist in the table `protocol`'s `readerFeatures` and `writerFeatures`, either during its creation or at a later stage.
+
+When supported:
+ - A table may have a metadata property `delta.enableTypeWidening` in the Delta schema set to `true`. Writers must reject widening type changes when this property isn't set to `true`.
+ - The `metadata` for a column or field in the table schema may contain the key `delta.typeChanges` storing a history of type changes for that column or field.
+
+### Type Change Metadata
+
+Type changes applied to a table are recorded in the table schema and stored in the `metadata` of their nearest ancestor [StructField](#struct-field) using the key `delta.typeChanges`.
+The value for the key `delta.typeChanges` must be a JSON list of objects, where each object contains the following fields:
+Field Name | optional/required | Description
+-|-|-
+`fromType`| required | The type of the column or field before the type change.
+`toType`| required | The type of the column or field after the type change.
+`fieldPath`| optional | When updating the type of a map key/value or array element only: the path from the struct field holding the metadata to the map key/value or array element that was updated.
+
+The `fieldPath` value is "key", "value" and "element"  when updating resp. the type of a map key, map value and array element.
+The `fieldPath` value for nested maps and nested arrays are prefixed by their parents' path, separated by dots.
+
+The following is an example for the definition of a column that went through two type changes:
+```json
+{
+    "name" : "e",
+    "type" : "long",
+    "nullable" : true,
+    "metadata" : { 
+      "delta.typeChanges": [
+        {
+          "fromType": "short",
+          "toType": "integer"
+        },
+        {
+          "fromType": "integer",
+          "toType": "long"
+        }
+      ]
+    }
+  }
+```
+
+The following is an example for the definition of a column after changing the type of a map key:
+```json
+{
+    "name" : "e",
+    "type" : {
+      "type": "map",
+      "keyType": "double",
+      "valueType": "integer",
+      "valueContainsNull": true
+    },
+    "nullable" : true,
+    "metadata" : { 
+      "delta.typeChanges": [
+        {
+          "fromType": "float",
+          "toType": "double",
+          "fieldPath": "key"
+        }
+      ]
+    }
+  }
+```
+
+The following is an example for the definition of a column after changing the type of a map value nested in an array:
+```json
+{
+    "name" : "e",
+    "type" : {
+      "type": "array",
+      "elementType": {
+        "type": "map",
+        "keyType": "string",
+        "valueType": "decimal(10, 4)",
+        "valueContainsNull": true
+      },
+      "containsNull": true
+    },
+    "nullable" : true,
+    "metadata" : { 
+      "delta.typeChanges": [
+        {
+          "fromType": "decimal(6, 2)",
+          "toType": "decimal(10, 4)",
+          "fieldPath": "element.value"
+        }
+      ]
+    }
+  }
+```
+
+## Writer Requirements for Type Widening
+
+When Type Widening is supported (when the `writerFeatures` field of a table's `protocol` action contains `typeWidening`), then:
+- Writers must reject applying any unsupported type change.
+- Writers must reject applying type changes not supported by [Iceberg V2](https://iceberg.apache.org/spec/#schema-evolution)
+  when either the [Iceberg Compatibility V1](#iceberg-compatibility-v1) or [Iceberg Compatibility V2](#iceberg-compatibility-v2) table feature is supported:
+  - `Byte`, `Short` or `Int` -> `Double`
+  - `Date`  -> `Timestamp without timezone`
+  - Decimal scale increase
+  - `Byte`, `Short`, `Int` or `Long` -> `Decimal`
+- Writers must record type change information in the `metadata` of the nearest ancestor [StructField](#struct-field). See [Type Change Metadata](#type-change-metadata).
+- Writers must preserve the `delta.typeChanges` field in the metadata fields in the schema when the table schema is updated.
+- Writers may remove the `delta.typeChanges` metadata in the table schema if all data files use the same field types as the table schema.
+
+When Type Widening is enabled (when the table property `delta.enableTypeWidening` is set to `true`), then:
+- Writers should allow updating the table schema to apply a supported type change to a column, struct field, map key/value or array element.
+
+When removing the Type Widening table feature from the table, in the version that removes `typeWidening` from the `writerFeatures` and `readerFeatures` fields of the table's `protocol` action:
+- Writers must ensure no `delta.typeChanges` metadata key is present in the table schema. This may require rewriting existing data files to ensure that all data files use the same field types as the table schema in order to fulfill the requirement to remove type widening metadata.
+- Writers must ensure that the table property `delta.enableTypeWidening` is not set.
+
+## Reader Requirements for Type Widening
+When Type Widening is supported (when the `readerFeatures` field of a table's `protocol` action contains `typeWidening`), then:
+- Readers must allow reading data files written before the table underwent any supported type change, and must convert such values to the current, wider type.
+- Readers must validate that they support all type changes in the `delta.typeChanges` field in the table schema for the table version they are reading and fail when finding any unsupported type change.
+
+# Additional Requirements for Writers
 This section documents additional requirements that writers must follow in order to preserve some of the higher level guarantees that Delta provides.
 
 ## Creation of New Log Entries
- - Writers MUST never overwrite an existing log entry. When ever possible they should use atomic primitives of the underlying filesystem to ensure concurrent writers do not overwrite each others entries.
+ - Writers MUST never overwrite an existing log entry. When ever possible they should use atomic primitives of the underlying filesystem to ensure concurrent writers do not overwrite each other's entries.
 
 ## Consistency Between Table Metadata and Data Files
- - Any column that exists in a data file present in the table MUST also be present in the metadata of the table.
+ - Any data file column that exists in the table schema MUST have the same type (except as allowed by the [Type Widening](#type-widening) table feature, if enabled).
  - Values for all partition columns present in the schema MUST be present for all files in the table.
  - Columns present in the schema of the table MAY be missing from data files. Readers SHOULD fill these missing columns in with `null`.
 
@@ -1317,7 +2172,7 @@ Each row in the checkpoint corresponds to a single action. The checkpoint **must
  * Files that have been [added](#Add-File-and-Remove-File) and not yet removed
  * Files that were recently [removed](#Add-File-and-Remove-File) and have not yet expired
  * [Transaction identifiers](#Transaction-Identifiers)
- * [Domain Metadata](#Domain-Metadata)
+ * [Domain Metadata](#Domain-Metadata) that have not been removed (i.e. excluding tombstones with `removed=true`)
  * [Checkpoint Metadata](#checkpoint-metadata) - Requires [V2 checkpoints](#v2-spec)
  * [Sidecar File](#sidecar-files) - Requires [V2 checkpoints](#v2-spec)
 
@@ -1505,12 +2360,15 @@ The following steps could be used to do cleanup of the DeltaLog directory:
 1. Identify a threshold (in days) uptil which we want to preserve the deltaLog. Let's refer to
 midnight UTC of that day as `cutOffTimestamp`. The newest commit not newer than the `cutOffTimestamp` is
 the `cutoffCommit`, because a commit exactly at midnight is an acceptable cutoff. We want to retain everything including and after the `cutoffCommit`.
-2. Identify the newest checkpoint that is not newer than the `cutOffCommit`. A checkpoint at the `cutOffCommit` is ideal, but an older one will do. Lets call it `cutOffCheckpoint`.
-We need to preserve the `cutOffCheckpoint` and all commits after it, because we need them to enable
-time travel for commits between `cutOffCheckpoint` and the next available checkpoint.
-3. Delete all [delta log entries](#delta-log-entries) and [checkpoint files](#checkpoints) before the
-`cutOffCheckpoint` checkpoint. Also delete all the [log compaction files](#log-compaction-files) having
-startVersion <= `cutOffCheckpoint`'s version.
+2. Identify the newest checkpoint that is not newer than the `cutOffCommit`. A checkpoint at the `cutOffCommit` is ideal, but an older one will do. Let's call it `cutOffCheckpoint`.
+We need to preserve the `cutOffCheckpoint` (both the checkpoint file and the JSON commit file at that version) and all published commits after it. The JSON commit file at the `cutOffCheckpoint` version must be preserved because checkpoints do not preserve [commit provenance information](#commit-provenance-information) (e.g., `commitInfo` actions), which may be required by table features such as [In-Commit Timestamps](#in-commit-timestamps). All published commits after `cutOffCheckpoint` must be preserved to enable time travel for commits between `cutOffCheckpoint` and the next available checkpoint.
+    - If no `cutOffCheckpoint` can be found, do not proceed with metadata cleanup as there is
+      nothing to cleanup.
+3. Delete all [delta log entries](#delta-log-entries), [checkpoint files](#checkpoints), and
+   [version checksum files](#version-checksum-file) before the `cutOffCheckpoint` checkpoint. Also delete all the [log compaction files](#log-compaction-files)
+   having startVersion <= `cutOffCheckpoint`'s version.
+    - Also delete all the [staged commit files](#staged-commit) having version <=
+      `cutOffCheckpoint`'s version from the `_delta_log/_staged_commits` directory.
 4. Now read all the available [checkpoints](#checkpoints-1) in the _delta_log directory and identify
 the corresponding [sidecar files](#sidecar-files). These sidecar files need to be protected.
 5. List all the files in `_delta_log/_sidecars` directory, preserve files that are less than a day
@@ -1606,6 +2464,7 @@ When enabled:
 - The `metadata` for the column in the table schema MAY contain the key `CURRENT_DEFAULT`.
 - The value of `CURRENT_DEFAULT` SHOULD be parsed as a SQL expression.
 - Writers MUST enforce that before writing any rows to the table, for each such requested row that lacks any explicit value (including NULL) for columns with default values, the writing system will assign the result of evaluating the default value expression for each such column as the value for that column in the row. By the same token, if the engine specified the explicit `DEFAULT` SQL keyword for any column, the expression result must be substituted in the same way.
+- All columns of `variant` type must default to null.
 
 ## Identity Columns
 
@@ -1657,6 +2516,16 @@ The requirements of the readers according to the protocol versions are summarize
 Reader Version 2 | Respect [Column Mapping](#column-mapping)
 Reader Version 3 | Respect [Table Features](#table-features) for readers<br> - Writer Version must be 7
 
+# Table Properties
+
+Delta Lake tables support a set of properties stored in the `configuration` field of the `metaData` action that control various aspects of table behavior.
+
+Property | Description | Details
+-|-|-
+`delta.parquet.compression.codec` | Compression codec writers SHOULD use for new Parquet data and checkpoint files. Changing this property does not affect existing files; a table may contain files written with different codecs, which is a normal and expected state. | Widely supported values (matched case-insensitively): `uncompressed`/`none` (no compression), `snappy`, `gzip`, `lz4` (deprecated, Hadoop framing), `lz4_raw` ([LZ4 block format](https://parquet.apache.org/docs/file-format/data-pages/compression/#lz4_raw)), `zstd`.<br><br>When absent, writers SHOULD default to `zstd`. If a writer does not support or recognize the specified codec, it SHOULD abort with an appropriate error or fall back to a default codec.<br><br>Readers SHOULD support all codecs listed above regardless of the current property value. Parquet files written with other [parquet-supported codecs](https://parquet.apache.org/docs/file-format/data-pages/compression/) may also exist; readers MAY support reading these files.
+`delta.parquet.format.version` | Parquet data page format writers SHOULD use for new data and checkpoint files. This property is a directive to writers only; readers do not need to consult it, as Parquet pages are self-describing via the `PageType` field in each page header. Changing this property does not affect existing files; a table MAY contain files written with different data page versions, which is a normal and expected state. | Valid values: `1.0.0` (DataPageV1) and `2.x.x` (DataPageV2, where `x.x` is any minor.patch version). Recommended values are `1.0.0` and `2.12.0`.<br><br>When absent, writers SHOULD default to `1.0.0`. Writers SHOULD validate this property and abort if the value does not match `1.0.0` or `2.MINOR.PATCH`.<br><br>Readers SHOULD support both DataPageV1 and DataPageV2 pages regardless of this property's value. Tables intended for access by engines beyond the Delta Lake connectors SHOULD use `1.0.0`, as DataPageV2 support varies across the broader Parquet ecosystem.
+`delta.enableVariantShredding` | When `true`, writers could write variant data to parquet files in [shredded](#variant-shredding) format. | Valid values: `true` (shredding allowed) and `false` (shredding not allowed).<br><br>When enabled, writers must ensure that the `variantShredding` table feature is present in the table `protocol`'s `readerFeatures` and `writerFeatures`.
+
 # Appendix
 
 ## Valid Feature Names in Table Features
@@ -1676,10 +2545,12 @@ Feature | Name | Readers or Writers?
 [Timestamp without Timezone](#timestamp-without-timezone-timestampNtz) | `timestampNtz` | Readers and writers
 [Domain Metadata](#domain-metadata) | `domainMetadata` | Writers only
 [V2 Checkpoint](#v2-checkpoint-table-feature) | `v2Checkpoint` | Readers and writers
+[Catalog-managed Tables](#catalog-managed-tables) | `catalogManaged` | Readers and writers
 [Iceberg Compatibility V1](#iceberg-compatibility-v1) | `icebergCompatV1` | Writers only
 [Iceberg Compatibility V2](#iceberg-compatibility-v2) | `icebergCompatV2` | Writers only
 [Clustered Table](#clustered-table) | `clustering` | Writers only
 [VACUUM Protocol Check](#vacuum-protocol-check) | `vacuumProtocolCheck` | Readers and Writers
+[In-Commit Timestamps](#in-commit-timestamps) | `inCommitTimestamp` | Writers only
 
 ## Deletion Vector Format
 
@@ -1700,7 +2571,7 @@ Bytes | Name | Description
 `<start of b>` – `<start of b> + 3` | key | The most significant 32-bit of all the values in this bucket.
 `<start of b> + 4` – `<end of b>` | bucketData | A serialized 32-bit RoaringBitmap with all the least signficant 32-bit entries in this bucket.
 
-The 32-bit serialization format then consists of a header that describes all the (least signficant) 16-bit containers, their types (s. above), and their their key (most significant 16-bits).
+The 32-bit serialization format then consists of a header that describes all the (least signficant) 16-bit containers, their types (s. above), and their key (most significant 16-bits).
 This is followed by the data for each individual container in a container-specific format.
 
 Reference Implementations of the Roaring format:
@@ -1782,6 +2653,56 @@ maxValues | A value that is equal to the largest valid value[^1] present in the 
 
 [^1]: String columns are cut off at a fixed prefix length. Timestamp columns are truncated down to milliseconds.
 
+### Statistics for Variant Columns
+
+- The `nullCount` stat for a Variant column is a LONG representing the nullcount for the Variant column itself (nullcount stats are not captured for individual paths within the Variant).
+- The `minValues` and `maxValues` stats for a Variant column are Variant objects, where the object keys are [normalized JSON path expressions](https://www.rfc-editor.org/rfc/rfc9535.html#name-normalized-paths), and the object values are the primitive Variant values representing the lower and upper bound for that field.
+- In JSON, the `minValues` and `maxValues` stats for a Variant column are [binary-encoded](https://github.com/apache/parquet-format/blob/master/VariantEncoding.md) Variant values, concatenating the `metadata` and `value`, and serialized to strings using [z85](https://rfc.zeromq.org/spec/32/) encoding (see example below).
+- In Parquet, the `minValues` and `maxValues` stats for a Variant column are Parquet Variant columns, following the Parquet Variant [encoding](https://github.com/apache/parquet-format/blob/master/VariantEncoding.md) and [shredding](https://github.com/apache/parquet-format/blob/master/VariantShredding.md) specifications.
+- In Parquet, the Variant `minValues` and `maxValues` stats are allowed to be shredded, but it is not required.
+- Each path in the Variant `minValues` (`maxValues`) value is the independently computed min (max) stat for the corresponding path in the file's Variant data, so e.g. `minValues.v:a` and `minValues.v:b` could come from different rows in the file.
+- Min/max stats may only be written for primitive (leaf) values, packed into a Variant representation.
+- Min/max stats may only be written for a path if that path has the same data type in every row of the data file.
+- If a path is present in both minValues and maxValues for a given file, the Variant type for that path must be the same in both.
+- A path may be present in minValues but not maxValues (or vice versa) for a given file. The paths and types can vary from file to file.
+- Subject to the above constraints, the writer of a given file determines which Variant leaf paths (if any) to emit statistics for.
+
+For a table with a single Variant column (`varCol: variant`) in its data schema, example statistics in JSON would look like:
+
+```
+"stats": {
+  "nullCount": {
+    "varCol": 2
+  }
+  "minValues": {
+    "varCol": "0S&u501fk+ze0(tB98CpzF6vU0rJl95HpNdvjbtatpi(cu0wW^cTu"
+  },
+  "maxValues": {
+    "varCol": "0S&u500&]LC42A9vqZe}wb#-i1}-a+cT!xdbWhT9cTx}7v<+K"
+  }
+}
+```
+The corresponding human-readable form is:
+```
+"stats": {
+  "nullCount": {
+    "varCol": 2
+  }
+  "minValues": {
+    "varCol": {
+      "$['a']" : "min-string",
+      "$['b']['c']" : 1
+    }
+  },
+  "maxValues": {
+    "varCol": {
+      "$['a']" : "variant",
+      "$['b']['c']" : 100
+    }
+  }
+}
+```
+
 ## Partition Value Serialization
 
 Partition values are stored as strings, using the following formats. An empty string for any type translates to a `null` partition value.
@@ -1805,6 +2726,7 @@ It is highly recommended that modern writers adjust the timestamp to UTC and sto
 ## Schema Serialization Format
 
 Delta uses a subset of Spark SQL's JSON Schema representation to record the schema of a table in the transaction log.
+All column names must be unique regardless of casing.
 A reference implementation can be found in [the catalyst package of the Apache Spark repository](https://github.com/apache/spark/tree/master/sql/catalyst/src/main/scala/org/apache/spark/sql/types).
 
 ### Primitive Types
@@ -1824,10 +2746,26 @@ binary| A sequence of binary data.
 date| A calendar date, represented as a year-month-day triple without a timezone.
 timestamp| Microsecond precision timestamp elapsed since the Unix epoch, 1970-01-01 00:00:00 UTC. When this is stored in a parquet file, its `isAdjustedToUTC` must be set to `true`.
 timestamp without time zone | Microsecond precision timestamp in a local timezone elapsed since the Unix epoch, 1970-01-01 00:00:00. It doesn't have the timezone information, and a value of this type can map to multiple physical time instants. It should always be displayed in the same way, regardless of the local time zone in effect. When this is stored in a parquet file, its `isAdjustedToUTC` must be set to `false`. To use this type, a table must support a feature `timestampNtz`. See section [Timestamp without timezone (TimestampNtz)](#timestamp-without-timezone-timestampNtz) for more information.
+void| A column that contains only `null` values and is never materialized in data files. See section [Void Type](#void-type) for more information.
 
 See Parquet [timestamp type](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#timestamp) for more details about timestamp and `isAdjustedToUTC`.
 
-Note: Existing tables may have `void` data type columns. Behavior is undefined for `void` data type columns but it is recommended to drop any `void` data type columns on reads (as is implemented by the Spark connector).
+#### Void Type
+
+_Note: `void` was never deliberately designed as a Delta feature; the Spark connector has produced such columns for a long time without it being specified here. This section documents that pre-existing behavior post-facto, rather than introducing it through the usual RFC process. Because such columns already exist in tables written by earlier clients, `void` is not gated by any table feature and applies to all tables._
+
+`void` is a primitive type and can appear both as a top-level column and nested inside complex types.
+
+On write, writers MUST omit `void` columns from data files; they do not appear in the data file's schema. On read, readers MUST reconstruct them as all-`null` columns, consistent with the [rule](#consistency-between-table-metadata-and-data-files) that columns present in the table schema but missing from a data file are read as `null`.
+
+Because `void` is never written to data files, writers MUST reject operations that **would write new data files** when the table's schema contains any of the following shapes:
+- a `void` type inside an `array` or `map` at any nesting level;
+- a `struct` (at any nesting level) whose fields are all `void`; or
+- a table whose columns are all `void`.
+
+These restrictions are stated in terms of the **table schema**, not the schema of any individual data file. A table with such a schema can still be created, altered through metadata-only operations, and read. In particular, a table covered by these restrictions can be made writable by evolving its schema - for example, by changing a `void` column to another type.
+
+A `void` column may be changed to any other data type through supported schema-evolution operations; this does not require the [Type Widening](#type-widening) table feature.
 
 ### Struct Type
 
@@ -1869,6 +2807,14 @@ type| Always the string "map".
 keyType| The type of element used for the key of this map, represented as a string containing the name of a primitive type, a struct definition, an array definition or a map definition
 valueType| The type of element used for the key of this map, represented as a string containing the name of a primitive type, a struct definition, an array definition or a map definition
 
+### Variant Type
+
+Variant data uses the Delta type name `variant` for Delta schema serialization.
+
+Field Name | Description
+-|-
+type | Always the string "variant"
+
 ### Column Metadata
 A column metadata stores various information about the column.
 For example, this MAY contain some keys like [`delta.columnMapping`](#column-mapping) or [`delta.generationExpression`](#generated-columns) or [`CURRENT_DEFAULT`](#default-columns).  
@@ -1878,7 +2824,7 @@ delta.columnMapping.*| These keys are used to store information about the mappin
 delta.identity.*| These keys are for defining identity columns. See [Identity Columns](#identity-columns) for details.
 delta.invariants| JSON string contains SQL expression information. See [Column Invariants](#column-invariants) for details.
 delta.generationExpression| SQL expression string. See [Generated Columns](#generated-columns) for details.
-
+delta.typeChanges| JSON string containing information about previous type changes applied to this column. See [Type Change Metadata](#type-change-metadata) for details.
 
 ### Example
 
@@ -2003,7 +2949,7 @@ The following examples uses a table with two partition columns: "date" and "regi
 |    |    |-- maxValues: struct
 |    |    |    |-- asset: string
 |    |    |    |-- quantity: double
-|    |    |-- nullCounts: struct
+|    |    |-- nullCount: struct
 |    |    |    |-- asset: long
 |    |    |    |-- quantity: long
 |-- remove: struct
@@ -2092,7 +3038,7 @@ Checkpoint schema (just the `add` column):
 |    |    |-- maxValues: struct
 |    |    |    |-- col-b96921f0-2329-4cb3-8d79-184b2bdab23b: string
 |    |    |    |-- col-04ee4877-ee53-4cb9-b1fb-1a4eb74b508c: double
-|    |    |-- nullCounts: struct
+|    |    |-- nullCount: struct
 |    |    |    |-- col-b96921f0-2329-4cb3-8d79-184b2bdab23b: long
 |    |    |    |-- col-04ee4877-ee53-4cb9-b1fb-1a4eb74b508c: long
 ```
@@ -2181,3 +3127,5 @@ binary| `binary` |
 array| either as `2-level` or `3-level` representation. Refer to [Parquet documentation](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#lists) for further details | `LIST`
 map| either as `2-level` or `3-level` representation. Refer to [Parquet documentation](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#maps) for further details | `MAP`
 struct| `group` |
+
+Note that `void` columns are not stored in Parquet files. See section [Void Type](#void-type).

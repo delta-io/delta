@@ -323,18 +323,21 @@ class AutoCompactPartitionStats(
   /**
    * Collect the number of files, which are less than minFileSize, added to or removed from each
    * partition from `actions`.
+   * The stats collection is only complete when:
+   *  1. The returned iterator has been consumed AND
+   *  2. finalizeStats has been called on the collector.
    */
   def collectPartitionStats(
       collector: AutoCompactPartitionStatsCollector,
-      tableId: String,
-      actions: Iterator[Action]): Unit = {
-    val acts = actions.toVector
-    acts.foreach {
-      case addFile: AddFile => collector.collectPartitionStatsForAdd(addFile)
-      case removeFile: RemoveFile => collector.collectPartitionStatsForRemove(removeFile)
-      case _ => // do nothing
+      actions: Iterator[Action]): Iterator[Action] = {
+    actions.map { action =>
+      action match {
+        case addFile: AddFile => collector.collectPartitionStatsForAdd(addFile)
+        case removeFile: RemoveFile => collector.collectPartitionStatsForRemove(removeFile)
+        case _ => // do nothing
+      }
+      action
     }
-    collector.finalizeStats(tableId)
   }
 
   /** This is test only code to reset the state of table partition statistics. */

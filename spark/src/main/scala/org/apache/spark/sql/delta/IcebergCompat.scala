@@ -16,13 +16,20 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.DeltaConfigs._
 import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, Protocol}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.shims.GeoTypesShim
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.internal.MDC
+import org.apache.spark.internal.config.ConfigEntry
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.types._
 
 /**
@@ -37,54 +44,157 @@ import org.apache.spark.sql.types._
  * enabled but UniForm (Iceberg) not enabled.
  */
 
-object IcebergCompatV1 extends IcebergCompat(
+object IcebergCompatV1 extends IcebergCompatBase(
   version = 1,
+  icebergFormatVersion = 2,
   config = DeltaConfigs.ICEBERG_COMPAT_V1_ENABLED,
-  requiredTableFeatures = Seq(ColumnMappingTableFeature),
-  requiredTableProperties = Seq(RequireColumnMapping),
+  tableFeature = IcebergCompatV1TableFeature,
+  relatedTableProperties = Seq(RequireColumnMapping, OptionalAtomicEligible),
+  incompatibleTableFeatures = Set(DeletionVectorsTableFeature),
   checks = Seq(
     CheckOnlySingleVersionEnabled,
     CheckAddFileHasStats,
     CheckNoPartitionEvolution,
     CheckNoListMapNullType,
-    CheckDeletionVectorDisabled
+    CheckDeletionVectorDisabled,
+    CheckGeoSpatialTableFeatureDisabled,
+    CheckTypeWideningSupported
   )
 )
 
-object IcebergCompatV2 extends IcebergCompat(
+object IcebergCompatV2 extends IcebergCompatBase(
   version = 2,
+  icebergFormatVersion = 2,
   config = DeltaConfigs.ICEBERG_COMPAT_V2_ENABLED,
-  requiredTableFeatures = Seq(ColumnMappingTableFeature),
-  requiredTableProperties = Seq(RequireColumnMapping),
+  tableFeature = IcebergCompatV2TableFeature,
+  relatedTableProperties = Seq(RequireColumnMapping, OptionalAtomicEligible),
+  incompatibleTableFeatures = Set(DeletionVectorsTableFeature),
   checks = Seq(
     CheckOnlySingleVersionEnabled,
     CheckAddFileHasStats,
     CheckTypeInV2AllowList,
     CheckPartitionDataTypeInV2AllowList,
     CheckNoPartitionEvolution,
-    CheckDeletionVectorDisabled
+    CheckDeletionVectorDisabled,
+    CheckGeoSpatialTableFeatureDisabled,
+    CheckTypeWideningSupported
   )
 )
+object CheckTypeInV3AllowList extends CheckTypeInAllowList {
+  val v3OnlyTypes = Set[Class[_]](VariantType.getClass)
+  val v3GeoSpatialTypes = GeoTypesShim.geoTypes
+  override val allowTypes: Set[Class[_]] =
+    CheckTypeInV2AllowList.allowTypes ++ v3OnlyTypes ++ v3GeoSpatialTypes
+}
+
+object RequireRowTracking extends RequiredDeltaTableProperty(
+  deltaConfig = DeltaConfigs.ROW_TRACKING_ENABLED,
+  validator = (b: Boolean) => b,
+  autoSetValue = "true",
+  autoEnableOnExistingTable = true)
+
+object IcebergCompatV3 extends IcebergCompatBase(
+  version = 3,
+  icebergFormatVersion = 3,
+  config = DeltaConfigs.ICEBERG_COMPAT_V3_ENABLED,
+  tableFeature = IcebergCompatV3TableFeature,
+  relatedTableProperties = Seq(RequireColumnMapping, RequireRowTracking, OptionalAtomicEligible),
+  checks = Seq(
+    CheckOnlySingleVersionEnabled,
+    CheckAddFileHasStats,
+    CheckTypeInV3AllowList,
+    CheckPartitionDataTypeInV2AllowList,
+    CheckNoPartitionEvolution,
+    CheckTypeWideningSupported,
+    CheckCannotDisableCompat,
+    CheckColumnDefaultIsLiteral,
+    CheckNoRowTrackingBeforeUpgradeV3,
+    CheckAnySQLConf(Seq(
+      DeltaSQLConf.DELTA_UNIFORM_ICEBERG_TABLE_V3_ENABLED
+    ))
+  )
+) {
+  override def shouldAutoEnable(schema: StructType, properties: Map[String, String]): Boolean = {
+    val hasV3Properties = Set(ROW_TRACKING_ENABLED.key, ENABLE_DELETION_VECTORS_CREATION.key)
+      .exists(properties.get(_).exists(_ == "true"))
+    // Other iceberg v3 types (nano, etc) will be supported in future versions
+    val hasVariant = SchemaUtils.checkForVariantTypeColumnsRecursively(schema)
+    val hasSimpleV3Type = CheckTypeInV3AllowList.v3OnlyTypes
+      .filterNot(_ == VariantType.getClass)
+      .exists(targetClass => SchemaUtils.typeExistsRecursively(schema)(_.getClass == targetClass))
+    val hasDefaultValue = schema.fields
+      .exists(DeltaColumnDefaults.hasLiteralDefault)
+    val hasGeoSpatial = CheckTypeInV3AllowList.v3GeoSpatialTypes
+      .exists(targetClass =>
+        SchemaUtils.typeExistsRecursively(schema)(_.getClass == targetClass))
+
+    hasV3Properties || hasVariant || hasSimpleV3Type || hasDefaultValue || hasGeoSpatial
+  }
+
+  /**
+   * Automatically adjusts table properties to switch from v2 to v3 when certain
+   * v3-related features are enabled.
+   *
+   * If `ICEBERG_COMPAT_V3_ENABLED` is already true in `newEnabledConf`, no changes are made.
+   * Otherwise, if any v3-specific properties (e.g., row tracking or deletion vectors) are
+   * just enabled while the table is still on v2, update the settings to disable v2 and enable v3.
+   *
+   * @param newEnabledConf New configuration properties to be applied.
+   * @param table The Delta table being updated.
+   * @return Updated property map reflecting any necessary switch from v2 to v3.
+   */
+  def propertiesToEnable(
+      newEnabledConf: Map[String, String], table: DeltaTableV2): Map[String, String] = {
+    if (newEnabledConf.getOrElse(
+      DeltaConfigs.ICEBERG_COMPAT_V3_ENABLED.key, "false").toBoolean) {
+      return newEnabledConf
+    }
+
+    val hasV3PropertiesJustEnabled =
+      Set(ROW_TRACKING_ENABLED.key, ENABLE_DELETION_VECTORS_CREATION.key)
+      .exists(newEnabledConf.get(_).exists(_ == "true"))
+
+    if (hasV3PropertiesJustEnabled && table.properties().getOrDefault(
+        DeltaConfigs.ICEBERG_COMPAT_V2_ENABLED.key, "false").toBoolean) {
+      newEnabledConf ++ Map(
+        DeltaConfigs.ICEBERG_COMPAT_V2_ENABLED.key -> "false",
+        DeltaConfigs.ICEBERG_COMPAT_V3_ENABLED.key -> "true")
+    } else {
+      newEnabledConf
+    }
+  }
+}
+
 
 /**
  * All IcebergCompatVx should extend from this base class
  *
  * @param version the compat version number
+ * @param icebergFormatVersion iceberg format version written by this compat
  * @param config  the DeltaConfig for this IcebergCompat version
  * @param requiredTableFeatures a list of table features it relies on
  * @param requiredTableProperties a list of table properties it relies on.
  *                                See [[RequiredDeltaTableProperty]]
+ * @param incompatibleTableFeatures a set of table features it is incompatible
+ *                                  with. Used by [[IcebergCompat.isAnyIncompatibleEnabled]]
  * @param checks  a list of checks this IcebergCompatVx will perform.
  *                @see [[RequiredDeltaTableProperty]]
  */
-case class IcebergCompat(
-    version: Integer,
+case class IcebergCompatBase(
+    version: Int,
+    icebergFormatVersion: Int,
     config: DeltaConfig[Option[Boolean]],
-    requiredTableFeatures: Seq[TableFeature],
-    requiredTableProperties: Seq[RequiredDeltaTableProperty[_<:Any]],
+    tableFeature: TableFeature,
+    relatedTableProperties: Seq[DeltaTableProperty],
+    incompatibleTableFeatures: Set[TableFeature] = Set.empty,
     checks: Seq[IcebergCompatCheck]) extends DeltaLogging {
   def isEnabled(metadata: Metadata): Boolean = config.fromMetaData(metadata).getOrElse(false)
 
+  /**
+   * @return true if the feature should be auto enabled on the table created / updated with
+   *         the schema
+   */
+  def shouldAutoEnable(schema: StructType, properties: Map[String, String]): Boolean = false
   /**
    * Expected to be called after the newest metadata and protocol have been ~ finalized.
    *
@@ -104,6 +214,8 @@ case class IcebergCompat(
    *         updates need to be applied, will return None.
    */
   def enforceInvariantsAndDependencies(
+      spark: SparkSession,
+      catalogTable: Option[CatalogTable],
       prevSnapshot: Snapshot,
       newestProtocol: Protocol,
       newestMetadata: Metadata,
@@ -118,51 +230,83 @@ case class IcebergCompat(
     val isCreatingOrReorgTable = UniversalFormat.isCreatingOrReorgTable(operation)
 
     (wasEnabled, isEnabled) match {
+      // disable compat, block if necessary
+      case (true, false) =>
+        checks.foreach {
+          case check @ CheckCannotDisableCompat =>
+            val context = IcebergCompatContext(
+              spark,
+              catalogTable,
+              prevSnapshot,
+              newestProtocol,
+              newestMetadata,
+              operation,
+              actions,
+              tableId,
+              version
+            )
+            check.apply(context)
+          case _ => // do nth
+        }
+        (None, None)
       case (_, false) => (None, None) // not enable or disabling, Ignore
       case (_, true) => // Enabling now or already-enabled
         val tblFeatureUpdates = scala.collection.mutable.Set.empty[TableFeature]
         val tblPropertyUpdates = scala.collection.mutable.Map.empty[String, String]
 
         // Check we have all required table features
-        requiredTableFeatures.foreach { f =>
+        tableFeature.requiredFeatures.foreach { f =>
           (prevProtocol.isFeatureSupported(f), newestProtocol.isFeatureSupported(f)) match {
             case (_, true) => // all good
-            case (false, false) => // txn has not supported it!
-              // Note: this code path should be impossible, since the IcebergCompatVxTableFeature
-              //       specifies ColumnMappingTableFeature as a required table feature. Thus,
-              //       it should already have been added during
-              //       OptimisticTransaction::updateMetadataInternal
-              if (isCreatingOrReorgTable) {
-                tblFeatureUpdates += f
-              } else {
-                throw DeltaErrors.icebergCompatMissingRequiredTableFeatureException(version, f)
-              }
+            case (false, false) => // txn has not supported it! auto-add the table feature
+              tblFeatureUpdates += f
             case (true, false) => // txn is removing/un-supporting it!
-              throw DeltaErrors.icebergCompatDisablingRequiredTableFeatureException(version, f)
+              handleDisablingRequiredTableFeature(f)
           }
         }
 
-        // Check we have all required delta table properties
-        requiredTableProperties.foreach {
-          case RequiredDeltaTableProperty(deltaConfig, validator, autoSetValue) =>
+        // Go through all relatedProperties:
+        // 1. Check we have all required delta table properties
+        // 2. Enable related non-required delta properties if needed
+        relatedTableProperties.foreach {
+          case RequiredDeltaTableProperty(
+              deltaConfig, validator, autoSetValue, autoEnableOnExistingTable) =>
             val newestValue = deltaConfig.fromMetaData(newestMetadata)
             val newestValueOkay = validator(newestValue)
             val newestValueExplicitlySet = newestMetadata.configuration.contains(deltaConfig.key)
 
-            val err = DeltaErrors.icebergCompatWrongRequiredTablePropertyException(
-              version, deltaConfig.key, newestValue.toString, autoSetValue)
-
             if (!newestValueOkay) {
-              if (!newestValueExplicitlySet && isCreatingOrReorgTable) {
+              if (!newestValueExplicitlySet &&
+                  (isCreatingOrReorgTable || autoEnableOnExistingTable)) {
                 // This case covers both CREATE and REPLACE TABLE commands that
                 // did not explicitly specify the required deltaConfig. In these
                 // cases, we set the property automatically.
+                // If autoEnableOnExistingTable = true, it auto sets in all cases
                 tblPropertyUpdates += deltaConfig.key -> autoSetValue
               } else {
                 // In all other cases, if the property value is not compatible
                 // with the IcebergV1 requirements, we fail
-                throw err
+                handleMissingRequiredTableProperties(
+                  deltaConfig.key, newestValue.toString, autoSetValue)
               }
+            }
+          case OptionalDeltaTableProperty(
+            deltaConfig,
+            autoEnableOnExistingTables,
+            autoSetValue,
+            shouldExistingValuesBeingPreserved
+          ) =>
+            val newestValueExplicitlySet = newestMetadata.configuration.contains(deltaConfig.key)
+            if (!newestValueExplicitlySet &&
+              (autoEnableOnExistingTables || isCreatingOrReorgTable)
+            ) {
+              val oldValueExplicitlySet = prevMetadata.configuration.contains(deltaConfig.key)
+              val setValue = if (shouldExistingValuesBeingPreserved && oldValueExplicitlySet) {
+                prevMetadata.configuration(deltaConfig.key)
+              } else {
+                autoSetValue
+              }
+              tblPropertyUpdates += deltaConfig.key -> setValue
             }
         }
 
@@ -181,7 +325,7 @@ case class IcebergCompat(
           val newConfiguration = newestMetadata.configuration ++ tblPropertyUpdates.toMap
           var tmpNewMetadata = newestMetadata.copy(configuration = newConfiguration)
 
-          requiredTableProperties.foreach { tp =>
+          relatedTableProperties.foreach { tp =>
             tmpNewMetadata = tp.postProcess(prevMetadata, tmpNewMetadata, isCreatingOrReorgTable)
           }
 
@@ -190,6 +334,8 @@ case class IcebergCompat(
 
         // Apply additional checks
         val context = IcebergCompatContext(
+          spark,
+          catalogTable,
           prevSnapshot,
           protocolResult.getOrElse(newestProtocol),
           metadataResult.getOrElse(newestMetadata),
@@ -203,17 +349,23 @@ case class IcebergCompat(
         (protocolResult, metadataResult)
     }
   }
+
+  protected def handleMissingTableFeature(feature: TableFeature): Unit =
+    throw DeltaErrors.icebergCompatMissingRequiredTableFeatureException(version, feature)
+
+  protected def handleDisablingRequiredTableFeature(feature: TableFeature): Unit =
+    throw DeltaErrors.icebergCompatDisablingRequiredTableFeatureException(version, feature)
+
+  protected def handleMissingRequiredTableProperties(
+      confKey: String, actualVal: String, requiredVal: String): Unit =
+    throw DeltaErrors.icebergCompatWrongRequiredTablePropertyException(
+      version, confKey, actualVal, requiredVal)
 }
 
 /**
  * Util methods to manage between IcebergCompat versions
  */
-object IcebergCompat extends DeltaLogging {
-
-  val knownVersions = Seq(
-    DeltaConfigs.ICEBERG_COMPAT_V1_ENABLED -> 1,
-    DeltaConfigs.ICEBERG_COMPAT_V2_ENABLED -> 2)
-
+case class IcebergCompatVersionBase(knownVersions: Set[IcebergCompatBase]) {
   /**
    * Fetch from Metadata the current enabled IcebergCompat version.
    * @return a number indicate the version. E.g., 1 for CompatV1.
@@ -221,53 +373,67 @@ object IcebergCompat extends DeltaLogging {
    */
   def getEnabledVersion(metadata: Metadata): Option[Int] =
     knownVersions
-      .find{ case (config, _) => config.fromMetaData(metadata).getOrElse(false) }
-      .map{ case (_, version) => version }
+      .find{ _.config.fromMetaData(metadata).getOrElse(false) }
+      .map{ _.version }
 
   /**
-   * Get the DeltaConfig for the given IcebergCompat version. If version is not valid,
+   * Get the IcebergCompat by version. If version is not valid,
    * throw an exception.
-   * @return the DeltaConfig for the given version. E.g.,
-   *         [[DeltaConfigs.ICEBERG_COMPAT_V1_ENABLED]] for version 1.
+   * @return the IcebergCompatVx object
    */
-  def getIcebergCompatVersionConfigForValidVersion(version: Int): DeltaConfig[Option[Boolean]] = {
-    if (version <= 0 || version > knownVersions.length) {
-      throw DeltaErrors.icebergCompatVersionNotSupportedException(
-        version, knownVersions.length
-      )
+  def getForVersion(version: Int): IcebergCompatBase =
+    knownVersions
+      .find(_.version == version)
+      .getOrElse(
+        throw DeltaErrors.icebergCompatVersionNotSupportedException(
+          version, knownVersions.size
+        )
+    )
+
+  /**
+   * @return any enabled IcebergCompat in the conf
+   */
+  def anyEnabled(conf: Map[String, String]): Option[IcebergCompatBase] =
+    knownVersions.find { compat =>
+      conf.getOrElse[String](compat.config.key, "false").toBoolean
     }
-    knownVersions(version - 1)._1
-  }
+
+  def anyEnabled(metadata: Metadata): Option[IcebergCompatBase] =
+    knownVersions.find { _.config.fromMetaData(metadata).getOrElse(false) }
 
   /**
    * @return true if any version of IcebergCompat is enabled
    */
+  def isAnyEnabled(conf: Map[String, String]): Boolean = anyEnabled(conf).nonEmpty
+
   def isAnyEnabled(metadata: Metadata): Boolean =
-    knownVersions.exists{ case (config, _) => config.fromMetaData(metadata).getOrElse(false) }
+    knownVersions.exists { _.config.fromMetaData(metadata).getOrElse(false) }
 
   /**
-   * @return true if the target version is enabled on the table.
+   * @return true if a CompatVx greater or eq to the required version is enabled
    */
-  def isVersionEnabled(metadata: Metadata, version: Integer): Boolean =
-    knownVersions.exists {
-      case (config, v) =>
-        (v == version) && (config.fromMetaData(metadata).getOrElse(false))
+  def isGeqEnabled(metadata: Metadata, requiredVersion: Int): Boolean =
+    anyEnabled(metadata).exists(_.version >= requiredVersion)
+  /**
+   * @return true if any version of IcebergCompat is enabled, and is incompatible
+   *         with the given table feature
+   */
+  def isAnyIncompatibleEnabled(
+      configuration: Map[String, String], feature: TableFeature): Boolean =
+    knownVersions.exists { compat =>
+      configuration.getOrElse[String](compat.config.key, "false").toBoolean &&
+        compat.incompatibleTableFeatures.contains(feature)
     }
 }
 
-/**
- * Wrapper class for table property validation
- *
- * @param deltaConfig [[DeltaConfig]] we are checking
- * @param validator A generic method to validate the given value
- * @param autoSetValue The value to set if we can auto-set this value (e.g. during table creation)
- */
-case class RequiredDeltaTableProperty[T](
-    deltaConfig: DeltaConfig[T],
-    validator: T => Boolean,
-    autoSetValue: String) {
+object IcebergCompat extends IcebergCompatVersionBase(
+    Set(IcebergCompatV1, IcebergCompatV2, IcebergCompatV3)
+  ) with DeltaLogging
+
+
+trait DeltaTableProperty {
   /**
-   * A callback after all required properties are added to the new metadata.
+   * A callback after all properties are added to the new metadata.
    * @return Updated metadata. None if no change
    */
   def postProcess(
@@ -276,16 +442,40 @@ case class RequiredDeltaTableProperty[T](
       isCreatingNewTable: Boolean) : Metadata = newMetadata
 }
 
-object RequireColumnMapping extends RequiredDeltaTableProperty(
+/**
+ * Wrapper class for table property validation
+ *
+ * @param deltaConfig [[DeltaConfig]] we are checking
+ * @param validator A generic method to validate the given value
+ * @param autoSetValue The value to set if we can auto-set this value
+ * @param autoEnableOnExistingTable this can be true only when the feature
+ *                                  can be confidently enabled on existing table
+ */
+case class RequiredDeltaTableProperty[T](
+      deltaConfig: DeltaConfig[T],
+      validator: T => Boolean,
+      autoSetValue: String,
+      autoEnableOnExistingTable: Boolean = false) extends DeltaTableProperty
+
+case class OptionalDeltaTableProperty[T](
+      deltaConfig: DeltaConfig[T],
+      autoEnableOnExistingTables: Boolean,
+      autoSetValue: String,
+      shouldExistingValuesBeingPreserved: Boolean) extends DeltaTableProperty
+
+
+class RequireColumnMapping(allowedModes: Seq[DeltaColumnMappingMode])
+  extends RequiredDeltaTableProperty(
     deltaConfig = DeltaConfigs.COLUMN_MAPPING_MODE,
-    validator = (mode: DeltaColumnMappingMode) => (mode == NameMapping || mode == IdMapping),
-    autoSetValue = NameMapping.name) {
+    validator = (mode: DeltaColumnMappingMode) => allowedModes.contains(mode),
+    autoSetValue = if (allowedModes.contains(NameMapping)) NameMapping.name else IdMapping.name) {
+
   override def postProcess(
       prevMetadata: Metadata,
       newMetadata: Metadata,
       isCreatingNewTable: Boolean): Metadata = {
-    if (newMetadata.configuration.contains(DeltaConfigs.COLUMN_MAPPING_MODE.key)) {
-      assert(isCreatingNewTable, "we only auto-upgrade Column Mapping on new tables")
+    if (!prevMetadata.configuration.contains(DeltaConfigs.COLUMN_MAPPING_MODE.key) &&
+        newMetadata.configuration.contains(DeltaConfigs.COLUMN_MAPPING_MODE.key)) {
       val tmpNewMetadata = DeltaColumnMapping.assignColumnIdAndPhysicalName(
         newMetadata = newMetadata,
         oldMetadata = prevMetadata,
@@ -300,7 +490,28 @@ object RequireColumnMapping extends RequiredDeltaTableProperty(
   }
 }
 
+object RequireColumnMapping extends RequireColumnMapping(Seq(NameMapping, IdMapping))
+
+object OptionalAtomicEligible extends OptionalDeltaTableProperty(
+  deltaConfig = DeltaConfigs.ICEBERG_ATOMIC_CONVERSION_SUPPORTED,
+  autoEnableOnExistingTables = false,
+  autoSetValue = "true",
+  shouldExistingValuesBeingPreserved = true
+)
+
+
+case class CheckAnySQLConf(confs: Seq[ConfigEntry[Boolean]]) extends IcebergCompatCheck {
+  override def apply(context: IcebergCompatContext): Unit = {
+    val spark = context.spark
+    if (!confs.exists(conf => spark.conf.get(conf))) {
+      throw DeltaErrors.icebergCompatConfigNotEnabled(context.version)
+    }
+  }
+}
+
 case class IcebergCompatContext(
+    spark: SparkSession,
+    catalogTable: Option[CatalogTable],
     prevSnapshot: Snapshot,
     newestProtocol: Protocol,
     newestMetadata: Metadata,
@@ -320,9 +531,9 @@ trait IcebergCompatCheck extends (IcebergCompatContext => Unit)
  */
 object CheckOnlySingleVersionEnabled extends IcebergCompatCheck {
   override def apply(context: IcebergCompatContext): Unit = {
-    val numEnabled = IcebergCompat.knownVersions
-      .map { case (config, _) =>
-        if (config.fromMetaData(context.newestMetadata).getOrElse(false)) 1 else 0
+    val numEnabled = IcebergCompat.knownVersions.toSeq
+      .map { compat =>
+        if (compat.isEnabled(context.newestMetadata)) 1 else 0
       }.sum
     if (numEnabled > 1) {
       throw DeltaErrors.icebergCompatVersionMutualExclusive(context.version)
@@ -378,15 +589,27 @@ object CheckNoListMapNullType extends IcebergCompatCheck {
   }
 }
 
-object CheckTypeInV2AllowList extends IcebergCompatCheck {
-  private val allowTypes = Set[Class[_]] (
-    ByteType.getClass, ShortType.getClass, IntegerType.getClass, LongType.getClass,
-    FloatType.getClass, DoubleType.getClass, classOf[DecimalType],
-    StringType.getClass, BinaryType.getClass,
-    BooleanType.getClass,
-    TimestampType.getClass, TimestampNTZType.getClass, DateType.getClass,
-    classOf[ArrayType], classOf[MapType], classOf[StructType]
-  )
+/**
+ * check if the table has any column with geospatial type, which are
+ * not supported yet.
+ */
+object CheckGeoSpatialTableFeatureDisabled extends IcebergCompatCheck {
+  override def apply(context: IcebergCompatContext): Unit = {
+    SchemaUtils
+      .findAnyTypeRecursively(context.newestMetadata.schema)(
+        t => DeltaGeoSpatial.isGeoSpatialType(t))
+      match {
+        case Some(unsupportedType) =>
+          throw DeltaErrors.icebergCompatUnsupportedDataTypeException(
+            context.version, unsupportedType, context.newestMetadata.schema)
+        case _ =>
+      }
+  }
+}
+
+class CheckTypeInAllowList extends IcebergCompatCheck {
+  def allowTypes: Set[Class[_]] = Set()
+
   override def apply(context: IcebergCompatContext): Unit = {
     SchemaUtils
       .findAnyTypeRecursively(context.newestMetadata.schema)(t => !allowTypes.contains(t.getClass))
@@ -398,6 +621,18 @@ object CheckTypeInV2AllowList extends IcebergCompatCheck {
     }
   }
 }
+
+object CheckTypeInV2AllowList extends CheckTypeInAllowList {
+  override val allowTypes: Set[Class[_]] = Set[Class[_]] (
+    ByteType.getClass, ShortType.getClass,
+    IntegerType.getClass, LongType.getClass,
+    FloatType.getClass, DoubleType.getClass, classOf[DecimalType],
+    StringType.getClass, BinaryType.getClass,
+    BooleanType.getClass,
+    TimestampType.getClass, TimestampNTZType.getClass, DateType.getClass,
+    classOf[ArrayType], classOf[MapType], classOf[StructType])
+}
+
 
 object CheckPartitionDataTypeInV2AllowList extends IcebergCompatCheck {
   private val allowedTypes = Set[Class[_]] (
@@ -457,3 +692,78 @@ object CheckDeletionVectorDisabled extends IcebergCompatCheck {
     }
   }
 }
+
+/**
+ * Checks that the table didn't go through any type changes that Iceberg doesn't support. See
+ * `TypeWidening.isTypeChangeSupportedByIceberg()` for supported type changes.
+ * Note that this check covers both:
+ * - When the table had an unsupported type change applied in the past and Uniform is being enabled.
+ * - When Uniform is enabled and a new, unsupported type change is being applied.
+ */
+object CheckTypeWideningSupported extends IcebergCompatCheck {
+  override def apply(context: IcebergCompatContext): Unit = {
+    val skipCheck = context.spark.sessionState.conf
+      .getConf(DeltaSQLConf.DELTA_TYPE_WIDENING_ALLOW_UNSUPPORTED_ICEBERG_TYPE_CHANGES)
+
+    if (skipCheck || !TypeWidening.isSupported(context.newestProtocol)) return
+
+    TypeWideningMetadata.getAllTypeChanges(context.newestMetadata.schema).foreach {
+      case (fieldPath, TypeChange(_, fromType: AtomicType, toType: AtomicType, _))
+        // We ignore type changes that are not generally supported with type widening to reduce the
+        // risk of this check misfiring. These are handled by `TypeWidening.assertTableReadable()`.
+        // The error here only captures type changes that are supported in Delta but not Iceberg.
+        if TypeWidening.isTypeChangeSupported(fromType, toType) &&
+          !TypeWidening.isTypeChangeSupportedByIceberg(fromType, toType) =>
+        throw DeltaErrors.icebergCompatUnsupportedTypeWideningException(
+          context.version, fieldPath, fromType, toType)
+      case _ => () // ignore
+    }
+  }
+}
+
+object CheckCannotDisableCompat extends IcebergCompatCheck {
+  override def apply(context: IcebergCompatContext): Unit = {
+    // block if this is not create table and iceberg compat 3+ is disabled
+    if (context.prevSnapshot.version >= 0 &&
+      IcebergCompat.isGeqEnabled(context.prevMetadata, 3) &&
+      !IcebergCompat.isGeqEnabled(context.newestMetadata, 3)) {
+      throw new UnsupportedOperationException("IcebergCompat cannot be disabled")
+    }
+  }
+}
+
+object CheckColumnDefaultIsLiteral extends IcebergCompatCheck {
+  override def apply(context: IcebergCompatContext): Unit = {
+    val schema = context.newestMetadata.schema
+    schema.fields
+      .find(field =>
+        DeltaColumnDefaults.hasWriteDefault(field) &&
+          !DeltaColumnDefaults.hasLiteralDefault(field))
+      .foreach(field =>
+        throw DeltaErrors.icebergCompatUnsupportedFieldException(context.version, field, schema)
+      )
+    }
+}
+
+/**
+ * Check that RowTracking is disabled before enabling Iceberg Compat V3
+ * via an ALTER TABLE operation.
+ *
+ * This ensures that if the target table's current protocol and metadata
+ * indicate RowTracking is enabled, users cannot directly upgrade to
+ * Iceberg Compat V3 using ALTER TABLE without disabling RowTracking first.
+ */
+object CheckNoRowTrackingBeforeUpgradeV3 extends IcebergCompatCheck {
+  override def apply(context: IcebergCompatContext): Unit = {
+    context.operation match {
+      case Some(_ : DeltaOperations.SetTableProperties)
+        if !IcebergCompat.isGeqEnabled(context.prevMetadata, 3) &&
+          RowTracking.isEnabled(context.prevProtocol, context.prevMetadata) =>
+        throw new UnsupportedOperationException(
+          "Alter Table enable icebergCompatV3 with RowTracking enabled is not supported. " +
+            "Please disable RowTracking first.")
+      case _ => // pass
+    }
+  }
+}
+

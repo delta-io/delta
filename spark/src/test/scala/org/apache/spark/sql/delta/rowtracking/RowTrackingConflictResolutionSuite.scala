@@ -19,8 +19,8 @@ package org.apache.spark.sql.delta.rowtracking
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Truncate}
 import org.apache.spark.sql.delta.actions.{Action, AddFile}
-import org.apache.spark.sql.delta.actions.{Metadata, RemoveFile}
-import org.apache.spark.sql.delta.commands.backfill.{BackfillBatchIterator, BackfillCommandStats, RowTrackingBackfillBatch, RowTrackingBackfillExecutor}
+import org.apache.spark.sql.delta.actions.{Metadata, Protocol, RemoveFile}
+import org.apache.spark.sql.delta.commands.backfill.{BackfillCommandStats, RowTrackingBackfillExecutor}
 import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.rowid.RowIdTestUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -42,6 +42,7 @@ class RowTrackingConflictResolutionSuite extends QueryTest
 
   override def sparkConf: SparkConf = super.sparkConf
     .set(DeltaSQLConf.DELTA_ROW_TRACKING_BACKFILL_ENABLED.key, "true")
+    .set(DeltaSQLConf.FEATURE_ENABLEMENT_CONFLICT_RESOLUTION_ENABLED.key, "true")
 
   private val testTableName = "test_table"
 
@@ -74,7 +75,9 @@ class RowTrackingConflictResolutionSuite extends QueryTest
   /** Add Row tracking table feature support. */
   private def activateRowTracking(): Unit = {
     require(!latestSnapshot.protocol.isFeatureSupported(RowTrackingFeature))
-    deltaLog.upgradeProtocol(Action.supportedProtocolVersion())
+    val protocolWithRowTracking = Protocol(3, 7).withFeature(RowTrackingFeature)
+    deltaLog.upgradeProtocol(
+      None, latestSnapshot, latestSnapshot.protocol.merge(protocolWithRowTracking))
   }
 
   // Add 'numRecords' records to the table.
@@ -114,8 +117,12 @@ class RowTrackingConflictResolutionSuite extends QueryTest
       val filePath = "file_path"
 
       val txn = deltaLog.startTransaction()
+      val protocolWithRowTracking = Protocol(3, 7).withFeature(RowTrackingFeature)
       deltaLog.startTransaction().commit(
-        Seq(Action.supportedProtocolVersion(), addFile("other_path")), DeltaOperations.ManualUpdate)
+        Seq(
+          latestSnapshot.protocol.merge(protocolWithRowTracking),
+          addFile("other_path")
+        ), DeltaOperations.ManualUpdate)
       txn.commit(Seq(addFile(filePath)), DeltaOperations.ManualUpdate)
 
       assertRowIdsAreValid(deltaLog)
@@ -180,7 +187,10 @@ class RowTrackingConflictResolutionSuite extends QueryTest
       f2,
       f3,
       f4,
-      Action.supportedProtocolVersion().withFeature(RowTrackingFeature)
+      Action.supportedProtocolVersion(
+        // AdaptiveMetadataTableFeature is WIP; don't enable it by default in test tables.
+        featuresToExclude = Seq(CatalogOwnedTableFeature, AdaptiveMetadataTableFeature))
+        .withFeature(RowTrackingFeature)
     )
 
     log.startTransaction().commit(setupActions, ManualUpdate)
@@ -196,27 +206,17 @@ class RowTrackingConflictResolutionSuite extends QueryTest
 
   /** Execute backfill on the table associated with the delta log passed in. */
   private def executeBackfill(log: DeltaLog, backfillTxn: OptimisticTransaction): Unit = {
-    val maxBatchesInParallel = 1
     val backfillStats = BackfillCommandStats(
       backfillTxn.txnId,
-      nameOfTriggeringOperation = DeltaOperations.OP_SET_TBLPROPERTIES,
-      maxNumBatchesInParallel = maxBatchesInParallel)
+      nameOfTriggeringOperation = DeltaOperations.OP_SET_TBLPROPERTIES)
     val backfillExecutor = new RowTrackingBackfillExecutor(
       spark,
-      backfillTxn,
-      FileMetadataMaterializationTracker.noopTracker,
-      maxBatchesInParallel,
+      log,
+      catalogTableOpt = None,
+      backfillTxn.txnId,
       backfillStats
     )
-    val filesToBackfill =
-      RowTrackingBackfillExecutor.getCandidateFilesToBackfill(log.update())
-    val batches = new BackfillBatchIterator(
-      filesToBackfill,
-      FileMetadataMaterializationTracker.noopTracker,
-      maxNumFilesPerBin = 4,
-      constructBatch = RowTrackingBackfillBatch(_))
-
-    backfillExecutor.run(batches)
+    backfillExecutor.run(maxNumFilesPerCommit = 4)
   }
 
   /** Check if base row IDs and default row commit versions have been assigned. */
@@ -351,22 +351,23 @@ class RowTrackingConflictResolutionSuite extends QueryTest
     txn.commit(Nil, ManualUpdate, tags)
   }
 
-  test("RowTrackingEnablementOnly metadata update does not fail transactions "
-      + "that don't do metadata update") {
+  test("RowTrackingEnablementOnly metadata update does not fail txns that don't update metadata") {
     withTestTable {
-      val txn = deltaLog.startTransaction()
-      activateRowTracking()
-      enableRowTrackingOnlyMetadataUpdate()
+      withSQLConf(DeltaSQLConf.FEATURE_ENABLEMENT_CONFLICT_RESOLUTION_ENABLED.key -> "false") {
+        val txn = deltaLog.startTransaction()
+        activateRowTracking()
+        enableRowTrackingOnlyMetadataUpdate()
 
-      val rowTrackingPreserved = rowTrackingMarkedAsPreservedForCommit(deltaLog) {
-        txn.commit(Seq(addFile(path = "file_path")), DeltaOperations.ManualUpdate)
-      }
+        val rowTrackingPreserved = rowTrackingMarkedAsPreservedForCommit(deltaLog) {
+          txn.commit(Seq(addFile(path = "file_path")), DeltaOperations.ManualUpdate)
+        }
 
-      assert(!rowTrackingPreserved, "Commits conflicting with a metadata update " +
+        assert(!rowTrackingPreserved, "Commits conflicting with a metadata update " +
           "that enables row tracking only should have row tracking marked as not preserved.")
 
-      assertRowIdsAreValid(deltaLog)
-      assert(RowTracking.isEnabled(latestSnapshot.protocol, latestSnapshot.metadata))
+        assertRowIdsAreValid(deltaLog)
+        assert(RowTracking.isEnabled(latestSnapshot.protocol, latestSnapshot.metadata))
+      }
     }
   }
 

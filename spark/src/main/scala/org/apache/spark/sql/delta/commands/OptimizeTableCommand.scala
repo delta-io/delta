@@ -28,7 +28,7 @@ import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescri
 import org.apache.spark.sql.delta.commands.optimize._
 import org.apache.spark.sql.delta.files.SQLMetricsReporting
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
-import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.schema.{SchemaUtils, UnsupportedDataTypeInfo}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.BinPackingUtils
 
@@ -46,6 +46,7 @@ import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.types._
 import org.apache.spark.util.{SystemClock, ThreadUtils}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.delta.actions.InMemoryLogReplay.UniqueFileActionTuple
 
 /** Base class defining abstract optimize command */
 abstract class OptimizeTableCommandBase extends RunnableCommand with DeltaCommand {
@@ -95,6 +96,14 @@ abstract class OptimizeTableCommandBase extends RunnableCommand with DeltaComman
       if (df.queryExecution.analyzed.resolve(colAttribute.nameParts, isNameEqual).isEmpty) {
         throw DeltaErrors.zOrderingColumnDoesNotExistException(colName)
       }
+      val attr = df.queryExecution.analyzed.resolve(colAttribute.nameParts, isNameEqual).get
+
+      if (DeltaGeoSpatial.containsGeoColumns(attr.dataType)) {
+        throw DeltaErrors.operationNotSupportedForDataTypes(
+          "Z-ORDER",
+          UnsupportedDataTypeInfo(colName, attr.dataType))
+      }
+
     }
     if (checkColStat && colsWithoutStats.nonEmpty) {
       throw DeltaErrors.zOrderingOnColumnWithNoStatsException(
@@ -151,6 +160,10 @@ case class OptimizeTableCommand(
     val snapshot = table.update()
     if (snapshot.version == -1) {
       throw DeltaErrors.notADeltaTableException(table.deltaLog.dataPath.toString)
+    }
+
+    if (snapshot.isCatalogOwned) {
+      throw DeltaErrors.operationBlockedOnCatalogManagedTable("OPTIMIZE")
     }
 
     val isClusteredTable = ClusteredTableUtils.isSupported(snapshot.protocol)
@@ -307,7 +320,14 @@ class OptimizeExecutor(
         case None =>
           filterCandidateFileList(minFileSize, maxDeletedRowsRatio, candidateFiles)
       }
-      val partitionsToCompact = filesToProcess.groupBy(_.partitionValues).toSeq
+      // Group files by their normalized (typed) partition values so that logically equivalent
+      // but differently formatted values (e.g. timestamp variants) end up in the same group.
+      val partitionsToCompact = filesToProcess
+        .groupBy(_.normalizedPartitionValues(
+          sparkSession,
+          snapshot.metadata.physicalPartitionSchema))
+        .map { case (_, files) => (files.head.partitionValues, files) }
+        .toSeq
 
       val jobs = groupFilesIntoBins(partitionsToCompact)
 
@@ -349,7 +369,7 @@ class OptimizeExecutor(
 
       optimizeStrategy.updateOptimizeStats(optimizeStats, removedFiles, jobs)
 
-      return Seq(Row(snapshot.deltaLog.dataPath.toString, optimizeStats.toOptimizeMetrics))
+      return Seq(Row(snapshot.dataPath.toString, optimizeStats.toOptimizeMetrics))
     }
   }
 
@@ -453,12 +473,17 @@ class OptimizeExecutor(
       val metrics = createMetrics(sparkSession.sparkContext, addedFiles, removedFiles, removedDVs)
       commitAndRetry(txn, getOperation(), updates, metrics) { newTxn =>
         val newPartitionSchema = newTxn.metadata.partitionSchema
-        val candidateSetOld = filesToProcess.map(_.path).toSet
+        // Note: When checking if the candidate set is the same, we need to consider (Path, DV)
+        //       as the key.
+        val candidateSetOld = filesToProcess.
+          map(f => UniqueFileActionTuple(f.pathAsUri, f.getDeletionVectorUniqueId)).toSet
+
         // We specifically don't list the files through the transaction since we are potentially
         // only processing a subset of them below. If the transaction is still valid, we will
         // register the files and predicate below
         val candidateSetNew =
-          newTxn.snapshot.filesForScan(partitionPredicate).files.map(_.path).toSet
+          newTxn.snapshot.filesForScan(partitionPredicate).files
+            .map(f => UniqueFileActionTuple(f.pathAsUri, f.getDeletionVectorUniqueId)).toSet
 
         // As long as all of the files that we compacted are still part of the table,
         // and the partitioning has not changed it is valid to continue to try

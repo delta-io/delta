@@ -23,7 +23,6 @@ package org.apache.spark.sql.delta.commands.backfill
  *                       is the parent transaction for BackfillBatch commits.
  * @param nameOfTriggeringOperation: The name of the operation that triggered backfill. For now,
  *                                   this can be ALTER TABLE SET TBLPROPERTIES
- * @param maxNumBatchesInParallel The maximum number of batches that could have run in parallel.
  * @param totalExecutionTimeMs The total execution time in milliseconds.
  * @param numSuccessfulBatches The number of BackfillBatch's that was successfully committed.
  * @param numFailedBatches The number of BackfillBatch's that failed.
@@ -32,7 +31,6 @@ package org.apache.spark.sql.delta.commands.backfill
 case class BackfillCommandStats(
     transactionId: String,
     nameOfTriggeringOperation: String,
-    maxNumBatchesInParallel: Int,
     var totalExecutionTimeMs: Long = 0,
     var numSuccessfulBatches: Int = 0,
     var numFailedBatches: Int = 0,

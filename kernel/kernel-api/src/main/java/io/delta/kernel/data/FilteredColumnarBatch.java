@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.data;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.internal.data.ColumnarBatchRow;
 import io.delta.kernel.utils.CloseableIterator;
@@ -37,10 +39,35 @@ import java.util.Optional;
 public class FilteredColumnarBatch {
   private final ColumnarBatch data;
   private final Optional<ColumnVector> selectionVector;
+  private final Optional<String> filePath;
+  private final Optional<Integer> preComputedNumSelectedRows;
 
+  // TODO: use static factory for constructors
   public FilteredColumnarBatch(ColumnarBatch data, Optional<ColumnVector> selectionVector) {
     this.data = data;
     this.selectionVector = selectionVector;
+    this.filePath = Optional.empty();
+    this.preComputedNumSelectedRows =
+        !selectionVector.isPresent() ? Optional.of(data.getSize()) : Optional.empty();
+  }
+
+  public FilteredColumnarBatch(
+      ColumnarBatch data,
+      Optional<ColumnVector> selectionVector,
+      String filePath,
+      int preComputedNumSelectedRows) {
+    this.data = data;
+    this.selectionVector = selectionVector;
+    checkArgument(
+        selectionVector.isPresent() || preComputedNumSelectedRows == data.getSize(),
+        "Invalid precomputedNumSelectedRows: must be equal to batch size "
+            + "when selectionVector is empty.");
+    checkArgument(
+        preComputedNumSelectedRows >= 0 && preComputedNumSelectedRows <= data.getSize(),
+        "Invalid precomputedNumSelectedRows: "
+            + "must be no less than 0 and no larger than batch size.");
+    this.filePath = Optional.of(filePath);
+    this.preComputedNumSelectedRows = Optional.of(preComputedNumSelectedRows);
   }
 
   /**
@@ -52,6 +79,18 @@ public class FilteredColumnarBatch {
    */
   public ColumnarBatch getData() {
     return data;
+  }
+
+  /**
+   * Returns the file path from which the data originates, if available.
+   *
+   * <p>Note: The file path may not be present. It is only set if explicitly provided in the
+   * constructor.
+   *
+   * @return an {@link Optional} containing the file path if available, otherwise an empty Optional
+   */
+  public Optional<String> getFilePath() {
+    return filePath;
   }
 
   /**
@@ -107,5 +146,21 @@ public class FilteredColumnarBatch {
       @Override
       public void close() {}
     };
+  }
+
+  /**
+   * @return an {@link Optional} containing the pre-computed number of selected rows, if available.
+   *     <p>If present, this value was computed ahead of time and can be used without incurring any
+   *     additional cost. This occurs in two cases:
+   *     <ul>
+   *       <li>When the selection vector is absent, which implies that all rows are selected — in
+   *           this case, the number of selected rows is equal to the batch size.
+   *       <li>When the number of selected rows was explicitly pre-computed and passed in.
+   *     </ul>
+   *     <p>If empty, the caller must compute the number of selected rows manually from the
+   *     selection vector.
+   */
+  public Optional<Integer> getPreComputedNumSelectedRows() {
+    return preComputedNumSelectedRows;
   }
 }

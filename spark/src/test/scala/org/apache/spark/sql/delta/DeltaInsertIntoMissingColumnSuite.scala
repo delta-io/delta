@@ -31,7 +31,6 @@ class DeltaInsertIntoMissingColumnSuite extends DeltaInsertIntoTest {
 
   override def beforeAll(): Unit = {
     super.beforeAll()
-    spark.conf.set(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key, "false")
     spark.conf.set(SQLConf.ANSI_ENABLED.key, "true")
   }
 
@@ -53,7 +52,7 @@ class DeltaInsertIntoMissingColumnSuite extends DeltaInsertIntoTest {
           .add("b", IntegerType)
           .add("c", IntegerType)),
       includeInserts = insertsByName,
-      confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
+      withSchemaEvolution = schemaEvolution
     )
 
     testInserts(s"insert with missing nested field, schemaEvolution=$schemaEvolution")(
@@ -71,7 +70,7 @@ class DeltaInsertIntoMissingColumnSuite extends DeltaInsertIntoTest {
             .add("y", IntegerType)
           )),
       includeInserts = insertsByName.intersect(insertsDataframe),
-      confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
+      withSchemaEvolution = schemaEvolution
     )
 
     // Missing columns for all inserts by name and missing nested fields for dataframe inserts by
@@ -89,8 +88,8 @@ class DeltaInsertIntoMissingColumnSuite extends DeltaInsertIntoTest {
           .add("a", LongType)
           .add("b", IntegerType)
           .add("c", IntegerType)),
-      includeInserts = insertsByName.intersect(insertsSQL),
-      confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
+      includeInserts = insertsByName.intersect(insertsSQL) + StreamingInsert,
+      withSchemaEvolution = schemaEvolution
     )
 
     testInserts(s"insert with implicit cast and missing top-level column," +
@@ -100,8 +99,8 @@ class DeltaInsertIntoMissingColumnSuite extends DeltaInsertIntoTest {
       overwriteWhere = "a" -> 1,
       insertData = TestData("a int, b long", Seq("""{ "a": 1, "b": 4 }""")),
       expectedResult = ExpectedResult.Failure(ex => {
-        // The missing column isn't an issue, but dataframe insert by name doesn't support implicit
-        // casting to reconcile the type mismatch.
+        // The missing column isn't an issue, but save() and saveAsTable() overwrite don't
+        // support implicit casting to reconcile the type mismatch.
         checkError(
           ex,
           "DELTA_FAILED_TO_MERGE_FIELDS",
@@ -110,8 +109,25 @@ class DeltaInsertIntoMissingColumnSuite extends DeltaInsertIntoTest {
             "updateField" -> "a"
           ))
       }),
-      includeInserts = insertsByName.intersect(insertsDataframe),
-      confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
+      includeInserts = insertsWithoutImplicitCastSupport,
+      withSchemaEvolution = schemaEvolution
+    )
+
+    // Other df-by-name inserts (DFv2, saveAsTable append) support implicit casting.
+    testInserts(s"insert with implicit cast and missing top-level column," +
+      s"schemaEvolution=$schemaEvolution")(
+      initialData = TestData("a long, b int, c int", Seq("""{ "a": 1, "b": 2, "c": 3 }""")),
+      partitionBy = Seq("a"),
+      overwriteWhere = "a" -> 1,
+      insertData = TestData("a int, b long", Seq("""{ "a": 1, "b": 4 }""")),
+      expectedResult = ExpectedResult.Success(
+        expected = new StructType()
+          .add("a", LongType)
+          .add("b", IntegerType)
+          .add("c", IntegerType)),
+      includeInserts = insertsByName.intersect(insertsDataframe) - StreamingInsert --
+        insertsWithoutImplicitCastSupport,
+      withSchemaEvolution = schemaEvolution
     )
 
     testInserts(s"insert with implicit cast and missing nested field," +
@@ -123,8 +139,8 @@ class DeltaInsertIntoMissingColumnSuite extends DeltaInsertIntoTest {
       insertData =
         TestData("a int, s struct<y: long>", Seq("""{ "a": 1, "s": { "y": 5 } }""")),
       expectedResult = ExpectedResult.Failure(ex => {
-        // The missing field isn't an issue, but dataframe insert by name doesn't support implicit
-        // casting to reconcile the type mismatch.
+        // The missing column isn't an issue, but save() and saveAsTable() overwrite don't
+        // support implicit casting to reconcile the type mismatch.
         checkError(
           ex,
           "DELTA_FAILED_TO_MERGE_FIELDS",
@@ -133,8 +149,29 @@ class DeltaInsertIntoMissingColumnSuite extends DeltaInsertIntoTest {
             "updateField" -> "s"
           ))
       }),
-      includeInserts = insertsByName.intersect(insertsDataframe),
-      confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
+      includeInserts = insertsWithoutImplicitCastSupport,
+      withSchemaEvolution = schemaEvolution
+    )
+
+    testInserts(s"insert with implicit cast and missing nested field," +
+      s"schemaEvolution=$schemaEvolution")(
+      initialData =
+        TestData("a int, s struct<x: int, y: int>", Seq("""{ "a": 1, "s": { "x": 2, "y": 3 } }""")),
+      partitionBy = Seq("a"),
+      overwriteWhere = "a" -> 1,
+      insertData =
+        TestData("a int, s struct<y: long>", Seq("""{ "a": 1, "s": { "y": 5 } }""")),
+      // Missing nested fields are allowed when writing to a delta streaming sink or using DFv2 and
+      // saveAsTable(Append) when there's a type mismatch, same as when there's no type mismatch.
+      expectedResult = ExpectedResult.Success(
+        expected = new StructType()
+          .add("a", IntegerType)
+          .add("s", new StructType()
+            .add("x", IntegerType)
+            .add("y", IntegerType))),
+      includeInserts = insertsByName.intersect(insertsDataframe) --
+        insertsWithoutImplicitCastSupport,
+      withSchemaEvolution = schemaEvolution
     )
 
     // Missing columns for all inserts by position and missing nested fields for all inserts by
@@ -150,14 +187,14 @@ class DeltaInsertIntoMissingColumnSuite extends DeltaInsertIntoTest {
           ex,
           "DELTA_INSERT_COLUMN_ARITY_MISMATCH",
           parameters = Map(
-            "tableName" -> "spark_catalog.default.target",
+            "tableName" -> s"$catalogName.default.target",
             "columnName" -> "not enough data columns",
             "numColumns" -> "3",
             "insertColumns" -> "2"
           ))
       }),
       includeInserts = insertsByPosition,
-      confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
+      withSchemaEvolution = schemaEvolution
     )
 
     testInserts(s"insert with implicit cast and missing top-level column," +
@@ -171,14 +208,14 @@ class DeltaInsertIntoMissingColumnSuite extends DeltaInsertIntoTest {
           ex,
           "DELTA_INSERT_COLUMN_ARITY_MISMATCH",
           parameters = Map(
-            "tableName" -> "spark_catalog.default.target",
+            "tableName" -> s"$catalogName.default.target",
             "columnName" -> "not enough data columns",
             "numColumns" -> "3",
             "insertColumns" -> "2"
           ))
       }),
       includeInserts = insertsByPosition,
-      confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
+      withSchemaEvolution = schemaEvolution
     )
 
     testInserts(s"insert with missing nested field, schemaEvolution=$schemaEvolution")(
@@ -193,14 +230,14 @@ class DeltaInsertIntoMissingColumnSuite extends DeltaInsertIntoTest {
           ex,
           "DELTA_INSERT_COLUMN_ARITY_MISMATCH",
           parameters = Map(
-            "tableName" -> "spark_catalog\\.default\\.target",
-            "columnName" -> "not enough nested fields in (spark_catalog\\.default\\.source\\.)?s",
+            "tableName" -> s"$catalogName\\.default\\.target",
+            "columnName" -> s"not enough nested fields in ($catalogName\\.default\\.source\\.)?s",
             "numColumns" -> "2",
             "insertColumns" -> "1"
           ))
       }),
       includeInserts = insertsByPosition ++ insertsSQL,
-      confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
+      withSchemaEvolution = schemaEvolution
     )
 
     testInserts(s"insert with implicit cast and missing nested field," +
@@ -216,14 +253,14 @@ class DeltaInsertIntoMissingColumnSuite extends DeltaInsertIntoTest {
           ex,
           "DELTA_INSERT_COLUMN_ARITY_MISMATCH",
           parameters = Map(
-            "tableName" -> "spark_catalog\\.default\\.target",
-            "columnName" -> "not enough nested fields in (spark_catalog\\.default\\.source\\.)?s",
+            "tableName" -> s"$catalogName\\.default\\.target",
+            "columnName" -> s"not enough nested fields in ($catalogName\\.default\\.source\\.)?s",
             "numColumns" -> "2",
             "insertColumns" -> "1"
           ))
       }),
       includeInserts = insertsByPosition ++ insertsSQL,
-      confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
+      withSchemaEvolution = schemaEvolution
     )
   }
 }

@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -150,7 +151,8 @@ class DeltaParquetFileFormatSuite extends DeltaParquetFileFormatSuiteBase {
           val deltaParquetFormat = new DeltaParquetFileFormat(
             deltaLog.snapshot.protocol,
             metadata,
-            nullableRowTrackingFields = false,
+            nullableRowTrackingConstantFields = false,
+            nullableRowTrackingGeneratedFields = false,
             optimizationsEnabled = false,
             if (enableDVs) Some(tablePath) else None)
 
@@ -172,7 +174,7 @@ class DeltaParquetFileFormatSuite extends DeltaParquetFileFormatSuiteBase {
               // Deleted row `value`: 0, 200, 300, 756, 10352, 19999
               // Not deleted row `value`: 7, 900
               checkDatasetUnorderly(
-                Dataset.ofRows(spark, plan)
+                DataFrameUtils.ofRows(spark, plan)
                   .filter("value in (0, 7, 200, 300, 756, 900, 10352, 19999)")
                   .select("value", DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME)
                   .as[(Int, Int)],
@@ -186,7 +188,7 @@ class DeltaParquetFileFormatSuite extends DeltaParquetFileFormatSuiteBase {
                 (19999, deletedColumnValue))
             } else {
               checkDatasetUnorderly(
-                Dataset.ofRows(spark, plan)
+                DataFrameUtils.ofRows(spark, plan)
                   .filter("value in (0, 7, 200, 300, 756, 900, 10352, 19999)")
                   .select("value", DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME)
                   .as[(Int, Int)],
@@ -207,7 +209,7 @@ class DeltaParquetFileFormatSuite extends DeltaParquetFileFormatSuiteBase {
               df.collect().map(_.getLong(colIndex)).toSet
             }
 
-            val df = Dataset.ofRows(spark, plan)
+            val df = DataFrameUtils.ofRows(spark, plan)
             assert(rowIndexes(df) === Seq.range(0, 20000).toSet)
 
             assert(
@@ -256,7 +258,8 @@ class DeltaParquetFileFormatWithPredicatePushdownSuite extends DeltaParquetFileF
       val deltaParquetFormat = new DeltaParquetFileFormat(
         deltaLog.update().protocol,
         metadata,
-        nullableRowTrackingFields = false,
+        nullableRowTrackingConstantFields = false,
+        nullableRowTrackingGeneratedFields = false,
         optimizationsEnabled = true,
         Some(tablePath))
 
@@ -279,7 +282,7 @@ class DeltaParquetFileFormatWithPredicatePushdownSuite extends DeltaParquetFileF
       // Deleted row `value`: 0, 200, 300, 756, 10352, 19999
       // Not deleted row `value`: 7, 900
       checkDatasetUnorderly(
-        Dataset.ofRows(spark, planWithMetadataCol)
+        DataFrameUtils.ofRows(spark, planWithMetadataCol)
           .filter("value in (0, 7, 200, 300, 756, 900, 10352, 19999)")
           .select("value", DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME)
           .as[(Int, Int)],

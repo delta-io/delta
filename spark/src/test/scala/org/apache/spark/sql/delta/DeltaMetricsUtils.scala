@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, CommitInfo, RemoveFile}
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.scalatest.Assertions._
 
 /**

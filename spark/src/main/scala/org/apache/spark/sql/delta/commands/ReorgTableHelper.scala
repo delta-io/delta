@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.commands
 
-import org.apache.spark.sql.delta.{MaterializedRowCommitVersion, MaterializedRowId, Snapshot}
+import org.apache.spark.sql.delta.{MaterializedRowCommitVersion, MaterializedRowId, Snapshot, SnapshotDescriptor}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.commands.VacuumCommand.generateCandidateFileMap
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
@@ -26,6 +26,7 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.execution.datasources.parquet.{ParquetFileFormat, ParquetToSparkSchemaConverter}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{AtomicType, StructField, StructType}
 import org.apache.spark.util.SerializableConfiguration
 
@@ -102,30 +103,32 @@ trait ReorgTableHelper extends Serializable {
   protected def filterParquetFilesOnExecutors(
       spark: SparkSession,
       files: Seq[AddFile],
-      snapshot: Snapshot,
+      snapshot: SnapshotDescriptor,
       ignoreCorruptFiles: Boolean)(
       filterFileFn: StructType => Boolean): Seq[AddFile] = {
 
     val serializedConf = new SerializableConfiguration(snapshot.deltaLog.newDeltaHadoopConf())
-    val assumeBinaryIsString = spark.sessionState.conf.isParquetBinaryAsString
-    val assumeInt96IsTimestamp = spark.sessionState.conf.isParquetINT96AsTimestamp
-    val dataPath = new Path(snapshot.deltaLog.dataPath.toString)
+    val dataPath = new Path(snapshot.dataPath.toString)
 
     import org.apache.spark.sql.delta.implicits._
 
     files.toDF(spark).as[AddFile].mapPartitions { iter =>
-        filterParquetFiles(iter.toList, dataPath, serializedConf.value, ignoreCorruptFiles,
-          assumeBinaryIsString, assumeInt96IsTimestamp)(filterFileFn).toIterator
+      val sqlConf = SparkSession.active.sessionState.conf
+      filterParquetFiles(
+        sqlConf,
+        iter.toList,
+        dataPath,
+        serializedConf.value,
+        ignoreCorruptFiles)(filterFileFn).toIterator
     }.collect()
   }
 
   protected def filterParquetFiles(
+      sqlConf: SQLConf,
       files: Seq[AddFile],
       dataPath: Path,
       configuration: Configuration,
-      ignoreCorruptFiles: Boolean,
-      assumeBinaryIsString: Boolean,
-      assumeInt96IsTimestamp: Boolean)(
+      ignoreCorruptFiles: Boolean)(
       filterFileFn: StructType => Boolean): Seq[AddFile] = {
     val nameToAddFileMap = generateCandidateFileMap(dataPath, files)
 
@@ -145,8 +148,10 @@ trait ReorgTableHelper extends Serializable {
       fileStatuses.toList,
       ignoreCorruptFiles)
 
-    val converter =
-      new ParquetToSparkSchemaConverter(assumeBinaryIsString, assumeInt96IsTimestamp)
+    // Spark 4.0.1 changed the primary ctor signature (added a param), which breaks binary
+    // compatibility for code compiled against Spark 4.0.0. Use the stable SQLConf-based ctor
+    // that takes the current SparkSession's SQLConf instead.
+    val converter = new ParquetToSparkSchemaConverter(sqlConf)
 
     val filesNeedToRewrite = footers.filter { footer =>
       val fileSchema = ParquetFileFormat.readSchemaFromFooter(footer, converter)

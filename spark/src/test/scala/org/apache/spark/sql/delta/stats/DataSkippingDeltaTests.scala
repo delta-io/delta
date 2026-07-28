@@ -20,21 +20,21 @@ import java.io.File
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.metering.ScanReport
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.test.ScanReportHelper
 import org.apache.commons.io.FileUtils
-import org.apache.hadoop.fs.Path
 import org.scalatest.GivenWhenThen
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.SparkConf
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.catalyst.plans.logical.Filter
 import org.apache.spark.sql.execution.LogicalRDD
 import org.apache.spark.sql.functions.{col, lit, struct}
 import org.apache.spark.sql.internal.SQLConf
@@ -42,12 +42,14 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
-trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShims
+trait DataSkippingDeltaTestsBase extends QueryTest
     with SharedSparkSession
     with DeltaSQLCommandTest
-    with PredicateHelper
+    with DataSkippingDeltaTestsUtils
     with GivenWhenThen
-    with ScanReportHelper {
+    with ScanReportHelper
+    with CatalogOwnedTestBaseSuite
+    with DeltaSQLTestUtils {
 
   val defaultNumIndexedCols = DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromString(
     DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.defaultValue)
@@ -70,6 +72,172 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
       super.test(testName + " - old behavior with DataFrame schema", testTags: _*) {
         withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS_USING_TABLE_SCHEMA.key -> "false") {
           testFun
+        }
+      }
+    }
+  }
+
+  protected def parse(deltaLog: DeltaLog, predicate: String): Seq[Expression] =
+    super.parse(spark, deltaLog, predicate)
+
+  protected def filesRead(
+      deltaLog: DeltaLog,
+      predicate: String,
+      checkEmptyUnusedFilters: Boolean = false): Int =
+    super.filesRead(spark, deltaLog, predicate, checkEmptyUnusedFilters)
+
+  protected def getFilesRead(
+      deltaLog: DeltaLog,
+      predicate: String,
+      checkEmptyUnusedFilters: Boolean = false): Seq[AddFile] =
+    super.getFilesRead(spark, deltaLog, predicate, checkEmptyUnusedFilters)
+
+  protected def checkResultsWithPartitions(
+    tableName: String,
+    predicate: String,
+    expResults: Seq[(String, String)],
+    expNumPartitions: Int,
+    expNumFiles: Long): Unit = {
+    require(!tableName.contains("/"), s"expected a table name, got a path: $tableName")
+    Given(predicate)
+    val df = spark.read.table(tableName).where(predicate)
+    checkAnswer(df, expResults.toDF())
+
+    val files = getFilesRead(DeltaLog.forTable(spark, TableIdentifier(tableName)), predicate)
+    assert(files.size == expNumFiles, "# files incorrect:\n\t" + files.mkString("\n\t"))
+
+    val partitionValues = files.map(_.partitionValues).distinct
+    assert(partitionValues.size == expNumPartitions,
+      "# partitions incorrect:\n\t" + partitionValues.mkString("\n\t"))
+  }
+
+  protected def getStatsDf(deltaLog: DeltaLog, columns: Column*): DataFrame = {
+    deltaLog.snapshot.withStats.select("stats.*").select(columns: _*)
+  }
+
+  protected def expectedStatsForFile(index: Int, colName: String, deltaLog: DeltaLog): String = {
+    if (deltaLog.unsafeVolatileSnapshot.protocol.isFeatureSupported(DeletionVectorsTableFeature)) {
+      s"""{"numRecords":1,"minValues":{"$colName":$index},"maxValues":{"$colName":$index},""" +
+        s""""nullCount":{"$colName":0},"tightBounds":true}""".stripMargin
+    } else {
+      s"""{"numRecords":1,"minValues":{"$colName":$index},"maxValues":{"$colName":$index},""" +
+        s""""nullCount":{"$colName":0}}""".stripMargin
+    }
+  }
+
+  protected def failPretty(error: String, predicate: String, data: String) = {
+    fail(
+      s"""$error
+         |
+         |== Data ==
+         |$data
+       """.stripMargin)
+  }
+
+  protected def setNumIndexedColumns(tableName: String, numIndexedCols: Int): Unit = {
+    require(!tableName.contains("/"), s"expected a table name, got a path: $tableName")
+    sql(s"""
+          |ALTER TABLE $tableName
+          |SET TBLPROPERTIES (
+          |  'delta.dataSkippingNumIndexedCols' = '$numIndexedCols'
+          |)""".stripMargin)
+  }
+
+  protected def setDeltaStatsColumns(tableName: String, deltaStatsColumns: String): Unit = {
+    require(!tableName.contains("/"), s"expected a table name, got a path: $tableName")
+    sql(s"""
+           |ALTER TABLE $tableName
+           |SET TBLPROPERTIES (
+           |  'delta.dataSkippingStatsColumns' = '$deltaStatsColumns'
+           |)""".stripMargin)
+  }
+
+  protected def checkSkipping(
+      log: DeltaLog,
+      hits: Seq[String],
+      misses: Seq[String],
+      data: String,
+      checkEmptyUnusedFiltersForHits: Boolean): Unit = {
+    hits.foreach { predicate =>
+      Given(predicate)
+      if (filesRead(log, predicate, checkEmptyUnusedFiltersForHits) == 0) {
+        failPretty(s"Expected hit but got miss for $predicate", predicate, data)
+      }
+    }
+
+    misses.foreach { predicate =>
+      Given(predicate)
+      if (filesRead(log, predicate) != 0) {
+        failPretty(s"Expected miss but got hit for $predicate", predicate, data)
+      }
+    }
+    val schemaDiff = SchemaUtils.reportDifferences(
+      log.snapshot.statsSchema.asNullable,
+      log.snapshot.statsSchema)
+    if (schemaDiff.nonEmpty) {
+      fail(s"The stats schema should be nullable. Differences:\n${schemaDiff.mkString("\n")}")
+    }
+  }
+  protected def getDataSkippingConfs(
+      indexedCols: Int,
+      deltaStatsColNamesOpt: Option[String]): TraversableOnce[(String, String)] = {
+    val numIndexedColsConfOpt = Option(indexedCols)
+      .filter(_ != defaultNumIndexedCols)
+      .map(DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.defaultTablePropertyKey -> _.toString)
+    val indexedColNamesConfOpt = deltaStatsColNamesOpt
+      .map(DeltaConfigs.DATA_SKIPPING_STATS_COLUMNS.defaultTablePropertyKey -> _)
+    numIndexedColsConfOpt ++ indexedColNamesConfOpt
+  }
+
+  protected def testSkipping(
+      name: String,
+      data: String,
+      schema: StructType = null,
+      hits: Seq[String],
+      misses: Seq[String],
+      sqlConfs: Seq[(String, String)] = Nil,
+      indexedCols: Int = defaultNumIndexedCols,
+      deltaStatsColNamesOpt: Option[String] = None,
+      checkEmptyUnusedFiltersForHits: Boolean = false,
+      exceptionOpt: Option[Throwable] = None): Unit = {
+    test(s"data skipping by stats - $name") {
+      val allSQLConfs = sqlConfs ++ getDataSkippingConfs(indexedCols, deltaStatsColNamesOpt)
+      withSQLConf(allSQLConfs: _*) {
+        val jsonRecords = data.split("\n").toSeq
+        val reader = spark.read
+        if (schema != null) { reader.schema(schema) }
+        val df = reader.json(jsonRecords.toDS())
+
+        val tableName = "data_skipping_by_stats_test"
+        withTable(tableName) {
+          df.coalesce(1).write.format("delta").saveAsTable(tableName)
+          val r = DeltaLog.forTable(spark, TableIdentifier(tableName))
+
+          exceptionOpt.map { exception =>
+            val except = intercept[Throwable] {
+              deltaStatsColNamesOpt.foreach { deltaStatsColNames =>
+                setDeltaStatsColumns(tableName, deltaStatsColNames)
+                df.coalesce(1).write.format("delta").mode("overwrite").saveAsTable(tableName)
+                if (indexedCols != defaultNumIndexedCols) {
+                  setNumIndexedColumns(tableName, indexedCols)
+                  df.coalesce(1).write.format("delta").mode("overwrite").saveAsTable(tableName)
+                }
+                checkSkipping(r, hits, misses, data, checkEmptyUnusedFiltersForHits)
+              }
+            }
+            assert(except.getClass == exception.getClass &&
+              except.getMessage.contains(exception.getMessage))
+          }.getOrElse {
+            if (indexedCols != defaultNumIndexedCols) {
+              setNumIndexedColumns(tableName, indexedCols)
+              df.coalesce(1).write.format("delta").mode("overwrite").saveAsTable(tableName)
+            }
+            deltaStatsColNamesOpt.foreach { deltaStatsColNames =>
+              setDeltaStatsColumns(tableName, deltaStatsColNames)
+              df.coalesce(1).write.format("delta").mode("overwrite").saveAsTable(tableName)
+            }
+            checkSkipping(r, hits, misses, data, checkEmptyUnusedFiltersForHits)
+          }
         }
       }
     }
@@ -600,6 +768,33 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
   )
 
   testSkipping(
+    "indexed column names - naming a nested column allows nested complex types",
+    """{
+      "a": {
+        "b": [1, 2, 3],
+        "c": [4, 5, 6],
+        "d": 7,
+        "e": 8,
+        "f": {
+          "g": 9
+        }
+      },
+      "i": 10
+    }""".replace("\n", ""),
+    hits = Seq(
+      "i < 0",
+      "a.d > 6",
+      "a.f.g < 10"
+    ),
+    misses = Seq(
+      "a.d < 0",
+      "a.e < 0",
+      "a.f.g < 0"
+    ),
+    deltaStatsColNamesOpt = Some("a")
+  )
+
+  testSkipping(
     "indexed column names - index only a subset of leaf columns",
     """{
       "a": 1,
@@ -694,7 +889,10 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
       "TRUE",
       "FALSE",     // Ideally this should not hit, but its correct to not skip
       "NULL AND a = 1", // This is optimized to FALSE by ReplaceNullWithFalse, so it's same as above
-      "NOT a <=> 1"
+      "NOT a <=> 1",
+      "(a > 1) IS NULL", // This pushes down the IS NULL to both sides of GreaterThan.
+      "(a > 1 AND a > 0) IS NULL", // Pushdown of IS NULL on AND.
+      "(a > 1 OR a < 0) IS NULL" // Pushdown of IS NULL on OR.
     ),
     misses = Seq(
       // stats tell us a is always NULL, so any predicate that requires non-NULL a should skip
@@ -705,8 +903,40 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
       "a > 1",
       "a < 1",
       "a <> 1",
-      "a <=> 1"
+      "a <=> 1",
+      "NOT ((a > 1) IS NULL)"
     )
+  )
+
+  testSkipping(
+    "nulls - only non-null in file",
+    """
+      {"a": 1, "b": 2}
+    """,
+    schema = new StructType()
+      .add(new StructField("a", IntegerType))
+      .add(new StructField("b", IntegerType)),
+    hits = Seq(),
+    misses = Seq(
+      "(a > 0 AND b > 1) IS NULL",
+      "(a > 0 OR b > 1) IS NULL"
+    )
+  )
+
+  testSkipping(
+    "nulls - only non-null in file with enhanced pushdown disabled",
+    """
+      {"a": 1, "b": 2}
+    """,
+    schema = new StructType()
+      .add(new StructField("a", IntegerType))
+      .add(new StructField("b", IntegerType)),
+    hits = Seq(
+      "(a > 0 AND b > 1) IS NULL",
+      "(a > 0 OR b > 1) IS NULL"
+    ),
+    misses = Seq.empty,
+    sqlConfs = Seq((DeltaSQLConf.DELTA_DATASKIPPING_ISNULL_PUSHDOWN_EXPRS_ENABLED.key, "false"))
   )
 
   testSkipping(
@@ -728,7 +958,12 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
       "TRUE",
       "FALSE",    // Ideally this should not hit, but its correct to not skip
       "NULL AND a = 1", // This is optimized to FALSE by ReplaceNullWithFalse, so it's same as above
-      "NOT a <=> 1"
+      "NOT a <=> 1",
+      "(a > 0) IS NULL",
+      "(a < 0) IS NULL",
+      "(a > 1 AND a > 0) IS NULL", // Pushdown of IS NULL on AND.
+      "(a > 1 OR a < 0) IS NULL", // Pushdown of IS NULL on OR.
+      "NOT ((a > 0) IS NULL)"
     ),
     misses = Seq(
       "a <> 1",
@@ -738,74 +973,148 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
     )
   )
 
-  test("data skipping with missing stats") {
-    val tempDir = Utils.createTempDir()
-    Seq(1, 2, 3).toDF().write.format("delta").save(tempDir.toString)
-    val log = DeltaLog.forTable(spark, new Path(tempDir.toString))
-    val txn = log.startTransaction()
-    val noStats = txn.filterFiles(Nil).map(_.copy(stats = null))
-    txn.commit(noStats, DeltaOperations.ComputeStats(Nil))
+  testSkipping(
+    "nulls - IsNull pushdown on complex expressions",
+    """
+      {"a": 1, "b": 2}
+    """,
+    schema = new StructType()
+      .add(new StructField("a", IntegerType))
+      .add(new StructField("b", IntegerType)),
+    hits = Seq(
+      "(a > 0 OR a == -1 OR a == -2 OR b == -1 OR b == -2 OR b > 10 OR b == 7) IS NULL"
+    ),
+    misses = Seq(
+      "(a > 0 OR b > 1) IS NULL"
+    ),
+    sqlConfs = Seq((DeltaSQLConf.DELTA_DATASKIPPING_ISNULL_PUSHDOWN_EXPRS_MAX_DEPTH.key -> "1"))
+  )
 
-    val df = spark.read.format("delta").load(tempDir.toString)
-    checkAnswer(df.where("value > 0"), Seq(Row(1), Row(2), Row(3)))
+  testSkipping(
+    "nulls - non-nulls only in file",
+    """
+      {"a": 1 }
+    """,
+    schema = new StructType().add(new StructField("a", IntegerType)),
+    hits = Seq(
+      "NOT ((a > 0) IS NULL)"
+    ),
+    misses = Seq(
+      "(a > 0) IS NULL",
+      "(a < 0) IS NULL",
+      "(a > 1 AND a > 0) IS NULL", // Pushdown of IS NULL on AND.
+      "(a > 1 OR a < 0) IS NULL" // Pushdown of IS NULL on OR.
+    )
+  )
+
+  testSkipping(
+    "nulls - non-nulls only in file with partial column stats",
+    """
+      {"a": 1, "b": 2}
+    """,
+    hits = Seq(
+      "NOT ((a > 0) IS NULL)",
+      "(b > 0) IS NULL",
+      "(b < 0) IS NULL",
+      "(b > 1 AND a > 0) IS NULL", // Pushdown of IS NULL on AND.
+      "(b > 1 OR a < 0) IS NULL" // Pushdown of IS NULL on OR.
+    ),
+    misses = Seq(
+      "(a > 0) IS NULL",
+      "(a < 0) IS NULL",
+      "(a > 1 AND a > 0) IS NULL", // Pushdown of IS NULL on AND.
+      "(a > 1 OR a < 0) IS NULL" // Pushdown of IS NULL on OR.
+    ),
+    indexedCols = 1
+  )
+
+  testSkipping(
+    "nulls - non-strict null-intolerant predicate returns hits for IS NULL",
+    """
+      {"a": [3, 4]}
+    """,
+    hits = Seq(
+      "NOT (element_at(a, 3) IS NULL)",
+      "element_at(a, 3) IS NULL"
+    ),
+    misses = Seq.empty
+  )
+
+  test("data skipping with missing stats") {
+    val t = "ds_missing_stats"
+    withTable(t) {
+      Seq(1, 2, 3).toDF().write.format("delta").saveAsTable(t)
+      val log = DeltaLog.forTable(spark, TableIdentifier(t))
+      val txn = log.startTransaction()
+      val noStats = txn.filterFiles().map(_.copy(stats = null))
+      txn.commit(noStats, DeltaOperations.ComputeStats(Nil))
+
+      val df = spark.table(t)
+      checkAnswer(df.where("value > 0"), Seq(Row(1), Row(2), Row(3)))
+    }
   }
 
   test("data skipping stats before and after optimize") {
-      val tempDir = Utils.createTempDir()
-      var r = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      assume(!catalogOwnedDefaultCreationEnabledInTests,
+        "OPTIMIZE is blocked on catalog-managed tables")
+      val t = "ds_stats_before_after_optimize"
+      withTable(t) {
+        val (numTuples, numFiles) = (10, 2)
+        val data = spark.range(0, numTuples, 1, 2).repartition(numFiles)
+        data.write.format("delta").saveAsTable(t)
+        var r = checkpointAndCreateNewLogIfNecessary(
+          DeltaLog.forTable(spark, TableIdentifier(t)))
+        def rStats: DataFrame =
+          getStatsDf(r, $"numRecords", $"minValues.id".as("id_min"), $"maxValues.id".as("id_max"))
 
-      val (numTuples, numFiles) = (10, 2)
-      val data = spark.range(0, numTuples, 1, 2).repartition(numFiles)
-      data.write.format("delta").save(r.dataPath.toString)
-      r = checkpointAndCreateNewLogIfNecessary(r)
-      def rStats: DataFrame =
-        getStatsDf(r, $"numRecords", $"minValues.id".as("id_min"), $"maxValues.id".as("id_max"))
-
-      checkAnswer(rStats, Seq(Row(4, 0, 8), Row(6, 1, 9)))
-      val optimizeDf = sql(s"OPTIMIZE '$tempDir'")
-      checkAnswer(rStats, Seq(Row(10, 0, 9)))
+        checkAnswer(rStats, Seq(Row(4, 0, 8), Row(6, 1, 9)))
+        val optimizeDf = sql(s"OPTIMIZE $t")
+        checkAnswer(rStats, Seq(Row(10, 0, 9)))
+      }
   }
 
   test("number of indexed columns") {
     val numTotalCols = defaultNumIndexedCols + 5
-    val path = Utils.createTempDir().getCanonicalPath
-    var r = DeltaLog.forTable(spark, new Path(path))
-    val data = spark.range(10).select(Seq.tabulate(numTotalCols)(i => lit(i) as s"col$i"): _*)
-    data.coalesce(1).write.format("delta").save(r.dataPath.toString)
+    val t = "ds_num_indexed_columns"
+    withTable(t) {
+      val data = spark.range(10).select(Seq.tabulate(numTotalCols)(i => lit(i) as s"col$i"): _*)
+      data.coalesce(1).write.format("delta").saveAsTable(t)
+      var r = DeltaLog.forTable(spark, TableIdentifier(t))
 
-    def checkNumIndexedCol(numIndexedCols: Int): Unit = {
-      if (defaultNumIndexedCols != numTotalCols) {
-        setNumIndexedColumns(r.dataPath.toString, numIndexedCols)
-      }
-      data.coalesce(1).write.format("delta").mode("overwrite").save(r.dataPath.toString)
-      r = checkpointAndCreateNewLogIfNecessary(r)
+      def checkNumIndexedCol(numIndexedCols: Int): Unit = {
+        if (defaultNumIndexedCols != numTotalCols) {
+          setNumIndexedColumns(t, numIndexedCols)
+        }
+        data.coalesce(1).write.format("delta").mode("overwrite").saveAsTable(t)
+        r = checkpointAndCreateNewLogIfNecessary(r)
 
-      if (numIndexedCols == 0) {
-        intercept[AnalysisException] {
-          getStatsDf(r, $"numRecords", $"minValues.col0").first()
-        }
-      } else if (numIndexedCols < numTotalCols) {
-        checkAnswer(
-          getStatsDf(r, $"numRecords", $"minValues.col${numIndexedCols - 1}"),
-          Seq(Row(10, numIndexedCols - 1)))
-        intercept[AnalysisException] {
-          getStatsDf(r, $"minValues.col$numIndexedCols").first()
-        }
-      } else {
-        checkAnswer(
-          getStatsDf(r, $"numRecords", $"minValues.col${numTotalCols - 1}"),
-          Seq(Row(10, numTotalCols - 1)))
-        intercept[AnalysisException] {
-          getStatsDf(r, $"minValues.col$numTotalCols").first()
+        if (numIndexedCols == 0) {
+          intercept[AnalysisException] {
+            getStatsDf(r, $"numRecords", $"minValues.col0").first()
+          }
+        } else if (numIndexedCols < numTotalCols) {
+          checkAnswer(
+            getStatsDf(r, $"numRecords", $"minValues.col${numIndexedCols - 1}"),
+            Seq(Row(10, numIndexedCols - 1)))
+          intercept[AnalysisException] {
+            getStatsDf(r, $"minValues.col$numIndexedCols").first()
+          }
+        } else {
+          checkAnswer(
+            getStatsDf(r, $"numRecords", $"minValues.col${numTotalCols - 1}"),
+            Seq(Row(10, numTotalCols - 1)))
+          intercept[AnalysisException] {
+            getStatsDf(r, $"minValues.col$numTotalCols").first()
+          }
         }
       }
+
+      checkNumIndexedCol(defaultNumIndexedCols)
+      checkNumIndexedCol(numTotalCols - 1)
+      checkNumIndexedCol(numTotalCols)
+      checkNumIndexedCol(numTotalCols + 1)
+      checkNumIndexedCol(0)
     }
-
-    checkNumIndexedCol(defaultNumIndexedCols)
-    checkNumIndexedCol(numTotalCols - 1)
-    checkNumIndexedCol(numTotalCols)
-    checkNumIndexedCol(numTotalCols + 1)
-    checkNumIndexedCol(0)
   }
 
   test("remove redundant stats column references in data skipping expression") {
@@ -890,14 +1199,14 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
   }
 
   test("Test file pruning metrics with data skipping") {
-    withTempDir { tempDir =>
+    val t = "ds_file_pruning_metrics"
+    withTable(t) {
       withTempView("t1", "t2") {
         val data = spark.range(10).toDF("col1")
           .withColumn("col2", 'col1./(3).cast(DataTypes.IntegerType))
-        data.write.format("delta").partitionBy("col1")
-          .save(tempDir.getCanonicalPath)
-        spark.read.format("delta").load(tempDir.getAbsolutePath).createTempView("t1")
-        val deltaLog = DeltaLog.forTable(spark, tempDir.toString())
+        data.write.format("delta").partitionBy("col1").saveAsTable(t)
+        spark.table(t).createTempView("t1")
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(t))
 
         val query = "SELECT * from t1 where col1 > 5"
         val Seq(r1) = getScanReport {
@@ -915,15 +1224,16 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
   }
 
   test("loading data from Delta to parquet should skip data") {
-    withTempDir { dir =>
-      val path = dir.getCanonicalPath
-      spark.range(5).write.format("delta").save(path)
-      spark.range(5, 10).write.format("delta").mode("append").save(path)
+    val t = "ds_delta_to_parquet"
+    withTable(t) {
+      spark.range(5).write.format("delta").saveAsTable(t)
+      spark.range(5, 10).write.format("delta").mode("append").saveAsTable(t)
 
+      // path-based intentionally (parquet output directory is non-Delta)
       withTempDir { dir2 =>
         val path2 = dir2.getCanonicalPath
         val scans = getScanReport {
-          spark.read.format("delta").load(path).where("id < 2")
+          spark.table(t).where("id < 2")
             .write.format("parquet").mode("overwrite").save(path2)
         }
         assert(scans.size == 1)
@@ -938,13 +1248,13 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
       sql("CREATE TABLE table (col1 Int, col2 Int, col3 Int) USING delta")
       val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
       // Only index the first two columns
-      setNumIndexedColumns(r.dataPath.toString, 2)
+      setNumIndexedColumns("table", 2)
       val dataSeq = Seq((1, 2, 3))
       // We should use the table schema to create stats and the DataFrame schema should be ignored
       dataSeq.toDF("col1", "col2", "col3")
         .select("col2", "col3", "col1") // DataFrame schema order
         .write.mode("append").format("delta")
-        .save(r.dataPath.toString)
+        .saveAsTable("table")
 
       var hits = Seq(
         "col3 = 10",
@@ -965,7 +1275,7 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
 
       // Change the statsSchema to 3 columns. But there are only two columns in the stats from
       // the file
-      setNumIndexedColumns(r.dataPath.toString, 3)
+      setNumIndexedColumns("table", 3)
       hits = Seq(
         "col3 = 3",  // 3 is in col3, but no stats
         "col3 = 10",  // No stats on col3
@@ -986,13 +1296,13 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
       sql("CREATE TABLE table (col1 Int, col2 Int, col3 Int) USING delta")
       val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
       // Only index the first two columns
-      setNumIndexedColumns(r.dataPath.toString, 2)
+      setNumIndexedColumns("table", 2)
       val dataSeq = Seq((1, 2, 3))
       // We should use the table schema to create stats and the DataFrame schema should be ignored
       dataSeq.toDF("col1", "col2", "col3")
         .select("COL2", "Col3", "coL1") // DataFrame schema order
         .write.mode("append").format("delta")
-        .save(r.dataPath.toString)
+        .saveAsTable("table")
 
       val hits = Seq(
         "col3 = 10",  // No stats for col3
@@ -1016,7 +1326,8 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
 
   test("data skipping with a different DataFrame schema order and nested columns",
     tableSchemaOnlyTag) {
-    withTempDir { dir =>
+    val t = "ds_diff_schema_nested"
+    withTable(t) {
       val structureData = Seq(
         Row(Row("James ", "", "Smith"), "36636", "M", 3100)
       )
@@ -1033,10 +1344,10 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
       val data = spark.createDataFrame(
         spark.sparkContext.parallelize(structureData), structureDataSchema)
 
-      data.write.partitionBy("id").format("delta").save(dir.getAbsolutePath)
+      data.write.partitionBy("id").format("delta").saveAsTable(t)
       // Only index the first three columns (unnested), excluding partition column id
-      val deltaLog = DeltaLog.forTable(spark, new Path(dir.getCanonicalPath))
-      setNumIndexedColumns(deltaLog.dataPath.toString, 3)
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(t))
+      setNumIndexedColumns(t, 3)
 
       val structureDfData = Seq(
         // The same content as previous row but different DataFrame schema order
@@ -1054,7 +1365,7 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
       // middlename is missing, but we collect NULL_COUNT for it
       val df = spark.createDataFrame(
         spark.sparkContext.parallelize(structureDfData), structureDfSchema)
-      df.write.mode("append").format("delta").save(dir.getAbsolutePath)
+      df.write.mode("append").format("delta").saveAsTable(t)
 
       val hits = Seq(
         // Can't skip them since stats schema only has three columns now
@@ -1079,13 +1390,13 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
       sql("CREATE TABLE table (col2 Int, col3 Int, col1 Int) USING delta")
       val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
       // Only index the first two columns
-      setNumIndexedColumns(r.dataPath.toString, 2)
+      setNumIndexedColumns("table", 2)
       val dataSeq = Seq((1, 2, 3))
       // Only collect stats for col2 and col3
       dataSeq.toDF("col1", "col2", "col3")
         .select("col2", "col3", "col1") // DataFrame schema order
         .write.mode("append").format("delta")
-        .save(r.dataPath.toString)
+        .saveAsTable("table")
 
       // Change the schema to (col1, col2, col3). The final result would be the same as using the
       // old approach to collect stats based on the DataFrame schema
@@ -1120,7 +1431,7 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
         sql("CREATE TABLE table (col1 Int, col2 Int, col3 Int) USING delta")
         val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
         // Only index the first two columns
-        setNumIndexedColumns(r.dataPath.toString, 2)
+        setNumIndexedColumns("table", 2)
         val dataSeq = Seq((1, 2, 3))
         // Only collect stats for col2 and col3
         dataSeq.toDF("col1", "col2", "col3")
@@ -1152,17 +1463,18 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
 
   test("data skipping with missing columns in DataFrame", tableSchemaOnlyTag) {
     // case-1: dataframe schema has less columns than the dataSkippingNumIndexedCols
-    withTable("table") {
-      sql("CREATE TABLE table (a Int, b Int, c Int, d Int, e Int) USING delta PARTITIONED BY(b)")
-      val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
+    withTempTable(createTable = false) { tableName =>
+      sql(s"CREATE TABLE $tableName (a Int, b Int, c Int, d Int, e Int) " +
+        "USING delta PARTITIONED BY(b)")
+      val r = DeltaLog.forTable(spark, new TableIdentifier(tableName))
       // Only index the first three columns, excluding partition column b
-      setNumIndexedColumns(r.dataPath.toString, 3)
+      setNumIndexedColumns(tableName, 3)
       val dataSeq = Seq((1, 2, 3, 4, 5))
 
       dataSeq.toDF("a", "b", "c", "d", "e")
         .select("a", "b") // DataFrame schema order
         .write.mode("append").format("delta")
-        .save(r.dataPath.toString)
+        .saveAsTable(tableName)
 
       val hits = Seq(
         // These values are in the table
@@ -1186,17 +1498,18 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
 
     // case-2: dataframe schema lacks columns that are supposed to be part of the stats schema,
     // but has an additional column that should not collect stats on
-    withTable("table") {
-      sql("CREATE TABLE table (a Int, b Int, c Int, d Int, e Int) USING delta PARTITIONED BY(b)")
-      val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
+    withTempTable(createTable = false) { tableName =>
+      sql(s"CREATE TABLE $tableName (a Int, b Int, c Int, d Int, e Int) " +
+        "USING delta PARTITIONED BY(b)")
+      val r = DeltaLog.forTable(spark, new TableIdentifier(tableName))
       // Only index the first three columns, excluding partition column b
-      setNumIndexedColumns(r.dataPath.toString, 3)
+      setNumIndexedColumns(tableName, 3)
       val dataSeq = Seq((1, 2, 3, 4, 5))
 
       dataSeq.toDF("a", "b", "c", "d", "e")
         .select("a", "b", "d", "e") // DataFrame schema order
         .write.mode("append").format("delta")
-        .save(r.dataPath.toString)
+        .saveAsTable(tableName)
 
       val hits = Seq(
         "a = 1", // In table
@@ -1215,7 +1528,8 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
     }
 
     // case-3: Structured data with some columns missing and some additional columns
-    withTempDir { dir =>
+    withTable("ds_missing_cols_case3") {
+      val t = "ds_missing_cols_case3"
       val structureData = Seq(
         Row(Row("James ", "", "Smith"), "36636", "M", 3100)
       )
@@ -1232,10 +1546,10 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
       val data = spark.createDataFrame(
         spark.sparkContext.parallelize(structureData), structureDataSchema)
 
-      data.write.partitionBy("id").format("delta").save(dir.getAbsolutePath)
+      data.write.partitionBy("id").format("delta").saveAsTable(t)
       // Only index the first three columns (unnested), excluding partition column id
-      val deltaLog = DeltaLog.forTable(spark, new Path(dir.getCanonicalPath))
-      setNumIndexedColumns(deltaLog.dataPath.toString, 3)
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(t))
+      setNumIndexedColumns(t, 3)
 
       val structureDfData = Seq(
         Row(2000, Row("Robert ", "Johnson"), "40000")
@@ -1250,7 +1564,7 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
       // middlename is missing, but we collect NULL_COUNT for it
       val df = spark.createDataFrame(
         spark.sparkContext.parallelize(structureDfData), structureDfSchema)
-      df.write.mode("append").format("delta").save(dir.getAbsolutePath)
+      df.write.mode("append").format("delta").saveAsTable(t)
 
       val hits = Seq(
         "gender = 'M'", // No stats
@@ -1268,17 +1582,17 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
 
     // case-4: dataframe schema does not have any columns within the first
     // dataSkippingNumIndexedCols columns of the table schema
-    withTable("table") {
-      sql("CREATE TABLE table (a Int, b Int, c Int, d Int, e Int) USING delta")
-      val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
+    withTempTable(createTable = false) { tableName =>
+      sql(s"CREATE TABLE $tableName (a Int, b Int, c Int, d Int, e Int) USING delta")
+      val r = DeltaLog.forTable(spark, new TableIdentifier(tableName))
       // Only index the first three columns
-      setNumIndexedColumns(r.dataPath.toString, 3)
+      setNumIndexedColumns(tableName, 3)
       val dataSeq = Seq((1, 2, 3, 4, 5))
 
       dataSeq.toDF("a", "b", "c", "d", "e")
         .select("d", "e") // DataFrame schema order
         .write.mode("append").format("delta")
-        .save(r.dataPath.toString)
+        .saveAsTable(tableName)
 
       val hits = Seq(
         "d = 40", // No stats
@@ -1295,18 +1609,18 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
 
     // case-5: The first dataSkippingNumIndexedCols columns of the table schema has map or array
     // types, which we only collect NULL_COUNT
-    withTable("table") {
-      sql("CREATE TABLE table (a Int, b Map<String, Int>, c Array<Int>, d Int, e Int)" +
+    withTempTable(createTable = false) { tableName =>
+      sql(s"CREATE TABLE $tableName (a Int, b Map<String, Int>, c Array<Int>, d Int, e Int)" +
         " USING delta")
-      val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
+      val r = DeltaLog.forTable(spark, new TableIdentifier(tableName))
       // Only index the first three columns
-      setNumIndexedColumns(r.dataPath.toString, 3)
+      setNumIndexedColumns(tableName, 3)
       val dataSeq = Seq((1, Map("key" -> 2), Seq(3, 3, 3), 4, 5))
 
       dataSeq.toDF("a", "b", "c", "d", "e")
         .select("b", "c", "d") // DataFrame schema order
         .write.mode("append").format("delta")
-        .save(r.dataPath.toString)
+        .saveAsTable(tableName)
 
       val hits = Seq(
         "d = 50", // No stats
@@ -1317,7 +1631,8 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
         // b and c should have NULL_COUNT stats, but currently they're not SkippingEligibleColumn
         // (since they're not AtomicType), we couldn't skip for them
         "isnull(b)",
-        "c is null"
+        "c is null",
+        "ELEMENT_AT(c, 10) IS NULL" // Out-of-bounds access returns null.
       )
       val misses = Seq(
         // a has NULL_COUNT stats since it's missing from DataFrame schema
@@ -1371,150 +1686,152 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
   }
 
   test("data skipping by partitions and data values - nulls") {
-    val tableDir = Utils.createTempDir().getAbsolutePath
-    val dataSeqs = Seq( // each sequence produce a single file
-      Seq((null, null)),
-      Seq((null, "a")),
-      Seq((null, "b")),
-      Seq(("a", "a"), ("a", null)),
-      Seq(("b", null))
-    )
-    dataSeqs.foreach { seq =>
-      seq.toDF("key", "value").coalesce(1)
-        .write.format("delta").partitionBy("key").mode("append").save(tableDir)
+    val t = "ds_partitions_nulls"
+    withTable(t) {
+      val dataSeqs = Seq( // each sequence produce a single file
+        Seq((null, null)),
+        Seq((null, "a")),
+        Seq((null, "b")),
+        Seq(("a", "a"), ("a", null)),
+        Seq(("b", null))
+      )
+      dataSeqs.foreach { seq =>
+        seq.toDF("key", "value").coalesce(1)
+          .write.format("delta").partitionBy("key").mode("append").saveAsTable(t)
+      }
+      val allData = dataSeqs.flatten
+
+      def checkResults(
+                        predicate: String,
+                        expResults: Seq[(String, String)],
+                        expNumPartitions: Int,
+                        expNumFiles: Long): Unit =
+        checkResultsWithPartitions(t, predicate, expResults, expNumPartitions, expNumFiles)
+
+      // Trivial base case
+      checkResults(
+        predicate = "True",
+        expResults = allData,
+        expNumPartitions = 3,
+        expNumFiles = 5)
+
+      // Conditions on partition key
+      checkResults(
+        predicate = "key IS NULL",
+        expResults = allData.filter(_._1 == null),
+        expNumPartitions = 1,
+        expNumFiles = 3) // 3 files with key = null
+
+      checkResults(
+        predicate = "key IS NOT NULL",
+        expResults = allData.filter(_._1 != null),
+        expNumPartitions = 2,
+        expNumFiles = 2) // 2 files with key = 'a', and 1 file with key = 'b'
+
+      checkResults(
+        predicate = "key <=> NULL",
+        expResults = allData.filter(_._1 == null),
+        expNumPartitions = 1,
+        expNumFiles = 3) // 3 files with key = null
+
+      checkResults(
+        predicate = "key = 'a'",
+        expResults = allData.filter(_._1 == "a"),
+        expNumPartitions = 1,
+        expNumFiles = 1) // 1 files with key = 'a'
+
+      checkResults(
+        predicate = "key <=> 'a'",
+        expResults = allData.filter(_._1 == "a"),
+        expNumPartitions = 1,
+        expNumFiles = 1) // 1 files with key <=> 'a'
+
+      checkResults(
+        predicate = "key = 'b'",
+        expResults = allData.filter(_._1 == "b"),
+        expNumPartitions = 1,
+        expNumFiles = 1) // 1 files with key = 'b'
+
+      checkResults(
+        predicate = "key <=> 'b'",
+        expResults = allData.filter(_._1 == "b"),
+        expNumPartitions = 1,
+        expNumFiles = 1) // 1 files with key <=> 'b'
+
+      // Conditions on partitions keys and values
+      checkResults(
+        predicate = "value IS NULL",
+        expResults = allData.filter(_._2 == null),
+        expNumPartitions = 3,
+        expNumFiles = 3) // files with all non-NULL values get skipped
+
+      checkResults(
+        predicate = "value IS NOT NULL",
+        expResults = allData.filter(_._2 != null),
+        expNumPartitions = 2, // one of the partitions has no files left after data skipping
+        expNumFiles = 3) // files with all NULL values get skipped
+
+      checkResults(
+        predicate = "value <=> NULL",
+        expResults = allData.filter(_._2 == null),
+        expNumPartitions = 3,
+        expNumFiles = 3) // same as IS NULL case above
+
+      checkResults(
+        predicate = "value = 'a'",
+        expResults = allData.filter(_._2 == "a"),
+        expNumPartitions = 2, // one partition has no files left after data skipping
+        expNumFiles = 2) // only two files contain "a"
+
+      checkResults(
+        predicate = "value <=> 'a'",
+        expResults = allData.filter(_._2 == "a"),
+        expNumPartitions = 2, // one partition has no files left after data skipping
+        expNumFiles = 2) // only two files contain "a"
+
+      checkResults(
+        predicate = "value <> 'a'",
+        expResults = allData.filter(x => x._2 != "a" && x._2 != null), // i.e., only (null, b)
+        expNumPartitions = 1,
+        expNumFiles = 1) // only one file contains 'b'
+
+      checkResults(
+        predicate = "value = 'b'",
+        expResults = allData.filter(_._2 == "b"),
+        expNumPartitions = 1,
+        expNumFiles = 1) // same as previous case
+
+      checkResults(
+        predicate = "value <=> 'b'",
+        expResults = allData.filter(_._2 == "b"),
+        expNumPartitions = 1,
+        expNumFiles = 1) // same as previous case
+
+      // Conditions on both, partition keys and values
+      checkResults(
+        predicate = "key IS NULL AND value = 'a'",
+        expResults = Seq((null, "a")),
+        expNumPartitions = 1,
+        expNumFiles = 1) // only one file in the partition has (*, "a")
+
+      checkResults(
+        predicate = "key IS NOT NULL AND value IS NOT NULL",
+        expResults = Seq(("a", "a")),
+        expNumPartitions = 1,
+        expNumFiles = 1) // 1 file with (*, a)
+
+      checkResults(
+        predicate = "key <=> NULL AND value <=> NULL",
+        expResults = Seq((null, null)),
+        expNumPartitions = 1,
+        expNumFiles = 1) // 3 files with key = null, but only 1 with val = null.
+
+      checkResults(
+        predicate = "key <=> NULL OR value <=> NULL",
+        expResults = allData.filter(_ != (("a", "a"))),
+        expNumPartitions = 3,
+        expNumFiles = 5) // all 5 files
     }
-    val allData = dataSeqs.flatten
-
-    def checkResults(
-                      predicate: String,
-                      expResults: Seq[(String, String)],
-                      expNumPartitions: Int,
-                      expNumFiles: Long): Unit =
-      checkResultsWithPartitions(tableDir, predicate, expResults, expNumPartitions, expNumFiles)
-
-    // Trivial base case
-    checkResults(
-      predicate = "True",
-      expResults = allData,
-      expNumPartitions = 3,
-      expNumFiles = 5)
-
-    // Conditions on partition key
-    checkResults(
-      predicate = "key IS NULL",
-      expResults = allData.filter(_._1 == null),
-      expNumPartitions = 1,
-      expNumFiles = 3) // 3 files with key = null
-
-    checkResults(
-      predicate = "key IS NOT NULL",
-      expResults = allData.filter(_._1 != null),
-      expNumPartitions = 2,
-      expNumFiles = 2) // 2 files with key = 'a', and 1 file with key = 'b'
-
-    checkResults(
-      predicate = "key <=> NULL",
-      expResults = allData.filter(_._1 == null),
-      expNumPartitions = 1,
-      expNumFiles = 3) // 3 files with key = null
-
-    checkResults(
-      predicate = "key = 'a'",
-      expResults = allData.filter(_._1 == "a"),
-      expNumPartitions = 1,
-      expNumFiles = 1) // 1 files with key = 'a'
-
-    checkResults(
-      predicate = "key <=> 'a'",
-      expResults = allData.filter(_._1 == "a"),
-      expNumPartitions = 1,
-      expNumFiles = 1) // 1 files with key <=> 'a'
-
-    checkResults(
-      predicate = "key = 'b'",
-      expResults = allData.filter(_._1 == "b"),
-      expNumPartitions = 1,
-      expNumFiles = 1) // 1 files with key = 'b'
-
-    checkResults(
-      predicate = "key <=> 'b'",
-      expResults = allData.filter(_._1 == "b"),
-      expNumPartitions = 1,
-      expNumFiles = 1) // 1 files with key <=> 'b'
-
-    // Conditions on partitions keys and values
-    checkResults(
-      predicate = "value IS NULL",
-      expResults = allData.filter(_._2 == null),
-      expNumPartitions = 3,
-      expNumFiles = 3) // files with all non-NULL values get skipped
-
-    checkResults(
-      predicate = "value IS NOT NULL",
-      expResults = allData.filter(_._2 != null),
-      expNumPartitions = 2, // one of the partitions has no files left after data skipping
-      expNumFiles = 3) // files with all NULL values get skipped
-
-    checkResults(
-      predicate = "value <=> NULL",
-      expResults = allData.filter(_._2 == null),
-      expNumPartitions = 3,
-      expNumFiles = 3) // same as IS NULL case above
-
-    checkResults(
-      predicate = "value = 'a'",
-      expResults = allData.filter(_._2 == "a"),
-      expNumPartitions = 2, // one partition has no files left after data skipping
-      expNumFiles = 2) // only two files contain "a"
-
-    checkResults(
-      predicate = "value <=> 'a'",
-      expResults = allData.filter(_._2 == "a"),
-      expNumPartitions = 2, // one partition has no files left after data skipping
-      expNumFiles = 2) // only two files contain "a"
-
-    checkResults(
-      predicate = "value <> 'a'",
-      expResults = allData.filter(x => x._2 != "a" && x._2 != null), // i.e., only (null, b)
-      expNumPartitions = 1,
-      expNumFiles = 1) // only one file contains 'b'
-
-    checkResults(
-      predicate = "value = 'b'",
-      expResults = allData.filter(_._2 == "b"),
-      expNumPartitions = 1,
-      expNumFiles = 1) // same as previous case
-
-    checkResults(
-      predicate = "value <=> 'b'",
-      expResults = allData.filter(_._2 == "b"),
-      expNumPartitions = 1,
-      expNumFiles = 1) // same as previous case
-
-    // Conditions on both, partition keys and values
-    checkResults(
-      predicate = "key IS NULL AND value = 'a'",
-      expResults = Seq((null, "a")),
-      expNumPartitions = 1,
-      expNumFiles = 1) // only one file in the partition has (*, "a")
-
-    checkResults(
-      predicate = "key IS NOT NULL AND value IS NOT NULL",
-      expResults = Seq(("a", "a")),
-      expNumPartitions = 1,
-      expNumFiles = 1) // 1 file with (*, a)
-
-    checkResults(
-      predicate = "key <=> NULL AND value <=> NULL",
-      expResults = Seq((null, null)),
-      expNumPartitions = 1,
-      expNumFiles = 1) // 3 files with key = null, but only 1 with val = null.
-
-    checkResults(
-      predicate = "key <=> NULL OR value <=> NULL",
-      expResults = allData.filter(_ != (("a", "a"))),
-      expNumPartitions = 3,
-      expNumFiles = 5) // all 5 files
   }
 
   // Note that we cannot use testSkipping here, because the JSON parsing bug we're working around
@@ -1527,72 +1844,129 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
           s"CAST(strTs AS $timestampType) AS ts",
           s"STRUCT(CAST(strTs AS $timestampType) AS ts) AS nested")
 
-      val tempDir = Utils.createTempDir()
-      val r = DeltaLog.forTable(spark, tempDir)
-      df.coalesce(1).write.format("delta").save(r.dataPath.toString)
+      val t = "ds_timestamp"
+      withTable(t) {
+        df.coalesce(1).write.format("delta").saveAsTable(t)
+        val log = DeltaLog.forTable(spark, TableIdentifier(t))
 
-      // Check to ensure that the value actually in the file is always in range queries.
-      val hits = Seq(
-        s"""ts >= cast("2019-09-09 01:02:03.456789" AS $timestampType)""",
-        s"""ts <= cast("2019-09-09 01:02:03.456789" AS $timestampType)""",
-        s"""nested.ts >= cast("2019-09-09 01:02:03.456789" AS $timestampType)""",
-        s"""nested.ts <= cast("2019-09-09 01:02:03.456789" AS $timestampType)""",
-        s"""TS >= cast("2019-09-09 01:02:03.456789" AS $timestampType)""",
-        s"""nEstED.tS >= cast("2019-09-09 01:02:03.456789" AS $timestampType)""")
-
-      // Check the range of values that are far enough away to be data skipped. Note that the values
-      // are aligned with millisecond boundaries because of the JSON serialization truncation.
-      val misses = Seq(
-        s"""ts >= cast("2019-09-09 01:02:03.457001" AS $timestampType)""",
-        s"""ts <= cast("2019-09-04 01:02:03.455999" AS $timestampType)""",
-        s"""nested.ts >= cast("2019-09-09 01:02:03.457001" AS $timestampType)""",
-        s"""nested.ts <= cast("2019-09-09 01:02:03.455999" AS $timestampType)""",
-        s"""TS >= cast("2019-09-09 01:02:03.457001" AS $timestampType)""",
-        s"""nEstED.tS >= cast("2019-09-09 01:02:03.457001" AS $timestampType)""")
-
-      hits.foreach { predicate =>
-        Given(predicate)
-        if (filesRead(r, predicate) != 1) {
-          failPretty(s"Expected hit but got miss for $predicate", predicate, data)
-        }
+        checkSkipping(
+          log,
+          // Check to ensure that the value actually in the file is always in range queries.
+          hits = Seq(
+            s"""ts >= cast("2019-09-09 01:02:03.456789" AS $timestampType)""",
+            s"""ts <= cast("2019-09-09 01:02:03.456789" AS $timestampType)""",
+            s"""nested.ts >= cast("2019-09-09 01:02:03.456789" AS $timestampType)""",
+            s"""nested.ts <= cast("2019-09-09 01:02:03.456789" AS $timestampType)""",
+            s"""TS >= cast("2019-09-09 01:02:03.456789" AS $timestampType)""",
+            s"""nEstED.tS >= cast("2019-09-09 01:02:03.456789" AS $timestampType)"""),
+          // Check the range of values that are far enough away to be data skipped. Note that the
+          // values are aligned with millisecond boundaries because of the JSON serialization
+          // truncation.
+          misses = Seq(
+            s"""ts >= cast("2019-09-09 01:02:03.457001" AS $timestampType)""",
+            s"""ts <= cast("2019-09-04 01:02:03.455999" AS $timestampType)""",
+            s"""nested.ts >= cast("2019-09-09 01:02:03.457001" AS $timestampType)""",
+            s"""nested.ts <= cast("2019-09-09 01:02:03.455999" AS $timestampType)""",
+            s"""TS >= cast("2019-09-09 01:02:03.457001" AS $timestampType)""",
+            s"""nEstED.tS >= cast("2019-09-09 01:02:03.457001" AS $timestampType)"""),
+          data = data,
+          checkEmptyUnusedFiltersForHits = false)
       }
+    }
+  }
 
-      misses.foreach { predicate =>
-        Given(predicate)
-        if (filesRead(r, predicate) != 0) {
-          failPretty(s"Expected miss but got hit for $predicate", predicate, data)
-        }
+  for (timestampType <- Seq("TIMESTAMP", "TIMESTAMP_NTZ")) {
+    test(s"data skipping on $timestampType with Long.MaxValue") {
+      val maxVal = "294247-01-10 04:00:54.775807Z"
+      val t = "ds_timestamp_maxvalue"
+      withTable(t) {
+        Seq(maxVal).toDF("strTs")
+          .selectExpr(s"CAST(strTs AS $timestampType) AS ts")
+          .coalesce(1)
+          .write
+          .format("delta")
+          .saveAsTable(t)
+        val log = DeltaLog.forTable(spark, TableIdentifier(t))
+
+        checkSkipping(
+          log,
+          hits = Seq(
+            s"""ts >= cast("$maxVal" AS $timestampType)""",
+            s"""ts >= "$maxVal"""",
+            s"""ts >= cast("2019-09-09 01:02:03.457001" AS $timestampType)""",
+            // This still hits because of JSON truncation to milliseconds
+            s"""ts < cast("$maxVal" AS $timestampType)""".stripMargin),
+          misses = Seq(
+            s"""ts <= cast("2019-09-09 01:02:03.457001" AS $timestampType)""",
+            s"""ts > cast("$maxVal" AS $timestampType)"""),
+          data = maxVal,
+          checkEmptyUnusedFiltersForHits = false)
+      }
+    }
+  }
+
+  for (timestampType <- Seq("TIMESTAMP", "TIMESTAMP_NTZ")) {
+    test(s"data skipping on $timestampType near Long.MaxValue") {
+      val t = "ds_timestamp_near_maxvalue"
+      withTable(t) {
+        val nearMaxMicros = Long.MaxValue - 999L
+
+        // Create DataFrame with the near-max timestamp value
+        Seq(nearMaxMicros).toDF("microsSinceEpoch")
+          .selectExpr(s"TIMESTAMP_MICROS(microsSinceEpoch) AS ts")
+          .selectExpr(s"CAST(ts AS $timestampType) AS ts")
+          .coalesce(1)
+          .write
+          .format("delta")
+          .saveAsTable(t)
+        val log = DeltaLog.forTable(spark, TableIdentifier(t))
+
+        checkSkipping(
+          log,
+          // maxValue of the stats on ts will be saturated to Long.MaxValue instead
+          // of being added 1000 microseconds, which will cause a long overflow.
+          hits = Seq(
+            s"ts >= TIMESTAMP_MICROS($nearMaxMicros)",
+            s"ts >= TIMESTAMP_MICROS(${nearMaxMicros - 100})",
+            s"""ts >= cast("2019-09-09 01:02:03.457001" AS $timestampType)""",
+            s"ts >= TIMESTAMP_MICROS(${Long.MaxValue - 1000})",
+            s"ts < TIMESTAMP_MICROS($nearMaxMicros)"),
+          misses = Seq(
+            s"""ts <= cast("2019-09-09 01:02:03.457001" AS $timestampType)"""),
+          data = nearMaxMicros.toString,
+          checkEmptyUnusedFiltersForHits = false)
       }
     }
   }
 
   test("Ensure that we don't reuse scans when tables are different") {
-    withTempDir { dir =>
-      val table1 = new File(dir, "tbl1")
-      val table1Dir = table1.getCanonicalPath
-      val table2 = new File(dir, "tbl2")
-      val table2Dir = table2.getCanonicalPath
-      spark.range(100).withColumn("part", 'id % 5).withColumn("id2", 'id)
-        .write.format("delta").partitionBy("part").save(table1Dir)
+      withTempDir { dir =>
+        val table1 = new File(dir, "tbl1")
+        val table1Dir = table1.getCanonicalPath
+        val table2 = new File(dir, "tbl2")
+        val table2Dir = table2.getCanonicalPath
+        spark.range(100).withColumn("part", 'id % 5).withColumn("id2", 'id)
+          .write.format("delta").partitionBy("part").save(table1Dir)
 
-      FileUtils.copyDirectory(table1, table2)
+        FileUtils.copyDirectory(table1, table2)
 
-      sql(s"DELETE FROM delta.`$table2Dir` WHERE part = 0 and id < 65")
+        sql(s"DELETE FROM delta.`$table2Dir` WHERE part = 0 and id < 65")
 
-      val query = sql(s"SELECT * FROM delta.`$table1Dir` WHERE part = 0 AND id2 < 85 AND " +
-        s"id NOT IN (SELECT id FROM delta.`$table2Dir` WHERE part = 0 AND id2 < 85)")
+        val query = sql(s"SELECT * FROM delta.`$table1Dir` WHERE part = 0 AND id2 < 85 AND " +
+          s"id NOT IN (SELECT id FROM delta.`$table2Dir` WHERE part = 0 AND id2 < 85)")
 
-      checkAnswer(
-        query,
-        sql(s"SELECT * FROM delta.`$table1Dir` WHERE part = 0 and id < 65"))
-    }
+        checkAnswer(
+          query,
+          sql(s"SELECT * FROM delta.`$table1Dir` WHERE part = 0 and id < 65"))
+      }
   }
 
   test("Data skipping should always return files from latest commit version") {
-    withTempDir { dir =>
+    val t = "ds_latest_commit_version"
+    withTable(t) {
       // If this test is flacky it is broken
-      Seq("aaa").toDF().write.format("delta").save(dir.getCanonicalPath)
-      val (log, snapshot) = DeltaLog.forTableWithSnapshot(spark, dir.getPath)
+      Seq("aaa").toDF().write.format("delta").saveAsTable(t)
+      val (log, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(t))
       val addFile = snapshot.allFiles.collect().head
       val fileWithStat = snapshot.getSpecificFilesWithStats(Seq(addFile.path)).head
       // Ensure the stats has actual stats, not {}
@@ -1671,34 +2045,37 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
     }
   }
 
-  testSparkMasterOnly("data skipping by stats - variant type") {
-    withTable("tbl") {
-      sql("""CREATE TABLE tbl(v VARIANT,
-              v_struct STRUCT<v: VARIANT>,
-              null_v VARIANT,
-              null_v_struct STRUCT<v: VARIANT>) USING DELTA""")
-      sql("""INSERT INTO tbl (SELECT
-          parse_json(cast(id as string)),
-          named_struct('v', parse_json(cast(id as string))),
-          cast(null as variant),
-          named_struct('v', cast(null as variant))
-          FROM range(100))""")
+  test("data skipping by stats - variant type") {
+    Seq(false, true).foreach { pushVariantIntoScan =>
+      withSQLConf(SQLConf.PUSH_VARIANT_INTO_SCAN.key -> pushVariantIntoScan.toString) {
+        val tableName = s"tbl_$pushVariantIntoScan"
+        withTable(tableName) {
+          sql(s"""CREATE TABLE $tableName(v VARIANT,
+                  v_struct STRUCT<v: VARIANT>,
+                  null_v VARIANT,
+                  null_v_struct STRUCT<v: VARIANT>) USING DELTA""")
+          sql(s"""INSERT INTO $tableName (SELECT
+              parse_json(cast(id as string)),
+              named_struct('v', parse_json(cast(id as string))),
+              cast(null as variant),
+              named_struct('v', cast(null as variant))
+              FROM range(100))""")
 
-      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("tbl", None, None))
-      val hits = Seq(
-        "v IS NOT NULL",
-        "v_struct.v IS NOT NULL",
-        "null_v IS NULL",
-        "null_v_struct.v IS NULL"
-      )
-      val misses = Seq(
-        "v IS NULL",
-        "v_struct.v IS NULL",
-        "null_v IS NOT NULL",
-        "null_v_struct.v IS NOT NULL"
-      )
-      val data = spark.sql("select * from tbl").collect().toSeq.toString
-      checkSkipping(deltaLog, hits, misses, data, false)
+          val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName, None, None))
+          val hits = Seq(
+            "v IS NOT NULL",
+            "v_struct.v IS NOT NULL",
+            "null_v IS NULL",
+            "null_v_struct.v IS NULL")
+          val misses = Seq(
+            "v IS NULL",
+            "v_struct.v IS NULL",
+            "null_v IS NOT NULL",
+            "null_v_struct.v IS NOT NULL")
+          val data = spark.sql(s"select * from $tableName").collect().toSeq.toString
+          checkSkipping(deltaLog, hits, misses, data, false)
+        }
+      }
     }
   }
 
@@ -1848,21 +2225,15 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
     }
   }
 
-  protected def expectedStatsForFile(index: Int, colName: String, deltaLog: DeltaLog): String = {
-      s"""{"numRecords":1,"minValues":{"$colName":$index},"maxValues":{"$colName":$index},""" +
-        s""""nullCount":{"$colName":0}}""".stripMargin
-  }
-
   test("data skipping get specific files with Stats API") {
-    withTempDir { tempDir =>
-      val tableDirPath = tempDir.getCanonicalPath
-
+    val t = "ds_get_specific_files_stats_api"
+    withTable(t) {
       val fileCount = 5
       // Create 5 files each having 1 row - x=1/x=2/x=3/x=4/x=5
       val data = spark.range(1, fileCount).toDF("x").repartition(fileCount, col("x"))
-      data.write.format("delta").save(tableDirPath)
+      data.write.format("delta").saveAsTable(t)
 
-      var deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      var deltaLog = DeltaLog.forTable(spark, TableIdentifier(t))
 
       // Get name of file corresponding to row x=1
       val file1 = getFilesRead(deltaLog, "x = 1").head.path
@@ -1873,9 +2244,9 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
 
       deltaLog = checkpointAndCreateNewLogIfNecessary(deltaLog)
       // Delete rows/files for x >= 3 from snapshot
-      sql(s"DELETE FROM delta.`$tableDirPath` WHERE x >= 3")
+      sql(s"DELETE FROM $t WHERE x >= 3")
       // Add another file with just one row x=6 in snapshot
-      sql(s"INSERT INTO delta.`$tableDirPath` VALUES (6)")
+      sql(s"INSERT INTO $t VALUES (6)")
 
       // We want the file from the INSERT VALUES (6) stmt. However, this `getFilesRead` call might
       // also return the AddFile (due to data file re-writes) from the DELETE stmt above. Since
@@ -1943,297 +2314,141 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
       resolver))
   }
 
-  protected def parse(deltaLog: DeltaLog, predicate: String): Seq[Expression] = {
+  test("File skipping with non-deterministic filters") {
+    withTable("tbl") {
+      // Create the table.
+      val df = spark.range(100).toDF()
+      df.write.mode("overwrite").format("delta").saveAsTable("tbl")
 
-    // We produce a wrong filter in this case otherwise
-    if (predicate == "True") return Seq(Literal.TrueLiteral)
+      // Append 9 times to the table.
+      for (i <- 1 to 9) {
+        val df = spark.range(i * 100, (i + 1) * 100).toDF()
+        df.write.mode("append").format("delta").insertInto("tbl")
+      }
 
-    val filtered = spark.read.format("delta").load(deltaLog.dataPath.toString).where(predicate)
-    filtered
-      .queryExecution
-      .optimizedPlan
-      .expressions
-      .flatMap(splitConjunctivePredicates)
+      val query = "SELECT count(*) FROM tbl WHERE rand(0) < 0.25"
+      val result = sql(query).collect().head.getLong(0)
+      assert(result > 150, s"Expected around 250 rows (~0.25 * 1000), got: $result")
+
+      val predicates = sql(query).queryExecution.optimizedPlan.collect {
+        case Filter(condition, _) => condition
+      }.flatMap(splitConjunctivePredicates)
+      val scanResult = DeltaLog.forTable(spark, TableIdentifier("tbl"))
+        .update().filesForScan(predicates)
+      assert(scanResult.unusedFilters.nonEmpty)
+    }
   }
 
-  /**
-   * Returns the number of files that should be included in a scan after applying the given
-   * predicate on a snapshot of the Delta log.
-   *
-   * @param deltaLog Delta log for a table.
-   * @param predicate Predicate to run on the Delta table.
-   * @param checkEmptyUnusedFilters If true, check if there were no unused filters, meaning
-   *                                the given predicate was used as data or partition filters.
-   * @return The number of files that should be included in a scan after applying the predicate.
-   */
-  protected def filesRead(
-      deltaLog: DeltaLog,
-      predicate: String,
-      checkEmptyUnusedFilters: Boolean = false): Int =
-    getFilesRead(deltaLog, predicate, checkEmptyUnusedFilters).size
+  test("File skipping with non-deterministic filters on partitioned tables") {
+    withTable("tbl_partitioned") {
+      import org.apache.spark.sql.functions.col
 
-  /**
-   * Returns the files that should be included in a scan after applying the given predicate on
-   * a snapshot of the Delta log.
-   * @param deltaLog Delta log for a table.
-   * @param predicate Predicate to run on the Delta table.
-   * @param checkEmptyUnusedFilters If true, check if there were no unused filters, meaning
-   *                                the given predicate was used as data or partition filters.
-   * @return The files that should be included in a scan after applying the predicate.
-   */
-  protected def getFilesRead(
-      deltaLog: DeltaLog,
-      predicate: String,
-      checkEmptyUnusedFilters: Boolean = false): Seq[AddFile] = {
-    val parsed = parse(deltaLog, predicate)
-    val res = deltaLog.snapshot.filesForScan(parsed)
-    assert(res.total.files.get == deltaLog.snapshot.numOfFiles)
-    assert(res.total.bytesCompressed.get == deltaLog.snapshot.sizeInBytes)
-    assert(res.scanned.files.get == res.files.size)
-    assert(res.scanned.bytesCompressed.get == res.files.map(_.size).sum)
-    assert(!checkEmptyUnusedFilters || res.unusedFilters.isEmpty)
-    res.files
+      // Create initial DataFrame and add a partition column.
+      val df = spark.range(100).toDF().withColumn("p", col("id") % 10)
+      df.write
+        .mode("overwrite")
+        .format("delta")
+        .partitionBy("p")
+        .saveAsTable("tbl_partitioned")
+
+      // Append 9 more times to the table.
+      for (i <- 1 to 9) {
+        val newDF = spark.range(i * 100, (i + 1) * 100).toDF().withColumn("p", col("id") % 10)
+        newDF.write.mode("append").format("delta").insertInto("tbl_partitioned")
+      }
+
+      // Run query with a nondeterministic filter.
+      val query = "SELECT count(*) FROM tbl_partitioned WHERE rand(0) < 0.25"
+      val result = sql(query).collect().head.getLong(0)
+      // Assert that the row count is as expected (e.g., roughly 25% of rows).
+      assert(result > 150, s"Expected a reasonable number of rows, got: $result")
+
+      val predicates = sql(query).queryExecution.optimizedPlan.collect {
+        case Filter(condition, _) => condition
+      }.flatMap(splitConjunctivePredicates)
+      val scanResult = DeltaLog.forTable(spark, TableIdentifier("tbl_partitioned"))
+        .update().filesForScan(predicates)
+      assert(scanResult.unusedFilters.nonEmpty)
+
+      // Assert that entries are fetched from all 10 partitions
+      val distinctPartitions =
+        sql("SELECT DISTINCT p FROM tbl_partitioned WHERE rand(0) < 0.25")
+        .collect()
+        .length
+      assert(distinctPartitions == 10)
+    }
   }
 
-  protected def checkResultsWithPartitions(
-    tableDir: String,
-    predicate: String,
-    expResults: Seq[(String, String)],
-    expNumPartitions: Int,
-    expNumFiles: Long): Unit = {
-    Given(predicate)
-    val df = spark.read.format("delta").load(tableDir).where(predicate)
-    checkAnswer(df, expResults.toDF())
-
-    val files = getFilesRead(DeltaLog.forTable(spark, tableDir), predicate)
-    assert(files.size == expNumFiles, "# files incorrect:\n\t" + files.mkString("\n\t"))
-
-    val partitionValues = files.map(_.partitionValues).distinct
-    assert(partitionValues.size == expNumPartitions,
-      "# partitions incorrect:\n\t" + partitionValues.mkString("\n\t"))
-  }
-
-  protected def getStatsDf(deltaLog: DeltaLog, columns: Column*): DataFrame = {
-    deltaLog.snapshot.withStats.select("stats.*").select(columns: _*)
-  }
-
-  protected def failPretty(error: String, predicate: String, data: String) = {
-    fail(
-      s"""$error
-         |
-         |== Data ==
-         |$data
-       """.stripMargin)
-  }
-
-  protected def setNumIndexedColumns(path: String, numIndexedCols: Int): Unit = {
-    sql(s"""
-          |ALTER TABLE delta.`$path`
-          |SET TBLPROPERTIES (
-          |  'delta.dataSkippingNumIndexedCols' = '$numIndexedCols'
-          |)""".stripMargin)
-  }
-
-  protected def setDeltaStatsColumns(path: String, deltaStatsColumns: String): Unit = {
-    sql(s"""
-           |ALTER TABLE delta.`$path`
-           |SET TBLPROPERTIES (
-           |  'delta.dataSkippingStatsColumns' = '$deltaStatsColumns'
-           |)""".stripMargin)
+  test("Data skipping handles aliasing for _metadata fields") {
+    withTable("t") {
+      // Create table with BIGINT file_name column
+      sql("create or replace table t(file_name BIGINT) using delta")
+      sql("insert into t values (1), (2), (3)")
+      sql("insert into t values (4), (5), (6)")
+      val (fileName, fileCount) = {
+        val dataFilesDF = sql("select distinct _metadata.file_name from t")
+        (dataFilesDF.first().getString(0), dataFilesDF.count())
+      }
+      // Filter rows by _metadata.file_name
+      val df = sql(s"select * from t where _metadata.file_name = '$fileName'")
+      // Verify the predicate is not used for data skipping
+      val predicates = df.queryExecution.optimizedPlan.collect {
+        case Filter(condition, _) => condition
+      }.flatMap(splitConjunctivePredicates)
+      val scanResult = DeltaLog.forTable(spark, TableIdentifier("t")).update()
+        .filesForScan(predicates)
+      assert(scanResult.unusedFilters.nonEmpty,
+        "Expected predicate to be ineligible for data skipping")
+    }
   }
 
   private def isFullScan(report: ScanReport): Boolean = {
     report.size("scanned").bytesCompressed === report.size("total").bytesCompressed
   }
 
-  protected def checkSkipping(
-      log: DeltaLog,
-      hits: Seq[String],
-      misses: Seq[String],
-      data: String,
-      checkEmptyUnusedFiltersForHits: Boolean): Unit = {
-    hits.foreach { predicate =>
-      Given(predicate)
-      if (filesRead(log, predicate, checkEmptyUnusedFiltersForHits) == 0) {
-        failPretty(s"Expected hit but got miss for $predicate", predicate, data)
-      }
-    }
-
-    misses.foreach { predicate =>
-      Given(predicate)
-      if (filesRead(log, predicate) != 0) {
-        failPretty(s"Expected miss but got hit for $predicate", predicate, data)
-      }
-    }
-    val schemaDiff = SchemaUtils.reportDifferences(
-      log.snapshot.statsSchema.asNullable,
-      log.snapshot.statsSchema)
-    if (schemaDiff.nonEmpty) {
-      fail(s"The stats schema should be nullable. Differences:\n${schemaDiff.mkString("\n")}")
-    }
-  }
-  protected def getDataSkippingConfs(
-      indexedCols: Int,
-      deltaStatsColNamesOpt: Option[String]): TraversableOnce[(String, String)] = {
-    val numIndexedColsConfOpt = Option(indexedCols)
-      .filter(_ != defaultNumIndexedCols)
-      .map(DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.defaultTablePropertyKey -> _.toString)
-    val indexedColNamesConfOpt = deltaStatsColNamesOpt
-      .map(DeltaConfigs.DATA_SKIPPING_STATS_COLUMNS.defaultTablePropertyKey -> _)
-    numIndexedColsConfOpt ++ indexedColNamesConfOpt
-  }
-
-  protected def testSkipping(
-      name: String,
-      data: String,
-      schema: StructType = null,
-      hits: Seq[String],
-      misses: Seq[String],
-      sqlConfs: Seq[(String, String)] = Nil,
-      indexedCols: Int = defaultNumIndexedCols,
-      deltaStatsColNamesOpt: Option[String] = None,
-      checkEmptyUnusedFiltersForHits: Boolean = false,
-      exceptionOpt: Option[Throwable] = None): Unit = {
-    test(s"data skipping by stats - $name") {
-      val allSQLConfs = sqlConfs ++ getDataSkippingConfs(indexedCols, deltaStatsColNamesOpt)
-      withSQLConf(allSQLConfs: _*) {
-        val jsonRecords = data.split("\n").toSeq
-        val reader = spark.read
-        if (schema != null) { reader.schema(schema) }
-        val df = reader.json(jsonRecords.toDS())
-
-        val tempDir = Utils.createTempDir()
-        val r = DeltaLog.forTable(spark, tempDir)
-        df.coalesce(1).write.format("delta").save(r.dataPath.toString)
-
-        exceptionOpt.map { exception =>
-          val except = intercept[Throwable] {
-            deltaStatsColNamesOpt.foreach { deltaStatsColNames =>
-              setDeltaStatsColumns(r.dataPath.toString, deltaStatsColNames)
-              df.coalesce(1).write.format("delta").mode("overwrite").save(r.dataPath.toString)
-              if (indexedCols != defaultNumIndexedCols) {
-                setNumIndexedColumns(r.dataPath.toString, indexedCols)
-                df.coalesce(1).write.format("delta").mode("overwrite").save(r.dataPath.toString)
-              }
-              checkSkipping(r, hits, misses, data, checkEmptyUnusedFiltersForHits)
-            }
-          }
-          assert(except.getClass == exception.getClass &&
-            except.getMessage.contains(exception.getMessage))
-        }.getOrElse {
-          if (indexedCols != defaultNumIndexedCols) {
-            setNumIndexedColumns(r.dataPath.toString, indexedCols)
-            df.coalesce(1).write.format("delta").mode("overwrite").save(r.dataPath.toString)
-          }
-          deltaStatsColNamesOpt.foreach { deltaStatsColNames =>
-            setDeltaStatsColumns(r.dataPath.toString, deltaStatsColNames)
-            df.coalesce(1).write.format("delta").mode("overwrite").save(r.dataPath.toString)
-          }
-          checkSkipping(r, hits, misses, data, checkEmptyUnusedFiltersForHits)
-        }
-      }
-    }
-  }
 }
 
 trait DataSkippingDeltaTests extends DataSkippingDeltaTestsBase
 /** Tests code paths within DataSkippingReader.scala */
-class DataSkippingDeltaV1Suite extends DataSkippingDeltaTests
+trait DataSkippingDeltaV1Tests
+  extends DataSkippingDeltaTests
 {
   import testImplicits._
 
   test("data skipping flags") {
-    val tempDir = Utils.createTempDir()
-    val r = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
-    def rStats: DataFrame =
-      getStatsDf(r, $"numRecords", $"minValues.id".as("id_min"), $"maxValues.id".as("id_max"))
+    val t = "ds_flags"
+    withTable(t) {
+      def r: DeltaLog = DeltaLog.forTable(spark, TableIdentifier(t))
+      def rStats: DataFrame =
+        getStatsDf(r, $"numRecords", $"minValues.id".as("id_min"), $"maxValues.id".as("id_max"))
 
-    val data = spark.range(10).repartition(2)
+      val data = spark.range(10).repartition(2)
 
-    Given("appending data without collecting stats")
-    withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "false") {
-      data.write.format("delta").save(r.dataPath.toString)
-      checkAnswer(rStats, Seq(Row(null, null, null), Row(null, null, null)))
+      Given("appending data without collecting stats")
+      withSQLConf(
+          DeltaSQLConf.DELTA_COLLECT_STATS.key -> "false",
+          DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey -> "false") {
+        data.write.format("delta").saveAsTable(t)
+        checkAnswer(rStats, Seq(Row(null, null, null), Row(null, null, null)))
+      }
+
+      Given("appending data and collecting stats")
+      withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "true") {
+        data.write.format("delta").mode("append").saveAsTable(t)
+        checkAnswer(rStats,
+          Seq(Row(null, null, null), Row(null, null, null), Row(4, 0, 8), Row(6, 1, 9)))
+      }
+
+      Given("querying reservoir without using stats")
+      withSQLConf(DeltaSQLConf.DELTA_STATS_SKIPPING.key -> "false") {
+        assert(filesRead(r, "id = 0") == 4)
+      }
+
+      Given("querying reservoir using stats")
+      withSQLConf(DeltaSQLConf.DELTA_STATS_SKIPPING.key -> "true") {
+        assert(filesRead(r, "id = 0") == 3)
+      }
     }
-
-    Given("appending data and collecting stats")
-    withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "true") {
-      data.write.format("delta").mode("append").save(r.dataPath.toString)
-      checkAnswer(rStats,
-        Seq(Row(null, null, null), Row(null, null, null), Row(4, 0, 8), Row(6, 1, 9)))
-    }
-
-    Given("querying reservoir without using stats")
-    withSQLConf(DeltaSQLConf.DELTA_STATS_SKIPPING.key -> "false") {
-      assert(filesRead(r, "id = 0") == 4)
-    }
-
-    Given("querying reservoir using stats")
-    withSQLConf(DeltaSQLConf.DELTA_STATS_SKIPPING.key -> "true") {
-      assert(filesRead(r, "id = 0") == 3)
-    }
   }
 }
 
-/**
- * Used to disable the tests with the old stats collection behavior on long-running suites to
- * avoid time-out
- * TODO(lin): remove this after we remove the DELTA_COLLECT_STATS_USING_TABLE_SCHEMA flag
- */
-trait DataSkippingDisableOldStatsSchemaTests extends DataSkippingDeltaTests {
-
-  protected override def test(testName: String, testTags: org.scalatest.Tag*)
-                             (testFun: => Any)
-                             (implicit pos: org.scalactic.source.Position): Unit = {
-    // Adding the null check in case tableSchemaOnlyTag has not been initialized in base traits
-    val newTestTags = if (tableSchemaOnlyTag == null) testTags else tableSchemaOnlyTag +: testTags
-    super.test(testName, newTestTags: _*)(testFun)(pos)
-  }
-}
-
-/** DataSkipping tests under id column mapping */
-trait DataSkippingDeltaIdColumnMappingTests extends DataSkippingDeltaTests
-  with DeltaColumnMappingTestUtils {
-
-  override def expectedStatsForFile(index: Int, colName: String, deltaLog: DeltaLog): String = {
-    val x = colName.phy(deltaLog)
-      s"""{"numRecords":1,"minValues":{"$x":$index},"maxValues":{"$x":$index},""" +
-        s""""nullCount":{"$x":0}}""".stripMargin
-  }
-}
-
-trait DataSkippingDeltaTestV1ColumnMappingMode extends DataSkippingDeltaIdColumnMappingTests {
-  override protected def getStatsDf(deltaLog: DeltaLog, columns: Column*): DataFrame = {
-    deltaLog.snapshot.withStats.select("stats.*")
-      .select(convertToPhysicalColumns(columns, deltaLog): _*)
-  }
-}
-
-class DataSkippingDeltaV1NameColumnMappingSuite
-  extends DataSkippingDeltaV1Suite
-    with DeltaColumnMappingEnableNameMode
-    with DataSkippingDeltaTestV1ColumnMappingMode {
-  override protected def runAllTests: Boolean = true
-}
-
-class DataSkippingDeltaV1JsonCheckpointV2Suite extends DataSkippingDeltaV1Suite {
-  override def sparkConf: SparkConf = {
-    super.sparkConf.setAll(
-      Seq(
-        DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name,
-        DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> V2Checkpoint.Format.JSON.name
-      )
-    )
-  }
-}
-
-class DataSkippingDeltaV1ParquetCheckpointV2Suite extends DataSkippingDeltaV1Suite {
-  override def sparkConf: SparkConf = {
-    super.sparkConf.setAll(
-      Seq(
-        DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name,
-        DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> V2Checkpoint.Format.PARQUET.name
-      )
-    )
-  }
-}

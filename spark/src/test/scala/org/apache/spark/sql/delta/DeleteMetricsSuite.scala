@@ -17,12 +17,13 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
-import com.databricks.spark.util.DatabricksLogging
+import com.databricks.spark.util.{DatabricksLogging, Log4jUsageLogger, MetricDefinitions}
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction, RemoveFile}
 import org.apache.spark.sql.delta.commands.DeleteMetric
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.sql.{Dataset, QueryTest}
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -199,8 +200,8 @@ class DeleteMetricsSuite extends QueryTest
     numPartitionsAfterSkipping = None,
     numPartitionsAddedTo = None,
     numPartitionsRemovedFrom = None,
-    numCopiedRows = None,
-    numDeletedRows = None,
+    numCopiedRows = Some(0),
+    numDeletedRows = Some(0),
     numBytesAdded = -1, // We don't want to assert equality on bytes
     numBytesRemoved = -1, // We don't want to assert equality on bytes
     changeFileBytes = -1, // We don't want to assert equality on bytes
@@ -421,6 +422,32 @@ class DeleteMetricsSuite extends QueryTest
       ),
     testConfig = testConfig
     )
+  }
+
+  for (alwaysReportSomeZero <- BOOLEAN_DOMAIN) {
+    test("DELETE with no matching rows reports numCopiedRows/numDeletedRows depending on flag " +
+      s"alwaysReportSomeZeroMetrics=$alwaysReportSomeZero") {
+      withSQLConf(
+        DeltaSQLConf.METRICS_ALWAYS_REPORT_SOME_ZERO_METRICS.key ->
+          alwaysReportSomeZero.toString
+      ) {
+        withTempDir { dir =>
+          spark.range(10).write.format("delta").save(dir.getAbsolutePath)
+          val records = Log4jUsageLogger.track {
+            spark.sql("DELETE FROM delta.`" + dir.getAbsolutePath + "` WHERE id > 100")
+          }
+          val events = records.filter { r =>
+            r.metric == MetricDefinitions.EVENT_TAHOE.name &&
+              r.tags.get("opType").contains("delta.dml.delete.stats")
+          }
+          assert(events.size == 1)
+          val deleteMetric = JsonUtils.fromJson[DeleteMetric](events.head.blob)
+          val expected = if (alwaysReportSomeZero) Some(0L) else None
+          assert(deleteMetric.numCopiedRows === expected)
+          assert(deleteMetric.numDeletedRows === expected)
+        }
+      }
+    }
   }
 
 }

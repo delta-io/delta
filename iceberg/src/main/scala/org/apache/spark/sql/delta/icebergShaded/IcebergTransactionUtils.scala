@@ -18,29 +18,30 @@ package org.apache.spark.sql.delta.icebergShaded
 
 import java.nio.ByteBuffer
 import java.time.Instant
+import java.time.format.DateTimeParseException
+import java.util.{Base64, List => JList, UUID}
 
 import scala.collection.JavaConverters._
+import scala.reflect.runtime.universe
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaConfig, DeltaConfigs, DeltaErrors, DeltaLog, Snapshot}
-import org.apache.spark.sql.delta.DeltaConfigs.parseCalendarInterval
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, DeltaLog, Snapshot, SnapshotDescriptor}
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction, RemoveFile}
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.util.PartitionUtils.{timestampPartitionPattern, utcFormatter}
+import org.apache.spark.sql.delta.util.TimestampFormatter
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
-import shadedForDelta.org.apache.iceberg.{DataFile, DataFiles, FileFormat, PartitionSpec, Schema => IcebergSchema}
+import shadedForDelta.org.apache.iceberg.{BaseTransaction, DataFile, DataFiles, FileFormat, MetadataUpdate, PartitionSpec, Schema => IcebergSchema, TableMetadata, Transaction => IcebergTransaction}
 import shadedForDelta.org.apache.iceberg.Metrics
 import shadedForDelta.org.apache.iceberg.StructLike
-import shadedForDelta.org.apache.iceberg.TableProperties
-
-// scalastyle:off import.ordering.noEmptyLine
 import shadedForDelta.org.apache.iceberg.catalog.{Namespace, TableIdentifier => IcebergTableIdentifier}
-// scalastyle:on import.ordering.noEmptyLine
 import shadedForDelta.org.apache.iceberg.hive.HiveCatalog
+import shadedForDelta.org.apache.iceberg.unityCatalog.{IcebergSnapshotIdGenerator, UnityCatalogTableOperations}
+import shadedForDelta.org.apache.iceberg.util.DateTimeUtil
 
 import org.apache.spark.sql.catalyst.{InternalRow, TableIdentifier => SparkTableIdentifier}
 import org.apache.spark.sql.types.{BinaryType, BooleanType, ByteType, DataType, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, ShortType, StringType, StructType, TimestampNTZType, TimestampType}
-import org.apache.spark.unsafe.types.CalendarInterval
 
 object IcebergTransactionUtils
     extends DeltaLogging
@@ -74,37 +75,8 @@ object IcebergTransactionUtils
     // Recall that FileActions can have either relative paths or absolute paths (i.e. from shallow-
     // cloned files).
     // Iceberg spec requires path be fully qualified path, suitable for constructing a Hadoop Path
-    if (f.pathAsUri.isAbsolute) f.path else new Path(tablePath, f.toPath.toString).toString
-  }
-
-  /** Returns the (deletions, additions) iceberg table property changes. */
-  def detectPropertiesChange(
-      newProperties: Map[String, String],
-      prevPropertiesOpt: Map[String, String]): (Set[String], Map[String, String]) = {
-    val newPropertiesIcebergOnly = getIcebergPropertiesFromDeltaProperties(newProperties)
-    val prevPropertiesOptIcebergOnly = getIcebergPropertiesFromDeltaProperties(prevPropertiesOpt)
-
-    if (prevPropertiesOptIcebergOnly == newPropertiesIcebergOnly) return (Set.empty, Map.empty)
-
-    (
-      prevPropertiesOptIcebergOnly.keySet.diff(newPropertiesIcebergOnly.keySet),
-      newPropertiesIcebergOnly
-    )
-  }
-
-  /**
-   * Only keep properties whose key starts with "delta.universalformat.config.iceberg"
-   * and strips the prefix from the key; Note the key is already normalized to lower case.
-   */
-  def getIcebergPropertiesFromDeltaProperties(
-      properties: Map[String, String]): Map[String, String] = {
-    val additionalPropertyFromDelta = additionalIcebergPropertiesFromDeltaProperties(properties)
-    val prefix = DeltaConfigs.DELTA_UNIVERSAL_FORMAT_ICEBERG_CONFIG_PREFIX
-    val specifiedProperty =
-      properties.filterKeys(_.startsWith(prefix)).map(kv => (kv._1.stripPrefix(prefix), kv._2))
-      .toMap
-    validateIcebergProperty(additionalPropertyFromDelta, specifiedProperty)
-    additionalPropertyFromDelta ++ specifiedProperty
+    if (f.pathAsUri.isAbsolute) new Path(f.pathAsUri).toString
+    else new Path(tablePath, f.toPath.toString).toString
   }
 
   /** Returns the mapping of logicalPartitionColName -> physicalPartitionColName */
@@ -132,10 +104,6 @@ object IcebergTransactionUtils
       logicalToPhysicalPartitionNames: Map[String, String],
       statsParser: String => InternalRow,
       snapshot: Snapshot): DataFile = {
-    if (add.deletionVector != null) {
-      throw new UnsupportedOperationException("No support yet for DVs")
-    }
-
     var dataFileBuilder =
       convertFileAction(
         add, tablePath, partitionSpec, logicalToPhysicalPartitionNames, snapshot)
@@ -143,7 +111,13 @@ object IcebergTransactionUtils
         // string is null/empty or not because this metric is required by Iceberg. If the number
         // of records is both unavailable here and unavailable in the Delta stats, Iceberg will
         // throw an exception when building the data file.
-        .withRecordCount(add.numLogicalRecords.getOrElse(-1L))
+        // Here, numPhysicalRecords is used as Iceberg's record count is position-oriented:
+        // it must reflect the total number of physical rows in the Parquet file,
+        // including rows masked by deletion vectors.
+        // This aligns with Delta's baseRowId assignment which reserves row ID space using
+        // numPhysicalRecords, and with Iceberg's row lineage where first_row_id + position
+        // must address every row in the file.
+        .withRecordCount(add.numPhysicalRecords.getOrElse(-1L))
 
     try {
       if (add.stats != null && add.stats.nonEmpty) {
@@ -164,10 +138,10 @@ object IcebergTransactionUtils
       tablePath: Path,
       partitionSpec: PartitionSpec,
       logicalToPhysicalPartitionNames: Map[String, String],
-      snapshot: Snapshot): DataFile = {
+      snapshot: SnapshotDescriptor): DataFile = {
     convertFileAction(
       remove, tablePath, partitionSpec, logicalToPhysicalPartitionNames, snapshot)
-      .withRecordCount(remove.numLogicalRecords.getOrElse(0L))
+      .withRecordCount(remove.numPhysicalRecords.getOrElse(0L))
       .build()
   }
 
@@ -176,42 +150,40 @@ object IcebergTransactionUtils
       tablePath: Path,
       partitionSpec: PartitionSpec,
       logicalToPhysicalPartitionNames: Map[String, String],
-      snapshot: Snapshot): DataFiles.Builder = {
+      snapshot: SnapshotDescriptor): DataFiles.Builder = {
     val absPath = canonicalizeFilePath(f, tablePath)
-    val schema = snapshot.schema
     var builder = DataFiles
       .builder(partitionSpec)
       .withPath(absPath)
       .withFileSizeInBytes(f.getFileSize)
       .withFormat(FileFormat.PARQUET)
-    val nameToDataTypes = schema.fields.map(f => f.name -> f.dataType).toMap
-
     if (partitionSpec.isPartitioned) {
-      val ICEBERG_NULL_PARTITION_VALUE = "__HIVE_DEFAULT_PARTITION__"
-      val partitionPath = partitionSpec.fields()
-      val partitionVals = new Array[Any](partitionSpec.fields().size())
-      for (i <- partitionVals.indices) {
-        val logicalPartCol = partitionPath.get(i).name()
-        val physicalPartKey = logicalToPhysicalPartitionNames(logicalPartCol)
-        // ICEBERG_NULL_PARTITION_VALUE is referred in Iceberg lib to mark NULL partition value
-        val partValue = Option(f.partitionValues(physicalPartKey))
-          .getOrElse(ICEBERG_NULL_PARTITION_VALUE)
-        val partitionColumnDataType = nameToDataTypes(logicalPartCol)
-        val icebergPartitionValue =
-          stringToIcebergPartitionValue(partitionColumnDataType, partValue, snapshot.version)
-        partitionVals(i) = icebergPartitionValue
-      }
-
-      builder = builder.withPartition(new Row(partitionVals))
+      builder = builder.withPartition(
+        DeltaToIcebergConvert.Partition.convertPartitionValues(
+          snapshot, partitionSpec, f.partitionValues, logicalToPhysicalPartitionNames))
+    }
+    f match {
+      case add: AddFile =>
+        add.baseRowId.map { rowId =>
+          builder.withFirstRowId(rowId)
+        }
+      case remove: RemoveFile =>
+        remove.baseRowId.map { rowId =>
+          builder.withFirstRowId(rowId)
+        }
+      case _ =>
     }
     builder
   }
+
+  private lazy val timestampFormatter =
+    TimestampFormatter(timestampPartitionPattern, java.util.TimeZone.getDefault)
 
   /**
    * Follows deserialization as specified here
    * https://github.com/delta-io/delta/blob/master/PROTOCOL.md#Partition-Value-Serialization
    */
-  private def stringToIcebergPartitionValue(
+  private[delta] def stringToIcebergPartitionValue(
       elemType: DataType,
       partitionVal: String,
       version: Long): Any = {
@@ -233,13 +205,27 @@ object IcebergTransactionUtils
       case _: DecimalType => new java.math.BigDecimal(partitionVal)
       case _: BinaryType => ByteBuffer.wrap(partitionVal.getBytes("UTF-8"))
       case _: TimestampNTZType =>
-        java.sql.Timestamp.valueOf(partitionVal).getNanos/1000.asInstanceOf[Long]
+        DateTimeUtil.isoTimestampToMicros(
+          partitionVal.replace(" ", "T"))
       case _: TimestampType =>
-        Instant.parse(partitionVal).getNano/1000.asInstanceOf[Long]
+        try {
+          getMicrosSinceEpoch(partitionVal)
+        } catch {
+          case _: DateTimeParseException =>
+            // In case of non-ISO timestamps, parse and interpret the timestamp as system time
+            // and then convert to UTC
+            val utcInstant = utcFormatter.format(timestampFormatter.parse(partitionVal))
+            getMicrosSinceEpoch(utcInstant)
+        }
       case _ =>
         throw DeltaErrors.universalFormatConversionFailedException(
           version, "iceberg", "Unexpected partition data type " + elemType)
     }
+  }
+
+  private def getMicrosSinceEpoch(instant: String): Long = {
+    DateTimeUtil.microsFromInstant(
+      Instant.parse(instant))
   }
 
   private def getMetricsForIcebergDataFile(
@@ -264,11 +250,32 @@ object IcebergTransactionUtils
    * @param conf: Hadoop Configuration
    * @return
    */
-  def createHiveCatalog(conf : Configuration) : HiveCatalog = {
+  def createHiveCatalog(
+      conf: Configuration,
+      metadataUpdates: java.util.ArrayList[MetadataUpdate]
+        = new java.util.ArrayList[MetadataUpdate]()) : HiveCatalog = {
     val catalog = new HiveCatalog()
     catalog.setConf(conf)
-    catalog.initialize("spark_catalog", Map.empty[String, String].asJava)
+    catalog.initialize("spark_catalog", Map.empty[String, String].asJava, metadataUpdates)
     catalog
+  }
+
+  /**
+  * Encode Spark table identifier to Iceberg table identifier by putting "database" and "catalog"
+  * to the "namespace" in Iceberg table identifier
+  */
+  def convertSparkTableIdentifierToIceberg(
+      identifier: SparkTableIdentifier): IcebergTableIdentifier = {
+    val namespace = (identifier.database, identifier.catalog) match {
+      case (Some(database), Some(catalog)) => Namespace.of(database, catalog)
+      case (Some(database), None) => Namespace.of(database)
+      case (None, Some(catalog)) =>
+        throw new IllegalArgumentException(
+          "Spark does not allow the constructors to skip the `database` when `catalog` is used"
+        )
+      case (None, None) => Namespace.empty()
+    }
+    IcebergTableIdentifier.of(namespace, identifier.table)
   }
 
   /**
@@ -285,77 +292,121 @@ object IcebergTransactionUtils
     IcebergTableIdentifier.of(namespace, identifier.table)
   }
 
-  // Additional iceberg properties inferred from delta properties
-  // If user doesn't specify the property in iceberg table, we infer it from delta properties
-  // Otherwise, we validate the user specified property with the inferred property
-  // Here's a list of additional properties:
-  // 1. iceberg's history.expire.max-snapshot-age-ms:
-  //  inferred as min of delta.logRetentionDuration and delta.deletedFileRetentionDuration
-  private def additionalIcebergPropertiesFromDeltaProperties(
-      properties: Map[String, String]): Map[String, String] = {
-    icebergRetentionPropertyFromDelta(properties)
-  }
+    /**
+     * Use reflection to set schemas and schemasById in TableMetadata
+     * @param txn
+     * @param schema
+     */
+    def setIcebergTxnSchema(txn: IcebergTransaction, schema: IcebergSchema): Unit = {
+      Option(txn.asInstanceOf[BaseTransaction].currentMetadata())
+        .foreach { metadata =>
+          val mirror = universe.runtimeMirror(getClass.getClassLoader)
+          val instanceMirror = mirror.reflect(metadata)
 
-  private def icebergRetentionPropertyFromDelta(
-      deltaProperties: Map[String, String]): Map[String, String] = {
-    val icebergSnapshotRetentionFromDelta = deltaRetentionMsFrom(deltaProperties)
-    lazy val icebergDefault = TableProperties.MAX_SNAPSHOT_AGE_MS_DEFAULT
-    icebergSnapshotRetentionFromDelta.map { retentionMs =>
-      Map(TableProperties.MAX_SNAPSHOT_AGE_MS -> (retentionMs min icebergDefault).toString)
-    }.getOrElse(Map.empty)
-  }
+          val currentSchema = metadata.asInstanceOf[TableMetadata].schemas()
+          assert(currentSchema.size() == 1)
+          val currentSchemaId = metadata.asInstanceOf[TableMetadata].currentSchemaId()
+          val newSchemas = java.util.Collections.singletonList(schema)
+          val newSchemasById = java.util.Collections.singletonMap(currentSchemaId, schema)
 
-  // Given additional iceberg property constrained/inferred by Delta and
-  // user specified iceberg property, validate that they don't conflict
-  private def validateIcebergProperty(
-      additionalPropertyFromDelta: Map[String, String],
-      customizedProperty: Map[String, String]): Unit = {
-    validateIcebergRetentionWithDelta(additionalPropertyFromDelta, customizedProperty)
-  }
+          val schemasField = universe
+            .typeOf[TableMetadata]
+            .decl(universe.TermName("schemas"))
+            .asTerm
+          val schemasByIdFiled = universe
+            .typeOf[TableMetadata]
+            .decl(universe.TermName("schemasById"))
+            .asTerm
+          instanceMirror.reflectField(schemasField).set(newSchemas)
+          instanceMirror.reflectField(schemasByIdFiled).set(newSchemasById)
+        }
+    }
 
-  // Validation:
-  // Customized iceberg retention should be <= to the delta retention
-  // Which is min of logRetentionDuration and deletedFileRetentionDuration
-  private def validateIcebergRetentionWithDelta(
-      additionalPropertyFromDelta: Map[String, String],
-      usrSpecifiedProperty: Map[String, String]): Unit = {
-    lazy val defaultRetentionDelta =
-      calendarStrToMs(DeltaConfigs.LOG_RETENTION.defaultValue) min
-      calendarStrToMs(DeltaConfigs.TOMBSTONE_RETENTION.defaultValue)
-    lazy val retentionMsFromDelta = additionalPropertyFromDelta
-      .getOrElse(TableProperties.MAX_SNAPSHOT_AGE_MS, s"$defaultRetentionDelta").toLong
+    /**
+     * Use reflection to set specs and specsById in TableMetadata
+     * @param txn
+     * @param spec
+     */
+    def setIcebergTxnPartitionSpec(txn: IcebergTransaction, spec: PartitionSpec): Unit = {
+      Option(txn.asInstanceOf[BaseTransaction].currentMetadata())
+        .foreach { metadata =>
+          val mirror = universe.runtimeMirror(getClass.getClassLoader)
+          val instanceMirror = mirror.reflect(metadata)
 
-    usrSpecifiedProperty.get(TableProperties.MAX_SNAPSHOT_AGE_MS).foreach { proposedMs =>
-      if (proposedMs.toLong > retentionMsFromDelta) {
-        throw new IllegalArgumentException(
-          s"Uniform iceberg's ${TableProperties.MAX_SNAPSHOT_AGE_MS} should be set >= " +
-          s" min of delta's ${DeltaConfigs.LOG_RETENTION.key} and" +
-          s" ${DeltaConfigs.TOMBSTONE_RETENTION.key}." +
-          s" Current delta retention min in MS: $retentionMsFromDelta," +
-          s" Proposed iceberg retention in Ms: $proposedMs")
+          val currentSpecs = metadata.asInstanceOf[TableMetadata].specs()
+          assert(currentSpecs.size() == 1)
+          val currentSpecId = metadata.asInstanceOf[TableMetadata].defaultSpecId()
+          val newSpecs = java.util.Collections.singletonList(spec)
+          val newSpecsById = java.util.Collections.singletonMap(currentSpecId, spec)
+
+          val specsField = universe
+            .typeOf[TableMetadata]
+            .decl(universe.TermName("specs"))
+            .asTerm
+          val specsByIdFiled = universe
+            .typeOf[TableMetadata]
+            .decl(universe.TermName("specsById"))
+            .asTerm
+          instanceMirror.reflectField(specsField).set(newSpecs)
+          instanceMirror.reflectField(specsByIdFiled).set(newSpecsById)
+        }
+    }
+
+    /**
+     * Pre-assigns a deterministic snapshot ID for a given Iceberg transaction.
+     *
+     * This method ensures that when committing through Unity Catalog, the next
+     * snapshot ID is deterministically assigned based on the Delta version
+     * and the table identifier.
+     */
+    def preAssignSnapshotIdForTxn(txn: IcebergTransaction, version: Long, tableId: String): Unit = {
+      txn match {
+        case baseTxn: BaseTransaction => baseTxn.underlyingOps() match {
+          case unityCatalogOps: UnityCatalogTableOperations =>
+            unityCatalogOps.setPreAssignedNextSnapshotId(
+              IcebergSnapshotIdGenerator.encode(
+                version,
+                UUID.fromString(tableId)))
+          case _ => throw new IllegalStateException(
+            "Expected tableOps to be UnityCatalogTableOperations")
+        }
+        case _ => throw new IllegalStateException("Expected txn to be BaseTransaction")
       }
     }
-  }
 
-  private def deltaRetentionMsFrom(deltaProperties: Map[String, String]): Option[Long] = {
-    def getCalendarMsFrom(
-        conf: DeltaConfig[CalendarInterval], properties: Map[String, String]): Option[Long] = {
-      properties.get(conf.key).map(calendarStrToMs)
+    /**
+     * Use reflection to set lastSequenceNumber in TableMetadata
+     * @param txn
+     * @param sequenceNumber
+     */
+    def setIcebergTxnLastSequenceNumber(txn: IcebergTransaction, sequenceNumber: Long): Unit = {
+      Option(txn.asInstanceOf[BaseTransaction].currentMetadata())
+        .foreach { metadata =>
+          val mirror = universe.runtimeMirror(getClass.getClassLoader)
+          val instanceMirror = mirror.reflect(metadata)
+          val field = universe
+            .typeOf[TableMetadata]
+            .decl(universe.TermName("lastSequenceNumber"))
+            .asTerm
+          instanceMirror.reflectField(field).set(sequenceNumber)
+        }
     }
 
-    def minOf(a: Option[Long], b: Option[Long]): Option[Long] = (a, b) match {
-      case (Some(a), Some(b)) => Some(a min b)
-      case (a, b) => a orElse b
+    /**
+     * Use reflection to set nextRowId in TableMetadata
+     * @param txn
+     * @param sequenceNumber
+     */
+    def setIcebergTxnNextRowId(txn: IcebergTransaction, nextRowId: Long): Unit = {
+      Option(txn.asInstanceOf[BaseTransaction].currentMetadata())
+        .foreach { metadata =>
+          val mirror = universe.runtimeMirror(getClass.getClassLoader)
+          val instanceMirror = mirror.reflect(metadata)
+          val field = universe
+            .typeOf[TableMetadata]
+            .decl(universe.TermName("nextRowId"))
+            .asTerm
+          instanceMirror.reflectField(field).set(nextRowId)
+        }
     }
-
-    val logRetention = getCalendarMsFrom(DeltaConfigs.LOG_RETENTION, deltaProperties)
-    val vacuumRetention = getCalendarMsFrom(DeltaConfigs.TOMBSTONE_RETENTION, deltaProperties)
-    minOf(logRetention, vacuumRetention)
-  }
-
-  // Converts a string in calendar interval format to milliseconds
-  private def calendarStrToMs(calendarStr: String): Long = {
-    val interval = parseCalendarInterval(calendarStr)
-    DeltaConfigs.getMilliSeconds(interval)
-  }
 }

@@ -59,6 +59,7 @@ class PrepareDeltaSharingScan(override val spark: SparkSession) extends PrepareD
           spark,
           deltaLog,
           deltaLog.dataPath,
+          catalogTableOpt = None,
           preparedScan = deltaScan,
           versionScanned = Some(snapshot.version)
         )

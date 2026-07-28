@@ -21,7 +21,7 @@ import java.io.FileNotFoundException
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
-import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsTestUtils
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
@@ -34,7 +34,7 @@ import org.apache.spark.util.Utils
 
 trait DescribeDeltaDetailSuiteBase extends QueryTest
   with SharedSparkSession
-  with CoordinatedCommitsTestUtils
+  with CatalogOwnedTestBaseSuite
   with DeltaTestUtilsForTempViews {
 
   import testImplicits._
@@ -213,8 +213,7 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
     }
   }
 
-  testWithDifferentBackfillIntervalOptional(
-      "delta table: describe detail always run on the latest snapshot") { batchSizeOpt =>
+  test("delta table: describe detail always run on the latest snapshot") {
     val tableName = "tbl_name_on_latest_snapshot"
     withTable(tableName) {
         val tempDir = Utils.createTempDir().toString
@@ -232,17 +231,20 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
           metadata.configuration ++ Map("foo" -> "bar")
         )
         txn.commit(newMetadata :: Nil, DeltaOperations.ManualUpdate)
-        val coordinatedCommitsProperties = batchSizeOpt.map(_ =>
-          getCoordinatedCommitsDefaultProperties(withICT = true))
-          .getOrElse(Map.empty)
+        val catalogOwnedProperties = constructCatalogOwnedSpecificTableProperties(
+          spark, newMetadata)
         checkResult(sql(s"DESCRIBE DETAIL $tableName"),
-          Seq(Map("foo" -> "bar") ++ coordinatedCommitsProperties),
+          Seq(Map("foo" -> "bar") ++ catalogOwnedProperties),
           Seq("properties")
         )
       }
   }
 
   test("delta table: describe detail shows table features") {
+    if (catalogOwnedDefaultCreationEnabledInTests) {
+      cancel("CatalogOwned is not compatible w/ the test since protocol version would be " +
+        "set to (3, 7) by default for CC tables.")
+    }
     withTable("t1") {
       withSQLConf(
         DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "1",
@@ -358,3 +360,15 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
 
 class DescribeDeltaDetailSuite
   extends DescribeDeltaDetailSuiteBase with DeltaSQLCommandTest
+
+class DescribeDeltaDetailWithCatalogOwnedBatch1Suite extends DescribeDeltaDetailSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class DescribeDeltaDetailWithCatalogOwnedBatch2Suite extends DescribeDeltaDetailSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+}
+
+class DescribeDeltaDetailWithCatalogOwnedBatch100Suite extends DescribeDeltaDetailSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
+}

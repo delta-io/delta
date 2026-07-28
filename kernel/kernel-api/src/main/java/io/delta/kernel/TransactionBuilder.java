@@ -18,12 +18,16 @@ package io.delta.kernel;
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentTransactionException;
+import io.delta.kernel.exceptions.DomainDoesNotExistException;
 import io.delta.kernel.exceptions.InvalidConfigurationValueException;
+import io.delta.kernel.exceptions.TableAlreadyExistsException;
 import io.delta.kernel.exceptions.UnknownConfigurationException;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.types.StructType;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Builder for creating a {@link Transaction} to mutate a Delta table.
@@ -33,11 +37,29 @@ import java.util.Map;
 @Evolving
 public interface TransactionBuilder {
   /**
-   * Set the schema of the table when creating a new table.
+   * Set the schema of the table. If setting the schema on an existing table for a schema evolution,
+   * then column mapping must be enabled. This API will preserve field metadata for fields such as
+   * field IDs and physical names. If field metadata is not specified for a field, it is considered
+   * as a new column and new IDs/physical names will be specified. The possible schema evolutions
+   * supported include column additions, removals, renames, and moves. If a schema evolution is
+   * performed, implementations must perform the following validations:
+   *
+   * <ul>
+   *   <li>No duplicate columns are allowed
+   *   <li>Column names contain only valid characters
+   *   <li>Data types are supported
+   *   <li>No new non-nullable fields are added
+   *   <li>Physical column name consistency is preserved in the new schema
+   *   <li>No type changes
+   *   <li>ToDo: Nested IDs for array/map types are preserved in the new schema
+   *   <li>ToDo: Validate invalid field reorderings
+   * </ul>
    *
    * @param engine {@link Engine} instance to use.
    * @param schema The new schema of the table.
    * @return updated {@link TransactionBuilder} instance.
+   * @throws io.delta.kernel.exceptions.KernelException in case column mapping is not enabled
+   * @throws IllegalArgumentException in case of any validation failure
    */
   TransactionBuilder withSchema(Engine engine, StructType schema);
 
@@ -46,10 +68,22 @@ public interface TransactionBuilder {
    *
    * @param engine {@link Engine} instance to use.
    * @param partitionColumns The partition columns of the table. These should be a subset of the
-   *     columns in the schema.
+   *     columns in the schema. Only top-level columns are allowed to be partitioned. Note:
+   *     Clustering columns and partition columns cannot coexist in a table.
    * @return updated {@link TransactionBuilder} instance.
    */
   TransactionBuilder withPartitionColumns(Engine engine, List<String> partitionColumns);
+
+  /**
+   * Set the list of clustering columns when create a new clustered table.
+   *
+   * @param engine {@link Engine} instance to use.
+   * @param clusteringColumns The clustering columns of the table. These should be a subset of the
+   *     columns in the schema. Both top-level and nested columns are allowed to be clustered. Note:
+   *     Clustering columns and partition columns cannot coexist in a table.
+   * @return updated {@link TransactionBuilder} instance.
+   */
+  TransactionBuilder withClusteringColumns(Engine engine, List<Column> clusteringColumns);
 
   /**
    * Set the transaction identifier for idempotent writes. Incremental processing systems (e.g.,
@@ -72,7 +106,9 @@ public interface TransactionBuilder {
 
   /**
    * Set the table properties for the table. When the table already contains the property with same
-   * key, it gets replaced if it doesn't have the same value.
+   * key, it gets replaced if it doesn't have the same value. Note, user-properties (those without a
+   * '.delta' prefix) are case-sensitive. Delta-properties are case-insensitive and are normalized
+   * to their expected case before writing to the log.
    *
    * @param engine {@link Engine} instance to use.
    * @param properties The table properties to set. These are key-value pairs that can be used to
@@ -81,6 +117,54 @@ public interface TransactionBuilder {
    * @since 3.3.0
    */
   TransactionBuilder withTableProperties(Engine engine, Map<String, String> properties);
+
+  /**
+   * Unset the provided table properties on the table. If a property does not exist this is a no-op.
+   * For now this is only supported for user-properties (in other words, does not support 'delta.'
+   * prefixed properties). An exception will be thrown upon calling {@link
+   * TransactionBuilder#build(Engine)} if the same key is both set and unset in the same
+   * transaction. Note, user-properties (those without a '.delta' prefix) are case-sensitive.
+   *
+   * @param propertyKeys the table property keys to unset (remove from the table properties)
+   * @return updated {@link TransactionBuilder} instance.
+   * @throws IllegalArgumentException if 'delta.' prefixed keys are provided
+   */
+  TransactionBuilder withTablePropertiesRemoved(Set<String> propertyKeys);
+
+  /**
+   * Set the maximum number of times to retry a transaction if a concurrent write is detected. This
+   * defaults to 200
+   *
+   * @param maxRetries The number of times to retry
+   * @return updated {@link TransactionBuilder} instance
+   */
+  TransactionBuilder withMaxRetries(int maxRetries);
+
+  /**
+   * Set the number of commits between log compactions. Defaults to 0 (disabled). For more
+   * information see the Delta protocol section <a
+   * href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#log-compaction-files">Log
+   * Compaction Files</a>.
+   *
+   * @param logCompactionInterval The commits between log compactions
+   * @return updated {@link TransactionBuilder} instance
+   */
+  TransactionBuilder withLogCompactionInverval(int logCompactionInterval);
+
+  /**
+   * Enables support for Domain Metadata on this table if it is not supported already. The table
+   * feature _must_ be supported on the table to add or remove domain metadata using {@link
+   * Transaction#addDomainMetadata} or {@link Transaction#removeDomainMetadata}. See <a
+   * href="https://docs.delta.io/latest/versioning.html#how-does-delta-lake-manage-feature-compatibility">
+   * How does Delta Lake manage feature compatibility?</a> for more details on table feature
+   * support.
+   *
+   * <p>See the Delta protocol for more information on how to use <a
+   * href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#domain-metadata">Domain
+   * Metadata</a>. This may break existing writers that do not support the Domain Metadata feature;
+   * readers will be unaffected.
+   */
+  TransactionBuilder withDomainMetadataSupported();
 
   /**
    * Build the transaction. Also validates the given info to ensure that a valid transaction can be
@@ -92,6 +176,11 @@ public interface TransactionBuilder {
    * @throws InvalidConfigurationValueException if the value of the property is invalid.
    * @throws UnknownConfigurationException if any of the properties are unknown to {@link
    *     TableConfig}.
+   * @throws DomainDoesNotExistException if removing a domain that does not exist in the latest
+   *     version of the table
+   * @throws TableAlreadyExistsException if the operation provided when calling {@link
+   *     Table#createTransactionBuilder(Engine, String, Operation)} is CREATE_TABLE and the table
+   *     already exists
    */
   Transaction build(Engine engine);
 }

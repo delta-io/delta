@@ -31,6 +31,7 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.planning.PhysicalOperation
 import org.apache.spark.sql.catalyst.plans.logical._
@@ -99,6 +100,7 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
       spark,
       fileIndex.deltaLog,
       fileIndex.path,
+      fileIndex.catalogTableOpt,
       preparedScan,
       fileIndex.versionToUse)
   }
@@ -291,8 +293,20 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
         fileIndex: FileIndexType): Boolean = {
       val partitionColumns = getPartitionColumns(fileIndex)
       import DeltaTableUtils._
-      filters.forall(expr => !containsSubquery(expr) &&
-        isPredicatePartitionColumnsOnly(expr, partitionColumns, spark))
+      // Guards the LIMIT file-pruning path: when this returns true, the scan applies filters
+      // during file listing and caps the result at ~limit before the residual Filter runs at
+      // execution. This is only safe for deterministic partition filters -- a non-deterministic
+      // predicate like rand() > 0.5 references no columns, so isPredicatePartitionColumnsOnly is
+      // vacuously true for it, letting it slip onto this path and get evaluated twice (once per
+      // file, once per row), double-filtering the data. We exclude non-deterministic predicates
+      // here to avoid that.
+      val skipNonDeterministicFilters =
+        spark.conf.get(DeltaSQLConf.DELTA_LIMIT_PUSHDOWN_SKIP_NON_DETERMINISTIC_FILTERS)
+      filters.forall { expr =>
+        !containsSubquery(expr) &&
+          (!skipNonDeterministicFilters || expr.deterministic) &&
+          isPredicatePartitionColumnsOnly(expr, partitionColumns, spark)
+      }
     }
 
     protected def limitPushdownEnabled(plan: LogicalPlan): Boolean
@@ -342,6 +356,7 @@ case class PreparedDeltaFileIndex(
     override val spark: SparkSession,
     override val deltaLog: DeltaLog,
     override val path: Path,
+    catalogTableOpt: Option[CatalogTable],
     preparedScan: DeltaScan,
     versionScanned: Option[Long])
   extends TahoeFileIndexWithSnapshotDescriptor(spark, deltaLog, path, preparedScan.scannedSnapshot)

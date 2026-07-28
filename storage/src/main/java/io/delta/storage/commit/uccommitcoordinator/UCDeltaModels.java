@@ -1,0 +1,291 @@
+/*
+ * Copyright (2026) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package io.delta.storage.commit.uccommitcoordinator;
+
+import io.delta.storage.commit.actions.AbstractMetadata;
+import io.delta.storage.commit.actions.AbstractProtocol;
+import io.delta.storage.commit.uniform.UniformMetadata;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
+
+/**
+ * Delta-owned models for the UC Delta API. These decouple the {@link UCDeltaClient}
+ * interface from any generated SDK types.
+ */
+public final class UCDeltaModels {
+
+  private UCDeltaModels() {}
+
+  public enum TableType {
+    MANAGED,
+    EXTERNAL
+  }
+
+  public static class DeltaProtocol implements AbstractProtocol {
+
+    private int minReaderVersion;
+    private int minWriterVersion;
+    private final Set<String> readerFeatures = new HashSet<>();
+    private final Set<String> writerFeatures = new HashSet<>();
+
+    @Override
+    public int getMinReaderVersion() {
+      return minReaderVersion;
+    }
+
+    @Override
+    public int getMinWriterVersion() {
+      return minWriterVersion;
+    }
+
+    @Override
+    public Set<String> getReaderFeatures() {
+      return readerFeatures;
+    }
+
+    @Override
+    public Set<String> getWriterFeatures() {
+      return writerFeatures;
+    }
+
+    public DeltaProtocol minReaderVersion(int minReaderVersion) {
+      this.minReaderVersion = minReaderVersion;
+      return this;
+    }
+
+    public DeltaProtocol minWriterVersion(int minWriterVersion) {
+      this.minWriterVersion = minWriterVersion;
+      return this;
+    }
+
+    public DeltaProtocol readerFeatures(Collection<String> readerFeatures) {
+      this.readerFeatures.addAll(readerFeatures);
+      return this;
+    }
+
+    public DeltaProtocol writerFeatures(Collection<String> writerFeatures) {
+      this.writerFeatures.addAll(writerFeatures);
+      return this;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+      if (this == o) return true;
+      if (!(o instanceof DeltaProtocol)) return false;
+      DeltaProtocol that = (DeltaProtocol) o;
+      return minReaderVersion == that.minReaderVersion
+          && minWriterVersion == that.minWriterVersion
+          && Objects.equals(readerFeatures, that.readerFeatures)
+          && Objects.equals(writerFeatures, that.writerFeatures);
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(minReaderVersion, minWriterVersion, readerFeatures, writerFeatures);
+    }
+  }
+
+  /** Result of {@link UCDeltaClient#loadTable} / {@link UCDeltaClient#createTable}. */
+  public static final class TableInfo {
+
+    private final UUID tableId;
+    private final TableType tableType;
+    private final String location;
+    private final AbstractMetadata metadata;
+    private final Map<String, String> storageProperties;
+    private final Optional<UniformMetadata> uniformMetadata;
+
+    public TableInfo(
+        UUID tableId,
+        TableType tableType,
+        String location,
+        AbstractMetadata metadata,
+        Map<String, String> storageProperties,
+        Optional<UniformMetadata> uniformMetadata) {
+      this.tableId = tableId;
+      this.tableType = tableType;
+      this.location = location;
+      this.metadata = metadata;
+      this.storageProperties = storageProperties;
+      this.uniformMetadata = uniformMetadata;
+    }
+
+    /** UC's {@code table_uuid}; distinct from {@link AbstractMetadata#getId()} (the Delta id). */
+    public UUID getTableId() {
+      return tableId;
+    }
+
+    public TableType getTableType() {
+      return tableType;
+    }
+
+    public String getLocation() {
+      return location;
+    }
+
+    public AbstractMetadata getMetadata() {
+      return metadata;
+    }
+
+    /** Hadoop-style storage options (e.g. catalog-vended credentials). */
+    public Map<String, String> getStorageProperties() {
+      return storageProperties == null ? Collections.emptyMap() : storageProperties;
+    }
+
+    /** UniForm conversion metadata, or empty if the table has no UniForm enabled. */
+    public Optional<UniformMetadata> getUniformMetadata() {
+      return uniformMetadata;
+    }
+  }
+
+  public static final class StagingTableInfo {
+
+    private final UUID tableId;
+    private final TableType tableType;
+    private final String location;
+    private final AbstractProtocol requiredProtocol;
+    private final AbstractProtocol suggestedProtocol;
+    private final Map<String, String> requiredProperties;
+    private final Map<String, String> suggestedProperties;
+    private final Map<String, String> storageProperties;
+
+    public StagingTableInfo(
+        UUID tableId,
+        TableType tableType,
+        String location,
+        AbstractProtocol requiredProtocol,
+        AbstractProtocol suggestedProtocol,
+        Map<String, String> requiredProperties,
+        Map<String, String> suggestedProperties,
+        Map<String, String> storageProperties) {
+      this.tableId = tableId;
+      this.tableType = tableType;
+      this.location = location;
+      this.requiredProtocol = requiredProtocol;
+      this.suggestedProtocol = suggestedProtocol;
+      this.requiredProperties = requiredProperties;
+      this.suggestedProperties = suggestedProperties;
+      this.storageProperties = storageProperties;
+    }
+
+    public UUID getTableId() {
+      return tableId;
+    }
+
+    public TableType getTableType() {
+      return tableType;
+    }
+
+    public String getLocation() {
+      return location;
+    }
+
+    public AbstractProtocol getRequiredProtocol() {
+      return requiredProtocol;
+    }
+
+    public AbstractProtocol getSuggestedProtocol() {
+      return suggestedProtocol;
+    }
+
+    public Map<String, String> getRequiredProperties() {
+      return requiredProperties == null ? Collections.emptyMap() : requiredProperties;
+    }
+
+    public Map<String, String> getSuggestedProperties() {
+      return suggestedProperties == null ? Collections.emptyMap() : suggestedProperties;
+    }
+
+    /** Hadoop-style storage options (e.g. catalog-vended credentials). */
+    public Map<String, String> getStorageProperties() {
+      return storageProperties == null ? Collections.emptyMap() : storageProperties;
+    }
+  }
+
+  /** Per-commit metrics payload reported to Unity Catalog. */
+  public static final class CommitReport {
+
+    private final long numFilesAdded;
+    private final long numFilesRemoved;
+    private final long numBytesAdded;
+    private final long numBytesRemoved;
+    private final Optional<Long> numRowsInserted;
+    private final Optional<Long> numRowsRemoved;
+    private final Optional<Long> numRowsUpdated;
+    private final Optional<FileSizeHistogram> fileSizeHistogram;
+
+    public CommitReport(
+        long numFilesAdded,
+        long numFilesRemoved,
+        long numBytesAdded,
+        long numBytesRemoved,
+        Optional<Long> numRowsInserted,
+        Optional<Long> numRowsRemoved,
+        Optional<Long> numRowsUpdated,
+        Optional<FileSizeHistogram> fileSizeHistogram) {
+      this.numFilesAdded = numFilesAdded;
+      this.numFilesRemoved = numFilesRemoved;
+      this.numBytesAdded = numBytesAdded;
+      this.numBytesRemoved = numBytesRemoved;
+      this.numRowsInserted = numRowsInserted;
+      this.numRowsRemoved = numRowsRemoved;
+      this.numRowsUpdated = numRowsUpdated;
+      this.fileSizeHistogram = fileSizeHistogram;
+    }
+
+    public long getNumFilesAdded() { return numFilesAdded; }
+    public long getNumFilesRemoved() { return numFilesRemoved; }
+    public long getNumBytesAdded() { return numBytesAdded; }
+    public long getNumBytesRemoved() { return numBytesRemoved; }
+    public Optional<Long> getNumRowsInserted() { return numRowsInserted; }
+    public Optional<Long> getNumRowsRemoved() { return numRowsRemoved; }
+    public Optional<Long> getNumRowsUpdated() { return numRowsUpdated; }
+    public Optional<FileSizeHistogram> getFileSizeHistogram() { return fileSizeHistogram; }
+  }
+
+  /** Post-commit file-size distribution snapshot, reported alongside the commit report. */
+  public static final class FileSizeHistogram {
+
+    private final List<Long> sortedBinBoundaries;
+    private final List<Long> fileCounts;
+    private final List<Long> totalBytes;
+    private final long commitVersion;
+
+    public FileSizeHistogram(
+        List<Long> sortedBinBoundaries,
+        List<Long> fileCounts,
+        List<Long> totalBytes,
+        long commitVersion) {
+      this.sortedBinBoundaries = sortedBinBoundaries;
+      this.fileCounts = fileCounts;
+      this.totalBytes = totalBytes;
+      this.commitVersion = commitVersion;
+    }
+
+    public List<Long> getSortedBinBoundaries() { return sortedBinBoundaries; }
+    public List<Long> getFileCounts() { return fileCounts; }
+    public List<Long> getTotalBytes() { return totalBytes; }
+    public long getCommitVersion() { return commitVersion; }
+  }
+}

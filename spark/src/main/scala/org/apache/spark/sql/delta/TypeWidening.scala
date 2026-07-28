@@ -18,7 +18,9 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.v2.interop.{AbstractMetadata, AbstractProtocol}
 
+import org.apache.spark.sql.catalyst.expressions.Cast
 import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
@@ -28,7 +30,7 @@ object TypeWidening {
   /**
    * Returns whether the protocol version supports the Type Widening table feature.
    */
-  def isSupported(protocol: Protocol): Boolean =
+  def isSupported(protocol: AbstractProtocol): Boolean =
     Seq(TypeWideningPreviewTableFeature, TypeWideningTableFeature)
       .exists(protocol.isFeatureSupported)
 
@@ -38,8 +40,8 @@ object TypeWidening {
    * not. When Type Widening is enabled, the type of existing columns or fields can be widened
    * using ALTER TABLE CHANGE COLUMN.
    */
-  def isEnabled(protocol: Protocol, metadata: Metadata): Boolean = {
-    val isEnabled = DeltaConfigs.ENABLE_TYPE_WIDENING.fromMetaData(metadata)
+  def isEnabled(protocol: AbstractProtocol, metadata: AbstractMetadata): Boolean = {
+    val isEnabled = DeltaConfigs.ENABLE_TYPE_WIDENING.fromMap(metadata.configuration)
     if (isEnabled && !isSupported(protocol)) {
       throw new IllegalStateException(
         s"Table property '${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' is " +
@@ -57,25 +59,92 @@ object TypeWidening {
       protocol: Protocol,
       metadata: Metadata,
       otherProtocol: Protocol,
-      otherMetadata: Metadata): Unit = {
+      otherMetadata: Metadata,
+      tableNameOrPath: String): Unit = {
     if (isEnabled(protocol, metadata) != isEnabled(otherProtocol, otherMetadata)) {
-      throw DeltaErrors.metadataChangedException(None)
+      throw DeltaErrors.metadataChangedException(tableNameOrPath, None)
     }
   }
 
   /**
    * Returns whether the given type change is eligible for widening. This only checks atomic types.
    * It is the responsibility of the caller to recurse into structs, maps and arrays.
+   *
+   * Type widening supports:
+   * - byte -> short -> int -> long.
+   * - float -> double.
+   * - date -> timestamp_ntz.
+   * - {byte, short, int} -> double.
+   * - decimal -> wider decimal.
+   * - {byte, short, int} -> decimal(10, 0) and wider.
+   * - long -> decimal(20, 0) and wider.
    */
   def isTypeChangeSupported(fromType: AtomicType, toType: AtomicType): Boolean =
-    TypeWideningShims.isTypeChangeSupported(fromType, toType)
+    (fromType, toType) match {
+      case (from, to) if from == to => true
+      // All supported type changes below are supposed to be widening, but to be safe, reject any
+      // non-widening change upfront.
+      case (from, to) if !Cast.canUpCast(from, to) => false
+      case (from: IntegralType, to: IntegralType) => from.defaultSize <= to.defaultSize
+      case (FloatType, DoubleType) => true
+      case (DateType, TimestampNTZType) => true
+      case (ByteType | ShortType | IntegerType, DoubleType) => true
+      case (from: DecimalType, to: DecimalType) => to.isWiderThan(from)
+      // Byte, Short, Integer are all stored as INT32 in parquet. The parquet readers support
+      // converting INT32 to Decimal(10, 0) and wider.
+      case (ByteType | ShortType | IntegerType, d: DecimalType) => d.isWiderThan(IntegerType)
+      // The parquet readers support converting INT64 to Decimal(20, 0) and wider.
+      case (LongType, d: DecimalType) => d.isWiderThan(LongType)
+      case _ => false
+    }
+
+  def isTypeChangeSupported(
+     fromType: AtomicType, toType: AtomicType, uniformIcebergCompatibleOnly: Boolean): Boolean =
+    isTypeChangeSupported(fromType, toType) &&
+      (!uniformIcebergCompatibleOnly ||
+        isTypeChangeSupportedByIceberg(fromType = fromType, toType = toType))
 
   /**
    * Returns whether the given type change can be applied during schema evolution. Only a
    * subset of supported type changes are considered for schema evolution.
    */
-  def isTypeChangeSupportedForSchemaEvolution(fromType: AtomicType, toType: AtomicType): Boolean =
-    TypeWideningShims.isTypeChangeSupportedForSchemaEvolution(fromType, toType)
+  def isTypeChangeSupportedForSchemaEvolution(
+      fromType: AtomicType,
+      toType: AtomicType,
+      uniformIcebergCompatibleOnly: Boolean): Boolean = {
+    val supportedForSchemaEvolution = (fromType, toType) match {
+      case (from, to) if from == to => true
+      case (from, to) if !isTypeChangeSupported(from, to) => false
+      case (from: IntegralType, to: IntegralType) => from.defaultSize <= to.defaultSize
+      case (FloatType, DoubleType) => true
+      case (from: DecimalType, to: DecimalType) => to.isWiderThan(from)
+      case (DateType, TimestampNTZType) => true
+      case _ => false
+    }
+
+    supportedForSchemaEvolution && (
+      !uniformIcebergCompatibleOnly ||
+        isTypeChangeSupportedByIceberg(fromType = fromType, toType = toType)
+    )
+  }
+
+  /**
+   * Returns whether the given type change is supported by Iceberg, and by extension can be read
+   * using Uniform. See https://iceberg.apache.org/spec/#schema-evolution.
+   * Note that these are type promotions supported by Iceberg V1 & V2 (both support the same type
+   * promotions). Iceberg V3 will add support for date -> timestamp_ntz and void -> any but Uniform
+   * doesn't currently support Iceberg V3.
+   */
+  def isTypeChangeSupportedByIceberg(fromType: AtomicType, toType: AtomicType): Boolean =
+    (fromType, toType) match {
+      case (from, to) if from == to => true
+      case (from, to) if !isTypeChangeSupported(from, to) => false
+      case (from: IntegralType, to: IntegralType) => from.defaultSize <= to.defaultSize
+      case (FloatType, DoubleType) => true
+      case (from: DecimalType, to: DecimalType)
+        if from.scale == to.scale && from.precision <= to.precision => true
+      case _ => false
+    }
 
   /**
    * Asserts that the given table doesn't contain any unsupported type changes. This should never
@@ -96,8 +165,8 @@ object TypeWidening {
       // Implementations shouldn't record these type changes in the table metadata per the Delta
       // spec, but in case that happen we really shouldn't block reading the table.
       case (_, TypeChange(_,
-        _: StringType | CharType(_) | VarcharType(_),
-        _: StringType | CharType(_) | VarcharType(_), _)) =>
+        _: StringType | CharTypeShim(_) | VarcharTypeShim(_),
+        _: StringType | CharTypeShim(_) | VarcharTypeShim(_), _)) =>
       case (fieldPath, TypeChange(_, from: AtomicType, to: AtomicType, _))
         if stableFeatureCanReadTypeChange(from, to) =>
         val featureName = if (protocol.isFeatureSupported(TypeWideningPreviewTableFeature)) {
@@ -135,4 +204,20 @@ object TypeWidening {
       case (LongType, d: DecimalType) => d.isWiderThan(LongType)
       case _ => false
     }
+
+  /**
+   * Compares `from` and `to` and returns whether the type was widened, or, for nested types,
+   * whether one of the nested fields was widened.
+   */
+  def containsWideningTypeChanges(from: DataType, to: DataType): Boolean = (from, to) match {
+    case (from: StructType, to: StructType) =>
+      TypeWideningMetadata.collectTypeChanges(from, to).nonEmpty
+    case (from: MapType, to: MapType) =>
+      containsWideningTypeChanges(from.keyType, to.keyType) ||
+        containsWideningTypeChanges(from.valueType, to.valueType)
+    case (from: ArrayType, to: ArrayType) =>
+      containsWideningTypeChanges(from.elementType, to.elementType)
+    case (from: AtomicType, to: AtomicType) =>
+      isTypeChangeSupported(from, to)
+  }
 }

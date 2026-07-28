@@ -73,11 +73,11 @@ trait RowTrackingCompactionTestsBase
       val deltaLog = DeltaLog.forTable(spark, dir)
       val snapshot = deltaLog.update()
       val materializedRowIdColName = MaterializedRowId.getMaterializedColumnNameOrThrow(
-        snapshot.protocol, snapshot.metadata, deltaLog.tableId)
+        snapshot.protocol, snapshot.metadata, deltaLog.unsafeVolatileTableId)
       df = df.withMaterializedRowIdColumn(materializedRowIdColName, col("value"))
       val materializedRowCommitVersionColName =
         MaterializedRowCommitVersion.getMaterializedColumnNameOrThrow(
-          snapshot.protocol, snapshot.metadata, deltaLog.tableId)
+          snapshot.protocol, snapshot.metadata, deltaLog.unsafeVolatileTableId)
       df = df.withMaterializedRowCommitVersionColumn(
         materializedRowCommitVersionColName, col("value"))
     }
@@ -240,16 +240,11 @@ trait RowTrackingAutoCompactionTests extends RowTrackingCompactionTests {
   }
 }
 
-trait RowTrackingPurgeTests extends RowTrackingCompactionTests with DeletionVectorsTestUtils {
+trait RowTrackingPurgeTests extends RowTrackingCompactionTests with PersistentDVEnabled {
 
   override protected val numSoftDeletedRows: Int = 3
 
   override protected def commandName: String = "purge"
-
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-    enableDeletionVectorsInNewTables(spark.conf)
-  }
 
   override protected def createTable(
       dir: File,

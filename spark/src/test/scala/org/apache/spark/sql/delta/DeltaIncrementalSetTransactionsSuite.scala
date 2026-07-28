@@ -23,10 +23,11 @@ import java.util.UUID
 import com.databricks.spark.util.UsageRecord
 import org.apache.spark.sql.delta.DeltaTestUtils.{collectUsageLogs, createTestAddFile, BOOLEAN_DOMAIN}
 import org.apache.spark.sql.delta.actions.{AddFile, SetTransaction, SingleAction}
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.sql.{QueryTest, SaveMode}
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -36,7 +37,8 @@ import org.apache.spark.sql.test.SharedSparkSession
 class DeltaIncrementalSetTransactionsSuite
   extends QueryTest
     with DeltaSQLCommandTest
-    with SharedSparkSession {
+    with SharedSparkSession
+    with CatalogOwnedTestBaseSuite {
 
   protected override def sparkConf = super.sparkConf
     .set(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key, "true")
@@ -80,13 +82,8 @@ class DeltaIncrementalSetTransactionsSuite
       deltaLog: DeltaLog,
       setTransactions: Seq[SetTransaction]): Unit = {
     deltaLog.startTransaction().commit(
-      setTransactions :+
-        AddFile(
-          s"file-${UUID.randomUUID().toString}",
-          partitionValues = Map.empty,
-          size = 1L,
-          modificationTime = 1L,
-          dataChange = true),
+      // Use createTestAddFile to create addFile with default stats for RowTracking.
+      setTransactions :+ createTestAddFile(encodedPath = s"file-${UUID.randomUUID().toString}"),
       DeltaOperations.Write(SaveMode.Append)
     )
   }
@@ -148,11 +145,21 @@ class DeltaIncrementalSetTransactionsSuite
         withSQLConf(DeltaSQLConf.DELTA_WRITE_SET_TRANSACTIONS_IN_CRC.key -> "true") {
           DeltaLog.clearCache()
           commitSetTxn(deltaLog, "app-1", version = 2, lastUpdated = 2) // 2nd commit
-          // By default, commit doesn't trigger stateReconstruction and so the
-          // incremental CRC won't have setTransactions present until `setTransactions` API is
-          // explicitly invoked before the commit.
-          assert(deltaLog.update().checksumOpt.get.setTransactions.isEmpty) // crc has no set-txn
-          assertSetTransactions(deltaLog, expectedTxns = Map("app-1" -> 2), viaCRC = false)
+          if (catalogOwnedDefaultCreationEnabledInTests) {
+            // For CatalogOwned tables with Row Tracking enabled (QoL feature), the commit DOES
+            // trigger state reconstruction via RowId.assignFreshRowIds -> extractHighWatermark ->
+            // domainMetadata access. This sets _computedStateTriggered=true, causing
+            // setTransactions to be included in the CRC immediately (not lazily as in the
+            // non-CatalogOwned case).
+            assert(deltaLog.update().checksumOpt.get.setTransactions.nonEmpty) // crc has set-txn
+            assertSetTransactions(deltaLog, expectedTxns = Map("app-1" -> 2), viaCRC = true)
+          } else {
+            // By default, commit doesn't trigger stateReconstruction and so the
+            // incremental CRC won't have setTransactions present until `setTransactions` API is
+            // explicitly invoked before the commit.
+            assert(deltaLog.update().checksumOpt.get.setTransactions.isEmpty) // crc has no set-txn
+            assertSetTransactions(deltaLog, expectedTxns = Map("app-1" -> 2), viaCRC = false)
+          }
           DeltaLog.clearCache()
 
           // Do commit after forcing computeState. Now SetTransaction tracking will start.
@@ -216,26 +223,41 @@ class DeltaIncrementalSetTransactionsSuite
           DeltaLog.clearCache()
           withSQLConf(DeltaSQLConf.DELTA_WRITE_SET_TRANSACTIONS_IN_CRC.key -> "true") {
             commitSetTxn(log, "app-1", version = 1, lastUpdated = 1)
-            // During 1st commit, the feature is enabled. But still the new commit crc shouldn't
-            // contain the [[SetTransaction]] actions as we don't have an estimate of how many
-            // [[SetTransaction]] actions might be already part of this table till now.
-            // So incremental computation of [[SetTransaction]] won't trigger.
-            assert(log.update().checksumOpt.flatMap(_.setTransactions).isEmpty)
+            if (catalogOwnedDefaultCreationEnabledInTests) {
+              // For CatalogOwned tables with Row Tracking enabled (QoL feature), the commit DOES
+              // trigger state reconstruction via RowId.assignFreshRowIds, which sets
+              // _computedStateTriggered=true, causing setTransactions to be included in CRC.
+              assert(log.update().checksumOpt.flatMap(_.setTransactions).nonEmpty)
+            } else {
+              // During 1st commit, the feature is enabled. But still the new commit crc shouldn't
+              // contain the [[SetTransaction]] actions as we don't have an estimate of how many
+              // [[SetTransaction]] actions might be already part of this table till now.
+              // So incremental computation of [[SetTransaction]] won't trigger.
+              assert(log.update().checksumOpt.flatMap(_.setTransactions).isEmpty)
+            }
 
             if (computeStatePreloaded) {
               // Calling `validateChecksum` will pre-load the computeState
               log.update().validateChecksum()
             }
-            // During 2nd commit, we have following 2 cases:
-            // 1. If `computeStatePreloaded` is set, then the Snapshot has already calculated
-            //    computeState and so we have estimate of number of SetTransactions till this point.
-            //    So next commit will trigger incremental computation of [[SetTransaction]].
-            // 2. If `computeStatePreloaded` is not set, then Snapshot doesn't have computeState
-            //    pre-computed. So next commit will not trigger incremental computation of
-            //    [[SetTransaction]].
+
             commitSetTxn(log, "app-1", version = 100, lastUpdated = 1)
-            assert(log.update().checksumOpt.flatMap(_.setTransactions).nonEmpty ===
-              computeStatePreloaded)
+            if (catalogOwnedDefaultCreationEnabledInTests) {
+              // For CatalogOwned tables with Row Tracking enabled, state reconstruction is
+              // triggered during every commit (via RowId.assignFreshRowIds), so setTransactions are
+              // always included in CRC regardless of whether computeState was preloaded.
+              assert(log.update().checksumOpt.flatMap(_.setTransactions).nonEmpty)
+            } else {
+              // During 2nd commit, we have following 2 cases:
+              // 1. If `computeStatePreloaded` is set, then the Snapshot has already calculated
+              //    computeState, and so we have estimate of number of SetTransactions till this
+              //    point. So next commit will trigger incremental computation of [[SetTransaction]]
+              // 2. If `computeStatePreloaded` is not set, then Snapshot doesn't have computeState
+              //    pre-computed. So next commit will not trigger incremental computation of
+              //    [[SetTransaction]].
+              assert(log.update().checksumOpt.flatMap(_.setTransactions).nonEmpty ===
+                computeStatePreloaded)
+            }
           }
         }
       }
@@ -411,20 +433,27 @@ class DeltaIncrementalSetTransactionsSuite
   /** Drops one [[SetTransaction]] operation from checkpoint - the one with max appId */
   private def dropOneSetTransactionFromCheckpoint(log: DeltaLog): Unit = {
     import testImplicits._
-    val checkpointPath = FileNames.checkpointFileSingular(log.logPath, log.snapshot.version)
+    val checkpointPath = log.update().checkpointProvider.topLevelFiles.head.getPath
+    val checkpointPathStr = checkpointPath.toString
+    // Get the checkpoint file format to read and write. Specify format to be compatible
+    // with v2 checkpoint b/c v2 checkpoint format could be either json/parquet.
+    // Test suites that extend w/ CC will enable v2 checkpoint by default.
+    val checkpointFormat = checkpointPathStr.substring(checkpointPathStr.lastIndexOf('.') + 1)
     withTempDir { tmpCheckpoint =>
       // count total rows in checkpoint
       val checkpointDf = spark.read
         .schema(SingleAction.encoder.schema)
-        .parquet(checkpointPath.toString)
+        .format(checkpointFormat).load(checkpointPathStr)
       val initialActionCount = checkpointDf.count().toInt
       val corruptedCheckpointData = checkpointDf
         .orderBy(col("txn.appId").asc_nulls_first) // force non setTransaction actions to front
         .as[SingleAction].take(initialActionCount - 1) // Drop 1 action
 
       corruptedCheckpointData.toSeq.toDS().coalesce(1).write
-        .mode("overwrite").parquet(tmpCheckpoint.toString)
-      assert(spark.read.parquet(tmpCheckpoint.toString).count() === initialActionCount - 1)
+        .mode("overwrite").format(checkpointFormat).save(tmpCheckpoint.toString)
+      assert(
+        spark.read.format(checkpointFormat).load(tmpCheckpoint.toString).count()
+          === initialActionCount - 1)
       val writtenCheckpoint =
         tmpCheckpoint.listFiles().toSeq.filter(_.getName.startsWith("part")).head
       val checkpointFile = new File(checkpointPath.toUri)
@@ -438,7 +467,7 @@ class DeltaIncrementalSetTransactionsSuite
       assert(checkpointFile.delete(), "Failed to delete old checkpoint")
       assert(writtenCheckpoint.renameTo(checkpointFile),
         "Failed to rename corrupt checkpoint")
-      val newCheckpoint = spark.read.parquet(checkpointFile.toString)
+      val newCheckpoint = spark.read.format(checkpointFormat).load(checkpointFile.toString)
       assert(newCheckpoint.count() === initialActionCount - 1,
         "Checkpoint file incorrect:\n" + newCheckpoint.collect().mkString("\n"))
     }
@@ -447,4 +476,22 @@ class DeltaIncrementalSetTransactionsSuite
   private def collectSetTransactionCorruptionReport(f: => Unit): Seq[UsageRecord] = {
     collectUsageLogs("delta.checksum.invalid")(f).toSeq
   }
+}
+
+class DeltaIncrementalSetTransactionsWithCatalogOwnedBatch1Suite
+  extends DeltaIncrementalSetTransactionsSuite {
+
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class DeltaIncrementalSetTransactionsWithCatalogOwnedBatch2Suite
+  extends DeltaIncrementalSetTransactionsSuite {
+
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+}
+
+class DeltaIncrementalSetTransactionsWithCatalogOwnedBatch100Suite
+  extends DeltaIncrementalSetTransactionsSuite {
+
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }

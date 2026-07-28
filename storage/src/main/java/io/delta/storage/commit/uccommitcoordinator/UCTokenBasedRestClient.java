@@ -1,0 +1,460 @@
+/*
+ * Copyright (2021) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package io.delta.storage.commit.uccommitcoordinator;
+
+import io.delta.storage.commit.Commit;
+import io.delta.storage.commit.CommitFailedException;
+import io.delta.storage.commit.CoordinatedCommitsUtils;
+import io.delta.storage.commit.GetCommitsResponse;
+import io.delta.storage.commit.TableIdentifier;
+import io.delta.storage.commit.actions.AbstractDomainMetadata;
+import io.delta.storage.commit.actions.AbstractMetadata;
+import io.delta.storage.commit.actions.AbstractProtocol;
+import io.delta.storage.commit.uniform.IcebergMetadata;
+import io.delta.storage.commit.uniform.UniformMetadata;
+import io.unitycatalog.client.ApiClient;
+import io.unitycatalog.client.ApiClientBuilder;
+import io.unitycatalog.client.ApiException;
+import io.unitycatalog.client.api.DeltaCommitsApi;
+import io.unitycatalog.client.api.MetastoresApi;
+import io.unitycatalog.client.api.TablesApi;
+import io.unitycatalog.client.auth.TokenProvider;
+import io.unitycatalog.client.model.DeltaCommit;
+import io.unitycatalog.client.model.DeltaCommitInfo;
+import io.unitycatalog.client.model.DeltaCommitMetadataProperties;
+import io.unitycatalog.client.model.DeltaGetCommits;
+import io.unitycatalog.client.model.DeltaGetCommitsResponse;
+import io.unitycatalog.client.model.DeltaMetadata;
+import io.unitycatalog.client.model.DeltaUniform;
+import io.unitycatalog.client.model.DeltaUniformIceberg;
+import io.unitycatalog.client.model.ColumnInfo;
+import io.unitycatalog.client.model.ColumnTypeName;
+import io.unitycatalog.client.model.CreateTable;
+import io.unitycatalog.client.model.DataSourceFormat;
+import io.unitycatalog.client.model.GetMetastoreSummaryResponse;
+import io.unitycatalog.client.model.TableType;
+import org.apache.hadoop.fs.FileStatus;
+import org.apache.hadoop.fs.Path;
+
+import java.io.IOException;
+import java.net.URI;
+import java.util.*;
+
+/**
+ * A REST client implementation of {@link UCClient} for interacting with Unity Catalog's commit
+ * coordination service. This client uses the Unity Catalog SDK with TokenProvider-based
+ * authentication for managing Delta table commits and metadata.
+ *
+ * <p>The client handles the following primary operations:
+ * <ul>
+ *   <li>Retrieving metastore information</li>
+ *   <li>Committing changes to Delta tables</li>
+ *   <li>Fetching unbackfilled commit histories</li>
+ * </ul>
+ *
+ * <p>All requests are authenticated using a TokenProvider that generates Bearer tokens dynamically.
+ * The client uses the Unity Catalog SDK's {@link DeltaCommitsApi} and {@link MetastoresApi} for
+ * API interactions.
+ *
+ * <p>Usage example:
+ * <pre>{@code
+ * TokenProvider tokenProvider = ... // Create or configure TokenProvider
+ * try (UCTokenBasedRestClient client = new UCTokenBasedRestClient(baseUri, tokenProvider, Map.of())) {
+ *     String metastoreId = client.getMetastoreId();
+ *     // Perform operations with the client...
+ * }
+ * }</pre>
+ *
+ * @see UCClient
+ * @see Commit
+ * @see GetCommitsResponse
+ * @see TokenProvider
+ */
+public class UCTokenBasedRestClient implements UCClient {
+
+  private DeltaCommitsApi deltaCommitsApi;
+  private MetastoresApi metastoresApi;
+  private TablesApi tablesApi;
+
+  // HTTP status codes for error handling
+  private static final int HTTP_BAD_REQUEST = 400;
+  private static final int HTTP_NOT_FOUND = 404;
+  private static final int HTTP_CONFLICT = 409;
+  private static final int HTTP_TOO_MANY_REQUESTS = 429;
+
+  /**
+   * Constructs a new UCTokenBasedRestClient with the specified base URI, TokenProvider,
+   * and application version information for telemetry.
+   *
+   * @param baseUri The base URI of the Unity Catalog server
+   * @param tokenProvider The TokenProvider to use for authentication
+   * @param appVersions A map of application name to version string
+   *                    (e.g. {@code "Delta" -> "4.0.0"}). Each entry is
+   *                    registered for User-Agent telemetry. May be empty.
+   */
+  public UCTokenBasedRestClient(
+      String baseUri,
+      TokenProvider tokenProvider,
+      Map<String, String> appVersions) {
+    Objects.requireNonNull(baseUri, "baseUri must not be null");
+    Objects.requireNonNull(tokenProvider, "tokenProvider must not be null");
+    Objects.requireNonNull(appVersions, "appVersions must not be null");
+
+    ApiClientBuilder builder = ApiClientBuilder.create()
+        .uri(baseUri)
+        .tokenProvider(tokenProvider);
+
+    appVersions.forEach((name, version) -> {
+      if (version != null) {
+        builder.addAppVersion(name, version);
+      }
+    });
+
+    ApiClient apiClient = builder.build();
+    this.deltaCommitsApi = new DeltaCommitsApi(apiClient);
+    this.metastoresApi = new MetastoresApi(apiClient);
+    this.tablesApi = new TablesApi(apiClient);
+  }
+
+  /**
+   * Ensures the client has not been closed. Must be called before any API operation.
+   */
+  private void ensureOpen() {
+    if (deltaCommitsApi == null || metastoresApi == null || tablesApi == null) {
+      throw new IllegalStateException("UCTokenBasedRestClient has been closed.");
+    }
+  }
+
+  @Override
+  public String getMetastoreId() throws IOException {
+    ensureOpen();
+    try {
+      GetMetastoreSummaryResponse response = metastoresApi.summary();
+      return response.getMetastoreId();
+    } catch (ApiException e) {
+      throw new IOException(
+          String.format("Failed to get metastore ID (HTTP %s): ", e.getCode()), e);
+    }
+  }
+
+  @Override
+  public void commit(
+      String tableId,
+      URI tableUri,
+      TableIdentifier tableIdentifier,
+      Optional<Commit> commit,
+      Optional<Long> lastKnownBackfilledVersion,
+      Optional<AbstractMetadata> oldMetadata,
+      Optional<AbstractMetadata> newMetadata,
+      Optional<AbstractProtocol> oldProtocol,
+      Optional<AbstractProtocol> newProtocol,
+      List<AbstractDomainMetadata> transactionDomainMetadata,
+      Optional<UniformMetadata> uniform
+  ) throws IOException, CommitFailedException, UCCommitCoordinatorException {
+    ensureOpen();
+    Objects.requireNonNull(tableId, "tableId must not be null.");
+    Objects.requireNonNull(tableUri, "tableUri must not be null.");
+
+    // Build the DeltaCommit request using SDK models
+    DeltaCommit deltaCommit = new DeltaCommit()
+        .tableId(tableId)
+        .tableUri(tableUri.toString());
+
+    // Add commit info if present
+    commit.ifPresent(c -> deltaCommit.commitInfo(toDeltaCommitInfo(c)));
+
+    // Add latest backfilled version if present
+    lastKnownBackfilledVersion.ifPresent(deltaCommit::latestBackfilledVersion);
+
+    // Add metadata if present
+    newMetadata.ifPresent(m -> deltaCommit.metadata(toDeltaMetadata(m)));
+
+    // Add uniform metadata if present
+    uniform.flatMap(u -> u.getIcebergMetadata().map(this::toDeltaUniformIceberg))
+        .ifPresent(iceberg -> deltaCommit.uniform(new DeltaUniform().iceberg(iceberg)));
+
+    // Note: tableIdentifier, oldMetadata, oldProtocol, and newProtocol are not part of the
+    // DeltaCommit schema in the Unity Catalog OpenAPI spec. They are intentionally not sent.
+
+    try {
+      deltaCommitsApi.commit(deltaCommit);
+    } catch (ApiException e) {
+      handleCommitException(e);
+    }
+  }
+
+  @Override
+  public GetCommitsResponse getCommits(
+      String tableId,
+      URI tableUri,
+      TableIdentifier tableIdentifier,
+      Optional<Long> startVersion,
+      Optional<Long> endVersion) throws IOException, UCCommitCoordinatorException {
+    ensureOpen();
+    Objects.requireNonNull(tableId, "tableId must not be null.");
+    Objects.requireNonNull(tableUri, "tableUri must not be null.");
+
+    // Build the DeltaGetCommits request using SDK models
+    DeltaGetCommits request = new DeltaGetCommits()
+        .tableId(tableId)
+        .tableUri(tableUri.toString())
+        .startVersion(startVersion.orElse(0L));
+
+    endVersion.ifPresent(request::endVersion);
+
+    try {
+      DeltaGetCommitsResponse response = deltaCommitsApi.getCommits(request);
+      return toGetCommitsResponse(response, tableUri);
+    } catch (ApiException e) {
+      int statusCode = e.getCode();
+      String responseBody = e.getResponseBody();
+
+      if (statusCode == HTTP_NOT_FOUND) {
+        throw new InvalidTargetTableException(
+            String.format("Invalid Target Table (HTTP %s) due to: %s", statusCode, responseBody));
+      } else {
+        throw new IOException(
+            String.format("Unexpected getCommits failure (HTTP %s): due to: %s", statusCode,
+                responseBody), e);
+      }
+    }
+  }
+
+  @Override
+  public void close() throws IOException {
+    // Nulling out the API instances makes them eligible for GC. Once garbage collected,
+    // the underlying connection pool is freed and destroyed.
+    this.deltaCommitsApi = null;
+    this.metastoresApi = null;
+    this.tablesApi = null;
+  }
+
+  /**
+   * Converts a Delta {@link Commit} to a Unity Catalog SDK {@link DeltaCommitInfo}.
+   *
+   * @param commit The Delta commit to convert
+   * @return The converted DeltaCommitInfo
+   */
+  private DeltaCommitInfo toDeltaCommitInfo(Commit commit) {
+    if (commit == null) {
+      throw new IllegalArgumentException("commit cannot be null");
+    }
+    if (commit.getFileStatus() == null) {
+      throw new IllegalArgumentException("commit.getFileStatus() cannot be null");
+    }
+
+    return new DeltaCommitInfo()
+        .version(commit.getVersion())
+        .timestamp(commit.getCommitTimestamp())
+        .fileName(commit.getFileStatus().getPath().getName())
+        .fileSize(commit.getFileStatus().getLen())
+        .fileModificationTimestamp(commit.getFileStatus().getModificationTime());
+  }
+
+  /**
+   * Converts a Delta {@link IcebergMetadata} to a Unity Catalog SDK
+   * {@link DeltaUniformIceberg}.
+   *
+   * <p>Field mapping (Delta internal -> OpenAPI snake_case):
+   * <ul>
+   *   <li>metadataLocation -> metadata_location</li>
+   *   <li>convertedDeltaVersion -> converted_delta_version</li>
+   *   <li>convertedDeltaTimestamp -> converted_delta_timestamp</li>
+   *   <li>baseConvertedDeltaVersion -> base_converted_delta_version (optional)</li>
+   * </ul>
+   */
+  private DeltaUniformIceberg toDeltaUniformIceberg(IcebergMetadata iceberg) {
+    return new DeltaUniformIceberg()
+        .metadataLocation(URI.create(iceberg.getMetadataLocation()))
+        .convertedDeltaVersion(iceberg.getConvertedDeltaVersion())
+        .convertedDeltaTimestamp(iceberg.getConvertedDeltaTimestamp())
+        .baseConvertedDeltaVersion(iceberg.getBaseConvertedDeltaVersion().orElse(null));
+  }
+
+  /**
+   * Converts an {@link AbstractMetadata} to a Unity Catalog SDK {@link DeltaMetadata}.
+   *
+   * @param metadata The abstract metadata to convert
+   * @return The converted DeltaMetadata
+   */
+  private DeltaMetadata toDeltaMetadata(AbstractMetadata metadata) {
+    if (metadata == null) {
+      throw new IllegalArgumentException("metadata cannot be null");
+    }
+
+    DeltaMetadata deltaMetadata = new DeltaMetadata()
+        .description(metadata.getDescription());
+
+    // Set properties if available
+    if (metadata.getConfiguration() != null && !metadata.getConfiguration().isEmpty()) {
+      DeltaCommitMetadataProperties properties = new DeltaCommitMetadataProperties()
+          .properties(metadata.getConfiguration());
+      deltaMetadata.properties(properties);
+    }
+
+    // Schema conversion is not directly supported as the SDK expects ColumnInfos
+    // which requires parsing the schema string. For now, we skip schema conversion.
+    // If needed, implement schema string parsing to ColumnInfos.
+
+    return deltaMetadata;
+  }
+
+  /**
+   * Converts a Unity Catalog SDK {@link DeltaGetCommitsResponse} to a Delta
+   * {@link GetCommitsResponse}.
+   *
+   * @param response The SDK response to convert
+   * @param tableUri The table URI for constructing file paths
+   * @return The converted GetCommitsResponse
+   */
+  private GetCommitsResponse toGetCommitsResponse(DeltaGetCommitsResponse response, URI tableUri) {
+    Path basePath = CoordinatedCommitsUtils.commitDirPath(
+        CoordinatedCommitsUtils.logDirPath(new Path(tableUri)));
+
+    List<Commit> commits = new ArrayList<>();
+    for (DeltaCommitInfo commitInfo : response.getCommits()) {
+      commits.add(fromDeltaCommitInfo(commitInfo, basePath));
+    }
+
+    return new GetCommitsResponse(commits, response.getLatestTableVersion());
+  }
+
+  /**
+   * Converts a Unity Catalog SDK {@link DeltaCommitInfo} to a Delta {@link Commit}.
+   *
+   * @param commitInfo The SDK commit info to convert
+   * @param basePath   The base path for constructing file paths
+   * @return The converted Commit
+   */
+  private Commit fromDeltaCommitInfo(DeltaCommitInfo commitInfo, Path basePath) {
+    FileStatus fileStatus = new FileStatus(
+        commitInfo.getFileSize(),
+        false /* isdir */,
+        0 /* block_replication */,
+        0 /* blocksize */,
+        commitInfo.getFileModificationTimestamp(),
+        new Path(basePath, commitInfo.getFileName()));
+
+    return new Commit(commitInfo.getVersion(), fileStatus, commitInfo.getTimestamp());
+  }
+
+  // ===========================
+  // Exception Handling Methods
+  // ===========================
+
+  @Override
+  public void finalizeCreate(
+      String tableName,
+      String catalogName,
+      String schemaName,
+      String storageLocation,
+      List<UCClient.ColumnDef> columns,
+      AbstractProtocol protocol,
+      Map<String, String> properties,
+      long lastCommitTimestampMs,
+      List<AbstractDomainMetadata> domainMetadata) throws CommitFailedException {
+    ensureOpen();
+    Objects.requireNonNull(tableName, "tableName must not be null.");
+    Objects.requireNonNull(catalogName, "catalogName must not be null.");
+    Objects.requireNonNull(schemaName, "schemaName must not be null.");
+    Objects.requireNonNull(storageLocation, "storageLocation must not be null.");
+    Objects.requireNonNull(columns, "columns must not be null.");
+    Objects.requireNonNull(protocol, "protocol must not be null.");
+    Objects.requireNonNull(properties, "properties must not be null.");
+
+    List<ColumnInfo> ucColumns = columns.stream()
+        .map(c -> {
+          ColumnTypeName typeName;
+          try {
+            typeName = ColumnTypeName.fromValue(c.getTypeName());
+          } catch (IllegalArgumentException ex) {
+            throw new IllegalArgumentException(
+                "Unknown column type '" + c.getTypeName() + "' for column '" + c.getName() + "'");
+          }
+          return new ColumnInfo()
+              .name(c.getName())
+              .typeName(typeName)
+              .typeText(c.getTypeText())
+              .typeJson(c.getTypeJson())
+              .nullable(c.isNullable())
+              .position(c.getPosition());
+        })
+        .collect(java.util.stream.Collectors.toList());
+
+    CreateTable request = new CreateTable()
+        .name(tableName)
+        .catalogName(catalogName)
+        .schemaName(schemaName)
+        .tableType(TableType.MANAGED)
+        .dataSourceFormat(DataSourceFormat.DELTA)
+        .columns(ucColumns)
+        .storageLocation(storageLocation)
+        .properties(properties);
+
+    try {
+      tablesApi.createTable(request);
+    } catch (ApiException e) {
+      throw new CommitFailedException(
+          true /* retryable */,
+          false /* conflict */,
+          String.format(
+              "Failed to finalize table creation for %s.%s.%s (HTTP %s): %s",
+              catalogName, schemaName, tableName, e.getCode(), e.getResponseBody()),
+          e);
+    }
+  }
+
+  /**
+   * Handles {@link ApiException} from commit operations by converting to appropriate Delta
+   * exceptions.
+   *
+   * @param e The API exception to handle
+   * @throws CommitFailedException        If the commit failed due to various reasons
+   * @throws UCCommitCoordinatorException If there's a UC-specific error
+   * @throws IOException                  If there's an unexpected error
+   */
+  private void handleCommitException(ApiException e)
+      throws CommitFailedException, UCCommitCoordinatorException {
+    int statusCode = e.getCode();
+    String responseBody = e.getResponseBody();
+
+    switch (statusCode) {
+      case HTTP_BAD_REQUEST:
+        throw new CommitFailedException(
+            false /* retryable */,
+            false /* conflict */,
+            "Invalid commit parameters: " + responseBody,
+            e);
+      case HTTP_NOT_FOUND:
+        throw new InvalidTargetTableException("Invalid Target Table: " + responseBody);
+      case HTTP_CONFLICT:
+        throw new CommitFailedException(
+            true /* retryable */,
+            true /* conflict */,
+            "Commit conflict: " + responseBody,
+            e);
+      case HTTP_TOO_MANY_REQUESTS:
+        throw new CommitLimitReachedException("Backfilled commits limit reached: " + responseBody);
+      default:
+        throw new CommitFailedException(
+            true /* retryable */,
+            false /* conflict */,
+            "Unexpected commit failure (HTTP " + statusCode + "): " + responseBody,
+            e);
+    }
+  }
+}

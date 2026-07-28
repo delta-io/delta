@@ -15,31 +15,33 @@
  */
 package io.delta.kernel.internal
 
-import io.delta.kernel.exceptions.KernelException
-import org.scalatest.funsuite.AnyFunSuite
+import java.util.Optional
 
 import scala.collection.JavaConverters._
+
+import io.delta.kernel.exceptions.{InvalidConfigurationValueException, KernelException}
+
+import org.scalatest.funsuite.AnyFunSuite
 
 class TableConfigSuite extends AnyFunSuite {
 
   test("check TableConfig.editable is true") {
-    TableConfig.validateProperties(
+    TableConfig.validateAndNormalizeDeltaProperties(
       Map(
         TableConfig.TOMBSTONE_RETENTION.getKey -> "interval 2 week",
         TableConfig.CHECKPOINT_INTERVAL.getKey -> "20",
         TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true",
         TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.getKey -> "1",
         TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.getKey -> "1",
-        TableConfig.COORDINATED_COMMITS_COORDINATOR_NAME.getKey -> "{in-memory}",
-        TableConfig.COORDINATED_COMMITS_COORDINATOR_CONF.getKey -> "{\"1\": \"1\"}",
-        TableConfig.COORDINATED_COMMITS_TABLE_CONF.getKey -> "{\"1\": \"1\"}",
         TableConfig.COLUMN_MAPPING_MODE.getKey -> "name",
-        TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true").asJava)
+        TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true",
+        TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "iceberg",
+        TableConfig.PARQUET_COMPRESSION_CODEC.getKey -> "snappy").asJava)
   }
 
   test("check TableConfig.MAX_COLUMN_ID.editable is false") {
     val e = intercept[KernelException] {
-      TableConfig.validateProperties(
+      TableConfig.validateAndNormalizeDeltaProperties(
         Map(
           TableConfig.TOMBSTONE_RETENTION.getKey -> "interval 2 week",
           TableConfig.CHECKPOINT_INTERVAL.getKey -> "20",
@@ -52,5 +54,96 @@ class TableConfigSuite extends AnyFunSuite {
       s"The Delta table property " +
       s"'${TableConfig.COLUMN_MAPPING_MAX_COLUMN_ID.getKey}'" +
       s" is an internal property and cannot be updated.")
+  }
+
+  Seq(
+    Map[String, String](),
+    Map(TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "")).foreach {
+    config =>
+      {
+        test(
+          s"Parsing UNIVERSAL_ENABLED formats returns empty set when key is not present $config") {
+          val formats = TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.fromMetadata(config.asJava)
+          assert(formats.isEmpty)
+        }
+      }
+  }
+
+  test("Parsing UNIVERSAL_ENABLED_FORMATS can parse spaces") {
+    val FORMATS_KEY = TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey
+    val config = Map(FORMATS_KEY -> "iceberg, hudi ").asJava
+    val formats = TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.fromMetadata(config)
+    assert(formats == Set("iceberg", "hudi").asJava)
+  }
+
+  test("PARQUET_COMPRESSION_CODEC - valid values accepted including mixed case") {
+    val validValues = Seq(
+      "snappy",
+      "SNAPPY",
+      "ZSTD",
+      "gzip",
+      "GZIP",
+      "lz4",
+      "lz4_raw",
+      "LZ4_RAW",
+      "uncompressed",
+      "UNCOMPRESSED",
+      "none",
+      "NONE",
+      "zstd")
+    validValues.foreach { codec =>
+      TableConfig.validateAndNormalizeDeltaProperties(
+        Map(TableConfig.PARQUET_COMPRESSION_CODEC.getKey -> codec).asJava)
+    }
+  }
+
+  test("PARQUET_COMPRESSION_CODEC - invalid value throws InvalidConfigurationValueException") {
+    val ex = intercept[InvalidConfigurationValueException] {
+      TableConfig.validateAndNormalizeDeltaProperties(
+        Map(TableConfig.PARQUET_COMPRESSION_CODEC.getKey -> "invalid").asJava)
+    }
+    assert(ex.getMessage.contains("delta.parquet.compression.codec"))
+    assert(ex.getMessage.contains("invalid"))
+  }
+
+  test("PARQUET_COMPRESSION_CODEC - fromMetadata returns lowercase regardless of stored case") {
+    val config = Map(TableConfig.PARQUET_COMPRESSION_CODEC.getKey -> "SNAPPY").asJava
+    val result = TableConfig.PARQUET_COMPRESSION_CODEC.fromMetadata(config)
+    assert(result === "snappy")
+  }
+
+  test("PARQUET_COMPRESSION_CODEC - fromMetadata returns snappy when property absent") {
+    val config = Map.empty[String, String].asJava
+    val result = TableConfig.PARQUET_COMPRESSION_CODEC.fromMetadata(config)
+    assert(result === "snappy")
+  }
+
+  test("PARQUET_COMPRESSION_CODEC - validation normalizes key case") {
+    val result = TableConfig.validateAndNormalizeDeltaProperties(
+      Map("DELTA.PARQUET.COMPRESSION.CODEC" -> "snappy").asJava)
+    assert(result.containsKey("delta.parquet.compression.codec"))
+    assert(result.get("delta.parquet.compression.codec") === "snappy")
+  }
+
+  test("SET_TRANSACTION_RETENTION - is not settable from Kernel (unregistered property)") {
+    // The property is read-only from Kernel's perspective: it is not in VALID_PROPERTIES, so a
+    // Kernel writer attempting to set it is rejected. Reading it (below) is unaffected by this.
+    val e = intercept[KernelException] {
+      TableConfig.validateAndNormalizeDeltaProperties(
+        Map(TableConfig.SET_TRANSACTION_RETENTION.getKey -> "interval 1 week").asJava)
+    }
+    assert(e.getMessage.contains(TableConfig.SET_TRANSACTION_RETENTION.getKey))
+  }
+
+  test("SET_TRANSACTION_RETENTION - fromMetadata parses the interval to millis when present") {
+    val oneWeekMillis = 7L * 24 * 60 * 60 * 1000
+    val config = Map(TableConfig.SET_TRANSACTION_RETENTION.getKey -> "interval 1 week").asJava
+    assert(
+      TableConfig.SET_TRANSACTION_RETENTION.fromMetadata(config) === Optional.of(oneWeekMillis))
+  }
+
+  test("SET_TRANSACTION_RETENTION - fromMetadata is empty (opt-in) when the property is absent") {
+    val config = Map.empty[String, String].asJava
+    assert(TableConfig.SET_TRANSACTION_RETENTION.fromMetadata(config) === Optional.empty())
   }
 }

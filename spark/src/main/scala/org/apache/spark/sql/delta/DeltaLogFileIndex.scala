@@ -20,7 +20,7 @@ import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs._
 
-import org.apache.spark.internal.{LoggingShims, MDC}
+import org.apache.spark.internal.{Logging, MDC}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.execution.datasources.{FileFormat, FileIndex, PartitionDirectory}
@@ -40,7 +40,7 @@ case class DeltaLogFileIndex private (
     format: FileFormat,
     files: Array[FileStatus])
   extends FileIndex
-  with LoggingShims {
+  with Logging {
 
   import DeltaLogFileIndex._
 
@@ -91,6 +91,7 @@ object DeltaLogFileIndex {
   lazy val COMMIT_FILE_FORMAT = new JsonFileFormat
   lazy val CHECKPOINT_FILE_FORMAT_PARQUET = new ParquetFileFormat
   lazy val CHECKPOINT_FILE_FORMAT_JSON = new JsonFileFormat
+  lazy val CHECKSUM_FILE_FORMAT = new JsonFileFormat
 
   def apply(format: FileFormat, fs: FileSystem, paths: Seq[Path]): DeltaLogFileIndex = {
     DeltaLogFileIndex(format, paths.map(fs.getFileStatus).toArray)

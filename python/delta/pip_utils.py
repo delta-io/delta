@@ -74,8 +74,23 @@ See the online documentation for the correct usage of this function.
         '''
         raise Exception(msg) from e
 
-    scala_version = "2.12"
-    maven_artifact = f"io.delta:delta-spark_{scala_version}:{delta_version}"
+    # Get Spark version from pyspark module
+    import pyspark
+    spark_version = pyspark.__version__
+
+    scala_version = "2.13"
+
+    # Determine the Spark major.minor version for artifact name
+    # Artifact names include Spark version suffix when spark_version is known
+    # (e.g., delta-spark_4.0_2.13). Falls back to no suffix for backward compatibility.
+    if spark_version:
+        spark_major_minor = ".".join(spark_version.split(".")[:2])  # e.g., "4.0" or "4.1"
+        artifact_name = f"delta-spark_{spark_major_minor}_{scala_version}"
+    else:
+        # Fallback to artifact without suffix for backward compatibility
+        artifact_name = f"delta-spark_{scala_version}"
+
+    maven_artifact = f"io.delta:{artifact_name}:{delta_version}"
 
     extra_packages = extra_packages if extra_packages is not None else []
     all_artifacts = [maven_artifact] + extra_packages

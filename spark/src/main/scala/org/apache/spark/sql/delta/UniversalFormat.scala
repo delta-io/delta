@@ -17,7 +17,6 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
-import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -109,6 +108,8 @@ object UniversalFormat extends DeltaLogging {
    *         updates need to be applied, will return None.
    */
   def enforceInvariantsAndDependencies(
+      spark: SparkSession,
+      catalogTable: Option[CatalogTable],
       snapshot: Snapshot,
       newestProtocol: Protocol,
       newestMetadata: Metadata,
@@ -116,7 +117,9 @@ object UniversalFormat extends DeltaLogging {
       actions: Seq[Action]): (Option[Protocol], Option[Metadata]) = {
     enforceHudiDependencies(newestMetadata, snapshot)
     enforceIcebergInvariantsAndDependencies(
-      snapshot, newestProtocol, newestMetadata, operation, actions)
+      spark, catalogTable,
+      snapshot,
+      newestProtocol, newestMetadata, operation, actions)
   }
 
   /**
@@ -133,7 +136,7 @@ object UniversalFormat extends DeltaLogging {
       }
       SchemaUtils.findAnyTypeRecursively(newestMetadata.schema) { f =>
         f.isInstanceOf[NullType] | f.isInstanceOf[ByteType] | f.isInstanceOf[ShortType] |
-        f.isInstanceOf[TimestampNTZType]
+        f.isInstanceOf[TimestampNTZType] | DeltaGeoSpatial.isGeoSpatialType(f)
       } match {
         case Some(unsupportedType) =>
           throw DeltaErrors.uniFormHudiSchemaCompat(unsupportedType)
@@ -151,6 +154,8 @@ object UniversalFormat extends DeltaLogging {
    *         updates need to be applied, will return None.
    */
   def enforceIcebergInvariantsAndDependencies(
+      spark: SparkSession,
+      catalogTable: Option[CatalogTable],
       snapshot: Snapshot,
       newestProtocol: Protocol,
       newestMetadata: Metadata,
@@ -198,31 +203,32 @@ object UniversalFormat extends DeltaLogging {
     var protocolToCheck = uniformProtocol.getOrElse(newestProtocol)
     var metadataToCheck = uniformMetadata.getOrElse(newestMetadata)
     changed = uniformProtocol.nonEmpty || uniformMetadata.nonEmpty
+    var protocolUpdate: Option[Protocol] = None
+    var metadataUpdate: Option[Metadata] = None
 
-    val (v1protocolUpdate, v1metadataUpdate) = IcebergCompatV1.enforceInvariantsAndDependencies(
-      snapshot,
-      newestProtocol = protocolToCheck,
-      newestMetadata = metadataToCheck,
-      operation,
-      actions
+    val compatChecks: Seq[
+      (SparkSession, Option[CatalogTable], Snapshot, Protocol, Metadata,
+        Option[DeltaOperations.Operation],
+        Seq[Action]) => (Option[Protocol], Option[Metadata])] = Seq(
+      IcebergCompatV1.enforceInvariantsAndDependencies,
+      IcebergCompatV2.enforceInvariantsAndDependencies,
+      IcebergCompatV3.enforceInvariantsAndDependencies
     )
-    protocolToCheck = v1protocolUpdate.getOrElse(protocolToCheck)
-    metadataToCheck = v1metadataUpdate.getOrElse(metadataToCheck)
-    changed ||= v1protocolUpdate.nonEmpty || v1metadataUpdate.nonEmpty
-
-    val (v2protocolUpdate, v2metadataUpdate) = IcebergCompatV2.enforceInvariantsAndDependencies(
-      snapshot,
-      newestProtocol = protocolToCheck,
-      newestMetadata = metadataToCheck,
-      operation,
-      actions
-    )
-    changed ||= v2protocolUpdate.nonEmpty || v2metadataUpdate.nonEmpty
+    compatChecks.foreach { compatCheck =>
+      val updates = compatCheck(
+        spark, catalogTable, snapshot, protocolToCheck, metadataToCheck, operation, actions
+      )
+      protocolUpdate = updates._1
+      metadataUpdate = updates._2
+      protocolToCheck = protocolUpdate.getOrElse(protocolToCheck)
+      metadataToCheck = metadataUpdate.getOrElse(metadataToCheck)
+      changed ||= protocolUpdate.nonEmpty || metadataUpdate.nonEmpty
+    }
 
     if (changed) {
       (
-        v2protocolUpdate.orElse(Some(protocolToCheck)),
-        v2metadataUpdate.orElse(Some(metadataToCheck))
+        protocolUpdate.orElse(Some(protocolToCheck)),
+        metadataUpdate.orElse(Some(metadataToCheck))
       )
     } else {
       (None, None)
@@ -238,12 +244,16 @@ object UniversalFormat extends DeltaLogging {
    *         otherwise the original configuration.
    */
   def enforceDependenciesInConfiguration(
+      spark: SparkSession,
+      catalogTable: CatalogTable,
       configuration: Map[String, String],
       snapshot: Snapshot): Map[String, String] = {
     var metadata = snapshot.metadata.copy(configuration = configuration)
 
     // Check UniversalFormat related property dependencies
     val (_, universalMetadata) = UniversalFormat.enforceInvariantsAndDependencies(
+      spark,
+      catalogTable = Some(catalogTable),
       snapshot,
       newestProtocol = snapshot.protocol,
       newestMetadata = metadata,
@@ -260,10 +270,8 @@ object UniversalFormat extends DeltaLogging {
   val ICEBERG_TABLE_TYPE_KEY = "table_type"
 
   /**
-   * Update CatalogTable to mark it readable by other table readers (iceberg for now).
-   * This method ensures 'table_type' = 'ICEBERG' when uniform is enabled,
-   * and ensure table_type is not 'ICEBERG' when uniform is not enabled
-   * If the key has other values than 'ICEBERG', this method will not touch it for compatibility
+   * HiveTableOperations ensures table_type is 'ICEBERG' when uniform is enabled
+   * This enforceSupportInCatalog ensure table_type is not 'ICEBERG' when uniform is not enabled
    *
    * @param table    catalogTable before change
    * @param metadata snapshot metadata
@@ -276,9 +284,6 @@ object UniversalFormat extends DeltaLogging {
     }
 
     (icebergEnabled(metadata), icebergInCatalog) match {
-      case (true, false) =>
-        Some(table.copy(properties = table.properties
-          + (ICEBERG_TABLE_TYPE_KEY -> ICEBERG_FORMAT)))
       case (false, true) =>
         Some(table.copy(properties =
           table.properties - ICEBERG_TABLE_TYPE_KEY))
@@ -288,7 +293,10 @@ object UniversalFormat extends DeltaLogging {
 }
 
 /** Class to facilitate the conversion of Delta into other table formats. */
-abstract class UniversalFormatConverter(spark: SparkSession) {
+abstract class UniversalFormatConverter {
+  /** The current Spark session. */
+  def spark: SparkSession = SparkSession.active
+
   /**
    * Perform an asynchronous conversion.
    *
@@ -298,7 +306,7 @@ abstract class UniversalFormatConverter(spark: SparkSession) {
    */
   def enqueueSnapshotForConversion(
     snapshotToConvert: Snapshot,
-    txn: OptimisticTransactionImpl): Unit
+    txn: CommittedTransaction): Unit
 
   /**
    * Perform a blocking conversion when performing an OptimisticTransaction
@@ -311,7 +319,7 @@ abstract class UniversalFormatConverter(spark: SparkSession) {
    * @return Converted Delta version and commit timestamp
    */
   def convertSnapshot(
-    snapshotToConvert: Snapshot, txn: OptimisticTransactionImpl): Option[(Long, Long)]
+    snapshotToConvert: Snapshot, txn: CommittedTransaction): Option[(Long, Long)]
 
   /**
    * Perform a blocking conversion for the given catalogTable
@@ -322,6 +330,24 @@ abstract class UniversalFormatConverter(spark: SparkSession) {
    */
   def convertSnapshot(
       snapshotToConvert: Snapshot, catalogTable: CatalogTable): Option[(Long, Long)]
+
+  /**
+   * Perform a blocking pre-commit conversion for an uncommitted transaction.
+   * Generates metadata before the Delta commit so both can be submitted atomically.
+   *
+   * @param txnInfo              The uncommitted transaction info containing the proposed actions.
+   * @param deltaAttemptVersion  The Delta version this transaction is targeting.
+   * @param deltaLog             The DeltaLog for this table.
+   * @param catalogTable         The catalog table this conversion targets.
+   * @return (generated metadata path, last converted Delta version)
+   */
+  def convertUncommitedTxn(
+      txnInfo: CurrentTransactionInfo,
+      deltaAttemptVersion: Long,
+      deltaLog: DeltaLog,
+      catalogTable: CatalogTable): (String, Option[Long]) =
+    throw new UnsupportedOperationException(
+      s"${getClass.getSimpleName} does not support atomic UniForm pre-commit conversion")
 
   /**
    * Fetch the delta version corresponding to the latest conversion.
@@ -336,6 +362,24 @@ object IcebergConstants {
   val ICEBERG_TBLPROP_METADATA_LOCATION = "metadata_location"
   val ICEBERG_PROVIDER = "iceberg"
   val ICEBERG_NAME_MAPPING_PROPERTY = "schema.name-mapping.default"
+
+  // UniForm metadata would be stored inside catalogTable's properties upon loading
+  // Those are kept in-memory only and won't be sent to catalog
+  /** CatalogTable property key for the last converted Iceberg metadata location. */
+  val CATALOG_TABLE_ICEBERG_METADATA_LOCATION_PROP =
+    "deltaUniformIceberg.metadataLocation"
+  /** CatalogTable property key for the last converted Delta version. */
+  val CATALOG_TABLE_ICEBERG_CONVERTED_DELTA_VERSION_PROP =
+    "deltaUniformIceberg.convertedDeltaVersion"
+  /** CatalogTable property key for the last converted Delta timestamp. */
+  val CATALOG_TABLE_ICEBERG_CONVERTED_TIMESTAMP_PROP =
+    "deltaUniformIceberg.convertedDeltaTimestamp"
+
+  // Reserved field ID for the `_row_id` column
+  // Iceberg spec: https://iceberg.apache.org/spec/?h=row#reserved-field-ids
+  val ICEBERG_ROW_TRACKING_ROW_ID_FIELD_ID = 2147483540L
+  // Reserved field ID for the `_last_updated_sequence_number` column
+  val ICEBERG_ROW_TRACKING_LAST_UPDATED_SEQUENCE_NUMBER_FIELD_ID = 2147483539L
 }
 
 object HudiConstants {

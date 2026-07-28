@@ -19,12 +19,16 @@ package org.apache.spark.sql.delta
 import java.io.File
 import java.sql.{Date, Timestamp}
 
-import org.apache.spark.sql.delta.sources.{DeltaSink, DeltaSQLConf}
+import scala.concurrent.duration._
 
-import org.apache.spark.{SparkArithmeticException, SparkThrowable}
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.Relocated.StreamExecution
+import org.apache.spark.sql.delta.sources.{DeltaSink, DeltaSQLConf}
+import org.apache.spark.sql.delta.test.shims.StreamingTestShims.MemoryStream
+
+import org.apache.spark.{SparkArithmeticException, SparkConf, SparkThrowable}
 import org.apache.spark.sql.{DataFrame, Encoder, Row}
 import org.apache.spark.sql.errors.QueryExecutionErrors.toSQLType
-import org.apache.spark.sql.execution.streaming.{MemoryStream, StreamExecution}
 import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.StoreAssignmentPolicy
@@ -39,7 +43,6 @@ abstract class DeltaSinkImplicitCastSuiteBase extends DeltaSinkTest {
 
   override def beforeAll(): Unit = {
     super.beforeAll()
-    spark.conf.set(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key, "true")
     spark.conf.set(SQLConf.ANSI_ENABLED.key, "true")
   }
 
@@ -53,10 +56,16 @@ abstract class DeltaSinkImplicitCastSuiteBase extends DeltaSinkTest {
     private val source = MemoryStream[T]
 
     def write(data: T*)(selectExpr: String*): Unit =
-      write(outputMode = OutputMode.Append, extraOptions = Map.empty)(data: _*)(selectExpr: _*)
+      write(
+        outputMode = OutputMode.Append,
+        timeout = streamingTimeout,
+        extraOptions = Map.empty)(
+        data: _*)(
+        selectExpr: _*)
 
     def write(
         outputMode: OutputMode,
+        timeout: Duration,
         extraOptions: Map[String, String])(
         data: T*)(
         selectExpr: String*): Unit = {
@@ -72,7 +81,7 @@ abstract class DeltaSinkImplicitCastSuiteBase extends DeltaSinkTest {
           .trigger(Trigger.AvailableNow())
           .start(outputDir.getCanonicalPath)
       try {
-        failAfter(streamingTimeout) {
+        failAfter(timeout) {
           query.processAllAvailable()
         }
       } finally {
@@ -111,12 +120,18 @@ abstract class DeltaSinkImplicitCastSuiteBase extends DeltaSinkTest {
 /**
  * Covers handling implicit casting to handle type mismatches when writing data to a Delta sink.
  */
-class DeltaSinkImplicitCastSuite extends DeltaSinkImplicitCastSuiteBase {
+class DeltaSinkImplicitCastSuite extends DeltaSinkImplicitCastSuiteBase
+  with CatalogOwnedTestBaseSuite {
   import testImplicits._
 
   test(s"write wider type - long -> int") {
     withDeltaStream[Long] { stream =>
-      stream.write(17)("CAST(value AS INT)")
+      // This is the first write in this test suite, use a larger timeout to allow for the initial
+      // streaming setup to take place.
+      stream.write(
+        outputMode = OutputMode.Append,
+        timeout = 600.seconds,
+        extraOptions = Map.empty)(17)("CAST(value AS INT)")
       assert(stream.currentSchema("value").dataType === IntegerType)
       checkAnswer(stream.read(), Row(17))
 
@@ -462,32 +477,8 @@ class DeltaSinkImplicitCastSuite extends DeltaSinkImplicitCastSuiteBase {
     }
   }
 
-  test("disallow implicit cast with spark.databricks.delta.streaming.sink.allowImplicitCasts") {
-    withSQLConf(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key -> "false") {
-      withDeltaStream[Long] { stream =>
-        stream.write(17)("CAST(value AS INT)")
-        assert(stream.currentSchema("value").dataType === IntegerType)
-        checkAnswer(stream.read(), Row(17))
-
-        val ex = intercept[StreamingQueryException] {
-          stream.write(23)("CAST(value AS LONG)")
-        }
-        checkError(
-          ex.getCause.asInstanceOf[SparkThrowable],
-          "DELTA_FAILED_TO_MERGE_FIELDS",
-          parameters = Map(
-          "currentField" -> "value",
-          "updateField" -> "value")
-        )
-      }
-    }
-  }
-
-  for (allowImplicitCasts <- Seq(true, false))
-  test(s"schema evolution with case sensitivity and without type mismatch, " +
-    s"allowImplicitCasts=$allowImplicitCasts") {
+  test("schema evolution with case sensitivity and without type mismatch") {
     withSQLConf(
-      DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key -> allowImplicitCasts.toString,
       SQLConf.CASE_SENSITIVE.key -> "true",
       DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true"
     ) {
@@ -536,4 +527,16 @@ class DeltaSinkImplicitCastSuite extends DeltaSinkImplicitCastSuiteBase {
       }
     }
   }
+}
+
+class DeltaSinkImplicitCastWithCatalogManagedBatch1Suite extends DeltaSinkImplicitCastSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class DeltaSinkImplicitCastWithCatalogManagedBatch2Suite extends DeltaSinkImplicitCastSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+}
+
+class DeltaSinkImplicitCastWithCatalogManagedBatch100Suite extends DeltaSinkImplicitCastSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }

@@ -1,0 +1,10 @@
+{
+  "adds": [
+    {
+      "path": "dummy_data_a.parquet",
+      "size": 1024,
+      "modification_time": 1712091404545,
+      "stats": "{\"numRecords\":10,\"minValues\":{\"letter\":\"a\",\"number\":1,\"a_float\":1.1},\"maxValues\":{\"letter\":\"j\",\"number\":10,\"a_float\":10.10},\"nullCount\":{\"letter\":0,\"number\":0,\"a_float\":0}}"
+    }
+  ]
+}

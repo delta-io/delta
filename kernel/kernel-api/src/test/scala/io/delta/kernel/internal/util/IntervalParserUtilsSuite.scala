@@ -17,6 +17,7 @@ package io.delta.kernel.internal.util
 
 import io.delta.kernel.internal.util.DateTimeConstants._
 import io.delta.kernel.internal.util.IntervalParserUtils.parseIntervalAsMicros
+
 import org.scalatest.funsuite.AnyFunSuite
 
 /**
@@ -40,8 +41,7 @@ class IntervalParserUtilsSuite extends AnyFunSuite {
       "foo",
       "foo 1 day",
       "month 3",
-      "year 3"
-    ).foreach { input =>
+      "year 3").foreach { input =>
       checkFromInvalidString(input, "Error parsing")
     }
   }
@@ -65,8 +65,7 @@ class IntervalParserUtilsSuite extends AnyFunSuite {
       "interval -   1 day +     3 Microseconds" -> micros(-1, 3),
       "  interval  123  weeks   -1 day " +
         "23 hours -22 minutes 1 second  -123  millisecond    567 microseconds " ->
-        micros(860, 81480877567L)
-    ).foreach { case (input, expected) =>
+        micros(860, 81480877567L)).foreach { case (input, expected) =>
       checkFromString(input, expected)
     }
   }
@@ -138,7 +137,9 @@ class IntervalParserUtilsSuite extends AnyFunSuite {
   }
 
   private def failFuncWithInvalidInput(
-    input: String, errorMsg: String, converter: String => Long): Unit = {
+      input: String,
+      errorMsg: String,
+      converter: String => Long): Unit = {
     withClue(s"Expected to throw an exception for the invalid input: $input") {
       val e = intercept[IllegalArgumentException](converter(input))
       assert(e.getMessage.contains(errorMsg))

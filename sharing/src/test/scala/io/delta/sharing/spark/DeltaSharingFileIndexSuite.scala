@@ -25,7 +25,7 @@ import io.delta.sharing.client.{
   DeltaSharingProfileProvider,
   DeltaSharingRestClient
 }
-import io.delta.sharing.client.model.{DeltaTableFiles, DeltaTableMetadata, Table}
+import io.delta.sharing.client.model.{DeltaTableFiles, DeltaTableMetadata, Table, TemporaryCredentials}
 import io.delta.sharing.client.util.JsonUtils
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
@@ -85,8 +85,9 @@ private object TestUtils {
 class TestDeltaSharingClientForFileIndex(
     profileProvider: DeltaSharingProfileProvider,
     timeoutInSeconds: Int = 120,
-    numRetries: Int = 10,
+    numRetries: Int = 3,
     maxRetryDuration: Long = Long.MaxValue,
+    retrySleepInterval: Long = 1000,
     sslTrustAll: Boolean = false,
     forStreaming: Boolean = false,
     responseFormat: String = DeltaSharingRestClient.RESPONSE_FORMAT_DELTA,
@@ -99,7 +100,9 @@ class TestDeltaSharingClientForFileIndex(
     asyncQueryMaxDuration: Long = 600000L,
     tokenExchangeMaxRetries: Int = 5,
     tokenExchangeMaxRetryDurationInSeconds: Int = 60,
-    tokenRenewalThresholdInSeconds: Int = 600)
+    tokenRenewalThresholdInSeconds: Int = 600,
+    callerOrg: String = "",
+    skipFileIdHashVerification: Boolean = false)
     extends DeltaSharingClient {
 
   import TestUtils._
@@ -147,7 +150,8 @@ class TestDeltaSharingClientForFileIndex(
       versionAsOf: Option[Long],
       timestampAsOf: Option[String],
       jsonPredicateHints: Option[String],
-      refreshToken: Option[String]
+      refreshToken: Option[String],
+      fileIdHash: Option[String]
   ): DeltaTableFiles = {
     numGetFileCalls += 1
     limit.foreach(lim => savedLimits = savedLimits :+ lim)
@@ -174,7 +178,9 @@ class TestDeltaSharingClientForFileIndex(
   override def getFiles(
       table: Table,
       startingVersion: Long,
-      endingVersion: Option[Long]
+      endingVersion: Option[Long],
+      fileIdHash: Option[String],
+      includeHistoricalProtocol: Boolean = false
   ): DeltaTableFiles = {
     throw new UnsupportedOperationException(s"getFiles with startingVersion($startingVersion)")
   }
@@ -182,12 +188,20 @@ class TestDeltaSharingClientForFileIndex(
   override def getCDFFiles(
       table: Table,
       cdfOptions: Map[String, String],
-      includeHistoricalMetadata: Boolean
+      includeHistoricalMetadata: Boolean,
+      fileIdHash: Option[String],
+      includeHistoricalProtocol: Boolean = false
   ): DeltaTableFiles = {
     throw new UnsupportedOperationException(
       s"getCDFFiles with cdfOptions:[$cdfOptions], " +
       s"includeHistoricalMetadata:$includeHistoricalMetadata"
     )
+  }
+
+  override def generateTemporaryTableCredential(
+      table: Table,
+      location: Option[String]): TemporaryCredentials = {
+    throw new UnsupportedOperationException("generateTemporaryTableCredential is not implemented")
   }
 
   override def getForStreaming(): Boolean = forStreaming
@@ -228,7 +242,7 @@ class DeltaSharingFileIndexSuite
       profilePath: String,
       metaData: String): (Path, DeltaSharingFileIndex, DeltaSharingClient) = {
     val tablePath = new Path(s"$profilePath#$shareName.$schemaName.$sharedTableName")
-    val client = DeltaSharingRestClient(profilePath, false, "delta")
+    val client = DeltaSharingRestClient(profilePath, Map.empty, false, "delta")
 
     val spark = SparkSession.active
     val params = new DeltaSharingFileIndexParams(

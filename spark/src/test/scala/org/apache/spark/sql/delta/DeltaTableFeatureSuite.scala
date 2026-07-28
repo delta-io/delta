@@ -17,11 +17,13 @@
 package org.apache.spark.sql.delta
 
 import java.io.File
+import java.util.Locale
 
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorProvider, InMemoryCommitCoordinatorBuilder}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -40,6 +42,13 @@ class DeltaTableFeatureSuite
   with DeltaSQLCommandTest {
 
   private lazy val testTableSchema = spark.range(1).schema
+  override protected def sparkConf: SparkConf = {
+    // All the drop feature tests below are targeting the drop feature with history truncation
+    // implementation. The fast drop feature implementation adds a new writer feature when dropping
+    // a feature and also does not require any waiting time. The fast drop feature implementation
+    // is tested extensively in the DeltaFastDropFeatureSuite.
+    super.sparkConf.set(DeltaSQLConf.FAST_DROP_FEATURE_ENABLED.key, "false")
+  }
 
   // This is solely a test hook. Users cannot create new Delta tables with protocol lower than
   // that of their current version.
@@ -138,6 +147,19 @@ class DeltaTableFeatureSuite
           TestWriterFeatureWithTransitiveDependency.name,
           TestFeatureWithDependency.name,
           TestReaderWriterFeature.name))
+  }
+
+  test("isFeatureSupportedInTableConfigs checks only the requested feature") {
+    val lowerCaseFeatureKey = propertyKey(TestReaderWriterFeature).toLowerCase(Locale.ROOT)
+    val configs = Map(
+      lowerCaseFeatureKey -> "Supported",
+      propertyKey("unknownFeatureForTargetedLookupTest") -> FEATURE_PROP_SUPPORTED)
+
+    assert(isFeatureSupportedInTableConfigs(configs, TestReaderWriterFeature))
+    assert(!isFeatureSupportedInTableConfigs(configs, TestWriterFeature))
+    assert(!isFeatureSupportedInTableConfigs(
+      Map(propertyKey(TestReaderWriterFeature) -> FEATURE_PROP_ENABLED),
+      TestReaderWriterFeature))
   }
 
   test("implicitly-enabled features") {
@@ -461,42 +483,49 @@ class DeltaTableFeatureSuite
       assert(!log.update().protocol.readerAndWriterFeatureNames.contains(featureName))
 
       // Add coordinated commits table feature to the table
-      CommitCoordinatorProvider.registerBuilder(InMemoryCommitCoordinatorBuilder(batchSize = 100))
-      val tblProperties1 =
-        Seq(s"'${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'in-memory'",
-          s"'${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '{}'")
-      sql(buildTablePropertyModifyingCommand(
-        "ALTER", targetTableName = table, sourceTableName = table, tblProperties1))
+      CommitCoordinatorProvider.clearNonDefaultBuilders()
+      try {
+        CommitCoordinatorProvider.registerBuilder(
+          InMemoryCommitCoordinatorBuilder(batchSize = 100))
+        val tblProperties1 =
+          Seq(s"'${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'in-memory'",
+            s"'${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '{}'")
+        sql(buildTablePropertyModifyingCommand(
+          "ALTER", targetTableName = table, sourceTableName = table, tblProperties1))
 
-      // Add TestRemovableReaderWriterFeature to the table in unbackfilled delta files
-      val tblProperties2 = Seq(s"'$FEATURE_PROP_PREFIX$featureName' = 'supported', " +
-        s"'delta.minWriterVersion' = $TABLE_FEATURES_MIN_WRITER_VERSION, " +
-        s"'${TestRemovableReaderWriterFeature.TABLE_PROP_KEY}' = 'true'")
-      sql(buildTablePropertyModifyingCommand(
-        "ALTER", targetTableName = table, sourceTableName = table, tblProperties2))
-      assert(log.update().protocol.readerAndWriterFeatureNames.contains(featureName))
+        // Add TestRemovableReaderWriterFeature to the table in unbackfilled delta files
+        val tblProperties2 = Seq(s"'$FEATURE_PROP_PREFIX$featureName' = 'supported', " +
+          s"'delta.minWriterVersion' = $TABLE_FEATURES_MIN_WRITER_VERSION, " +
+          s"'${TestRemovableReaderWriterFeature.TABLE_PROP_KEY}' = 'true'")
+        sql(buildTablePropertyModifyingCommand(
+          "ALTER", targetTableName = table, sourceTableName = table, tblProperties2))
+        assert(log.update().protocol.readerAndWriterFeatureNames.contains(featureName))
 
-      // Disable feature on the latest snapshot
-      val tblProperties3 = Seq(s"'${TestRemovableReaderWriterFeature.TABLE_PROP_KEY}' = 'false'")
-      sql(buildTablePropertyModifyingCommand(
-        "ALTER", targetTableName = table, sourceTableName = table, tblProperties3))
+        // Disable feature on the latest snapshot
+        val tblProperties3 = Seq(s"'${TestRemovableReaderWriterFeature.TABLE_PROP_KEY}' = 'false'")
+        sql(buildTablePropertyModifyingCommand(
+          "ALTER", targetTableName = table, sourceTableName = table, tblProperties3))
 
-      val tableFeature =
-        TableFeature.featureNameToFeature(featureName).get.asInstanceOf[RemovableFeature]
-      assert(tableFeature.historyContainsFeature(spark, log.update()))
+        val tableFeature =
+          TableFeature.featureNameToFeature(featureName).get.asInstanceOf[RemovableFeature]
+        assert(tableFeature.historyContainsFeature(
+          spark, DeltaTableV2(spark, log.dataPath), log.update()))
 
-      // Dropping feature should fail because the feature still has traces in deltas.
-      val e = intercept[DeltaTableFeatureException] {
+        // Dropping feature should fail because the feature still has traces in deltas.
+        val e = intercept[DeltaTableFeatureException] {
+          sql(s"ALTER TABLE $table DROP FEATURE $featureName")
+        }
+        assert(e.getMessage.contains("DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST"), e)
+
+        // Add in a checkpoint and cleanUp up older logs containing feature traces
+        log.startTransaction().commitManually()
+        log.checkpoint()
+        log.cleanUpExpiredLogs(log.update(), deltaRetentionMillisOpt = Some(-1000000000000L))
         sql(s"ALTER TABLE $table DROP FEATURE $featureName")
+        assert(!log.update().protocol.readerAndWriterFeatureNames.contains(featureName))
+      } finally {
+        CommitCoordinatorProvider.clearNonDefaultBuilders()
       }
-      assert(e.getMessage.contains("DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST"), e)
-
-      // Add in a checkpoint and cleanUp up older logs containing feature traces
-      log.startTransaction().commitManually()
-      log.checkpoint()
-      log.cleanUpExpiredLogs(log.update(), deltaRetentionMillisOpt = Some(-1000000000000L))
-      sql(s"ALTER TABLE $table DROP FEATURE $featureName")
-      assert(!log.update().protocol.readerAndWriterFeatureNames.contains(featureName))
     }
   }
 

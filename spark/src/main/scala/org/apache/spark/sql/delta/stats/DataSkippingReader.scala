@@ -22,8 +22,11 @@ import java.io.Closeable
 import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLog, DeltaTableUtils}
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
+import org.apache.spark.sql.delta.expressions.DecodeNestedZ85EncodedVariant
 import org.apache.spark.sql.delta.implicits._
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -39,12 +42,13 @@ import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.Literal.{FalseLiteral, TrueLiteral}
-import org.apache.spark.sql.catalyst.expressions.objects.InvokeLike
 import org.apache.spark.sql.catalyst.util.TypeUtils
 import org.apache.spark.sql.execution.InSubqueryExec
+import org.apache.spark.sql.execution.datasources.VariantMetadata
 import org.apache.spark.sql.expressions.SparkUserDefinedFunction
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.types.{AtomicType, BooleanType, CalendarIntervalType, DataType, DateType, LongType, NumericType, StringType, StructField, StructType, TimestampNTZType, TimestampType}
+import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.types.{AtomicType, BooleanType, CalendarIntervalType, DataType, DateType, LongType, NumericType, StringType, StructField, StructType, TimestampNTZType, TimestampType, VariantType}
 import org.apache.spark.unsafe.types.{CalendarInterval, UTF8String}
 
 /**
@@ -128,7 +132,12 @@ private [sql] object DataSkippingPredicate {
 object SkippingEligibleColumn {
   def unapply(arg: Expression): Option[(Seq[String], DataType)] = {
     // Only atomic types are eligible for skipping, and args should always be resolved by now.
-    val eligible = arg.resolved && arg.dataType.isInstanceOf[AtomicType]
+    // When `pushVariantIntoScan` is true, Variants in the read schema are transformed into Structs
+    // to facilitate shredded reads. Therefore, filters like `v is not null` where `v` is a variant
+    // column look like the filters on struct data. `VariantMetadata.isVariantStruct` helps in
+    // distinguishing between "true structs" and "variant structs".
+    val eligible = arg.resolved && (arg.dataType.isInstanceOf[AtomicType] ||
+      VariantMetadata.isVariantStruct(arg.dataType))
     if (eligible) searchChain(arg).map(_ -> arg.dataType) else None
   }
 
@@ -159,6 +168,8 @@ object SkippingEligibleDataType {
   // Call this directly, e.g. `SkippingEligibleDataType(dataType)`
   def apply(dataType: DataType): Boolean = dataType match {
     case _: NumericType | DateType | TimestampType | TimestampNTZType | StringType => true
+    case _: VariantType =>
+      SQLConf.get.getConf(DeltaSQLConf.COLLECT_VARIANT_DATA_SKIPPING_STATS)
     case _ => false
   }
 
@@ -170,10 +181,38 @@ object SkippingEligibleDataType {
   def unapply(f: StructField): Option[DataType] = unapply(f.dataType)
 }
 
-private[delta] object DataSkippingReader {
+/**
+ * An extractor that matches expressions that are eligible for data skipping predicates.
+ *
+ * @return A tuple of 1) column name referenced in the expression, 2) date type for the
+ *         expression, 3) [[DataSkippingPredicateBuilder]] that builds the data skipping
+ *         predicate for the expression, if the given expression is eligible.
+ *         Otherwise, return None.
+ */
+abstract class GenericSkippingEligibleExpression() {
 
-  /** Default number of cols for which we should collect stats */
+  def unapply(arg: Expression): Option[(Seq[String], DataType, DataSkippingPredicateBuilder)] = {
+    arg match {
+      case SkippingEligibleColumn(c, dt) =>
+        Some((c, dt, DataSkippingPredicateBuilder.ColumnBuilder))
+      case _ => None
+    }
+  }
+}
+
+/**
+ * This object is used to avoid referencing DataSkippingReader in DetlaConfig.
+ * Otherwise, it might cause the cyclic import through SQLConf -> SparkSession -> DetlaConfig.
+ */
+private[delta] object DataSkippingReaderConf {
+
+  /**
+   * Default number of cols for which we should collect stats
+   */
   val DATA_SKIPPING_NUM_INDEXED_COLS_DEFAULT_VALUE = 32
+}
+
+private[delta] object DataSkippingReader {
 
   private[this] def col(e: Expression): Column = Column(e)
   def fold(e: Expression): Column = col(new Literal(e.eval(), e.dataType))
@@ -193,6 +232,27 @@ private[delta] object DataSkippingReader {
     Option(ExpressionEncoder[java.lang.Long]()),
     Option(ExpressionEncoder[java.lang.Long]()),
     Option(ExpressionEncoder[java.lang.Long]()))
+
+  /**
+   * For timestamps, JSON serialization will truncate to milliseconds. This means
+   * that we must adjust 1 millisecond upwards for max stats, or we will incorrectly skip
+   * records that differ only in microsecond precision. (For example, a file containing only
+   * 01:02:03.456789 will be written with min == max == 01:02:03.456, so we must consider it
+   * to contain the range from 01:02:03.456 to 01:02:03.457.)
+   *
+   * To avoid overflow when the timestamp is near Long.MAX_VALUE, we check if adding 1
+   * millisecond would overflow. If so, we saturate to Long.MAX_VALUE to ensure the max stat
+   * is >= all actual values in the file while avoiding arithmetic overflow.
+   */
+  def getAdjustedTimestamp(col: Column, tsType: DataType): Column = {
+    val maxTimestampLiteral = Literal(Long.MaxValue, tsType)
+    val overflowThresholdLiteral = Literal(Long.MaxValue - 1000, tsType)
+    val adjustedExpr = If(
+      GreaterThan(col.expr, overflowThresholdLiteral),
+      maxTimestampLiteral,
+      TimestampAdd("MILLISECOND", Literal(1L, LongType), col.expr))
+    Column(Cast(adjustedExpr, tsType))
+  }
 }
 
 /**
@@ -213,16 +273,33 @@ trait DataSkippingReaderBase
   def version: Long
   def metadata: Metadata
   private[delta] def sizeInBytesIfKnown: Option[Long]
-  def deltaLog: DeltaLog
   def schema: StructType
   private[delta] def numOfFilesIfKnown: Option[Long]
   def redactedPath: String
 
   private def useStats = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STATS_SKIPPING)
 
+  private lazy val limitPartitionLikeFiltersToClusteringColumns = spark.sessionState.conf.getConf(
+    DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_CLUSTERING_COLUMNS_ONLY)
+  private lazy val additionalPartitionLikeFilterSupportedExpressions =
+    spark.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ADDITIONAL_SUPPORTED_EXPRESSIONS)
+      .toSet.flatMap((exprs: String) => exprs.split(","))
+
   /** Returns a DataFrame expression to obtain a list of files with parsed statistics. */
   private def withStatsInternal0: DataFrame = {
-    allFiles.withColumn("stats", from_json(col("stats"), statsSchema))
+    val parsedStats = from_json(col("stats"), statsSchema)
+    // Only use DecodeNestedZ85EncodedVariant if the schema contains VariantType.
+    // This avoids performance overhead for tables without variant columns.
+    // `DecodeNestedZ85EncodedVariant` is a temporary workaround since the Spark 4.1 from_json
+    // expression has no way to decode a VariantVal from an encoded Z85 string.
+    // TODO: Add Z85 decoding to Variant in Spark 4.2 and use that from_json option here.
+    val decodedStats = if (SchemaUtils.checkForVariantTypeColumnsRecursively(statsSchema)) {
+      Column(DecodeNestedZ85EncodedVariant(parsedStats.expr))
+    } else {
+      parsedStats
+    }
+    allFiles.withColumn("stats", decodedStats)
   }
 
   private lazy val withStatsCache =
@@ -243,560 +320,9 @@ trait DataSkippingReaderBase
     withStatsInternal
   }
 
-  /**
-   * Constructs a [[DataSkippingPredicate]] for isNotNull predicates.
-   */
-   protected def constructNotNullFilter(
-      statsProvider: StatsProvider,
-      pathToColumn: Seq[String]): Option[DataSkippingPredicate] = {
-    val nullCountCol = StatsColumn(NULL_COUNT, pathToColumn, LongType)
-    val numRecordsCol = StatsColumn(NUM_RECORDS, pathToColumn = Nil, LongType)
-    statsProvider.getPredicateWithStatsColumns(nullCountCol, numRecordsCol) {
-      (nullCount, numRecords) => nullCount < numRecords
-    }
-  }
 
   def withStatsDeduplicated: DataFrame = withStats
 
-  /**
-   * Builds the data filters for data skipping.
-   */
-  class DataFiltersBuilder(
-      protected val spark: SparkSession,
-      protected val dataSkippingType: DeltaDataSkippingType)
-  {
-    protected val statsProvider: StatsProvider = new StatsProvider(getStatsColumnOpt)
-
-    // Main function for building data filters.
-    def apply(dataFilter: Expression): Option[DataSkippingPredicate] =
-      constructDataFilters(dataFilter)
-
-    // Helper method for expression types that represent an IN-list of literal values.
-    //
-    //
-    // For excessively long IN-lists, we just test whether the file's min/max range overlaps the
-    // range spanned by the list's smallest and largest elements.
-    private def constructLiteralInListDataFilters(a: Expression, possiblyNullValues: Seq[Any]):
-        Option[DataSkippingPredicate] = {
-      // The Ordering we use for sorting cannot handle null values, and these can anyway
-      // be safely ignored because they will never cause an IN-list predicate to return TRUE.
-      val values = possiblyNullValues.filter(_ != null)
-      if (values.isEmpty) {
-        // Handle the trivial empty case even for otherwise ineligible types.
-        // NOTE: SQL forbids empty in-list, but InSubqueryExec could have an empty subquery result
-        // or IN-list may contain only NULLs.
-        return Some(DataSkippingPredicate(falseLiteral))
-      }
-
-      val (pathToColumn, dt, builder) = SkippingEligibleExpression.unapply(a).getOrElse {
-        // The expression is not eligible for skipping, and we can stop constructing data filters
-        // for the expression by simply returning None.
-        return None
-      }
-
-      lazy val ordering = TypeUtils.getInterpretedOrdering(dt)
-      if (!SkippingEligibleDataType(dt)) {
-        // Don't waste time building expressions for incompatible types
-        None
-      }
-      else {
-        // Emit filters for an imprecise range test that covers the entire entire list.
-        val min = Literal(values.min(ordering), dt)
-        val max = Literal(values.max(ordering), dt)
-        constructDataFilters(And(GreaterThanOrEqual(max, a), LessThanOrEqual(min, a)))
-      }
-    }
-
-    /**
-     * Returns a file skipping predicate expression, derived from the user query, which uses column
-     * statistics to prune away files that provably contain no rows the query cares about.
-     *
-     * Specifically, the filter extraction code must obey the following rules:
-     *
-     * 1. Given a query predicate `e`, `constructDataFilters(e)` must return TRUE for a file unless
-     *    we can prove `e` will not return TRUE for any row the file might contain. For example,
-     *    given `a = 3` and min/max stat values [0, 100], this skipping predicate is safe:
-     *
-     *      AND(minValues.a <= 3, maxValues.a >= 3)
-     *
-     *    Because that condition must be true for any file that might possibly contain `a = 3`; the
-     *    skipping predicate could return FALSE only if the max is too low, or the min too high; it
-     *    could return NULL only if a is NULL in every row of the file. In both latter cases, it is
-     *    safe to skip the file because `a = 3` can never evaluate to TRUE.
-     *
-     * 2. It is unsafe to apply skipping to operators that can evaluate to NULL or produce an error
-     *    for non-NULL inputs. For example, consider this query predicate involving integer
-     *    addition:
-     *
-     *      a + 1 = 3
-     *
-     *    It might be tempting to apply the standard equality skipping predicate:
-     *
-     *      AND(minValues.a + 1 <= 3, 3 <= maxValues.a + 1)
-     *
-     *    However, the skipping predicate would be unsound, because the addition operator could
-     *    trigger integer overflow (e.g. minValues.a = 0 and maxValues.a = INT_MAX), even though the
-     *    file could very well contain rows satisfying a + 1 = 3.
-     *
-     * 3. Predicates involving NOT are ineligible for skipping, because
-     *    `Not(constructDataFilters(e))` is seldom equivalent to `constructDataFilters(Not(e))`.
-     *    For example, consider the query predicate:
-     *
-     *      NOT(a = 1)
-     *
-     *    A simple inversion of the data skipping predicate would be:
-     *
-     *      NOT(AND(minValues.a <= 1, maxValues.a >= 1))
-     *      ==> OR(NOT(minValues.a <= 1), NOT(maxValues.a >= 1))
-     *      ==> OR(minValues.a > 1, maxValues.a < 1)
-     *
-     *    By contrast, if we first combine the NOT with = to obtain
-     *
-     *      a != 1
-     *
-     *    We get a different skipping predicate:
-     *
-     *      NOT(AND(minValues.a = 1, maxValues.a = 1))
-     *      ==> OR(NOT(minValues.a = 1), NOT(maxValues.a = 1))
-     *      ==>  OR(minValues.a != 1, maxValues.a != 1)
-     *
-     *    A truth table confirms that the first (naively inverted) skipping predicate is incorrect:
-     *
-     *      minValues.a
-     *      | maxValues.a
-     *      | | OR(minValues.a > 1, maxValues.a < 1)
-     *      | | | OR(minValues.a != 1, maxValues.a != 1)
-     *      0 0 T T
-     *      0 1 F T    !! first predicate wrongly skipped a = 0
-     *      1 1 F F
-     *
-     *    Fortunately, we may be able to eliminate NOT from some (branches of some) predicates:
-     *
-     *    a. It is safe to push the NOT into the children of AND and OR using de Morgan's Law, e.g.
-     *
-     *         NOT(AND(a, b)) ==> OR(NOT(a), NOT(B)).
-     *
-     *    b. It is safe to fold NOT into other operators, when a negated form of the operator
-     *       exists:
-     *
-     *         NOT(NOT(x)) ==> x
-     *         NOT(a == b) ==> a != b
-     *         NOT(a > b) ==> a <= b
-     *
-     * NOTE: The skipping predicate must handle the case where min and max stats for a column are
-     * both NULL -- which indicates that all values in the file are NULL. Fortunately, most of the
-     * operators we support data skipping for are NULL intolerant, and thus trivially satisfy this
-     * requirement because they never return TRUE for NULL inputs. The only NULL tolerant operator
-     * we support -- IS [NOT] NULL -- is specifically NULL aware.
-     *
-     * NOTE: The skipping predicate does *NOT* need to worry about missing stats columns (which also
-     * manifest as NULL). That case is handled separately by `verifyStatsForFilter` (which disables
-     * skipping for any file that lacks the needed stats columns).
-     */
-    private[stats] def constructDataFilters(dataFilter: Expression):
-        Option[DataSkippingPredicate] = dataFilter match {
-      // Expressions that contain only literals are not eligible for skipping.
-      case cmp: Expression if cmp.children.forall(areAllLeavesLiteral) => None
-
-      // Push skipping predicate generation through the AND:
-      //
-      // constructDataFilters(AND(a, b))
-      // ==> AND(constructDataFilters(a), constructDataFilters(b))
-      //
-      // To see why this transformation is safe, consider that `constructDataFilters(a)` must
-      // evaluate to TRUE *UNLESS* we can prove that `a` would not evaluate to TRUE for any row the
-      // file might contain. Thus, if the rewritten form of the skipping predicate does not evaluate
-      // to TRUE, at least one of the skipping predicates must not have evaluated to TRUE, which in
-      // turn means we were able to prove that `a` and/or `b` will not evaluate to TRUE for any row
-      // of the file. If that is the case, then `AND(a, b)` also cannot evaluate to TRUE for any row
-      // of the file, which proves we have a valid data skipping predicate.
-      //
-      // NOTE: AND is special -- we can safely skip the file if one leg does not evaluate to TRUE,
-      // even if we cannot construct a skipping filter for the other leg.
-      case And(e1, e2) =>
-        val e1Filter = constructDataFilters(e1)
-        val e2Filter = constructDataFilters(e2)
-        if (e1Filter.isDefined && e2Filter.isDefined) {
-          Some(DataSkippingPredicate(
-            e1Filter.get.expr && e2Filter.get.expr,
-            e1Filter.get.referencedStats ++ e2Filter.get.referencedStats))
-        } else if (e1Filter.isDefined) {
-          e1Filter
-        } else {
-          e2Filter  // possibly None
-        }
-
-      // Use deMorgan's law to push the NOT past the AND. This is safe even with SQL tri-valued
-      // logic (see below), and is desirable because we cannot generally push predicate filters
-      // through NOT, but we *CAN* push predicate filters through AND and OR:
-      //
-      // constructDataFilters(NOT(AND(a, b)))
-      // ==> constructDataFilters(OR(NOT(a), NOT(b)))
-      // ==> OR(constructDataFilters(NOT(a)), constructDataFilters(NOT(b)))
-      //
-      // Assuming we can push the resulting NOT operations all the way down to some leaf operation
-      // it can fold into, the rewrite allows us to create a data skipping filter from the
-      // expression.
-      //
-      // a b AND(a, b)
-      // | | | NOT(AND(a, b))
-      // | | | | OR(NOT(a), NOT(b))
-      // T T T F F
-      // T F F T T
-      // T N N N N
-      // F F F T T
-      // F N F T T
-      // N N N N N
-      case Not(And(e1, e2)) =>
-        constructDataFilters(Or(Not(e1), Not(e2)))
-
-      // Push skipping predicate generation through OR (similar to AND case).
-      //
-      // constructDataFilters(OR(a, b))
-      // ==> OR(constructDataFilters(a), constructDataFilters(b))
-      //
-      // Similar to AND case, if the rewritten predicate does not evaluate to TRUE, then it means
-      // that neither `constructDataFilters(a)` nor `constructDataFilters(b)` evaluated to TRUE,
-      // which in turn means that neither `a` nor `b` could evaluate to TRUE for any row the file
-      // might contain, which proves we have a valid data skipping predicate.
-      //
-      // Unlike AND, a single leg of an OR expression provides no filtering power -- we can only
-      // reject a file if both legs evaluate to false.
-      case Or(e1, e2) =>
-        val e1Filter = constructDataFilters(e1)
-        val e2Filter = constructDataFilters(e2)
-        if (e1Filter.isDefined && e2Filter.isDefined) {
-          Some(DataSkippingPredicate(
-            e1Filter.get.expr || e2Filter.get.expr,
-            e1Filter.get.referencedStats ++ e2Filter.get.referencedStats))
-        } else {
-          None
-        }
-
-      // Similar to AND, we can (and want to) push the NOT past the OR using deMorgan's law.
-      case Not(Or(e1, e2)) =>
-        constructDataFilters(And(Not(e1), Not(e2)))
-
-      // Match any file whose null count is larger than zero.
-      // Note DVs might result in a redundant read of a file.
-      // However, they cannot lead to a correctness issue.
-      case IsNull(SkippingEligibleColumn(a, dt)) =>
-        statsProvider.getPredicateWithStatType(a, dt, NULL_COUNT) { nullCount =>
-          nullCount > Literal(0L)
-        }
-      case Not(IsNull(e)) =>
-        constructDataFilters(IsNotNull(e))
-
-      // Match any file whose null count is less than the row count.
-      case IsNotNull(SkippingEligibleColumn(a, _)) =>
-        constructNotNullFilter(statsProvider, a)
-
-      case Not(IsNotNull(e)) =>
-        constructDataFilters(IsNull(e))
-
-      // Match any file whose min/max range contains the requested point.
-      case EqualTo(SkippingEligibleExpression(c, _, builder), SkippingEligibleLiteral(v)) =>
-        builder.equalTo(statsProvider, c, v)
-      case EqualTo(v: Literal, a) =>
-        constructDataFilters(EqualTo(a, v))
-
-      // Match any file whose min/max range contains anything other than the rejected point.
-      case Not(EqualTo(SkippingEligibleExpression(c, _, builder), SkippingEligibleLiteral(v))) =>
-        builder.notEqualTo(statsProvider, c, v)
-      case Not(EqualTo(v: Literal, a)) =>
-        constructDataFilters(Not(EqualTo(a, v)))
-
-      // Rewrite `EqualNullSafe(a, NotNullLiteral)` as
-      // `And(IsNotNull(a), EqualTo(a, NotNullLiteral))` and rewrite `EqualNullSafe(a, null)` as
-      // `IsNull(a)` to let the existing logic handle it.
-      case EqualNullSafe(a, v: Literal) =>
-        val rewrittenExpr = if (v.value != null) And(IsNotNull(a), EqualTo(a, v)) else IsNull(a)
-        constructDataFilters(rewrittenExpr)
-      case EqualNullSafe(v: Literal, a) =>
-        constructDataFilters(EqualNullSafe(a, v))
-      case Not(EqualNullSafe(a, v: Literal)) =>
-        val rewrittenExpr = if (v.value != null) And(IsNotNull(a), EqualTo(a, v)) else IsNull(a)
-        constructDataFilters(Not(rewrittenExpr))
-      case Not(EqualNullSafe(v: Literal, a)) =>
-        constructDataFilters(Not(EqualNullSafe(a, v)))
-
-      // Match any file whose min is less than the requested upper bound.
-      case LessThan(SkippingEligibleExpression(c, _, builder), SkippingEligibleLiteral(v)) =>
-        builder.lessThan(statsProvider, c, v)
-      case LessThan(v: Literal, a) =>
-        constructDataFilters(GreaterThan(a, v))
-      case Not(LessThan(a, b)) =>
-        constructDataFilters(GreaterThanOrEqual(a, b))
-
-      // Match any file whose min is less than or equal to the requested upper bound
-      case LessThanOrEqual(SkippingEligibleExpression(c, _, builder), SkippingEligibleLiteral(v)) =>
-        builder.lessThanOrEqual(statsProvider, c, v)
-      case LessThanOrEqual(v: Literal, a) =>
-        constructDataFilters(GreaterThanOrEqual(a, v))
-      case Not(LessThanOrEqual(a, b)) =>
-        constructDataFilters(GreaterThan(a, b))
-
-      // Match any file whose max is larger than the requested lower bound.
-      case GreaterThan(SkippingEligibleExpression(c, _, builder), SkippingEligibleLiteral(v)) =>
-        builder.greaterThan(statsProvider, c, v)
-      case GreaterThan(v: Literal, a) =>
-        constructDataFilters(LessThan(a, v))
-      case Not(GreaterThan(a, b)) =>
-        constructDataFilters(LessThanOrEqual(a, b))
-
-      // Match any file whose max is larger than or equal to the requested lower bound.
-      case GreaterThanOrEqual(
-          SkippingEligibleExpression(c, _, builder), SkippingEligibleLiteral(v)) =>
-        builder.greaterThanOrEqual(statsProvider, c, v)
-      case GreaterThanOrEqual(v: Literal, a) =>
-        constructDataFilters(LessThanOrEqual(a, v))
-      case Not(GreaterThanOrEqual(a, b)) =>
-        constructDataFilters(LessThan(a, b))
-
-      // Similar to an equality test, except comparing against a prefix of the min/max stats, and
-      // neither commutative nor invertible.
-      case StartsWith(SkippingEligibleColumn(a, _), v @ Literal(s: UTF8String, dt: StringType)) =>
-        statsProvider.getPredicateWithStatTypes(a, dt, MIN, MAX) { (min, max) =>
-          val sLen = s.numChars()
-          substring(min, 0, sLen) <= v && substring(max, 0, sLen) >= v
-        }
-
-      // We can only handle-IN lists whose values can all be statically evaluated to literals.
-      case in @ In(a, values) if in.inSetConvertible =>
-        constructLiteralInListDataFilters(a, values.map(_.asInstanceOf[Literal].value))
-
-      // The optimizer automatically converts all but the shortest eligible IN-lists to InSet.
-      case InSet(a, values) =>
-        constructLiteralInListDataFilters(a, values.toSeq)
-
-      // Treat IN(... subquery ...) as a normal IN-list, since the subquery already ran before now.
-      case in: InSubqueryExec =>
-        // At this point the subquery has been materialized, but values() can return None if
-        // the subquery was bypassed at runtime.
-        in.values().flatMap(v => constructLiteralInListDataFilters(in.child, v.toSeq))
-
-
-      // Remove redundant pairs of NOT
-      case Not(Not(e)) =>
-        constructDataFilters(e)
-
-      // WARNING: NOT is dangerous, because `Not(constructDataFilters(e))` is seldom equivalent to
-      // `constructDataFilters(Not(e))`. We must special-case every `Not(e)` we wish to support.
-      case Not(_) => None
-
-      // Unknown expression type... can't use it for data skipping.
-      case _ => None
-    }
-
-    // Lightweight wrapper to represent a fully resolved reference to an attribute for
-    // partition-like data filters. Contains the min/max/null count stats column expressions and
-    // the referenced stats column for the attribute.
-    private case class ResolvedPartitionLikeReference(
-        referencedStatsCols: Seq[StatsColumn],
-        minExpr: Expression,
-        maxExpr: Expression,
-        nullCountExpr: Expression)
-
-    /**
-     * Rewrites the references in an expression to point to the collected stats over that column
-     * (if possible).
-     *
-     * This is generally equivalent to [[DeltaLog.rewritePartitionFilters]], with a few differences:
-     * 1. This method checks the eligibility of the column datatype before rewriting it to point to
-     *    the stats column (which isn't needed for partition columns).
-     * 2. There's no need to handle scalar subqueries (other than InSubqueryExec) here - subqueries
-     *    other than InSubqueryExec aren't eligible for data filtering.
-     * 3. AND expressions may be partially rewritten as partition-like data filters if one branch
-     *    is eligible but the other is not.
-     *
-     * For example:
-     *  CAST(a AS DATE) = '2024-09-11' -> CAST(parsed_stats[minValues][a] AS DATE) = '2024-09-11'
-     *
-     * @param expr    The expression to rewrite.
-     * @return        If the expression is safe to rewrite, return the rewritten expression and a
-     *                set of referenced attributes (with both the logical path to the column and the
-     *                column type).
-     */
-    private def rewriteDataFiltersAsPartitionLikeInternal(
-        expr: Expression,
-        clusteringColumnPaths: Set[Seq[String]])
-    : Option[(Expression, Set[ResolvedPartitionLikeReference])] = expr match {
-      // The expression is an eligible reference to an attribute.
-      // Do NOT allow partition-like filtering on timestamp columns because timestamps are truncated
-      // to millisecond precision, meaning that we can't guarantee that the collected minVal and
-      // maxVal are the same.
-      // Applying these partition-like filters will generally only be beneficial if a large
-      // percentage of files have the same min-max value. As a rough heuristic, only allow rewriting
-      // expressions that reference only the clustering columns (since these columns are more likely
-      // to have the same min-max values).
-      case SkippingEligibleColumn(c, SkippingEligibleDataType(dt))
-        if dt != TimestampType && dt != TimestampNTZType &&
-          clusteringColumnPaths.exists(SchemaUtils.areLogicalNamesEqual(_, c.reverse)) =>
-        // Only rewrite the expression if all stats are collected for this column.
-        val minStatsCol = StatsColumn(MIN, c, dt)
-        val maxStatsCol = StatsColumn(MAX, c, dt)
-        val nullCountStatsCol = StatsColumn(NULL_COUNT, c, dt)
-        for {
-          minCol <- getStatsColumnOpt(minStatsCol);
-          maxCol <- getStatsColumnOpt(maxStatsCol);
-          nullCol <- getStatsColumnOpt(nullCountStatsCol)
-        } yield {
-          val resolvedAttribute = ResolvedPartitionLikeReference(
-            Seq(minStatsCol, maxStatsCol, nullCountStatsCol),
-            minCol.expr,
-            maxCol.expr,
-            nullCol.expr)
-          (minCol.expr, Set(resolvedAttribute))
-        }
-      // For other attribute references, we can't safely rewrite the expression.
-      case SkippingEligibleColumn(_, _) => None
-      // Don't attempt data skipping on a nondeterministic expression, since the value returned
-      // might be different when executed twice on the same input.
-      // For example, rand() > 0.5 would return ~25% of records if used in data skipping, while the
-      // user would expect ~50% of records to be returned.
-      case other if !other.deterministic => None
-      // Inline subquery results to support InSet. The subquery should generally have already been
-      // evaluated.
-      case in: InSubqueryExec =>
-        // Values may not be defined if the subquery has been skipped - we can't apply this filter.
-        in.values().flatMap { possiblyNullValues =>
-          // Rewrite the children of InSubqueryExec, then replace the subquery with an InSet
-          // containing the materialized values.
-          rewriteDataFiltersAsPartitionLikeInternal(in.child, clusteringColumnPaths).flatMap {
-            case (rewrittenChildren, referencedStats) =>
-              Some(InSet(rewrittenChildren, possiblyNullValues.toSet), referencedStats)
-          }
-        }
-      // Don't allow rewriting UDFs - even if deterministic, UDFs might have some unexpected
-      // side effects when executed twice.
-      case _: UserDefinedExpression => None
-      // Don't attempt to rewrite expressions might be extremely expensive to invoke twice.
-      case _: RegExpReplace | _: RegExpExtractBase | _: Like | _: MultiLikeBase => None
-      case _: InvokeLike => None
-      case _: JsonToStructs => None
-      // Pushdown NOT through OR - we prefer AND to OR because AND can tolerate one branch not being
-      // rewriteable.
-      case Not(Or(e1, e2)) =>
-        rewriteDataFiltersAsPartitionLikeInternal(And(Not(e1), Not(e2)), clusteringColumnPaths)
-      // For AND expressions, we can tolerate one side not being eligible for partition-like
-      // data skipping - simply remove the ineligible side.
-      case And(left, right) =>
-        val leftResult = rewriteDataFiltersAsPartitionLikeInternal(left, clusteringColumnPaths)
-        val rightResult = rewriteDataFiltersAsPartitionLikeInternal(right, clusteringColumnPaths)
-        (leftResult, rightResult) match {
-          case (Some((newLeft, statsLeft)), Some((newRight, statsRight))) =>
-            Some((And(newLeft, newRight), statsLeft ++ statsRight))
-          case _ => leftResult.orElse(rightResult)
-        }
-      // For all other expressions, recursively rewrite the children.
-      case other =>
-        val childResults = other.children.map(
-          rewriteDataFiltersAsPartitionLikeInternal(_, clusteringColumnPaths))
-        Option.whenNot (childResults.exists(_.isEmpty)) {
-          val (children, stats) = childResults.map(_.get).unzip
-          (other.withNewChildren(children), stats.flatten.toSet)
-        }
-    }
-
-    /**
-     * Returns an expression that returns true if a file must be read because of a mismatched
-     * min-max value or partial nulls on a given column. For these files, it's not safe to apply
-     * arbitrary partition-like filters.
-     */
-    private def fileMustBeScanned(
-        resolvedPartitionLikeReference: ResolvedPartitionLikeReference,
-        numRecordsColOpt: Option[Column]): Expression = {
-      // Construct an expression to determine if all records in the file are null.
-      val nullCountExpr = resolvedPartitionLikeReference.nullCountExpr
-      val allNulls = numRecordsColOpt match {
-        case Some(physicalNumRecords) => EqualTo(nullCountExpr, physicalNumRecords.expr)
-        case _ => Literal(false)
-      }
-
-      // Note that there are 2 other differences in behavior between unpartitioned and partitioned
-      // tables:
-      // 1. If the column is a timestamp, the min-max stats are truncated to millisecond precision.
-      //    We shouldn't apply partition-like filters in this case, but
-      //    rewriteDataFiltersAsPartitionLikeInternal validates the column is not a Timestamp,
-      //    so we don't have to check here.
-      // 2. The min-max stats on a string column might be truncated for an unpartitioned table.
-      //    Note that just validating that the min and max are equal is enough to prevent this case
-      //    - if the string is truncated, the collected max value is guaranteed to be longer than
-      //    the min value due to the tiebreaker character(s) appended at the end of the max.
-      Not(
-        Or(
-          allNulls,
-          And(
-            EqualTo(
-              resolvedPartitionLikeReference.minExpr, resolvedPartitionLikeReference.maxExpr),
-            EqualTo(resolvedPartitionLikeReference.nullCountExpr, Literal(0L))
-          )
-        )
-      )
-    }
-
-    /**
-     * Rewrites the given expression as a partition-like expression if possible:
-     * 1. Rewrite the attribute references in the expression to reference the collected min stats
-     *     on the attribute reference's column.
-     * 2. Construct an expression that returns true if any of the referenced columns are not
-     *     partition-like on a given file.
-     * The rewritten expression is a union of the above expressions: a file is read if it's either
-     * not partition-like on any of the columns or if the rewritten expression evaluates to true.
-     *
-     * @param clusteringColumns   The columns that are used for clustering.
-     * @param expr                The data filtering expression to rewrite.
-     * @return                    If the expression is safe to rewrite, return the rewritten
-     *                            expression. Otherwise, return None.
-     */
-    def rewriteDataFiltersAsPartitionLike(
-        clusteringColumns: Seq[String], expr: Expression): Option[DataSkippingPredicate] = {
-      val clusteringColumnPaths =
-        clusteringColumns.map(UnresolvedAttribute.quotedString(_).nameParts).toSet
-      rewriteDataFiltersAsPartitionLikeInternal(expr, clusteringColumnPaths).map {
-        case (newExpr, referencedStats) =>
-          // Create an expression that returns true if a file must be read because it has mismatched
-          // min-max values or partial nulls on any of the referenced columns.
-          val numRecordsStatsCol = StatsColumn(NUM_RECORDS, pathToColumn = Nil, LongType)
-          val numRecordsColOpt = getStatsColumnOpt(numRecordsStatsCol)
-          val statsCols = ArrayBuffer(numRecordsStatsCol)
-          val finalExpr = referencedStats.foldLeft(newExpr) {
-            case (oldExpr, resolvedReference) =>
-              val updatedExpr = Or(
-                oldExpr, fileMustBeScanned(resolvedReference, numRecordsColOpt))
-              statsCols ++= resolvedReference.referencedStatsCols
-              updatedExpr
-          }
-          // Create the final data skipping expression - read a file either if it's has nulls on any
-          // referenced column, has mismatched stats on any referenced column, or the filter
-          // expression evaluates to `true`.
-          DataSkippingPredicate(Column(finalExpr), statsCols.toSet)
-      }
-    }
-
-    private def areAllLeavesLiteral(e: Expression): Boolean = e match {
-      case _: Literal => true
-      case _ if e.children.nonEmpty => e.children.forall(areAllLeavesLiteral)
-      case _ => false
-    }
-
-    /**
-     * An extractor that matches expressions that are eligible for data skipping predicates.
-     *
-     * @return A tuple of 1) column name referenced in the expression, 2) date type for the
-     *         expression, 3) [[DataSkippingPredicateBuilder]] that builds the data skipping
-     *         predicate for the expression, if the given expression is eligible.
-     *         Otherwise, return None.
-     */
-    object SkippingEligibleExpression {
-      def unapply(arg: Expression)
-          : Option[(Seq[String], DataType, DataSkippingPredicateBuilder)] = arg match {
-        case SkippingEligibleColumn(c, dt) =>
-          Some((c, dt, DataSkippingPredicateBuilder.ColumnBuilder))
-        case _ => None
-      }
-    }
-  }
 
   /**
    * Returns an expression to access the given statistics for a specific column, or None if that
@@ -869,19 +395,9 @@ trait DataSkippingReaderBase
       .filterNot(_._2.isInstanceOf[StructType])
       .map {
         case (statCol, TimestampType, _) if pathToStatType.head == MAX =>
-          // SC-22824: For timestamps, JSON serialization will truncate to milliseconds. This means
-          // that we must adjust 1 millisecond upwards for max stats, or we will incorrectly skip
-          // records that differ only in microsecond precision. (For example, a file containing only
-          // 01:02:03.456789 will be written with min == max == 01:02:03.456, so we must consider it
-          // to contain the range from 01:02:03.456 to 01:02:03.457.)
-          //
-          // There is a longer term task SC-22825 to fix the serialization problem that caused this.
-          // But we need the adjustment in any case to correctly read stats written by old versions.
-          Column(Cast(TimeAdd(statCol.expr, oneMillisecondLiteralExpr), TimestampType))
+          getAdjustedTimestamp(statCol, TimestampType)
         case (statCol, TimestampNTZType, _) if pathToStatType.head == MAX =>
-          // We also apply the same adjustment of max stats that was applied to Timestamp
-          // for TimestampNTZ because these 2 types have the same precision in terms of time.
-          Column(Cast(TimeAdd(statCol.expr, oneMillisecondLiteralExpr), TimestampNTZType))
+          getAdjustedTimestamp(statCol, TimestampNTZType)
         case (statCol, _, _) =>
           statCol
       }
@@ -908,6 +424,10 @@ trait DataSkippingReaderBase
   /** Overload for convenience working with StatsColumn helpers */
   final protected[delta] def getStatsColumnOrNullLiteral(stat: StatsColumn): Column =
     getStatsColumnOpt(stat.pathToStatType, stat.pathToColumn).getOrElse(lit(null))
+
+  /** Overload for delta table property override */
+  override protected def getDataSkippingStringPrefixLength: Int =
+    StatsCollectionUtils.getDataSkippingStringPrefixLength(spark, metadata)
 
   /**
    * Returns an expression that can be used to check that the required statistics are present for a
@@ -1033,7 +553,10 @@ trait DataSkippingReaderBase
       partitionFilters: Seq[Expression],
       keepNumRecords: Boolean): (Seq[AddFile], DataSize) = recordFrameProfile(
       "Delta", "DataSkippingReader.filterOnPartitions") {
-    val df = if (keepNumRecords) {
+    val forceCollectRowCount =
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_ALWAYS_COLLECT_STATS)
+    val shouldCollectStats = keepNumRecords || forceCollectRowCount
+    val df = if (shouldCollectStats) {
       // use withStats instead of allFiles so the `stats` column is already parsed
       val filteredFiles =
         DeltaLog.filterFileList(metadata.partitionSchema, withStats, partitionFilters)
@@ -1048,7 +571,36 @@ trait DataSkippingReaderBase
     }
     val files = convertDataFrameToAddFiles(df)
     val sizeInBytesByPartitionFilters = files.map(_.size).sum
-    files.toSeq -> DataSize(Some(sizeInBytesByPartitionFilters), None, Some(files.size))
+    // Compute row count if we have stats available and forceCollectRowCount is enabled
+    val (rowCount, logicalRowCount) = if (forceCollectRowCount) {
+      sumRowCounts(files)
+    } else {
+      (None, None)
+    }
+    files.toSeq -> DataSize(Some(sizeInBytesByPartitionFilters), rowCount, Some(files.size),
+      logicalRowCount)
+  }
+
+  /**
+   * Sums up the numPhysicalRecords and numLogicalRecords from the given AddFile objects.
+   * Returns (None, None) if any file is missing physical record stats.
+   * Returns (Some(physical), None) if any file is missing logical record stats.
+   */
+  private def sumRowCounts(files: Seq[AddFile]): (Option[Long], Option[Long]) = {
+    var physicalRows = 0L
+    var logicalRows = 0L
+    var physicalMissing = false
+    var logicalMissing = false
+    files.foreach { file =>
+      physicalMissing = physicalMissing || file.numPhysicalRecords.isEmpty
+      logicalMissing = logicalMissing || file.numLogicalRecords.isEmpty
+      physicalRows += file.numPhysicalRecords.getOrElse(0L)
+      logicalRows += file.numLogicalRecords.getOrElse(0L)
+    }
+    (
+      if (physicalMissing) None else Some(physicalRows),
+      if (logicalMissing) None else Some(logicalRows)
+    )
   }
 
   /**
@@ -1081,7 +633,8 @@ trait DataSkippingReaderBase
     } else nullStringLiteral
 
     val files =
-      recordFrameProfile("Delta", "DataSkippingReader.getDataSkippedFiles.collectFiles") {
+      recordFrameProfile(
+        "Delta", "DataSkippingReader.getDataSkippedFiles.collectFiles") {
       val df = filteredFiles.withColumn("stats", statsColumn)
       convertDataFrameToAddFiles(df)
     }
@@ -1103,15 +656,26 @@ trait DataSkippingReaderBase
   override def filesForScan(filters: Seq[Expression], keepNumRecords: Boolean): DeltaScan = {
     val startTime = System.currentTimeMillis()
     if (filters == Seq(TrueLiteral) || filters.isEmpty || schema.isEmpty) {
-      recordDeltaOperation(deltaLog, "delta.skipping.none") {
+      recordDeltaOperation(snapshotToScan, "delta.skipping.none") {
         // When there are no filters we can just return allFiles with no extra processing
+        val forceCollectRowCount =
+          spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_ALWAYS_COLLECT_STATS)
+        val shouldCollectStats = keepNumRecords || forceCollectRowCount
+        lazy val files = getAllFiles(shouldCollectStats)
+        // Compute row count if forceCollectRowCount is enabled
+        val (rowCount, logicalRowCount) = if (forceCollectRowCount) {
+          sumRowCounts(files)
+        } else {
+          (None, None)
+        }
         val dataSize = DataSize(
           bytesCompressed = sizeInBytesIfKnown,
-          rows = None,
-          files = numOfFilesIfKnown)
+          rows = rowCount,
+          files = numOfFilesIfKnown,
+          logicalRows = logicalRowCount)
         return DeltaScan(
           version = version,
-          files = getAllFiles(keepNumRecords),
+          files = files,
           total = dataSize,
           partition = dataSize,
           scanned = dataSize)(
@@ -1130,16 +694,22 @@ trait DataSkippingReaderBase
     import DeltaTableUtils._
     val partitionColumns = metadata.partitionColumns
 
-    // For data skipping, avoid using the filters that involve subqueries.
-
-    val (subqueryFilters, flatFilters) = filters.partition {
-      case f => containsSubquery(f)
+    // For data skipping, avoid using the filters that either:
+    // 1. involve subqueries.
+    // 2. are non-deterministic.
+    // 3. involve file metadata struct fields
+    var (ineligibleFilters, eligibleFilters) = filters.partition {
+      case f => containsSubquery(f) || !f.deterministic || f.exists {
+        case MetadataAttribute(_) => true
+        case _ => false
+      }
     }
 
-    val (partitionFilters, dataFilters) = flatFilters
-        .partition(isPredicatePartitionColumnsOnly(_, partitionColumns, spark))
 
-    if (dataFilters.isEmpty) recordDeltaOperation(deltaLog, "delta.skipping.partition") {
+    val (partitionFilters, dataFilters) = eligibleFilters
+      .partition(isPredicatePartitionColumnsOnly(_, partitionColumns, spark))
+
+    if (dataFilters.isEmpty) recordDeltaOperation(snapshotToScan, "delta.skipping.partition") {
       // When there are only partition filters we can scan allFiles
       // rather than withStats and thus we skip data skipping information.
       val (files, scanSize) = filterOnPartitions(partitionFilters, keepNumRecords)
@@ -1154,12 +724,12 @@ trait DataSkippingReaderBase
         dataFilters = ExpressionSet(Nil),
         partitionLikeDataFilters = ExpressionSet(Nil),
         rewrittenPartitionLikeDataFilters = Set.empty,
-        unusedFilters = ExpressionSet(subqueryFilters),
+        unusedFilters = ExpressionSet(ineligibleFilters),
         scanDurationMs = System.currentTimeMillis() - startTime,
         dataSkippingType =
           getCorrectDataSkippingType(DeltaDataSkippingType.partitionFilteringOnlyV1)
       )
-    } else recordDeltaOperation(deltaLog, "delta.skipping.data") {
+    } else recordDeltaOperation(snapshotToScan, "delta.skipping.data") {
       val finalPartitionFilters = constructPartitionFilters(partitionFilters)
 
       val dataSkippingType = if (partitionFilters.isEmpty) {
@@ -1169,7 +739,14 @@ trait DataSkippingReaderBase
       }
 
       var (skippingFilters, unusedFilters) = if (useStats) {
-        val constructDataFilters = new DataFiltersBuilder(spark, dataSkippingType)
+        val constructDataFilters = new DataFiltersBuilder(
+          spark = spark,
+          dataSkippingType = dataSkippingType,
+          getStatsColumnOpt = (s: StatsColumn) => getStatsColumnOpt(s),
+          additionalPartitionLikeFilterSupportedExpressions =
+            additionalPartitionLikeFilterSupportedExpressions,
+          limitPartitionLikeFiltersToClusteringColumns =
+            limitPartitionLikeFiltersToClusteringColumns)
         dataFilters.map(f => (f, constructDataFilters(f))).partition(f => f._2.isDefined)
       } else {
         (Nil, dataFilters.map(f => (f, None)))
@@ -1185,7 +762,8 @@ trait DataSkippingReaderBase
       //    rough heuristic, require the table to no longer be considered a "small delta table."
       // 3. At least 1 data filter was not already used for data skipping.
       val shouldRewriteDataFiltersAsPartitionLike =
-        spark.conf.get(DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ENABLED) &&
+        useStats &&
+          spark.conf.get(DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ENABLED) &&
           ClusteredTableUtils.isSupported(snapshotToScan.protocol) &&
           snapshotToScan.numOfFilesIfKnown.exists(_ >=
             spark.conf.get(DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_THRESHOLD)) &&
@@ -1193,7 +771,14 @@ trait DataSkippingReaderBase
       val partitionLikeFilters = if (shouldRewriteDataFiltersAsPartitionLike) {
         val clusteringColumns = ClusteringColumnInfo.extractLogicalNames(snapshotToScan)
         val (rewrittenUsedFilters, rewrittenUnusedFilters) = {
-          val constructDataFilters = new DataFiltersBuilder(spark, dataSkippingType)
+          val constructDataFilters = new DataFiltersBuilder(
+            spark = spark,
+            dataSkippingType = dataSkippingType,
+            getStatsColumnOpt = (s: StatsColumn) => getStatsColumnOpt(s),
+            additionalPartitionLikeFilterSupportedExpressions =
+              additionalPartitionLikeFilterSupportedExpressions,
+            limitPartitionLikeFiltersToClusteringColumns =
+              limitPartitionLikeFiltersToClusteringColumns)
           unusedFilters
             .map { case (expr, _) =>
               val rewrittenExprOpt = constructDataFilters.rewriteDataFiltersAsPartitionLike(
@@ -1231,7 +816,7 @@ trait DataSkippingReaderBase
         dataFilters = ExpressionSet(skippingFilters.map(_._1)),
         partitionLikeDataFilters = ExpressionSet(partitionLikeFilters.map(_._1)),
         rewrittenPartitionLikeDataFilters = partitionLikeFilters.map(_._2.expr.expr).toSet,
-        unusedFilters = ExpressionSet(unusedFilters.map(_._1) ++ subqueryFilters),
+        unusedFilters = ExpressionSet(unusedFilters.map(_._1) ++ ineligibleFilters),
         scanDurationMs = System.currentTimeMillis() - startTime,
         dataSkippingType = getCorrectDataSkippingType(dataSkippingType)
       )
@@ -1244,7 +829,7 @@ trait DataSkippingReaderBase
    * Statistics about the amount of data that will be read are gathered and returned.
    */
   override def filesForScan(limit: Long, partitionFilters: Seq[Expression]): DeltaScan =
-    recordDeltaOperation(deltaLog, "delta.skipping.filteredLimit") {
+    recordDeltaOperation(snapshotToScan, "delta.skipping.filteredLimit") {
       val startTime = System.currentTimeMillis()
       val finalPartitionFilters = constructPartitionFilters(partitionFilters)
 
@@ -1291,7 +876,8 @@ trait DataSkippingReaderBase
    * @return a sequence of addFiles for the given `paths`
    */
   def getSpecificFilesWithStats(paths: Seq[String]): Seq[AddFile] = {
-    recordFrameProfile("Delta", "DataSkippingReader.getSpecificFilesWithStats") {
+    recordFrameProfile(
+        "Delta", "DataSkippingReader.getSpecificFilesWithStats") {
       val right = paths.toDF(spark, "path")
       val df = allFiles.join(right, Seq("path"), "leftsemi")
       convertDataFrameToAddFiles(df)
@@ -1336,6 +922,15 @@ trait DataSkippingReaderBase
     val withNumRecords = {
       getFilesAndNumRecords(df)
     }
+    pruneFilesWithIterator(withNumRecords, limit)
+  }
+
+  /**
+   * Accepts an iterator of files with record counts and prunes them based on the limit.
+   */
+  protected def pruneFilesWithIterator(
+      withNumRecords: Iterator[(AddFile, NumRecords)] with Closeable,
+      limit: Long): ScanAfterLimit = {
 
     var logicalRowsToScan = 0L
     var physicalRowsToScan = 0L

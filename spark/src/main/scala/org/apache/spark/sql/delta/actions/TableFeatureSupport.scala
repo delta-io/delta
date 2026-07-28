@@ -19,10 +19,13 @@ package org.apache.spark.sql.delta.actions
 import java.util.Locale
 
 import scala.collection.mutable
+import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import com.fasterxml.jackson.annotation.JsonIgnore
 
@@ -404,6 +407,29 @@ trait TableFeatureSupport { this: Protocol =>
       // new protocol
       readerAndWriterFeatureNames.contains(feature.name)
   }
+
+  /** Returns whether this client supports writing in a table with this protocol. */
+  def supportedForWrite(): Boolean = {
+    val supportedWriterVersions = Action.supportedWriterVersionNumbers
+    val supportedWriterFeatures = Action.supportedProtocolVersion().writerFeatureNames
+    val testUnsupportedFeatures: Set[String] = TableFeature.testUnsupportedFeatures
+      .filterNot(_.isReaderWriterFeature)
+      .map(_.name)
+
+    supportedWriterVersions.contains(this.minWriterVersion) &&
+      this.writerFeatureNames.subsetOf(supportedWriterFeatures -- testUnsupportedFeatures)
+  }
+
+  /** Returns whether this client supports reading a table with this protocol. */
+  def supportedForRead(): Boolean = {
+    val supportedReaderVersions = Action.supportedReaderVersionNumbers
+    val supportedReaderFeatures = Action.supportedProtocolVersion().readerFeatureNames
+    val testUnsupportedFeatures: Set[String] = TableFeature.testUnsupportedFeatures
+      .filter(_.isReaderWriterFeature).map(_.name)
+
+    supportedReaderVersions.contains(this.minReaderVersion) &&
+      this.readerFeatureNames.subsetOf(supportedReaderFeatures -- testUnsupportedFeatures)
+  }
 }
 
 object TableFeatureProtocolUtils {
@@ -437,6 +463,25 @@ object TableFeatureProtocolUtils {
   /** Get the table property config key for the `featureName`. */
   def propertyKey(featureName: String): String =
     s"$FEATURE_PROP_PREFIX$featureName"
+
+  /**
+   * Checks whether `configs` marks `feature` as supported.
+   *
+   * This inspects only the requested feature key, so callers that receive protocol-derived
+   * catalog properties can avoid failing on unrelated feature names newer than this runtime.
+   */
+  def isFeatureSupportedInTableConfigs(
+      configs: Map[String, String],
+      feature: TableFeature): Boolean = {
+    val featureKey = propertyKey(feature).toLowerCase(Locale.ROOT)
+    configs.exists { case (key, status) =>
+      // Snapshot.getProperties generates protocol-derived catalog feature properties.
+      // Those properties always use `supported`.
+      // Do not accept the deprecated `enabled` table property status here.
+      key.toLowerCase(Locale.ROOT) == featureKey &&
+        status.toLowerCase(Locale.ROOT) == FEATURE_PROP_SUPPORTED
+    }
+  }
 
   /** Get the session default config key for the `feature`. */
   def defaultPropertyKey(feature: TableFeature): String = defaultPropertyKey(feature.name)
@@ -504,4 +549,88 @@ object TableFeatureProtocolUtils {
    */
   def minimumRequiredVersions(features: Seq[TableFeature]): (Int, Int) =
     ((features.map(_.minReaderVersion) :+ 1).max, (features.map(_.minWriterVersion) :+ 1).max)
+}
+
+object DropTableFeatureUtils extends DeltaLogging {
+  private val MAX_CHECKPOINT_RETRIES = 3
+
+  // The number of barrier checkpoints to create before the version requiring checkpoint protection.
+  val NUMBER_OF_BARRIER_CHECKPOINTS = 3
+
+  /**
+   * Helper function for creating checkpoints. If checkpoint creation fails we retry up
+   * to [[MAX_CHECKPOINT_RETRIES]] times.
+   *
+   * @param snapshotRefreshStartTimeTs The timestamp to use as a starting point for refreshing
+   *                                   the snapshot. This value is used to improve the performance
+   *                                   of the snapshot refresh operation.
+   */
+  def createCheckpointWithRetries(
+      table: DeltaTableV2,
+      snapshotRefreshStartTimeTs: Long): Boolean = {
+    val log = table.deltaLog
+    val snapshot = table.update(checkIfUpdatedSinceTs = Some(snapshotRefreshStartTimeTs))
+
+    def checkpointAndVerify(snapshot: Snapshot): Boolean = {
+      try {
+        table.checkpoint(snapshot)
+        log.checkpointExistsAtVersion(snapshot.version)
+      } catch {
+        case NonFatal(e) =>
+          recordDeltaEvent(
+            provider = log,
+            opType = "dropFeature.checkpointAndVerify.error",
+            data = Map(
+              "message" -> e.getMessage,
+              "stackTrace" -> e.getStackTrace().mkString("\n")))
+          false
+      }
+    }
+
+    (1 to MAX_CHECKPOINT_RETRIES).collectFirst {
+      case _ if checkpointAndVerify(snapshot) => true
+    }.getOrElse(false)
+  }
+
+  def createEmptyCommitAndCheckpoint(
+      table: DeltaTableV2,
+      snapshotRefreshStartTs: Long,
+      retryOnFailure: Boolean = false): Boolean = {
+    val log = table.deltaLog
+    val snapshot = table.update(checkIfUpdatedSinceTs = Some(snapshotRefreshStartTs))
+    val emptyCommitTS = table.deltaLog.clock.nanoTime()
+    log.startTransaction(table.catalogTable, Some(snapshot))
+      .commit(Nil, DeltaOperations.EmptyCommit)
+
+    // retryOnFailure is temporary to avoid affecting the behavior of the legacy Drop Feature
+    // command behavior.
+    if (retryOnFailure) {
+      createCheckpointWithRetries(table, emptyCommitTS)
+    } else {
+      table.checkpoint(table.update(checkIfUpdatedSinceTs = Some(emptyCommitTS)))
+      true
+    }
+  }
+
+  def truncateHistoryLogRetentionMillis(metadata: Metadata): Long = {
+    val truncateHistoryLogRetention = DeltaConfigs
+      .TABLE_FEATURE_DROP_TRUNCATE_HISTORY_LOG_RETENTION
+      .fromMetaData(metadata)
+
+    DeltaConfigs.getMilliSeconds(truncateHistoryLogRetention)
+  }
+
+  /**
+   * Returns new metadata without `tablePropertiesToRemoveAtDowngradeCommit` table properties.
+   */
+  def getDowngradedProtocolMetadata(
+      feature: RemovableFeature,
+      metadata: Metadata): Metadata = {
+    val propKeys = feature.tablePropertiesToRemoveAtDowngradeCommit
+    val normalizedKeys = DeltaConfigs.normalizeConfigKeys(propKeys)
+    val newConfiguration = metadata.configuration.filterNot {
+      case (key, _) => normalizedKeys.contains(key)
+    }
+    metadata.copy(configuration = newConfiguration)
+  }
 }

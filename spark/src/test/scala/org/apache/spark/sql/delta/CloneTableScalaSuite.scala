@@ -16,45 +16,17 @@
 
 package org.apache.spark.sql.delta
 
+import java.time.LocalDate
+
 import org.apache.spark.sql.delta.util.AnalysisHelper
 import org.apache.hadoop.fs.Path
 
 class CloneTableScalaSuite extends CloneTableSuiteBase
+    with CloneTableScalaTestMixin
     with AnalysisHelper
     with DeltaColumnMappingTestUtils {
 
   import testImplicits._
-
-  // scalastyle:off argcount
-  override protected def cloneTable(
-      source: String,
-      target: String,
-      isShallow: Boolean,
-      sourceIsTable: Boolean = false,
-      targetIsTable: Boolean = false,
-      targetLocation: Option[String] = None,
-      versionAsOf: Option[Long] = None,
-      timestampAsOf: Option[String] = None,
-      isCreate: Boolean = true,
-      isReplace: Boolean = false,
-      tableProperties: Map[String, String] = Map.empty): Unit = {
-    val table = if (sourceIsTable) {
-      io.delta.tables.DeltaTable.forName(spark, source)
-    } else {
-      io.delta.tables.DeltaTable.forPath(spark, source)
-    }
-
-    if (versionAsOf.isDefined) {
-      table.cloneAtVersion(versionAsOf.get,
-        target, isShallow = isShallow, replace = isReplace, tableProperties)
-    } else if (timestampAsOf.isDefined) {
-      table.cloneAtTimestamp(timestampAsOf.get,
-        target, isShallow = isShallow, replace = isReplace, tableProperties)
-    } else {
-      table.clone(target, isShallow = isShallow, replace = isReplace, tableProperties)
-    }
-  }
-  // scalastyle:on argcount
 
   testAllClones("cloneAtVersion API") { (source, target, isShallow) =>
     spark.range(5).write.format("delta").save(source)
@@ -110,8 +82,7 @@ class CloneTableScalaSuite extends CloneTableSuiteBase
     val sourceTbl = io.delta.tables.DeltaTable.forPath(source)
     assert(spark.read.format("delta").load(source).count() === 15)
 
-    val desiredTime = "1996-01-12"
-
+    val desiredTime = LocalDate.now().minusDays(5).toString // Date as of 5 days old
     val format = new java.text.SimpleDateFormat("yyyy-MM-dd")
     val time = format.parse(desiredTime).getTime
 
@@ -120,7 +91,7 @@ class CloneTableScalaSuite extends CloneTableSuiteBase
     val fs = path.getFileSystem(spark.sessionState.newHadoopConf())
     // scalastyle:on deltahadoopconfiguration
     fs.setTimes(path, time, 0)
-    if (coordinatedCommitsEnabledInTests) {
+    if (catalogOwnedDefaultCreationEnabledInTests) {
       InCommitTimestampTestUtils.overwriteICTInDeltaFile(
         DeltaLog.forTable(spark, source),
         path,

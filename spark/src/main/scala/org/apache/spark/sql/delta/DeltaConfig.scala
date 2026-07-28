@@ -24,8 +24,9 @@ import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeat
 import org.apache.spark.sql.delta.hooks.AutoCompactType
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.stats.{DataSkippingReader, StatisticsCollection}
-import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.spark.sql.delta.stats.{DataSkippingReaderConf, StatisticsCollection}
+import org.apache.spark.sql.delta.util.{DeltaSqlParserUtils, JsonUtils}
+import org.apache.spark.sql.delta.util.ParquetFormatVersion
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.util.{DateTimeConstants, IntervalUtils}
@@ -43,13 +44,32 @@ case class DeltaConfig[T](
     alternateKeys: Seq[String] = Seq.empty) {
   /**
    * Recover the saved value of this configuration from `Metadata`. If undefined, fall back to
-   * alternate keys, returning defaultValue if none match.
+   * alternate keys, returning defaultValue if none matches.
    */
   def fromMetaData(metadata: Metadata): T = {
-    for (usedKey <- key +: alternateKeys) {
-      metadata.configuration.get(usedKey).map { value => return fromString(value) }
+    fromMap(metadata.configuration)
+  }
+
+  /**
+   * Recover the saved value of this configuration from `Metadata`. If undefined, fall back to
+   * alternate keys, returning `None` if none matches.
+   */
+  protected[delta] def fromMetaDataOption(metadata: Metadata): Option[T] = {
+    fromMapOption(metadata.configuration)
+  }
+
+  def fromMap(configs: Map[String, String]): T = {
+    fromMapOption(configs).getOrElse(fromString(defaultValue))
+  }
+
+  protected[delta] def fromMapOption(configs: Map[String, String]): Option[T] = {
+    for (k <- key +: alternateKeys) {
+      configs.get(k) match {
+        case Some(value) => return Some(fromString(value))
+        case None => // keep looking
+      }
     }
-    fromString(defaultValue)
+    None
   }
 
   /** Validate the setting for this configuration */
@@ -137,7 +157,7 @@ trait DeltaConfigsBase extends DeltaLogging {
    */
   val sqlConfPrefix = "spark.databricks.delta.properties.defaults."
 
-  private val entries = new HashMap[String, DeltaConfig[_]]
+  private[delta] val entries = new HashMap[String, DeltaConfig[_]]
 
   protected def buildConfig[T](
       key: String,
@@ -167,36 +187,59 @@ trait DeltaConfigsBase extends DeltaLogging {
     val allowArbitraryProperties = SparkSession.active.sessionState.conf
       .getConf(DeltaSQLConf.ALLOW_ARBITRARY_TABLE_PROPERTIES)
 
-    configurations.map { case kv @ (key, value) =>
-      key.toLowerCase(Locale.ROOT) match {
-        case lKey if lKey.startsWith("delta.constraints.") =>
-          // This is a CHECK constraint, we should allow it.
-          kv
-        case lKey if lKey.startsWith(TableFeatureProtocolUtils.FEATURE_PROP_PREFIX) =>
-          // This is a table feature, we should allow it.
-          lKey -> value
-        case lKey if lKey.startsWith("delta.") =>
-          Option(entries.get(lKey.stripPrefix("delta."))) match {
-            case Some(deltaConfig) => deltaConfig(value) // validate the value
-            case None if lKey.startsWith(DELTA_UNIVERSAL_FORMAT_CONFIG_PREFIX) =>
-              // always allow any delta universal format config with key converted to lower case
-              lKey -> value
-            case None if allowArbitraryProperties =>
-              logConsole(
-                s"You are setting a property: $key that is not recognized by this " +
-                  "version of Delta")
-              kv
-            case None => throw DeltaErrors.unknownConfigurationKeyException(key)
-          }
-        case _ =>
-          if (entries.containsKey(key)) {
-            logConsole(s"""
-              |You are trying to set a property the key of which is the same as Delta config: $key.
-              |If you are trying to set a Delta config, prefix it with "delta.", e.g. 'delta.$key'.
-            """.stripMargin)
-          }
-          kv
-      }
+    configurations.map { case (key, value) =>
+      validateConfiguration(key, value, allowArbitraryProperties, configurations)
+    }
+  }
+
+  /**
+   * Validates a single key-value entry and returns the normalized key -> value pair.
+   * Throws if the key isn't acceptable as a Delta table property.
+   *
+   * @param allConfigurations the full configuration map; used for cross-key checks
+   *                          (e.g. tombstone / log retention compatibility).
+   */
+  def validateConfiguration(
+      key: String,
+      value: String,
+      allowArbitraryProperties: Boolean,
+      allConfigurations: Map[String, String]): (String, String) = {
+    val kv = key -> value
+    key.toLowerCase(Locale.ROOT) match {
+      case lKey if lKey.startsWith("delta.constraints.") =>
+        // This is a CHECK constraint, we should allow it.
+        kv
+      case lKey if lKey.startsWith(TableFeatureProtocolUtils.FEATURE_PROP_PREFIX) =>
+        // This is a table feature, we should allow it.
+        lKey -> value
+      case lKey if lKey.startsWith("delta.") =>
+        Option(entries.get(lKey.stripPrefix("delta."))) match {
+          case Some(deltaConfig) if (
+            lKey == DeltaConfigs.TOMBSTONE_RETENTION.key.toLowerCase(Locale.ROOT) ||
+            lKey == DeltaConfigs.LOG_RETENTION.key.toLowerCase(Locale.ROOT)) =>
+            val ret = deltaConfig(value) // validate the value
+            validateTombstoneAndLogRetentionDurationCompatibility(allConfigurations)
+            ret
+          case Some(deltaConfig) =>
+            deltaConfig(value) // validate the value
+          case None if lKey.startsWith(DELTA_UNIVERSAL_FORMAT_CONFIG_PREFIX) =>
+            // always allow any delta universal format config with key converted to lower case
+            lKey -> value
+          case None if allowArbitraryProperties =>
+            logConsole(
+              s"You are setting a property: $key that is not recognized by this " +
+                "version of Delta")
+            kv
+          case None => throw DeltaErrors.unknownConfigurationKeyException(key)
+        }
+      case _ =>
+        if (entries.containsKey(key)) {
+          logConsole(s"""
+            |You are trying to set a property the key of which is the same as Delta config: $key.
+            |If you are trying to set a Delta config, prefix it with "delta.", e.g. 'delta.$key'.
+          """.stripMargin)
+        }
+        kv
     }
   }
 
@@ -303,6 +346,41 @@ trait DeltaConfigsBase extends DeltaLogging {
   private def getMicroSeconds(i: CalendarInterval): Long = {
     assert(i.months == 0)
     i.days * DateTimeConstants.MICROS_PER_DAY + i.microseconds
+  }
+
+  private def validateTombstoneAndLogRetentionDurationCompatibility(
+    configs: Map[String, String]): Unit = {
+    if (!SparkSession.active.sessionState.conf
+      .getConf(DeltaSQLConf.ENFORCE_DELETED_FILE_AND_LOG_RETENTION_DURATION_COMPATIBILITY)) {
+      return
+    }
+    val lowerCaseConfigs = configs.iterator.map {
+      case (k, v) => k.toLowerCase(Locale.ROOT) -> v
+    }.toMap
+    val logRetention = DeltaConfigs.LOG_RETENTION
+    val tombstoneRetention = DeltaConfigs.TOMBSTONE_RETENTION
+    val logRetentionDuration: CalendarInterval = logRetention.fromString(
+      lowerCaseConfigs.get(logRetention.key.toLowerCase(Locale.ROOT))
+        .getOrElse(logRetention.defaultValue))
+    val tombstoneRetentionDuration: CalendarInterval = tombstoneRetention.fromString(
+      lowerCaseConfigs.get(tombstoneRetention.key.toLowerCase(Locale.ROOT))
+        .getOrElse(tombstoneRetention.defaultValue))
+
+    val logRetentionFound = lowerCaseConfigs.get(
+      logRetention.key.toLowerCase(Locale.ROOT)).isDefined
+
+    val errorMessage = if (logRetentionFound) {
+      s"The table property ${DeltaConfigs.LOG_RETENTION.key}(${logRetentionDuration.toString}) " +
+        s"needs to be greater than or equal to ${DeltaConfigs.TOMBSTONE_RETENTION.key}" +
+        s"(${tombstoneRetentionDuration.toString})."
+    } else {
+      s"The table property ${DeltaConfigs.TOMBSTONE_RETENTION.key}" +
+        s"(${tombstoneRetentionDuration.toString}) needs to be less than or equal to " +
+        s"${DeltaConfigs.LOG_RETENTION.key}(${logRetentionDuration.toString})."
+    }
+
+    require(getMilliSeconds(logRetentionDuration) >= getMilliSeconds(tombstoneRetentionDuration),
+      errorMessage)
   }
 
   /**
@@ -549,6 +627,30 @@ trait DeltaConfigsBase extends DeltaLogging {
     validationFunction = _ => true,
     helpMessage = "needs to be a boolean.")
 
+  /*
+   * This is the table property that determines which Parquet format version should be used when
+   * writing new Parquet files on the table.
+   */
+  val PARQUET_FORMAT_VERSION: DeltaConfig[Option[String]] =
+    buildConfig[Option[String]](
+      "parquet.format.version",
+      ParquetFormatVersion.V1_0_0.getVersion(),
+      fromString = v => Option(v),
+      validationFunction = v => {
+        v.foreach(s => ParquetFormatVersion.resolve(s))
+        true
+      },
+      s"needs to be a valid Parquet format version " +
+      s"(${ParquetFormatVersion.values().map(_.getVersion).mkString(", ")})"
+    )
+
+  val ENABLE_VARIANT_SHREDDING = buildConfig[Boolean](
+    key = "enableVariantShredding",
+    defaultValue = "false",
+    fromString = _.toBoolean,
+    validationFunction = _ => true,
+    helpMessage = "needs to be a boolean.")
+
   /**
    * Whether this table will automatically optimize the layout of files during writes.
    */
@@ -568,7 +670,7 @@ trait DeltaConfigsBase extends DeltaLogging {
    */
   val DATA_SKIPPING_NUM_INDEXED_COLS = buildConfig[Int](
     "dataSkippingNumIndexedCols",
-    DataSkippingReader.DATA_SKIPPING_NUM_INDEXED_COLS_DEFAULT_VALUE.toString,
+    DataSkippingReaderConf.DATA_SKIPPING_NUM_INDEXED_COLS_DEFAULT_VALUE.toString,
     _.toInt,
     a => a >= -1,
     "needs to be larger than or equal to -1.")
@@ -587,7 +689,7 @@ trait DeltaConfigsBase extends DeltaLogging {
     "dataSkippingStatsColumns",
     null,
     v => Option(v),
-    vOpt => vOpt.forall(v => StatisticsCollection.parseDeltaStatsColumnNames(v).isDefined),
+    vOpt => vOpt.forall(v => DeltaSqlParserUtils.parseMultipartColumnList(v).isDefined),
     """
       |The dataSkippingStatsColumns parameter is a comma-separated list of case-insensitive column
       |identifiers. Each column identifier can consist of letters, digits, and underscores.
@@ -601,6 +703,18 @@ trait DeltaConfigsBase extends DeltaLogging {
       |name is specified in dataSkippingStatsColumns, statistics for all its leaf fields will be
       |collected.
       |""".stripMargin)
+
+  /**
+   * For string columns, how long prefix to store in the data skipping index.
+   * Note that the behavior from table property overrides the config:
+   * [[DeltaSQLConf.DATA_SKIPPING_STRING_PREFIX_LENGTH]]
+   */
+  val DATA_SKIPPING_STRING_PREFIX_LENGTH = buildConfig[Option[Int]](
+    "dataSkippingStringPrefixLength",
+    null,
+    v => Option(v).map(_.toInt),
+    v => v.forall(_ >= 0),
+    "needs to be greater or equal to zero.")
 
   val SYMLINK_FORMAT_MANIFEST_ENABLED = buildConfig[Boolean](
     s"${hooks.GenerateSymlinkManifest.CONFIG_NAME_ROOT}.enabled",
@@ -723,6 +837,22 @@ trait DeltaConfigsBase extends DeltaLogging {
     helpMessage = "needs to be a boolean.")
 
   /**
+   * Controls whether row tracking operations should be suspended. It blocks the assignment of new
+   * baseRowIds as well as copying existing baseRowIds. It is intended to be used when dropping
+   * row tracking. It can be enabled after setting `delta.enableRowTracking` to false.
+   *
+   * WARNING 1: Should never be enabled when `delta.enableRowTracking` is set to true.
+   * WARNING 2: It should never be manually set. It is only safe to be used in the context of
+   *            DROP FEATURE.
+   */
+  val ROW_TRACKING_SUSPENDED = buildConfig[Boolean](
+    key = "rowTrackingSuspended",
+    defaultValue = false.toString,
+    fromString = _.toBoolean,
+    validationFunction = _ => true,
+    helpMessage = "needs to be a boolean.")
+
+  /**
    * Convert the table's metadata into other storage formats after each Delta commit.
    * Only Iceberg is supported for now
    */
@@ -755,6 +885,43 @@ trait DeltaConfigsBase extends DeltaLogging {
     helpMessage = "needs to be a boolean."
   )
 
+  val ICEBERG_COMPAT_V3_ENABLED = buildConfig[Option[Boolean]](
+    key = "enableIcebergCompatV3",
+    defaultValue = null,
+    fromString = v => Option(v).map(_.toBoolean),
+    validationFunction = _ => true,
+    helpMessage = "needs to be a boolean."
+  )
+
+  /**
+   * Guard property automatically set when a new IcebergCompat table is created
+   * Atomic UniForm Iceberg conversion requires this property to be present
+   */
+  val ICEBERG_ATOMIC_CONVERSION_SUPPORTED = buildConfig[Boolean](
+    "universalFormat.iceberg.atomicConversion.supported",
+    "false",
+    _.toBoolean,
+    _ => true,
+    "needs to be a boolean.",
+    userConfigurable = true
+  )
+
+  val CAST_ICEBERG_TIME_TYPE = buildConfig[Boolean](
+    key = "castIcebergTimeType",
+    defaultValue = "false",
+    fromString = _.toBoolean,
+    validationFunction = _ => true,
+    helpMessage = "Casting Iceberg TIME type to Spark Long type enabled"
+  )
+
+  val IGNORE_ICEBERG_BUCKET_PARTITION = buildConfig[Boolean](
+    key = "ignoreIcebergBucketPartition",
+    defaultValue = "false",
+    fromString = _.toBoolean,
+    validationFunction = _ => true,
+    helpMessage = "Ignore Iceberg bucket partition, which means " +
+      "converting source iceberg table to a non-partition delta table"
+  )
   /**
    * Enable optimized writes into a Delta table. Optimized writes adds an adaptive shuffle before
    * the write to write compacted files into a Delta table during a write.
@@ -853,6 +1020,29 @@ trait DeltaConfigsBase extends DeltaLogging {
     _.toLong,
     _ >= 0,
     "needs to be greater or equal to zero.")
+
+  /**
+   * If true, enables the MaterializePartitionColumns table feature which requires partition
+   * columns to be materialized for future parquet data files.
+   */
+  val ENABLE_MATERIALIZE_PARTITION_COLUMNS_FEATURE = buildConfig[Option[Boolean]](
+    "enableMaterializePartitionColumnsFeature",
+    null,
+    v => Option(v).map(_.toBoolean),
+    _ => true,
+    "needs to be a boolean.")
+
+
+  /**
+   * If false, does not write partition columns in parquet data files. Defaults to
+   * writing partition columns in parquet data files if unset.
+   */
+  val WRITE_PARTITION_COLUMNS_TO_PARQUET = buildConfig[Option[Boolean]](
+    "writePartitionColumnsToParquet",
+    null,
+    v => Option(v).map(_.toBoolean),
+    _ => true,
+    "needs to be a boolean.")
 }
 
 object DeltaConfigs extends DeltaConfigsBase

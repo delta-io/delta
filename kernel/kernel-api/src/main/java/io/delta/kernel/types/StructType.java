@@ -40,6 +40,25 @@ public final class StructType extends DataType {
   }
 
   public StructType(List<StructField> fields) {
+    // Extract all nested fields and ensure that they do not contain metadata columns
+    validateNoMetadataColumns(
+        fields.stream()
+            .filter(f -> !(f.getDataType() instanceof BasePrimitiveType))
+            .collect(Collectors.toList()));
+
+    // Ensure that there are no duplicate metadata columns at the top level
+    Set<MetadataColumnSpec> seenMetadataCols = new HashSet<>();
+    for (StructField field : fields) {
+      if (field.isMetadataColumn()) {
+        MetadataColumnSpec colType = field.getMetadataColumnSpec();
+        if (seenMetadataCols.contains(colType)) {
+          throw new IllegalArgumentException(
+              String.format("Duplicate metadata column %s found in struct type", colType));
+        }
+        seenMetadataCols.add(colType);
+      }
+    }
+
     this.fields = fields;
     this.fieldNames = fields.stream().map(f -> f.getName()).collect(Collectors.toList());
 
@@ -72,6 +91,11 @@ public final class StructType extends DataType {
     return add(new StructField(name, dataType, nullable, metadata));
   }
 
+  /** Add a predefined metadata column of {@link MetadataColumnSpec} to the struct type. */
+  public StructType addMetadataColumn(String name, MetadataColumnSpec colType) {
+    return add(StructField.createMetadataColumn(name, colType));
+  }
+
   /** @return array of fields */
   public List<StructField> fields() {
     return Collections.unmodifiableList(fields);
@@ -87,8 +111,27 @@ public final class StructType extends DataType {
     return fields.size();
   }
 
+  /** @return the index of the field with the given name, or -1 if not found */
   public int indexOf(String fieldName) {
-    return fieldNames.indexOf(fieldName);
+    Tuple2<StructField, Integer> fieldAndOrdinal = nameToFieldAndOrdinal.get(fieldName);
+    return fieldAndOrdinal != null ? fieldAndOrdinal._2 : -1;
+  }
+
+  /** @return the index of the metadata column of the given spec, or -1 if not found */
+  public int indexOf(MetadataColumnSpec spec) {
+    // We only allow each metadata column type to appear at most once in the schema and only at top
+    // level (i.e., not nested).
+    for (int i = 0; i < fields.size(); i++) {
+      if (spec.equals(fields.get(i).getMetadataColumnSpec())) {
+        return i;
+      }
+    }
+    return -1; // Not found
+  }
+
+  /** @return true if the struct type contains a metadata column of the given spec */
+  public boolean contains(MetadataColumnSpec spec) {
+    return indexOf(spec) >= 0;
   }
 
   public StructField get(String fieldName) {
@@ -132,6 +175,45 @@ public final class StructType extends DataType {
             .allMatch(result -> result);
   }
 
+  /**
+   * Checks whether the given {@code dataType} is compatible with this type when writing data.
+   * Collation differences are ignored.
+   *
+   * <p>This method is intended to be used during the write path to validate that an input type
+   * matches the expected schema before data is written.
+   *
+   * <p>It should not be used in other cases, such as the read path.
+   *
+   * @param dataType the input data type being written
+   * @return {@code true} if the input type is compatible with this type.
+   */
+  @Override
+  public boolean isWriteCompatible(DataType dataType) {
+    if (this == dataType) {
+      return true;
+    }
+    if (dataType == null || getClass() != dataType.getClass()) {
+      return false;
+    }
+    StructType structType = (StructType) dataType;
+    return this.length() == structType.length()
+        && fieldNames.equals(structType.fieldNames)
+        && IntStream.range(0, this.length())
+            .mapToObj(
+                i -> {
+                  StructField thisField = this.at(i);
+                  StructField otherField = structType.at(i);
+                  return (thisField == null && otherField == null)
+                      || (thisField != null && thisField.isWriteCompatible(otherField));
+                })
+            .allMatch(result -> result);
+  }
+
+  @Override
+  public boolean isNested() {
+    return true;
+  }
+
   @Override
   public String toString() {
     return String.format(
@@ -155,5 +237,35 @@ public final class StructType extends DataType {
   @Override
   public int hashCode() {
     return Objects.hash(nameToFieldAndOrdinal, fields, fieldNames);
+  }
+
+  /**
+   * Validates that there are no metadata columns in a list of StructFields.
+   *
+   * @param fields The list of fields to validate
+   * @throws IllegalArgumentException if any nested metadata columns are found
+   */
+  private void validateNoMetadataColumns(List<StructField> fields) {
+    for (StructField field : fields) {
+      DataType dataType = field.getDataType();
+
+      if (dataType instanceof StructType) {
+        StructType structType = (StructType) dataType;
+        // We filter out nested StructTypes since they have already been validated at their creation
+        validateNoMetadataColumns(
+            structType.fields().stream()
+                .filter(f -> !(f.getDataType() instanceof StructType))
+                .collect(Collectors.toList()));
+      } else if (dataType instanceof MapType) {
+        MapType mapType = (MapType) dataType;
+        validateNoMetadataColumns(Arrays.asList(mapType.getKeyField(), mapType.getValueField()));
+      } else if (dataType instanceof ArrayType) {
+        ArrayType arrayType = (ArrayType) dataType;
+        validateNoMetadataColumns(Collections.singletonList(arrayType.getElementField()));
+      } else if (field.isMetadataColumn()) {
+        throw new IllegalArgumentException(
+            "Metadata columns are only allowed at the top level of a schema.");
+      }
+    }
   }
 }

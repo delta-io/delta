@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.deletionvectors
 import java.io.{File, FileNotFoundException}
 import java.net.URISyntaxException
 
-import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeletionVectorsTestUtils, DeltaChecksumException, DeltaConfigs, DeltaExcludedBySparkVersionTestMixinShims, DeltaLog, DeltaMetricsUtils, DeltaTestUtilsForTempViews}
+import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeletionVectorsTestUtils, DeltaChecksumException, DeltaConfigs, DeltaLog, DeltaMetricsUtils, DeltaTestUtilsForTempViews}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, RemoveFile}
 import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor.EMPTY
@@ -36,11 +36,12 @@ import org.apache.hadoop.fs.Path
 import org.apache.parquet.format.converter.ParquetMetadataConverter
 import org.apache.parquet.hadoop.ParquetFileReader
 
+import org.apache.spark.SparkConf
 import org.apache.spark.SparkException
 import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.plans.logical.{AppendData, Subquery}
-import org.apache.spark.sql.execution.FileSourceScanExec
+import org.apache.spark.sql.execution.FileSourceScanLike
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
@@ -50,8 +51,7 @@ class DeletionVectorsSuite extends QueryTest
   with DeltaSQLCommandTest
   with DeletionVectorsTestUtils
   with DeltaTestUtilsForTempViews
-  with DeltaExceptionTestUtils
-  with DeltaExcludedBySparkVersionTestMixinShims {
+  with DeltaExceptionTestUtils {
   import testImplicits._
 
   override def beforeAll(): Unit = {
@@ -299,7 +299,7 @@ class DeletionVectorsSuite extends QueryTest
       }
     }
 
-    testSparkMasterOnly(s"variant types DELETE with DVs with column mapping mode=$mode") {
+    test(s"variant types DELETE with DVs with column mapping mode=$mode") {
       withSQLConf("spark.databricks.delta.properties.defaults.columnMapping.mode" -> mode) {
         withTempDir { dirName =>
           val path = dirName.getAbsolutePath
@@ -438,8 +438,9 @@ class DeletionVectorsSuite extends QueryTest
           val expectedDVFileCount = targetDVFileSize match {
             // Each AddFile will have its own DV file
             case 2 => numFilesWithDVs
-            // Each DV size is about 34bytes according the latest format.
-            case 200 => numFilesWithDVs / (200 / 34).floor.toInt
+            // Each DV size is about 34bytes according the latest format, plus 4 bytes for
+            // checksum and another 4 bytes for data length.
+            case 200 => (numFilesWithDVs.toDouble / (200 / (34 + 4 + 4)).toDouble).ceil.toInt
             // Expect all DVs in one file
             case 2000000 => 1
             case default =>
@@ -460,6 +461,25 @@ class DeletionVectorsSuite extends QueryTest
             Seq.range(0, 200).filterNot(
               Seq.range(start = 0, end = 20, step = 2).contains(_)).toDF())
         }
+      }
+    }
+  }
+
+  test("DELETE with DVs - table with a user column named 'path' does not conflict") {
+    withDeletionVectorsEnabled() {
+      withTempDir { dir =>
+        val tablePath = dir.getAbsolutePath
+        import testImplicits._
+        val data = (0 until 10).map(i => (i, s"/path/to/value/$i"))
+        data.toDF("value", "path").write.format("delta").save(tablePath)
+
+        val deltaTable = io.delta.tables.DeltaTable.forPath(tablePath)
+        deltaTable.delete("value < 3")
+
+        checkAnswer(
+          spark.read.format("delta").load(tablePath).orderBy("value"),
+          (3 until 10).map(i => Row(i, s"/path/to/value/$i"))
+        )
       }
     }
   }
@@ -930,8 +950,11 @@ class DeletionVectorsWithPredicatePushdownSuite extends DeletionVectorsSuite {
   }
 
   override def afterAll(): Unit = {
-    super.afterAll()
-    sql(s"DROP TABLE IF EXISTS $multiRowgroupTable")
+    try {
+      sql(s"DROP TABLE IF EXISTS $multiRowgroupTable")
+    } finally {
+      super.afterAll()
+    }
   }
 
   private def testPredicatePushDown(
@@ -1090,7 +1113,7 @@ class DeletionVectorsWithPredicatePushdownSuite extends DeletionVectorsSuite {
 
   private def assertPredicatesArePushedDown(df: DataFrame): Unit = {
     val scan = df.queryExecution.executedPlan.collectFirst {
-      case scan: FileSourceScanExec => scan
+      case scan: FileSourceScanLike => scan
     }
     assert(scan.map(_.dataFilters.nonEmpty).getOrElse(true))
   }

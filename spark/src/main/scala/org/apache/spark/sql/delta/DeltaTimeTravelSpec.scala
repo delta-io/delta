@@ -33,11 +33,14 @@ import org.apache.spark.sql.types.{LongType, TimestampType}
  *                  be a subquery.
  * @param version The version of the table to time travel to. Must be >= 0.
  * @param creationSource The API used to perform time travel, e.g. `atSyntax`, `dfReader` or SQL
+ * @param enforceRetention Whether to enforce file delete retention and block access to expired
+ *                         snapshot regardless of the VACUUM status.
  */
 case class DeltaTimeTravelSpec(
     timestamp: Option[Expression],
     version: Option[Long],
-    creationSource: Option[String]) extends DeltaLogging {
+    creationSource: Option[String],
+    enforceRetention: Boolean = true) extends DeltaLogging {
 
   assert(version.isEmpty ^ timestamp.isEmpty,
     "Either the version or timestamp should be provided for time travel")
@@ -69,6 +72,14 @@ case class DeltaTimeTravelSpec(
       throw DeltaErrors.timestampInvalid(evaluable)
     }
     DateTimeUtils.toJavaTimestamp(castResult.asInstanceOf[java.lang.Long])
+  }
+
+  /**
+   * Compute the timestamp to use for time travelling the relation from the given expression for
+   * the given time zone if this spec has a timestamp defined.
+   */
+  def getTimestampOpt(conf: SQLConf): Option[Timestamp] = {
+    timestamp.map(_ => getTimestamp(conf))
   }
 }
 

@@ -1,0 +1,317 @@
+/*
+ * Copyright (2025) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package io.delta.kernel.unitycatalog
+
+import java.lang.{Long => JLong}
+import java.net.URI
+import java.util.{Collections, List => JList, Optional}
+import java.util.concurrent.ConcurrentHashMap
+
+import scala.collection.JavaConverters._
+import scala.collection.mutable.ArrayBuffer
+
+import io.delta.storage.commit.{Commit, CommitFailedException, GetCommitsResponse, TableIdentifier}
+import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
+import io.delta.storage.commit.uccommitcoordinator.{InvalidTargetTableException, UCClient}
+import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
+
+object InMemoryUCClient {
+
+  /**
+   * Internal data structure to track table state including commits and version information.
+   *
+   * Thread Safety: All public methods are synchronized to ensure thread-safe access to the
+   * internal mutable state. This class is designed to be safely accessed by multiple threads
+   * concurrently.
+   */
+  class TableData(
+      private var maxRatifiedVersion: Long,
+      private val commits: ArrayBuffer[Commit]) {
+
+    // For test only, since UC doesn't store these as top-level entities.
+    private var currentProtocolOpt: Option[AbstractProtocol] = None
+    private var currentMetadataOpt: Option[AbstractMetadata] = None
+    private var currentIcebergOpt: Option[IcebergMetadata] = None
+
+    // For test only: capture the read-side (old) Protocol/Metadata and domain metadata that the
+    // last commit() call received. The UCClient ignores these; capturing them lets tests assert
+    // the committer forwards them, which is needed by the UCDeltaClient.
+    private var lastOldProtocolOpt: Option[AbstractProtocol] = None
+    private var lastOldMetadataOpt: Option[AbstractMetadata] = None
+    private var lastDomainMetadatas: List[AbstractDomainMetadata] = Nil
+
+    /** @return the maximum ratified version. */
+    def getMaxRatifiedVersion: Long = synchronized { maxRatifiedVersion }
+
+    /** @return An immutable list of all commits. */
+    def getCommits: List[Commit] = synchronized { commits.toList }
+
+    /** @return commits filtered by version range. */
+    def getCommitsInRange(
+        startVersion: Optional[JLong],
+        endVersion: Optional[JLong]): List[Commit] = synchronized {
+      commits
+        .filter { commit =>
+          startVersion.orElse(0L) <= commit.getVersion &&
+          commit.getVersion <= endVersion.orElse(Long.MaxValue)
+        }
+        .toList
+    }
+
+    /** @return the current protocol. For test only. */
+    def getCurrentProtocolOpt: Option[AbstractProtocol] = synchronized { currentProtocolOpt }
+
+    /** @return the current metadata. For test only. */
+    def getCurrentMetadataOpt: Option[AbstractMetadata] = synchronized { currentMetadataOpt }
+
+    /** @return the current Iceberg metadata. For test only. */
+    def getCurrentIcebergOpt: Option[IcebergMetadata] = synchronized {
+      currentIcebergOpt
+    }
+
+    /** @return the read-side (old) protocol passed to the last commit(). For test only. */
+    def getLastOldProtocolOpt: Option[AbstractProtocol] = synchronized { lastOldProtocolOpt }
+
+    /** @return the read-side (old) metadata passed to the last commit(). For test only. */
+    def getLastOldMetadataOpt: Option[AbstractMetadata] = synchronized { lastOldMetadataOpt }
+
+    /** @return the domain metadata passed to the last commit(). For test only. */
+    def getLastDomainMetadatas: List[AbstractDomainMetadata] = synchronized { lastDomainMetadatas }
+
+    /** Records the read-side P&M and domain metadata seen by a commit(). For test only. */
+    def recordCommitInputs(
+        oldProtocol: Optional[AbstractProtocol],
+        oldMetadata: Optional[AbstractMetadata],
+        domainMetadatas: JList[AbstractDomainMetadata]): Unit = synchronized {
+      lastOldProtocolOpt = if (oldProtocol.isPresent) Some(oldProtocol.get()) else None
+      lastOldMetadataOpt = if (oldMetadata.isPresent) Some(oldMetadata.get()) else None
+      lastDomainMetadatas = domainMetadatas.asScala.toList
+    }
+
+    /** Updates the Iceberg metadata. */
+    def updateIcebergMetadata(icebergMetadata: IcebergMetadata): Unit = synchronized {
+      currentIcebergOpt = Some(icebergMetadata)
+    }
+
+    /** Appends a new commit to this table and atomically updates protocol/metadata. */
+    def appendCommit(
+        commit: Commit,
+        newProtocol: Optional[AbstractProtocol] = Optional.empty(),
+        newMetadata: Optional[AbstractMetadata] = Optional.empty()): Unit = synchronized {
+      val expectedCommitVersion = maxRatifiedVersion + 1
+
+      if (commit.getVersion != expectedCommitVersion) {
+        throw new CommitFailedException(
+          false, /* retryable */
+          false, /* conflict */
+          s"Expected commit version $expectedCommitVersion but got ${commit.getVersion}")
+      }
+
+      // Atomically update everything
+      commits += commit
+      maxRatifiedVersion = commit.getVersion
+      if (newProtocol.isPresent) currentProtocolOpt = Some(newProtocol.get())
+      if (newMetadata.isPresent) currentMetadataOpt = Some(newMetadata.get())
+    }
+
+    def forceRemoveCommitsUpToVersion(version: Long): Unit = synchronized {
+      if (version < 0) {
+        throw new IllegalArgumentException(s"Version must be non-negative, but got: $version")
+      }
+
+      val indexToRemove = commits.lastIndexWhere(_.getVersion <= version)
+      if (indexToRemove >= 0) {
+        commits.remove(0, indexToRemove + 1)
+      }
+    }
+  }
+
+  object TableData {
+    def afterCreate(): TableData = new TableData(0, ArrayBuffer.empty[Commit])
+  }
+
+  /** Record of arguments passed to {@code finalizeCreate}. */
+  case class FinalizeCreateRecord(
+      tableName: String,
+      catalogName: String,
+      schemaName: String,
+      storageLocation: String,
+      columns: java.util.List[UCClient.ColumnDef],
+      protocol: AbstractProtocol,
+      properties: java.util.Map[String, String],
+      lastCommitTimestampMs: Long,
+      domainMetadata: java.util.List[AbstractDomainMetadata])
+}
+
+/**
+ * In-memory Unity Catalog client implementation for testing.
+ *
+ * Provides a mock implementation of UCClient that stores all table data in memory. This is useful
+ * for unit tests that need to simulate Unity Catalog operations without connecting to an actual UC
+ * service.
+ *
+ * Thread Safety: This implementation is thread-safe for concurrent access. Multiple threads can
+ * safely perform operations on different tables simultaneously. Operations on the same table are
+ * internally synchronized by the [[TableData]] class.
+ */
+class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
+
+  import InMemoryUCClient._
+
+  /** Map from UC_TABLE_ID to TABLE_DATA */
+  private val tables = new ConcurrentHashMap[String, TableData]()
+
+  override def getMetastoreId: String = ucMetastoreId
+
+  /** Convenience method for tests to commit with default parameters. */
+  def commitWithDefaults(
+      tableId: String,
+      tableUri: URI,
+      commit: Optional[Commit],
+      lastKnownBackfilledVersion: Optional[JLong] = Optional.empty(),
+      newMetadata: Optional[AbstractMetadata] = Optional.empty(),
+      newProtocol: Optional[AbstractProtocol] = Optional.empty()): Unit = {
+    this.commit(
+      tableId,
+      tableUri,
+      null, // tableIdentifier
+      commit,
+      lastKnownBackfilledVersion,
+      Optional.empty(), // oldMetadata
+      newMetadata,
+      Optional.empty(), // oldProtocol
+      newProtocol,
+      Collections.emptyList[AbstractDomainMetadata](), // transactionDomainMetadata
+      Optional.empty() // uniform
+    )
+  }
+
+  // scalastyle:off argcount
+  override def commit(
+      tableId: String,
+      tableUri: URI,
+      tableIdentifier: TableIdentifier,
+      commitOpt: Optional[Commit] = Optional.empty(),
+      lastKnownBackfilledVersionOpt: Optional[JLong],
+      oldMetadata: Optional[AbstractMetadata],
+      newMetadata: Optional[AbstractMetadata],
+      oldProtocol: Optional[AbstractProtocol],
+      newProtocol: Optional[AbstractProtocol],
+      transactionDomainMetadata: JList[AbstractDomainMetadata],
+      uniform: Optional[UniformMetadata]): Unit = {
+    forceThrowInCommitMethod()
+
+    val tableData = getOrCreateTableIfNotExists(tableId)
+
+    tableData.synchronized {
+      tableData.recordCommitInputs(oldProtocol, oldMetadata, transactionDomainMetadata)
+
+      commitOpt.ifPresent { commit =>
+        tableData.appendCommit(commit, newProtocol, newMetadata)
+      }
+
+      lastKnownBackfilledVersionOpt.ifPresent { lastKnownBackfilledVersion =>
+        tableData.forceRemoveCommitsUpToVersion(lastKnownBackfilledVersion)
+      }
+
+      // Update Iceberg metadata if provided in uniform
+      uniform.ifPresent { u =>
+        u.getIcebergMetadata.ifPresent { iceberg =>
+          tableData.updateIcebergMetadata(iceberg)
+        }
+      }
+    }
+  }
+  // scalastyle:on argcount
+
+  override def getCommits(
+      tableId: String,
+      tableUri: URI,
+      tableIdentifier: TableIdentifier,
+      startVersion: Optional[JLong],
+      endVersion: Optional[JLong]): GetCommitsResponse = {
+    val tableData = getTableDataElseThrow(tableId)
+    val filteredCommits = tableData.getCommitsInRange(startVersion, endVersion)
+    new GetCommitsResponse(filteredCommits.asJava, tableData.getMaxRatifiedVersion)
+  }
+
+  /** Captured arguments from the last {@code finalizeCreate} call, for test assertions. */
+  private var lastFinalizeCreateRecord: Option[InMemoryUCClient.FinalizeCreateRecord] = None
+
+  private[unitycatalog] def getLastFinalizeCreateRecord
+      : Option[InMemoryUCClient.FinalizeCreateRecord] =
+    lastFinalizeCreateRecord
+
+  override def finalizeCreate(
+      tableName: String,
+      catalogName: String,
+      schemaName: String,
+      storageLocation: String,
+      columns: java.util.List[UCClient.ColumnDef],
+      protocol: AbstractProtocol,
+      properties: java.util.Map[String, String],
+      lastCommitTimestampMs: Long,
+      domainMetadata: java.util.List[AbstractDomainMetadata]): Unit = {
+    forceThrowInFinalizeCreateMethod()
+    lastFinalizeCreateRecord = Some(InMemoryUCClient.FinalizeCreateRecord(
+      tableName,
+      catalogName,
+      schemaName,
+      storageLocation,
+      columns,
+      protocol,
+      properties,
+      lastCommitTimestampMs,
+      domainMetadata))
+    val fqn = s"$catalogName.$schemaName.$tableName"
+    Option(tables.putIfAbsent(fqn, TableData.afterCreate()))
+      .foreach(_ => throw new IllegalArgumentException(s"$fqn already exists"))
+  }
+
+  override def close(): Unit = {}
+
+  /** Can be overridden to force an exception in finalizeCreate. */
+  protected def forceThrowInFinalizeCreateMethod(): Unit = {}
+
+  /** Visible for testing. Can be overridden to force an exception in commit method. */
+  protected def forceThrowInCommitMethod(): Unit = {}
+
+  private[unitycatalog] def insertTableDataAfterCreate(ucTableId: String): Unit = {
+    Option(tables.putIfAbsent(ucTableId, TableData.afterCreate()))
+      .foreach(_ => throw new IllegalArgumentException(s"Table $ucTableId already exists"))
+  }
+
+  private[unitycatalog] def insertTableData(ucTableId: String, tableData: TableData): Unit = {
+    Option(tables.putIfAbsent(ucTableId, tableData))
+      .foreach(_ => throw new IllegalArgumentException(s"Table $ucTableId already exists"))
+  }
+
+  private[unitycatalog] def getTablesCopy: Map[String, TableData] = {
+    tables.asScala.toMap
+  }
+
+  /** Retrieves table data for the given table ID or throws an exception if not found. */
+  private[unitycatalog] def getTableDataElseThrow(tableId: String): TableData = {
+    Option(tables.get(tableId))
+      .getOrElse(throw new InvalidTargetTableException(s"Table not found: $tableId"))
+  }
+
+  /** Retrieves the table data for the given table ID, creating it if it does not exist. */
+  private def getOrCreateTableIfNotExists(tableId: String): TableData = {
+    tables.computeIfAbsent(tableId, _ => TableData.afterCreate())
+  }
+}

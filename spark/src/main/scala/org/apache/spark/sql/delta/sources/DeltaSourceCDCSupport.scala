@@ -16,10 +16,13 @@
 
 package org.apache.spark.sql.delta.sources
 
+import java.io.FileNotFoundException
+
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
+import org.apache.spark.sql.delta.DeltaErrors
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.DataFrame
@@ -109,7 +112,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
     def filterFiles(
         fromVersion: Long,
         fromIndex: Long,
-        limits: Option[AdmissionLimits],
+        limits: Option[DeltaSource.AdmissionLimits],
         endOffset: Option[DeltaSourceOffset] = None): Iterator[IndexedFile] = {
 
       if (limits.isEmpty) {
@@ -200,21 +203,53 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
     val changes = getFileChangesForCDC(
       startVersion, startIndex, isInitialSnapshot, limits = None, Some(endOffset))
 
+    // Versions before startVersion have already been processed, so we treat
+    // startVersion - 1 as already "seen".
+    var maxVersionSeen = startVersion - 1
+    // The last commit version we expect the iterator to cover.
+    // If endOffset.index < 0, we don't need to read any file from
+    // endOffset.reservoirVersion, so the last version we must see is one before it.
+    // Similarly if start >= end (no data to read from that version), subtract 1.
+    val lastExpectedVersion = if (endOffset.index >= 0 &&
+      (startVersion < endOffset.reservoirVersion || startIndex < endOffset.index)) {
+      endOffset.reservoirVersion
+    } else {
+      endOffset.reservoirVersion - 1
+    }
+    // iterator will be materialized during CDCReader.changesToDF
     val groupedFileAndCommitInfoActions =
       changes.map { case (v, indexFiles, commitInfoOpt) =>
+        maxVersionSeen = v
         (v, indexFiles.filter(_.hasFileAction).map(_.getFileAction).toSeq ++ commitInfoOpt)
       }
 
     val (result, duration) = Utils.timeTakenMs {
-      CDCReader
-        .changesToDF(
-          readSnapshotDescriptor,
-          startVersion,
-          endOffset.reservoirVersion,
-          groupedFileAndCommitInfoActions,
-          spark,
-          isStreaming = true)
-        .fileChangeDf
+      // CDCReader calls getSnapshotAt directly instead of using DeltaSource's wrapper, which can
+      // result in FileNotFoundExceptions from the Delta log. We wrap these to present a clearer
+      // error message.
+      try {
+        CDCReader
+          .changesToDF(
+            readSnapshotDescriptor,
+            startVersion,
+            endOffset.reservoirVersion,
+            groupedFileAndCommitInfoActions,
+            spark,
+            catalogTableOpt,
+            isStreaming = true)
+          .fileChangeDf
+      } catch {
+        case e: FileNotFoundException =>
+          throw DeltaErrors.logFileNotFoundExceptionForStreamingSource(e)
+      }
+    }
+    if (spark.sessionState.conf.getConf(DeltaSQLConf.STREAMING_TRAILING_COMMIT_VALIDATION) &&
+        maxVersionSeen < lastExpectedVersion) {
+      recordTrailingCommitMissingEvent(
+        startVersion, startIndex, isInitialSnapshot, endOffset,
+        lastExpectedVersion, maxVersionSeen, isStreamingCDC = true)
+      throw DeltaErrors.streamingTrailingCommitMissing(
+        lastExpectedVersion, maxVersionSeen)
     }
     logInfo(log"Getting CDC dataFrame for delta_log_path=" +
       log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)} with " +
@@ -238,7 +273,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
       fromVersion: Long,
       fromIndex: Long,
       isInitialSnapshot: Boolean,
-      limits: Option[AdmissionLimits],
+      limits: Option[DeltaSource.AdmissionLimits],
       endOffset: Option[DeltaSourceOffset],
       verifyMetadataAction: Boolean = true
   ): Iterator[(Long, Iterator[IndexedFile], Option[CommitInfo])] = {
@@ -250,7 +285,8 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
       //    in that case, we need to recompute the start snapshot and evolve the schema if needed
       require(options.failOnDataLoss || !trackingMetadataChange,
         "Using schema from schema tracking log cannot tolerate missing commit files.")
-      deltaLog.getChanges(startVersion, options.failOnDataLoss).map { case (version, actions) =>
+      deltaLog.getChanges(
+          startVersion, catalogTableOpt, options.failOnDataLoss).map { case (version, actions) =>
         // skipIndexedFile must be applied after creating IndexedFile so that
         // IndexedFile.index is consistent across all versions.
         val (fileActions, skipIndexedFile, metadataOpt, protocolOpt, commitInfoOpt) =

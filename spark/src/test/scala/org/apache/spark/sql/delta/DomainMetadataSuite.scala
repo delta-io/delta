@@ -22,6 +22,7 @@ import java.util.concurrent.ExecutionException
 import scala.util.{Failure, Success, Try}
 
 import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Truncate}
+import org.apache.spark.sql.delta.Relocated.CheckpointFileManager
 import org.apache.spark.sql.delta.actions.{DomainMetadata, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -32,7 +33,6 @@ import org.junit.Assert._
 
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.execution.streaming.CheckpointFileManager
 import org.apache.spark.sql.test.SharedSparkSession
 
 class DomainMetadataSuite
@@ -312,10 +312,8 @@ class DomainMetadataSuite
       val e = intercept[DeltaIllegalArgumentException] {
         deltaTable.startTransactionWithInitialSnapshot().commit(domainMetadata, Truncate())
       }
-      assertEquals(e.getMessage,
-        "[DELTA_DUPLICATE_DOMAIN_METADATA_INTERNAL_ERROR] " +
-          "Internal error: two DomainMetadata actions within the same transaction have " +
-          "the same domain testDomain1")
+      checkError(e, "DELTA_DUPLICATE_DOMAIN_METADATA_INTERNAL_ERROR", "42601",
+        Map("domainName" -> "testDomain1"))
     }
   }
 
@@ -327,10 +325,8 @@ class DomainMetadataSuite
       val e = intercept[DeltaIllegalArgumentException] {
         deltaLog.startTransaction().commit(domainMetadata, Truncate())
       }
-      assertEquals(e.getMessage,
-        "[DELTA_DOMAIN_METADATA_NOT_SUPPORTED] " +
-          "Detected DomainMetadata action(s) for domains [testDomain1], " +
-          "but DomainMetadataTableFeature is not enabled.")
+      checkError(e, "DELTA_DOMAIN_METADATA_NOT_SUPPORTED", "0A000",
+        Map("domainNames" -> "[testDomain1]"))
     }
   }
 

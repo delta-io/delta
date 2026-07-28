@@ -26,7 +26,7 @@ import io.delta.tables.execution._
 import org.apache.spark.annotation._
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.plans.logical.{ColumnDefinitionShims, CreateTable, ReplaceTable}
+import org.apache.spark.sql.catalyst.plans.logical.{ColumnDefinition, CreateTable, ReplaceTable}
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.connector.expressions.Transform
 import org.apache.spark.sql.execution.SQLExecution
@@ -362,18 +362,17 @@ class DeltaTableBuilder private[tables](
       provider = Some(FORMAT_NAME),
       options = Map.empty,
       location = location,
-      serde = None,
       comment = tblComment,
-      external = false
-    )
+      collation = None,
+      serde = None,
+      external = false)
 
     val stmt = builderOption match {
       case CreateTableOptions(ifNotExists) =>
         val unresolvedTable = org.apache.spark.sql.catalyst.analysis.UnresolvedIdentifier(table)
         CreateTable(
           unresolvedTable,
-          // Callout: Spark 3.5 returns StructType, Spark 4.0 returns Seq[ColumnDefinition]
-          ColumnDefinitionShims.parseColumns(columns.toSeq, spark.sessionState.sqlParser),
+          columns.map(ColumnDefinition.fromV1Column(_, spark.sessionState.sqlParser)).toSeq,
           partitioning,
           tableSpec,
           ifNotExists)
@@ -381,8 +380,7 @@ class DeltaTableBuilder private[tables](
         val unresolvedTable = org.apache.spark.sql.catalyst.analysis.UnresolvedIdentifier(table)
         ReplaceTable(
           unresolvedTable,
-          // Callout: Spark 3.5 returns StructType, Spark 4.0 returns Seq[ColumnDefinition]
-          ColumnDefinitionShims.parseColumns(columns.toSeq, spark.sessionState.sqlParser),
+          columns.map(ColumnDefinition.fromV1Column(_, spark.sessionState.sqlParser)).toSeq,
           partitioning,
           tableSpec,
           orCreate)

@@ -21,7 +21,7 @@ import java.util.concurrent.TimeUnit.NANOSECONDS
 
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaErrors, DeltaLog, DeltaOptions, DeltaTableIdentifier, DeltaTableUtils, OptimisticTransaction, ResolvedPathBasedNonDeltaTable}
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaErrors, DeltaLog, DeltaOptions, DeltaTableIdentifier, DeltaTableUtils, NumRecordsStats, OptimisticTransaction, ResolvedPathBasedNonDeltaTable}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.{DeltaTableV2, IcebergTablePlaceHolder}
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
@@ -38,17 +38,19 @@ import org.apache.spark.sql.catalyst.analysis.{Analyzer, EliminateSubqueryAliase
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions.{Expression, SubqueryExpression}
 import org.apache.spark.sql.catalyst.parser.ParseException
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, SubqueryAlias}
 import org.apache.spark.sql.connector.catalog.V1Table
+import org.apache.spark.sql.delta.DeltaOperations.Operation
+import org.apache.spark.sql.delta.sources.DeltaSQLConf.DELTA_COLLECT_STATS
 import org.apache.spark.sql.execution.SQLExecution
-import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelationWithTable}
-import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
+import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation, LogicalRelationWithTable}
+import org.apache.spark.sql.execution.datasources.v2.{DataSourceV2Relation, DataSourceV2RelationShim}
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 
 /**
  * Helper trait for all delta commands.
  */
-trait DeltaCommand extends DeltaLogging {
+trait DeltaCommand extends DeltaLogging with DeltaCommandInvariants {
   /**
    * Converts string predicates into [[Expression]]s relative to a transaction.
    *
@@ -62,6 +64,8 @@ trait DeltaCommand extends DeltaLogging {
     } catch {
       case e: ParseException =>
         throw DeltaErrors.failedRecognizePredicate(predicate, e)
+      case e: NullPointerException if predicate == null =>
+        throw DeltaErrors.failedRecognizePredicate("NULL", e)
     }
   }
 
@@ -198,7 +202,7 @@ trait DeltaCommand extends DeltaLogging {
         // is table
         case LogicalRelationWithTable(HadoopFsRelation(_, _, _, _, _, _), Some(_)) => true
         // is iceberg table
-        case DataSourceV2Relation(_: IcebergTablePlaceHolder, _, _, _, _) => false
+        case DataSourceV2RelationShim(_: IcebergTablePlaceHolder, _, _, _, _) => false
         // could not resolve table/db
         case _: UnresolvedRelation =>
           throw new NoSuchTableException(tableIdent.database.getOrElse(""), tableIdent.table)
@@ -438,4 +442,69 @@ trait DeltaCommand extends DeltaLogging {
     (txnVersion, txnAppId, fromSessionConf)
   }
 
+  protected def logNumRecordsMismatch(
+      deltaLog: DeltaLog,
+      actions: Seq[Action],
+      stats: NumRecordsStats,
+      op: Operation): Unit = {
+
+    var numRemove = 0
+    var numAdd = 0
+    actions.foreach {
+      case _: AddFile =>
+        numAdd += 1
+      case _: RemoveFile =>
+        numRemove += 1
+      case _ =>
+    }
+
+    val info = NumRecordsCheckInfo(
+      operation = op.name,
+      numAdd = numAdd,
+      numRemove = numRemove,
+      numRecordsRemoved = stats.numLogicalRecordsRemovedPartial,
+      numRecordsAdded = stats.numLogicalRecordsAddedPartial,
+      numDeletionVectorRecordsRemoved = stats.numDeletionVectorRecordsRemoved,
+      numDeletionVectorRecords = stats.numDeletionVectorRecordsAdded,
+      operationParameters = op.jsonEncodedValues,
+      statsCollectionEnabled = SparkSession.getActiveSession.get.conf.get(DELTA_COLLECT_STATS)
+    )
+    recordDeltaEvent(deltaLog, opType = "delta.assertions.numRecordsChanged", data = info)
+    logWarning(log"Number of records validation failed. Number of added records" +
+      log" (${MDC(DeltaLogKeys.NUM_RECORDS, stats.numLogicalRecordsAddedPartial)})" +
+      log" does not match removed records" +
+      log" (${MDC(DeltaLogKeys.NUM_RECORDS2, stats.numLogicalRecordsRemovedPartial)})")
+  }
+
+  /**
+   * Creates a LogicalPlan for the current Delta table snapshot,
+   * optionally wrapping it with a table alias if provided.
+   */
+  protected def createTableRelation(
+      txn: OptimisticTransaction, tableAliasOpt: Option[String]): LogicalPlan = {
+    val baseRelation = txn.deltaLog.createRelation(
+      snapshotToUseOpt = Some(txn.snapshot),
+      catalogTableOpt = txn.catalogTable)
+    val tableRelation = LogicalRelation(baseRelation)
+    if (tableAliasOpt.isDefined) {
+      SubqueryAlias(
+        identifier = tableAliasOpt.get,
+        child = tableRelation)
+    } else {
+      tableRelation
+    }
+  }
 }
+
+// Recorded when number of records check for unchanged data fails.
+case class NumRecordsCheckInfo(
+    operation: String,
+    numAdd: Int,
+    numRemove: Int,
+    numRecordsAdded: Long,
+    numRecordsRemoved: Long,
+    numDeletionVectorRecordsRemoved: Long = 0, // number of DV records removed by the RemoveFiles
+    numDeletionVectorRecords: Long = 0, // number of DV records present in all AddFiles
+    operationParameters: Map[String, String],
+    statsCollectionEnabled: Boolean
+)

@@ -535,7 +535,7 @@ trait IdentityColumnDMLSuiteBase
       checkAnswer(sql(
         s"""SELECT id, value, ${CDCReader.CDC_TYPE_COLUMN_NAME}
            |FROM table_changes('$tgt', 8)
-           |ORDER BY id, value, _change_type""".stripMargin),
+           |ORDER BY value, id, _change_type""".stripMargin),
         Seq(
           Row(1, 1, CDCReader.CDC_TYPE_UPDATE_POSTIMAGE),
           Row(1, 1, CDCReader.CDC_TYPE_UPDATE_PREIMAGE),
@@ -575,6 +575,49 @@ trait IdentityColumnDMLSuiteBase
           Row(1, 101, CDCReader.CDC_TYPE_UPDATE_POSTIMAGE),
           Row(2, 2, CDCReader.CDC_TYPE_UPDATE_PREIMAGE),
           Row(2, 102, CDCReader.CDC_TYPE_UPDATE_POSTIMAGE)))
+    }
+  }
+
+  test("UPDATE cannot lead to bad high watermarks") {
+    val tblName = getRandomTableName
+    withTable(tblName) {
+      createTable(
+        tblName,
+        Seq(
+          IdentityColumnSpec(
+            GeneratedByDefault,
+            startsWith = Some(1),
+            incrementBy = Some(1)),
+          TestColumnSpec(colName = "value", dataType = IntegerType)
+        ),
+        partitionedBy = Seq("value"),
+        tblProperties = Map(
+          DeltaConfigs.CHANGE_DATA_FEED.key -> "true",
+          DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key -> "false"
+        )
+      )
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tblName))
+
+      sql(s"INSERT INTO $tblName(id, value) VALUES (-5, -5), (-3, -3), (-1, -1)")
+      val valuesStr = (-999 to -900).map(id => s"($id, -3)").mkString(", ")
+      sql(s"INSERT INTO $tblName(id, value) VALUES $valuesStr")
+      sql(s"INSERT INTO $tblName(id, value) VALUES (-1, -1)")
+      assert(getHighWaterMark(deltaLog.update(), colName = "id").isEmpty,
+        "High watermark should not be set for user inserted values")
+
+      Seq((-1000L, -3)).toDF("id", "value")
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .option(DeltaOptions.REPLACE_WHERE_OPTION, "value = -3 and id <= -987")
+        .saveAsTable(tblName)
+
+      assert(getHighWaterMark(deltaLog.update(), colName = "id").isEmpty,
+        "High watermark should not be set for user inserted values")
+
+      sql(s"UPDATE $tblName SET value = -3 WHERE id = -1")
+      assert(getHighWaterMark(deltaLog.update(), colName = "id").isEmpty,
+        "Updates should not update high watermark")
     }
   }
 }

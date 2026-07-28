@@ -18,8 +18,9 @@ package io.delta.kernel.internal;
 import io.delta.kernel.exceptions.InvalidConfigurationValueException;
 import io.delta.kernel.exceptions.UnknownConfigurationException;
 import io.delta.kernel.internal.actions.Metadata;
-import io.delta.kernel.internal.util.*;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
+import io.delta.kernel.internal.util.IntervalParserUtils;
 import java.util.*;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -30,9 +31,111 @@ import java.util.function.Predicate;
  */
 public class TableConfig<T> {
 
+  public static final String MIN_PROTOCOL_READER_VERSION_KEY = "delta.minReaderVersion";
+
+  public static final String MIN_PROTOCOL_WRITER_VERSION_KEY = "delta.minWriterVersion";
+
   //////////////////
   // TableConfigs //
   //////////////////
+
+  /**
+   * Whether this Delta table is append-only. Files can't be deleted, or values can't be updated.
+   */
+  public static final TableConfig<Boolean> APPEND_ONLY_ENABLED =
+      new TableConfig<>(
+          "delta.appendOnly",
+          "false",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
+
+  /**
+   * Enable change data feed output. When enabled, DELETE, UPDATE, and MERGE INTO operations will
+   * need to do additional work to output their change data in an efficiently readable format.
+   */
+  public static final TableConfig<Boolean> CHANGE_DATA_FEED_ENABLED =
+      new TableConfig<>(
+          "delta.enableChangeDataFeed",
+          "false",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
+
+  public static final TableConfig<String> CHECKPOINT_POLICY =
+      new TableConfig<>(
+          "delta.checkpointPolicy",
+          "classic",
+          v -> v,
+          value -> value.equals("classic") || value.equals("v2"),
+          "needs to be a string and one of 'classic' or 'v2'.",
+          true);
+
+  /**
+   * Whether to write per-file statistics as a struct column in checkpoint files. Recognized so
+   * connectors can set it (e.g. {@code v2Checkpoint} tables require it), but Kernel does not yet
+   * act on it when writing checkpoints.
+   */
+  public static final TableConfig<Boolean> CHECKPOINT_WRITE_STATS_AS_STRUCT =
+      new TableConfig<>(
+          "delta.checkpoint.writeStatsAsStruct",
+          "false",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
+
+  /**
+   * Whether to write per-file statistics as JSON in checkpoint files. Recognized so connectors can
+   * set it, but Kernel does not yet act on it when writing checkpoints.
+   */
+  public static final TableConfig<Boolean> CHECKPOINT_WRITE_STATS_AS_JSON =
+      new TableConfig<>(
+          "delta.checkpoint.writeStatsAsJson",
+          "true",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
+
+  /** Whether commands modifying this Delta table are allowed to create new deletion vectors. */
+  public static final TableConfig<Boolean> DELETION_VECTORS_CREATION_ENABLED =
+      new TableConfig<>(
+          "delta.enableDeletionVectors",
+          "false",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
+
+  /**
+   * Whether widening the type of an existing column or field is allowed, either manually using
+   * ALTER TABLE CHANGE COLUMN or automatically if automatic schema evolution is enabled.
+   */
+  public static final TableConfig<Boolean> TYPE_WIDENING_ENABLED =
+      new TableConfig<>(
+          "delta.enableTypeWidening",
+          "false",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
+
+  /**
+   * Indicates whether Row Tracking is enabled on the table. When this flag is turned on, all rows
+   * are guaranteed to have Row IDs and Row Commit Versions assigned to them, and writers are
+   * expected to preserve them by materializing them to hidden columns in the data files.
+   */
+  public static final TableConfig<Boolean> ROW_TRACKING_ENABLED =
+      new TableConfig<>(
+          "delta.enableRowTracking",
+          "false",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
 
   /**
    * The shortest duration we have to keep logically deleted data files around before deleting them
@@ -80,6 +183,29 @@ public class TableConfig<T> {
           "delta.logRetentionDuration",
           "interval 30 days",
           IntervalParserUtils::safeParseIntervalAsMillis,
+          value -> true,
+          "needs to be provided as a calendar interval such as '2 weeks'. Months "
+              + "and years are not accepted. You may specify '365 days' for a year instead.",
+          true /* editable */);
+
+  /**
+   * This table property is used to track the retention duration for {@link
+   * io.delta.kernel.internal.actions.SetTransaction} actions (transaction identifiers). When set,
+   * the checksum's {@code setTransactions} drop entries whose {@code lastUpdated} is older than the
+   * current time minus this duration (entries without a {@code lastUpdated} are also dropped).
+   *
+   * <p>This is currently read-only from Kernel's perspective: it is intentionally not registered in
+   * {@link #VALID_PROPERTIES}, so a Kernel writer attempting to set it is rejected. Kernel only
+   * honors it while computing a checksum ({@code ChecksumUtils.computeChecksum}). Unlike
+   * Delta-Spark it does not expire transactions during general snapshot/state reconstruction, so we
+   * do not yet expose it as a settable property. Reading the value from metadata written by another
+   * engine (e.g. Delta-Spark) does not depend on that registration.
+   */
+  public static final TableConfig<Optional<Long>> SET_TRANSACTION_RETENTION =
+      new TableConfig<>(
+          "delta.setTransactionRetentionDuration",
+          null, // no default: absence means retention is unbounded (opt-in).
+          v -> Optional.ofNullable(v).map(IntervalParserUtils::safeParseIntervalAsMillis),
           value -> true,
           "needs to be provided as a calendar interval such as '2 weeks'. Months "
               + "and years are not accepted. You may specify '365 days' for a year instead.",
@@ -138,52 +264,6 @@ public class TableConfig<T> {
           "needs to be a long.",
           true);
 
-  /*
-   * This table property is used to track the commit-coordinator name for this table. If this
-   * property is not set, the table will be considered as file system table and commits will be
-   * done via atomically publishing the commit file.
-   */
-  public static final TableConfig<Optional<String>> COORDINATED_COMMITS_COORDINATOR_NAME =
-      new TableConfig<>(
-          "delta.coordinatedCommits.commitCoordinator-preview",
-          null, /* default values */
-          Optional::ofNullable,
-          value -> true,
-          "The commit-coordinator name for this table. This is used to determine "
-              + "which implementation of commit-coordinator to use when committing "
-              + "to this table. If this property is not set, the table will be "
-              + "considered as file system table and commits will be done via "
-              + "atomically publishing the commit file.",
-          true);
-
-  /*
-   * This table property is used to track the configuration properties for the commit coordinator
-   * which is needed to build the commit coordinator client.
-   */
-  public static final TableConfig<Map<String, String>> COORDINATED_COMMITS_COORDINATOR_CONF =
-      new TableConfig<>(
-          "delta.coordinatedCommits.commitCoordinatorConf-preview",
-          null, /* default values */
-          JsonUtils::parseJSONKeyValueMap,
-          value -> true,
-          "A string-to-string map of configuration properties for the"
-              + " coordinated commits-coordinator.",
-          true);
-
-  /*
-   * This property is used by the commit coordinator to uniquely identify and manage the table
-   * internally.
-   */
-  public static final TableConfig<Map<String, String>> COORDINATED_COMMITS_TABLE_CONF =
-      new TableConfig<>(
-          "delta.coordinatedCommits.tableConf-preview",
-          null, /* default values */
-          JsonUtils::parseJSONKeyValueMap,
-          value -> true,
-          "A string-to-string map of configuration properties for"
-              + "  describing the table to commit-coordinator.",
-          true);
-
   /** This table property is used to control the column mapping mode. */
   public static final TableConfig<ColumnMappingMode> COLUMN_MAPPING_MODE =
       new TableConfig<>(
@@ -216,22 +296,222 @@ public class TableConfig<T> {
           "needs to be a boolean.",
           true);
 
+  /**
+   * Table property that enables modifying the table in accordance with the Delta-Iceberg
+   * Compatibility V3 protocol. TODO: add the delta protocol link once updated
+   * [https://github.com/delta-io/delta/issues/4574]
+   */
+  public static final TableConfig<Boolean> ICEBERG_COMPAT_V3_ENABLED =
+      new TableConfig<>(
+          "delta.enableIcebergCompatV3",
+          "false",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
+
+  /**
+   * The number of columns to collect stats on for data skipping. A value of -1 means collecting
+   * stats for all columns.
+   *
+   * <p>For Struct types, all leaf fields count individually toward this limit in depth-first order.
+   * For example, if a table has columns a, b.c, b.d, and e, then the first three indexed columns
+   * would be a, b.c, and b.d. Map and array types are not supported for statistics collection.
+   */
+  public static final TableConfig<Integer> DATA_SKIPPING_NUM_INDEXED_COLS =
+      new TableConfig<>(
+          "delta.dataSkippingNumIndexedCols",
+          "32",
+          Integer::valueOf,
+          value -> value >= -1,
+          "needs to be larger than or equal to -1.",
+          true);
+
+  /**
+   * IMPORTANT: This table property is recognized but is not yet validated, enforced, or implemented
+   * by Kernel.
+   *
+   * <p>The names of specific columns to collect stats on for data skipping. If present, it takes
+   * precedence over {@link #DATA_SKIPPING_NUM_INDEXED_COLS}, and the system will only collect stats
+   * for columns that exactly match those specified. If a nested column is specified, the system
+   * will collect stats for all leaf fields of that column. If a non-existent column is specified,
+   * it will be ignored. Updating this config does not trigger stats re-collection, but redefines
+   * the stats schema of the table, i.e., it will change the behavior of future stats collection
+   * (e.g., in append and OPTIMIZE) as well as data skipping (e.g., the column stats not mentioned
+   * by this config will be ignored even if they exist).
+   *
+   * <p>The value is a comma-separated list of case-insensitive column identifiers. Each column
+   * identifier can consist of letters, digits, and underscores. If a column identifier includes
+   * special characters, the column name should be enclosed in backticks (`) to escape the special
+   * characters.
+   *
+   * <p>A column identifier can refer to one of the following: the name of a non-struct column, the
+   * leaf field's name of a struct column, or the name of a struct column. When a struct column's
+   * name is specified, statistics for all its leaf fields will be collected.
+   */
+  public static final TableConfig<Optional<String>> DATA_SKIPPING_STATS_COLUMNS =
+      new TableConfig<>(
+          "delta.dataSkippingStatsColumns",
+          null,
+          v -> Optional.ofNullable(v),
+          value -> true,
+          "needs to be a comma-separated list of column identifiers.",
+          true);
+
+  /**
+   * Table property that enables modifying the table in accordance with the Delta-Iceberg Writer
+   * Compatibility V1 ({@code icebergCompatWriterV1}) protocol.
+   */
+  public static final TableConfig<Boolean> ICEBERG_WRITER_COMPAT_V1_ENABLED =
+      new TableConfig<>(
+          "delta.enableIcebergWriterCompatV1",
+          "false",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
+
+  /**
+   * Table property that enables modifying the table in accordance with the Delta-Iceberg Writer
+   * Compatibility V3 ({@code icebergCompatWriterV3}) protocol. V2 is skipped to align with the
+   * iceberg v3 spec.
+   */
+  public static final TableConfig<Boolean> ICEBERG_WRITER_COMPAT_V3_ENABLED =
+      new TableConfig<>(
+          "delta.enableIcebergWriterCompatV3",
+          "false",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
+
+  public static class UniversalFormats {
+
+    /**
+     * The value that enables uniform exports to Iceberg for {@linkplain
+     * TableConfig#UNIVERSAL_FORMAT_ENABLED_FORMATS}.
+     *
+     * <p>{@link #ICEBERG_COMPAT_V2_ENABLED but also be set to true} to fully enable this feature.
+     */
+    public static final String FORMAT_ICEBERG = "iceberg";
+    /**
+     * The value to use to enable uniform exports to Hudi for {@linkplain
+     * TableConfig#UNIVERSAL_FORMAT_ENABLED_FORMATS}.
+     */
+    public static final String FORMAT_HUDI = "hudi";
+  }
+
+  /**
+   * The set of compression codecs that Kernel currently recognizes and enforces. This is
+   * intentionally strict for now. In the future we may add new codecs or relax validation to allow
+   * any codec string.
+   */
+  private static final Set<String> VALID_COMPRESSION_CODECS =
+      Collections.unmodifiableSet(
+          new HashSet<>(
+              Arrays.asList("uncompressed", "none", "snappy", "gzip", "lz4", "lz4_raw", "zstd")));
+
+  private static final Collection<String> ALLOWED_UNIFORM_FORMATS =
+      Collections.unmodifiableList(
+          Arrays.asList(UniversalFormats.FORMAT_HUDI, UniversalFormats.FORMAT_ICEBERG));
+
+  /** Table config that allows for translation of Delta metadata to other table formats metadata. */
+  public static final TableConfig<Set<String>> UNIVERSAL_FORMAT_ENABLED_FORMATS =
+      new TableConfig<>(
+          "delta.universalFormat.enabledFormats",
+          null,
+          TableConfig::parseStringSet,
+          value -> ALLOWED_UNIFORM_FORMATS.containsAll(value),
+          String.format("each value must in the the set: %s", ALLOWED_UNIFORM_FORMATS),
+          true);
+
+  /**
+   * Table property that enables modifying the table in accordance with the Delta-Variant Shredding
+   * protocol.
+   *
+   * @see <a
+   *     href="https://github.com/delta-io/delta/blob/master/protocol_rfcs/variant-shredding.md">
+   *     Delta-Variant Shredding Protocol</a>
+   */
+  public static final TableConfig<Boolean> VARIANT_SHREDDING_ENABLED =
+      new TableConfig<>(
+          "delta.enableVariantShredding",
+          "false",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
+
+  /**
+   * Compression codec writers should use for new Parquet data and checkpoint files. Changing this
+   * property does not affect existing files; a table may contain files written with different
+   * codecs.
+   *
+   * <p>Valid values (case-insensitive): uncompressed, none, snappy, gzip, lz4, lz4_raw, zstd.
+   */
+  public static final TableConfig<String> PARQUET_COMPRESSION_CODEC =
+      new TableConfig<>(
+          "delta.parquet.compression.codec",
+          "snappy",
+          v -> v.toLowerCase(Locale.ROOT),
+          VALID_COMPRESSION_CODECS::contains,
+          "needs to be one of: 'uncompressed', 'none', 'snappy', 'gzip',"
+              + " 'lz4', 'lz4_raw', 'zstd'.",
+          true /* editable */);
+
+  public static final TableConfig<String> MATERIALIZED_ROW_ID_COLUMN_NAME =
+      new TableConfig<>(
+          "delta.rowTracking.materializedRowIdColumnName",
+          null,
+          v -> v,
+          value -> true,
+          "need to be a string.",
+          false);
+
+  public static final TableConfig<String> MATERIALIZED_ROW_COMMIT_VERSION_COLUMN_NAME =
+      new TableConfig<>(
+          "delta.rowTracking.materializedRowCommitVersionColumnName",
+          null,
+          v -> v,
+          value -> true,
+          "need to be a string.",
+          false);
+
   /** All the valid properties that can be set on the table. */
   private static final Map<String, TableConfig<?>> VALID_PROPERTIES =
       Collections.unmodifiableMap(
           new HashMap<String, TableConfig<?>>() {
             {
+              addConfig(this, APPEND_ONLY_ENABLED);
+              addConfig(this, CHANGE_DATA_FEED_ENABLED);
+              addConfig(this, CHECKPOINT_POLICY);
+              addConfig(this, DELETION_VECTORS_CREATION_ENABLED);
+              addConfig(this, TYPE_WIDENING_ENABLED);
+              addConfig(this, ROW_TRACKING_ENABLED);
+              addConfig(this, LOG_RETENTION);
+              addConfig(this, EXPIRED_LOG_CLEANUP_ENABLED);
               addConfig(this, TOMBSTONE_RETENTION);
               addConfig(this, CHECKPOINT_INTERVAL);
               addConfig(this, IN_COMMIT_TIMESTAMPS_ENABLED);
               addConfig(this, IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION);
               addConfig(this, IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP);
-              addConfig(this, COORDINATED_COMMITS_COORDINATOR_NAME);
-              addConfig(this, COORDINATED_COMMITS_COORDINATOR_CONF);
-              addConfig(this, COORDINATED_COMMITS_TABLE_CONF);
               addConfig(this, COLUMN_MAPPING_MODE);
               addConfig(this, ICEBERG_COMPAT_V2_ENABLED);
+              addConfig(this, ICEBERG_COMPAT_V3_ENABLED);
+              addConfig(this, ICEBERG_WRITER_COMPAT_V1_ENABLED);
+              addConfig(this, ICEBERG_WRITER_COMPAT_V3_ENABLED);
               addConfig(this, COLUMN_MAPPING_MAX_COLUMN_ID);
+              addConfig(this, DATA_SKIPPING_NUM_INDEXED_COLS);
+              addConfig(this, UNIVERSAL_FORMAT_ENABLED_FORMATS);
+              addConfig(this, MATERIALIZED_ROW_ID_COLUMN_NAME);
+              addConfig(this, MATERIALIZED_ROW_COMMIT_VERSION_COLUMN_NAME);
+              addConfig(this, VARIANT_SHREDDING_ENABLED);
+              addConfig(this, PARQUET_COMPRESSION_CODEC);
+
+              // The below configs do not yet have their behavior correctly implemented in Kernel.
+              addConfig(this, DATA_SKIPPING_STATS_COLUMNS);
+              addConfig(this, CHECKPOINT_WRITE_STATS_AS_STRUCT);
+              addConfig(this, CHECKPOINT_WRITE_STATS_AS_JSON);
             }
           });
 
@@ -240,32 +520,47 @@ public class TableConfig<T> {
   ///////////////////////////
 
   /**
-   * Validates that the given properties have the delta prefix in the key name, and they are in the
-   * set of valid properties. The caller should get the validated configurations and store the case
-   * of the property name defined in TableConfig.
+   * Validates that the given new properties that the txn is trying to update in table. Properties
+   * that have `delta.` prefix in the key name should be in valid list and are editable. The caller
+   * is expected to store the returned properties in the table metadata after further validation
+   * from a protocol point of view. The returned properties will have the key's case normalized as
+   * defined in its {@link TableConfig}.
    *
-   * @param configurations the properties to validate
+   * @param newProperties the properties to validate
    * @throws InvalidConfigurationValueException if any of the properties are invalid
    * @throws UnknownConfigurationException if any of the properties are unknown
    */
-  public static Map<String, String> validateProperties(Map<String, String> configurations) {
-    Map<String, String> validatedConfigurations = new HashMap<>();
-    for (Map.Entry<String, String> kv : configurations.entrySet()) {
+  public static Map<String, String> validateAndNormalizeDeltaProperties(
+      Map<String, String> newProperties) {
+    Map<String, String> validatedProperties = new HashMap<>();
+    for (Map.Entry<String, String> kv : newProperties.entrySet()) {
       String key = kv.getKey().toLowerCase(Locale.ROOT);
       String value = kv.getValue();
-      if (key.startsWith("delta.") && VALID_PROPERTIES.containsKey(key)) {
+
+      boolean isTableFeatureOverrideKey =
+          key.startsWith(TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX);
+      boolean isTableConfigKey = key.startsWith("delta.");
+      // TableFeature override properties validation is handled separately in TransactionBuilder.
+      boolean shouldValidateProperties = isTableConfigKey && !isTableFeatureOverrideKey;
+      if (shouldValidateProperties) {
+        // If it is a delta table property, make sure it is a supported property and editable
+        if (!VALID_PROPERTIES.containsKey(key)) {
+          throw DeltaErrors.unknownConfigurationException(kv.getKey());
+        }
+
         TableConfig<?> tableConfig = VALID_PROPERTIES.get(key);
-        if (tableConfig.editable) {
-          tableConfig.validate(value);
-          validatedConfigurations.put(tableConfig.getKey(), value);
-        } else {
+        if (!tableConfig.editable) {
           throw DeltaErrors.cannotModifyTableProperty(kv.getKey());
         }
+
+        tableConfig.validate(value);
+        validatedProperties.put(tableConfig.getKey(), value);
       } else {
-        throw DeltaErrors.unknownConfigurationException(kv.getKey());
+        // allow unknown properties to be set (and preserve their original case!)
+        validatedProperties.put(kv.getKey(), value);
       }
     }
-    return validatedConfigurations;
+    return validatedProperties;
   }
 
   private static void addConfig(HashMap<String, TableConfig<?>> configs, TableConfig<?> config) {
@@ -334,5 +629,18 @@ public class TableConfig<T> {
     if (!validator.test(parsedValue)) {
       throw DeltaErrors.invalidConfigurationValueException(key, value, helpMessage);
     }
+  }
+
+  private static Set<String> parseStringSet(String value) {
+    if (value == null || value.isEmpty()) {
+      return Collections.emptySet();
+    }
+    String[] formats = value.split(",");
+    Set<String> config = new HashSet<>();
+
+    for (String format : formats) {
+      config.add(format.trim());
+    }
+    return config;
   }
 }

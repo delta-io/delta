@@ -17,6 +17,7 @@ package io.delta.kernel.examples;
 
 import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 
 import org.apache.commons.cli.Options;
 
@@ -24,6 +25,8 @@ import io.delta.kernel.*;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Literal;
+import io.delta.kernel.hook.PostCommitHook;
+import io.delta.kernel.hook.PostCommitHook.PostCommitHookType;
 import io.delta.kernel.utils.*;
 import static io.delta.kernel.examples.utils.Utils.parseArgs;
 
@@ -263,7 +266,7 @@ public class CreateTableAndInsertData extends BaseTableWriter {
                 table.createTransactionBuilder(
                         engine,
                         "Examples", /* engineInfo */
-                        Operation.CREATE_TABLE);
+                        Operation.WRITE);
 
         // Build the transaction - no need to provide the schema as the table already exists.
         Transaction txn = txnBuilder.build(engine);
@@ -334,7 +337,7 @@ public class CreateTableAndInsertData extends BaseTableWriter {
                 table.createTransactionBuilder(
                         engine,
                         "Examples", /* engineInfo */
-                        Operation.CREATE_TABLE);
+                        Operation.WRITE);
 
         // Set the transaction identifiers for idempotent writes
         // Delta/Kernel makes sure that there exists only one transaction in the Delta log
@@ -409,11 +412,17 @@ public class CreateTableAndInsertData extends BaseTableWriter {
         // for every 10 versions.
         for (int i = 0; i < 12; i++) {
             TransactionCommitResult commitResult = insertDataIntoUnpartitionedTable(tablePath);
-            if (commitResult.isReadyForCheckpoint()) {
+            for(PostCommitHook hook: commitResult.getPostCommitHooks())
                 // Checkpoint the table
-                Table.forPath(engine, tablePath).checkpoint(engine, commitResult.getVersion());
-                didCheckpoint = true;
-            }
+                didCheckpoint = didCheckpoint || CompletableFuture.supplyAsync(() -> {
+                    // run the code async
+                    try{
+                        hook.threadSafeInvoke(engine);
+                    } catch (IOException e) {
+                        return false;
+                    }
+                    return hook.getType().equals(PostCommitHookType.CHECKPOINT);
+                }).join(); // wait async finish.
         }
 
         if (!didCheckpoint) {

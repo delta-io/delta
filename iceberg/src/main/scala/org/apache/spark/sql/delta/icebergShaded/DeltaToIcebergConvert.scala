@@ -1,0 +1,502 @@
+/*
+ * Copyright (2021) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.spark.sql.delta.icebergShaded
+
+import java.nio.ByteBuffer
+import java.time.{LocalDateTime, OffsetDateTime, ZoneOffset}
+import java.time.format._
+import java.util.{Base64, List => JList}
+
+import scala.util.control.NonFatal
+
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaConfig, DeltaConfigs, DummySnapshot, IcebergCompat, NoMapping, RowId, Snapshot, SnapshotDescriptor}
+import org.apache.spark.sql.delta.DeltaConfigs.{LOG_RETENTION, TOMBSTONE_RETENTION}
+import org.apache.spark.sql.delta.actions.{AddFile, FileAction}
+import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore.getTotalSizeOfDVFieldsInFile
+import org.apache.spark.sql.delta.util.JsonUtils
+import shadedForDelta.org.apache.iceberg.{DeleteFile, FileFormat, FileMetadata, PartitionData, PartitionSpec, Schema => IcebergSchema, StructLike, TableProperties => IcebergTableProperties, Transaction => IcebergTransaction}
+import shadedForDelta.org.apache.iceberg.expressions.Literal
+import shadedForDelta.org.apache.iceberg.types.{Conversions, Type => IcebergType, Types => IcebergTypes}
+
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.catalyst.util.ResolveDefaultColumns.CURRENT_DEFAULT_COLUMN_METADATA_KEY
+import org.apache.spark.sql.types._
+import org.apache.spark.unsafe.types.CalendarInterval
+
+/**
+ * Generate Iceberg table metadata (schema, partition, etc.) from a Delta [[Snapshot]]
+ */
+class DeltaToIcebergConverter(val snapshot: SnapshotDescriptor, val catalogTable: CatalogTable) {
+
+  // Always wrap the input in a DummySnapshot. For NoMapping snapshots the wrap also
+  // decorates the schema with synthetic column-mapping IDs so the id-mode path downstream
+  // sees a complete statsSchema; for id-mode the wrap is metadata-preserving.
+  val wrappedSnapshot: Snapshot = {
+    val effectiveMetadata =
+      if (snapshot.metadata.columnMappingMode == NoMapping) {
+        val (decoratedSchema, maxId) =
+          DeltaToIcebergConvert.decorateNoMappingSchema(snapshot.metadata.schema)
+        snapshot.metadata.copy(
+          schemaString = decoratedSchema.json,
+          configuration = snapshot.metadata.configuration +
+            (DeltaConfigs.COLUMN_MAPPING_MAX_ID.key -> maxId.toString))
+      } else {
+        snapshot.metadata
+      }
+    new DummySnapshot(
+      logPath = snapshot.logPath,
+      deltaLog = snapshot.deltaLog,
+      metadata = effectiveMetadata,
+      protocolOpt = Some(snapshot.protocol))
+  }
+
+  private val schemaUtils: IcebergSchemaUtils = IcebergSchemaUtils()
+
+  def maxFieldId: Int = schemaUtils.maxFieldId(wrappedSnapshot)
+
+  val schema: IcebergSchema = IcebergCompat
+    .getEnabledVersion(wrappedSnapshot.metadata)
+    .orElse(Some(0))
+    .map { compatVersion =>
+      val icebergStruct = schemaUtils.convertStruct(wrappedSnapshot.schema)(compatVersion)
+      new IcebergSchema(icebergStruct.fields())
+    }.getOrElse(throw new IllegalArgumentException("No IcebergCompat available"))
+
+  val partition: PartitionSpec = IcebergTransactionUtils
+    .createPartitionSpec(schema, wrappedSnapshot.metadata.partitionColumns)
+
+  val properties: Map[String, String] =
+    DeltaToIcebergConvert.TableProperties(wrappedSnapshot.metadata.configuration)
+}
+/**
+ * Utils for converting a Delta Table to Iceberg Table
+ */
+object DeltaToIcebergConvert extends DeltaLogging {
+  object Action {
+
+    def buildPartitionValues(
+        builder: FileMetadata.Builder,
+        fileAction: FileAction,
+        partitionSpec: PartitionSpec,
+        snapshot: SnapshotDescriptor,
+        logicalToPhysicalPartitionNames: Map[String, String]): Unit = {
+      if (partitionSpec.isPartitioned) {
+          builder.withPartition(
+            DeltaToIcebergConvert.Partition.convertPartitionValues(
+              snapshot,
+              partitionSpec,
+              fileAction.partitionValues,
+              logicalToPhysicalPartitionNames))
+      }
+    }
+
+    private[delta] def dvToDeleteFile(
+        dvSource: FileAction,
+        partitionSpec: PartitionSpec,
+        logicalToPhysicalPartitionNames: Map[String, String],
+        snapshot: SnapshotDescriptor): DeleteFile = {
+      val dv = dvSource.deletionVector
+      if (dv == null || !dv.isOnDisk || dv.offset.isEmpty) {
+        throw new IllegalArgumentException("Invalid DeletionVector. Cannot convert.")
+      }
+      var builder = FileMetadata.deleteFileBuilder(partitionSpec)
+        .ofPositionDeletes()
+        .withFormat(FileFormat.PUFFIN)
+        .withPath(dv.absolutePath(snapshot.dataPath).toString)
+        .withFileSizeInBytes(dv.offset.get + getTotalSizeOfDVFieldsInFile(dv.sizeInBytes))
+        .withReferencedDataFile(dvSource.absolutePath(snapshot).toString)
+        .withContentOffset(dv.offset.get)
+        .withContentSizeInBytes(getTotalSizeOfDVFieldsInFile(dv.sizeInBytes))
+        .withRecordCount(dv.cardinality)
+
+      buildPartitionValues(
+        builder, dvSource, partitionSpec, snapshot, logicalToPhysicalPartitionNames)
+      builder.build
+    }
+  }
+
+  object RowTracking {
+    /**
+     * Set the next row-id on an Iceberg transaction so that subsequent data files written by
+     * the transaction get first-row-ids picked up from the Delta-side row-id high water mark.
+     * No-op when the Delta snapshot has no row tracking high water mark recorded.
+     */
+    private[delta] def setNextRowId(snapshot: Snapshot, icebergTxn: IcebergTransaction): Unit = {
+      RowId.extractHighWatermark(snapshot).foreach { highWaterMark =>
+        IcebergTransactionUtils.setIcebergTxnNextRowId(icebergTxn, highWaterMark + 1)
+      }
+    }
+  }
+  /**
+   * Utils used when converting Delta schema to Iceberg
+   */
+  object Schema {
+    /**
+     * Extract Delta Column Default values in Iceberg Literal format
+     * @param field column
+     * @return Right(Some(Literal)) if the column contains a literal default
+     *         Right(None) if the column does not have a default
+     *         Left(errorMessage) if the column contains a non-literal default
+     */
+    def extractLiteralDefault(field: StructField): Either[String, Option[Literal[_]]] = {
+      if (field.metadata.contains(CURRENT_DEFAULT_COLUMN_METADATA_KEY)) {
+        val defaultValueStr = field.metadata.getString(CURRENT_DEFAULT_COLUMN_METADATA_KEY)
+        try {
+            Right(Some(stringToLiteral(defaultValueStr, field.dataType)))
+        } catch {
+          case NonFatal(e) =>
+            Left("Unsupported default value:" +
+              s"${field.dataType.typeName}:$defaultValueStr:${e.getMessage}")
+          case unknown: Throwable => throw unknown
+        }
+      } else {
+        Right(None)
+      }
+    }
+
+    /**
+     * Follow Spark's string escape rule to unescape a default value string
+     * @param input string to be unescaped
+     * @return unescaped string
+     */
+    def unescapeString(input: String): String = {
+      val table = Map[Char, String](
+        'b' -> "\u0008", 't' -> "\t", 'n' -> "\n", 'r' -> "\r",
+        'Z' -> "\u001A", '\\' -> "\\", '%' -> "\\%", '_' -> "\\_", '\'' -> "'"
+      )
+
+      def isHex(c: Char): Boolean = Character.digit(c, 16) >= 0
+      def isOct(c: Char): Boolean = c >= '0' && c <= '7'
+
+      def hexAt(pos: Int, n: Int): String = {
+        if (pos + n <= input.length && (0 until n).forall(k => isHex(input.charAt(pos + k)))) {
+          val cp = Integer.parseInt(input.substring(pos, pos + n), 16)
+          new String(Character.toChars(cp))
+        } else null
+      }
+
+      def octAt(pos: Int): String = {
+        if (pos + 3 <= input.length && (0 until 3).forall(k => isOct(input.charAt(pos + k)))) {
+          val cp = Integer.parseInt(input.substring(pos, pos + 3), 8)
+          if (cp <= 255) new String(Character.toChars(cp)) else null
+        } else null
+      }
+
+      val out = new StringBuilder
+      var i = 0
+      while (i < input.length) {
+        val c = input.charAt(i)
+        if (c != '\\') { out.append(c); i += 1 }
+        else {
+          if (i + 1 >= input.length) throw new IllegalStateException("dangling escape")
+          val d = input.charAt(i + 1)
+
+          if (d >= '0' && d <= '7') {
+            val oct = octAt(i + 1)
+            if (oct != null) { out.append(oct); i += 4 }
+            else if (d == '0') { out.append("\u0000"); i += 2 }
+            else { out.append(d); i += 2 }
+          } else if (d == 'u' || d == 'U') {
+            val h8 = hexAt(i + 2, 8)
+            val h4 = if (h8 == null) hexAt(i + 2, 4) else null
+            val h = if (h8 != null) h8 else h4
+            if (h != null) { out.append(h); i += (if (h8 != null) 10 else 6) }
+            else { out.append(d); i += 2 } // \x => x rule
+          } else {
+            out.append(table.getOrElse(d, d.toString))
+            i += 2
+          }
+        }
+      }
+      out.toString
+    }
+
+    /**
+     * Convert Delta default value string to an Iceberg Literal based on data type.
+     * @param str default value in Delta column metadata
+     * @param dataType Delta column data type
+     * @return converted Literal
+     */
+    def stringToLiteral(str: String, dataType: DataType): Literal[_] = {
+      def parseString(input: String) = {
+        if (input.length > 1 && ((input.head == '\'' && input.last == '\'')
+          || (input.head == '"' && input.last == '"'))) {
+          Literal.of(unescapeString(input.substring(1, input.length - 1)))
+        } else {
+          throw new UnsupportedOperationException(s"String missing quotation marks: $input")
+        }
+      }
+      // Parse either hex encoded literal x'....' or string literal(utf8) into binary
+      def parseBinary(input: String) = {
+        if (input.startsWith("x") || input.startsWith("X")) {
+          // Hex encoded literal
+          var hexString = parseString(input.substring(1)).value().toString
+          if (hexString.length % 2 == 1) {
+            hexString = hexString.substring(1) + "00"
+          }
+          Literal.of(hexString.sliding(2, 2).map(Integer.parseInt(_, 16).toByte).toArray)
+        } else {
+          Literal.of(parseString(input).value().toString
+            .getBytes(java.nio.charset.StandardCharsets.UTF_8))
+        }
+      }
+      // Parse timestamp string without time zone info
+      def parseLocalTimestamp(input: String) = {
+        val formats = Seq(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
+          DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+        val stripped = parseString(input).value()
+        val parsed = formats.flatMap { format =>
+          try {
+            val ldt = LocalDateTime.parse(stripped, format)
+            Some(
+              Literal.of(
+                ldt.toInstant(ZoneOffset.UTC).getEpochSecond * 1000000
+                  + ldt.getNano / 1000
+              )
+            )
+          } catch {
+            case NonFatal(_) => None
+          }
+        }
+        if (parsed.nonEmpty) {
+          parsed.head
+        } else {
+          throw new IllegalArgumentException(input)
+        }
+      }
+      // Parse string with time zone info. If the input has no time zone, assume its UTC.
+      def parseTimestamp(input: String) = {
+        val stripped = parseString(input).value()
+        try {
+          val instant = OffsetDateTime.parse(stripped, DateTimeFormatter.ISO_DATE_TIME).toInstant
+          Literal.of(instant.getEpochSecond * 1000000 + instant.getNano / 1000)
+        } catch {
+          case NonFatal(_) => parseLocalTimestamp(input)
+        }
+      }
+
+      dataType match {
+        case StringType => parseString(str)
+        case LongType => Literal.of(java.lang.Long.valueOf(str.replaceAll("[lL]$", "")))
+        case IntegerType | ShortType | ByteType => Literal.of(Integer.valueOf(str))
+        case FloatType => Literal.of(java.lang.Float.valueOf(str))
+        case DoubleType => Literal.of(java.lang.Double.valueOf(str))
+        // The number should be correctly formatted without need to rounding
+        case d: DecimalType => Literal.of(
+          new java.math.BigDecimal(str, new java.math.MathContext(d.precision)).setScale(d.scale)
+        )
+        case BooleanType => Literal.of(java.lang.Boolean.valueOf(str))
+        case BinaryType => parseBinary(str)
+        case DateType => parseString(str).to(IcebergTypes.DateType.get())
+        case TimestampType => parseTimestamp(str)
+        case TimestampNTZType => parseLocalTimestamp(str)
+        case _ =>
+          throw new UnsupportedOperationException(
+            s"Could not convert default value: $dataType: $str")
+      }
+    }
+  }
+
+  object TableProperties
+  {
+    /**
+     * We generate Iceberg Table properties from Delta table properties
+     * using two methods.
+     * 1. If a Delta property key starts with "delta.universalformat.config.iceberg"
+     * we strip the prefix from the key and include the property pair.
+     * Note the key is already normalized to lower case.
+     * 2. We compute Iceberg properties from Delta using custom logic
+     * This now includes
+     * a) Iceberg format version
+     * b) Iceberg snapshot retention
+     */
+    def apply(deltaProperties: Map[String, String]): Map[String, String] = {
+      val prefix = DeltaConfigs.DELTA_UNIVERSAL_FORMAT_ICEBERG_CONFIG_PREFIX
+      val copiedFromDelta =
+        deltaProperties
+          .filterKeys(_.startsWith(prefix))
+          .map { case (key, value) => key.stripPrefix(prefix) -> value }
+          .toSeq
+          .toMap
+      val computers = Seq(FormatVersionComputer, RetentionPeriodComputer)
+      val computed: Map[String, String] = computers
+        .map(_.apply(deltaProperties ++ copiedFromDelta))
+        .reduce((a, b) => a ++ b)
+
+      copiedFromDelta ++ computed
+    }
+
+    private trait IcebergPropertiesComputer {
+      /**
+       * Compute Iceberg properties from Delta properties.
+       */
+      def apply(deltaProperties: Map[String, String]): Map[String, String]
+    }
+
+    /**
+     * Compute Iceberg FORMAT_VERSION from IcebergCompat
+     */
+    private object FormatVersionComputer extends IcebergPropertiesComputer {
+      override def apply(deltaProperties: Map[String, String]): Map[String, String] =
+        IcebergCompat
+          .anyEnabled(deltaProperties)
+          .map(IcebergTableProperties.FORMAT_VERSION -> _.icebergFormatVersion.toString)
+          .toMap
+    }
+
+    /**
+     * Compute Iceberg MAX_SNAPSHOT_AGE_MS as the minimal of
+     * Delta's LOG_RETENTION and TOMBSTONE_RETENTION.
+     * If users explicitly provide a MAX_SNAPSHOT_AGE_MS, also ensure the provided
+     * value is no larger than Delta's retention.
+     */
+    private object RetentionPeriodComputer extends IcebergPropertiesComputer {
+      override def apply(deltaProperties: Map[String, String]): Map[String, String] = {
+        def getAsMilliSeconds(conf: DeltaConfig[CalendarInterval],
+                              properties: Map[String, String],
+                              useDefault: Boolean = false): Option[Long] =
+          properties.get(conf.key)
+            .orElse(if (useDefault) Some(conf.defaultValue) else None)
+            .map(conf.fromString)
+            .map(DeltaConfigs.getMilliSeconds)
+
+        // Set Iceberg max snapshot age as minimal of Delta log retention and tombstone retention
+        val deltaRetention = (
+          getAsMilliSeconds(LOG_RETENTION, deltaProperties),
+          getAsMilliSeconds(TOMBSTONE_RETENTION, deltaProperties)
+        ) match {
+          case (Some(a), Some(b)) => Some(a min b)
+          case (a, b) => a orElse b
+        }
+
+        // If user provided max snapshot age, check that it is smaller than Delta's retention
+        lazy val maxAllowedRetention =
+          getAsMilliSeconds(LOG_RETENTION, deltaProperties, useDefault = true).get min
+          getAsMilliSeconds(TOMBSTONE_RETENTION, deltaProperties, useDefault = true).get
+
+        deltaProperties.get(IcebergTableProperties.MAX_SNAPSHOT_AGE_MS)
+          .foreach { providedRetention =>
+            if (providedRetention.toLong > maxAllowedRetention) {
+              throw new IllegalArgumentException(
+                s"""Uniform iceberg's ${IcebergTableProperties.MAX_SNAPSHOT_AGE_MS} should be
+                    | no less than the min of delta's ${LOG_RETENTION.key} and
+                    | ${TOMBSTONE_RETENTION.key}.
+                    | Current delta retention min in MS: $maxAllowedRetention.
+                    | Proposed iceberg retention in Ms: $providedRetention""".stripMargin)
+            }
+          }
+
+        deltaRetention
+          .filter(_ < IcebergTableProperties.MAX_SNAPSHOT_AGE_MS_DEFAULT)
+          .map { IcebergTableProperties.MAX_SNAPSHOT_AGE_MS -> _.toString }
+          .toMap
+      }
+    }
+  }
+
+  object Partition {
+
+    private[delta] def convertPartitionValues(
+        snapshot: SnapshotDescriptor,
+        partitionSpec: PartitionSpec,
+        partitionValues: Map[String, String],
+        logicalToPhysicalPartitionNames: Map[String, String]): StructLike = {
+      val schema = snapshot.schema
+      val ICEBERG_NULL_PARTITION_VALUE = "__HIVE_DEFAULT_PARTITION__"
+      val partitionPath = partitionSpec.fields()
+      val partitionVals = new Array[Any](partitionSpec.fields().size())
+      val nameToDataTypes: Map[String, DataType] =
+        schema.fields.map(f => f.name -> f.dataType).toMap
+      for (i <- partitionVals.indices) {
+        val logicalPartCol = partitionPath.get(i).name()
+        val physicalPartKey = logicalToPhysicalPartitionNames(logicalPartCol)
+        // ICEBERG_NULL_PARTITION_VALUE is referred in Iceberg lib to mark NULL partition value
+        val partValue = Option(partitionValues.getOrElse(physicalPartKey, null))
+          .getOrElse(ICEBERG_NULL_PARTITION_VALUE)
+        val partitionColumnDataType = nameToDataTypes(logicalPartCol)
+        val icebergPartitionValue =
+          IcebergTransactionUtils.stringToIcebergPartitionValue(
+            partitionColumnDataType, partValue, snapshot.version)
+        partitionVals(i) = icebergPartitionValue
+      }
+      new IcebergTransactionUtils.Row(partitionVals)
+    }
+  }
+
+  /**
+   * Stamps synthetic column-mapping IDs onto a NoMapping schema in DFS order. Leaf fields
+   * get `delta.columnMapping.id`; Array/Map parents additionally get `nested.ids` entries
+   * for `arr.element`, `m.key`, `m.value`. Pre-existing IDs are observed so newly minted
+   * ones don't collide. Returns the decorated schema and the largest ID seen.
+   */
+  private[delta] def decorateNoMappingSchema(schema: StructType): (StructType, Int) =
+    new NoMappingSchemaDecorator().decorate(schema)
+
+  private class NoMappingSchemaDecorator {
+    private var counter = 0
+
+    def decorate(schema: StructType): (StructType, Int) = (decorateStruct(schema), counter)
+
+    private def nextId(): Int = { counter += 1; counter }
+    private def observe(id: Int): Unit = if (id > counter) counter = id
+
+    private def decorateStruct(schema: StructType): StructType =
+      StructType(schema.fields.map { f =>
+        if (DeltaColumnMapping.hasColumnId(f)) {
+          observe(DeltaColumnMapping.getColumnId(f))
+          f
+        } else {
+          val id = nextId()
+          val nestedIds = new MetadataBuilder()
+          val newDataType = decorateDataType(f.dataType, nestedIds, Seq(f.name))
+          val mdBuilder = new MetadataBuilder()
+            .withMetadata(f.metadata)
+            .putLong(DeltaColumnMapping.COLUMN_MAPPING_METADATA_ID_KEY, id.toLong)
+            .putString(DeltaColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, f.name)
+          val nestedBuilt = nestedIds.build()
+          if (nestedBuilt.json != "{}") {
+            mdBuilder.putMetadata(
+              DeltaColumnMapping.COLUMN_MAPPING_METADATA_NESTED_IDS_KEY, nestedBuilt)
+          }
+          f.copy(dataType = newDataType, metadata = mdBuilder.build())
+        }
+      })
+
+    private def decorateDataType(
+        dt: DataType,
+        nestedIds: MetadataBuilder,
+        path: Seq[String]): DataType = dt match {
+      case st: StructType =>
+        decorateStruct(st)
+      case ArrayType(elemType, containsNull) =>
+        val elemPath = path :+ DeltaColumnMapping.PARQUET_LIST_ELEMENT_FIELD_NAME
+        nestedIds.putLong(elemPath.mkString("."), nextId().toLong)
+        ArrayType(decorateDataType(elemType, nestedIds, elemPath), containsNull)
+      case MapType(keyType, valueType, valueContainsNull) =>
+        val keyPath = path :+ DeltaColumnMapping.PARQUET_MAP_KEY_FIELD_NAME
+        val valPath = path :+ DeltaColumnMapping.PARQUET_MAP_VALUE_FIELD_NAME
+        nestedIds.putLong(keyPath.mkString("."), nextId().toLong)
+        nestedIds.putLong(valPath.mkString("."), nextId().toLong)
+        MapType(
+          decorateDataType(keyType, nestedIds, keyPath),
+          decorateDataType(valueType, nestedIds, valPath),
+          valueContainsNull)
+      case other => other
+    }
+  }
+}

@@ -16,41 +16,61 @@
 
 package org.apache.spark.sql.delta.typewidening
 
+import java.io.File
+import java.util.UUID
+
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{RemoveFile, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.AlterTableDropFeatureDeltaCommand
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import com.google.common.math.DoubleMath
 
-import org.apache.spark.SparkConf
+import org.apache.spark.{SparkConf, SparkThrowable}
 import org.apache.spark.sql.{DataFrame, Encoder, QueryTest}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.internal.{LegacyBehaviorPolicy, SQLConf}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
+import org.apache.spark.util.Utils
 
 /**
  * Test mixin that enables type widening by default for all tests in the suite.
  */
-trait TypeWideningTestMixin extends DeltaSQLCommandTest with DeltaDMLTestUtils { self: QueryTest =>
+trait TypeWideningTestMixin
+  extends DeltaSQLCommandTest
+  with DeltaDMLTestUtilsPathBased { self: QueryTest =>
 
   import testImplicits._
 
   protected override def sparkConf: SparkConf = {
     super.sparkConf
       .set(DeltaConfigs.ENABLE_TYPE_WIDENING.defaultTablePropertyKey, "true")
+      .set(DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING.key, "always")
       .set(TableFeatureProtocolUtils.defaultPropertyKey(TimestampNTZTableFeature), "supported")
       // Ensure we don't silently cast test inputs to null on overflow.
       .set(SQLConf.ANSI_ENABLED.key, "true")
       // Rebase mode must be set explicitly to allow writing dates before 1582-10-15.
       .set(SQLConf.PARQUET_REBASE_MODE_IN_WRITE.key, LegacyBehaviorPolicy.CORRECTED.toString)
+      // All the drop feature tests below are based on the drop feature with history truncation
+      // implementation. The fast drop feature implementation does not require any waiting time.
+      // The fast drop feature implementation is tested extensively in the
+      // DeltaFastDropFeatureSuite.
+      .set(DeltaSQLConf.FAST_DROP_FEATURE_ENABLED.key, false.toString)
   }
 
-  /** Enable (or disable) type widening for the table under the given path. */
-  protected def enableTypeWidening(tablePath: String, enabled: Boolean = true): Unit =
-    sql(s"ALTER TABLE delta.`$tablePath` " +
+  /**
+   * Enable (or disable) type widening for the table under test. `table` defaults to the table under
+   * test ([[tableSQLIdentifier]]) so the same test body works with both path-based and name-based
+   * access; callers may pass an explicit identifier to target a different table.
+   */
+  protected def enableTypeWidening(
+      table: String = tableSQLIdentifier,
+      enabled: Boolean = true): Unit =
+    sql(s"ALTER TABLE $table " +
           s"SET TBLPROPERTIES('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = '${enabled.toString}')")
 
   /** Whether the test table supports the type widening table feature. */
@@ -64,15 +84,38 @@ trait TypeWideningTestMixin extends DeltaSQLCommandTest with DeltaDMLTestUtils {
     TypeWidening.isEnabled(snapshot.protocol, snapshot.metadata)
   }
 
+  /**
+   * Runs `write`, tolerating a cast overflow failure. Used in tests that want to check that column
+   * doesn't get automatically widened. Depending on the data, the write may succeed or overflow.
+   */
+  protected def mayOverflow(write: => Unit): Unit = {
+    val allowedConditions = Set(
+      "CAST_OVERFLOW_IN_TABLE_INSERT",
+      "CAST_OVERFLOW",
+      "DELTA_CAST_OVERFLOW_IN_TABLE_WRITE")
+
+    def isAllowedOverflow(error: Throwable): Boolean = error match {
+      case e: SparkThrowable if allowedConditions.contains(e.getCondition) => true
+      case e if e.getCause != null && (e.getCause ne e) => isAllowedOverflow(e.getCause)
+      case _ => false
+    }
+
+    try {
+      write
+    } catch {
+      // Spark may report the arithmetic error directly or wrap it in TASK_WRITE_FAILED.
+      case e: Exception if isAllowedOverflow(e) =>
+    }
+  }
+
   /** Short-hand to create type widening metadata for struct fields. */
   protected def typeWideningMetadata(
-      version: Long,
       from: AtomicType,
       to: AtomicType,
       path: Seq[String] = Seq.empty): Metadata =
     new MetadataBuilder()
       .putMetadataArray(
-        "delta.typeChanges", Array(TypeChange(Some(version), from, to, path).toMetadata))
+        "delta.typeChanges", Array(TypeChange(None, from, to, path).toMetadata))
       .build()
 
   def addSingleFile[T: Encoder](values: Seq[T], dataType: DataType): Unit =
@@ -115,6 +158,44 @@ trait TypeWideningTestMixin extends DeltaSQLCommandTest with DeltaDMLTestUtils {
 }
 
 /**
+ * Mixin for type widening test suites that run against the DSv2 Delta connector.
+ * Use name-based access as path-based isn't well-supported in DSv2.
+ */
+trait TypeWideningDSv2TestMixin
+  extends TypeWideningTestMixin
+    with DeltaDSv2TestMixin
+    with DeltaDMLTestUtilsNameBased { self: QueryTest =>
+
+  private var testTableName = "test_delta_table"
+  private var testTablePaths = List.empty[File]
+
+  override protected def beforeEach(): Unit = {
+    // A failed V2 write may leave a canceled task running briefly after the write returns. Give
+    // every test its own managed-table path so a late orphan file cannot affect the next test.
+    testTableName = s"test_delta_table_${UUID.randomUUID().toString.replace('-', '_')}"
+    val path = spark.sessionState.catalog.defaultTablePath(tableIdentifier).getPath
+    testTablePaths ::= new File(path)
+    super.beforeEach()
+  }
+
+  override protected def tableSQLIdentifier: String = testTableName
+
+  override protected def afterAll(): Unit = {
+    try {
+      super.afterAll()
+    } finally {
+      // `super.afterAll()` stops the shared Spark context, so canceled tasks can no longer
+      // recreate files while this final cleanup runs.
+      testTablePaths.foreach(Utils.deleteRecursively)
+    }
+  }
+
+  protected override def sparkConf: SparkConf = {
+    super.sparkConf.set(DeltaSQLConf.V2_ENABLE_MODE.key, "AUTO")
+  }
+}
+
+/**
  * Mixin trait containing helpers to test dropping the type widening table feature.
  */
 trait TypeWideningDropFeatureTestMixin
@@ -130,17 +211,26 @@ trait TypeWideningDropFeatureTestMixin
     FAIL_FEATURE_NOT_PRESENT = Value
   }
 
+  def getCatalogTableOpt: Option[CatalogTable] = {
+    if (DeltaTableIdentifier.isDeltaPath(spark, tableIdentifier)) {
+      None
+    } else {
+      Some(spark.sessionState.catalog.getTableMetadata(tableIdentifier))
+    }
+  }
+
   /**
    * Helper method to drop the type widening table feature and check for an expected outcome.
    * Validates in particular that the right number of files were rewritten and that the rewritten
    * files all contain the expected type for specified columns.
    */
   def dropTableFeature(
-      feature: TableFeature = TypeWideningPreviewTableFeature,
+      feature: TableFeature = TypeWideningTableFeature,
       expectedOutcome: ExpectedOutcome.Value,
       expectedNumFilesRewritten: Long,
       expectedColumnTypes: Map[String, DataType]): Unit = {
-    val snapshot = deltaLog.update()
+    val catalogTableOpt = getCatalogTableOpt
+    val snapshot = deltaLog.update(catalogTableOpt = catalogTableOpt)
     // Need to directly call ALTER TABLE command to pass our deltaLog with manual clock.
     val dropFeature =
       AlterTableDropFeatureDeltaCommand(DeltaTableV2(spark, deltaLog.dataPath), feature.name)
@@ -183,7 +273,8 @@ trait TypeWideningDropFeatureTestMixin
     }
 
     if (expectedOutcome != ExpectedOutcome.FAIL_FEATURE_NOT_PRESENT) {
-      assert(!TypeWideningMetadata.containsTypeWideningMetadata(deltaLog.update().schema))
+      assert(!TypeWideningMetadata.containsTypeWideningMetadata(
+        deltaLog.update(catalogTableOpt = catalogTableOpt).schema))
     }
 
     // Check the number of files rewritten.
@@ -194,7 +285,8 @@ trait TypeWideningDropFeatureTestMixin
     // Check that all files now contain the expected data types.
     expectedColumnTypes.foreach { case (colName, expectedType) =>
       withSQLConf("spark.databricks.delta.formatCheck.enabled" -> "false") {
-        deltaLog.update().filesForScan(Seq.empty, keepNumRecords = false).files.foreach { file =>
+        deltaLog.update(catalogTableOpt = catalogTableOpt).filesForScan(
+            Seq.empty, keepNumRecords = false).files.foreach { file =>
           val filePath = DeltaFileOperations.absolutePath(deltaLog.dataPath.toString, file.path)
           val data = spark.read.parquet(filePath.toString)
           val physicalColName = DeltaColumnMapping.getPhysicalName(snapshot.schema(colName))
@@ -208,7 +300,7 @@ trait TypeWideningDropFeatureTestMixin
   /** Get the number of remove actions committed since the given table version (included). */
   def getNumRemoveFilesSinceVersion(version: Long): Long =
     deltaLog
-      .getChanges(startVersion = version)
+      .getChanges(startVersion = version, catalogTableOpt = getCatalogTableOpt)
       .flatMap { case (_, actions) => actions }
       .collect { case r: RemoveFile => r }
       .size

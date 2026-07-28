@@ -18,19 +18,23 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 import java.net.URI
+import java.util.UUID
 
 import scala.concurrent.duration._
 
 // scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
+import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.DeltaCommitFileProvider
+import org.apache.spark.sql.delta.shims.VariantStatsShims
+import org.apache.spark.sql.delta.test.shims.VariantShreddingTestShims
+import org.apache.spark.sql.delta.util.{Codec, DeltaCommitFileProvider, DeltaStatsJsonUtils, JsonUtils}
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
@@ -41,15 +45,20 @@ import org.apache.hadoop.util.Progressable
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.functions.{col, lit, when}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.types.variant.{Variant, VariantUtil}
+import org.apache.spark.unsafe.types.VariantVal
 
 class CheckpointsSuite
   extends QueryTest
   with SharedSparkSession
   with DeltaCheckpointTestUtils
   with DeltaSQLCommandTest
-  with CoordinatedCommitsBaseSuite {
+  with DeltaSQLTestUtils
+  with CatalogOwnedTestBaseSuite {
 
   def testDifferentV2Checkpoints(testName: String)(f: => Unit): Unit = {
     for (checkpointFormat <- Seq(V2Checkpoint.Format.JSON.name, V2Checkpoint.Format.PARQUET.name)) {
@@ -83,6 +92,19 @@ class CheckpointsSuite
     }
   }
 
+  def getCheckpointFileActions(
+      deltaLog: DeltaLog,
+      checkpoint: FileStatus): Seq[Action] = {
+    if (checkpoint.getPath.toString.endsWith("json")) {
+      deltaLog.store.read(checkpoint.getPath).map(Action.fromJson)
+    } else {
+      val fileIndex =
+        DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, Seq(checkpoint)).get
+      deltaLog.loadIndex(fileIndex, Action.logSchema)
+        .as[SingleAction].collect().map(_.unwrap).toSeq
+    }
+  }
+
   protected override def sparkConf = {
     // Set the gs LogStore impl to `LocalLogStore` so that it will work with
     // `FakeGCSFileSystemValidatingCheckpoint`.
@@ -91,25 +113,27 @@ class CheckpointsSuite
   }
 
   test("checkpoint metadata - checkpoint schema above the configured threshold are not" +
-    " written to LAST_CHECKPOINT") {
-    withTempDir { tempDir =>
-      spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
-      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
-      deltaLog.checkpoint()
-      val lastCheckpointOpt = deltaLog.readLastCheckpointFile()
-      assert(lastCheckpointOpt.nonEmpty)
-      assert(lastCheckpointOpt.get.checkpointSchema.nonEmpty)
-      val expectedCheckpointSchema =
-        Seq("txn", "add", "remove", "metaData", "protocol", "domainMetadata")
-      assert(lastCheckpointOpt.get.checkpointSchema.get.fieldNames.toSeq ===
-        expectedCheckpointSchema)
-
-      spark.range(10).write.mode("append").format("delta").save(tempDir.getAbsolutePath)
-      withSQLConf(DeltaSQLConf.CHECKPOINT_SCHEMA_WRITE_THRESHOLD_LENGTH.key-> "10") {
+      " written to LAST_CHECKPOINT") {
+    withClassicCheckpointPolicyForCatalogOwned {
+      withTempTable(createTable = false) { tableName =>
+        spark.range(10).write.format("delta").saveAsTable(tableName)
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
         deltaLog.checkpoint()
         val lastCheckpointOpt = deltaLog.readLastCheckpointFile()
         assert(lastCheckpointOpt.nonEmpty)
-        assert(lastCheckpointOpt.get.checkpointSchema.isEmpty)
+        assert(lastCheckpointOpt.get.checkpointSchema.nonEmpty)
+        val expectedCheckpointSchema =
+          Seq("txn", "add", "remove", "metaData", "protocol", "domainMetadata")
+        assert(lastCheckpointOpt.get.checkpointSchema.get.fieldNames.toSeq ===
+          expectedCheckpointSchema)
+
+        spark.range(10).write.mode("append").format("delta").saveAsTable(tableName)
+        withSQLConf(DeltaSQLConf.CHECKPOINT_SCHEMA_WRITE_THRESHOLD_LENGTH.key -> "10") {
+          deltaLog.checkpoint()
+          val lastCheckpointOpt = deltaLog.readLastCheckpointFile()
+          assert(lastCheckpointOpt.nonEmpty)
+          assert(lastCheckpointOpt.get.checkpointSchema.isEmpty)
+        }
       }
     }
   }
@@ -182,17 +206,7 @@ class CheckpointsSuite
           assert(checkpointLiteral == "checkpoint")
       }
 
-      def getCheckpointFileActions(checkpoint: FileStatus) : Seq[Action] = {
-        if (checkpoint.getPath.toString.endsWith("json")) {
-          deltaLog.store.read(checkpoint.getPath).map(Action.fromJson)
-        } else {
-          val fileIndex =
-            DeltaLogFileIndex(DeltaLogFileIndex.CHECKPOINT_FILE_FORMAT_PARQUET, Seq(checkpoint)).get
-          deltaLog.loadIndex(fileIndex, Action.logSchema)
-            .as[SingleAction].collect().map(_.unwrap).toSeq
-        }
-      }
-      val actions = getCheckpointFileActions(checkpoint)
+      val actions = getCheckpointFileActions(deltaLog, checkpoint)
       // V2 Checkpoints should contain exactly one action each of types
       // Metadata, CheckpointMetadata, and Protocol
       // In this particular case, we should only have one sidecar file
@@ -215,6 +229,70 @@ class CheckpointsSuite
       val protocolActions = actions.collect { case p: Protocol => p }
       assert(protocolActions.length == 1)
       assert(CheckpointProvider.isV2CheckpointEnabled(protocolActions.head))
+    }
+  }
+
+  testDifferentV2Checkpoints("V2 Checkpoint - CheckpointMetadata tags contain" +
+      " sidecar stats and schema") {
+    withTempDir { tempDir =>
+      val path = tempDir.getAbsolutePath
+      spark.range(10).write.format("delta").save(path)
+      val deltaLog = DeltaLog.forTable(spark, path)
+      deltaLog.checkpoint()
+
+      val checkpointFiles = deltaLog.listFrom(0).filter(FileNames.isCheckpointFile).toList
+      assert(checkpointFiles.length == 1)
+      val checkpoint = checkpointFiles.head
+
+      val actions = getCheckpointFileActions(deltaLog, checkpoint)
+      val cmActions = actions.collect { case cm: CheckpointMetadata => cm }
+      assert(cmActions.length == 1)
+      val cm = cmActions.head
+
+      assert(cm.tags != null, "CheckpointMetadata.tags should not be null")
+      val expectedKeys = Set(
+        "sidecarNumActions",
+        "sidecarSizeInBytes",
+        "numOfAddFiles",
+        "sidecarFileSchema"
+      )
+      assert(expectedKeys.subsetOf(cm.tags.keySet),
+        s"tags keys ${cm.tags.keySet} should contain all of $expectedKeys")
+
+      val numActions = cm.tags("sidecarNumActions").toLong
+      assert(numActions > 0, s"sidecarNumActions should be > 0, got $numActions")
+      val sizeInBytes = cm.tags("sidecarSizeInBytes").toLong
+      assert(sizeInBytes > 0, s"sidecarSizeInBytes should be > 0, got $sizeInBytes")
+      val numOfAddFiles = cm.tags("numOfAddFiles").toLong
+      assert(numOfAddFiles > 0, s"numOfAddFiles should be > 0, got $numOfAddFiles")
+
+      val schemaJson = cm.tags("sidecarFileSchema")
+      assert(schemaJson != null && schemaJson.nonEmpty,
+        "sidecarFileSchema should be a non-empty JSON string")
+      val schema = cm.sidecarFileSchema
+      assert(schema.isDefined, "sidecarFileSchema should deserialize to Some(StructType)")
+      val sidecarSchema = schema.get
+      assert(sidecarSchema.fieldNames.contains("add"),
+        s"sidecar schema should contain 'add' field, got: ${sidecarSchema.fieldNames.toSeq}")
+      assert(sidecarSchema.fieldNames.contains("remove"),
+        s"sidecar schema should contain 'remove' field, got: ${sidecarSchema.fieldNames.toSeq}")
+
+      val sidecarActions = actions.collect { case s: SidecarFile => s }
+      assert(sidecarActions.nonEmpty, "Should have at least one sidecar file")
+      val sidecarFileStatus = sidecarActions.head.toFileStatus(deltaLog.logPath)
+      val footerSchema = Snapshot.getParquetFileSchemaAndRowCount(
+        spark, deltaLog, sidecarFileStatus)._1
+      assert(footerSchema == sidecarSchema,
+        s"Schema from tags should match schema read from sidecar Parquet footer.\n" +
+        s"From tags: ${sidecarSchema.treeString}\n" +
+        s"From footer: ${footerSchema.treeString}")
+
+      val roundTripped = JsonUtils.fromJson[SingleAction](cm.json).unwrap
+        .asInstanceOf[CheckpointMetadata]
+      assert(roundTripped.tags == cm.tags,
+        "Tags should survive JSON round-trip serialization")
+      assert(roundTripped.sidecarFileSchema == cm.sidecarFileSchema,
+        "sidecarFileSchema should survive JSON round-trip")
     }
   }
 
@@ -242,7 +320,12 @@ class CheckpointsSuite
           "fs.gs.impl" -> classOf[FakeGCSFileSystemValidatingCheckpoint].getName,
           "fs.gs.impl.disable.cache" -> "true") {
         val gsPath = s"gs://${tempDir.getCanonicalPath}"
-        spark.range(1).write.format("delta").save(gsPath)
+        val writer = spark.range(1).write.format("delta")
+        if (catalogOwnedDefaultCreationEnabledInTests) {
+          // Setting checkpointPolicy=classic because this test is intended for v1 checkpoint only.
+          writer.option(DeltaConfigs.CHECKPOINT_POLICY.key, "classic")
+        }
+        writer.save(gsPath)
         DeltaLog.clearCache()
         val deltaLog = DeltaLog.forTable(spark, new Path(gsPath))
         deltaLog.checkpoint()
@@ -262,68 +345,81 @@ class CheckpointsSuite
   }
 
   test("multipart checkpoints") {
-     withTempDir { tempDir =>
-      val path = tempDir.getCanonicalPath
+    withClassicCheckpointPolicyForCatalogOwned {
+      withTempTable(createTable = false) { tableName =>
+        withSQLConf(
+          DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "10",
+          DeltaConfigs.CHECKPOINT_INTERVAL.defaultTablePropertyKey -> "1") {
+          // 1 file actions
+          spark.range(1).repartition(1).write.format("delta").saveAsTable(tableName)
+          val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
 
-      withSQLConf(
-        DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "10",
-        DeltaConfigs.CHECKPOINT_INTERVAL.defaultTablePropertyKey -> "1") {
-        // 1 file actions
-        spark.range(1).repartition(1).write.format("delta").save(path)
-        val deltaLog = DeltaLog.forTable(spark, path)
+          // 2 file actions, 1 new file
+          spark.range(1).repartition(1).write.format("delta").mode("append").saveAsTable(tableName)
 
-        // 2 file actions, 1 new file
-        spark.range(1).repartition(1).write.format("delta").mode("append").save(path)
+          verifyCheckpoint(deltaLog.readLastCheckpointFile(), 1, None)
 
-        verifyCheckpoint(deltaLog.readLastCheckpointFile(), 1, None)
+          val checkpointPath =
+            FileNames.checkpointFileSingular(deltaLog.logPath, deltaLog.snapshot.version).toUri
+          assert(new File(checkpointPath).exists())
 
-        val checkpointPath =
-          FileNames.checkpointFileSingular(deltaLog.logPath, deltaLog.snapshot.version).toUri
-        assert(new File(checkpointPath).exists())
+          // 11 total file actions, 9 new files
+          spark.range(30).repartition(9).write.format("delta").mode("append").saveAsTable(tableName)
+          verifyCheckpoint(deltaLog.readLastCheckpointFile(), 2, Some(2))
 
-        // 11 total file actions, 9 new files
-        spark.range(30).repartition(9).write.format("delta").mode("append").save(path)
-        verifyCheckpoint(deltaLog.readLastCheckpointFile(), 2, Some(2))
+          var checkpointPaths =
+            FileNames.checkpointFileWithParts(deltaLog.logPath, deltaLog.snapshot.version, 2)
+          checkpointPaths.foreach(p => assert(new File(p.toUri).exists()))
 
-        var checkpointPaths =
-          FileNames.checkpointFileWithParts(deltaLog.logPath, deltaLog.snapshot.version, 2)
-        checkpointPaths.foreach(p => assert(new File(p.toUri).exists()))
+          // 20 total actions, 9 new files
+          spark
+            .range(100)
+            .repartition(9)
+            .write
+            .format("delta")
+            .mode("append")
+            .saveAsTable(tableName)
+          verifyCheckpoint(deltaLog.readLastCheckpointFile(), 3, Some(2))
 
-        // 20 total actions, 9 new files
-        spark.range(100).repartition(9).write.format("delta").mode("append").save(path)
-        verifyCheckpoint(deltaLog.readLastCheckpointFile(), 3, Some(2))
+          assert(deltaLog.snapshot.version == 3)
+          checkpointPaths =
+            FileNames.checkpointFileWithParts(deltaLog.logPath, deltaLog.snapshot.version, 2)
+          checkpointPaths.foreach(p => assert(new File(p.toUri).exists()))
 
-        assert(deltaLog.snapshot.version == 3)
-        checkpointPaths =
-          FileNames.checkpointFileWithParts(deltaLog.logPath, deltaLog.snapshot.version, 2)
-        checkpointPaths.foreach(p => assert(new File(p.toUri).exists()))
+          // 31 total actions, 11 new files
+          spark
+            .range(100)
+            .repartition(11)
+            .write
+            .format("delta")
+            .mode("append")
+            .saveAsTable(tableName)
+          verifyCheckpoint(deltaLog.readLastCheckpointFile(), 4, Some(4))
 
-        // 31 total actions, 11 new files
-        spark.range(100).repartition(11).write.format("delta").mode("append").save(path)
-        verifyCheckpoint(deltaLog.readLastCheckpointFile(), 4, Some(4))
+          assert(deltaLog.snapshot.version == 4)
+          checkpointPaths =
+            FileNames.checkpointFileWithParts(deltaLog.logPath, deltaLog.snapshot.version, 4)
+          checkpointPaths.foreach(p => assert(new File(p.toUri).exists()))
+        }
 
-        assert(deltaLog.snapshot.version == 4)
-        checkpointPaths =
-          FileNames.checkpointFileWithParts(deltaLog.logPath, deltaLog.snapshot.version, 4)
-        checkpointPaths.foreach(p => assert(new File(p.toUri).exists()))
-      }
+        // Increase max actions
+        withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "100") {
+          val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+          // 100 total actions, 69 new files
+          spark.range(1000)
+            .repartition(69).write.format("delta").mode("append").saveAsTable(tableName)
+          verifyCheckpoint(deltaLog.readLastCheckpointFile(), 5, None)
+          val checkpointPath =
+            FileNames.checkpointFileSingular(deltaLog.logPath, deltaLog.snapshot.version).toUri
+          assert(new File(checkpointPath).exists())
 
-      // Increase max actions
-      withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "100") {
-        val deltaLog = DeltaLog.forTable(spark, path)
-        // 100 total actions, 69 new files
-        spark.range(1000).repartition(69).write.format("delta").mode("append").save(path)
-        verifyCheckpoint(deltaLog.readLastCheckpointFile(), 5, None)
-        val checkpointPath =
-          FileNames.checkpointFileSingular(deltaLog.logPath, deltaLog.snapshot.version).toUri
-        assert(new File(checkpointPath).exists())
-
-        // 101 total actions, 1 new file
-        spark.range(1).repartition(1).write.format("delta").mode("append").save(path)
-        verifyCheckpoint(deltaLog.readLastCheckpointFile(), 6, Some(2))
-         var checkpointPaths =
-          FileNames.checkpointFileWithParts(deltaLog.logPath, deltaLog.snapshot.version, 2)
-        checkpointPaths.foreach(p => assert(new File(p.toUri).exists()))
+          // 101 total actions, 1 new file
+          spark.range(1).repartition(1).write.format("delta").mode("append").saveAsTable(tableName)
+          verifyCheckpoint(deltaLog.readLastCheckpointFile(), 6, Some(2))
+          var checkpointPaths =
+            FileNames.checkpointFileWithParts(deltaLog.logPath, deltaLog.snapshot.version, 2)
+          checkpointPaths.foreach(p => assert(new File(p.toUri).exists()))
+        }
       }
     }
   }
@@ -387,6 +483,66 @@ class CheckpointsSuite
     }
   }
 
+  testDifferentV2Checkpoints(
+      "v2 checkpoint uses default part size when not explicitly configured") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      withSQLConf(
+        DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name,
+        DeltaConfigs.CHECKPOINT_INTERVAL.defaultTablePropertyKey -> "1") {
+
+        // Write 12 files without setting DELTA_CHECKPOINT_PART_SIZE explicitly.
+        // The default for V2 is 50,000 so 12 actions < 50,000 => 1 sidecar.
+        spark.range(12).repartition(12).write.format("delta").save(path)
+        val deltaLog = DeltaLog.forTable(spark, path)
+        deltaLog.checkpoint()
+        assert(getV2CheckpointProvider(deltaLog).sidecarFileStatuses.size == 1)
+      }
+    }
+  }
+
+  testDifferentV2Checkpoints(
+      "v2 checkpoint default part size with 55K actions produces 2 sidecars") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      withSQLConf(
+        DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name) {
+
+        spark.range(0).write.format("delta").save(path)
+        val deltaLog = DeltaLog.forTable(spark, path)
+        val fakeFiles = (1 to 55000).map { i =>
+          createTestAddFile(encodedPath = s"file-$i")
+        }
+        deltaLog.startTransaction().commit(fakeFiles, DeltaOperations.ManualUpdate)
+
+        deltaLog.checkpoint()
+        // 55000 / 50000 = 1.1 => ceil = 2 sidecars
+        assert(getV2CheckpointProvider(deltaLog).sidecarFileStatuses.size == 2)
+      }
+    }
+  }
+
+  testDifferentV2Checkpoints(
+      "v2 checkpoint default part size with 45K actions produces 1 sidecar") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      withSQLConf(
+        DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name) {
+
+        spark.range(0).write.format("delta").save(path)
+        val deltaLog = DeltaLog.forTable(spark, path)
+        val fakeFiles = (1 to 45000).map { i =>
+          createTestAddFile(encodedPath = s"file-$i")
+        }
+        deltaLog.startTransaction().commit(fakeFiles, DeltaOperations.ManualUpdate)
+
+        deltaLog.checkpoint()
+        // 45000 / 50000 = 0.9 => ceil = 1 sidecar
+        assert(getV2CheckpointProvider(deltaLog).sidecarFileStatuses.size == 1)
+      }
+    }
+  }
+
   test("checkpoint does not contain CDC field") {
     withSQLConf(
         DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true"
@@ -414,9 +570,11 @@ class CheckpointsSuite
           assert(deltaFileContent.map(Action.fromJson).exists(_.isInstanceOf[AddCDCFile]))
           assert(deltaLog.snapshot.stateDS.collect().forall { sa => sa.cdc == null })
           deltaLog.checkpoint()
-          val checkpointFile = FileNames.checkpointFileSingular(deltaLog.logPath, 1)
-          val checkpointSchema = spark.read.format("parquet").load(checkpointFile.toString).schema
-          val expectedCheckpointSchema =
+          val checkpointPathStr = DeltaLog.forTableWithSnapshot(spark, tempDir.getAbsolutePath)._2
+            .checkpointProvider.topLevelFiles.head.getPath.toString
+          val checkpointFormat = checkpointPathStr.substring(checkpointPathStr.lastIndexOf('.') + 1)
+          val checkpointSchema = spark.read.format(checkpointFormat).load(checkpointPathStr).schema
+          var expectedCheckpointSchema =
             Seq(
               "txn",
               "add",
@@ -424,6 +582,15 @@ class CheckpointsSuite
               "metaData",
               "protocol",
               "domainMetadata")
+          // For CCv1.5 table, v2 checkpoints is enabled by default.
+          if (catalogOwnedDefaultCreationEnabledInTests) {
+            // V2 checkpoint's schema is shared by sidecar files (contains all file actions)
+            // and the main v2 checkpoint file (contains all non-file actions).
+            // So file actions (e.g. `txn`, `add`, `remove`) are not included in the main v2
+            // checkpoint file.
+            expectedCheckpointSchema = Seq(
+              "checkpointMetadata", "domainMetadata", "metaData", "protocol", "sidecar")
+          }
           assert(checkpointSchema.fieldNames.toSeq == expectedCheckpointSchema)
         }
       }
@@ -503,53 +670,93 @@ class CheckpointsSuite
   }
 
   test("checkpoint does not contain remove.tags and remove.numRecords") {
-    withTempDir { tempDir =>
-      val expectedRemoveFileSchema = Seq(
-        "path",
-        "deletionTimestamp",
-        "dataChange",
-        "extendedFileMetadata",
-        "partitionValues",
-        "size",
-        "deletionVector",
-        "baseRowId",
-        "defaultRowCommitVersion")
+    withClassicCheckpointPolicyForCatalogOwned {
+      withTempDir { tempDir =>
+        val expectedRemoveFileSchema = Seq(
+          "path",
+          "deletionTimestamp",
+          "dataChange",
+          "extendedFileMetadata",
+          "partitionValues",
+          "size",
+          "deletionVector",
+          "baseRowId",
+          "defaultRowCommitVersion")
 
-      val tablePath = tempDir.getAbsolutePath
-      // Append rows [0, 9] to table and merge tablePath.
-      spark.range(end = 10).write.format("delta").mode("overwrite").save(tablePath)
-      spark.range(5, 15).createOrReplaceTempView("src")
-      sql(
-        s"""
-           |MERGE INTO delta.`$tempDir` t USING src s ON t.id = s.id
-           |WHEN MATCHED THEN DELETE
-           |WHEN NOT MATCHED THEN INSERT *
-           |""".stripMargin)
-      val deltaLog = DeltaLog.forTable(spark, tablePath)
-      deltaLog.checkpoint()
-      var checkpointFile = FileNames.checkpointFileSingular(deltaLog.logPath, 1).toString
-      var checkpointSchema = spark.read.format(source = "parquet").load(checkpointFile).schema
-      var removeSchemaName = checkpointSchema("remove").dataType.asInstanceOf[StructType].fieldNames
-      assert(removeSchemaName.toSeq === expectedRemoveFileSchema)
-      checkAnswer(
-        spark.sql(s"select * from delta.`$tablePath`"),
-        Seq(0, 1, 2, 3, 4, 10, 11, 12, 13, 14).map { i => Row(i) })
-      // Append rows [0, 9] to table and merge one more time.
-      spark.range(end = 10).write.format("delta").mode("append").save(tablePath)
-      sql(
-        s"""
-           |MERGE INTO delta.`$tempDir` t USING src s ON t.id = s.id
-           |WHEN MATCHED THEN DELETE
-           |WHEN NOT MATCHED THEN INSERT *
-           |""".stripMargin)
-      deltaLog.checkpoint()
-      checkpointFile = FileNames.checkpointFileSingular(deltaLog.logPath, 1).toString
-      checkpointSchema = spark.read.format(source = "parquet").load(checkpointFile).schema
-      removeSchemaName = checkpointSchema("remove").dataType.asInstanceOf[StructType].fieldNames
-      assert(removeSchemaName.toSeq === expectedRemoveFileSchema)
-      checkAnswer(
-        spark.sql(s"select * from delta.`$tablePath`"),
-        Seq(0, 0, 1, 1, 2, 2, 3, 3, 4, 4).map { i => Row(i) })
+        val tablePath = tempDir.getAbsolutePath
+        // Append rows [0, 9] to table and merge tablePath.
+        spark.range(end = 10).write.format("delta").mode("overwrite").save(tablePath)
+        spark.range(5, 15).createOrReplaceTempView("src")
+        sql(
+          s"""
+             |MERGE INTO delta.`$tempDir` t USING src s ON t.id = s.id
+             |WHEN MATCHED THEN DELETE
+             |WHEN NOT MATCHED THEN INSERT *
+             |""".stripMargin)
+        val deltaLog = DeltaLog.forTable(spark, tablePath)
+        deltaLog.checkpoint()
+        var checkpointFile = FileNames.checkpointFileSingular(deltaLog.logPath, 1).toString
+        var checkpointSchema = spark.read.format(source = "parquet").load(checkpointFile).schema
+        var removeSchemaName =
+          checkpointSchema("remove").dataType.asInstanceOf[StructType].fieldNames
+        assert(removeSchemaName.toSeq === expectedRemoveFileSchema)
+        checkAnswer(
+          spark.sql(s"select * from delta.`$tablePath`"),
+          Seq(0, 1, 2, 3, 4, 10, 11, 12, 13, 14).map { i => Row(i) })
+        // Append rows [0, 9] to table and merge one more time.
+        spark.range(end = 10).write.format("delta").mode("append").save(tablePath)
+        sql(
+          s"""
+             |MERGE INTO delta.`$tempDir` t USING src s ON t.id = s.id
+             |WHEN MATCHED THEN DELETE
+             |WHEN NOT MATCHED THEN INSERT *
+             |""".stripMargin)
+        deltaLog.checkpoint()
+        checkpointFile = FileNames.checkpointFileSingular(deltaLog.logPath, 1).toString
+        checkpointSchema = spark.read.format(source = "parquet").load(checkpointFile).schema
+        removeSchemaName = checkpointSchema("remove").dataType.asInstanceOf[StructType].fieldNames
+        assert(removeSchemaName.toSeq === expectedRemoveFileSchema)
+        checkAnswer(
+          spark.sql(s"select * from delta.`$tablePath`"),
+          Seq(0, 0, 1, 1, 2, 2, 3, 3, 4, 4).map { i => Row(i) })
+      }
+    }
+  }
+
+  test("non-AMT tables do not persist backReference in checkpoint or commit JSON") {
+    withClassicCheckpointPolicyForCatalogOwned {
+      withTempDir { tempDir =>
+        val tablePath = tempDir.getAbsolutePath
+        spark.range(end = 10).write.format("delta").mode("overwrite").save(tablePath)
+        sql(s"DELETE FROM delta.`$tablePath` WHERE id < 5")
+
+        val deltaLog = DeltaLog.forTable(spark, tablePath)
+        deltaLog.checkpoint()
+        val version = deltaLog.snapshot.version
+
+        // 1. The classic checkpoint parquet must not carry backReference on add or remove.
+        val checkpointFile =
+          FileNames.checkpointFileSingular(deltaLog.logPath, version).toString
+        val checkpointSchema = spark.read.format("parquet").load(checkpointFile).schema
+        val addFields =
+          checkpointSchema("add").dataType.asInstanceOf[StructType].fieldNames.toSeq
+        val removeFields =
+          checkpointSchema("remove").dataType.asInstanceOf[StructType].fieldNames.toSeq
+        assert(!addFields.contains("backReference"),
+          s"checkpoint add struct must not contain backReference, got: $addFields")
+        assert(!removeFields.contains("backReference"),
+          s"checkpoint remove struct must not contain backReference, got: $removeFields")
+
+        // 2. No commit JSON should mention backReference (null fields are omitted from JSON).
+        val commitProvider = DeltaCommitFileProvider(deltaLog.unsafeVolatileSnapshot)
+        val hadoopConf = deltaLog.newDeltaHadoopConf()
+        (0L to version).foreach { v =>
+          val deltaFile = commitProvider.deltaFile(v)
+          val content = deltaLog.store.read(deltaFile, hadoopConf)
+          assert(!content.exists(_.contains("backReference")),
+            s"commit JSON for version $v must not contain backReference: ${content.mkString("\n")}")
+        }
+      }
     }
   }
 
@@ -557,7 +764,8 @@ class CheckpointsSuite
     for (v2Checkpoint <- Seq(true, false))
     withTempDir { tempDir =>
       val source = new File(DeletionVectorsSuite.table1Path) // this table has DVs in two versions
-      val target = new File(tempDir, "insertTest")
+      val targetName = s"insertTest_${UUID.randomUUID().toString.replace("-", "")}"
+      val target = new File(tempDir, targetName)
 
       // Copy the source2 DV table to a temporary directory, so that we do updates to it
       FileUtils.copyDirectory(source, target)
@@ -705,12 +913,10 @@ class CheckpointsSuite
           DeltaSQLConf.LAST_CHECKPOINT_SIDECARS_THRESHOLD.key -> s"$sidecarActionThreshold"
         ) {
           val addFiles = (1 to adds).map(_ =>
-            AddFile(
-              path = java.util.UUID.randomUUID.toString,
+            createTestAddFile(
+              encodedPath = java.util.UUID.randomUUID.toString,
               partitionValues = Map(),
-              size = 128L,
-              modificationTime = 1L,
-              dataChange = true
+              size = 128L
             ))
           deltaLog.startTransaction().commit(addFiles, DeltaOperations.ManualUpdate)
           deltaLog.checkpoint()
@@ -720,20 +926,34 @@ class CheckpointsSuite
         lastCheckpointInfoOpt.get
       }
 
+      // For CCv1.5 table, row tracking is enabled by default, there will be an extra
+      // DomainMetadata added by RowTracking as a non file action.
+      val domainMetadataAddedByRowTracking = if (catalogOwnedDefaultCreationEnabledInTests) 1 else 0
       // Append 1 AddFile [AddFile-2]
       val lc1 = writeCheckpoint(adds = 1, nonFileActionThreshold = 10, sidecarActionThreshold = 10)
       assert(lc1.v2Checkpoint.nonEmpty)
       // 3 non file actions - protocol/metadata/checkpointMetadata, 1 sidecar
-      assert(lc1.v2Checkpoint.get.nonFileActions.get.size === 3)
+      assert(
+        lc1.v2Checkpoint.get.nonFileActions.get.size === 3
+          + domainMetadataAddedByRowTracking
+      )
       assert(lc1.v2Checkpoint.get.sidecarFiles.get.size === 1)
 
       // Append 1 SetTxn, 8 more AddFiles [SetTxn-1, AddFile-10]
       deltaLog.startTransaction()
         .commit(Seq(SetTransaction("app-1", 2, None)), DeltaOperations.ManualUpdate)
-      val lc2 = writeCheckpoint(adds = 8, nonFileActionThreshold = 4, sidecarActionThreshold = 10)
+      val lc2 = writeCheckpoint(
+        adds = 8,
+        sidecarActionThreshold = 10,
+        nonFileActionThreshold = 4
+          + domainMetadataAddedByRowTracking
+      )
       assert(lc2.v2Checkpoint.nonEmpty)
       // 4 non file actions - protocol/metadata/checkpointMetadata/setTxn, 1 sidecar
-      assert(lc2.v2Checkpoint.get.nonFileActions.get.size === 4)
+      assert(
+        lc2.v2Checkpoint.get.nonFileActions.get.size === 4
+          + domainMetadataAddedByRowTracking
+      )
       assert(lc2.v2Checkpoint.get.sidecarFiles.get.size === 1)
 
       // Append 10 more AddFiles [SetTxn-1, AddFile-20]
@@ -761,13 +981,17 @@ class CheckpointsSuite
         assert(lc5.v2Checkpoint.nonEmpty)
         // 4 non file actions - protocol/metadata/checkpointMetadata/setTxn
         // total 30 file actions, across 15 sidecar files (2 actions per file)
-        assert(lc5.v2Checkpoint.get.nonFileActions.get.size === 4)
+        assert(
+          lc5.v2Checkpoint.get.nonFileActions.get.size === 4
+            + domainMetadataAddedByRowTracking
+        )
         assert(lc5.v2Checkpoint.get.sidecarFiles.isEmpty)
       }
     }
   }
 
-  def checkIntermittentError(tempDir: File, lastCheckpointMissing: Boolean): Unit = {
+  def checkIntermittentError(
+      tempDir: File, lastCheckpointMissing: Boolean, crcMissing: Boolean): Unit = {
     // Create a table with commit version 0, 1 and a checkpoint.
     val tablePath = tempDir.getAbsolutePath
     spark.range(10).write.format("delta").save(tablePath)
@@ -782,6 +1006,13 @@ class CheckpointsSuite
     val fs = log.logPath.getFileSystem(conf)
     if (lastCheckpointMissing) {
       fs.delete(log.LAST_CHECKPOINT)
+    }
+    // Delete CRC file based on test configuration.
+    if (crcMissing) {
+      // Delete all CRC files
+      (0L to log.update().version).foreach { version =>
+        fs.delete(FileNames.checksumFile(log.logPath, version))
+      }
     }
 
     // In order to trigger an intermittent failure while reading checkpoint, this test corrupts
@@ -804,9 +1035,36 @@ class CheckpointsSuite
     assert(fs.getFileStatus(tempPath).getLen === checkpointFileStatus.getLen)
 
     DeltaLog.clearCache()
+    if (!crcMissing) {
+      // When CRC is present, then P&M will be taken from CRC and snapshot will be initialized
+      // without needing a checkpoint. But the underlying checkpoint provider points to a
+      // corrupted checkpoint and so any query/state reconstruction on this will fail.
+      intercept[Exception] {
+        sql(s"SELECT * FROM delta.`$tablePath`").collect()
+        DeltaLog.forTable(spark, tablePath).unsafeVolatileSnapshot.validateChecksum()
+      }
+      val snapshot = DeltaLog.forTable(spark, tablePath).unsafeVolatileSnapshot
+      intercept[Exception] {
+        snapshot.allFiles.collect()
+      }
+      // Undo the corruption
+      assert(fs.delete(checkpointFileStatus.getPath, true))
+      assert(fs.rename(tempPath, checkpointFileStatus.getPath))
+
+      // Once the corruption in undone, then the queries starts passing on top of same snapshot.
+      // This tests that we have not caches the intermittent error in the underlying checkpoint
+      // provider.
+      sql(s"SELECT * FROM delta.`$tablePath`").collect()
+      assert(DeltaLog.forTable(spark, tablePath).update() === snapshot)
+      return
+    }
+    // When CRC is missing, then P&M will be taken from checkpoint which is temporarily
+    // corrupted, so we will end up creating a new snapshot without using checkpoint and the
+    // query will succeed.
     sql(s"SELECT * FROM delta.`$tablePath`").collect()
     val snapshot = DeltaLog.forTable(spark, tablePath).unsafeVolatileSnapshot
     snapshot.computeChecksum
+    snapshot.validateChecksum()
     assert(snapshot.checkpointProvider.isEmpty)
   }
 
@@ -828,6 +1086,12 @@ class CheckpointsSuite
 
     val actionsToWrite = Checkpoints
       .buildCheckpoint(actionsDS, snapshot)
+      // buildCheckpoint drops backReference from the on-disk add/remove shape so we need to
+      // re-materialize it as a null column before .as[SingleAction].
+      .withColumn("add", when(col("add.path").isNotNull,
+        col("add").withField("backReference", lit(null).cast(BackReference.STRUCT_TYPE))))
+      .withColumn("remove", when(col("remove.path").isNotNull,
+        col("remove").withField("backReference", lit(null).cast(BackReference.STRUCT_TYPE))))
       .as[SingleAction]
       .collect()
       .toSeq
@@ -926,7 +1190,13 @@ class CheckpointsSuite
   for (lastCheckpointMissing <- BOOLEAN_DOMAIN)
   testDifferentCheckpoints("intermittent error while reading checkpoint should not" +
       s" stick to snapshot [lastCheckpointMissing: $lastCheckpointMissing]") { (_, _) =>
-    withTempDir { tempDir => checkIntermittentError(tempDir, lastCheckpointMissing) }
+    withTempDir { tempDir =>
+      withSQLConf(
+        DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_ENABLED.key -> "false"
+      ) {
+        checkIntermittentError(tempDir, lastCheckpointMissing, crcMissing = true)
+      }
+    }
   }
 
   test("validate metadata cleanup is not called with createCheckpointAtVersion API") {
@@ -945,6 +1215,681 @@ class CheckpointsSuite
 
       }
       assert(filterUsageRecords(usageRecords2, "delta.log.cleanup").size > 0)
+    }
+  }
+
+  testDifferentCheckpoints("Ensure variant stats in checkpoint") { (policy, _) =>
+    // Test all combinations of (writeStatsAsJson, writeStatsAsStruct)
+    // Skip (false, false) as that would have no stats at all
+    val combinations = Seq(
+      (true, false),
+      (false, true),
+      (true, true)
+    )
+
+    // Test with collectVariantStats = false and true
+    Seq(false, true).foreach { collectVariantStats =>
+      combinations.foreach { case (writeStatsAsJson, writeStatsAsStruct) =>
+        withClue(s"collectVariantStats=$collectVariantStats, " +
+            s"writeStatsAsJson=$writeStatsAsJson, writeStatsAsStruct=$writeStatsAsStruct") {
+          withSQLConf(
+            DeltaSQLConf.COLLECT_VARIANT_DATA_SKIPPING_STATS.key -> collectVariantStats.toString
+          ) {
+            withTempDir { tempDir =>
+              // Load golden table with variant stats (no checkpoint)
+              val source = new File("src/test/resources/delta/variant-stats-no-checkpoint")
+              val target = new File(tempDir, "variant-stats-table")
+
+              FileUtils.copyDirectory(source, target)
+
+              val tablePath = target.getAbsolutePath
+
+              // Set the stats configuration via ALTER TABLE
+              spark.sql(s"ALTER TABLE delta.`$tablePath` SET TBLPROPERTIES " +
+                s"('${DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_JSON.key}' = '$writeStatsAsJson', " +
+                s"'${DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_STRUCT.key}' = '$writeStatsAsStruct')")
+
+              if (policy == CheckpointPolicy.V2) {
+                spark.sql(s"ALTER TABLE delta.`$tablePath` SET TBLPROPERTIES " +
+                  s"('${DeltaConfigs.CHECKPOINT_POLICY.key}' = 'v2')")
+              }
+
+              val deltaLog = DeltaLog.forTable(spark, tablePath)
+              val snapshot = deltaLog.update()
+
+              deltaLog.checkpoint(snapshot)
+              val checkpointFile = if (policy.needsV2CheckpointSupport) {
+                val provider = getV2CheckpointProvider(deltaLog)
+                provider.sidecarFileStatuses.head.getPath
+              } else {
+                FileNames.checkpointFileSingular(deltaLog.logPath, deltaLog.snapshot.version)
+              }
+
+              val checkpointDf = spark.read.format("parquet").load(checkpointFile.toString)
+                .filter(col("add").isNotNull)
+
+              // Helper function to decode Z85 and get variant JSON
+              def decodeZ85ToVariantJson(z85String: String): String = {
+                val decoded = Codec.Base85Codec.decodeBytes(z85String, z85String.length)
+                val metadataSize = VariantStatsShims.metadataSize(decoded)
+                val value = decoded.slice(metadataSize, decoded.length)
+                val variant = new Variant(value, decoded)
+                variant.toJson(java.time.ZoneId.of("UTC"))
+              }
+
+              // Verify stats in add.stats (JSON format) when writeStatsAsJson=true
+              if (writeStatsAsJson) {
+                val checkpointStatsJson = checkpointDf
+                  .selectExpr(
+                    s"get_json_object(add.stats, '$$.minValues.v')",
+                    s"get_json_object(add.stats, '$$.maxValues.v')",
+                    s"get_json_object(add.stats, '$$.minValues.nv.v')",
+                    s"get_json_object(add.stats, '$$.maxValues.nv.v')").collect().head
+
+                // Verify top-level variant column stats
+                val actualMinTopLevel = decodeZ85ToVariantJson(checkpointStatsJson.getString(0))
+                val actualMaxTopLevel = decodeZ85ToVariantJson(checkpointStatsJson.getString(1))
+                assert(actualMinTopLevel == """{"$['id']":0,"$['name']":"1"}""")
+                assert(actualMaxTopLevel == """{"$['id']":9,"$['name']":"9"}""")
+
+                // Verify nested variant column stats
+                val actualMinNested = decodeZ85ToVariantJson(checkpointStatsJson.getString(2))
+                val actualMaxNested = decodeZ85ToVariantJson(checkpointStatsJson.getString(3))
+                assert(actualMinNested == """{"$['id']":10,"$['name']":"11"}""")
+                assert(actualMaxNested == """{"$['id']":19,"$['name']":"20"}""")
+              }
+
+              // Verify stats in add.stats_parsed (struct format) when writeStatsAsStruct=true
+              if (writeStatsAsStruct) {
+                if (collectVariantStats) {
+                  val checkpointStatsParsed = checkpointDf
+                    .selectExpr(
+                      "add.stats_parsed.minValues.v",
+                      "add.stats_parsed.maxValues.v",
+                      "add.stats_parsed.minValues.nv.v",
+                      "add.stats_parsed.maxValues.nv.v").collect().head
+
+                  // Verify top-level variant column stats
+                  val minVariantTopLevel = checkpointStatsParsed.getAs[VariantVal](0)
+                  val maxVariantTopLevel = checkpointStatsParsed.getAs[VariantVal](1)
+                  val minTopLevelVariant =
+                    new Variant(minVariantTopLevel.getValue, minVariantTopLevel.getMetadata)
+                  val maxTopLevelVariant =
+                    new Variant(maxVariantTopLevel.getValue, maxVariantTopLevel.getMetadata)
+                  assert(minTopLevelVariant.toJson(java.time.ZoneId.of("UTC")) ==
+                    """{"$['id']":0,"$['name']":"1"}""")
+                  assert(maxTopLevelVariant.toJson(java.time.ZoneId.of("UTC")) ==
+                    """{"$['id']":9,"$['name']":"9"}""")
+
+                  // Verify nested variant column stats
+                  val minVariantNested = checkpointStatsParsed.getAs[VariantVal](2)
+                  val maxVariantNested = checkpointStatsParsed.getAs[VariantVal](3)
+                  val minNestedVariant =
+                    new Variant(minVariantNested.getValue, minVariantNested.getMetadata)
+                  val maxNestedVariant =
+                    new Variant(maxVariantNested.getValue, maxVariantNested.getMetadata)
+                  assert(minNestedVariant.toJson(java.time.ZoneId.of("UTC")) ==
+                    """{"$['id']":10,"$['name']":"11"}""")
+                  assert(maxNestedVariant.toJson(java.time.ZoneId.of("UTC")) ==
+                    """{"$['id']":19,"$['name']":"20"}""")
+                } else {
+                  // When collectVariantStats=false, variant columns should not be in stats_parsed
+                  val statsParsedSchema = checkpointDf
+                    .select("add.stats_parsed.minValues", "add.stats_parsed.maxValues")
+                    .schema
+                  val minValuesFields = statsParsedSchema("minValues").dataType
+                    .asInstanceOf[StructType].fieldNames
+                  val maxValuesFields = statsParsedSchema("maxValues").dataType
+                    .asInstanceOf[StructType].fieldNames
+                  assert(!minValuesFields.contains("v"),
+                    "minValues should not contain 'v' when collectVariantStats=false")
+                  assert(!maxValuesFields.contains("v"),
+                    "maxValues should not contain 'v' when collectVariantStats=false")
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  testDifferentCheckpoints("Ensure variant stats are preserved during state reconstruction") {
+    case (_, _) =>
+    // Test different combinations of (writeStatsAsJson, writeStatsAsStruct)
+    // The golden table contains variant stats but NO checkpoint.
+    // We set the checkpoint properties and create the checkpoint in this test.
+    val combinations = Seq(
+      ("true", "false"),
+      ("false", "true"),
+      ("true", "true")
+      // Note: ("false", "false") would have no stats at all, so not testing it
+    )
+
+    // Expected Z85-encoded value for variant `0` (the golden table contains `id::variant`
+    // where id=0)
+    // This is the Z85 encoding of the variant binary representation of integer 0
+    val expectedZ85 = "0rAf3bMW#D00%Fx0000000000"
+
+    combinations.foreach { case (jsonStats, structStats) =>
+      withClue(s"writeStatsAsJson=$jsonStats, writeStatsAsStruct=$structStats") {
+        withTempDir { tempDir =>
+          // Copy golden table to temp directory
+          val source = new File("src/test/resources/delta/variant-stats-state-reconstruction")
+          val target = new File(tempDir, "variant-stats-table")
+          FileUtils.copyDirectory(source, target)
+
+          val tablePath = target.getAbsolutePath
+
+          // Set checkpoint properties
+          spark.sql(
+            s"""ALTER TABLE delta.`$tablePath` SET TBLPROPERTIES (
+            |  'delta.checkpoint.writeStatsAsJson' = '$jsonStats',
+            |  'delta.checkpoint.writeStatsAsStruct' = '$structStats'
+            |)""".stripMargin)
+
+          // Create checkpoint with the new properties
+          val deltaLog = DeltaLog.forTable(spark, tablePath)
+          deltaLog.checkpoint(deltaLog.update())
+
+          // Clear cache to ensure fresh state reconstruction from checkpoint
+          DeltaLog.clearCache()
+
+          val snapshot = deltaLog.update()
+
+          // Get the reconstructed state and verify variant stats are present
+          val addFilesWithStats = snapshot.stateDS
+            .filter("add IS NOT NULL")
+            .filter("add.stats IS NOT NULL AND add.stats != ''")
+            .collect()
+
+          assert(
+            addFilesWithStats.nonEmpty,
+            s"Expected at least one AddFile with stats for " +
+              s"writeStatsAsJson=$jsonStats, writeStatsAsStruct=$structStats")
+
+          // Verify that the stats contain the expected Z85-encoded variant
+          val statsContainZ85 = addFilesWithStats.exists { action =>
+            val stats = action.add.stats
+            stats != null && stats.contains(expectedZ85)
+          }
+
+          assert(
+            statsContainZ85,
+            s"Expected stats to contain Z85-encoded variant '$expectedZ85' for " +
+              s"writeStatsAsJson=$jsonStats, writeStatsAsStruct=$structStats. " +
+              s"Actual stats: ${addFilesWithStats.map(_.add.stats).mkString(", ")}")
+        }
+      }
+    }
+  }
+
+  test("DML with DVs corrupts variant stats when collectVariantDataSkippingStats is disabled") {
+    // This test reads from golden files containing the variant logical type annotation
+    assume(VariantShreddingTestShims.variantInferShreddingSchemaSupported,
+      "parse_json requires Spark 4.1+")
+
+    // This test verifies that when:
+    // 1. A table has variant stats
+    // 2. collectVariantDataSkippingStats is disabled in OSS
+    // 3. Deletion vectors are enabled
+    // 4. A DML operation (UPDATE/DELETE/MERGE) is performed
+    // The variant stats are lost because updateStatsToWideBounds doesn't preserve
+    // the Z85 encoding properly when re-serializing stats.
+    Seq("UPDATE", "DELETE", "MERGE").foreach { dmlOp =>
+      withClue(s"DML operation: $dmlOp") {
+        withSQLConf(
+          DeltaSQLConf.COLLECT_VARIANT_DATA_SKIPPING_STATS.key -> "false",
+          DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key -> "true",
+          DeltaSQLConf.UPDATE_USE_PERSISTENT_DELETION_VECTORS.key -> "true",
+          DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key -> "true") {
+          withTempDir { tempDir =>
+            // Load golden table with variant stats (no checkpoint)
+            val source = new File("src/test/resources/delta/variant-stats-no-checkpoint")
+            val target = new File(tempDir, "variant-stats-table")
+            FileUtils.copyDirectory(source, target)
+
+            val tablePath = target.getAbsolutePath
+
+            // Enable deletion vectors on the table
+            spark.sql(s"ALTER TABLE delta.`$tablePath` SET TBLPROPERTIES " +
+              s"('${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}' = 'true')")
+
+            val deltaLog = DeltaLog.forTable(spark, tablePath)
+
+            // Verify variant stats are present initially (Z85-encoded)
+            val initialSnapshot = deltaLog.update()
+            val initialAddFiles = initialSnapshot.allFiles.collect()
+            val initialStatsWithVariant = initialAddFiles.filter { addFile =>
+              addFile.stats != null && addFile.stats.contains("\"v\":")
+            }
+            assert(
+              initialStatsWithVariant.nonEmpty,
+              "Expected variant stats to be present initially")
+
+            // Perform DML operation that uses DVs
+            dmlOp match {
+              case "UPDATE" =>
+                spark.sql(s"""UPDATE delta.`$tablePath` SET v = parse_json('{"updated":true}') """ +
+                  """WHERE i = 100""")
+              case "DELETE" =>
+                spark.sql(s"""DELETE FROM delta.`$tablePath` WHERE i = 100""")
+              case "MERGE" =>
+                spark.sql(
+                  s"""MERGE INTO delta.`$tablePath` AS target
+                     |USING (SELECT 100 AS i, parse_json('{"merged":true}') AS v) AS source
+                     |ON target.i = source.i
+                     |WHEN MATCHED THEN UPDATE SET target.v = source.v
+                     |""".stripMargin)
+            }
+
+            // After DML with DVs, verify that variant stats are lost
+            val afterSnapshot = deltaLog.update()
+            val filesWithDVs = afterSnapshot.allFiles.collect().filter(_.deletionVector != null)
+
+            assert(filesWithDVs.nonEmpty, s"Expected files with DVs after $dmlOp")
+
+            // Files that went through updateStatsToWideBounds should lose variant stats
+            // because the Z85 encoding is not preserved when re-serializing.
+            // The variant stats are dropped from minValues/maxValues entirely.
+            filesWithDVs.foreach { addFile =>
+              val stats = addFile.stats
+              assert(stats != null, "Stats should not be null")
+
+              // Parse the stats JSON to check minValues and maxValues
+              // The variant stats (v, nv.v) should be absent from minValues/maxValues
+              // after DML because OSS doesn't preserve the Z85-encoded variant stats
+              val statsJson = JsonUtils.fromJson[Map[String, Any]](stats)
+              val minValues = statsJson.get("minValues").map(_.asInstanceOf[Map[String, Any]])
+              val maxValues = statsJson.get("maxValues").map(_.asInstanceOf[Map[String, Any]])
+
+              // Check that variant column 'v' is not in minValues/maxValues
+              // (it was present in the original stats as a Z85-encoded string)
+              val minValuesHasVariant = minValues.exists(_.contains("v"))
+              val maxValuesHasVariant = maxValues.exists(_.contains("v"))
+
+              assert(
+                !minValuesHasVariant && !maxValuesHasVariant,
+                s"Expected variant stats to be absent from minValues/maxValues after $dmlOp " +
+                  s"with DVs, but found: $stats")
+            }
+          }
+        }
+      }
+    }
+  }
+
+  test("DML with DVs preserves variant stats when collectVariantDataSkippingStats is enabled") {
+    // This test reads from golden files containing the variant logical type annotation
+    assume(VariantShreddingTestShims.variantInferShreddingSchemaSupported,
+      "parse_json requires Spark 4.1+")
+
+    // This test verifies that when:
+    // 1. A table has variant stats
+    // 2. collectVariantDataSkippingStats is enabled
+    // 3. Deletion vectors are enabled
+    // 4. A DML operation (UPDATE/DELETE/MERGE) is performed
+    // The variant stats are preserved because updateStatsToWideBounds now properly
+    // encodes variant values as Z85 before re-serializing to JSON.
+    Seq("UPDATE", "DELETE", "MERGE").foreach { dmlOp =>
+      withClue(s"DML operation: $dmlOp") {
+        withSQLConf(
+          DeltaSQLConf.COLLECT_VARIANT_DATA_SKIPPING_STATS.key -> "true",
+          DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key -> "true",
+          DeltaSQLConf.UPDATE_USE_PERSISTENT_DELETION_VECTORS.key -> "true",
+          DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key -> "true") {
+          withTempDir { tempDir =>
+            // Load golden table with variant stats (no checkpoint)
+            val source = new File("src/test/resources/delta/variant-stats-no-checkpoint")
+            val target = new File(tempDir, "variant-stats-table")
+            FileUtils.copyDirectory(source, target)
+
+            val tablePath = target.getAbsolutePath
+
+            // Enable deletion vectors on the table
+            spark.sql(s"ALTER TABLE delta.`$tablePath` SET TBLPROPERTIES " +
+              s"('${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}' = 'true')")
+
+            val deltaLog = DeltaLog.forTable(spark, tablePath)
+
+            // Verify variant stats are present initially (Z85-encoded)
+            val initialSnapshot = deltaLog.update()
+            val initialAddFiles = initialSnapshot.allFiles.collect()
+            val initialStatsWithVariant = initialAddFiles.filter { addFile =>
+              addFile.stats != null && addFile.stats.contains("\"v\":")
+            }
+            assert(
+              initialStatsWithVariant.nonEmpty,
+              "Expected variant stats to be present initially")
+
+            // Perform DML operation that uses DVs
+            dmlOp match {
+              case "UPDATE" =>
+                spark.sql(s"""UPDATE delta.`$tablePath` SET v = parse_json('{"updated":true}') """ +
+                  """WHERE i = 100""")
+              case "DELETE" =>
+                spark.sql(s"""DELETE FROM delta.`$tablePath` WHERE i = 100""")
+              case "MERGE" =>
+                spark.sql(
+                  s"""MERGE INTO delta.`$tablePath` AS target
+                     |USING (SELECT 100 AS i, parse_json('{"merged":true}') AS v) AS source
+                     |ON target.i = source.i
+                     |WHEN MATCHED THEN UPDATE SET target.v = source.v
+                     |""".stripMargin)
+            }
+
+            // After DML with DVs, verify that variant stats are PRESERVED
+            val afterSnapshot = deltaLog.update()
+            val filesWithDVs = afterSnapshot.allFiles.collect().filter(_.deletionVector != null)
+
+            assert(filesWithDVs.nonEmpty, s"Expected files with DVs after $dmlOp")
+
+            // Files that went through updateStatsToWideBounds should preserve variant stats
+            // because the fix properly encodes variant values as Z85 before serializing to JSON.
+            filesWithDVs.foreach { addFile =>
+              val stats = addFile.stats
+              assert(stats != null, "Stats should not be null")
+
+              // Parse the stats JSON to check minValues and maxValues
+              val statsJson = JsonUtils.fromJson[Map[String, Any]](stats)
+              val minValues = statsJson.get("minValues").map(_.asInstanceOf[Map[String, Any]])
+              val maxValues = statsJson.get("maxValues").map(_.asInstanceOf[Map[String, Any]])
+
+              // Check that variant column 'v' IS in minValues/maxValues
+              // (preserved as Z85-encoded strings)
+              val minValuesHasVariant = minValues.exists(_.contains("v"))
+              val maxValuesHasVariant = maxValues.exists(_.contains("v"))
+
+              assert(
+                minValuesHasVariant && maxValuesHasVariant,
+                s"Expected variant stats to be preserved in minValues/maxValues after $dmlOp " +
+                  s"with DVs, but found: $stats")
+
+              // Verify the variant stats are valid Z85-encoded strings by decoding them
+              def decodeZ85ToVariantJson(z85String: String): String = {
+                val decoded = Codec.Base85Codec.decodeBytes(z85String, z85String.length)
+                val metadataSize = VariantStatsShims.metadataSize(decoded)
+                val value = decoded.slice(metadataSize, decoded.length)
+                val variant = new Variant(value, decoded)
+                variant.toJson(java.time.ZoneId.of("UTC"))
+              }
+
+              val minV = minValues.flatMap(_.get("v")).map(_.toString)
+              val maxV = maxValues.flatMap(_.get("v")).map(_.toString)
+
+              // Decode Z85 and verify they produce valid variant JSON
+              val minVJson = minV.map(decodeZ85ToVariantJson)
+              val maxVJson = maxV.map(decodeZ85ToVariantJson)
+
+              assert(
+                minVJson.exists(_.nonEmpty),
+                s"Expected minValues.v to be valid Z85-encoded variant, but found: $minV")
+              assert(
+                maxVJson.exists(_.nonEmpty),
+                s"Expected maxValues.v to be valid Z85-encoded variant, but found: $maxV")
+            }
+          }
+        }
+      }
+    }
+  }
+
+  test("DML with DVs preserves nested variant stats " +
+      "when collectVariantDataSkippingStats is enabled") {
+    // This test reads from golden files containing the variant logical type annotation
+    assume(VariantShreddingTestShims.variantInferShreddingSchemaSupported,
+      "parse_json requires Spark 4.1+")
+
+    // This test verifies that variant stats for a variant column nested inside a struct
+    // (schema: i int, s struct<v variant>) are preserved after DML operations with DVs.
+    Seq("UPDATE", "DELETE", "MERGE").foreach { dmlOp =>
+      withClue(s"DML operation: $dmlOp") {
+        withSQLConf(
+          DeltaSQLConf.COLLECT_VARIANT_DATA_SKIPPING_STATS.key -> "true",
+          DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key -> "true",
+          DeltaSQLConf.UPDATE_USE_PERSISTENT_DELETION_VECTORS.key -> "true",
+          DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key -> "true") {
+          withTempDir { tempDir =>
+            // Load golden table with nested variant stats (no checkpoint)
+            // Schema: i int, s struct<v variant>
+            val source = new File(
+              "src/test/resources/delta/variant-stats-nested-no-checkpoint")
+            val target = new File(tempDir, "variant-stats-table")
+            FileUtils.copyDirectory(source, target)
+
+            val tablePath = target.getAbsolutePath
+
+            // Enable deletion vectors on the table
+            spark.sql(s"ALTER TABLE delta.`$tablePath` SET TBLPROPERTIES " +
+              s"('${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}' = 'true')")
+
+            val deltaLog = DeltaLog.forTable(spark, tablePath)
+
+            // Verify nested variant stats are present initially (Z85-encoded)
+            val initialSnapshot = deltaLog.update()
+            val initialAddFiles = initialSnapshot.allFiles.collect()
+            val initialStatsWithVariant = initialAddFiles.filter { addFile =>
+              addFile.stats != null && addFile.stats.contains("\"s\":")
+            }
+            assert(
+              initialStatsWithVariant.nonEmpty,
+              "Expected nested variant stats to be present initially")
+
+            // Perform DML operation that uses DVs
+            dmlOp match {
+              case "UPDATE" =>
+                spark.sql(
+                  s"""UPDATE delta.`$tablePath`
+                     |SET s = named_struct('v', parse_json('{"updated":true}'))
+                     |WHERE i = 100""".stripMargin)
+              case "DELETE" =>
+                spark.sql(s"""DELETE FROM delta.`$tablePath` WHERE i = 100""")
+              case "MERGE" =>
+                spark.sql(
+                  s"""MERGE INTO delta.`$tablePath` AS target
+                     |USING (SELECT 100 AS i,
+                     |  named_struct('v', parse_json('{"merged":true}')) AS s) AS source
+                     |ON target.i = source.i
+                     |WHEN MATCHED THEN UPDATE SET target.s = source.s
+                     |""".stripMargin)
+            }
+
+            // After DML with DVs, verify that nested variant stats are PRESERVED
+            val afterSnapshot = deltaLog.update()
+            val filesWithDVs = afterSnapshot.allFiles.collect().filter(_.deletionVector != null)
+
+            assert(filesWithDVs.nonEmpty, s"Expected files with DVs after $dmlOp")
+
+            filesWithDVs.foreach { addFile =>
+              val stats = addFile.stats
+              assert(stats != null, "Stats should not be null")
+
+              // Parse the stats JSON to check minValues and maxValues
+              val statsJson = JsonUtils.fromJson[Map[String, Any]](stats)
+              val minValues = statsJson.get("minValues").map(_.asInstanceOf[Map[String, Any]])
+              val maxValues = statsJson.get("maxValues").map(_.asInstanceOf[Map[String, Any]])
+
+              // Check that nested variant column 's.v' IS in minValues/maxValues
+              val minValuesHasNestedVariant = minValues.exists { mv =>
+                mv.get("s").exists(_.asInstanceOf[Map[String, Any]].contains("v"))
+              }
+              val maxValuesHasNestedVariant = maxValues.exists { mv =>
+                mv.get("s").exists(_.asInstanceOf[Map[String, Any]].contains("v"))
+              }
+
+              assert(
+                minValuesHasNestedVariant && maxValuesHasNestedVariant,
+                s"Expected nested variant stats (s.v) to be preserved in " +
+                  s"minValues/maxValues after $dmlOp with DVs, but found: $stats")
+
+              // Verify the nested variant stats are valid Z85-encoded strings
+              def decodeZ85ToVariantJson(z85String: String): String = {
+                val decoded = Codec.Base85Codec.decodeBytes(z85String, z85String.length)
+                val metadataSize = VariantStatsShims.metadataSize(decoded)
+                val value = decoded.slice(metadataSize, decoded.length)
+                val variant = new Variant(value, decoded)
+                variant.toJson(java.time.ZoneId.of("UTC"))
+              }
+
+              val minSV = minValues
+                .flatMap(_.get("s"))
+                .map(_.asInstanceOf[Map[String, Any]])
+                .flatMap(_.get("v"))
+                .map(_.toString)
+              val maxSV = maxValues
+                .flatMap(_.get("s"))
+                .map(_.asInstanceOf[Map[String, Any]])
+                .flatMap(_.get("v"))
+                .map(_.toString)
+
+              val minSVJson = minSV.map(decodeZ85ToVariantJson)
+              val maxSVJson = maxSV.map(decodeZ85ToVariantJson)
+
+              assert(
+                minSVJson.exists(_.nonEmpty),
+                s"Expected minValues.s.v to be valid Z85-encoded variant, but found: $minSV")
+              assert(
+                maxSVJson.exists(_.nonEmpty),
+                s"Expected maxValues.s.v to be valid Z85-encoded variant, but found: $maxSV")
+            }
+          }
+        }
+      }
+    }
+  }
+
+  test("DML with DVs preserves variant and struct stats " +
+      "when collectVariantDataSkippingStats is enabled") {
+    // This test reads from golden files containing the variant logical type annotation
+    assume(VariantShreddingTestShims.variantInferShreddingSchemaSupported,
+      "parse_json requires Spark 4.1+")
+
+    // This test verifies that for a table with both variant and struct columns
+    // (schema: v variant, s struct<i int, j string>), stats are preserved for ALL columns
+    // after DML operations with DVs.
+    Seq("UPDATE", "DELETE", "MERGE").foreach { dmlOp =>
+      withClue(s"DML operation: $dmlOp") {
+        withSQLConf(
+          DeltaSQLConf.COLLECT_VARIANT_DATA_SKIPPING_STATS.key -> "true",
+          DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key -> "true",
+          DeltaSQLConf.UPDATE_USE_PERSISTENT_DELETION_VECTORS.key -> "true",
+          DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key -> "true") {
+          withTempDir { tempDir =>
+            // Load golden table with variant + struct stats (no checkpoint)
+            // Schema: v variant, s struct<i int, j string>
+            val source = new File(
+              "src/test/resources/delta/variant-stats-with-struct-no-checkpoint")
+            val target = new File(tempDir, "variant-stats-table")
+            FileUtils.copyDirectory(source, target)
+
+            val tablePath = target.getAbsolutePath
+
+            // Enable deletion vectors on the table
+            spark.sql(s"ALTER TABLE delta.`$tablePath` SET TBLPROPERTIES " +
+              s"('${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}' = 'true')")
+
+            val deltaLog = DeltaLog.forTable(spark, tablePath)
+
+            // Verify both variant and struct stats are present initially
+            val initialSnapshot = deltaLog.update()
+            val initialAddFiles = initialSnapshot.allFiles.collect()
+            val initialStatsWithVariant = initialAddFiles.filter { addFile =>
+              addFile.stats != null &&
+                addFile.stats.contains("\"v\":") &&
+                addFile.stats.contains("\"s\":")
+            }
+            assert(
+              initialStatsWithVariant.nonEmpty,
+              "Expected both variant and struct stats to be present initially")
+
+            // Perform DML operation that uses DVs
+            // Use s.i for the WHERE condition since it's a regular int column
+            dmlOp match {
+              case "UPDATE" =>
+                spark.sql(
+                  s"""UPDATE delta.`$tablePath`
+                     |SET v = parse_json('{"updated":true}')
+                     |WHERE s.i = 200""".stripMargin)
+              case "DELETE" =>
+                spark.sql(s"""DELETE FROM delta.`$tablePath` WHERE s.i = 200""")
+              case "MERGE" =>
+                spark.sql(
+                  s"""MERGE INTO delta.`$tablePath` AS target
+                     |USING (SELECT parse_json('{"merged":true}') AS v,
+                     |  named_struct('i', 200, 'j', 'str_200') AS s) AS source
+                     |ON target.s.i = source.s.i
+                     |WHEN MATCHED THEN UPDATE SET target.v = source.v
+                     |""".stripMargin)
+            }
+
+            // After DML with DVs, verify that ALL stats are PRESERVED
+            val afterSnapshot = deltaLog.update()
+            val filesWithDVs = afterSnapshot.allFiles.collect().filter(_.deletionVector != null)
+
+            assert(filesWithDVs.nonEmpty, s"Expected files with DVs after $dmlOp")
+
+            filesWithDVs.foreach { addFile =>
+              val stats = addFile.stats
+              assert(stats != null, "Stats should not be null")
+
+              // Parse the stats JSON to check minValues and maxValues
+              val statsJson = JsonUtils.fromJson[Map[String, Any]](stats)
+              val minValues = statsJson.get("minValues").map(_.asInstanceOf[Map[String, Any]])
+              val maxValues = statsJson.get("maxValues").map(_.asInstanceOf[Map[String, Any]])
+
+              // Check that variant column 'v' IS in minValues/maxValues
+              val minValuesHasVariant = minValues.exists(_.contains("v"))
+              val maxValuesHasVariant = maxValues.exists(_.contains("v"))
+
+              assert(
+                minValuesHasVariant && maxValuesHasVariant,
+                s"Expected variant stats (v) to be preserved after $dmlOp " +
+                  s"with DVs, but found: $stats")
+
+              // Check that struct column 's' stats (s.i and s.j) are also preserved
+              val minValuesHasStruct = minValues.exists { mv =>
+                mv.get("s").exists { s =>
+                  val structMap = s.asInstanceOf[Map[String, Any]]
+                  structMap.contains("i") && structMap.contains("j")
+                }
+              }
+              val maxValuesHasStruct = maxValues.exists { mv =>
+                mv.get("s").exists { s =>
+                  val structMap = s.asInstanceOf[Map[String, Any]]
+                  structMap.contains("i") && structMap.contains("j")
+                }
+              }
+
+              assert(
+                minValuesHasStruct && maxValuesHasStruct,
+                s"Expected struct stats (s.i, s.j) to be preserved after $dmlOp " +
+                  s"with DVs, but found: $stats")
+
+              // Verify the variant stats are valid Z85-encoded strings
+              def decodeZ85ToVariantJson(z85String: String): String = {
+                val decoded = Codec.Base85Codec.decodeBytes(z85String, z85String.length)
+                val metadataSize = VariantStatsShims.metadataSize(decoded)
+                val value = decoded.slice(metadataSize, decoded.length)
+                val variant = new Variant(value, decoded)
+                variant.toJson(java.time.ZoneId.of("UTC"))
+              }
+
+              val minV = minValues.flatMap(_.get("v")).map(_.toString)
+              val maxV = maxValues.flatMap(_.get("v")).map(_.toString)
+
+              val minVJson = minV.map(decodeZ85ToVariantJson)
+              val maxVJson = maxV.map(decodeZ85ToVariantJson)
+
+              assert(
+                minVJson.exists(_.nonEmpty),
+                s"Expected minValues.v to be valid Z85-encoded variant, but found: $minV")
+              assert(
+                maxVJson.exists(_.nonEmpty),
+                s"Expected maxValues.v to be valid Z85-encoded variant, but found: $maxV")
+            }
+          }
+        }
+      }
     }
   }
 }
@@ -1063,15 +2008,15 @@ class FakeGCSFileSystemValidatingCommits extends FakeGCSFileSystemValidatingChec
   override protected def shouldValidateFilePattern(f: Path): Boolean = f.getName.contains(".json")
 }
 
-class CheckpointsWithCoordinatedCommitsBatch1Suite extends CheckpointsSuite {
-  override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
+class CheckpointsWithCatalogOwnedBatch1Suite extends CheckpointsSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class CheckpointsWithCoordinatedCommitsBatch2Suite extends CheckpointsSuite {
-  override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(2)
+class CheckpointsWithCatalogOwnedBatch2Suite extends CheckpointsSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
 }
 
-class CheckpointsWithCoordinatedCommitsBatch100Suite extends CheckpointsSuite {
-  override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
+class CheckpointsWithCatalogOwnedBatch100Suite extends CheckpointsSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }
 

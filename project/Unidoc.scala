@@ -49,6 +49,7 @@ object Unidoc {
       generateScalaDoc: Boolean = false,
       classPathToSkip: String = null
     ): Project = {
+      if (sys.env.contains("DISABLE_UNIDOC")) return projectToUpdate
       if (!generatedJavaDoc && !generateScalaDoc) return projectToUpdate
 
       var updatedProject: Project = projectToUpdate
@@ -61,15 +62,20 @@ object Unidoc {
         // .enablePlugins(PublishJavadocPlugin)
         .settings(
           libraryDependencies ++= Seq(
-            // Ensure genJavaDoc plugin is of the right version that works with Scala 2.12
+            // Ensure genJavaDoc plugin is of the right version that works with Scala 2.13.16
             compilerPlugin(
-              "com.typesafe.genjavadoc" %% "genjavadoc-plugin" % "0.18" cross CrossVersion.full)
+              "com.typesafe.genjavadoc" %% "genjavadoc-plugin" % "0.19" cross CrossVersion.full)
           ),
 
           generateUnidocSettings(docTitle, generateScalaDoc, classPathToSkip),
 
           // Ensure unidoc is run with tests.
-          (Test / test) := ((Test / test) dependsOn (Compile / unidoc)).value
+          (Test / test) := ((Test / test) dependsOn (Compile / unidoc)).value,
+
+          // hide package private types and methods in javadoc
+          scalacOptions ++= Seq(
+            "-P:genjavadoc:strictVisibility=true"
+          ),
         )
     }
 

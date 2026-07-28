@@ -1,0 +1,133 @@
+/*
+ * Copyright (2021) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.spark.sql.delta.test
+
+import scala.collection.mutable
+
+import org.apache.spark.sql.delta.DeltaTestUtils
+import org.apache.spark.sql.delta.files.TahoeFileIndex
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.scalactic.source.Position
+import org.scalatest.Tag
+
+import org.apache.spark.SparkConf
+import org.apache.spark.sql.execution.FileSourceScanExec
+import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanHelper
+
+/**
+ * Trait that forces Delta V2 connector mode to STRICT, ensuring all operations
+ * use the Kernel-based DeltaV2Table implementation (V2 connector) instead of
+ * DeltaTableV2 (V1 connector).
+ *
+ * See [[DeltaSQLConf.V2_ENABLE_MODE]] for V1 vs V2 connector definitions.
+ *
+ * Usage:
+ * {{{
+ * class MyKernelTest extends MyOriginalSuite with V2ForceTest {
+ *   override protected def shouldPassTests: Set[String] = Set("supported test")
+ *   override protected def shouldFailTests: Set[String] = Set("unsupported test")
+ * }
+ * }}}
+ */
+trait V2ForceTest extends DeltaSQLCommandTest with AdaptiveSparkPlanHelper {
+
+  private val testsRun: mutable.Set[String] = mutable.Set.empty
+
+  /**
+   * When true, each `shouldPass` test additionally asserts that it does not silently fall back to
+   * the V1 Delta file-source scan under STRICT mode. Off by default.
+   */
+  protected def assertNoV1Fallback: Boolean = false
+
+  /**
+   * Override `test` to apply the `shouldFail` logic.
+   * Tests that are expected to fail are converted to ignored tests.
+   */
+  abstract override protected def test(
+      testName: String,
+      testTags: Tag*)(testFun: => Any)(implicit pos: Position): Unit = {
+    if (shouldFail(testName)) {
+      // TODO(#5754): Assert on test failure instead of ignoring
+      super.ignore(
+        s"$testName - expected to fail with Kernel-based V2 connector (not yet supported)")(testFun)
+    } else {
+      super.test(testName, testTags: _*) {
+        testsRun.add(testName)
+        if (assertNoV1Fallback) {
+          val capturedPlans = DeltaTestUtils.withAllPlansCaptured(spark) { testFun; () }
+          val fellBackToV1Delta = capturedPlans.exists { plans =>
+            collectFirst(plans.executedPlan) {
+              case scan: FileSourceScanExec
+                  if scan.relation.location.isInstanceOf[TahoeFileIndex] => scan
+            }.isDefined
+          }
+          assert(!fellBackToV1Delta,
+            s"'$testName' produced a V1 Delta file-source scan under STRICT V2 mode, so it " +
+              "silently fell back to the V1 connector. Move it to shouldFailTests if the V2 " +
+              "connector does not support this surface yet.")
+        } else {
+          testFun
+        }
+      }
+    }
+  }
+
+  /** Tests expected to pass under the V2 connector. Subclasses populate this set. */
+  protected def shouldPassTests: Set[String] = Set.empty
+
+  /** Tests expected to fail under the V2 connector. Subclasses populate this set. */
+  protected def shouldFailTests: Set[String] = Set.empty
+
+  /**
+   * Determine if a test is expected to fail. Every test must appear in exactly one of
+   * [[shouldPassTests]] or [[shouldFailTests]] so the V2 contract is explicit.
+   */
+  protected def shouldFail(testName: String): Boolean = {
+    val inPassList = shouldPassTests.contains(testName)
+    val inFailList = shouldFailTests.contains(testName)
+
+    assert(inPassList || inFailList,
+      s"Test '$testName' not in shouldPassTests or shouldFailTests")
+    assert(!(inPassList && inFailList),
+      s"Test '$testName' in both shouldPassTests and shouldFailTests")
+
+    inFailList
+  }
+
+  /**
+   * Override `sparkConf` to set V2_ENABLE_MODE to "STRICT".
+   * This ensures all catalog operations use Kernel DeltaV2Table (V2 connector).
+   */
+  abstract override protected def sparkConf: SparkConf = {
+    super.sparkConf
+      .set(DeltaSQLConf.V2_ENABLE_MODE.key, "STRICT")
+  }
+
+  /**
+   * Run an arbitrary action through the V1 connector by temporarily setting V2_ENABLE_MODE to
+   * NONE. Useful for setup/DDL/DML that V2 doesn't support.
+   */
+  protected def inV1Mode[T](f: => T): T =
+    withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "NONE")(f)
+
+  /** Run a SQL statement through the V1 connector. */
+  protected def executeInV1Mode(sqlText: String): Unit = inV1Mode(sql(sqlText))
+
+  override def afterAll(): Unit = {
+    super.afterAll()
+  }
+}

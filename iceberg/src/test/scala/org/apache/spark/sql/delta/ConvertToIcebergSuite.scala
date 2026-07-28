@@ -100,8 +100,7 @@ class ConvertToIcebergSuite extends QueryTest with Eventually {
 
     testTable = testTable.copy(properties = Map.empty)
     resultTable = UniversalFormat.enforceSupportInCatalog(testTable, testMetadata)
-    assert(resultTable.nonEmpty)
-    assert(resultTable.get.properties("table_type") == "iceberg")
+    assert(resultTable.isEmpty)
   }
 
   test("basic test - managed table created with SQL") {
@@ -110,6 +109,7 @@ class ConvertToIcebergSuite extends QueryTest with Eventually {
         s"""CREATE TABLE `${testTableName}` (col1 INT) USING DELTA
            |TBLPROPERTIES (
            |  'delta.columnMapping.mode' = 'name',
+           |  'delta.enableIcebergCompatV2' = 'true',
            |  'delta.universalFormat.enabledFormats' = 'iceberg'
            |)""".stripMargin)
       runDeltaSql(s"INSERT INTO `$testTableName` VALUES (123)")
@@ -156,6 +156,7 @@ class ConvertToIcebergSuite extends QueryTest with Eventually {
   def withDefaultTablePropsInSQLConf(f: => Unit): Unit = {
     withSQLConf(
       DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey -> "name",
+      DeltaConfigs.ICEBERG_COMPAT_V1_ENABLED.defaultTablePropertyKey -> "true",
       DeltaConfigs.UNIVERSAL_FORMAT_ENABLED_FORMATS.defaultTablePropertyKey -> "iceberg"
     ) { f }
   }

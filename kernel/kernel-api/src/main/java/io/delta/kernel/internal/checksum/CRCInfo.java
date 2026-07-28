@@ -1,0 +1,497 @@
+/*
+ * Copyright (2025) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package io.delta.kernel.internal.checksum;
+
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static java.util.Objects.requireNonNull;
+
+import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.data.Row;
+import io.delta.kernel.internal.actions.DomainMetadata;
+import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.actions.SetTransaction;
+import io.delta.kernel.internal.data.GenericRow;
+import io.delta.kernel.internal.data.StructRow;
+import io.delta.kernel.internal.stats.FileSizeHistogram;
+import io.delta.kernel.internal.util.InternalUtils;
+import io.delta.kernel.internal.util.VectorUtils;
+import io.delta.kernel.types.ArrayType;
+import io.delta.kernel.types.LongType;
+import io.delta.kernel.types.StringType;
+import io.delta.kernel.types.StructType;
+import java.util.*;
+import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+public class CRCInfo {
+  private static final Logger logger = LoggerFactory.getLogger(CRCInfo.class);
+
+  // Constants for schema field names
+  private static final String TABLE_SIZE_BYTES = "tableSizeBytes";
+  private static final String NUM_FILES = "numFiles";
+  private static final String NUM_METADATA = "numMetadata";
+  private static final String NUM_PROTOCOL = "numProtocol";
+  private static final String METADATA = "metadata";
+  private static final String PROTOCOL = "protocol";
+  private static final String TXN_ID = "txnId";
+  private static final String DOMAIN_METADATA = "domainMetadata";
+  private static final String FILE_SIZE_HISTOGRAM = "fileSizeHistogram";
+  private static final String IN_COMMIT_TIMESTAMP = "inCommitTimestampOpt";
+  private static final String SET_TRANSACTIONS = "setTransactions";
+  private static final String NUM_DELETED_RECORDS_OPT = "numDeletedRecordsOpt";
+  private static final String NUM_DELETION_VECTORS_OPT = "numDeletionVectorsOpt";
+  private static final String HISTOGRAM_OPT = "histogramOpt";
+
+  public static final StructType CRC_FILE_SCHEMA =
+      new StructType()
+          .add(TABLE_SIZE_BYTES, LongType.LONG)
+          .add(NUM_FILES, LongType.LONG)
+          .add(NUM_METADATA, LongType.LONG)
+          .add(NUM_PROTOCOL, LongType.LONG)
+          .add(METADATA, Metadata.FULL_SCHEMA)
+          .add(PROTOCOL, Protocol.FULL_SCHEMA)
+          .add(TXN_ID, StringType.STRING, /*nullable*/ true)
+          .add(DOMAIN_METADATA, new ArrayType(DomainMetadata.FULL_SCHEMA, false), /*nullable*/ true)
+          .add(FILE_SIZE_HISTOGRAM, FileSizeHistogram.FULL_SCHEMA, /*nullable*/ true)
+          .add(IN_COMMIT_TIMESTAMP, LongType.LONG, /*nullable*/ true)
+          .add(
+              SET_TRANSACTIONS, new ArrayType(SetTransaction.FULL_SCHEMA, false), /*nullable*/ true)
+          .add(NUM_DELETED_RECORDS_OPT, LongType.LONG, /*nullable*/ true)
+          .add(NUM_DELETION_VECTORS_OPT, LongType.LONG, /*nullable*/ true);
+
+  // Used by ChecksumReader to support reading CRC files with the legacy "histogramOpt" field.
+  public static final StructType CRC_FILE_READ_SCHEMA =
+      CRC_FILE_SCHEMA.add(HISTOGRAM_OPT, FileSizeHistogram.FULL_SCHEMA, /*nullable*/ true);
+
+  public static Optional<CRCInfo> fromColumnarBatch(
+      long version, ColumnarBatch batch, int rowId, String crcFilePath) {
+    // Read required fields.
+    Protocol protocol =
+        Protocol.fromColumnVector(batch.getColumnVector(getSchemaIndex(PROTOCOL)), rowId);
+    Metadata metadata =
+        Metadata.fromColumnVector(batch.getColumnVector(getSchemaIndex(METADATA)), rowId);
+    long tableSizeBytes =
+        InternalUtils.requireNonNull(
+                batch.getColumnVector(getSchemaIndex(TABLE_SIZE_BYTES)), rowId, TABLE_SIZE_BYTES)
+            .getLong(rowId);
+    long numFiles =
+        InternalUtils.requireNonNull(
+                batch.getColumnVector(getSchemaIndex(NUM_FILES)), rowId, NUM_FILES)
+            .getLong(rowId);
+
+    // Read optional fields
+    ColumnVector txnIdColumnVector = batch.getColumnVector(getSchemaIndex(TXN_ID));
+    Optional<String> txnId =
+        txnIdColumnVector.isNullAt(rowId)
+            ? Optional.empty()
+            : Optional.of(txnIdColumnVector.getString(rowId));
+    Optional<FileSizeHistogram> fileSizeHistogram =
+        FileSizeHistogram.fromColumnVector(
+            batch.getColumnVector(getSchemaIndex(FILE_SIZE_HISTOGRAM)), rowId);
+    if (!fileSizeHistogram.isPresent()) {
+      int histogramOptIdx = batch.getSchema().indexOf(HISTOGRAM_OPT);
+      if (histogramOptIdx >= 0) {
+        fileSizeHistogram =
+            FileSizeHistogram.fromColumnVector(batch.getColumnVector(histogramOptIdx), rowId);
+      }
+    }
+    ColumnVector domainMetadataVector = batch.getColumnVector(getSchemaIndex(DOMAIN_METADATA));
+    Optional<Set<DomainMetadata>> domainMetadata =
+        domainMetadataVector.isNullAt(rowId)
+            ? Optional.empty()
+            : Optional.of(
+                VectorUtils.toJavaList(domainMetadataVector.getArray(rowId)).stream()
+                    .map(row -> DomainMetadata.fromRow((StructRow) row))
+                    .collect(Collectors.toSet()));
+    Optional<Long> inCommitTimestamp = readOptionalLong(batch, IN_COMMIT_TIMESTAMP, rowId);
+    ColumnVector setTransactionsVector = batch.getColumnVector(getSchemaIndex(SET_TRANSACTIONS));
+    Optional<List<SetTransaction>> setTransactions =
+        setTransactionsVector.isNullAt(rowId)
+            ? Optional.empty()
+            : Optional.of(
+                VectorUtils.<Row>toJavaList(setTransactionsVector.getArray(rowId)).stream()
+                    .map(SetTransaction::fromRow)
+                    .collect(Collectors.toList()));
+    Optional<Long> numDeletedRecords = readOptionalLong(batch, NUM_DELETED_RECORDS_OPT, rowId);
+    Optional<Long> numDeletionVectors = readOptionalLong(batch, NUM_DELETION_VECTORS_OPT, rowId);
+
+    // protocol and metadata are nullable per fromColumnVector's implementation.
+    if (protocol == null || metadata == null) {
+      logger.warn("Invalid checksum file missing protocol and/or metadata: {}", crcFilePath);
+      return Optional.empty();
+    }
+    return Optional.of(
+        new CRCInfo(
+            version,
+            metadata,
+            protocol,
+            tableSizeBytes,
+            numFiles,
+            txnId,
+            domainMetadata,
+            fileSizeHistogram,
+            inCommitTimestamp,
+            setTransactions,
+            numDeletedRecords,
+            numDeletionVectors));
+  }
+
+  private static Optional<Long> readOptionalLong(ColumnarBatch batch, String fieldName, int rowId) {
+    ColumnVector vector = batch.getColumnVector(getSchemaIndex(fieldName));
+    return vector.isNullAt(rowId) ? Optional.empty() : Optional.of(vector.getLong(rowId));
+  }
+
+  /**
+   * Reconstructs a {@link CRCInfo} from a {@link Row} previously produced by {@link #toRow()},
+   * inverting that serialization. Because {@code toRow()} does not carry the version (the version
+   * is derived from the {@code .crc} file name, not the row), the caller supplies it here.
+   *
+   * @param version the table version this checksum represents
+   * @param row a row with the schema {@link #CRC_FILE_SCHEMA}
+   * @return the reconstructed {@link CRCInfo}
+   * @throws IllegalArgumentException if {@code row}'s schema is not {@link #CRC_FILE_SCHEMA}, or if
+   *     any required field ({@code metadata}, {@code protocol}, {@code tableSizeBytes}, {@code
+   *     numFiles}) is null
+   */
+  public static CRCInfo fromRow(long version, Row row) {
+    requireNonNull(row, "row is null");
+    checkArgument(
+        CRC_FILE_SCHEMA.equals(row.getSchema()),
+        "Expected schema: %s, found: %s",
+        CRC_FILE_SCHEMA,
+        row.getSchema());
+
+    // Required fields
+    int metadataIdx = getSchemaIndex(METADATA);
+    int protocolIdx = getSchemaIndex(PROTOCOL);
+    int tableSizeBytesIdx = getSchemaIndex(TABLE_SIZE_BYTES);
+    int numFilesIdx = getSchemaIndex(NUM_FILES);
+    Metadata metadata =
+        Metadata.fromRow(
+            InternalUtils.requireNonNull(row, metadataIdx, METADATA).getStruct(metadataIdx));
+    Protocol protocol =
+        Protocol.fromRow(
+            InternalUtils.requireNonNull(row, protocolIdx, PROTOCOL).getStruct(protocolIdx));
+    long tableSizeBytes =
+        InternalUtils.requireNonNull(row, tableSizeBytesIdx, TABLE_SIZE_BYTES)
+            .getLong(tableSizeBytesIdx);
+    long numFiles = InternalUtils.requireNonNull(row, numFilesIdx, NUM_FILES).getLong(numFilesIdx);
+
+    int txnIdIdx = getSchemaIndex(TXN_ID);
+    Optional<String> txnId =
+        row.isNullAt(txnIdIdx) ? Optional.empty() : Optional.of(row.getString(txnIdIdx));
+
+    int domainMetadataIdx = getSchemaIndex(DOMAIN_METADATA);
+    Optional<Set<DomainMetadata>> domainMetadata =
+        row.isNullAt(domainMetadataIdx)
+            ? Optional.empty()
+            : Optional.of(
+                VectorUtils.<Row>toJavaList(row.getArray(domainMetadataIdx)).stream()
+                    .map(DomainMetadata::fromRow)
+                    .collect(Collectors.toSet()));
+
+    int histogramIdx = getSchemaIndex(FILE_SIZE_HISTOGRAM);
+    Optional<FileSizeHistogram> fileSizeHistogram =
+        row.isNullAt(histogramIdx)
+            ? Optional.empty()
+            : Optional.of(FileSizeHistogram.fromRow(row.getStruct(histogramIdx)));
+
+    Optional<Long> inCommitTimestamp = readOptionalLongFromRow(row, IN_COMMIT_TIMESTAMP);
+    Optional<Long> numDeletedRecords = readOptionalLongFromRow(row, NUM_DELETED_RECORDS_OPT);
+    Optional<Long> numDeletionVectors = readOptionalLongFromRow(row, NUM_DELETION_VECTORS_OPT);
+
+    int setTransactionsIdx = getSchemaIndex(SET_TRANSACTIONS);
+    Optional<List<SetTransaction>> setTransactions =
+        row.isNullAt(setTransactionsIdx)
+            ? Optional.empty()
+            : Optional.of(
+                VectorUtils.<Row>toJavaList(row.getArray(setTransactionsIdx)).stream()
+                    .map(SetTransaction::fromRow)
+                    .collect(Collectors.toList()));
+
+    return new CRCInfo(
+        version,
+        metadata,
+        protocol,
+        tableSizeBytes,
+        numFiles,
+        txnId,
+        domainMetadata,
+        fileSizeHistogram,
+        inCommitTimestamp,
+        setTransactions,
+        numDeletedRecords,
+        numDeletionVectors);
+  }
+
+  private static Optional<Long> readOptionalLongFromRow(Row row, String fieldName) {
+    int idx = getSchemaIndex(fieldName);
+    return row.isNullAt(idx) ? Optional.empty() : Optional.of(row.getLong(idx));
+  }
+
+  private final long version;
+  private final Metadata metadata;
+  private final Protocol protocol;
+  private final long tableSizeBytes;
+  private final long numFiles;
+  private final Optional<String> txnId;
+  private final Optional<Set<DomainMetadata>> domainMetadata;
+  private final Optional<FileSizeHistogram> fileSizeHistogram;
+  private final Optional<Long> inCommitTimestamp;
+  private final Optional<List<SetTransaction>> setTransactions;
+  private final Optional<Long> numDeletedRecords;
+  private final Optional<Long> numDeletionVectors;
+
+  public CRCInfo(
+      long version,
+      Metadata metadata,
+      Protocol protocol,
+      long tableSizeBytes,
+      long numFiles,
+      Optional<String> txnId,
+      Optional<Set<DomainMetadata>> domainMetadata,
+      Optional<FileSizeHistogram> fileSizeHistogram) {
+    this(
+        version,
+        metadata,
+        protocol,
+        tableSizeBytes,
+        numFiles,
+        txnId,
+        domainMetadata,
+        fileSizeHistogram,
+        Optional.empty() /* inCommitTimestamp */,
+        Optional.empty() /* setTransactions */,
+        Optional.empty() /* numDeletedRecords */,
+        Optional.empty() /* numDeletionVectors */);
+  }
+
+  public CRCInfo(
+      long version,
+      Metadata metadata,
+      Protocol protocol,
+      long tableSizeBytes,
+      long numFiles,
+      Optional<String> txnId,
+      Optional<Set<DomainMetadata>> domainMetadata,
+      Optional<FileSizeHistogram> fileSizeHistogram,
+      Optional<Long> inCommitTimestamp,
+      Optional<List<SetTransaction>> setTransactions,
+      Optional<Long> numDeletedRecords,
+      Optional<Long> numDeletionVectors) {
+    checkArgument(tableSizeBytes >= 0);
+    checkArgument(numFiles >= 0);
+    // Live Domain Metadata actions at this version, excluding tombstones.
+    this.domainMetadata = requireNonNull(domainMetadata);
+    domainMetadata.ifPresent(
+        dms ->
+            dms.forEach(
+                dm ->
+                    checkArgument(
+                        !dm.isRemoved(),
+                        String.format(
+                            "Domain metadata in CRC should exclude tombstones, "
+                                + "found removed domain metadata: %s.",
+                            dm.getDomain()))));
+    this.version = version;
+    this.metadata = requireNonNull(metadata);
+    this.protocol = requireNonNull(protocol);
+    this.tableSizeBytes = tableSizeBytes;
+    this.numFiles = numFiles;
+    this.txnId = requireNonNull(txnId);
+    this.fileSizeHistogram = requireNonNull(fileSizeHistogram);
+    this.inCommitTimestamp = requireNonNull(inCommitTimestamp);
+    this.setTransactions = requireNonNull(setTransactions);
+    setTransactions.ifPresent(
+        txns -> {
+          Set<String> appIds = new HashSet<>();
+          txns.forEach(
+              txn ->
+                  checkArgument(
+                      appIds.add(txn.getAppId()),
+                      "SetTransactions in CRC must be unique per appId, found duplicate: %s",
+                      txn.getAppId()));
+        });
+    this.numDeletedRecords = requireNonNull(numDeletedRecords);
+    this.numDeletionVectors = requireNonNull(numDeletionVectors);
+    checkArgument(
+        numDeletedRecords.isPresent() == numDeletionVectors.isPresent(),
+        "numDeletedRecords and numDeletionVectors must both be present or both absent");
+    numDeletedRecords.ifPresent(n -> checkArgument(n >= 0, "numDeletedRecords must be >= 0"));
+    numDeletionVectors.ifPresent(n -> checkArgument(n >= 0, "numDeletionVectors must be >= 0"));
+  }
+
+  /** Used by callers to supply an ICT that cannot be derived from the file actions alone. */
+  public CRCInfo withInCommitTimestamp(Optional<Long> inCommitTimestamp) {
+    return new CRCInfo(
+        version,
+        metadata,
+        protocol,
+        tableSizeBytes,
+        numFiles,
+        txnId,
+        domainMetadata,
+        fileSizeHistogram,
+        inCommitTimestamp,
+        setTransactions,
+        numDeletedRecords,
+        numDeletionVectors);
+  }
+
+  /** The version of the Delta table that this CRCInfo represents. */
+  public long getVersion() {
+    return version;
+  }
+
+  /** The {@link Metadata} stored in this CRCInfo. */
+  public Metadata getMetadata() {
+    return metadata;
+  }
+
+  /** The {@link Protocol} stored in this CRCInfo. */
+  public Protocol getProtocol() {
+    return protocol;
+  }
+
+  public long getNumFiles() {
+    return numFiles;
+  }
+
+  public long getTableSizeBytes() {
+    return tableSizeBytes;
+  }
+
+  public Optional<String> getTxnId() {
+    return txnId;
+  }
+
+  public Optional<Set<DomainMetadata>> getDomainMetadata() {
+    return domainMetadata;
+  }
+
+  /** The {@link FileSizeHistogram} stored in this CRCInfo. */
+  public Optional<FileSizeHistogram> getFileSizeHistogram() {
+    return fileSizeHistogram;
+  }
+
+  public Optional<List<SetTransaction>> getSetTransactions() {
+    return setTransactions;
+  }
+
+  /** DV stats */
+  public Optional<Long> getNumDeletedRecords() {
+    return numDeletedRecords;
+  }
+
+  public Optional<Long> getNumDeletionVectors() {
+    return numDeletionVectors;
+  }
+
+  /**
+   * The in-commit timestamp of the commit at this version, if the table has the inCommitTimestamp
+   * feature enabled. Empty otherwise, or when read from a checksum file written before this field
+   * existed.
+   */
+  public Optional<Long> getInCommitTimestamp() {
+    return inCommitTimestamp;
+  }
+
+  /**
+   * Encode as a {@link Row} object with the schema {@link CRCInfo#CRC_FILE_SCHEMA}.
+   *
+   * @return {@link Row} object with the schema {@link CRCInfo#CRC_FILE_SCHEMA}
+   */
+  public Row toRow() {
+    Map<Integer, Object> values = new HashMap<>();
+    // Add required fields
+    values.put(getSchemaIndex(TABLE_SIZE_BYTES), tableSizeBytes);
+    values.put(getSchemaIndex(NUM_FILES), numFiles);
+    values.put(getSchemaIndex(NUM_METADATA), 1L);
+    values.put(getSchemaIndex(NUM_PROTOCOL), 1L);
+    values.put(getSchemaIndex(METADATA), metadata.toRow());
+    values.put(getSchemaIndex(PROTOCOL), protocol.toRow());
+
+    // Add optional fields
+    txnId.ifPresent(txn -> values.put(getSchemaIndex(TXN_ID), txn));
+    domainMetadata.ifPresent(
+        domainMetadataSet ->
+            values.put(
+                getSchemaIndex(DOMAIN_METADATA),
+                VectorUtils.buildArrayValue(
+                    domainMetadataSet.stream()
+                        .map(DomainMetadata::toRow)
+                        .collect(Collectors.toList()),
+                    DomainMetadata.FULL_SCHEMA)));
+    fileSizeHistogram.ifPresent(
+        fileSizeHistogram ->
+            values.put(getSchemaIndex(FILE_SIZE_HISTOGRAM), fileSizeHistogram.toRow()));
+    inCommitTimestamp.ifPresent(ict -> values.put(getSchemaIndex(IN_COMMIT_TIMESTAMP), ict));
+    setTransactions.ifPresent(
+        txns ->
+            values.put(
+                getSchemaIndex(SET_TRANSACTIONS),
+                VectorUtils.buildArrayValue(
+                    txns.stream().map(SetTransaction::toRow).collect(Collectors.toList()),
+                    SetTransaction.FULL_SCHEMA)));
+    numDeletedRecords.ifPresent(n -> values.put(getSchemaIndex(NUM_DELETED_RECORDS_OPT), n));
+    numDeletionVectors.ifPresent(n -> values.put(getSchemaIndex(NUM_DELETION_VECTORS_OPT), n));
+    return new GenericRow(CRC_FILE_SCHEMA, values);
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(
+        version,
+        metadata,
+        protocol,
+        tableSizeBytes,
+        numFiles,
+        txnId,
+        domainMetadata,
+        fileSizeHistogram,
+        inCommitTimestamp,
+        setTransactions,
+        numDeletedRecords,
+        numDeletionVectors);
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (!(o instanceof CRCInfo)) {
+      return false;
+    }
+    CRCInfo other = (CRCInfo) o;
+    return version == other.version
+        && tableSizeBytes == other.tableSizeBytes
+        && numFiles == other.numFiles
+        && metadata.equals(other.metadata)
+        && protocol.equals(other.protocol)
+        && txnId.equals(other.txnId)
+        && domainMetadata.equals(other.domainMetadata)
+        && fileSizeHistogram.equals(other.fileSizeHistogram)
+        && inCommitTimestamp.equals(other.inCommitTimestamp)
+        && setTransactions.equals(other.setTransactions)
+        && numDeletedRecords.equals(other.numDeletedRecords)
+        && numDeletionVectors.equals(other.numDeletionVectors);
+  }
+
+  private static int getSchemaIndex(String fieldName) {
+    return CRC_FILE_SCHEMA.indexOf(fieldName);
+  }
+}

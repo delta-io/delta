@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.commands.convert
 
 import java.lang.reflect.InvocationTargetException
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, SerializableFileStatus}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, SerializableFileStatus, Snapshot}
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
@@ -44,7 +44,7 @@ trait ConvertUtilsBase extends DeltaLogging {
 
   var icebergSparkTableClassPath =
     "org.apache.spark.sql.delta.commands.convert.IcebergTable"
-  var icebergLibTableClassPath = "org.apache.iceberg.Table"
+  var icebergLibTableClassPath = "shadedForDelta.org.apache.iceberg.Table"
 
   /**
    * Creates a source Parquet table for conversion.
@@ -70,29 +70,25 @@ trait ConvertUtilsBase extends DeltaLogging {
    * @param spark: the spark session to use.
    * @param targetDir: the target directory of the Iceberg table.
    * @param sparkTable: the optional V2 table interface of the Iceberg table.
-   * @param tableSchema: the existing converted Delta table schema (if exists) of the Iceberg table.
+   * @param deltaTable: the existing converted Delta table (if exists) of the Iceberg table.
+   * @param collectStats: collect column stats on convert
    * @return a target Iceberg table.
    */
   def getIcebergTable(
       spark: SparkSession,
       targetDir: String,
-      sparkTable: Option[Table],
-      tableSchema: Option[StructType]): ConvertTargetTable = {
+      deltaSnapshotOpt: Option[Snapshot],
+      collectStats: Boolean = true): ConvertTargetTable = {
     try {
+      val convertIcebergStats = collectStats &&
+        spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_STATS)
       val clazz = Utils.classForName(icebergSparkTableClassPath)
-      if (sparkTable.isDefined) {
-        val constFromTable = clazz.getConstructor(
-          classOf[SparkSession],
-          Utils.classForName(icebergLibTableClassPath),
-          classOf[Option[StructType]])
-        val method = sparkTable.get.getClass.getMethod("table")
-        constFromTable.newInstance(spark, method.invoke(sparkTable.get), tableSchema)
-      } else {
-        val baseDir = getQualifiedPath(spark, new Path(targetDir)).toString
-        val constFromPath = clazz.getConstructor(
-          classOf[SparkSession], classOf[String], classOf[Option[StructType]])
-        constFromPath.newInstance(spark, baseDir, tableSchema)
-      }
+      val baseDir = getQualifiedPath(spark, new Path(targetDir)).toString
+      val constFromPath = clazz.getConstructor(
+        classOf[SparkSession], classOf[String], classOf[Option[Snapshot]],
+        java.lang.Boolean.TYPE)
+      constFromPath.newInstance(spark, baseDir, deltaSnapshotOpt,
+        java.lang.Boolean.valueOf(convertIcebergStats))
     } catch {
       case e: ClassNotFoundException =>
         logError(log"Failed to find Iceberg class", e)
@@ -102,6 +98,27 @@ trait ConvertUtilsBase extends DeltaLogging {
         // The better error is within the cause
         throw ExceptionUtils.getRootCause(e)
     }
+  }
+
+  /**
+   * Get Iceberg metadata location from spark catalog resolved Iceberg table,
+   * which means it is a SparkTable
+   * Needs to use reflection because shaded Iceberg classes are not accessible here
+   * It is equivalent to call
+   *  table.asInstanceOf[SparkTable].table().operations().current().metadataFileLocation()
+   * @param table the iceberg table resolved spark catalog
+   * @return metadata location corresponding to table's latest snapshot
+   */
+  def getIcebergMetadataLocationFromSparkTable(table: Table): String = {
+    val tableMethod = table.getClass.getMethod("table")
+    val icebergTable = tableMethod.invoke(table)
+    val operationsMethod = icebergTable.getClass.getMethod("operations")
+    val operations = operationsMethod.invoke(icebergTable)
+    val currentMethod = operations.getClass.getMethod("current")
+    val currentMetadata = currentMethod.invoke(operations)
+    val metadataFileLocationMethod =
+      currentMetadata.getClass.getMethod("metadataFileLocation")
+    metadataFileLocationMethod.invoke(currentMetadata).asInstanceOf[String]
   }
 
   /**
@@ -187,8 +204,7 @@ trait ConvertUtilsBase extends DeltaLogging {
 
         val values = partValues
           .literals
-          .map(l => Cast(l, StringType, tz, ansiEnabled = false).eval())
-          .map(Option(_).map(_.toString).orNull)
+          .map(PartitionUtils.literalToNormalizedString(_, tz))
 
         partitionColNames.zip(partValues.columnNames).foreach { case (expected, parsed) =>
           if (!resolver(expected, parsed)) {
@@ -212,10 +228,18 @@ trait ConvertUtilsBase extends DeltaLogging {
         s"Fail to relativize path $path against base path $basePath.")
       relativePath.toUri.toString
     } else {
-      path.toUri.toString
+      fs.makeQualified(path).toUri.toString
     }
 
-    AddFile(pathStrForAddFile, partition, file.length, file.modificationTime, dataChange = true)
+
+    AddFile(
+      pathStrForAddFile,
+      partition,
+      file.length,
+      file.modificationTime,
+      dataChange = true,
+      stats = targetFile.stats.orNull
+    )
   }
 
   /**
@@ -310,14 +334,7 @@ trait ConvertUtilsBase extends DeltaLogging {
 /**
  * Configuration for fetching Parquet schema.
  *
- * @param assumeBinaryIsString: whether unannotated BINARY fields should be assumed to be Spark
- *                              SQL [[StringType]] fields.
- * @param assumeInt96IsTimestamp: whether unannotated INT96 fields should be assumed to be Spark
- *                                SQL [[TimestampType]] fields.
  * @param ignoreCorruptFiles: a boolean indicating whether corrupt files should be ignored during
  *                            schema retrieval.
  */
-case class ParquetSchemaFetchConfig(
-  assumeBinaryIsString: Boolean,
-  assumeInt96IsTimestamp: Boolean,
-  ignoreCorruptFiles: Boolean)
+case class ParquetSchemaFetchConfig(ignoreCorruptFiles: Boolean)

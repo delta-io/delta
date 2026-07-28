@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import java.util.UUID
+
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkFunSuite
@@ -35,8 +37,8 @@ class FileNamesSuite extends SparkFunSuite {
     // UUID Files
     assert(!isDeltaFile(new Path("/a/123.uuid.json")))
     assert(!isDeltaFile(new Path("/a/_delta_log/123.uuid.json")))
-    assert(isDeltaFile(new Path("/a/_delta_log/_commits/123.uuid.json")))
-    assert(!isDeltaFile(new Path("/a/_delta_log/_commits/123.uuid1.uuid2.json")))
+    assert(isDeltaFile(new Path("/a/_delta_log/_staged_commits/123.uuid.json")))
+    assert(!isDeltaFile(new Path("/a/_delta_log/_staged_commits/123.uuid1.uuid2.json")))
   }
 
   test("DeltaFile.unapply") {
@@ -52,9 +54,10 @@ class FileNamesSuite extends SparkFunSuite {
     // UUID Files
     assert(DeltaFile.unapply(new Path("/a/123.uuid.json")).isEmpty)
     assert(DeltaFile.unapply(new Path("/a/_delta_log/123.uuid.json")).isEmpty)
-    assert(DeltaFile.unapply(new Path("/a/_delta_log/_commits/123.uuid.json")) ===
-      Some((new Path("/a/_delta_log/_commits/123.uuid.json"), 123)))
-    assert(DeltaFile.unapply(new Path("/a/_delta_log/_commits/123.uuid1.uuid2.json")).isEmpty)
+    assert(DeltaFile.unapply(new Path("/a/_delta_log/_staged_commits/123.uuid.json")) ===
+      Some((new Path("/a/_delta_log/_staged_commits/123.uuid.json"), 123)))
+    assert(DeltaFile.unapply(
+      new Path("/a/_delta_log/_staged_commits/123.uuid1.uuid2.json")).isEmpty)
   }
 
   test("isCheckpointFile") {
@@ -98,8 +101,38 @@ class FileNamesSuite extends SparkFunSuite {
 
   test("commitDirPath") {
     assert(commitDirPath(logPath = new Path("/a/_delta_log")) ===
-      new Path("/a/_delta_log/_commits"))
+      new Path("/a/_delta_log/_staged_commits"))
     assert(commitDirPath(logPath = new Path("/a/_delta_log/")) ===
-      new Path("/a/_delta_log/_commits"))
+      new Path("/a/_delta_log/_staged_commits"))
+  }
+
+  test("amtMetadataDirPath") {
+    assert(amtMetadataDirPath(new Path("/a/tbl")) === new Path("/a/tbl/metadata"))
+    assert(amtMetadataDirPath(new Path("/a/tbl/")) === new Path("/a/tbl/metadata"))
+    assert(amtMetadataDirPath(new Path("s3://bucket/tbl")) ===
+      new Path("s3://bucket/tbl/metadata"))
+    assert(amtMetadataDirPath(new Path("/a/tbl")).getName === AMT_METADATA_DIR_NAME)
+  }
+
+  test("newAMTLeafManifestFile") {
+    val metadataDir = new Path("/a/tbl/metadata")
+    val leaf = newAMTLeafManifestFile(metadataDir)
+    assert(leaf.getParent === metadataDir)
+    assert(leaf.getName.startsWith("leaf-") && leaf.getName.endsWith(".parquet"))
+    // The UUID embedded in the name must parse back.
+    val uuid = leaf.getName.stripPrefix("leaf-").stripSuffix(".parquet")
+    UUID.fromString(uuid)
+    // Each call produces a distinct file name.
+    assert(newAMTLeafManifestFile(metadataDir) !== leaf)
+  }
+
+  test("newAMTRootManifestFile") {
+    val metadataDir = new Path("/a/tbl/metadata")
+    val root = newAMTRootManifestFile(metadataDir)
+    assert(root.getParent === metadataDir)
+    assert(root.getName.startsWith("root-") && root.getName.endsWith(".parquet"))
+    val uuid = root.getName.stripPrefix("root-").stripSuffix(".parquet")
+    UUID.fromString(uuid)
+    assert(newAMTRootManifestFile(metadataDir) !== root)
   }
 }

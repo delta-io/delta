@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+
+<configuration>
+  <!--property>
+    <name>fs.s3a.endpoint</name>
+    <value>s3.us-west-2.amazonaws.com</value>
+  </property>
+  <property>
+    <name>fs.s3a.endpoint.region</name>
+    <value>us-west-2</value>
+  </property-->
+
+  <property>
+    <name>fs.s3a.access.key</name>
+    <value>KEY</value>
+  </property>
+  <property>
+    <name>fs.s3a.secret.key</name>
+    <value>KEY</value>
+  </property>
+  <property>
+    <name>fs.s3a.session.token</name>
+    <value>TOKEN</value>
+  </property>
+
+  <!-- Optional but often helpful -->
+  <property>
+    <name>fs.s3a.path.style.access</name>
+    <value>true</value>
+  </property>
+
+</configuration>
+

@@ -19,7 +19,10 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.util.Locale
 
+import org.apache.spark.sql.delta.DataFrameUtils
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.v2.interop.AbstractProtocol
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils.quoteIdentifier
@@ -31,11 +34,14 @@ import org.apache.spark.sql.{AnalysisException, Column, Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.Analyzer
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
+import org.apache.spark.sql.catalyst.expressions.objects.StaticInvoke
+import org.apache.spark.sql.catalyst.optimizer.CollapseProject
 import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, LogicalPlan, Project}
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
-import org.apache.spark.sql.catalyst.util.{quoteIfNeeded, CaseInsensitiveMap}
+import org.apache.spark.sql.catalyst.util.{quoteIfNeeded, CaseInsensitiveMap, CharVarcharCodegenUtils}
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.types.{Metadata => FieldMetadata}
 /**
@@ -72,7 +78,7 @@ import org.apache.spark.sql.types.{Metadata => FieldMetadata}
  */
 object GeneratedColumn extends DeltaLogging with AnalysisHelper {
 
-  def satisfyGeneratedColumnProtocol(protocol: Protocol): Boolean =
+  def satisfyGeneratedColumnProtocol(protocol: AbstractProtocol): Boolean =
     protocol.isFeatureSupported(GeneratedColumnsTableFeature)
 
   /**
@@ -112,6 +118,19 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
       snapshot.metadata.schema.partition(isGeneratedColumn)._1
     } else {
       Nil
+    }
+  }
+
+  /**
+   * Returns whether the table has a generated column that has a NullType data type.
+   *
+   * @param protocol the table protocol.
+   * @param schema the table schema.
+   * @return whether the table has a generated column that has a NullType data type.
+   */
+  def hasGeneratedNullTypeColumn(protocol: Protocol, schema: StructType): Boolean = {
+    schema.exists { f =>
+      isGeneratedColumn(protocol, f) && f.dataType.isInstanceOf[NullType]
     }
   }
 
@@ -206,7 +225,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
       // Generated columns cannot be variant types because the writer must be able to enforce that
       // the <variant value> <=> <generated expression>. Variants are currently not comprable so
       // this condition is impossible to enforce.
-      if (VariantShims.isVariantType(c.dataType)) {
+      if (c.dataType.isInstanceOf[VariantType]) {
         throw DeltaErrors.generatedColumnsUnsupportedType(c.dataType)
       }
     }
@@ -230,7 +249,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
     }
     val dfWithExprs = try {
       val plan = Project(selectExprs.map(_.expr.asInstanceOf[NamedExpression]), relation)
-      Dataset.ofRows(spark, plan)
+      DataFrameUtils.ofRows(spark, plan)
     } catch {
       case e: AnalysisException if e.getMessage != null =>
         val regexCandidates = Seq(
@@ -245,6 +264,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
           throw e
         }
     }
+
     // Check whether the generation expressions are valid
     dfWithExprs.queryExecution.analyzed.transformAllExpressions {
       case expr: Alias =>
@@ -262,7 +282,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
         throw DeltaErrors.generatedColumnsNonDeterministicExpression(expr)
       case expr if expr.isInstanceOf[AggregateExpression] =>
         throw DeltaErrors.generatedColumnsAggregateExpression(expr)
-      case expr if !SupportedGenerationExpressions.expressions.contains(expr.getClass) =>
+      case expr if !AllowedUserProvidedExpressions.expressions.contains(expr.getClass) =>
         throw DeltaErrors.generatedColumnsUnsupportedExpression(expr)
     }
     // Compare the columns types defined in the schema and the expression types.
@@ -285,7 +305,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
       return Set.empty
     }
 
-    val df = Dataset.ofRows(SparkSession.active, new LocalRelation(toAttributes(schema)))
+    val df = DataFrameUtils.ofRows(SparkSession.active, new LocalRelation(toAttributes(schema)))
     val generatedColumnsAndColumnsUsedByGeneratedColumns =
       df.select(generationExprs: _*).queryExecution.analyzed match {
         case Project(exprs, _) =>
@@ -355,7 +375,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
       }
     }
 
-    val df = Dataset.ofRows(SparkSession.active, new LocalRelation(toAttributes(schema)))
+    val df = DataFrameUtils.ofRows(SparkSession.active, new LocalRelation(toAttributes(schema)))
     val extractedPartitionExprs =
       df.select(partitionGenerationExprs: _*).queryExecution.analyzed match {
         case Project(exprs, _) =>
@@ -575,7 +595,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
     val executionId = Option(spark.sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY))
       .getOrElse("unknown")
     recordDeltaEvent(
-      snapshot.deltaLog,
+      snapshot,
       "delta.generatedColumns.optimize",
       data = Map(
         "executionId" -> executionId,
@@ -583,6 +603,69 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
       ))
 
     resolvedPartitionFilters
+  }
+
+  /**
+   * Check whether executing DML (Merge or Update) with this plan as the target plan and
+   * generated column is allowed.
+   * It is already checked by the caller that the table is a Delta table, and that it has
+   * generated columns, so it is not checked again here.
+   *
+   * In general it is allowed to Merge or Update into a temporary view over a Delta table, but
+   * this is not allowed if the table contains a generated column. This is because the generated
+   * column definition is a SQL expression text, and it would not handle any transformation done by
+   * the view (e.g. if the view was `SELECT a as b, b as a FROM table`, the generated column would
+   * not handle the aliasing).
+   *
+   * This function checks if the target plan is a bare reference to the Delta table, or if the
+   * transformations are the result of internal processing introduced not by the user, but
+   * internally during analysis, which need to be taken into account and allowed.
+   *
+   * @param deltaLogicalPlan Target plan of the DML (Merge or Update)
+   * @param conf SQLConf object.
+   * @return true if allowed,
+   *         false if DeltaErrors.operationOnTempViewWithGenerateColsNotSupported should be thrown.
+   */
+  def allowDMLTargetPlan(deltaLogicalPlan: LogicalPlan, conf: SQLConf): Boolean = {
+    // Simple quick path: pure scan.
+    // It is already checked by PreprocessTable{Merge|Update} that this is a Delta scan.
+    deltaLogicalPlan.isInstanceOf[LogicalRelation] || (
+      CollapseProject(deltaLogicalPlan) match {
+        case Project(projectList, r: LogicalRelation) if conf.readSideCharPadding =>
+          // Check if s is a char padding applied to a.
+          def isCharPadding(s: StaticInvoke, a: Attribute): Boolean = {
+            s.staticObject == classOf[CharVarcharCodegenUtils] &&
+            s.functionName == "readSidePadding" &&
+            s.arguments.size == 2 &&
+            (s.arguments(0) match {
+              case arg: Attribute => arg.exprId == a.exprId
+              case _ => false
+            })
+          }
+
+          projectList.length == r.output.length &&
+          projectList.zip(r.output).forall {
+            // Attribute forwarding.
+            case (p: Attribute, a: Attribute) if p.exprId == a.exprId => true
+            // See Spark's ApplyCharTypePaddingHelper.readSidePadding which applies this projection.
+            // p alias must have the same name as input attribute a,
+            // and be char padding applied to it.
+            case (p: Alias, a: Attribute) if conf.resolver(p.name, a.name) =>
+              p.child match {
+                case s: StaticInvoke if isCharPadding(s, a) => true
+                case _ => false
+              }
+            case _ => false
+          }
+
+        // Pure scan.
+        // It is already checked by PreprocessTable{Merge|Update} that this is a Delta scan.
+        case _: LogicalRelation =>
+          true
+
+        case _ => false
+      }
+    )
   }
 
   private val DATE_FORMAT_YEAR_MONTH = "yyyy-MM"

@@ -20,7 +20,7 @@ import org.apache.spark.sql.delta.constraints.Constraints.{Check, NotNull}
 import org.apache.spark.sql.delta.schema.DeltaInvariantViolationException
 
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.{AttributeSeq, BindReferences, Expression, NonSQLExpression, UnaryExpression}
+import org.apache.spark.sql.catalyst.expressions.{Expression, NonSQLExpression}
 import org.apache.spark.sql.catalyst.expressions.codegen._
 import org.apache.spark.sql.catalyst.expressions.codegen.Block._
 import org.apache.spark.sql.types.{DataType, NullType}
@@ -34,22 +34,14 @@ import org.apache.spark.sql.types.{DataType, NullType}
  */
 case class CheckDeltaInvariant(
     child: Expression,
-    columnExtractors: Map[String, Expression],
+    columnExtractors: Seq[(String, Expression)],
     constraint: Constraint)
-  extends UnaryExpression with NonSQLExpression with CodegenFallback {
+  extends Expression with NonSQLExpression with CodegenFallback {
 
+  override def children: Seq[Expression] = child +: columnExtractors.map(_._2)
   override def dataType: DataType = NullType
   override def foldable: Boolean = false
   override def nullable: Boolean = true
-
-  def withBoundReferences(input: AttributeSeq): CheckDeltaInvariant = {
-    CheckDeltaInvariant(
-      BindReferences.bindReference(child, input),
-      columnExtractors.map {
-        case (column, extractor) => column -> BindReferences.bindReference(extractor, input)
-      },
-      constraint)
-  }
 
   private def assertRule(input: InternalRow): Unit = constraint match {
     case n: NotNull =>
@@ -59,7 +51,12 @@ case class CheckDeltaInvariant(
     case c: Check =>
       val result = child.eval(input)
       if (result == null || result == false) {
-        throw DeltaInvariantViolationException(c, columnExtractors.mapValues(_.eval(input)).toMap)
+        throw DeltaInvariantViolationException(
+          c,
+          columnExtractors.map {
+            case (column, extractor) => column -> extractor.eval(input)
+          }.toMap
+        )
       }
   }
 
@@ -111,8 +108,7 @@ case class CheckDeltaInvariant(
     }.fold(start)(_ + _)
   }
 
-  private def generateExpressionValidationCode(
-      constraintName: String, expr: Expression, ctx: CodegenContext): Block = {
+  private def generateExpressionValidationCode(ctx: CodegenContext): Block = {
     val elementValue = child.genCode(ctx)
     val invariantField = ctx.addReferenceObj("errMsg", constraint)
     val colListName = ctx.freshName("colList")
@@ -129,12 +125,17 @@ case class CheckDeltaInvariant(
 
   override protected def doGenCode(ctx: CodegenContext, ev: ExprCode): ExprCode = {
     val code = constraint match {
-      case NotNull(_) => generateNotNullCode(ctx)
-      case Check(name, expr) => generateExpressionValidationCode(name, expr, ctx)
+      case _: NotNull => generateNotNullCode(ctx)
+      case _: Check => generateExpressionValidationCode(ctx)
     }
     ev.copy(code = code, isNull = TrueLiteral, value = JavaCode.literal("null", NullType))
   }
 
-  override protected def withNewChildInternal(newChild: Expression): CheckDeltaInvariant =
-    copy(child = newChild)
+  override protected def withNewChildrenInternal(
+      newChildren: IndexedSeq[Expression]): Expression = {
+    copy(
+      child = newChildren.head,
+      columnExtractors = columnExtractors.map(_._1).zip(newChildren.tail)
+    )
+  }
 }

@@ -102,7 +102,8 @@ case class RestoreTableCommand(sourceTable: DeltaTableV2)
       val versionToRestore = version.getOrElse {
         deltaLog
           .history
-          .getActiveCommitAtTime(parseStringToTs(timestamp), canReturnLastCommit = true)
+          .getActiveCommitAtTime(
+            parseStringToTs(timestamp), catalogTableOpt, canReturnLastCommit = true)
           .version
       }
 
@@ -117,7 +118,7 @@ case class RestoreTableCommand(sourceTable: DeltaTableV2)
         val latestSnapshot = txn.snapshot
         val snapshotToRestore = deltaLog.getSnapshotAt(
           versionToRestore,
-          catalogTableOpt = txn.catalogTable)
+          catalogTableOpt = txn.catalogTable, enforceTimeTravelWithinDeletedFileRetention = true)
         val latestSnapshotFiles = latestSnapshot.allFiles
         val snapshotToRestoreFiles = snapshotToRestore.allFiles
 
@@ -199,8 +200,10 @@ case class RestoreTableCommand(sourceTable: DeltaTableV2)
         // We need to merge the schema of the latest snapshot with the schema of the snapshot
         // we're restoring to ensure that the high water mark is correct.
         val mergedSchema = IdentityColumn.copySchemaWithMergedHighWaterMarks(
+          deltaLog = deltaLog,
           schemaToCopy = snapshotToRestore.metadata.schema,
-          schemaWithHighWaterMarksToMerge = latestSnapshot.metadata.schema)
+          schemaWithHighWaterMarksToMerge = latestSnapshot.metadata.schema
+        )
 
         txn.updateMetadata(snapshotToRestore.metadata.copy(schemaString = mergedSchema.json))
 

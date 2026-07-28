@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.commands.convert
 
+import org.apache.spark.sql.delta.Relocated._
 import org.apache.spark.sql.delta.{DeltaErrors, SerializableFileStatus}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
@@ -27,7 +28,7 @@ import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.execution.datasources.PartitioningUtils
 import org.apache.spark.sql.execution.datasources.parquet.{ParquetFileFormat, ParquetToSparkSchemaConverter}
-import org.apache.spark.sql.execution.streaming.FileStreamSink
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
 
@@ -53,9 +54,24 @@ class ParquetTable(
   }
 
   protected lazy val serializableConf: SerializableConfiguration = {
+    val sqlConf = spark.sessionState.conf
     // scalastyle:off deltahadoopconfiguration
-    new SerializableConfiguration(spark.sessionState.newHadoopConf())
+    val hadoopConf = spark.sessionState.newHadoopConf()
     // scalastyle:on deltahadoopconfiguration
+
+    // ParquetToSparkSchemaConverter(Configuration) requires these SQLConf values to be
+    // present in the Hadoop conf. newHadoopConf only includes SQL configs explicitly set
+    // by the user, so copy the required values here just like Spark's Parquet reader does.
+    hadoopConf.setBoolean(SQLConf.PARQUET_BINARY_AS_STRING.key, sqlConf.isParquetBinaryAsString)
+    hadoopConf.setBoolean(SQLConf.PARQUET_INT96_AS_TIMESTAMP.key, sqlConf.isParquetINT96AsTimestamp)
+    hadoopConf.setBoolean(SQLConf.CASE_SENSITIVE.key, sqlConf.caseSensitiveAnalysis)
+    hadoopConf.setBoolean(
+      SQLConf.PARQUET_INFER_TIMESTAMP_NTZ_ENABLED.key,
+      sqlConf.parquetInferTimestampNTZEnabled)
+    hadoopConf.setBoolean(
+      SQLConf.LEGACY_PARQUET_NANOS_AS_LONG.key,
+      sqlConf.legacyParquetNanosAsLong)
+    new SerializableConfiguration(hadoopConf)
   }
 
   override val partitionSchema: StructType = {
@@ -64,16 +80,14 @@ class ParquetTable(
 
   override lazy val numFiles: Long = fileManifest.numFiles
 
+  override lazy val sizeInBytes: Long = fileManifest.sizeInBytes
+
   def tableSchema: StructType = fileManifest.parquetSchema.get
 
   override val format: String = "parquet"
 
   val fileManifest: ConvertTargetFileManifest = {
-    val fetchConfig = ParquetSchemaFetchConfig(
-      spark.sessionState.conf.isParquetBinaryAsString,
-      spark.sessionState.conf.isParquetINT96AsTimestamp,
-      spark.sessionState.conf.ignoreCorruptFiles
-    )
+    val fetchConfig = ParquetSchemaFetchConfig(spark.sessionState.conf.ignoreCorruptFiles)
     if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_USE_METADATA_LOG) &&
       FileStreamSink.hasMetadata(Seq(basePath), serializableConf.value, spark.sessionState.conf)) {
       new MetadataLogFileManifest(spark, basePath, partitionSchema, fetchConfig, serializableConf)
