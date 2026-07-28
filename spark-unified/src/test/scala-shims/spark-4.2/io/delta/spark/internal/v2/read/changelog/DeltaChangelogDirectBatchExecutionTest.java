@@ -321,13 +321,8 @@ public class DeltaChangelogDirectBatchExecutionTest extends DeltaChangelogTestBa
 
   /**
    * Reproducer for the changelog path-encoding bug: the kernel snapshot path (table
-   * root) is NOT URL-encoded, so a reserved character in the table directory (a space, a
-   * {@code %}) arrives literally, while the AddFile/RemoveFile file path IS URL-encoded. The
-   * changelog reader built its SparkPath with fromUrlString over the whole
-   * {@code new Path(tablePath, filePath)} concatenation, which throws URISyntaxException on the
-   * literal reserved character in the table path. The table dir here carries both a space and a
-   * {@code %}, and the base's {@code testOnly.dataFileNamePrefix} puts a {@code %} in the file
-   * name too, so the fix is exercised on both the un-encoded (table) and encoded (file) parts.
+   * root) is NOT URL-encoded. A reserved character in the table directory (a space, a
+   * {@code %}) arrives literally, while the AddFile/RemoveFile file path IS URL-encoded.
    */
   @Test
   public void testChangelogWithReservedCharsInPath() throws Exception {

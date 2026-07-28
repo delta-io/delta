@@ -406,8 +406,8 @@ public class PartitionUtils {
   }
 
   /**
-   * Resolves a Delta-log file path against the table root, matching the encoding contract V1 uses
-   * in {@code TahoeFileIndex} / {@code DeltaFileOperations.absolutePath}:
+   * Resolves a Delta-log file path against the table root, matching {@code TahoeFileIndex} /
+   * {@code DeltaFileOperations.absolutePath}:
    *
    * <ul>
    *   <li>{@code tablePath} (from the kernel snapshot path) is NOT URL-encoded, so a reserved
@@ -417,12 +417,11 @@ public class PartitionUtils {
    * </ul>
    *
    * <p>The changelog reader built its {@link SparkPath} with {@code SparkPath.fromUrlString(new
-   * Path(tablePath, filePath).toString())}, which feeds the whole concatenation (including the
-   * un-encoded tablePath) to {@code fromUrlString}. That parses its argument as an already-encoded
+   * Path(tablePath, filePath).toString())}. That parses its argument as an already-encoded
    * URL and throws {@link java.net.URISyntaxException} once the literal reserved character in the
    * tablePath is dereferenced. This helper instead wraps only the (already-encoded) filePath in a
    * {@link URI}, joins it onto the raw tablePath with {@link org.apache.hadoop.fs.Path}, and uses
-   * {@link SparkPath#fromPath}, so both parts are handled with the encoding they actually carry.
+   * {@link SparkPath#fromPath}.
    */
   public static SparkPath sparkPathFromRawPath(String tablePath, String filePath) {
     try {
