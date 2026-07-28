@@ -15,11 +15,12 @@
  */
 package io.delta.kernel.internal.checksum
 
+import java.lang.{Boolean => JBoolean, Long => JLong}
 import java.util
 import java.util.{Collections, Optional}
 
 import io.delta.kernel.data.Row
-import io.delta.kernel.internal.actions.{DomainMetadata, Format, Metadata, Protocol, SetTransaction}
+import io.delta.kernel.internal.actions.{AddFile, DomainMetadata, Format, Metadata, Protocol, SetTransaction}
 import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.stats.FileSizeHistogram
 import io.delta.kernel.internal.types.DataTypeJsonSerDe
@@ -56,6 +57,22 @@ class CRCInfoFromRowSuite extends AnyFunSuite {
     val bytes = Array(fileCount * 100, 0L)
     new FileSizeHistogram(boundaries, counts, bytes)
   }
+
+  /** Builds a minimal AddFile row for allFiles round-trip tests. */
+  private def testAddFileRow(path: String, size: Long): Row =
+    AddFile.createAddFileRow(
+      null, // statistics
+      path,
+      stringStringMapValue(Collections.emptyMap[String, String]()),
+      size.asInstanceOf[JLong],
+      20L.asInstanceOf[JLong], // modificationTime
+      true.asInstanceOf[JBoolean], // dataChange
+      Optional.empty(), // deletionVector
+      Optional.empty(), // tags
+      Optional.empty(), // baseRowId
+      Optional.empty(), // defaultRowCommitVersion
+      Optional.empty() // stats
+    )
 
   private def domainMetadataSet(entries: (String, String)*): util.Set[DomainMetadata] = {
     val set = new util.HashSet[DomainMetadata]()
@@ -131,9 +148,10 @@ class CRCInfoFromRowSuite extends AnyFunSuite {
       Optional.empty(),
       Optional.empty(),
       Optional.of(java.lang.Long.valueOf(1749830855993L)),
-      Optional.empty(),
-      Optional.empty(),
-      Optional.empty()))
+      /* setTransactions */ Optional.empty(),
+      /* numDeletedRecords */ Optional.empty(),
+      /* numDeletionVectors */ Optional.empty(),
+      /* allFiles */ Optional.empty()))
   }
 
   test("round-trips with setTransactions present") {
@@ -147,11 +165,48 @@ class CRCInfoFromRowSuite extends AnyFunSuite {
       Optional.empty(),
       Optional.empty(),
       Optional.empty(),
-      Optional.of(util.Arrays.asList(
+      /* setTransactions */ Optional.of(util.Arrays.asList(
         new SetTransaction("app1", 5L, Optional.of(java.lang.Long.valueOf(100L))),
         new SetTransaction("app2", 9L, Optional.empty()))),
+      /* numDeletedRecords */ Optional.empty(),
+      /* numDeletionVectors */ Optional.empty(),
+      /* allFiles */ Optional.empty()))
+  }
+
+  test("round-trips with numDeletedRecords and numDeletionVectors present") {
+    assertRoundTrips(new CRCInfo(
+      15L,
+      testMetadata,
+      testProtocol,
+      4900L,
+      49L,
       Optional.empty(),
-      Optional.empty()))
+      Optional.empty(),
+      Optional.empty(),
+      Optional.empty(),
+      /* setTransactions */ Optional.empty(),
+      /* numDeletedRecords */ Optional.of(java.lang.Long.valueOf(7L)),
+      /* numDeletionVectors */ Optional.of(java.lang.Long.valueOf(2L)),
+      /* allFiles */ Optional.empty()))
+  }
+
+  test("round-trips with allFiles present") {
+    assertRoundTrips(new CRCInfo(
+      16L,
+      testMetadata,
+      testProtocol,
+      /* tableSizeBytes */ 300L,
+      /* numFiles */ 2L,
+      Optional.empty(),
+      Optional.empty(),
+      Optional.empty(),
+      Optional.empty(),
+      /* setTransactions */ Optional.empty(),
+      /* numDeletedRecords */ Optional.empty(),
+      /* numDeletionVectors */ Optional.empty(),
+      /* allFiles */ Optional.of(util.Arrays.asList(
+        new AddFile(testAddFileRow("f1", 100L)),
+        new AddFile(testAddFileRow("f2", 200L))))))
   }
 
   test("round-trips with all optional fields present") {
@@ -159,16 +214,18 @@ class CRCInfoFromRowSuite extends AnyFunSuite {
       13L,
       testMetadata,
       testProtocol,
-      5000L,
-      50L,
+      /* tableSizeBytes */ 5000L,
+      /* numFiles */ 1L,
       Optional.of("txn-xyz"),
       Optional.of(domainMetadataSet("delta.clustering" -> "{\"cols\":[\"c1\"]}")),
       Optional.of(createTestHistogram(fileCount = 50)),
       Optional.of(java.lang.Long.valueOf(1749830871085L)),
-      Optional.of(util.Arrays.asList(
+      /* setTransactions */ Optional.of(util.Arrays.asList(
         new SetTransaction("app1", 5L, Optional.of(java.lang.Long.valueOf(100L))))),
-      Optional.of(java.lang.Long.valueOf(7L)),
-      Optional.of(java.lang.Long.valueOf(2L))))
+      /* numDeletedRecords */ Optional.of(java.lang.Long.valueOf(7L)),
+      /* numDeletionVectors */ Optional.of(java.lang.Long.valueOf(2L)),
+      /* allFiles */ Optional.of(util.Arrays.asList(
+        new AddFile(testAddFileRow("f1", 100L))))))
   }
 
   test("preserves the supplied version, independent of the row (toRow omits version)") {
