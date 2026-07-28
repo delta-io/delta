@@ -283,6 +283,7 @@ The root manifest contains entries of the following types:
 |----------|------------|------------|----------|---------------|-------------|
 | 147 | `tracking` | Struct ([Tracking](#tracking)) | Required | All | Tracking information for this entry |
 | 134 | `content_type` | Int | Required | All | 0=DATA, 3=DATA_MANIFEST |
+| 157 | `format_version` | Int | Required | All | Iceberg writer format version; 4 for V4. |
 | 100 | `location` | String | Required | All | Path relative to table root (e.g., `metadata/leaf-m1.parquet` or `data/part-00001.parquet`). May be absolute URI. |
 | 101 | `file_format` | String | Required | All | File format name. Delta only supports `parquet`. |
 | 102 | `partition` | Struct | Optional | DATA | Partition data tuple. Struct fields are keyed by partition `field-id` (`1000 + i` for the i-th partition column). |
