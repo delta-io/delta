@@ -155,7 +155,7 @@ object AMTWriteHelper extends DeltaLogging {
   private def buildResult(
       contentStateVersion: Long,
       contentRoot: ContentRoot,
-      leaves: Seq[AMTCheckpointProvider.LeafInfo],
+      leaves: Seq[DataManifestEntry],
       postCommitProtocol: Protocol,
       postCommitMetadata: Metadata,
       domainMetadata: Seq[DomainMetadata],
@@ -215,7 +215,7 @@ object AMTWriteHelper extends DeltaLogging {
       hadoopConf: Configuration,
       tableRoot: Path,
       liveAddFiles: Seq[AddFile],
-      entriesPerLeaf: Int): (ContentRoot, Seq[AMTCheckpointProvider.LeafInfo]) = {
+      entriesPerLeaf: Int): (ContentRoot, Seq[DataManifestEntry]) = {
     require(entriesPerLeaf > 0, "entriesPerLeaf must be positive.")
 
     val fs = tableRoot.getFileSystem(hadoopConf)
@@ -233,36 +233,26 @@ object AMTWriteHelper extends DeltaLogging {
       liveAddFiles.grouped(entriesPerLeaf).toSeq
     }
 
-    val leafPointers = leafBatches.map { batch =>
+    val leafEntries = leafBatches.map { batch =>
       writeLeaf(spark, fs, hadoopConf, tableRoot, metadataDir, batch)
     }
 
-    val contentRoot = writeRoot(spark, fs, hadoopConf, metadataDir, leafPointers)
-    (contentRoot, leafInfosFor(leafPointers))
+    val contentRoot = writeRoot(spark, fs, hadoopConf, tableRoot, metadataDir, leafEntries)
+    (contentRoot, leafEntries)
   }
-
-  // Builds the pointer-only [[AMTCheckpointProvider.LeafInfo]] view from the written leaf pointers.
-  private def leafInfosFor(
-      leafPointers: Seq[LeafPointer]): Seq[AMTCheckpointProvider.LeafInfo] =
-    leafPointers.map { leaf =>
-      AMTCheckpointProvider.LeafInfo(
-        path = leaf.path,
-        sizeInBytes = leaf.sizeInBytes,
-        numEntries = leaf.manifestInfo.added_files_count.toLong)
-    }
 
   /**
    * Writes a clustered AMT manifest tree for a full checkpoint of `readSnapshot`'s live files.
    * All files are clustered and flushed into leaf manifests -- one leaf per Spark partition,
    * written by executors. The root lists only leaf pointers (no inline data entries). Returns the
-   * [[ContentRoot]] plus the per-leaf [[AMTCheckpointProvider.LeafInfo]] pointers.
+   * [[ContentRoot]] plus the per-leaf [[DataManifestEntry]] pointers.
    */
   private def writeClusteredManifestTree(
       spark: SparkSession,
       deltaLog: DeltaLog,
       readSnapshot: Snapshot,
       hadoopConf: Configuration,
-      entriesPerLeaf: Int): (ContentRoot, Seq[AMTCheckpointProvider.LeafInfo]) = {
+      entriesPerLeaf: Int): (ContentRoot, Seq[DataManifestEntry]) = {
     require(entriesPerLeaf > 0, "entriesPerLeaf must be positive.")
     val tableRoot = deltaLog.dataPath
     val fs = tableRoot.getFileSystem(hadoopConf)
@@ -274,15 +264,15 @@ object AMTWriteHelper extends DeltaLogging {
     val addFilesDf =
       readSnapshot.allFiles.toDF().repartition(desiredNumLeaves, col("path"))
 
-    val leafPointers = writeLeavesDistributed(
+    val leafEntries = writeLeavesDistributed(
       spark = spark,
       hadoopConf = hadoopConf,
       tableRoot = tableRoot,
       metadataDir = metadataDir,
       addFilesDf = addFilesDf,
       desiredNumLeaves = desiredNumLeaves)
-    val contentRoot = writeRoot(spark, fs, hadoopConf, metadataDir, leafPointers)
-    (contentRoot, leafInfosFor(leafPointers))
+    val contentRoot = writeRoot(spark, fs, hadoopConf, tableRoot, metadataDir, leafEntries)
+    (contentRoot, leafEntries)
   }
 
 
@@ -292,7 +282,7 @@ object AMTWriteHelper extends DeltaLogging {
       tableRoot: Path,
       metadataDir: Path,
       addFilesDf: DataFrame,
-      desiredNumLeaves: Int): Seq[LeafPointer] = {
+      desiredNumLeaves: Int): Seq[DataManifestEntry] = {
     import org.apache.spark.sql.delta.implicits._
     val addFilesDs = addFilesDf.as[AddFile]
 
@@ -334,24 +324,21 @@ object AMTWriteHelper extends DeltaLogging {
             expectedNumParts = desiredNumLeaves,
             rows = iter
           )
-          Iterator.single(LeafPointer(
-            path = leafFile.toString,
-            sizeInBytes = status.length,
-            // TODO: populate the per-leaf summary for the distributed write path.
-            manifestInfo = manifestInfoFor(Seq.empty)))
+          val leafFs = leafFile.getFileSystem(conf)
+          Iterator.single(DataManifestEntry(
+            location = AMTUtils.relativizeManifestPathToTableRoot(
+              leafFs, tableRootSparkPath.toPath, leafFile),
+            file_format = AMTSingleAction.FileFormatParquet,
+            // The root pointer to this leaf is newly ADDED, even though the leaf's own DATA
+            // entries are EXISTING (the referenced data files already lived in the table).
+            tracking = trackingWithStatus(Tracking.Status.Added),
+            record_count = 0L,
+            file_size_in_bytes = status.length,
+            manifest_info = manifestInfoFor(Seq.empty)))
         }
       }.collect().toSeq
     }
   }
-
-  /**
-   * Pointer to one written leaf, used to build the root's `DATA_MANIFEST` entry for it.
-   *
-   * @param path         Absolute path to the leaf parquet file.
-   * @param sizeInBytes  Size of the leaf parquet file on disk.
-   * @param manifestInfo Per-leaf summary (file/row counts by status) for the root pointer.
-   */
-  private case class LeafPointer(path: String, sizeInBytes: Long, manifestInfo: ManifestInfo)
 
   // Tracking envelope for a freshly written entry with the given status, no lineage/sequence
   // numbers yet.
@@ -366,7 +353,8 @@ object AMTWriteHelper extends DeltaLogging {
     replaced_positions = None)
 
   /**
-   * Writes a single leaf parquet file (DATA entries) and returns a pointer row for it.
+   * Writes a single leaf parquet file (DATA entries) and returns the DataManifestEntry
+   * corresponding to it.
    */
   private def writeLeaf(
       spark: SparkSession,
@@ -374,7 +362,7 @@ object AMTWriteHelper extends DeltaLogging {
       hadoopConf: Configuration,
       tableRoot: Path,
       metadataDir: Path,
-      batch: Seq[AddFile]): LeafPointer = {
+      batch: Seq[AddFile]): DataManifestEntry = {
     val leafFile = FileNames.newAMTLeafManifestFile(metadataDir)
     val rows: Seq[AMTSingleAction] =
       batch.map(add =>
@@ -388,37 +376,34 @@ object AMTWriteHelper extends DeltaLogging {
       )
     writeAMTParquet(spark, hadoopConf, leafFile, rows)
     val status = fs.getFileStatus(leafFile)
-    LeafPointer(
-      path = leafFile.toString,
-      sizeInBytes = status.getLen,
-      manifestInfo = manifestInfoFor(rows)
-    )
+    val manifestInfo = manifestInfoFor(rows)
+    DataManifestEntry(
+      location = AMTUtils.relativizeManifestPathToTableRoot(fs, tableRoot, leafFile),
+      file_format = AMTSingleAction.FileFormatParquet,
+      tracking = trackingWithStatus(Tracking.Status.Added),
+      // Number of content entries the referenced leaf manifest holds.
+      record_count = manifestInfo.added_files_count.toLong,
+      file_size_in_bytes = status.getLen,
+      manifest_info = manifestInfo)
   }
 
   /**
-   * Writes the root parquet file (DATA_MANIFEST pointers only) and returns the ContentRoot.
+   * Writes the root parquet file (DATA_MANIFEST pointers only) and returns the ContentRoot. The
+   * root pointer follows the same table-root-relative (raw) convention as the leaf pointers.
    */
   private def writeRoot(
       spark: SparkSession,
       fs: FileSystem,
       hadoopConf: Configuration,
+      tableRoot: Path,
       metadataDir: Path,
-      leafPointers: Seq[LeafPointer]): ContentRoot = {
+      leafEntries: Seq[DataManifestEntry]): ContentRoot = {
     val rootFile = FileNames.newAMTRootManifestFile(metadataDir)
-    val rows: Seq[AMTSingleAction] = leafPointers.map { leaf =>
-      DataManifestEntry(
-        location = leaf.path,
-        file_format = AMTSingleAction.FileFormatParquet,
-        tracking = trackingWithStatus(Tracking.Status.Added),
-        // Number of content entries the referenced leaf manifest holds.
-        record_count = leaf.manifestInfo.added_files_count.toLong,
-        file_size_in_bytes = leaf.sizeInBytes,
-        manifest_info = leaf.manifestInfo).wrap
-    }
+    val rows: Seq[AMTSingleAction] = leafEntries.map(_.wrap)
     writeAMTParquet(spark, hadoopConf, rootFile, rows)
     val status = fs.getFileStatus(rootFile)
     ContentRoot(
-      path = rootFile.toString,
+      path = AMTUtils.relativizeManifestPathToTableRoot(fs, tableRoot, rootFile),
       sizeInBytes = status.getLen)
   }
 

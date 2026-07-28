@@ -30,6 +30,7 @@ import scala.util.control.NonFatal
 import com.databricks.spark.util.TagDefinition
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.ClassicColumnConversions._
+import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -1617,6 +1618,11 @@ case class ContentRoot(
   /** The version of the most recent full (non-incremental) manifest rewrite, if recorded. */
   def lastManifestCommitWithFullRewrite: Option[Long] =
     tag(ContentRoot.Tags.LAST_MANIFEST_COMMIT_WITH_FULL_REWRITE).map(_.toLong)
+
+  /** Absolute [[Path]] to the root manifest, resolving `path` against `tableRoot`. */
+  @JsonIgnore
+  def getAbsolutePath(tableRoot: Path): Path =
+    AMTUtils.absolutePathForManifestFile(tableRoot, path)
 }
 
 object ContentRoot {
