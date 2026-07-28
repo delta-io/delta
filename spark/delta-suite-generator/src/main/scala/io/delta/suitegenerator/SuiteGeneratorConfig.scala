@@ -458,8 +458,6 @@ object SuiteGeneratorConfig {
       case "MergeIntoDVsTests" => !mixins.contains(Dims.MERGE_DVS.traitName)
       case "UpdateSQLWithDeletionVectorsTests" =>
         !mixins.contains(Dims.UPDATE_DVS.traitName)
-      // UpdateCDCWithDeletionVectorsTests only makes sense for permutations that combine DVs with
-      // a CDC read path.
       case "UpdateCDCWithDeletionVectorsTests" =>
         !List(Dims.UPDATE_DVS, Dims.CDC).map(_.traitName).forall(mixins.contains)
       case "RowTrackingDeleteDvBase" => !mixins.contains(Dims.PERSISTENT_DV_ON.traitName)

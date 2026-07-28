@@ -82,8 +82,7 @@ trait CDCTestMixin extends SharedSparkSession {
 
 trait ChangelogV2CDCUtilMixin extends CDCTestMixin {
 
-  // Tests skipped on the V2 changelog read path. Single source of truth for both the DBR and OSS
-  // skip mechanisms below.
+  // Tests skipped on the V2 changelog read path.
   protected def excludedV2Exact: Set[String] = Set(
     // Read-CDF does not write any files.
     "usage metrics",
@@ -108,7 +107,7 @@ trait ChangelogV2CDCUtilMixin extends CDCTestMixin {
     "UPDATE with DV write CDC files explicitly"
   )
 
-  // OSS's CDCTestMixin has no `excluded` hook, so filter by name in a test() override and ignore()
+  // CDCTestMixin has no `excluded` hook, so filter by name in a test() override and ignore()
   // the matches; everything else runs.
   override protected def test(testName: String, testTags: org.scalatest.Tag*)(testFun: => Any)(
       implicit pos: org.scalactic.source.Position): Unit = {
