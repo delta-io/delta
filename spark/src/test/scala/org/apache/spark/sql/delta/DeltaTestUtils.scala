@@ -108,13 +108,22 @@ trait ChangelogV2CDCUtilMixin extends CDCTestMixin {
   )
 
   // CDCTestMixin has no `excluded` hook, so filter by name in a test() override and ignore()
-  // the matches; everything else runs.
+  // the matches; everything else runs. The V2 changelog read path uses the `SELECT ... CHANGES`
+  // clause, which only the Spark 4.2 parser supports, so tests are cancelled on older versions.
   override protected def test(testName: String, testTags: org.scalatest.Tag*)(testFun: => Any)(
       implicit pos: org.scalactic.source.Position): Unit = {
     if (excludedV2Exact.contains(testName)) {
       ignore(testName + " (excluded on the V2 changelog read path, see excludedV2Exact)")(testFun)
     } else {
-      super.test(testName, testTags: _*)(testFun)
+      super.test(testName, testTags: _*) {
+        val sparkVersion = spark.version
+        assume(
+          sparkVersion >= "4.2" &&
+            !sparkVersion.contains("SNAPSHOT") &&
+            !sparkVersion.contains("preview"),
+          "The SELECT ... CHANGES clause requires Spark 4.2 or newer")
+        testFun
+      }
     }
   }
 
