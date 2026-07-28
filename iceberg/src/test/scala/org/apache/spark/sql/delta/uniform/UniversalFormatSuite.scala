@@ -18,6 +18,8 @@ package org.apache.spark.sql.delta.uniform
 
 import java.util.UUID
 
+import scala.collection.JavaConverters._
+
 import org.apache.spark.sql.delta.{
   DeltaLog,
   IcebergCompatBase,
@@ -30,6 +32,7 @@ import org.apache.spark.sql.delta.{
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeltaReorgTableCommand
 import org.apache.spark.sql.delta.icebergShaded.IcebergTransactionUtils
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.uniform.UniFormIcebergVerifier
 import org.apache.hadoop.fs.Path
 
@@ -117,6 +120,58 @@ class UniFormWithIcebergCompatV3Suite
       val icebergTable = UniFormIcebergVerifier.loadIcebergTableFromUC(id)
 
       new UniFormIcebergVerifier(spark, deltaLog, table.catalogTable, icebergTable).verify()
+    }
+  }
+
+  test("V2 to V3 upgrade preserves Iceberg snapshot lineage") {
+    withTempTableAndDir { case (id, _) =>
+      withSQLConf(
+        DeltaSQLConf.DELTA_ROW_TRACKING_BACKFILL_MAX_NUM_FILES_PER_COMMIT.key -> "1") {
+        executeSql(
+          s"""
+             |CREATE TABLE $id (ID INT) USING DELTA TBLPROPERTIES (
+             |  'delta.universalFormat.enabledFormats' = 'iceberg',
+             |  'delta.enableIcebergCompatV2' = 'true'
+             |  $requiredTableProperties
+             |)""".stripMargin)
+        executeSql(s"INSERT INTO $id VALUES (1), (2), (3)")
+        executeSql(s"INSERT INTO $id VALUES (4), (5), (6)")
+
+        val tableBeforeUpgrade = UniFormIcebergVerifier.loadIcebergTableFromUC(id)
+        val snapshotsBeforeUpgrade = tableBeforeUpgrade.snapshots().asScala.toSeq
+        val snapshotIdsBeforeUpgrade = snapshotsBeforeUpgrade.map(_.snapshotId()).toSet
+        val checkpointSnapshotId = snapshotsBeforeUpgrade.minBy(_.sequenceNumber()).snapshotId()
+        val currentSnapshotId = tableBeforeUpgrade.currentSnapshot().snapshotId()
+        assert(
+          checkpointSnapshotId != currentSnapshotId,
+          "Test setup requires a streaming checkpoint behind the current Iceberg snapshot.")
+
+        executeSql(
+          s"""
+             |ALTER TABLE $id SET TBLPROPERTIES (
+             |  'delta.enableIcebergCompatV2' = 'false',
+             |  'delta.enableIcebergCompatV3' = 'true'
+             |)""".stripMargin)
+
+        val tableAfterUpgrade = UniFormIcebergVerifier.loadIcebergTableFromUC(id)
+        val snapshotsAfterUpgrade = tableAfterUpgrade.snapshots().asScala.toSeq
+        assert(
+          snapshotIdsBeforeUpgrade.subsetOf(snapshotsAfterUpgrade.map(_.snapshotId()).toSet),
+          "The upgrade must retain snapshots that may be referenced by streaming checkpoints.")
+        assert(
+          tableAfterUpgrade.snapshot(checkpointSnapshotId) != null,
+          "The snapshot stored in a streaming checkpoint must remain resolvable.")
+
+        val upgradeSnapshots = snapshotsAfterUpgrade
+          .filterNot(snapshot => snapshotIdsBeforeUpgrade.contains(snapshot.snapshotId()))
+        assert(upgradeSnapshots.nonEmpty, "The upgrade should commit at least one snapshot.")
+        assert(
+          upgradeSnapshots.forall(_.operation() == "replace"),
+          "Row Tracking backfill must use metadata-only replace snapshots.")
+        assert(
+          upgradeSnapshots.minBy(_.sequenceNumber()).parentId() == currentSnapshotId,
+          "The first upgrade snapshot must extend the pre-upgrade snapshot chain.")
+      }
     }
   }
 }

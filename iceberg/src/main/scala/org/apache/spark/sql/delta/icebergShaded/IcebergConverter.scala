@@ -38,7 +38,7 @@ import org.apache.spark.sql.delta.util.TransactionHelper
 import io.delta.storage.commit.{CommitFailedException => DeltaCommitFailedException}
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.Path
-import shadedForDelta.org.apache.iceberg.{Table => IcebergTable, TableProperties}
+import shadedForDelta.org.apache.iceberg.{DataFile, Table => IcebergTable, TableProperties}
 import shadedForDelta.org.apache.iceberg.BaseTable
 import shadedForDelta.org.apache.iceberg.exceptions.CommitFailedException
 import shadedForDelta.org.apache.iceberg.hadoop.HadoopTables
@@ -380,10 +380,9 @@ class IcebergConverter
         isRowTrackingJustEnabled(
           snapshotToConvert, prevConvertedSnapshotOpt, lastConvertedIcebergTable)
       val tableOp = (lastDeltaVersionConverted, prevConvertedSnapshotOpt) match {
-        case (Some(_), _) if rowTrackingJustEnabled => REPLACE_TABLE
         case (Some(_), Some(_)) => WRITE_TABLE
         case (Some(_), None) => REPLACE_TABLE
-        case (None, None) => CREATE_TABLE
+        case (None, _) => CREATE_TABLE
       }
 
       val icebergTxn = new IcebergConversionTransaction(
@@ -396,14 +395,20 @@ class IcebergConverter
         // will first be triggered, adding one or more ROW TRACKING BACKFILL commits
         // to the table. After backfilling completes, here we must regenerate the entire
         // Iceberg metadata to keep the snapshot version in sync.
-        case _ if rowTrackingJustEnabled =>
-          val commitInfos = createSnapshotsForReplaceTable(
+        case Some(prevSnapshot) if rowTrackingJustEnabled =>
+          icebergTxn.updateTableMetadata(prevSnapshot.metadata)
+          createSnapshotsForRowTrackingUpgrade(
+            snapshotToConvert,
+            lastConvertedIcebergTable.getOrElse {
+              throw new IllegalStateException(
+                "Row Tracking upgrade requires a previous Iceberg table to exist.")
+            },
+            icebergTxn,
+            snapshotToConvert.version)
+        case None if rowTrackingJustEnabled =>
+          createSnapshotsForReplaceTable(
             snapshotToConvert, prevConvertedSnapshotOpt, icebergTxn, catalogTable,
             snapshotToConvert.version, useRowTrackingVersion = true)
-          prevConvertedSnapshotOpt.foreach { prevSnapshot =>
-            icebergTxn.updateTableMetadata(prevSnapshot.metadata)
-          }
-          commitInfos
         case Some(prevSnapshot) =>
           // Read the actions directly from the delta json files.
           // TODO: Run this as a spark job on executors
@@ -659,6 +664,96 @@ class IcebergConverter
       // Either this is first time to enable Uniform or upgrade from lower version
       (prevConvertedSnapshotOpt.isEmpty || lastConvertedIcebergTable.exists(
         _.asInstanceOf[BaseTable].operations().current().formatVersion() <= 2))
+  }
+
+  /** Returns the active Iceberg data files indexed by path. */
+  private def loadActiveIcebergDataFilesByPath(
+      icebergTable: IcebergTable): Map[String, DataFile] = {
+    val scanTasks = icebergTable.newScan().planFiles()
+    val activeDataFiles = try {
+      scanTasks.iterator().asScala.map(_.file()).toSeq
+    } finally {
+      scanTasks.close()
+    }
+    activeDataFiles
+      .groupBy(_.path().toString)
+      .map { case (path, files) =>
+        if (files.size != 1) {
+          throw new IllegalStateException(
+            s"Cannot preserve Iceberg snapshot lineage while upgrading Row Tracking: " +
+              s"found ${files.size} active data files for path $path.")
+        }
+        path -> files.head
+      }
+  }
+
+  /** Fails the upgrade rather than adding or dropping a data file. */
+  private def validateRowTrackingUpgradePaths(
+      deltaPaths: Set[String],
+      icebergPaths: Set[String]): Unit = {
+    if (deltaPaths != icebergPaths) {
+      throw new IllegalStateException(
+        "Cannot preserve Iceberg snapshot lineage while upgrading Row Tracking: " +
+          s"${deltaPaths.diff(icebergPaths).size} Delta files are missing from Iceberg and " +
+          s"${icebergPaths.diff(deltaPaths).size} Iceberg files are missing from Delta.")
+    }
+  }
+
+  /**
+   * Adds Row Tracking metadata to existing Iceberg data files while preserving the table's
+   * snapshot lineage.
+   *
+   * Row Tracking backfill updates the metadata of every active Delta AddFile without changing
+   * its logical data. RewriteFiles represents the same operation in Iceberg: each existing data
+   * file is replaced by a descriptor for the same path carrying its v3 first-row-id. The rewrites
+   * are grouped by defaultRowCommitVersion so Iceberg sequence numbers remain aligned with Delta.
+   *
+   * @param snapshotToConvert Delta snapshot after the Row Tracking backfill
+   * @param existingIcebergTable Iceberg table whose snapshot lineage must be preserved
+   * @param icebergTxn transaction opened against the existing Iceberg table
+   * @param fallbackVersion version for files without a defaultRowCommitVersion
+   */
+  protected def createSnapshotsForRowTrackingUpgrade(
+      snapshotToConvert: Snapshot,
+      existingIcebergTable: IcebergTable,
+      icebergTxn: IcebergConversionTransaction,
+      fallbackVersion: Long): Seq[Option[CommitInfo]] = {
+    val existingDataFilesByPath = loadActiveIcebergDataFilesByPath(existingIcebergTable)
+
+    val versionedFiles = snapshotToConvert.allFiles.rdd.map { add =>
+      val version = add.defaultRowCommitVersion.getOrElse(fallbackVersion)
+      version -> add.wrap.unwrap.asInstanceOf[AddFile]
+    }.cache()
+    val rowCommitVersions = versionedFiles.keys.distinct().collect().sorted
+    val filesByVersion = versionedFiles.groupByKey().cache()
+    val tablePath = snapshotToConvert.dataPath
+    val deltaPaths = versionedFiles.values
+      .map(add => IcebergTransactionUtils.canonicalizeFilePath(add, tablePath))
+      .collect()
+      .toSet
+    validateRowTrackingUpgradePaths(deltaPaths, existingDataFilesByPath.keySet)
+    rowCommitVersions.toSeq.map { version =>
+      val filesToRewrite = filesByVersion
+        .lookup(version)
+        .headOption
+        .map(_.iterator.toSeq)
+        .getOrElse(throw new IllegalStateException(s"No files found for version $version"))
+      val rewriteHelper = icebergTxn.getRewriteHelper
+      filesToRewrite.foreach { add =>
+        val canonicalPath =
+          IcebergTransactionUtils.canonicalizeFilePath(add, tablePath)
+        rewriteHelper.replaceDataFile(
+          existingDataFilesByPath(canonicalPath),
+          add.copy(dataChange = false))
+      }
+
+      val firstRowIds = filesToRewrite.flatMap(_.baseRowId)
+      if (firstRowIds.nonEmpty) {
+        icebergTxn.setNextRowId(firstRowIds.min)
+      }
+      rewriteHelper.commit(version)
+      None
+    }
   }
 
   /**

@@ -224,6 +224,13 @@ class IcebergConversionTransaction(
 
     override def opType: String = "rewrite"
 
+    def replaceDataFile(existingDataFile: DataFile, replacement: AddFile): Unit = {
+      writeSize += replacement.size
+      assert(!replacement.dataChange, "Rewrite operation should not add data")
+      rewriter.deleteFile(existingDataFile)
+      rewriter.addFile(replacement.toDataFile)
+    }
+
     override def add(add: AddFile): Unit = {
       writeSize += add.size
       assert(!add.dataChange, "Rewrite operation should not add data")
@@ -392,6 +399,10 @@ class IcebergConversionTransaction(
     val ret = new RewriteHelper(txn.newRewrite())
     fileUpdates += ret
     ret
+  }
+
+  def setNextRowId(nextRowId: Long): Unit = {
+    IcebergTransactionUtils.setIcebergTxnNextRowId(txn, nextRowId)
   }
 
   def getRowDeltaHelper: RowDeltaHelper = {
