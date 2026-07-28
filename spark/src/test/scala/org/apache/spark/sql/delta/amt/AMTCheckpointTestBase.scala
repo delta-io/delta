@@ -69,9 +69,14 @@ trait AMTCheckpointTestBase
   protected def tablePath(tableName: String): String =
     new File(deltaLogForName(tableName).dataPath.toUri).getCanonicalPath
 
-  protected def createAMTTable(tableName: String, checkpointInterval: Int = 2): Unit = {
+  protected def createAMTTable(
+      tableName: String,
+      checkpointInterval: Int = 2,
+      location: Option[String] = None): Unit = {
+    val locationClause = location.map(l => s"LOCATION '$l'").getOrElse("")
     sql(
       s"""CREATE TABLE $tableName (id INT) USING DELTA
+         |$locationClause
          |TBLPROPERTIES (
          |  '${propertyKey(AdaptiveMetadataTableFeature)}' = '$FEATURE_PROP_SUPPORTED',
          |  'delta.columnMapping.mode' = 'id',
@@ -149,8 +154,8 @@ trait AMTCheckpointTestBase
   protected def currentLeafDataEntries(snapshot: Snapshot): Long = {
     val provider = amtProvider(snapshot)
       .getOrElse(fail("Snapshot has no AMTCheckpointProvider."))
-      provider.leaves.map { leaf =>
-        spark.read.parquet(leaf.path)
+      provider.leafManifestAbsolutePaths.map { leafPath =>
+        spark.read.parquet(leafPath.toString)
           .where(col("content_type") === AMTSingleAction.ContentType.Type.Data)
           .count()
       }.sum

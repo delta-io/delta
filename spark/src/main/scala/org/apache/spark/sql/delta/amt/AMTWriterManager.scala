@@ -66,14 +66,14 @@ case class SingleAMTWriteMetrics(
  *
  * @param contentRootVersion          the table version the manifest tree describes
  * @param checkpoint                  the inline [[Checkpoint]] action to embed in the commit JSON
- * @param leaves                      pointer metadata for each leaf written
+ * @param leaves                      the root's `DATA_MANIFEST` pointer entries, one per leaf
  * @param includeActionsInCommitJson  whether the transaction should still write the commit's file
  *                                    actions inline in the commit JSON.
  */
 case class AMTWriteResult(
     contentRootVersion: Long,
     checkpoint: Checkpoint,
-    leaves: Seq[AMTCheckpointProvider.LeafInfo],
+    leaves: Seq[DataManifestEntry],
     includeActionsInCommitJson: Boolean)
 
 /**

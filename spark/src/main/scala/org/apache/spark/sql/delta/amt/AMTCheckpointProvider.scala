@@ -37,11 +37,15 @@ import org.apache.spark.sql.types.StructType
  *
  * @param checkpointAction The inline-emitted Checkpoint action this tree was committed with;
  *                         carries the version, contentRoot, and inline non-file state.
- * @param leaves           Pointer metadata for each leaf reachable from the root.
+ * @param leaves           The root's `DATA_MANIFEST` pointer entries, one per leaf reachable from
+ *                         the root. Each entry's `location` is stored table-root-relative; use
+ *                         [[leafManifestAbsolutePaths]] to resolve them against the table root.
+ * @param tableRoot        The table's data path.
  */
 final class AMTCheckpointProvider(
     val checkpointAction: Checkpoint,
-    val leaves: Seq[AMTCheckpointProvider.LeafInfo])
+    val leaves: Seq[DataManifestEntry],
+    val tableRoot: Path)
   extends CheckpointProvider {
 
   /** The table version the manifest tree describes. */
@@ -50,10 +54,15 @@ final class AMTCheckpointProvider(
   /** Pointer to the root manifest parquet. */
   private def contentRoot: ContentRoot = checkpointAction.contentRoot
 
+  /** Absolute [[Path]] to the root manifest parquet, resolved against the table root. */
+  private val rootManifestAbsolutePath: Path = contentRoot.getAbsolutePath(tableRoot)
+
+  /** Absolute [[Path]]s to the leaf manifest parquet files, resolved against the table root. */
+  lazy val leafManifestAbsolutePaths: Seq[Path] = leaves.map(_.getAbsolutePath(tableRoot))
+
   override def version: Long = checkpointAction.version
 
   override def topLevelFiles: Seq[FileStatus] = {
-    val rootPath = new Path(contentRoot.path)
     Seq(new FileStatus(
       /* length = */ contentRoot.sizeInBytes,
       /* isdir = */ false,
@@ -62,11 +71,11 @@ final class AMTCheckpointProvider(
       // modificationTime is not tracked on the ContentRoot, so report 0.
       // This should not impact readers.
       /* modification_time = */ 0L,
-      rootPath))
+      rootManifestAbsolutePath))
   }
 
   override def effectiveCheckpointSizeInBytes(): Long =
-    contentRoot.sizeInBytes + leaves.map(_.sizeInBytes).sum
+    contentRoot.sizeInBytes + leaves.map(_.file_size_in_bytes).sum
 
   override def checkpointPolicyForLogging: Option[CheckpointPolicy.Policy] = None
 
@@ -120,9 +129,10 @@ final class AMTCheckpointProvider(
   private def liveAddSingleActions(
       spark: SparkSession, deltaLog: DeltaLog): Dataset[SingleAction] = {
     import org.apache.spark.sql.delta.implicits._
-    val tableRoot = deltaLog.dataPath
-    val paths = new Path(contentRoot.path) +: leaves.map(l => new Path(l.path))
-    val encodedRootPath = SparkPath.fromPathString(contentRoot.path).urlEncoded
+    // Bind to a local so the `map` closure captures it, not the (non-serializable) provider.
+    val localTableRoot = deltaLog.dataPath
+    val paths = rootManifestAbsolutePath +: leafManifestAbsolutePaths
+    val encodedRootPath = SparkPath.fromPath(rootManifestAbsolutePath).urlEncoded
     AMTCheckpointProvider.loadEntriesWithLocation(spark, deltaLog, paths)
       .where(col("entry.content_type") === lit(AMTSingleAction.ContentType.Type.Data))
       .map { entryWithLoc =>
@@ -134,7 +144,7 @@ final class AMTCheckpointProvider(
               Some(BackReference(
                 SparkPath.fromUrlString(entryWithLoc.leafPath).toPath.toString, entryWithLoc.pos))
             }
-            val add = data.toAddFile(tableRoot).copy(backReference = backReference)
+            val add = data.toAddFile(localTableRoot).copy(backReference = backReference)
             SingleAction(add = add)
           case other => throw new IllegalStateException(
             s"Expected a DATA entry after filtering, got ${other.getClass.getSimpleName}.")
@@ -144,15 +154,6 @@ final class AMTCheckpointProvider(
 }
 
 object AMTCheckpointProvider {
-
-  /**
-   * Pointer-only view of a single leaf, derived from the `DATA_MANIFEST` row.
-   *
-   * @param path        Path to the leaf parquet file (the root entry's `location`).
-   * @param sizeInBytes On-disk size of the leaf parquet file (`file_size_in_bytes`).
-   * @param numEntries  Number of content entries the leaf holds (`record_count`).
-   */
-  case class LeafInfo(path: String, sizeInBytes: Long, numEntries: Long)
 
   /**
    * An [[AMTSingleAction]] entry paired with its physical read location in its manifest parquet.
@@ -182,16 +183,14 @@ object AMTCheckpointProvider {
       spark: SparkSession,
       deltaLog: DeltaLog,
       checkpoint: Checkpoint): AMTCheckpointProvider = {
+    val tableRoot = deltaLog.dataPath
+    val rootPath = checkpoint.contentRoot.getAbsolutePath(tableRoot)
     // The root manifest is small (one row per leaf), so collect it to the driver to enumerate the
     // leaf pointers.
-    val rootPath = new Path(checkpoint.contentRoot.path)
     val leaves = loadEntries(spark, deltaLog, Seq(rootPath)).collect().toSeq
       .filter(_.content_type == AMTSingleAction.ContentType.Type.DataManifest)
-      .map(row => LeafInfo(
-        path = row.location,
-        sizeInBytes = row.file_size_in_bytes,
-        numEntries = row.record_count))
-    new AMTCheckpointProvider(checkpointAction = checkpoint, leaves = leaves)
+      .map(_.unwrap.asInstanceOf[DataManifestEntry])
+    new AMTCheckpointProvider(checkpointAction = checkpoint, leaves = leaves, tableRoot = tableRoot)
   }
 
   /**

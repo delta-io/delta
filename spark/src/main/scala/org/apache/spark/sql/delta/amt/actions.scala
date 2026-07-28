@@ -23,6 +23,7 @@ import scala.util.Try
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor}
 import org.apache.spark.sql.delta.stats.DeltaStatistics
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
+import com.fasterxml.jackson.annotation.JsonIgnore
 import org.apache.hadoop.fs.Path
 
 /**
@@ -347,6 +348,11 @@ case class DataManifestEntry(
     key_metadata = key_metadata,
     split_offsets = split_offsets,
     column_files = column_files)
+
+  /** Absolute [[Path]] to the referenced leaf manifest, resolving `location` against the root. */
+  @JsonIgnore
+  def getAbsolutePath(tableRoot: Path): Path =
+    AMTUtils.absolutePathForManifestFile(tableRoot, location)
 }
 
 /**
