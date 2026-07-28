@@ -25,6 +25,7 @@ import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.*;
+import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.data.StructRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.ActionWrapper;
@@ -82,7 +83,7 @@ public class ChecksumUtils {
    * its "already seen" set. Unlike the live-file count, this grows with the number of add/remove
    * actions across the folded range (e.g. many rewrites).
    */
-  private static final int MAX_SEEN_IDENTITIES = 1000;
+  @VisibleForTesting static final int MAX_SEEN_IDENTITIES = 1000;
 
   private static final Set<String> INCREMENTAL_SUPPORTED_OPS =
       Collections.unmodifiableSet(
@@ -701,7 +702,8 @@ public class ChecksumUtils {
   }
 
   /** Class for tracking state during log processing. */
-  private static class StateTracker {
+  @VisibleForTesting
+  static class StateTracker {
     Optional<Metadata> metadataFromLog = Optional.empty();
     Optional<Protocol> protocolFromLog = Optional.empty();
     LongAdder tableSizeByte = new LongAdder();
