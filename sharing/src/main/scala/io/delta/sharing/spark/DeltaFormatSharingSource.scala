@@ -903,19 +903,26 @@ case class DeltaFormatSharingSource(
       DeltaSharingOptions.CDF_START_VERSION -> startingOffset.reservoirVersion.toString,
       DeltaSharingOptions.CDF_END_VERSION -> endingVersionForQuery.toString
     )
+    // Requests a Protocol action for each protocol change in the range, so a mid-range protocol
+    // upgrade is reflected in the local delta log instead of a stale head protocol. Gated by a
+    // default-off flag; when off the client keeps the legacy single-head-protocol behavior.
+    val includeHistoricalProtocol =
+      sqlConf.getConf(DeltaSQLConf.DELTA_SHARING_CDF_ENABLE_HISTORICAL_PROTOCOL)
     val tableFiles = client.getCDFFiles(
       table = table,
       cdfOptions = cdfOptions,
       // Requests Metadata actions for schema-changing versions in the range so DeltaSource
       // can detect both backward-compatible and non-backward-compatible schema changes.
       includeHistoricalMetadata = true,
-      fileIdHash = fileIdHash
+      fileIdHash = fileIdHash,
+      includeHistoricalProtocol = includeHistoricalProtocol
     )
     val refreshFunc = DeltaSharingUtils.getRefresherForGetCDFFiles(
       client = client,
       table = table,
       cdfOptions = cdfOptions,
-      fileIdHash = fileIdHash
+      fileIdHash = fileIdHash,
+      includeHistoricalProtocol = includeHistoricalProtocol
     )
     logInfo(
       s"Fetched ${tableFiles.lines.size} CDF lines from startingVersion " +
