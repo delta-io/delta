@@ -154,12 +154,11 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
       startVersion: Long,
       endVersion: Long
   ): ClosableIterator[(Long, Action)] = {
-    deltaLog.getChangeLogFiles(startVersion, catalogTableOpt, options.failOnDataLoss).takeWhile {
-      case (version, _) => version <= endVersion
-    }.flatMapWithClose { case (version, fileStatus) =>
-      DeltaSource.createRewindableActionIterator(spark, deltaLog, fileStatus)
-        .map((version, _))
-        .toClosable
+    deltaLog.getChangesIterator(startVersion, catalogTableOpt, options.failOnDataLoss).takeWhile {
+      commit => commit.version <= endVersion
+    }.flatMapWithClose { commit =>
+      DeltaSource.createRewindableActionIterator(spark, commit)
+        .withClose(_.map((commit.version, _)))
     }
   }
 
@@ -748,12 +747,12 @@ object DeltaSourceMetadataEvolutionSupport extends Logging {
     // We start from the currentSchemaVersion so that we can stop early in case the current
     // version still has file actions that potentially needs to be processed.
     val untilMetadataChange =
-      deltaLog.getChangeLogFiles(
-        currentMetadataVersion, catalogTableOpt).map { case (version, fileStatus) =>
+      deltaLog.getChangesIterator(
+        currentMetadataVersion, catalogTableOpt).map { commit =>
         var metadataAction: Option[Metadata] = None
         var protocolAction: Option[Protocol] = None
         var hasFileAction = false
-        DeltaSource.createRewindableActionIterator(spark, deltaLog, fileStatus)
+        DeltaSource.createRewindableActionIterator(spark, commit)
           .processAndClose { actionsIter =>
             actionsIter.foreach {
               case m: Metadata => metadataAction = Some(m)
@@ -763,7 +762,7 @@ object DeltaSourceMetadataEvolutionSupport extends Logging {
             }
           }
         (!hasFileAction && (metadataAction.isDefined || protocolAction.isDefined),
-          version, metadataAction, protocolAction)
+          commit.version, metadataAction, protocolAction)
       }.takeWhile(_._1)
     // Fold the chain so the merged entry tracks the latest Metadata and Protocol seen
     // anywhere in the run, not just the last commit's actions -- otherwise a (Metadata,

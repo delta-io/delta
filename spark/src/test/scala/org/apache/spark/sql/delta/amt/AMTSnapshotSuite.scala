@@ -16,12 +16,15 @@
 
 package org.apache.spark.sql.delta.amt
 
-import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaLog, DeltaOperations}
-import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor}
+import org.apache.spark.sql.delta.{Checkpoints, DeletionVectorsTestUtils, DeltaLog, DeltaOperations}
+import org.apache.spark.sql.delta.actions.{AddFile, Checkpoint, ContentRoot, DeletionVectorDescriptor}
 import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.FileNames
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.Row
+import org.apache.spark.sql.execution.datasources.LogicalRelation
 
 /**
  * Verifies that [[Snapshot]] APIs correct results on AMT tables.
@@ -34,23 +37,23 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
   // Post commit snapshot
   ///////////////////////////
 
-  test("snapshot.allFiles reflects a DELETE that lands on the checkpoint boundary") {
-    withTempDir { dir =>
-      val path = dir.getCanonicalPath
-      createAMTTable(path, checkpointInterval = 2)
-      sql(s"INSERT INTO delta.`$path` VALUES (1)")   // v1: 1 file.
-      sql(s"INSERT INTO delta.`$path` VALUES (2)")   // v2: emit; 2 live files.
-      // Sanity: snapshot state and leaves agree at the first checkpoint.
-      assert(DeltaLog.forTable(spark, path).unsafeVolatileSnapshot.allFiles.count() == 2)
+  testInlineAndDeferred("snapshot.allFiles reflects a DELETE on the checkpoint boundary") {
+    _ =>
+    withTable("amt_delete_boundary") {
+      val name = "amt_delete_boundary"
+      // Interval 1 so every commit is a boundary; combined with inline mode this makes the last
+      // DML AMT-backed in both modes regardless of the follow-up commit's version bookkeeping.
+      createAMTTable(name, checkpointInterval = 1)
+      sql(s"INSERT INTO $name VALUES (1)")
+      sql(s"INSERT INTO $name VALUES (2)")
+      sql(s"INSERT INTO $name VALUES (3)")
+      sql(s"DELETE FROM $name WHERE id = 1") // removes id=1; triggers an AMT (inline or follow-up).
 
-      sql(s"INSERT INTO delta.`$path` VALUES (3)")   // v3: 3 live files (not a boundary).
-      sql(s"DELETE FROM delta.`$path` WHERE id = 1") // v4: emit; live set drops id=1.
-
-      val snapshot = DeltaLog.forTable(spark, path).unsafeVolatileSnapshot
-      assert(snapshot.version == 4)
-      assert(amtProvider(snapshot).isDefined)
+      val snapshot = deltaLogForName(name).unsafeVolatileSnapshot
+      assert(amtProvider(snapshot).isDefined,
+        "The post-DELETE snapshot must be AMT-backed.")
       // allFiles must reflect the DELETE: the removed file is gone from the post-commit live set.
-      checkAnswer(spark.read.format("delta").load(path), Seq(Row(2), Row(3)))
+      checkAnswer(spark.read.table(name), Seq(Row(2), Row(3)))
       // The manifest tree written at the checkpoint captures exactly the post-DELETE live files
       // (computePostCommitState applied the RemoveFile), i.e. it matches snapshot.allFiles.
       assert(currentLeafDataEntries(snapshot) == snapshot.allFiles.count(),
@@ -58,56 +61,58 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
     }
   }
 
-  test("snapshot.allFiles matches leaves across insert/overwrite/delete before a checkpoint") {
-    withTempDir { dir =>
-      val path = dir.getCanonicalPath
-      createAMTTable(path, checkpointInterval = 4)
-      sql(s"INSERT INTO delta.`$path` VALUES (1)")            // v1.
-      sql(s"INSERT INTO delta.`$path` VALUES (2)")            // v2.
-      sql(s"INSERT OVERWRITE delta.`$path` VALUES (10), (20)") // v3: replaces all prior files.
-      sql(s"DELETE FROM delta.`$path` WHERE id = 10")         // v4: emit; removes one.
+  testInlineAndDeferred(
+      "snapshot.allFiles matches leaves across insert/overwrite/delete before a checkpoint") { _ =>
+    withTable("amt_overwrite") {
+      val name = "amt_overwrite"
+      // Interval 1 so the final DELETE triggers an AMT in both modes.
+      createAMTTable(name, checkpointInterval = 1)
+      sql(s"INSERT INTO $name VALUES (1)")
+      sql(s"INSERT INTO $name VALUES (2)")
+      sql(s"INSERT OVERWRITE $name VALUES (10), (20)") // replaces all prior files.
+      sql(s"DELETE FROM $name WHERE id = 10")          // removes one; triggers an AMT.
 
-      val snapshot = DeltaLog.forTable(spark, path).unsafeVolatileSnapshot
-      assert(snapshot.version == 4)
+      val snapshot = deltaLogForName(name).unsafeVolatileSnapshot
       assert(amtProvider(snapshot).isDefined)
-      checkAnswer(spark.read.format("delta").load(path), Seq(Row(20)))
+      checkAnswer(spark.read.table(name), Seq(Row(20)))
       assert(snapshot.allFiles.count() == 1, "Only the surviving overwrite file should be live.")
       assert(currentLeafDataEntries(snapshot) == 1,
         "Leaves must capture exactly the surviving live file after overwrite + delete.")
     }
   }
 
-  test("filtered scan is correct after emission (reconstruction from trimmed deltas + leaves)") {
-    withTempDir { dir =>
-      val path = dir.getCanonicalPath
-      createAMTTable(path, checkpointInterval = 2)
-      sql(s"INSERT INTO delta.`$path` VALUES (1)")
-      sql(s"INSERT INTO delta.`$path` VALUES (2)")   // v2: emit; provider is AMT.
-      sql(s"INSERT INTO delta.`$path` VALUES (3)")   // v3.
-      sql(s"DELETE FROM delta.`$path` WHERE id = 1") // v4: emit again.
+  testInlineAndDeferred(
+      "filtered scan is correct after emission (trimmed deltas + leaves)") { _ =>
+    withTable("amt_filtered_scan") {
+      val name = "amt_filtered_scan"
+      createAMTTable(name, checkpointInterval = 1)
+      sql(s"INSERT INTO $name VALUES (1)")
+      sql(s"INSERT INTO $name VALUES (2)")
+      sql(s"INSERT INTO $name VALUES (3)")
+      sql(s"DELETE FROM $name WHERE id = 1") // removes id=1; triggers an AMT.
 
       // SQL data-skipping reconstruction is disabled for AMT tables, so reads go through the
       // allFiles-based reconstruction: the leaves supply state up to the checkpoint and the
       // trimmed deltas supply the rest. Each row must appear exactly once -- a double-count would
       // surface as duplicate rows or wrong counts.
-      checkAnswer(spark.read.format("delta").load(path).filter("id >= 2"), Seq(Row(2), Row(3)))
+      checkAnswer(spark.read.table(name).filter("id >= 2"), Seq(Row(2), Row(3)))
       checkAnswer(
-        spark.read.format("delta").load(path).groupBy().count(), Seq(Row(2L)))
-      checkAnswer(spark.read.format("delta").load(path), Seq(Row(2), Row(3)))
+        spark.read.table(name).groupBy().count(), Seq(Row(2L)))
+      checkAnswer(spark.read.table(name), Seq(Row(2), Row(3)))
     }
   }
 
   test("deletion vector round-trips through the leaves with a matching uniqueId") {
-    withTempDir { dir =>
-      val path = dir.getCanonicalPath
-      createAMTTable(path, checkpointInterval = 2)
+    withTable("amt_dv") {
+      val name = "amt_dv"
+      // Interval 1 so the DV commit triggers an AMT (via its follow-up OPTIMIZE CHECKPOINT commit).
+      createAMTTable(name, checkpointInterval = 1)
       Seq(1, 2).toDF("id").coalesce(1)
-        .write.format("delta").mode("append").save(path) // v1: one file, two rows.
+        .write.mode("append").insertInto(name) // one file, two rows.
 
       // Attach a persistent DV directly rather than relying on DELETE's DV-vs-rewrite heuristic:
       // write a DV marking row 0 deleted and commit the resulting AddFile (with DV) + RemoveFile.
-      // v2 is a checkpoint boundary -> emit.
-      val log = DeltaLog.forTable(spark, path)
+      val log = deltaLogForName(name)
       val fileToDv = log.unsafeVolatileSnapshot.allFiles.collect()
       assert(fileToDv.length == 1, "The two rows must land in a single file.")
       val dvActions = writeFileWithDVOnDisk(log, fileToDv.head, RoaringBitmapArray(0L))
@@ -117,10 +122,9 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
         log.startTransaction().commit(dvActions, DeltaOperations.Delete(predicate = Seq.empty))
       }
 
-      val snapshot = DeltaLog.forTable(spark, path).unsafeVolatileSnapshot
-      assert(snapshot.version == 2)
+      val snapshot = deltaLogForName(name).unsafeVolatileSnapshot
       val provider = amtProvider(snapshot).getOrElse(fail("expected AMTCheckpointProvider"))
-      checkAnswer(spark.read.format("delta").load(path), Seq(Row(2)))
+      checkAnswer(spark.read.table(name), Seq(Row(2)))
 
       // The one surviving live file must carry a deletion vector in committed state.
       val committed = snapshot.allFiles.collect()
@@ -171,5 +175,111 @@ class AMTSnapshotSuite extends AMTCheckpointTestBase with DeletionVectorsTestUti
       assert(reconstructed.head.numLogicalRecords.contains(1L),
         "Reconstructed logical record count must match the committed file.")
     }
+  }
+
+  test("distributed reconstruction reads across multiple leaves via a file scan") {
+    withTable("amt_dist_multileaf") {
+      val name = "amt_dist_multileaf"
+      // Pack at most 2 entries per leaf so 5 files span multiple leaves; the distributed read must
+      // fan out across all leaf parquet files and union their entries.
+      withSQLConf(DeltaSQLConf.AMT_ENTRIES_PER_LEAF.key -> "2") {
+        createAMTTable(name, checkpointInterval = 5)
+        (1 to 5).foreach(i => sql(s"INSERT INTO $name VALUES ($i)")) // v5: emit.
+      }
+      val snapshot = deltaLogForName(name).unsafeVolatileSnapshot
+      val provider = amtProvider(snapshot).getOrElse(fail("expected AMTCheckpointProvider"))
+      assert(provider.leaves.size >= 2,
+        "entriesPerLeaf=2 with 5 files must produce multiple leaves.")
+      checkAnswer(spark.read.table(name), (1 to 5).map(Row(_)))
+      val committedPaths = snapshot.allFiles.select("path").as[String].collect().toSet
+      assert(committedPaths.size == 5)
+      val df = provider.loadActionsForStateReconstruction(spark, snapshot.deltaLog)
+        .getOrElse(fail("AMT provider must contribute leaf-derived actions."))
+
+      // The leaves must be read through a distributed parquet scan, not a driver-side collected
+      // LocalRelation.
+      val hasFileScan = df.queryExecution.optimizedPlan.collectFirst {
+        case l: LogicalRelation => l
+      }.isDefined
+      assert(hasFileScan,
+        "Reconstruction must read the leaves through a distributed file scan, " +
+          "not collect them to the driver.")
+
+      val addPaths = df.where("add is not null").select("add.path").as[String].collect().toSet
+      assert(addPaths == committedPaths,
+        "Reconstruction must surface every leaf entry exactly once across leaves.")
+      assert(df.where("protocol.minReaderVersion is not null").count() == 1,
+        "Reconstruction must carry the inline protocol action.")
+      assert(df.where("metaData.id is not null").count() == 1,
+        "Reconstruction must carry the inline metadata action.")
+    }
+  }
+
+  test("reconstruction surfaces DATA entries that live directly in the root") {
+    withTable("amt_root_data") {
+      val name = "amt_root_data"
+      createAMTTable(name, checkpointInterval = 2)
+      sql(s"INSERT INTO $name VALUES (1)") // v1.
+      sql(s"INSERT INTO $name VALUES (2)") // v2: emit -> a real root + leaf.
+
+      val deltaLog = deltaLogForName(name)
+      val provider = amtProvider(deltaLog.unsafeVolatileSnapshot)
+        .getOrElse(fail("expected AMTCheckpointProvider"))
+      val tableRoot = deltaLog.dataPath
+
+      // TODO(v4amt): once the write path can emit DATA entries directly into the root, drop this
+      // synthetic-root scaffolding (checkpointWithSyntheticRoot / addedTracking) and drive the test
+      // from a real writer-produced root instead.
+      val rootAdds = Seq("root-data-1.parquet", "root-data-2.parquet").map { path =>
+        AddFile(path = path, partitionValues = Map.empty, size = 128L, modificationTime = 0L,
+          dataChange = false, stats = s"""{"numRecords":3}""")
+      }
+      val rootDataRows = rootAdds.map(add =>
+        AMTSingleAction.fromAddFile(add, addedTracking, tableRoot))
+      val checkpoint =
+        checkpointWithSyntheticRoot(deltaLog, provider.checkpointAction, rootDataRows)
+
+      val rootProvider = AMTCheckpointProvider.fromCheckpoint(spark, deltaLog, checkpoint)
+      assert(rootProvider.leaves.isEmpty, "A DATA-only root must yield no leaf pointers.")
+
+      val expected = rootAdds.map(_.path).toSet
+      val df = rootProvider.loadActionsForStateReconstruction(spark, deltaLog)
+        .getOrElse(fail("AMT provider must contribute root-derived actions."))
+      val addPaths = df.where("add is not null").select("add.path").as[String].collect().toSet
+      assert(addPaths == expected,
+        "Reconstruction must surface the DATA entries stored directly in the root.")
+      assert(df.where("protocol.minReaderVersion is not null").count() == 1,
+        "Reconstruction must still carry the inline protocol action.")
+      assert(df.where("metaData.id is not null").count() == 1,
+        "Reconstruction must still carry the inline metadata action.")
+    }
+  }
+
+  /** An ADDED tracking envelope with no lineage/sequence numbers, matching the AMT writer. */
+  private def addedTracking: Tracking = Tracking(
+    status = Tracking.Status.Added,
+    snapshot_id = None,
+    dv_snapshot_id = None,
+    sequence_number = None,
+    file_sequence_number = None,
+    first_row_id = None,
+    deleted_positions = None,
+    replaced_positions = None)
+
+  /**
+   * Writes `rows` to a fresh AMT root manifest parquet under the table's metadata dir and returns
+   * a [[Checkpoint]] (copied from `base`) pointing at it.
+   */
+  private def checkpointWithSyntheticRoot(
+      deltaLog: DeltaLog, base: Checkpoint, rows: Seq[AMTSingleAction]): Checkpoint = {
+    val hadoopConf = deltaLog.newDeltaHadoopConf()
+    val metadataDir = FileNames.amtMetadataDirPath(deltaLog.dataPath)
+    val rootFile = FileNames.newAMTRootManifestFile(metadataDir)
+    val useRename = deltaLog.store.isPartialWriteVisible(deltaLog.logPath, hadoopConf)
+    val enc = org.apache.spark.sql.delta.implicits.amtSingleActionEncoder
+    val df = spark.createDataset(rows)(enc).toDF()
+    Checkpoints.writeAtomicCheckpointParquetFile(spark, df, rootFile, hadoopConf, useRename)
+    val size = rootFile.getFileSystem(hadoopConf).getFileStatus(rootFile).getLen
+    base.copy(contentRoot = ContentRoot(path = rootFile.toString, sizeInBytes = size))
   }
 }
