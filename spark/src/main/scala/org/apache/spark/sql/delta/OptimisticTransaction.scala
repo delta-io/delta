@@ -279,6 +279,21 @@ trait OptimisticTransactionImpl extends TransactionHelper
   with DeltaLoggingProvider {
 
   /**
+   * Whether this transaction may be constructed without a V1 [[DeltaLog]]. Defaults to `false`:
+   * a V1 transaction must always have a real `deltaLog`. Only the Kernel-backed
+   * [[org.apache.spark.sql.delta.v2.interop.DeltaV2OptimisticTransaction]] legitimately
+   * has none and opts in by overriding this.
+   */
+  protected def allowNullDeltaLog: Boolean = false
+
+  // Invariant: a V1 OptimisticTransaction must always be constructed with a non-null deltaLog.
+  // Guards against accidentally constructing one with null deltaLog which would otherwise
+  // surface as a confusing NPE deep in the commit path rather than at construction.
+  require(
+    allowNullDeltaLog || deltaLog != null,
+    "A V1 OptimisticTransaction must be constructed with a non-null deltaLog.")
+
+  /**
    * Recording tags for this transaction, anchored to the read snapshot's `metadata.id`. Lets
    * `recordDeltaEvent(txn, ...)` attribute events to the table being mutated without reaching
    * through `txn.deltaLog`.
@@ -290,14 +305,24 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
   // Intentionally cache the values of these configs to ensure stable commit code path
   // and avoid race conditions between committing and dynamic config changes.
-  protected val incrementalCommitEnabled = deltaLog.incrementalCommitEnabled
-  protected val shouldVerifyIncrementalCommit = deltaLog.shouldVerifyIncrementalCommit
+  // The cached vals are initialized from overridable compute-hooks.
+  protected def computeIncrementalCommitEnabled: Boolean = deltaLog.incrementalCommitEnabled
+  protected def computeShouldVerifyIncrementalCommit: Boolean =
+    deltaLog.shouldVerifyIncrementalCommit
+  protected val incrementalCommitEnabled = computeIncrementalCommitEnabled
+  protected val shouldVerifyIncrementalCommit = computeShouldVerifyIncrementalCommit
   protected val forcedChecksumValidationInterval =
     spark.conf.get(DeltaSQLConf.FORCED_CHECKSUM_VALIDATION_INTERVAL)
   protected val forcedChecksumValidationMinTimeIntervalMinutes =
     spark.conf.get(DeltaSQLConf.FORCED_CHECKSUM_VALIDATION_MIN_TIME_INTERVAL_MINUTES)
 
   def clock: Clock = deltaLog.clock
+
+  override def dataPath: Path = deltaLog.dataPath
+
+  override def logPath: Path = deltaLog.logPath
+
+  override def newDeltaHadoopConf(): Configuration = deltaLog.newDeltaHadoopConf()
 
   // This would be a quick operation if we already validated the checksum
   // Otherwise, we should at least perform the validation here.
@@ -395,8 +420,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
   protected var commitInfo: CommitInfo = _
   def getCommitInfo: CommitInfo = commitInfo
 
-  /** Whether the txn should trigger a checkpoint after the commit */
-  private[delta] var needsCheckpoint = false
+  /** The log-maintenance work this txn decided after committing. */
+  private[delta] var maintenanceOperation: MaintenanceOperation = MaintenanceOperation()
 
   // Whether this transaction is creating a new table.
   private var isCreatingNewTable: Boolean = false
@@ -563,11 +588,17 @@ trait OptimisticTransactionImpl extends TransactionHelper
   protected[delta] var isBlindAppend: Boolean = false
 
   /**
+   * The initial value of [[preCommitLogSegment]]. V1 copies the read snapshot's own
+   * [[LogSegment]].
+   */
+  protected def initialPreCommitLogSegment: LogSegment =
+    snapshot.logSegment.copy(checkpointProvider = snapshot.checkpointProvider)
+
+  /**
    * The logSegment of the snapshot prior to the commit.
    * Will be updated only when retrying due to a conflict.
    */
-  private[delta] var preCommitLogSegment: LogSegment =
-    snapshot.logSegment.copy(checkpointProvider = snapshot.checkpointProvider)
+  private[delta] var preCommitLogSegment: LogSegment = initialPreCommitLogSegment
 
   /** The end to end execution time of this transaction. */
   def txnExecutionTimeMs: Option[Long] = if (commitEndNano == -1) {
@@ -644,10 +675,12 @@ trait OptimisticTransactionImpl extends TransactionHelper
     if (!identityColumnAllowed &&
         ColumnWithDefaultExprUtils.hasIdentityColumn(newMetadataTmp.schema)) {
       throw DeltaErrors.unsupportedWriterTableFeaturesInTableException(
-        deltaLog.dataPath.toString, Seq(IdentityColumnsTableFeature.name))
+        dataPath.toString, Seq(IdentityColumnsTableFeature.name))
     }
 
     val protocolBeforeUpdate = protocol
+    newMetadataTmp = enableAdaptiveMetadataDependentFeatures(newMetadataTmp)
+
     // `readVersion == -1` indicates the current transaction is reading from a snapshot
     // where the table has not existed yet.
     // `isCreatingNewTable` will be true for commands like REPLACE and CREATE,
@@ -1048,6 +1081,60 @@ trait OptimisticTransactionImpl extends TransactionHelper
     } else {
       metadata
     }
+  }
+
+  /**
+   * Enable the dependencies of the [[AdaptiveMetadataTableFeature]] in the metadata.
+   * [[AdaptiveMetadataTableFeature.requiredFeatures]] only guarantees these features are present
+   * in the protocol (supported); several of them additionally need a metadata flag to be truly
+   * enabled(rowTracking, deletionVectors) or a specific configuration (column mapping `id` mode).
+   */
+  private def enableAdaptiveMetadataDependentFeatures(metadata: Metadata): Metadata = {
+    val adaptiveMetadataEnabled =
+      protocol.isFeatureSupported(AdaptiveMetadataTableFeature) ||
+        TableFeatureProtocolUtils.isFeatureSupportedInTableConfigs(
+          metadata.configuration, AdaptiveMetadataTableFeature)
+    if (!adaptiveMetadataEnabled) {
+      return metadata
+    }
+
+    val existingTableHasAdaptiveMetadata =
+      snapshot.protocol.isFeatureSupported(AdaptiveMetadataTableFeature)
+    if (!isCreatingNewTable && !existingTableHasAdaptiveMetadata) {
+      throw DeltaErrors.adaptiveMetadataUpgradeNotSupported(AdaptiveMetadataTableFeature.name)
+    }
+
+    // rowTracking / deletionVectors: these dependencies must be enabled via their metadata flag.
+    // If the flag is not set, auto-enable it. If it is explicitly set to `false`, the user is
+    // asking for behavior that conflicts with the feature's requirement, so fail rather than
+    // silently overriding.
+    val flagEnablements = Seq(
+      DeltaConfigs.ROW_TRACKING_ENABLED.key,
+      DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key)
+      .flatMap { key =>
+        metadata.configuration.get(key) match {
+          case None => Some(key -> "true")
+          case Some(v) if v.toBoolean => None
+          case Some(v) =>
+            throw DeltaErrors.adaptiveMetadataRequiresDependentFeatureEnabled(
+              AdaptiveMetadataTableFeature.name, key, v)
+        }
+      }
+    var updatedConfig = metadata.configuration ++ flagEnablements
+
+    // columnMapping: the feature requires `id` mode.
+    //  - New table, mode unspecified: auto-set `id`.
+    //  - Otherwise (e.g. an explicit mode was requested at CREATE) the resulting mode must be `id`,
+    //    else fail.
+    val modeExplicitlySet = metadata.configuration.contains(DeltaConfigs.COLUMN_MAPPING_MODE.key)
+    if (!modeExplicitlySet && isCreatingNewTable) {
+      updatedConfig += (DeltaConfigs.COLUMN_MAPPING_MODE.key -> IdMapping.name)
+    } else if (metadata.columnMappingMode != IdMapping) {
+      throw DeltaErrors.adaptiveMetadataRequiresColumnMappingIdMode(
+        AdaptiveMetadataTableFeature.name, metadata.columnMappingMode.name)
+    }
+
+    metadata.copy(configuration = updatedConfig)
   }
 
   private def setNewProtocolWithFeaturesEnabledByMetadata(metadata: Metadata): Unit = {
@@ -1673,10 +1760,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
   ): Unit = {
     // If this transaction commits to the redirect destination location, then there is no
     // need to validate the subsequent no-redirect rules.
-    val configuration = deltaLog.newDeltaHadoopConf()
-    val dataPath = snapshot.dataPath.toUri.getPath
+    val configuration = newDeltaHadoopConf()
+    val tableDataPath = dataPath.toUri.getPath
     val catalog = spark.sessionState.catalog
-    val isRedirectDest = redirectConfig.spec.isRedirectDest(catalog, configuration, dataPath)
+    val isRedirectDest = redirectConfig.spec.isRedirectDest(catalog, configuration, tableDataPath)
     if (isRedirectDest) return
     // Find all rules that match with the current application name.
     // If appName is not present, its no-redirect-rule are included.
@@ -1876,7 +1963,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
         postCommitSnapshot,
         Some(updatedCurrentTransactionInfo))
       logInfo(log"Committed delta #${MDC(DeltaLogKeys.VERSION, commitVersion)} to " +
-        log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)}")
+        log"${MDC(DeltaLogKeys.PATH, logPath)}")
       commitVersion
     } catch {
       case e: DeltaConcurrentModificationException =>
@@ -2189,7 +2276,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
               deltaLog.update(catalogTableOpt = catalogTable))
             val logs = deltaLog.store.readAsIterator(
               fileProvider.deltaFile(attemptVersion),
-              deltaLog.newDeltaHadoopConf())
+              newDeltaHadoopConf())
             try {
               val winningCommitActions = logs.map(Action.fromJson)
               val commitInfo = winningCommitActions.collectFirst { case a: CommitInfo => a }
@@ -2303,14 +2390,14 @@ trait OptimisticTransactionImpl extends TransactionHelper
           // FS -> CC conversion
           val (commitCoordinatorName, commitCoordinatorConf) =
             CoordinatedCommitsUtils.getCoordinatedCommitsConfs(finalMetadata)
-          logInfo(log"Table ${MDC(DeltaLogKeys.PATH, deltaLog.logPath)} transitioning from " +
+          logInfo(log"Table ${MDC(DeltaLogKeys.PATH, logPath)} transitioning from " +
             log"file-system based table to coordinated-commits table: " +
             log"[commit-coordinator: ${MDC(DeltaLogKeys.COORDINATOR_NAME, commitCoordinatorName)}" +
             log", conf: ${MDC(DeltaLogKeys.COORDINATOR_CONF, commitCoordinatorConf)}]")
           val tableIdentifierOpt =
             CoordinatedCommitsUtils.toCCTableIdentifier(catalogTable.map(_.identifier))
           newCoordinatedCommitsTableConf = Some(newCommitCoordinatorClient.registerTable(
-            deltaLog.logPath,
+            logPath,
             tableIdentifierOpt,
             readVersion,
             finalMetadata,
@@ -2319,7 +2406,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
           // CC -> FS conversion
           val (newOwnerName, newOwnerConf) =
             CoordinatedCommitsUtils.getCoordinatedCommitsConfs(snapshot.metadata)
-          logInfo(log"Table ${MDC(DeltaLogKeys.PATH, deltaLog.logPath)} transitioning from " +
+          logInfo(log"Table ${MDC(DeltaLogKeys.PATH, logPath)} transitioning from " +
             log"coordinated-commits table to file-system table: " +
             log"[commit-coordinator: ${MDC(DeltaLogKeys.COORDINATOR_NAME, newOwnerName)}, " +
             log"conf: ${MDC(DeltaLogKeys.COORDINATOR_CONF, newOwnerConf)}]")
@@ -2331,7 +2418,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
           // commit-coordinator.
           val (newOwnerName, newOwnerConf) =
             CoordinatedCommitsUtils.getCoordinatedCommitsConfs(finalMetadata)
-          val message = s"Transition of table ${deltaLog.logPath} from one commit-coordinator to" +
+          val message = s"Transition of table ${logPath} from one commit-coordinator to" +
             s" another commit-coordinator is not allowed: [old commit-coordinator: $oldOwnerName," +
             s" new commit-coordinator: $newOwnerName, old commit-coordinator conf: $oldOwnerConf," +
             s" new commit-coordinator conf: $newOwnerConf]."
@@ -2364,7 +2451,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     }
 
     logInfo(log"Committed delta #${MDC(DeltaLogKeys.VERSION, attemptVersion)} to " +
-      log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)}. Wrote " +
+      log"${MDC(DeltaLogKeys.PATH, logPath)}. Wrote " +
       log"${MDC(DeltaLogKeys.NUM_ACTIONS, commitSize.toLong)} actions.")
 
     deltaLog.checkpoint(currentSnapshot, catalogTable)
@@ -2616,7 +2703,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
   private[delta] def isCommitLockEnabled: Boolean = {
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COMMIT_LOCK_ENABLED).getOrElse(
-      deltaLog.store.isPartialWriteVisible(deltaLog.logPath, deltaLog.newDeltaHadoopConf()))
+      deltaLog.store.isPartialWriteVisible(logPath, newDeltaHadoopConf()))
   }
 
   private def lockCommitIfEnabled[T](body: => T): T = {
@@ -2774,7 +2861,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
     if (readVersion > -1 && metadata.id != snapshot.metadata.id) {
       val msg = s"Change in the table id detected in txn. Table id for txn on table at " +
-        s"${deltaLog.dataPath} was ${snapshot.metadata.id} when the txn was created and " +
+        s"${dataPath} was ${snapshot.metadata.id} when the txn was created and " +
         s"is now changed to ${metadata.id}."
       logWarning(msg)
       recordDeltaEvent(deltaLog, "delta.metadataCheck.commit", data = Map(
@@ -2807,7 +2894,19 @@ trait OptimisticTransactionImpl extends TransactionHelper
       catalogTableForPostCommitSnapshot,
       amtCheckpointOpt = amtWriteResultOpt.map(_.checkpoint))
     val postCommitReconstructionTime = System.nanoTime()
-    needsCheckpoint = isCheckpointNeeded(attemptVersion, postCommitSnapshot)
+    maintenanceOperation = if (
+        !postCommitSnapshot.protocol.isFeatureSupported(AdaptiveMetadataTableFeature)) {
+      MaintenanceOperation(
+        shouldCheckpoint = isCheckpointNeeded(attemptVersion, postCommitSnapshot))
+    } else if (amtWriteResultOpt.isEmpty) {
+      // The AMT writer did not write inline, so schedule a follow-up OPTIMIZE CHECKPOINT commit
+      // (issued by the post-commit checkpoint hook)
+      // if needed.
+      amtWriterManager.planMaintenance(attemptVersion, postCommitSnapshot)
+    } else {
+      // The AMT was written inline with this commit; no follow-up maintenance is needed.
+      MaintenanceOperation()
+    }
     val commitStatsComputer = new CommitStatsComputer()
     // Add to commit stats and consume the returned iterator.
     commitStatsComputer.addToCommitStats(actions.toIterator).foreach(_ => ())
@@ -2824,7 +2923,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       stateReconstructionDurationMs =
         NANOSECONDS.toMillis(postCommitReconstructionTime - commitEndNano),
       postCommitSnapshot = postCommitSnapshot,
-      computedNeedsCheckpoint = needsCheckpoint,
+      computedNeedsCheckpoint = maintenanceOperation.shouldCheckpoint,
       isolationLevel = isolationLevel,
       // We don't use postCommitSnapshot.fileSizeHistogram here
       // because it can trigger full state reconstruction.
@@ -2967,7 +3066,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       )
     }
     if (attemptVersion == 0L) {
-      val expectedPathForCommitZero = unsafeDeltaFile(deltaLog.logPath, version = 0L).toUri
+      val expectedPathForCommitZero = unsafeDeltaFile(logPath, version = 0L).toUri
       val actualCommitPath = commitResponse.getCommit.getFileStatus.getPath.toUri
       if (actualCommitPath != expectedPathForCommitZero) {
         throw new IllegalStateException("Expected 0th commit to be written to " +
@@ -3157,7 +3256,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       postCommitSnapshot = postCommitSnapshot,
       postCommitHooks = postCommitHooks.toSeq,
       txnExecutionTimeMs = txnExecutionTimeMs.get,
-      needsCheckpoint = needsCheckpoint,
+      maintenanceOperation = maintenanceOperation,
       partitionsAddedToOpt = partitionsAddedToOpt,
       isBlindAppend = isBlindAppend
     ))
@@ -3342,5 +3441,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
   // Backfill any unbackfilled commits if coordinated commits are disabled -- in the Optimistic
   // Transaction constructor.
-  CoordinatedCommitsUtils.backfillWhenCoordinatedCommitsDisabled(snapshot)
+  protected def maybeBackfillOnConstruction(): Unit =
+    CoordinatedCommitsUtils.backfillWhenCoordinatedCommitsDisabled(snapshot)
+  maybeBackfillOnConstruction()
 }

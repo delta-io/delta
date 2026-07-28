@@ -26,6 +26,8 @@ import org.junit.jupiter.api.BeforeAll;
  * <p>Swaps the default {@link DeltaV2TestBase} Spark session for one configured with:
  *
  * <ul>
+ *   <li>The unified {@code DeltaSparkSessionExtension}, including the Spark 4.2 rule that routes
+ *       Delta CDF APIs to the DSv2 changelog implementation.
  *   <li>The hybrid {@code DeltaCatalog} (spark-unified) as {@code spark_catalog}, so {@code
  *       TableCatalog.loadChangelog} routes into the {@code ChangelogSupport} trait.
  *   <li>{@code spark.databricks.delta.changelogV2.enabled = true}, the SQLConf gate behind which
@@ -47,7 +49,7 @@ public abstract class DeltaChangelogTestBase extends DeltaV2TestBase {
         SparkSession.builder()
             .master("local[*]")
             .appName("SparkKernelDsv2ChangelogTests")
-            .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtensionV1")
+            .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
             .config(
                 "spark.sql.catalog.spark_catalog",
                 "org.apache.spark.sql.delta.catalog.DeltaCatalog")

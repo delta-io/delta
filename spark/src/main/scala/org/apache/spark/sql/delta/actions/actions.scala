@@ -30,10 +30,11 @@ import scala.util.control.NonFatal
 import com.databricks.spark.util.TagDefinition
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.ClassicColumnConversions._
+import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.{DeltaFileOperations, JsonUtils, Utils => DeltaUtils}
+import org.apache.spark.sql.delta.util.{DeltaEncoder, DeltaFileOperations, JsonUtils, Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.PartitionUtils
 import com.fasterxml.jackson.annotation._
@@ -915,7 +916,8 @@ case class AddFile(
     baseRowId: Option[Long] = None,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     defaultRowCommitVersion: Option[Long] = None,
-    clusteringProvider: Option[String] = None
+    clusteringProvider: Option[String] = None,
+    backReference: Option[BackReference] = None
 ) extends FileAction with HasNumRecords {
   require(path.nonEmpty)
 
@@ -935,7 +937,8 @@ case class AddFile(
       deletionVector = deletionVector,
       baseRowId = baseRowId,
       defaultRowCommitVersion = defaultRowCommitVersion,
-      stats = stats
+      stats = stats,
+      backReference = backReference
     )
     // scalastyle:on
   }
@@ -1126,6 +1129,29 @@ object AddFile {
 }
 
 /**
+ * A back reference points a file action at the exact location of its source entry inside a
+ * Adaptive Metadata Tree (AMT) leaf manifest.
+ *
+ * @param manifest The canonical path of the AMT leaf manifest that held the source entry (the leaf
+ *                 DATA_MANIFEST `location`).
+ * @param pos      The 0-based position of the entry within that leaf. This equals the parquet
+ *                 `_metadata.row_index` of the leaf row, which is the same ordinal the MDV bitmap
+ *                 indexes.
+ */
+case class BackReference(
+    manifest: String,
+    pos: Long)
+
+object BackReference {
+
+  final lazy val STRUCT_TYPE: StructType =
+    Action.addFileSchema("backReference").dataType.asInstanceOf[StructType]
+
+  private lazy val _encoder = new DeltaEncoder[BackReference]
+  implicit def encoder: Encoder[BackReference] = _encoder.get
+}
+
+/**
  * Logical removal of a given file from the reservoir. Acts as a tombstone before a file is
  * deleted permanently.
  *
@@ -1155,7 +1181,8 @@ case class RemoveFile(
     baseRowId: Option[Long] = None,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     defaultRowCommitVersion: Option[Long] = None,
-    override val stats: String = null
+    override val stats: String = null,
+    backReference: Option[BackReference] = None
 ) extends FileAction with HasNumRecords {
   override def wrap: SingleAction = SingleAction(remove = this)
 
@@ -1575,10 +1602,57 @@ sealed trait CheckpointOnlyAction extends Action
  *
  * @param path        root manifest path, relative to the table root.
  * @param sizeInBytes size of the root manifest file in bytes.
+ * @param tags        additional metadata about the AMT. See [[ContentRoot.Tags]] for known keys.
  */
 case class ContentRoot(
     path: String,
-    sizeInBytes: Long)
+    sizeInBytes: Long,
+    tags: Map[String, String] = null) {
+
+  private def tag(key: ContentRoot.Tags.KeyType): Option[String] =
+    Option(tags).flatMap(_.get(key.name))
+
+  /** Whether this manifest tree was built incrementally, if recorded. */
+  def isIncremental: Option[Boolean] = tag(ContentRoot.Tags.IS_INCREMENTAL).map(_.toBoolean)
+
+  /** The version of the most recent full (non-incremental) manifest rewrite, if recorded. */
+  def lastManifestCommitWithFullRewrite: Option[Long] =
+    tag(ContentRoot.Tags.LAST_MANIFEST_COMMIT_WITH_FULL_REWRITE).map(_.toLong)
+
+  /** Absolute [[Path]] to the root manifest, resolving `path` against `tableRoot`. */
+  @JsonIgnore
+  def getAbsolutePath(tableRoot: Path): Path =
+    AMTUtils.absolutePathForManifestFile(tableRoot, path)
+}
+
+object ContentRoot {
+
+  def apply(
+      path: String,
+      sizeInBytes: Long,
+      isIncremental: Boolean,
+      lastManifestCommitWithFullRewrite: Long): ContentRoot = {
+    ContentRoot(
+      path = path,
+      sizeInBytes = sizeInBytes,
+      tags = Map(
+        Tags.IS_INCREMENTAL.name -> isIncremental.toString,
+        Tags.LAST_MANIFEST_COMMIT_WITH_FULL_REWRITE.name ->
+          lastManifestCommitWithFullRewrite.toString
+      )
+    )
+  }
+
+  object Tags {
+    sealed abstract class KeyType(val name: String)
+
+    /** Whether the tree was built incrementally (`"true"`/`"false"`). */
+    object IS_INCREMENTAL extends KeyType("isIncremental")
+    /** The version of the most recent full (non-incremental) manifest rewrite. */
+    object LAST_MANIFEST_COMMIT_WITH_FULL_REWRITE
+      extends KeyType("lastManifestCommitWithFullRewrite")
+  }
+}
 
 /**
  * Closed set of values for [[SidecarFile.sidecarType]] under the `adaptiveMetadata-preview`

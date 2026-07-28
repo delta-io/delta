@@ -21,9 +21,11 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.actions.SetTransaction;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.data.StructRow;
 import io.delta.kernel.internal.stats.FileSizeHistogram;
@@ -51,6 +53,11 @@ public class CRCInfo {
   private static final String TXN_ID = "txnId";
   private static final String DOMAIN_METADATA = "domainMetadata";
   private static final String FILE_SIZE_HISTOGRAM = "fileSizeHistogram";
+  private static final String IN_COMMIT_TIMESTAMP = "inCommitTimestampOpt";
+  private static final String SET_TRANSACTIONS = "setTransactions";
+  private static final String NUM_DELETED_RECORDS_OPT = "numDeletedRecordsOpt";
+  private static final String NUM_DELETION_VECTORS_OPT = "numDeletionVectorsOpt";
+  private static final String ALL_FILES = "allFiles";
   private static final String HISTOGRAM_OPT = "histogramOpt";
 
   public static final StructType CRC_FILE_SCHEMA =
@@ -63,11 +70,20 @@ public class CRCInfo {
           .add(PROTOCOL, Protocol.FULL_SCHEMA)
           .add(TXN_ID, StringType.STRING, /*nullable*/ true)
           .add(DOMAIN_METADATA, new ArrayType(DomainMetadata.FULL_SCHEMA, false), /*nullable*/ true)
-          .add(FILE_SIZE_HISTOGRAM, FileSizeHistogram.FULL_SCHEMA, /*nullable*/ true);
+          .add(FILE_SIZE_HISTOGRAM, FileSizeHistogram.FULL_SCHEMA, /*nullable*/ true)
+          .add(IN_COMMIT_TIMESTAMP, LongType.LONG, /*nullable*/ true)
+          .add(
+              SET_TRANSACTIONS, new ArrayType(SetTransaction.FULL_SCHEMA, false), /*nullable*/ true)
+          .add(NUM_DELETED_RECORDS_OPT, LongType.LONG, /*nullable*/ true)
+          .add(NUM_DELETION_VECTORS_OPT, LongType.LONG, /*nullable*/ true)
+          .add(ALL_FILES, new ArrayType(AddFile.FULL_SCHEMA, false), /*nullable*/ true);
 
   // Used by ChecksumReader to support reading CRC files with the legacy "histogramOpt" field.
   public static final StructType CRC_FILE_READ_SCHEMA =
       CRC_FILE_SCHEMA.add(HISTOGRAM_OPT, FileSizeHistogram.FULL_SCHEMA, /*nullable*/ true);
+
+  /** AllFiles is only stored when the table has at most this many files. */
+  public static final long DEFAULT_ALL_FILES_IN_CRC_THRESHOLD = 20L;
 
   public static Optional<CRCInfo> fromColumnarBatch(
       long version, ColumnarBatch batch, int rowId, String crcFilePath) {
@@ -109,6 +125,25 @@ public class CRCInfo {
                 VectorUtils.toJavaList(domainMetadataVector.getArray(rowId)).stream()
                     .map(row -> DomainMetadata.fromRow((StructRow) row))
                     .collect(Collectors.toSet()));
+    Optional<Long> inCommitTimestamp = readOptionalLong(batch, IN_COMMIT_TIMESTAMP, rowId);
+    ColumnVector setTransactionsVector = batch.getColumnVector(getSchemaIndex(SET_TRANSACTIONS));
+    Optional<List<SetTransaction>> setTransactions =
+        setTransactionsVector.isNullAt(rowId)
+            ? Optional.empty()
+            : Optional.of(
+                VectorUtils.<Row>toJavaList(setTransactionsVector.getArray(rowId)).stream()
+                    .map(SetTransaction::fromRow)
+                    .collect(Collectors.toList()));
+    Optional<Long> numDeletedRecords = readOptionalLong(batch, NUM_DELETED_RECORDS_OPT, rowId);
+    Optional<Long> numDeletionVectors = readOptionalLong(batch, NUM_DELETION_VECTORS_OPT, rowId);
+    ColumnVector allFilesVector = batch.getColumnVector(getSchemaIndex(ALL_FILES));
+    Optional<List<AddFile>> allFiles =
+        allFilesVector.isNullAt(rowId)
+            ? Optional.empty()
+            : Optional.of(
+                VectorUtils.<Row>toJavaList(allFilesVector.getArray(rowId)).stream()
+                    .map(AddFile::new)
+                    .collect(Collectors.toList()));
 
     // protocol and metadata are nullable per fromColumnVector's implementation.
     if (protocol == null || metadata == null) {
@@ -124,7 +159,17 @@ public class CRCInfo {
             numFiles,
             txnId,
             domainMetadata,
-            fileSizeHistogram));
+            fileSizeHistogram,
+            inCommitTimestamp,
+            setTransactions,
+            numDeletedRecords,
+            numDeletionVectors,
+            allFiles));
+  }
+
+  private static Optional<Long> readOptionalLong(ColumnarBatch batch, String fieldName, int rowId) {
+    ColumnVector vector = batch.getColumnVector(getSchemaIndex(fieldName));
+    return vector.isNullAt(rowId) ? Optional.empty() : Optional.of(vector.getLong(rowId));
   }
 
   /**
@@ -182,6 +227,28 @@ public class CRCInfo {
             ? Optional.empty()
             : Optional.of(FileSizeHistogram.fromRow(row.getStruct(histogramIdx)));
 
+    Optional<Long> inCommitTimestamp = readOptionalLongFromRow(row, IN_COMMIT_TIMESTAMP);
+    Optional<Long> numDeletedRecords = readOptionalLongFromRow(row, NUM_DELETED_RECORDS_OPT);
+    Optional<Long> numDeletionVectors = readOptionalLongFromRow(row, NUM_DELETION_VECTORS_OPT);
+
+    int setTransactionsIdx = getSchemaIndex(SET_TRANSACTIONS);
+    Optional<List<SetTransaction>> setTransactions =
+        row.isNullAt(setTransactionsIdx)
+            ? Optional.empty()
+            : Optional.of(
+                VectorUtils.<Row>toJavaList(row.getArray(setTransactionsIdx)).stream()
+                    .map(SetTransaction::fromRow)
+                    .collect(Collectors.toList()));
+
+    int allFilesIdx = getSchemaIndex(ALL_FILES);
+    Optional<List<AddFile>> allFiles =
+        row.isNullAt(allFilesIdx)
+            ? Optional.empty()
+            : Optional.of(
+                VectorUtils.<Row>toJavaList(row.getArray(allFilesIdx)).stream()
+                    .map(AddFile::new)
+                    .collect(Collectors.toList()));
+
     return new CRCInfo(
         version,
         metadata,
@@ -190,7 +257,17 @@ public class CRCInfo {
         numFiles,
         txnId,
         domainMetadata,
-        fileSizeHistogram);
+        fileSizeHistogram,
+        inCommitTimestamp,
+        setTransactions,
+        numDeletedRecords,
+        numDeletionVectors,
+        allFiles);
+  }
+
+  private static Optional<Long> readOptionalLongFromRow(Row row, String fieldName) {
+    int idx = getSchemaIndex(fieldName);
+    return row.isNullAt(idx) ? Optional.empty() : Optional.of(row.getLong(idx));
   }
 
   private final long version;
@@ -201,6 +278,11 @@ public class CRCInfo {
   private final Optional<String> txnId;
   private final Optional<Set<DomainMetadata>> domainMetadata;
   private final Optional<FileSizeHistogram> fileSizeHistogram;
+  private final Optional<Long> inCommitTimestamp;
+  private final Optional<List<SetTransaction>> setTransactions;
+  private final Optional<Long> numDeletedRecords;
+  private final Optional<Long> numDeletionVectors;
+  private final Optional<List<AddFile>> allFiles;
 
   public CRCInfo(
       long version,
@@ -211,6 +293,36 @@ public class CRCInfo {
       Optional<String> txnId,
       Optional<Set<DomainMetadata>> domainMetadata,
       Optional<FileSizeHistogram> fileSizeHistogram) {
+    this(
+        version,
+        metadata,
+        protocol,
+        tableSizeBytes,
+        numFiles,
+        txnId,
+        domainMetadata,
+        fileSizeHistogram,
+        Optional.empty() /* inCommitTimestamp */,
+        Optional.empty() /* setTransactions */,
+        Optional.empty() /* numDeletedRecords */,
+        Optional.empty() /* numDeletionVectors */,
+        Optional.empty() /* allFiles */);
+  }
+
+  public CRCInfo(
+      long version,
+      Metadata metadata,
+      Protocol protocol,
+      long tableSizeBytes,
+      long numFiles,
+      Optional<String> txnId,
+      Optional<Set<DomainMetadata>> domainMetadata,
+      Optional<FileSizeHistogram> fileSizeHistogram,
+      Optional<Long> inCommitTimestamp,
+      Optional<List<SetTransaction>> setTransactions,
+      Optional<Long> numDeletedRecords,
+      Optional<Long> numDeletionVectors,
+      Optional<List<AddFile>> allFiles) {
     checkArgument(tableSizeBytes >= 0);
     checkArgument(numFiles >= 0);
     // Live Domain Metadata actions at this version, excluding tombstones.
@@ -232,6 +344,53 @@ public class CRCInfo {
     this.numFiles = numFiles;
     this.txnId = requireNonNull(txnId);
     this.fileSizeHistogram = requireNonNull(fileSizeHistogram);
+    this.inCommitTimestamp = requireNonNull(inCommitTimestamp);
+    this.setTransactions = requireNonNull(setTransactions);
+    setTransactions.ifPresent(
+        txns -> {
+          Set<String> appIds = new HashSet<>();
+          txns.forEach(
+              txn ->
+                  checkArgument(
+                      appIds.add(txn.getAppId()),
+                      "SetTransactions in CRC must be unique per appId, found duplicate: %s",
+                      txn.getAppId()));
+        });
+    this.numDeletedRecords = requireNonNull(numDeletedRecords);
+    this.numDeletionVectors = requireNonNull(numDeletionVectors);
+    checkArgument(
+        numDeletedRecords.isPresent() == numDeletionVectors.isPresent(),
+        "numDeletedRecords and numDeletionVectors must both be present or both absent");
+    numDeletedRecords.ifPresent(n -> checkArgument(n >= 0, "numDeletedRecords must be >= 0"));
+    numDeletionVectors.ifPresent(n -> checkArgument(n >= 0, "numDeletionVectors must be >= 0"));
+    // The complete list of live AddFile actions at this version, when small enough to store.
+    // When present it must be consistent with numFiles.
+    this.allFiles = requireNonNull(allFiles);
+    allFiles.ifPresent(
+        files ->
+            checkArgument(
+                files.size() == numFiles,
+                "allFiles size (%s) must match numFiles (%s)",
+                files.size(),
+                numFiles));
+  }
+
+  /** Used by callers to supply an ICT that cannot be derived from the file actions alone. */
+  public CRCInfo withInCommitTimestamp(Optional<Long> inCommitTimestamp) {
+    return new CRCInfo(
+        version,
+        metadata,
+        protocol,
+        tableSizeBytes,
+        numFiles,
+        txnId,
+        domainMetadata,
+        fileSizeHistogram,
+        inCommitTimestamp,
+        setTransactions,
+        numDeletedRecords,
+        numDeletionVectors,
+        allFiles);
   }
 
   /** The version of the Delta table that this CRCInfo represents. */
@@ -270,6 +429,33 @@ public class CRCInfo {
     return fileSizeHistogram;
   }
 
+  public Optional<List<SetTransaction>> getSetTransactions() {
+    return setTransactions;
+  }
+
+  /** DV stats */
+  public Optional<Long> getNumDeletedRecords() {
+    return numDeletedRecords;
+  }
+
+  public Optional<Long> getNumDeletionVectors() {
+    return numDeletionVectors;
+  }
+
+  /**
+   * The in-commit timestamp of the commit at this version, if the table has the inCommitTimestamp
+   * feature enabled. Empty otherwise, or when read from a checksum file written before this field
+   * existed.
+   */
+  public Optional<Long> getInCommitTimestamp() {
+    return inCommitTimestamp;
+  }
+
+  /** The complete list of live {@link AddFile} actions comprising the table at this version. */
+  public Optional<List<AddFile>> getAllFiles() {
+    return allFiles;
+  }
+
   /**
    * Encode as a {@link Row} object with the schema {@link CRCInfo#CRC_FILE_SCHEMA}.
    *
@@ -299,6 +485,23 @@ public class CRCInfo {
     fileSizeHistogram.ifPresent(
         fileSizeHistogram ->
             values.put(getSchemaIndex(FILE_SIZE_HISTOGRAM), fileSizeHistogram.toRow()));
+    inCommitTimestamp.ifPresent(ict -> values.put(getSchemaIndex(IN_COMMIT_TIMESTAMP), ict));
+    setTransactions.ifPresent(
+        txns ->
+            values.put(
+                getSchemaIndex(SET_TRANSACTIONS),
+                VectorUtils.buildArrayValue(
+                    txns.stream().map(SetTransaction::toRow).collect(Collectors.toList()),
+                    SetTransaction.FULL_SCHEMA)));
+    numDeletedRecords.ifPresent(n -> values.put(getSchemaIndex(NUM_DELETED_RECORDS_OPT), n));
+    numDeletionVectors.ifPresent(n -> values.put(getSchemaIndex(NUM_DELETION_VECTORS_OPT), n));
+    allFiles.ifPresent(
+        files ->
+            values.put(
+                getSchemaIndex(ALL_FILES),
+                VectorUtils.buildArrayValue(
+                    files.stream().map(AddFile::toRow).collect(Collectors.toList()),
+                    AddFile.FULL_SCHEMA)));
     return new GenericRow(CRC_FILE_SCHEMA, values);
   }
 
@@ -312,7 +515,12 @@ public class CRCInfo {
         numFiles,
         txnId,
         domainMetadata,
-        fileSizeHistogram);
+        fileSizeHistogram,
+        inCommitTimestamp,
+        setTransactions,
+        numDeletedRecords,
+        numDeletionVectors,
+        allFiles);
   }
 
   @Override
@@ -328,7 +536,12 @@ public class CRCInfo {
         && protocol.equals(other.protocol)
         && txnId.equals(other.txnId)
         && domainMetadata.equals(other.domainMetadata)
-        && fileSizeHistogram.equals(other.fileSizeHistogram);
+        && fileSizeHistogram.equals(other.fileSizeHistogram)
+        && inCommitTimestamp.equals(other.inCommitTimestamp)
+        && setTransactions.equals(other.setTransactions)
+        && numDeletedRecords.equals(other.numDeletedRecords)
+        && numDeletionVectors.equals(other.numDeletionVectors)
+        && allFiles.equals(other.allFiles);
   }
 
   private static int getSchemaIndex(String fieldName) {
