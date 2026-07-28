@@ -40,6 +40,7 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 import org.apache.hadoop.mapred.{JobConf, TaskAttemptContextImpl, TaskAttemptID}
 import org.apache.hadoop.mapreduce.{Job, TaskType}
+import org.apache.parquet.hadoop.ParquetOutputFormat
 
 import org.apache.spark.TaskContext
 import org.apache.spark.internal.MDC
@@ -1037,27 +1038,45 @@ object Checkpoints
    * concurrent (zombie) task, the existing file is reused rather than failing the write --
    * all writers of a given path are expected to produce identical content.
    *
-   * @param df        DataFrame to write. Its schema (after `asNullable`) is the on-disk
-   *                  schema and is returned to the caller.
+   * @param df        DataFrame supplying the rows to write. Only its rows are used; the on-disk
+   *                  schema is `outputSchema` (below).
    * @param finalPath The exact final path of the parquet file. Custom-named files are
    *                  supported -- callers control the basename.
    * @param useRename Write to a `.<finalPath>.<uuid>.tmp` first, then atomic-rename to
    *                  `finalPath`. Required for log stores where partial writes are visible
    *                  to concurrent readers.
-   * @return The schema actually written (`df.schema.asNullable`).
+   * @param outputSchema The exact on-disk Parquet schema: field names, types, per-field nullability
+   *                  (a non-nullable field is written as Parquet `REQUIRED`), and any field-id
+   *                  metadata. `df`'s rows must be positionally compatible with it. When `None`
+   *                  (the default, classic-checkpoint behavior) it is `df.schema.asNullable` (fully
+   *                  nullable). The AMT manifest writer passes its id-carrying schema. The resolved
+   *                  schema is the value returned to the caller.
+   * @param useDeltaParquetWriteSupport When true, hooks in [[DeltaParquetWriteSupport]] as the
+   *                  Parquet write support class so that list-element / map key-value field ids
+   *                  carried on `outputSchema` via `parquet.field.nested.ids` are emitted to the
+   *                  file's Parquet schema (the stock `ParquetWriteSupport` does not). Needed for
+   *                  the AMT Iceberg-V4 manifest schema. Default false uses the standard support.
+   * @return The schema actually written.
    */
   def writeAtomicCheckpointParquetFile(
       spark: SparkSession,
       df: DataFrame,
       finalPath: Path,
       hadoopConf: Configuration,
-      useRename: Boolean): StructType =
+      useRename: Boolean,
+      outputSchema: Option[StructType] = None,
+      useDeltaParquetWriteSupport: Boolean = false): StructType =
       recordFrameProfile(
         "Checkpoints", "writeAtomicCheckpointParquetFile") {
-    val schema = df.schema.asNullable
+    val schema = outputSchema.getOrElse(df.schema.asNullable)
     val format = new ParquetFileFormat()
     val job = Job.getInstance(hadoopConf)
     val factory = format.prepareWrite(spark, job, Map.empty, schema)
+    if (useDeltaParquetWriteSupport) {
+      // Emit nested (list-element / map key-value) field ids, which the stock ParquetWriteSupport
+      // does not. Set after prepareWrite so it overrides the write-support class prepareWrite set.
+      ParquetOutputFormat.setWriteSupportClass(job, classOf[DeltaParquetWriteSupport])
+    }
     val serConf = new SerializableConfiguration(job.getConfiguration)
     val finalSparkPath = SparkPath.fromPath(finalPath)
 
