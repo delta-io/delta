@@ -49,8 +49,8 @@ public class MapType extends DataType {
    * default UTF8_BINARY collation is allowed.
    *
    * @see <a
-   *     href="https://github.com/delta-io/delta/blob/master/protocol_rfcs/collated-string-type.md">
-   *     Collated String Type RFC</a>
+   *     href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#specifying-collations-in-the-table-schema">
+   *     Collations protocol specification</a>
    */
   private static void validateKeyType(DataType keyType) {
     if (keyType instanceof StringType && !((StringType) keyType).isUTF8BinaryCollated()) {

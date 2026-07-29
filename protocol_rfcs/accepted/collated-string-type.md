@@ -1,4 +1,6 @@
 # Collated String Type
+**Folded into [PROTOCOL.md](../../PROTOCOL.md#collations-table-feature)**
+
 **Associated Github issue for discussions: https://github.com/delta-io/delta/issues/2894**
 
 This protocol change adds support for collated strings. It consists of three changes to the protocol:
@@ -12,14 +14,16 @@ This protocol change adds support for collated strings. It consists of three cha
 # Collations Table Feature
 
 To support this feature:
-* The table must have Writer Version 7. 
+* The table must have Writer Version 7.
 * The feature `collations` must exist in the table's `writerFeatures`.
-* The feature `domainMetadata` must exist in the table's `writerFeatures`. 
+* The feature `domainMetadata` must exist in the table's `writerFeatures`.
 
 ## Reader Requirements for Collations:
 
-When Collations are supported (when the `writerFeatures` field of a table's protocol action contains `collations`), then:
-- Readers could do comparisons and sorting of strings based on the collation specified in the schema. 
+Because `collations` is a writer-only feature, readers are not required to support collations. Readers that do not support collations may ignore the collation metadata and read strings using UTF-8 binary collation.
+
+When the `writerFeatures` field of a table's protocol action contains `collations`, readers that choose to perform collation-aware operations must meet the following requirements:
+- Readers could do comparisons and sorting of strings based on the collation specified in the schema.
 - If the collation is not specified for a string type, then the reader must use the default comparison operators for the binary representation of strings under UTF-8 encoding.
 - Readers must only do file skipping based on column statistics for a collation if the filter operator used for the data skipping is specified to treat the column as having that same collation. For example, when filtering a string column using the string equality comparison operator that is configured with the collation `ICU.en_US.72`, the reader must not use file skipping statistics from the collation `spark.UTF8_LCASE.75.1`. It should also not use the statistics from `ICU.en_US.69` because the collation version number does not match.
 
@@ -59,7 +63,7 @@ Version | Version string. Is allowed to contain dots. This part is optional. Col
 
 #### Specifying collations in the table schema
 
-Collations can be specified for any string type in a schema. This includes string fields, but also the key and value type of maps and the element type of arrays. Collations are stored in the `__COLLATIONS` key of the metadata of the nearest ancestor [StructField](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#struct-field) of the Delta table schema. Nested maps and arrays are encoded the same way as ids in [IcebergCompatV2](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#writer-requirements-for-icebergcompatv2). Collation identifiers are stored without key because the version of a collation is not enforced for reading.
+Collations can be specified for string struct fields, map values, and array elements. Map keys must use UTF-8 binary collation. Collations are stored in the `__COLLATIONS` key of the metadata of the nearest ancestor [StructField](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#struct-field) of the Delta table schema. Nested maps and arrays are encoded the same way as ids in [IcebergCompatV2](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#writer-requirements-for-icebergcompatv2). Collation identifiers are stored without a version because the version of a collation is not enforced for reading.
 
 This example provides an overview of how collations are stored in the schema. Note that irrelevant fields have been stripped.
 
@@ -70,8 +74,7 @@ Example schema
 |-- col2: array
 |       |-- elementType: map
 |                      |-- keyType: string
-|                      |-- valueType: struct
-|                                   |-- f1: string
+|                      |-- valueType: string
 ```
 
 Schema with collation information
@@ -96,25 +99,12 @@ Schema with collation information
             "elementType":{
                "type":"map",
                "keyType":"string",
-               "valueType":{
-                  "type":"struct",
-                  "fields":[
-                     {
-                        "name":"f1",
-                        "type":"string",
-                        "metadata":{
-                           "__COLLATIONS":{
-                              "f1":"ICU.de_DE"
-                           }
-                        }
-                     }
-                  ]
-               }
+               "valueType":"string"
             }
          },
          "metadata":{
             "__COLLATIONS":{
-               "col2.element.key":"ICU.en_US"
+               "col2.element.value":"ICU.en_US"
             }
          }
       }
@@ -160,7 +150,7 @@ For example, given the following data schema:
 |    |-- b: struct
 |    |    |-- c: long
 |-- d: struct
-     |-- e: string collate ICU.en_US.72
+     |-- e: string collate ICU.en_US
 ```
 
 Statistics could be stored with the following schema:

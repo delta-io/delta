@@ -62,6 +62,9 @@
   - [Reader Requirements for Vacuum Protocol Check](#reader-requirements-for-vacuum-protocol-check)
 - [Clustered Table](#clustered-table)
   - [Writer Requirements for Clustered Table](#writer-requirements-for-clustered-table)
+- [Collations Table Feature](#collations-table-feature)
+  - [Reader Requirements for Collations](#reader-requirements-for-collations)
+  - [Writer Requirements for Collations](#writer-requirements-for-collations)
 - [Variant Data Type](#variant-data-type)
   - [Variant data in Parquet](#variant-data-in-parquet)
   - [Writer Requirements for Variant Type](#writer-requirements-for-variant-type)
@@ -122,6 +125,10 @@
     - [Statistics for Variant Columns](#statistics-for-variant-columns)
   - [Partition Value Serialization](#partition-value-serialization)
   - [Schema Serialization Format](#schema-serialization-format)
+    - [Collations](#collations)
+      - [Collation identifiers](#collation-identifiers)
+      - [Specifying collations in the table schema](#specifying-collations-in-the-table-schema)
+      - [Collation versions](#collation-versions)
     - [Primitive Types](#primitive-types)
       - [Void Type](#void-type)
     - [Struct Type](#struct-type)
@@ -1851,6 +1858,32 @@ The example above converts `configuration` field into JSON format, including esc
 }
 ```
 
+# Collations Table Feature
+
+The Collations table feature enables string comparison and ordering semantics other than binary comparison of UTF-8 encoded strings. Collations affect how strings are compared, but not how they are stored.
+
+To support this feature:
+- The table must be on Writer Version 7.
+- The feature `collations` must exist in the table's `writerFeatures`.
+- The feature `domainMetadata` must exist in the table's `writerFeatures`.
+
+## Reader Requirements for Collations
+
+Because `collations` is a writer-only feature, readers are not required to support collations. Readers that do not support collations may ignore the collation metadata and read strings using UTF-8 binary collation.
+
+When the `writerFeatures` field of a table's `protocol` action contains `collations`, readers that choose to perform collation-aware operations must meet the following requirements:
+- Readers may compare and sort strings using the collation specified in the table schema.
+- If a collation is not specified for a string type, readers must use the default comparison operators for the binary representation of strings under UTF-8 encoding.
+- Readers must only use column statistics for file skipping when the statistics use the same collation as the filter operator. The collation identifiers must match in all aspects, including the collation version. For example, when filtering a string column using an equality comparison configured with `ICU.en_US.72`, a reader must not use statistics produced with `spark.UTF8_LCASE.75.1` or `ICU.en_US.69`.
+
+## Writer Requirements for Collations
+
+When Collations are supported (when the `writerFeatures` field of a table's `protocol` action contains `collations`), then:
+- Writers must write the collation identifier in the schema metadata for a string with a non-default collation; that is, a collation other than comparison by the strings' binary representations under UTF-8 encoding.
+- Writers must not write a collation identifier in the schema metadata for a string with the default collation.
+- Writers may write per-file statistics for string columns with non-default collations in `statsWithCollation`. See [Per-file Statistics](#per-file-statistics) for details.
+- If a writer adds per-file statistics for a new version of a collation, the writer should also update the `domainMetadata` for the `collations` table feature to include the new collation versions used to collect statistics.
+- Writers may remove a collation version from the `domainMetadata` for the `collations` table feature if statistics collection for that version is no longer desired. For example, an engine may upgrade its ICU library and begin collecting statistics with a newer version of a collation.
 
 # Variant Data Type
 
@@ -2549,6 +2582,7 @@ Feature | Name | Readers or Writers?
 [Iceberg Compatibility V1](#iceberg-compatibility-v1) | `icebergCompatV1` | Writers only
 [Iceberg Compatibility V2](#iceberg-compatibility-v2) | `icebergCompatV2` | Writers only
 [Clustered Table](#clustered-table) | `clustering` | Writers only
+[Collations](#collations-table-feature) | `collations` | Writers only
 [VACUUM Protocol Check](#vacuum-protocol-check) | `vacuumProtocolCheck` | Readers and Writers
 [In-Commit Timestamps](#in-commit-timestamps) | `inCommitTimestamp` | Writers only
 
@@ -2620,12 +2654,14 @@ tightBounds | Whether per-column statistics are currently **tight** or **wide** 
 For any logical file where `deletionVector` is not `null`, the `numRecords` statistic *must* be present and accurate. That is, it must equal the number of records in the data file, not the valid records in the logical file.
 In the presence of [Deletion Vectors](#Deletion-Vectors) the statistics may be somewhat outdated, i.e. not reflecting deleted rows yet. The flag `stats.tightBounds` indicates whether we have **tight bounds** (i.e. the min/maxValue exists[^1] in the valid state of the file) or **wide bounds** (i.e. the minValue is <= all valid values in the file, and the maxValue >= all valid values in the file). These upper/lower bounds are sufficient information for data skipping. Note, `stats.tightBounds` should be treated as `true` when it is not explicitly present in the statistics.
 
-Per-column statistics record information for each column in the file and they are encoded, mirroring the schema of the actual data.
+Per-column statistics record information for each column in the file and are encoded by mirroring the schema of the actual data. Statistics are optional, and writers may provide UTF-8 binary statistics for a string even when its field has a different collation.
 For example, given the following data schema:
 ```
 |-- a: struct
 |    |-- b: struct
 |    |    |-- c: long
+|-- d: struct
+     |-- e: string collate ICU.en_US
 ```
 
 Statistics could be stored with the following schema:
@@ -2641,6 +2677,14 @@ Statistics could be stored with the following schema:
 |    |    |-- a: struct
 |    |    |    |-- b: struct
 |    |    |    |    |-- c: long
+|    |-- statsWithCollation: struct
+|    |    |-- ICU.en_US.72: struct
+|    |    |    |-- minValues: struct
+|    |    |    |    |-- d: struct
+|    |    |    |    |    |-- e: string
+|    |    |    |-- maxValues: struct
+|    |    |    |    |-- d: struct
+|    |    |    |    |    |-- e: string
 ```
 
 The following per-column statistics are currently supported:
@@ -2650,6 +2694,7 @@ Name | Description (`stats.tightBounds=true`) | Description (`stats.tightBounds=
 nullCount | The number of `null` values for this column | <p>If the `nullCount` for a column equals the physical number of records (`stats.numRecords`) then **all** valid rows for this column must have `null` values (the reverse is not necessarily true).</p><p>If the `nullCount` for a column equals 0 then **all** valid rows are non-`null` in this column (the reverse is not necessarily true).</p><p>If the `nullCount` for a column is any value other than these two special cases, the value carries no information and should be treated as if absent.</p>
 minValues | A value that is equal to the smallest valid value[^1] present in the file for this column. If all valid rows are null, this carries no information. | A value that is less than or equal to all valid values[^1] present in this file for this column. If all valid rows are null, this carries no information.
 maxValues | A value that is equal to the largest valid value[^1] present in the file for this column. If all valid rows are null, this carries no information. | A value that is greater than or equal to all valid values[^1] present in this file for this column. If all valid rows are null, this carries no information.
+statsWithCollation | An object containing `minValues` and `maxValues` for string columns, keyed by the versioned collation identifier used to produce them. | The nested `minValues` and `maxValues` have the same semantics as their top-level counterparts.
 
 [^1]: String columns are cut off at a fixed prefix length. Timestamp columns are truncated down to milliseconds.
 
@@ -2729,11 +2774,100 @@ Delta uses a subset of Spark SQL's JSON Schema representation to record the sche
 All column names must be unique regardless of casing.
 A reference implementation can be found in [the catalyst package of the Apache Spark repository](https://github.com/apache/spark/tree/master/sql/catalyst/src/main/scala/org/apache/spark/sql/types).
 
+### Collations
+
+Collations are sets of rules for comparing strings. They do not affect how strings are stored; they are applied when comparing strings for equality or determining their sort order. Case-insensitive comparison is one example: case is ignored when strings are compared for equality, and a lowercased form of each string determines sort order.
+
+Each string field may have a collation specified in the table schema. Statistics may also be stored for individual collation versions because the minimum and maximum values of a column can differ by collation and by collation version.
+
+By default, strings use binary collation: strings compare equal when their binary UTF-8 encoded representations are equal, and those representations determine their sort order. All strings in Delta are encoded in UTF-8.
+
+The [`collations` table feature](#collations-table-feature) is writer-only, so clients that do not support collations can read the table using UTF-8 binary collation. Clients that support the feature must preserve collation metadata when changing the schema. Collecting collated statistics is optional, and writers may store UTF-8 binary statistics for fields that use a non-binary collation.
+
+A column's collation is the default collation readers should use for operations on that column. An engine may apply a different collation according to its collation precedence rules. However, it must only use column statistics for file skipping when the statistics' collation is identical to the filtering operation's collation in all aspects, including version.
+
+#### Collation identifiers
+
+Collations are identified by collation identifiers. The Delta format does not specify collation rules other than binary collation, but supports collation providers such as [ICU](https://icu.unicode.org/), allowing engines to identify the rules used to produce statistics.
+
+A collation identifier consists of three parts separated by dots. Dots are not allowed in provider or collation names, but are allowed in versions.
+
+Part | Description
+-|-
+Provider | Name of the provider. Must not contain dots.
+Name | Name of the collation as provided by the provider. Must not contain dots.
+Version | Optional version string, which may contain dots. Collations without a version are used in the schema because readers are not required to use a specific collation version. Statistics use versioned collation identifiers to guarantee correctness.
+
+#### Specifying collations in the table schema
+
+Collations can be specified for string struct fields, map values, and array elements. Map keys must use UTF-8 binary collation. Collations are stored under the `__COLLATIONS` key in the metadata of the nearest ancestor [Struct Field](#struct-field). Nested maps and arrays are encoded using the same path convention as IDs in [IcebergCompatV2](#writer-requirements-for-icebergcompatv2). Collation identifiers in the table schema are stored without a version.
+
+This example shows how collations are stored in the schema. Irrelevant fields have been omitted.
+
+Example schema:
+
+```
+|-- col1: string
+|-- col2: array
+|       |-- elementType: map
+|                      |-- keyType: string
+|                      |-- valueType: string
+```
+
+Schema with collation information:
+
+```json
+{
+  "type": "struct",
+  "fields": [
+    {
+      "name": "col1",
+      "type": "string",
+      "metadata": {
+        "__COLLATIONS": {
+          "col1": "ICU.de_DE"
+        }
+      }
+    },
+    {
+      "name": "col2",
+      "type": {
+        "type": "array",
+        "elementType": {
+          "type": "map",
+          "keyType": "string",
+          "valueType": "string"
+        }
+      },
+      "metadata": {
+        "__COLLATIONS": {
+          "col2.element.value": "ICU.en_US"
+        }
+      }
+    }
+  ]
+}
+```
+
+#### Collation versions
+
+The [Domain Metadata](#domain-metadata) for the `collations` table feature contains hints for the collation versions clients should use when producing statistics. These hints allow clients to choose versions without first inspecting the statistics of every `add` action. Clients may ignore the hints.
+
+The decoded `collations` Domain Metadata configuration has the following form:
+
+```json
+{
+  "writeVersions": {
+    "ICU.en_US": ["72", "73"]
+  }
+}
+```
+
 ### Primitive Types
 
 Type Name | Description
 -|-
-string| UTF-8 encoded string of characters
+string| UTF-8 encoded string of characters. A collation can be specified in [Column Metadata](#specifying-collations-in-the-table-schema); otherwise binary collation is used by default.
 long| 8-byte signed integer. Range: -9223372036854775808 to 9223372036854775807
 integer|4-byte signed integer. Range: -2147483648 to 2147483647
 short| 2-byte signed integer numbers. Range: -32768 to 32767
@@ -2825,6 +2959,7 @@ delta.identity.*| These keys are for defining identity columns. See [Identity Co
 delta.invariants| JSON string contains SQL expression information. See [Column Invariants](#column-invariants) for details.
 delta.generationExpression| SQL expression string. See [Generated Columns](#generated-columns) for details.
 delta.typeChanges| JSON string containing information about previous type changes applied to this column. See [Type Change Metadata](#type-change-metadata) for details.
+__COLLATIONS| Collations for strings stored in the field or in combinations of maps and arrays stored in the field that do not contain nested structs. See [Specifying collations in the table schema](#specifying-collations-in-the-table-schema) for details.
 
 ### Example
 
