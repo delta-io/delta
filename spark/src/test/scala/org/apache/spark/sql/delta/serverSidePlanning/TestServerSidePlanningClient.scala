@@ -19,12 +19,12 @@ package org.apache.spark.sql.delta.serverSidePlanning
 import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.functions.input_file_name
+import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.sources.Filter
 
 /**
- * Implementation of ServerSidePlanningClient that uses Spark SQL with input_file_name()
- * to discover the list of files in a table. This allows end-to-end testing without
+ * Implementation of ServerSidePlanningClient that uses Spark SQL with the `_metadata.file_path`
+ * column to discover the list of files in a table. This allows end-to-end testing without
  * a real server that can do server-side planning.
  *
  * Also captures filter/projection parameters for test verification via companion object.
@@ -49,10 +49,10 @@ class TestServerSidePlanningClient(spark: SparkSession) extends ServerSidePlanni
     spark.conf.set(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key, "false")
 
     try {
-      // Use input_file_name() to get the list of files
-      // Query: SELECT DISTINCT input_file_name() FROM table
+      // Use the `_metadata.file_path` column to get the list of files
+      // Query: SELECT DISTINCT _metadata.file_path FROM table
       val filesDF = spark.table(fullTableName)
-        .select(input_file_name().as("file_path"))
+        .select(col("_metadata.file_path").as("file_path"))
         .distinct()
 
       // Collect file paths
@@ -65,7 +65,7 @@ class TestServerSidePlanningClient(spark: SparkSession) extends ServerSidePlanni
       val hadoopConf = spark.sessionState.newHadoopConf()
       // scalastyle:on deltahadoopconfiguration
       val files = filePaths.map { filePath =>
-        // input_file_name() returns URL-encoded paths, decode them
+        // _metadata.file_path returns URL-encoded paths, decode them
         val decodedPath = java.net.URLDecoder.decode(filePath, "UTF-8")
         val path = new Path(decodedPath)
         val fs = path.getFileSystem(hadoopConf)
