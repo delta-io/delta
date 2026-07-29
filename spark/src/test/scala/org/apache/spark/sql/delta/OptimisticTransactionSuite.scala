@@ -804,6 +804,159 @@ class OptimisticTransactionSuite
       RemoveFile("b", None, partitionValues = Map(partCol -> "1")))
   )
 
+  // Case: an OPTIMIZE-style winner that only rearranges existing rows (dataChange = false,
+  // isBlindAppend unset -> its adds fall into `changedDataAddedFiles`) must not raise a
+  // spurious ConcurrentAppendException against a concurrent non-blind writer that reads the
+  // same partition. Gated by conflictDetection.excludeNoDataChangeAddedFiles.enabled.
+  for (excludeNoDataChange <- BOOLEAN_DOMAIN) {
+    test("dataChange = false append (OPTIMIZE-style) vs concurrent partition read, " +
+      s"excludeNoDataChangeAddedFiles = $excludeNoDataChange") {
+      withSQLConf(
+        DeltaSQLConf.DELTA_CONFLICT_DETECTION_EXCLUDE_NO_DATA_CHANGE_ADDS.key ->
+          excludeNoDataChange.toString) {
+        withTempDir { tempDir =>
+          val partCol = "part"
+          val log = DeltaLog.forTable(spark, tempDir.getCanonicalPath)
+
+          // Partitioned table with one file per partition.
+          log.startTransaction().commit(Seq(
+            Metadata(
+              schemaString = new StructType()
+                .add(partCol, IntegerType)
+                .add("value", IntegerType).json,
+              partitionColumns = Seq(partCol))
+          ), ManualUpdate)
+          log.startTransaction().commit(
+            Seq(AddFile("a", Map(partCol -> "0"), 1, 1, dataChange = true),
+              AddFile("b", Map(partCol -> "1"), 1, 1, dataChange = true)),
+            ManualUpdate)
+
+          // txn1 (loser): a non-blind writer that reads partition 0.
+          val newData = Seq(AddFile("x", Map(partCol -> "0"), 1, 1, dataChange = true))
+          val txn = log.startTransaction()
+          val addFiles = txn.filterFiles(newData)
+
+          // txn2 (winner): OPTIMIZE-style compaction of partition 0 -- its output carries
+          // dataChange = false (rearranges existing rows, introduces no new logical rows).
+          log.startTransaction().commit(
+            Seq(AddFile("y", Map(partCol -> "0"), 1, 1, dataChange = false)), ManualUpdate)
+
+          // txn1 commits: removes the file it read and appends its new data.
+          def commitTxn1(): Unit = txn.commit(addFiles.map(_.remove) ++ newData, ManualUpdate)
+
+          if (excludeNoDataChange) {
+            // dataChange = false output is excluded from the append check -> no false conflict.
+            commitTxn1()
+            val files = log.update().allFiles.collect()
+            // partition 0 now holds 'y' (OPTIMIZE output) + 'x' (txn1); 'a' was removed.
+            assert(files.count(_.partitionValues.get(partCol).contains("0")) == 2)
+            assert(files.length == 3)
+          } else {
+            // Legacy behavior: OPTIMIZE's output is treated as changed data -> spurious abort.
+            intercept[ConcurrentAppendException] {
+              commitTxn1()
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Safety floor: with the exclusion enabled, a winner that adds genuinely new data
+  // (dataChange = true) to a partition the loser read must STILL raise a
+  // ConcurrentAppendException. The fix only drops dataChange = false rearrangements, never
+  // real appends -- so it can never mask a genuine conflict, regardless of which operation
+  // produced the concurrent commit.
+  test("dataChange = true append still conflicts with a concurrent partition read, " +
+    "excludeNoDataChangeAddedFiles = true") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_CONFLICT_DETECTION_EXCLUDE_NO_DATA_CHANGE_ADDS.key -> "true") {
+      withTempDir { tempDir =>
+        val partCol = "part"
+        val log = DeltaLog.forTable(spark, tempDir.getCanonicalPath)
+
+        log.startTransaction().commit(Seq(
+          Metadata(
+            schemaString = new StructType()
+              .add(partCol, IntegerType)
+              .add("value", IntegerType).json,
+            partitionColumns = Seq(partCol))
+        ), ManualUpdate)
+        log.startTransaction().commit(
+          Seq(AddFile("a", Map(partCol -> "0"), 1, 1, dataChange = true),
+            AddFile("b", Map(partCol -> "1"), 1, 1, dataChange = true)),
+          ManualUpdate)
+
+        // txn1 (loser): a non-blind writer that reads partition 0.
+        val newData = Seq(AddFile("x", Map(partCol -> "0"), 1, 1, dataChange = true))
+        val txn = log.startTransaction()
+        val addFiles = txn.filterFiles(newData)
+
+        // txn2 (winner): appends genuinely new data (dataChange = true) to partition 0.
+        log.startTransaction().commit(
+          Seq(AddFile("z", Map(partCol -> "0"), 1, 1, dataChange = true)), ManualUpdate)
+
+        // Even with the exclusion enabled, a real append must still conflict.
+        intercept[ConcurrentAppendException] {
+          txn.commit(addFiles.map(_.remove) ++ newData, ManualUpdate)
+        }
+      }
+    }
+  }
+
+  // Unpartitioned whole-table read -- the Liquid Clustering / auto-compaction scenario. A
+  // clustered table has no partitions, so a read-then-append writer reads the whole table and
+  // a concurrent OPTIMIZE (whose compacted output is dataChange = false) collides with that
+  // read on every commit. This is the case the exclusion is most needed for.
+  for (excludeNoDataChange <- BOOLEAN_DOMAIN) {
+    test("dataChange = false append (OPTIMIZE-style) vs concurrent whole-table read, " +
+      s"excludeNoDataChangeAddedFiles = $excludeNoDataChange") {
+      withSQLConf(
+        DeltaSQLConf.DELTA_CONFLICT_DETECTION_EXCLUDE_NO_DATA_CHANGE_ADDS.key ->
+          excludeNoDataChange.toString) {
+        withTempDir { tempDir =>
+          val log = DeltaLog.forTable(spark, tempDir.getCanonicalPath)
+
+          // Unpartitioned table with two files.
+          log.startTransaction().commit(Seq(
+            Metadata(
+              schemaString = new StructType()
+                .add("id", IntegerType)
+                .add("value", IntegerType).json)
+          ), ManualUpdate)
+          log.startTransaction().commit(
+            Seq(AddFile("a", Map.empty, 1, 1, dataChange = true),
+              AddFile("b", Map.empty, 1, 1, dataChange = true)),
+            ManualUpdate)
+
+          // txn1 (loser): an insert-only writer that reads the whole table (no removes) --
+          // e.g. reads to dedup/aggregate, then appends. filterFiles() reads all files.
+          val txn = log.startTransaction()
+          txn.filterFiles()
+          val newData = Seq(AddFile("x", Map.empty, 1, 1, dataChange = true))
+
+          // txn2 (winner): OPTIMIZE compacts the two files into one, dataChange = false.
+          log.startTransaction().commit(
+            Seq(AddFile("y", Map.empty, 1, 1, dataChange = false)), ManualUpdate)
+
+          def commitTxn1(): Unit = txn.commit(newData, ManualUpdate)
+
+          if (excludeNoDataChange) {
+            // OPTIMIZE's dataChange = false output is not in the append check -> no conflict.
+            commitTxn1()
+            val files = log.update().allFiles.collect()
+            // 'a', 'b', 'y' (OPTIMIZE output) and 'x' (txn1) all present; nothing removed.
+            assert(files.map(_.path).toSet == Set("a", "b", "y", "x"))
+          } else {
+            intercept[ConcurrentAppendException] {
+              commitTxn1()
+            }
+          }
+        }
+      }
+    }
+  }
+
   for (enableNormalization <- BOOLEAN_DOMAIN) {
     test("filterFiles for timestamp partitions with different string formats, " +
       s"enableNormalization = $enableNormalization") {

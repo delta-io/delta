@@ -2240,6 +2240,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_CONFLICT_DETECTION_EXCLUDE_NO_DATA_CHANGE_ADDS =
+    buildConf("conflictDetection.excludeNoDataChangeAddedFiles.enabled")
+      .doc("When enabled, files added by a winning transaction with dataChange = false " +
+        "(e.g. OPTIMIZE compaction / Z-ORDER outputs) are excluded from the added-files " +
+        "conflict check. Such files only rearrange rows that already exist in the table and " +
+        "introduce no new logical rows, so a concurrent non-blind writer should not raise a " +
+        "ConcurrentAppendException against them. Off by default to preserve existing behavior.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_UNIFORM_ICEBERG_TABLE_V3_ENABLED =
     buildConf("uniform.iceberg.v3.enabled")
       .internal()

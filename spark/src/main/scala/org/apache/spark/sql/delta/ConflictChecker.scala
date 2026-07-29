@@ -1137,8 +1137,22 @@ private[delta] class ConflictChecker(
           Seq.empty
       }
 
+      // Files added with `dataChange = false` (e.g. OPTIMIZE compaction / Z-ORDER outputs)
+      // only rearrange rows that already exist in the table; they introduce no new logical
+      // rows a concurrent reader could have missed. Because OPTIMIZE is not a blind append
+      // (isBlindAppend = false), its outputs otherwise fall into `changedDataAddedFiles` and
+      // make a concurrent non-blind writer raise a spurious ConcurrentAppendException against
+      // OPTIMIZE. When enabled, drop them so only genuinely new data is checked. All
+      // FileActions in a commit share one `dataChange` value (see `trackConsistentDataChange`).
+      val addedFilesWithoutNoDataChange =
+        if (spark.conf.get(DeltaSQLConf.DELTA_CONFLICT_DETECTION_EXCLUDE_NO_DATA_CHANGE_ADDS)) {
+          addedFilesToCheckForConflicts.filter(_.dataChange)
+        } else {
+          addedFilesToCheckForConflicts
+        }
+
       val fileMatchingPartitionReadPredicates =
-        getFirstFileMatchingPartitionPredicates(addedFilesToCheckForConflicts)
+        getFirstFileMatchingPartitionPredicates(addedFilesWithoutNoDataChange)
 
       if (fileMatchingPartitionReadPredicates.nonEmpty) {
         throw DeltaErrors.concurrentAppendException(
