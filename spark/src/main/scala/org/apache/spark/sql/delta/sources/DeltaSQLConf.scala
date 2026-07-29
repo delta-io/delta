@@ -1488,8 +1488,10 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .internal()
       .doc("""
           |When enabled, the Adaptive Metadata Tree `backReference` field is stripped from
-          |the add/remove structs before a classic/V2 checkpoint is written, so that non-AMT
-          |checkpoints stay byte-identical to before the AMT back-reference feature.
+          |the `remove` struct before a classic/V2 checkpoint is written, so that non-AMT
+          |checkpoints stay byte-identical to before the AMT back-reference feature. The `add`
+          |struct is rebuilt from an explicit column projection that never lists `backReference`,
+          |so it is excluded independently of this flag.
           |""".stripMargin)
       .booleanConf
       .createWithDefault(true)
