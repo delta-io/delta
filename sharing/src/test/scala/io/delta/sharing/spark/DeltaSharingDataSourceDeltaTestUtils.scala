@@ -631,6 +631,14 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
           val versionHasCdc = versionActions.exists(_.isInstanceOf[AddCDCFile])
           versionActions.foreach { action =>
             action match {
+              case p: Protocol if version > startingVersion && !parquetFormat =>
+                // A protocol change committed inside the range (e.g. enabling deletionVectors) is
+                // streamed as its own versioned Protocol for delta-format responses, mirroring
+                // historical metadata. Parquet responses never emit historical protocols.
+                actionLines += DeltaSharingProtocol(
+                  deltaProtocol = p,
+                  version = version
+                ).json
               case m: Metadata =>
                 if (parquetFormat) {
                   actionLines += JsonUtils.toJson(getClientMetadataForParquet(m).wrap)
@@ -760,7 +768,12 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
       )
     } else {
       Seq(
-        DeltaSharingProtocol(deltaProtocol = startingSnapshot.protocol).json,
+        // The head protocol is stamped with startingVersion, matching the head metadata, mirroring
+        // how the server stamps the head Protocol for historical-protocol responses.
+        DeltaSharingProtocol(
+          deltaProtocol = startingSnapshot.protocol,
+          version = startingVersion
+        ).json,
         DeltaSharingMetadata(
           deltaMetadata = startingSnapshot.metadata,
           version = startingVersion

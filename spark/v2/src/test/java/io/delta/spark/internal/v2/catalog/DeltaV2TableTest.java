@@ -17,6 +17,7 @@ package io.delta.spark.internal.v2.catalog;
 
 import static org.apache.spark.sql.connector.catalog.TableCapability.BATCH_READ;
 import static org.apache.spark.sql.connector.catalog.TableCapability.BATCH_WRITE;
+import static org.apache.spark.sql.connector.catalog.TableCapability.STREAMING_WRITE;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -942,6 +943,27 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
     // The original table is unaffected.
     assertEquals(2, latest.schema().fields().length);
     assertNotEquals(latest, pinned);
+    assertEquals("1", latest.version(), "latest table should resolve to v1");
+    assertEquals("0", pinned.version(), "pinned table should report v0");
+  }
+
+  /** A time travel pinned table is read-only (it drops its write capabilities). */
+  @Test
+  public void testTimeTravelPinnedTableIsReadOnly(@TempDir File tempDir) {
+    String path = tempDir.getAbsolutePath();
+    spark.sql(
+        String.format("CREATE TABLE test_pin_readonly (id INT) USING delta LOCATION '%s'", path));
+    spark.sql("INSERT INTO test_pin_readonly VALUES (1)");
+
+    Identifier identifier = Identifier.of(new String[] {"default"}, "test_pin_readonly");
+    DeltaV2Table latest = new DeltaV2Table(identifier, path);
+    assertTrue(latest.capabilities().contains(BATCH_WRITE), "latest table is writable");
+    assertTrue(latest.capabilities().contains(STREAMING_WRITE), "latest table is writable");
+
+    DeltaV2Table pinned = latest.withVersion(0L);
+    assertTrue(pinned.capabilities().contains(BATCH_READ), "pinned table stays readable");
+    assertFalse(pinned.capabilities().contains(BATCH_WRITE), "pinned table drops batch write");
+    assertFalse(pinned.capabilities().contains(STREAMING_WRITE), "pinned table drops stream write");
   }
 
   /** withVersion fails when the requested version is out of range. */
@@ -993,6 +1015,7 @@ public class DeltaV2TableTest extends DeltaV2TestBase {
     // The original table is unaffected.
     assertEquals(2, latest.schema().fields().length);
     assertNotEquals(latest, pinned);
+    assertEquals("0", pinned.version(), "pinned table should report v0");
   }
 
   /** withTimestamp fails when the requested timestamp is out of range. */
