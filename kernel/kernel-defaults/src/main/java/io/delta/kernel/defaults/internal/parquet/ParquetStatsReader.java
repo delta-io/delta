@@ -57,32 +57,17 @@ public class ParquetStatsReader {
   public static DataFileStatistics readDataFileStatistics(
       InputFile kernelInputFile, StructType dataSchema, List<Column> statsColumns)
       throws IOException {
-    // Read the Parquet footer to compute the statistics
     org.apache.parquet.io.InputFile parquetFile =
         ParquetIOUtils.createParquetInputFile(kernelInputFile);
     ParquetMetadata footer =
         ParquetFileReader.readFooter(parquetFile, ParquetMetadataConverter.NO_FILTER);
-    ImmutableMultimap.Builder<Column, ColumnChunkMetaData> metadataForColumn =
-        ImmutableMultimap.builder();
-
-    long rowCount = 0;
-    for (BlockMetaData blockMetaData : footer.getBlocks()) {
-      rowCount += blockMetaData.getRowCount();
-      for (ColumnChunkMetaData columnChunkMetaData : blockMetaData.getColumns()) {
-        Column column = new Column(columnChunkMetaData.getPath().toArray());
-        metadataForColumn.put(column, columnChunkMetaData);
-      }
-    }
-
-    return constructFileStats(metadataForColumn.build(), dataSchema, statsColumns, rowCount);
+    return extractDataFileStatistics(footer, dataSchema, statsColumns);
   }
 
   /**
-   * Extract statistics from the in-memory {@link ParquetMetadata} held by the writer after close,
-   * avoiding a file reopen. Functionally identical to {@link #readDataFileStatistics} but operates
-   * on the already-available footer object rather than re-reading it from storage.
+   * Extract statistics from the in-memory {@link ParquetMetadata}
    *
-   * @param footer the {@link ParquetMetadata} returned by {@code ParquetWriter.getFooter()}
+   * @param footer the {@link ParquetMetadata} to extract statistics from
    * @param dataSchema the schema of the data in the file
    * @param statsColumns the columns for which statistics should be collected
    * @return file/column level statistics as a {@link DataFileStatistics} instance
