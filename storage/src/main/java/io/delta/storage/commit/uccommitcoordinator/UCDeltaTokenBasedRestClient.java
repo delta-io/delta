@@ -597,6 +597,13 @@ public class UCDeltaTokenBasedRestClient implements UCDeltaClient {
     switch (tableType) {
       case MANAGED:
       case MANAGED_SHALLOW_CLONE:
+        /*
+         * UC returns MANAGED_SHALLOW_CLONE when loading a managed shallow clone, but Delta's
+         * existing shallow clone path otherwise treats the target as a managed table. This
+         * value is not written back to UC, and UC blocks direct creation of
+         * MANAGED_SHALLOW_CLONE tables, so normalizing it to MANAGED does not change catalog
+         * metadata. If these constraints change, this type should be handled separately.
+         */
         return UCDeltaModels.TableType.MANAGED;
       case EXTERNAL:
         return UCDeltaModels.TableType.EXTERNAL;
