@@ -28,6 +28,7 @@ import org.apache.spark.sql.execution.datasources.FileFormat.{FILE_PATH, METADAT
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.functions.{col, lit, struct}
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.util.SerializableConfiguration
 
 /**
  * A [[CheckpointProvider]] backed by an AMT (Adaptive Metadata Tree) manifest tree.
@@ -129,25 +130,32 @@ final class AMTCheckpointProvider(
   private def liveAddSingleActions(
       spark: SparkSession, deltaLog: DeltaLog): Dataset[SingleAction] = {
     import org.apache.spark.sql.delta.implicits._
-    // Bind to a local so the `map` closure captures it, not the (non-serializable) provider.
+    // Bind to a local so the `mapPartitions` closure captures it, not the (non-serializable)
+    // provider.
     val localTableRoot = deltaLog.dataPath
     val paths = rootManifestAbsolutePath +: leafManifestAbsolutePaths
     val encodedRootPath = SparkPath.fromPath(rootManifestAbsolutePath).urlEncoded
+    val serializableConf = new SerializableConfiguration(deltaLog.newDeltaHadoopConf())
     AMTCheckpointProvider.loadEntriesWithLocation(spark, deltaLog, paths)
       .where(col("entry.content_type") === lit(AMTSingleAction.ContentType.Type.Data))
-      .map { entryWithLoc =>
-        entryWithLoc.entry.unwrap match {
-          case data: DataEntry =>
-            val backReference = if (entryWithLoc.leafPath == encodedRootPath) {
-              None
-            } else {
-              Some(BackReference(
-                SparkPath.fromUrlString(entryWithLoc.leafPath).toPath.toString, entryWithLoc.pos))
-            }
-            val add = data.toAddFile(localTableRoot).copy(backReference = backReference)
-            SingleAction(add = add)
-          case other => throw new IllegalStateException(
-            s"Expected a DATA entry after filtering, got ${other.getClass.getSimpleName}.")
+      .mapPartitions { entries =>
+        val fs = localTableRoot.getFileSystem(serializableConf.value)
+        entries.map { entryWithLoc =>
+          entryWithLoc.entry.unwrap match {
+            case data: DataEntry =>
+              val backReference = if (entryWithLoc.leafPath == encodedRootPath) {
+                None
+              } else {
+                val absLeaf = SparkPath.fromUrlString(entryWithLoc.leafPath).toPath
+                val relManifest =
+                  AMTUtils.relativizeManifestPathToTableRoot(fs, localTableRoot, absLeaf)
+                Some(BackReference(relManifest, entryWithLoc.pos))
+              }
+              val add = data.toAddFile(localTableRoot).copy(backReference = backReference)
+              SingleAction(add = add)
+            case other => throw new IllegalStateException(
+              s"Expected a DATA entry after filtering, got ${other.getClass.getSimpleName}.")
+          }
         }
       }
   }
