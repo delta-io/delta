@@ -185,19 +185,26 @@ class SnapshotLastManifestCommitWithoutCRCSuite extends SnapshotLastManifestComm
     withTable("amt_lmc_fallback") {
       val name = "amt_lmc_fallback"
       createAMTTable(name, checkpointInterval = 2)
-      sql(s"INSERT INTO $name VALUES (1)")
-      sql(s"INSERT INTO $name VALUES (2)") // v2: emit; carries the inline checkpoint action.
+      // The first AMT is always a full, deferred rewrite (an inline write is incremental and needs
+      // a full tree to build on). v2 is the interval boundary, so the first (full) AMT lands as a
+      // follow-up OPTIMIZE CHECKPOINT commit at v3. v4 is the next interval boundary and, now that
+      // a full tree exists, carries its AMT checkpoint action inline (this suite forces inline via
+      // a threshold of 1). This test needs an inline checkpoint action to build the provider from,
+      // so it uses v4.
+      sql(s"INSERT INTO $name VALUES (1)") // v1.
+      sql(s"INSERT INTO $name VALUES (2)") // v2: boundary -> deferred full AMT follow-up at v3.
+      sql(s"INSERT INTO $name VALUES (3)") // v4: boundary -> inline AMT checkpoint action.
 
       val deltaLog = deltaLogForName(name)
-      injectLmc(deltaLog, version = 2, lmc = Some(lmc))
+      injectLmc(deltaLog, version = 4, lmc = Some(lmc))
 
-      // Build the AMT provider from v2's emitted checkpoint action and stub it into a fresh
+      // Build the AMT provider from v4's emitted inline checkpoint action and stub it into a fresh
       // snapshot's log segment, trimming the version's delta as cold discovery eventually will.
-      val checkpoint = checkpointsAt(deltaLog, 2).headOption.getOrElse {
-        fail("v2 must emit an inline AMT checkpoint action.")
+      val checkpoint = checkpointsAt(deltaLog, 4).headOption.getOrElse {
+        fail("v4 must emit an inline AMT checkpoint action.")
       }
       val provider = AMTCheckpointProvider.fromCheckpoint(spark, deltaLog, checkpoint)
-      val coldSnapshot = freshSnapshotAt(name, 2)
+      val coldSnapshot = freshSnapshotAt(name, 4)
       val segment = coldSnapshot.logSegment.copy(checkpointProvider = provider, deltas = Nil)
       val snapshot = new Snapshot(
         path = coldSnapshot.path,
