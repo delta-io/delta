@@ -348,7 +348,8 @@ public class DeltaChangelogBatch implements Batch {
       // tablePath (kernel snapshot path) is not URL-encoded while the file path is, so the inline
       // SparkPath.fromUrlString(new Path(tablePath, filePath).toString()) throws URISyntaxException
       // on a reserved character (space, '%') in the table path. sparkPathFromRawPath joins the two
-      // with the encoding each part carries, matching V1 TahoeFileIndex.
+      // with the encoding each part carries, matching V1 TahoeFileIndex. Scoped to ChangelogBatch:
+      // the shared scan/streaming path keeps fromUrlString and is left unchanged here.
       SparkPath sparkPath =
           PartitionUtils.sparkPathFromRawPath(tablePath, cdcPartition.getFilePath());
       scala.collection.immutable.Map<String, Object> constantMetadata =
