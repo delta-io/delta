@@ -42,7 +42,7 @@ import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
-import org.apache.spark.sql.execution.datasources.FileFormat.{FILE_PATH, METADATA_NAME}
+import org.apache.spark.sql.execution.datasources.FileFormat.FILE_PATH
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.{createMetric, createTimingMetric}
 import org.apache.spark.sql.functions.{array, col, explode, lit, struct}
@@ -190,7 +190,7 @@ case class UpdateCommand(
         val pathsToRewrite =
           withStatusCode("DELTA", UpdateCommand.FINDING_TOUCHED_FILES_MSG) {
             data.filter(Column(updateCondition))
-              .select(col(s"${METADATA_NAME}.${FILE_PATH}"))
+              .select(DeltaTableUtils.getFileMetadataColumn(data).getField(FILE_PATH))
               .filter(Column(incrUpdatedCountExpr))
               .distinct()
               .as[String]
