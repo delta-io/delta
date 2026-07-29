@@ -334,6 +334,16 @@ class OptimisticTransactionSuite
     }
   }
 
+  test("newDeltaHadoopConf resolves to deltaLog.newDeltaHadoopConf") {
+    withTempDir { tempDir =>
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      val txn = log.startTransaction()
+      def asMap(conf: org.apache.hadoop.conf.Configuration): Map[String, String] =
+        conf.iterator().asScala.map(e => e.getKey -> e.getValue).toMap
+      assert(asMap(txn.newDeltaHadoopConf()) === asMap(log.newDeltaHadoopConf()))
+    }
+  }
+
   test("enabling Coordinated Commits on an existing table should create commit dir") {
     withTempDir { tempDir =>
       val log = DeltaLog.forTable(spark, new Path(tempDir.getAbsolutePath))

@@ -1488,8 +1488,10 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .internal()
       .doc("""
           |When enabled, the Adaptive Metadata Tree `backReference` field is stripped from
-          |the add/remove structs before a classic/V2 checkpoint is written, so that non-AMT
-          |checkpoints stay byte-identical to before the AMT back-reference feature.
+          |the `remove` struct before a classic/V2 checkpoint is written, so that non-AMT
+          |checkpoints stay byte-identical to before the AMT back-reference feature. The `add`
+          |struct is rebuilt from an explicit column projection that never lists `backReference`,
+          |so it is excluded independently of this flag.
           |""".stripMargin)
       .booleanConf
       .createWithDefault(true)
@@ -3289,6 +3291,18 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         "When false, use the responseFormat option from the user. Gates the streaming CDF " +
         "(readChangeFeed=true) path independently from the non-CDF streaming path controlled " +
         "by spark.sql.delta.sharing.streamingAutoResolveResponseFormat.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_SHARING_STREAMING_ENABLE_HISTORICAL_PROTOCOL =
+    buildConf("spark.sql.delta.sharing.streamingEnableHistoricalProtocol")
+      .doc("When true, a Delta Sharing streaming query (non-CDF, incremental getFiles) requests " +
+        "includeHistoricalProtocol so the server streams a Protocol for each protocol change " +
+        "inside the version range, keeping the locally constructed delta log's protocol accurate " +
+        "across a mid-range protocol upgrade. When false, the client keeps the legacy " +
+        "single-head-protocol behavior. Gates the non-CDF streaming path independently from the " +
+        "CDF path controlled by spark.sql.delta.sharing.cdfEnableHistoricalProtocol.")
       .internal()
       .booleanConf
       .createWithDefault(false)
