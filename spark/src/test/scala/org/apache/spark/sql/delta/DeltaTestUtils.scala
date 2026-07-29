@@ -94,13 +94,6 @@ trait ChangelogV2CDCUtilMixin extends CDCTestMixin {
     "merge CDC - schema evolution from void to struct with void",
     "merge CDC - schema evolution with non-nullable schema",
     "merge CDC - schema evolution with non-nullable schema - matched only",
-    // TODO(follow-up): the two "delete from file with DV with (NOT) EXISTS subquery" tests fail
-    // with java.net.URISyntaxException in DeletionVectorReadFunction.applyRow. The V2 DV reader
-    // double-encodes the parquet data file path (e.g. "test%25file%25prefix-part-...parquet"), so
-    // any file path containing reserved URI characters cannot be read. This is a genuine V2 DV
-    // read-path bug, not a test-setup issue.
-    "CDC - delete from file with DV with EXISTS subquery",
-    "CDC - delete from file with DV with NOT EXISTS subquery",
     // TODO(follow-up): "UPDATE with DV write CDC files explicitly" fails with "List() was empty":
     // it inspects AddCDCFile actions written by the classic path, but the V2 changelog read path
     // computes changes differently and does not surface those explicit CDC files here.
