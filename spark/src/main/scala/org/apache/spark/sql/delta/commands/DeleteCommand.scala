@@ -42,10 +42,9 @@ import org.apache.spark.sql.catalyst.plans.logical.{DeltaDelete, LogicalPlan}
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.catalyst.plans.logical.SupportsSubquery
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
-import org.apache.spark.sql.execution.datasources.FileFormat.{FILE_PATH, METADATA_NAME}
+import org.apache.spark.sql.execution.datasources.FileFormat.FILE_PATH
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.{createMetric, createTimingMetric}
-import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.types.LongType
 
 trait DeleteCommandMetrics { self: LeafRunnableCommand =>
@@ -324,7 +323,7 @@ case class DeleteCommand(
                   Array.empty[String]
                 } else {
                   data.filter(Column(cond))
-                    .select(col(s"${METADATA_NAME}.${FILE_PATH}"))
+                    .select(DeltaTableUtils.getFileMetadataColumn(data).getField(FILE_PATH))
                     .filter(Column(incrDeletedCountExpr))
                     .distinct()
                     .as[String]
