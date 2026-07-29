@@ -15,6 +15,9 @@
  */
 package io.delta.spark.internal.v2.write;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -23,6 +26,9 @@ import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
 import java.io.File;
 import java.util.Map;
+import org.apache.spark.sql.connector.distributions.UnspecifiedDistribution;
+import org.apache.spark.sql.connector.expressions.NamedReference;
+import org.apache.spark.sql.connector.expressions.SortOrder;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
@@ -73,6 +79,101 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
     }
   }
 
+  @Test
+  public void testDistributionAndOrdering_unpartitionedRequestsNeither(@TempDir File tempDir) {
+    String path = createTable(tempDir, "write_dist_unpartitioned");
+    DeltaV2Write write = newWrite(path, CaseInsensitiveStringMap.empty());
+
+    // Unpartitioned: no distribution (never a shuffle) and no ordering.
+    assertInstanceOf(UnspecifiedDistribution.class, write.requiredDistribution());
+    assertEquals(0, write.requiredOrdering().length);
+  }
+
+  @Test
+  public void testDistributionAndOrdering_partitionedSortsWithoutDistribution(
+      @TempDir File tempDir) {
+    // Table (id, name) partitioned by (name). We still request no distribution (no shuffle), only a
+    // local sort on the partition column.
+    String path = tempDir.getAbsolutePath();
+    spark.sql(
+        String.format(
+            "CREATE TABLE write_dist_part_%d (id INT, name STRING) USING delta "
+                + "PARTITIONED BY (name) LOCATION '%s'",
+            System.nanoTime(), path));
+    StructType dataSchema =
+        DataTypes.createStructType(
+            new StructField[] {DataTypes.createStructField("id", DataTypes.IntegerType, true)});
+    StructType partitionSchema =
+        DataTypes.createStructType(
+            new StructField[] {DataTypes.createStructField("name", DataTypes.StringType, true)});
+    PathBasedSnapshotManager mgr =
+        new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf());
+    DeltaV2Write write =
+        new DeltaV2Write(
+            defaultEngine,
+            spark.sessionState().newHadoopConf(),
+            path,
+            mgr.loadLatestSnapshot(),
+            mgr,
+            dataSchema,
+            partitionSchema,
+            WriteTestUtils.logicalWriteInfo(TABLE_SCHEMA, CaseInsensitiveStringMap.empty()));
+
+    assertInstanceOf(UnspecifiedDistribution.class, write.requiredDistribution());
+    SortOrder[] ordering = write.requiredOrdering();
+    assertEquals(1, ordering.length);
+    NamedReference ref = (NamedReference) ordering[0].expression();
+    assertArrayEquals(new String[] {"name"}, ref.fieldNames());
+  }
+
+  @Test
+  public void testDistributionAndOrdering_multipleColumnsSortInPartitionOrder(
+      @TempDir File tempDir) {
+    // Partition schema (p2, p1): the ordering must follow partition-schema order, not table order.
+    String path = tempDir.getAbsolutePath();
+    spark.sql(
+        String.format(
+            "CREATE TABLE write_dist_multi_%d (id INT, p1 STRING, p2 INT) USING delta "
+                + "PARTITIONED BY (p2, p1) LOCATION '%s'",
+            System.nanoTime(), path));
+    StructType dataSchema =
+        DataTypes.createStructType(
+            new StructField[] {DataTypes.createStructField("id", DataTypes.IntegerType, true)});
+    StructType partitionSchema =
+        DataTypes.createStructType(
+            new StructField[] {
+              DataTypes.createStructField("p2", DataTypes.IntegerType, true),
+              DataTypes.createStructField("p1", DataTypes.StringType, true)
+            });
+    StructType fullSchema =
+        DataTypes.createStructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.IntegerType, true),
+              DataTypes.createStructField("p1", DataTypes.StringType, true),
+              DataTypes.createStructField("p2", DataTypes.IntegerType, true)
+            });
+    PathBasedSnapshotManager mgr =
+        new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf());
+    DeltaV2Write write =
+        new DeltaV2Write(
+            defaultEngine,
+            spark.sessionState().newHadoopConf(),
+            path,
+            mgr.loadLatestSnapshot(),
+            mgr,
+            dataSchema,
+            partitionSchema,
+            WriteTestUtils.logicalWriteInfo(fullSchema, CaseInsensitiveStringMap.empty()));
+
+    assertInstanceOf(UnspecifiedDistribution.class, write.requiredDistribution());
+    SortOrder[] ordering = write.requiredOrdering();
+    assertEquals(2, ordering.length);
+    assertArrayEquals(
+        new String[] {"p2"}, ((NamedReference) ordering[0].expression()).fieldNames());
+    assertArrayEquals(
+        new String[] {"p1"}, ((NamedReference) ordering[1].expression()).fieldNames());
+  }
+
   private String createTable(File tempDir, String tableName) {
     String path = tempDir.getAbsolutePath();
     spark.sql(
@@ -93,6 +194,7 @@ public class DeltaV2WriteTest extends DeltaV2TestBase {
         snapshot,
         snapshotManager,
         TABLE_SCHEMA,
+        new StructType(),
         info);
   }
 }

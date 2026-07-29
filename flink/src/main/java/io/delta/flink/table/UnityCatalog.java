@@ -22,6 +22,8 @@ import dev.failsafe.function.CheckedSupplier;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
 import io.delta.kernel.types.*;
 import io.delta.kernel.unitycatalog.UCTableIdentifier;
+import io.delta.storage.commit.uccommitcoordinator.UCConfigUtils;
+import io.delta.storage.commit.uccommitcoordinator.UCDeltaTokenBasedRestClient;
 import io.unitycatalog.client.ApiClient;
 import io.unitycatalog.client.ApiClientBuilder;
 import io.unitycatalog.client.ApiException;
@@ -151,6 +153,28 @@ public class UnityCatalog implements DeltaCatalog {
       default:
         return Map.of("type", "static", "token", token);
     }
+  }
+
+  /**
+   * Builds the {@code ucConfig} map consumed by {@link UCDeltaTokenBasedRestClient}: the endpoint
+   * under {@code uri}, the auth settings under the {@code auth.} prefix, and the app versions under
+   * the {@code appVersions.} prefix.
+   */
+  static Map<String, String> buildUcConfig(
+      URI endpoint,
+      AuthMode authMode,
+      String token,
+      URI oauthUri,
+      String oauthClientId,
+      String oauthClientSecret) {
+    Map<String, String> ucConfig = new HashMap<>();
+    ucConfig.put(UCConfigUtils.URI_KEY, endpoint.toString());
+    buildTokenProviderConf(authMode, token, oauthUri, oauthClientId, oauthClientSecret)
+        .forEach((key, value) -> ucConfig.put(UCConfigUtils.AUTH_PREFIX + key, value));
+    VersionHelper.appVersions()
+        .forEach(
+            (name, version) -> ucConfig.put(UCConfigUtils.APP_VERSIONS_PREFIX + name, version));
+    return ucConfig;
   }
 
   private final String name;

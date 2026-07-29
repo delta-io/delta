@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.storage.{ClosableIterator, SupportsRewinding}
 import org.apache.spark.sql.delta.storage.ClosableIterator._
-import org.apache.hadoop.fs.FileStatus
+import org.apache.hadoop.fs.{FileStatus, Path}
 
 /**
  * A handle to a single commit in the Delta log, standing in for the raw commit log file that
@@ -29,7 +29,6 @@ import org.apache.hadoop.fs.FileStatus
 class SingleCommit private (
     private val deltaLog: DeltaLog,
     val version: Long,
-    val fileModificationTimestamp: Long,
     private val fileStatus: FileStatus
 ) {
   /**
@@ -43,19 +42,33 @@ class SingleCommit private (
   def getActionsIterator(
       maxInMemoryFileSizeBytes: Long = 0): ClosableIterator[Action] with SupportsRewinding[Action] =
     SingleCommit.createRewindableActionIterator(deltaLog, fileStatus, maxInMemoryFileSizeBytes)
+
+  /**
+   * The modification time of this commit's log file. Delta internal only.
+   */
+  private[delta] def fileModificationTimestamp: Long = fileStatus.getModificationTime
+
+  /**
+   * The size of this commit's log file, in bytes. Delta internal only.
+   */
+  private[delta] def sizeInBytes: Long = fileStatus.getLen
+
+  /**
+   * The commit log file's path. Should used by delta internal only.
+   */
+  private[delta] def path: Path = fileStatus.getPath
 }
 
 object SingleCommit {
-  /** Wrap a commit's log file into a [[SingleCommit]] handle. The commit
-   * `fileModificationTimestamp` is derived from the file's modification time; the raw
-   * [[FileStatus]] stays hidden inside the handle so the log's physical layout is not exposed to
-   * callers.
+  /**
+   * Wrap a commit's log file into a [[SingleCommit]] handle. The raw [[FileStatus]] stays hidden
+   * inside the handle so the log's physical layout is not exposed to callers.
    */
   private[delta] def apply(
       deltaLog: DeltaLog,
       version: Long,
       fileStatus: FileStatus): SingleCommit =
-    new SingleCommit(deltaLog, version, fileStatus.getModificationTime, fileStatus)
+    new SingleCommit(deltaLog, version, fileStatus)
 
   /**
    * Read a single commit's actions into a rewindable, closable iterator, respecting memory

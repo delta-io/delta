@@ -172,7 +172,8 @@ class CommitInfoSerializerSuite extends QueryTest with SharedSparkSession {
       auto = true,
       clusterBy = Some(Seq("col3")),
       isFull = false)),
-    "OptimizeCheckpoint" -> (() => DeltaOperations.OptimizeCheckpoint()),
+    "OptimizeCheckpoint" -> (() =>
+      DeltaOperations.OptimizeCheckpoint(incremental = false, triggerName = "CHECKPOINT_INTERVAL")),
     "Clone" -> (() => DeltaOperations.Clone(
       source = "s3://bucket/path/to/table",
       sourceVersion = 10L)),

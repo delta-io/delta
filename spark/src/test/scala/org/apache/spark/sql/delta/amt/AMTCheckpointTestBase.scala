@@ -69,14 +69,53 @@ trait AMTCheckpointTestBase
   protected def tablePath(tableName: String): String =
     new File(deltaLogForName(tableName).dataPath.toUri).getCanonicalPath
 
-  protected def createAMTTable(tableName: String, checkpointInterval: Int = 2): Unit = {
+  protected def createAMTTable(
+      tableName: String,
+      checkpointInterval: Int = 2,
+      location: Option[String] = None): Unit = {
+    val locationClause = location.map(l => s"LOCATION '$l'").getOrElse("")
     sql(
       s"""CREATE TABLE $tableName (id INT) USING DELTA
+         |$locationClause
          |TBLPROPERTIES (
          |  '${propertyKey(AdaptiveMetadataTableFeature)}' = '$FEATURE_PROP_SUPPORTED',
          |  'delta.columnMapping.mode' = 'id',
          |  'delta.enableDeletionVectors' = 'true',
          |  'delta.checkpointInterval' = '$checkpointInterval')""".stripMargin)
+  }
+
+  /**
+   * How an AMT is emitted for a triggering commit. In [[AMTWriteMode.Inline]] the manifest tree
+   * rides in the business commit itself; in [[AMTWriteMode.Deferred]] a follow-up OPTIMIZE
+   * CHECKPOINT commit (issued by the post-commit hook) lands it one version later.
+   */
+  protected sealed trait AMTWriteMode {
+    /** Number of extra commits the AMT emission adds after a triggering business commit. */
+    def followUpCommits: Int
+  }
+  protected object AMTWriteMode {
+    case object Inline extends AMTWriteMode { val followUpCommits = 0 }
+    case object Deferred extends AMTWriteMode { val followUpCommits = 1 }
+  }
+
+  /**
+   * Registers a test in both AMT write modes. The body runs once with inline writes forced (a low
+   * action-count threshold) and once with the default deferred follow-up-commit path, so behavior
+   * is covered in both. The body receives the active [[AMTWriteMode]] for any version-relative
+   * assertions.
+   */
+  protected def testInlineAndDeferred(testName: String)(body: AMTWriteMode => Unit): Unit = {
+    test(s"$testName (inline)") {
+      withSQLConf(
+          DeltaSQLConf.AMT_LARGE_COMMIT_ACTIONS_COUNT_THRESHOLD_FOR_INLINE_MANIFEST_COMMIT.key
+            -> "1") {
+        body(AMTWriteMode.Inline)
+      }
+    }
+    test(s"$testName (deferred)") {
+      // Default threshold (Long.MaxValue) keeps business commits from writing inline.
+      body(AMTWriteMode.Deferred)
+    }
   }
 
   /** True iff `name` looks like an AMT leaf parquet file. */
@@ -115,8 +154,8 @@ trait AMTCheckpointTestBase
   protected def currentLeafDataEntries(snapshot: Snapshot): Long = {
     val provider = amtProvider(snapshot)
       .getOrElse(fail("Snapshot has no AMTCheckpointProvider."))
-      provider.leaves.map { leaf =>
-        spark.read.parquet(leaf.path)
+      provider.leafManifestAbsolutePaths.map { leafPath =>
+        spark.read.parquet(leafPath.toString)
           .where(col("content_type") === AMTSingleAction.ContentType.Type.Data)
           .count()
       }.sum

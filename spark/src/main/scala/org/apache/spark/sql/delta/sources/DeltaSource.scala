@@ -345,7 +345,7 @@ trait DeltaSourceBase extends Source
   }
 
   /** Records a Delta event when a trailing commit goes missing, for fleet visibility before we
-   * throw, mirroring [[DeltaFileProviderUtils.getDeltaFilesInVersionRange]]. */
+   * throw, mirroring [[DeltaFileProviderUtils.getCommitsInVersionRange]]'s contiguity check. */
   protected def recordTrailingCommitMissingEvent(
       startVersion: Long,
       startIndex: Long,

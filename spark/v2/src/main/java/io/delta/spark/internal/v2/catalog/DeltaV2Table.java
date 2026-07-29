@@ -28,10 +28,13 @@ import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.spark.internal.v2.adapters.KernelMetadataAdapter;
 import io.delta.spark.internal.v2.adapters.KernelProtocolAdapter;
+import io.delta.spark.internal.v2.exception.NoRecreatableHistoryException;
+import io.delta.spark.internal.v2.exception.TableNotFoundException;
 import io.delta.spark.internal.v2.exception.TimestampOutOfRangeException;
 import io.delta.spark.internal.v2.read.DeltaV2ScanUtils;
 import io.delta.spark.internal.v2.read.MetadataEvolutionHandler;
 import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
+import io.delta.spark.internal.v2.shims.CatalogV2UtilShims;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
@@ -53,7 +56,6 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
-import org.apache.spark.sql.connector.catalog.CatalogV2Util;
 import org.apache.spark.sql.connector.catalog.Column;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.MetadataColumn;
@@ -95,6 +97,7 @@ public class DeltaV2Table extends DeltaV2TableShims
       RowCommitVersion$.MODULE$.METADATA_STRUCT_FIELD_NAME();
 
   private static final Set<TableCapability> CAPABILITIES = buildCapabilities();
+  private static final Set<TableCapability> READ_ONLY_CAPABILITIES = buildReadOnlyCapabilities();
 
   private static Set<TableCapability> buildCapabilities() {
     EnumSet<TableCapability> caps =
@@ -105,6 +108,11 @@ public class DeltaV2Table extends DeltaV2TableShims
             TableCapability.STREAMING_WRITE);
     DeltaV2TableShims.schemaEvolutionCapability().ifPresent(caps::add);
     return Collections.unmodifiableSet(caps);
+  }
+
+  private static Set<TableCapability> buildReadOnlyCapabilities() {
+    return Collections.unmodifiableSet(
+        EnumSet.of(TableCapability.BATCH_READ, TableCapability.MICRO_BATCH_READ));
   }
 
   private final Identifier identifier;
@@ -120,6 +128,8 @@ public class DeltaV2Table extends DeltaV2TableShims
   private final SchemaProvider schemaProvider;
   private final Optional<CatalogTable> catalogTable;
   private final boolean isCDCRead;
+  // True when this table is pinned to a time travel version.
+  private final boolean isTimeTravel;
 
   /**
    * Creates a DeltaV2Table from a filesystem path without a catalog table.
@@ -238,12 +248,25 @@ public class DeltaV2Table extends DeltaV2TableShims
         SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(options));
     this.kernelEngine = DefaultEngine.create(this.hadoopConf);
     this.snapshotManager = SnapshotManagerFactory.create(tablePath, kernelEngine, catalogTable);
-    this.initialSnapshot =
-        timeTravelVersion.isPresent()
-            ? loadSnapshotAtCheckedVersion(snapshotManager, timeTravelVersion.getAsLong())
-            : snapshotManager.loadLatestSnapshot();
+    try {
+      this.initialSnapshot =
+          timeTravelVersion.isPresent()
+              ? loadSnapshotAtCheckedVersion(snapshotManager, timeTravelVersion.getAsLong())
+              : snapshotManager.loadLatestSnapshot();
+    } catch (io.delta.kernel.exceptions.TableNotFoundException e) {
+      // Rethrow as the Delta-module wrapper so catalog/interop layer never names a Kernel type.
+      throw new TableNotFoundException(tablePath);
+    } catch (io.delta.kernel.exceptions.KernelException e) {
+      // Missing earliest commit file surfaces as a base KernelException, so match on its message.
+      String reason = e.getMessage();
+      if (reason != null && reason.contains("Missing delta file")) {
+        throw new NoRecreatableHistoryException(tablePath);
+      }
+      throw e;
+    }
 
     this.isCDCRead = CDCReader.isCDCRead(new CaseInsensitiveStringMap(this.options));
+    this.isTimeTravel = timeTravelVersion.isPresent();
 
     Optional<PersistedMetadata> persistedMetadata =
         MetadataEvolutionHandler.getPersistedMetadataForMicroBatchStream(
@@ -404,7 +427,7 @@ public class DeltaV2Table extends DeltaV2TableShims
 
   @Override
   public Column[] columns() {
-    return CatalogV2Util.structTypeToV2Columns(schema());
+    return CatalogV2UtilShims.structTypeToV2Columns(schema());
   }
 
   @Override
@@ -420,7 +443,9 @@ public class DeltaV2Table extends DeltaV2TableShims
 
   @Override
   public Set<TableCapability> capabilities() {
-    return CAPABILITIES;
+    // A time travel pin cannot be written to. Dropping the write capabilities makes writes fall
+    // back to the v1 path.
+    return isTimeTravel ? READ_ONLY_CAPABILITIES : CAPABILITIES;
   }
 
   /**
@@ -532,6 +557,7 @@ public class DeltaV2Table extends DeltaV2TableShims
         initialSnapshot,
         snapshotManager,
         schemaProvider.getDataSchema(),
+        schemaProvider.getPartitionSchema(),
         info);
   }
 

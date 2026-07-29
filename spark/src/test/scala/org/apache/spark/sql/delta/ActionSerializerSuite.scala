@@ -103,6 +103,47 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
     assert(action2.json === json2.replaceAll("\\s", ""))
   }
 
+  test("AddFile - backReference json serialization/deserialization") {
+    val withBackRef = AddFile(
+      path = "a",
+      partitionValues = Map.empty,
+      size = 1,
+      modificationTime = 2,
+      dataChange = false,
+      backReference = Some(BackReference(manifest = "metadata/leaf-1.parquet", pos = 7L)))
+    assert(withBackRef.json.contains("\"backReference\":{\"manifest\":" +
+      "\"metadata/leaf-1.parquet\",\"pos\":7}"))
+    assert(Action.fromJson(withBackRef.json) === withBackRef)
+
+    // Absent (default None) -> omitted from the serialized action.
+    val withoutBackRef = AddFile("a", Map.empty, 1, 2, dataChange = false)
+    assert(!withoutBackRef.json.contains("backReference"))
+    assert(Action.fromJson(withoutBackRef.json).asInstanceOf[AddFile].backReference.isEmpty)
+  }
+
+  test("RemoveFile - backReference json serialization/deserialization") {
+    val withBackRef = RemoveFile(
+      path = "a",
+      deletionTimestamp = Some(1L),
+      backReference = Some(BackReference(manifest = "metadata/leaf-2.parquet", pos = 3L)))
+    assert(withBackRef.json.contains("\"backReference\":{\"manifest\":" +
+      "\"metadata/leaf-2.parquet\",\"pos\":3}"))
+    assert(Action.fromJson(withBackRef.json) === withBackRef)
+
+    val withoutBackRef = RemoveFile("a", Some(1L))
+    assert(!withoutBackRef.json.contains("backReference"))
+    assert(Action.fromJson(withoutBackRef.json).asInstanceOf[RemoveFile].backReference.isEmpty)
+  }
+
+  test("AddFile back reference propagates to removeWithTimestamp and copy") {
+    val backRef = Some(BackReference(manifest = "metadata/leaf-3.parquet", pos = 11L))
+    val add = AddFile("a", Map.empty, 1, 2, dataChange = true, backReference = backRef)
+    // removeWithTimestamp -> tombstone inherits the back reference.
+    assert(add.removeWithTimestamp().backReference == backRef)
+    // copy (the mechanism the superseding AddFile of removeRows relies on) preserves it.
+    assert(add.copy(dataChange = false).backReference == backRef)
+  }
+
   // This is the same test as "removefile" in OSS, but due to a Jackson library upgrade the behavior
   // has diverged between Spark 3.1 and Spark 3.2.
   // We don't believe this is a practical issue because all extant versions of Delta explicitly

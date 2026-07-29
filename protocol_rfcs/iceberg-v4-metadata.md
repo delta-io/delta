@@ -45,19 +45,19 @@ This design enables:
 
 | Field Name | Data Type | Description |
 | - | - | - |
-| <ins>backReference</ins> | <ins>Struct</ins> | <ins>Reference to the existing entry in the metadata tree that this add supersedes (e.g., stats backfill, DV update). Null when the file has no entry in the tree. Contains `manifest` (String) and `pos` (Long). See [Backreferences](#backreferences).</ins> |
+| <ins>backReference</ins> | <ins>Struct</ins> | <ins>Reference to the existing leaf-manifest entry that this add supersedes (e.g., stats backfill, DV update). Null when the file has no leaf-manifest entry to supersede — either it has no entry in the tree, or its entry is inline in the root manifest. Contains `manifest` (String) and `pos` (Long). See [Backreferences](#backreferences).</ins> |
 
 ### Remove File
 
 > ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#remove-file)***
 
-<ins>When the `adaptiveMetadata` table feature is enabled, the `remove` action must include a `backReference`, set `extendedFileMetadata` to true, and have a null `deletionTimestamp`:</ins>
+<ins>When the `adaptiveMetadata` table feature is enabled, the `remove` action must include a `backReference` when the file's entry lives in a leaf manifest, set `extendedFileMetadata` to true, and have a null `deletionTimestamp`:</ins>
 
 | Field Name | Data Type | Description |
 | - | - | - |
 | <ins>deletionTimestamp</ins> | <ins>Long</ins> | <ins>Must be null. Metadata cleanup uses tree reachability instead of timestamp-based expiration.</ins> |
 | <ins>extendedFileMetadata</ins> | <ins>Boolean</ins> | <ins>Must be true. `partitionValues`, `size`, and `tags` are always present on the `remove`.</ins> |
-| <ins>backReference</ins> | <ins>Struct</ins> | <ins>Required reference to the file's location in the metadata tree. Contains `manifest` (String) and `pos` (Long). See [Backreferences](#backreferences).</ins> |
+| <ins>backReference</ins> | <ins>Struct</ins> | <ins>Reference to the file's entry in a leaf manifest. Null when the file has no leaf-manifest entry — either it has no entry in the tree, or its entry is inline in the root manifest. Contains `manifest` (String) and `pos` (Long). See [Backreferences](#backreferences).</ins> |
 | <ins>stats</ins> | <ins>String</ins> | <ins>Must be present. Statistics of the removed file, with `numRecords` required at minimum; column statistics are included when recorded for the file. Copied from the matching `add.stats`, or converted from the file's tree entry (`record_count`, `content_stats`).</ins> |
 
 <ins>`remove` actions are transient. During log replay a `remove` cancels the matching `add` (or, via its `backReference`, marks the corresponding tree entry deleted) and is then discarded. Removes are **not** retained as tombstones in checkpoints or in the reconstructed table state. There is no timestamp-based tombstone expiration; physical file cleanup is driven by tree reachability (see [Metadata Cleanup](#metadata-cleanup)).</ins>
@@ -134,7 +134,7 @@ The `adaptiveMetadata` table feature is supported when:
 - The feature `adaptiveMetadata` exists in the table `protocol`'s `readerFeatures` and `writerFeatures`.
 
 Required table features that must also be enabled:
-- `columnMapping` (`id` mode): Stable column identification across schema evolution
+- `columnMapping` (`name` or `id` mode): Stable column identification across schema evolution. Both modes assign a stable field ID (`delta.columnMapping.id`) to every schema field, which is all the metadata tree relies on. The mode only governs how columns are resolved inside data files; manifests are always written with Parquet `field_id` metadata and resolved by field ID, independent of the table's mode (see [Content Entry Schema](#content-entry-schema)).
 - `rowTracking`: Manifest entries natively carry row-tracking fields (`first_row_id`, `sequence_number`); see [Row Tracking Compatibility](#row-tracking-compatibility)
 - `domainMetadata`: Storing feature-specific metadata
 - `deletionVectors`: Deletes are represented as deletion vectors, not by rewriting files
@@ -207,7 +207,9 @@ For both user domain metadata and `txns`, inline and sidecar storage may coexist
 
 ## Backreferences
 
-When `adaptiveMetadata` is enabled, `remove` and `add` actions carry a `backReference` field that identifies where the file's existing entry is located in the metadata tree. A backreference is non-null when the file has a live entry in a manifest, and null when the file has no manifest entry (it exists only in the Delta log).
+When `adaptiveMetadata` is enabled, `remove` and `add` actions carry a `backReference` field that identifies where the file's existing entry is located in the metadata tree. Backreferences are only needed to locate entries in **leaf** manifests: leaf manifests are not read exhaustively on every commit, so a writer needs the (manifest, position) pair to find and supersede a leaf entry without scanning the leaves. Entries inline in the root manifest never carry a backreference.
+
+A backreference is therefore non-null only when the file has a live entry in a leaf manifest. It is null when the file has no manifest entry (it exists only in the Delta log) or when its entry is inline in the root manifest.
 
 A backreference is meaningful only relative to the tree it was computed from, identified by that tree's `contentRoot.version`. A commit's backreferences are valid only if they target the current `contentRoot.version`; if a concurrent manifest commit has advanced the tree (e.g., compaction moved entries between manifests), they are stale and must be recomputed against the new tree before the commit can proceed (see [Conflict Resolution](#conflict-resolution)).
 
@@ -281,9 +283,10 @@ The root manifest contains entries of the following types:
 |----------|------------|------------|----------|---------------|-------------|
 | 147 | `tracking` | Struct ([Tracking](#tracking)) | Required | All | Tracking information for this entry |
 | 134 | `content_type` | Int | Required | All | 0=DATA, 3=DATA_MANIFEST |
+| 157 | `format_version` | Int | Required | All | Iceberg writer format version; 4 for V4. |
 | 100 | `location` | String | Required | All | Path relative to table root (e.g., `metadata/leaf-m1.parquet` or `data/part-00001.parquet`). May be absolute URI. |
 | 101 | `file_format` | String | Required | All | File format name. Delta only supports `parquet`. |
-| 102 | `partition` | Struct | Required | DATA | Partition data tuple. Struct fields are keyed by partition `field-id` (`1000 + i` for the i-th partition column). |
+| 102 | `partition` | Struct | Optional | DATA | Partition data tuple. Struct fields are keyed by partition `field-id` (`1000 + i` for the i-th partition column). |
 | 103 | `record_count` | Long | Required | All | Number of records in the file |
 | 104 | `file_size_in_bytes` | Long | Required | All | Total file size in bytes |
 | 141 | `spec_id` | Int | Optional | All | Partition spec ID used for this entry |
@@ -428,7 +431,7 @@ If any child entry is missing a stats field, the aggregate for that field must b
 
 Delta `add` actions carry statistics as a JSON `stats` string (`numRecords`, `nullCount`, `minValues`, `maxValues`, `tightBounds`), keyed by physical column name. Manifest entries carry the same information as `content_stats`, keyed by column-mapping field ID and stored in each field's type. A live file's stats exist as `add.stats` while it is only in the Delta log, and as `content_stats` once it is folded into the tree — never both. Readers must treat the two representations as equivalent for data skipping. `remove` actions carry a copy of the removed file's stats so that log replay can prune them (see [Remove File](#remove-file)).
 
-When folding a log `add` into a manifest, writers convert `add.stats` to `content_stats` as follows. Field IDs are resolved via `columnMapping` (a required dependent feature), and `minValues`/`maxValues` are converted from their JSON representation to the field's typed value.
+When folding a log `add` into a manifest, writers convert `add.stats` to `content_stats` as follows. Field IDs are the schema's column mapping IDs (`delta.columnMapping.id`), which are assigned in both `name` and `id` mode: the stats key (a physical column name) is matched to the schema field with that `delta.columnMapping.physicalName`, and that field's ID keys the stats struct. `minValues`/`maxValues` are converted from their JSON representation to the field's typed value.
 
 | Delta `add.stats` | V4 `content_stats` |
 |-------------------|--------------------|

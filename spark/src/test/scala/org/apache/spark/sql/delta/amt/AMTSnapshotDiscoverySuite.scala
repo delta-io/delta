@@ -33,55 +33,52 @@ class AMTSnapshotDiscoverySuite extends AMTCheckpointTestBase {
   // Post commit snapshot
   ///////////////////////////
 
-  test("inline emission installs an AMTCheckpointProvider on the post-commit snapshot") {
+  testInlineAndDeferred("emission installs an AMTCheckpointProvider on the post-commit snapshot") {
+    mode =>
     withTable("amt_provider_install") {
       val name = "amt_provider_install"
       createAMTTable(name, checkpointInterval = 2)
       sql(s"INSERT INTO $name VALUES (1)")
-      sql(s"INSERT INTO $name VALUES (2)") // v2: emit.
+      sql(s"INSERT INTO $name VALUES (2)") // v2: interval boundary.
+      // Inline: the AMT rides in the v2 business commit (checkpointVersion == 2).
+      // Deferred: a follow-up OPTIMIZE CHECKPOINT commit lands at v3 describing state as of v2.
+      val checkpointVersion = 2L
+      val snapshotVersion = checkpointVersion + mode.followUpCommits
 
       val deltaLog = deltaLogForName(name)
       val snapshot = deltaLog.unsafeVolatileSnapshot
-      assert(snapshot.version == 2)
+      assert(snapshot.version == snapshotVersion)
       val provider = amtProvider(snapshot)
       assert(provider.isDefined, "Post-emission snapshot must expose an AMTCheckpointProvider.")
-      assert(provider.get.checkpointVersion == 2)
+      assert(provider.get.checkpointVersion == checkpointVersion)
       assert(provider.get.checkpointAction.contentRoot.path ==
-        checkpointsAt(deltaLog, 2).head.contentRoot.path)
+        checkpointsAt(deltaLog, snapshotVersion).head.contentRoot.path)
       assert(provider.get.leaves.nonEmpty, "Provider must list the tree's leaves.")
     }
   }
 
-  test("post-commit LogSegment carries the AMT provider and only post-checkpoint deltas") {
+  testInlineAndDeferred("an emitted AMT installs the provider and trims the log segment") { mode =>
     withTable("amt_log_segment") {
       val name = "amt_log_segment"
       createAMTTable(name, checkpointInterval = 3)
-      // After each commit, the post-commit snapshot's log segment holds the deltas after the latest
-      // checkpoint. A checkpoint emits at every interval boundary (v3, v6); the provider persists
-      // across the intervening commits (deltaLog.update() is a no-op for AMT, so the cached
-      // post-commit snapshot is returned as-is). Expected (version -> delta count):
-      //   v0=1, v1=2, v2=3, v3=0 (checkpoint), v4=1, v5=2, v6=0 (checkpoint).
-      val expected = Seq(0L -> 1, 1L -> 2, 2L -> 3, 3L -> 0, 4L -> 1, 5L -> 2, 6L -> 0)
+      // The interval boundary is v3. Inline: the AMT rides in the v3 business commit. Deferred: a
+      // follow-up OPTIMIZE CHECKPOINT commit lands at v4 describing state as of v3. Either way the
+      // Checkpoint describes state as of v3, and the log segment trims to deltas after v3.
+      (1 to 3).foreach(i => sql(s"INSERT INTO $name VALUES ($i)"))
+      val checkpointVersion = 3L
+      val snapshotVersion = checkpointVersion + mode.followUpCommits
+
       val deltaLog = deltaLogForName(name)
-
-      def assertSegment(snapshot: Snapshot, expectedVersion: Long, expectedDeltas: Int): Unit = {
-        assert(snapshot.version == expectedVersion)
-        assert(snapshot.logSegment.deltas.size == expectedDeltas,
-          s"v$expectedVersion: expected $expectedDeltas deltas, " +
-          s"got ${snapshot.logSegment.deltas.map(f => FileNames.deltaVersion(f))}.")
-        // A provider is installed exactly on the checkpoint-boundary commits (v3, v6).
-        val isBoundary = expectedVersion > 0 && expectedVersion % 3 == 0
-        if (isBoundary) {
-          assert(amtProvider(snapshot).exists(_.checkpointVersion == expectedVersion),
-            s"v$expectedVersion: expected an AMT provider at this checkpoint version.")
-        }
-      }
-
-      assertSegment(deltaLog.unsafeVolatileSnapshot, expected.head._1, expected.head._2)
-      expected.tail.foreach { case (version, deltas) =>
-        sql(s"INSERT INTO $name VALUES ($version)")
-        assertSegment(deltaLogForName(name).unsafeVolatileSnapshot, version, deltas)
-      }
+      val snapshot = deltaLog.unsafeVolatileSnapshot
+      assert(snapshot.version == snapshotVersion)
+      val provider = amtProvider(snapshot).getOrElse(
+        fail("The post-emission snapshot must expose an AMTCheckpointProvider."))
+      assert(provider.checkpointVersion == checkpointVersion,
+        "The Checkpoint describes state as of v3.")
+      // The log segment keeps only deltas strictly after the checkpoint version (v3).
+      val segmentDeltaVersions = snapshot.logSegment.deltas.map(f => FileNames.deltaVersion(f))
+      assert(segmentDeltaVersions.forall(_ > checkpointVersion),
+        s"Log segment must trim deltas up to the checkpoint version; got $segmentDeltaVersions.")
     }
   }
 }
