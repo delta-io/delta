@@ -43,6 +43,7 @@ import org.apache.spark.sql.catalyst.analysis.{Analyzer, NoSuchTableException}
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, SessionCatalog}
 import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog, V1Table}
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
+import org.apache.spark.sql.execution.datasources.FileFormat.{FILE_PATH, METADATA_NAME}
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.types.StructType
 
@@ -497,7 +498,7 @@ object ConvertToDeltaCommand extends DeltaLogging {
       addFiles: Seq[AddFile]): Iterator[AddFile] = {
     import org.apache.spark.sql.functions._
     val filesWithStats = deltaLog.createDataFrame(snapshot, addFiles)
-      .groupBy(input_file_name()).agg(to_json(snapshot.statsCollector))
+      .groupBy(col(s"${METADATA_NAME}.${FILE_PATH}")).agg(to_json(snapshot.statsCollector))
 
     val pathToAddFileMap = generateCandidateFileMap(deltaLog.dataPath, addFiles)
     filesWithStats.collect().iterator.map { row =>
