@@ -34,8 +34,6 @@ import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorReadFunction
 import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorSchemaContext;
 import io.delta.spark.internal.v2.read.metadata.MetadataStructReadFunction;
 import io.delta.spark.internal.v2.read.metadata.MetadataStructSchemaContext;
-import java.net.URI;
-import java.net.URISyntaxException;
 import java.time.ZoneId;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -403,35 +401,6 @@ public class PartitionUtils {
         modificationTime,
         partitionRow,
         metadata);
-  }
-
-  /**
-   * Resolves a Delta-log file path against the table root, matching {@code TahoeFileIndex} / {@code
-   * DeltaFileOperations.absolutePath}:
-   *
-   * <ul>
-   *   <li>{@code tablePath} (from the kernel snapshot path) is NOT URL-encoded, so a reserved
-   *       character (a space, a {@code %}) appears literally.
-   *   <li>{@code filePath} (the AddFile/RemoveFile path) IS URL-encoded per the Delta protocol
-   *       (e.g. a literal {@code %} arrives as {@code %25}).
-   * </ul>
-   *
-   * <p>The changelog reader built its {@link SparkPath} with {@code SparkPath.fromUrlString(new
-   * Path(tablePath, filePath).toString())}. That parses its argument as an already-encoded URL and
-   * throws {@link java.net.URISyntaxException} once the literal reserved character in the tablePath
-   * is dereferenced. This helper instead wraps only the (already-encoded) filePath in a {@link
-   * URI}, joins it onto the raw tablePath with {@link org.apache.hadoop.fs.Path}, and uses {@link
-   * SparkPath#fromPath}.
-   */
-  public static SparkPath sparkPathFromRawPath(String tablePath, String filePath) {
-    try {
-      Path child = new Path(new URI(filePath));
-      Path resolved = child.isAbsolute() ? child : new Path(new Path(tablePath), child);
-      return SparkPath.fromPath(resolved);
-    } catch (URISyntaxException e) {
-      throw new IllegalArgumentException(
-          "Could not parse Delta-log file path as URI: " + filePath, e);
-    }
   }
 
   private static PartitionedFile makePartitionedFile(
