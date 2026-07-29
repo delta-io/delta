@@ -78,6 +78,33 @@ public class ParquetStatsReader {
   }
 
   /**
+   * Extract statistics from the in-memory {@link ParquetMetadata} held by the writer after close,
+   * avoiding a file reopen. Functionally identical to {@link #readDataFileStatistics} but operates
+   * on the already-available footer object rather than re-reading it from storage.
+   *
+   * @param footer the {@link ParquetMetadata} returned by {@code ParquetWriter.getFooter()}
+   * @param dataSchema the schema of the data in the file
+   * @param statsColumns the columns for which statistics should be collected
+   * @return file/column level statistics as a {@link DataFileStatistics} instance
+   */
+  public static DataFileStatistics extractDataFileStatistics(
+      ParquetMetadata footer, StructType dataSchema, List<Column> statsColumns) {
+    ImmutableMultimap.Builder<Column, ColumnChunkMetaData> metadataForColumn =
+        ImmutableMultimap.builder();
+
+    long rowCount = 0;
+    for (BlockMetaData blockMetaData : footer.getBlocks()) {
+      rowCount += blockMetaData.getRowCount();
+      for (ColumnChunkMetaData columnChunkMetaData : blockMetaData.getColumns()) {
+        Column column = new Column(columnChunkMetaData.getPath().toArray());
+        metadataForColumn.put(column, columnChunkMetaData);
+      }
+    }
+
+    return constructFileStats(metadataForColumn.build(), dataSchema, statsColumns, rowCount);
+  }
+
+  /**
    * Merge statistics from multiple rowgroups into a single set of statistics for each column.
    *
    * @return Stats for each column in the file as {@link DataFileStatistics}.
