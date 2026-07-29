@@ -386,71 +386,67 @@ public class DeltaChangelogDirectBatchExecutionTest extends DeltaChangelogTestBa
 
   /**
    * Same path-encoding bug at the data-file level: the table directory is clean, but the
-   * AddFile/RemoveFile file names carry a reserved character (a {@code %}). The prefix is set only
-   * for this test rather than the whole suite so the case above stays focused on the directory.
+   * AddFile/RemoveFile file names carry a reserved character (a {@code %}). Under test the data
+   * file name prefix defaults to {@code test%file%prefix-} (DeltaSQLConf.TEST_FILE_NAME_PREFIX),
+   * so no config is set here and the case above stays focused on the directory.
    */
   @Test
   public void testChangelogWithReservedCharsInDataFileNames() throws Exception {
     String tableName = "dsv2_changelog_datafile_" + System.nanoTime();
     String tablePath = System.getProperty("java.io.tmpdir") + "/" + tableName;
 
-    withSQLConf(
-        "spark.databricks.delta.testOnly.dataFileNamePrefix",
-        "test%file%prefix-",
-        () ->
-            withTable(
-                new String[] {tableName},
-                () -> {
-                  spark.sql(
-                      String.format(
-                          "CREATE TABLE %s (id BIGINT, name STRING) USING delta LOCATION '%s' "
-                              + "TBLPROPERTIES ('delta.enableDeletionVectors'='false', "
-                              + "'delta.enableRowTracking'='true')",
-                          tableName, tablePath));
-                  spark.sql(
-                      String.format("INSERT INTO %s VALUES (1, 'Alice'), (2, 'Bob')", tableName));
+    withTable(
+        new String[] {tableName},
+        () -> {
+          spark.sql(
+              String.format(
+                  "CREATE TABLE %s (id BIGINT, name STRING) USING delta LOCATION '%s' "
+                      + "TBLPROPERTIES ('delta.enableDeletionVectors'='false', "
+                      + "'delta.enableRowTracking'='true')",
+                  tableName, tablePath));
+          spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice'), (2, 'Bob')", tableName));
 
-                  DeltaSnapshotManager snapshotManager =
-                      SnapshotManagerFactory.create(tablePath, defaultEngine, Optional.empty());
-                  long latestVersion = snapshotManager.loadLatestSnapshot().getVersion();
-                  Map<Long, Long> commitTimestampsMicros = loadCommitTimestampsMicros(tableName);
+          DeltaSnapshotManager snapshotManager =
+              SnapshotManagerFactory.create(tablePath, defaultEngine, Optional.empty());
+          long latestVersion = snapshotManager.loadLatestSnapshot().getVersion();
+          Map<Long, Long> commitTimestampsMicros = loadCommitTimestampsMicros(tableName);
 
-                  DeltaChangelog changelog =
-                      new DeltaChangelog(
-                          tableName,
-                          new DeltaV2Table(Identifier.of(new String[0], tableName), tablePath),
-                          0L,
-                          latestVersion);
-                  Scan scan =
-                      changelog
-                          .newScanBuilder(new CaseInsensitiveStringMap(Collections.emptyMap()))
-                          .build();
-                  Batch batch = scan.toBatch();
-                  StructType schema = scan.readSchema();
+          DeltaChangelog changelog =
+              new DeltaChangelog(
+                  tableName,
+                  new DeltaV2Table(Identifier.of(new String[0], tableName), tablePath),
+                  0L,
+                  latestVersion);
+          Scan scan =
+              changelog
+                  .newScanBuilder(new CaseInsensitiveStringMap(Collections.emptyMap()))
+                  .build();
+          Batch batch = scan.toBatch();
+          StructType schema = scan.readSchema();
 
-                  List<InternalRow> actualRows = collectRows(batch);
+          List<InternalRow> actualRows = collectRows(batch);
 
-                  List<String> fieldNames = Arrays.asList(schema.fieldNames());
-                  int idIndex = fieldNames.indexOf("id");
-                  int nameIndex = fieldNames.indexOf("name");
-                  int changeTypeIndex = fieldNames.indexOf("_change_type");
-                  int commitVersionIndex = fieldNames.indexOf("_commit_version");
-                  int commitTimestampIndex = fieldNames.indexOf("_commit_timestamp");
+          List<String> fieldNames = Arrays.asList(schema.fieldNames());
+          int idIndex = fieldNames.indexOf("id");
+          int nameIndex = fieldNames.indexOf("name");
+          int changeTypeIndex = fieldNames.indexOf("_change_type");
+          int commitVersionIndex = fieldNames.indexOf("_commit_version");
+          int commitTimestampIndex = fieldNames.indexOf("_commit_timestamp");
 
-                  List<ExpectedRow> expectedRows = new ArrayList<>();
-                  expectedRows.add(row(1L, "Alice", "insert", 1L, commitTimestampsMicros.get(1L)));
-                  expectedRows.add(row(2L, "Bob", "insert", 1L, commitTimestampsMicros.get(1L)));
+          List<ExpectedRow> expectedRows = new ArrayList<>();
+          expectedRows.add(row(1L, "Alice", "insert", 1L, commitTimestampsMicros.get(1L)));
+          expectedRows.add(row(2L, "Bob", "insert", 1L, commitTimestampsMicros.get(1L)));
 
-                  assertEquals(expectedRows.size(), actualRows.size());
-                  assertRowsEqual(
-                      actualRows,
-                      expectedRows,
-                      idIndex,
-                      nameIndex,
-                      changeTypeIndex,
-                      commitVersionIndex,
-                      commitTimestampIndex);
-                }));
+          assertEquals(expectedRows.size(), actualRows.size());
+          assertRowsEqual(
+              actualRows,
+              expectedRows,
+              idIndex,
+              nameIndex,
+              changeTypeIndex,
+              commitVersionIndex,
+              commitTimestampIndex);
+        });
   }
 
   private static List<InternalRow> collectRows(Batch batch) throws Exception {
