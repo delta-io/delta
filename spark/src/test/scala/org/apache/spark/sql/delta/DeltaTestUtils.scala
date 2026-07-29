@@ -34,6 +34,7 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.test.shims.ChangelogSyntaxSupportedShim
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames}
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
@@ -80,7 +81,7 @@ trait CDCTestMixin extends SharedSparkSession {
   }
 }
 
-trait ChangelogV2CDCUtilMixin extends CDCTestMixin {
+trait ChangelogV2CDCUtilMixin extends CDCTestMixin with ChangelogSyntaxSupportedShim {
 
   // Tests skipped on the V2 changelog read path.
   protected def excludedV2Exact: Set[String] = Set(
@@ -102,19 +103,15 @@ trait ChangelogV2CDCUtilMixin extends CDCTestMixin {
 
   // CDCTestMixin has no `excluded` hook, so filter by name in a test() override and ignore()
   // the matches; everything else runs. The V2 changelog read path uses the `SELECT ... CHANGES`
-  // clause, which only the Spark 4.2 parser supports, so tests are cancelled on older versions.
+  // clause, which only the Spark 4.2 parser supports; supportsChangelogSyntax is a compile-time
+  // shim (true on spark-4.2, false on spark-4.0-4.1) so tests cancel on older versions.
   override protected def test(testName: String, testTags: org.scalatest.Tag*)(testFun: => Any)(
       implicit pos: org.scalactic.source.Position): Unit = {
     if (excludedV2Exact.contains(testName)) {
       ignore(testName + " (excluded on the V2 changelog read path, see excludedV2Exact)")(testFun)
     } else {
       super.test(testName, testTags: _*) {
-        val sparkVersion = spark.version
-        assume(
-          sparkVersion >= "4.2" &&
-            !sparkVersion.contains("SNAPSHOT") &&
-            !sparkVersion.contains("preview"),
-          "The SELECT ... CHANGES clause requires Spark 4.2 or newer")
+        assume(supportsChangelogSyntax, "The SELECT ... CHANGES clause requires Spark 4.2 or newer")
         testFun
       }
     }
