@@ -20,6 +20,7 @@ import java.lang.ref.WeakReference
 import java.nio.charset.StandardCharsets.UTF_8
 
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import com.google.common.hash.Hashing
 import io.delta.sharing.client.DeltaSharingClient
 import io.delta.sharing.client.model.{Table => DeltaSharingTable}
@@ -52,8 +53,18 @@ object DeltaSharingCDFUtils extends Logging {
     // and also any metadata changes between [startingVersion, endingVersion], to put them in the
     // delta log. This is to allow delta library to check the metadata change and handle it
     // properly -- currently it throws error for column mapping changes.
+    // includeHistoricalProtocol requests a protocol for each protocol change in the same range, so
+    // a mid-range protocol upgrade (e.g. enabling deletionVectors) is reflected in the delta log
+    // instead of leaving the recipient on a stale head protocol. Gated by a default-off flag; when
+    // off the client keeps the legacy single-head-protocol behavior.
+    val includeHistoricalProtocol = sqlContext.sparkSession.sessionState.conf
+      .getConf(DeltaSQLConf.DELTA_SHARING_CDF_ENABLE_HISTORICAL_PROTOCOL)
     val deltaTableFiles = client.getCDFFiles(
-      table, options.cdfOptions, includeHistoricalMetadata = true, fileIdHash = None
+      table,
+      options.cdfOptions,
+      includeHistoricalMetadata = true,
+      fileIdHash = None,
+      includeHistoricalProtocol = includeHistoricalProtocol
     )
     logInfo(
       s"Fetched ${deltaTableFiles.lines.size} lines with cdf options ${options.cdfOptions} " +
@@ -86,7 +97,8 @@ object DeltaSharingCDFUtils extends Logging {
       refresher = DeltaSharingUtils.getRefresherForGetCDFFiles(
         client = client,
         table = table,
-        cdfOptions = options.cdfOptions
+        cdfOptions = options.cdfOptions,
+        includeHistoricalProtocol = includeHistoricalProtocol
       ),
       expirationTimestamp =
         if (CachedTableManager.INSTANCE

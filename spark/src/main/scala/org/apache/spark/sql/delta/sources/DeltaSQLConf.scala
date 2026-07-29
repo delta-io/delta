@@ -3307,6 +3307,18 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_SHARING_CDF_ENABLE_HISTORICAL_PROTOCOL =
+    buildConf("spark.sql.delta.sharing.cdfEnableHistoricalProtocol")
+      .doc("When true, a Delta Sharing CDF query (queryTableChanges, both batch and streaming) " +
+        "requests includeHistoricalProtocol so the server streams a Protocol for each protocol " +
+        "change inside the version range, keeping the locally constructed delta log's protocol " +
+        "accurate across a mid-range protocol upgrade. When false, the client keeps the legacy " +
+        "single-head-protocol behavior. Gates the CDF path independently from the non-CDF " +
+        "streaming path controlled by spark.sql.delta.sharing.streamingEnableHistoricalProtocol.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_SHARING_ENABLE_AUTO_RESOLVE_FOR_CDF =
     buildConf("spark.sql.delta.sharing.enableAutoResolveForCdf")
       .doc("When true, Delta Sharing CDF queries without an explicit responseFormat will " +
