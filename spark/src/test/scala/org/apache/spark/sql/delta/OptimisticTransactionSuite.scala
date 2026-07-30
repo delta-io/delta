@@ -904,54 +904,72 @@ class OptimisticTransactionSuite
     }
   }
 
-  // Unpartitioned whole-table read -- the Liquid Clustering / auto-compaction scenario. A
-  // clustered table has no partitions, so a read-then-append writer reads the whole table and
-  // a concurrent OPTIMIZE (whose compacted output is dataChange = false) collides with that
-  // read on every commit. This is the case the exclusion is most needed for.
-  for (excludeNoDataChange <- BOOLEAN_DOMAIN) {
-    test("dataChange = false append (OPTIMIZE-style) vs concurrent whole-table read, " +
-      s"excludeNoDataChangeAddedFiles = $excludeNoDataChange") {
-      withSQLConf(
-        DeltaSQLConf.DELTA_CONFLICT_DETECTION_EXCLUDE_NO_DATA_CHANGE_ADDS.key ->
-          excludeNoDataChange.toString) {
-        withTempDir { tempDir =>
-          val log = DeltaLog.forTable(spark, tempDir.getCanonicalPath)
+  // End-to-end with a *realistic* OPTIMIZE that both removes the compacted inputs AND adds the
+  // dataChange = false output. The loser is an insert-only writer that registered only a
+  // partition read PREDICATE (filterFiles(newFiles) does not populate readFiles), so the
+  // separate removed-files check cannot fire. With the flag on the fix FULLY reconciles -- it
+  // is not merely swapping ConcurrentAppendException for ConcurrentDeleteReadException. This is
+  // the exact shape of the insert-only conflict reported in issues #326 / #626 / PR #1305.
+  test("full OPTIMIZE (removes + dataChange=false adds) vs insert-only partition reader " +
+    "reconciles, excludeNoDataChangeAddedFiles = true") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_CONFLICT_DETECTION_EXCLUDE_NO_DATA_CHANGE_ADDS.key -> "true") {
+      withTempDir { tempDir =>
+        val partCol = "part"
+        val log = DeltaLog.forTable(spark, tempDir.getCanonicalPath)
+        log.startTransaction().commit(Seq(Metadata(
+          schemaString = new StructType()
+            .add(partCol, IntegerType).add("value", IntegerType).json,
+          partitionColumns = Seq(partCol))), ManualUpdate)
+        val fileA = AddFile("a", Map(partCol -> "0"), 1, 1, dataChange = true)
+        log.startTransaction().commit(
+          Seq(fileA, AddFile("b", Map(partCol -> "1"), 1, 1, dataChange = true)), ManualUpdate)
 
-          // Unpartitioned table with two files.
-          log.startTransaction().commit(Seq(
-            Metadata(
-              schemaString = new StructType()
-                .add("id", IntegerType)
-                .add("value", IntegerType).json)
-          ), ManualUpdate)
-          log.startTransaction().commit(
-            Seq(AddFile("a", Map.empty, 1, 1, dataChange = true),
-              AddFile("b", Map.empty, 1, 1, dataChange = true)),
-            ManualUpdate)
+        val newData = Seq(AddFile("x", Map(partCol -> "0"), 1, 1, dataChange = true))
+        val txn = log.startTransaction()
+        txn.filterFiles(newData) // partition-0 read predicate only, no readFiles
 
-          // txn1 (loser): an insert-only writer that reads the whole table (no removes) --
-          // e.g. reads to dedup/aggregate, then appends. filterFiles() reads all files.
-          val txn = log.startTransaction()
-          txn.filterFiles()
-          val newData = Seq(AddFile("x", Map.empty, 1, 1, dataChange = true))
+        // realistic OPTIMIZE of partition 0: remove 'a', add 'y', all dataChange = false.
+        log.startTransaction().commit(Seq(
+          AddFile("y", Map(partCol -> "0"), 1, 1, dataChange = false),
+          fileA.removeWithTimestamp(dataChange = false)), ManualUpdate)
 
-          // txn2 (winner): OPTIMIZE compacts the two files into one, dataChange = false.
-          log.startTransaction().commit(
-            Seq(AddFile("y", Map.empty, 1, 1, dataChange = false)), ManualUpdate)
+        txn.commit(newData, ManualUpdate) // insert-only: append 'x', remove nothing
+        assert(log.update().allFiles.collect().map(_.path).toSet == Set("b", "y", "x"))
+      }
+    }
+  }
 
-          def commitTxn1(): Unit = txn.commit(newData, ManualUpdate)
+  // Scope boundary: the same realistic full OPTIMIZE vs a WHOLE-TABLE reader (filterFiles()
+  // populates readFiles = {a,b}). Here OPTIMIZE removes files the reader actually read, so the
+  // SEPARATE removed-files check (checkForDeletedFilesAgainstCurrentTxnReadFiles) fires with
+  // ConcurrentDeleteReadException. The added-files fix does NOT -- and must not -- silence a
+  // genuine read/remove overlap; fully reconciling that case is the harder row-level-
+  // concurrency problem and is out of scope for this change.
+  test("full OPTIMIZE (removes + dataChange=false adds) vs whole-table reader still raises " +
+    "ConcurrentDeleteReadException, excludeNoDataChangeAddedFiles = true") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_CONFLICT_DETECTION_EXCLUDE_NO_DATA_CHANGE_ADDS.key -> "true") {
+      withTempDir { tempDir =>
+        val log = DeltaLog.forTable(spark, tempDir.getCanonicalPath)
+        log.startTransaction().commit(Seq(Metadata(
+          schemaString = new StructType()
+            .add("id", IntegerType).add("value", IntegerType).json)), ManualUpdate)
+        val fileA = AddFile("a", Map.empty, 1, 1, dataChange = true)
+        val fileB = AddFile("b", Map.empty, 1, 1, dataChange = true)
+        log.startTransaction().commit(Seq(fileA, fileB), ManualUpdate)
 
-          if (excludeNoDataChange) {
-            // OPTIMIZE's dataChange = false output is not in the append check -> no conflict.
-            commitTxn1()
-            val files = log.update().allFiles.collect()
-            // 'a', 'b', 'y' (OPTIMIZE output) and 'x' (txn1) all present; nothing removed.
-            assert(files.map(_.path).toSet == Set("a", "b", "y", "x"))
-          } else {
-            intercept[ConcurrentAppendException] {
-              commitTxn1()
-            }
-          }
+        val txn = log.startTransaction()
+        txn.filterFiles() // whole-table read -> readFiles = {a, b}
+        val newData = Seq(AddFile("x", Map.empty, 1, 1, dataChange = true))
+
+        log.startTransaction().commit(Seq(
+          AddFile("y", Map.empty, 1, 1, dataChange = false),
+          fileA.removeWithTimestamp(dataChange = false),
+          fileB.removeWithTimestamp(dataChange = false)), ManualUpdate)
+
+        intercept[ConcurrentDeleteReadException] {
+          txn.commit(newData, ManualUpdate)
         }
       }
     }
