@@ -1,9 +1,11 @@
 # Interval Types
 **Associated Github issue for discussions: https://github.com/delta-io/delta/issues/7077**
 
-This protocol change adds support for interval types (as defined [here](https://spark.apache.org/docs/latest/sql-ref-datatypes.html)). It consists of one change to the protocol:
+This protocol change documents support for interval types (as defined [here](https://spark.apache.org/docs/latest/sql-ref-datatypes.html)). It consists of one change to the protocol:
 
-- Two distinct new primitive types (year-month and day-second)
+- Two distinct primitive types (year-month and day-second)
+
+Like [`void`](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#void-type), interval types are documented here post-facto: interval columns already exist in tables written by earlier clients before this behavior was specified. Because such columns predate any table feature, interval types are **not** gated by a table feature and apply to all tables.
 
 --------
 
@@ -11,7 +13,7 @@ This protocol change adds support for interval types (as defined [here](https://
 
 # Interval Types
 
-This RFC adds two distinct Delta logical types, one for each [ANSI SQL interval type](https://spark.apache.org/docs/latest/sql-ref-datatypes.html) family:
+This section defines two distinct Delta logical types, one for each [ANSI SQL interval type](https://spark.apache.org/docs/latest/sql-ref-datatypes.html) family:
 
 1. **interval year to month**: A signed number of months, e.g. `INTERVAL '1-6' YEAR TO MONTH` represents 18 (1 year + 6 months = 18 months).
 2. **interval day to second**: A signed number of microseconds, e.g. `INTERVAL '1 12:24:36.000022' DAY TO SECOND` represents 131,076,000,022 (1 day + 12 hours + 24 minutes + 36 seconds + 22 microseconds = 86,400,000,000 + 43,200,000,000 + 1,440,000,000 + 36,000,000 + 22 = 131,076,000,022).
@@ -92,6 +94,12 @@ Interval values are stored using a raw Parquet physical type with no logical-typ
 
 Because no Parquet logical type is written, an interval column is physically indistinguishable from a Parquet `int32`/`int64` (i.e. a Delta `integer`/`long`); the interval semantics are carried solely by the Delta schema in `Metadata.schemaString`. This representation supports signed intervals and microsecond precision. 
 
+Since interval types are not gated by a table feature, a client that does not recognize the `interval year to month` / `interval day to second` type names will read these columns as their physical `int32`/`int64` values without applying interval semantics. A conformant reader always resolves the correct type from `Metadata.schemaString`; the raw physical value is the signed count of months or microseconds described above, so no data is lost, but a client unaware of interval types will present it as an integer or long rather than an interval.
+
+## Schema Evolution and Type Changes
+
+Interval columns do not participate in type changes. Because interval values are materialized as raw `int32`/`int64` counts with no logical-type annotation (see [Parquet Format](#parquet-format)), and because neither interval family has a wider type it could be promoted to, there is no meaningful widening for an interval. A writer must not change an interval column to any other type, and must not change any other type to an interval type. Interval type changes are therefore never permitted, and the [Type Widening](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#type-widening) table feature does not apply to interval columns.
+
 ## Error Conditions
 
 - **Unrecognized type-name strings.** Type-name matching is case-sensitive. A reader that encounters an interval type-name string that is not one of the recognized canonical or narrowed spellings, including a multi-family spelling such as `interval month to second`, or a case variant such as `INTERVAL Year To Month`, must reject the schema with an error rather than silently coercing it to a supported type.
@@ -112,6 +120,18 @@ Because no Parquet logical type is written, an interval column is physically ind
 | --- | --- | --- |
 | interval year to month | `int32` | |
 | interval day to second | `int64` | |
+
+> ***Add a note after the [Delta Data Type to Parquet Type Mappings](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#delta-data-type-to-parquet-type-mappings) table.***
+
+Note that interval columns are stored using a raw Parquet `int32`/`int64` physical type with no logical-type annotation. See section [Interval Types](#interval-types).
+
+> ***Update the [IcebergCompatV1/V2/V3](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#icebergcompatv1) writer requirements to block interval types, alongside the existing restriction on `Map`/`Array`/`Void` types. Replace the line:***
+>
+> - Block adding `Map`/`Array`/`Void` types to the table schema (and, thus, block writing them, too)
+>
+> ***with:***
+>
+> - Block adding `Map`/`Array`/`Void`/`Interval` types to the table schema (and, thus, block writing them, too)
 
 # References
 
