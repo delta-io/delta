@@ -323,12 +323,15 @@ case class DeleteCommand(
                 if (candidateFiles.isEmpty) {
                   Array.empty[String]
                 } else {
-                  data.filter(Column(cond))
-                    .select(Column(fileMetadataCol).getField(FILE_PATH))
-                    .filter(Column(incrDeletedCountExpr))
-                    .distinct()
-                    .as[String]
-                    .collect()
+                  DeltaTableUtils.withNestedSchemaPruningDisabledForVariant(
+                      sparkSession, txn.metadata.schema) {
+                    data.filter(Column(cond))
+                      .select(Column(fileMetadataCol).getField(FILE_PATH))
+                      .filter(Column(incrDeletedCountExpr))
+                      .distinct()
+                      .as[String]
+                      .collect()
+                  }
                 }
               }
 
