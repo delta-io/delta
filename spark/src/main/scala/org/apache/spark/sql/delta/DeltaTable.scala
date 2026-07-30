@@ -314,6 +314,19 @@ object DeltaTableUtils extends PredicateHelper
   }
 
   /**
+   * Stricter partition-only check for file-listing / RPC pushdown: deterministic and references
+   * only partition columns. Non-deterministic or columnless predicates (e.g. rand() > 0.5) return
+   * false.
+   */
+  def isPredicatePartitionColumnsOnlyStrict(
+      condition: Expression,
+      partitionColumns: Seq[String],
+      spark: SparkSession): Boolean = {
+    condition.deterministic &&
+      isPredicatePartitionColumnsOnly(condition, partitionColumns, spark)
+  }
+
+  /**
    * Partition the given condition into two sequence of conjunctive predicates:
    * - predicates that can be evaluated using metadata only.
    * - other predicates.
@@ -329,6 +342,30 @@ object DeltaTableUtils extends PredicateHelper
     val extraMetadataPredicates =
       if (dataPredicates.nonEmpty) {
         extractMetadataPredicates(dataPredicates.reduce(And), partitionColumns, spark)
+          .map(splitConjunctivePredicates)
+          .getOrElse(Seq.empty)
+      } else {
+        Seq.empty
+      }
+    (metadataPredicates ++ extraMetadataPredicates, dataPredicates)
+  }
+
+  /**
+   * Like [[splitMetadataAndDataPredicates]], but classifies conjuncts with
+   * [[isPredicateMetadataOnlyStrict]] so non-deterministic predicates (e.g. `rand() > 0.5`) are
+   * not treated as partition/metadata-only filters.
+   */
+  def splitMetadataAndDataPredicatesStrict(
+      condition: Expression,
+      partitionColumns: Seq[String],
+      spark: SparkSession): (Seq[Expression], Seq[Expression]) = {
+    val (metadataPredicates, dataPredicates) =
+      splitConjunctivePredicates(condition).partition(
+        isPredicateMetadataOnlyStrict(_, partitionColumns, spark))
+    // Extra metadata predicates that can partially extracted from `dataPredicates`.
+    val extraMetadataPredicates =
+      if (dataPredicates.nonEmpty) {
+        extractMetadataPredicatesStrict(dataPredicates.reduce(And), partitionColumns, spark)
           .map(splitConjunctivePredicates)
           .getOrElse(Seq.empty)
       } else {
@@ -383,6 +420,34 @@ object DeltaTableUtils extends PredicateHelper
   }
 
   /**
+   * Like [[extractMetadataPredicates]], but uses [[isPredicatePartitionColumnsOnlyStrict]].
+   */
+  private def extractMetadataPredicatesStrict(
+      condition: Expression,
+      partitionColumns: Seq[String],
+      spark: SparkSession): Option[Expression] = {
+    condition match {
+      case And(left, right) =>
+        val lhs = extractMetadataPredicatesStrict(left, partitionColumns, spark)
+        val rhs = extractMetadataPredicatesStrict(right, partitionColumns, spark)
+        (lhs.toSeq ++ rhs.toSeq).reduceOption(And)
+
+    case Or(left, right) =>
+      for {
+        lhs <- extractMetadataPredicatesStrict(left, partitionColumns, spark)
+        rhs <- extractMetadataPredicatesStrict(right, partitionColumns, spark)
+      } yield Or(lhs, rhs)
+
+    case other =>
+      if (isPredicatePartitionColumnsOnlyStrict(other, partitionColumns, spark)) {
+        Some(other)
+      } else {
+        None
+      }
+    }
+  }
+
+  /**
    * Check if condition involves a subquery expression.
    */
   def containsSubquery(condition: Expression): Boolean = {
@@ -398,6 +463,17 @@ object DeltaTableUtils extends PredicateHelper
       partitionColumns: Seq[String],
       spark: SparkSession): Boolean = {
     isPredicatePartitionColumnsOnly(condition, partitionColumns, spark) &&
+      !containsSubquery(condition)
+  }
+
+  /**
+   * Like [[isPredicateMetadataOnly]], but also requires the predicate to be deterministic.
+   */
+  def isPredicateMetadataOnlyStrict(
+      condition: Expression,
+      partitionColumns: Seq[String],
+      spark: SparkSession): Boolean = {
+    isPredicatePartitionColumnsOnlyStrict(condition, partitionColumns, spark) &&
       !containsSubquery(condition)
   }
 

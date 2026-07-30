@@ -58,10 +58,12 @@ class RemoveColumnMappingSuite extends RemoveColumnMappingSuiteUtils {
   }
 
   test("invalid column names") {
-    val invalidColName1 = colName("col1")
-    val invalidColName2 = colName("col2")
+    val invalidColName1 = "col1()"
+    val invalidColName2 = "col2{}"
+    val validColName = "col3"
     sql(
-      s"""CREATE TABLE $testTableName (a INT, `$invalidColName1` INT, `$invalidColName2` INT)
+      s"""CREATE TABLE $testTableName (a INT, `$invalidColName1` INT, `$invalidColName2` INT,
+         |`$validColName` INT)
          |USING delta
          |TBLPROPERTIES ('delta.columnMapping.mode' = 'name')
          |""".stripMargin)
@@ -106,12 +108,14 @@ class RemoveColumnMappingSuite extends RemoveColumnMappingSuiteUtils {
   }
 
   test("ALTER TABLE UNSET column mapping with invalid column names") {
-    val invalidColName1 = colName("col1")
-    val invalidColName2 = colName("col2")
+    val invalidColName1 = "col1()"
+    val invalidColName2 = "col2{}"
+    val validColName = "col3"
     val propertyToKeep = "acme"
     val propertyToUnset = "acme2"
     sql(
-      s"""CREATE TABLE $testTableName (a INT, `$invalidColName1` INT, `$invalidColName2` INT)
+      s"""CREATE TABLE $testTableName (a INT, `$invalidColName1` INT, `$invalidColName2` INT,
+         |`$validColName` INT)
          |USING delta
          |TBLPROPERTIES ('${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'name',
          |'$propertyToKeep' = '1234', '$propertyToUnset' = '1234')

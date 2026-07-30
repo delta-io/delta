@@ -125,13 +125,16 @@ public class TableConf implements Serializable {
   /**
    * Configuration to be forwarded to the Kernel engine.
    *
-   * <p>This returns the subset of configuration entries that are relevant to engine-side behavior.
-   * If your engine uses different option names, translate them here.
+   * <p>This carries custom options that will be passed to the engine. Currently it includes all
+   * customer-provided file-system options (keys starting with {@code "fs."}, e.g. {@code
+   * fs.s3a.access.key}), which are added to the Hadoop {@code Configuration} used by the engine.
    *
    * @return a map of engine configuration entries
    */
   public Map<String, String> engineConf() {
-    return Map.of();
+    return raw.entrySet().stream()
+        .filter(entry -> entry.getKey().startsWith("fs."))
+        .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
   }
 
   /** @return whether checksum file creation is enabled for this table */

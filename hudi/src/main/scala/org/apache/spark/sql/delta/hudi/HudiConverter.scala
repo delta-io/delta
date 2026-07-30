@@ -255,7 +255,7 @@ class HudiConverter
       case Some(prevSnapshot) =>
         // Read the actions directly from the delta json files.
         // TODO: Run this as a spark job on executors
-        val deltaFiles = DeltaFileProviderUtils.getDeltaFilesInVersionRange(
+        val commits = DeltaFileProviderUtils.getCommitsInVersionRange(
           spark = spark,
           deltaLog = log,
           startVersion = prevSnapshot.version + 1,
@@ -268,18 +268,16 @@ class HudiConverter
           data = Map(
             "fromVersion" -> (prevSnapshot.version + 1),
             "toVersion" -> snapshotToConvert.version,
-            "numDeltaFiles" -> deltaFiles.length
+            "numDeltaFiles" -> commits.length
           )
         )
 
-        val actionsToConvert = DeltaFileProviderUtils.parallelReadAndParseDeltaFilesAsIterator(
-          log, spark, deltaFiles)
-        actionsToConvert.foreach { actionsIter =>
+        val actionIterators =
+          DeltaFileProviderUtils.parallelReadAndParseDeltaFilesAsIterator(spark, log, commits)
+        actionIterators.foreach { actionsIter =>
           try {
-            actionsIter.grouped(actionBatchSize).foreach { actionStrs =>
-              runHudiConversionForActions(
-                hudiTxn,
-                actionStrs.map(Action.fromJson))
+            actionsIter.grouped(actionBatchSize).foreach { actions =>
+              runHudiConversionForActions(hudiTxn, actions)
             }
           } finally {
             actionsIter.close()

@@ -217,6 +217,8 @@ trait CommitCoordinatorClientImplSuiteBase extends QueryTest
     assert(resp1.getCommits == resp2.getCommits)
   }
 
+  protected def expectedEmptyGetCommitsLatestTableVersion: Long = -1
+
   test("test basic commit and backfill functionality") {
     withTempTableDir { tempDir =>
       val log = DeltaLog.forTable(spark, tempDir.toString)
@@ -229,7 +231,7 @@ trait CommitCoordinatorClientImplSuiteBase extends QueryTest
       assert(e.getMessage === "Commit version 0 must go via filesystem.")
       writeCommitZero(logPath)
       assertResponseEquals(tableCommitCoordinatorClient.getCommits(),
-        new JGetCommitsResponse(Seq.empty.asJava, -1))
+        new JGetCommitsResponse(Seq.empty.asJava, expectedEmptyGetCommitsLatestTableVersion))
       assertBackfilled(version = 0, logPath, Some(0L))
 
       // Test backfilling functionality for commits 1 - 8

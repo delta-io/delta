@@ -91,6 +91,22 @@ public class DeltaV2Mode {
   }
 
   /**
+   * Determines if catalog-driven Auto-CDF (CHANGES) reads should route to the sparkV2 connector.
+   *
+   * @return true if CHANGES reads should use the sparkV2 connector
+   */
+  public boolean shouldRouteChangelogToV2() {
+    switch (mode()) {
+      case STRICT:
+      case AUTO:
+        return true;
+      default:
+        // NONE or unknown: the V2 Auto-CDF path is not available.
+        return false;
+    }
+  }
+
+  /**
    * Determines if the provided schema should be trusted without validation for streaming reads.
    * This is used to bypass DeltaLog schema loading for Unity Catalog tables where the catalog
    * already provides the correct schema.

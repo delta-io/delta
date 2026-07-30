@@ -6,6 +6,7 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaLogActionUtils;
+import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.actions.Metadata;
@@ -17,6 +18,8 @@ import io.delta.spark.internal.v2.utils.SchemaUtils;
 import io.delta.spark.internal.v2.utils.StreamingHelper;
 import java.io.IOException;
 import java.io.Serializable;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -45,6 +48,14 @@ import org.apache.spark.sql.types.StructType;
 import org.apache.spark.unsafe.types.UTF8String;
 import scala.Tuple2;
 
+/**
+ * Batch implementation for read-time CDF that turns a commit range into CDC input partitions. It
+ * iterates the AddFile, RemoveFile and Metadata actions of each commit in the range, emitting one
+ * partition per data-changing file (RemoveFiles before AddFiles per commit), and rejects ranges
+ * whose schema or row-tracking state is not stable. {@link #createReaderFactory()} wraps the Parquet
+ * reader with {@link CDCPartitionReaderFactory} to append the CDC tail columns ({@code _change_type},
+ * {@code _commit_version}, {@code _commit_timestamp}).
+ */
 public class DeltaChangelogBatch implements Batch {
   private static final Set<DeltaLogActionUtils.DeltaAction> CHANGELOG_ACTION_SET =
       Set.of(
@@ -56,19 +67,19 @@ public class DeltaChangelogBatch implements Batch {
 
   private final CommitRange commitRange;
   private final Engine engine;
-  private final StructType dataSchema;
+  private final StructType endDataSchema;
   private final Snapshot snapshot;
   private final Configuration hadoopConf;
 
   public DeltaChangelogBatch(
       CommitRange commitRange,
       Engine engine,
-      StructType dataSchema,
+      StructType endDataSchema,
       Snapshot snapshot,
       Configuration hadoopConf) {
     this.commitRange = commitRange;
     this.engine = engine;
-    this.dataSchema = dataSchema;
+    this.endDataSchema = endDataSchema;
     this.snapshot = snapshot;
     this.hadoopConf = hadoopConf;
   }
@@ -80,10 +91,7 @@ public class DeltaChangelogBatch implements Batch {
     // Pre-check catches schema drift between start and end. The per-commit loop below catches
     // in-range Metadata commits.
     StructType startSchema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
-    if (!startSchema.equals(dataSchema)) {
-      DeltaErrors.throwChangelogSchemaChangeInRange(
-          ((CommitRangeImpl) commitRange).getStartVersion());
-    }
+    requireReadCompatible(startSchema, ((CommitRangeImpl) commitRange).getStartVersion());
 
     // TODO: Remove StreamingHelper usage. The helper is generic, only the class name is
     // streaming-flavored.
@@ -152,36 +160,38 @@ public class DeltaChangelogBatch implements Batch {
                 Metadata md = metadataOpt.get();
                 StructType commitSchema =
                     SchemaUtils.convertKernelSchemaToSparkSchema(md.getSchema());
-                if (!commitSchema.equals(dataSchema)) {
-                  DeltaErrors.throwChangelogSchemaChangeInRange(commit.getVersion());
-                }
-                String rtValue = md.getConfiguration().get("delta.enableRowTracking");
-                // Absent key means the prior value persists (no change at this commit).
-                boolean rowTrackingEnabled = rtValue == null || "true".equalsIgnoreCase(rtValue);
+                requireReadCompatible(commitSchema, commit.getVersion());
+                // A new Metadata action fully replaces the prior configuration, so an absent
+                // row-tracking key means the table default (disabled), not an inherited value.
+                boolean rowTrackingEnabled = TableConfig.ROW_TRACKING_ENABLED.fromMetadata(md);
                 if (!rowTrackingEnabled) {
                   DeltaErrors.throwChangelogRowTrackingDisabledInRange(commit.getVersion());
                 }
               }
             }
           }
-        } catch (RuntimeException e) {
-          throw e;
         } catch (Exception e) {
-          // Include the inner message so AnalysisException error classes
-          // (e.g. DELTA_CHANGELOG_ROW_TRACKING_DISABLED_IN_RANGE) reach the user.
-          throw new RuntimeException(
-              "Failed to process CDC commit actions: " + e.getMessage(), e);
+          // A cause that already carries a Spark error class is rethrown unchanged by
+          // throwChangelogReadFailed; anything else is wrapped in a Delta error class.
+          DeltaErrors.throwChangelogReadFailed("PROCESS_COMMIT_ACTIONS", e);
         }
         partitions.addAll(commitRemoves);
         partitions.addAll(commitAdds);
       }
-    } catch (RuntimeException e) {
-      throw e;
     } catch (Exception e) {
-      throw new RuntimeException(
-          "Failed to plan CDC input partitions: " + e.getMessage(), e);
+      DeltaErrors.throwChangelogReadFailed("PLAN_INPUT_PARTITIONS", e);
     }
     return partitions.toArray(new InputPartition[0]);
+  }
+
+  /**
+   * Rejects a schema at {@code version} that the end schema cannot read. Used for both the
+   * start/end pre-check and each in-range Metadata action.
+   */
+  private void requireReadCompatible(StructType schema, long version) {
+    if (!SchemaUtils.isReadCompatible(schema, endDataSchema)) {
+      DeltaErrors.throwChangelogSchemaChangeInRange(version);
+    }
   }
 
   /**
@@ -225,22 +235,43 @@ public class DeltaChangelogBatch implements Batch {
         deletionVector);
   }
 
+  /**
+   * Resolves a Delta-log file path against the table root. The two parts carry different encodings:
+   * {@code tablePath} (kernel snapshot path) is not URL-encoded, so a reserved character (a space,
+   * a {@code %}) appears literally, while {@code filePath} (the AddFile/RemoveFile path) is
+   * URL-encoded per the Delta protocol. Wrapping only the encoded filePath in a {@link URI},
+   * joining it onto the raw tablePath with {@link Path}, and using {@link SparkPath#fromPath}
+   * matches the encoding each part carries (the contract V1 TahoeFileIndex uses). Kept local to the
+   * changelog reader rather than shared, since the general scan/streaming path uses
+   * {@link SparkPath#fromUrlString} unchanged.
+   */
+  private static SparkPath sparkPathFromRawPath(String tablePath, String filePath) {
+    try {
+      Path child = new Path(new URI(filePath));
+      Path resolved = child.isAbsolute() ? child : new Path(new Path(tablePath), child);
+      return SparkPath.fromPath(resolved);
+    } catch (URISyntaxException e) {
+      throw new IllegalArgumentException(
+          "Could not parse Delta-log file path as URI: " + filePath, e);
+    }
+  }
+
   @Override
   public PartitionReaderFactory createReaderFactory() {
     StructType partitionSchema = new StructType();
     StructType readDataSchema =
-        dataSchema.add(DeltaChangelog.METADATA_COLUMN, DeltaChangelog.METADATA_STRUCT, false);
+        endDataSchema.add(DeltaChangelog.METADATA_COLUMN, DeltaChangelog.METADATA_STRUCT, false);
     Filter[] dataFilters = new Filter[0];
     scala.collection.immutable.Map<String, String> scalaOptions =
         scala.collection.immutable.Map$.MODULE$.empty();
     SQLConf sqlConf = SQLConf.get();
 
-    // Read-time Auto-CDF: tail columns are added by CDCPartitionReaderFactory below, so
+    // Read-time CDF: tail columns are added by CDCPartitionReaderFactory below, so
     // isWriteTimeCDCRead stays false (write-time streaming is the only true caller).
     PartitionReaderFactory delegate =
         PartitionUtils.createDeltaParquetReaderFactory(
             snapshot,
-            dataSchema,
+            endDataSchema,
             partitionSchema,
             readDataSchema,
             /* ddlOrderedReadOutputSchema */ readDataSchema,
@@ -338,8 +369,10 @@ public class DeltaChangelogBatch implements Batch {
     public PartitionReader<InternalRow> createReader(InputPartition partition) {
       CDCInputPartition cdcPartition = (CDCInputPartition) partition;
       InternalRow partitionValues = new GenericInternalRow(0);
-      SparkPath sparkPath =
-          SparkPath.fromUrlString(new Path(tablePath, cdcPartition.getFilePath()).toString());
+      // Join the raw table root and the URL-encoded file path (see sparkPathFromRawPath); the naive
+      // SparkPath.fromUrlString(new Path(tablePath, filePath).toString()) throws on a reserved
+      // character (space, '%') in the table path.
+      SparkPath sparkPath = sparkPathFromRawPath(tablePath, cdcPartition.getFilePath());
       scala.collection.immutable.Map<String, Object> constantMetadata =
           (scala.collection.immutable.Map<String, Object>)
               (scala.collection.immutable.Map<?, ?>)

@@ -29,7 +29,8 @@ import scala.util.control.NonFatal
 
 // scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.TagDefinitions.TAG_ASYNC
-import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.delta.actions.{Checkpoint, Metadata}
+import org.apache.spark.sql.delta.amt.AMTCheckpointProvider
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -874,16 +875,29 @@ trait SnapshotManagement { self: DeltaLog =>
       commit: Commit,
       tableCommitCoordinatorClientOpt: Option[TableCommitCoordinatorClient],
       catalogTableOpt: Option[CatalogTable],
-      oldCheckpointProvider: CheckpointProvider): LogSegment = recordFrameProfile(
+      oldCheckpointProvider: CheckpointProvider,
+      amtCheckpointProviderOpt: Option[CheckpointProvider] = None
+      ): LogSegment = recordFrameProfile(
     "Delta", "SnapshotManagement.getLogSegmentAfterCommit") {
     // If the table doesn't have any competing updates, then go ahead and use the optimized
     // incremental logSegment computation to fetch the LogSegment for the committedVersion.
     // See the comment in the getLogSegmentAfterCommit overload for why we can't always safely
     // return the committedVersion's snapshot when there is contention.
-    val useFastSnapshotConstruction = !snapshotLock.hasQueuedThreads
+    // AMT commits carry their checkpoint as an inline action in the commit JSON, which the slow
+    // re-listing path cannot see, so always use the fast incremental path when installing an AMT
+    // provider.
+    val useFastSnapshotConstruction =
+      !snapshotLock.hasQueuedThreads || amtCheckpointProviderOpt.isDefined
     if (useFastSnapshotConstruction) {
-      SnapshotManagement.appendCommitToLogSegment(
+      val segment = SnapshotManagement.appendCommitToLogSegment(
         preCommitLogSegment, commit.getFileStatus, committedVersion)
+      // The AMT manifest tree is authoritative for state up to its checkpoint version, so install
+      // the provider and trim the segment's deltas to versions after it.
+      amtCheckpointProviderOpt.map { cp =>
+        segment.copy(
+          checkpointProvider = cp,
+          deltas = segment.deltas.filter(f => deltaVersion(f) > cp.version))
+      }.getOrElse(segment)
     } else {
       val latestCheckpointProvider =
         Seq(preCommitLogSegment.checkpointProvider, oldCheckpointProvider).maxBy(_.version)
@@ -1065,6 +1079,10 @@ trait SnapshotManagement { self: DeltaLog =>
     // that there's no chance of a race condition changing the snapshot partway through the update.
     val capturedSnapshot = currentSnapshot
     val oldVersion = capturedSnapshot.snapshot.version
+    // TODO: implement deltaLog.update() rediscovery for AMT tables.
+    if (capturedSnapshot.snapshot.protocol.isFeatureSupported(AdaptiveMetadataTableFeature)) {
+      return capturedSnapshot.snapshot
+    }
     def sendEvent(
       newSnapshot: Snapshot,
       snapshotAlreadyUpdatedAfterRequiredTimestamp: Boolean = false
@@ -1438,13 +1456,18 @@ trait SnapshotManagement { self: DeltaLog =>
    *                       Usually None, since the commit would have just finished.
    * @param preCommitLogSegment the log segment of the table prior to commit
    * @param catalogTableOpt the current catalog table
+   * @param amtCheckpointOpt the inline Checkpoint action emitted with this commit, if any for AMT
+   *                      tables. When present, it is installed in the underlying post-commit
+   *                      snapshot as it must be the latest checkpoint in the commit range
+   *                      [0, committedVersion]. None otherwise.
    */
   def updateAfterCommit(
       committedVersion: Long,
       commit: Commit,
       newChecksumOpt: Option[VersionChecksum],
       preCommitLogSegment: LogSegment,
-      catalogTableOpt: Option[CatalogTable]): Snapshot = {
+      catalogTableOpt: Option[CatalogTable],
+      amtCheckpointOpt: Option[Checkpoint] = None): Snapshot = {
     var previousSnapshot: Snapshot = null
     recordDeltaOperation(this, "delta.log.updateAfterCommit") {
       val updatedSnapshot = withSnapshotLockInterruptibly {
@@ -1455,6 +1478,8 @@ trait SnapshotManagement { self: DeltaLog =>
         val commitCoordinatorOpt = populateCommitCoordinator(
           spark, catalogTableOpt, previousSnapshot
         )
+        val amtCheckpointProviderOpt =
+          amtCheckpointOpt.map(cp => AMTCheckpointProvider.fromCheckpoint(spark, this, cp))
         val segment = getLogSegmentAfterCommit(
           committedVersion,
           newChecksumOpt,
@@ -1462,7 +1487,8 @@ trait SnapshotManagement { self: DeltaLog =>
           commit,
           commitCoordinatorOpt,
           catalogTableOpt,
-          previousSnapshot.checkpointProvider)
+          previousSnapshot.checkpointProvider,
+          amtCheckpointProviderOpt = amtCheckpointProviderOpt)
 
         // This likely implies a list-after-write inconsistency
         if (segment.version < committedVersion) {

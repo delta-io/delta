@@ -19,11 +19,14 @@ package io.delta.flink.sink.sql;
 import static io.delta.flink.sink.sql.DeltaDynamicTableSinkFactory.*;
 
 import io.delta.flink.sink.DeltaSink;
+import io.delta.flink.sink.DeltaSinkConf;
 import io.delta.kernel.internal.util.Preconditions;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.DataStreamSink;
 import org.apache.flink.table.api.ValidationException;
@@ -37,6 +40,7 @@ import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.factories.FactoryUtil;
 import org.apache.flink.table.types.DataType;
 import org.apache.flink.table.types.logical.RowType;
+import org.apache.flink.types.RowKind;
 
 /**
  * Flink {@link DynamicTableSink} implementation that writes data to a Delta table via {@link
@@ -62,7 +66,21 @@ public class DeltaDynamicTableSink implements DynamicTableSink, SupportsPartitio
 
   @Override
   public ChangelogMode getChangelogMode(ChangelogMode requestedMode) {
+    if (getWriteMode() == DeltaSinkConf.WriteMode.UPSERT) {
+      // Use Flink's standard upsert mode: INSERT, UPDATE_AFTER, DELETE. UPDATE_BEFORE is elided
+      // by Flink when the sink declares a primary key.
+      return ChangelogMode.newBuilder()
+          .addContainedKind(RowKind.INSERT)
+          .addContainedKind(RowKind.UPDATE_AFTER)
+          .addContainedKind(RowKind.DELETE)
+          .build();
+    }
     return ChangelogMode.insertOnly();
+  }
+
+  /** Reads {@link DeltaSinkConf#WRITE_MODE} from the options map as a typed enum. */
+  private DeltaSinkConf.WriteMode getWriteMode() {
+    return Configuration.fromMap(options).get(DeltaSinkConf.WRITE_MODE);
   }
 
   @Override
@@ -71,6 +89,18 @@ public class DeltaDynamicTableSink implements DynamicTableSink, SupportsPartitio
 
     Preconditions.checkArgument(
         options.get(FactoryUtil.CONNECTOR.key()).equals(IDENTIFIER), "Target table must be delta");
+
+    DeltaSinkConf.WriteMode writeMode = getWriteMode();
+    // The factory already resolved column names to ordinals when building the options map.
+    // Here we just parse them back into Integers and hand them to DeltaSink.Builder.
+    List<Integer> primaryKeyOrdinals =
+        writeMode == DeltaSinkConf.WriteMode.UPSERT
+            ? Arrays.stream(options.getOrDefault(DeltaSinkConf.PRIMARY_KEY.key(), "").split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .map(Integer::parseInt)
+                .collect(java.util.stream.Collectors.toList())
+            : java.util.Collections.emptyList();
 
     DeltaSink deltaSink;
     if (options.containsKey(TABLE_PATH.key())) {
@@ -82,6 +112,8 @@ public class DeltaDynamicTableSink implements DynamicTableSink, SupportsPartitio
               .withTablePath(options.get(TABLE_PATH.key()))
               .withPartitionColNames(
                   Arrays.asList(options.getOrDefault(PARTITIONS.key(), "").split(",")))
+              .withWriteMode(writeMode)
+              .withPrimaryKey(primaryKeyOrdinals)
               .build();
     } else {
       // Fetch catalog and configs
@@ -97,6 +129,8 @@ public class DeltaDynamicTableSink implements DynamicTableSink, SupportsPartitio
                       "unitycatalog.table_name", tableId.asSummaryString()))
               .withEndpoint(options.get(FlinkUnityCatalogFactory.ENDPOINT.key()))
               .withToken(options.get(FlinkUnityCatalogFactory.TOKEN.key()))
+              .withWriteMode(writeMode)
+              .withPrimaryKey(primaryKeyOrdinals)
               .build();
     }
 

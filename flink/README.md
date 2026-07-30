@@ -4,8 +4,7 @@
 
 The **Delta Flink Connector** enables Apache Flink streaming jobs to write data into **Delta Lake tables**.
 ```aiignore
-Note: this is a private build right now and there will be no product support provided.
-Suggestions and feedbacks are welcome.
+Note: this is a private build right now. Suggestions and feedbacks are welcome.
 ```
 
 ### Supported Flink Versions
@@ -256,18 +255,19 @@ There are two categories of per-table config:
   - Affect runtime behavior and are **not stored** in Delta table metadata.
 
 
-| Key                   | Type,   | Default   | Description                                                                                                            |
-|-----------------------|---------|-----------|------------------------------------------------------------------------------------------------------------------------|
-| checkpoint.frequency  | Double  | 0.0       | Probability [0.0–1.0] to create Delta checkpoint on commit. `0.0` disables checkpoints, `1.0` checkpoints every commit |
-| checksum.enable       | Boolean | true      | Generate checksum files on commit                                                                                      |
-| file_rolling.strategy | String  | size      | size / count                                                                                                           |
-| file_rolling.size     | Integer | 104857600 | Number of bytes per file                                                                                               |
-| file_rolling.count    | Integer |           | Max records per file                                                                                                   |
-| schema_evolution.mode | String  | no        | no → strict, newcolumn → allow adding new columns                                                                      |
+| Key                   | Type,   | Default   | Description                                                                                                                                                                               |
+|-----------------------|---------|-----------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| checkpoint.frequency  | Double  | 0.0       | Probability [0.0–1.0] to create Delta checkpoint on commit. `0.0` disables checkpoints, `1.0` checkpoints every commit                                                                    |
+| checksum.enable       | Boolean | true      | Generate checksum files on commit                                                                                                                                                         |
+| file_rolling.strategy | String  | size      | size / count                                                                                                                                                                              |
+| file_rolling.size     | Integer | 104857600 | Number of bytes per file                                                                                                                                                                  |
+| file_rolling.count    | Integer |           | Max records per file                                                                                                                                                                      |
+| schema_evolution.mode | String  | no        | no → strict, newcolumn → allow adding new columns                                                                                                                                         |
+| credentials.source    | String  | uc        | Storage credential source: `uc` (fetch temporary credentials from Unity Catalog) or `ambient` (fetch nothing; rely on the runtime environment — workload identity, instance profile, etc) |
 
 ---
 
-### 5.3 Default Delta Properties Provided by the Sink
+### Default Delta Properties Provided by the Sink
 
 The sink sets defaults for certain Delta properties, which can be overridden by user configs:
 
@@ -298,20 +298,33 @@ If an unsupported schema change is detected, the sink will fail the job.
 
 ## 7. Security & Credentials
 
+The sink resolves storage credentials based on the per-table `credentials.source` option:
+- `uc` (default): fetch temporary credentials from Unity Catalog (vended and rotated automatically).
+- `ambient`: fetch nothing; rely on the runtime environment (workload identity, instance profile,
+  ADC, or `core-site.xml`) to supply them.
+
 ### Unity Catalog (UC)
 
-When using Unity Catalog:
-- Clients must provide a **Personal Access Token (PAT)**
+This is the default (`credentials.source = uc`). When using Unity Catalog:
+- Clients must provide a **Personal Access Token (PAT)** or **OAuth2 Configuration**
 - UC handles **credential vending**
 - Temporary credentials are managed/rotated automatically by UC
 
-Typical config keys:
-- `unitycatalog.endpoint`
-- `unitycatalog.token`
+Provide exactly one authentication method; both share `unitycatalog.endpoint`:
+
+- **Personal Access Token (PAT)**
+  - `unitycatalog.token`
+- **OAuth2 (client credentials)**
+  - `unitycatalog.oauth.uri`
+  - `unitycatalog.oauth.client_id`
+  - `unitycatalog.oauth.client_secret`
+
+> DataStream API equivalents: `withToken(...)` for PAT, or `withOauthUri(...)` /
+> `withOauthClientId(...)` / `withOauthClientSecret(...)` for OAuth2.
 
 ### Path-based Access (Without UC)
 
-When using path-based access without UC support:
+When using path-based access without UC support, set `credentials.source = ambient`. Then:
 - Users can configure static S3 credentials in:
 
 ```
@@ -338,6 +351,23 @@ Example:
     <value>https://s3.amazonaws.com</value>
   </property>
 </configuration>
+```
+
+Alternatively, the same `fs.*` settings can be supplied directly as **per-table options**, without
+editing `core-site.xml`. They are forwarded to the engine's Hadoop `Configuration` and override the
+connector's built-in file-system defaults (see [Per-table Configuration](#per-table-configuration)).
+
+```sql
+CREATE TEMPORARY TABLE sink (
+  id BIGINT,
+  dt STRING
+) WITH (
+  'connector' = 'delta',
+  'table_path' = '<path>',
+  'fs.s3a.access.key' = 'YOUR_ACCESS_KEY',
+  'fs.s3a.secret.key' = 'YOUR_SECRET_KEY',
+  'fs.s3a.endpoint' = 'https://s3.amazonaws.com'
+);
 ```
 
 ---

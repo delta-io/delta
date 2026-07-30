@@ -124,6 +124,13 @@ abstract class DeltaParquetFileFormatBase(
   }
 
   /**
+   * prepareSchemaForWrite converts a logical schema to the physical column mapping layout used when
+   * writing parquet data files. This is an identity transform for non-column-mapped tables.
+   */
+  def prepareSchemaForWrite(inputSchema: StructType): StructType =
+    DeltaColumnMapping.createPhysicalSchema(inputSchema, referenceSchema, columnMappingMode)
+
+  /**
    * Prepares filters so that they can be pushed down into the Parquet reader.
    *
    * If column mapping is enabled, then logical column names in the filters will be replaced with

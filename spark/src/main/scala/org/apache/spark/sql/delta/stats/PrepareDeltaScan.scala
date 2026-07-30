@@ -293,8 +293,20 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
         fileIndex: FileIndexType): Boolean = {
       val partitionColumns = getPartitionColumns(fileIndex)
       import DeltaTableUtils._
-      filters.forall(expr => !containsSubquery(expr) &&
-        isPredicatePartitionColumnsOnly(expr, partitionColumns, spark))
+      // Guards the LIMIT file-pruning path: when this returns true, the scan applies filters
+      // during file listing and caps the result at ~limit before the residual Filter runs at
+      // execution. This is only safe for deterministic partition filters -- a non-deterministic
+      // predicate like rand() > 0.5 references no columns, so isPredicatePartitionColumnsOnly is
+      // vacuously true for it, letting it slip onto this path and get evaluated twice (once per
+      // file, once per row), double-filtering the data. We exclude non-deterministic predicates
+      // here to avoid that.
+      val skipNonDeterministicFilters =
+        spark.conf.get(DeltaSQLConf.DELTA_LIMIT_PUSHDOWN_SKIP_NON_DETERMINISTIC_FILTERS)
+      filters.forall { expr =>
+        !containsSubquery(expr) &&
+          (!skipNonDeterministicFilters || expr.deterministic) &&
+          isPredicatePartitionColumnsOnly(expr, partitionColumns, spark)
+      }
     }
 
     protected def limitPushdownEnabled(plan: LogicalPlan): Boolean

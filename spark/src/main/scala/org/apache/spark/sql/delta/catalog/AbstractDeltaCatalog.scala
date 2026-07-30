@@ -55,6 +55,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchNamespaceException, NoSuchTableException, UnresolvedAttribute, UnresolvedFieldName, UnresolvedFieldPosition}
 import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable, CatalogTableType, CatalogUtils, SessionCatalog}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, QualifiedColType, QualifiedColTypeShims, SyncIdentity}
+import org.apache.spark.sql.catalyst.util.{GeneratedColumn => SparkGeneratedColumn}
 import org.apache.spark.sql.connector.catalog.{DelegatingCatalogExtension, Identifier, StagedTable, StagingTableCatalog, SupportsWrite, Table, TableCapability, TableCatalog, TableCatalogCapability, TableChange, V1Table}
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.catalog.TableChange._
@@ -63,7 +64,7 @@ import org.apache.spark.sql.connector.write.{LogicalWriteInfo, SupportsTruncate,
 import org.apache.spark.sql.execution.datasources.{DataSource, PartitioningUtils}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.InsertableRelation
-import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
+import org.apache.spark.sql.types.{IntegerType, MetadataBuilder, StructField, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 
@@ -123,11 +124,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
   override def capabilities(): util.Set[TableCatalogCapability] = {
     val capabilities = new util.HashSet[TableCatalogCapability](super.capabilities())
     capabilities.add(TableCatalogCapability.SUPPORT_COLUMN_DEFAULT_VALUE)
-    // Lets Spark's SQL parser route `CREATE TABLE t (c BIGINT GENERATED ALWAYS AS IDENTITY ...)`
-    // through this catalog (Spark's `IdentityColumn.validateIdentityColumn` otherwise refuses
-    // without this capability). Delta translates Spark's identity column metadata into Delta's
-    // own keys in `createDeltaTable`.
-    capabilities.add(TableCatalogCapability.SUPPORTS_CREATE_TABLE_WITH_IDENTITY_COLUMNS)
+    capabilities.add(TableCatalogCapability.SUPPORTS_CREATE_TABLE_WITH_GENERATED_COLUMNS)
     capabilities
   }
 
@@ -146,6 +143,23 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       spark.conf.set(
         DeltaSQLConf.DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40.key, "true")
     }
+  }
+
+  /** Converts Spark's generated-column metadata key into the key persisted by Delta. */
+  private def convertGeneratedColumnMetadata(schema: StructType): StructType = {
+    StructType(schema.fields.map { field =>
+      if (field.metadata.contains(SparkGeneratedColumn.GENERATION_EXPRESSION_METADATA_KEY)) {
+        val expression = field.metadata.getString(
+          SparkGeneratedColumn.GENERATION_EXPRESSION_METADATA_KEY)
+        field.copy(metadata = new MetadataBuilder()
+          .withMetadata(field.metadata)
+          .remove(SparkGeneratedColumn.GENERATION_EXPRESSION_METADATA_KEY)
+          .putString(DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY, expression)
+          .build())
+      } else {
+        field
+      }
+    })
   }
 
   /**
@@ -196,6 +210,10 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       case TableCatalog.PROP_COMMENT => false
       case TableCatalog.PROP_OWNER => false
       case TableCatalog.PROP_EXTERNAL => false
+      // `is_managed_location` is a reserved v2 catalog property used only to signal that the
+      // table location is system-generated (see `isManagedLocation` below). It is not a real
+      // Delta table property, so filter it out to avoid leaking it into the table metadata.
+      case TableCatalog.PROP_IS_MANAGED_LOCATION => false
       case "path" => false
       case "option.path" => false
       case _ => true
@@ -208,7 +226,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         throw DeltaErrors.identityColumnPartitionNotSupported(colName)
       }
     }
-    var newSchema = schema
+    var newSchema = convertGeneratedColumnMetadata(schema)
     var newPartitionColumns = partitionColumns
     var newBucketSpec = maybeBucketSpec
     val conf = spark.sessionState.conf
@@ -383,13 +401,40 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         .map(_.loadTable(ident))
         .getOrElse(super.loadTable(ident))
 
-      ServerSidePlannedTable.tryCreate(spark, ident, table, isUnityCatalog).foreach { sspt =>
-        return sspt
-      }
-
       table match {
         case v1: V1Table if DeltaTableUtils.isDeltaTable(v1.catalogTable) =>
-          loadCatalogTable(ident, v1.catalogTable)
+          // Server-side planning only applies to Delta tables. Attempt it here, inside the
+          // Delta-`V1Table` branch, rather than on every loaded table: a non-Delta table or a
+          // catalog-specific shape (e.g. Unity Catalog's `MetadataTable` wrapping a `ViewInfo`
+          // for a metric view) must flow through the `case o => o` fallthrough unchanged so the
+          // resolver can route it correctly. Capturing those in `ServerSidePlannedTable.tryCreate`
+          // would short-circuit view loading.
+          //
+          // Gate on the cheap config flag so the SSP-off path stays the lazy `loadCatalogTable`.
+          //
+          // SSP is the fallback for tables with *no* vended credentials, so for the case it
+          // targets -- a credential-less UC table -- we must not force a `_delta_log` read while
+          // deciding to use it. Both inputs to `tryCreate` are therefore sourced from the raw
+          // `V1Table`, which needs no such read:
+          //   - credentials: read from the `V1Table`'s `option.fs.*` properties. (A `DeltaTableV2`
+          //     both strips `fs.*` and forces `initialSnapshot` via `properties()`.)
+          //   - schema: use the `V1Table` schema, which the delegate (UC) already populates.
+          //     Only fall back to `DeltaTableV2.schema()` when it is empty -- an HMS Delta table,
+          //     whose schema lives solely in the log, so the log is the last-resort schema source
+          //     and the read is unavoidable rather than a bet on credentials being present. (This
+          //     HMS case has credentials in practice, so the read succeeds; the "no `_delta_log`
+          //     read" guarantee holds for the credential-less UC case, not universally.)
+          if (ServerSidePlannedTable.isEnabled(spark)) {
+            val deltaTable = loadCatalogTable(ident, v1.catalogTable)
+            val tableSchema = if (v1.schema.nonEmpty) v1.schema else deltaTable.schema()
+            ServerSidePlannedTable
+              .tryCreate(spark, ident, deltaTable, isUnityCatalog,
+                hasCredentials = ServerSidePlannedTable.hasCredentials(v1),
+                tableSchema = tableSchema)
+              .getOrElse(deltaTable)
+          } else {
+            loadCatalogTable(ident, v1.catalogTable)
+          }
         case o => o
       }
     } catch {
@@ -493,6 +538,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
   protected def loadPathTable(ident: Identifier): Table = {
     DeltaTableV2(spark, new Path(ident.name()))
   }
+
 
   private def getProvider(properties: util.Map[String, String]): String = {
     Option(properties.get("provider"))

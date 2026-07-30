@@ -34,11 +34,15 @@ public class UnsupportedProtocolVersionException extends KernelException {
   }
 
   private final String tablePath;
-  private final int version;
+  private final int minReaderVersion;
+  private final int minWriterVersion;
   private final ProtocolVersionType versionType;
 
   public UnsupportedProtocolVersionException(
-      String tablePath, int version, ProtocolVersionType versionType) {
+      String tablePath,
+      int minReaderVersion,
+      int minWriterVersion,
+      ProtocolVersionType versionType) {
     super(
         String.format(
             "Unsupported Delta protocol %s version: table `%s` requires %s version %s "
@@ -46,9 +50,10 @@ public class UnsupportedProtocolVersionException extends KernelException {
             versionType.name().toLowerCase(),
             tablePath,
             versionType.name().toLowerCase(),
-            version));
+            versionType == ProtocolVersionType.READER ? minReaderVersion : minWriterVersion));
     this.tablePath = tablePath;
-    this.version = version;
+    this.minReaderVersion = minReaderVersion;
+    this.minWriterVersion = minWriterVersion;
     this.versionType = versionType;
   }
 
@@ -57,12 +62,22 @@ public class UnsupportedProtocolVersionException extends KernelException {
     return tablePath;
   }
 
-  /** @return the unsupported protocol version */
-  public int getVersion() {
-    return version;
+  /** @return the table's required minimum reader protocol version */
+  public int getMinReaderVersion() {
+    return minReaderVersion;
   }
 
-  /** @return the type of protocol version (READER or WRITER) */
+  /** @return the table's required minimum writer protocol version */
+  public int getMinWriterVersion() {
+    return minWriterVersion;
+  }
+
+  /** @return the unsupported protocol version */
+  public int getVersion() {
+    return versionType == ProtocolVersionType.READER ? minReaderVersion : minWriterVersion;
+  }
+
+  /** @return the type of protocol version that is unsupported */
   public ProtocolVersionType getVersionType() {
     return versionType;
   }

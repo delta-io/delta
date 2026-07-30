@@ -28,7 +28,6 @@ import io.delta.storage.commit.{Commit, CommitFailedException, TableIdentifier}
 import io.delta.storage.commit.actions.{AbstractDomainMetadata, AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.exceptions.NoSuchTableException
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
-import io.unitycatalog.client.auth.TokenProvider
 
 import org.apache.hadoop.fs.{FileStatus, Path}
 import org.apache.http.HttpStatus
@@ -118,15 +117,16 @@ class UCDeltaTokenBasedRestClientSuite
     exchange.getResponseBody.close()
   }
 
-  private def tokenProvider(): TokenProvider = new TokenProvider {
-    override def accessToken(): String = "mock-token"
-    override def initialize(configs: java.util.Map[String, String]): Unit = {}
-    override def configs(): java.util.Map[String, String] = Collections.emptyMap()
+  private def clientConfig: java.util.Map[String, String] = {
+    val config = new java.util.LinkedHashMap[String, String]()
+    config.put("uri", serverUri)
+    config.put("auth.type", "static")
+    config.put("auth.token", "mock-token")
+    config
   }
 
   private def withClient(fn: UCDeltaTokenBasedRestClient => Unit): Unit = {
-    val client = new UCDeltaTokenBasedRestClient(
-      serverUri, tokenProvider(), Collections.emptyMap())
+    val client = new UCDeltaTokenBasedRestClient(clientConfig, null)
     try fn(client) finally client.close()
   }
 
@@ -188,13 +188,13 @@ class UCDeltaTokenBasedRestClientSuite
 
   test("constructor validates required parameters") {
     intercept[NullPointerException] {
-      new UCDeltaTokenBasedRestClient(null, tokenProvider(), Collections.emptyMap())
+      new UCDeltaTokenBasedRestClient(null, null)
     }
-    intercept[NullPointerException] {
-      new UCDeltaTokenBasedRestClient(serverUri, null, Collections.emptyMap())
-    }
-    intercept[NullPointerException] {
-      new UCDeltaTokenBasedRestClient(serverUri, tokenProvider(), null)
+    intercept[IllegalArgumentException] {
+      val noUri = new java.util.LinkedHashMap[String, String]()
+      noUri.put("auth.type", "static")
+      noUri.put("auth.token", "mock-token")
+      new UCDeltaTokenBasedRestClient(noUri, null)
     }
   }
 
@@ -879,16 +879,30 @@ class UCDeltaTokenBasedRestClientSuite
       new UCClient.ColumnDef("name", "STRING", "string",
         """{"name":"name","type":"string","nullable":true,"metadata":{}}""", true, 1))
     val props = new java.util.HashMap[String, String]()
-    props.put("delta.minReaderVersion", "1")
+    props.put("foo", "bar")
+    props.put("delta.appendOnly", "true")
 
     withClient { c =>
-      c.finalizeCreate("my_table", testCatalog, testSchema, "s3://bucket/tbl", columns, props)
+      c.finalizeCreate(
+        "my_table",
+        testCatalog,
+        testSchema,
+        "s3://bucket/tbl",
+        columns,
+        protocol(3, 7, Collections.singleton("deletionVectors"), Collections.emptySet()),
+        props,
+        0L,
+        Collections.emptyList[AbstractDomainMetadata]())
     }
 
     val json = objectMapper.readTree(captured)
     assert(json.get("name").asText() === "my_table")
     assert(json.get("location").asText() === "s3://bucket/tbl")
-    assert(json.get("properties").get("delta.minReaderVersion").asText() === "1")
+    // Protocol is sent as a structured field, not flattened into properties.
+    assert(json.get("protocol").get("min-reader-version").asInt() === 3)
+    assert(json.get("protocol").get("min-writer-version").asInt() === 7)
+    assert(json.get("properties").get("foo").asText() === "bar")
+    assert(json.get("properties").get("delta.appendOnly").asText() === "true")
 
     val fields = json.get("columns").get("fields")
     assert(fields.size() === 2)
@@ -898,6 +912,85 @@ class UCDeltaTokenBasedRestClientSuite
     assert(fields.get(1).get("nullable").asBoolean() === true)
   }
 
+  test("finalizeCreate sends reader and writer features in the correct structured lists") {
+    var captured: String = null
+    deltaHandler = (exchange, body) => {
+      captured = body
+      sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+    }
+
+    withClient { c =>
+      c.finalizeCreate(
+        "t",
+        testCatalog,
+        testSchema,
+        "s3://bucket/tbl",
+        Collections.emptyList(),
+        protocol(
+          3,
+          7,
+          Collections.singleton("readerOnlyFeature"),
+          Collections.singleton("writerOnlyFeature")),
+        Collections.emptyMap(),
+        0L,
+        Collections.emptyList[AbstractDomainMetadata]())
+    }
+
+    val proto = objectMapper.readTree(captured).get("protocol")
+    val readerFeatures = proto.get("reader-features").elements().asScala.map(_.asText()).toSet
+    val writerFeatures = proto.get("writer-features").elements().asScala.map(_.asText()).toSet
+    assert(readerFeatures === Set("readerOnlyFeature"))
+    assert(writerFeatures === Set("writerOnlyFeature"))
+  }
+
+  test("finalizeCreate sends structured last-commit-timestamp and clustering domain metadata") {
+    var captured: String = null
+    deltaHandler = (exchange, body) => {
+      captured = body
+      sendJson(exchange, HttpStatus.SC_OK, loadTableJson())
+    }
+
+    withClient { c =>
+      c.finalizeCreate(
+        "t",
+        testCatalog,
+        testSchema,
+        "s3://bucket/tbl",
+        Collections.emptyList(),
+        protocol(3, 7),
+        Collections.emptyMap(),
+        1234L,
+        java.util.List.of(dm("delta.clustering", """{"clusteringColumns":[["c1"],["a","b"]]}""")))
+    }
+
+    val json = objectMapper.readTree(captured)
+    assert(json.get("last-commit-timestamp-ms").asLong() === 1234L)
+    val clusteringColumns =
+      json.get("domain-metadata").get("delta.clustering").get("clusteringColumns")
+    assert(clusteringColumns.get(0).get(0).asText() === "c1")
+    assert(clusteringColumns.get(1).get(0).asText() === "a")
+    assert(clusteringColumns.get(1).get(1).asText() === "b")
+  }
+
+  test("finalizeCreate wraps unsupported domain metadata as non-retryable CommitFailedException") {
+    withClient { c =>
+      val e = intercept[CommitFailedException] {
+        c.finalizeCreate(
+          "t",
+          testCatalog,
+          testSchema,
+          "s3://bucket/tbl",
+          Collections.emptyList(),
+          protocol(3, 7),
+          Collections.emptyMap(),
+          0L,
+          java.util.List.of(dm("delta.unknownDomain", "{}")))
+      }
+      assert(!e.getRetryable)
+      assert(!e.getConflict)
+    }
+  }
+
   test("finalizeCreate throws CommitFailedException on server error") {
     deltaHandler = (exchange, _) =>
       sendJson(exchange, HttpStatus.SC_INTERNAL_SERVER_ERROR, """{"error":"fail"}""")
@@ -905,7 +998,8 @@ class UCDeltaTokenBasedRestClientSuite
     withClient { c =>
       val e = intercept[CommitFailedException] {
         c.finalizeCreate("t", testCatalog, testSchema, "s3://b/t",
-          Collections.emptyList(), Collections.emptyMap())
+          Collections.emptyList(), protocol(3, 7), Collections.emptyMap(),
+          0L, Collections.emptyList[AbstractDomainMetadata]())
       }
       assert(e.getRetryable)
     }
@@ -914,10 +1008,14 @@ class UCDeltaTokenBasedRestClientSuite
   test("finalizeCreate validates required parameters") {
     withClient { c =>
       intercept[NullPointerException] {
-        c.finalizeCreate(null, "c", "s", "loc", Collections.emptyList(), Collections.emptyMap())
+        c.finalizeCreate(
+          null, "c", "s", "loc", Collections.emptyList(), protocol(3, 7), Collections.emptyMap(),
+          0L, Collections.emptyList[AbstractDomainMetadata]())
       }
       intercept[NullPointerException] {
-        c.finalizeCreate("t", null, "s", "loc", Collections.emptyList(), Collections.emptyMap())
+        c.finalizeCreate(
+          "t", null, "s", "loc", Collections.emptyList(), protocol(3, 7), Collections.emptyMap(),
+          0L, Collections.emptyList[AbstractDomainMetadata]())
       }
     }
   }
@@ -925,8 +1023,7 @@ class UCDeltaTokenBasedRestClientSuite
   // --------------- close / ensureOpen ---------------
 
   test("operations after close throw IllegalStateException") {
-    val client = new UCDeltaTokenBasedRestClient(
-      serverUri, tokenProvider(), Collections.emptyMap())
+    val client = new UCDeltaTokenBasedRestClient(clientConfig, null)
     client.close()
     intercept[IllegalStateException] { client.getMetastoreId() }
     intercept[IllegalStateException] {

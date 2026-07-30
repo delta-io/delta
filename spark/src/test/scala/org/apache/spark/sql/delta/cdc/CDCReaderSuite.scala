@@ -103,6 +103,7 @@ class CDCReaderSuite
 
   def createCDFDF(start: Long, end: Long, commitVersion: Long, changeType: String): DataFrame = {
     spark.range(start, end)
+      .withColumn("v", lit(null))
       .withColumn(CDC_TYPE_COLUMN_NAME, lit(changeType))
       .withColumn(CDC_COMMIT_VERSION, lit(commitVersion))
   }
@@ -421,12 +422,15 @@ class CDCReaderSuite
 
   for (cdfEnabled <- BOOLEAN_DOMAIN)
   test(s"Coarse-grained CDF, cdfEnabled=$cdfEnabled") {
+    // The test table has a NullType column (v) that is read back via CDF.
+    assume(DeltaTestUtilsBase.nullTypeColumnsSupported)
     withSQLConf(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> cdfEnabled.toString) {
       withTempDir { dir =>
         val log = DeltaLog.forTable(spark, dir.getAbsolutePath)
 
         // commit 0: 2 inserts
         spark.range(start = 0, end = 2, step = 1, numPartitions = 1)
+          .withColumn("v", lit(null))
           .write.format("delta").save(dir.getAbsolutePath)
         var df = CDCReader.changesToBatchDF(
           log, 0, 1, spark, catalogTableOpt = None, useCoarseGrainedCDC = true)

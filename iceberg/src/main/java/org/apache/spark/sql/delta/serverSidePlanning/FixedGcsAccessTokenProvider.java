@@ -17,6 +17,8 @@
 package org.apache.spark.sql.delta.serverSidePlanning;
 
 import com.google.cloud.hadoop.util.AccessTokenProvider;
+import java.time.Instant;
+import java.util.logging.Logger;
 import org.apache.hadoop.conf.Configuration;
 
 /**
@@ -31,6 +33,9 @@ import org.apache.hadoop.conf.Configuration;
  * guarantee that the token will be valid for the entire duration of the query. If the actual token expires earlier, queries will fail.
  */
 public class FixedGcsAccessTokenProvider implements AccessTokenProvider {
+
+  private static final Logger LOG =
+      Logger.getLogger(FixedGcsAccessTokenProvider.class.getName());
 
   private static final String CONFIG_TOKEN = "fs.gs.auth.access.token";
   private static final String CONFIG_EXPIRATION_MS = "fs.gs.auth.access.token.expiration.ms";
@@ -52,7 +57,8 @@ public class FixedGcsAccessTokenProvider implements AccessTokenProvider {
       try {
         expirationMs = Long.parseLong(expirationStr);
       } catch (NumberFormatException e) {
-        // If parsing fails, use fallback
+        LOG.warning("Invalid " + CONFIG_EXPIRATION_MS + " value: " + expirationStr
+            + ", using fallback expiration");
         expirationMs = System.currentTimeMillis() + FALLBACK_EXPIRATION_MS;
       }
     } else {
@@ -60,7 +66,7 @@ public class FixedGcsAccessTokenProvider implements AccessTokenProvider {
       expirationMs = System.currentTimeMillis() + FALLBACK_EXPIRATION_MS;
     }
 
-    return new AccessTokenProvider.AccessToken(token, expirationMs);
+    return new AccessTokenProvider.AccessToken(token, Instant.ofEpochMilli(expirationMs));
   }
 
   @Override

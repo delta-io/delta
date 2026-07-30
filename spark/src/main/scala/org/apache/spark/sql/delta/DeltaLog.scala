@@ -36,7 +36,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeLogFileIndex}
-import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider}
+import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider, ThrottledEventLogger}
 import org.apache.spark.sql.delta.redirect.RedirectFeature
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources._
@@ -366,6 +366,43 @@ class DeltaLog private(
     }
   }
 
+  /**
+   * Lazily get all commits starting from "startVersion" (inclusive) as [[SingleCommit]]
+   * handles, without exposing the underlying log files. If startVersion doesn't exist, return an
+   * empty Iterator. This is the streaming counterpart of [[getChanges]]
+   *
+   * Callers are encouraged to use the other override which takes the endVersion if available to
+   * avoid I/O and improve performance of this method.
+   */
+  private[sql] def getChangesIterator(
+      startVersion: Long,
+      catalogTableOpt: Option[CatalogTable] = None,
+      failOnDataLoss: Boolean = false): Iterator[SingleCommit] =
+    getChangeLogFiles(startVersion, catalogTableOpt, failOnDataLoss).map {
+      case (version, status) => SingleCommit(this, version, status)
+    }
+
+  private[sql] def getChangesIterator(
+      startVersion: Long,
+      endVersion: Long,
+      catalogTableOpt: Option[CatalogTable],
+      failOnDataLoss: Boolean): Iterator[SingleCommit] =
+    getChangeLogFiles(startVersion, endVersion, catalogTableOpt, failOnDataLoss).map {
+      case (version, status) => SingleCommit(this, version, status)
+    }
+
+  /**
+   * Get access to all commit log files over [startVersion, endVersion] (both inclusive) via
+   * [[FileStatus]].
+   *
+   * NOTE: This method exposes the log's raw [[FileStatus]]es and will be removed in the future. New
+   * callers should use [[getChangesIterator]] instead, which returns [[SingleCommit]] handles and
+   * keeps the log's physical layout internal (a prerequisite for the Adaptive Metadata Tree).
+   */
+  @deprecated(
+    "This method exposes the log's raw file statuses and will be removed in the " +
+    "future. Use getChanges and variants instead"
+  )
   private[sql] def getChangeLogFiles(
       startVersion: Long,
       endVersion: Long,
@@ -400,7 +437,15 @@ class DeltaLog private(
    * If `startVersion` doesn't exist, return an empty Iterator.
    * Callers are encouraged to use the other override which takes the endVersion if available to
    * avoid I/O and improve performance of this method.
+   *
+   * NOTE: This method exposes the log's raw [[FileStatus]]es and will be removed in the future. New
+   * callers should use [[getChangesIterator]] instead, which returns [[SingleCommit]] handles and
+   * keeps the log's physical layout internal (a prerequisite for the Adaptive Metadata Tree).
    */
+  @deprecated(
+    "This method exposes the log's raw file statuses and will be removed in the " +
+    "future. Use getChanges and variants instead"
+  )
   def getChangeLogFiles(
       startVersion: Long,
       catalogTableOpt: Option[CatalogTable] = None,
@@ -409,12 +454,44 @@ class DeltaLog private(
       this, catalogTableOpt, startVersion)
     // Subtract 1 to ensure that we have the same check for the inclusive startVersion
     var lastSeenVersion = startVersion - 1
-    deltasWithVersion.map { case (status, version) =>
+    val result = deltasWithVersion.map { case (status, version) =>
       if (failOnDataLoss && version > lastSeenVersion + 1) {
         throw DeltaErrors.failOnDataLossException(lastSeenVersion + 1, version)
       }
       lastSeenVersion = version
       (version, status)
+    }
+
+    val conf = spark.sessionState.conf
+    val logGaps = conf.getConf(DeltaSQLConf.DELTA_GET_CHANGE_LOG_FILES_LOG_GAPS)
+    val failOnGap =
+      conf.getConf(DeltaSQLConf.DELTA_GET_CHANGE_LOG_FILES_FAIL_ON_GAPS_IN_TESTS) &&
+        DeltaUtils.isTesting
+    if (!logGaps && !failOnGap) {
+      result
+    } else {
+      // Per-call cap so a single iteration cannot emit more than 2 gap events even if the
+      // underlying log has many gaps; the throttler's lifetime is tied to this iterator.
+      val gapEventLogger = new ThrottledEventLogger(maxEventsToLog = 2)
+      new ContiguousVersionIterator[(Long, FileStatus)](
+        underlying = result,
+        getVersionFromItem = _._1,
+        treatGapAsFatal = failOnGap,
+        logGap = if (logGaps) {
+          gap => gapEventLogger.recordThrottledDeltaEvent(
+            this,
+            "delta.getChangeLogFiles.versionGap",
+            data = Map(
+              "startVersion" -> startVersion,
+              "prevVersion" -> gap.prevVersion,
+              "prevFileName" -> gap.prevItem._2.getPath.getName,
+              "prevModificationTime" -> gap.prevItem._2.getModificationTime,
+              "nextVersion" -> gap.nextVersion,
+              "nextFileName" -> gap.nextItem._2.getPath.getName,
+              "nextModificationTime" -> gap.nextItem._2.getModificationTime))
+        } else {
+          _ => ()
+        })
     }
   }
 
@@ -685,7 +762,9 @@ class DeltaLog private(
       snapshot: SnapshotDescriptor,
       fileIndex: TahoeFileIndex,
       bucketSpec: Option[BucketSpec],
-      dropNullTypeColumnsFromSchema: Boolean = true): HadoopFsRelation = {
+      dropNullTypeColumnsFromSchema: Boolean = spark.conf
+        .get(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS)
+    ): HadoopFsRelation = {
     val dataSchema = if (dropNullTypeColumnsFromSchema) {
       SchemaUtils.dropNullTypeColumns(snapshot.metadata.schema)
     } else {
