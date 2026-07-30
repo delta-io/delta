@@ -2661,7 +2661,7 @@ For example, given the following data schema:
 |    |-- b: struct
 |    |    |-- c: long
 |-- d: struct
-     |-- e: string collate ICU.en_US
+     |-- e: string collate en_US
 ```
 
 Statistics could be stored with the following schema:
@@ -2800,18 +2800,19 @@ Version | Optional version string, which may contain dots. Collations without a 
 
 #### Specifying collations in the table schema
 
-Collations can be specified for string struct fields, map values, and array elements. Map keys must use UTF-8 binary collation. Collations are stored under the `__COLLATIONS` key in the metadata of the nearest ancestor [Struct Field](#struct-field). Nested maps and arrays are encoded using the same path convention as IDs in [IcebergCompatV2](#writer-requirements-for-icebergcompatv2). Collation identifiers in the table schema are stored without a version.
+Collations can be specified for any string type in a schema. This includes string fields, the key and value types of maps, and the element type of arrays. Collations are stored under the `__COLLATIONS` key in the metadata of the nearest ancestor [Struct Field](#struct-field). Nested maps and arrays are encoded using the same path convention as IDs in [IcebergCompatV2](#writer-requirements-for-icebergcompatv2). Collation identifiers in the table schema are stored without a version.
 
 This example shows how collations are stored in the schema. Irrelevant fields have been omitted.
 
 Example schema:
 
 ```
-|-- col1: string
+|-- col1: string collate de_DE
 |-- col2: array
 |       |-- elementType: map
-|                      |-- keyType: string
-|                      |-- valueType: string
+|                      |-- keyType: string collate en_US
+|                      |-- valueType: struct
+|                                   |-- f1: string collate de_DE
 ```
 
 Schema with collation information:
@@ -2836,12 +2837,25 @@ Schema with collation information:
         "elementType": {
           "type": "map",
           "keyType": "string",
-          "valueType": "string"
+          "valueType": {
+            "type": "struct",
+            "fields": [
+              {
+                "name": "f1",
+                "type": "string",
+                "metadata": {
+                  "__COLLATIONS": {
+                    "f1": "ICU.de_DE"
+                  }
+                }
+              }
+            ]
+          }
         }
       },
       "metadata": {
         "__COLLATIONS": {
-          "col2.element.value": "ICU.en_US"
+          "col2.element.key": "ICU.en_US"
         }
       }
     }

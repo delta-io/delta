@@ -63,18 +63,19 @@ Version | Version string. Is allowed to contain dots. This part is optional. Col
 
 #### Specifying collations in the table schema
 
-Collations can be specified for string struct fields, map values, and array elements. Map keys must use UTF-8 binary collation. Collations are stored in the `__COLLATIONS` key of the metadata of the nearest ancestor [StructField](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#struct-field) of the Delta table schema. Nested maps and arrays are encoded the same way as ids in [IcebergCompatV2](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#writer-requirements-for-icebergcompatv2). Collation identifiers are stored without a version because the version of a collation is not enforced for reading.
+Collations can be specified for any string type in a schema. This includes string fields, the key and value types of maps, and the element type of arrays. Collations are stored in the `__COLLATIONS` key of the metadata of the nearest ancestor [StructField](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#struct-field) of the Delta table schema. Nested maps and arrays are encoded the same way as ids in [IcebergCompatV2](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#writer-requirements-for-icebergcompatv2). Collation identifiers are stored without a version because the version of a collation is not enforced for reading.
 
 This example provides an overview of how collations are stored in the schema. Note that irrelevant fields have been stripped.
 
 Example schema
 
 ```
-|-- col1: string
+|-- col1: string collate de_DE
 |-- col2: array
 |       |-- elementType: map
-|                      |-- keyType: string
-|                      |-- valueType: string
+|                      |-- keyType: string collate en_US
+|                      |-- valueType: struct
+|                                   |-- f1: string collate de_DE
 ```
 
 Schema with collation information
@@ -99,12 +100,25 @@ Schema with collation information
             "elementType":{
                "type":"map",
                "keyType":"string",
-               "valueType":"string"
+               "valueType":{
+                  "type":"struct",
+                  "fields":[
+                     {
+                        "name":"f1",
+                        "type":"string",
+                        "metadata":{
+                           "__COLLATIONS":{
+                              "f1":"ICU.de_DE"
+                           }
+                        }
+                     }
+                  ]
+               }
             }
          },
          "metadata":{
             "__COLLATIONS":{
-               "col2.element.value":"ICU.en_US"
+               "col2.element.key":"ICU.en_US"
             }
          }
       }
@@ -150,7 +164,7 @@ For example, given the following data schema:
 |    |-- b: struct
 |    |    |-- c: long
 |-- d: struct
-     |-- e: string collate ICU.en_US
+     |-- e: string collate en_US
 ```
 
 Statistics could be stored with the following schema:

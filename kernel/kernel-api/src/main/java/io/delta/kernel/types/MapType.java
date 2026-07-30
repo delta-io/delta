@@ -45,8 +45,7 @@ public class MapType extends DataType {
   }
 
   /**
-   * The Delta protocol does not support collated string types as map keys. Only StringType with the
-   * default UTF8_BINARY collation is allowed.
+   * Delta Kernel rejects a non-UTF8_BINARY {@link StringType} used directly as a map key.
    *
    * @see <a
    *     href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#specifying-collations-in-the-table-schema">
