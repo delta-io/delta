@@ -1477,8 +1477,10 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .internal()
       .doc("""
           |When enabled, the Adaptive Metadata Tree `backReference` field is stripped from
-          |the add/remove structs before a classic/V2 checkpoint is written, so that non-AMT
-          |checkpoints stay byte-identical to before the AMT back-reference feature.
+          |the `remove` struct before a classic/V2 checkpoint is written, so that non-AMT
+          |checkpoints stay byte-identical to before the AMT back-reference feature. The `add`
+          |struct is rebuilt from an explicit column projection that never lists `backReference`,
+          |so it is excluded independently of this flag.
           |""".stripMargin)
       .booleanConf
       .createWithDefault(true)
@@ -2937,6 +2939,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELETION_VECTOR_PROPAGATE_CLOSE_FAILURE =
+    buildConf("deletionVectors.propagateCloseFailure")
+      .internal()
+      .doc("When true, a failed close() of a deletion vector writer propagates and aborts the " +
+        "write, instead of being swallowed. Swallowing it can commit a descriptor for a file " +
+        "that was never durably written, corrupting the table. Kill-switch for the fix; leave on.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELETION_VECTOR_PACKING_TARGET_SIZE =
     buildConf("deletionVectors.packing.targetSize")
       .internal()
@@ -3290,6 +3301,18 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         "across a mid-range protocol upgrade. When false, the client keeps the legacy " +
         "single-head-protocol behavior. Gates the non-CDF streaming path independently from the " +
         "CDF path controlled by spark.sql.delta.sharing.cdfEnableHistoricalProtocol.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_SHARING_CDF_ENABLE_HISTORICAL_PROTOCOL =
+    buildConf("spark.sql.delta.sharing.cdfEnableHistoricalProtocol")
+      .doc("When true, a Delta Sharing CDF query (queryTableChanges, both batch and streaming) " +
+        "requests includeHistoricalProtocol so the server streams a Protocol for each protocol " +
+        "change inside the version range, keeping the locally constructed delta log's protocol " +
+        "accurate across a mid-range protocol upgrade. When false, the client keeps the legacy " +
+        "single-head-protocol behavior. Gates the CDF path independently from the non-CDF " +
+        "streaming path controlled by spark.sql.delta.sharing.streamingEnableHistoricalProtocol.")
       .internal()
       .booleanConf
       .createWithDefault(false)

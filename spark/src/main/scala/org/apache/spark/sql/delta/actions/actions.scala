@@ -30,6 +30,7 @@ import scala.util.control.NonFatal
 import com.databricks.spark.util.TagDefinition
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.ClassicColumnConversions._
+import org.apache.spark.sql.delta.amt.AMTUtils
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.metering.{DeltaLogging, DeltaLoggingProvider}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -1128,11 +1129,12 @@ object AddFile {
 }
 
 /**
- * A back reference points a file action at the exact location of its source entry inside a
+ * A back reference points a file action at the exact location of its source entry inside an
  * Adaptive Metadata Tree (AMT) leaf manifest.
  *
- * @param manifest The canonical path of the AMT leaf manifest that held the source entry (the leaf
- *                 DATA_MANIFEST `location`).
+ * @param manifest The AMT leaf manifest that held the source entry, stored exactly like the leaf's
+ *                 tree `location`: a raw (non-URL-encoded) path relative to the table root. This
+ *                 differs from [[AddFile.path]], which is URL-encoded.
  * @param pos      The 0-based position of the entry within that leaf. This equals the parquet
  *                 `_metadata.row_index` of the leaf row, which is the same ordinal the MDV bitmap
  *                 indexes.
@@ -1617,6 +1619,11 @@ case class ContentRoot(
   /** The version of the most recent full (non-incremental) manifest rewrite, if recorded. */
   def lastManifestCommitWithFullRewrite: Option[Long] =
     tag(ContentRoot.Tags.LAST_MANIFEST_COMMIT_WITH_FULL_REWRITE).map(_.toLong)
+
+  /** Absolute [[Path]] to the root manifest, resolving `path` against `tableRoot`. */
+  @JsonIgnore
+  def getAbsolutePath(tableRoot: Path): Path =
+    AMTUtils.absolutePathForManifestFile(tableRoot, path)
 }
 
 object ContentRoot {

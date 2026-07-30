@@ -773,12 +773,18 @@ class IcebergConverter
    * |  Add + Remove     |  All          |   RowDeltaHelper    |  UPDATE            |
    * |  with DV          +---------------+---------------------+--------------------+
    * |                   |  None         |   RewriteHelper     |  OPTIMIZE          |
+   * |                   |               |                     |  Note 3            |
    * |                   +---------------+---------------------+--------------------+
    * |                   |  Some         |   Unsupported       |  (unknown)         |
    * +-------------------+---------------+---------------------+--------------------+
    * Note:
    * 1. We assume a Create/Replace table operation will only contain AddFiles.
    * 2. DV is allowed but ignored for no-data changes.
+   * 3. If the added DVs mask more rows than the removed DVs did (e.g. a rebased
+   *    OPTIMIZE after a concurrent DELETE fully removed one compacted input file), the
+   *    commit adds more physical records than it replaces, so we use RowDeltaHelper
+   *    instead, since Iceberg's RewriteFiles rejects that. Otherwise we keep
+   *    RewriteHelper. See the branch body for the cardinality-based derivation.
    */
   private[delta] def runIcebergConversionForActions(
       icebergTxn: IcebergConversionTransaction,
@@ -853,7 +859,32 @@ class IcebergConverter
           case (true, true, DataChange.All) if hasDv =>
             icebergTxn.getRowDeltaHelper
           case (true, true, DataChange.None) if hasDv =>
-            icebergTxn.getRewriteHelper
+            // Iceberg's RewriteFiles ("replace") rejects a commit whose added data files carry
+            // more physical records than the removed data files ("N added > M replaced records").
+            // A rebased OPTIMIZE can violate this: when a concurrent DELETE fully removes one of
+            // the compacted input files, the compacted output still physically contains that
+            // file's rows (masked by a new DV), but the commit carries no RemoveFile for it (the
+            // winner already removed it), leaving more physical rows added than replaced.
+            //
+            // This branch is a reorg (DataChange.None), which preserves the logical row count, so
+            // the physical-record imbalance equals the DV-cardinality imbalance:
+            //   added_physical - removed_physical == added_dv_cardinality - removed_dv_cardinality
+            // We therefore decide from DV cardinalities alone, which are always present (unlike
+            // numPhysicalRecords, which depends on row stats that may be absent). When the added
+            // DVs mask no more rows than the removed DVs did, the physical counts balance (or the
+            // commit removes more than it adds, which RewriteFiles allows) so we stay on
+            // RewriteHelper and OPTIMIZE remains an Iceberg "replace". Otherwise the commit adds
+            // more physical rows than it removes, so route to RowDeltaHelper ("overwrite"), which
+            // does not require that balance.
+            def dvCardinality(f: FileAction): Long =
+              Option(f.deletionVector).map(_.cardinality).getOrElse(0L)
+            val addedDvCardinality = addFiles.map(dvCardinality).sum
+            val removedDvCardinality = removeFiles.map(dvCardinality).sum
+            if (addedDvCardinality <= removedDvCardinality) {
+              icebergTxn.getRewriteHelper
+            } else {
+              icebergTxn.getRowDeltaHelper
+            }
           case (true, true, DataChange.All) if !hasDv =>
             icebergTxn.getOverwriteHelper
           case (true, true, DataChange.None) if !hasDv =>
