@@ -421,6 +421,53 @@ object DeltaTableUtils extends PredicateHelper
   }
 
   /**
+   * Add the file source metadata column to the output of `target`, and return the updated plan
+   * together with the attribute referencing the added column.
+   *
+   * Commands such as UPDATE/DELETE/MERGE read `_metadata.file_path` to identify the files that
+   * need to be rewritten. That column cannot be looked up by name on the resulting DataFrame:
+   * views don't expose metadata columns, so resolving `_metadata` fails whenever the command
+   * targets a view. Instead we add the column to the scan and thread it through the projections
+   * above it, so it can be referenced directly by its attribute.
+   *
+   * This follows the same approach that `DMLWithDeletionVectorsHelper.replaceFileIndex` already
+   * uses to request the metadata column for the deletion vector code paths, which is why those
+   * paths work on views today. The difference is that this only adds the column, leaving the file
+   * index untouched, and that it renames the column on conflict.
+   *
+   * @param target the logical plan to add the file source metadata column to
+   */
+  def addFileMetadataColumn(target: LogicalPlan): (LogicalPlan, AttributeReference) = {
+    var fileMetadataCol: AttributeReference = null
+
+    val newTarget = target transformUp {
+      case l @ LogicalRelationWithTable(hfsr: HadoopFsRelation, _) =>
+        val metadataCol = hfsr.fileFormat.createFileMetadataCol()
+        // Rename the added column when the table has a data column with the same name, so that
+        // references to that data column stay unambiguous. Renaming is safe because we reference
+        // the added column by its attribute rather than by name, and because the logical name
+        // that identifies it as the file source metadata column is kept in its metadata.
+        var name = metadataCol.name
+        while (l.output.exists(_.name.equalsIgnoreCase(name))) {
+          name = s"_$name"
+        }
+        fileMetadataCol = metadataCol.withName(name)
+        l.copy(output = l.output :+ fileMetadataCol)
+      case p @ Project(projectList, _) =>
+        if (fileMetadataCol == null) {
+          throw new IllegalStateException("File metadata column is not yet created.")
+        }
+        p.copy(projectList = projectList :+ fileMetadataCol)
+    }
+
+    if (fileMetadataCol == null) {
+      throw new IllegalStateException(
+        "Could not find a file source relation to add the file metadata column to.")
+    }
+    (newTarget, fileMetadataCol)
+  }
+
+  /**
    * Transform the file format in a logical plan and return the updated plan.
    *
    * @param target the logical plan in which the file format is replaced.

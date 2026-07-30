@@ -314,7 +314,9 @@ case class DeleteCommand(
             // Keep everything from the resolved target except a new TahoeFileIndex
             // that only involves the affected files instead of all files.
             val newTarget = DeltaTableUtils.replaceFileIndex(target, fileIndex)
-            val data = DataFrameUtils.ofRows(sparkSession, newTarget)
+            val (newTargetWithFileMetadata, fileMetadataCol) =
+              DeltaTableUtils.addFileMetadataColumn(newTarget)
+            val data = DataFrameUtils.ofRows(sparkSession, newTargetWithFileMetadata)
             val incrDeletedCountExpr = IncrementMetric(TrueLiteral, metrics("numDeletedRows"))
             val filesToRewrite =
               withStatusCode("DELTA", FINDING_TOUCHED_FILES_MSG) {
@@ -322,7 +324,7 @@ case class DeleteCommand(
                   Array.empty[String]
                 } else {
                   data.filter(Column(cond))
-                    .select(DeltaTableUtils.getFileMetadataColumn(data).getField(FILE_PATH))
+                    .select(Column(fileMetadataCol).getField(FILE_PATH))
                     .filter(Column(incrDeletedCountExpr))
                     .distinct()
                     .as[String]
