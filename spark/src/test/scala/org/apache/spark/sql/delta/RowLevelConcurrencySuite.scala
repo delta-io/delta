@@ -37,6 +37,12 @@ import org.apache.spark.util.ThreadUtils
  *
  * Two concurrent DML operations that touch the same physical file but modify disjoint rows should
  * commit cleanly by merging their deletion vectors, instead of aborting the losing transaction.
+ *
+ * Scope note: this is the sound *same-file DV union*. A rewrite-only DML that also writes *new
+ * image* files (an UPDATE emits updated row values to a fresh path) is NOT reconciled here. Those
+ * image files are ordinary non-blind changed-data files that can carry a genuine conflict (a
+ * value-flip write-skew), so they fall back to today's abort. Reconciling them on proven
+ * non-overlap is conflict-time data skipping, owned by Case 1 (fork issue #4).
  */
 class RowLevelConcurrencySuite extends QueryTest
   with SharedSparkSession
@@ -138,7 +144,7 @@ class RowLevelConcurrencySuite extends QueryTest
       ThreadUtils.awaitResult(futureB, Duration.Inf)
       val e = intercept[SparkException] { ThreadUtils.awaitResult(futureA, Duration.Inf) }
       assertConcurrentModificationException(e)
-      // Only the winner's delete (id=20) is applied; DVs are still used, so its DV has cardinality 1.
+      // Only the winner's delete (id=20) is applied; DVs still used, so its DV cardinality is 1.
       assert(ids(dir) === (0L to 99L).filterNot(_ == 20))
       assert(deletionVectorCardinalities(log) === Seq(1L))
     }
@@ -165,10 +171,12 @@ class RowLevelConcurrencySuite extends QueryTest
   }
 
   // ---------------------------------------------------------------------------
-  // Layer 2: UPDATE (rewrite-only DML adds new data files)
+  // UPDATE image files: rewrite-only DML writes new data files that Layer-1 (DV union) does not
+  // reconcile. They conservatively conflict here; conflict-time data skipping (Case 1 / #4)
+  // reconciles the provably-disjoint case.
   // ---------------------------------------------------------------------------
 
-  test("disjoint DELETE (loser) vs UPDATE (winner) both commit") {
+  test("DELETE (loser) vs UPDATE (winner): winner image file conservatively conflicts") {
     withTempDir { dir =>
       val log = createSingleFileTableWithDVs(dir)
       // A (loser) deletes id=10; B (winner) updates id=20 -> 1020 (masks row 20, appends image).
@@ -177,31 +185,17 @@ class RowLevelConcurrencySuite extends QueryTest
         rowLevelConcurrency = true)
 
       val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
-      ThreadUtils.awaitResult(futureA, Duration.Inf)
       ThreadUtils.awaitResult(futureB, Duration.Inf)
-
-      assert(ids(dir) === ((0L to 99L).filterNot(id => id == 10 || id == 20) :+ 1020L).sorted)
-      // The original file's merged DV masks rows 10 and 20; the updated image lives in a new file.
-      assert(deletionVectorCardinalities(log) === Seq(2L))
-    }
-  }
-
-  test("disjoint UPDATE vs UPDATE both commit") {
-    withTempDir { dir =>
-      val log = createSingleFileTableWithDVs(dir)
-      val txnA = sqlTxn(s"UPDATE ${tableRef(dir)} SET id = 1010 WHERE id = 10",
-        rowLevelConcurrency = true)
-      val txnB = sqlTxn(s"UPDATE ${tableRef(dir)} SET id = 1020 WHERE id = 20",
-        rowLevelConcurrency = true)
-
-      val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
-      ThreadUtils.awaitResult(futureA, Duration.Inf)
-      ThreadUtils.awaitResult(futureB, Duration.Inf)
-
-      assert(ids(dir) ===
-        ((0L to 99L).filterNot(id => id == 10 || id == 20) ++ Seq(1010L, 1020L)).sorted)
-      // Original file's merged DV masks rows 10 and 20; updated images live in two new files.
-      assert(deletionVectorCardinalities(log) === Seq(2L))
+      // The shared file's DVs are disjoint and would merge, but the winner's UPDATE also writes an
+      // *image* file (new path) that the append check cannot prove disjoint from the loser's read
+      // without conflict-time data skipping (Case 1 / #4). It conservatively conflicts, so the
+      // loser aborts. This is one-way safe: it never reconciles a genuine value-flip write-skew
+      // (e.g. winner `SET x = 15`, loser `DELETE WHERE x > 10`), which the DV union cannot detect.
+      val e = intercept[SparkException] { ThreadUtils.awaitResult(futureA, Duration.Inf) }
+      assertConcurrentModificationException(e)
+      // Loser aborted cleanly: only the winner's update is applied (row 20 masked, 1020 appended).
+      assert(ids(dir) === ((0L to 99L).filterNot(_ == 20) :+ 1020L).sorted)
+      assert(deletionVectorCardinalities(log) === Seq(1L))
     }
   }
 

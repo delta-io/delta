@@ -22,7 +22,7 @@ import java.util.concurrent.TimeUnit
 
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.DeltaOperations.{OP_DELETE, OP_SET_TBLPROPERTIES, OP_UPDATE, ROW_TRACKING_BACKFILL_OPERATION_NAME, ROW_TRACKING_UNBACKFILL_OPERATION_NAME}
+import org.apache.spark.sql.delta.DeltaOperations.{OP_SET_TBLPROPERTIES, ROW_TRACKING_BACKFILL_OPERATION_NAME, ROW_TRACKING_UNBACKFILL_OPERATION_NAME}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
@@ -1145,31 +1145,25 @@ private[delta] class ConflictChecker(
     winningCommitSummary.commitInfo.map(_.operation)
 
   /**
-   * Whether the winning commit is a row-level DML that only rewrites or removes existing rows
-   * (DELETE or UPDATE), i.e. it introduces no net-new logical rows. Files added by such a commit
-   * are rewrites of rows that the current transaction already observed in its read snapshot (or
-   * re-adds of files masked by a deletion vector), so they cannot introduce phantom rows for the
-   * current transaction. MERGE is intentionally excluded because it may insert net-new rows.
-   */
-  private lazy val winningCommitIsRewriteOnlyRowLevelDml: Boolean = {
-    val usesDeletionVectors = winningCommitSummary.addedFiles.exists(_.deletionVector != null)
-    usesDeletionVectors && winningOperationName.exists {
-      case OP_DELETE | OP_UPDATE => true
-      case _ => false
-    }
-  }
-
-  /**
    * Whether a file added by the winning transaction can be skipped in the added-files (append)
-   * conflict check thanks to row-level concurrency resolution. This is true when:
-   *   1. the file's "same physical file" conflict was already reconciled by merging deletion
-   *      vectors ([[rowLevelResolvedPaths]]), or
-   *   2. the winning commit is a rewrite-only row-level DML (DELETE/UPDATE) whose added files
-   *      cannot introduce phantom rows (see [[winningCommitIsRewriteOnlyRowLevelDml]]).
+   * conflict check thanks to row-level concurrency resolution.
+   *
+   * This is true only when the file's "same physical file" conflict was already reconciled by
+   * merging deletion vectors ([[resolveRowLevelConflicts]] recorded the path in
+   * [[rowLevelResolvedPaths]]). In that case the winner's re-added `AddFile(P)` carries the winning
+   * DV that we already folded into the current transaction's merged DV, so re-checking it would be
+   * a false conflict.
+   *
+   * We deliberately do NOT skip a rewrite-only DML winner's *new image* files here (an UPDATE
+   * writes updated row values to a fresh path). Those are ordinary non-blind changed-data files
+   * and can legitimately conflict: e.g. an UPDATE can move a row *into* the loser's predicate
+   * (winner `SET x = 15`, loser `DELETE WHERE x > 10`, row was `x = 5`), a genuine write-skew that
+   * the DV union cannot detect. They are arbitrated by the standard added-files check (and, when
+   * enabled, by conflict-time data skipping over their stats).
    */
   private def canSkipAddedFileForRowLevelConcurrency(addFile: AddFile): Boolean = {
     if (!rowLevelConcurrencyEnabled) return false
-    rowLevelResolvedPaths.contains(addFile.path) || winningCommitIsRewriteOnlyRowLevelDml
+    rowLevelResolvedPaths.contains(addFile.path)
   }
 
   /**
